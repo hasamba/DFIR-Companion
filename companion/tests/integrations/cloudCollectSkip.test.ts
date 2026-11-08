@@ -5,6 +5,7 @@ import { collectionPaths, parseManifest } from "../../src/integrations/cloudColl
 import { deriveSubWindows } from "../../src/integrations/cloudCollect/collectReplay.js";
 import { precheckSource, sourceCoverage } from "../../src/integrations/cloudCollect/collectCoverage.js";
 import {
+  CursorExpiredError,
   SkippedItemError,
   type CloudCollectSession,
   type CollectPage,
@@ -192,5 +193,34 @@ describe("the always-shown source notice (#2313)", () => {
       { sources: ["lookup"], window: WINDOW, startedAt: "2026-10-05T00:00:00Z" },
     );
     expect(cov[0].notes).toContain("90 days, management events only.");
+  });
+});
+
+// #2402: a cursor-expired restart re-reads the whole window and meets the refused item again. The
+// live run kept the old skip count and added the new one; replay (on resume) clears it. Both now
+// count the unresolved item once.
+describe("skip counts across a live cursor restart (#2402)", () => {
+  it("counts the re-skipped item once, matching what the manifest replays to", async () => {
+    const t = await tempCase();
+    const order = ["k1", "k2", "k3"];
+    let expired = false;
+    const base = scripted({ k1: "ok", k2: "skip", k3: "ok" }, order);
+    const session: CloudCollectSession = {
+      ...base,
+      fetchPage: async (req) => {
+        // After the skip, the next token has expired once: the window restarts from the top.
+        if (req.pageToken === "k2" && !expired) {
+          expired = true;
+          throw new CursorExpiredError("page token expired");
+        }
+        return base.fetchPage(req);
+      },
+    };
+    const { cp, manifest } = await runOnce(t, session);
+    expect(manifest.entries.filter((e) => e.type === "restart")).toHaveLength(1);
+    expect(manifest.entries.filter((e) => e.type === "skip")).toHaveLength(2); // history kept
+    expect(cp.subWindows[0].skipped).toBe(1);
+    const replayed = deriveSubWindows(manifest.header!, manifest.entries);
+    expect(replayed[0].skipped).toBe(cp.subWindows[0].skipped);
   });
 });

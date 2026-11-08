@@ -6,7 +6,12 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { CollectFs } from "./collectFs.js";
 import { collectionPaths, loadManifest } from "./collectManifest.js";
-import { readCheckpoint, writeCheckpoint } from "./collectCheckpoint.js";
+import {
+  checkpointFromManifest,
+  collectionIdsOf,
+  readCheckpoint,
+  writeCheckpoint,
+} from "./collectCheckpoint.js";
 import type { CollectionCheckpoint, ManifestHeader } from "./collectTypes.js";
 
 export const CLOUD_COLLECT_RESUME_ELSEWHERE =
@@ -39,9 +44,13 @@ export interface CollectionSummary {
 
 export async function readCollection(fs: CollectFs, dir: string): Promise<CollectionSummary | null> {
   const paths = collectionPaths(dir);
-  const checkpoint = await readCheckpoint(fs, paths);
-  if (!checkpoint) return null;
   const manifest = await loadManifest(fs, paths).catch(() => null);
+  // #2402: a missing or unreadable checkpoint no longer hides the collection — it is rebuilt from the
+  // manifest for the panel (nothing is written by a list; the next run persists it).
+  const checkpoint =
+    (await readCheckpoint(fs, paths)) ??
+    checkpointFromManifest(manifest?.header ?? null, collectionIdsOf(dir), new Date().toISOString());
+  if (!checkpoint) return null;
   const h = manifest?.header;
   return {
     checkpoint,
@@ -65,7 +74,8 @@ export async function listCollections(fs: CollectFs, caseDir: string): Promise<C
   const ids = (await fs.readdir(root)).filter(isCollectionId).sort().reverse();
   const out: CollectionSummary[] = [];
   for (const id of ids) {
-    const summary = await readCollection(fs, join(root, id));
+    // #2402: one damaged collection never hides the others.
+    const summary = await readCollection(fs, join(root, id)).catch(() => null);
     if (summary) out.push(summary);
   }
   return out;

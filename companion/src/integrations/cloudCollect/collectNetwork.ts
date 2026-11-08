@@ -274,7 +274,19 @@ async function fetchStep(
     if (err instanceof SkippedItemError) return skipStep(deps, sw, err, note);
     if (err instanceof CursorExpiredError && sw.pageToken && sw.restarts < MAX_RESTARTS) {
       await note({ type: "restart", subWindowId: sw.id, reason: "cursor-expired", at: deps.now() });
-      return { sw: { ...sw, pageToken: undefined, restarts: sw.restarts + 1 }, done: false };
+      // #2402: the restart re-reads the whole window and meets the refused items again, so their
+      // skips are counted afresh — exactly as replay's restart does — not added to the old count.
+      return {
+        sw: {
+          ...sw,
+          pageToken: undefined,
+          capped: undefined,
+          skipped: undefined,
+          skippedItems: undefined,
+          restarts: sw.restarts + 1,
+        },
+        done: false,
+      };
     }
     const reason =
       err instanceof CursorExpiredError
