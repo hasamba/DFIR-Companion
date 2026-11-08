@@ -8,7 +8,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const read = (f: string) => readFileSync(new URL(`../../../public/js/${f}`, import.meta.url), "utf8");
+// Normalised: a Windows checkout has CRLF line endings, and the slicing below looks for "\n  }\n".
+const read = (f: string) =>
+  readFileSync(new URL(`../../../public/js/${f}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 const fnBody = (src: string, name: string) => {
   const start = src.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`no function ${name}`);
