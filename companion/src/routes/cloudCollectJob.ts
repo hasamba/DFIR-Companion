@@ -12,6 +12,7 @@
 // The handler takes the parked session; with none (the generic /api/jobs/:id/resume, refused there
 // anyway) it fails, still resumable, and says where to resume from.
 
+import { workerStarted } from "./cloudCollectOwnership.js";
 import { join } from "node:path";
 import type { JobManager } from "../analysis/jobManager.js";
 import type { ManifestValue } from "../analysis/analysisRunTypes.js";
@@ -133,6 +134,13 @@ export async function executeCollection(
   const manager = ctx.options.jobManager;
   const now = () => new Date().toISOString();
   const log = (line: string) => ctx.serverLogger.info(line, { caseId: input.caseId });
+  // #2402: never two writers on one collection folder. Refused BEFORE the try, so the refusal does
+  // not mark the running collection stopped.
+  const releaseWorker = workerStarted(input.dir);
+  if (!releaseWorker) {
+    await Promise.resolve(input.ref.session.close?.()).catch(() => {});
+    throw new Error("This collection is already being written by another run.");
+  }
   try {
     const cp = await runCollection(
       {
@@ -178,6 +186,7 @@ export async function executeCollection(
     throw err;
   } finally {
     await Promise.resolve(input.ref.session.close?.()).catch(() => {});
+    releaseWorker();
   }
 }
 

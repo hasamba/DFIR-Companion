@@ -244,6 +244,58 @@ describe("cloud collect routes (#2311)", () => {
     POLL_TIMEOUT_MS * 4,
   );
 
+  // #2402: the checkpoint names a job only once it runs, so two quick Resume presses both used to
+  // pass the "already running" check and start two runs on one collection folder.
+  async function failedCollection() {
+    const made = await makeApp({ failPage: 0 });
+    const res = await request(made.app)
+      .post("/cases/c1/cloud-collect")
+      .send({ accountId: made.account!.id, sources: ["ct"], ...WINDOW });
+    await settled(made.app, ["failed"], { jobManager: made.jobManager, jobId: res.body.jobId, attempt: 1 });
+    await pollFor("the collect job failing", async () =>
+      made.jobManager.get(res.body.jobId)?.status === "failed" ? true : null,
+    );
+    delete made.state.failPage;
+    made.provider.open = () => {
+      made.provider.opened++;
+      return fakeSession({ pages: 2 });
+    };
+    return { ...made, collectionId: res.body.collectionId as string, jobId: res.body.jobId as string };
+  }
+
+  it(
+    "two Resume presses at once start one run, and the second is told it is already running",
+    async () => {
+      const { app, jobManager, collectionId, jobId } = await failedCollection();
+      const url = `/cases/c1/cloud-collect/${collectionId}/resume`;
+      const answers = await Promise.all([request(app).post(url), request(app).post(url)]);
+      expect(answers.map((a) => a.status).sort()).toEqual([202, 409]);
+      expect(answers.find((a) => a.status === 409)?.body.error).toMatch(/already running/);
+      const collects = jobManager.list("c1").filter((j) => j.kind === "cloud-collect");
+      expect(collects).toHaveLength(1);
+      await settled(app, ["complete"], { jobManager, jobId, attempt: 2 });
+    },
+    POLL_TIMEOUT_MS * 4,
+  );
+
+  it(
+    "a Resume after a fresh run was queued, but before it ran, is refused",
+    async () => {
+      const { app, jobManager, collectionId } = await failedCollection();
+      // The old job cannot be requeued (spent), so the route launches a fresh one for the collection.
+      vi.spyOn(jobManager, "resume").mockResolvedValue({ ok: false, reason: "not-interrupted" });
+      const url = `/cases/c1/cloud-collect/${collectionId}/resume`;
+      const first = await request(app).post(url);
+      expect(first.status).toBe(202);
+      const second = await request(app).post(url);
+      expect(second.status).toBe(409);
+      const fresh = jobManager.list("c1").filter((j) => j.kind === "cloud-collect");
+      expect(fresh).toHaveLength(2); // the failed original + exactly one new run
+      await settled(app, ["complete"], { jobManager, jobId: first.body.jobId, attempt: 1 });
+    },
+    POLL_TIMEOUT_MS * 4,
+  );
+
   it("is refused on the public demo", async () => {
     const { app } = await makeApp({ demo: true });
     expect((await request(app).get("/cases/c1/cloud-collect")).status).toBe(403);
