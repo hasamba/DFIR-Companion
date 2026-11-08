@@ -142,25 +142,31 @@ describe("close case dialog failures (#2412)", () => {
     expect(el("ccaConfirm").disabled).toBe(false);
   });
 
-  it("a close that never answers times out into the same reconciliation", async () => {
+  it("a close that never answers, with a case list that never answers, still gives the dialog back", async () => {
     const timers: Array<() => void> = [];
     const { api, el } = loadClose(
       {
         "GET /cases/c1/cloud-accounts": { body: { accounts: [ROW] } },
         "PATCH /cases/c1/status": () => new Promise<Route>(() => {}),
-        "GET /cases": { body: [{ caseId: "c1", status: "open" }] },
+        "GET /cases": () => new Promise<Route>(() => {}),
       },
       "c1",
       timers,
     );
-    void api.closeCaseWithCredentials("c1");
+    const done = api.closeCaseWithCredentials("c1");
     await flush();
     el("ccaConfirm").click();
     await flush();
     expect(el("ccaCancel").disabled).toBe(true);
-    expect(timers.length).toBeGreaterThan(0);
-    // routedFetch ignores the abort signal, so the timeout is proven to be armed; the reconcile path
-    // it feeds is the one the network-error tests above cover.
+    timers.splice(0).forEach((fn) => fn()); // the close's 30 s deadline passes
+    await flush();
+    timers.splice(0).forEach((fn) => fn()); // the status read's deadline passes
+    await flush();
+    expect(el("ccaConfirm").disabled).toBe(false);
+    expect(el("ccaCancel").disabled).toBe(false);
+    expect(el("ccaMsg").textContent).toContain("may have gone through");
+    el("ccaCancel").click();
+    expect(await done).toBe(false);
   });
 
   it("a superseded close does not repaint the toolbar of a different case on screen", async () => {

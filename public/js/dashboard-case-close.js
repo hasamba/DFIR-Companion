@@ -37,50 +37,70 @@
 
   // How long the close may stay on the wire before the dialog stops waiting for it (#2412). Aborting
   // the request does not undo a close the server already made — so a timeout, like a network error,
-  // is "outcome unknown", and the case's status is read back before anything is claimed.
+  // is "outcome unknown", and the case's status is read back before anything is claimed. That read is
+  // bounded too: the dialog must always get its buttons back, whatever the network does.
   const CLOSE_TIMEOUT_MS = 30000;
+  const STATUS_TIMEOUT_MS = 10000;
 
-  async function patchClosed(caseId, cloudCredentials) {
-    const canTime = typeof AbortController === "function" && typeof setTimeout === "function";
-    const ac = canTime ? new AbortController() : null;
-    const timer = ac ? setTimeout(() => ac.abort(), CLOSE_TIMEOUT_MS) : null;
-    const stopTimer = () => {
+  // Runs `work(signal)` — a request AND its body read — and rejects with an AbortError after `ms`.
+  // The race is what bounds it, not the signal alone: a body read that ignores the abort still ends.
+  function withDeadline(ms, work) {
+    if (typeof setTimeout !== "function") return work(undefined);
+    const ac = typeof AbortController === "function" ? new AbortController() : null;
+    let timer = null;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        if (ac) ac.abort();
+        const err = new Error("timed out");
+        err.name = "AbortError";
+        reject(err);
+      }, ms);
+    });
+    const stop = () => {
       if (timer !== null && typeof clearTimeout === "function") clearTimeout(timer);
     };
-    const init = {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(cloudCredentials ? { status: "closed", cloudCredentials } : { status: "closed" }),
-    };
-    if (ac) init.signal = ac.signal;
+    return Promise.race([work(ac ? ac.signal : undefined), deadline]).then(
+      (v) => (stop(), v),
+      (e) => {
+        stop();
+        throw e;
+      },
+    );
+  }
+
+  async function patchClosed(caseId, cloudCredentials) {
+    const body = JSON.stringify(cloudCredentials ? { status: "closed", cloudCredentials } : { status: "closed" });
     // A network failure is an answer too (#2412): thrown past the dialog it left "closing…" on screen
     // with the button disabled for good. It is NOT a refusal, though — the server may have closed
     // the case and lost the reply — so it is reconciled against the case's status.
-    let res;
     try {
-      res = await fetch(`/cases/${encodeURIComponent(caseId)}/status`, init);
+      return await withDeadline(CLOSE_TIMEOUT_MS, async (signal) => {
+        const init = { method: "PATCH", headers: { "content-type": "application/json" }, body };
+        if (signal) init.signal = signal;
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/status`, init);
+        let answer = {};
+        try {
+          answer = await res.json();
+        } catch {
+          answer = {};
+        }
+        return { ok: res.ok, status: res.status, body: answer };
+      });
     } catch (err) {
-      stopTimer();
       return reconcileUnknown(caseId, err);
     }
-    let body = {};
-    try {
-      body = await res.json();
-    } catch {
-      body = {};
-    }
-    stopTimer();
-    return { ok: res.ok, status: res.status, body };
   }
 
-  // The case's lifecycle status from the case list, or null when that cannot be read either.
+  // The case's lifecycle status from the case list, or null when that cannot be read in time either.
   async function caseStatus(caseId) {
     try {
-      const res = await fetch("/cases");
-      if (!res.ok) return null;
-      const cases = await res.json();
-      const meta = Array.isArray(cases) ? cases.find((c) => c && c.caseId === caseId) : null;
-      return meta ? meta.status || null : null;
+      return await withDeadline(STATUS_TIMEOUT_MS, async (signal) => {
+        const res = await fetch("/cases", signal ? { signal } : undefined);
+        if (!res.ok) return null;
+        const cases = await res.json();
+        const meta = Array.isArray(cases) ? cases.find((c) => c && c.caseId === caseId) : null;
+        return meta ? meta.status || null : null;
+      });
     } catch {
       return null;
     }
