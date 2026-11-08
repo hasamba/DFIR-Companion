@@ -12,8 +12,13 @@
 // acquired cutoff and the retention limits, and a split tree is judged on its leaves.
 
 import type { CollectFs } from "./collectFs.js";
-import { appendManifest, collectionPaths, type CollectionPaths } from "./collectManifest.js";
-import { readCheckpoint, writeCheckpoint } from "./collectCheckpoint.js";
+import { appendManifest, collectionPaths, loadManifest, type CollectionPaths } from "./collectManifest.js";
+import {
+  checkpointFromManifest,
+  collectionIdsOf,
+  readCheckpoint,
+  writeCheckpoint,
+} from "./collectCheckpoint.js";
 import { initialSubWindows, replayCollection, retrySkipped, windowsToRetry } from "./collectReplay.js";
 import { runNetworkStage } from "./collectNetwork.js";
 import { runImportStage, type CollectPageImporter } from "./collectImport.js";
@@ -214,11 +219,16 @@ export async function createCollection(
 async function baseCheckpoint(
   deps: CollectRunDeps,
   paths: CollectionPaths,
-  caseId: string,
+  header: ManifestHeader,
+  dir: string,
 ): Promise<CollectionCheckpoint> {
   const cp = await readCheckpoint(deps.fs, paths);
   if (cp) return cp;
-  throw new Error(`collection checkpoint is missing or unreadable for case ${caseId}`);
+  // #2402: rebuilt from the manifest — with the CASE id of the folder, which the page imports and
+  // their "already landed?" check are run against.
+  const rebuilt = checkpointFromManifest(header, collectionIdsOf(dir), deps.now());
+  if (rebuilt) return rebuilt;
+  throw new Error(`collection ${header.collectionId}: checkpoint unreadable and manifest header unusable`);
 }
 
 /** Start or resume: replay, fetch what is unfinished, import what is not yet in the case. */
@@ -231,7 +241,7 @@ export async function runCollection(
   const replay = await replayCollection(deps.fs, paths, deps.now);
   // #2363: the scope the start decided (the AWS regions) — the header is the one record of it.
   deps.session.applyFilters?.(replay.header.filters ?? {});
-  let cp = await baseCheckpoint(deps, paths, replay.header.collectionId);
+  let cp = await baseCheckpoint(deps, paths, replay.header, dir);
   let derived = replay.subWindows;
   if (opts.resume) {
     await appendManifest(deps.fs, paths, { type: "resume", at: deps.now() });
@@ -340,5 +350,16 @@ export async function markCollectionStopped(
   const paths = collectionPaths(dir);
   const cp = await readCheckpoint(fs, paths);
   if (!cp) return;
-  await writeCheckpoint(fs, paths, { ...cp, status, error: error.slice(0, 500), updatedAt: now() });
+  // #2402: "failed" means nothing was collected. A run that threw after usable pages were saved
+  // (an import error, say) stopped part-way: it is "partial", and its error says why.
+  const next = status === "failed" && (await usablePages(fs, paths, cp)) > 0 ? "partial" : status;
+  await writeCheckpoint(fs, paths, { ...cp, status: next, error: error.slice(0, 500), updatedAt: now() });
+}
+
+/** Saved pages that are still evidence: manifest page lines minus the quarantined files. */
+async function usablePages(fs: CollectFs, paths: CollectionPaths, cp: CollectionCheckpoint): Promise<number> {
+  const manifest = await loadManifest(fs, paths).catch(() => null);
+  if (!manifest) return cp.imported.length;
+  const quarantined = new Set(cp.quarantined.map((q) => q.file));
+  return manifest.pages.filter((p) => !quarantined.has(p.file)).length;
 }
