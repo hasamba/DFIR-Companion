@@ -11,7 +11,7 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import type { RouteContext } from "./context.js";
 import { fetchOutbound, OutboundUrlBlockedError } from "./outboundFetchGuard.js";
-import { SigmaStoreError, type SigmaRuleStore } from "../analysis/sigmaRuleStore.js";
+import { SigmaStoreError, sigmaCheckAsOfNow, type SigmaRuleStore } from "../analysis/sigmaRuleStore.js";
 import { SIGMA_RELEASE_MAX_ZIP_BYTES } from "../analysis/sigmaReleaseArchive.js";
 import { SIGMA_EXCLUSION_LIMITS } from "../analysis/sigmaExclusions.js";
 import { computeSigmaCoverage, inventoryCounts } from "../analysis/sigmaCoverage.js";
@@ -90,7 +90,7 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
       },
       counts: inventoryCounts(set.inventory),
       problems: set.problems,
-      lastCheck: store.lastCheck ?? null,
+      lastCheck: store.lastCheck ? sigmaCheckAsOfNow(store.lastCheck, store.active().release) : null,
       demoMode: !!options.demoMode,
     });
   });

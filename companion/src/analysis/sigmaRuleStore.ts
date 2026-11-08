@@ -85,6 +85,16 @@ export interface SigmaLatestCheck {
   error?: string;
 }
 
+/**
+ * #2389: the last check, read against the release in use NOW. A check made before an install still
+ * said "New Sigma release available" after that release was installed (or the reverse after a roll
+ * back). An errored check is left as it is.
+ */
+export function sigmaCheckAsOfNow(check: SigmaLatestCheck, installed: string): SigmaLatestCheck {
+  if (check.error || !check.latest) return { ...check, installed };
+  return { ...check, installed, updateAvailable: check.latest !== installed };
+}
+
 interface Pending {
   token: string;
   dir: string;

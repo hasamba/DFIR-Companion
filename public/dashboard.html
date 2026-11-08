@@ -223,6 +223,7 @@
   <script src="/js/dashboard-tagger.js"></script>
   <!-- Content tagger → built-in rule updates for an edited rules copy (#2344). Self-starts; refreshed after rule edits. -->
   <script src="/js/dashboard-tagger-updates.js"></script>
+  <script src="/js/dashboard-detection-rules.js"></script>
   <script src="/js/dashboard-rule-pack.js"></script>
   <!-- The CISA KEV catalog panel (#99), the second and last wholly-movable feature (#415 tier 3). -->
   <script src="/js/dashboard-kev.js"></script>
@@ -4300,12 +4301,17 @@
       <!-- #2344: "your rules are older than the built-in set" + its review. Filled by js/dashboard-tagger-updates.js. -->
       <div id="taggerUpdatesNotice" hidden data-safe-style="margin-bottom:6px;padding:6px;border:1px solid var(--warning-bg-strong);border-radius:6px;font-size:12px"></div>
       <div id="taggerUpdatesPane" hidden data-safe-style="margin-bottom:8px;padding:6px;border:1px solid var(--border-color);border-radius:6px;font-size:12px;max-height:480px;overflow-y:auto"></div>
-      <!-- #2349: the detection-rule pack released separately from the app. Filled by js/dashboard-rule-pack.js. -->
-      <div id="rulePackPanel" hidden data-safe-style="margin-bottom:6px;padding:6px;border:1px solid var(--border-color);border-radius:6px;font-size:12px">
-        <div id="rulePackStatus"></div>
-        <div id="rulePackMsg" data-safe-style="font-size:12px;color:var(--text-muted);margin-top:4px"></div>
-        <div id="rulePackReview" hidden data-safe-style="margin-top:6px;padding:6px;border:1px solid var(--border-color);border-radius:6px;max-height:480px;overflow-y:auto"></div>
-      </div>
+      <!-- #2389: one collapsible box — a line each for the tagger rules and Sigma (js/dashboard-detection-rules.js),
+           and the #2349 rule pack details inside it (js/dashboard-rule-pack.js). -->
+      <details id="detectionRulesBox" class="detection-rules" hidden>
+        <summary><span class="dr-title">Detection rules</span><div id="detectionRulesLines"></div></summary>
+        <div id="rulePackPanel" hidden data-safe-style="margin-top:6px;font-size:12px">
+          <div id="rulePackStatus"></div>
+          <div id="rulePackMsg" data-safe-style="font-size:12px;color:var(--text-muted);margin-top:4px"></div>
+          <div id="rulePackReview" hidden data-safe-style="margin-top:6px;padding:6px;border:1px solid var(--border-color);border-radius:6px;max-height:480px;overflow-y:auto"></div>
+        </div>
+        <div class="dr-sigma-note">Sigma rules: release, review and roll back are in <button type="button" id="drSigmaSettingsBtn" class="ev-bulk-btn">Settings → Sigma rules</button>.</div>
+      </details>
       <!-- NL → rule (PR #112 follow-up): AI rule authoring + rule management, hidden until ✨ Suggest rule is clicked. -->
       <div id="taggerSuggestWrap" hidden>
       <!-- describe a rule in plain English; AI drafts it for review. -->
