@@ -24,6 +24,11 @@
 // result. Unticked regions are sent as `excludeRegions` and named in the result as skipped by
 // choice. Any change to the form clears the pre-check, so "Confirm and start" can only send the
 // body that was checked.
+//
+// #2379: a progress poll refreshes the collection ROWS only. The start form — and its region picker,
+// whose list is a real ec2:DescribeRegions call and a team-audit entry — is built on open, on a case
+// switch and after the analyst's own Start or Resume, never on a poll, so a poll cannot re-ask the
+// regions, jump the layout or reset what the analyst changed in the form.
 (function () {
   "use strict";
 
@@ -39,6 +44,11 @@
 
   let pollTimer = null;
   let pollCase = "";
+  // Each full render bumps renderGen; a poll answer from an older render is dropped. rowsBox is the
+  // current render's collection list, the only thing a poll replaces.
+  let renderGen = 0;
+  let rowsBox = null;
+  let renderedCase = "";
 
   const byId = (id) => document.getElementById(id);
 
@@ -106,9 +116,10 @@
     stopPolling();
     pollCase = caseId;
     // Case-scoped: a tick for a case the analyst has left does nothing.
+    const gen = renderGen;
     pollTimer = setTimeout(() => {
       pollTimer = null;
-      if (pollCase === caseNow()) loadCloudCollect(pollCase);
+      if (pollCase === caseNow()) refreshCollections(pollCase, gen);
     }, POLL_MS);
   }
 
@@ -317,6 +328,7 @@
         confirm.disabled = true;
         const res = await post(base(caseId), body);
         confirm.disabled = false;
+        if (caseId !== caseNow()) return; // the analyst moved to another case meanwhile
         setMsg(res.ok ? "Collection started — progress below and in Background jobs." : res.body.error || `Start failed (HTTP ${res.status})`, !res.ok);
         if (res.ok) loadCloudCollect(caseId);
       });
@@ -408,6 +420,7 @@
       resume.addEventListener("click", async () => {
         resume.disabled = true;
         const res = await post(`${base(caseId)}/${encodeURIComponent(cp.collectionId)}/resume`);
+        if (caseId !== caseNow()) return; // the analyst moved to another case meanwhile
         setMsg(res.ok ? "Resuming — the account's credential was opened again." : res.body.error || `Resume failed (HTTP ${res.status})`, !res.ok);
         loadCloudCollect(caseId);
       });
@@ -416,24 +429,62 @@
     return row;
   }
 
+  const isRunning = (collections) => collections.some((c) => c.checkpoint.status === "running");
+
+  function hideForDemo(list) {
+    if (!(list.status === 403 && list.body.demo)) return false;
+    const section = byId("sec-cloud-collect");
+    const button = byId("cloudCollectBtn");
+    if (section) section.hidden = true;
+    if (button) button.hidden = true;
+    return true;
+  }
+
+  function fillRows(rows, caseId, collections) {
+    rows.replaceChildren();
+    for (const c of collections) rows.appendChild(collectionRow(caseId, c));
+    if (!collections.length) rows.appendChild(el("p", "No collections yet.", "cc-note"));
+  }
+
+  // A progress poll (#2379): asks the collection list only and replaces the rows only. The start
+  // form, its region picker and anything the analyst typed stay as they are.
+  async function refreshCollections(caseId, gen) {
+    const list = await getJson(base(caseId));
+    if (gen !== renderGen || caseId !== caseNow() || !rowsBox) return; // a full render or another case took over
+    if (hideForDemo(list)) return;
+    if (!list.ok) {
+      rowsBox.replaceChildren(el("p", list.body.error || `Cloud collection is not available (HTTP ${list.status}).`, "cc-missing"));
+      return;
+    }
+    const collections = list.body.collections || [];
+    fillRows(rowsBox, caseId, collections);
+    if (isRunning(collections)) schedulePoll(caseId);
+  }
+
+  // The full render: on open, on a case switch, and after the analyst's own Start or Resume.
   async function loadCloudCollect(caseId) {
     const box = byId("cloudCollect");
-    const section = byId("sec-cloud-collect");
     if (!box) return;
+    // A late Start/Resume answer for a case the analyst has left must not cancel the open case's
+    // poll or invalidate its render (#2379), so it is refused before touching either.
+    if (caseId && caseId !== caseNow()) return;
     const id = caseId || caseNow();
+    const gen = ++renderGen;
     stopPolling();
     if (!id) {
+      rowsBox = null;
+      renderedCase = "";
       box.textContent = "Open a case to collect cloud logs.";
       return;
     }
     const [list, accounts] = await Promise.all([getJson(base(id)), getJson(`/cases/${encodeURIComponent(id)}/cloud-accounts`)]);
-    if (id !== caseNow()) return; // the analyst moved on while this loaded
-    const button = byId("cloudCollectBtn");
-    if (list.status === 403 && list.body.demo) {
-      if (section) section.hidden = true;
-      if (button) button.hidden = true;
-      return;
-    }
+    if (gen !== renderGen || id !== caseNow()) return; // a newer render, or the analyst moved on
+    if (hideForDemo(list)) return;
+    // The Start / Resume outcome line survives the rebuild that follows it, for the same case only.
+    const prev = renderedCase === id ? byId("cloudCollectMsg") : null;
+    const kept = prev ? { text: prev.textContent, color: prev.style.color } : null;
+    rowsBox = null;
+    renderedCase = id;
     box.replaceChildren();
     if (!list.ok) {
       box.appendChild(el("p", list.body.error || `Cloud collection is not available (HTTP ${list.status}).`, "cc-note"));
@@ -445,14 +496,19 @@
     const msg = el("span", "", "cc-msg");
     msg.id = "cloudCollectMsg";
     msg.setAttribute("role", "status");
+    if (kept) {
+      msg.textContent = kept.text;
+      msg.style.color = kept.color;
+    }
     box.appendChild(msg);
     const rows = el("div", null, "cc-list");
     rows.setAttribute("role", "list");
     rows.setAttribute("aria-label", "Cloud collections of this case");
-    for (const c of list.body.collections || []) rows.appendChild(collectionRow(id, c));
-    if (!(list.body.collections || []).length) rows.appendChild(el("p", "No collections yet.", "cc-note"));
+    const collections = list.body.collections || [];
+    fillRows(rows, id, collections);
     box.appendChild(rows);
-    if ((list.body.collections || []).some((c) => c.checkpoint.status === "running")) schedulePoll(id);
+    rowsBox = rows;
+    if (isRunning(collections)) schedulePoll(id);
   }
 
   function initCloudCollect() {

@@ -1196,7 +1196,7 @@ export const FEATURES: Feature[] = [
     // No `initializer`: initCaseConnect() runs initCloudCollect(), not the inline script.
     file: "dashboard-cloud-collect.js",
     publish: ["initCloudCollect", "loadCloudCollect"],
-    private: ["pollTimer", "pollCase"],
+    private: ["pollTimer", "pollCase", "renderGen", "rowsBox", "renderedCase"],
   },
   {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the
