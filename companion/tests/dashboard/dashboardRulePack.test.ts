@@ -130,6 +130,14 @@ function harness(status: Record<string, unknown> = STATUS) {
 }
 
 describe("the Rule pack panel", () => {
+  // #2389: the check is recorded server-side; the status is re-read so the Detection rules summary
+  // line says what the check found instead of staying "not checked".
+  it("re-reads the status after a check, so the summary line follows it", async () => {
+    const h = harness();
+    await h.api.checkRulePack();
+    expect(h.calls.map((c) => c.url).slice(-2)).toEqual(["/tagger/pack/check", "/tagger/pack"]);
+  });
+
   it("is mounted in the Content tagger area and served", async () => {
     const html = await readFile(DASHBOARD, "utf8");
     expect(html).toContain('<script src="/js/dashboard-rule-pack.js"></script>');

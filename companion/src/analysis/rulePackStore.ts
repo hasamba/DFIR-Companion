@@ -93,8 +93,14 @@ export interface RulePackCheckRecord {
  * to "installed and current". A roll back to the bundled rules makes it an update again.
  */
 export function checkAsOfNow(check: RulePackCheckRecord, installed: string | null): RulePackCheckRecord {
-  if (check.status !== "update" || !check.latest || !installed) return check;
-  if (comparePackVersions(check.latest, installed) > 0) return check;
+  if ((check.status !== "update" && check.status !== "current") || !check.latest) return check;
+  // A "current" check goes stale the other way: install, check, then roll back (Codex review).
+  if (!installed || comparePackVersions(check.latest, installed) > 0)
+    return {
+      ...check,
+      status: "update",
+      message: `Rule pack ${check.latest} is available (installed: ${installed ?? "the bundled rules"}).`,
+    };
   return { ...check, status: "current", message: `Rule pack ${installed} is installed and current.` };
 }
 

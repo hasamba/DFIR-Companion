@@ -107,6 +107,10 @@ async function checkRulePack() {
     else closeRulePackReview();
   } catch (e) {
     rpMsg("Check failed: " + e.message, true);
+  } finally {
+    // #2389: the check is recorded on the server, failed or not; re-read it so the Detection rules
+    // summary line says what this check found.
+    await loadRulePack();
   }
 }
 
