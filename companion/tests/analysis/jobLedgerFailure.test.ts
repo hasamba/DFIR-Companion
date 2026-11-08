@@ -189,4 +189,39 @@ describe("job ledger write failures (#2409)", () => {
     expect(restarted.get(jobId)?.status).toBe("interrupted");
     expect((await ledger.list("case-a")).find((row) => row.id === jobId)?.status).toBe("interrupted");
   });
+
+  // The guard must cover the prune that follows the write, not just the write itself.
+  it("a supersede or second resume while the resume is pruning cannot slip past the guard", async () => {
+    const { restarted, jobId, ledger } = await interruptedJob();
+    const realPrune = ledger.prune.bind(ledger);
+    let release = (): void => {};
+    let started = (): void => {};
+    const pruneStarted = new Promise<void>((resolve) => (started = resolve));
+    let armed = true;
+    ledger.prune = async (caseId, max) => {
+      if (armed) {
+        armed = false;
+        started();
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+      return realPrune(caseId, max);
+    };
+    const resuming = restarted.resume(jobId);
+    await pruneStarted;
+    expect(await restarted.resume(jobId)).toEqual({ ok: false, reason: "not-interrupted" });
+    const replacement = restarted.register({
+      caseId: "case-a",
+      kind: "deep-pass",
+      cancellable: true,
+      exclusive: true,
+    });
+    release();
+
+    expect(await resuming).toEqual({ ok: false, reason: "unknown" });
+    expect(restarted.get(jobId)).toBeUndefined();
+    await replacement.ready;
+    expect(restarted.get(replacement.jobId)?.status).toBe("running");
+    const rows = (await ledger.list("case-a")).filter((row) => row.kind === "deep-pass");
+    expect(rows.map((row) => row.id)).toEqual([replacement.jobId]);
+  });
 });

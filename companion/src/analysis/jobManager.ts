@@ -473,42 +473,45 @@ export class JobManager {
     };
     const queued = getJob(requeue(this.table), jobId)!;
 
-    // WRITE FIRST, then apply (#2409). Until the queued row is on disk the in-memory row stays
-    // interrupted/failed, so the scheduler cannot admit it and a cancel or supersede cannot see a
-    // half-resumed job. A failed write therefore changes nothing in memory: no phantom `queued`
-    // row that a later pass would start with no handler attached and hold the case's slot forever.
+    // WRITE FIRST, then apply (#2409): until the queued row is on disk and installed, memory keeps it
+    // interrupted/failed, so no pass can admit it and a refused write leaves no phantom slot. The
+    // `resuming` guard covers the whole window, prune included, against a supersede or second resume.
     const attempt = { superseded: false, cancellable: queued.cancellable };
     this.resuming.set(jobId, attempt);
     try {
-      await this.ledger?.update(queued);
-    } catch (error) {
-      this.reportError(new Error(`job ${jobId} resume was not recorded: ${toError(error).message}`));
-      return { ok: false, reason: "ledger-write-failed" };
+      try {
+        await this.ledger?.update(queued);
+      } catch (error) {
+        this.reportError(new Error(`job ${jobId} resume was not recorded: ${toError(error).message}`));
+        return { ok: false, reason: "ledger-write-failed" };
+      }
+      if (this.ledger) await this.pruneLedger(queued.caseId);
+      // SUPERSEDED (or the case forgotten) MEANWHILE: left on disk, the queued row comes back after a
+      // restart offering Resume on work a newer run already took over. Erase it; the resume lost.
+      if (attempt.superseded || !getJob(this.table, jobId)) {
+        await this.ledger?.delete(queued).catch((error: unknown) => this.reportError(toError(error)));
+        return { ok: false, reason: "unknown" };
+      }
+      this.table = requeue(this.table);
+      this.installResumed(queued, registration.handler);
+      return { ok: true, job: getJob(this.table, jobId)! };
     } finally {
       this.resuming.delete(jobId);
     }
-    if (this.ledger) await this.pruneLedger(queued.caseId);
+  }
 
-    // SUPERSEDED (or the case forgotten) WHILE THAT WRITE WAS IN FLIGHT. The row it wrote is a
-    // `queued` job nothing points at: left, the next restore() reloads it as `interrupted` and
-    // offers Resume on work a newer run already took over. Erase it and say the resume lost.
-    if (attempt.superseded || !getJob(this.table, jobId)) {
-      await this.ledger?.delete(queued).catch((error: unknown) => this.reportError(toError(error)));
-      return { ok: false, reason: "unknown" };
-    }
-    this.table = requeue(this.table);
+  private installResumed(queued: Job, handler: ResumeHandler): void {
     if (queued.cancellable || queued.resourceBudget?.maxRuntimeMs) {
-      this.controllers.set(jobId, new AbortController());
+      this.controllers.set(queued.id, new AbortController());
     }
     const admission = deferred();
     const durability = deferred();
-    this.admissions.set(jobId, admission);
-    this.durabilities.set(jobId, durability);
+    this.admissions.set(queued.id, admission);
+    this.durabilities.set(queued.id, durability);
     durability.resolve();
     this.emit(queued.caseId);
     void this.scheduleQueued();
-    void this.runResumedJob(jobId, registration.handler, admission.promise);
-    return { ok: true, job: getJob(this.table, jobId)! };
+    void this.runResumedJob(queued.id, handler, admission.promise);
   }
 
   list(caseId?: string): JobListItem[] {
