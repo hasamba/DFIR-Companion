@@ -262,6 +262,12 @@ export interface ValuesApi {
   suggestToolForExt(ext: string, status: unknown): string | null;
   toolsForExt(ext: string, status: unknown): Array<{ id: string }>;
   sigmaNotGradedHint(e: Record<string, unknown>): string;
+  superRepeatGroups<T extends Record<string, unknown>>(events: T[], windowMs: number): T[][];
+  superGroupedHtml(
+    rows: Record<string, unknown>[],
+    rowHtml: (e: Record<string, unknown>, badge?: string) => string,
+    windowMs: number,
+  ): string;
   sigmaHinted(e: Record<string, unknown>, html: string): string;
   jobMenuView(
     j: Record<string, unknown>,

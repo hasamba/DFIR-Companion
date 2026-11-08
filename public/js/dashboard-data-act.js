@@ -112,6 +112,14 @@
       el.textContent = d.hidden ? "[details ▶]" : "[details ▼]";
     },
     zoomToTimeWindow: (el) => zoomToTimeWindow(el.dataset.from, el.dataset.to),
+    // Super-timeline "Group repeats" (#2391)
+    stGroupRepeats: () => toggleSuperGroupRepeats(),
+    stGroupExpand: (el) => {
+      const box = document.getElementById(el.dataset.target);
+      if (!box) return;
+      box.hidden = !box.hidden;
+      el.textContent = el.textContent.replace(/[▶▼]$/, box.hidden ? "▶" : "▼");
+    },
     tlPagePrev: (el) => {
       if (tlPage > 0) {
         tlPage--;

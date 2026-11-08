@@ -353,6 +353,7 @@ export const FEATURES: Feature[] = [
       "toggleSuperSelectAll",
       "toggleSuperStarredOnly",
       "toggleSuperTaggedOnly",
+      "toggleSuperGroupRepeats",
     ],
     private: [
       "superOffset",
