@@ -217,7 +217,7 @@
       btn.disabled = true;
       document.getElementById("notionMsg").textContent = "exporting…";
       fetch(`/cases/${c}/push/notion`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || ("HTTP " + r.status)), { pageId: j.pageId, pageUrl: j.pageUrl }); return j; })
         .then((res) => {
           const verb = res.created ? "created" : "updated";
           document.getElementById("status").textContent =
@@ -228,7 +228,19 @@
           if (res.warnings && res.warnings.length) console.warn("notion export warnings:", res.warnings);
           closeNotionModal();
         })
-        .catch((err) => document.getElementById("notionMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
+        .catch((err) => {
+          // #2414: the export stopped part-way but its page exists — point the next export INTO that
+          // page, so pressing Export again finishes it instead of creating a second page.
+          if (err.pageId) {
+            const existing = document.querySelector('input[name="notionMode"][value="existing"]');
+            if (existing) existing.checked = true;
+            document.getElementById("notionPageUrl").value = err.pageUrl || err.pageId;
+            syncNotionRows();
+            document.getElementById("notionMsg").textContent = "failed: " + err.message + " — the page is selected below; press Export to finish it.";
+            return;
+          }
+          document.getElementById("notionMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s";
+        })
         .finally(() => { btn.disabled = false; });
     };
 
@@ -462,7 +474,7 @@
       btn.disabled = true;
       document.getElementById("irisPushMsg").textContent = "pushing…";
       fetch(`/cases/${encodeURIComponent(caseId)}/push/iris`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ caseName }) })
-        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
+        .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || ("HTTP " + r.status)), { pageId: j.pageId, pageUrl: j.pageUrl }); return j; })
         .then((res) => {
           const verb = res.created ? "created" : "updated";
           document.getElementById("status").textContent =

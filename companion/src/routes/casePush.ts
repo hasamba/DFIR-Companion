@@ -9,7 +9,11 @@ import {
   pushSuperTimelineToTimesketch,
 } from "../integrations/timesketch/timesketchPush.js";
 import { pushCaseToMisp } from "../integrations/misp/mispPush.js";
-import { pushCaseToNotion, type NotionPushTarget } from "../integrations/notion/notionPush.js";
+import {
+  NotionExportIncompleteError,
+  pushCaseToNotion,
+  type NotionPushTarget,
+} from "../integrations/notion/notionPush.js";
 import { parseNotionPageId } from "../integrations/notion/notionClient.js";
 import { pushPlaybookToClickUp } from "../integrations/clickup/clickupPush.js";
 import { pushFindingToJira, pushFindingsToJira } from "../integrations/jira/jiraPush.js";
@@ -394,6 +398,9 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       return res.status(200).json(result);
     } catch (err) {
       logLine(`[notion] ${caseId} export ERROR: ${(err as Error).message}`);
+      // #2414: a part-way export names the page it made, so the next export goes INTO it.
+      if (err instanceof NotionExportIncompleteError)
+        return res.status(502).json({ error: err.message, pageId: err.pageId, pageUrl: err.pageUrl ?? "" });
       return res.status(502).json({ error: (err as Error).message });
     }
   });

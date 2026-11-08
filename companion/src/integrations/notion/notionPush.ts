@@ -30,6 +30,7 @@ import {
   type NotionBotUser,
 } from "./notionClient.js";
 import type { NotionExport } from "./notionExportStore.js";
+import { StateLock } from "../../analysis/stateLock.js";
 
 // Structural subset of NotionClient used here — lets tests pass a lightweight mock.
 export interface NotionClientLike {
@@ -86,11 +87,43 @@ export interface NotionPushResult {
 
 const INTER_BATCH_MS = 350; // ~3 req/s — Notion's documented average rate limit
 
-export async function pushCaseToNotion(
+/**
+ * The export stopped part-way (#2414). The page exists (and is remembered), so the analyst can
+ * re-export INTO it instead of creating another page. Carries the page so the route and dashboard
+ * can offer exactly that.
+ */
+export class NotionExportIncompleteError extends Error {
+  constructor(
+    message: string,
+    readonly pageId: string,
+    readonly pageUrl: string | undefined,
+  ) {
+    super(message);
+    this.name = "NotionExportIncompleteError";
+  }
+}
+
+// One export per case at a time (#2414): two overlapping exports could each create a page, overwrite
+// each other's remembered pointer, or interleave archiving and appending in the same container.
+const notionPushLock = new StateLock();
+
+export function pushCaseToNotion(
   client: NotionClientLike,
   input: NotionPushInput,
   target: NotionPushTarget,
   options: NotionPushOptions = {},
+  store: NotionExportStoreLike,
+): Promise<NotionPushResult> {
+  return notionPushLock.runExclusive(input.caseName, () =>
+    pushCaseToNotionNow(client, input, target, options, store),
+  );
+}
+
+async function pushCaseToNotionNow(
+  client: NotionClientLike,
+  input: NotionPushInput,
+  target: NotionPushTarget,
+  options: NotionPushOptions,
   store: NotionExportStoreLike,
 ): Promise<NotionPushResult> {
   const meta = input.meta ?? emptyReportMeta();
@@ -169,63 +202,90 @@ export async function pushCaseToNotion(
     pageUrl = page.url;
     created = true;
   }
+  const pointer = { pageId, pageUrl: pageUrl ?? "", parentPageId, databaseId, lastMode: target.mode };
+  const incomplete = (message: string) => new NotionExportIncompleteError(message, pageId, pageUrl);
+  // #2414: from here on the page exists. Any failure names it, so the dashboard points the next
+  // export INTO this page instead of creating another one.
+  try {
+    // Remembered the moment it exists, so a failure below never leaves an untracked page.
+    if (created) await store.record(input.caseName, { ...pointer, containerBlockId: "" });
+    return await writeManagedContent();
+  } catch (err) {
+    if (err instanceof NotionExportIncompleteError) throw err;
+    throw incomplete(
+      `Notion export stopped after the page was ${created ? "created" : "opened"}: ${(err as Error).message}. ` +
+        `Export to this page again to finish it.`,
+    );
+  }
 
-  // 4. Create the managed container when we don't have one yet; otherwise clean its children.
-  let containerRecreated = false;
-  let blocksArchived = 0;
-  if (!containerBlockId) {
-    const appended = await client.appendChildren(pageId, [toggle(containerTitle)]); // fatal if this fails
-    containerBlockId = appended[0]?.id ?? "";
-    if (!containerBlockId) throw new Error("Notion did not return the created container block id");
-    containerRecreated = hadRemembered && remembered.pageId === pageId;
-  } else {
-    // Children-replace: archive only OUR container's children — never the page's other blocks.
-    for (const child of await client.listChildren(containerBlockId)) {
+  async function writeManagedContent(): Promise<NotionPushResult> {
+    // 4. Create the managed container when we don't have one yet; otherwise clean its children.
+    let containerRecreated = false;
+    let blocksArchived = 0;
+    if (!containerBlockId) {
+      const appended = await client.appendChildren(pageId, [toggle(containerTitle)]); // fatal if this fails
+      containerBlockId = appended[0]?.id ?? "";
+      if (!containerBlockId) throw new Error("Notion did not return the created container block id");
+      containerRecreated = hadRemembered && remembered.pageId === pageId;
+      await store.record(input.caseName, { ...pointer, containerBlockId }); // #2414
+    } else {
+      // Children-replace: archive only OUR container's children — never the page's other blocks.
+      const failed: string[] = [];
+      for (const child of await client.listChildren(containerBlockId)) {
+        try {
+          await client.archiveBlock(child.id);
+          blocksArchived += 1;
+        } catch (err) {
+          failed.push(`${child.id}: ${(err as Error).message}`);
+        }
+      }
+      // #2414: appending now would leave the old content beside the new — a page that contradicts
+      // itself. Stop before writing anything new.
+      if (failed.length)
+        throw incomplete(
+          `Notion export stopped: ${failed.length} block(s) of the previous export could not be removed ` +
+            `(${failed[0]}). Nothing new was written; export to this page again to retry.`,
+        );
+    }
+
+    // 5. Append the fresh content in ≤100-block batches, paced for the rate limit.
+    const batches = batchBlocks(blocks);
+    let blocksAppended = 0;
+    for (let i = 0; i < batches.length; i++) {
+      if (i > 0) await sleep(INTER_BATCH_MS);
       try {
-        await client.archiveBlock(child.id);
-        blocksArchived += 1;
+        await client.appendChildren(containerBlockId, batches[i]);
+        blocksAppended += batches[i].length;
       } catch (err) {
-        warnings.push(`archive ${child.id}: ${(err as Error).message}`);
+        // #2414: a failed batch would leave a hole mid-page. Stop — no later batch is appended after
+        // a gap — and fail the export loudly. Re-exporting replaces the container's children.
+        throw incomplete(
+          `Notion export incomplete: batch ${i + 1} of ${batches.length} failed (${(err as Error).message}). ` +
+            `${blocksAppended} of ${blocks.length} block(s) were written; export to this page again to replace them.`,
+        );
       }
     }
+
+    // 6. Persist the pointer so the next export refreshes this same container.
+    await store.record(input.caseName, {
+      ...pointer,
+      containerBlockId,
+      lastExportedAt: exportedAt,
+      lastBlocksAppended: blocksAppended,
+    });
+
+    return {
+      created,
+      pageId,
+      pageUrl,
+      containerBlockId,
+      containerRecreated,
+      blocksAppended,
+      blocksArchived,
+      batches: batches.length,
+      warnings,
+    };
   }
-
-  // 5. Append the fresh content in ≤100-block batches, paced for the rate limit.
-  const batches = batchBlocks(blocks);
-  let blocksAppended = 0;
-  for (let i = 0; i < batches.length; i++) {
-    if (i > 0) await sleep(INTER_BATCH_MS);
-    try {
-      await client.appendChildren(containerBlockId, batches[i]);
-      blocksAppended += batches[i].length;
-    } catch (err) {
-      warnings.push(`append batch ${i + 1}/${batches.length}: ${(err as Error).message}`);
-    }
-  }
-
-  // 6. Persist the pointer so the next export refreshes this same container.
-  await store.record(input.caseName, {
-    pageId,
-    pageUrl: pageUrl ?? "",
-    containerBlockId,
-    parentPageId,
-    databaseId,
-    lastExportedAt: exportedAt,
-    lastBlocksAppended: blocksAppended,
-    lastMode: target.mode,
-  });
-
-  return {
-    created,
-    pageId,
-    pageUrl,
-    containerBlockId,
-    containerRecreated,
-    blocksAppended,
-    blocksArchived,
-    batches: batches.length,
-    warnings,
-  };
 }
 
 function pageTitle(caseName: string): string {
