@@ -54,12 +54,38 @@ describe("service-worker capture toggle and timer (#2257)", () => {
     const toggle = /async function toggleCapture\(\)[\s\S]*?\n\}/.exec(sw)?.[0];
     expect(toggle, "toggleCapture not found in serviceWorker.ts").toBeDefined();
     const guard = toggle?.indexOf("startCaptureBlockReason(settings, hasAccess)") ?? -1;
-    const rec = toggle?.indexOf("running: !settings.running") ?? -1;
+    // #2398: the check and the write are one step on the settings writer.
+    const rec = toggle?.indexOf("return blocked ? undefined : { running: true }") ?? -1;
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(rec);
+    expect(toggle).toContain("settingsWriter.transact(");
   });
 
   it("never schedules the timer under the browser's 30 s alarm floor", () => {
     expect(sw).toMatch(/periodInMinutes: clampIntervalSeconds\(settings\.intervalSeconds\) \/ 60/);
+  });
+});
+
+// #2398: every settings write goes through the one writer in the service worker, and the timer,
+// icon and badge follow the stored value rather than a best-effort message.
+describe("service-worker settings ownership (#2398)", () => {
+  const pages = ["popup.ts", "options.ts"].map((name) => readFileSync(resolve(__dirname, `../src/${name}`), "utf-8"));
+
+  it("no page writes the settings key to storage itself", () => {
+    for (const page of pages) expect(page).not.toMatch(/storage\.local\.set\(\{\s*settings/);
+  });
+
+  it("the worker never writes the whole settings object outside the writer", () => {
+    expect(sw).not.toMatch(/storage\.local\.set\(\{\s*settings/);
+  });
+
+  it("refuses settings changes that do not come from an extension page", () => {
+    const handler = /if \(msg\?\.kind === "update_settings"\) \{[\s\S]*?\n {2}\}/.exec(sw)?.[0];
+    expect(handler, "update_settings handler not found").toBeDefined();
+    expect(handler).toContain("isExtensionPageSender(sender.url");
+  });
+
+  it("reschedules the timer from the storage change, not only from a message", () => {
+    expect(sw).toMatch(/storage\.onChanged\.addListener\([\s\S]{0,400}settingsChangeNeedsReconcile\(changes\[SETTINGS_KEY\]\)/);
   });
 });

@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.js";
+import { requestSettingsUpdate, type UpdateSettingsResult } from "./settingsClient.js";
 import { caseListFailure, clampIntervalSeconds, settingsFromForm } from "./popupSettings.js";
 import { ADAPTERS } from "./adapters/registry.js";
 import { OVERRIDE_NONE } from "./adapters/override.js";
@@ -180,9 +181,21 @@ async function load(): Promise<Settings> {
   return { ...DEFAULT_SETTINGS, ...(stored.settings as Partial<Settings> | undefined) };
 }
 
-async function save(settings: Settings): Promise<void> {
-  await browserApi.storage.local.set({ settings });
-  await browserApi.runtime.sendMessage({ kind: "settings_changed" }).catch(() => {});
+/**
+ * Ask the service worker to change the named fields (#2398). The worker is the only writer, so the
+ * popup can no longer put back a stale capture state or case over a change made elsewhere — the
+ * options page, the keyboard shortcut, or another popup. A failure is shown, never swallowed.
+ */
+async function save(patch: Partial<Settings>, ifCaseId?: string): Promise<UpdateSettingsResult> {
+  const result = await requestSettingsUpdate((m) => browserApi.runtime.sendMessage(m), patch, ifCaseId);
+  if (!result.ok) statusEl().textContent = `settings not saved — ${result.error}`;
+  return result;
+}
+
+/** The four editable fields as the worker should store them; capture state is not one of them. */
+function formFields(): Partial<Settings> {
+  const { running: _owned, ...fields } = readForm(false);
+  return fields;
 }
 
 function readForm(running: boolean): Settings {
@@ -198,22 +211,44 @@ function readForm(running: boolean): Settings {
 }
 
 /**
- * Persist the whole form, keeping the capture state the service worker owns.
+ * Persist the four form fields, leaving the capture state the service worker owns.
  *
- * Every field edit routes through here. The popup is a transient window — it closes on the next
- * click into the page — so a value that is only in the DOM is lost the moment the analyst looks
- * away. That is how a typed Team service token used to disappear on a page reload.
+ * The popup is a transient window — it closes on the next click into the page — so a value that is
+ * only in the DOM is lost the moment the analyst looks away. That is how a typed Team service token
+ * used to disappear on a page reload.
  */
 async function persistForm(): Promise<Settings> {
-  const stored = await load();
-  const next = readForm(stored.running);
-  await save(next);
-  return next;
+  const result = await save(formFields());
+  return result.ok ? result.settings : { ...(await load()), ...formFields() };
 }
+
+/** Persist one field the analyst just left, and nothing else (#2398). */
+async function persistField(field: keyof Settings): Promise<void> {
+  const value = formFields()[field];
+  if (value !== undefined) await save({ [field]: value });
+}
+
+/**
+ * The stored case is gone from a case list the companion just returned (closed, archived, or the
+ * token is scoped elsewhere). Clear it — only if it is still the stored case — and say so when
+ * that stopped capture, instead of leaving a recording icon that captures nothing (#2398).
+ */
+async function clearVanishedCase(caseId: string): Promise<void> {
+  const result = await save({ caseId: "" }, caseId);
+  if (result.ok && result.applied && result.stoppedForNoCase) {
+    statusNotice = `case ${caseId} is no longer available — capture stopped`;
+    await refreshStatus(result.settings);
+  }
+}
+
+// Why capture last stopped on its own, kept on the status line until the analyst starts again —
+// a status refresh triggered by the same storage change must not wipe it.
+let statusNotice = "";
 
 async function refreshStatus(s: Settings): Promise<void> {
   const el = statusEl();
-  const prefix = s.running ? "capturing" : "stopped";
+  if (s.running) statusNotice = "";
+  const prefix = s.running ? "capturing" : statusNotice ? `stopped (${statusNotice})` : "stopped";
   try {
     const res = await fetch(`${s.companionUrl}/health`, { method: "GET" });
     if (res.ok) {
@@ -233,11 +268,26 @@ async function refreshStatus(s: Settings): Promise<void> {
 // to existing cases — they're created in the dashboard — so this is the only way to pick
 // one. On failure (companion offline, or an older server without GET /cases) fall back to
 // the last-used case id so Start can still resume an existing case.
+// Each case-list request gets a number; an answer that arrives after a newer request was made is
+// thrown away, so a slow reply cannot overwrite a newer URL, token or case choice (#2398).
+let caseListGeneration = 0;
+
+interface CaseListResult {
+  ok: boolean;
+  failure?: string;
+  /** A newer request was made while this one was waiting; nothing was changed. */
+  stale?: boolean;
+  /** The list was read and the selected case is not in it. */
+  missing?: boolean;
+}
+
 async function loadCases(
   companionUrl: string,
   selectedId: string,
   serviceToken: string,
-): Promise<{ ok: boolean; failure?: string }> {
+): Promise<CaseListResult> {
+  const generation = ++caseListGeneration;
+  const isStale = () => generation !== caseListGeneration;
   const sel = caseSelect();
   // 0 means the fetch never got a response at all; any other value is the companion answering,
   // which is a very different thing to tell the analyst (see caseListFailure).
@@ -250,11 +300,13 @@ async function loadCases(
     status = res.status;
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const cases = (await res.json()) as Array<{ caseId: string; name: string; hasPassword?: boolean }>;
+    if (isStale()) return { ok: false, stale: true };
+    const missing = !!selectedId && !cases.some((c) => c.caseId === selectedId);
     lockedCases = new Set(cases.filter((c) => c.hasPassword === true).map((c) => c.caseId));
     sel.innerHTML = "";
     if (cases.length === 0) {
       sel.appendChild(new Option("(no cases — create one in the dashboard)", ""));
-      return { ok: true };
+      return { ok: true, missing };
     }
     sel.appendChild(new Option("— no case (push button hidden) —", ""));
     for (const c of cases) {
@@ -262,9 +314,10 @@ async function loadCases(
       const label = c.hasPassword ? `${named} (locked)` : named;
       sel.appendChild(new Option(label, c.caseId));
     }
-    sel.value = cases.some((c) => c.caseId === selectedId) ? selectedId : "";
-    return { ok: true };
+    sel.value = missing ? "" : selectedId;
+    return { ok: true, missing };
   } catch {
+    if (isStale()) return { ok: false, stale: true };
     // Unreachable, unauthorized, or an endpoint the server does not have — keep the last-used case
     // selectable either way so Start still works once the cause is fixed.
     const failure = caseListFailure(status);
@@ -320,13 +373,22 @@ async function init() {
   $("serviceToken").value = s.serviceToken;
   // A value stored by an older build may be under the 30 s floor — show what will actually run.
   $("intervalSeconds").value = String(clampIntervalSeconds(s.intervalSeconds));
-  await loadCases(s.companionUrl, s.caseId, s.serviceToken);
+  const initialCases = await loadCases(s.companionUrl, s.caseId, s.serviceToken);
   await refreshCasePasswordField(caseSelect().value, s.companionUrl, lockedCases.has(caseSelect().value));
   wireCasePasswordField(() => {
     const f = readForm(false);
     return { caseId: f.caseId, companionUrl: f.companionUrl, serviceToken: f.serviceToken };
   });
   await refreshStatus(s);
+  if (initialCases.missing) await clearVanishedCase(s.caseId);
+  // The status line follows capture state however it changed — the keyboard shortcut included.
+  browserApi.storage.onChanged.addListener((changes, areaName) => {
+    const change = changes.settings;
+    if (areaName !== "local" || !change) return;
+    const before = change.oldValue as Partial<Settings> | undefined;
+    const after = { ...DEFAULT_SETTINGS, ...(change.newValue as Partial<Settings> | undefined) };
+    if (before?.running !== after.running) void refreshStatus(after);
+  });
   await showLastCapture();
   await showHotkey();
   wireSiteAccessControls();
@@ -339,8 +401,8 @@ async function init() {
   //
   // "change" rather than "input": it fires on blur for a text box and immediately for the case
   // dropdown, which keeps the write count low without ever losing a value.
-  for (const id of ["caseId", "companionUrl", "serviceToken", "intervalSeconds"]) {
-    document.getElementById(id)!.addEventListener("change", () => void persistForm());
+  for (const id of ["caseId", "companionUrl", "serviceToken", "intervalSeconds"] as const) {
+    document.getElementById(id)!.addEventListener("change", () => void persistField(id));
   }
   caseSelect().addEventListener("change", () => {
     const caseId = caseSelect().value;
@@ -359,14 +421,16 @@ async function init() {
     // natural place to press before Start.
     const saved = await persistForm();
     const result = await loadCases(saved.companionUrl, saved.caseId, saved.serviceToken);
-    // Re-persist: a refresh can drop the stored case from the list (it was closed or archived, or
-    // the token is scoped elsewhere), which blanks the dropdown. Without this the service worker
-    // would keep capturing into a case the analyst can no longer see.
-    const settled = await persistForm();
-    await refreshCasePasswordField(settled.caseId, settled.companionUrl, lockedCases.has(settled.caseId));
+    if (result.stale) return; // a newer Refresh or edit owns the dropdown now
+    const caseId = caseSelect().value;
+    await refreshCasePasswordField(caseId, saved.companionUrl, lockedCases.has(caseId));
     statusEl().textContent = result.ok
       ? "case list refreshed"
-      : `${result.failure} (${settled.companionUrl})`;
+      : `${result.failure} (${saved.companionUrl})`;
+    // A refresh can drop the stored case from the list, which blanks the dropdown. Without clearing
+    // it the service worker would keep "capturing" into a case the analyst can no longer see. A
+    // failed list (offline, token rejected) proves nothing, so the case is kept then.
+    if (result.missing) await clearVanishedCase(saved.caseId);
   };
   // Cases are created in the dashboard — open it in a new tab.
   document.getElementById("openDashboard")!.onclick = (e) => {
@@ -381,17 +445,16 @@ async function init() {
       return;
     }
     if (!(await grantCurrentSite())) return;
-    await save(f);
-    await refreshStatus(f);
+    const result = await save({ ...formFields(), running: true });
+    if (result.ok) await refreshStatus(result.settings);
   };
+  // Stop changes only the capture state — it must not also overwrite fields edited elsewhere.
   document.getElementById("stop")!.onclick = async () => {
-    const f = readForm(false);
-    await save(f);
-    await refreshStatus(f);
+    const result = await save({ running: false });
+    if (result.ok) await refreshStatus(result.settings);
   };
   document.getElementById("captureOnce")!.onclick = async () => {
-    const current = await load();
-    const f = readForm(current.running);
+    const f = readForm(false);
     if (!f.caseId) {
       statusEl().textContent = "select a case before capturing";
       return;
@@ -400,7 +463,7 @@ async function init() {
       statusEl().textContent = "this browser or private page cannot be captured";
       return;
     }
-    await save(f);
+    if (!(await save(formFields())).ok) return;
     const message: CaptureOnceMessage = { kind: "capture_once" };
     const result = await browserApi.runtime.sendMessage(message) as { ok: boolean; error?: string };
     statusEl().textContent = result.ok ? "one-off capture saved" : `capture blocked — ${result.error ?? "unknown error"}`;

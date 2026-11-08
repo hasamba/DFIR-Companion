@@ -12,6 +12,11 @@ import { buildArtifactFilename } from "./adapters/artifactName.js";
 import { artifactPushErrorText, artifactPushSuccessText, importSourceUrl, postWithOneRetry } from "./artifactPush.js";
 import { browserApi } from "./browser.js";
 import {
+  isExtensionPageSender, sanitizeSettingsPatch, SettingsReconciler, settingsChangeNeedsReconcile, SettingsWriter,
+  SETTINGS_KEY, type SettingsArea,
+} from "./settingsStore.js";
+import type { UpdateSettingsMessage, UpdateSettingsResult } from "./settingsClient.js";
+import {
   forgetCaseCredential, forgetCredentialOnServerChange, isLockedRejection, pushErrorMessage,
   readCaseCredential,
   type SessionArea,
@@ -26,7 +31,6 @@ import {
   type SiteAccessAuditAction,
 } from "./siteAccess.js";
 import {
-  DEFAULT_SETTINGS,
   type ContextPushResultMessage, type ContextTableResult,
   type GetContextTableMessage, type PushArtifactMessage, type PushArtifactResult,
   type CaseCredential, type Settings, type SiteAccessChangedMessage, type TriggerType,
@@ -42,9 +46,11 @@ interface CaptureAttemptResult {
   error?: string;
 }
 
-async function getSettings(): Promise<Settings> {
-  const stored = await browserApi.storage.local.get("settings");
-  return { ...DEFAULT_SETTINGS, ...(stored.settings as Partial<Settings> | undefined) };
+// The only writer of the settings (#2398): the popup and options page send their changes here.
+const settingsWriter = new SettingsWriter(browserApi.storage.local as unknown as SettingsArea);
+
+function getSettings(): Promise<Settings> {
+  return settingsWriter.read();
 }
 
 // The locked-case password (#2135): browser.storage.session only — see casePasswordSession.ts.
@@ -394,8 +400,10 @@ async function handlePermissionChange(
   else await notifyContentScripts(origins, false);
 }
 
-async function rescheduleAlarm(): Promise<void> {
-  const settings = await getSettings();
+// Bring the capture timer, toolbar icon and badge in line with the stored settings. Driven by the
+// storage change itself (#2398), so Start/Stop from the popup and the keyboard shortcut look the
+// same, and a lost message can no longer leave the timer out of step with the setting.
+async function applyCaptureState(settings: Settings, runningChanged: boolean): Promise<void> {
   await browserApi.alarms.clear(ALARM);
   if (settings.running) {
     // Never under the browser's 30 s alarm floor; an older stored value is raised (#2257).
@@ -403,30 +411,55 @@ async function rescheduleAlarm(): Promise<void> {
   }
   // Keep the toolbar icon in sync with capture state (recording dot vs idle ring).
   await setActionIcon(settings.running).catch(() => {});
+  if (runningChanged) {
+    await browserApi.action.setBadgeText({ text: settings.running ? "REC" : "off" });
+    await browserApi.action.setBadgeBackgroundColor({ color: settings.running ? "#cc3333" : "#777777" });
+  }
 }
 
-// Flip capture on/off (used by the keyboard shortcut). Persists the same settings shape
-// the popup writes, reschedules the alarm + icon, and flashes the toolbar badge so the
-// hotkey has a visible effect. When turning ON, take one capture immediately so the
+const captureState = new SettingsReconciler(getSettings, applyCaptureState, (error) =>
+  console.error("[dfir] could not apply the capture state", error),
+);
+
+function rescheduleAlarm(): Promise<void> {
+  return captureState.request();
+}
+
+// A browser start or an extension update finds whatever an older build stored: capture ON with no
+// case would show a recording icon while every capture is refused, so it is turned off first.
+async function repairAndReschedule(): Promise<void> {
+  await settingsWriter.transact(async (current) => (current.running && !current.caseId.trim() ? {} : undefined))
+    .catch((error: unknown) => console.error("[dfir] could not repair the stored settings", error));
+  await rescheduleAlarm();
+}
+
+// Flip capture on/off (used by the keyboard shortcut). The check and the write are one step on the
+// settings writer (#2398), so a Stop from the popup cannot slip in between them. The storage change
+// then updates the alarm, icon and badge. When turning ON, take one capture immediately so the
 // shortcut feels responsive instead of waiting for the next timer tick.
 async function toggleCapture(): Promise<void> {
-  const settings = await getSettings();
-  if (!settings.running) {
+  let blocked: string | undefined;
+  const result = await settingsWriter.transact(async (settings) => {
+    if (settings.running) return { running: false };
     // No case, or no site access: record why and do NOT show REC (#2257) — see captureToggle.ts.
     const [tab] = await browserApi.tabs.query({ active: true, lastFocusedWindow: true });
     const hasAccess = tab ? await tabHasPersistentAccess(tab) : false;
-    const blocked = startCaptureBlockReason(settings, hasAccess);
-    if (blocked) {
-      await recordBlockedCapture("manual", blocked);
-      return;
-    }
+    blocked = startCaptureBlockReason(settings, hasAccess);
+    return blocked ? undefined : { running: true };
+  });
+  if (blocked) {
+    await recordBlockedCapture("manual", blocked);
+    return;
   }
-  const next: Settings = { ...settings, running: !settings.running };
-  await browserApi.storage.local.set({ settings: next });
-  await rescheduleAlarm();
-  await browserApi.action.setBadgeText({ text: next.running ? "REC" : "off" });
-  await browserApi.action.setBadgeBackgroundColor({ color: next.running ? "#cc3333" : "#777777" });
-  if (next.running) void captureActiveTab("manual");
+  if (result.applied && result.settings.running) void captureActiveTab("manual");
+}
+
+async function updateSettingsFromPage(msg: UpdateSettingsMessage): Promise<UpdateSettingsResult> {
+  const patch = sanitizeSettingsPatch(msg.patch);
+  if (!patch) return { ok: false, error: "invalid settings change" };
+  const ifCaseId = typeof msg.ifCaseId === "string" ? msg.ifCaseId : undefined;
+  const result = await settingsWriter.update(patch, ifCaseId);
+  return { ok: true, ...result };
 }
 
 browserApi.alarms.onAlarm.addListener((alarm) => {
@@ -442,7 +475,18 @@ browserApi.webNavigation.onCompleted.addListener((details) => {
 });
 browserApi.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.kind === "user_event") { void captureActiveTab("click"); return; }
+  // Kept for a popup or options page still open from before an update; storage drives it now.
   if (msg?.kind === "settings_changed") { void rescheduleAlarm(); return; }
+  if (msg?.kind === "update_settings") {
+    if (!isExtensionPageSender(sender.url, browserApi.runtime.getURL(""))) {
+      sendResponse({ ok: false, error: "settings can only be changed from the extension" });
+      return;
+    }
+    void updateSettingsFromPage(msg as UpdateSettingsMessage).then(sendResponse, (e: unknown) =>
+      sendResponse({ ok: false, error: e instanceof Error ? e.message : String(e) }),
+    );
+    return true;
+  }
   if (msg?.kind === "ensure_hook") { void injectHook(sender.tab); return; }
   if (msg?.kind === "activate_site") {
     const tabId = (msg as { tabId?: unknown }).tabId;
@@ -473,15 +517,18 @@ browserApi.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
-browserApi.runtime.onInstalled.addListener(() => { void rescheduleAlarm(); void registerContextMenus(); });
-browserApi.runtime.onStartup.addListener(() => void rescheduleAlarm());
+browserApi.runtime.onInstalled.addListener(() => { void repairAndReschedule(); void registerContextMenus(); });
+browserApi.runtime.onStartup.addListener(() => void repairAndReschedule());
 browserApi.contextMenus.onClicked.addListener((info, tab) => void handleContextMenuClick(info, tab));
 browserApi.permissions.onAdded.addListener((change) => void handlePermissionChange("granted", change));
 browserApi.permissions.onRemoved.addListener((change) => void handlePermissionChange("revoked", change));
 // A case password belongs to the companion it was entered for (#2135): a new Companion URL, saved
 // from the popup or the options page, forgets it rather than letting it travel to another server.
 browserApi.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === "local") void forgetCredentialOnServerChange(sessionArea(), changes).catch(() => undefined);
+  if (areaName !== "local") return;
+  void forgetCredentialOnServerChange(sessionArea(), changes).catch(() => undefined);
+  const { reconcile, runningChanged } = settingsChangeNeedsReconcile(changes[SETTINGS_KEY]);
+  if (reconcile) void captureState.request(runningChanged);
 });
 // Keyboard shortcut (default Ctrl+Shift+S / Cmd+Shift+S) to toggle capture on/off.
 browserApi.commands?.onCommand.addListener((command) => {
