@@ -272,10 +272,11 @@ describe("every moved function still resolves at its call sites", () => {
   // jobWhen and lastSynthesisLine, the Background jobs popover's "when did it run" line; 132 with
   // jobFilesHtml, the popover's list of every file a drop sweep covers; 135 with emptyStateHtml,
   // narrativeViewHtml and timelineEmptyHtml, the panels' empty-state sentence (#1765-#1768); 136 with
-  // revisedChip, the timeline row's "changed after first recorded" note (#2141).
+  // revisedChip, the timeline row's "changed after first recorded" note (#2141); 138 with etaText and
+  // etaLeftText, the job row's "ETA 16:44 (in about 2 min)".
   // The number is a vacuity guard, not a budget.
-  it("moved 136 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(136);
+  it("moved 138 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(138);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {
