@@ -357,6 +357,8 @@ window.DfirValues = {
   toolForExt,
   suggestToolForExt,
   toolsForExt,
+  etaLeftText,
+  etaText,
   jobMenuView,
   jobBarPercent,
   jobTime,
