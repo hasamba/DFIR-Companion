@@ -45,6 +45,11 @@
                                   // unifies with the forensic timeline's tag/star machinery.
   let superTaggedOnly = false;    // filter: only events carrying ≥1 tag (server-side, tagged=1)
   let superStarredOnly = false;   // filter: only starred events (server-side, starred=1)
+  // #2391: "Group repeats" — a VIEW only: consecutive identical rows on this page fold into the first,
+  // with a ×N badge that shows each record. Remembered per browser; off by default.
+  const ST_GROUP_KEY = "dfir.superGroupRepeats";
+  const ST_GROUP_WINDOW_MS = 5 * 60_000;
+  let superGroupRepeats = (() => { try { return localStorage.getItem(ST_GROUP_KEY) === "1"; } catch { return false; } })();
   let superSavedTimeframes = [];  // dwell-windows (saved timeframes)
   let superLoadRequestToken = 0;  // only the newest request may update the panel
   const superCaseId = () => document.getElementById("caseId").value.trim();
@@ -262,7 +267,7 @@
       updateSuperSelBar(rows);
       return;
     }
-    el.innerHTML = rows.map(e => {
+    const rowHtml = (e, groupBadge) => {
       const origin = e.artifactName || (Array.isArray(e.sources) && e.sources[0]) || "Unknown";
       const sev = e.severity || "Info";
       const starred = DfirStarred.has(e.id);
@@ -314,13 +319,28 @@
         `</div>` +
         `<div class="ev-col-time"><span class="sev-${escAttr(sev)}">${esc(e.timestamp || "")}</span></div>` +
         `<div class="ev-col-content">` +
-        `<span class="ev-origin" title="origin">${esc(origin)}</span> ${promotedBadge}` +
+        `<span class="ev-origin" title="origin">${esc(origin)}</span> ${groupBadge || ""}${promotedBadge}` +
         `${superTagPills("event", e.id)}${host}${details.toggle} ${sigmaHinted(e, descHtml(details.title))}${veloLink}` +
         `${details.panel}` +
         `</div>` +
         `</div>`;
-    }).join("");
+    };
+    el.innerHTML = superGroupRepeats ? superGroupedHtml(rows, rowHtml, ST_GROUP_WINDOW_MS) : rows.map((e) => rowHtml(e)).join("");
     updateSuperSelBar(rows);
+  }
+
+  function toggleSuperGroupRepeats() {
+    superGroupRepeats = !superGroupRepeats;
+    try { localStorage.setItem(ST_GROUP_KEY, superGroupRepeats ? "1" : "0"); } catch { /* the choice lasts for this page */ }
+    syncSuperGroupButton();
+    refreshSuperRows();
+  }
+
+  function syncSuperGroupButton() {
+    const b = document.getElementById("stGroupRepeats");
+    if (!b) return;
+    b.textContent = superGroupRepeats ? "☑ Group repeats" : "☐ Group repeats";
+    b.classList.toggle("active", superGroupRepeats);
   }
 
   // Tag pills for a super row, each clickable to filter the super-timeline to that single tag (sets the
@@ -356,6 +376,7 @@
   // defers its wiring, so a reader cannot tell 'safe at load' from 'forgot to defer' without
   // checking each one. The page calls initSuperTimeline() where the block used to sit.
   function initSuperTimeline() {
+    syncSuperGroupButton();
     document.addEventListener("click", (e) => {
       const openBtn = e.target.closest && e.target.closest(".st-dd .src-filter-btn");
       if (openBtn) {
@@ -751,6 +772,7 @@
   window.toggleSuperSelectAll = toggleSuperSelectAll;
   window.toggleSuperStarredOnly = toggleSuperStarredOnly;
   window.toggleSuperTaggedOnly = toggleSuperTaggedOnly;
+  window.toggleSuperGroupRepeats = toggleSuperGroupRepeats;
   // The two the page used to write directly.
   window.resetSuperPagination = () => { superOffset = 0; };
   window.setSuperLabelFilter = (label) => { superSelectedLabels = label ? new Set([label]) : new Set(); };

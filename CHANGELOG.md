@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Super-timeline Group repeats** — an optional view that folds runs of identical rows into one row with a ×N badge that opens each record; nothing is merged (closes #2391).
 
 - **GuardDuty findings** — collect findings live from every region with a GuardDuty detector, and import exported findings, each graded by GuardDuty's own severity (archived ones Info) with MITRE from the finding type; Check access tests the GuardDuty read (closes #2361)
 - **AWS region picker** — event history and trail discovery walk the regions enabled on the account (`ec2:DescribeRegions`, opt-in regions included), the analyst can untick regions and the result names them as skipped by choice; without the permission the default list is used and disclosed (closes #2363)

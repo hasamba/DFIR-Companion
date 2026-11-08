@@ -618,3 +618,8 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 .cc-complete { color: var(--badge-success-text); }
 .cc-partial, .cc-interrupted { color: var(--badge-warning-text); }
 .cc-failed { color: var(--badge-danger-text); }
+
+/* #2391: super-timeline Group repeats — the ×N badge that opens a run of identical rows. */
+.st-group-badge { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 0 7px; font-size: 11px; cursor: pointer; }
+.st-group-badge:hover { border-color: var(--border-strong); }
+.st-group-members { border-left: 2px solid var(--border-color); margin-left: 8px; }

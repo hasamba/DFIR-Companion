@@ -1092,6 +1092,7 @@ A Timesketch-style complete record of **every** imported event, kept separately 
 - **Label** events for your own triage
 - **Promote** selected events into the forensic timeline so AI synthesis picks them up
 - **Star or tag** a row to keep it. The super-timeline holds at most `DFIR_SUPERTIMELINE_MAX` rows (default 100,000) and drops the oldest-imported rows past that — but a row you starred or tagged is never dropped, whatever the count. Tags the automatic content tagger writes do not count; only your own do.
+- **Group repeats** (toolbar switch, off by default, remembered per browser) folds runs of identical rows on the current page into one: rows next to each other with the same origin, severity and description, each within 5 minutes of the previous one, show as the first row with a **×N (16:12:15–16:12:16)** badge. Click the badge to see each record with its own controls. It is a view only: nothing is merged or deleted, and the forensic timeline is not touched. Selecting or promoting the first row acts on that one record; open the group to pick others.
 - Each row can expand a **[details ▶]** toggle for the full untruncated message, and a Velociraptor-sourced row shows a **↗ Velociraptor** link back to the originating hunt/flow
 
 A **"Super-Timeline Triage"** Velociraptor bundle collects raw Windows host artifacts (MFT, USN, EVTX, registry, Prefetch, Amcache, LNK, browser history, RecycleBin, scheduled tasks, ActivitiesCache) directly into the super-timeline only.
