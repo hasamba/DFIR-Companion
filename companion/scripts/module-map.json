@@ -534,6 +534,7 @@
     "hypothesis.ts": "analysis/ai",
     "hypothesisDiagnostics.ts": "analysis/ai",
     "hypothesisExclusion.ts": "analysis/ai",
+    "hypothesisExhaustion.ts": "analysis/ai",
     "hypothesisStore.ts": "analysis/ai",
     "hypothesisLineage.ts": "analysis/ai",
     "iamChange.ts": "analysis/detect",

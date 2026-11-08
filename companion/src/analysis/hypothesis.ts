@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  normalizeExhaustion,
+  resetExhaustion,
+  shouldResetExhaustion,
+  signalCountsAfterReset,
+} from "./hypothesisExhaustion.js";
 
 // Hypothesis-driven investigation mode (issue #140 — the umbrella surface).
 //
@@ -104,6 +110,10 @@ export const hypothesisSchema = z.object({
   subjectScope: resolvedSubjectScopeSchema.optional().catch(UNKNOWN_SCOPE),
   exhausted: z.boolean().default(false).catch(false),
   exhaustedReason: z.string().default("").catch(""),
+  // #2415: when exhaustion was last reset (a status change, or a change to what it tests). Only hunts
+  // deployed after this count as misses. "" = never reset — every miss counts.
+  // Optional like subjectScope: a record (or test literal) without it means "never reset".
+  exhaustionResetAt: z.string().optional().catch(undefined),
   assignee: z.string().default("").catch(""),
   notes: z.string().default("").catch(""),
   source: z.enum(HYPOTHESIS_SOURCES).default("analyst").catch("analyst"),
@@ -395,7 +405,7 @@ export function mergeHypotheses(
     if (cur) {
       if (!cur.analystTouched && seedDiffersFrom(cur, seed)) {
         const idx = result.findIndex((h) => h.id === cur.id);
-        result[idx] = {
+        const refreshed: Hypothesis = {
           ...result[idx],
           title: seed.title,
           description: seed.description,
@@ -412,6 +422,7 @@ export function mergeHypotheses(
           statusHistory: appendStatusChange(cur.statusHistory, seed.status, now),
           updatedAt: now,
         };
+        result[idx] = withExhaustionRules(cur, refreshed, now, false);
         changed = true;
       }
     } else {
@@ -429,6 +440,7 @@ export function mergeHypotheses(
         subjectScope: seed.subjectScope ?? CASE_WIDE_SCOPE,
         exhausted: false,
         exhaustedReason: "",
+        exhaustionResetAt: "",
         assignee: "",
         notes: "",
         source: "synthesis",
@@ -504,6 +516,7 @@ export function buildAnalystHypothesis(input: NewHypothesis, id: string, now: st
     subjectScope: CASE_WIDE_SCOPE,
     exhausted: false,
     exhaustedReason: "",
+    exhaustionResetAt: "",
     assignee: String(input.assignee ?? "").trim(),
     notes: String(input.notes ?? "")
       .trim()
@@ -529,7 +542,7 @@ export function applyHypothesisPatch(h: Hypothesis, patch: HypothesisPatch, now:
   const statusChanged =
     patch.status !== undefined && VALID_STATUS.has(patch.status) && patch.status !== h.status;
   const clearReview = statusChanged || patch.acknowledgeReview === true;
-  return {
+  const next: Hypothesis = {
     ...h,
     ...(patch.title !== undefined ? { title: String(patch.title).trim().slice(0, MAX_TITLE_LEN) } : {}),
     ...(patch.description !== undefined
@@ -570,6 +583,19 @@ export function applyHypothesisPatch(h: Hypothesis, patch: HypothesisPatch, now:
       : {}),
     updatedAt: now,
   };
+  return withExhaustionRules(h, next, now);
+}
+
+// #2415: a status change or a change to what the hypothesis tests resets exhaustion; whatever the
+// path, a non-open hypothesis never stays exhausted.
+function withExhaustionRules(
+  before: Hypothesis,
+  after: Hypothesis,
+  now: string,
+  byAnalyst = true,
+): Hypothesis {
+  if (shouldResetExhaustion(before, after, byAnalyst)) return { ...after, ...resetExhaustion(now) };
+  return normalizeExhaustion(after);
 }
 
 export interface ReconsiderHypothesesInput {
@@ -614,7 +640,11 @@ export function reconsiderHypotheses(
         ? h.reviewReason
         : [...reasons, FP_REVIEW_REASON].join("; "),
       ...(flipStatus
-        ? { status: "unknown", statusHistory: appendStatusChange(h.statusHistory, "unknown", now) }
+        ? {
+            status: "unknown",
+            statusHistory: appendStatusChange(h.statusHistory, "unknown", now),
+            ...resetExhaustion(now),
+          }
         : {}),
       updatedAt: now,
     };
@@ -709,6 +739,7 @@ export interface HypothesisHuntSignal {
   techniques: string[];
   missed: boolean; // true = the hunt came back empty (negative evidence for what it tested)
   title?: string; // for the exhaustion reason
+  at?: string; // ISO time the hunt was DEPLOYED (#2415: only hunts after a reset count)
 }
 
 export interface MarkExhaustedResult {
@@ -735,7 +766,7 @@ export function markExhaustedHypotheses(
     const techniqueSet = new Set(h.relatedTechniques);
     let misses = 0;
     for (const s of signals) {
-      if (!s.missed) continue;
+      if (!s.missed || !signalCountsAfterReset(h, s.at)) continue;
       const matches = s.relatedHypothesisId
         ? s.relatedHypothesisId === h.id
         : s.techniques.some((t) => techniqueSet.has(t));
