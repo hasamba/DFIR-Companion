@@ -334,3 +334,22 @@ describe("pollUntilImported — honest outcomes (#2408)", () => {
     expect(res.error).toMatch(/ECONNREFUSED.*time limit/);
   });
 });
+
+describe("pollUntilImported — a job settled elsewhere is not imported twice (#2408)", () => {
+  it("stops before ingest when the store says the job already finished", async () => {
+    let ingested = 0;
+    const settled = job({ status: "imported", addedEvents: 7 });
+    const res = await pollUntilImported("c", job(), {
+      store: { upsert: async () => settled } as unknown as SocratesJobStore,
+      checkStatus: async () => ({ status: "ready" }),
+      fetchVerdicts: async () => ({ text: "[]", alerts: 0, yara: 0, sigma: 0 }),
+      ingest: async () => {
+        ingested++;
+        return { addedEvents: 1, addedIocs: 0 };
+      },
+      sleep: async () => {},
+    });
+    expect(ingested).toBe(0);
+    expect(res).toMatchObject({ status: "imported", addedEvents: 7 });
+  });
+});

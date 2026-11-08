@@ -136,7 +136,10 @@ async function importReady(
 ): Promise<SocratesJob> {
   const importing: SocratesJob = { ...ready, status: "importing", phase: status.phase };
   try {
-    await deps.store.upsert(caseId, importing);
+    const stored = await deps.store.upsert(caseId, importing);
+    // The store refuses to move a finished job: another writer already settled it, so importing
+    // again would put its verdicts in the case twice (#2408).
+    if (stored.status === "imported" || stored.status === "error") return stored;
   } catch (err) {
     return await fail(
       `Could not record the import start, so nothing was imported: ${(err as Error).message}`,

@@ -35,7 +35,12 @@ export interface SocratesJobRunnerDeps {
 
 export interface SocratesJobRunner {
   readonly jobs: SocratesJobStore;
-  /** Poll one job in the background until it is imported or failed. */
+  /**
+   * Claim a job id BEFORE its row is written, so startup recovery running meanwhile never sees it
+   * as orphaned and starts a second poller for it.
+   */
+  reserve(jobId: string): void;
+  /** Poll one job in the background until it is imported or failed. At most one poller per job. */
   launch(caseId: string, job: SocratesJob, cfg: ToolConfig & { baseUrl: string }): void;
   /** Startup recovery for every non-archived case: resume or mark interrupted (#2408). */
   resumeAll(): Promise<void>;
@@ -46,8 +51,11 @@ const POLL_INTERVAL_MS = 5_000;
 export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJobRunner {
   const { store } = deps;
   const jobs = new SocratesJobStore(store);
-  // Job ids a poller in this process is driving, so recovery never starts a second one (#2408).
-  const active = new Set<string>();
+  // Job ids this process owns, so recovery never starts a second poller for one (#2408): `reserved`
+  // covers a fresh submission between writing its row and launching, `running` a live poller.
+  const reserved = new Set<string>();
+  const running = new Set<string>();
+  const owned = (jobId: string): boolean => reserved.has(jobId) || running.has(jobId);
 
   // SO-CRATES pollers finish independently, but every ingest mutates the SAME case state behind the
   // per-case state lock. Firing them concurrently — a 25-entry archive, or several files dropped at
@@ -97,7 +105,9 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
     resumed: boolean,
   ): void {
     const { baseUrl } = cfg;
-    active.add(job.jobId);
+    reserved.delete(job.jobId);
+    if (running.has(job.jobId)) return;
+    running.add(job.jobId);
     void pollUntilImported(
       caseId,
       job,
@@ -132,7 +142,7 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
     )
       .then((final) => closeDropLog(caseId, final))
       .catch((err) => warnLine(`[socrates] job ${job.jobId}: poller stopped: ${(err as Error).message}`))
-      .finally(() => active.delete(job.jobId));
+      .finally(() => running.delete(job.jobId));
   }
 
   async function resumeAll(): Promise<void> {
@@ -157,7 +167,7 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
           () =>
             recoverSocratesJobs(caseId, {
               store: jobs,
-              isActive: (id) => active.has(id),
+              isActive: owned,
               configured: () => Boolean(deps.socratesConfig()?.baseUrl),
               resume: (cid, job) => {
                 const cfg = deps.socratesConfig();
@@ -180,6 +190,7 @@ export function createSocratesJobRunner(deps: SocratesJobRunnerDeps): SocratesJo
 
   return {
     jobs,
+    reserve: (jobId) => reserved.add(jobId),
     launch: (caseId, job, cfg) => start(caseId, job, cfg, false),
     resumeAll,
   };

@@ -402,6 +402,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
         startedAt: new Date().toISOString(),
         dropRelpath: input.dropRelpath,
       };
+      socrates.reserve(job.jobId); // #2408: before the row exists, so recovery cannot claim it
       await socratesJobs.upsert(caseId, job);
       jobIds.push(job.jobId);
 
