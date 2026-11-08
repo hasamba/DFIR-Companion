@@ -196,6 +196,22 @@ describe("jobMenuView", () => {
     expect(view.detail).toContain("2 warning(s)");
   });
 
+  // A bare clock time ("ETA 16:44:07") read as "16 hours 44 minutes" — say how long is left too.
+  it.each([
+    [20_000, "in under a minute"],
+    [90_000, "in about 2 min"],
+    [45 * 60_000, "in about 45 min"],
+    [(2 * 60 + 5) * 60_000, "in about 2 h 5 min"],
+  ])("states the time left beside the ETA clock (%i ms away)", (ms, phrase) => {
+    const now = Date.parse("2026-11-08T14:42:38Z");
+    const view = v.jobMenuView(
+      { status: "running", progress: { done: 54, total: 55 }, etaAt: new Date(now + ms).toISOString() },
+      { now },
+    );
+    expect(view.detail).toMatch(/ETA \d/);
+    expect(view.detail).toContain(`(${phrase})`);
+  });
+
   it("leaves the detail empty when there is nothing to say", () => {
     expect(v.jobMenuView({ status: "done" }).detail).toBe("");
   });

@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Job ETA and Cloud Collection Account field** — the ETA now says how long is left ("16:44 (in about 2 min)") instead of a bare clock time, and the Account dropdown lines up with the date fields beside it.
 
 - **Steady Cloud Collection form** — a progress poll refreshes only the collection rows, so the start form keeps the analyst's edits and the AWS regions are no longer re-listed every few seconds; the region checkboxes are a wrapping grid, each next to its name (closes #2379)
 - **GuardDuty detector pagination** — collection reads every page of a region's GuardDuty detector listing (bounded) and names a listing cut at the bound (closes #2372)

@@ -120,14 +120,30 @@ function toolsForExt(ext, status) {
 // button the analyst already has (see rerunJob in js/dashboard-jobs.js).
 const RERUN_JOB_KINDS = ["synthesis", "deep-pass", "second-opinion"];
 
+// How long until an ETA, in words. A bare clock time ("ETA 16:44:07") was read as "16 hours 44 min".
+function etaLeftText(etaMs, nowMs) {
+  const mins = Math.round((etaMs - nowMs) / 60000);
+  if (mins < 1) return "in under a minute";
+  if (mins < 60) return `in about ${mins} min`;
+  return `in about ${Math.floor(mins / 60)} h ${mins % 60} min`;
+}
+
+function etaText(etaAt, nowMs) {
+  const at = new Date(etaAt);
+  if (Number.isNaN(at.getTime())) return "";
+  const clock = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return ` · ETA ${clock} (${etaLeftText(at.getTime(), nowMs)})`;
+}
+
 // opts.gateCleared: no gate holds the case now. opts.newestOfKind: no later job of the same kind
-// exists. Both default to false, so a caller that does not know offers no Re-run.
+// exists. Both default to false, so a caller that does not know offers no Re-run. opts.now: the
+// clock to measure the ETA against (tests); defaults to Date.now().
 function jobMenuView(j, opts = {}) {
   const cancel = (j.status === "running" || j.status === "queued") && j.cancellable;
   const resume = j.resumable && (j.status === "interrupted" || (j.status === "failed" && j.failure && j.failure.retryable));
   const progress = j.progress ? ` ${j.progress.done}/${j.progress.total}` : "";
   const speed = j.throughputPerSecond ? ` · ${Number(j.throughputPerSecond).toFixed(1)}/s` : "";
-  const eta = j.etaAt ? ` · ETA ${new Date(j.etaAt).toLocaleTimeString()}` : "";
+  const eta = j.etaAt ? etaText(j.etaAt, typeof opts.now === "number" ? opts.now : Date.now()) : "";
   const checkpoint = j.lastCheckpoint ? ` · durable checkpoint ${j.lastCheckpoint.progress.done}/${j.lastCheckpoint.progress.total}` : "";
   const warnings = Array.isArray(j.warnings) && j.warnings.length ? ` · ${j.warnings.length} warning(s)` : "";
   // A finished multi-file job's detail is only the LAST file it processed, and the file list already
@@ -341,6 +357,8 @@ window.DfirValues = {
   toolForExt,
   suggestToolForExt,
   toolsForExt,
+  etaLeftText,
+  etaText,
   jobMenuView,
   jobBarPercent,
   jobTime,
