@@ -9,6 +9,7 @@ import { HypothesisStore } from "../../src/analysis/hypothesisStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { ImportUndoStore } from "../../src/analysis/importUndo.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
+import { StateLock } from "../../src/analysis/stateLock.js";
 
 // #2404: analyst writes that change the case's record had no closed/archived check — import
 // undo/redo, finding workflow and severity restore, hypotheses, playbook, remediation, cockpit.
@@ -50,7 +51,9 @@ async function makeApp() {
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const importLock = new ImportLock();
+  const stateLock = new StateLock();
   const app = createApp(store, {
+    stateLock,
     pipeline,
     stateStore,
     hypothesisStore,
@@ -58,7 +61,7 @@ async function makeApp() {
     importUndoStore: new ImportUndoStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, store, hypothesisStore, importLock };
+  return { app, store, hypothesisStore, importLock, stateLock };
 }
 
 function send(app: Awaited<ReturnType<typeof makeApp>>["app"], method: string, path: string) {
@@ -137,5 +140,27 @@ describe("closed and archived cases refuse case-changing writes (#2404)", () => 
     const res = await pending;
     expect(res.status).toBe(423);
     expect(res.body.error).toMatch(/closed — reopen it before changing it/);
+  });
+
+  it("an undo that was waiting for the state lock when the case closed is refused", async () => {
+    const { app, stateLock } = await makeApp();
+    let releaseState = (): void => {};
+    const held = new Promise<void>((r) => (releaseState = r));
+    let holding = (): void => {};
+    const isHolding = new Promise<void>((r) => (holding = r));
+    void stateLock.runExclusive("c1", async () => {
+      holding();
+      await held;
+    });
+    await isHolding;
+    const pending = request(app)
+      .post("/cases/c1/import/undo")
+      .send({})
+      .then((r) => r);
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await request(app).patch("/cases/c1/status").send({ status: "closed" })).status).toBe(200);
+    releaseState();
+    const res = await pending;
+    expect(res.status).toBe(423);
   });
 });

@@ -21,7 +21,7 @@ import { rehomeSuperTimeline, type SuperRehomeStore } from "./importSettleRehome
 import type { RouteContext } from "./context.js";
 import { frozenCaseRefusal } from "./importCaseGuard.js";
 
-/** The case was closed or archived while this step waited for the import lock (#2404). */
+/** The case was closed or archived while this step waited for its locks (#2404). */
 class FrozenWhileWaiting extends Error {}
 
 export function registerImportUndoRoutes(app: Express, ctx: RouteContext): void {
@@ -48,17 +48,16 @@ export function registerImportUndoRoutes(app: Express, ctx: RouteContext): void 
       const deps: UndoStepDeps = {
         undoStore,
         stateStore: options.stateStore,
+        importLock,
         // The request-time gate (caseWriteGuard) checked the case before this step queued behind
-        // the import lock; a close can land while it waits. Checked again once the lock is held.
-        importLock: {
-          runExclusive: (id, fn) =>
-            importLock.runExclusive(id, async () => {
-              const refusal = await frozenCaseRefusal(ctx.store, id, "changing it");
-              if (refusal) throw new FrozenWhileWaiting(refusal);
-              return fn();
-            }),
-        },
-        runStateExclusive: ctx.runStateExclusive,
+        // the import lock and then the state lock; a close can land while it waits. Checked again
+        // inside the state lock — the innermost one, held by the step's only mutation.
+        runStateExclusive: (id, fn) =>
+          ctx.runStateExclusive(id, async () => {
+            const refusal = await frozenCaseRefusal(ctx.store, id, "changing it");
+            if (refusal) throw new FrozenWhileWaiting(refusal);
+            return fn();
+          }),
         superTimeline: options.superTimelineStore,
         rehomeSuper: superRehomer(options.superTimelineStore),
         cloudRecords: options.cloudRecordStore, // #2301: Undo forgets / Redo remembers the import's records
