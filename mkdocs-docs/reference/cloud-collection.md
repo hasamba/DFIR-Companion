@@ -222,6 +222,9 @@ only.
 The add form in Settings shows the minimum policy for the provider you pick. Grant this and
 nothing more.
 
+New to cloud consoles? [Setting Up Cloud Accounts](cloud-account-setup.md) walks through creating
+each identity, click by click, and adding it to a case.
+
 ### AWS
 
 An IAM policy for the role or user the companion signs in as. Replace `<trail-bucket>` with the

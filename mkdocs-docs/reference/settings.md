@@ -271,6 +271,9 @@ A cloud account holds the credential that cloud collection uses for one AWS acco
 tenant or one GCP project. Find the list at Settings → Integrations → **Cloud accounts**. The
 list shows in **All** settings mode.
 
+For a click-by-click guide to creating the identity in each cloud, see
+[Setting Up Cloud Accounts](cloud-account-setup.md).
+
 Cloud accounts belong to cases. The list shows the accounts of the **open case**, and a new
 account is added to the open case.
 
