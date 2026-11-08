@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Steady Cloud Collection form** — a progress poll refreshes only the collection rows, so the start form keeps the analyst's edits and the AWS regions are no longer re-listed every few seconds; the region checkboxes are a wrapping grid, each next to its name (closes #2379)
 - **GuardDuty detector pagination** — collection reads every page of a region's GuardDuty detector listing (bounded) and names a listing cut at the bound (closes #2372)
 - **Cloud credential release custody race** — closing, archiving or deleting a case now records its detached credentials from the same snapshot the release acts on, so a concurrent attach, detach, delete or vault reset waits instead of leaving a custody entry that disagrees with the outcome (closes #2371)
 - **Cloud collection survives a briefly locked file** — on Windows a checkpoint or page rename that hits a momentary lock (antivirus, indexer, a reader) is retried like every other atomic write instead of failing the collection (closes #2370)
