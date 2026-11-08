@@ -194,7 +194,8 @@
     ];
     // The signal is the case load's own contract: an abandoned request hands its loader a promise
     // that never settles, so it draws nothing. Every loader here already runs under it on a case
-    // switch, and none keeps an in-flight flag that a never-settling promise would leave stuck.
+    // switch. Two of them — jobs, and tags via the tags_changed replay — do hold a lock until their
+    // request settles; runPanelLoaders announces the abort and both drop it there (#2400).
     const runner =
       window.DfirCaseLoadProgress && window.DfirCaseLoadProgress.runPanelLoaders;
     if (typeof runner === "function" && typeof AbortController === "function") {
