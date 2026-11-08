@@ -169,6 +169,14 @@ const gateAboveBase = async () => {
 
 const superRow = async (id: string) => superStore.get("c1", id);
 
+/**
+ * The server's answer, as the message of a status assertion (#2377): a 500 then shows the error
+ * text the route sent back instead of only "expected 500 to be 200". The undo route's 500 failed on
+ * one machine and not on others, and the number alone said nothing about why.
+ */
+const serverError = (res: { status: number; body: unknown }) =>
+  `HTTP ${res.status}: ${JSON.stringify(res.body)}`;
+
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-sigma-regrade-"));
   cases = new CaseStore(root);
@@ -538,7 +546,7 @@ describe("Undo / Redo of a Sigma re-grade (#2220)", () => {
   const step = async (app: ReturnType<typeof createApp>, which: "undo" | "redo") => {
     superNotices.length = 0;
     const res = await request(app).post(`/cases/c1/import/${which}`).send({});
-    expect(res.status).toBe(200);
+    expect(res.status, serverError(res)).toBe(200);
     expect(superNotices).toContain("c1");
   };
 
@@ -624,11 +632,12 @@ describe("a failed Sigma re-grade apply rolls back both timelines (#2206)", () =
       expect(await superRow(row.id)).toEqual(superBefore);
 
       const retry = await request(app).post("/cases/c1/sigma/regrade").send({});
-      expect(retry.status).toBe(200);
+      expect(retry.status, serverError(retry)).toBe(200);
       expect(retry.body.counts).toMatchObject({ lowered: 1 });
       expect(grade(await superRow(row.id))!.severity).toBe(BASE.severity);
 
-      expect((await request(app).post("/cases/c1/import/undo").send({})).status).toBe(200);
+      const undo = await request(app).post("/cases/c1/import/undo").send({});
+      expect(undo.status, serverError(undo)).toBe(200);
       expect(target((await stateStore.load("c1")).forensicTimeline)).toEqual(row);
       expect(grade(await superRow(row.id))).toEqual(grade(superBefore));
     });
