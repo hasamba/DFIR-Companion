@@ -61,10 +61,11 @@ async function makeApp() {
   return { app, store, hypothesisStore, importLock };
 }
 
-const send = (app: Awaited<ReturnType<typeof makeApp>>["app"], method: string, path: string) =>
-  (request(app) as unknown as Record<string, (p: string) => request.Test>)
-    [method](`/cases/c1${path}`)
-    .send({});
+function send(app: Awaited<ReturnType<typeof makeApp>>["app"], method: string, path: string) {
+  const agent = request(app) as unknown as Record<string, (p: string) => request.Test>;
+  const call = agent[method];
+  return call(`/cases/c1${path}`).send({});
+}
 
 describe("closed and archived cases refuse case-changing writes (#2404)", () => {
   it("refuses every listed write on a closed case with 423, and the gate lets them through when open", async () => {
