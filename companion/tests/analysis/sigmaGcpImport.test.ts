@@ -261,7 +261,7 @@ describe("bundled SigmaHQ GCP audit rules (#2346)", () => {
     const r = parse([rec]);
     expect(r.events[0].severity).toBe(without.events[0].severity);
     expect(r.events[0].description).toMatch(
-      /^Sigma \(medium, tag only\): Google Cloud SQL Database Modified or Deleted - GCP /,
+      /^Sigma \(medium, not graded\): Google Cloud SQL Database Modified or Deleted - GCP /,
     );
     expect(r.events[0].message).toMatch(
       /author Austin Songer @austinsonger, SigmaHQ r2026-07-01, https:\/\/github\.com\/SigmaHQ\/sigma\/blob\/552f3fee/,

@@ -52,7 +52,7 @@ describe("CloudTrail with import-time Sigma", () => {
     expect(r.events).toHaveLength(1);
     expect(r.events[0].severity).toBe("High");
     expect(r.events[0].description).toMatch(
-      /^Sigma \(medium, tag only\): AWS CloudTrail Important Change - /,
+      /^Sigma \(medium, not graded\): AWS CloudTrail Important Change - /,
     );
     expect(r.events[0].mitreTechniques).toContain("T1562.008");
   });
@@ -245,7 +245,7 @@ describe("Entra with import-time Sigma", () => {
       graph([signIn({ status: { errorCode: 50053, failureReason: "Account is locked" } })]),
       { sigma },
     );
-    expect(r.events[0].description).toMatch(/^Sigma \(medium, tag only\): Account Lockout - /);
+    expect(r.events[0].description).toMatch(/^Sigma \(medium, not graded\): Account Lockout - /);
   });
 
   it("grades a Graph directory-audit record by its activity name", () => {

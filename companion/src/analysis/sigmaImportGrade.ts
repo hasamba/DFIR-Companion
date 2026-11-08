@@ -108,8 +108,21 @@ export function unionSigmaMatches(lists: readonly (readonly SigmaRuleRef[])[]): 
 function messageLine(r: SigmaRuleRef): string {
   const author = r.author ? `, author ${r.author}` : "";
   const modified = r.modified ? `, modified ${r.modified}` : "";
-  const hunting = r.huntingOnly ? ", threat-hunting rule (tag only)" : "";
+  const hunting = r.huntingOnly ? ", threat-hunting rule (labels only, never grades)" : "";
   return `Sigma rule: ${r.title} [${r.id}] — level ${r.level}, status ${r.status}${modified}${hunting}${author}, SigmaHQ ${r.release}, ${r.url}`;
+}
+
+/** #2386: the head of the line that says why a matched rule did not set the severity. */
+export const NOT_GRADED_NOTE = "Sigma note: not graded — ";
+
+/**
+ * #2386: why the lead rule only labels the row, in plain words ("tag only" was jargon). The lead is
+ * the highest-level match, so its reason is the row's reason.
+ */
+function notGradedReason(lead: SigmaRuleRef, minLevel: SigmaLevel, vetoed: boolean): string {
+  if (vetoed) return "this log source does not let Sigma raise this record's severity (see the note below)";
+  if (lead.huntingOnly) return "a threat-hunting rule labels events but never sets their severity";
+  return `Sigma rules below the "${minLevel}" level label events but do not set severity (Settings → Sigma minimum level); any severity shown comes from the companion's other rules`;
 }
 
 /** The event with the snapshot's provenance token on its canonical producer (once). */
@@ -151,12 +164,13 @@ export function applySigmaMatches(
   const more = matches.length > 1 ? ` (+${matches.length - 1} more)` : "";
   const head = graded.length
     ? `Sigma: ${lead.title}${more}`
-    : `Sigma (${lead.level}, tag only): ${lead.title}${more}`;
+    : `Sigma (${lead.level}, not graded): ${lead.title}${more}`;
   const severity = graded.reduce((s, r) => worstSeverity(s, LEVEL_SEVERITY[r.level]), stamped.severity);
   const mitre = [...stamped.mitre];
   for (const t of matches.flatMap((r) => r.mitre)) if (!mitre.includes(t)) mitre.push(t);
   const lines = [
     ...byLevel.map(messageLine),
+    ...(graded.length ? [] : [`${NOT_GRADED_NOTE}${notGradedReason(lead, minLevel, vetoed)}`]),
     ...(note ? [`Sigma note: ${note}`] : []),
     ...(vetoed && veto ? [`Sigma note: ${veto.note}`] : []),
   ];

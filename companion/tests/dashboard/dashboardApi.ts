@@ -261,6 +261,8 @@ export interface ValuesApi {
   toolForExt(ext: string, status: unknown): string | null;
   suggestToolForExt(ext: string, status: unknown): string | null;
   toolsForExt(ext: string, status: unknown): Array<{ id: string }>;
+  sigmaNotGradedHint(e: Record<string, unknown>): string;
+  sigmaHinted(e: Record<string, unknown>, html: string): string;
   jobMenuView(
     j: Record<string, unknown>,
     opts?: { gateCleared?: boolean; newestOfKind?: boolean; now?: number },

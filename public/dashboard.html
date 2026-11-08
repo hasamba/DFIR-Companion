@@ -5664,7 +5664,7 @@
           + (tlShow("badges", tld) ? `${newBadge}${badge}${corro}${chain}` : "")
           + (showHost ? host : "")
           + (details.toggle ? ` ${details.toggle}` : "")
-          + ` ${qaLinkify(details.title, { evid: id })} ${fpBtn("event", e.id, desc)}${veloLink}`
+          + ` ${sigmaHinted(e, qaLinkify(details.title, { evid: id }))} ${fpBtn("event", e.id, desc)}${veloLink}`
           + (tlShow("badges", tld) && e.chainCheck && !e.chainCheck.observed ? `<br><small data-safe-style="color:var(--tag-red-text)">${esc(e.chainCheck.note)}</small>` : "")
           + details.panel
           + `</div>`

@@ -208,7 +208,7 @@ describe("planSigmaRegrade (#2206)", () => {
       relatedFindingIds: [],
       sourceScreenshots: [FILE],
       severity: "High",
-      description: now.description.replace(/^Sigma \(high, tag only\): /, "Sigma: "),
+      description: now.description.replace(/^Sigma \(high, not graded\): /, "Sigma: "),
       message: (now.message ?? "")
         .split("\n")
         .filter((l) => !l.startsWith("Sigma note: "))

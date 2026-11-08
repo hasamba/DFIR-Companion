@@ -273,10 +273,11 @@ describe("every moved function still resolves at its call sites", () => {
   // jobFilesHtml, the popover's list of every file a drop sweep covers; 135 with emptyStateHtml,
   // narrativeViewHtml and timelineEmptyHtml, the panels' empty-state sentence (#1765-#1768); 136 with
   // revisedChip, the timeline row's "changed after first recorded" note (#2141); 138 with etaText and
-  // etaLeftText, the job row's "ETA 16:44 (in about 2 min)".
+  // etaLeftText, the job row's "ETA 16:44 (in about 2 min)"; 140 with sigmaNotGradedHint and
+  // sigmaHinted, the hover saying why a Sigma match did not grade (#2386).
   // The number is a vacuity guard, not a budget.
-  it("moved 138 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(138);
+  it("moved 140 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(140);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

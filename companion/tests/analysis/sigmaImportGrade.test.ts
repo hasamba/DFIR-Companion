@@ -65,15 +65,39 @@ describe("applySigmaMatches", () => {
   it("tags without grading below the minimum level", () => {
     const out = applySigmaMatches(base(), [ref("m", "medium", ["T1098"])], SNAP);
     expect(out.severity).toBe("Info");
-    expect(out.description).toBe("Sigma (medium, tag only): Rule m - AWS cloudtrail StopLogging by alice");
+    expect(out.description).toBe("Sigma (medium, not graded): Rule m - AWS cloudtrail StopLogging by alice");
     expect(out.mitre).toContain("T1098");
   });
 
   it("never grades on a threat-hunting rule, whatever its level", () => {
     const out = applySigmaMatches(base(), [{ ...ref("t", "critical"), huntingOnly: true }], SNAP);
     expect(out.severity).toBe("Info");
-    expect(out.description).toMatch(/^Sigma \(critical, tag only\): Rule t - /);
-    expect(out.message).toContain("threat-hunting rule (tag only)");
+    expect(out.description).toMatch(/^Sigma \(critical, not graded\): Rule t - /);
+    expect(out.message).toContain("threat-hunting rule (labels only, never grades)");
+  });
+
+  // #2386: "tag only" was jargon — the row now says it was not graded, and the details say why.
+  it.each([
+    ["below the minimum level", ref("m", "medium"), undefined, 'below the "high" level'],
+    [
+      "a threat-hunting rule",
+      { ...ref("t", "critical"), huntingOnly: true },
+      undefined,
+      "threat-hunting rule",
+    ],
+    [
+      "vetoed by the log source",
+      ref("h", "high"),
+      { mayGrade: () => false, note: "an unanswered request" },
+      "does not let Sigma raise",
+    ],
+  ])("states why a matched rule did not grade: %s", (_why, rule, veto, reason) => {
+    const out = applySigmaMatches(base(), [rule], SNAP, undefined, veto);
+    expect(out.message).toMatch(new RegExp(`^Sigma note: not graded — .*${reason}`, "m"));
+  });
+
+  it("says nothing about grading when a rule graded the row", () => {
+    expect(applySigmaMatches(base(), [ref("a", "high")], SNAP).message).not.toContain("not graded");
   });
 
   it("leads with a graded rule and counts the rest", () => {

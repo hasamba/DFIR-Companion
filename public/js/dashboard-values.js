@@ -120,6 +120,21 @@ function toolsForExt(ext, status) {
 // button the analyst already has (see rerunJob in js/dashboard-jobs.js).
 const RERUN_JOB_KINDS = ["synthesis", "deep-pass", "second-opinion"];
 
+// #2386: the hover for a row whose Sigma match did not set the severity — the reason the grader wrote
+// as "Sigma note: not graded — …" in the message. "" when there is none (a graded row, or a row
+// imported before the note existed).
+function sigmaNotGradedHint(e) {
+  const m = /^Sigma note: not graded — (.+)$/m.exec(String((e && e.message) || ""));
+  return m ? `Sigma rule did not set the severity: ${m[1]}` : "";
+}
+
+// #2386: a row title whose Sigma match did not grade, wrapped so the reason shows on hover. `html` is
+// the already-escaped title; escAttr comes from js/dashboard-escape.js at call time.
+function sigmaHinted(e, html) {
+  const hint = sigmaNotGradedHint(e);
+  return hint ? `<span class="sigma-hint" title="${escAttr(hint)}">${html}</span>` : html;
+}
+
 // How long until an ETA, in words. A bare clock time ("ETA 16:44:07") was read as "16 hours 44 min".
 function etaLeftText(etaMs, nowMs) {
   const mins = Math.round((etaMs - nowMs) / 60000);
@@ -358,6 +373,8 @@ window.DfirValues = {
   toolForExt,
   suggestToolForExt,
   toolsForExt,
+  sigmaNotGradedHint,
+  sigmaHinted,
   etaLeftText,
   etaText,
   jobMenuView,
