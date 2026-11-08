@@ -667,6 +667,9 @@ export interface AppOptions {
   // startServer stores the function and fires it after app.listen() so the probes run when
   // the server is actually ready. Tests can inject their own handler or leave it absent.
   onPreflightReady?: (run: () => Promise<PreflightReport>) => void;
+  // SO-CRATES startup recovery (#2408): called once inside createApp with the function that resumes
+  // or marks interrupted every job a restart left unfinished. startServer fires it after listen().
+  onSocratesRecoveryReady?: (run: () => Promise<void>) => void;
   // Additional browser origins beyond the always-trusted extension and loopback origins.
   allowedOrigins?: string[];
   // Named hosts/suffixes explicitly trusted by the DNS-rebinding guard.

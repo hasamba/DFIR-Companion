@@ -16,6 +16,13 @@ export interface PostCaptureResult {
   reason?: string;
 }
 
+/**
+ * Longest a capture upload may stay open (#2396). Chrome ends a service worker that waits on one
+ * fetch for over 30 s, so the limit sits under that: a stalled companion now answers "unreachable"
+ * (the capture stays queued for retry) instead of holding the worker until it is killed.
+ */
+export const CAPTURE_POST_TIMEOUT_MS = 25_000;
+
 export class CompanionClient {
   // The default wraps global fetch in an arrow so it keeps its correct binding.
   // Invoking unbound `fetch` via `this.fetchFn(...)` throws "Illegal invocation"
@@ -27,7 +34,19 @@ export class CompanionClient {
     // The password of a password-locked case (#2135), added to the request body at SEND time for
     // that case on the companion it was entered for only — queued payloads never carry it.
     private readonly caseCredential?: CaseCredential,
+    private readonly captureTimeoutMs = CAPTURE_POST_TIMEOUT_MS,
   ) {}
+
+  /** The companion this client talks to — queued captures are bound to it (#2396). */
+  get companionUrl(): string {
+    return this.baseUrl;
+  }
+
+  /** Would a capture for this case carry the stored case password? */
+  sendsCredentialFor(caseId: string): boolean {
+    const cred = this.caseCredential;
+    return Boolean(cred && credentialMatches(cred, caseId, this.baseUrl));
+  }
 
   private withCasePassword<T extends object>(caseId: string, body: T): T | (T & { casePassword: string }) {
     const cred = this.caseCredential;
@@ -60,16 +79,23 @@ export class CompanionClient {
   }
 
   async postCapture(payload: CapturePayload): Promise<PostCaptureResult> {
+    // The timer covers reading the answer too: a companion that sends headers and then stalls
+    // must not hold the upload open either (#2396).
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), this.captureTimeoutMs);
     try {
       const res = await this.fetchFn(`${this.baseUrl}/captures`, {
         method: "POST",
         headers: this.headers(true),
         body: JSON.stringify(this.withCasePassword(payload.caseId, payload)),
+        signal: abort.signal,
       });
       if (res.status === 201) return { ok: true, status: 201, ...(await CompanionClient.successOf(res)) };
       return { ok: false, status: res.status, ...(await CompanionClient.errorOf(res)) };
     } catch {
-      return { ok: false, status: 0 }; // network error — companion unreachable
+      return { ok: false, status: 0 }; // network error or timed out — companion unreachable
+    } finally {
+      clearTimeout(timer);
     }
   }
 

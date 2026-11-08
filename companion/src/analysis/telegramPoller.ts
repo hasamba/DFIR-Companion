@@ -59,6 +59,8 @@ export interface TelegramPollerOptions {
 
 const MIN_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
+/** Cap on the one best-effort cursor confirmation stop() sends, so shutdown stays prompt. */
+const CONFIRM_TIMEOUT_MS = 5_000;
 
 export class TelegramPoller {
   private readonly opts: Required<Pick<TelegramPollerOptions, "apiBase" | "pollTimeoutSeconds">> &
@@ -68,9 +70,18 @@ export class TelegramPoller {
   private stopped = false;
   private controller: AbortController | undefined;
   private loop: Promise<void> | undefined;
+  private stopping: Promise<void> | undefined;
+  /** Aborted by stop() so a backoff sleep (up to 60s) ends at once. Fresh per run. */
+  private stopController: AbortController | undefined;
   /** Telegram's cursor: the next update_id we have NOT processed. Sending it back is what marks
    *  everything before it as delivered — without it Telegram replays the same commands forever. */
   private offset: number | undefined;
+  /** The bot token the cursor belongs to. update_ids are per bot, so a cursor from bot A must never
+   *  be sent to bot B after a token rotation — it would silently confirm B's unread updates. */
+  private offsetToken: string | undefined;
+  /** The highest offset Telegram has ANSWERED a getUpdates for, i.e. known to be confirmed. An
+   *  offset sent on a request that never came back is not counted. */
+  private confirmedOffset: number | undefined;
   private backoffMs = MIN_BACKOFF_MS;
 
   constructor(options: TelegramPollerOptions) {
@@ -90,16 +101,55 @@ export class TelegramPoller {
   /** Begin polling. Returns immediately; the loop runs until stop(). */
   start(): void {
     if (this.loop) return;
+    this.stopped = false;
+    this.backoffMs = MIN_BACKOFF_MS;
+    this.stopController = new AbortController();
     this.opts.log.info(`[telegram] long-polling for commands (no inbound URL needed)`);
     this.loop = this.run();
   }
 
-  /** Stop polling and wait for the in-flight request to unwind. */
-  async stop(): Promise<void> {
+  /** Stop polling and wait for the in-flight request to unwind. Restart is `await stop(); start()`.
+   *  Concurrent calls share one shutdown. */
+  stop(): Promise<void> {
+    this.stopping ??= this.shutdown().finally(() => {
+      this.stopping = undefined;
+    });
+    return this.stopping;
+  }
+
+  private async shutdown(): Promise<void> {
     this.stopped = true;
+    this.stopController?.abort();
     this.controller?.abort();
     await this.loop?.catch(() => {});
     this.loop = undefined;
+    await this.confirmHandled();
+  }
+
+  /** Tell Telegram the updates we already handled are delivered, so a fresh process does not run
+   *  those commands again (#2411). Normally the next poll does this; on shutdown there is no next
+   *  poll. Best-effort: a process crash between handling and the next poll can still replay one
+   *  batch — an accepted tradeoff, since persisting the cursor to disk is more machinery than a
+   *  single replayed chat command warrants. Commands' background work is not drained either. */
+  private async confirmHandled(): Promise<void> {
+    const offset = this.offset;
+    const token = this.offsetToken;
+    if (offset === undefined || !token) return;
+    if (this.confirmedOffset !== undefined && offset <= this.confirmedOffset) return;
+    try {
+      // timeout=0 returns at once; any update it hands back is >= offset and therefore NOT confirmed
+      // by this call — it stays queued for the next start.
+      const url = `${this.opts.apiBase.replace(/\/+$/, "")}/bot${token}/getUpdates?offset=${offset}&timeout=0&limit=1`;
+      const res = await this.fetchFn(url, { signal: AbortSignal.timeout(CONFIRM_TIMEOUT_MS) });
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; description?: string };
+      if (!res.ok || body.ok === false) throw new Error(body.description ?? `HTTP ${res.status}`);
+      this.confirmedOffset = offset;
+    } catch (err) {
+      this.opts.log.warn(
+        `[telegram] could not confirm handled commands on shutdown (${(err as Error).message}); ` +
+          `they may run again on the next start`,
+      );
+    }
   }
 
   private async run(): Promise<void> {
@@ -130,11 +180,18 @@ export class TelegramPoller {
     // Give the request longer than Telegram's own hold, so the timeout that fires is theirs.
     const timer = setTimeout(() => this.controller?.abort(), (this.opts.pollTimeoutSeconds + 15) * 1_000);
     timer.unref?.();
+    // Resolved per cycle, not per poller: a token rotated by /settings/reload takes effect on the
+    // next request rather than at the next restart. A rotated token starts from no cursor.
+    const token = resolveToken(this.opts.botToken);
+    if (this.offsetToken !== undefined && token !== this.offsetToken) {
+      this.offset = undefined;
+      this.confirmedOffset = undefined;
+      this.offsetToken = undefined;
+    }
+    const sentOffset = this.offset;
     try {
       const url =
-        // Resolved per cycle, not per poller: a token rotated by /settings/reload takes effect on
-        // the next request rather than at the next restart.
-        `${this.opts.apiBase.replace(/\/+$/, "")}/bot${resolveToken(this.opts.botToken)}/getUpdates` +
+        `${this.opts.apiBase.replace(/\/+$/, "")}/bot${token}/getUpdates` +
         `?timeout=${this.opts.pollTimeoutSeconds}` +
         `&allowed_updates=${encodeURIComponent(JSON.stringify(["message", "channel_post"]))}` +
         (this.offset === undefined ? "" : `&offset=${this.offset}`);
@@ -147,6 +204,8 @@ export class TelegramPoller {
       if (!res.ok || body.ok === false) {
         throw new TelegramApiError(res.status, body.description ?? `HTTP ${res.status}`);
       }
+      if (sentOffset !== undefined) this.confirmedOffset = sentOffset;
+      this.offsetToken = token; // the update_ids in this batch belong to this bot
       return Array.isArray(body.result) ? body.result : [];
     } finally {
       clearTimeout(timer);
@@ -172,8 +231,24 @@ export class TelegramPoller {
         `[telegram] poll failed (${err.message}); retrying in ${Math.round(this.backoffMs / 1000)}s`,
       );
     }
-    await this.sleepFn(this.backoffMs);
+    await this.pause(this.backoffMs);
     this.backoffMs = Math.min(this.backoffMs * 2, MAX_BACKOFF_MS);
+  }
+
+  /** sleepFn, cut short by stop(). */
+  private async pause(ms: number): Promise<void> {
+    const signal = this.stopController?.signal;
+    if (!signal || signal.aborted) return;
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<void>((resolve) => {
+      onAbort = resolve;
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      await Promise.race([this.sleepFn(ms), aborted]);
+    } finally {
+      if (onAbort) signal.removeEventListener("abort", onAbort);
+    }
   }
 }
 

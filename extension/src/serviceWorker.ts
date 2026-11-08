@@ -1,7 +1,7 @@
 import { CompanionClient } from "./companionClient.js";
 import { CaptureQueue } from "./captureQueue.js";
 import { CaptureController } from "./captureController.js";
-import { describeCaptureOutcome } from "./captureOutcome.js";
+import { describeCaptureOutcome, describeQueueDrain } from "./captureOutcome.js";
 import {
   CaptureGate, captureThroughGate, isAutomaticTrigger, isCaptureRateLimitError, type SnapshotOutcome,
 } from "./captureGate.js";
@@ -12,7 +12,7 @@ import { buildArtifactFilename } from "./adapters/artifactName.js";
 import { artifactPushErrorText, artifactPushSuccessText, importSourceUrl, postWithOneRetry } from "./artifactPush.js";
 import { browserApi } from "./browser.js";
 import {
-  isExtensionPageSender, sanitizeSettingsExpectation, sanitizeSettingsPatch, SettingsReconciler, settingsChangeNeedsReconcile, SettingsWriter,
+  isExtensionPageSender, sanitizeSettingsExpectation, sanitizeSettingsPatch, SerialQueue, SettingsReconciler, settingsChangeNeedsReconcile, SettingsWriter,
   SETTINGS_KEY, type SettingsArea,
 } from "./settingsStore.js";
 import type { UpdateSettingsMessage, UpdateSettingsResult } from "./settingsClient.js";
@@ -37,6 +37,11 @@ import {
 } from "./types.js";
 
 const ALARM = "dfir-capture-timer";
+// Retries the offline queue on its own (#2396). It exists only while captures are waiting, and is
+// created only when missing — re-creating it on every capture would keep pushing the retry back.
+const DRAIN_ALARM = "dfir-queue-drain";
+const DRAIN_PERIOD_MINUTES = 1;
+const drainAlarmQueue = new SerialQueue();
 const queue = new CaptureQueue();
 // Single-flight + minimum gap between captures (#2255) — see captureGate.ts.
 const captureGate = new CaptureGate();
@@ -138,11 +143,74 @@ async function captureActiveTabNow(
   return { snapshot: { settings, caseId: settings.caseId, url: tab.url, tabTitle: tab.title ?? "", imageBase64 } };
 }
 
+function ensureDrainAlarm(): Promise<void> {
+  return drainAlarmQueue.run(async () => {
+    if (!(await browserApi.alarms.get(DRAIN_ALARM))) {
+      await browserApi.alarms.create(DRAIN_ALARM, { periodInMinutes: DRAIN_PERIOD_MINUTES });
+    }
+  });
+}
+
+/** The drain alarm exists exactly while captures are waiting in the queue. */
+function syncDrainAlarm(): Promise<void> {
+  return drainAlarmQueue.run(async () => {
+    const waiting = await queue.size();
+    const existing = await browserApi.alarms.get(DRAIN_ALARM);
+    if (waiting > 0 && !existing) await browserApi.alarms.create(DRAIN_ALARM, { periodInMinutes: DRAIN_PERIOD_MINUTES });
+    if (waiting === 0 && existing) await browserApi.alarms.clear(DRAIN_ALARM);
+  });
+}
+
+// Send what the offline queue holds without waiting for the next capture (#2396): on the drain
+// alarm, at browser start and on install/update. Capture does not have to be running — evidence
+// that is waiting still goes out after Stop. Every result with captures in it is recorded, so a
+// queue that cannot empty (unreachable, locked, refused) is visible rather than silent.
+async function drainQueuedCaptures(): Promise<void> {
+  if ((await queue.size()) > 0) {
+    const settings = await getSettings();
+    const credential = await readCaseCredential(sessionArea(), settings.caseId, settings.companionUrl);
+    const drain = await new CaptureController(clientFor(settings, credential), queue).drainQueue();
+    if (!drain.busy) {
+      const outcome = describeQueueDrain(drain);
+      // A wrong case password is tried once, here as for a live capture (#2135).
+      if (outcome.forgetCredential) await forgetCaseCredential(sessionArea());
+      await browserApi.storage.local.set({ lastQueueDrain: { at: new Date().toISOString(), diag: outcome.diag } });
+      await browserApi.action.setBadgeText({ text: outcome.badgeText });
+      await browserApi.action.setBadgeBackgroundColor({ color: outcome.badgeColor });
+    }
+  }
+  await syncDrainAlarm();
+}
+
+// Automatic work is started with `void` — a rejection there used to vanish unhandled (#2396).
+// Record it instead, and never let the recording itself reject.
+function runSafely(what: string, work: () => Promise<unknown>): void {
+  void work().catch(async (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[dfir] ${what} failed`, error);
+    try {
+      await browserApi.storage.local.set({
+        lastCapture: { at: new Date().toISOString(), trigger: what, url: "", bytes: 0, diag: `${what} status unknown — ${message}` },
+      });
+      await browserApi.action.setBadgeText({ text: "!" });
+      await browserApi.action.setBadgeBackgroundColor({ color: "#cc3333" });
+    } catch (reportError) {
+      console.error("[dfir] could not record the failure", reportError);
+    }
+  });
+}
+
+function captureSafely(trigger: TriggerType): void {
+  runSafely(`${trigger} capture`, () => captureActiveTab(trigger));
+}
+
 // Upload a snapshot and record the outcome — runs OUTSIDE the capture gate (#2255).
 async function uploadSnapshot(trigger: TriggerType, snap: ActiveTabSnapshot): Promise<CaptureAttemptResult> {
   const { settings, imageBase64 } = snap;
   const credential = await readCaseCredential(sessionArea(), snap.caseId, settings.companionUrl);
-  const controller = new CaptureController(clientFor(settings, credential), queue);
+  // The capture is queued before it is uploaded, and a retry is scheduled before the upload starts,
+  // so a worker suspended mid-upload leaves the capture queued AND due for retry (#2396).
+  const controller = new CaptureController(clientFor(settings, credential), queue, { onQueued: ensureDrainAlarm });
   const status = await controller.capture(snap.caseId, trigger, {
     url: snap.url,
     tabTitle: snap.tabTitle,
@@ -162,6 +230,7 @@ async function uploadSnapshot(trigger: TriggerType, snap: ActiveTabSnapshot): Pr
   });
   await browserApi.action.setBadgeText({ text: outcome.badgeText });
   await browserApi.action.setBadgeBackgroundColor({ color: outcome.badgeColor });
+  await syncDrainAlarm().catch(() => undefined);
   return outcome.ok ? { ok: true } : { ok: false, error: outcome.error };
 }
 
@@ -451,7 +520,7 @@ async function toggleCapture(): Promise<void> {
     await recordBlockedCapture("manual", blocked);
     return;
   }
-  if (result.applied && result.settings.running) void captureActiveTab("manual");
+  if (result.applied && result.settings.running) captureSafely("manual");
 }
 
 async function updateSettingsFromPage(msg: UpdateSettingsMessage): Promise<UpdateSettingsResult> {
@@ -464,18 +533,19 @@ async function updateSettingsFromPage(msg: UpdateSettingsMessage): Promise<Updat
 }
 
 browserApi.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM) void captureActiveTab("timer");
+  if (alarm.name === ALARM) captureSafely("timer");
+  if (alarm.name === DRAIN_ALARM) runSafely("queue retry", drainQueuedCaptures);
 });
-browserApi.tabs.onActivated.addListener(() => void captureActiveTab("tab_switch"));
+browserApi.tabs.onActivated.addListener(() => captureSafely("tab_switch"));
 // The navigation shot waits for onCompleted (#2255): onCommitted fires before the new page renders,
 // so the screenshot often showed the previous page.
 browserApi.webNavigation.onCompleted.addListener((details) => {
   if (details.frameId !== 0) return;
   void activateSite(details.tabId);
-  void captureActiveTab("navigation");
+  captureSafely("navigation");
 });
 browserApi.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.kind === "user_event") { void captureActiveTab("click"); return; }
+  if (msg?.kind === "user_event") { captureSafely("click"); return; }
   // Kept for a popup or options page still open from before an update; storage drives it now.
   if (msg?.kind === "settings_changed") { void rescheduleAlarm(); return; }
   if (msg?.kind === "update_settings") {
@@ -518,8 +588,18 @@ browserApi.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
-browserApi.runtime.onInstalled.addListener(() => { void repairAndReschedule(); void registerContextMenus(); });
-browserApi.runtime.onStartup.addListener(() => void repairAndReschedule());
+browserApi.runtime.onInstalled.addListener(() => {
+  void repairAndReschedule();
+  void registerContextMenus();
+  runSafely("queue retry", drainQueuedCaptures);
+});
+browserApi.runtime.onStartup.addListener(() => {
+  void repairAndReschedule();
+  runSafely("queue retry", drainQueuedCaptures);
+});
+// Every worker wake — not only a browser start — checks that captures left waiting by a worker
+// that was suspended mid-upload have a retry scheduled (#2396).
+void syncDrainAlarm().catch((error: unknown) => console.error("[dfir] could not schedule the queue retry", error));
 browserApi.contextMenus.onClicked.addListener((info, tab) => void handleContextMenuClick(info, tab));
 browserApi.permissions.onAdded.addListener((change) => void handlePermissionChange("granted", change));
 browserApi.permissions.onRemoved.addListener((change) => void handlePermissionChange("revoked", change));

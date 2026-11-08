@@ -19,7 +19,7 @@ export interface CasePasswordTarget {
 }
 
 export const CHECK_RESULT_HINTS: Record<CasePasswordCheck, string> = {
-  ok: "Password accepted — kept in memory until the browser closes. Waiting captures upload with the next capture.",
+  ok: "Password accepted — kept in memory until the browser closes. Waiting captures are retried automatically.",
   wrong: "Wrong password — not saved. Captures keep waiting in the extension.",
   "locked-out": "Too many wrong passwords for this case — wait a few minutes, then try again.",
   offline: "Companion offline — the password could not be checked.",
