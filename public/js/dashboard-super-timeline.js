@@ -23,7 +23,6 @@
   // feature was typed before it moved out.
   const ST_PAGE = 100;
 
-
   let superOffset = 0;            // pagination cursor
   let superTotal = 0;
   let superOrigins = [];          // origin facet from the last query
@@ -59,6 +58,7 @@
   // caller (loadTags/loadComments/toggleStar) has already refreshed tagsByTarget/commentsByTarget/
   // starredEvents, so the cached rows pick up the new state. No-op if the section was never loaded.
   function refreshSuperRows() {
+    if (superRowsCase !== superFilterCase) return; // cached rows belong to the case being left (#2401)
     if (DfirState.lastSuperData() && document.getElementById("superTimelineList")) renderSuperTimeline(DfirState.lastSuperData(), superCaseId());
   }
 
@@ -99,7 +99,6 @@
     p.set("limit", String(ST_PAGE));
     return p.toString();
   }
-
 
   function loadSuperTimeline(caseId) {
     caseId = caseId || superCaseId();
@@ -150,14 +149,27 @@
   // The origin/host choices belong to ONE case. They used to be pruned against every answer, which
   // hid that; kept across a narrow window (#1911) they would otherwise follow the analyst into the
   // next case and hide a host there that happens to share a name. Reset before the first query.
+  // So does the rest (#2401): carried over, the selection sent A's ids to B and the page/filters/time
+  // range made B look empty. A's rows are disowned (superRowsCase) so Select-all cannot tick them;
+  // superCaseGen numbers each visit (A -> B -> A). Group repeats is a browser preference and stays.
   let superFilterCase = null;
+  let superCaseGen = 0, superRowsCase = null; // visit number; the case whose rows were last drawn
   function scopeSuperFiltersToCase(caseId) {
     if (caseId === superFilterCase) return;
-    superFilterCase = caseId;
+    superFilterCase = caseId; superCaseGen++;
     superSelectedOrigins = null;
     superKnownOrigins = new Set();
     superSelectedHosts = null;
     superKnownHosts = new Set();
+    superPromote = new Set(); superSelectedLabels = new Set();
+    superOffset = 0; superTaggedOnly = false; superStarredOnly = false; paintSuperToggles();
+    ["stFrom", "stTo", "stTimeframe"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ""; });
+    const list = document.getElementById("superTimelineList"); if (list && superRowsCase !== null) list.innerHTML = "";
+  }
+  function paintSuperToggles() {
+    const t = document.getElementById("stTaggedOnly"), s = document.getElementById("stStarredOnly");
+    if (t) { t.textContent = superTaggedOnly ? "☑ Tagged only" : "☐ Tagged only"; t.classList.toggle("active", superTaggedOnly); }
+    if (s) { s.textContent = superStarredOnly ? "★ Starred only" : "☆ Starred only"; s.classList.toggle("active", superStarredOnly); }
   }
 
   function renderSuperFilters(data) {
@@ -231,6 +243,7 @@
   function stCloseDropdowns() { document.querySelectorAll(".st-dd .src-filter-menu").forEach(m => { m.hidden = true; }); }
 
   function renderSuperTimeline(data, caseId) {
+    superRowsCase = caseId || superFilterCase;
     DfirState.setLastSuperData(data);   // cache for client-side re-render on tag/comment/star change
     superTotal = Number(data.total) || 0;
     // A broad text search stops counting past 10,000 matches (#2069): the total is then a floor,
@@ -407,6 +420,7 @@
 
   // The rows currently on screen (starred-only is server-side now, so this is just the page).
   function currentSuperRows() {
+    if (superRowsCase !== superFilterCase) return []; // the case being left — not this case's rows
     return (DfirState.lastSuperData() && Array.isArray(DfirState.lastSuperData().events)) ? DfirState.lastSuperData().events : [];
   }
 
@@ -437,16 +451,14 @@
   // Toggle "Tagged only" (server-side tagged=1) and reload from the first page.
   function toggleSuperTaggedOnly() {
     superTaggedOnly = !superTaggedOnly;
-    const b = document.getElementById("stTaggedOnly");
-    if (b) { b.textContent = superTaggedOnly ? "☑ Tagged only" : "☐ Tagged only"; b.classList.toggle("active", superTaggedOnly); }
+    paintSuperToggles();
     superPage(0);
   }
 
   // Toggle "Starred only" (server-side starred=1 — filters the WHOLE super-timeline) and reload.
   function toggleSuperStarredOnly() {
     superStarredOnly = !superStarredOnly;
-    const b = document.getElementById("stStarredOnly");
-    if (b) { b.textContent = superStarredOnly ? "★ Starred only" : "☆ Starred only"; b.classList.toggle("active", superStarredOnly); }
+    paintSuperToggles();
     superPage(0);
   }
 
@@ -650,24 +662,32 @@
     loadSuperTimeline();
   }
 
+  // ONE PROMOTE PER VISIT (#2401): no double send. An answer for an earlier visit neither clears the
+  // new selection nor reloads the panel with the old case id.
+  let superPromoteInFlight = null; // the visit (superCaseGen) whose promote is in flight, or null
   function promoteSuperSelected() {
     const caseId = superCaseId();
     const msg = document.getElementById("superTimelineMsg");
     if (!caseId) { if (msg) msg.textContent = "open a case first"; return; }
+    const gen = superCaseGen;
+    if (superPromoteInFlight === gen) { if (msg) { msg.style.color = "var(--text-muted)"; msg.textContent = "promoting… (already sent)"; } return; }
     const eventIds = [...superPromote];
     if (!eventIds.length) { if (msg) { msg.textContent = "tick some events first"; } return; }
+    const stillHere = () => gen === superCaseGen && superCaseId() === caseId; superPromoteInFlight = gen;
     if (msg) { msg.style.color = "var(--text-muted)"; msg.textContent = "promoting…"; }
     fetch(`/cases/${encodeURIComponent(caseId)}/super-timeline/promote`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ eventIds })
     }).then(r => r.json().then(j => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
+        if (!stillHere()) return;
         if (!ok || j.error) { if (msg) { msg.style.color = "var(--badge-danger-text)"; msg.textContent = "promote failed: " + (j.error || "failed"); } return; }
-        superPromote.clear();
+        eventIds.forEach(id => superPromote.delete(id)); // only what was sent; a box ticked meanwhile stays
         if (msg) { msg.style.color = "var(--text-muted)"; msg.textContent = `promoted ${j.promoted} → forensic timeline (synthesis may run)`; }
         loadSuperTimeline(caseId);
       })
-      .catch(e => { if (msg) { msg.style.color = "var(--badge-danger-text)"; msg.textContent = "promote failed: " + e.message + " — restart the companion server if this 404s"; } });
+      .catch(e => { if (stillHere() && msg) { msg.style.color = "var(--badge-danger-text)"; msg.textContent = "promote failed: " + e.message + " — restart the companion server if this 404s"; } })
+      .finally(() => { if (superPromoteInFlight === gen) superPromoteInFlight = null; });
   }
 
   // --- Saved timeframes (the dwell-windows store: label + start + end) ----------
