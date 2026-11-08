@@ -288,8 +288,12 @@ interface GotObject {
   $metadata?: { requestId?: string };
 }
 
-/** One object the normal way (no prefetch, or it failed): a denied object is a skip. Abort is terminal. */
+/**
+ * One object the normal way (no prefetch, or it failed): a denied object is a skip. Abort is
+ * terminal, and so is a closed walk (the session closed while this page waited).
+ */
 async function getTrailObject(
+  walk: TrailObjectWalk,
   clients: AwsCollectClients,
   bucket: string,
   key: string,
@@ -297,9 +301,13 @@ async function getTrailObject(
   signal?: AbortSignal,
 ): Promise<FetchedObject> {
   if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("aborted");
+  if (walk.prefetch.closed)
+    throw Object.assign(new Error("the collection session was closed"), { name: "AbortError" });
   let got: GotObject;
   try {
-    got = await sendAws<GotObject>(clients.s3, new GetObjectCommand({ Bucket: bucket, Key: key }), signal);
+    // The walk owns this download too: close() aborts it (with the run's cancel, if any).
+    const owned = signal ? AbortSignal.any([signal, walk.prefetch.signal]) : walk.prefetch.signal;
+    got = await sendAws<GotObject>(clients.s3, new GetObjectCommand({ Bucket: bucket, Key: key }), owned);
   } catch (err) {
     if (!isDenied(err)) throw err;
     throw new SkippedItemError(`s3://${bucket}/${key}`, deniedReason(err), nextPageToken);
@@ -375,7 +383,7 @@ export async function fetchTrailObject(
   );
   const { meta: got, body } =
     (await walk.prefetch.take(cell.bucket, found.key, request.signal)) ??
-    (await getTrailObject(clients, cell.bucket, found.key, nextPageToken, request.signal));
+    (await getTrailObject(walk, clients, cell.bucket, found.key, nextPageToken, request.signal));
   const root = roots.find((r) => r.bucket === cell.bucket && r.root === cell.root);
   return {
     body,

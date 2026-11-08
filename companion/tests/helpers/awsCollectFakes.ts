@@ -59,6 +59,8 @@ export interface FakeAwsOptions {
   s3LatencyMs?: number;
   /** #2380: a GetObject body takes this long (ms) to stream; the abort signal ends it. */
   bodyLatencyMs?: number;
+  /** #2380: per key, a body latency in place of `bodyLatencyMs`. */
+  bodyLatencyByKey?: Record<string, number>;
   /** #2380: GetObject throws SlowDown for these keys on every call. */
   slowDownKeys?: string[];
   /** Buckets whose object listing (no delimiter, the trail walk) is refused; folder listing still works. */
@@ -275,7 +277,7 @@ export function fakeAwsClients(
         Body: {
           transformToByteArray: async () => {
             try {
-              await waitOrAbort(opts.bodyLatencyMs ?? 0, signal);
+              await waitOrAbort(opts.bodyLatencyByKey?.[obj.key] ?? opts.bodyLatencyMs ?? 0, signal);
               return obj.body;
             } finally {
               s3Activity.active--;

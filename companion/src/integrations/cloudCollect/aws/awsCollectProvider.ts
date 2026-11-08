@@ -166,6 +166,8 @@ class AwsCollectSession implements CloudCollectSession {
   private who?: Promise<{ account: string; caller: string }>;
   private roots?: Promise<TrailDiscovery>;
   private walk?: TrailObjectWalk;
+  /** #2380: teardowns of walks closed so far (each walk's close() is one shared promise). */
+  private readonly retiring: Promise<void>[] = [];
   private filters: Readonly<Record<string, string>> = {};
 
   constructor(
@@ -220,16 +222,24 @@ class AwsCollectSession implements CloudCollectSession {
   applyFilters(filters: Readonly<Record<string, string>>): void {
     this.filters = { ...filters };
     this.roots = undefined;
-    // #2380: the old walk's downloads ahead are for the old scope: abort them (close settles them).
-    void this.walk?.close();
+    // #2380: the old walk's downloads ahead are for the old scope: abort them now; close() waits.
+    this.retireWalk();
+  }
+
+  /** #2380: stop a walk's downloads ahead, keeping its teardown so close() can wait for it. */
+  private retireWalk(): void {
+    if (!this.walk) return;
+    this.retiring.push(this.walk.close());
     this.walk = undefined;
   }
 
-  /** #2380: the job's finally — cancel, failure or done — stops every download ahead and waits. */
+  /**
+   * #2380: the job's finally — cancel, failure or done. Stops every download ahead, of this walk
+   * and of any walk a filter change replaced, and resolves only once all have settled.
+   */
   async close(): Promise<void> {
-    const walk = this.walk;
-    this.walk = undefined;
-    await walk?.close();
+    this.retireWalk();
+    await Promise.allSettled(this.retiring);
   }
 
   /** Trail discovery, asked in the walked regions; a region folder the analyst unticked is dropped. */

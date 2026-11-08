@@ -94,11 +94,22 @@ export class TrailPrefetcher {
   private readonly controller = new AbortController();
   private readonly linked = new WeakSet<AbortSignal>();
   private stopped = false;
+  private closing?: Promise<void>;
 
   constructor(
     private readonly s3: AwsSender,
     private readonly depth: number = PREFETCH_DEPTH,
   ) {}
+
+  /** Aborted on close() (or a request's cancel): the walk's own downloads use it too. */
+  get signal(): AbortSignal {
+    return this.controller.signal;
+  }
+
+  /** Closed: no download starts again, and a page that asks gets an error, never a new request. */
+  get closed(): boolean {
+    return this.closing !== undefined;
+  }
 
   /** Downloads in flight now (tests: nothing may be left after close()). */
   get active(): number {
@@ -158,21 +169,32 @@ export class TrailPrefetcher {
    */
   async take(bucket: string, key: string, signal?: AbortSignal): Promise<FetchedObject | undefined> {
     this.link(signal);
+    this.throwIfClosed();
     const id = idOf(bucket, key);
     const entry = this.entries.get(id);
     if (!entry) return undefined;
     if (entry.state === "pending") await untilAbort(entry.done, signal);
     if (signal?.aborted) throw abortReason(signal);
+    // Closed while this page waited: terminal — the caller must not start a normal download.
+    this.throwIfClosed();
     const settled = this.entries.get(id);
     this.entries.delete(id);
     return settled?.state === "ready" ? settled.value : undefined;
   }
 
-  /** Abort every download and wait until all have settled. Idempotent. */
-  async close(): Promise<void> {
-    this.stopped = true;
-    this.controller.abort();
-    await Promise.allSettled([...this.inflight]);
-    this.entries.clear();
+  private throwIfClosed(): void {
+    if (this.closed)
+      throw Object.assign(new Error("the collection session was closed"), { name: "AbortError" });
+  }
+
+  /** Abort every download and wait until all have settled. Every caller gets the same promise. */
+  close(): Promise<void> {
+    this.closing ??= (async () => {
+      this.stopped = true;
+      this.controller.abort();
+      await Promise.allSettled([...this.inflight]);
+      this.entries.clear();
+    })();
+    return this.closing;
   }
 }

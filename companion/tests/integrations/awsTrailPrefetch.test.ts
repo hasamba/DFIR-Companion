@@ -243,6 +243,38 @@ describe("cancel (#2380)", () => {
     expect(s.clients.s3Activity.active).toBe(0);
   });
 
+  // Codex review: teardown must own every walk, and close must be terminal for a waiting page.
+  it("a region change then close(): the old walk's downloads have settled when close() resolves", async () => {
+    const s = session({ buckets: { b: objects(10) }, bodyLatencyMs: 200 });
+    const pending = s.session.fetchPage({ source: "s3-trail", subWindowId: "x", window: WINDOW });
+    for (let i = 0; i < 100 && s.clients.s3Activity.active <= 1; i++) await settle(10);
+    await s.session.prepareFilters?.({});
+    await Promise.all([s.session.close?.(), s.session.close?.()]);
+    expect(s.clients.s3Activity.active).toBe(0);
+    await pending.catch(() => {});
+  });
+
+  it("closing while a page waits for a download ahead fails that page, and starts nothing new", async () => {
+    const objs = objects(10);
+    // The second object streams slowly, so its download ahead is still running when the page asks.
+    const s = session({ buckets: { b: objs }, bodyLatencyByKey: { [objs[1].key]: 2_000 } });
+    const first = await s.session.fetchPage({ source: "s3-trail", subWindowId: "x", window: WINDOW });
+    // The next object is downloading ahead; this page waits for it.
+    const waiting = s.session.fetchPage({
+      source: "s3-trail",
+      subWindowId: "x",
+      window: WINDOW,
+      pageToken: first.nextPageToken!,
+    });
+    await settle(20);
+    await s.session.close?.();
+    await expect(waiting).rejects.toThrow(/closed/);
+    const sent = s.clients.sent.length;
+    await settle(250);
+    expect(s.clients.sent.length).toBe(sent);
+    expect(s.clients.s3Activity.active).toBe(0);
+  });
+
   it("an already-cancelled request downloads nothing", async () => {
     const s = session({ buckets: { b: objects(5) } });
     await expect(
