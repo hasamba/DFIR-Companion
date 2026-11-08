@@ -533,10 +533,28 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     if (!pipeline) return;
     // Gate text synthesis on its provider (with vision fallback), preserving OCR-less installs.
     if (!pipeline.hasSynthesisProvider()) {
-      autoEnrichIfEnabled(caseId);
+      void skipFrozenCase(caseId).then((frozen) => frozen || autoEnrichIfEnabled(caseId));
       return;
     }
     void startResynthesis(caseId, pipeline, opts.analyst === true);
+  }
+
+  /**
+   * #2404: a case closed or archived while an import was running. The import itself finishes and is
+   * recorded — evidence first — but its follow-up AI run and enrichment would write into a frozen
+   * case. Skip them and mark the conclusions out of date, so reopening says so.
+   */
+  async function skipFrozenCase(caseId: string, known?: FrozenStatus): Promise<boolean> {
+    const status = known === undefined ? await frozenStatus(caseId) : known;
+    if (!status) return false;
+    await markOutOfDate(caseId, `new evidence arrived after the case was ${status}`);
+    return true;
+  }
+
+  type FrozenStatus = "closed" | "archived" | null;
+  async function frozenStatus(caseId: string): Promise<FrozenStatus> {
+    const status = (await store.getCaseMeta(caseId).catch(() => null))?.status;
+    return status === "closed" || status === "archived" ? status : null;
   }
 
   async function startResynthesis(
@@ -550,7 +568,11 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     // synthesis — findings / attacker-path / MITRE wait until AI is turned on and the case is
     // re-synthesized. Enrichment is a separate, independently-gated feature (threat-intel
     // lookups, not an LLM call), so it still runs regardless of the AI toggle.
-    if (!(await getControl(caseId)).enabled) {
+    // Read together, so the frozen check (#2404) adds no wait before the deferral decision below.
+    // A deferred kick re-enters here after its wait and is checked again.
+    const [control, frozen] = await Promise.all([getControl(caseId), frozenStatus(caseId)]);
+    if (await skipFrozenCase(caseId, frozen)) return;
+    if (!control.enabled) {
       // #1599: the case changed and no run follows, so the conclusions no longer match it. Without
       // this the pill read "up to date — live analysis paused" over evidence the model never saw.
       await markOutOfDate(caseId, "new evidence while AI was off");
@@ -588,6 +610,10 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       // and this function is fired-and-forgotten, so a rejection escaping here is an unhandled
       // one rather than a cancellation the catch below can report.
       if (job) await job.ready;
+      if (await skipFrozenCase(caseId)) {
+        if (job) await options.jobManager?.finish(job.jobId); // it waited behind other case work
+        return;
+      }
       options.onAiStatus?.(caseId, {
         status: "analyzing",
         phase: "synthesizing",

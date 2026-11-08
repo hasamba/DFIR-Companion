@@ -42,9 +42,45 @@ const INGEST_FROZEN_WHEN_CLOSED = new Set([
   "/iris-import",
 ]);
 
+/**
+ * Analyst writes that change the case's record of the investigation (#2404): undoing or redoing an
+ * import, a finding's workflow or capped severity, hypotheses, the playbook, remediation and the
+ * cockpit. Each had no closed/archived check, so a frozen case could still be rewritten through
+ * them. `[method, path pattern]`, the pattern relative to /cases/:id and matched lowercased.
+ * Reads, reopen/archive/restore/delete and exports are not listed, so a frozen case still serves
+ * them. Annotations (notebook, comments, tags, pins) are a separate product call (follow-up).
+ */
+const CASE_CHANGES_FROZEN_WHEN_CLOSED: ReadonlyArray<readonly [string, RegExp]> = [
+  ["POST", /^\/import\/(undo|redo)$/],
+  ["PATCH", /^\/findings\/[^/]+\/workflow$/],
+  ["POST", /^\/findings\/[^/]+\/severity-restore$/],
+  ["DELETE", /^\/findings\/[^/]+\/severity-restore$/],
+  ["POST", /^\/hypotheses$/],
+  ["PATCH", /^\/hypotheses\/[^/]+$/],
+  ["DELETE", /^\/hypotheses\/[^/]+$/],
+  ["POST", /^\/playbook$/],
+  ["PUT", /^\/playbook\/control$/],
+  ["POST", /^\/playbook\/(sync|suggest-hunts)$/],
+  ["PATCH", /^\/playbook\/[^/]+$/], // a task, and /playbook/order
+  ["DELETE", /^\/playbook\/[^/]+$/],
+  ["POST", /^\/remediation$/],
+  ["DELETE", /^\/remediation\/[^/]+$/],
+  ["POST", /^\/remediation\/[^/]+\/(verify|attach)$/],
+  ["PATCH", /^\/remediation\/[^/]+\/status$/],
+  ["PATCH", /^\/cockpit\/cards\/[^/]+$/],
+  ["POST", /^\/cockpit\/review$/],
+];
+
+function purposeOf(method: string, rel: string): string | null {
+  if (method === "POST" && FROZEN_WHEN_CLOSED.has(rel)) return "adding evidence";
+  if (method === "POST" && INGEST_FROZEN_WHEN_CLOSED.has(rel)) return "importing evidence";
+  const changes = CASE_CHANGES_FROZEN_WHEN_CLOSED.some(([m, re]) => m === method && re.test(rel));
+  return changes ? "changing it" : null;
+}
+
 export function mountCaseWriteGuard(app: Express, store: CaseStore): void {
   app.use("/cases/:id", function caseWriteGuardGate(req: Request, res: Response, next: NextFunction) {
-    if (req.method !== "POST") return next();
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
     // Lowercased before the compare. Express routes case-insensitively, so /EVENTS reaches the same
     // handler; a case-sensitive Set lookup here would leave the guard one shift key from bypassed.
     // The optional trailing slash goes too. Express is not in "strict routing" mode, so
@@ -55,11 +91,7 @@ export function mountCaseWriteGuard(app: Express, store: CaseStore): void {
         .replace(/^\/cases\/[^/]+\//, "/")
         .replace(/\/+$/, "")
         .toLowerCase() || "/";
-    const purpose = FROZEN_WHEN_CLOSED.has(rel)
-      ? "adding evidence"
-      : INGEST_FROZEN_WHEN_CLOSED.has(rel)
-        ? "importing evidence"
-        : null;
+    const purpose = purposeOf(req.method, rel);
     if (!purpose) return next();
 
     frozenCaseRefusal(store, req.params.id, purpose).then((refusal) => {
