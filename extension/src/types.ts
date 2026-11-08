@@ -77,6 +77,13 @@ export interface ConnectionStatus {
   // The capture had to be queued but the queue write itself failed (quota, aborted transaction) —
   // it is NOT saved anywhere. The reason, for the popup (#2256).
   queueWriteFailed?: string;
+  // Queued captures taken for a different companion than the current one — kept, not sent (#2396).
+  queuedElsewhere?: number;
+  // A queued capture was refused as locked although it carried the stored case password: the
+  // password is wrong and must be forgotten, like a live capture's (#2135, #2396).
+  credentialRefused?: boolean;
+  // Retrying the offline queue failed part-way (#2396); anything it discarded is still listed above.
+  queueDrainError?: string;
 }
 
 // The password of a password-locked case, as the analyst typed it into the popup (#2135). Held in

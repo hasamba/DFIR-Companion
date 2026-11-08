@@ -30,7 +30,7 @@ describe("service-worker capture triggers", () => {
 
   it("takes the navigation shot when the page has loaded, not when it is committed", () => {
     expect(sw).not.toContain("onCommitted.addListener");
-    expect(sw).toMatch(/onCompleted\.addListener\([\s\S]{0,200}captureActiveTab\("navigation"\)/);
+    expect(sw).toMatch(/onCompleted\.addListener\([\s\S]{0,200}captureSafely\("navigation"\)/);
     // onCompleted is part of the existing webNavigation permission — no new permission is needed.
     expect(manifest.permissions).toContain("webNavigation");
   });
