@@ -74,6 +74,7 @@ nav:
     - Chain of Custody: reference/chain-of-custody.md
     - Integrations: reference/integrations.md
     - Cloud Collection: reference/cloud-collection.md
+    - Setting Up Cloud Accounts: reference/cloud-account-setup.md
     - War-Room Slash-Command Bot: reference/war-room-bot.md
     - Live Monitoring & Push Ingest: reference/live-monitoring.md
     - Settings Reference: reference/settings.md
