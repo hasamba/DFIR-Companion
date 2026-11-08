@@ -30,6 +30,7 @@ import type {
   ManifestHeader,
   MissingWindow,
   SubWindowStatus,
+  WalkPosition,
 } from "./collectTypes.js";
 import type { CloudProvider } from "../cloudAccounts/types.js";
 
@@ -39,7 +40,15 @@ export interface CollectProgress {
   records: number;
   imported: number;
   /** Per source: pages and records saved so far, and what the cloud is doing now (#2315). */
-  sources: Array<{ source: string; pages: number; records: number; state: string; status?: string }>;
+  sources: Array<{
+    source: string;
+    pages: number;
+    records: number;
+    state: string;
+    status?: string;
+    /** #2384: folders (or other walk units) finished, of the total; absent when unknowable. */
+    walk?: WalkPosition;
+  }>;
 }
 
 export interface CollectRunDeps {
@@ -72,7 +81,7 @@ export interface NewCollection {
   overlapMs?: Record<string, number>;
 }
 
-function sourceProgress(subWindows: readonly SubWindowStatus[]): CollectProgress["sources"] {
+export function sourceProgress(subWindows: readonly SubWindowStatus[]): CollectProgress["sources"] {
   const by = new Map<string, CollectProgress["sources"][number]>();
   const RANK: Record<string, number> = { done: 0, incomplete: 1, pending: 2, capped: 2, failed: 3 };
   for (const sw of subWindows) {
@@ -89,7 +98,29 @@ function sourceProgress(subWindows: readonly SubWindowStatus[]): CollectProgress
       ...(status ? { status } : {}),
     });
   }
-  return [...by.values()];
+  return [...by.values()].map((p) => {
+    const walk = walkOf(subWindows.filter((sw) => sw.source === p.source));
+    return walk ? { ...p, walk } : p;
+  });
+}
+
+const SETTLED = new Set(["done", "failed", "incomplete"]);
+
+/**
+ * #2384: a source's position in its fixed walk, summed over its unsplit sub-windows; a settled one
+ * counts as finished. Undefined when any unsettled sub-window has not stated one yet: a guess
+ * there would be the fake "one page left" ETA this replaces.
+ */
+function walkOf(subWindows: readonly SubWindowStatus[]): WalkPosition | undefined {
+  const live = subWindows.filter((sw) => sw.state !== "split");
+  if (!live.some((sw) => sw.walk) || live.some((sw) => !sw.walk && !SETTLED.has(sw.state))) return undefined;
+  return live.reduce(
+    (acc, sw) =>
+      sw.walk
+        ? { at: acc.at + (SETTLED.has(sw.state) ? sw.walk.of : sw.walk.at), of: acc.of + sw.walk.of }
+        : acc,
+    { at: 0, of: 0 },
+  );
 }
 
 /** Which windows are missing, and why. Pure. */

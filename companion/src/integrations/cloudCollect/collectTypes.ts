@@ -96,6 +96,12 @@ export interface CollectPage {
   recordCount: number;
   /** Absent on the last page of the sub-window. */
   nextPageToken?: string;
+  /**
+   * #2384: how far through the source's fixed walk this page is — `at` units fully finished before
+   * it, of `of` (the S3 trail: folders, trail × region × day). Progress display only; a source that
+   * cannot tell how much is left leaves it out, and the job then shows no ETA.
+   */
+  walk?: WalkPosition;
   /** The provider's own request id (x-amz-request-id, client-request-id, …), when it sent one. */
   requestId?: string;
   /** The request as sent, minus secrets: filter, page size, bucket/key, API version. */
@@ -350,6 +356,12 @@ export type ManifestEntry =
  */
 export type SubWindowState = "pending" | "done" | "failed" | "capped" | "split" | "incomplete";
 
+/** #2384: a position in a source's fixed walk (see CollectPage.walk). */
+export interface WalkPosition {
+  at: number;
+  of: number;
+}
+
 export interface SubWindowStatus {
   id: string;
   source: string;
@@ -376,6 +388,8 @@ export interface SubWindowStatus {
   unverified?: boolean;
   /** The provider's own status while the sub-window waits (#2315); cleared by its next page. */
   providerStatus?: string;
+  /** #2384: the walk position its last page stated (progress display only). */
+  walk?: WalkPosition;
 }
 
 /** Per source, how far the collection really got (#2312): never "complete" past this. */
