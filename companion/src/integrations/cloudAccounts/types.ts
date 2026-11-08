@@ -90,6 +90,12 @@ export type StoredCloudAccount = AccountMeta & {
   settings: AwsSettings | GcpSettings | MicrosoftSettings;
   sealed: string;
   caseIds?: string[];
+  /**
+   * #2378: per attached case, the token of a release that has recorded its `credential-detached`
+   * custody entry but not yet detached. A retried release finds the entry by it and does not record
+   * the detach twice. Kept only for cases still in `caseIds`, so a detach clears it.
+   */
+  releaseTokens?: Record<string, string>;
 };
 
 /** What a client sees. `locked` holds the reason when the vault cannot open the account. */
@@ -107,7 +113,9 @@ export type CloudAccountView = AccountMeta & {
  * custody entry may say about it. `caseIds` are the cases it was attached to BEFORE the change for
  * an erased account, and the cases it is still attached to for a detached one.
  */
-export type ReleasedCloudAccount = Omit<StoredCloudAccount, "sealed" | "caseIds"> & { caseIds: string[] };
+export type ReleasedCloudAccount = Omit<StoredCloudAccount, "sealed" | "caseIds" | "releaseTokens"> & {
+  caseIds: string[];
+};
 
 /** A create or edit request. On edit, an absent or empty secret keeps the stored one. */
 export interface CloudAccountInput {

@@ -197,7 +197,7 @@ describe("closing a case", () => {
   it("records the detach before removing it: a failed custody write leaves the account attached", async () => {
     const shared = vault.create(awsKeyInput("Shared", secret()), "c1").account;
     vault.attach(shared.id, "c2");
-    vi.spyOn(custody, "record").mockRejectedValue(new Error("custody disk full"));
+    vi.spyOn(custody, "recordMany").mockRejectedValue(new Error("custody disk full"));
     const res = await close(soloApp(), "c1");
     expect(res.status, res.text).toBe(200);
     expect(res.body.cloudCredentialsError).toMatch(/could not be deleted/i);
