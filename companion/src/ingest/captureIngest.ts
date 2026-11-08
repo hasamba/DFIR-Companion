@@ -7,6 +7,13 @@ import { slugifyTitle } from "./titleSlug.js";
 import { detectImageFormat } from "./imageFormat.js";
 import { resolve } from "node:path";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
+import {
+  findReplay,
+  isIdReusedForOtherContent,
+  rememberCapture,
+  _resetReplayIndex,
+} from "./captureReplay.js";
+import { warnLine } from "../logging/serverLogger.js";
 
 // Is deduplication enabled? Default on. `DFIR_DEDUP=off` (also false/no/0) turns it off so
 // EVERY capture is analyzed. Read per call so a restart picks up the change. When on, a capture
@@ -24,7 +31,16 @@ const payloadSchema = z.object({
   tabTitle: z.string(),
   triggerType: z.enum(TRIGGER_TYPES),
   imageBase64: z.string().min(1),
+  // A random id the extension gives each screenshot, so a re-send is recognised (#2397). Optional:
+  // older extensions and the drop folder send none.
+  captureId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,128}$/, "invalid captureId")
+    .optional(),
 });
+
+/** What ingestCapture returns: the record, and whether it was a re-send of one already stored. */
+export type IngestedCapture = CaptureMetadata & { replayed?: true };
 
 // Thrown when a capture targets a case that was never created. The companion never
 // creates a case as a side effect of ingesting evidence — creation is an explicit
@@ -92,7 +108,7 @@ export async function ingestCapture(
   store: CaseStore,
   rawPayload: unknown,
   dedup: boolean = isDedupEnabled(),
-): Promise<CaptureMetadata> {
+): Promise<IngestedCapture> {
   const payload = payloadSchema.parse(rawPayload);
 
   // The case must already exist (created in the dashboard). Reject an unknown case
@@ -112,7 +128,19 @@ export async function ingestCapture(
 
   const hash = computeContentHash(bytes);
 
-  return withCaseLock(payload.caseId, async () => {
+  return withCaseLock(payload.caseId, async (): Promise<IngestedCapture> => {
+    if (payload.captureId) {
+      const key = { ...payload, captureId: payload.captureId, contentHash: hash };
+      const stored = await findReplay(store, payload.caseId, key);
+      // A re-send of a capture already on disk and in the log: answer with that record and write
+      // nothing — no second file, sequence number or custody row for the same evidence (#2397).
+      if (stored) return { ...stored, replayed: true };
+      if (isIdReusedForOtherContent(store, payload.caseId, payload.captureId)) {
+        warnLine(
+          `[capture] ${payload.caseId}: capture id ${payload.captureId} arrived again with different content — stored as a new capture`,
+        );
+      }
+    }
     const previous = lastHashes(store).get(payload.caseId);
     // Exact match only: a duplicate is a byte-identical re-capture of the previous frame (the
     // screen didn't change). Any difference → not a duplicate → analyzed. dedup=false disables it.
@@ -128,6 +156,7 @@ export async function ingestCapture(
     // queue keeps the entry at the head) and that retry comes back a duplicate — which willAnalyze,
     // the OCR indexer and captureAnalysis all skip, so it is stored but never analyzed (#513).
     lastHashes(store).set(payload.caseId, hash);
+    rememberCapture(store, metadata);
     return metadata;
   });
 }
@@ -141,6 +170,7 @@ async function persistCapture(
     url: string;
     tabTitle: string;
     triggerType: CaptureMetadata["triggerType"];
+    captureId?: string;
   },
   frame: { bytes: Buffer; hash: string; duplicate: boolean; ext: string },
 ): Promise<CaptureMetadata> {
@@ -168,6 +198,7 @@ async function persistCapture(
     contentHash: frame.hash,
     isDuplicate: frame.duplicate,
     screenshotFile,
+    ...(payload.captureId ? { captureId: payload.captureId } : {}),
   };
 
   // Evidence first: write the image before recording metadata. The provenance goes with the write
@@ -185,6 +216,7 @@ async function persistCapture(
 // Exposed for test isolation.
 export function _resetDedupCache(): void {
   lastHashByRoot.clear();
+  _resetReplayIndex();
   // Deliberately NOT clearing caseQueues: dropping a live chain would let a post-reset capture run
   // alongside one still in flight, which is the interleaving the queue exists to prevent. Settled
   // chains remove themselves, so there is nothing left to clear anyway.

@@ -136,7 +136,18 @@ export function registerCaptureRoutes(app: Express, ctx: RouteContext): void {
           if (!decision.ok) return sendCaseWriteRefusal(res, decision);
         }
       }
-      const metadata = await ingestCapture(store, req.body);
+      const ingested = await ingestCapture(store, req.body);
+      // A re-send of a screenshot already stored (#2397): answer with the stored record and do
+      // nothing else — it was broadcast, indexed and queued for analysis when it first landed, and
+      // analysis owed for a capture that persisted but was never buffered is re-derived from
+      // captures.jsonl (#2248). No re-evaluated analyzed/reason: that would misstate the original.
+      if (ingested.replayed) {
+        serverLogger.debug(`screenshot re-sent seq=${ingested.sequenceNumber} — already stored`, {
+          caseId: ingested.caseId,
+        });
+        return res.status(201).json(ingested);
+      }
+      const metadata = ingested;
       // Pre-evaluate the analysis condition before responding so the dashboard knows whether
       // this capture will produce timeline events (mirrors the analyzed/reason pattern on /import).
       const willAnalyze =
