@@ -1,6 +1,32 @@
 import type { CapturePayload, DroppedCapture } from "./types.js";
+import { companionServerKey } from "./casePasswordSession.js";
 
 const STORE = "captures";
+
+/**
+ * Most captures the offline queue holds (#2396). A wrong token used to add a full PNG on every
+ * 30 s tick until the browser quota ran out. At the cap a NEW capture is refused (and the analyst
+ * told); captures already waiting are never evicted to make room — that would delete evidence.
+ */
+export const MAX_QUEUED_CAPTURES = 200;
+
+/** The queue already holds MAX_QUEUED_CAPTURES; this capture could not be added. */
+export class CaptureQueueFullError extends Error {
+  constructor(readonly limit: number) {
+    super(`offline queue full (${limit} captures waiting)`);
+    this.name = "CaptureQueueFullError";
+  }
+}
+
+/** Where a capture is to be delivered — the companion it was taken for (#2396). */
+export interface EnqueueOptions {
+  companionUrl?: string;
+  /**
+   * The caller uploads this row itself right now: register it as live before enqueue resolves, so
+   * a drain running meanwhile cannot send it a second time. The caller must call endLive(key).
+   */
+  live?: boolean;
+}
 
 /** First wait before a kept (access-refused) capture is re-sent (#2263). */
 export const KEPT_BACKOFF_BASE_MS = 60_000;
@@ -24,6 +50,8 @@ export function keptBackoffMs(attempts: number): number {
 interface QueueRecord {
   key: number;
   payload: CapturePayload;
+  /** The companion this capture was taken for (#2396); absent on rows from an older extension. */
+  companionUrl?: string;
   attempts?: number;
   nextAttemptAt?: number;
   lastStatus?: number;
@@ -61,6 +89,22 @@ export interface DrainSummary {
   dropped: DroppedCapture[];
   /** Entries refused for access and left in the queue (`skip`, #2254). */
   kept: DroppedCapture[];
+  /** Entries taken for a different companion than the one being drained to — kept, not sent (#2396). */
+  elsewhere: number;
+  /**
+   * The drain stopped on an error part-way. What it did before that (sent, dropped) is still in
+   * this summary, so a capture already discarded is never reported as nothing (#2396).
+   */
+  error?: string;
+  /** Another drain was already running, so this one did nothing. */
+  busy?: boolean;
+  /** The HTTP status that stopped the drain (`retry`; 0 = unreachable), when one did. */
+  stoppedStatus?: number;
+}
+
+/** Which companion a drain delivers to; rows bound to another one stay queued (#2396). */
+export interface DrainOptions {
+  companionUrl?: string;
 }
 
 function reported(payload: CapturePayload, result: QueueSendResult): DroppedCapture {
@@ -99,6 +143,7 @@ function withRefusal(rec: QueueRecord, result: QueueSendResult, now: number): Qu
   return {
     key: rec.key,
     payload: rec.payload,
+    ...(rec.companionUrl ? { companionUrl: rec.companionUrl } : {}),
     attempts,
     nextAttemptAt: now + keptBackoffMs(attempts),
     ...(result.status !== undefined ? { lastStatus: result.status } : {}),
@@ -114,6 +159,13 @@ export class CaptureQueue {
   ) {}
 
   private draining = false;
+  // Rows a live capture is uploading right now (#2396). In memory on purpose: after the worker is
+  // suspended the set is gone, which is exactly when a drain should pick those rows up.
+  private readonly live = new Set<number>();
+
+  endLive(key: number): void {
+    this.live.delete(key);
+  }
 
   private open(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
@@ -174,8 +226,41 @@ export class CaptureQueue {
     return this.withDb((db) => this.txOn<T>(db, mode, fn));
   }
 
-  async enqueue(payload: CapturePayload): Promise<void> {
-    await this.tx("readwrite", (s) => s.add({ payload }));
+  /**
+   * Add a capture and return its key. The count check and the add share ONE transaction, so two
+   * captures racing for the last slot cannot both get in (#2396). Rejects with
+   * CaptureQueueFullError at the cap; resolves only once the row is committed.
+   */
+  async enqueue(payload: CapturePayload, options: EnqueueOptions = {}): Promise<number> {
+    const record = { payload, ...(options.companionUrl ? { companionUrl: options.companionUrl } : {}) };
+    const key = await this.withDb((db) => new Promise<number>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      let added: number | undefined;
+      let full = false;
+      const count = store.count();
+      count.onsuccess = () => {
+        if (count.result >= MAX_QUEUED_CAPTURES) {
+          full = true;
+          return; // nothing written; the empty transaction completes
+        }
+        const add = store.add(record);
+        add.onsuccess = () => { added = add.result as number; };
+      };
+      tx.oncomplete = () => {
+        if (full || added === undefined) { reject(new CaptureQueueFullError(MAX_QUEUED_CAPTURES)); return; }
+        if (options.live) this.live.add(added);
+        resolve(added);
+      };
+      tx.onabort = () => reject(tx.error ?? new Error("capture queue transaction aborted"));
+      tx.onerror = () => reject(tx.error ?? new Error("capture queue transaction failed"));
+    }));
+    return key;
+  }
+
+  /** Remove one row; resolves once the deletion is committed. */
+  async remove(key: number): Promise<void> {
+    await this.tx("readwrite", (s) => s.delete(key));
   }
 
   async size(): Promise<number> {
@@ -190,59 +275,64 @@ export class CaptureQueue {
   // everything behind it, so order is preserved); discards permanently-rejected entries and
   // continues past them, reporting them in the summary; keeps SKIPPED entries in place and
   // continues past them too (#2254), backing off before re-sending them (#2263).
-  async drain(sender: (p: CapturePayload) => Promise<QueueSendResult>): Promise<DrainSummary> {
-    const summary: DrainSummary = { sent: 0, dropped: [], kept: [] };
-    if (this.draining) return summary;
+  //
+  // Only the KEYS are read up front (#2396). Each row is loaded just before it is sent, so a drain
+  // holds one screenshot in memory, never sends a row a live capture is uploading, and never
+  // re-sends a row that live capture already delivered and removed.
+  async drain(
+    sender: (p: CapturePayload) => Promise<QueueSendResult>,
+    options: DrainOptions = {},
+  ): Promise<DrainSummary> {
+    const summary: DrainSummary = { sent: 0, dropped: [], kept: [], elsewhere: 0 };
+    if (this.draining) return { ...summary, busy: true };
     this.draining = true;
     try {
-      // ONE connection for the whole drain. Enumeration opened one and every deletion opened
-      // another, so draining fifty captures meant fifty-one connections — pure churn, and fifty-one
-      // chances to leave one open.
+      // ONE connection for the whole drain.
       return await this.withDb(async (db) => {
-        const entries: QueueRecord[] = await new Promise((resolve, reject) => {
-          const out: QueueRecord[] = [];
-          const tx = db.transaction(STORE, "readonly");
-          const cursorReq = tx.objectStore(STORE).openCursor();
-          cursorReq.onsuccess = () => {
-            const cursor = cursorReq.result;
-            if (cursor) {
-              out.push({ ...(cursor.value as Omit<QueueRecord, "key">), key: cursor.key as number });
-              cursor.continue();
+        const keys = await this.txOn<IDBValidKey[]>(db, "readonly", (s) => s.getAllKeys());
+        const target = options.companionUrl ? companionServerKey(options.companionUrl) : "";
+        try {
+          for (const rawKey of keys) {
+            const key = rawKey as number;
+            if (this.live.has(key)) continue;
+            const value = await this.txOn<unknown>(db, "readonly", (s) => s.get(key));
+            if (!value || this.live.has(key)) continue; // delivered meanwhile, or now being uploaded
+            const entry = { ...(value as Omit<QueueRecord, "key">), key };
+            // Taken for another companion: never replay it to this one, never delete it here.
+            // Compared as server identity, so "http://LOCALHOST:4773/" and "http://localhost:4773" match.
+            if (entry.companionUrl && target && companionServerKey(entry.companionUrl) !== target) {
+              summary.elsewhere += 1;
+              continue;
             }
-          };
-          cursorReq.onerror = () => reject(cursorReq.error);
-          // Resolved from the transaction, like every other operation here — the cursor is finished
-          // only once the transaction that owns it is.
-          tx.oncomplete = () => resolve(out);
-          tx.onabort = () => reject(tx.error ?? new Error("capture queue drain aborted"));
-        });
-
-        for (const entry of entries) {
-          // A kept capture still inside its backoff window is NOT uploaded again (#2263) — before
-          // this, every successful capture re-sent every kept PNG. It is still reported as kept, so
-          // the amber badge and popup note stay up while it waits. Never deleted here.
-          if (isDeferred(entry, this.now())) {
-            summary.kept.push(reported(entry.payload, lastRefusal(entry)));
-            continue;
+            // A kept capture still inside its backoff window is NOT uploaded again (#2263). It is
+            // still reported as kept, so the amber badge and popup note stay up while it waits.
+            if (isDeferred(entry, this.now())) {
+              summary.kept.push(reported(entry.payload, lastRefusal(entry)));
+              continue;
+            }
+            const result = await sender(entry.payload);
+            if (result.outcome === "retry") {
+              summary.stoppedStatus = result.status ?? 0;
+              return summary; // keep this and all later entries
+            }
+            if (result.outcome === "skip") {
+              summary.kept.push(reported(entry.payload, result));
+              // Left in the queue — not deleted — with its attempt count and next re-send time.
+              await this.txOn(db, "readwrite", (s) => s.put(withRefusal(entry, result, this.now())));
+              continue;
+            }
+            if (result.outcome === "drop") {
+              summary.dropped.push(reported(entry.payload, result));
+            } else {
+              summary.sent += 1;
+            }
+            // Both "sent" and "drop" remove the entry — a permanently-rejected capture must not stay
+            // at the head of the queue blocking the ones behind it. Awaiting the transaction (not the
+            // request) means a capture is never counted as handled while its removal is still open.
+            await this.txOn(db, "readwrite", (s) => s.delete(key));
           }
-          const result = await sender(entry.payload);
-          if (result.outcome === "retry") return summary; // keep this and all later entries
-          if (result.outcome === "skip") {
-            summary.kept.push(reported(entry.payload, result));
-            // Left in the queue — not deleted — with its attempt count and next re-send time.
-            await this.txOn(db, "readwrite", (s) => s.put(withRefusal(entry, result, this.now())));
-            continue;
-          }
-          if (result.outcome === "drop") {
-            summary.dropped.push(reported(entry.payload, result));
-          } else {
-            summary.sent += 1;
-          }
-          // Both "sent" and "drop" remove the entry — a permanently-rejected capture must not stay
-          // at the head of the queue blocking the ones behind it. Awaiting the transaction (not the
-          // request) means a capture is never counted as handled while its removal is still open:
-          // a suspend in that window would have resurrected an already-delivered capture.
-          await this.txOn(db, "readwrite", (s) => s.delete(entry.key));
+        } catch (err) {
+          summary.error = err instanceof Error ? err.message : String(err);
         }
         return summary;
       });

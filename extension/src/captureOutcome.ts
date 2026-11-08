@@ -1,6 +1,7 @@
 import { lockedQueueMessage, lockedQueuedMessage } from "./casePasswordSession.js";
 import { CAPTURE_LOG_NEEDS_REPAIR } from "./captureRefusal.js";
 import type { ConnectionStatus, DroppedCapture } from "./types.js";
+import type { QueueDrainStatus } from "./captureController.js";
 
 // What the toolbar badge, the popup's last-capture line and the capture's caller are told about one
 // capture attempt. Pure — the service worker applies it — so the badge logic is unit-testable.
@@ -55,6 +56,17 @@ function keptNote(status: ConnectionStatus): string {
   return ` · ${status.kept.length} queued capture(s) kept — ${parts.join("; ")}`;
 }
 
+// Queued captures taken for a different companion than the current one — kept, not sent (#2396).
+function elsewhereNote(status: ConnectionStatus): string {
+  if (!status.queuedElsewhere) return "";
+  return ` · ${status.queuedElsewhere} queued capture(s) waiting for the companion they were taken for`;
+}
+
+// Retrying the queue failed part-way — say so; it is retried again later (#2396).
+function drainErrorNote(status: ConnectionStatus): string {
+  return status.queueDrainError ? ` · queue retry failed: ${status.queueDrainError}` : "";
+}
+
 function heldDiag(status: ConnectionStatus): string {
   const why = status.heldCode === CAPTURE_LOG_NEEDS_REPAIR
     ? ` — ${NEEDS_REPAIR}`
@@ -94,7 +106,8 @@ function badge(status: ConnectionStatus): { badgeText: string; badgeColor: strin
 }
 
 export function describeCaptureOutcome(status: ConnectionStatus, hadCredential: boolean): CaptureOutcome {
-  const diag = baseDiag(status, hadCredential) + droppedNote(status) + keptNote(status);
+  const diag = baseDiag(status, hadCredential) + droppedNote(status) + keptNote(status) + elsewhereNote(status)
+    + drainErrorNote(status);
   // A held capture is saved but not delivered, and needs the analyst — report it like locked.
   const ok = !(status.rejected || status.locked || status.held || status.queueWriteFailed);
   return {
@@ -102,8 +115,40 @@ export function describeCaptureOutcome(status: ConnectionStatus, hadCredential: 
     ...badge(status),
     // A wrong password is tried ONCE (#2135). Only the CURRENT capture's locked answer says so — a
     // queued capture for another case being locked says nothing about this case's password (#2185).
-    forgetCredential: Boolean(status.locked && hadCredential),
+    // A queued capture that carried the password and was refused says the same (#2396).
+    forgetCredential: Boolean((status.locked && hadCredential) || status.credentialRefused),
     ok,
     ...(ok ? {} : { error: diag }),
+  };
+}
+
+/**
+ * What a drain of the offline queue that ran ON ITS OWN — on its schedule or at browser start, not
+ * after a capture — tells the analyst (#2396). Same badge rules as a capture; the line says what
+ * the queue did, including "nothing could be sent", so a stuck queue is visible.
+ */
+export function describeQueueDrain(drain: QueueDrainStatus): Omit<CaptureOutcome, "ok" | "error"> {
+  const status: ConnectionStatus = {
+    online: drain.stoppedStatus !== 0,
+    queued: drain.queued,
+    ...(drain.dropped.length ? { dropped: drain.dropped } : {}),
+    ...(drain.kept.length ? { kept: drain.kept } : {}),
+    ...(drain.elsewhere ? { queuedElsewhere: drain.elsewhere } : {}),
+    ...(drain.lockedQueuedCaseId ? { lockedQueuedCaseId: drain.lockedQueuedCaseId } : {}),
+    ...(drain.credentialRefused ? { credentialRefused: true } : {}),
+    ...(drain.error ? { queueDrainError: drain.error } : {}),
+  };
+  const head = drain.stoppedStatus === 0
+    ? `companion unreachable — ${drain.queued} queued capture(s) will be retried`
+    : drain.lockedQueuedCaseId
+      ? lockedQueuedMessage(drain.queued, drain.lockedQueuedCaseId)
+      : drain.stoppedStatus !== undefined
+        ? `companion answered HTTP ${drain.stoppedStatus} — ${drain.queued} queued capture(s) will be retried`
+        : `queue: ${drain.sent} sent, ${drain.queued} still waiting`;
+  const sentNote = drain.sent && drain.stoppedStatus !== undefined ? ` · ${drain.sent} sent` : "";
+  return {
+    diag: head + sentNote + droppedNote(status) + keptNote(status) + elsewhereNote(status) + drainErrorNote(status),
+    ...badge(status),
+    forgetCredential: drain.credentialRefused,
   };
 }
