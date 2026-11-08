@@ -22,6 +22,8 @@ function drTaggerLine(st) {
   if (st.problem) return { label: "Tagger rules", text: `${what} — see details`, action: null, warn: true };
   if (lc && lc.status === "update") return { label: "Tagger rules", text: `${what} — ${lc.latest} available`, action: "tagger", button: "Review update…" };
   if (lc && lc.status === "error") return { label: "Tagger rules", text: `${what} — the last check failed`, action: "tagger", button: "Check again" };
+  // A newer pack exists but this app cannot load it: not "current" — the app needs upgrading first.
+  if (lc && lc.status === "needs-newer-app") return { label: "Tagger rules", text: `${what} — ${lc.message || "a newer pack needs a newer app"}`, action: null, warn: true };
   if (lc) return { label: "Tagger rules", text: `${what} — current`, action: null };
   return { label: "Tagger rules", text: `${what} — not checked`, action: "tagger", button: "Check for updates" };
 }

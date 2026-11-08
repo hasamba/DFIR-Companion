@@ -103,6 +103,20 @@ describe("the Detection rules box (#2389)", () => {
     ).toBeNull();
   });
 
+  it("never calls a pack that needs a newer app current", () => {
+    const { api } = harness();
+    const line = api.drTaggerLine({
+      ...PACK_STATUS,
+      lastCheck: {
+        status: "needs-newer-app",
+        message: "rule pack rules-2026.12.01 needs DFIR Companion 0.46.0 or newer.",
+      },
+    });
+    expect(line?.text).not.toContain("current");
+    expect(line).toMatchObject({ warn: true, action: null });
+    expect(line?.text).toContain("needs DFIR Companion 0.46.0 or newer");
+  });
+
   it("offers a check when nothing was checked yet, and says so when the last check failed", () => {
     const { api } = harness();
     expect(
