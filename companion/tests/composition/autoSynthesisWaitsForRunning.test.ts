@@ -135,6 +135,9 @@ describe("an automatic synthesis kick while a synthesis is running (#1608)", () 
     analysis.resynthesizeInBackground(CASE_ID);
     await runningCount(1);
     analysis.resynthesizeInBackground(CASE_ID); // new evidence arrives, the kick waits
+    // Let the kick reach its wait: it reads the case's AI switch and its closed/archived status
+    // first (#2404). A cancel in the very same tick would land before the kick is waiting at all.
+    await settle();
 
     const running = jobManager.list(CASE_ID).find((j) => j.kind === "synthesis" && j.status === "running");
     await jobManager.cancel(running!.id);
