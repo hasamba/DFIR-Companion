@@ -405,7 +405,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
   // tests and embeddings that don't use monitoring.
   void monitors.resumeVeloMonitors();
-  void hunts.resumeVeloHuntStatusPolls();
+  void hunts.resumeVeloHuntStatusPolls({ startup: true }); // #2403: + interrupted collects (startup only)
 
   // Arm the evidence drop-folder watcher (auto-import inbox). Gated on the status store being wired
   // (startServer), so createApp-only unit tests never start a filesystem poller.
