@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -223,5 +223,44 @@ describe("hunts left mid-collect by a dead process (#2403)", () => {
     const { t } = huntTimers(huntStore, async () => ({ state: "RUNNING" }));
     await t.resumeVeloHuntStatusPolls();
     expect((await huntStore.get("c1", JOB.huntId))?.status).toBe("collecting");
+  });
+});
+
+describe("overlapping hunt status polls (#2403)", () => {
+  it("a stale poll does not cancel the re-arm an overlapping poll just made", async () => {
+    const huntStore = new VeloHuntStore(store);
+    await huntStore.upsert("c1", JOB);
+    const gates = [gate<unknown>(), gate<unknown>()];
+    let call = 0;
+    const { t } = huntTimers(huntStore, async () => {
+      const mine = call++;
+      if (mine >= 2) return { state: "RUNNING" };
+      const answer = await gates[mine].promise;
+      if (mine === 0) throw new Error("ECONNREFUSED"); // A: running -> unreachable
+      return answer;
+    });
+    const realSetTimeout = globalThis.setTimeout;
+    const yieldReal = () => new Promise((r) => realSetTimeout(r, 5));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      t.scheduleVeloHuntStatusPoll("c1", JOB.huntId);
+      const a = t.pollVeloHuntStatus("c1", JOB.huntId); // the scheduled tick
+      const b = t.pollVeloHuntStatus("c1", JOB.huntId); // "Poll now", also started from "running"
+      for (let i = 0; i < 50 && call < 2; i++) await yieldReal();
+      gates[0].release(undefined);
+      await a; // recorded "unreachable" and re-armed
+      gates[1].release({ state: "RUNNING" }); // B is stale now: the row is no longer "running"
+      await b;
+      expect((await huntStore.get("c1", JOB.huntId))?.status).toBe("unreachable");
+      // The chain must still be alive: the next tick fires, polls, and re-arms again.
+      await vi.advanceTimersByTimeAsync(301_000);
+      for (let i = 0; i < 50 && call < 3; i++) await yieldReal();
+      for (let i = 0; i < 20; i++) await yieldReal();
+      expect(call).toBe(3);
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      t.stopVeloHuntStatusPollsForCase("c1");
+      vi.useRealTimers();
+    }
   });
 });

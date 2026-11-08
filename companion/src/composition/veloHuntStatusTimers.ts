@@ -122,10 +122,9 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     } catch {
       /* best-effort, as before: a failed write does not stop the poll */
     }
-    if (wasStale) {
-      veloStatusTimers.delete(caseId, huntId);
-      return;
-    }
+    // Stale: leave the timers alone. A collect already stopped them, a forgotten hunt's next tick ends
+    // itself, and an overlapping poll that DID record the change owns the re-arm it just made.
+    if (wasStale) return;
     if (outcome.job.status !== startedFrom) options.onVeloHunt?.(caseId);
 
     if (outcome.action === "reschedule") {
