@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import type { CaptureMetadata } from "../types.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
+import { AuditLogNeedsRepairError } from "../storage/auditLogNeedsRepairError.js";
 
 /**
  * Recognising a capture the extension sends twice (#2397).
@@ -61,11 +62,12 @@ function addTo(index: IdIndex, metadata: CaptureMetadata): void {
 }
 
 /**
- * Build the case's id index from captures.jsonl. Returns undefined when the log has a malformed
- * line: such a log is refused by the sequence allocator anyway (needs repair), and an index built
- * past the damage must never be cached as complete.
+ * Build the case's id index from captures.jsonl. A malformed line fails CLOSED with the same
+ * needs-repair refusal the sequence allocator gives (#2252): an index built past the damage could
+ * miss the very capture being re-sent and store it twice. The extension keeps the capture queued
+ * on that 409, and the next capture re-reads the log once it is repaired.
  */
-async function loadIndex(store: CaseStore, caseId: string): Promise<IdIndex | undefined> {
+async function loadIndex(store: CaseStore, caseId: string): Promise<IdIndex> {
   let raw: string;
   try {
     raw = await readFile(store.capturesLogPath(caseId), "utf8");
@@ -74,12 +76,13 @@ async function loadIndex(store: CaseStore, caseId: string): Promise<IdIndex | un
     throw err;
   }
   const index: IdIndex = new Map();
-  for (const line of raw.split("\n")) {
+  for (const [lineIndex, line] of raw.split("\n").entries()) {
     if (!line.trim()) continue;
     try {
       addTo(index, JSON.parse(line) as CaptureMetadata);
-    } catch {
-      return undefined;
+    } catch (err) {
+      const logFile = basename(store.capturesLogPath(caseId));
+      throw new AuditLogNeedsRepairError(caseId, "capture", logFile, lineIndex + 1, (err as Error).message);
     }
   }
   return index;
@@ -98,7 +101,6 @@ export async function findReplay(
   let index = cache.get(caseId);
   if (!index) {
     index = await loadIndex(store, caseId);
-    if (!index) return undefined;
     cache.set(caseId, index);
   }
   return index.get(key.captureId)?.find((stored) => sameCapture(stored, key));

@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, readFile, readdir, appendFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, appendFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import sharp from "sharp";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
+import { AuditLogNeedsRepairError } from "../../src/storage/auditLogNeedsRepairError.js";
 import { ingestCapture, _resetDedupCache } from "../../src/ingest/captureIngest.js";
 import { _resetReplayIndex } from "../../src/ingest/captureReplay.js";
 import { hashCasePassword } from "../../src/analysis/casePassword.js";
@@ -128,16 +129,21 @@ describe("ingestCapture — re-sent captures (#2397)", () => {
     ).rejects.toThrow();
   });
 
-  it("does not trust an index built past a damaged log line", async () => {
+  it("refuses a capture with an id while the log has a damaged line, and replays once repaired", async () => {
     const img = await png(1);
-    await ingestCapture(store, body({ imageBase64: img }));
-    await appendFile(store.capturesLogPath("c1"), "{not json\n", "utf8");
+    await ingestCapture(store, body({ imageBase64: img })); // warms the sequence allocator
+    const logPath = store.capturesLogPath("c1");
+    const good = await readFile(logPath, "utf8");
+    await appendFile(logPath, "{not json\n", "utf8");
     _resetReplayIndex();
-    // Fail safe: an index built past the damage is not trusted, so the capture is stored again
-    // rather than answered from a possibly incomplete record (a restart then refuses the damaged
-    // log outright, via the sequence allocator).
-    const again = await ingestCapture(store, body({ imageBase64: img }));
-    expect(again.replayed).toBeUndefined();
+    // Fail closed: an index built past the damage could miss this very capture and store it twice.
+    await expect(ingestCapture(store, body({ imageBase64: img }))).rejects.toBeInstanceOf(
+      AuditLogNeedsRepairError,
+    );
+    expect(await readdir(store.screenshotsDir("c1"))).toHaveLength(1);
+    await writeFile(logPath, good, "utf8"); // the analyst repairs the line
+    expect((await ingestCapture(store, body({ imageBase64: img }))).replayed).toBe(true);
+    expect(await logLines()).toHaveLength(1);
   });
 });
 

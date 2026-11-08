@@ -87,6 +87,9 @@ export interface ConnectionStatus {
   credentialRefused?: boolean;
   // Retrying the offline queue failed part-way (#2396); anything it discarded is still listed above.
   queueDrainError?: string;
+  // With `locked`: the case's password is locked out after wrong guesses (429), so even the right
+  // password was refused unchecked — the stored password is NOT forgotten (#2397).
+  lockedOut?: boolean;
 }
 
 // The password of a password-locked case, as the analyst typed it into the popup (#2135). Held in

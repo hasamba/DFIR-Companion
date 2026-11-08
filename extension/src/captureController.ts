@@ -121,7 +121,9 @@ export class CaptureController {
     // case's password is locked out after wrong guesses (#2397). Not a verdict on the screenshot:
     // keep it queued, so it uploads once the analyst enters the password.
     if (isCaseLockRefusal(result.status, result.errorMessage, result.errorCode)) {
-      return this.kept(key, writeError, { online: true, locked: true });
+      // A lockout refuses even the right password without checking it: never a reason to forget it.
+      const lockedOut = !isLockedRejection(result.status, result.errorMessage);
+      return this.kept(key, writeError, { online: true, locked: true, ...(lockedOut ? { lockedOut: true } : {}) });
     }
 
     // Refused for WHO is asking — a missing/rotated service token (401), a case role that cannot
@@ -179,6 +181,7 @@ export class CaptureController {
       online: status.online,
       queued,
       ...(status.locked ? { locked: true } : {}),
+      ...(status.lockedOut ? { lockedOut: true } : {}),
       queueWriteFailed: writeError ?? "the capture could not be queued",
     };
   }
@@ -217,8 +220,11 @@ export class CaptureController {
       // to stop the whole drain, so one locked case held up every other case's captures).
       if (isCaseLockRefusal(r.status, r.errorMessage, r.errorCode)) {
         lockedQueuedCaseId ??= p.caseId;
-        // It carried the stored password and was still refused: that password is wrong (#2396).
-        if (this.client.sendsCredentialFor(p.caseId)) credentialRefused = true;
+        // It carried the stored password and was refused as WRONG (401 locked): forget it (#2396).
+        // A lockout (429) refuses even the right password unchecked, so it is kept.
+        if (isLockedRejection(r.status, r.errorMessage) && this.client.sendsCredentialFor(p.caseId)) {
+          credentialRefused = true;
+        }
         refusedCases.add(p.caseId);
         return { outcome: "skip", ...detail };
       }

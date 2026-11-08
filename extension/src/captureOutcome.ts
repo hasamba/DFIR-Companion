@@ -80,6 +80,9 @@ function heldDiag(status: ConnectionStatus): string {
 
 function baseDiag(status: ConnectionStatus, hadCredential: boolean): string {
   if (status.queueWriteFailed) return `capture NOT saved — queue write failed: ${status.queueWriteFailed}`;
+  if (status.locked && status.lockedOut) {
+    return `${lockedQueueMessage(status.queued)} (too many wrong passwords — waiting for the lockout to pass)`;
+  }
   if (status.locked) {
     return `${lockedQueueMessage(status.queued)}${hadCredential ? " (the password was not accepted)" : ""}`;
   }
@@ -120,7 +123,8 @@ export function describeCaptureOutcome(status: ConnectionStatus, hadCredential: 
     // A wrong password is tried ONCE (#2135). Only the CURRENT capture's locked answer says so — a
     // queued capture for another case being locked says nothing about this case's password (#2185).
     // A queued capture that carried the password and was refused says the same (#2396).
-    forgetCredential: Boolean((status.locked && hadCredential) || status.credentialRefused),
+    // A lockout refuses even the right password unchecked, so it never forgets one (#2397).
+    forgetCredential: Boolean((status.locked && !status.lockedOut && hadCredential) || status.credentialRefused),
     ok,
     ...(ok ? {} : { error: diag }),
   };

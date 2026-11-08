@@ -148,3 +148,44 @@ describe("a live capture for a locked-out case (#2397)", () => {
     expect(describeCaptureOutcome(status, false).diag).toContain("Case is locked");
   });
 });
+
+// Codex review of #2397: a lockout refuses even the right password without checking it.
+describe("case-password lockout keeps the stored password (#2397 review)", () => {
+  it("does not flag a correct password presented during a lockout, in a drain", async () => {
+    await queue.enqueue(row("A", "1"));
+    const c = companion(() => lockout());
+    const client = new CompanionClient(URL_, c.fetchFn, "", credentialFor("A"));
+    const drain = await new CaptureController(client, queue).drainQueue();
+    expect(drain.credentialRefused).toBe(false);
+    expect(describeQueueDrain(drain).forgetCredential).toBe(false);
+  });
+
+  it("does not forget the password for a live capture refused by a lockout, and says why", async () => {
+    const c = companion(() => lockout());
+    const client = new CompanionClient(URL_, c.fetchFn, "", credentialFor("A"));
+    const status = await new CaptureController(client, queue).capture("A", "timer", snapshot);
+    expect(status).toMatchObject({ locked: true, lockedOut: true });
+    const outcome = describeCaptureOutcome(status, true);
+    expect(outcome.forgetCredential).toBe(false);
+    expect(outcome.diag).toContain("waiting for the lockout to pass");
+  });
+
+  it("delivers with the kept password once the lockout has passed", async () => {
+    await queue.enqueue(row("A", "1"));
+    let lockedOut = true;
+    const c = companion(() => (lockedOut ? lockout() : created()));
+    const client = new CompanionClient(URL_, c.fetchFn, "", credentialFor("A"));
+    await new CaptureController(client, queue).drainQueue();
+    lockedOut = false;
+    now += 2 * 60_000; // past the first backoff window
+    const drain = await new CaptureController(client, queue).drainQueue();
+    expect(drain).toMatchObject({ sent: 1, queued: 0 });
+  });
+
+  it("still forgets a password refused as wrong", async () => {
+    const c = companion(() => locked());
+    const client = new CompanionClient(URL_, c.fetchFn, "", credentialFor("A"));
+    const status = await new CaptureController(client, queue).capture("A", "timer", snapshot);
+    expect(describeCaptureOutcome(status, true).forgetCredential).toBe(true);
+  });
+});
