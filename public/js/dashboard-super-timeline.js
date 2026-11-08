@@ -23,7 +23,6 @@
   // feature was typed before it moved out.
   const ST_PAGE = 100;
 
-
   let superOffset = 0;            // pagination cursor
   let superTotal = 0;
   let superOrigins = [];          // origin facet from the last query
@@ -101,7 +100,6 @@
     return p.toString();
   }
 
-
   function loadSuperTimeline(caseId) {
     caseId = caseId || superCaseId();
     const list = document.getElementById("superTimelineList");
@@ -151,44 +149,26 @@
   // The origin/host choices belong to ONE case. They used to be pruned against every answer, which
   // hid that; kept across a narrow window (#1911) they would otherwise follow the analyst into the
   // next case and hide a host there that happens to share a name. Reset before the first query.
-  //
-  // So does the rest of the panel's per-case state (#2401). The selection is a set of THIS case's
-  // event ids, and Promote / bulk Star / bulk Tag send it as-is — carried over, it acted on case B
-  // with case A's ids. The page number, and the Tagged-only, Starred-only and tag filters, made case
-  // B open on a filtered or past-the-end page that reads as "this case has nothing". All reset here.
-  // Group repeats is a per-browser view preference, not case state, and is kept.
-  //
-  // The rows on screen and in the cache still belong to the case being left until the new answer
-  // lands, so they are dropped from the list and disowned (superRowsCase): Select-all must not tick
-  // case A's ids into case B's selection. superCaseGen numbers each visit, so an answer for an
-  // earlier visit is recognised even after A -> B -> A.
-  //
-  // The From/To boxes and the saved-timeframe choice are cleared for the same reason as the filters.
+  // So does the rest (#2401): carried over, the selection sent A's ids to B and the page/filters/time
+  // range made B look empty. A's rows are disowned (superRowsCase) so Select-all cannot tick them;
+  // superCaseGen numbers each visit (A -> B -> A). Group repeats is a browser preference and stays.
   let superFilterCase = null;
-  let superCaseGen = 0;
-  let superRowsCase = null; // the case whose rows renderSuperTimeline last drew
+  let superCaseGen = 0, superRowsCase = null; // visit number; the case whose rows were last drawn
   function scopeSuperFiltersToCase(caseId) {
     if (caseId === superFilterCase) return;
-    superFilterCase = caseId;
-    superCaseGen++;
+    superFilterCase = caseId; superCaseGen++;
     superSelectedOrigins = null;
     superKnownOrigins = new Set();
     superSelectedHosts = null;
     superKnownHosts = new Set();
-    superPromote = new Set();
-    superOffset = 0;
-    superSelectedLabels = new Set();
-    superTaggedOnly = false;
-    superStarredOnly = false;
-    paintSuperToggles();
+    superPromote = new Set(); superSelectedLabels = new Set();
+    superOffset = 0; superTaggedOnly = false; superStarredOnly = false; paintSuperToggles();
     ["stFrom", "stTo", "stTimeframe"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ""; });
-    const list = document.getElementById("superTimelineList");
-    if (list && superRowsCase !== null) list.innerHTML = "";
+    const list = document.getElementById("superTimelineList"); if (list && superRowsCase !== null) list.innerHTML = "";
   }
   function paintSuperToggles() {
-    const t = document.getElementById("stTaggedOnly");
+    const t = document.getElementById("stTaggedOnly"), s = document.getElementById("stStarredOnly");
     if (t) { t.textContent = superTaggedOnly ? "☑ Tagged only" : "☐ Tagged only"; t.classList.toggle("active", superTaggedOnly); }
-    const s = document.getElementById("stStarredOnly");
     if (s) { s.textContent = superStarredOnly ? "★ Starred only" : "☆ Starred only"; s.classList.toggle("active", superStarredOnly); }
   }
 
@@ -682,10 +662,8 @@
     loadSuperTimeline();
   }
 
-  // ONE PROMOTE AT A TIME (#2401). A double click used to send the same ticked set twice. The guard is
-  // a button-click POST's, never under the case load's abandon contract, so it always comes off in
-  // the finally. An answer that lands after a case switch belongs to the case it was sent for: it
-  // must neither clear the new case's selection nor reload the panel with the old case's id.
+  // ONE PROMOTE PER VISIT (#2401): no double send. An answer for an earlier visit neither clears the
+  // new selection nor reloads the panel with the old case id.
   let superPromoteInFlight = null; // the visit (superCaseGen) whose promote is in flight, or null
   function promoteSuperSelected() {
     const caseId = superCaseId();
@@ -695,8 +673,7 @@
     if (superPromoteInFlight === gen) { if (msg) { msg.style.color = "var(--text-muted)"; msg.textContent = "promoting… (already sent)"; } return; }
     const eventIds = [...superPromote];
     if (!eventIds.length) { if (msg) { msg.textContent = "tick some events first"; } return; }
-    const stillHere = () => gen === superCaseGen && superCaseId() === caseId;
-    superPromoteInFlight = gen;
+    const stillHere = () => gen === superCaseGen && superCaseId() === caseId; superPromoteInFlight = gen;
     if (msg) { msg.style.color = "var(--text-muted)"; msg.textContent = "promoting…"; }
     fetch(`/cases/${encodeURIComponent(caseId)}/super-timeline/promote`, {
       method: "POST", headers: { "content-type": "application/json" },
