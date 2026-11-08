@@ -77,6 +77,9 @@ async function resumeJob(ctx: RouteContext, req: Request, res: Response): Promis
   if (result.reason === "not-interrupted") {
     return res.status(409).json({ error: "job is not interrupted or failed" });
   }
+  if (result.reason === "ledger-write-failed") {
+    return res.status(503).json({ error: "could not record the resume; nothing was restarted, try again" });
+  }
   const error =
     result.reason === "retry-exhausted"
       ? "job retry budget is exhausted"

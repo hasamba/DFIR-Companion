@@ -9,6 +9,14 @@ import { sanitizeManifestValue } from "./analysisRunHash.js";
 import { manifestValueSchema, type ManifestValue } from "./analysisRunTypes.js";
 import type { JobLedgerStore } from "./jobLedgerStore.js";
 import {
+  abortError,
+  deferred,
+  ledgerWriteFailure,
+  nextAdmissibleJob,
+  toError,
+  type Deferred,
+} from "./jobManagerSupport.js";
+import {
   modelIdentityFields,
   servedStampTarget,
   withModelLabels,
@@ -100,7 +108,8 @@ export type ResumeResult =
   | { ok: true; job: Job }
   | {
       ok: false;
-      reason: "unknown" | "not-interrupted" | "not-resumable" | "retry-exhausted";
+      /** ledger-write-failed: the requeue could not be recorded; nothing changed, Resume stays offered. */
+      reason: "unknown" | "not-interrupted" | "not-resumable" | "retry-exhausted" | "ledger-write-failed";
     };
 
 export interface FailureOptions {
@@ -115,18 +124,6 @@ export interface CheckpointInput {
   cursor?: unknown;
 }
 
-type Deferred = {
-  promise: Promise<void>;
-  resolve: () => void;
-  reject: (error: Error) => void;
-  /**
-   * Whether resolve/reject has already been called. Read SYNCHRONOUSLY by the supersede path to
-   * answer "has this job's ledger INSERT landed yet" — a question a Promise cannot answer without
-   * awaiting, and awaiting is what the supersede cannot do (register() is synchronous).
-   */
-  settled: () => boolean;
-};
-
 type ResumeHandler = (job: Job, signal?: AbortSignal) => Promise<void>;
 type ResumeHandlerOptions = {
   cancellable?: (job: Job) => boolean;
@@ -135,45 +132,6 @@ type ResumeHandlerRegistration = {
   handler: ResumeHandler;
   options: ResumeHandlerOptions;
 };
-
-function deferred(): Deferred {
-  let resolve!: () => void;
-  let reject!: (error: Error) => void;
-  const promise = new Promise<void>((ok, fail) => {
-    resolve = ok;
-    reject = fail;
-  });
-  // Cancelling a job that never started REJECTS these (see cancel()), possibly before anyone waits:
-  // resume() attaches runResumedJob's handler only after the ledger write. Unhandled, Node makes that
-  // rejection fatal. This keep-alive swallows nothing — .catch() returns a NEW promise, and every
-  // real awaiter of `ready` still sees the AbortError.
-  promise.catch(() => {});
-  let done = false;
-  return {
-    promise,
-    resolve: () => {
-      done = true;
-      resolve();
-    },
-    reject: (error: Error) => {
-      done = true;
-      reject(error);
-    },
-    settled: () => done,
-  };
-}
-
-function abortError(): Error {
-  const error = new Error("job cancelled before it started");
-  error.name = "AbortError";
-  return error;
-}
-
-function priorityRank(priority: JobPriority): number {
-  if (priority === "high") return 2;
-  if (priority === "normal") return 1;
-  return 0;
-}
 
 export class JobManager {
   private table: JobTable = emptyJobTable();
@@ -189,6 +147,9 @@ export class JobManager {
   private readonly durabilities = new Map<string, Deferred>();
   private readonly budgetTimers = new Map<string, NodeJS.Timeout>();
   private readonly resumeHandlers = new Map<JobKind, ResumeHandlerRegistration>();
+  // Resumes whose requeue is still being written (#2409): the row stays interrupted/failed in memory
+  // until it lands; an exclusive registration of the same kind marks the attempt superseded.
+  private readonly resuming = new Map<string, { superseded: boolean; cancellable: boolean }>();
   private readonly stopping = new StoppingJobs(); // a deleted case's work still winding down (#1831)
   private readonly onJob?: (caseId: string | null) => void;
   private readonly onError?: (error: Error) => void;
@@ -219,7 +180,7 @@ export class JobManager {
     let sequence = 0;
     this.id = opts.id ?? (opts.ledger ? () => `job_${randomUUID()}` : () => `job_${++sequence}`);
     this.initialization = this.restore().catch((error: unknown) => {
-      this.initializationError = error instanceof Error ? error : new Error(String(error));
+      this.initializationError = toError(error);
       this.reportError(this.initializationError);
     });
   }
@@ -252,7 +213,12 @@ export class JobManager {
     this.publishPatch(job, pinJobModel(this.table, jobId, fields, this.now()));
   }
 
-  /** Adopt a patched table; when `before` changed, persist its new row and tell the dashboard. */
+  /**
+   * Adopt a patched table; when `before` changed, persist its new row and tell the dashboard.
+   * Fire-and-forget is safe for ordering (#2409): ledger.update posts to the single ledger worker
+   * synchronously, and that worker handles messages one at a time in arrival order, so a progress
+   * write can never land after a terminal write issued later. progressJob ignores non-running rows.
+   */
   private publishPatch(before: Job, table: JobTable): void {
     this.table = table;
     const updated = getJob(table, before.id);
@@ -260,7 +226,7 @@ export class JobManager {
     if (!this.ledger) return this.emit(updated.caseId);
     void this.persistUpdate(updated)
       .then(() => this.emit(updated.caseId))
-      .catch((error: unknown) => this.reportError(error instanceof Error ? error : new Error(String(error))));
+      .catch((error: unknown) => this.reportError(toError(error)));
   }
 
   register(input: RegisterInput): RegisteredJob {
@@ -291,9 +257,9 @@ export class JobManager {
   private supersedeExclusiveJobs(input: RegisterInput, caseId: string | null): void {
     if (!input.exclusive) return;
     for (const job of listJobs(this.table, { caseId })) {
-      if (job.kind === input.kind && !isTerminal(job.status)) {
-        this.dropForExclusiveRegistration(job);
-      }
+      if (job.kind !== input.kind) continue;
+      if (!isTerminal(job.status)) this.dropForExclusiveRegistration(job);
+      else this.supersedeResumeInFlight(job);
     }
   }
 
@@ -344,7 +310,7 @@ export class JobManager {
       this.startInMemoryWhenPossible();
     } else {
       void this.persistNewAndSchedule(jobId).catch((error: unknown) => {
-        const normalized = error instanceof Error ? error : new Error(String(error));
+        const normalized = toError(error);
         durability.reject(normalized);
         admission.reject(normalized);
         this.reportError(normalized);
@@ -431,12 +397,16 @@ export class JobManager {
     this.clearBudgetTimer(jobId);
     this.table = cancelJob(this.table, jobId, this.now());
     const cancelled = getJob(this.table, jobId)!;
-    await this.persistUpdate(cancelled);
+    // The work is already aborted and the row cancelled in memory, so a failed write is reported
+    // and the clean-up and scheduling below still run (#2409): a throw here used to strand the
+    // job's slot bookkeeping and stop the queue, and escaped the cancel route unhandled.
+    const failure = await this.tryPersist(cancelled);
     this.admissions.get(jobId)?.reject(abortError());
     this.admissions.delete(jobId);
     this.durabilities.delete(jobId);
     this.controllers.delete(jobId);
     this.emit(cancelled.caseId);
+    if (failure) this.reportError(ledgerWriteFailure(cancelled, job.status, failure));
     await this.scheduleQueued();
     return { ok: true, job: cancelled };
   }
@@ -489,42 +459,59 @@ export class JobManager {
       return { ok: false, reason: "retry-exhausted" };
     }
 
+    if (this.resuming.has(jobId)) return { ok: false, reason: "not-interrupted" };
+
     const repin = this.modelFor
       ? modelIdentityFields(
           this.modelFor({ kind: job.kind, ...(job.parameters ? { parameters: job.parameters } : {}) }),
         )
       : undefined;
-    this.table = requeueJob(this.table, jobId, this.now(), repin);
-    if (registration.options.cancellable?.(job)) {
-      this.table = allowJobCancellation(this.table, jobId);
+    const now = this.now();
+    const requeue = (table: JobTable): JobTable => {
+      const requeued = requeueJob(table, jobId, now, repin);
+      return registration.options.cancellable?.(job) ? allowJobCancellation(requeued, jobId) : requeued;
+    };
+    const queued = getJob(requeue(this.table), jobId)!;
+
+    // WRITE FIRST, then apply (#2409): until the queued row is on disk and installed, memory keeps it
+    // interrupted/failed, so no pass can admit it and a refused write leaves no phantom slot. The
+    // `resuming` guard covers the whole window, prune included, against a supersede or second resume.
+    const attempt = { superseded: false, cancellable: queued.cancellable };
+    this.resuming.set(jobId, attempt);
+    try {
+      try {
+        await this.ledger?.update(queued);
+      } catch (error) {
+        this.reportError(new Error(`job ${jobId} resume was not recorded: ${toError(error).message}`));
+        return { ok: false, reason: "ledger-write-failed" };
+      }
+      if (this.ledger) await this.pruneLedger(queued.caseId);
+      // SUPERSEDED (or the case forgotten) MEANWHILE: left on disk, the queued row comes back after a
+      // restart offering Resume on work a newer run already took over. Erase it; the resume lost.
+      if (attempt.superseded || !getJob(this.table, jobId)) {
+        await this.ledger?.delete(queued).catch((error: unknown) => this.reportError(toError(error)));
+        return { ok: false, reason: "unknown" };
+      }
+      this.table = requeue(this.table);
+      this.installResumed(queued, registration.handler);
+      return { ok: true, job: getJob(this.table, jobId)! };
+    } finally {
+      this.resuming.delete(jobId);
     }
-    const queued = getJob(this.table, jobId)!;
+  }
+
+  private installResumed(queued: Job, handler: ResumeHandler): void {
     if (queued.cancellable || queued.resourceBudget?.maxRuntimeMs) {
-      this.controllers.set(jobId, new AbortController());
+      this.controllers.set(queued.id, new AbortController());
     }
     const admission = deferred();
     const durability = deferred();
-    this.admissions.set(jobId, admission);
-    this.durabilities.set(jobId, durability);
-    await this.persistUpdate(queued);
-    // SUPERSEDED WHILE THAT WRITE WAS IN FLIGHT. dropForExclusiveRegistration only deletes the
-    // ledger row itself when durability has settled; otherwise it defers to the insert in
-    // persistNewAndSchedule, and a resume never goes near one — the row it requeues has been on
-    // disk since the run that was interrupted. So this await is the only place left that can clean
-    // up, and skipping it strands a `queued` row for a job nothing points at: the next restore()
-    // reloads it as `interrupted` and offers Resume on work a newer run already took over.
-    //
-    // Only a supersede (or forgetCase) can remove the row here — capJobsByScope evicts terminal
-    // rows only, and this one is queued — so a missing row means the resume lost the race.
-    if (!getJob(this.table, jobId)) {
-      await this.ledger?.delete(queued);
-      return { ok: false, reason: "unknown" };
-    }
+    this.admissions.set(queued.id, admission);
+    this.durabilities.set(queued.id, durability);
     durability.resolve();
     this.emit(queued.caseId);
     void this.scheduleQueued();
-    void this.runResumedJob(jobId, registration.handler, admission.promise);
-    return { ok: true, job: queued };
+    void this.runResumedJob(queued.id, handler, admission.promise);
   }
 
   list(caseId?: string): JobListItem[] {
@@ -620,7 +607,16 @@ export class JobManager {
     if (!inLedger) return;
     void (this.ledger?.delete(job) ?? Promise.resolve())
       .then(() => this.scheduleQueued())
-      .catch((error: unknown) => this.reportError(error instanceof Error ? error : new Error(String(error))));
+      .catch((error: unknown) => this.reportError(toError(error)));
+  }
+
+  /** A resume still writing its requeue: drop the row now; resume() erases what it wrote (#2409). */
+  private supersedeResumeInFlight(job: Job): void {
+    const attempt = this.resuming.get(job.id);
+    if (!attempt?.cancellable) return;
+    attempt.superseded = true;
+    this.table = dropJob(this.table, job.id);
+    this.emit(job.caseId);
   }
 
   private startInMemoryWhenPossible(): void {
@@ -636,7 +632,7 @@ export class JobManager {
 
   private scheduleQueued(): Promise<void> {
     this.scheduling = this.scheduling
-      .catch((error: unknown) => this.reportError(error instanceof Error ? error : new Error(String(error))))
+      .catch((error: unknown) => this.reportError(toError(error)))
       .then(async () => {
         while (true) {
           const next = this.nextAdmissible();
@@ -656,7 +652,7 @@ export class JobManager {
             // gets its chance — breaking here would strand them until some later registration or
             // terminal transition happened to schedule another pass. The failure is retryable, so
             // if the ledger is genuinely down each job fails visibly and can be resumed.
-            const normalized = error instanceof Error ? error : new Error(String(error));
+            const normalized = toError(error);
             this.table = failJob(
               this.table,
               next.id,
@@ -686,24 +682,7 @@ export class JobManager {
   }
 
   private nextAdmissible(): Job | undefined {
-    const running = this.table.jobs.filter((job) => job.status === "running");
-    if (running.length >= this.globalConcurrency) return undefined;
-    const runningByScope = new Map<string, number>();
-    for (const job of running) {
-      const scope = job.caseId ?? "global";
-      runningByScope.set(scope, (runningByScope.get(scope) ?? 0) + 1);
-    }
-    return this.table.jobs
-      .filter((job) => {
-        if (job.status !== "queued") return false;
-        return (runningByScope.get(job.caseId ?? "global") ?? 0) < this.perCaseConcurrency;
-      })
-      .sort(
-        (a, b) =>
-          priorityRank(b.priority) - priorityRank(a.priority) ||
-          a.queuedAt.localeCompare(b.queuedAt) ||
-          a.id.localeCompare(b.id),
-      )[0];
+    return nextAdmissibleJob(this.table, this.globalConcurrency, this.perCaseConcurrency);
   }
 
   private async terminalTransition(
@@ -716,19 +695,42 @@ export class JobManager {
     if (!job || isTerminal(job.status)) return;
     this.table = apply(this.table, this.now());
     const terminal = getJob(this.table, jobId)!;
-    await this.persistUpdate(terminal);
+    // Memory is already terminal. A failed write must not skip the clean-up or the scheduling
+    // pass, or queued work waits for an unrelated event (#2409). It is reported, not thrown: the
+    // work itself ended as recorded, and callers treat a throwing finish() as a failed import.
+    const failure = await this.tryPersist(terminal);
     this.clearBudgetTimer(jobId);
     this.controllers.delete(jobId);
     this.admissions.delete(jobId);
     this.durabilities.delete(jobId);
     this.emit(terminal.caseId);
+    if (failure) this.reportError(ledgerWriteFailure(terminal, job.status, failure));
     await this.scheduleQueued();
+  }
+
+  private async tryPersist(job: Job): Promise<Error | undefined> {
+    try {
+      await this.persistUpdate(job);
+      return undefined;
+    } catch (error) {
+      return toError(error);
+    }
   }
 
   private async persistUpdate(job: Job): Promise<void> {
     if (!this.ledger) return;
     await this.ledger.update(job);
-    await this.ledger.prune(job.caseId, this.max);
+    await this.pruneLedger(job.caseId);
+  }
+
+  // Retention, not the transition: once update() landed, a failed prune must not make the caller
+  // treat the transition itself as unrecorded (#2409). Reported; the next write prunes again.
+  private async pruneLedger(caseId: string | null): Promise<void> {
+    try {
+      await this.ledger?.prune(caseId, this.max);
+    } catch (error) {
+      this.reportError(toError(error));
+    }
     this.table = this.limitTable(this.table);
   }
 
@@ -767,9 +769,7 @@ export class JobManager {
       void this.fail(job.id, new Error(`job exceeded its ${maxRuntimeMs} ms runtime budget`), {
         code: "runtime_budget_exceeded",
         retryable: false,
-      }).catch((error: unknown) =>
-        this.reportError(error instanceof Error ? error : new Error(String(error))),
-      );
+      }).catch((error: unknown) => this.reportError(toError(error)));
     }, maxRuntimeMs);
     timer.unref();
     this.budgetTimers.set(job.id, timer);
