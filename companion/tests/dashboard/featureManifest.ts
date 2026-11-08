@@ -2119,6 +2119,7 @@ export const NON_FEATURES = new Set([
   "dashboard-timeline-search.js", // pure loader: re-asks /state for the search term (#928), owns no panel
   "dashboard-tagger.js",
   "dashboard-tagger-updates.js", // Content tagger → built-in rule updates (#2344): calls /tagger/rules/updates, holds only its review
+  "dashboard-detection-rules.js", // Content tagger → Detection rules box (#2389): calls /sigma/status, holds the two summary lines
   "dashboard-rule-pack.js", // Content tagger → Rule pack (#2349): calls /tagger/pack routes, holds only the open review
   "dashboard-kev.js",
   "dashboard-sigma-rules.js", // Settings → Sigma rules (#2204): reads the DOM, calls /sigma routes, holds no state

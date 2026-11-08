@@ -92,6 +92,8 @@ function sigmaRenderStatus(s) {
     if (b) b.disabled = demo || (id === "sigmaRollbackBtn" && !s.previous);
   });
   document.getElementById("sigmaDemo").hidden = !demo;
+  // #2389: keep the Detection rules box's Sigma line in step after a check, install or roll back.
+  if (window.DfirDetectionRules) window.DfirDetectionRules.drSetSigma(s);
 }
 
 // True in the public demo, where the server refuses every change (#2216). It reads the notice

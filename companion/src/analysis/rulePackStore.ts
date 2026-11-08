@@ -34,6 +34,7 @@ import {
 import { compileText, type PackRulesProvider } from "./taggerStore.js";
 import { RULE_PACK_UPSTREAM } from "./taggerRulesBase.js";
 import { sha256Hex } from "./githubReleaseDownload.js";
+import { comparePackVersions } from "./rulePackManifest.js";
 import {
   RULE_PACK_MAX_RULES_BYTES,
   needsNewerAppMessage,
@@ -84,6 +85,23 @@ export interface RulePackCheckRecord {
   status: "update" | "current" | "superseded" | "none" | "needs-newer-app" | "error";
   message: string;
   latest?: string;
+}
+
+/**
+ * #2389: the last check, read against what is installed NOW. An "update" found before the pack was
+ * installed is current once that pack (or a newer one) is in use; it was shown as "available" next
+ * to "installed and current". A roll back to the bundled rules makes it an update again.
+ */
+export function checkAsOfNow(check: RulePackCheckRecord, installed: string | null): RulePackCheckRecord {
+  if ((check.status !== "update" && check.status !== "current") || !check.latest) return check;
+  // A "current" check goes stale the other way: install, check, then roll back (Codex review).
+  if (!installed || comparePackVersions(check.latest, installed) > 0)
+    return {
+      ...check,
+      status: "update",
+      message: `Rule pack ${check.latest} is available (installed: ${installed ?? "the bundled rules"}).`,
+    };
+  return { ...check, status: "current", message: `Rule pack ${installed} is installed and current.` };
 }
 
 export class RulePackError extends Error {
@@ -248,7 +266,14 @@ export class RulePackStore implements PackRulesProvider {
       superseded: !!problem && /older than the rules bundled/.test(problem),
       ...(problem ? { problem } : {}),
       inUse: res.current && !problem ? "pack" : "bundled",
-      ...(this.lastCheck ? { lastCheck: this.lastCheck } : {}),
+      ...(this.lastCheck
+        ? {
+            lastCheck: checkAsOfNow(
+              this.lastCheck,
+              res.current && !problem ? res.current.pack.version : null,
+            ),
+          }
+        : {}),
     };
   }
 

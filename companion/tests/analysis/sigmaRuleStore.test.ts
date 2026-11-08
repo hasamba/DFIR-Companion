@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { bundledSigmaDir, ruleFiles } from "../../src/analysis/sigmaBundledRules.js";
 import { createZip } from "../../src/analysis/zipArchive.js";
-import { SigmaRuleStore } from "../../src/analysis/sigmaRuleStore.js";
+import { SigmaRuleStore, sigmaCheckAsOfNow } from "../../src/analysis/sigmaRuleStore.js";
 import { sigmaPaths, writeManifest } from "../../src/analysis/sigmaReleaseFiles.js";
 import { sigmaProvenanceToken } from "../../src/analysis/sigmaImportGrade.js";
 
@@ -308,5 +308,29 @@ describe("SigmaRuleStore", () => {
       await installing;
       await expect(measuring).rejects.toMatchObject({ status: 404 });
     });
+  });
+});
+
+// #2389: a check made before an install still said "available" after the release was installed.
+describe("sigmaCheckAsOfNow", () => {
+  const check = {
+    checkedAt: "2026-11-08T00:00:00Z",
+    latest: "r2026-10-01",
+    installed: "r2026-07-01",
+    updateAvailable: true,
+  };
+  it("reads as up to date once the checked release is the one in use, and as an update after a roll back", () => {
+    expect(sigmaCheckAsOfNow(check, "r2026-10-01")).toMatchObject({
+      installed: "r2026-10-01",
+      updateAvailable: false,
+    });
+    expect(
+      sigmaCheckAsOfNow({ ...check, updateAvailable: false, installed: "r2026-10-01" }, "r2026-07-01")
+        .updateAvailable,
+    ).toBe(true);
+  });
+  it("leaves an errored check as it was", () => {
+    const failed = { checkedAt: "x", installed: "r1", updateAvailable: false, error: "offline" };
+    expect(sigmaCheckAsOfNow(failed, "r2")).toMatchObject({ updateAvailable: false, error: "offline" });
   });
 });

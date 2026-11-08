@@ -63,7 +63,7 @@ async function loadRulePack() {
   try {
     const r = await fetch("/tagger/pack");
     // 403: not an administrator in team mode; 501: not configured. Neither sees the panel.
-    if (!r.ok) { panel.hidden = true; return; }
+    if (!r.ok) { panel.hidden = true; if (window.DfirDetectionRules) window.DfirDetectionRules.drSetTagger(null); return; }
     renderRulePackStatus(await r.json());
     panel.hidden = false;
   } catch (e) {
@@ -93,6 +93,8 @@ function renderRulePackStatus(st) {
   if (st.installed) bar.appendChild(rpBtn("Roll back to bundled rules", () => rollbackRulePack("bundled"), why || "Stop using the installed pack; the rules bundled with the app are used", off));
   box.appendChild(bar);
   if (off) box.appendChild(rpEl("div", "Rule pack downloads are disabled in the public demo.", "font-size:11px;color:var(--text-muted)"));
+  // #2389: the one-line summary of the Detection rules box.
+  if (window.DfirDetectionRules) window.DfirDetectionRules.drSetTagger(st);
 }
 
 async function checkRulePack() {
@@ -105,6 +107,10 @@ async function checkRulePack() {
     else closeRulePackReview();
   } catch (e) {
     rpMsg("Check failed: " + e.message, true);
+  } finally {
+    // #2389: the check is recorded on the server, failed or not; re-read it so the Detection rules
+    // summary line says what this check found.
+    await loadRulePack();
   }
 }
 

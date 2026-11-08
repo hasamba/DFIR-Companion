@@ -623,3 +623,12 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 .st-group-badge { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 0 7px; font-size: 11px; cursor: pointer; }
 .st-group-badge:hover { border-color: var(--border-strong); }
 .st-group-members { border-left: 2px solid var(--border-color); margin-left: 8px; }
+/* #2389: Content tagger → Detection rules — collapsed to one line per rule set. */
+.detection-rules { margin-bottom: 6px; padding: 4px 6px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; }
+.detection-rules > summary { cursor: pointer; list-style-position: outside; }
+.detection-rules .dr-title { font-weight: 600; }
+.detection-rules .dr-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 2px 0 0 14px; }
+.detection-rules .dr-label { min-width: 90px; color: var(--text-muted); }
+.detection-rules .dr-warn { color: var(--warning-bg-strong); }
+.detection-rules .dr-line .ev-bulk-btn { padding: 1px 8px; }
+.detection-rules .dr-sigma-note { margin-top: 6px; font-size: 11px; color: var(--text-muted); }
