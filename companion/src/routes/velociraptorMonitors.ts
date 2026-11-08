@@ -171,7 +171,8 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
     const monitor = await options.veloMonitorStore.get(caseId, id);
     if (!monitor) return res.status(404).json({ error: "monitor not found" });
     ctx.stopVeloMonitorTimer(caseId, id);
-    await options.veloMonitorStore.upsert(caseId, { ...monitor, status: "stopped" });
+    // #2403: stamp "stopped" onto the row as stored now, not onto the copy read above.
+    await options.veloMonitorStore.update(caseId, id, (cur) => ({ ...cur, status: "stopped" }));
     options.onVeloMonitor?.(caseId);
     return res.status(200).json({ ok: true });
   });

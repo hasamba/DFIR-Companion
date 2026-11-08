@@ -50,7 +50,18 @@ export interface CaseWriteCredentialInput {
 export type CaseWriteDecision =
   | { ok: true }
   | { ok: false; status: 401; body: { error: "locked"; caseId: string } }
-  | { ok: false; status: 429; retryAfterMs: number; body: { error: string; retryAfterMs: number } };
+  | {
+      ok: false;
+      status: 429;
+      retryAfterMs: number;
+      body: { error: string; retryAfterMs: number; code: CaseWriteLimitCode };
+    };
+
+/**
+ * Which limit a 429 hit (#2397). The extension keeps a queued screenshot for a case that is locked
+ * out and carries on with other cases, but a per-client ceiling applies to every case, so it stops.
+ */
+export type CaseWriteLimitCode = "case-password-lockout" | "client-attempt-ceiling";
 
 /**
  * The one check for an evidence WRITE into a locked case: the dashboard's unlock cookie OR the case
@@ -84,7 +95,11 @@ export async function checkCaseWriteCredential(input: CaseWriteCredentialInput):
       ok: false,
       status: 429,
       retryAfterMs: outcome.retryAfterMs,
-      body: { error: "too many failed attempts, try again later", retryAfterMs: outcome.retryAfterMs },
+      body: {
+        error: "too many failed attempts, try again later",
+        retryAfterMs: outcome.retryAfterMs,
+        code: outcome.kind === "locked" ? "case-password-lockout" : "client-attempt-ceiling",
+      },
     };
   }
   if (outcome.lockoutMs > 0) {
@@ -92,7 +107,11 @@ export async function checkCaseWriteCredential(input: CaseWriteCredentialInput):
       ok: false,
       status: 429,
       retryAfterMs: outcome.lockoutMs,
-      body: { error: "too many failed attempts, locked out", retryAfterMs: outcome.lockoutMs },
+      body: {
+        error: "too many failed attempts, locked out",
+        retryAfterMs: outcome.lockoutMs,
+        code: "case-password-lockout",
+      },
     };
   }
   return refused;

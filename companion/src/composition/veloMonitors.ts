@@ -17,6 +17,7 @@ import type { AppOptions } from "./appOptions.js";
 import { monitorId, type VeloMonitor } from "../analysis/veloMonitorStore.js";
 import {
   pollMonitorOnce,
+  mergePolledMonitor,
   monitorArtifactMap,
   type PollDeps,
 } from "../integrations/velociraptor/monitorPoller.js";
@@ -93,6 +94,11 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     (timer) => clearTimeout(timer),
   );
 
+  // The poll in flight per (case, generation, monitor) (#2403). "Poll now" pressed while a timer poll
+  // is reading — or the timer firing during a "Poll now" — joins the running poll instead of reading
+  // the same cursor window a second time.
+  const inFlight = new CaseKeyedMap<Promise<void>>(() => store.casesRoot);
+
   const serverClients = () => options.serverClients ?? unavailableServerClients;
   // Every tick resolves the case's set again, so a set edit applies on the next poll.
   const tickVelo = createTickVelo(serverClients, logLine, "velo-monitor");
@@ -140,7 +146,17 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
 
   // One poll cycle for a monitor: load it, poll (pure pollMonitorOnce), persist the updated monitor,
   // broadcast, and reschedule the next tick (unless it was removed/stopped). Never throws.
-  async function pollVeloMonitor(caseId: string, id: string): Promise<void> {
+  function pollVeloMonitor(caseId: string, id: string): Promise<void> {
+    const running = inFlight.get(caseId, id);
+    if (running) return running;
+    const run = pollVeloMonitorOnce(caseId, id).finally(() => {
+      if (inFlight.get(caseId, id) === run) inFlight.delete(caseId, id);
+    });
+    inFlight.set(caseId, run, id);
+    return run;
+  }
+
+  async function pollVeloMonitorOnce(caseId: string, id: string): Promise<void> {
     const monStore = options.veloMonitorStore;
     if (!monStore) {
       timers.delete(caseId, id);
@@ -172,15 +188,19 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
       defaultLookbackSeconds: monitor.pollSeconds,
       log: logLine,
     };
-    const updated = await pollMonitorOnce(monitor, deps);
+    const before = monitor;
+    const polled = await pollMonitorOnce(before, deps);
+    // #2403: merged onto the row as stored NOW. A stop pressed during the poll stays a stop, and a
+    // monitor deleted during it is not written back.
+    let stored: VeloMonitor | null = polled;
     try {
-      await monStore.upsert(caseId, updated);
+      stored = await monStore.update(caseId, id, (cur) => mergePolledMonitor(cur, before, polled));
     } catch {
       /* best-effort */
     }
     options.onVeloMonitor?.(caseId);
     // Reschedule only if it's still meant to run (a concurrent stop/delete clears the timer below).
-    if (timers.has(caseId, id)) scheduleVeloMonitor(caseId, updated);
+    if (stored && stored.status !== "stopped" && timers.has(caseId, id)) scheduleVeloMonitor(caseId, stored);
   }
 
   // Arm (or re-arm) a monitor's timer for one poll interval out. Clears any existing timer first so
@@ -285,14 +305,24 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
       polls: existing?.polls ?? 0,
       veloTableEntry: existing?.veloTableEntry === "added" ? "added" : veloTableEntry,
     };
-    await monStore.upsert(caseId, monitor);
-    scheduleVeloMonitor(caseId, monitor);
+    // #2403: a poll may have committed while the table was being checked. Keep its progress — the
+    // cursor never moves back and the counters are the stored ones — so nothing is read twice.
+    const written = await monStore.update(caseId, id, (cur) => ({
+      ...monitor,
+      cursor: Math.max(cur.cursor || 0, monitor.cursor),
+      addedEvents: cur.addedEvents ?? monitor.addedEvents,
+      polls: cur.polls ?? monitor.polls,
+      lastPolledAt: cur.lastPolledAt,
+      lastEventAt: cur.lastEventAt,
+    }));
+    if (!written) await monStore.upsert(caseId, monitor);
+    scheduleVeloMonitor(caseId, written ?? monitor);
     options.onVeloMonitor?.(caseId);
     logLine(
       `[velo-monitor] started ${spec.artifact} on ${monitor.hostname || spec.clientId} (every ${spec.pollSeconds}s) for case ${caseId}` +
         (veloTableEntry === "added" ? " — enabled it in Velociraptor's Client Monitoring table" : ""),
     );
-    return monitor;
+    return written ?? monitor;
   }
 
   async function verifyVeloMonitorEnabled(caseId: string, monitor: VeloMonitor): Promise<VeloMonitor> {
@@ -305,9 +335,13 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
       status: "error",
       lastError: `${monitor.artifact} is no longer enabled in Velociraptor → Client Monitoring — no client is collecting it. Start the monitor again to re-enable it.`,
     };
-    await monStore.upsert(caseId, flagged);
+    // #2403: onto the row as stored after the table check — a monitor stopped or deleted meanwhile
+    // is not turned back into a live (resumable) one.
+    const stored = await monStore.update(caseId, monitor.id, (cur) =>
+      cur.status === "stopped" ? null : { ...cur, status: "error", lastError: flagged.lastError },
+    );
     options.onVeloMonitor?.(caseId);
-    return flagged;
+    return stored ?? flagged;
   }
 
   // True when any persisted monitor of a case on the same server set matches — the cross-case view

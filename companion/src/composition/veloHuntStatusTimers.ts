@@ -31,6 +31,8 @@ export interface VeloHuntStatusTimersDeps {
    * both ways and only one of the two directions can be a module import.
    */
   startVeloHuntCollect: (caseId: string, huntId: string) => void;
+  /** Is a collect of this hunt running in THIS process right now (`collectingNow`, #2403)? */
+  isCollecting: (caseId: string, huntId: string) => boolean;
 }
 
 export interface VeloHuntStatusTimers {
@@ -40,11 +42,21 @@ export interface VeloHuntStatusTimers {
   /** Cancel every pending status poll of one case (its server set changed). */
   stopVeloHuntStatusPollsForCase(caseId: string): void;
   /** Re-arm status polling for every non-terminal hunt across all cases (server restart). */
-  resumeVeloHuntStatusPolls(): Promise<void>;
+  /**
+   * `startup: true` ONLY at server start (#2403): first mark interrupted every hunt stored as
+   * "collecting" that no collect in this process owns — it was left by a process that died
+   * mid-collect, and its card would say "importing" forever. Reconnect calls this WITHOUT it: a
+   * collect running then is real.
+   */
+  resumeVeloHuntStatusPolls(opts?: { startup?: boolean }): Promise<void>;
 }
 
+export const INTERRUPTED_COLLECT_MESSAGE =
+  "Interrupted by a server restart while collecting — the results are still on the Velociraptor " +
+  "server. Press Collect now to collect them again.";
+
 export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): VeloHuntStatusTimers {
-  const { store, options, startVeloHuntCollect } = deps;
+  const { store, options, startVeloHuntCollect, isCollecting } = deps;
   // Every tick resolves the case's server set again, so a set edit applies on the next poll.
   const tickVelo = createTickVelo(
     () => options.serverClients ?? unavailableServerClients,
@@ -91,14 +103,29 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
 
     const pollDeps: HuntPollDeps = { getState: (id) => client.huntStatus(id), log: logLine };
     const outcome = await pollHuntStatusOnce(job, pollDeps);
-    if (outcome.job.status !== job.status) {
-      try {
-        await huntStore.upsert(caseId, outcome.job);
-      } catch {
-        /* best-effort */
-      }
-      options.onVeloHunt?.(caseId);
+    // #2403: the answer is only good if nothing moved the hunt on while this poll waited — most of all
+    // a collect, which stops the timer but cannot stop a poll already on the network. A stale poll
+    // neither writes its status nor acts on it.
+    const startedFrom = job.status;
+    const stale = (cur: VeloHuntJob): boolean =>
+      cur.status !== startedFrom || cur.collectPhase !== undefined || isCollecting(caseId, huntId);
+    let wasStale = false;
+    try {
+      const stored = await huntStore.update(caseId, huntId, (cur) => {
+        if (stale(cur)) {
+          wasStale = true;
+          return null;
+        }
+        return outcome.job.status === cur.status ? null : { ...cur, status: outcome.job.status };
+      });
+      if (!stored) wasStale = true; // forgotten while the poll waited
+    } catch {
+      /* best-effort, as before: a failed write does not stop the poll */
     }
+    // Stale: leave the timers alone. A collect already stopped them, a forgotten hunt's next tick ends
+    // itself, and an overlapping poll that DID record the change owns the re-arm it just made.
+    if (wasStale) return;
+    if (outcome.job.status !== startedFrom) options.onVeloHunt?.(caseId);
 
     if (outcome.action === "reschedule") {
       if (veloStatusTimers.has(caseId, huntId)) scheduleVeloHuntStatusPoll(caseId, huntId);
@@ -137,9 +164,10 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
   // side effect this also self-heals the pre-existing "fixed-delay auto-collect timer is lost on
   // restart" gap: a resumed status poll will detect STOPPED/ARCHIVED on its own and trigger the
   // collect even though the original setTimeout is gone. Best-effort per case.
-  async function resumeVeloHuntStatusPolls(): Promise<void> {
+  async function resumeVeloHuntStatusPolls(opts: { startup?: boolean } = {}): Promise<void> {
     const huntStore = options.veloHuntStore;
     if (!huntStore) return;
+    if (opts.startup) await recoverInterruptedCollects();
     let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
@@ -168,6 +196,55 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
     if (resumed > 0)
       logLine(
         `[velo-hunt-status] resumed status polling for ${resumed} hunt(s) across ${cases.length} case(s)`,
+      );
+  }
+
+  async function recoverInterruptedCollects(): Promise<void> {
+    const huntStore = options.veloHuntStore;
+    if (!huntStore) return;
+    let cases: Awaited<ReturnType<typeof store.listCases>> = [];
+    try {
+      cases = await store.listCases();
+    } catch {
+      return;
+    }
+    let marked = 0;
+    for (const c of cases) {
+      try {
+        const jobs = await huntStore.list(c.caseId);
+        for (const { huntId } of jobs.filter((j) => j.status === "collecting")) {
+          if (isCollecting(c.caseId, huntId)) continue;
+          // #1866: as work of the incarnation just listed. The predicate is re-checked under the
+          // store lock, so a collect started during this sweep is never overwritten.
+          const stored = await runInCaseScope(
+            store.casesRoot,
+            c.caseId,
+            () =>
+              huntStore.update(c.caseId, huntId, (cur) =>
+                cur.status !== "collecting" || isCollecting(c.caseId, huntId)
+                  ? null
+                  : {
+                      ...cur,
+                      status: "error",
+                      collectPhase: undefined,
+                      collectRows: undefined,
+                      error: INTERRUPTED_COLLECT_MESSAGE,
+                    },
+              ),
+            generationOf(c),
+          );
+          if (stored?.status === "error" && stored.error === INTERRUPTED_COLLECT_MESSAGE) {
+            marked++;
+            options.onVeloHunt?.(c.caseId);
+          }
+        }
+      } catch {
+        /* skip this case */
+      }
+    }
+    if (marked > 0)
+      logLine(
+        `[velo-hunt] ${marked} hunt collect(s) were interrupted by the restart — marked for Collect now`,
       );
   }
 

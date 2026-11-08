@@ -14,10 +14,12 @@ import { caseOpenStateOf } from "./caseOpenState.js";
  * account for it. Until now it ran on its own at the tail of every synthesis, which made it the one
  * automatic writer to the evidence record. A tool used in real investigations should not have one.
  *
- * A PLAIN REQUEST/RESPONSE, not the deep-pass job machinery. The sweep itself makes ZERO AI calls —
- * it is a deterministic keyword search — and the optional re-synthesis is exactly the one call
- * POST /cases/:id/synthesize already makes without a job wrapper. A job registration here would buy
- * cancellation of a search that does not need cancelling.
+ * A request/response that RUNS AS A JOB (#2407). The sweep makes zero AI calls, but the forced
+ * re-synthesis is a full synthesis, and with no job it ran beside whatever synthesis the case
+ * already had — the later one overwriting the earlier. The job takes the case's one-job slot (the
+ * durable ledger admits one job per case at a time), shows in the Jobs panel, and counts as "busy".
+ * Not cancellable: a cancel mid-promotion would free the slot while rows were still being written,
+ * and the sweep and promotion take no abort signal yet.
  */
 export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void {
   const { store, options, markConclusionsOutOfDate } = ctx;
@@ -84,9 +86,18 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
       return res.status(409).json({ error: "a second look is already running for this case" });
     }
     running.add(caseId);
+    let job: { jobId: string; ready: Promise<void> } | undefined;
     // The finally covers every await after entry, so a run that throws never leaves the case locked.
     try {
+      job = options.jobManager?.register({
+        caseId,
+        kind: "second-look",
+        label: resynthesize ? "second look + re-synthesis" : "second look",
+        parameters: { resynthesize },
+      });
+      await job?.ready;
       const result = await options.pipeline.secondLook(caseId, { resynthesize });
+      if (job) await options.jobManager?.finish(job.jobId);
       if (!result) return unconfigured(res);
       // Promoted rows the conclusions never saw: say so on the AI chip (#1599). A re-synthesis
       // already refreshed them, so only the opt-out path marks.
@@ -107,7 +118,11 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
     } catch (error) {
       // The re-synthesis inherits the host-merge gate, so a held case reaches here as a decision
       // gate rather than a failure. Report the hold, the way the deep-pass route does.
-      if (isAnalystDecisionGate(error)) return sendPipelineError(res, error);
+      if (isAnalystDecisionGate(error)) {
+        if (job) await options.jobManager?.hold(job.jobId, String((error as Error).message));
+        return sendPipelineError(res, error);
+      }
+      if (job) await options.jobManager?.fail(job.jobId, error, { code: "second_look_failed" });
       return res.status(500).json({ error: String((error as Error).message) });
     } finally {
       running.delete(caseId);
