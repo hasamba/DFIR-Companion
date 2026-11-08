@@ -217,6 +217,7 @@ class NodeSmtpSocket implements SmtpSocketLike {
   constructor(
     private socket: net.Socket | tls.TLSSocket,
     public secure: boolean,
+    private readonly tlsConnect: typeof tls.connect = tls.connect,
   ) {
     this.attach();
   }
@@ -263,25 +264,49 @@ class NodeSmtpSocket implements SmtpSocketLike {
     });
   }
 
+  // Upgrade the plain connection to TLS. Anything still unread from the plaintext side — a whole reply
+  // queued behind the STARTTLS `220`, or a partial line — could have been injected by someone on the
+  // path, and must never be read as if it arrived encrypted (#2410, STARTTLS command injection). We
+  // refuse the upgrade rather than discard it: a well-behaved server sends nothing after `220` until
+  // the handshake (RFC 3207 §4.2: knowledge from before TLS is discarded). The check, listener
+  // removal and TLS wrap stay synchronous so no data event can slip in between.
   startTls(opts: { host: string; rejectUnauthorized: boolean }): Promise<void> {
+    if (this.fatal) return Promise.reject(this.fatal);
+    if (this.queue.length > 0 || this.buffer.length > 0) {
+      return Promise.reject(
+        new SmtpError(
+          "STARTTLS refused: the server sent data before the TLS upgrade (possible injection)",
+          "protocol",
+        ),
+      );
+    }
     return new Promise((resolve, reject) => {
       const plain = this.socket;
       plain.removeAllListeners("data");
       plain.removeAllListeners("error");
       plain.removeAllListeners("close");
-      const secure = tls.connect(
+      let settled = false;
+      const fail = (message: string): void => {
+        if (settled) return;
+        settled = true;
+        reject(new SmtpError(`STARTTLS upgrade failed: ${message}`, "connect"));
+      };
+      const secure = this.tlsConnect(
         { socket: plain, servername: opts.host, rejectUnauthorized: opts.rejectUnauthorized },
         () => {
+          if (settled) return;
+          settled = true;
           this.socket = secure;
           this.secure = true;
           this.buffer = "";
+          this.queue.length = 0;
           this.attach();
           resolve();
         },
       );
-      secure.once("error", (err) =>
-        reject(new SmtpError(`STARTTLS upgrade failed: ${err.message}`, "connect")),
-      );
+      secure.once("error", (err: Error) => fail(err.message));
+      // A close with no error would otherwise leave this promise (and sendSmtp) pending forever.
+      secure.once("close", () => fail("connection closed during the TLS handshake"));
     });
   }
 
@@ -371,7 +396,7 @@ function openSocket(
       });
     } else {
       const socket = connectPlain({ host: opts.address, port: opts.port, timeout: opts.timeoutMs }, () =>
-        resolve(new NodeSmtpSocket(socket, false)),
+        resolve(new NodeSmtpSocket(socket, false, connectTls)),
       );
       socket.once("error", onError);
       socket.once("timeout", () => {
