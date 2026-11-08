@@ -434,6 +434,7 @@ describe("hunt timers on a set change", () => {
         store: cases,
         options: { veloHuntStore: { get } } as unknown as AppOptions,
         startVeloHuntCollect: vi.fn(),
+        isCollecting: () => false,
       });
       timers.scheduleVeloHuntStatusPoll("c1", "H.1");
       timers.scheduleVeloHuntStatusPoll("c2", "H.9");

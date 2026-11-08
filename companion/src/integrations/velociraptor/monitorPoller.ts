@@ -132,3 +132,30 @@ export async function pollMonitorOnce(monitor: VeloMonitor, deps: PollDeps): Pro
     };
   }
 }
+
+/**
+ * Fold one poll's outcome onto the monitor AS STORED NOW (#2403), not onto the copy the poll started
+ * from. While the poll waited on the network the analyst may have stopped the monitor, or another
+ * write may have moved it on: a stopped monitor stays stopped (otherwise it comes back after the next
+ * restart), the cursor never moves backwards, and the counters add only what THIS poll did. The
+ * cursor and counters are recorded even for a stopped monitor — the rows were ingested, so a later
+ * resume must not read that window again.
+ */
+export function mergePolledMonitor(
+  stored: VeloMonitor,
+  before: VeloMonitor,
+  polled: VeloMonitor,
+): VeloMonitor {
+  const addedDelta = Math.max(0, (polled.addedEvents ?? 0) - (before.addedEvents ?? 0));
+  const pollsDelta = Math.max(0, (polled.polls ?? 0) - (before.polls ?? 0));
+  return {
+    ...stored,
+    status: stored.status === "stopped" ? "stopped" : polled.status,
+    cursor: Math.max(stored.cursor || 0, polled.cursor || 0),
+    lastPolledAt: polled.lastPolledAt ?? stored.lastPolledAt,
+    lastEventAt: polled.lastEventAt ?? stored.lastEventAt,
+    addedEvents: (stored.addedEvents ?? 0) + addedDelta,
+    polls: (stored.polls ?? 0) + pollsDelta,
+    lastError: polled.lastError,
+  };
+}

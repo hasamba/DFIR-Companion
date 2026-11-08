@@ -6,6 +6,7 @@ import {
   nextCursor,
   monitorArtifactMap,
   pollMonitorOnce,
+  mergePolledMonitor,
   type PollDeps,
 } from "../../src/integrations/velociraptor/monitorPoller.js";
 import type { VeloMonitor } from "../../src/analysis/veloMonitorStore.js";
@@ -141,5 +142,39 @@ describe("pollMonitorOnce", () => {
   it("leaves a stopped monitor untouched", async () => {
     const m = mon({ status: "stopped" });
     expect(await pollMonitorOnce(m, baseDeps())).toEqual(m);
+  });
+});
+
+describe("mergePolledMonitor (#2403)", () => {
+  const before = mon({ cursor: 100, addedEvents: 5, polls: 2, status: "active" });
+  const polled = {
+    ...before,
+    cursor: 200,
+    addedEvents: 8,
+    polls: 3,
+    lastPolledAt: "2026-11-08T00:00:00.000Z",
+  };
+
+  it("keeps a stop pressed during the poll, but records the poll's progress", () => {
+    const out = mergePolledMonitor({ ...before, status: "stopped" }, before, polled);
+    expect(out).toMatchObject({ status: "stopped", cursor: 200, addedEvents: 8, polls: 3 });
+  });
+
+  it("never moves the cursor back, and adds only this poll's counts", () => {
+    const stored = { ...before, cursor: 300, addedEvents: 10, polls: 4 };
+    expect(mergePolledMonitor(stored, before, polled)).toMatchObject({
+      cursor: 300,
+      addedEvents: 13,
+      polls: 5,
+    });
+  });
+
+  it("takes the poll's status and error when nothing changed meanwhile", () => {
+    const failed = { ...before, status: "error" as const, polls: 3, lastError: "boom" };
+    expect(mergePolledMonitor(before, before, failed)).toMatchObject({
+      status: "error",
+      lastError: "boom",
+      cursor: 100,
+    });
   });
 });
