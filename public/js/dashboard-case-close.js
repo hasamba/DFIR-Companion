@@ -35,20 +35,100 @@
     }
   }
 
-  async function patchClosed(caseId, cloudCredentials) {
-    const init = {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(cloudCredentials ? { status: "closed", cloudCredentials } : { status: "closed" }),
+  // How long the close may stay on the wire before the dialog stops waiting for it (#2412). Aborting
+  // the request does not undo a close the server already made — so a timeout, like a network error,
+  // is "outcome unknown", and the case's status is read back before anything is claimed. That read is
+  // bounded too: the dialog must always get its buttons back, whatever the network does.
+  const CLOSE_TIMEOUT_MS = 30000;
+  const STATUS_TIMEOUT_MS = 10000;
+
+  // Runs `work(signal)` — a request AND its body read — and rejects with an AbortError after `ms`.
+  // The race is what bounds it, not the signal alone: a body read that ignores the abort still ends.
+  function withDeadline(ms, work) {
+    if (typeof setTimeout !== "function") return work(undefined);
+    const ac = typeof AbortController === "function" ? new AbortController() : null;
+    let timer = null;
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        if (ac) ac.abort();
+        const err = new Error("timed out");
+        err.name = "AbortError";
+        reject(err);
+      }, ms);
+    });
+    const stop = () => {
+      if (timer !== null && typeof clearTimeout === "function") clearTimeout(timer);
     };
-    const res = await fetch(`/cases/${encodeURIComponent(caseId)}/status`, init);
-    let body = {};
+    return Promise.race([work(ac ? ac.signal : undefined), deadline]).then(
+      (v) => (stop(), v),
+      (e) => {
+        stop();
+        throw e;
+      },
+    );
+  }
+
+  async function patchClosed(caseId, cloudCredentials) {
+    const body = JSON.stringify(cloudCredentials ? { status: "closed", cloudCredentials } : { status: "closed" });
+    // A network failure is an answer too (#2412): thrown past the dialog it left "closing…" on screen
+    // with the button disabled for good. It is NOT a refusal, though — the server may have closed
+    // the case and lost the reply — so it is reconciled against the case's status.
     try {
-      body = await res.json();
-    } catch {
-      body = {};
+      return await withDeadline(CLOSE_TIMEOUT_MS, async (signal) => {
+        const init = { method: "PATCH", headers: { "content-type": "application/json" }, body };
+        if (signal) init.signal = signal;
+        const res = await fetch(`/cases/${encodeURIComponent(caseId)}/status`, init);
+        let answer = {};
+        try {
+          answer = await res.json();
+        } catch {
+          answer = {};
+        }
+        return { ok: res.ok, status: res.status, body: answer };
+      });
+    } catch (err) {
+      return reconcileUnknown(caseId, err);
     }
-    return { ok: res.ok, status: res.status, body };
+  }
+
+  // The case's lifecycle status from the case list, or null when that cannot be read in time either.
+  async function caseStatus(caseId) {
+    try {
+      return await withDeadline(STATUS_TIMEOUT_MS, async (signal) => {
+        const res = await fetch("/cases", signal ? { signal } : undefined);
+        if (!res.ok) return null;
+        const cases = await res.json();
+        const meta = Array.isArray(cases) ? cases.find((c) => c && c.caseId === caseId) : null;
+        return meta ? meta.status || null : null;
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  async function reconcileUnknown(caseId, err) {
+    const status = await caseStatus(caseId);
+    if (status === "closed") return { ok: true, status: 200, body: {}, reconciled: true };
+    const reason = err && err.name === "AbortError" ? "no answer in time" : (err && err.message) || "network error";
+    if (status)
+      return { ok: false, status: 0, body: { error: `Close failed — the companion did not answer (${reason}); the case is still ${status}.` } };
+    return {
+      ok: false,
+      status: 0,
+      unknown: true,
+      body: {
+        error: `The companion did not answer (${reason}), and the case's status could not be read — the close may have gone through. Check the case status before retrying.`,
+      },
+    };
+  }
+
+  // Refresh what shows the case's lifecycle. The toolbar describes the case on screen, so it is only
+  // repainted for that case; the case list is always refreshed.
+  function refreshLifecycle(caseId) {
+    const current = (byId("caseId") || {}).value;
+    if (typeof window.loadCaseLifecycle === "function" && typeof current === "string" && current.trim() === caseId)
+      window.loadCaseLifecycle(caseId);
+    if (typeof window.loadCaseList === "function") window.loadCaseList();
   }
 
   function accountLine(a) {
@@ -63,6 +143,7 @@
     byId("ccaDelete").checked = true;
     byId("ccaMsg").textContent = "";
     byId("ccaConfirm").disabled = false;
+    byId("ccaCancel").disabled = false;
     byId("closeCaseOverlay").classList.add("open");
   }
 
@@ -70,17 +151,36 @@
     byId("closeCaseOverlay").classList.remove("open");
     const done = pending;
     pending = null;
-    if (done) done.resolve(closed);
+    if (!done) return;
+    // A cancel after an unknown outcome: the case may be closed, so show what the server now says.
+    if (!closed && done.unknown) refreshLifecycle(done.caseId);
+    done.resolve(closed);
   }
 
+  // CANCEL CANNOT HIDE A CLOSE (#2412). Once the close is on the wire, Cancel is disabled: resolving
+  // "not closed" there let the case close on the server while nothing refreshed the lifecycle or the
+  // case list. It comes back with Confirm when the close fails. A dialog replaced while its close was
+  // on the wire (a second close opened over it) has already told its caller "not closed", so a close
+  // that then succeeds refreshes the lifecycle and the case list itself.
   async function confirmClose() {
     if (!pending) return;
+    const mine = pending;
     const choice = byId("ccaKeep").checked ? "keep" : "delete";
     byId("ccaConfirm").disabled = true;
+    byId("ccaCancel").disabled = true;
     byId("ccaMsg").textContent = "closing…";
-    const res = await patchClosed(pending.caseId, choice);
+    const res = await patchClosed(mine.caseId, choice);
+    if (pending !== mine) {
+      if (res.ok || res.unknown) {
+        if (res.body.cloudCredentialsError) alert(res.body.cloudCredentialsError);
+        refreshLifecycle(mine.caseId);
+      }
+      return;
+    }
     if (!res.ok) {
+      mine.unknown = !!res.unknown;
       byId("ccaConfirm").disabled = false;
+      byId("ccaCancel").disabled = false;
       byId("ccaMsg").textContent = res.body.error || `Close failed (HTTP ${res.status})`;
       return;
     }
@@ -96,7 +196,10 @@
     const accounts = await caseAccounts(caseId);
     if (accounts.length === 0) {
       const res = await patchClosed(caseId);
-      if (!res.ok) alert("Failed to close case: " + (res.body.error || "HTTP " + res.status));
+      if (res.unknown) {
+        alert(res.body.error);
+        refreshLifecycle(caseId);
+      } else if (!res.ok) alert("Failed to close case: " + (res.body.error || "HTTP " + res.status));
       return res.ok;
     }
     if (pending) pending.resolve(false);

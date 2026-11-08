@@ -256,7 +256,10 @@ describe("cloud collection engine (#2311)", () => {
     // Kill the checkpoint write that would record page 1 as imported (stage "import").
     fs.inject(
       "writeFileSync",
-      (p) => p.endsWith("checkpoint.json.tmp") && ++checkpoints > 0 && checkpointStage === "import-1",
+      (p) =>
+        /checkpoint\.json\.[0-9a-f-]{36}\.tmp$/.test(p) &&
+        ++checkpoints > 0 &&
+        checkpointStage === "import-1",
       kill,
     );
     let checkpointStage = "";

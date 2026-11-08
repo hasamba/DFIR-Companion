@@ -17,6 +17,7 @@ import {
 } from "../../src/integrations/notion/notionBlocks.js";
 import {
   pushCaseToNotion,
+  NotionExportIncompleteError,
   type NotionClientLike,
   type NotionExportStoreLike,
 } from "../../src/integrations/notion/notionPush.js";
@@ -477,7 +478,8 @@ describe("pushCaseToNotion", () => {
     expect((await store.load("c1")).databaseId).toBe(""); // recorded as a page parent, not a DB
   });
 
-  it("treats a failed archive as a non-fatal warning and still appends", async () => {
+  // #2414: appending after a failed archive left the previous export's content beside the new one.
+  it("stops before writing anything new when the previous content cannot be removed", async () => {
     const m = new MockNotion();
     m.seedPage("page-1");
     const store = new MemStore();
@@ -489,14 +491,106 @@ describe("pushCaseToNotion", () => {
       store,
     );
     m.failArchive = true;
-    const res = await pushCaseToNotion(
+    const appendsBefore = m.appendCalls.length;
+    const err = await pushCaseToNotion(
       m,
       { caseName: "c1", state: sampleState() },
       { mode: "existing", pageId: "page-1" },
       { exportedAt: AT, sleep: noop },
       store,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotionExportIncompleteError);
+    expect((err as NotionExportIncompleteError).pageId).toBe("page-1");
+    expect((err as Error).message).toMatch(/Nothing new was written/);
+    expect(m.appendCalls.length).toBe(appendsBefore);
+  });
+
+  it("a container failure after the page was made names the page, and the retry finishes that page", async () => {
+    const m = new MockNotion();
+    const store = new MemStore();
+    const real = m.appendChildren.bind(m);
+    m.appendChildren = async () => {
+      throw new Error("container append failed");
+    };
+    const err = await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "new", databaseId: "db-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotionExportIncompleteError);
+    const pageId = (err as NotionExportIncompleteError).pageId;
+    expect(pageId).toMatch(/^page-/);
+    expect((err as Error).message).toMatch(/container append failed/);
+    const saved = await store.load("c1");
+    expect(saved.pageId).toBe(pageId);
+    expect(saved.containerBlockId).toBe("");
+    // What the dashboard now sends: the same page, in "existing" mode.
+    m.appendChildren = real;
+    const res = await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId },
+      { exportedAt: AT, sleep: noop },
+      store,
     );
-    expect(res.warnings.length).toBeGreaterThan(0);
+    expect(res.pageId).toBe(pageId);
+    expect(m.createPageCalls).toHaveLength(1);
     expect(res.blocksAppended).toBeGreaterThan(0);
+  });
+
+  it("a failed middle batch fails the export, appends nothing after the gap, and names the page", async () => {
+    const m = new MockNotion();
+    const store = new MemStore();
+    const many: InvestigationState = {
+      ...sampleState(),
+      findings: Array.from({ length: 120 }, (_, i) => finding(i)),
+    };
+    const real = m.appendChildren.bind(m);
+    let calls = 0;
+    m.appendChildren = async (blockId, children) => {
+      calls++;
+      if (calls === 3) throw new Error("rate limited too long"); // container, batch 1, then batch 2 fails
+      return real(blockId, children);
+    };
+    const err = await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: many },
+      { mode: "new", databaseId: "db-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotionExportIncompleteError);
+    expect((err as Error).message).toMatch(/batch 2 of \d+ failed/);
+    expect(calls).toBe(3); // nothing appended after the failed batch
+    const saved = await store.load("c1");
+    expect(saved.pageId).toBe((err as NotionExportIncompleteError).pageId);
+    expect(saved.containerBlockId).toBeTruthy();
+  });
+
+  it("serializes two exports of one case, so they never create two pages at once", async () => {
+    const m = new MockNotion();
+    const store = new MemStore();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const real = m.createPage.bind(m);
+    m.createPage = async (parent, title) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 10));
+      inFlight--;
+      return real(parent, title);
+    };
+    const run = () =>
+      pushCaseToNotion(
+        m,
+        { caseName: "c1", state: sampleState() },
+        { mode: "new", databaseId: "db-1" },
+        { exportedAt: AT, sleep: noop },
+        store,
+      );
+    await Promise.all([run(), run()]);
+    expect(maxInFlight).toBe(1);
   });
 });

@@ -6,6 +6,7 @@
 // re-derives every cursor from the manifest (collectReplay.ts), so a crash between the manifest line
 // and the checkpoint write loses nothing.
 
+import { atomicTempPath } from "../../storage/atomicWrite.js";
 import type { CollectFs } from "./collectFs.js";
 import type { CollectionPaths } from "./collectManifest.js";
 import type { CollectionCheckpoint } from "./collectTypes.js";
@@ -15,7 +16,9 @@ export async function writeCheckpoint(
   paths: CollectionPaths,
   checkpoint: CollectionCheckpoint,
 ): Promise<void> {
-  const tmp = `${paths.checkpoint}.tmp`;
+  // #2402: a unique, atomicWrite-shaped temp name — two writers never share one, and a whole-case
+  // export recognises an in-flight write instead of archiving it as case content.
+  const tmp = atomicTempPath(paths.checkpoint);
   await fs.writeFileSync(tmp, `${JSON.stringify(checkpoint, null, 2)}\n`);
   await fs.rename(tmp, paths.checkpoint);
   await fs.fsyncDir(paths.dir);
