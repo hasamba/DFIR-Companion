@@ -46,7 +46,12 @@ import {
 } from "./awsCollectTypes.js";
 import { createAwsCollectClients } from "./awsCollectClients.js";
 import { discoverTrailRoots, type TrailDiscovery } from "./awsTrailDiscovery.js";
-import { CLOUDTRAIL_DELIVERY_HORIZON_MS, fetchTrailObject, TrailObjectWalk } from "./awsTrailObjects.js";
+import {
+  CLOUDTRAIL_DELIVERY_HORIZON_MS,
+  fetchTrailObject,
+  TrailObjectWalk,
+  type TrailWalkOptions,
+} from "./awsTrailObjects.js";
 import { fetchLookupPage } from "./awsLookupEvents.js";
 import { fetchGuardDutyPage } from "./awsGuardDutyFindings.js";
 import {
@@ -166,6 +171,7 @@ class AwsCollectSession implements CloudCollectSession {
   constructor(
     private readonly settings: AwsSettings,
     private readonly makeClients: () => AwsCollectClients,
+    private readonly walkOptions: TrailWalkOptions = {},
   ) {}
 
   private get clients(): AwsCollectClients {
@@ -214,7 +220,16 @@ class AwsCollectSession implements CloudCollectSession {
   applyFilters(filters: Readonly<Record<string, string>>): void {
     this.filters = { ...filters };
     this.roots = undefined;
+    // #2380: the old walk's downloads ahead are for the old scope: abort them (close settles them).
+    void this.walk?.close();
     this.walk = undefined;
+  }
+
+  /** #2380: the job's finally — cancel, failure or done — stops every download ahead and waits. */
+  async close(): Promise<void> {
+    const walk = this.walk;
+    this.walk = undefined;
+    await walk?.close();
   }
 
   /** Trail discovery, asked in the walked regions; a region folder the analyst unticked is dropped. */
@@ -254,7 +269,7 @@ class AwsCollectSession implements CloudCollectSession {
       return withScopeNote(await fetchGuardDutyPage(this.clients, this.walkRegions(), request), notes);
     if (request.source !== S3_TRAIL_SOURCE) throw new Error(`unknown AWS source "${request.source}"`);
     const discovery = await this.trailRoots(request.signal);
-    this.walk ??= new TrailObjectWalk(this.clients);
+    this.walk ??= new TrailObjectWalk(this.clients, this.walkOptions);
     return withScopeNote(await fetchTrailObject(this.walk, this.clients, discovery, request), notes);
   }
 
@@ -272,6 +287,8 @@ export interface AwsCollectProviderDeps {
   config?: (transport: CloudTransport) => { requestHandler: unknown };
   /** Tests: structural fake clients in place of the SDK's. */
   clients?: (settings: AwsSettings, secrets: AwsSecrets) => AwsCollectClients;
+  /** Tests (#2380): the S3 walk's fetch-ahead depth and listing reuse; production uses the defaults. */
+  trailWalk?: TrailWalkOptions;
 }
 
 export function createAwsCollectProvider(deps: AwsCollectProviderDeps): CloudCollectProvider {
@@ -288,7 +305,7 @@ export function createAwsCollectProvider(deps: AwsCollectProviderDeps): CloudCol
         const config = deps.config ? deps.config(transport) : awsClientConfig(transport);
         return createAwsCollectClients(settings, secrets, transport, config);
       };
-      return new AwsCollectSession(settings, make);
+      return new AwsCollectSession(settings, make, deps.trailWalk);
     },
   };
 }

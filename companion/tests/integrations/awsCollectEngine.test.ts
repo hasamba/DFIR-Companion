@@ -156,7 +156,12 @@ describe("AWS collection through the engine (#2313)", () => {
     );
     const del = state.forensicTimeline.find((e) => /DeleteTrail/.test(e.description))!;
     expect(["High", "Critical"]).toContain(del.severity);
-    expect(clients.sent.filter((c) => c.op === "GetObject")).toHaveLength(3);
+    // #2380: every readable object is downloaded once; the refused one twice — its download ahead
+    // failed, and the walk then asks once the normal way, so the real request decides the skip.
+    const gets = clients.sent.filter((c) => c.op === "GetObject").map((c) => String(c.input.Key));
+    expect(gets.filter((k) => k === objects[0].key)).toHaveLength(1);
+    expect(gets.filter((k) => k === objects[2].key)).toHaveLength(1);
+    expect(gets.filter((k) => k === objects[1].key)).toHaveLength(2);
   });
 
   it("paces LookupEvents at 2 requests a second and backs off on S3 SlowDown", async () => {

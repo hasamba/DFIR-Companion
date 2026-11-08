@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Large CloudTrail import by path** — a CloudTrail object over 256 KiB imported by path is detected as AWS instead of "could not detect the file type" (closes #2317)
 
 ### Changed
+- **Faster S3 trail collection** — each trail folder is listed once instead of once per file, and the next few files download while the current one is saved; about 7× faster on a test bucket, same files and order (closes #2380).
 - **Sigma "not graded" wording** — a Sigma match that did not set the severity reads `Sigma (medium, not graded)` instead of `tag only`, and the details and a hover on the row title say why (closes #2386).
 
 - **Faster large CloudTrail imports** — the streamed import no longer re-maps each object's summary window; same rows, counts, grades and disclosures; 400k-record set 693 s → 509 s under `npm run dev`, 500 s → 455 s built (closes #2362)

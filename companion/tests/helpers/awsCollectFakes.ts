@@ -55,6 +55,12 @@ export interface FakeAwsOptions {
   listPageSize?: number;
   /** Throw this many SlowDown errors on the first GetObject calls. */
   slowDowns?: number;
+  /** #2380: every S3 call waits this long (ms, real timers) before answering; the abort signal ends the wait. */
+  s3LatencyMs?: number;
+  /** #2380: a GetObject body takes this long (ms) to stream; the abort signal ends it. */
+  bodyLatencyMs?: number;
+  /** #2380: GetObject throws SlowDown for these keys on every call. */
+  slowDownKeys?: string[];
   /** Buckets whose object listing (no delimiter, the trail walk) is refused; folder listing still works. */
   walkListDenied?: string[];
   /**
@@ -141,20 +147,53 @@ function listBucket(objects: FakeObject[], input: Record<string, unknown>, pageS
   const page = rest.slice(0, pageSize);
   const truncated = rest.length > pageSize;
   return {
-    Contents: page.map((Key) => ({ Key })),
+    Contents: page.map((Key) => ({ Key, Size: objects.find((o) => o.key === Key)?.body.length ?? 0 })),
     IsTruncated: truncated,
     ...(truncated ? { NextContinuationToken: page[page.length - 1] } : {}),
   };
 }
 
-export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent: Sent[] } {
+/** #2380: wait `ms`, or reject at once with an AbortError when the signal aborts. */
+function waitOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortError());
+  if (!ms) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(abortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function abortError(): Error {
+  return Object.assign(new Error("Request aborted"), { name: "AbortError" });
+}
+
+/** #2380: S3 GetObject requests (call through body) in flight now, and the most at once. */
+export interface S3Activity {
+  active: number;
+  maxActive: number;
+}
+
+export function fakeAwsClients(
+  opts: FakeAwsOptions,
+): AwsCollectClients & { sent: Sent[]; s3Activity: S3Activity } {
   const sent: Sent[] = [];
+  const s3Activity: S3Activity = { active: 0, maxActive: 0 };
   let slowDowns = opts.slowDowns ?? 0;
   const sender = (region?: string): AwsSender => ({
-    send: async (command: object) => {
+    send: async (command: object, options?: { abortSignal?: AbortSignal }) => {
       const op = command.constructor.name.replace(/Command$/, "");
       const input = (command as { input: Record<string, unknown> }).input;
       sent.push({ op, ...(region ? { region } : {}), input });
+      const signal = options?.abortSignal;
+      if (op === "ListObjectsV2") await waitOrAbort(opts.s3LatencyMs ?? 0, signal);
+      if (op === "GetObject") return getObject(input, signal);
       switch (op) {
         case "GetCallerIdentity":
           return { Account: ACCOUNT, Arn: `arn:aws:iam::${ACCOUNT}:role/collector` };
@@ -170,26 +209,6 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
           if (!input.Delimiter && opts.walkListDenied?.includes(String(input.Bucket)))
             throw awsError("AccessDenied", 403, "Access Denied");
           return listBucket(objects, input, opts.listPageSize ?? 1000);
-        }
-        case "GetObject": {
-          if (slowDowns > 0) {
-            slowDowns--;
-            throw awsError("SlowDown", 503);
-          }
-          const obj = opts.buckets[String(input.Bucket)]?.find((o) => o.key === input.Key);
-          if (!obj) throw awsError("NoSuchKey", 404);
-          if (obj.kmsDenied)
-            throw awsError(
-              "AccessDenied",
-              403,
-              "User is not authorized to perform kms:Decrypt on the resource associated with this ciphertext",
-            );
-          return {
-            Body: { transformToByteArray: async () => obj.body },
-            ...(obj.versionId ? { VersionId: obj.versionId } : {}),
-            ETag: '"etag"',
-            $metadata: { requestId: `s3-${obj.key.slice(-12)}` },
-          };
         }
         case "LookupEvents": {
           const plan = opts.lookup?.[region ?? ""] ?? [];
@@ -231,11 +250,52 @@ export function fakeAwsClients(opts: FakeAwsOptions): AwsCollectClients & { sent
       }
     },
   });
+  // GetObject: counted as active from the call until its body has streamed (or the call failed).
+  async function getObject(input: Record<string, unknown>, signal?: AbortSignal) {
+    s3Activity.active++;
+    s3Activity.maxActive = Math.max(s3Activity.maxActive, s3Activity.active);
+    let handedOff = false;
+    try {
+      await waitOrAbort(opts.s3LatencyMs ?? 0, signal);
+      if (slowDowns > 0) {
+        slowDowns--;
+        throw awsError("SlowDown", 503);
+      }
+      if (opts.slowDownKeys?.includes(String(input.Key))) throw awsError("SlowDown", 503);
+      const obj = opts.buckets[String(input.Bucket)]?.find((o) => o.key === input.Key);
+      if (!obj) throw awsError("NoSuchKey", 404);
+      if (obj.kmsDenied)
+        throw awsError(
+          "AccessDenied",
+          403,
+          "User is not authorized to perform kms:Decrypt on the resource associated with this ciphertext",
+        );
+      handedOff = true;
+      return {
+        Body: {
+          transformToByteArray: async () => {
+            try {
+              await waitOrAbort(opts.bodyLatencyMs ?? 0, signal);
+              return obj.body;
+            } finally {
+              s3Activity.active--;
+            }
+          },
+        },
+        ...(obj.versionId ? { VersionId: obj.versionId } : {}),
+        ETag: '"etag"',
+        $metadata: { requestId: `s3-${obj.key.slice(-12)}` },
+      };
+    } finally {
+      if (!handedOff) s3Activity.active--;
+    }
+  }
   const s3 = sender();
   const sts = sender();
   const ec2 = sender();
   return {
     sent,
+    s3Activity,
     sts,
     s3,
     ec2,
