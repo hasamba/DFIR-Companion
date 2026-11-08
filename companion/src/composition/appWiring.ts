@@ -58,6 +58,7 @@ import { createCheckClientFactory } from "../integrations/cloudCheck/checkClient
 import { runCloudAccountCheck } from "../integrations/cloudCheck/runCloudCheck.js";
 import { redactAiStatusEvent } from "./aiStatusRedact.js";
 import { createAiStatusHandler } from "./aiStatusHandler.js";
+import { caseJobRest } from "./aiStatusIdleGate.js";
 import { getServerLogger, warnLine } from "../logging/serverLogger.js";
 import { dirname, join } from "node:path";
 
@@ -147,6 +148,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     mcpServerStore,
     importUndoStore,
     jobManager,
+    onJobChange,
     clientInventoryFor,
     velociraptorClientStore,
     artifactBundleStore,
@@ -336,6 +338,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
       broadcast: (caseId, redacted) => hub.broadcastTo(caseId, { type: "ai_status", ...redacted }),
       logger: getServerLogger,
       redact: (event) => redactAiStatusEvent(event, [store.casesRoot]),
+      // #2406: "idle" reaches the dashboard only once the case has no job running.
+      jobs: { jobsAtRest: (caseId) => caseJobRest(jobManager.list(caseId)), subscribeJobs: onJobChange },
     }),
     // Broadcast to ALL dashboards so one viewing a different case can warn that captures are
     // arriving here (the capture extension is pointed at a case the analyst isn't looking at).
