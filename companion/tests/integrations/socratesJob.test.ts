@@ -166,3 +166,171 @@ describe("pollUntilImported — wall-clock deadline", () => {
     expect(checks).toBe(1);
   });
 });
+
+// #2408: restart recovery and honest terminal states.
+describe("SocratesJobStore — guarded writes (#2408)", () => {
+  it("never overwrites a finished job, and hands back the stored one", async () => {
+    const store = await makeStore();
+    await store.upsert("case-1", job({ status: "imported", addedEvents: 4 }));
+    const back = await store.upsert("case-1", job({ status: "processing", phase: "network" }));
+    expect(back.status).toBe("imported");
+    expect((await store.list("case-1"))[0]).toMatchObject({ status: "imported", addedEvents: 4 });
+  });
+
+  it("drops only finished jobs when the history cap is reached", async () => {
+    const store = await makeStore();
+    await store.upsert("case-1", job({ jobId: "live-oldest", status: "processing" }));
+    for (let i = 0; i < 30; i++)
+      await store.upsert("case-1", job({ jobId: `done-${i}`, status: "imported" }));
+    await store.upsert("case-1", job({ jobId: "live-newest", status: "importing" }));
+    const ids = (await store.list("case-1")).map((j) => j.jobId);
+    expect(ids).toHaveLength(25);
+    expect(ids).toContain("live-oldest");
+    expect(ids[0]).toBe("live-newest");
+  });
+
+  it("keeps every in-flight job even past the cap", async () => {
+    const store = await makeStore();
+    for (let i = 0; i < 27; i++) await store.upsert("case-1", job({ jobId: `live-${i}` }));
+    expect(await store.list("case-1")).toHaveLength(27);
+  });
+});
+
+describe("pollUntilImported — honest outcomes (#2408)", () => {
+  const noSleep = async () => {};
+  function recordingStore(failWhen: (j: SocratesJob) => boolean = () => false) {
+    const writes: SocratesJob[] = [];
+    const store = {
+      upsert: async (_c: string, j: SocratesJob) => {
+        if (failWhen(j)) throw new Error("disk full");
+        writes.push(j);
+        return j;
+      },
+    } as unknown as SocratesJobStore;
+    return { store, writes };
+  }
+  const base = {
+    fetchVerdicts: async () => ({ text: "[]", alerts: 1, yara: 0, sigma: 0 }),
+    ingest: async () => ({ addedEvents: 3, addedIocs: 2 }),
+    sleep: noSleep,
+  };
+
+  it("keeps the phase it recorded when the analysis later fails", async () => {
+    const { store, writes } = recordingStore();
+    const statuses: SocratesStatus[] = [
+      { status: "processing", phase: "logs" },
+      { status: "error", message: "zeek died" },
+    ];
+    let i = 0;
+    const res = await pollUntilImported("c", job(), {
+      ...base,
+      store,
+      checkStatus: async () => statuses[i++],
+    });
+    expect(res).toMatchObject({ status: "error", phase: "logs" });
+    expect(writes.at(-1)).toMatchObject({ status: "error", phase: "logs" });
+  });
+
+  it("reports imported, never error, when ingest succeeded but the final save keeps failing", async () => {
+    const { store, writes } = recordingStore((j) => j.status === "imported");
+    const warnings: string[] = [];
+    const res = await pollUntilImported("c", job(), {
+      ...base,
+      store,
+      checkStatus: async () => ({ status: "ready" }),
+      warn: (l) => warnings.push(l),
+    });
+    expect(res.status).toBe("imported");
+    expect(writes.some((w) => w.status === "error")).toBe(false);
+    expect(warnings.join("\n")).toMatch(/imported but the job record could not be updated/);
+  });
+
+  it("retries the final save so a transient failure still records imported", async () => {
+    let failures = 1;
+    const { store, writes } = recordingStore((j) => j.status === "imported" && failures-- > 0);
+    const res = await pollUntilImported("c", job(), {
+      ...base,
+      store,
+      checkStatus: async () => ({ status: "ready" }),
+    });
+    expect(res.status).toBe("imported");
+    expect(writes.at(-1)?.status).toBe("imported");
+  });
+
+  it("does not ingest when the import start cannot be recorded", async () => {
+    let ingested = 0;
+    const { store } = recordingStore((j) => j.status === "importing");
+    const res = await pollUntilImported("c", job(), {
+      ...base,
+      store,
+      checkStatus: async () => ({ status: "ready" }),
+      ingest: async () => {
+        ingested++;
+        return { addedEvents: 1, addedIocs: 0 };
+      },
+    });
+    expect(ingested).toBe(0);
+    expect(res.status).toBe("error");
+  });
+
+  it("keeps polling through a phase save failure", async () => {
+    const { store } = recordingStore((j) => j.status === "processing");
+    const statuses: SocratesStatus[] = [{ status: "processing", phase: "network" }, { status: "ready" }];
+    let i = 0;
+    const res = await pollUntilImported("c", job(), {
+      ...base,
+      store,
+      checkStatus: async () => statuses[i++],
+    });
+    expect(res.status).toBe("imported");
+  });
+
+  it("a fresh job fails fast on a refused status check", async () => {
+    const { store } = recordingStore();
+    const res = await pollUntilImported("c", job(), {
+      ...base,
+      store,
+      checkStatus: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    });
+    expect(res.status).toBe("error");
+  });
+
+  it("a resumed job polls through refused checks until the server comes up", async () => {
+    const { store } = recordingStore();
+    let calls = 0;
+    const res = await pollUntilImported(
+      "c",
+      job(),
+      {
+        ...base,
+        store,
+        checkStatus: async () => {
+          if (++calls < 4) throw new Error("ECONNREFUSED");
+          return { status: "ready" };
+        },
+      },
+      { tolerateStatusErrors: true, maxAttempts: 10 },
+    );
+    expect(res.status).toBe("imported");
+  });
+
+  it("a resumed job that never reaches the server reports the last error at the deadline", async () => {
+    const { store } = recordingStore();
+    const res = await pollUntilImported(
+      "c",
+      job(),
+      {
+        ...base,
+        store,
+        checkStatus: async () => {
+          throw new Error("ECONNREFUSED");
+        },
+      },
+      { tolerateStatusErrors: true, maxAttempts: 3 },
+    );
+    expect(res.status).toBe("error");
+    expect(res.error).toMatch(/ECONNREFUSED.*time limit/);
+  });
+});

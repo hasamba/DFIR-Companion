@@ -21,7 +21,6 @@
  * through Python's zipfile, which cannot open AES archives at all.
  */
 import { basename, join, resolve } from "node:path";
-import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import { openNoFollow } from "../storage/noFollowRead.js";
 import { EXPORT_STAGING_DIRNAME } from "../storage/exportStaging.js";
 import { resolveInsideDropDir } from "../storage/dropRelpath.js";
@@ -44,19 +43,11 @@ import { describeToolRun } from "../integrations/tools/toolProvenance.js";
 import { customToolToConfig, type CustomTool } from "../integrations/tools/customToolStore.js";
 import { RAW_TOOL_EXTS, dropMaxBytesFromEnv } from "../analysis/dropScan.js";
 import { extractZipEntries } from "../analysis/zipExtract.js";
-import {
-  md5Buffer,
-  probeAnalysis,
-  uploadBuffer,
-  checkStatus,
-  fetchVerdicts,
-} from "../integrations/socrates/socratesApi.js";
-import { SocratesJobStore, type SocratesJob } from "../integrations/socrates/socratesJobStore.js";
-import { pollUntilImported } from "../integrations/socrates/socratesPoller.js";
-import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
+import { md5Buffer, probeAnalysis, uploadBuffer } from "../integrations/socrates/socratesApi.js";
+import type { SocratesJob, SocratesJobStore } from "../integrations/socrates/socratesJobStore.js";
+import { createSocratesJobRunner } from "./socratesJobRunner.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
-import { logLine } from "../logging/serverLogger.js";
-import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 
 export interface ExternalToolsDeps {
   store: CaseStore;
@@ -122,31 +113,21 @@ export interface ExternalTools {
     caseId: string,
     input: { data: Buffer; filename: string; zipPassword?: string; dropRelpath?: string },
   ): Promise<{ jobIds: string[]; skippedNested: string[]; truncated: boolean }>;
+  /** Startup recovery of SO-CRATES jobs a restart left unfinished (#2408). */
+  resumeSocratesJobs(): Promise<void>;
 }
 
 export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
   const { store, options, resolveImportKind, ingestStreamed, persistRawEvidence, pushImportCheckpoint } =
     deps;
 
-  const socratesJobs = new SocratesJobStore(store);
-
-  // SO-CRATES pollers finish independently, but every ingest mutates the SAME case state behind the
-  // per-case state lock. Firing them concurrently — a 25-entry archive, or several files dropped at
-  // once — piles them all onto that lock. Chain them per case so verdicts land one at a time, in
-  // completion order. The chain never rejects (each link swallows), so one bad import cannot wedge
-  // every later one behind it.
-  const socratesIngestChain = new CaseKeyedMap<Promise<unknown>>(() => store.casesRoot); // #1866
-  const queueSocratesIngest = <T>(caseId: string, fn: () => Promise<T>): Promise<T> => {
-    const prev = socratesIngestChain.get(caseId) ?? Promise.resolve();
-    const next = prev.then(fn, fn);
-    socratesIngestChain.set(
-      caseId,
-      next.catch(() => {
-        /* keep the chain alive after a failure */
-      }),
-    );
-    return next;
-  };
+  // #2408: the background poller, its per-case ingest chain, and startup recovery live together.
+  const socrates = createSocratesJobRunner({
+    store,
+    ingestStreamed,
+    socratesConfig: () => liveToolConfigs().get("socrates") ?? null,
+  });
+  const socratesJobs = socrates.jobs;
 
   // User-defined custom tools (#211) held in memory + refreshed on CRUD (mirrors importerRegistry), so
   // liveToolConfigs stays synchronous.
@@ -419,6 +400,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
         zipEntry: sub.zipEntry,
         status: "processing",
         startedAt: new Date().toISOString(),
+        dropRelpath: input.dropRelpath,
       };
       await socratesJobs.upsert(caseId, job);
       jobIds.push(job.jobId);
@@ -435,60 +417,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
         });
 
       // Fire and forget: the poller updates the job record, which the dashboard polls.
-      void pollUntilImported(
-        caseId,
-        job,
-        {
-          store: socratesJobs,
-          checkStatus: (m) => checkStatus(baseUrl, m),
-          fetchVerdicts: (m) => fetchVerdicts(baseUrl, m),
-          ingest: (cid, text, name) =>
-            queueSocratesIngest(cid, async () => {
-              // Each verdict set is its own import attempt with its own recorder (#1736).
-              const debug = createImportDebugRecorder();
-              const r = await ingestStreamed(
-                cid,
-                "socrates",
-                text,
-                name,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                debug,
-              );
-              return { addedEvents: r.addedEvents, addedIocs: r.addedIocs };
-            }),
-        },
-        // The operator's DFIR_TOOL_SOCRATES_TIMEOUT_MS is a duration: it is the wall-clock deadline,
-        // and the attempt ceiling derived from it is the second bound (#927).
-        { maxAttempts: Math.max(1, Math.floor(cfg.timeoutMs / 5000)), totalMs: cfg.timeoutMs },
-      )
-        .then(async (final) => {
-          // Close the SUBMITTED line in drop-log.txt with what actually happened. Without this the
-          // audit trail ends at "handed to socrates" and never says whether verdicts landed — and a
-          // failed analysis would leave a file sitting in _processed/ with no recorded outcome.
-          if (!input.dropRelpath) return;
-          const entry: DropLogEntry =
-            final.status === "imported"
-              ? {
-                  status: "IMPORTED",
-                  relpath: input.dropRelpath,
-                  reason: `via socrates — +${final.addedEvents ?? 0} event(s), +${final.addedIocs ?? 0} IOC(s)`,
-                }
-              : {
-                  status: "FAILED",
-                  relpath: input.dropRelpath,
-                  reason: final.error ?? "SO-CRATES analysis failed",
-                };
-          await appendDropLog(
-            dropDirOf(store, caseId),
-            formatDropLogLines([entry], new Date().toISOString()),
-          ).catch((e) => logLine(`[drop] log append failed: ${(e as Error).message}`));
-        })
-        .catch(() => {
-          /* pollUntilImported already records failures on the job */
-        });
+      socrates.launch(caseId, job, { ...cfg, baseUrl });
     }
 
     return { jobIds, skippedNested, truncated };
@@ -496,6 +425,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
 
   return {
     socratesJobStore: socratesJobs,
+    resumeSocratesJobs: socrates.resumeAll,
     liveToolConfigs,
     customTools: () => customTools,
     reloadCustomTools,

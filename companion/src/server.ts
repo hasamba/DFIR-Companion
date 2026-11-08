@@ -669,6 +669,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     auditExporter: rt.auditExporter,
     // #2311: a collection running when the server stopped is marked interrupted; Resume is the analyst's.
     cloudCollectRecoverers: cloudCollectStartupRecoverers(store, logLine),
+    // #2408: an SO-CRATES analysis still running when the server stopped is resumed.
+    socratesRecovery: tools.resumeSocratesJobs,
   });
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.
