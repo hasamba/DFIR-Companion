@@ -246,7 +246,15 @@ async function resumeCollection(ctx: RouteContext, vault: CloudAccountVault, req
     parkResumeSession(existing.id, ref);
     const result = await runInCaseScope(ctx.store.casesRoot, caseId, () => manager.resume(existing.id));
     if (result.ok) return res.status(202).json({ collectionId, jobId: existing.id });
-    unparkResumeSession(existing.id); // a spent or cancelled row: a new job carries the collection on
+    unparkResumeSession(existing.id);
+    // The job ledger refused the requeue (#2409): the row is still resumable, so a fresh job would
+    // only duplicate the collection. Say so and let the analyst retry.
+    if (result.reason === "ledger-write-failed") {
+      return res
+        .status(503)
+        .json({ error: "Could not record the resume. Nothing was restarted; try again." });
+    }
+    // a spent or cancelled row: a new job carries the collection on
   }
   const jobId = await launchCollectJob(ctx, manager, {
     caseId,

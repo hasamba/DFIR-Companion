@@ -235,6 +235,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     persistRawEvidence: imports.persistRawEvidence,
     pushImportCheckpoint: appliers.pushImportCheckpoint,
   });
+  options.onSocratesRecoveryReady?.(tools.resumeSocratesJobs); // #2408: startServer runs it after listen()
   const drops = createDropFolder({
     store,
     options,
@@ -542,6 +543,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   // Pre-flight (#179): createApp calls onPreflightReady with runPreflightChecks; we store it
   // here and fire it after app.listen() so probes don't run before the server is ready.
   let scheduledPreflight: (() => Promise<PreflightReport>) | null = null;
+  // #2408: the same hand-off for SO-CRATES startup recovery.
+  let scheduledSocratesRecovery: (() => Promise<void>) | undefined;
 
   // The ~120-member AppOptions literal binding every store to its live-broadcast callback.
   // See composition/appWiring.ts.
@@ -558,7 +561,12 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
       scheduledPreflight = run;
     },
   });
-  const app = createApp(store, appOptions);
+  const app = createApp(store, {
+    ...appOptions,
+    onSocratesRecoveryReady: (run) => {
+      scheduledSocratesRecovery = run;
+    },
+  });
 
   // Serve the logo + favicons from public/ (the dashboard <head> links these). Whitelisted
   // filenames only; browsers that auto-request /favicon.ico get the crisp 32px PNG.
@@ -669,6 +677,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     auditExporter: rt.auditExporter,
     // #2311: a collection running when the server stopped is marked interrupted; Resume is the analyst's.
     cloudCollectRecoverers: cloudCollectStartupRecoverers(store, logLine),
+    // #2408: an SO-CRATES analysis still running when the server stopped is resumed.
+    socratesRecovery: scheduledSocratesRecovery,
   });
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.

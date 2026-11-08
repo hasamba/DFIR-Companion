@@ -16,6 +16,7 @@ import {
   readBodyWithProgress,
   runPanelLoaders,
   afterPaint,
+  PANEL_REQUESTS_ABANDONED,
 } from "../../../public/js/case-load-progress.js";
 
 const MB = 1024 * 1024;
@@ -442,6 +443,33 @@ describe("runPanelLoaders", () => {
     expect(caughtByLoader).toBe(false);
     // The strip is not fooled by the silence — it still counts the panel as settled.
     expect(panelProgressOf(tally).fraction).toBe(1);
+  });
+
+  it("announces an abandonment once per signal, so a loader's lock can be dropped (#2400)", async () => {
+    // The loader never hears about the abort (above), so a module that holds a lock until its
+    // request settles would hold it for ever. The page is told instead, once per signal: the panel
+    // reloader's signal is shared by hundreds of runs.
+    const ac = new AbortController();
+    globalThis.fetch = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_res, rej) => {
+        init?.signal?.addEventListener("abort", () => rej(new Error("aborted")), { once: true });
+      })) as typeof fetch;
+    const seen: string[] = [];
+    const g = globalThis as { dispatchEvent?: (e: Event) => boolean };
+    const realDispatch = g.dispatchEvent;
+    g.dispatchEvent = (e: Event) => (seen.push(e.type), true);
+    try {
+      runPanelLoaders([["tags", () => void fetch("/a")]], undefined, { signal: ac.signal });
+      runPanelLoaders([["jobs", () => void fetch("/b")]], undefined, { signal: ac.signal });
+      expect(seen).toEqual([]);
+      ac.abort();
+      expect(seen).toEqual([PANEL_REQUESTS_ABANDONED]);
+      // A fan-out with no signal can abandon nothing, and announces nothing.
+      runPanelLoaders([["x", () => void fetch("/c")]], undefined, {});
+      expect(seen).toHaveLength(1);
+    } finally {
+      g.dispatchEvent = realDispatch;
+    }
   });
 
   it("still delivers a genuine failure to the loader", async () => {

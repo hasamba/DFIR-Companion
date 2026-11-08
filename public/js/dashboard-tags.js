@@ -195,25 +195,40 @@
 
   // Every tag change broadcasts tags_changed, and a bulk star sends one per event (#2059). One fetch
   // runs at a time; whatever arrives meanwhile is answered by ONE trailing fetch after it.
-  let tagsInFlight = false;
+  //
+  // THE LOCK IS A TOKEN, NOT A FLAG (#2400). The case load and the reconnect catch-up hand an
+  // abandoned request a promise that never settles (js/case-load-progress.js), so a lock released
+  // only when its fetch settles stayed on for the rest of the session: one cancelled or switched-away
+  // case load froze tags and stars in every case. runPanelLoaders announces each abandonment and
+  // resetTagLoads() drops the token; a fetch whose token is no longer current — one that does settle
+  // late — neither paints nor releases the newer fetch's lock nor takes its trailing fetch.
+  let tagsLoad = null; // { caseId } of the fetch holding the lock, or null
   let tagsAgain = null; // the case a change arrived for while a fetch was out
   function loadTags(caseId) {
-    if (tagsInFlight) {
+    if (tagsLoad) {
       tagsAgain = caseId;
       return;
     }
-    tagsInFlight = true;
-    fetchTags(caseId)
+    const token = { caseId };
+    tagsLoad = token;
+    fetchTags(caseId, token)
       .catch(() => {})
       .then(() => {
-        tagsInFlight = false;
+        if (tagsLoad !== token) return; // abandoned meanwhile: the lock is no longer this fetch's
+        tagsLoad = null;
         const next = tagsAgain;
         tagsAgain = null;
         if (next !== null) loadTags(next);
       });
   }
+  function resetTagLoads() {
+    tagsLoad = null;
+    tagsAgain = null;
+  }
+  if (typeof addEventListener === "function")
+    addEventListener("dfir:panel-requests-abandoned", resetTagLoads);
 
-  function fetchTags(caseId) {
+  function fetchTags(caseId, token) {
     taggerForCase(caseId);
     return fetch(`/cases/${caseId}/tags`)
       .then((r) => {
@@ -221,6 +236,7 @@
         return r.json().then((list) => ({ list, version }));
       })
       .then(({ list, version }) => {
+        if (token && tagsLoad !== token) return; // abandoned — a newer load owns the tag list now
         if (tagsAgain !== null && tagsAgain !== caseId) return; // the analyst moved to another case meanwhile
         noteTaggerVersion(version);
         tagsByTarget = new Map();

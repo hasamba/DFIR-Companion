@@ -221,6 +221,29 @@ describe("cloud collect routes (#2311)", () => {
     POLL_TIMEOUT_MS * 4,
   );
 
+  // #2409: a requeue the job ledger refused leaves the row resumable. Launching a fresh job instead
+  // would run the collection twice once the analyst retries.
+  it(
+    "a resume the job ledger could not record answers 503 and starts no new job",
+    async () => {
+      const { app, account, jobManager } = await makeApp({ failPage: 0 });
+      const res = await request(app)
+        .post("/cases/c1/cloud-collect")
+        .send({ accountId: account!.id, sources: ["ct"], ...WINDOW });
+      await settled(app, ["failed"], { jobManager, jobId: res.body.jobId, attempt: 1 });
+      await pollFor("the collect job failing", async () =>
+        jobManager.get(res.body.jobId)?.status === "failed" ? true : null,
+      );
+      const before = jobManager.list("c1").length;
+      vi.spyOn(jobManager, "resume").mockResolvedValue({ ok: false, reason: "ledger-write-failed" });
+      const resumed = await request(app).post(`/cases/c1/cloud-collect/${res.body.collectionId}/resume`);
+      expect(resumed.status).toBe(503);
+      expect(resumed.body.error).toMatch(/Nothing was restarted/);
+      expect(jobManager.list("c1")).toHaveLength(before);
+    },
+    POLL_TIMEOUT_MS * 4,
+  );
+
   it("is refused on the public demo", async () => {
     const { app } = await makeApp({ demo: true });
     expect((await request(app).get("/cases/c1/cloud-collect")).status).toBe(403);
