@@ -44,6 +44,8 @@ function fetchServing(rounds: Array<{ status?: number; body: unknown }>) {
   const urls: string[] = [];
   const fn = async (url: string, init?: { signal?: AbortSignal }) => {
     urls.push(String(url));
+    // stop()'s cursor confirmation (#2411) is answered at once, like Telegram does for timeout=0.
+    if (String(url).includes("timeout=0")) return new Response(JSON.stringify({ ok: true, result: [] }));
     const next = rounds.shift();
     if (!next) {
       // Nothing left to serve: park until the poller aborts, mimicking Telegram holding the line.
