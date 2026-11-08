@@ -151,6 +151,8 @@ export interface CustodyRecord {
     addedAt: string;
     collections: string[];
     reason: string;
+    /** On `credential-detached` only (#2378): the release that recorded it, so a retry skips it. */
+    releaseToken?: string;
   };
   /** Position in this case's custody chain. Strictly increasing; gaps are legal (see nextCustodySeq). */
   seq: number;
@@ -362,6 +364,11 @@ export class CustodyStore {
 
   async record(caseId: string, input: CustodyRecordInput): Promise<CustodyRecord> {
     return (await this.appendChained(caseId, [input]))[0];
+  }
+
+  /** Several records as one run of the chain, in one append (#2378). An empty list writes nothing. */
+  async recordMany(caseId: string, inputs: CustodyRecordInput[]): Promise<CustodyRecord[]> {
+    return this.appendChained(caseId, inputs);
   }
 
   /**

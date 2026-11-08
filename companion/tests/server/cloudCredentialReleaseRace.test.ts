@@ -55,13 +55,13 @@ function holdDetachedWrites() {
   const gate = new Promise<void>((resolve) => (open = resolve));
   let reached!: () => void;
   const held = new Promise<void>((resolve) => (reached = resolve));
-  const record = custody.record.bind(custody);
-  vi.spyOn(custody, "record").mockImplementation(async (caseId, input) => {
-    if (input.event === "credential-detached") {
+  const recordMany = custody.recordMany.bind(custody);
+  vi.spyOn(custody, "recordMany").mockImplementation(async (caseId, inputs) => {
+    if (inputs.some((input) => input.event === "credential-detached")) {
       reached();
       await gate;
     }
-    return record(caseId, input);
+    return recordMany(caseId, inputs);
   });
   return { held, open };
 }
@@ -174,7 +174,7 @@ describe("a case release racing another change (#2371)", () => {
 
   it("a failed custody write still stops the release, and the vault lock is free afterwards", async () => {
     const shared = make("Shared", "c1", "c2");
-    vi.spyOn(custody, "record").mockRejectedValueOnce(new Error("custody disk full"));
+    vi.spyOn(custody, "recordMany").mockRejectedValueOnce(new Error("custody disk full"));
     const a = app();
     const res = await closeCase(a, "c1");
     expect(res.body.cloudCredentialsError).toMatch(/could not be deleted/i);
