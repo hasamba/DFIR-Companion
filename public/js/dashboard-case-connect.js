@@ -80,8 +80,12 @@
     if (api && typeof api.retirePanelReloads === "function") api.retirePanelReloads(caseId);
   }
 
+  // Connect loads the picker's choice (#2399); #caseId only changes once the load starts, in
+  // proceedConnect, so a lock probe or password prompt leaves every action on the case on screen.
   function connect() {
-    const caseId = document.getElementById("caseId").value.trim();
+    const caseId = (
+      typeof pickedCaseId === "function" ? pickedCaseId() : document.getElementById("caseId").value
+    ).trim();
     if (!caseId) return;
     if (activeUnlockedCaseId && activeUnlockedCaseId !== caseId)
       forgetActiveCaseIfNotRemembered();
@@ -203,6 +207,10 @@
     // panel. The result was a dashboard that kept redrawing and re-loading a case the analyst had
     // just walked out of, at a URL that named no case at all.
     //
+    // Nothing is loaded now, so no action may target the cancelled case (#2399); the picker keeps it
+    // as its choice so retrying is one click.
+    const cancelledCaseId = activeCaseId;
+    if (typeof clearLoadedCase === "function") clearLoadedCase(cancelledCaseId);
     // Order matters: drop activeCaseId LAST. render()'s stale guard compares against it, so
     // clearing it before the socket is closed would open a window where a push in flight is
     // measured against nothing.
@@ -236,6 +244,10 @@
     connectAbortController = new AbortController();
     const loadSignal = connectAbortController.signal;
     activeCaseId = caseId;
+    // #caseId is the case every action targets (#2399): it changes HERE, with activeCaseId, never on
+    // a bare pick. Without the picker module the field is written directly, as before.
+    if (typeof commitLoadedCase === "function") commitLoadedCase(caseId);
+    else document.getElementById("caseId").value = caseId;
     showCaseLoadingOverlay();
     hideCaseMismatch();
     mismatchDismissed = ""; // fresh start for the newly-connected case
@@ -707,14 +719,20 @@
     const remembered = (localStorage.getItem("dfir.caseId") || "").trim();
     const el = document.getElementById("caseId");
     if (!el) return;
+    // A pick, not a load (#2399): a remembered case is only pre-selected, so #caseId names a case
+    // only once one is actually loading.
+    const choose = (id) => {
+      if (typeof setCasePick === "function") setCasePick(id);
+      else el.value = id;
+    };
     if (fromUrl) {
-      el.value = fromUrl;
+      choose(fromUrl);
       connect();
       // Same task as the connect, so before the next paint: reserve the cockpit's space now, not
       // when its fetch starts, or the panels below it paint in place and then jump (#1791).
       if (typeof cockpitShowLoading === "function") cockpitShowLoading();
     } else if (remembered) {
-      el.value = remembered;
+      choose(remembered);
     }
     // The visible box shows the case's NAME; #caseId only holds the id (#1523).
     if (typeof syncCasePicker === "function") syncCasePicker();
@@ -737,8 +755,11 @@
     if (cancelBtn) cancelBtn.onclick = dismissCaseLoading;
     document.getElementById("caseMismatchSwitch").onclick = () => {
       if (!foreignCaptureCase) return;
-      document.getElementById("caseId").value = foreignCaptureCase;
-      if (typeof syncCasePicker === "function") syncCasePicker();
+      if (typeof setCasePick === "function") setCasePick(foreignCaptureCase);
+      else {
+        document.getElementById("caseId").value = foreignCaptureCase;
+        if (typeof syncCasePicker === "function") syncCasePicker();
+      }
       mismatchDismissed = "";
       hideCaseMismatch();
       connect();

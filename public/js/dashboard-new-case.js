@@ -119,7 +119,9 @@
       });
       if (res.status === 201) {
         closeNewCase();
-        document.getElementById("caseId").value = caseId;
+        // A pick; connect() below loads it and only then does #caseId change (#2399).
+        if (typeof setCasePick === "function") setCasePick(caseId);
+        else document.getElementById("caseId").value = caseId;
         loadCaseList(); // add the new case to the combo box
         connect(); // attach the dashboard to the case we just created
       } else if (res.status === 409) {
@@ -166,7 +168,9 @@
         alert("Demo case error: " + (b.error || "HTTP " + res.status));
       } else {
         const { caseId } = await res.json();
-        document.getElementById("caseId").value = caseId;
+        // A pick; connect() below loads it and only then does #caseId change (#2399).
+        if (typeof setCasePick === "function") setCasePick(caseId);
+        else document.getElementById("caseId").value = caseId;
         loadCaseList();
         connect();
       }
