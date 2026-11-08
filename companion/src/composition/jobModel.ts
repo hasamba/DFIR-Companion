@@ -43,6 +43,8 @@ export function jobModelResolver(
   const textModel = (): JobModelIdentity => pipeline?.analysisTextProviderModel() ?? undefined;
   return (input) => {
     if (input.kind === "synthesis" || input.kind === "deep-pass") return textModel();
+    if (input.kind === "second-look")
+      return input.parameters?.resynthesize === false ? undefined : textModel();
     if (input.kind !== "import") return undefined;
     const kind = input.parameters?.kind;
     return typeof kind === "string" && isAiDependent(kind) ? textModel() : undefined;

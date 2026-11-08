@@ -14,6 +14,7 @@ export const JOB_KINDS = [
   "deep-pass",
   "mcp",
   "second-opinion",
+  "second-look", // analyst-pressed raw-record sweep + forced re-synthesis (#2407)
   "cloud-collect", // live cloud collection (#2311): network stage, then the import stage
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
