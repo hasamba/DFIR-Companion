@@ -19,7 +19,12 @@ interface SuperTimelineApi {
   toggleSuperSelectAll: (checked: boolean) => void;
 }
 
-const PRELOAD = ["dashboard-state.js", "dashboard-escape.js", "dashboard-time.js", "dashboard-timeline-view.js"];
+const PRELOAD = [
+  "dashboard-state.js",
+  "dashboard-escape.js",
+  "dashboard-time.js",
+  "dashboard-timeline-view.js",
+];
 
 const page = (total = 500, ids: string[] = []) => ({
   events: ids.map((id) => ({ id, timestamp: "2026-01-01T00:00:00Z", description: id, sources: ["s"] })),
@@ -143,7 +148,12 @@ describe("super-timeline across a case switch (#2401)", () => {
     const readsBefore = h.reads().length;
     h.answer(h.promotes()[0], { promoted: 1 }); // A's promote lands while B is on screen
     await settle();
-    expect(h.reads().slice(readsBefore).some((c) => c.url.includes("/cases/A/"))).toBe(false);
+    expect(
+      h
+        .reads()
+        .slice(readsBefore)
+        .some((c) => c.url.includes("/cases/A/")),
+    ).toBe(false);
     h.api.promoteSuperSelected();
     expect(h.promotes()).toHaveLength(2);
     expect(JSON.parse(h.promotes()[1].body ?? "{}")).toEqual({ eventIds: ["b1"] });
