@@ -150,6 +150,10 @@ only.
   late file can come hours later. A file can hold events outside the window; they are imported
   too, and duplicates are removed. Files delivered more than 24 hours after the window end are not
   collected, and the result says so. Collect the window again later to pick them up.
+- **Speed.** Each trail folder is listed once (up to 1,000 files per listing), and the next few
+  files (up to 6, each at most 8 MB) are downloaded while the current one is saved. Files are still
+  saved and recorded one at a time, in order, so the manifest, Resume and Cancel behave exactly as
+  before. A cancel stops the downloads in flight too.
 - **Each file is saved exactly as stored** — the `.json.gz` CloudTrail wrote, not unpacked or
   changed. The collection's manifest records its bucket, key, SHA-256 and, when the bucket has
   versioning on, its **S3 version id**.

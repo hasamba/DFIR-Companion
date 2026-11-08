@@ -24,6 +24,12 @@ import {
 } from "../collectTypes.js";
 import { errorName, sendAws, awsReason, type AwsCollectClients } from "./awsCollectTypes.js";
 import type { TrailDiscovery, TrailRoot } from "./awsTrailDiscovery.js";
+import {
+  PREFETCH_DEPTH,
+  TrailPrefetcher,
+  type FetchedObject,
+  type PrefetchCandidate,
+} from "./awsTrailPrefetch.js";
 
 /** How far past the window's end a delivered file is still looked for (disclosed in the result). */
 export const CLOUDTRAIL_DELIVERY_HORIZON_MS = 24 * 60 * 60_000;
@@ -118,15 +124,55 @@ function positionOf(cells: readonly Cell[], token?: string): Position {
   return { cell, after: t.k };
 }
 
-/** The S3 walk of one session: the listings it has read, so the look-ahead is never listed twice. */
+/** One ListObjectsV2 answer for a cell: the keys after `startAfter`, in S3 order. */
+interface CachedListing {
+  bucket: string;
+  prefix: string;
+  startAfter?: string;
+  keys: string[];
+  sizes: Map<string, number>;
+  truncated: boolean;
+}
+
+/** #2380: tests compare the old walk (a listing per page, no fetch-ahead) with the new one. */
+export interface TrailWalkOptions {
+  prefetchDepth?: number;
+  reuseListings?: boolean;
+}
+
+/**
+ * The S3 walk of one session. Listings are reused across pages (#2380): the next key after X in a
+ * cell comes from a cached listing whose range covers X, so a folder of 1,000 objects costs one
+ * ListObjectsV2, not one per object (the cache was keyed by StartAfter, which changes every page).
+ * The next few objects are downloaded ahead (awsTrailPrefetch.ts). close() stops both.
+ */
 export class TrailObjectWalk {
-  private readonly listings = new Map<string, Listed>();
+  private readonly listings: CachedListing[] = [];
+  private readonly reuse: boolean;
+  readonly prefetch: TrailPrefetcher;
 
-  constructor(private readonly clients: AwsCollectClients) {}
+  constructor(
+    private readonly clients: AwsCollectClients,
+    options: TrailWalkOptions = {},
+  ) {
+    this.reuse = options.reuseListings ?? true;
+    this.prefetch = new TrailPrefetcher(clients.s3, options.prefetchDepth ?? PREFETCH_DEPTH);
+  }
 
-  private async list(c: Cell, after: string | undefined, signal?: AbortSignal): Promise<Listed> {
-    const key = `${c.bucket}\n${prefixOf(c)}\n${after ?? ""}`;
-    const hit = this.listings.get(key);
+  /** A cached listing that answers "the next key after `after`" in this cell, or undefined. */
+  private covering(c: Cell, after: string | undefined): CachedListing | undefined {
+    const prefix = prefixOf(c);
+    return this.listings.find((l) => {
+      if (l.bucket !== c.bucket || l.prefix !== prefix) return false;
+      if (!this.reuse) return (l.startAfter ?? "") === (after ?? "");
+      if (l.startAfter !== undefined && (after === undefined || after < l.startAfter)) return false;
+      const last = l.keys[l.keys.length - 1];
+      return !l.truncated || (last !== undefined && (after === undefined || after < last));
+    });
+  }
+
+  private async list(c: Cell, after: string | undefined, signal?: AbortSignal): Promise<CachedListing> {
+    const hit = this.covering(c, after);
     if (hit) return hit;
     const listed = await sendAws<Listed>(
       this.clients.s3,
@@ -137,9 +183,20 @@ export class TrailObjectWalk {
       }),
       signal,
     );
-    if (this.listings.size >= LISTING_CACHE) this.listings.delete(this.listings.keys().next().value!);
-    this.listings.set(key, listed);
-    return listed;
+    const contents = (listed.Contents ?? []).filter((o): o is { Key: string; Size?: number } => !!o.Key);
+    const entry: CachedListing = {
+      bucket: c.bucket,
+      prefix: prefixOf(c),
+      ...(after ? { startAfter: after } : {}),
+      keys: contents.map((o) => o.Key),
+      sizes: new Map(
+        contents.filter((o) => typeof o.Size === "number").map((o) => [o.Key, o.Size as number]),
+      ),
+      truncated: !!listed.IsTruncated,
+    };
+    if (this.listings.length >= LISTING_CACHE) this.listings.shift();
+    this.listings.push(entry);
+    return entry;
   }
 
   /** The next object in the window at or after `from`, or null at the end of the walk. */
@@ -153,14 +210,50 @@ export class TrailObjectWalk {
       let after = i === from.cell ? from.after : undefined;
       for (;;) {
         const listed = await this.list(cells[i], after, signal);
-        const keys = (listed.Contents ?? []).map((o) => o.Key).filter((k): k is string => !!k);
-        const hit = keys.find((k) => (!after || k > after) && inWindow(k, window));
+        const hit = listed.keys.find((k) => (!after || k > after) && inWindow(k, window));
         if (hit) return { cell: i, key: hit };
-        if (!listed.IsTruncated || !keys.length) break;
-        after = keys[keys.length - 1];
+        if (!listed.truncated || !listed.keys.length) break;
+        after = listed.keys[listed.keys.length - 1];
       }
     }
     return null;
+  }
+
+  /**
+   * The objects the walk will return after `from`, from cached listings only (never lists), at most
+   * `max`. It stops where the cache does — a listing not read yet is not guessed.
+   */
+  upcoming(
+    cells: readonly Cell[],
+    from: Position,
+    window: { start: string; end: string },
+    max: number,
+  ): PrefetchCandidate[] {
+    const out: PrefetchCandidate[] = [];
+    for (let i = from.cell; i < cells.length && out.length < max; i++) {
+      let after = i === from.cell ? from.after : undefined;
+      for (;;) {
+        const listed = this.covering(cells[i], after);
+        if (!listed) return out;
+        for (const k of listed.keys) {
+          if ((after && k <= after) || !inWindow(k, window)) continue;
+          out.push({
+            bucket: cells[i].bucket,
+            key: k,
+            ...(listed.sizes.has(k) ? { size: listed.sizes.get(k) } : {}),
+          });
+          if (out.length >= max) return out;
+        }
+        if (!listed.truncated || !listed.keys.length) break;
+        after = listed.keys[listed.keys.length - 1];
+      }
+    }
+    return out;
+  }
+
+  /** Stop every download ahead and wait for them to settle. */
+  close(): Promise<void> {
+    return this.prefetch.close();
   }
 }
 
@@ -193,6 +286,35 @@ interface GotObject {
   ETag?: string;
   LastModified?: Date;
   $metadata?: { requestId?: string };
+}
+
+/**
+ * One object the normal way (no prefetch, or it failed): a denied object is a skip. Abort is
+ * terminal, and so is a closed walk (the session closed while this page waited).
+ */
+async function getTrailObject(
+  walk: TrailObjectWalk,
+  clients: AwsCollectClients,
+  bucket: string,
+  key: string,
+  nextPageToken: string | undefined,
+  signal?: AbortSignal,
+): Promise<FetchedObject> {
+  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("aborted");
+  if (walk.prefetch.closed)
+    throw Object.assign(new Error("the collection session was closed"), { name: "AbortError" });
+  let got: GotObject;
+  try {
+    // The walk owns this download too: close() aborts it (with the run's cancel, if any).
+    const owned = signal ? AbortSignal.any([signal, walk.prefetch.signal]) : walk.prefetch.signal;
+    got = await sendAws<GotObject>(clients.s3, new GetObjectCommand({ Bucket: bucket, Key: key }), owned);
+  } catch (err) {
+    if (!isDenied(err)) throw err;
+    throw new SkippedItemError(`s3://${bucket}/${key}`, deniedReason(err), nextPageToken);
+  }
+  const body = (await got.Body?.transformToByteArray()) ?? new Uint8Array();
+  const { Body: _stream, ...meta } = got;
+  return { meta, body };
 }
 
 const SELECTION = `objects delivered from the window start's minute to ${CLOUDTRAIL_DELIVERY_HORIZON_MS / 3_600_000} h after its end`;
@@ -252,18 +374,16 @@ export async function fetchTrailObject(
     request.signal,
   );
   const nextPageToken = ahead ? encodeToken(cell, found.key) : undefined;
-  let got: GotObject;
-  try {
-    got = await sendAws<GotObject>(
-      clients.s3,
-      new GetObjectCommand({ Bucket: cell.bucket, Key: found.key }),
-      request.signal,
-    );
-  } catch (err) {
-    if (!isDenied(err)) throw err;
-    throw new SkippedItemError(`s3://${cell.bucket}/${found.key}`, deniedReason(err), nextPageToken);
-  }
-  const body = (await got.Body?.transformToByteArray()) ?? new Uint8Array();
+  // #2380: start downloading the next objects while this one is fetched and committed.
+  const after = { cell: found.cell, after: found.key };
+  walk.prefetch.fill(
+    { bucket: cell.bucket, key: found.key },
+    walk.upcoming(cells, after, request.window, PREFETCH_DEPTH),
+    request.signal,
+  );
+  const { meta: got, body } =
+    (await walk.prefetch.take(cell.bucket, found.key, request.signal)) ??
+    (await getTrailObject(walk, clients, cell.bucket, found.key, nextPageToken, request.signal));
   const root = roots.find((r) => r.bucket === cell.bucket && r.root === cell.root);
   return {
     body,

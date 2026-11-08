@@ -46,7 +46,12 @@ import {
 } from "./awsCollectTypes.js";
 import { createAwsCollectClients } from "./awsCollectClients.js";
 import { discoverTrailRoots, type TrailDiscovery } from "./awsTrailDiscovery.js";
-import { CLOUDTRAIL_DELIVERY_HORIZON_MS, fetchTrailObject, TrailObjectWalk } from "./awsTrailObjects.js";
+import {
+  CLOUDTRAIL_DELIVERY_HORIZON_MS,
+  fetchTrailObject,
+  TrailObjectWalk,
+  type TrailWalkOptions,
+} from "./awsTrailObjects.js";
 import { fetchLookupPage } from "./awsLookupEvents.js";
 import { fetchGuardDutyPage } from "./awsGuardDutyFindings.js";
 import {
@@ -161,11 +166,14 @@ class AwsCollectSession implements CloudCollectSession {
   private who?: Promise<{ account: string; caller: string }>;
   private roots?: Promise<TrailDiscovery>;
   private walk?: TrailObjectWalk;
+  /** #2380: teardowns of walks closed so far (each walk's close() is one shared promise). */
+  private readonly retiring: Promise<void>[] = [];
   private filters: Readonly<Record<string, string>> = {};
 
   constructor(
     private readonly settings: AwsSettings,
     private readonly makeClients: () => AwsCollectClients,
+    private readonly walkOptions: TrailWalkOptions = {},
   ) {}
 
   private get clients(): AwsCollectClients {
@@ -214,7 +222,24 @@ class AwsCollectSession implements CloudCollectSession {
   applyFilters(filters: Readonly<Record<string, string>>): void {
     this.filters = { ...filters };
     this.roots = undefined;
+    // #2380: the old walk's downloads ahead are for the old scope: abort them now; close() waits.
+    this.retireWalk();
+  }
+
+  /** #2380: stop a walk's downloads ahead, keeping its teardown so close() can wait for it. */
+  private retireWalk(): void {
+    if (!this.walk) return;
+    this.retiring.push(this.walk.close());
     this.walk = undefined;
+  }
+
+  /**
+   * #2380: the job's finally — cancel, failure or done. Stops every download ahead, of this walk
+   * and of any walk a filter change replaced, and resolves only once all have settled.
+   */
+  async close(): Promise<void> {
+    this.retireWalk();
+    await Promise.allSettled(this.retiring);
   }
 
   /** Trail discovery, asked in the walked regions; a region folder the analyst unticked is dropped. */
@@ -254,7 +279,7 @@ class AwsCollectSession implements CloudCollectSession {
       return withScopeNote(await fetchGuardDutyPage(this.clients, this.walkRegions(), request), notes);
     if (request.source !== S3_TRAIL_SOURCE) throw new Error(`unknown AWS source "${request.source}"`);
     const discovery = await this.trailRoots(request.signal);
-    this.walk ??= new TrailObjectWalk(this.clients);
+    this.walk ??= new TrailObjectWalk(this.clients, this.walkOptions);
     return withScopeNote(await fetchTrailObject(this.walk, this.clients, discovery, request), notes);
   }
 
@@ -272,6 +297,8 @@ export interface AwsCollectProviderDeps {
   config?: (transport: CloudTransport) => { requestHandler: unknown };
   /** Tests: structural fake clients in place of the SDK's. */
   clients?: (settings: AwsSettings, secrets: AwsSecrets) => AwsCollectClients;
+  /** Tests (#2380): the S3 walk's fetch-ahead depth and listing reuse; production uses the defaults. */
+  trailWalk?: TrailWalkOptions;
 }
 
 export function createAwsCollectProvider(deps: AwsCollectProviderDeps): CloudCollectProvider {
@@ -288,7 +315,7 @@ export function createAwsCollectProvider(deps: AwsCollectProviderDeps): CloudCol
         const config = deps.config ? deps.config(transport) : awsClientConfig(transport);
         return createAwsCollectClients(settings, secrets, transport, config);
       };
-      return new AwsCollectSession(settings, make);
+      return new AwsCollectSession(settings, make, deps.trailWalk);
     },
   };
 }
