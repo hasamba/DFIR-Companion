@@ -505,24 +505,39 @@ describe("pushCaseToNotion", () => {
     expect(m.appendCalls.length).toBe(appendsBefore);
   });
 
-  it("remembers a new page the moment it exists, so a later failure leaves no untracked page", async () => {
+  it("a container failure after the page was made names the page, and the retry finishes that page", async () => {
     const m = new MockNotion();
     const store = new MemStore();
+    const real = m.appendChildren.bind(m);
     m.appendChildren = async () => {
       throw new Error("container append failed");
     };
-    await expect(
-      pushCaseToNotion(
-        m,
-        { caseName: "c1", state: sampleState() },
-        { mode: "new", databaseId: "db-1" },
-        { exportedAt: AT, sleep: noop },
-        store,
-      ),
-    ).rejects.toThrow(/container append failed/);
+    const err = await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "new", databaseId: "db-1" },
+      { exportedAt: AT, sleep: noop },
+      store,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(NotionExportIncompleteError);
+    const pageId = (err as NotionExportIncompleteError).pageId;
+    expect(pageId).toMatch(/^page-/);
+    expect((err as Error).message).toMatch(/container append failed/);
     const saved = await store.load("c1");
-    expect(saved.pageId).toMatch(/^page-/);
+    expect(saved.pageId).toBe(pageId);
     expect(saved.containerBlockId).toBe("");
+    // What the dashboard now sends: the same page, in "existing" mode.
+    m.appendChildren = real;
+    const res = await pushCaseToNotion(
+      m,
+      { caseName: "c1", state: sampleState() },
+      { mode: "existing", pageId },
+      { exportedAt: AT, sleep: noop },
+      store,
+    );
+    expect(res.pageId).toBe(pageId);
+    expect(m.createPageCalls).toHaveLength(1);
+    expect(res.blocksAppended).toBeGreaterThan(0);
   });
 
   it("a failed middle batch fails the export, appends nothing after the gap, and names the page", async () => {
