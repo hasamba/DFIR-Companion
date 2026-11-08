@@ -1,5 +1,5 @@
 // #2350 — import-time Sigma puts its head at the START of a row's description ("Sigma: <title> - "
-// or "Sigma (<level>, tag only): <title> - "), and the cloud tagger rules are anchored on the
+// or "Sigma (<level>, not graded): <title> - "), and the cloud tagger rules are anchored on the
 // importer's own prefix ("^AWS ModifySnapshotAttribute (", "^Entra audit:", "^Entra sign-in:").
 // The tagger must still match those rules on a Sigma-matched row, through the real importers, the
 // bundled Sigma rules and the SHIPPED tags.yaml — and in the streamed pre-grade too.

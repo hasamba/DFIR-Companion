@@ -3,7 +3,7 @@
 // can read it without pulling in each other's dependencies.
 //
 // sigmaImportGrade.applySigmaMatches writes a head at the START of the description
-// ("Sigma: <title> - " or "Sigma (<level>, tag only): <title> - ") and one "Sigma rule:" line per
+// ("Sigma: <title> - " or "Sigma (<level>, not graded): <title> - ") and one "Sigma rule:" line per
 // matched rule into the message. A head is removed ONLY when the message carries the matching
 // "Sigma rule: <title> [<id>] — level …" line, so a description that merely starts with "Sigma:"
 // (adversary-controlled text, or another importer's own Sigma head) is left as it is.
@@ -32,6 +32,8 @@ export function splitSigmaOverlay(description: string, message: string | undefin
   const more = rules.length > 1 ? ` (+${rules.length - 1} more)` : "";
   const heads = rules.flatMap((r) => [
     `Sigma: ${r.title}${more} - `,
+    `Sigma (${r.level}, not graded): ${r.title}${more} - `,
+    // Rows imported before #2386 carry the old wording until a Sigma re-grade.
     `Sigma (${r.level}, tag only): ${r.title}${more} - `,
   ]);
   const head = heads.find((h) => description.startsWith(h));

@@ -148,7 +148,7 @@ describe("matchEvent — any/all/none semantics", () => {
 });
 
 describe("matchEvent — the import-time Sigma head (#2350)", () => {
-  const head = "Sigma (medium, tag only): Some Rule - ";
+  const head = "Sigma (medium, not graded): Some Rule - ";
   const ruleLine = "Sigma rule: Some Rule [r-1] — level medium, status test";
   const sigmaRow = (base: string) =>
     ev({ id: "e", description: `${head}${base}`, message: `m\n${ruleLine}` });
@@ -156,6 +156,16 @@ describe("matchEvent — the import-time Sigma head (#2350)", () => {
   it("an importer-anchored rule matches the row without the verified Sigma head", () => {
     const r = one({ all: [{ field: "description", regex: "^AWS Foo \\(" }], tags: ["t"] });
     expect(matchEvent(sigmaRow("AWS Foo (x)"), r)).toBe(true);
+  });
+
+  it('still strips the pre-#2386 "tag only" head on a row imported before the rename', () => {
+    const r = one({ all: [{ field: "description", regex: "^AWS Foo \\(" }], tags: ["t"] });
+    const old = ev({
+      id: "e",
+      description: "Sigma (medium, tag only): Some Rule - AWS Foo (x)",
+      message: `m\n${ruleLine}`,
+    });
+    expect(matchEvent(old, r)).toBe(true);
   });
 
   it("a rule anchored on the Sigma head still matches the stored row", () => {

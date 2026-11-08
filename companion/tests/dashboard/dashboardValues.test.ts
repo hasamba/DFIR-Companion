@@ -222,6 +222,25 @@ describe("jobMenuView", () => {
     expect(v.jobBarPercent({ status: "running", progress: { done: 0, total: 0 } })).toBeNull();
   });
 
+  it("reads the Sigma not-graded reason for the title hover, and nothing on other rows (#2386)", () => {
+    const message = "raw\nSigma rule: R [r] — level medium\nSigma note: not graded — below the minimum";
+    expect(v.sigmaNotGradedHint({ message })).toBe("Sigma rule did not set the severity: below the minimum");
+    expect(v.sigmaNotGradedHint({ message: "Sigma rule: R [r] — level high" })).toBe("");
+    expect(v.sigmaNotGradedHint({})).toBe("");
+  });
+
+  it("wraps a not-graded title in an escaped hover, and leaves other titles alone (#2386)", () => {
+    const withEscape = loadDashboardModule<ValuesApi>("dashboard-values.js", [
+      "dashboard-time.js",
+      "dashboard-escape.js",
+    ]);
+    const message = 'Sigma note: not graded — rules below the "high" level';
+    expect(withEscape.sigmaHinted({ message }, "T")).toBe(
+      '<span class="sigma-hint" title="Sigma rule did not set the severity: rules below the &quot;high&quot; level">T</span>',
+    );
+    expect(withEscape.sigmaHinted({}, "T")).toBe("T");
+  });
+
   it("leaves the detail empty when there is nothing to say", () => {
     expect(v.jobMenuView({ status: "done" }).detail).toBe("");
   });

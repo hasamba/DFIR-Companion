@@ -1883,9 +1883,13 @@ they are imported. No AI is involved, and the same file always gets the same res
 - **A high or critical rule raises the event** to the rule's level. The description starts with
   `Sigma: <rule title>`. A severity the importer already gave is never lowered.
 - **A rule below the minimum level (default: medium, low or informational), or any rule from SigmaHQ's
-  threat-hunting set, only tags the event**: `Sigma (medium, tag only): <title>`.
-  The severity does not change, so an Info row stays Info, goes to the super-timeline, and is never
-  read by the AI.
+  threat-hunting set, labels the event but does not grade it**: `Sigma (medium, not graded): <title>`.
+  The severity does not change. Any severity the row shows comes from the companion's other rules,
+  and an Info row stays Info, goes to the super-timeline, and is never read by the AI. The details
+  carry a `Sigma note: not graded — …` line that says why: the rule is below the minimum level, it is
+  a threat-hunting rule, or the log source does not let Sigma raise that record. Hover over the row
+  title to see the same reason. Rows imported before this wording read `tag only` until you run a
+  Sigma re-grade.
 - **Every match is recorded on the event**: the rule id, level, status, author, the SigmaHQ release
   and a link to the rule. The rule's ATT&CK techniques are added to the event.
 - **One event, not two.** When the importer's own tables and a Sigma rule flag the same record, it
@@ -1906,8 +1910,8 @@ they are imported. No AI is involved, and the same file always gets the same res
 
 Which rules run (by default): SigmaHQ `stable` and `test` rules for `aws/cloudtrail`, `azure/signinlogs`,
 `azure/auditlogs` and `gcp/audit`. The 15 bundled GCP audit rules are all `medium`, so at the default
-minimum level (high) they **only tag** GCP events — for example `Sigma (medium, tag only): Google Cloud
-Firewall Modified or Deleted`. Set the minimum level to medium to let them raise events. Some of them
+minimum level (high) they **only label** GCP events — for example `Sigma (medium, not graded): Google
+Cloud Firewall Modified or Deleted`. Set the minimum level to medium to let them raise events. Some of them
 name GCP methods the way another log pipeline spells them (`.serviceAccounts.disable` for what a real
 audit log calls `DisableServiceAccount`). The Companion runs the rules as SigmaHQ wrote them and also
 matches the real name for those exact calls, so every one of the 15 fires on real Cloud Audit Log

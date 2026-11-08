@@ -315,7 +315,7 @@
         `<div class="ev-col-time"><span class="sev-${escAttr(sev)}">${esc(e.timestamp || "")}</span></div>` +
         `<div class="ev-col-content">` +
         `<span class="ev-origin" title="origin">${esc(origin)}</span> ${promotedBadge}` +
-        `${superTagPills("event", e.id)}${host}${details.toggle} ${descHtml(details.title)}${veloLink}` +
+        `${superTagPills("event", e.id)}${host}${details.toggle} ${sigmaHinted(e, descHtml(details.title))}${veloLink}` +
         `${details.panel}` +
         `</div>` +
         `</div>`;
