@@ -27,6 +27,18 @@ export function isHeldRefusal(status: number, errorMessage?: string, errorCode?:
  * isHeldRefusal: after a token or case switch, a queued capture for the old case can get team
  * auth's 404 — which may mean "no access", not "case gone".
  */
+/** The 429 code the companion uses when one case's password is locked out (#2397). */
+export const CASE_PASSWORD_LOCKOUT = "case-password-lockout";
+
+/**
+ * The case refuses this capture until its password is entered (401 locked) or its lockout has
+ * passed (429 case-password-lockout). Either way it is about ONE case: a queued capture for it is
+ * kept and skipped, and the captures behind it for other cases still go out (#2397).
+ */
+export function isCaseLockRefusal(status: number, errorMessage?: string, errorCode?: string): boolean {
+  return isLockedRejection(status, errorMessage) || (status === 429 && errorCode === CASE_PASSWORD_LOCKOUT);
+}
+
 export function isKeptQueuedRefusal(status: number, errorMessage?: string, errorCode?: string): boolean {
   if (isHeldRefusal(status, errorMessage, errorCode)) return true;
   return status === 404 && errorMessage === ACCESS_DENIED_404_MESSAGE;
