@@ -2,7 +2,7 @@ import type { CompanionClient } from "./companionClient.js";
 import type { CaptureQueue, QueueSendResult } from "./captureQueue.js";
 import type { CapturePayload, ConnectionStatus, DroppedCapture, TriggerType } from "./types.js";
 import { isLockedRejection } from "./casePasswordSession.js";
-import { isHeldRefusal, isKeptQueuedRefusal } from "./captureRefusal.js";
+import { isCaseLockRefusal, isHeldRefusal, isKeptQueuedRefusal } from "./captureRefusal.js";
 
 // Is this HTTP status worth retrying later? A 4xx is normally the companion's considered answer
 // about THIS capture (404 case gone, 423 case closed, 410 deleted) and will say the same thing
@@ -73,6 +73,9 @@ export class CaptureController {
       tabTitle: snapshot.tabTitle,
       triggerType: trigger,
       imageBase64: snapshot.imageBase64,
+      // Stored with the queued row and sent with every attempt: a re-send after an ambiguous
+      // failure or a suspend is recognised by the companion, not stored twice (#2397).
+      captureId: crypto.randomUUID(),
     };
 
     let key: number | undefined;
@@ -114,10 +117,13 @@ export class CaptureController {
       };
     }
 
-    // The case is password-locked and the capture carried no (or a wrong) password (#2135). Not a
-    // verdict on the screenshot: keep it queued, so it uploads once the analyst enters the password.
-    if (isLockedRejection(result.status, result.errorMessage)) {
-      return this.kept(key, writeError, { online: true, locked: true });
+    // The case is password-locked and the capture carried no (or a wrong) password (#2135), or the
+    // case's password is locked out after wrong guesses (#2397). Not a verdict on the screenshot:
+    // keep it queued, so it uploads once the analyst enters the password.
+    if (isCaseLockRefusal(result.status, result.errorMessage, result.errorCode)) {
+      // A lockout refuses even the right password without checking it: never a reason to forget it.
+      const lockedOut = !isLockedRejection(result.status, result.errorMessage);
+      return this.kept(key, writeError, { online: true, locked: true, ...(lockedOut ? { lockedOut: true } : {}) });
     }
 
     // Refused for WHO is asking — a missing/rotated service token (401), a case role that cannot
@@ -175,6 +181,7 @@ export class CaptureController {
       online: status.online,
       queued,
       ...(status.locked ? { locked: true } : {}),
+      ...(status.lockedOut ? { lockedOut: true } : {}),
       queueWriteFailed: writeError ?? "the capture could not be queued",
     };
   }
@@ -188,26 +195,50 @@ export class CaptureController {
   async drainQueue(): Promise<QueueDrainStatus> {
     let lockedQueuedCaseId: string | undefined;
     let credentialRefused = false;
+    // Cases refused for their password in THIS drain (#2397): later captures for them are kept
+    // without being sent, so a known-wrong password is never tried twice and a locked-out case is
+    // not hammered — while captures for every other case still go out.
+    const refusedCases = new Set<string>();
+    const isDueNow = (p: CapturePayload, last: QueueSendResult): boolean =>
+      // Waiting for a password the client now holds: try it at once, not after the backoff.
+      isLockedRejection(last.status ?? 0, last.errorMessage)
+      && this.client.sendsCredentialFor(p.caseId)
+      && !refusedCases.has(p.caseId);
     const drained = await this.queue.drain(async (p): Promise<QueueSendResult> => {
+      if (refusedCases.has(p.caseId)) {
+        return { outcome: "skip", status: 401, errorMessage: "locked" };
+      }
       const r = await this.client.postCapture(p);
       if (r.ok) return { outcome: "sent" };
-      // Still waiting for its case password (#2135) — keep it, never drop evidence for this.
-      if (isLockedRejection(r.status, r.errorMessage)) {
-        lockedQueuedCaseId = p.caseId;
-        // It carried the stored password and was still refused: that password is wrong (#2396).
-        if (this.client.sendsCredentialFor(p.caseId)) credentialRefused = true;
-        return { outcome: "retry", status: r.status };
-      }
       const detail = {
         status: r.status,
         ...(r.errorMessage ? { errorMessage: r.errorMessage } : {}),
         ...(r.errorCode ? { errorCode: r.errorCode } : {}),
       };
+      // Still waiting for its case password (#2135), or that case is locked out (#2397) — keep it,
+      // never drop evidence for this, and carry on with the captures behind it (#2397: this used
+      // to stop the whole drain, so one locked case held up every other case's captures).
+      if (isCaseLockRefusal(r.status, r.errorMessage, r.errorCode)) {
+        lockedQueuedCaseId ??= p.caseId;
+        // It carried the stored password and was refused as WRONG (401 locked): forget it (#2396).
+        // A lockout (429) refuses even the right password unchecked, so it is kept.
+        if (isLockedRejection(r.status, r.errorMessage) && this.client.sendsCredentialFor(p.caseId)) {
+          credentialRefused = true;
+        }
+        refusedCases.add(p.caseId);
+        return { outcome: "skip", ...detail };
+      }
       // Refused for access (e.g. a capture for the old case after a token switch) — keep it, and
       // SKIP rather than retry, so the valid captures behind it still go out (#2254, #215).
       if (isKeptQueuedRefusal(r.status, r.errorMessage, r.errorCode)) return { outcome: "skip", ...detail };
+      // Unreachable, timed out, 5xx, 408, other 429s: retried. Safe now that each capture carries
+      // an id the companion recognises (#2397) — a re-send of one it already stored is not stored again.
       return { outcome: isPermanent(r.status) ? "drop" : "retry", ...detail };
-    }, { companionUrl: this.client.companionUrl });
+    }, { companionUrl: this.client.companionUrl, isDueNow });
+    // A capture still inside its backoff for a locked case was not sent, but it is still waiting
+    // for that case's password: name the case (#2397).
+    lockedQueuedCaseId ??= drained.kept.find((k) => isCaseLockRefusal(k.status, k.errorMessage, k.errorCode))
+      ?.payload.caseId;
     let queued = 0;
     let error = drained.error;
     try {

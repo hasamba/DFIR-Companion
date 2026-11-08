@@ -105,6 +105,12 @@ export interface DrainSummary {
 /** Which companion a drain delivers to; rows bound to another one stay queued (#2396). */
 export interface DrainOptions {
   companionUrl?: string;
+  /**
+   * A kept capture inside its backoff window is re-sent anyway when this says so (#2397): a capture
+   * waiting for a case password must not sit out a 30-minute backoff after the analyst entered it.
+   * Given the capture and the refusal it last got.
+   */
+  isDueNow?: (payload: CapturePayload, lastRefusal: QueueSendResult) => boolean;
 }
 
 function reported(payload: CapturePayload, result: QueueSendResult): DroppedCapture {
@@ -306,7 +312,7 @@ export class CaptureQueue {
             }
             // A kept capture still inside its backoff window is NOT uploaded again (#2263). It is
             // still reported as kept, so the amber badge and popup note stay up while it waits.
-            if (isDeferred(entry, this.now())) {
+            if (isDeferred(entry, this.now()) && !options.isDueNow?.(entry.payload, lastRefusal(entry))) {
               summary.kept.push(reported(entry.payload, lastRefusal(entry)));
               continue;
             }
