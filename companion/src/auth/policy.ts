@@ -104,7 +104,10 @@ function collectionPath(path: string): string {
 export function isNonCasePath(path: string): boolean {
   return NON_CASE_PATHS.has(collectionPath(path));
 }
-const CASE_READ_SEGMENTS = ["/unlock", "/lock-status", "/lock-forget"];
+// "/lock" is the dashboard's "forget THIS browser's unlock" (routes/casePassword.ts) — it only clears
+// the caller's own cookie, so anyone who may unlock may lock (#2416; this list once named a
+// "/lock-forget" route that never existed, leaving readers unable to forget an unlock).
+const CASE_READ_SEGMENTS = ["/unlock", "/lock-status", "/lock"];
 // A case's cloud accounts and cloud collection (#2308): WRITE for every method, GET included.
 // Listing names the credentials a case holds, so a reader must not see it; any writer may add an
 // account to the case and collect with it. The route then checks the cases the account is attached

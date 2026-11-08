@@ -47,6 +47,31 @@ Findings against these come up in every automated review; they are design decisi
   only (never on disk, never in its capture queue), and forgets it after one rejection so a wrong
   password costs one attempt. In team mode every route also requires an authenticated session
   holding write on the case.
+- **Brute-force lockouts and rate limits are kept in memory and reset when the server restarts.**
+  That covers the per-case unlock lockout, the per-client case-password ceiling, and the login,
+  bootstrap-token, slash-command-secret and import limiters. Restarts happen for ordinary reasons
+  (upgrades, a supervisor, a container reschedule), and each one gives a guesser a fresh budget:
+  5 more wrong guesses per case and 20 more per client per minute. The scrypt cost of every
+  admitted attempt still applies. Saving the counters to disk would add a write to every failed
+  attempt, and an attacker who can trigger restarts at will has a bigger problem than this. Use a
+  long case password. If you suspect someone is guessing, change the password and check the
+  activity log (#2416).
+- **Leaving a case forgets the unlock in this browser only. Changing the password revokes every
+  unlock.** An unlock is a signed cookie. When you leave a case, or close its tab, after
+  unlocking it without "remember on this computer", the dashboard deletes the cookie from this
+  browser (`POST /cases/:id/lock`). In team mode that request carries the session's CSRF header
+  since #2416. Before that, the tab-close forget was refused, and the unlock stayed for the rest
+  of the browser session. The server keeps no list of
+  issued unlocks, so a copy of that cookie taken earlier stays valid until it expires: 12 hours, or
+  up to a year with "remember". To cut off every copy, change the case password. That rotates the
+  value every unlock is bound to, and from the next request each one is refused. A live
+  dashboard connection that is already open is not closed by the change. It loses access on
+  its next reconnect. A server-side list of revoked unlocks is tracked separately (#2416).
+- **Team-mode sessions have a fixed lifetime and no idle timeout.** A sign-in lasts
+  `DFIR_AUTH_SESSION_HOURS` (default 12, at most 168), however long the browser sits unused. The
+  "last seen" time on a session shows activity in the session list. It does not end the session.
+  To end one early, sign out, or have an administrator disable the user (which revokes all of
+  that user's sessions).
 - **Anyone who can write to the cases folder on disk is trusted, and backups are not
   content-authenticated.** That includes each case's `state/backups/` directory. Restoring a
   backup checks the filename, allows only the known state files, and runs a SQLite integrity
