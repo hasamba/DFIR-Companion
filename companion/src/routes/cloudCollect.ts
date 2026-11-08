@@ -26,6 +26,7 @@ import {
 import type { CloudCollectProvider, CollectWindow } from "../integrations/cloudCollect/collectTypes.js";
 import { budgetStopReason, type QueryBudget } from "../integrations/cloudCollect/collectBudget.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
+import { claimResume, collectJobPending, workerLive } from "./cloudCollectOwnership.js";
 import { getAppVersion } from "../version.js";
 import {
   cloudAccountInCase,
@@ -220,19 +221,45 @@ function registerStart(app: Express, ctx: RouteContext): void {
 }
 
 async function resumeCollection(ctx: RouteContext, vault: CloudAccountVault, req: Request, res: Response) {
+  const collectionId = req.params.collectionId;
+  if (!ctx.options.jobManager) return res.status(503).json({ error: "Background jobs are not available." });
+  if (!isCollectionId(collectionId)) return res.status(404).json({ error: "Collection not found." });
+  const dir = collectionDir(ctx, req.params.id, collectionId);
+  // #2402: one Resume at a time per collection, claimed before the first await.
+  const release = claimResume(dir);
+  if (!release) return res.status(409).json({ error: ALREADY_RUNNING });
+  try {
+    return await resumeClaimed(ctx, vault, req, res, dir);
+  } finally {
+    release();
+  }
+}
+
+const ALREADY_RUNNING = "This collection is already running.";
+
+async function resumeClaimed(
+  ctx: RouteContext,
+  vault: CloudAccountVault,
+  req: Request,
+  res: Response,
+  dir: string,
+) {
   const caseId = req.params.id;
   const collectionId = req.params.collectionId;
-  const manager = ctx.options.jobManager;
-  if (!manager) return res.status(503).json({ error: "Background jobs are not available." });
-  if (!isCollectionId(collectionId)) return res.status(404).json({ error: "Collection not found." });
-  const dir = collectionDir(ctx, caseId, collectionId);
+  const manager = ctx.options.jobManager!;
   const summary = await readCollection(nodeCollectFs, dir);
   if (!summary) return res.status(404).json({ error: "Collection not found." });
   const cp = summary.checkpoint;
   if (cp.status === "complete") return res.status(409).json({ error: "This collection is complete." });
   const existing = cp.jobId ? manager.get(cp.jobId) : undefined;
-  if (existing && (existing.status === "running" || existing.status === "queued"))
-    return res.status(409).json({ error: "This collection is already running." });
+  // #2402: the checkpoint names a job only once that job runs, so also ask the ledger for one queued
+  // for this collection, and whether a cancelled run is still finishing its last write.
+  if (
+    (existing && (existing.status === "running" || existing.status === "queued")) ||
+    collectJobPending(manager, caseId, collectionId) ||
+    workerLive(dir)
+  )
+    return res.status(409).json({ error: ALREADY_RUNNING });
   const found = providerFor(ctx, req, vault, caseId, cp.accountId);
   if (!found.ok) return sendCloudRefusal(res, found);
   const opened = openCloudAccountForCollect(ctx, req, caseId, cp.accountId); // again, on every resume
