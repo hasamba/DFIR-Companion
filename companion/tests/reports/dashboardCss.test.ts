@@ -169,6 +169,14 @@ describe("the toolbar group labels cost the row no height", () => {
     expect(css).toMatch(/@media[^{]*max-width:\s*900px[^{]*\{[^}]*\.tb-group\s*\{[^}]*display:\s*contents/);
   });
 
+  // A Settings checkbox stretched to width 100% overflowed the pane (Settings → Updates scrolled sideways).
+  it("keeps a Settings checkbox at its own size, after the full-width field rule", () => {
+    const full = css.search(/\.sfield input, \.sfield select\s*\{[^}]*width:\s*100%/);
+    const own = css.search(/\.sfield input\[type="checkbox"\][^{]*\{[^}]*width:\s*auto/);
+    expect(full).toBeGreaterThan(-1);
+    expect(own).toBeGreaterThan(full);
+  });
+
   it("never leaves a label drawn over an empty group", () => {
     expect(css).toMatch(/\.tb-group:not\(:has\(> :not\(\.tb-group-label\)\)\)\s*\{[^}]*display:\s*none/);
   });

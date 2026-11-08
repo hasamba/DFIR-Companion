@@ -301,6 +301,9 @@
 .sfield { margin-bottom: 10px; }
 .sfield > label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
 .sfield input, .sfield select { width: 100%; box-sizing: border-box; }
+/* A checkbox or radio keeps its own size: at width 100% plus its default margin it overflowed the
+   pane (a horizontal scroll bar on Settings → Updates) and sat alone on a line, away from its label. */
+.sfield input[type="checkbox"], .sfield input[type="radio"] { width: auto; margin: 0 6px 0 0; vertical-align: middle; }
 /* Dark-mode combo boxes throughout Settings (every <select>, matching the export/push .toolbar-select look).
    Without this, selects fall back to the light browser default while the inputs around them are dark. */
 .settings-modal select { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 5px; font-size: 13px; }
