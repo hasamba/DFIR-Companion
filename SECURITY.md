@@ -59,7 +59,9 @@ Findings against these come up in every automated review; they are design decisi
 - **Leaving a case forgets the unlock in this browser only. Changing the password revokes every
   unlock.** An unlock is a signed cookie. When you leave a case, or close its tab, after
   unlocking it without "remember on this computer", the dashboard deletes the cookie from this
-  browser (`POST /cases/:id/lock`). The server keeps no list of
+  browser (`POST /cases/:id/lock`). In team mode that request carries the session's CSRF header
+  since #2416. Before that, the tab-close forget was refused, and the unlock stayed for the rest
+  of the browser session. The server keeps no list of
   issued unlocks, so a copy of that cookie taken earlier stays valid until it expires: 12 hours, or
   up to a year with "remember". To cut off every copy, change the case password. That rotates the
   value every unlock is bound to, and from the next request each one is refused. A live

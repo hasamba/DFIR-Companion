@@ -55,9 +55,10 @@
     activeUnlockedCaseId = null;
     activeUnlockRemembered = true;
   }
-  // Covers refresh / navigating away entirely / closing the tab — sendBeacon is the
-  // standard way to reliably fire a small POST during page teardown (a plain fetch can be
-  // cancelled mid-flight once the page starts unloading).
+  // Covers refresh / navigating away entirely / closing the tab — a keepalive fetch survives
+  // page teardown like sendBeacon does, but goes through the dashboard's fetch wrapper, so in
+  // team mode it carries the X-DFIR-CSRF header. sendBeacon cannot send headers, and the
+  // server refused it with 403 before the cookie was cleared (#2416).
 
   // The in-flight case-load "generation" (#174): each proceedConnect() gets its own AbortController
   // covering the two loads the overlay blocks on (state + lifecycle), and activeCaseId names whose
@@ -749,7 +750,10 @@
     };
     window.addEventListener("pagehide", () => {
       if (activeUnlockedCaseId && !activeUnlockRemembered) {
-        navigator.sendBeacon(`/cases/${activeUnlockedCaseId}/lock`);
+        fetch(`/cases/${activeUnlockedCaseId}/lock`, {
+          method: "POST",
+          keepalive: true,
+        }).catch(() => {});
       }
     });
   }
