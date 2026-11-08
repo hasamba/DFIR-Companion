@@ -106,6 +106,24 @@ function requireAssignedReviewer(workflow: ReportWorkflow, actor: ReportActor): 
   }
 }
 
+// A high-impact uncertainty note is the one gate on approval, so resolving it is restricted (#2405)
+// to the people in the review: the investigator who wrote the report (the snapshot's author, or
+// whoever opened the workflow), the assigned reviewer, and the note's own author. Never a service.
+function requireResolver(
+  workflow: ReportWorkflow,
+  noteAuthorId: string,
+  actor: ReportActor,
+  reportAuthor: ReportActor | undefined,
+): void {
+  if (actor.kind === "service") throw new Error("a service identity cannot resolve a review note");
+  const allowed = [reportAuthor?.id, workflow.createdBy.id, workflow.assignedReviewer?.id, noteAuthorId];
+  if (!allowed.includes(actor.id)) {
+    throw new Error(
+      "only the report's investigator, the assigned reviewer, or the note's author can resolve this note",
+    );
+  }
+}
+
 export class ReportWorkflowStore {
   private readonly lock = new StateLock();
 
@@ -214,6 +232,7 @@ export class ReportWorkflowStore {
     annotationId: string,
     actor: ReportActor,
     resolution: string,
+    reportAuthor?: ReportActor,
   ): Promise<ReportWorkflow> {
     const cleanResolution = cleanNote(resolution, "resolution");
     return this.mutate(caseId, versionId, actor, (current) => {
@@ -223,6 +242,7 @@ export class ReportWorkflowStore {
       const target = current.annotations.find((item) => item.id === annotationId);
       if (!target) throw new Error("annotation not found");
       if (target.resolvedAt) throw new Error("annotation is already resolved");
+      requireResolver(current, target.authorId, actor, reportAuthor);
       const at = new Date().toISOString();
       return {
         ...current,

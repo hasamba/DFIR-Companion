@@ -373,10 +373,13 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     clientInventoryFor,
   );
   const hub = new LiveHub(casesRoot); // #1866: closes a deleted case's sockets
+  // Late subscribers to "a case's jobs changed" (#2406: the AI status idle gate), wired by appWiring.
+  const jobChangeListeners = new Set<(caseId: string) => void>();
   const jobManager = new JobManager({
     onJob: (caseId) => {
       // The push carries the list (#1453); `jobManager` is assigned by the time any job emits.
       if (caseId) hub.broadcastJobs(caseId, jobManager.list(caseId));
+      if (caseId) for (const listener of jobChangeListeners) listener(caseId);
     },
     onError: (error) => logLine(`[jobs] durable ledger error: ${error.message}`),
     ledger: new JobLedgerStore(store),
@@ -515,6 +518,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
 
   return {
     demoMode,
+    onJobChange: (listener: (caseId: string) => void): void => void jobChangeListeners.add(listener),
     store,
     teamAuth,
     writerGuard,

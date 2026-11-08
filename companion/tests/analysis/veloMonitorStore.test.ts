@@ -64,3 +64,26 @@ describe("VeloMonitorStore", () => {
     expect((await store.list("c1")).map((m) => m.id)).toEqual(["b"]);
   });
 });
+
+describe("VeloMonitorStore.update (#2403)", () => {
+  let store: VeloMonitorStore;
+  beforeEach(async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-velomon-upd-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    store = new VeloMonitorStore(cases);
+  });
+
+  it("applies the change to the row as stored now", async () => {
+    await store.upsert("c1", mon());
+    const out = await store.update("c1", mon().id, (cur) => ({ ...cur, status: "stopped" }));
+    expect(out?.status).toBe("stopped");
+    expect((await store.get("c1", mon().id))?.status).toBe("stopped");
+  });
+
+  it("never re-creates a deleted row, and a null result leaves the file alone", async () => {
+    expect(await store.update("c1", "gone", (cur) => cur)).toBeNull();
+    expect(await store.list("c1")).toEqual([]);
+    await store.upsert("c1", mon({ polls: 4 }));
+    expect((await store.update("c1", mon().id, () => null))?.polls).toBe(4);
+  });
+});

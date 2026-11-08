@@ -86,6 +86,35 @@ export class VeloMonitorStore {
     });
   }
 
+  /**
+   * Read-modify-write ONE row under the case lock (#2403). `fn` gets the row as stored NOW and returns
+   * the row to write, or null to leave the file untouched. Never creates a row: a row deleted while
+   * the caller was waiting on the network stays deleted. Resolves to the stored row (null if absent).
+   */
+  update(
+    caseId: string,
+    id: string,
+    fn: (current: VeloMonitor) => VeloMonitor | null,
+  ): Promise<VeloMonitor | null> {
+    return veloMonitorLock.runExclusive(caseId, async () => {
+      const monitors = await this.list(caseId);
+      const idx = monitors.findIndex((x) => x.id === id);
+      if (idx < 0) return null;
+      const next = fn(monitors[idx]);
+      if (!next) return monitors[idx];
+      const written = { ...next, id };
+      await atomicWrite(
+        this.path(caseId),
+        JSON.stringify(
+          monitors.map((x, i) => (i === idx ? written : x)),
+          null,
+          2,
+        ),
+      );
+      return written;
+    });
+  }
+
   remove(caseId: string, id: string): Promise<void> {
     return veloMonitorLock.runExclusive(caseId, async () => {
       const monitors = await this.list(caseId);

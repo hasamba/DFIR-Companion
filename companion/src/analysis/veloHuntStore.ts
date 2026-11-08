@@ -301,6 +301,35 @@ export class VeloHuntStore {
     });
   }
 
+  /**
+   * Read-modify-write ONE row under the case lock (#2403). `fn` gets the row as stored NOW and returns
+   * the row to write, or null to leave the file untouched. Never creates a row: a row deleted while
+   * the caller was waiting on the network stays deleted. Resolves to the stored row (null if absent).
+   */
+  update(
+    caseId: string,
+    huntId: string,
+    fn: (current: VeloHuntJob) => VeloHuntJob | null,
+  ): Promise<VeloHuntJob | null> {
+    return veloHuntLock.runExclusive(caseId, async () => {
+      const jobs = await this.list(caseId);
+      const idx = jobs.findIndex((x) => x.huntId === huntId);
+      if (idx < 0) return null;
+      const next = fn(jobs[idx]);
+      if (!next) return jobs[idx];
+      const written = { ...next, huntId };
+      await atomicWrite(
+        this.path(caseId),
+        JSON.stringify(
+          jobs.map((x, i) => (i === idx ? written : x)),
+          null,
+          2,
+        ),
+      );
+      return written;
+    });
+  }
+
   // Forget every tracked hunt of the case (its server set changed, so the ids mean nothing to the
   // new server). Returns how many were removed.
   clear(caseId: string): Promise<number> {

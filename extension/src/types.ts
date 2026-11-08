@@ -7,6 +7,9 @@ export interface CapturePayload {
   tabTitle: string;
   triggerType: TriggerType;
   imageBase64: string;     // base64 without data: prefix
+  // A random id per screenshot, sent with every attempt, so the companion recognises a re-send
+  // instead of storing the same evidence twice (#2397). Absent on rows queued by an older build.
+  captureId?: string;
 }
 
 export interface Settings {
@@ -84,6 +87,9 @@ export interface ConnectionStatus {
   credentialRefused?: boolean;
   // Retrying the offline queue failed part-way (#2396); anything it discarded is still listed above.
   queueDrainError?: string;
+  // With `locked`: the case's password is locked out after wrong guesses (429), so even the right
+  // password was refused unchecked — the stored password is NOT forgotten (#2397).
+  lockedOut?: boolean;
 }
 
 // The password of a password-locked case, as the analyst typed it into the popup (#2135). Held in

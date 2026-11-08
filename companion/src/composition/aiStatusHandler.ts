@@ -11,6 +11,7 @@
  * the next import logs its first progress at once.
  */
 import type { AiStatusEvent } from "./appOptions.js";
+import { createAiStatusIdleGate, type AiStatusIdleGateDeps } from "./aiStatusIdleGate.js";
 import type { Logger } from "../logging/logger.js";
 import {
   createImportProgressThrottle,
@@ -25,6 +26,8 @@ export interface AiStatusHandlerDeps {
   throttle?: ImportProgressThrottle;
   /** Applied once, to the event that is both broadcast and logged. */
   redact: (event: AiStatusEvent) => AiStatusEvent;
+  /** Hold "idle" while the case still has a job running (#2406). Absent: every event broadcasts. */
+  jobs?: AiStatusIdleGateDeps;
 }
 
 export function createAiStatusHandler(
@@ -32,9 +35,10 @@ export function createAiStatusHandler(
 ): (caseId: string, event: AiStatusEvent) => void {
   const throttle = deps.throttle ?? createImportProgressThrottle();
   const logger = (): Logger => (typeof deps.logger === "function" ? deps.logger() : deps.logger);
+  const gate = deps.jobs ? createAiStatusIdleGate(deps.jobs, deps.broadcast) : undefined;
   return (caseId, event) => {
     const redacted = deps.redact(event);
-    deps.broadcast(caseId, redacted);
+    if (!gate || gate.admit(caseId, redacted)) deps.broadcast(caseId, redacted);
     if (redacted.status !== "analyzing") {
       throttle.clear(caseId);
       return;

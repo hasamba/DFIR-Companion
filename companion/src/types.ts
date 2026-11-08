@@ -16,6 +16,7 @@ export interface CaptureMetadata {
   contentHash: string; // SHA-256 hex of the screenshot bytes (exact-match dedup vs. the previous capture)
   isDuplicate: boolean;
   screenshotFile: string; // relative filename within screenshots/, e.g. "000123_<ts>_<tab-title>.webp" (title slugified; omitted when empty / no safe chars)
+  captureId?: string; // the extension's id for this screenshot, so a re-send is recognised (#2397)
 }
 
 export interface CasePasswordHash {

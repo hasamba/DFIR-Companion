@@ -127,7 +127,7 @@ export interface VeloHunts {
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   stopVeloHuntStatusPoll(caseId: string, huntId: string): void;
   /** Re-arm status polling for every non-terminal hunt across all cases (server restart). */
-  resumeVeloHuntStatusPolls(): Promise<void>;
+  resumeVeloHuntStatusPolls(opts?: { startup?: boolean }): Promise<void>;
   /**
    * Record a deployed hunt in the per-case hunting feedback-loop ledger (#157). Never throws.
    * The two ingest paths for hunts the Companion did NOT launch live in
@@ -158,9 +158,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   // restart the dashboard still shows them and the analyst triggers "Collect now". .unref() so a
   // pending timer never blocks exit.
   const veloHuntTimers = new CaseKeyedMap<NodeJS.Timeout>(() => store.casesRoot, clearTimeout); // #1866
-  // In-flight collects, keyed (caseId, huntId); claimed synchronously before any await, which is what
-  // closes the TOCTOU race between the fixed-delay timer, the status poller and a manual "Collect
-  // now" all deciding to collect the same hunt at the same moment (VeloHuntStore has no lock/CAS).
+  // In-flight collects, keyed (caseId, huntId); claimed synchronously before any await — closes the race
+  // between the fixed-delay timer, the status poller and "Collect now" all collecting one hunt at once.
   const collectingNow = new CaseKeyedMap<{ rerun: boolean }>(() => store.casesRoot); // #1866: + generation
 
   // ── The case's import slot ───────────────────────────────────────────────────────────────────
@@ -214,6 +213,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     store,
     options,
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
+    isCollecting: (c, h) => collectingNow.has(c, h), // #2403
   });
   const servers = () => options.serverClients ?? unavailableServerClients;
   const collectVelo = createTickVelo(servers, logLine, "velo-hunt");

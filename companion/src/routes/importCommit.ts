@@ -12,6 +12,7 @@ import type { ManifestValue } from "../analysis/analysisRunTypes.js";
 import { formatImportMerged, formatImportStart } from "../logging/importLog.js";
 import { safeKind, createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug } from "./importDebugEmit.js";
+import { admitDedicatedImport, type DedicatedImportJob } from "./importCommitJob.js";
 
 /**
  * The commit spine every dedicated `import-*` route runs after it has answered 202 (#956).
@@ -120,7 +121,12 @@ export function commitDedicatedImport(
   // background task so the 202 never waited on another import, and released in the `finally`.
   let baseline: ImportBaseline | null = null;
   let section: ImportSection | null = null;
+  // #2407: a job row, so the import is visible in the Jobs panel and counted as "the case is
+  // busy". Admission comes BEFORE the section, as on the generic route: with the durable ledger's
+  // one-job-per-case slot the import queues behind other case work instead of running beside it.
+  const job: DedicatedImportJob = admitDedicatedImport(ctx, commit);
   const run = async (): Promise<void> => {
+    if (!(await job.admitted())) throw job.stopped();
     section = await beginImportSection(importLock, caseId, options.stateStore, {
       incomingEvents: commit.linesIn,
     });
@@ -221,11 +227,15 @@ export function commitDedicatedImport(
         path: commit.path,
         parameters: commit.parameters,
       });
+      await job.finish();
       resynthesizeInBackground(caseId);
       // Last, so a settle or record failure above reports this attempt as failed, not succeeded.
       emitImportDebug(caseId, debug, "succeeded");
     })
-    .catch((err) => {
+    .catch(async (err) => {
+      // Never admitted (its case was deleted while it queued): nothing ran, so nothing failed.
+      if (job.isStopped(err)) return;
+      await job.fail(err);
       recordImportFailure(caseId, kind, storedName, err, debug);
       recordAiError(caseId, "import", err);
       options.onAiStatus?.(caseId, {

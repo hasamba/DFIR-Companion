@@ -188,14 +188,25 @@ export class ReportVersionStore {
     return this.workflows.addAnnotation(caseId, versionId, actor, input);
   }
 
-  resolveReviewAnnotation(
+  // Resolve a reviewer note. Who may do it depends on the snapshot's author, which the workflow store
+  // does not hold, so it is passed in here (#2405).
+  async resolveReviewAnnotation(
     caseId: string,
     versionId: string,
     annotationId: string,
     actor: ReportActor,
     resolution: string,
   ): Promise<ReportWorkflow> {
-    return this.workflows.resolveAnnotation(caseId, versionId, annotationId, actor, resolution);
+    const version = await this.get(caseId, versionId);
+    if (!version) throw new Error("report version not found");
+    return this.workflows.resolveAnnotation(
+      caseId,
+      versionId,
+      annotationId,
+      actor,
+      resolution,
+      version.createdBy,
+    );
   }
 
   requestReportChanges(
@@ -215,17 +226,57 @@ export class ReportVersionStore {
     return this.workflows.selfApprove(caseId, versionId, actor, note);
   }
 
-  async release(
+  // Release a version. The release record (release store) and the workflow's "released" mark
+  // (workflow store) are two separate writes, so the whole read -> create -> mark sequence runs under
+  // this case's version lock (#2405): it serializes concurrent releases AND keeps snapshot() from
+  // pruning the version mid-release. The release store still refuses a second release of a version.
+  //
+  // If an earlier release was interrupted after its record reached the release index but before the
+  // workflow was marked (a crash, a failed write), the workflow is stuck at "approved" and every retry
+  // would fail with "already released". A retry now COMPLETES that release — marks the workflow with
+  // the existing record — after checking the ledger is intact, instead of stranding it. Instance-local
+  // lock: this guards one server process, which is how the Companion runs.
+  release(
     caseId: string,
     versionId: string,
     input: Omit<ReportReleaseInput, "version" | "workflow">,
   ): Promise<ReportReleaseRecord> {
-    const version = await this.get(caseId, versionId);
-    if (!version) throw new Error("report version not found");
-    const workflow = await this.workflows.load(caseId, versionId, version.createdBy);
-    const release = await this.releases.create(caseId, { ...input, version, workflow });
-    await this.workflows.markReleased(caseId, versionId, input.actor, release.id);
-    return release;
+    return this.lock.runExclusive(caseId, async () => {
+      const version = await this.get(caseId, versionId);
+      if (!version) throw new Error("report version not found");
+      const workflow = await this.workflows.load(caseId, versionId, version.createdBy);
+      const prior = (await this.releases.list(caseId)).find((r) => r.reportVersionId === versionId);
+      if (prior && workflow.status === "approved") {
+        const record = await this.interruptedRelease(caseId, versionId, prior.id);
+        await this.workflows.markReleased(caseId, versionId, input.actor, record.id);
+        return record;
+      }
+      if (prior) throw new Error("this report version is already released");
+      const release = await this.releases.create(caseId, { ...input, version, workflow });
+      await this.workflows.markReleased(caseId, versionId, input.actor, release.id);
+      return release;
+    });
+  }
+
+  // The indexed release record an interrupted release left behind, verified before anything relies
+  // on it: the record must exist, belong to this case and version, and the whole release ledger
+  // (manifest hashes, chain, index, head) must verify. A ledger that does not verify is refused, not
+  // papered over by marking the workflow released.
+  private async interruptedRelease(
+    caseId: string,
+    versionId: string,
+    releaseId: string,
+  ): Promise<ReportReleaseRecord> {
+    const refuse = (why: string): Error =>
+      new Error(`release ledger integrity failed (${why}); cannot complete the interrupted release`);
+    const record = await this.releases.get(caseId, releaseId).catch(() => null);
+    if (!record) throw refuse(`release record ${releaseId} is missing or unreadable`);
+    if (record.caseId !== caseId || record.reportVersionId !== versionId) {
+      throw refuse(`release record ${releaseId} does not belong to this report version`);
+    }
+    const integrity = await this.releases.verify(caseId);
+    if (!integrity.ok) throw refuse(integrity.problems.join("; "));
+    return record;
   }
 
   listReleases(caseId: string): Promise<ReportReleaseSummary[]> {
