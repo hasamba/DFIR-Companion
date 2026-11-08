@@ -294,6 +294,7 @@ async function fetchStep(
       records: sw.records + line.records,
       firstRetrievedAt: sw.firstRetrievedAt ?? retrievedAt,
       ...(line.acquiredUntil ? { acquiredUntil: line.acquiredUntil } : {}),
+      ...(page.walk ? { walk: page.walk } : {}),
       reason: undefined,
     },
     line,

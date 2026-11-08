@@ -99,6 +99,28 @@ describe("S3 trail discovery and paths (#2313)", () => {
     expect(await s.partitionValues!("s3-trail")).toEqual(["eu-west-1", "us-east-1"]);
   });
 
+  // #2384: the walk is a fixed list of folders (region × day), so each page says how far through it is.
+  it("each page states its folder position in the fixed walk (#2384)", async () => {
+    const root = `AWSLogs/${ACCOUNT}/`;
+    const k1 = trailKey(root, "us-east-1", "2026-10-01T01:05:00Z");
+    const k2 = trailKey(root, "eu-west-1", "2026-10-01T02:10:00Z");
+    const { session: s } = session({
+      trails: [{ Name: "main", S3BucketName: "b" }],
+      buckets: {
+        b: [
+          { key: k1, body: trailObject([trailRecord(1)]) },
+          { key: k2, body: trailObject([trailRecord(2)]) },
+        ],
+      },
+    });
+    const out = await walk(s, "s3-trail");
+    // Two regions × two days (the window's day plus the delivery horizon), region first.
+    expect(out.map((o) => ("page" in o ? o.page.walk : undefined))).toEqual([
+      { at: 0, of: 4 },
+      { at: 2, of: 4 },
+    ]);
+  });
+
   it("an account trail without a prefix, a shadow trail deduped; objects outside the window are left", async () => {
     const root = `AWSLogs/${ACCOUNT}/`;
     const inside = trailKey(root, "us-east-1", "2026-10-01T05:59:00Z");

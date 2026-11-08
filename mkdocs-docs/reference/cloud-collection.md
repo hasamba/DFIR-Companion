@@ -165,6 +165,12 @@ only.
   trail status (a `StopLogging` call shows in the trail just before the gap) and the bucket's
   lifecycle rules. For a window that ends in the last few minutes, collect again later: CloudTrail
   delivers files 5 to 15 minutes late.
+- **Progress.** The companion reads the trail one folder at a time: one folder per region per day.
+  The job line shows how many files are saved and which folder it is in ("folder 12 of 119"). It
+  estimates the total and the ETA from that position. Folders are not all the same size, so the
+  ETA is approximate. While the first folder is still being read, there is no estimate yet, and
+  the line shows no bar and no ETA. A trail writes about one file per region every 5 minutes, so a
+  week of every region can be tens of thousands of files.
 
 ### Event history
 

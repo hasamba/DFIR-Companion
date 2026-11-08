@@ -212,6 +212,16 @@ describe("jobMenuView", () => {
     expect(view.detail).toContain(`(${phrase})`);
   });
 
+  it("shows no 0/0 when the total is unknown, but keeps the detail (#2384)", () => {
+    const view = v.jobMenuView({
+      status: "running",
+      detail: "cloud collect — saving pages: s3-trail 50 page(s) saved",
+      progress: { done: 0, total: 0 },
+    });
+    expect(view.detail).toBe("cloud collect — saving pages: s3-trail 50 page(s) saved");
+    expect(v.jobBarPercent({ status: "running", progress: { done: 0, total: 0 } })).toBeNull();
+  });
+
   it("leaves the detail empty when there is nothing to say", () => {
     expect(v.jobMenuView({ status: "done" }).detail).toBe("");
   });

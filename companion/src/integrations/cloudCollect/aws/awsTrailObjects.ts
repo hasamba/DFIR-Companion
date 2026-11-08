@@ -270,6 +270,7 @@ export async function fetchTrailObject(
     extension: body[0] === 0x1f && body[1] === 0x8b ? "json.gz" : "json",
     recordCount: countRecords(body),
     ...(nextPageToken ? { nextPageToken } : {}),
+    walk: { at: found.cell, of: cells.length },
     ...(got.$metadata?.requestId ? { requestId: got.$metadata.requestId } : {}),
     requestParams: {
       api: "s3:GetObject",

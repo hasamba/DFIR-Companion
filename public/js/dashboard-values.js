@@ -141,7 +141,8 @@ function etaText(etaAt, nowMs) {
 function jobMenuView(j, opts = {}) {
   const cancel = (j.status === "running" || j.status === "queued") && j.cancellable;
   const resume = j.resumable && (j.status === "interrupted" || (j.status === "failed" && j.failure && j.failure.retryable));
-  const progress = j.progress ? ` ${j.progress.done}/${j.progress.total}` : "";
+  // #2384: a total of 0 means "unknown" (a cloud download with no estimate yet) — no "0/0".
+  const progress = j.progress && Number(j.progress.total) > 0 ? ` ${j.progress.done}/${j.progress.total}` : "";
   const speed = j.throughputPerSecond ? ` · ${Number(j.throughputPerSecond).toFixed(1)}/s` : "";
   const eta = j.etaAt ? etaText(j.etaAt, typeof opts.now === "number" ? opts.now : Date.now()) : "";
   const checkpoint = j.lastCheckpoint ? ` · durable checkpoint ${j.lastCheckpoint.progress.done}/${j.lastCheckpoint.progress.total}` : "";

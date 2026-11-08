@@ -73,12 +73,42 @@ export function collectionDir(ctx: RouteContext, caseId: string, collectionId: s
   return join(collectionsRoot(ctx.store.caseDir(caseId)), collectionId);
 }
 
-function progressLine(p: CollectProgress): { done: number; total: number; detail: string } {
-  const per = p.sources
-    .map((s) => `${s.source} ${s.pages} page(s) ${s.state}${s.status ? ` (${s.status})` : ""}`)
-    .join(", ");
-  if (p.stage === "network")
-    return { done: p.pages, total: p.pages + 1, detail: `cloud collect — saving pages: ${per}` };
+type SourceLine = CollectProgress["sources"][number];
+
+/** One source's part of the line. "saved", never "pending": the count is files already on disk. */
+function sourceText(s: SourceLine): string {
+  const where = s.walk ? `, folder ${Math.min(s.walk.at + 1, s.walk.of)} of ${s.walk.of}` : "";
+  const state = s.state === "pending" ? "" : ` ${s.state}`;
+  return `${s.source} ${s.pages} page(s) saved${where}${state}${s.status ? ` (${s.status})` : ""}`;
+}
+
+/**
+ * #2384: the pages this source will have saved when it ends — exact once it settled, scaled from its
+ * walk position while it runs, undefined when it cannot tell (still in its first folder, or a source
+ * with no fixed walk). An estimate: folders differ in size, so the ETA is "about".
+ */
+function expectedPages(s: SourceLine): number | undefined {
+  // Settled only when no sub-window still downloads: one failed child ranks the source "failed"
+  // while its siblings go on (Codex review).
+  if (!(s.running ?? s.state === "pending")) return s.pages;
+  if (!s.walk || s.walk.at <= 0 || s.walk.of <= 0) return undefined;
+  return Math.max(s.pages + 1, Math.ceil((s.pages * s.walk.of) / s.walk.at));
+}
+
+/**
+ * The job's progress. While downloading, the total is an estimate when every source can give one,
+ * and 0 (no bar, no ETA) when any cannot — never "saved + 1", which made a fake ETA a page away.
+ */
+export function progressLine(p: CollectProgress): { done: number; total: number; detail: string } {
+  if (p.stage === "network") {
+    const expected = p.sources.map(expectedPages);
+    const known = expected.every((n): n is number => n !== undefined);
+    return {
+      done: known ? p.pages : 0,
+      total: known ? expected.reduce((a, b) => a + b, 0) : 0,
+      detail: `cloud collect — saving pages: ${p.sources.map(sourceText).join(", ")}`,
+    };
+  }
   return {
     done: p.imported,
     total: Math.max(p.pages, p.imported),
