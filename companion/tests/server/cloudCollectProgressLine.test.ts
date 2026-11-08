@@ -70,6 +70,15 @@ describe("cloud collect progress line (#2384)", () => {
     expect(p.walk).toEqual({ at: 10, of: 16 });
   });
 
+  it("a failed sub-window beside a downloading one is not settled: no exact total", () => {
+    const sources = sourceProgress([
+      sw({ id: "a", source: "cloudtrail-lookup", state: "failed", pages: 4 }),
+      sw({ id: "b", source: "cloudtrail-lookup", pages: 6 }),
+    ]);
+    expect(sources[0]).toMatchObject({ state: "failed", running: true });
+    expect(progressLine(net(sources)).total).toBe(0);
+  });
+
   it("states no walk while an unsettled sub-window has not reported one yet", () => {
     const [p] = sourceProgress([sw({ id: "a", walk: { at: 3, of: 8 } }), sw({ id: "b" })]);
     expect(p.walk).toBeUndefined();

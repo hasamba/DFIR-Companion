@@ -88,7 +88,9 @@ function sourceText(s: SourceLine): string {
  * with no fixed walk). An estimate: folders differ in size, so the ETA is "about".
  */
 function expectedPages(s: SourceLine): number | undefined {
-  if (s.state !== "pending") return s.pages;
+  // Settled only when no sub-window still downloads: one failed child ranks the source "failed"
+  // while its siblings go on (Codex review).
+  if (!(s.running ?? s.state === "pending")) return s.pages;
   if (!s.walk || s.walk.at <= 0 || s.walk.of <= 0) return undefined;
   return Math.max(s.pages + 1, Math.ceil((s.pages * s.walk.of) / s.walk.at));
 }

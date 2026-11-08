@@ -48,6 +48,8 @@ export interface CollectProgress {
     status?: string;
     /** #2384: folders (or other walk units) finished, of the total; absent when unknowable. */
     walk?: WalkPosition;
+    /** #2384: a sub-window is still downloading — even when the aggregate state says "failed". */
+    running?: boolean;
   }>;
 }
 
@@ -99,8 +101,10 @@ export function sourceProgress(subWindows: readonly SubWindowStatus[]): CollectP
     });
   }
   return [...by.values()].map((p) => {
-    const walk = walkOf(subWindows.filter((sw) => sw.source === p.source));
-    return walk ? { ...p, walk } : p;
+    const mine = subWindows.filter((sw) => sw.source === p.source);
+    const running = mine.some((sw) => sw.state === "pending" || sw.state === "capped");
+    const walk = walkOf(mine);
+    return { ...p, running, ...(walk ? { walk } : {}) };
   });
 }
 
