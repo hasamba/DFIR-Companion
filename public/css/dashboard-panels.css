@@ -619,6 +619,10 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 .cc-partial, .cc-interrupted { color: var(--badge-warning-text); }
 .cc-failed { color: var(--badge-danger-text); }
 
+/* #2391: super-timeline Group repeats — the ×N badge that opens a run of identical rows. */
+.st-group-badge { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 0 7px; font-size: 11px; cursor: pointer; }
+.st-group-badge:hover { border-color: var(--border-strong); }
+.st-group-members { border-left: 2px solid var(--border-color); margin-left: 8px; }
 /* #2389: Content tagger → Detection rules — collapsed to one line per rule set. */
 .detection-rules { margin-bottom: 6px; padding: 4px 6px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px; }
 .detection-rules > summary { cursor: pointer; list-style-position: outside; }

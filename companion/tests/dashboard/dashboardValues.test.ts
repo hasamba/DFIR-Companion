@@ -10,6 +10,82 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 const v = loadDashboardModule<ValuesApi>("dashboard-values.js", ["dashboard-time.js"]);
 
+// #2391: the super-timeline's "Group repeats" view folds a run of identical rows into one.
+describe("superRepeatGroups", () => {
+  const row = (id: string, ts: string, over: Record<string, unknown> = {}) => ({
+    id,
+    timestamp: ts,
+    artifactName: "AWS CloudTrail",
+    severity: "Info",
+    description: "AWS AssumeRole (sts) by AWSAccount",
+    ...over,
+  });
+
+  it("folds consecutive identical rows, each within the window of the previous one", () => {
+    const groups = v.superRepeatGroups(
+      [
+        row("a", "2026-11-05T16:12:15Z"),
+        row("b", "2026-11-05T16:12:15Z"),
+        row("c", "2026-11-05T16:12:16Z"),
+        row("d", "2026-11-05T16:12:16Z", { description: "AWS GetBucketAcl (s3)" }),
+      ],
+      5 * 60_000,
+    );
+    expect(groups.map((g) => g.map((e) => e.id))).toEqual([["a", "b", "c"], ["d"]]);
+  });
+
+  it("splits a run at a gap longer than the window, or when origin or severity differs", () => {
+    const groups = v.superRepeatGroups(
+      [
+        row("a", "2026-11-05T15:41:31Z"),
+        row("b", "2026-11-05T15:52:00Z"),
+        row("c", "2026-11-05T15:52:01Z", { severity: "High" }),
+        row("d", "2026-11-05T15:52:02Z", { artifactName: "Other" }),
+      ],
+      5 * 60_000,
+    );
+    expect(groups.map((g) => g.map((e) => e.id))).toEqual([["a"], ["b"], ["c"], ["d"]]);
+  });
+
+  it("never folds rows that are not next to each other, and keeps every row", () => {
+    const rows = [
+      row("a", "2026-11-05T16:00:00Z"),
+      row("x", "2026-11-05T16:00:01Z", { description: "other" }),
+      row("b", "2026-11-05T16:00:02Z"),
+    ];
+    const groups = v.superRepeatGroups(rows, 5 * 60_000);
+    expect(groups.length).toBe(3);
+    expect(groups.flat().map((e) => e.id)).toEqual(["a", "x", "b"]);
+  });
+
+  it("renders a run as its first row with a ×N badge and the rest hidden behind it", () => {
+    const withEscape = loadDashboardModule<ValuesApi>("dashboard-values.js", [
+      "dashboard-time.js",
+      "dashboard-escape.js",
+    ]);
+    const rows = [
+      row("a", "2026-11-05T16:12:15Z"),
+      row("b", "2026-11-05T16:12:16Z"),
+      row("c", "2026-11-05T16:20:00Z", { description: "x" }),
+    ];
+    const html = withEscape.superGroupedHtml(
+      rows,
+      (e, badge) => `<row ${String(e.id)}>${badge ?? ""}</row>`,
+      5 * 60_000,
+    );
+    expect(html).toContain(
+      '<row a><button type="button" class="st-group-badge" data-act="stGroupExpand" data-target="stgrp-0"',
+    );
+    expect(html).toContain("×2 (16:12:15–16:12:16) ▶");
+    expect(html).toContain('<div id="stgrp-0" class="st-group-members" hidden><row b></row></div>');
+    expect(html).toContain("<row c></row>");
+  });
+
+  it("does not fold rows without a timestamp", () => {
+    expect(v.superRepeatGroups([row("a", ""), row("b", "")], 60_000).length).toBe(2);
+  });
+});
+
 describe("_workflowInitials", () => {
   it.each([
     ["Ada Lovelace", "AL"],

@@ -135,6 +135,38 @@ function sigmaHinted(e, html) {
   return hint ? `<span class="sigma-hint" title="${escAttr(hint)}">${html}</span>` : html;
 }
 
+// #2391: the super-timeline's "Group repeats" view — consecutive rows with the same origin, severity
+// and description, each within `windowMs` of the previous one, as one run. A view only: every row is
+// kept, in order, and a row without a timestamp is never folded. PURE.
+function superRepeatGroups(events, windowMs) {
+  const keyOf = (e) => [e.artifactName || (Array.isArray(e.sources) && e.sources[0]) || "", e.severity || "", e.description || ""].join("\u0000");
+  const groups = [];
+  for (const e of events) {
+    const t = Date.parse(e.timestamp || "");
+    const run = groups[groups.length - 1];
+    const last = run && run[run.length - 1];
+    const lastT = last ? Date.parse(last.timestamp || "") : NaN;
+    const joins = run && Number.isFinite(t) && Number.isFinite(lastT) && keyOf(last) === keyOf(e) && Math.abs(t - lastT) <= windowMs;
+    if (joins) run.push(e);
+    else groups.push([e]);
+  }
+  return groups;
+}
+
+// #2391: a run of identical rows as its first row plus a ×N badge; the other rows wait, hidden, in a
+// members block the badge opens. Every record keeps its own row and controls. `rowHtml(e, badge)`
+// builds one row (the super-timeline's own renderer); esc comes from js/dashboard-escape.js.
+function superGroupedHtml(rows, rowHtml, windowMs) {
+  return superRepeatGroups(rows, windowMs).map((g, i) => {
+    if (g.length === 1) return rowHtml(g[0]);
+    const id = `stgrp-${i}`;
+    const from = String(g[0].timestamp || ""), to = String(g[g.length - 1].timestamp || "");
+    const range = from.slice(0, 10) === to.slice(0, 10) ? `${from.slice(11, 19)}–${to.slice(11, 19)}` : `${from}–${to}`;
+    const badge = `<button type="button" class="st-group-badge" data-act="stGroupExpand" data-target="${id}" title="${g.length} identical records in a row — show each one">×${g.length} (${esc(range)}) ▶</button> `;
+    return rowHtml(g[0], badge) + `<div id="${id}" class="st-group-members" hidden>${g.slice(1).map((e) => rowHtml(e)).join("")}</div>`;
+  }).join("");
+}
+
 // How long until an ETA, in words. A bare clock time ("ETA 16:44:07") was read as "16 hours 44 min".
 function etaLeftText(etaMs, nowMs) {
   const mins = Math.round((etaMs - nowMs) / 60000);
@@ -375,6 +407,8 @@ window.DfirValues = {
   toolsForExt,
   sigmaNotGradedHint,
   sigmaHinted,
+  superRepeatGroups,
+  superGroupedHtml,
   etaLeftText,
   etaText,
   jobMenuView,
