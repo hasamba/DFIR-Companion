@@ -101,6 +101,20 @@ describe("a retried release records each detach once (#2378)", () => {
     await expectCleanChain("c1");
   });
 
+  it("after the vault write failed and the account was edited before the retry", async () => {
+    const ids = twoShared();
+    const a = app();
+    vi.spyOn(vault, "releaseCase").mockImplementationOnce(() => {
+      throw new Error("vault write failed");
+    });
+    expect((await close(a)).body.cloudCredentialsError).toBeTruthy();
+    vault.update(ids[0], awsKeyInput("Shared AWS (renamed)", fakeAwsSecret()));
+
+    expect((await close(a)).body.cloudCredentials).toEqual({ deleted: 0, detached: 2 });
+    expect(await detachCounts("c1")).toEqual({ [ids[0]]: 1, [ids[1]]: 1 });
+    await expectCleanChain("c1");
+  });
+
   it("a case that comes back and ends again records a second, distinct detach", async () => {
     const ids = twoShared();
     const a = app();

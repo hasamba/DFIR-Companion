@@ -183,6 +183,8 @@ export class CloudAccountVault {
       ...(prev.createdBy ? { createdBy: prev.createdBy } : {}),
       ...(prev.lastUsedAt ? { lastUsedAt: prev.lastUsedAt } : {}),
       caseIds: prev.caseIds ?? [],
+      // A release still pending on a case keeps its token, or its retry would record the detach twice (#2378).
+      ...(prev.releaseTokens ? { releaseTokens: { ...prev.releaseTokens } } : {}),
     };
     const next = this.sealed(meta, credential, this.requireKey());
     this.write(raw.map((a) => (a.id === id ? next : a)));
