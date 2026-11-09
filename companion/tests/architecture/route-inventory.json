@@ -11,6 +11,7 @@
     "USE /^\\/?(?=\\/|$)/i bodyParserUnlessRawUpload/3",
     "USE /^\\/?(?=\\/|$)/i bodyParserErrorHandler/4",
     "USE /^\\/?(?=\\/|$)/i errorPathRedactor/3",
+    "ROUTE GET /auth/me",
     "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i caseIdGate/3",
     "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i caseLockGate/3",
     "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i abandonedCaseReadGate/3",

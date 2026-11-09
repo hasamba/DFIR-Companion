@@ -392,7 +392,9 @@ export function registerServerSetRoutes(app: Express, ctx: RouteContext): void {
 
   app.get("/cases/:id/server-set", (req: Request, res: Response) => {
     const r = ctx.serverClients.forCase(req.params.id);
-    if (!r.ok) return res.status(r.status).json({ error: r.error });
+    // An unresolved case (no link, set deleted or incomplete) is an ordinary state on every case
+    // load: 200 with the resolver's reason as `problem`, not a console-logged 409 (#2462).
+    if (!r.ok) return res.json({ setId: "", name: "", tools: [], problem: r.error });
     const tools = TOOLS.filter((t) => r.servers[t] !== undefined);
     return res.json({ setId: r.servers.setId, name: r.servers.setName, tools });
   });

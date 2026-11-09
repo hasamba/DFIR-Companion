@@ -55,6 +55,27 @@ export function requestVelo(ctx: RouteContext, req: Request, res: Response) {
   return caseVelo(ctx, caseId, res);
 }
 
+/**
+ * For load-time reads that must not log a failed request (#2462): the named case's target, or `null`
+ * when that case's set does not resolve or has no Velociraptor. The caller answers an empty 200, and
+ * never consults the default set. A malformed caseId is still a 400 (sent here, returns undefined).
+ */
+export function namedCaseVeloOrNull(
+  ctx: RouteContext,
+  req: Request,
+  res: Response,
+): VeloTarget | null | undefined {
+  const raw = req.body?.caseId ?? req.query?.caseId;
+  const caseId = typeof raw === "string" ? raw.trim() : "";
+  if (!caseId || !isValidCaseId(caseId)) {
+    res.status(400).json({ error: "caseId must be a valid case id" });
+    return undefined;
+  }
+  const r = ctx.serverClients.forCase(caseId);
+  if (!r.ok || !r.servers.velociraptor) return null;
+  return { client: r.servers.velociraptor, setId: r.servers.setId, setName: r.servers.setName };
+}
+
 /** True when the request names a case (`body.caseId` or `?caseId=`), so requestVelo resolves that case. */
 export function namesCase(req: Request): boolean {
   const raw = req.body?.caseId ?? req.query?.caseId;

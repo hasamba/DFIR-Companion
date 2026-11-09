@@ -637,13 +637,17 @@ function initialize() {
   document.getElementById("hqExplain").addEventListener("click", validate);
   runButton.addEventListener("click", () => run());
   cancelButton.addEventListener("click", async () => {
-    running?.abort();
-    if (executionId) {
-      cancelRequest = fetch(endpoint(`/executions/${executionId}/cancel`), {
+    // Send the cancel BEFORE aborting the Run (#2462). Aborting first closes the Run's connection,
+    // the server forgets the execution, and the cancel then answers 404. Capture the id first:
+    // run()'s finally clears it once the abort lands.
+    const id = executionId;
+    if (id) {
+      cancelRequest = fetch(endpoint(`/executions/${id}/cancel`), {
         method: "POST",
       }).catch(() => {});
-      await cancelRequest;
     }
+    running?.abort();
+    if (id) await cancelRequest;
   });
   nextButton.addEventListener("click", () => run(lastCursor));
   document.getElementById("hqSave").addEventListener("click", saveHunt);

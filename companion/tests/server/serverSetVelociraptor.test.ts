@@ -432,15 +432,41 @@ describe("the case-less client list and time-scope preview follow the open case"
     expect(runnerFor("/a/api.yaml")).not.toHaveBeenCalled();
   });
 
-  it("a named case without a set is refused on all three, never answered from the default set", async () => {
+  it("a named case without a set is refused on the two actions, never answered from the default set", async () => {
     const { app } = await twoSetApp();
-    const r1 = await request(app).get("/velociraptor/clients?caseId=unlinked");
     const r2 = await request(app).post("/velociraptor/clients/refresh").send({ caseId: "unlinked" });
     const r3 = await request(app)
       .post("/velociraptor/bundles/super-timeline-triage/time-scope-preview")
       .send({ preset: "7d", caseId: "unlinked" });
-    expect([r1.status, r2.status, r3.status]).toEqual([409, 409, 409]);
+    expect([r2.status, r3.status]).toEqual([409, 409]);
     expect(runnerFor("/a/api.yaml")).not.toHaveBeenCalled();
+  });
+
+  // Settings reads the client list on open (#2462). "This case has no usable Velociraptor" is an
+  // ordinary state there, so the read answers an empty list with 200 instead of a console-logged
+  // 409/501, and it is still never answered from the default set's inventory.
+  it("reading the client list for an unlinked case is an empty 200, never the default set's", async () => {
+    const { app } = await twoSetApp();
+    const filled = await request(app).post("/velociraptor/clients/refresh").send({});
+    expect(filled.body.clients.length).toBeGreaterThan(0); // the default set's inventory is not empty
+    const r1 = await request(app).get("/velociraptor/clients?caseId=unlinked");
+    expect(r1.status).toBe(200);
+    expect(r1.body).toEqual({ updatedAt: "", clients: [] });
+  });
+
+  it("reading the client list for a case whose set has no Velociraptor is an empty 200", async () => {
+    const { app } = await twoSetApp();
+    const noVelo = sets.create({ name: "No Velo", iris: { url: "https://iris.example.test", apiKey: "k" } });
+    sets.linkCase("c3", noVelo.id);
+    const r = await request(app).get("/velociraptor/clients?caseId=c3");
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ updatedAt: "", clients: [] });
+  });
+
+  it("reading the client list keeps the 400 for a malformed caseId", async () => {
+    const { app } = await twoSetApp();
+    const r = await request(app).get("/velociraptor/clients?caseId=bad%20id%2F..");
+    expect(r.status).toBe(400);
   });
 });
 

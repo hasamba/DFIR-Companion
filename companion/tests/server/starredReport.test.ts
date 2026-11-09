@@ -112,9 +112,12 @@ describe("POST /cases/:id/starred-report after a fold (#1715)", () => {
 });
 
 describe("saved starred report (GET/PUT /cases/:id/starred-report)", () => {
-  it("404 before anything is saved; round-trips after PUT", async () => {
+  // Nothing saved yet is an ordinary state on every case load: 200 null, not a console-logged 404 (#2462).
+  it("200 null before anything is saved; round-trips after PUT", async () => {
     const { app } = await harness();
-    expect((await request(app).get("/cases/c1/starred-report")).status).toBe(404);
+    const none = await request(app).get("/cases/c1/starred-report");
+    expect(none.status).toBe(200);
+    expect(none.body).toBeNull();
     const put = await request(app)
       .put("/cases/c1/starred-report")
       .send({ markdown: "# saved", eventCount: 3 });

@@ -340,13 +340,14 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   });
 
   // The saved copy of the starred report (a per-case side file; survives reload, overwritten on
-  // each save). GET → 404 when nothing is saved yet.
+  // each save). GET → 200 null when nothing is saved yet: an ordinary state on every case load, not
+  // a failed request for the browser console (#2462).
   app.get("/cases/:id/starred-report", async (req: Request, res: Response) => {
     if (!options.starredReportStore)
       return res.status(501).json({ error: "starred report store not configured" });
     try {
       const saved = await options.starredReportStore.load(req.params.id);
-      if (!saved) return res.status(404).json({ error: "no saved starred report" });
+      if (!saved) return res.status(200).json(null);
       return res.status(200).json(saved);
     } catch (err) {
       return sendPipelineError(res, err);
