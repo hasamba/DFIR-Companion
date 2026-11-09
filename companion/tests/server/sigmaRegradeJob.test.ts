@@ -22,6 +22,7 @@ import { createSigmaImportGrader } from "../../src/analysis/sigmaImportGrade.js"
 import { splitSigmaOverlay } from "../../src/analysis/sigmaRegrade.js";
 import type { SigmaRuleSet } from "../../src/analysis/sigmaRuleSet.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
+import { ImportLock } from "../../src/analysis/importLock.js";
 import { isTerminal, type JobStatus } from "../../src/analysis/jobRegistry.js";
 import { pollFor } from "../helpers/poll.js";
 
@@ -64,7 +65,7 @@ let meta: SynthMetaStore;
 
 type StatusPush = { status: string; jobStatus?: JobStatus };
 
-function build(jobManager: JobManager, pushes: StatusPush[] = []) {
+function build(jobManager: JobManager, pushes: StatusPush[] = [], importLock?: ImportLock) {
   const stateLock = new StateLock();
   const pipeline = new AnalysisPipeline({
     stateStore,
@@ -83,6 +84,7 @@ function build(jobManager: JobManager, pushes: StatusPush[] = []) {
     activityLogStore: new ActivityLogStore(cases),
     synthMetaStore: meta,
     jobManager,
+    ...(importLock ? { importLock } : {}),
     onAiStatus: (_caseId: string, s: { status: string }) =>
       void pushes.push({ status: s.status, jobStatus: regradeStatus() }),
   });
@@ -215,5 +217,73 @@ describe("POST /cases/:id/sigma/regrade runs as a job (#2425)", () => {
     expect(regradeJobs(jobManager)).toHaveLength(1);
     await jobManager.finish(busy.jobId);
     expect((await first).status).toBe(200);
+  });
+});
+
+// #2437: the closed-case refusal ran once, before the re-grade waited for its job slot and its
+// import section. A re-grade queued behind a synthesis was admitted once closing the case cancelled
+// that synthesis, and then rewrote severities in the closed case. It is checked again after each wait.
+describe("a re-grade admitted after the case closed is refused (#2437)", () => {
+  const close = (app: ReturnType<typeof createApp>) =>
+    request(app).patch("/cases/c1/status").send({ status: "closed" });
+
+  it("queued behind a synthesis that closing cancels: 423, nothing rewritten, job not left running", async () => {
+    const jobManager = new JobManager({ globalConcurrency: 1, perCaseConcurrency: 1 });
+    const { app } = build(jobManager);
+    await importTrail(app);
+    await importsIdle(jobManager);
+    const before = await target();
+    const busy = jobManager.register({
+      caseId: "c1",
+      kind: "synthesis",
+      label: "synthesis",
+      cancellable: true,
+    });
+    await busy.ready;
+    rules = SET_OFF;
+
+    const pending = request(app)
+      .post("/cases/c1/sigma/regrade")
+      .send({})
+      .then((r) => r);
+    await pollFor("the re-grade to queue", async () =>
+      regradeJobs(jobManager).find((j) => j.status === "queued") ? true : undefined,
+    );
+    expect((await close(app)).status).toBe(200);
+    expect(jobManager.get(busy.jobId)?.status).toBe("cancelled");
+
+    const res = await pending;
+    expect(res.status, JSON.stringify(res.body)).toBe(423);
+    expect(res.body.error).toMatch(/closed/);
+    expect(await target()).toEqual(before);
+    const job = regradeJobs(jobManager)[0];
+    expect(isTerminal(job!.status), job!.status).toBe(true);
+    expect(job).toMatchObject({ status: "failed", failure: { code: "case_frozen" } });
+  });
+
+  it("waiting on the import section while the case closes: 423 and nothing rewritten", async () => {
+    const jobManager = new JobManager();
+    const importLock = new ImportLock();
+    const { app } = build(jobManager, [], importLock);
+    await importTrail(app);
+    await importsIdle(jobManager);
+    const before = await target();
+    rules = SET_OFF;
+    const release = await importLock.acquire("c1");
+
+    const pending = request(app)
+      .post("/cases/c1/sigma/regrade")
+      .send({})
+      .then((r) => r);
+    await pollFor("the re-grade to hold its job slot", async () =>
+      regradeJobs(jobManager).find((j) => j.status === "running") ? true : undefined,
+    );
+    expect((await close(app)).status).toBe(200);
+    release();
+
+    const res = await pending;
+    expect(res.status, JSON.stringify(res.body)).toBe(423);
+    expect(await target()).toEqual(before);
+    expect(regradeJobs(jobManager)[0]).toMatchObject({ status: "failed", failure: { code: "case_frozen" } });
   });
 });

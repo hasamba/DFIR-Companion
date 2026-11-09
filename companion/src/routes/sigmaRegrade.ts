@@ -45,6 +45,9 @@ import { frozenCaseRefusal } from "./importCaseGuard.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import { loadRegradePlan, regradeNotes, storedImportBytes } from "./sigmaRegradePlan.js";
 
+/** The case was closed or archived while the re-grade waited (#2437); answered 423. */
+class FrozenCaseError extends Error {}
+
 type Prepared = { plan: RegradePlan; snapshot: SigmaGradingSnapshot };
 
 const REGRADE_RUNNING = "a Sigma re-grade of this case is already running — wait for it to finish";
@@ -153,11 +156,15 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
       });
       jobId = job?.jobId;
       await job?.ready;
+      // #2437: the case may have been closed while this queued (closing cancels the synthesis it
+      // waited on). Checked again after each wait, so a frozen case is never rewritten.
+      await refuseIfFrozen(caseId);
       section = await beginImportSection(ctx.importLock, caseId, options.stateStore, {
         incomingBytes: await storedImportBytes(cases.importsDir(caseId)),
         uncapped: true, // the re-parse reads every stored file with no DFIR_MAX_EVENTS cap
         wording: REGRADE_REFUSAL_WORDING,
       });
+      await refuseIfFrozen(caseId);
       const { changed, body } = await applyHeld(caseId, snapshot, section);
       section.release();
       section = undefined;
@@ -169,15 +176,21 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     } catch (err) {
       section?.release();
       section = undefined;
-      if (jobId)
-        await options.jobManager?.fail(jobId, err, { code: "sigma_regrade_failed", retryable: false });
-      const status = err instanceof ImportMemoryRefusedError ? 503 : 500;
+      const frozen = err instanceof FrozenCaseError;
+      const code = frozen ? "case_frozen" : "sigma_regrade_failed";
+      if (jobId) await options.jobManager?.fail(jobId, err, { code, retryable: false });
+      const status = frozen ? 423 : err instanceof ImportMemoryRefusedError ? 503 : 500;
       return res.status(status).json({ error: (err as Error).message });
     } finally {
       section?.release();
       running.delete(caseId);
     }
   });
+
+  async function refuseIfFrozen(caseId: string): Promise<void> {
+    const refusal = await frozenCaseRefusal(cases, caseId, "re-grading its evidence");
+    if (refusal) throw new FrozenCaseError(refusal);
+  }
 
   /** The apply, with the case's job slot and import section held: plan, write, checkpoint, activity. */
   async function applyHeld(caseId: string, snapshot: SigmaGradingSnapshot, section: ImportSection) {
