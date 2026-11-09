@@ -766,7 +766,6 @@
   // Trackable checklist auto-derived (server-side) from the case's next steps + Critical/High
   // findings, plus analyst-added custom tasks. GET re-syncs idempotently (analyst status/edits
   // preserved), so loading the panel always reflects the latest synthesis.
-
   window.initSuperTimeline = initSuperTimeline;
   window.applyTimeframe = applyTimeframe;
   window.clearSuperTime = clearSuperTime;
@@ -785,6 +784,7 @@
   window.superBulkStar = superBulkStar;
   window.superBulkTag = superBulkTag;
   window.superCaseId = superCaseId;
+  window.superQueryString = superQueryString; // #2491 (AI preview)
   window.superPage = superPage;
   window.superScopeToWindow = superScopeToWindow;
   window.toggleSuperPromote = toggleSuperPromote;

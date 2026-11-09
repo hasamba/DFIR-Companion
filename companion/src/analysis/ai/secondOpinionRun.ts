@@ -12,6 +12,7 @@ import {
   type SecondOpinionDelta,
 } from "../secondOpinion.js";
 import { stripAiSpans, withAiSpans } from "./aiSpan.js";
+import { rethrowIfAiPreview } from "./aiPreviewScope.js";
 import { neutralAuthored } from "./presidioAuthoredText.js";
 import { anonRevision } from "../anonRevision.js";
 import { dropToPrimaryCall, keepReopenedDecision, reopenedCall } from "../secondOpinionReopen.js";
@@ -182,6 +183,7 @@ async function reconcileDeltas(
     const parsed = await callReferee(ctx, caseId, a, asked, userPrompt, record);
     return flagRefereeDismissals(foldVerdicts(record, parsed, asked.current()), guard);
   } catch (err) {
+    rethrowIfAiPreview(err); // a preview stops at its first request (#2491)
     return withRefereeFailure(ctx, caseId, record, asked.current(), userPrompt, err);
   }
 }
@@ -358,6 +360,7 @@ async function rerunReferee(
   try {
     parsed = await callReferee(ctx, caseId, state, asked, prompt, before);
   } catch (err) {
+    rethrowIfAiPreview(err); // a preview stops at its first request (#2491)
     // A gate is a question for the analyst, not a broken referee — the route shows the approval.
     if (err instanceof PresidioApprovalRequired || err instanceof HostMergeDecisionRequired) throw err;
     failure = err;

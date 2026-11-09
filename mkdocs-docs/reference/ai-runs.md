@@ -445,6 +445,39 @@ for a case, the whole chain is skipped, **including the PII scanner**.
     **Import extraction skips the PII scanner per batch**, safe only because the whole payload is
     scanned once up front. The skip and the pre-scan are a pair; neither is correct alone.
 
+### Preview what the AI will see
+
+Open the **Anon** toolbar dialog and press **Preview what the AI will see**. Pick an AI action, fill
+in what it needs (an event id, a question, a technique), and press **Preview**. You see the first
+request that action would send:
+
+- the **clear text** and the **masked text** side by side, with every token (`ANON_HOST_1`, …)
+  highlighted — the masked side is exactly what the provider receives;
+- the **system prompt**, labelled as sent **unmasked**;
+- what **Presidio** would do: nothing, or the values it would hold for your approval, or that its
+  scan cannot run — the real action would stop at that point;
+- for an action that sends screenshots, which ones would be OCR-redacted first (OCR itself is not
+  run in the preview).
+
+**Nothing is sent and nothing is saved.** The preview runs the real action — the same prompt, built
+from the forensic timeline the same way — and stops it just before the provider call. It does not
+spend tokens, does not add a Presidio approval, does not promote rows, and writes nothing to the run
+ledger, the activity log or the case. The clear text exists only in the dialog. The masked text comes
+from the same masking code the real request uses, so the preview cannot look safer than the send.
+
+What to keep in mind:
+
+- It uses the **saved** anonymization settings. Save a change first, then preview it.
+- **Only the first request is shown.** A deep pass asks once per batch, a second opinion asks two or
+  three models; their later requests carry the model's earlier answers, so they cannot be previewed
+  without running. The dialog says so when it applies.
+- A second look shows its re-synthesis request as it would look after the promotion — the promotion
+  is simulated in memory only.
+- **Not covered:** import-time AI reads (CSV, log and screenshot extraction — they read a file that is
+  not in the case yet), playbook hunts (they refresh the Velociraptor fleet inventory before asking),
+  and the missed-evidence review / containment check (their own masking route).
+- It needs the same team permission as running the action, and it is disabled on the public demo.
+
 ## The archive boundary
 
 The rule is that the model reads the forensic timeline, and nothing automatic reads the raw

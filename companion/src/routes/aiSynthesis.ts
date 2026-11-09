@@ -20,11 +20,14 @@ import {
   type NewHypothesis,
 } from "../analysis/hypothesis.js";
 import type { InvestigationQuestion, QuestionStatus } from "../analysis/stateTypes.js";
-import { STARRED_LABEL, type SuperQuery } from "../analysis/superTimeline.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import { sendSynthesisRouteFailure } from "./analystGate.js";
-import { resolveStoredTargets } from "../analysis/eventAliasLookup.js";
-import { eventAliasSource } from "../analysis/eventAliasRead.js";
+import {
+  loadEventTagLabelMap,
+  loadStarredEventIds,
+  parseTechniqueHuntBody,
+  parseViewSummaryFilters,
+} from "./aiActionArgs.js";
 import type { RouteContext } from "./context.js";
 import { renderStandalonePresentationChecked } from "../reports/presentationExport.js";
 import { logEvidenceSafety } from "./evidenceSafetyLog.js";
@@ -313,15 +316,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       return res.status(501).json({ error: "AI provider not configured for starred report" });
     if (!options.tagsStore) return res.status(501).json({ error: "tags not configured" });
     try {
-      const tags = await options.tagsStore.load(req.params.id);
-      const starred = tags.filter((t) => t.targetType === "event" && t.label === STARRED_LABEL);
-      // A star on an event correlation folded into another reports the event it lives on (#1715).
-      const resolved = await resolveStoredTargets(
-        eventAliasSource(options.stateStore),
-        req.params.id,
-        starred,
-      );
-      const starredIds = [...new Set(resolved.map((t) => t.resolvedTargetId ?? t.targetId))];
+      const starredIds = await loadStarredEventIds(options, req.params.id);
       if (!starredIds.length)
         return res.status(400).json({ error: "no starred events — star rows (☆) in the timeline first" });
       const result = await options.pipeline.starredReport(req.params.id, starredIds);
@@ -386,36 +381,11 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
       return res.status(501).json({ error: "AI provider not configured for view summary" });
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
-    const b = req.body ?? {};
-    const csv = (v: unknown): string[] =>
-      String(v ?? "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    const filters: SuperQuery = {
-      from: typeof b.from === "string" && b.from ? b.from : undefined,
-      to: typeof b.to === "string" && b.to ? b.to : undefined,
-      exclude: csv(b.exclude),
-      excludeHosts: csv(b.excludeHosts),
-      labels: csv(b.labels),
-      excludeLabels: csv(b.excludeLabels),
-      taggedOnly: b.tagged === true || b.tagged === "1" || b.tagged === "true",
-      starred: b.starred === true || b.starred === "1" || b.starred === "true",
-      search: typeof b.q === "string" ? b.q : undefined,
-      excludeText: csv(b.excludeText),
-    };
+    const filters = parseViewSummaryFilters(req.body);
     try {
       // Tag label map — same construction as the GET /super-timeline route, so labels=/starred
       // filter by the case's analyst tags here too.
-      let tagLabelMap: Record<string, string[]> | undefined;
-      if (options.tagsStore) {
-        const tags = await options.tagsStore.load(req.params.id);
-        tagLabelMap = {};
-        for (const t of tags) {
-          if (t.targetType !== "event") continue;
-          (tagLabelMap[t.targetId] ??= []).push(t.label);
-        }
-      }
+      const tagLabelMap = await loadEventTagLabelMap(options, req.params.id);
       const result = await options.pipeline.viewSummary(req.params.id, filters, tagLabelMap);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai",
@@ -678,11 +648,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   app.post("/cases/:id/adversary-hints/hunt-technique", async (req: Request, res: Response) => {
     if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
       return res.status(501).json({ error: "AI provider not configured for hunt suggestions" });
-    const techniqueId = String((req.body as { techniqueId?: unknown })?.techniqueId ?? "").trim();
-    const techniqueName =
-      String((req.body as { techniqueName?: unknown })?.techniqueName ?? "").trim() || undefined;
-    if (!/^T\d{4}(?:\.\d{3})?$/i.test(techniqueId))
-      return res.status(400).json({ error: "valid ATT&CK techniqueId required" });
+    const technique = parseTechniqueHuntBody(req.body);
+    if (!technique) return res.status(400).json({ error: "valid ATT&CK techniqueId required" });
+    const { techniqueId, techniqueName } = technique;
     try {
       const suggestions = await options.pipeline.suggestTechniqueHunts(
         req.params.id,

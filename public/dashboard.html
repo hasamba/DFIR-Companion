@@ -294,6 +294,7 @@
   <script src="/js/dashboard-redacted-export.js"></script>
   <!-- Explain Event (#141). No initializer. -->
   <script src="/js/dashboard-explain-event.js"></script>
+  <script src="/js/dashboard-ai-preview.js"></script>
   <!-- Timeline Gaps (#83). No initializer. -->
   <script src="/js/dashboard-timeline-gaps.js"></script>
   <!-- Unified export menu. Wiring only. -->
@@ -714,9 +715,26 @@
         </div>
         <div id="anonMsg" data-safe-style="color:var(--text-muted);font-size:12px;margin-top:8px"></div>
         <div data-safe-style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+          <button id="aiPreviewBtn" type="button" data-safe-style="margin-right:auto" data-tip="See the exact text an AI action would send — clear and masked side by side — before it runs. Nothing is sent and nothing is saved. Uses the saved settings: Save first to preview a change.">Preview what the AI will see</button>
           <button id="anonCancel">Cancel</button>
           <button id="anonSave">Save</button>
         </div>
+    </div>
+  </div>
+  <div id="aiPreviewOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="aiPreviewTitle">
+    <div class="comment-modal ai-preview-modal">
+      <h3 id="aiPreviewTitle" data-safe-style="margin:0 0 6px">Preview what the AI will see</h3>
+      <div class="ai-preview-note">Builds the first request the chosen action would send, exactly as pressing it would — then stops. Nothing is sent to the AI provider, nothing is spent, and nothing in the case changes. Import-time AI reads, playbook hunts and the Jev review are not covered.</div>
+      <div data-safe-style="display:flex;gap:8px;align-items:center;margin:8px 0">
+        <label for="aiPreviewAction" data-safe-style="font-size:13px">AI action</label>
+        <select id="aiPreviewAction" data-safe-style="flex:1"></select>
+        <button id="aiPreviewRun" type="button">Preview</button>
+      </div>
+      <div id="aiPreviewParams"></div>
+      <div id="aiPreviewResult" aria-live="polite"></div>
+      <div data-safe-style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button id="aiPreviewClose" type="button">Close</button>
+      </div>
     </div>
   </div>
   <div id="commentOverlay" class="comment-overlay">
@@ -6162,6 +6180,7 @@
     else dfirFeatureUnavailable("IOC block-list export");
     if (typeof initRedactedExport !== "undefined") initRedactedExport();
     else dfirFeatureUnavailable("Redacted case export");
+    if (typeof initAiPreview !== "undefined") initAiPreview(); else dfirFeatureUnavailable("AI preview");
     // Report versions (#77) binds its own three controls in initReportVersions() — see
     // js/dashboard-report-versions.js. Guarded: they are this module's functions, and reading
     // them here as values would throw at load if that file 404s.

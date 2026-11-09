@@ -9,6 +9,7 @@ import {
   type Observation,
 } from "./deepPass.js";
 import { PresidioApprovalRequired } from "./presidio.js";
+import { rethrowIfAiPreview } from "./ai/aiPreviewScope.js";
 
 interface DeepPassExecutionInput {
   batches: readonly ForensicEvent[][];
@@ -81,6 +82,7 @@ export async function executeDeepPassBatches(
       observations.push(...sanitizeObservations(raw, input.validEventIds));
     } catch (error) {
       if (error instanceof PresidioApprovalRequired) throw error;
+      rethrowIfAiPreview(error); // a preview stops at its first request (#2491)
       if (input.signal?.aborted) {
         aborted = true;
         break;
@@ -116,6 +118,7 @@ export async function executeDeepPassBatches(
         condensed.push(...sanitizeObservations(raw, input.validEventIds));
       } catch (error) {
         if (error instanceof PresidioApprovalRequired) throw error;
+        rethrowIfAiPreview(error); // a preview stops at its first request (#2491)
         if (input.signal?.aborted) {
           aborted = true;
           break;

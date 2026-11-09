@@ -12,7 +12,7 @@ import { resolveRedactedExportOptions, redactedExportFilename } from "../analysi
 import { buildRedactedExport } from "../reports/redactedExportBuilder.js";
 import { CustomerStore } from "../analysis/customerStore.js";
 import { isValidCaseId } from "../storage/caseStore.js";
-import { normalizeHuntPlatform, HUNT_PLATFORMS, type HuntPlatform } from "../analysis/huntPlatforms.js";
+import { resolveTranslatePlatforms } from "./aiActionArgs.js";
 import { visionEnv } from "../config/aiEnv.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import { PRESIDIO_CLEARED_REASON } from "../analysis/aiState.js";
@@ -474,14 +474,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       return res.status(501).json({ error: "AI provider not configured for query translation" });
     const request = typeof req.body?.request === "string" ? req.body.request.trim() : "";
     if (!request) return res.status(400).json({ error: "request is required" });
-    const enabled = options.huntPlatforms ?? [...HUNT_PLATFORMS];
-    const bodyPlatforms = Array.isArray(req.body?.platforms)
-      ? req.body.platforms
-          .map((p: unknown) => normalizeHuntPlatform(typeof p === "string" ? p : ""))
-          .filter((p: HuntPlatform | null): p is HuntPlatform => !!p)
-      : [];
-    const wanted = bodyPlatforms.length ? enabled.filter((p) => bodyPlatforms.includes(p)) : enabled;
-    const platforms = wanted.length ? wanted : enabled;
+    const platforms = resolveTranslatePlatforms(options, req.body);
     try {
       const result = await options.pipeline.translateQuery(req.params.id, request, platforms);
       logLine(`[translate-query] produced ${result.queries.length} query/ies for ${req.params.id}`);

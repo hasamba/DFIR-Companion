@@ -634,3 +634,16 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 .detection-rules .dr-warn { color: var(--warning-bg-strong); }
 .detection-rules .dr-line .ev-bulk-btn { padding: 1px 8px; }
 .detection-rules .dr-sigma-note { margin-top: 6px; font-size: 11px; color: var(--text-muted); }
+/* Preview what the AI will see (#2491) — clear | masked side by side, tokens highlighted. */
+.ai-preview-modal { width: min(1100px, 96vw); max-height: 90vh; overflow-y: auto; }
+.ai-preview-note { font-size: 12px; color: var(--text-muted); margin: 6px 0; }
+.ai-preview-warn { font-size: 12px; margin: 6px 0; padding: 8px; border-radius: 6px; background: var(--warning-bg); color: var(--tag-orange-text); }
+.ai-preview-param { display: flex; gap: 8px; align-items: center; font-size: 12px; margin: 4px 0; }
+.ai-preview-param span { min-width: 220px; color: var(--text-muted); }
+.ai-preview-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 760px) { .ai-preview-panes { grid-template-columns: 1fr; } }
+.ai-preview-pane pre { margin: 0; padding: 8px; max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font-size: 11px; background: var(--bg-primary); color: var(--text-bright); border-radius: 6px; }
+.ai-preview-token { background: var(--brand-teal-deep); color: var(--brand-teal-ink); border-radius: 3px; padding: 0 2px; }
+#aiPreviewBtn::before { content: ""; display: inline-block; width: 14px; height: 14px; vertical-align: middle; margin-right: 6px;
+  background: no-repeat center / contain url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa4b2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z'/><circle cx='12' cy='12' r='3'/></svg>"); }
