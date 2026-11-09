@@ -35,6 +35,13 @@ export const CSV_RECORD_MAX_CHARS = 8 * 1024 * 1024;
  * Rows sharing the importer's grouping key merge into one detail row and count once (#2502).
  */
 export const MEDIUM_INDIVIDUAL_PER_RULE_ACTOR = 25;
+/**
+ * Distinct failed read-only Medium rows (a denied Get/List/Describe…) kept in detail per actor, across
+ * all actions (#2481). Past it, that actor's further failed reads fold into one counted event that
+ * lists the actions; each folded call is still sent to the super-timeline while its room lasts. A
+ * failed write never counts here and never folds this way.
+ */
+export const MEDIUM_FAILED_READS_PER_ACTOR = 10;
 /** Distinct Medium rows kept in detail per import, across all rules and actors. */
 export const MEDIUM_INDIVIDUAL_MAX = 10_000;
 

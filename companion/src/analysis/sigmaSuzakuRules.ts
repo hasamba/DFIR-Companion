@@ -143,3 +143,21 @@ export function loadSuzakuRules(
 /** The origins map a rule set needs for a Suzaku load (empty when nothing was read). */
 export const suzakuOrigins = (load: SuzakuLoad): Map<string, SigmaRuleOrigin> =>
   load.origin ? new Map([[SUZAKU_ORIGIN_KEY, load.origin]]) : new Map();
+
+/** The Suzaku rules a rule set should load right now — files, problems and cache identity together (#2508). */
+export interface SuzakuActive {
+  /** Changes whenever the effective folder changes (install, roll back, fallback). */
+  key: string;
+  dir: string | undefined;
+  problems: string[];
+}
+
+/** What SigmaRuleStore needs from a Suzaku rule source: the bundled folder, or the installed one. */
+export interface SuzakuSource {
+  activeSource(): SuzakuActive;
+}
+
+/** A source that is always the bundled folder; `null` = looked for and missing (#2499). */
+export const bundledSuzakuSource = (dir: string | null): SuzakuSource => ({
+  activeSource: () => ({ key: "bundled", dir: dir ?? undefined, problems: [] }),
+});

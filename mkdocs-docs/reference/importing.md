@@ -2882,6 +2882,14 @@ disk in batches of 5,000 records and never holds it whole, so memory does not gr
   become one counted event. Past the second, the rest are counted per rule and source
   address — a password spray against a million accounts becomes one counted event per attacking
   address, not a million events.
+- **Failed read-only CloudTrail calls: 10 per principal, then one counted event.** A scanner or
+  CSPM role that is denied on dozens of `Get`/`List`/`Describe` actions no longer fills the forensic
+  timeline. The first 10 distinct failed reads by one principal (across all actions) are kept one by
+  one; a repeat of one of them merges into its row. Past that, the principal's other failed reads
+  become one Medium event: *"`<principal>`: N failed read-only call(s) across M action(s), first →
+  last"*, with each action and its count (the 20 most called are named). Each folded call is still
+  written to the super-timeline, so you can search for it, within the import's super-timeline room.
+  A failed **write** (Put, Create, Delete, Attach…) is never folded this way, and no grade changes.
 - **Low rows: counted** in the forensic timeline, and kept one by one in the super-timeline.
 - **Info rows: kept one by one in the super-timeline**, up to 50,000 per import and never more than
   the room the case's super-timeline has left (`DFIR_SUPERTIMELINE_MAX`, 100,000 rows by default), so
