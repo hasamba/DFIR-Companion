@@ -17,7 +17,13 @@ import { createCanonicalEvent, type CanonicalEventEnvelope } from "./canonicalEv
 import { renderAwsDescription } from "./awsDescription.js";
 import { decodeEntraAppChanges, type Resolver } from "./entraAppChange.js";
 export type { Resolver };
-import { isGuid, outcomeWord, readEntraAuditRecord, type EntraAuditRecord } from "./entraAuditRecord.js";
+import {
+  isGuid,
+  outcomeWord,
+  readEntraAuditRecord,
+  type EntraAuditRecord,
+  type EntraProp,
+} from "./entraAuditRecord.js";
 import { KNOWN_APIS } from "./entraCapabilities.js";
 import {
   addIoc,
@@ -140,6 +146,84 @@ function head(r: EntraAuditRecord): { who: string; ip: string; head: string } {
   };
 }
 
+// ───────────────────────────── the row's details ─────────────────────────────
+
+// Entra repeats the changed property NAMES in one extra property; the real properties carry the values.
+const INCLUDED = /^included updated properties$/i;
+const DETAIL_VALUE_MAX = 200;
+const DETAIL_PROPS_MAX = 25;
+const DETAIL_TOTAL_MAX = 6000;
+const DETAIL_TARGETS_MAX = 5;
+// Controls and bidi overrides become spaces: the text is adversary-reachable and is shown verbatim.
+const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g;
+
+function detailText(s: string, max: number): string {
+  const t = s.replace(UNSAFE_CHARS, " ").trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+function detailValue(p: EntraProp, which: "oldValue" | "newValue"): string {
+  if (p.unreadable) return "(too large to read)";
+  const v = p[which];
+  if (v === null || v === undefined || v === "") return "(empty)";
+  return detailText(typeof v === "string" ? v : JSON.stringify(v), DETAIL_VALUE_MAX);
+}
+
+/** The names Entra lists in "Included Updated Properties"; empty when it lists none. */
+function includedNames(r: EntraAuditRecord): string[] {
+  return r.props
+    .filter((p) => INCLUDED.test(p.name) && !p.unreadable)
+    .flatMap((p) => (typeof p.newValue === "string" ? p.newValue.split(",") : []))
+    .map((n) => n.trim())
+    .filter(Boolean);
+}
+
+/** An app refreshing its own service principal with no changed property: Microsoft's own upkeep. */
+function isEmptySelfRefresh(r: EntraAuditRecord): boolean {
+  if (r.initiator.kind !== "app" || !/^update service principal$/i.test(r.operation)) return false;
+  if (r.props.some((p) => !INCLUDED.test(p.name)) || includedNames(r).length) return false;
+  const own = new Set((r.initiator.objectIds ?? []).map((x) => x.toLowerCase()));
+  return r.targets.length > 0 && r.targets.every((t) => t.id && own.has(t.id.toLowerCase()));
+}
+
+/** Who acted, what was changed, and every changed property — the text of the row's [details] panel. */
+function auditDetails(r: EntraAuditRecord): string {
+  const who = r.initiator.upn || r.initiator.name || r.initiator.id || r.initiator.appId;
+  const lines = [
+    `Initiated by: ${who ? detailText(who, 200) : "(not recorded)"} (${r.initiator.kind}${r.initiator.id ? ` ${detailText(r.initiator.id, 80)}` : ""})`,
+  ];
+  const changed = r.props.filter((p) => !INCLUDED.test(p.name));
+  const targets = r.targets.length ? r.targets : [{ type: "", id: "", name: "", upn: "" }];
+  let shown = 0;
+  targets.slice(0, DETAIL_TARGETS_MAX).forEach((t, i) => {
+    const label = t.upn || t.name;
+    if (label || t.id) {
+      lines.push(
+        `Target: ${label ? detailText(label, 200) : "(no name)"} (${detailText(t.type || "object", 40)}${t.id ? ` ${detailText(t.id, 80)}` : ""})`,
+      );
+    }
+    for (const p of changed.filter((c) => c.targetIndex === i || (i === 0 && c.targetIndex < 0))) {
+      if (shown++ >= DETAIL_PROPS_MAX) continue;
+      lines.push(
+        `  ${detailText(p.name, 120)}: ${detailValue(p, "oldValue")} → ${detailValue(p, "newValue")}`,
+      );
+    }
+  });
+  if (r.targets.length > DETAIL_TARGETS_MAX)
+    lines.push(`+${r.targets.length - DETAIL_TARGETS_MAX} more targets`);
+  if (shown > DETAIL_PROPS_MAX) lines.push(`+${shown - DETAIL_PROPS_MAX} more properties`);
+  if (!changed.length) {
+    const names = includedNames(r);
+    lines.push(
+      names.length
+        ? `Changed properties (values not recorded): ${detailText(names.join(", "), 600)}`
+        : 'Microsoft recorded no changed property for this change ("Included Updated Properties" is empty).',
+    );
+  }
+  const text = lines.join("\n");
+  return text.length > DETAIL_TOTAL_MAX ? `${text.slice(0, DETAIL_TOTAL_MAX)}…` : text;
+}
+
 function envelope(
   r: EntraAuditRecord,
   index: number,
@@ -241,13 +325,18 @@ export function mapEntraAuditRows(
   const outcome = r.outcome;
   const tail = r.outcome === "success" ? "" : `[${r.outcome}]`;
   const changes = decodeEntraAppChanges(r, resolve);
+  const details = auditDetails(r);
   if (!changes.length) {
     // The plain row, as before: the first target's label and "+n more", the table's grade.
     const labels = r.targets.map((t) => t.upn || t.name).filter(Boolean);
     const target = labels.length
       ? `${labels[0]}${labels.length > 1 ? ` +${labels.length - 1} more` : ""}`
       : "";
-    const def = plainSeverity(r.operation);
+    // An app's empty refresh of its own service principal names no change at all, so it is no
+    // evidence of the credential tampering the table's grade assumes.
+    const def = isEmptySelfRefresh(r)
+      ? { severity: "Low" as Severity, mitre: [] }
+      : plainSeverity(r.operation);
     const targetIds = [
       ...new Set(
         r.targets
@@ -270,6 +359,7 @@ export function mapEntraAuditRows(
           `entra-audit|${r.operation}|${outcome}|${r.initiator.id || r.initiator.appId || h.who}|${targetIds.join(",")}`.toLowerCase(),
         ),
         sources: ["Entra ID"],
+        message: details,
         canonical: envelope(
           r,
           index,
@@ -306,6 +396,7 @@ export function mapEntraAuditRows(
     mitre: [...c.mitre],
     aggKey: boundedAggKey(c.aggKey),
     sources: ["Entra ID"],
+    message: details,
     canonical: envelope(r, index, outcome, {
       object: { id: c.subject.id, name: c.subject.name },
       ...(c.role
