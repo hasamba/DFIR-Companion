@@ -3082,7 +3082,10 @@
             <button id="sigmaFileBtn" type="button" class="btn-mini">Install from file…</button>
             <button id="sigmaRollbackBtn" type="button" class="btn-mini">Roll back SigmaHQ</button>
           </div>
-          <span class="sfield-hint">A download is installed only when it matches the SHA-256 GitHub publishes. Nothing is installed until you review the changes and click Install.</span>
+          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+            <button id="sigmaMainBtn" type="button" class="btn-mini">Install SigmaHQ main-branch rules…</button>
+          </div>
+          <span class="sfield-hint">A release download is installed only when it matches the SHA-256 GitHub publishes. SigmaHQ releases come every one to three months; its main branch gets new rules almost daily but is unreleased — every main-branch file must match GitHub's fingerprint for it at the chosen commit, and the install is named "unreleased" in reports. Nothing is installed until you review the changes and click Install.</span>
           <div id="sigmaMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
           <div id="sigmaPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
         </div>

@@ -836,6 +836,8 @@
     "sigmaSuzakuRules.ts": "analysis/hunt",
     "suzakuReleaseClient.ts": "analysis/ingest",
     "suzakuRuleStore.ts": "analysis/ingest",
+    "sigmaMainBranchClient.ts": "analysis/ingest",
+    "sigmaUpdateCheck.ts": "analysis/ingest",
     "sigmaImportGrade.ts": "analysis/ingest",
     "sigmaOverlay.ts": "analysis/findings",
     "sigmaRegrade.ts": "analysis/ingest",

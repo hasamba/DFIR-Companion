@@ -15,6 +15,13 @@ import { readDisabledList, readMeta, ruleFiles, SIGMA_MAX_RULE_FILES } from "./s
 import { diffSigmaReleases, readSigmaReleaseZip, type SigmaReleaseDiff } from "./sigmaReleaseArchive.js";
 import { downloadSigmaRelease, latestSigmaRelease, type SigmaAssetFetch } from "./sigmaReleaseClient.js";
 import {
+  downloadSigmaMain,
+  latestSigmaMainCommit,
+  sigmaMainLabel,
+  sigmaMainSummary,
+} from "./sigmaMainBranchClient.js";
+import { releaseIsUpdate, type SigmaLatestCheck } from "./sigmaUpdateCheck.js";
+import {
   checkSigmaExclusion,
   exclusionsByRule,
   parseSigmaExclusions,
@@ -102,24 +109,8 @@ export interface SigmaPreview {
   problems: string[];
 }
 
-export interface SigmaLatestCheck {
-  checkedAt: string;
-  latest?: string;
-  publishedAt?: string;
-  installed: string;
-  updateAvailable: boolean;
-  error?: string;
-}
-
-/**
- * #2389: the last check, read against the release in use NOW. A check made before an install still
- * said "New Sigma release available" after that release was installed (or the reverse after a roll
- * back). An errored check is left as it is.
- */
-export function sigmaCheckAsOfNow(check: SigmaLatestCheck, installed: string): SigmaLatestCheck {
-  if (check.error || !check.latest) return { ...check, installed };
-  return { ...check, installed, updateAvailable: check.latest !== installed };
-}
+// The check result and its as-of-now reading live in sigmaUpdateCheck.ts (#2518).
+export { releaseIsUpdate, sigmaCheckAsOfNow, type SigmaLatestCheck } from "./sigmaUpdateCheck.js";
 
 interface Pending {
   token: string;
@@ -705,7 +696,27 @@ export class SigmaRuleStore {
 
   // ── GitHub ─────────────────────────────────────────────────────────────────────────────────
 
-  async checkLatest(fetchFn: typeof fetch): Promise<SigmaLatestCheck> {
+  async checkLatest(fetchFn: typeof fetch, withMain = false): Promise<SigmaLatestCheck> {
+    const check = await this.checkRelease(fetchFn);
+    if (!withMain) return check;
+    let main: SigmaLatestCheck["main"];
+    try {
+      main = await sigmaMainSummary(fetchFn, this.activeInfo.commit);
+    } catch (error) {
+      main = { error: (error as Error).message };
+    }
+    this.lastCheck = { ...check, main };
+    return this.lastCheck;
+  }
+
+  /** Download SigmaHQ's newest main-branch commit, verified, and preview it like a release (#2518). */
+  async previewMain(fetchFn: typeof fetch, fetchAsset: SigmaAssetFetch): Promise<SigmaPreview> {
+    const commit = await latestSigmaMainCommit(fetchFn);
+    const bytes = await downloadSigmaMain(commit, fetchFn, fetchAsset);
+    return this.preview(bytes, { source: "github", tag: sigmaMainLabel(commit), verified: true });
+  }
+
+  private async checkRelease(fetchFn: typeof fetch): Promise<SigmaLatestCheck> {
     const installed = this.activeInfo.release;
     try {
       const latest = await latestSigmaRelease(fetchFn);
@@ -714,7 +725,7 @@ export class SigmaRuleStore {
         latest: latest.tag,
         ...(latest.publishedAt ? { publishedAt: latest.publishedAt } : {}),
         installed,
-        updateAvailable: latest.tag !== installed,
+        updateAvailable: releaseIsUpdate(latest.tag, latest.publishedAt, installed),
       };
     } catch (error) {
       this.lastCheck = {

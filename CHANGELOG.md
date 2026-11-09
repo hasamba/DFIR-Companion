@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **SigmaHQ main-branch rules** — the check names the newest release and counts unreleased main-branch changes to graded rules, and an opt-in install brings them in verified against GitHub's listing (closes #2518)
 - **Preview what the AI will see** — from the Anon dialog, see the first request any AI action would send, clear and masked text side by side with the unmasked system prompt and what Presidio would hold; nothing is sent, spent or saved (closes #2491)
 - **Collector footprint tag** — a cloud collection's own API calls are tagged `dfir-collector` (identity + run window + the collector's read calls; writes stay untagged, grades unchanged), with a Hide collector calls super-timeline switch, off by default (closes #2487)
 - **Failed AWS reads folded per principal** — a streamed CloudTrail import keeps the first 10 failed read-only calls of each principal, then folds the rest into one Medium event listing the actions and counts; each folded call stays in the super-timeline, failed writes never fold (closes #2481)
