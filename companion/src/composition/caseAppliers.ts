@@ -34,6 +34,7 @@ import type { PlaybookTask } from "../analysis/playbook.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
 import { getServerLogger } from "../logging/serverLogger.js";
+import { isFrozenCase } from "../routes/importCaseGuard.js";
 
 export interface CaseAppliersDeps {
   store: CaseStore;
@@ -293,6 +294,9 @@ export function createCaseAppliers({
   async function syncPlaybook(caseId: string): Promise<PlaybookTask[]> {
     if (!options.playbookStore || !options.stateStore)
       return options.playbookStore ? options.playbookStore.load(caseId) : [];
+    // #2437: a closed or archived case is the handed-over record, and opening it must not change it.
+    // Its stored tasks are returned as they are (load sorts them as sync does), nothing is re-derived.
+    if (await isFrozenCase(store, caseId)) return options.playbookStore.load(caseId);
     const state = await options.stateStore.load(caseId);
     const { useTemplates } = await loadPlaybookControl(caseId);
     const aliasIndex = await loadHostAliasIndex(

@@ -634,6 +634,7 @@ export interface CasePickerApi {
   setCasePick(id: string): void;
   commitLoadedCase(caseId: string): void;
   clearLoadedCase(cancelledId: string | null): void;
+  clearCasePick(): void;
 }
 
 // public/js/dashboard-mitre-matrix.js — the MITRE panel's Matrix view (#1764). The layout and hit

@@ -386,6 +386,8 @@ const MISSED_TYPES = [
   // #1691: the two case settings a dashboard control shows.
   "confidence_control_changed",
   "report_template_changed",
+  // #2443: another analyst closed, reopened, archived or restored a case.
+  "case_lifecycle_changed",
 ];
 
 describe("a reconnect re-reads every push-driven panel the gap missed (#1681)", () => {
@@ -1002,6 +1004,6 @@ describe("the case-load path hands its socket to js/dashboard-live-socket.js (#1
 
   it("closes the old socket through closeCaseSocket on a switch and on a cancel", () => {
     expect(body("function proceedConnect(", "function restoreCaseFromUrl(")).toContain("closeCaseSocket()");
-    expect(body("function dismissCaseLoading(", "function proceedConnect(")).toContain("closeCaseSocket()");
+    expect(body("function abandonCaseLoad(", "function proceedConnect(")).toContain("closeCaseSocket()");
   });
 });

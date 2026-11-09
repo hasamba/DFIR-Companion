@@ -580,8 +580,9 @@ export const FEATURES: Feature[] = [
     // same load-time trap in a shape that looks deliberate — and is 113 of the block's 149 lines.
     file: "dashboard-case-lifecycle.js",
     initializer: "initCaseLifecycle",
-    publish: ["initCaseLifecycle", "loadCaseLifecycle"],
-    private: [],
+    publish: ["initCaseLifecycle", "loadCaseLifecycle", "loadLifecycleChange"],
+    // The last painted case + status (#2443): a live change hides a menu opened before it.
+    private: ["paintedLifecycle"],
   },
   {
     // Close case: asks Delete or Keep for the case's cloud credentials first (#2347).
@@ -1157,8 +1158,16 @@ export const FEATURES: Feature[] = [
     // sequence — loadCaseList(), restore() and two guard stanzas — and none of it came along.
     file: "dashboard-case-unlock.js",
     initializer: "initCaseUnlock",
-    publish: ["initCaseUnlock", "promptCaseUnlock"],
-    private: [],
+    publish: [
+      "initCaseUnlock",
+      "promptCaseUnlock",
+      "forgetActiveCaseIfNotRemembered",
+      "adoptCaseUnlock",
+      "beginCaseSwitch",
+      "isCurrentCaseSwitch",
+    ],
+    // The case-switch generation (#2442): only beginCaseSwitch and a cancel may move it.
+    private: ["switchGen"],
   },
   {
     // Case picker (#1523). The visible box shows the case NAME; #caseId is hidden and keeps the id.
@@ -1174,6 +1183,7 @@ export const FEATURES: Feature[] = [
       "setCasePick",
       "commitLoadedCase",
       "clearLoadedCase",
+      "clearCasePick",
     ],
     private: ["byId", "byText", "pick"],
   },
@@ -1656,7 +1666,7 @@ export const FEATURES: Feature[] = [
     file: "dashboard-notebook.js",
     initializer: "initNotebook",
     publish: ["initNotebook", "loadNotebook", "loadNbAiToggle", "nbDelete", "nbStartEdit", "notebookEntry"],
-    private: ["notebookEntries"],
+    private: ["notebookEntries", "notebookCaseId"],
   },
   {
     // Collapsible + reorderable sections. Reported blocked on a `sections` escape for most of #415

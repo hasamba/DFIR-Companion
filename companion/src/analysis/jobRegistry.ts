@@ -16,6 +16,9 @@ export const JOB_KINDS = [
   "second-opinion",
   "second-look", // analyst-pressed raw-record sweep + forced re-synthesis (#2407)
   "cloud-collect", // live cloud collection (#2311): network stage, then the import stage
+  "sigma-regrade", // analyst-pressed Sigma re-grade of the stored rows (#2425)
+  "jev-review", // analyst-pressed missed-evidence (Jev) review, paid (#2425)
+  "containment-check", // analyst-pressed per-finding containment check, one paid Jev call (#2425)
 ] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 

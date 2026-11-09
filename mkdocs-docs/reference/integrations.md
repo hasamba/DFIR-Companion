@@ -85,6 +85,18 @@ sketch (so neither clobbers the other):
 
 **Configure:** Settings → Integrations → Timesketch. Reconnect without restart after saving credentials.
 
+**Pushing again replaces the timeline safely.** The new events go up first, under a temporary name
+ending in "(staging …)". Only after Timesketch has accepted all of them is the old timeline removed
+and the new one given the normal name, and only then does the status line say "(replaced)".
+
+- If the upload fails part-way, the old timeline stays as it was, and the partial staging timeline
+  is removed.
+- If the old timeline cannot be removed, or the final rename fails, the new events stay under the
+  "(staging …)" name and the push reports a warning. The next push removes leftover staging
+  timelines.
+- The push does not wait for Timesketch to finish indexing. A large super timeline can show as
+  "processing" in Timesketch for a while after the push completes.
+
 Command-line: `npm run timesketch:push -- <caseId>`. The script uses the Timesketch server of the
 case's server set. If the case has no usable set, the script stops with an error.
 

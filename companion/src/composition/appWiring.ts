@@ -10,9 +10,12 @@
  * optional members instead of a required config — the optionality IS the test seam.
  *
  * BROADCAST SCOPE IS DELIBERATE per callback. Most are `broadcastTo(caseId, …)` — only the
- * dashboards viewing that case care. Two are `broadcastAll`: capture and import ingest, so a
+ * dashboards viewing that case care. Three are `broadcastAll`. Two are capture and import ingest, so a
  * dashboard viewing a DIFFERENT case can warn that evidence is arriving for another one (the
- * capture extension pointed at a case the analyst is not looking at).
+ * capture extension pointed at a case the analyst is not looking at). The third is the case
+ * lifecycle push (#2443): every dashboard's case list shows every case's status, so all of them
+ * re-read it. It is BARE — no case id, no status — so a team-mode socket learns nothing about a
+ * case it cannot read; each dashboard re-reads GET /cases under its own access rules.
  */
 import { createStateBroadcaster } from "./stateBroadcast.js";
 import type { AppOptions } from "./appOptions.js";
@@ -232,6 +235,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     sigmaRuleStore: sigmaRules,
     rulePackStore,
     onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
+    onCasePasswordChanged: (caseId) => hub.dropCase(caseId),
+    onCaseLifecycle: () => hub.broadcastAll({ type: "case_lifecycle_changed" }),
     activityLogStore,
     auditExportStore,
     auditExportCursors,

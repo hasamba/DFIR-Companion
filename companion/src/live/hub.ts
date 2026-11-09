@@ -25,6 +25,14 @@ export function jobsChangedMessage(jobs: readonly unknown[]): {
   return { type: "job_changed", jobs };
 }
 
+function passes(guard: () => boolean): boolean {
+  try {
+    return guard();
+  } catch {
+    return false;
+  }
+}
+
 export class LiveHub {
   private subs = new Map<string, Set<SocketLike>>();
   // #1866: with a cases root, a deleted (or reseeded) case's sockets are closed, so a dashboard
@@ -37,17 +45,55 @@ export class LiveHub {
       this.forgetter = new CaseForgetter(casesRoot, (caseId) => this.dropCase(caseId));
   }
 
+  // #2441: bumped by every dropCase. An upgrade reads it before it authorizes and refuses itself if
+  // it moved, so a socket authorized against the case as it was before a drop (a password change,
+  // a delete) can never subscribe after it. Kept for the process's life: the compare needs the old value.
+  private readonly epochs = new Map<string, number>();
+
+  /** The case's authorization epoch: changes whenever its sockets are dropped (#2441). */
+  authEpoch(caseId: string): number {
+    return this.epochs.get(caseId) ?? 0;
+  }
+
   /** Close and forget every socket subscribed to the case. */
   dropCase(caseId: string): void {
+    this.epochs.set(caseId, this.authEpoch(caseId) + 1);
     const set = this.subs.get(caseId);
     this.subs.delete(caseId);
     for (const socket of set ?? []) socket.terminate?.();
   }
 
-  subscribe(caseId: string, socket: SocketLike): void {
+  // #2449: team mode authorizes a socket only at upgrade. The upgrade hands over a re-check closure
+  // (the same check, same cookie, same case) so revalidate() can close a socket whose user was
+  // disabled, signed out, or lost the case. A WeakMap, so every removal path needs no cleanup.
+  private readonly guards = new WeakMap<SocketLike, () => boolean>();
+
+  subscribe(caseId: string, socket: SocketLike, stillAllowed?: () => boolean): void {
     const set = this.subs.get(caseId) ?? new Set<SocketLike>();
     set.add(socket);
     this.subs.set(caseId, set);
+    if (stillAllowed) this.guards.set(socket, stillAllowed);
+  }
+
+  /**
+   * Re-run every socket's upgrade check and close the ones that no longer pass (#2449). A guard
+   * that throws fails CLOSED. Sockets without a guard (single-user mode) are never touched.
+   * Failures are collected first and closed after: `terminate` fires ws's `close` handler, which
+   * calls `unsubscribe` re-entrantly. Returns how many sockets were closed.
+   */
+  revalidate(): number {
+    const revoked: Array<[string, SocketLike]> = [];
+    for (const [caseId, set] of this.subs) {
+      for (const socket of set) {
+        const guard = this.guards.get(socket);
+        if (guard && !passes(guard)) revoked.push([caseId, socket]);
+      }
+    }
+    for (const [caseId, socket] of revoked) {
+      this.unsubscribe(caseId, socket);
+      socket.terminate?.();
+    }
+    return revoked.length;
   }
 
   /** True when at least one socket is subscribed to the case (composition/stateBroadcast.ts). */

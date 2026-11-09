@@ -394,6 +394,8 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
       .find((part) => part.startsWith("dfir_session="))
       ?.slice("dfir_session=".length);
     if (token) auth.store.deleteSessionByToken(decodeURIComponent(token));
+    // #2449: close this session's open live dashboards now, not on their next reconnect.
+    auth.notifyAccessChanged();
     res.setHeader("Set-Cookie", auth.clearSessionCookie());
     res.status(204).end();
   });
@@ -414,6 +416,7 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
     const session = requireSession(auth, req, res);
     if (!session || session.kind !== "session") return;
     const removed = auth.store.deleteOtherSessions(session.identity.id, session.session.id);
+    auth.notifyAccessChanged();
     res.status(200).json({ removed });
   });
 
@@ -474,6 +477,8 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
         },
         session.identity,
       );
+      // A disable or a demotion can end access; the re-check is cheap and idempotent (#2449).
+      auth.notifyAccessChanged();
       return res.status(200).json(updated);
     } catch (err) {
       return res.status(400).json({ error: (err as Error).message });
@@ -530,6 +535,7 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
       return res.status(409).json({ error: "a case administrator cannot remove their own access" });
     }
     const removed = auth.store.removeCaseRole(req.params.caseId, req.params.identityId, session.identity);
+    if (removed) auth.notifyAccessChanged();
     return res.status(removed ? 204 : 404).end();
   });
 

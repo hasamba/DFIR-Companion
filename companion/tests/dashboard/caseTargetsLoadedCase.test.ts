@@ -38,7 +38,7 @@ describe("the loaded case, not the picked one, is what #caseId names (#2399)", (
   });
 
   it("a cancelled load clears the target before activeCaseId is dropped", () => {
-    const body = fnBody(CONNECT, "dismissCaseLoading");
+    const body = fnBody(CONNECT, "abandonCaseLoad");
     const clear = body.indexOf("clearLoadedCase(cancelledCaseId)");
     expect(clear).toBeGreaterThan(-1);
     expect(clear).toBeLessThan(body.indexOf("activeCaseId = null"));

@@ -116,6 +116,16 @@ function sendJobsSnapshot(sock: SocketLike, caseId: string, jobsFor: WsUpgradeDe
     });
 }
 
+// The `caseId` an upgrade asks for, read the way authorizeWsUpgrade reads it. Only keys the epoch
+// snapshot: a malformed or missing id is refused by the authorization itself.
+function requestedCaseId(url: string | undefined): string {
+  try {
+    return new URL(url ?? "", "http://localhost").searchParams.get("caseId")?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function attachLiveSocket(
   server: Server | HttpsServer,
   hub: LiveHub,
@@ -131,7 +141,11 @@ export function attachLiveSocket(
   // forever (memory leak) and the next broadcast's `send()` to the half-open socket throws an
   // unhandled 'error' on the WebSocket (no error listener was attached) → process crash.
   const REAPER_INTERVAL_MS = 30_000;
+  // #2449: each tick also re-runs every team-mode socket's upgrade check. This is the backstop for
+  // what sends no signal — a session that simply expires, a case-access sweep — and for any future
+  // auth writer that forgets to call notifyAccessChanged.
   const reaper = setInterval(() => {
+    hub.revalidate();
     const reaped = hub.sweepReaper();
     for (let count = 0; count < reaped; count++)
       void deps.operationalMetrics?.record({ type: "websocket", event: "reap", durationMs: 0 });
@@ -140,15 +154,30 @@ export function attachLiveSocket(
   if (typeof reaper.unref === "function") reaper.unref();
   // Stop sweeping once this server is closed, so a test (or a /settings/reload) that attaches a
   // second WebSocketServer doesn't leave the first one's timer pinging a hub nobody serves.
-  wss.on("close", () => clearInterval(reaper));
+  // #2449: an access-ending auth action (sign-out, disable, demotion, removed case role) re-checks
+  // every open socket at once instead of waiting for the next tick.
+  const stopWatchingAccess = deps.teamAuth?.onAccessChanged(() => {
+    hub.revalidate();
+  });
+  wss.on("close", () => {
+    clearInterval(reaper);
+    stopWatchingAccess?.();
+  });
 
   server.on("upgrade", (req, socket, head) => {
     // Only claim our own path; anything else is left for another handler to answer (or to time out).
     const path = new URL(req.url ?? "", "http://localhost").pathname;
     if (path !== "/ws") return;
 
+    // #2441: captured BEFORE authorizing. A drop (password change) that lands while the case
+    // metadata is being read would otherwise be missed by a socket subscribed on the old salt.
+    const epochAtStart = hub.authEpoch(requestedCaseId(req.url));
     void authorizeWsUpgrade({ url: req.url, headers: req.headers }, deps)
-      .then((decision) => {
+      .then((authorized) => {
+        const decision: WsUpgradeDecision =
+          authorized.ok && hub.authEpoch(authorized.caseId) !== epochAtStart
+            ? { ok: false, reason: "case access changed while the socket was being authorized" }
+            : authorized;
         if (!decision.ok) {
           void deps.operationalMetrics?.record({ type: "websocket", event: "reject", durationMs: 0 });
           // Refuse before the handshake: the client gets an HTTP error and never has a socket.
@@ -158,6 +187,11 @@ export function attachLiveSocket(
         }
         const { caseId } = decision;
         wss.handleUpgrade(req, socket, head, (ws) => {
+          // The same check at subscribe time, in case the handshake yielded in between.
+          if (hub.authEpoch(caseId) !== epochAtStart) {
+            ws.terminate();
+            return;
+          }
           const connectedAt = Date.now();
           void deps.operationalMetrics?.record({ type: "websocket", event: "connect", durationMs: 0 });
           if (connectedAt - lastDisconnectAt <= REAPER_INTERVAL_MS)
@@ -185,7 +219,17 @@ export function attachLiveSocket(
           ws.on("pong", () => {
             sock.isAlive = true;
           });
-          hub.subscribe(caseId, sock);
+          // #2449: in team mode, hand the hub the upgrade's own access check so it can close this
+          // socket once the session or case role behind it is gone. The cookie header it keeps is
+          // the one ws's request object already holds for the socket's life — no new exposure.
+          // Single-user mode passes no guard, so a re-check never closes its sockets.
+          const teamAuth = deps.teamAuth;
+          const cookie = req.headers.cookie;
+          hub.subscribe(
+            caseId,
+            sock,
+            teamAuth ? () => teamAuth.authorizeWebSocket(cookie, caseId) : undefined,
+          );
           sendJobsSnapshot(sock, caseId, deps.jobsFor);
           ws.on("close", () => {
             hub.unsubscribe(caseId, sock);

@@ -53,6 +53,7 @@ export class TeamAuth {
   readonly cookieSecure: boolean;
   readonly sessionTtlMs: number;
   readonly oidcClient?: OidcClient;
+  private readonly accessListeners = new Set<() => void>();
 
   constructor(options: TeamAuthOptions) {
     this.store = options.store;
@@ -318,6 +319,30 @@ export class TeamAuth {
   canWriteCase(req: Request, caseId: string): boolean {
     const auth = requestAuthentication(req) ?? this.authenticateRequest(req);
     return auth !== null && this.canAccessCase(auth, caseId, "write");
+  }
+
+  /**
+   * Subscribe to "someone's access may have ended" (#2449): a sign-out, a user update (disable,
+   * demotion), or a removed case role. The live hub re-checks every open socket on it. Returns the
+   * unsubscribe function.
+   */
+  onAccessChanged(listener: () => void): () => void {
+    this.accessListeners.add(listener);
+    return () => {
+      this.accessListeners.delete(listener);
+    };
+  }
+
+  /** Tell every listener; called by the auth routes after the store change has committed. */
+  notifyAccessChanged(): void {
+    for (const listener of [...this.accessListeners]) {
+      try {
+        listener();
+      } catch {
+        // The auth change already committed; a listener failure must not fail the route. The
+        // live hub's 30-second reaper re-check closes any socket this one missed.
+      }
+    }
   }
 
   authorizeWebSocket(cookieHeader: string | undefined, caseId: string): boolean {

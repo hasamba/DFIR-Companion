@@ -45,6 +45,9 @@ import { frozenCaseRefusal } from "./importCaseGuard.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import { loadRegradePlan, regradeNotes, storedImportBytes } from "./sigmaRegradePlan.js";
 
+/** The case was closed or archived while the re-grade waited (#2437); answered 423. */
+class FrozenCaseError extends Error {}
+
 type Prepared = { plan: RegradePlan; snapshot: SigmaGradingSnapshot };
 
 const REGRADE_RUNNING = "a Sigma re-grade of this case is already running — wait for it to finish";
@@ -141,15 +144,42 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     if (running.has(caseId)) return res.status(409).json({ error: REGRADE_RUNNING });
     running.add(caseId);
     let section: ImportSection | undefined;
+    let jobId: string | undefined;
     try {
+      // #2425: a job — in the Jobs panel, "busy", in the case's one-job slot, so it never rewrites
+      // rows under a running synthesis. Neither cancellable nor exclusive. LOCK ORDER
+      // (analysis/importLock.ts): the job slot first, then the import section, never the reverse.
+      const job = options.jobManager?.register({
+        caseId,
+        kind: "sigma-regrade",
+        label: regradeLabel(snapshot),
+      });
+      jobId = job?.jobId;
+      await job?.ready;
+      // #2437: the case may have been closed while this queued (closing cancels the synthesis it
+      // waited on). Checked again after each wait, so a frozen case is never rewritten.
+      await refuseIfFrozen(caseId);
       section = await beginImportSection(ctx.importLock, caseId, options.stateStore, {
         incomingBytes: await storedImportBytes(cases.importsDir(caseId)),
         uncapped: true, // the re-parse reads every stored file with no DFIR_MAX_EVENTS cap
         wording: REGRADE_REFUSAL_WORDING,
       });
-      return res.json(await applyHeld(caseId, snapshot, section));
+      await refuseIfFrozen(caseId);
+      const { changed, body } = await applyHeld(caseId, snapshot, section);
+      section.release();
+      section = undefined;
+      if (jobId) await options.jobManager?.finish(jobId);
+      // AFTER the job ends (#2425): the mark skips its "idle" push while the case is busy, and this
+      // run's own job would count. #1599: the re-grade starts no run of its own.
+      if (changed) await ctx.markConclusionsOutOfDate(caseId, "Sigma re-grade");
+      return res.json(body);
     } catch (err) {
-      const status = err instanceof ImportMemoryRefusedError ? 503 : 500;
+      section?.release();
+      section = undefined;
+      const frozen = err instanceof FrozenCaseError;
+      const code = frozen ? "case_frozen" : "sigma_regrade_failed";
+      if (jobId) await options.jobManager?.fail(jobId, err, { code, retryable: false });
+      const status = frozen ? 423 : err instanceof ImportMemoryRefusedError ? 503 : 500;
       return res.status(status).json({ error: (err as Error).message });
     } finally {
       section?.release();
@@ -157,26 +187,35 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     }
   });
 
-  /** The apply, with the case's import section held: plan, write, checkpoint, activity. */
+  async function refuseIfFrozen(caseId: string): Promise<void> {
+    const refusal = await frozenCaseRefusal(cases, caseId, "re-grading its evidence");
+    if (refusal) throw new FrozenCaseError(refusal);
+  }
+
+  /** The apply, with the case's job slot and import section held: plan, write, checkpoint, activity. */
   async function applyHeld(caseId: string, snapshot: SigmaGradingSnapshot, section: ImportSection) {
     const prepared = await prepare(caseId, snapshot);
     const work = prepared.plan.rows.filter((r) => r.kind !== "unchanged");
     const applied = work.length ? await applyRegrade(caseId, prepared, work, section.baseline) : undefined;
     const demoted = applied?.demoted ?? 0;
-    if (work.some((r) => r.kind === "changed")) {
-      const label = regradeLabel(snapshot);
-      // #2220: the checkpoint carries the super copies, so Undo puts both timelines back.
-      if (section.baseline)
-        await ctx.pushImportCheckpoint(caseId, section.baseline, label, undefined, applied?.superRows);
-      await ctx.markConclusionsOutOfDate(caseId, "Sigma re-grade"); // #1599: no run of its own
-    }
+    const changed = work.some((r) => r.kind === "changed");
+    // #2220: the checkpoint carries the super copies, so Undo puts both timelines back.
+    if (changed && section.baseline)
+      await ctx.pushImportCheckpoint(
+        caseId,
+        section.baseline,
+        regradeLabel(snapshot),
+        undefined,
+        applied?.superRows,
+      );
     const c = prepared.plan.counts;
     void logActivity(options.activityLogStore, options.onActivity, caseId, {
       category: "triage",
       action: "sigma-regrade",
       detail: `Sigma re-grade with SigmaHQ ${snapshot.ruleSet.release}: ${c.raised} raised, ${c.lowered} lowered, ${c.unchanged} unchanged, ${demoted} left the forensic timeline`,
     });
-    return { ...summary(prepared), applied: true, demoted };
+    // `changed` tells the caller to mark the conclusions out of date once its job has ended.
+    return { changed, body: { ...summary(prepared), applied: true, demoted } };
   }
 
   /**

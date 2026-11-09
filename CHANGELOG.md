@@ -45,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Case saves on newer Node releases** — saves that rewrite an indexed timeline row no longer fail with "Value is too large" on Node releases that range-check SQLite row ids, which broke import, undo/redo, deep pass and Sigma re-grade (closes #2445)
+- **Password change disconnects open dashboards** — setting or changing a case password closes every live dashboard connection on that case; reconnecting needs the new password (part of #2441)
+- **Team-mode access ends live dashboards** — signing out, disabling or demoting a user, or removing their case role closes their open live dashboards at once; an expired session's within 30 seconds (closes #2449)
+- **AI runs as jobs** — Sigma re-grade, Jev review and containment check show in the Jobs panel, count as busy and wait for a running synthesis or import instead of overlapping it (part of #2425)
+- **Dashboard case switching** — late password checks and unlocks for a case the analyst left are ignored, a cancelled password prompt leaves the open case unlocked, a failed load says so and targets nothing, and Notebook, Presidio and Sigma buttons refuse to act on a case no longer on screen (closes #2442)
+- **Timesketch replace keeps the old timeline until the new one is in** — re-push uploads under a staging name and deletes the old timeline only after every upload succeeded, then renames; "(replaced)" means the swap finished (part of #2414)
+- **Closed cases stay frozen** — opening a closed or archived case no longer rewrites its playbook or hunt list, closing or archiving cancels a running synthesis, deep pass or enrichment, and false-positive marks, scope, source trust and tags (stars included) are refused until reopened; notes, comments and pins stay editable (part of #2437)
+- **Live case lifecycle** — another analyst's close, archive or restore refreshes the lifecycle buttons and case list on every open dashboard (closes #2443)
+- **Capture replay memory** — the per-case index that recognises re-sent captures keeps a compact digest per capture instead of the full row, about half the memory (closes #2446)
+- **Linear-time test flake** — the scan-speed tests measure CPU time over batched, best-of-N samples, so a slow Windows runner no longer fails them while quadratic code still does (closes #2444)
 - **GCP Data Access without the role** — Check access and collection now say when a missing Private Logs Viewer role made Google hide Data Access logs, instead of showing no records (closes #2450)
 - **Cloud access check fields** — a GCP or Microsoft account's access check no longer shows the AWS-only trail bucket and key prefix fields
 - **Settings checkboxes** — a checkbox in Settings sits beside its label at its own size, so the Updates tab no longer scrolls sideways.

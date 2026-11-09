@@ -162,6 +162,8 @@
     cont.style.display = "";
   }
   async function retryPresidio(caseId) {
+    // The buttons are bound to the case they were shown for (#2442): never act on a case left behind.
+    if (caseId !== activeCaseId) return hidePresidioActions();
     const status = document.getElementById("status");
     status.textContent = "checking Presidio…";
     try {
@@ -181,6 +183,7 @@
     }
   }
   async function continueWithoutPresidio(caseId) {
+    if (caseId !== activeCaseId) return hidePresidioActions(); // no anon-control write to it (#2442)
     const status = document.getElementById("status");
     try {
       // The version the switch is saved against (#1839): a stale one is refused, never overwritten.

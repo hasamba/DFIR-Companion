@@ -168,10 +168,10 @@ describe("the case paths share the page's lanes and retire the reloads (#1713)",
   });
 
   it("switching case and cancelling a load both retire the pending reloads", () => {
-    for (const name of ["proceedConnect", "dismissCaseLoading"]) {
+    for (const name of ["proceedConnect", "abandonCaseLoad"]) {
       expect(fnBody(CONNECT, name), name).toMatch(/retirePanelReloads\((caseId|null)\)/);
     }
     expect(fnBody(CONNECT, "proceedConnect")).toMatch(/retirePanelReloads\(caseId\)/);
-    expect(fnBody(CONNECT, "dismissCaseLoading")).toMatch(/retirePanelReloads\(null\)/);
+    expect(fnBody(CONNECT, "abandonCaseLoad")).toMatch(/retirePanelReloads\(null\)/);
   });
 });

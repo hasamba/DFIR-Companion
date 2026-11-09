@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { expectLinearScan } from "../helpers/growth.js";
 import { isTrustedSystemImage } from "../../src/analysis/winProcessBaseline.js";
 import { canonicalConformanceIssues } from "../../src/analysis/canonicalEvent.js";
 import {
@@ -1293,17 +1294,11 @@ describe("textIocs — ReDoS guard (#249)", () => {
   it("costs LINEAR time in the input, not quadratic", () => {
     // The wall-clock bound above only says "fast enough on this machine today"; what actually
     // protects the server is the SHAPE of the curve, because textIocs runs once per record and
-    // maxEvents caps only the events emitted, not the records mapped. Over a 4x input, linear costs
-    // ~4x and quadratic ~16x, so 8x separates them with room to spare for timer noise.
-    const time = (kb: number) => {
-      const t = Date.now();
-      textIocs(bait(kb), new Map());
-      return Date.now() - t;
-    };
-    time(10); // warm up the regex engine
-    const small = Math.max(time(25), 1);
-    const large = time(100);
-    expect(large / small).toBeLessThan(8);
+    // maxEvents caps only the events emitted, not the records mapped. Measured with the shared
+    // growth harness (tests/helpers/growth.ts, from loadTest): CPU time, batched, best-of-3. Over an
+    // 8x input (10 KB → 80 KB), linear costs ~8x and quadratic ~64x; the limit is 32x the
+    // baseline + 25 CPU-ms, so timer grain and runner load cannot fail it (#2444).
+    expectLinearScan("textIocs", (kb) => textIocs(bait(kb), new Map()), 10);
   });
 
   it("still extracts a domain that sits past where the old 10 KB input cap fell", () => {

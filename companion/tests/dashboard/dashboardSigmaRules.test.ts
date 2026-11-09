@@ -401,11 +401,24 @@ describe("the Sigma rules settings tab", () => {
     });
 
     it("posts the apply for the case it previewed", async () => {
-      const { mod, fetch } = load(false);
+      const { mod, fetch } = load(false, "c 1");
       await mod.sigmaRegradeApply("c 1");
       const call = fetch.mock.calls[0] as unknown as [string, { method: string }];
       expect(call[0]).toBe("/cases/c%201/sigma/regrade");
       expect(call[1].method).toBe("POST");
+    });
+
+    it("refuses the apply when the open case changed since the preview (#2442)", async () => {
+      const { mod, nodes, fetch } = load(false, "c1");
+      nodes.sigmaMessage = { ...makeNode("div"), style: { color: "" } };
+      mod.sigmaRenderRegrade(REGRADE, "c1", false);
+      const apply = buttons(nodes.sigmaRegrade)[0];
+      expect(apply).toBeDefined();
+      (nodes.caseId as unknown as { value: string }).value = "c2";
+      await mod.sigmaRegradeApply("c1");
+      expect(fetch).not.toHaveBeenCalled();
+      expect(nodes.sigmaRegrade.hidden).toBe(true);
+      expect(nodes.sigmaMessage.textContent).toMatch(/preview the re-grade again/);
     });
 
     // #2209: measure the staged release against the open case before installing it.

@@ -79,6 +79,17 @@ Toolbar **☰ Case lifecycle** menu lets you:
 - **🔒 Password…** — set, change, or remove a password on this case (see below)
 - **🗑️ Delete…** a case — permanently removes the case's directory (see below)
 
+**What a closed or archived case still accepts.** A closed or archived case is the record you hand
+over, so it stays as it was when you closed it:
+
+- Opening it changes nothing. The playbook and the coach card show the saved tasks; new tasks are
+  not added until you reopen the case.
+- Closing or archiving stops a synthesis, a deep pass or an enrichment that is still running, so its
+  results do not land in the closed case. A running import still finishes and is recorded.
+- False-positive marks, the scope window, source trust and tags (stars too) are refused, because
+  they change what the report says. Reopen (or restore) the case to change them.
+- Notebook entries, comments and pinned findings stay editable, so a reviewer can still add notes.
+
 The toolbar also shows a disk-space warning if the cases folder is running low.
 
 ## Case Password Protection
@@ -101,7 +112,7 @@ the extension retries waiting screenshots on its own about once a minute, and at
 you do not have to take another capture. A
 wrong password is tried only once, so the extension cannot lock you out of your own case. Webhooks
 that use a push key keep working on a locked case. Setting or changing a password does not auto-unlock the browser that set it;
-you're prompted the same as anyone else. Leaving a case you unlocked without "remember" forgets the unlock in this browser only. To shut out every browser that has unlocked the case, including one that saved a copy of the unlock, change the password. **Remove password** is only available when the case is
+you're prompted the same as anyone else. Leaving a case you unlocked without "remember" forgets the unlock in this browser only. To shut out every browser that has unlocked the case, including one that saved a copy of the unlock, change the password. Dashboards that already have the case open are disconnected at once. **Remove password** is only available when the case is
 currently unlocked and has a password set.
 
 ## Permanently Deleting a Case

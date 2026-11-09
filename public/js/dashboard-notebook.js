@@ -11,11 +11,21 @@
 
   let notebookEntries = [];
   let nbEditingId = null;
+  let notebookCaseId = null; // the case the list and the editor belong to
 
   function loadNotebook(caseId) {
+    // A different case (#2442): its half-finished edit and entry list must not carry over — "Save
+    // edit" would PATCH the old case's entry id into the new case.
+    if (caseId !== notebookCaseId) {
+      notebookCaseId = caseId;
+      notebookEntries = [];
+      if (document.getElementById("nbAddBtn")) nbCancelEdit();
+      renderNotebook();
+    }
     fetch(`/cases/${caseId}/notebook`)
       .then((r) => r.json())
       .then((list) => {
+        if (caseId !== notebookCaseId) return; // a late answer for the case left behind
         notebookEntries = Array.isArray(list) ? list : [];
         renderNotebook();
       })

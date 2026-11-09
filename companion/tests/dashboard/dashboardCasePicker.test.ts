@@ -217,6 +217,26 @@ describe("dashboard-case-picker.js", () => {
     expect(h.picker.value).toBe("Acme ransomware");
   });
 
+  it("a cancelled password prompt drops the pending pick: the box names the loaded case again (#2442)", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.mod.commitLoadedCase("INC-2026-001");
+    h.mod.setCasePick("INC-2026-002");
+    h.mod.clearCasePick();
+    expect(h.mod.pickedCaseId()).toBe("INC-2026-001");
+    expect(h.picker.value).toBe("Acme ransomware");
+    expect(h.caseId.value).toBe("INC-2026-001");
+  });
+
+  it("with no case loaded, a cancelled prompt keeps the pick so Connect retries it (#2442)", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.mod.setCasePick("INC-2026-002"); // a deep link into a locked case, then Cancel
+    h.mod.clearCasePick();
+    expect(h.mod.pickedCaseId()).toBe("INC-2026-002");
+    expect(h.picker.value).toBe("Payroll BEC");
+  });
+
   it("the Current marker follows the loaded case, not the pick", async () => {
     const h = harness(CASES);
     await h.mod.loadCaseList();

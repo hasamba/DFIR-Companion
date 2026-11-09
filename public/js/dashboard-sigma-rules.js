@@ -499,6 +499,13 @@ async function sigmaRegradePreview() {
 
 async function sigmaRegradeApply(caseId) {
   if (sigmaDemoActive()) return;
+  // The Apply button is bound to the case it was previewed for (#2442); a different case is open now.
+  if (caseId !== sigmaRegradeCaseId()) {
+    sigmaMsg("The open case changed — preview the re-grade again.", true);
+    const box = document.getElementById("sigmaRegrade");
+    if (box) box.hidden = true;
+    return;
+  }
   try {
     const r = await sigmaFetch(`/cases/${encodeURIComponent(caseId)}/sigma/regrade`, {
       method: "POST",

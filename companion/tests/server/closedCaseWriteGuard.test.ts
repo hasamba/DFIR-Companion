@@ -10,6 +10,9 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { ImportUndoStore } from "../../src/analysis/importUndo.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
 import { StateLock } from "../../src/analysis/stateLock.js";
+import { NotebookStore } from "../../src/analysis/notebookStore.js";
+import { CommentsStore } from "../../src/analysis/comments.js";
+import { TagsStore } from "../../src/analysis/tags.js";
 
 // #2404: analyst writes that change the case's record had no closed/archived check — import
 // undo/redo, finding workflow and severity restore, hypotheses, playbook, remediation, cockpit.
@@ -41,6 +44,19 @@ const WRITES: ReadonlyArray<readonly ["post" | "patch" | "put" | "delete", strin
   ["post", "/cockpit/review"],
 ];
 
+// #2437 Q1: the marks that change what the report says are frozen too — false-positive marks, the
+// scope window, source trust and tags (stars included: a star is the reserved "starred" tag).
+const REPORT_MARKS: ReadonlyArray<readonly ["post" | "patch" | "put" | "delete", string]> = [
+  ["post", "/false-positive"],
+  ["post", "/false-positive/batch"],
+  ["post", "/false-positive/remove"],
+  ["post", "/scope"],
+  ["put", "/source-trust"],
+  ["post", "/tags"],
+  ["delete", "/tags/t1"],
+  ["post", "/iocs/bulk-tag"],
+];
+
 async function makeApp() {
   const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-2404-")));
   const stateStore = new StateStore(store);
@@ -59,6 +75,9 @@ async function makeApp() {
     hypothesisStore,
     importLock,
     importUndoStore: new ImportUndoStore(store),
+    notebookStore: new NotebookStore(store),
+    commentsStore: new CommentsStore(store),
+    tagsStore: new TagsStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, store, hypothesisStore, importLock, stateLock };
@@ -162,5 +181,54 @@ describe("closed and archived cases refuse case-changing writes (#2404)", () => 
     releaseState();
     const res = await pending;
     expect(res.status).toBe(423);
+  });
+
+  it("refuses every report-changing mark on a closed and an archived case (#2437)", async () => {
+    const { app, store } = await makeApp();
+    for (const [method, path] of REPORT_MARKS) {
+      const open = await send(app, method, path);
+      expect(open.status, `${method.toUpperCase()} ${path} on an open case`).not.toBe(423);
+    }
+    await request(app).patch("/cases/c1/status").send({ status: "closed" });
+    for (const [method, path] of REPORT_MARKS) {
+      const res = await send(app, method, path);
+      expect(res.status, `${method.toUpperCase()} ${path} on a closed case`).toBe(423);
+      expect(res.body.error).toMatch(/closed — reopen it before changing it/);
+    }
+    await store.archiveCaseFolder("c1", "archived");
+    for (const [method, path] of REPORT_MARKS) {
+      const res = await send(app, method, path);
+      expect(res.status, `${method.toUpperCase()} ${path} on an archived case`).toBe(423);
+      expect(res.body.error).toMatch(/archived — restore it before changing it/);
+    }
+  });
+
+  it("a closed case keeps its scope window and false-positive marks exactly as they were (#2437)", async () => {
+    const { app } = await makeApp();
+    await request(app).post("/cases/c1/scope").send({ start: "2026-01-01T00:00:00Z", end: "" });
+    await request(app)
+      .post("/cases/c1/false-positive")
+      .send({ kind: "ioc", ref: "1.2.3.4", reason: "benign" });
+    await request(app).patch("/cases/c1/status").send({ status: "closed" });
+    const scope = (await request(app).get("/cases/c1/scope")).body;
+    expect((await request(app).post("/cases/c1/scope").send({ start: "", end: "" })).status).toBe(423);
+    expect((await request(app).get("/cases/c1/scope")).body).toEqual(scope);
+    expect(scope.start).toBe("2026-01-01T00:00:00.000Z");
+    expect((await request(app).post("/cases/c1/false-positive/suggest").send({})).status).not.toBe(423);
+  });
+
+  it("leaves the notes beside the record editable: a notebook entry, a comment and a pin (#2437)", async () => {
+    const { app } = await makeApp();
+    await request(app).patch("/cases/c1/status").send({ status: "closed" });
+    const note = await request(app).post("/cases/c1/notebook").send({ text: "reviewer note after close" });
+    expect(note.status).toBe(201);
+    const comment = await request(app)
+      .post("/cases/c1/comments")
+      .send({ targetType: "finding", targetId: "f1", text: "looks right", author: "rev" });
+    expect(comment.status).toBe(201);
+    expect((await request(app).post("/cases/c1/pinned-findings").send({ findingId: "f1" })).status).not.toBe(
+      423,
+    );
+    expect((await request(app).post("/cases/c1/tags/tagger-for").send({ ids: [] })).status).not.toBe(423);
   });
 });

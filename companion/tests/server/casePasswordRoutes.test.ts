@@ -234,3 +234,51 @@ describe("case password lifecycle", () => {
     );
   });
 });
+
+// #2441 (part B): setting or changing a case password rotates the salt, so every HTTP request
+// with an old unlock cookie is refused at once. A live dashboard socket was checked only at
+// connect, so it kept streaming the full state. The route now reports a successful set/change so
+// the app can close every open live connection on that case; failures and removal do not.
+describe("case password change closes open live connections (#2441)", () => {
+  async function appWithSpy(): Promise<{ spyApp: ReturnType<typeof createApp>; changed: string[] }> {
+    const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-casepw-live-")));
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const changed: string[] = [];
+    const spyApp = createApp(store, {
+      stateStore: new StateStore(store),
+      onCasePasswordChanged: (caseId: string) => changed.push(caseId),
+    });
+    return { spyApp, changed };
+  }
+
+  const setPassword = (target: ReturnType<typeof createApp>, caseId: string, newPassword: string) =>
+    request(target).post(`/cases/${caseId}/password`).send({ newPassword });
+
+  it("reports the case once when a password is first set, and again when it is changed", async () => {
+    const { spyApp, changed } = await appWithSpy();
+    // Once a password exists, changing it is itself gated, so the agent unlocks first.
+    const agent = request.agent(spyApp);
+    expect((await agent.post("/cases/c1/password").send({ newPassword: "correct horse" })).status).toBe(200);
+    expect(changed).toEqual(["c1"]);
+    await agent.post("/cases/c1/unlock").send({ password: "correct horse" });
+    expect((await agent.post("/cases/c1/password").send({ newPassword: "battery staple" })).status).toBe(200);
+    expect(changed).toEqual(["c1", "c1"]);
+  });
+
+  it("does not report a rejected (too-short) password or an unknown case", async () => {
+    const { spyApp, changed } = await appWithSpy();
+    expect((await setPassword(spyApp, "c1", "ab")).status).toBe(400);
+    expect((await setPassword(spyApp, "nope", "correct horse")).status).toBe(404);
+    expect(changed).toEqual([]);
+  });
+
+  it("does not report removing the password: an unprotected case admits any reconnect anyway", async () => {
+    const { spyApp, changed } = await appWithSpy();
+    const agent = request.agent(spyApp);
+    await agent.post("/cases/c1/password").send({ newPassword: "correct horse" });
+    await agent.post("/cases/c1/unlock").send({ password: "correct horse" });
+    expect(changed).toEqual(["c1"]);
+    expect((await agent.delete("/cases/c1/password")).status).toBe(200);
+    expect(changed).toEqual(["c1"]);
+  });
+});
