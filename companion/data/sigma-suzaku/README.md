@@ -22,6 +22,8 @@ These Sigma rules grade imported AWS CloudTrail logs at import time, beside the 
 - Settings: `DFIR_SIGMA_SUZAKU_RULES` (on), `DFIR_SIGMA_SUZAKU_STATUSES` (stable, test,
   experimental — 711 of the files are experimental) and `DFIR_SIGMA_SUZAKU_MIN_LEVEL` (critical).
   Most of these rules are one rule per API call with no context, so below the floor they only label.
-- Updating: copy the upstream folder over `rules/aws/cloudtrail`, move the commit in `release.json`
+- Analysts can install a newer Suzaku commit at runtime (Settings → Sigma rules, #2508); it lives
+  in the server data folder and never changes this bundled copy.
+- Updating this bundled copy: copy the upstream folder over `rules/aws/cloudtrail`, move the commit in `release.json`
   and `UPSTREAM` forward in the same PR, and run the detection-overlap check
   (`tests/analysis/detectionOverlap.test.ts`) and `tests/analysis/sigmaBundledRules.test.ts`.

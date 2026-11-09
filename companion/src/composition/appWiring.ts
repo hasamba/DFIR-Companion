@@ -64,6 +64,7 @@ import { createAiStatusHandler } from "./aiStatusHandler.js";
 import { caseJobRest } from "./aiStatusIdleGate.js";
 import { getServerLogger, warnLine } from "../logging/serverLogger.js";
 import { dirname, join } from "node:path";
+import { suzakuRuleStore } from "./sigmaRules.js";
 
 export interface AppWiringDeps {
   teamAuth?: TeamAuth;
@@ -233,6 +234,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     dashboardViewStore,
     taggerStore,
     sigmaRuleStore: sigmaRules,
+    suzakuRuleStore: suzakuRuleStore(),
     rulePackStore,
     onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
     onCasePasswordChanged: (caseId) => hub.dropCase(caseId),
