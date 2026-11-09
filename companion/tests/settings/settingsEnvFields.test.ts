@@ -110,9 +110,25 @@ describe("Settings modal group placement", () => {
   });
 
   // The Integrations tab grew too long, so cloud accounts got a tab of their own.
+  // Essential shows the account list, its form and the access check: collection is dead without an
+  // account. Essential hides any unmarked field inside a field row, so every form field is marked.
+  // The cloud CA, proxy, skip-TLS and query-budget settings stay All-only.
+  it("shows the cloud account list, form and check in Essential, every field included", async () => {
+    const cloud = settingsPane(await dashboardHtml(), "cloud");
+    expect(cloud).toMatch(/id="cloudAccountsHead" data-essential/);
+    expect(cloud).toMatch(/<div id="cloudAccountsPanel" data-essential>/);
+    const panel = cloud.slice(cloud.indexOf('id="cloudAccountsPanel"'));
+    const unmarked = [
+      ...panel.matchAll(/<div class="sfield"(?![^>]*data-essential)[^>]*>\s*<label for="([^"]+)"/g),
+    ].map((m) => m[1]);
+    expect(unmarked).toEqual([]);
+    expect(panel).toContain('id="caName"');
+    expect(panel).toContain('id="ccS3Bucket"');
+  });
+
   it("gives cloud accounts their own tab, outside Integrations", async () => {
     const html = await dashboardHtml();
-    expect(html).toMatch(/<button class="stab" data-stab="cloud">Cloud Accounts<\/button>/);
+    expect(html).toMatch(/<button class="stab" data-stab="cloud" data-essential>Cloud Accounts<\/button>/);
     const cloud = settingsPane(html, "cloud");
     const integrations = settingsPane(html, "integrations");
     for (const id of [

@@ -1400,7 +1400,7 @@
         <button class="stab" data-stab="enrichment" data-essential>Enrichment</button>
         <button class="stab" data-stab="exposure" data-essential>Exposure</button>
         <button class="stab" data-stab="integrations" data-essential>Integrations</button>
-        <button class="stab" data-stab="cloud">Cloud Accounts</button>
+        <button class="stab" data-stab="cloud" data-essential>Cloud Accounts</button>
         <button class="stab" data-stab="velociraptor">Velociraptor</button>
         <button class="stab" data-stab="tools">Tools</button>
         <button class="stab" data-stab="whitelist">IOC Whitelist</button>
@@ -2467,14 +2467,14 @@
 
       <!-- Cloud accounts (moved out of Integrations) -->
       <div class="stab-pane" id="stab-cloud">
-        <div class="settings-group-head" id="cloudAccountsHead">Cloud accounts (AWS, Microsoft, GCP)</div>
+        <div class="settings-group-head" id="cloudAccountsHead" data-essential>Cloud accounts (AWS, Microsoft, GCP)</div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_CLOUD_CA">Cloud CA bundle<span class="sfield-hint">DFIR_CLOUD_CA — PEM CA bundle (e.g. a TLS-inspecting proxy's CA) trusted for every cloud request, token endpoints included. Added to the built-in trust; verification stays ON.</span></label><input id="env-DFIR_CLOUD_CA" placeholder="path/to/ca.pem" /></div>
           <div class="sfield"><label for="env-DFIR_CLOUD_INSECURE">Cloud: skip TLS verify<span class="sfield-hint">DFIR_CLOUD_INSECURE — true to accept any certificate. Cloud hosts are never loopback, so this also needs DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true. Lab only; prefer the CA bundle.</span></label><input id="env-DFIR_CLOUD_INSECURE" placeholder="false" /></div>
           <div class="sfield"><label for="env-DFIR_CLOUD_PROXY_URL">Cloud proxy URL<span class="sfield-hint">DFIR_CLOUD_PROXY_URL — http(s)://host:port proxy every cloud request tunnels through. HTTPS_PROXY is not read for cloud collection.</span></label><input id="env-DFIR_CLOUD_PROXY_URL" type="password" placeholder="http://proxy.corp:3128" /></div>
           <div class="sfield"><label for="env-DFIR_CLOUD_M365_QUERY_BUDGET">Microsoft query budget (per tenant, 24 h)<span class="sfield-hint">DFIR_CLOUD_M365_QUERY_BUDGET — audit query submissions this companion may use per Microsoft tenant in a rolling 24 h (1–200, default 50). Microsoft guarantees at least 200 per tenant, shared with every other tool; a collection stops "partial — budget used" before passing this. Restart to apply.</span></label><input id="env-DFIR_CLOUD_M365_QUERY_BUDGET" type="number" min="1" max="200" placeholder="50" /></div>
         </div>
-        <div id="cloudAccountsPanel">
+        <div id="cloudAccountsPanel" data-essential>
           <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">A cloud account holds the credential that cloud collection uses for one AWS account, Microsoft tenant or GCP project. Prefer short-lived credentials: an AWS role, GCP impersonation, a Microsoft app certificate. Credentials are encrypted with a <strong>vault key file that is not in the data folder</strong>. Back the key file up on its own and keep it out of data backups. If the key file is lost, add the accounts again; case evidence is not affected.</p>
           <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">Cloud accounts belong to cases. The list shows the accounts of the <strong>open case</strong>; you need write access to the case to see, add or use them. Share an account with another case you can write, or detach it from this case only. Editing or deleting a shared account needs write access to every case it is attached to.</p>
           <p id="cloudVaultKeyLine" role="status" data-safe-style="font-size:12px;margin:2px 0 6px"></p>
@@ -2493,51 +2493,51 @@
           </div>
           <form id="cloudAccountForm" hidden data-safe-style="margin-top:8px; padding:8px; border:1px solid var(--border-color, #444); border-radius:6px;">
             <div class="sfield-row">
-              <div class="sfield"><label for="caName">Name</label><input id="caName" maxlength="80" required /></div>
-              <div class="sfield"><label for="caProvider">Provider</label><select id="caProvider"><option value="aws">AWS account</option><option value="microsoft">Microsoft tenant</option><option value="gcp">GCP project</option></select></div>
+              <div class="sfield" data-essential><label for="caName">Name</label><input id="caName" maxlength="80" required /></div>
+              <div class="sfield" data-essential><label for="caProvider">Provider</label><select id="caProvider"><option value="aws">AWS account</option><option value="microsoft">Microsoft tenant</option><option value="gcp">GCP project</option></select></div>
             </div>
             <p id="caStoredSecrets" role="status" data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 6px"></p>
             <div data-cloud-provider="aws">
               <div class="sfield-row">
-                <div class="sfield"><label for="caAwsAuthMode">Sign-in<span class="sfield-hint">Assume a role (preferred, sessions of at most 1 hour) or use an access key alone</span></label><select id="caAwsAuthMode"><option value="assume-role">Assume role</option><option value="access-key">Access key only</option></select></div>
-                <div class="sfield"><label for="caAwsRegion">Region<span class="sfield-hint">Optional, for example eu-west-1. Event history and GuardDuty findings ask this region first</span></label><input id="caAwsRegion" /></div>
+                <div class="sfield" data-essential><label for="caAwsAuthMode">Sign-in<span class="sfield-hint">Assume a role (preferred, sessions of at most 1 hour) or use an access key alone</span></label><select id="caAwsAuthMode"><option value="assume-role">Assume role</option><option value="access-key">Access key only</option></select></div>
+                <div class="sfield" data-essential><label for="caAwsRegion">Region<span class="sfield-hint">Optional, for example eu-west-1. Event history and GuardDuty findings ask this region first</span></label><input id="caAwsRegion" /></div>
               </div>
               <div class="sfield-row">
-                <div class="sfield"><label for="caAwsRoleArn">Role ARN<span class="sfield-hint">Assume role only</span></label><input id="caAwsRoleArn" placeholder="arn:aws:iam::123456789012:role/name" /></div>
-                <div class="sfield"><label for="caAwsExternalId">External ID<span class="sfield-hint">Assume role only, optional</span></label><input id="caAwsExternalId" type="password" autocomplete="new-password" /></div>
+                <div class="sfield" data-essential><label for="caAwsRoleArn">Role ARN<span class="sfield-hint">Assume role only</span></label><input id="caAwsRoleArn" placeholder="arn:aws:iam::123456789012:role/name" /></div>
+                <div class="sfield" data-essential><label for="caAwsExternalId">External ID<span class="sfield-hint">Assume role only, optional</span></label><input id="caAwsExternalId" type="password" autocomplete="new-password" /></div>
               </div>
               <div class="sfield-row">
-                <div class="sfield"><label for="caAwsBase">Base credential<span class="sfield-hint">What calls AssumeRole: a stored access key, or the machine's own profile or instance role</span></label><select id="caAwsBase"><option value="access-key">Stored access key</option><option value="ambient">Ambient profile or instance role</option></select></div>
-                <div class="sfield"><label for="caAwsSession">Session seconds<span class="sfield-hint">900–3600, default 3600</span></label><input id="caAwsSession" inputmode="numeric" placeholder="3600" /></div>
+                <div class="sfield" data-essential><label for="caAwsBase">Base credential<span class="sfield-hint">What calls AssumeRole: a stored access key, or the machine's own profile or instance role</span></label><select id="caAwsBase"><option value="access-key">Stored access key</option><option value="ambient">Ambient profile or instance role</option></select></div>
+                <div class="sfield" data-essential><label for="caAwsSession">Session seconds<span class="sfield-hint">900–3600, default 3600</span></label><input id="caAwsSession" inputmode="numeric" placeholder="3600" /></div>
               </div>
               <div class="sfield-row3">
-                <div class="sfield"><label for="caAwsKeyId">Access key ID</label><input id="caAwsKeyId" type="password" autocomplete="new-password" /></div>
-                <div class="sfield"><label for="caAwsSecret">Secret access key</label><input id="caAwsSecret" type="password" autocomplete="new-password" /></div>
-                <div class="sfield"><label for="caAwsSessionToken">Session token<span class="sfield-hint">Access key only, optional</span></label><input id="caAwsSessionToken" type="password" autocomplete="new-password" /></div>
+                <div class="sfield" data-essential><label for="caAwsKeyId">Access key ID</label><input id="caAwsKeyId" type="password" autocomplete="new-password" /></div>
+                <div class="sfield" data-essential><label for="caAwsSecret">Secret access key</label><input id="caAwsSecret" type="password" autocomplete="new-password" /></div>
+                <div class="sfield" data-essential><label for="caAwsSessionToken">Session token<span class="sfield-hint">Access key only, optional</span></label><input id="caAwsSessionToken" type="password" autocomplete="new-password" /></div>
               </div>
             </div>
             <div data-cloud-provider="microsoft" hidden>
               <div class="sfield-row3">
-                <div class="sfield"><label for="caMsTenant">Tenant ID<span class="sfield-hint">GUID or domain</span></label><input id="caMsTenant" /></div>
-                <div class="sfield"><label for="caMsClient">Application (client) ID</label><input id="caMsClient" /></div>
-                <div class="sfield"><label for="caMsFormat">Certificate<span class="sfield-hint">App-only sign-in with a certificate</span></label><select id="caMsFormat"><option value="pem">PEM (certificate and private key)</option><option value="pfx">PFX file and password</option></select></div>
+                <div class="sfield" data-essential><label for="caMsTenant">Tenant ID<span class="sfield-hint">GUID or domain</span></label><input id="caMsTenant" /></div>
+                <div class="sfield" data-essential><label for="caMsClient">Application (client) ID</label><input id="caMsClient" /></div>
+                <div class="sfield" data-essential><label for="caMsFormat">Certificate<span class="sfield-hint">App-only sign-in with a certificate</span></label><select id="caMsFormat"><option value="pem">PEM (certificate and private key)</option><option value="pfx">PFX file and password</option></select></div>
               </div>
-              <div class="sfield"><label for="caMsPem">Certificate PEM<span class="sfield-hint">Paste the certificate and its unencrypted private key</span></label><textarea id="caMsPem" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
+              <div class="sfield" data-essential><label for="caMsPem">Certificate PEM<span class="sfield-hint">Paste the certificate and its unencrypted private key</span></label><textarea id="caMsPem" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
               <div class="sfield-row">
-                <div class="sfield"><label for="caMsPfx">PFX file</label><input id="caMsPfx" type="file" accept=".pfx,.p12" /></div>
-                <div class="sfield"><label for="caMsPfxPassword">PFX password</label><input id="caMsPfxPassword" type="password" autocomplete="new-password" /></div>
+                <div class="sfield" data-essential><label for="caMsPfx">PFX file</label><input id="caMsPfx" type="file" accept=".pfx,.p12" /></div>
+                <div class="sfield" data-essential><label for="caMsPfxPassword">PFX password</label><input id="caMsPfxPassword" type="password" autocomplete="new-password" /></div>
               </div>
             </div>
             <div data-cloud-provider="gcp" hidden>
               <div class="sfield-row">
-                <div class="sfield"><label for="caGcpProject">Project ID</label><input id="caGcpProject" /></div>
-                <div class="sfield"><label for="caGcpAuthMode">Sign-in</label><select id="caGcpAuthMode"><option value="impersonation">Impersonate a service account (preferred)</option><option value="service-account-key">Service-account key</option></select></div>
+                <div class="sfield" data-essential><label for="caGcpProject">Project ID</label><input id="caGcpProject" /></div>
+                <div class="sfield" data-essential><label for="caGcpAuthMode">Sign-in</label><select id="caGcpAuthMode"><option value="impersonation">Impersonate a service account (preferred)</option><option value="service-account-key">Service-account key</option></select></div>
               </div>
               <div class="sfield-row">
-                <div class="sfield"><label for="caGcpTarget">Service account to impersonate<span class="sfield-hint">Impersonation only</span></label><input id="caGcpTarget" placeholder="name@project.iam.gserviceaccount.com" /></div>
-                <div class="sfield"><label for="caGcpBase">Base credential<span class="sfield-hint">Impersonation only: a stored key, or the machine's own credentials</span></label><select id="caGcpBase"><option value="ambient">Ambient credentials</option><option value="service-account-key">Stored service-account key</option></select></div>
+                <div class="sfield" data-essential><label for="caGcpTarget">Service account to impersonate<span class="sfield-hint">Impersonation only</span></label><input id="caGcpTarget" placeholder="name@project.iam.gserviceaccount.com" /></div>
+                <div class="sfield" data-essential><label for="caGcpBase">Base credential<span class="sfield-hint">Impersonation only: a stored key, or the machine's own credentials</span></label><select id="caGcpBase"><option value="ambient">Ambient credentials</option><option value="service-account-key">Stored service-account key</option></select></div>
               </div>
-              <div class="sfield"><label for="caGcpKeyJson">Service-account key JSON</label><textarea id="caGcpKeyJson" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
+              <div class="sfield" data-essential><label for="caGcpKeyJson">Service-account key JSON</label><textarea id="caGcpKeyJson" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
             </div>
             <div id="caPolicyBox" data-safe-style="margin-top:6px;">
               <p data-safe-style="font-size:12px;margin:2px 0 4px"><strong id="caPolicyTitle"></strong> — grant this and nothing more. The companion never checks that an account cannot write; this policy is how you keep it read-only.</p>
@@ -2555,8 +2555,8 @@
             <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 6px">The check makes one read per source you pick — a page of one entry, or one file listing and one file read — and reports which reads worked. It makes no write and does not test whether the account can also write.</p>
             <div id="ccSources" data-safe-style="display:flex; gap:12px; flex-wrap:wrap; font-size:12px;"></div>
             <div id="ccS3Fields" class="sfield-row" hidden>
-              <div class="sfield"><label for="ccS3Bucket">Trail bucket<span class="sfield-hint">The S3 bucket the trail writes to. Leave empty to skip the bucket test.</span></label><input id="ccS3Bucket" spellcheck="false" /></div>
-              <div class="sfield"><label for="ccS3Prefix">Key prefix<span class="sfield-hint">Where the trail writes in the bucket, default AWSLogs/</span></label><input id="ccS3Prefix" spellcheck="false" placeholder="AWSLogs/" /></div>
+              <div class="sfield" data-essential><label for="ccS3Bucket">Trail bucket<span class="sfield-hint">The S3 bucket the trail writes to. Leave empty to skip the bucket test.</span></label><input id="ccS3Bucket" spellcheck="false" /></div>
+              <div class="sfield" data-essential><label for="ccS3Prefix">Key prefix<span class="sfield-hint">Where the trail writes in the bucket, default AWSLogs/</span></label><input id="ccS3Prefix" spellcheck="false" placeholder="AWSLogs/" /></div>
             </div>
             <div data-safe-style="display:flex; gap:8px; margin-top:6px;">
               <button id="ccRun" type="button">Run check</button>
