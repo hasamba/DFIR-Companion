@@ -1315,7 +1315,9 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).toMatch(/\$\{stuck\} — click to dismiss/);
     expect(html).not.toContain("Still loading — click to dismiss");
     // Dismissing still ABANDONS the in-flight load (#174), not merely hides the overlay.
-    expect(html).toMatch(/function dismissCaseLoading\(\)[\s\S]{0,200}connectAbortController\.abort\(\)/);
+    expect(html).toMatch(
+      /function abandonCaseLoad\(statusText\)[\s\S]{0,200}connectAbortController\.abort\(\)/,
+    );
     // And the overlay is escapable from the first frame, not only after the 15s stall timer has
     // turned the backdrop into a click target.
     expect(html).toContain('id="caseLoadingCancel"');

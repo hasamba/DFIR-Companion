@@ -207,6 +207,33 @@ describe("Presidio unreachable — the two actions on the error pill (#1945)", (
   });
 });
 
+describe("Presidio actions after a case switch (#2442)", () => {
+  it("Continue for a case that is no longer open writes nothing and hides the buttons", async () => {
+    const p = page({ reachable: false });
+    p.api.applyAiStatus(ERROR);
+    await settle();
+    expect(p.cont.style.display).toBe("");
+    (p.api as unknown as { activeCaseId: string }).activeCaseId = "INC-2";
+    const before = p.calls.length;
+    await p.cont.onclick!();
+    expect(p.calls.slice(before)).toEqual([]);
+    expect(p.cont.style.display).toBe("none");
+    expect(p.retry.style.display).toBe("none");
+  });
+
+  it("Retry for a case that is no longer open probes nothing", async () => {
+    const p = page({ reachable: false });
+    p.api.applyAiStatus(ERROR);
+    await settle();
+    (p.api as unknown as { activeCaseId: string }).activeCaseId = "INC-2";
+    const before = p.calls.length;
+    await p.retry.onclick!();
+    expect(p.calls.slice(before)).toEqual([]);
+    expect(p.retry.style.display).toBe("none");
+    expect(p.counters.resynth).toBe(0);
+  });
+});
+
 describe("Presidio unreachable — markup and toolbar icons", () => {
   const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
   const css = dashboardStylesheet();

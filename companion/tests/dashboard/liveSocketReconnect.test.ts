@@ -1002,6 +1002,6 @@ describe("the case-load path hands its socket to js/dashboard-live-socket.js (#1
 
   it("closes the old socket through closeCaseSocket on a switch and on a cancel", () => {
     expect(body("function proceedConnect(", "function restoreCaseFromUrl(")).toContain("closeCaseSocket()");
-    expect(body("function dismissCaseLoading(", "function proceedConnect(")).toContain("closeCaseSocket()");
+    expect(body("function abandonCaseLoad(", "function proceedConnect(")).toContain("closeCaseSocket()");
   });
 });

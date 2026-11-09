@@ -8,8 +8,9 @@
 //
 // The active-case identity (activeCaseId, activeUnlockedCaseId, activeUnlockRemembered) did
 // NOT come along: eight extracted modules read those by bare name, so they stay page
-// vocabulary beside SEV. This module writes them through the same global lexical environment
-// every other module already shares.
+// vocabulary beside SEV. This module writes activeCaseId through the same global lexical
+// environment every other module already shares; the two unlock names are written by
+// js/dashboard-case-unlock.js (adoptCaseUnlock, #2442).
 (function () {
   "use strict";
 
@@ -40,26 +41,6 @@
     document.getElementById("caseMismatchBanner").hidden = true;
   }
 
-  // Tracks the currently-connected password-protected case's unlock, so a NOT-"remembered"
-  // unlock can be explicitly forgotten (POST /cases/:id/lock) the moment we leave it. A
-  // session cookie otherwise survives switching cases within the same tab — only an actual
-  // browser close clears it — which is stricter persistence than "don't remember" should
-  // give: without this, unchecking "remember" would only matter across browser restarts,
-  // not across simply switching to another case and back.
-  function forgetActiveCaseIfNotRemembered() {
-    if (activeUnlockedCaseId && !activeUnlockRemembered) {
-      fetch(`/cases/${activeUnlockedCaseId}/lock`, { method: "POST" }).catch(
-        () => {},
-      );
-    }
-    activeUnlockedCaseId = null;
-    activeUnlockRemembered = true;
-  }
-  // Covers refresh / navigating away entirely / closing the tab — a keepalive fetch survives
-  // page teardown like sendBeacon does, but goes through the dashboard's fetch wrapper, so in
-  // team mode it carries the X-DFIR-CSRF header. sendBeacon cannot send headers, and the
-  // server refused it with 403 before the cookie was cleared (#2416).
-
   // The in-flight case-load "generation" (#174): each proceedConnect() gets its own AbortController
   // covering the two loads the overlay blocks on (state + lifecycle), and activeCaseId names whose
   // case is currently authoritative — used by render()'s stale-response guard above.
@@ -88,8 +69,9 @@
       typeof pickedCaseId === "function" ? pickedCaseId() : document.getElementById("caseId").value
     ).trim();
     if (!caseId) return;
-    if (activeUnlockedCaseId && activeUnlockedCaseId !== caseId)
-      forgetActiveCaseIfNotRemembered();
+    // A newer Connect retires this one (#2442): its lock answer, or its offline fallback, is dropped.
+    const gen = typeof beginCaseSwitch === "function" ? beginCaseSwitch() : 0;
+    const stale = () => typeof isCurrentCaseSwitch === "function" && !isCurrentCaseSwitch(gen);
     fetch(`/cases/${caseId}/lock-status`)
       .then((r) =>
         r.ok
@@ -97,15 +79,14 @@
           : { hasPassword: false, unlocked: true, remembered: false },
       )
       .then((status) => {
+        if (stale()) return;
         if (status.hasPassword && !status.unlocked) {
           promptCaseUnlock(caseId);
         } else {
-          activeUnlockedCaseId = caseId;
-          activeUnlockRemembered = !status.hasPassword || status.remembered;
-          proceedConnect(caseId);
+          proceedConnect(caseId, { remembered: !status.hasPassword || !!status.remembered });
         }
       })
-      .catch(() => proceedConnect(caseId)); // offline / older server — fall back to the old behavior
+      .catch(() => stale() || proceedConnect(caseId)); // offline / older server — fall back to the old behavior
   }
 
   // Case loading overlay: blocks the screen from the moment a case is selected until
@@ -192,8 +173,11 @@
   // state/lifecycle load instead of merely hiding the overlay, so those requests stop being able to
   // block or clobber a case the analyst connects to next. Selecting a new case has the same effect
   // (proceedConnect aborts the previous generation itself) — this covers giving up without picking
-  // a replacement case yet.
+  // a replacement case yet. A load that FAILS goes through the same path (#2442), with its own text.
   function dismissCaseLoading() {
+    abandonCaseLoad("case load cancelled — pick a case to load");
+  }
+  function abandonCaseLoad(statusText) {
     if (connectAbortController) connectAbortController.abort();
     // Retire the generation as well as aborting it. The abort stops the requests; this stops the
     // panel strip from going on reporting progress for a load the analyst has walked away from —
@@ -234,10 +218,11 @@
     // case is only partly loaded before they read anything off it. The picker keeps the id, so
     // retrying is one click.
     const statusEl = document.getElementById("status");
-    if (statusEl) statusEl.textContent = "case load cancelled — pick a case to load";
+    if (statusEl) statusEl.textContent = statusText;
   }
 
-  function proceedConnect(caseId) {
+  // `unlock` is what the lock probe or the password prompt learned ({ remembered }); none = offline.
+  function proceedConnect(caseId, unlock) {
     // Abandon the previous case's in-flight state/lifecycle load (#174): aborts its fetches (frees
     // the browser's connection slots and lets the server bail out early if it hasn't started the
     // heavy work yet) and makes render()'s stale-response guard reject anything it still returns.
@@ -249,6 +234,11 @@
     // a bare pick. Without the picker module the field is written directly, as before.
     if (typeof commitLoadedCase === "function") commitLoadedCase(caseId);
     else document.getElementById("caseId").value = caseId;
+    // Only now is the case being left forgotten (#2442) — a cancelled prompt never got this far.
+    if (typeof adoptCaseUnlock === "function") {
+      if (unlock) adoptCaseUnlock(caseId, !!unlock.remembered);
+      else if (activeUnlockedCaseId !== caseId) adoptCaseUnlock(null, true);
+    }
     showCaseLoadingOverlay();
     hideCaseMismatch();
     mismatchDismissed = ""; // fresh start for the newly-connected case
@@ -280,6 +270,7 @@
         });
         // Still busy after its retries (#1915): the busy note says so; never render the error as a case.
         if (typeof dfirServerBusy === "function" && dfirServerBusy(res)) throw new Error("server busy");
+        if (!res.ok) throw new Error("HTTP " + res.status);
         clpStage("query"); // headers are in — the server has finished querying
         const api = clpApi();
         const body = api
@@ -296,12 +287,16 @@
         clpStage("parse");
         await clpAfterPaint();
         typeof render === "function" && render(state);
-        jumpToEventFromHash();
-        clpStage("render");
-      } catch {
-        // Aborted (#174), offline, or a non-JSON error body. Same outcome as the .catch(() => {})
-        // this replaced: the overlay hides via allSettled below and the dashboard stays as-is.
+      } catch (e) {
+        // Aborted (#174) by a newer switch or a Cancel: nothing to do. Anything else — an error
+        // answer, offline, an unreadable body — must not leave the old case on screen while every
+        // action targets this one (#2442), so the load is abandoned and the analyst told.
+        if (!loadSignal.aborted && activeCaseId === caseId)
+          abandonCaseLoad(`case ${caseId} failed to load (${e && e.message ? e.message : "error"}) — nothing is loaded; press Connect to retry`);
+        return;
       }
+      try { jumpToEventFromHash(); } catch {} // a deep-link miss after a good render is not a failed load
+      clpStage("render");
     })();
     if (typeof verifyCustodyOnOpen === "function") verifyCustodyOnOpen(caseId); // never block a case connect
     // A new case is a different investigation, so no palette reveal survives into it (the set in
@@ -769,6 +764,10 @@
       mismatchDismissed = foreignCaptureCase || ""; // suppress this case until a different one appears
       hideCaseMismatch();
     };
+    // Leaving a case forgets an unremembered unlock (js/dashboard-case-unlock.js, #2442); this covers
+    // refresh / navigating away / closing the tab — a keepalive fetch survives page teardown like
+    // sendBeacon does, but goes through the dashboard's fetch wrapper, so in team mode it carries
+    // the X-DFIR-CSRF header. sendBeacon cannot, and the server refused it with 403 (#2416).
     window.addEventListener("pagehide", () => {
       if (activeUnlockedCaseId && !activeUnlockRemembered) {
         fetch(`/cases/${activeUnlockedCaseId}/lock`, {

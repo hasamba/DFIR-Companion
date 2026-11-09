@@ -136,6 +136,16 @@
     syncCasePicker();
   }
 
+  // Drop a pending pick: the box shows the loaded case again (a cancelled password prompt, #2442).
+  // With NO case loaded (a deep link into a locked case, then Cancel) the pick is kept, so the box
+  // still names the case and Connect retries it — the same rule as a cancelled load.
+  function clearCasePick() {
+    const idEl = document.getElementById("caseId");
+    if (!idEl || !idEl.value.trim()) return;
+    pick = null;
+    syncCasePicker();
+  }
+
   function pushPickerToPick() {
     const picker = document.getElementById("casePicker");
     if (!picker) return;
@@ -208,6 +218,7 @@
   window.syncCasePicker = syncCasePicker;
   window.pickedCaseId = pickedCaseId;
   window.setCasePick = setCasePick;
+  window.clearCasePick = clearCasePick;
   window.commitLoadedCase = commitLoadedCase;
   window.clearLoadedCase = clearLoadedCase;
 })();
