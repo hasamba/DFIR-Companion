@@ -135,9 +135,7 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
 
   app.post("/cases/:id/sigma/regrade", async (req: Request, res: Response) => {
     if (unavailable(res)) return;
-    const caseId = req.params.id;
-    const refusal = await frozenCaseRefusal(cases, caseId, "re-grading its evidence");
-    if (refusal) return res.status(423).json({ error: refusal });
+    const caseId = req.params.id; // a frozen case is refused by the central gate (#2437)
     const snapshot = options.pipeline!.sigmaSnapshot();
     if (!snapshot)
       return res.status(409).json({ error: "Sigma grading is switched off — switch it on to re-grade" });

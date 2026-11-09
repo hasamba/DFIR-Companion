@@ -174,12 +174,7 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
     const superStore = options.superTimelineStore;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (!caseMeta) return res.status(404).json({ error: "case not found" });
-    if (caseMeta.status === "closed" || caseMeta.status === "archived") {
-      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({
-        error: `Case "${caseId}" is ${caseMeta.status} — ${action} before promoting evidence`,
-      });
-    }
+    // #2437: a closed or archived case is refused by the central gate (composition/caseWriteGuard.ts).
     const parsed = parseSelection(req.body);
     if ("error" in parsed) return res.status(400).json({ error: parsed.error });
 

@@ -137,12 +137,7 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
     const caseId = req.params.id;
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (!caseMeta) return res.status(404).json({ error: "case not found" });
-    if (caseMeta.status === "closed" || caseMeta.status === "archived") {
-      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res.status(423).json({
-        error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running a deep pass`,
-      });
-    }
+    // #2437: a closed or archived case is refused by the central gate (composition/caseWriteGuard.ts).
     const minSeverity = parseMinSeverity((req.body as { minSeverity?: unknown })?.minSeverity);
     if (!minSeverity || minSeverity === "Info") {
       return res.status(400).json({

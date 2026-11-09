@@ -75,15 +75,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       res.status(404).json({ error: `case ${caseId} does not exist` });
       return null;
     }
-    // Same write guard as every other evidence route: a closed or archived case takes no new imports.
-    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      res
-        .status(423)
-        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running a tool` });
-      return null;
-    }
+    // #2437: a closed or archived case is refused by the central gate (composition/caseWriteGuard.ts).
     const server = await options.mcpServerStore.get(req.params.serverId);
     if (!server) {
       res.status(400).json({ error: `unknown MCP server "${req.params.serverId}"` });
@@ -494,13 +486,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     if (!options.mcpServerStore) return res.status(501).json({ error: "MCP servers not enabled" });
     if (!(await store.caseExists(caseId)))
       return res.status(404).json({ error: `case ${caseId} does not exist` });
-    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res
-        .status(423)
-        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before importing` });
-    }
+    // #2437: a closed or archived case is refused by the central gate (composition/caseWriteGuard.ts).
     const p = await readPreview(caseId, req.params.jobId);
     if (!p)
       return res.status(404).json({
@@ -654,14 +640,7 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       res.status(404).json({ error: `case ${caseId} does not exist` });
       return null;
     }
-    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      res.status(423).json({
-        error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running the investigation`,
-      });
-      return null;
-    }
+    // #2437: a closed or archived case is refused by the central gate (composition/caseWriteGuard.ts).
     const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
     if (!prompt) {
       res.status(400).json({ error: "an investigation instruction is required" });

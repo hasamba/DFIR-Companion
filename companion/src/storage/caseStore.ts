@@ -14,7 +14,7 @@ import type { FileHandle } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
@@ -266,6 +266,24 @@ export class CaseStore {
    *  recover a case a pre-#1809 status change left there labelled open or closed. */
   isInArchive(caseId: string): boolean {
     return existsSync(join(this.root, ARCHIVED_DIRNAME, caseId)) && !existsSync(join(this.root, caseId));
+  }
+
+  /** #2437: heal a crash between an archive/restore move and its relabel: reconcile to archived.
+   *  Re-checked under metaLock, so a move+relabel in flight finishes first. True when it changed. */
+  reconcileArchiveLabel(caseId: string): Promise<boolean> {
+    const active = join(this.root, caseId);
+    const archived = join(this.root, ARCHIVED_DIRNAME, caseId);
+    return this.metaLock.runExclusive(caseId, async () => {
+      const meta = await this.getCaseMeta(caseId);
+      if (meta && this.isInArchive(caseId) && meta.status !== "archived") {
+        await this.writeCaseMetaLocked(caseId, { status: "archived" });
+        return true;
+      }
+      if (meta?.status !== "archived" || !existsSync(active) || existsSync(archived)) return false;
+      const move = () => mkdir(dirname(archived), { recursive: true }).then(() => rename(active, archived));
+      await this.whileClosed(caseId, "moved", move, ["active"]);
+      return true;
+    });
   }
 
   /** Set a case open or closed. Refuses an archived case: only restore takes it out (#1809). */
