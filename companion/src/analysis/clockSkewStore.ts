@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import { isReadOnlyScope } from "../storage/readOnlyScope.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import {
   DEFAULT_MAX_AUTO_ALIGN_MS,
@@ -147,7 +148,6 @@ export class ClockSkewStore {
   }
 
   async save(caseId: string, record: ClockSkewRecord): Promise<ClockSkewRecord> {
-    await this.cases.mkdirInCase(this.cases.stateDir(caseId));
     const clean: ClockSkewRecord = {
       alignEnabled: record.alignEnabled === true,
       results: (Array.isArray(record.results) ? record.results : [])
@@ -162,6 +162,10 @@ export class ClockSkewStore {
       referenceHost: typeof record.referenceHost === "string" ? record.referenceHost : "",
       updatedAt: new Date().toISOString(),
     };
+    // Synthesis records its detection before it asks the model, and the offsets shape the prompt: an
+    // AI preview (#2491) gets the same record, unsaved.
+    if (isReadOnlyScope()) return clean;
+    await this.cases.mkdirInCase(this.cases.stateDir(caseId));
     await atomicWrite(this.path(caseId), JSON.stringify(clean, null, 2));
     return clean;
   }

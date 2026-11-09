@@ -348,6 +348,7 @@ export const FEATURES: Feature[] = [
       "superBulkTag",
       "superCaseId",
       "superPage",
+      "superQueryString",
       "superScopeToWindow",
       "toggleSuperPromote",
       "toggleSuperSelectAll",
@@ -628,6 +629,13 @@ export const FEATURES: Feature[] = [
     file: "dashboard-redacted-export.js",
     initializer: "initRedactedExport",
     publish: ["initRedactedExport", "openRedactedExport", "closeRedactedExport", "doRedactedExport"],
+    private: [],
+  },
+  {
+    // Preview what the AI will see (#2491). A dialog inside the Anon overlay; initAiPreview binds it.
+    file: "dashboard-ai-preview.js",
+    initializer: "initAiPreview",
+    publish: ["initAiPreview", "openAiPreview"],
     private: [],
   },
   {

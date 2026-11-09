@@ -61,6 +61,7 @@ import { registerMcpRoutes } from "../routes/mcp.js";
 import { registerPlaybookHuntsRoutes } from "../routes/playbookHunts.js";
 import { registerPlaybookMatchRoutes } from "../routes/playbookMatch.js";
 import { registerAiSynthesisRoutes } from "../routes/aiSynthesis.js";
+import { registerAiPreviewRoutes } from "../routes/aiPreview.js";
 import { registerHypothesisEvidenceRoutes } from "../routes/hypothesisEvidence.js";
 import { registerFindingsDisplayRoutes } from "../routes/findingsDisplay.js";
 import { registerReportsExportRoutes } from "../routes/reportsExport.js";
@@ -214,6 +215,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerPlaybookHuntsRoutes(app, ctx);
   registerPlaybookMatchRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
+  registerAiPreviewRoutes(app, ctx); // #2491: preview what the AI will see
   registerHypothesisEvidenceRoutes(app, ctx);
   registerFindingsDisplayRoutes(app, ctx);
   registerDeepPassRoutes(app, ctx);

@@ -59,6 +59,10 @@ const DIRECT_SYNTHESIZE: Sites = {
   "routes/analysisRuns.ts": 1, // synthesis replay
 };
 
+// #2491 "Preview what the AI will see": calls synthesize inside an AI preview, which stops at the
+// AI-call gate and writes nothing, so it never completes a synthesis and needs no busy check.
+const PREVIEW_SYNTHESIZE: Sites = { "routes/aiPreviewActions.ts": 1 };
+
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -107,7 +111,7 @@ describe("synthesis entry points (#1599)", () => {
   });
 
   it("pipeline.synthesize is called directly only by Re-synthesize, replay and the two job-wrapped runs", () => {
-    expect(scan(/[.!]synthesize\(()/g)).toEqual(DIRECT_SYNTHESIZE);
+    expect(scan(/[.!]synthesize\(()/g)).toEqual({ ...DIRECT_SYNTHESIZE, ...PREVIEW_SYNTHESIZE });
   });
 
   it("every direct synthesize() call site registers an exclusive synthesis job — the one busy check", () => {

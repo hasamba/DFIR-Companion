@@ -5,6 +5,7 @@ import {
   type PlasoParseResult,
 } from "../plasoImport.js";
 import { deltaSchema } from "../responseSchema.js";
+import { isReadOnlyScope } from "../../storage/readOnlyScope.js";
 
 import { type ForensicEvent, type InvestigationState, type Severity } from "../stateTypes.js";
 import { createReadStream } from "node:fs";
@@ -207,7 +208,9 @@ export async function promoteSuperTimelineWithOutcome(
     const outcome = promotionOutcome(before, stamped, requestedIds);
     const state = withOutcomeNote(stamped, opts, outcome);
     await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
+    // An AI preview's promotion lives only in memory (readOnlyScope.ts): announcing it would show
+    // the dashboards a promotion that never happened (#2491).
+    if (!isReadOnlyScope()) ctx.opts.onState?.(state);
     return { state, outcome };
   });
 }

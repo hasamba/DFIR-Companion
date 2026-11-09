@@ -2,6 +2,7 @@ import { ProviderError, type ProviderErrorKind } from "../../providers/provider.
 import { PresidioApprovalRequired, PresidioScanError } from "../presidio.js";
 import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 import { OcrRedactionError } from "../ocrRedact.js";
+import { isAiPreviewCapture } from "./aiPreviewScope.js";
 
 /**
  * Retry policy for AI calls (#418).
@@ -32,6 +33,8 @@ function isRetryableError(err: unknown): boolean {
   // A cancelled or superseded run (#1608). Retrying it only calls the provider again for a result
   // nobody will keep.
   if (err instanceof Error && err.name === "AbortError") return false;
+  // An AI preview stopping at the gate (#2491). Nothing was sent; asking again would only stop again.
+  if (isAiPreviewCapture(err)) return false;
   // An approval gate is not a transient failure. Retrying it re-runs the Presidio scan and delays
   // the 409 the analyst is waiting on, so surface it on the first throw.
   if (err instanceof PresidioApprovalRequired) return false;

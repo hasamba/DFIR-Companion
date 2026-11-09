@@ -1,5 +1,6 @@
 import type { AIProvider } from "../../providers/provider.js";
 import type { InvestigationState } from "../stateTypes.js";
+import { rethrowIfAiPreview } from "./aiPreviewScope.js";
 import { deltaSchema, stripAiExtractedFrom } from "../responseSchema.js";
 import { collectServedModel } from "../servedModels.js";
 import { resolveSynthThinking, type SynthThinkingInput, type SynthThinkingSource } from "../synthThinking.js";
@@ -144,6 +145,7 @@ export async function callSynthesisModel(
           resolvedModel = served.resolvedModel;
           return answer;
         } catch (err) {
+          rethrowIfAiPreview(err); // a preview stops at its first request: no retry note, no saved answer (#2491)
           throwIfSuperseded(opts.signal); // #1608: not a parse retry, and withRetry never retries it
           parseRetries++;
           retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note

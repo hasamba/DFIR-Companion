@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { runStorageUpkeep } from "../storage/readOnlyScope.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { EntityPage, EntityQuery } from "./stateStore.js";
 import type { ForensicEvent } from "./stateTypes.js";
@@ -218,7 +219,8 @@ export class SuperTimelineStore {
       setAsideVersion: SET_ASIDE_REGISTRY_VERSION,
     };
     if (!(await caseSqliteWorker.request<boolean>({ ...message, op: "superMigrateNeeded" }))) return;
-    await caseSqliteWorker.request<void>({ ...message, op: "migrateSuper" });
+    // Storage upkeep, not a content change: let it through an AI preview's read-only scope (#2491).
+    await runStorageUpkeep(() => caseSqliteWorker.request<void>({ ...message, op: "migrateSuper" }));
   }
 
   /**

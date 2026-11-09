@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Preview what the AI will see** — from the Anon dialog, see the first request any AI action would send, clear and masked text side by side with the unmasked system prompt and what Presidio would hold; nothing is sent, spent or saved (closes #2491)
 - **Suzaku CloudTrail rules** — Yamato Security's own ~740 AWS CloudTrail Sigma rules are bundled beside SigmaHQ, with their own switch, statuses and severity floor (default: label only, critical raises); the Sigma engine gains the `exists` modifier (part of #2499)
 - **All my cases service tokens** — one capture-extension token for every case its owner can edit, checked live against the owner's roles, capped at capture + write, expiring within 90 days (closes #2474)
 - **Cloud Accounts settings tab** — cloud accounts and the cloud proxy/CA settings moved out of the crowded Integrations tab into their own Settings tab, shown in Essential
