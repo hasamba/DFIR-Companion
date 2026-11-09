@@ -1890,10 +1890,9 @@ an account**. Their source is `Coverage`, and a re-merge replaces them instead o
 - **Where they sit.** Each one sits at the time of the **earliest** event it describes: the earliest
   cloud audit record, the earliest cloud object record, or the earliest browsing record. It no longer
   depends on the order in which the files were imported.
-- **Cloud coverage gap is Low.** It is advice, so it is graded Low, not Medium. Low still reaches the
-  forensic timeline, so AI synthesis still learns that "nothing found" here does not mean "nothing
-  happened". The other three stay Medium, because each one says that evidence was dropped or is
-  missing.
+- **All four are Medium.** A case whose forensic gate is set to Medium removes every Low row from
+  the forensic timeline, so a Low note would never reach AI synthesis there. At Medium, AI synthesis
+  still learns that "nothing found" here does not mean "nothing happened".
 
 ### Sigma rules grade CloudTrail, Entra and GCP imports
 

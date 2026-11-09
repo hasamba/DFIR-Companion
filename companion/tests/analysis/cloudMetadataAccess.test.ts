@@ -16,6 +16,7 @@ import {
   METADATA_TARGETS,
 } from "../../src/analysis/cloudMetadataAccess.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { demoteBelowSeverity } from "../../src/analysis/forensicGate.js";
 
 let seq = 0;
 const ev = (over: Partial<ForensicEvent> = {}): ForensicEvent => ({
@@ -379,9 +380,10 @@ describe("reachability", () => {
 });
 
 // #2486: the coverage gap is advice, not an event — a fixed, documented place (the earliest cloud
-// audit record) and graded Low, which still reaches the forensic timeline and the AI.
+// audit record). It stays Medium: a case gated at Medium demotes anything lower, and the note must
+// reach the forensic timeline and the AI (#908).
 describe("the cloud coverage gap row", () => {
-  it("sits at the earliest cloud-audit record and is graded Low", () => {
+  it("sits at the earliest cloud-audit record and is graded Medium", () => {
     const out = metadataCoverageEvent([
       ev({ description: "Shellbag: C:\\x", timestamp: "2025-06-01T00:00:00Z" }),
       ev({ description: "AWS GetObject (s3) by a", timestamp: "2026-01-03T10:00:00Z" }),
@@ -389,8 +391,13 @@ describe("the cloud coverage gap row", () => {
       ev({ description: "Azure activity: x", timestamp: "not a time" }),
     ]);
     expect(out?.timestamp).toBe("2026-01-01T09:00:00Z");
-    expect(out?.severity).toBe("Low");
+    expect(out?.severity).toBe("Medium");
     expect(out?.description).toMatch(/^Cloud coverage gap /);
+  });
+
+  it("stays in the forensic timeline when the case gate is Medium", () => {
+    const out = metadataCoverageEvent([ev({ description: "AWS GetObject (s3) by a" })])!;
+    expect(demoteBelowSeverity([out], "Medium").demoted).toEqual([]);
   });
 
   it("is absent when the case holds host telemetry", () => {

@@ -478,14 +478,15 @@ export function metadataCoverageEvent(events: readonly ForensicEvent[]): Forensi
   if (!hasCloudAudit) return null;
   return {
     id: COVERAGE_EVENT_ID,
-    // Advice, not an event (#2486): at the earliest cloud-audit record, graded Low. Low still reaches
-    // the forensic timeline, so synthesis still learns that "nothing found" is not "absent" (#908).
+    // Advice, not an event (#2486): at the earliest cloud-audit record. Graded Medium, not Low: a
+    // case gated at Medium demotes every Low row on each merge, and this note must reach the forensic
+    // timeline so synthesis learns that "nothing found" is not "absent" (#908).
     timestamp: earliestEventTime(
       events,
       (e) => e.id !== COVERAGE_EVENT_ID && CLOUD_AUDIT_RE.test(e.description ?? ""),
     ),
     description: `Cloud coverage gap ${METADATA_MARKER} ${explainVisibility(false, true)}]`,
-    severity: "Low",
+    severity: "Medium",
     mitreTechniques: [],
     relatedFindingIds: [],
     sourceScreenshots: [],
