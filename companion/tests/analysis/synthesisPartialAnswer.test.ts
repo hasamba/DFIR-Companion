@@ -153,7 +153,10 @@ describe("synthesis on a partial model answer (#1602)", () => {
     const p = pipelineAnswering([JSON.stringify({ findings: [FINDING] })]);
     // #2495: the analyst gets the plain sentence; the original schema error is kept on `cause`.
     await expect(p.synthesize("c1")).rejects.toSatisfy(
-      (err: Error) => /AI reply could not be read/.test(err.message) && /summary/.test(String(err.cause)),
+      (err: unknown) =>
+        err instanceof Error &&
+        /AI reply could not be read/.test(err.message) &&
+        /summary/.test(String(err.cause)),
     );
     expect(prompts).toHaveLength(4);
     expect(await failedFiles()).toHaveLength(4);
@@ -163,7 +166,10 @@ describe("synthesis on a partial model answer (#1602)", () => {
     const p = pipelineAnswering([JSON.stringify({ findings: [FINDING] })], false);
     // #2495: the analyst gets the plain sentence; the original schema error is kept on `cause`.
     await expect(p.synthesize("c1")).rejects.toSatisfy(
-      (err: Error) => /AI reply could not be read/.test(err.message) && /summary/.test(String(err.cause)),
+      (err: unknown) =>
+        err instanceof Error &&
+        /AI reply could not be read/.test(err.message) &&
+        /summary/.test(String(err.cause)),
     );
     expect(warns.some((w) => w.includes("raw answer not saved"))).toBe(true);
   });
