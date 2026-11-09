@@ -30,6 +30,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/settings-search.js": "application/javascript; charset=utf-8",
   "/js/case-load-progress.js": "application/javascript; charset=utf-8",
   "/js/hunt-workbench.js": "application/javascript; charset=utf-8",
+  "/js/hunt-catalog.js": "application/javascript; charset=utf-8",
   "/js/diagnostics-panel.js": "application/javascript; charset=utf-8",
   // Pure helpers lifted out of dashboard.html's inline script (#415). CLASSIC scripts, not modules
   // — the dashboard calls them by bare name, so they have to declare real globals; see
