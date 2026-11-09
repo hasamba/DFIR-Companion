@@ -614,6 +614,7 @@
     "ROUTE GET /cases/:id/dns-connection-cross-upload-matches",
     "ROUTE GET /cases/:id/endpoint-dns-connection-cross-upload-matches",
     "ROUTE GET /cases/:id/ai-state",
+    "ROUTE POST /cases/:id/ai-state/skip-held-screenshots",
     "ROUTE GET /cases/:id/clock-skew",
     "ROUTE POST /cases/:id/clock-skew/recompute",
     "ROUTE POST /cases/:id/clock-skew/align",
