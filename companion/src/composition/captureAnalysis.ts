@@ -23,7 +23,7 @@
 import { warnLine } from "../logging/serverLogger.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
-import type { AiControl } from "../analysis/aiControl.js";
+import type { AiControl, SkipHeldResult } from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
 import { milestoneEvent } from "../analysis/notifications.js";
@@ -77,6 +77,8 @@ export interface CaptureAnalysis {
    * instead (#1608), unless `analyst` says a person asked for this run now (/dfir synthesize).
    */
   resynthesizeInBackground(caseId: string, opts?: { analyst?: boolean }): void;
+  /** #2498: the analyst accepts the gap — see CaptureWindows.skipHeld. */
+  skipHeldScreenshots(caseId: string, token: string): Promise<SkipHeldResult>;
 }
 
 export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysis {
@@ -641,5 +643,6 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     resumeAfterRestart,
     scheduleSynthesis,
     resynthesizeInBackground,
+    skipHeldScreenshots: windows.skipHeld, // #2498
   };
 }

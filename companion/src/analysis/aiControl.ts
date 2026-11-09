@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { join } from "node:path";
@@ -50,8 +51,29 @@ export function describeAnalysisHold(hold: AnalysisHold | undefined): string | u
   const count = hold?.failedSeqs.length ?? 0;
   if (!hold || count === 0) return undefined;
   return hold.gaveUp
-    ? `${count} screenshot(s) could not be analyzed — turn AI off and on to retry`
+    ? `${count} screenshot(s) could not be analyzed — turn AI off and on to retry, or press Skip screenshots`
     : `${count} screenshot(s) waiting for retry`;
+}
+
+/**
+ * #2498: a short fingerprint of WHICH screenshots a hold owes. The dashboard sends it back with
+ * "skip", so a hold that changed after the button was shown is refused instead of skipped blind.
+ */
+export function holdToken(hold: AnalysisHold | undefined): string | undefined {
+  if (!hold || hold.failedSeqs.length === 0) return undefined;
+  const seqs = [...hold.failedSeqs].sort((a, b) => a - b).join(",");
+  return createHash("sha256").update(seqs).digest("hex").slice(0, 16);
+}
+
+/**
+ * #2498: what an analyst's "skip" did. "stale" — the hold changed since the analyst saw it.
+ * "frozen" — the case was closed or archived while the skip waited in the case's queue.
+ */
+export interface SkipHeldResult {
+  outcome: "none" | "stale" | "frozen" | "skipped";
+  skipped: number[];
+  remaining: number[];
+  lastError?: string;
 }
 
 const DEFAULT: AiControl = { enabled: false, lastAnalyzedSeq: 0 };

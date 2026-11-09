@@ -7,7 +7,7 @@ import type { DropFingerprint, ProcessedVersion } from "../analysis/dropScan.js"
 import type { AppOptions } from "../server.js";
 import type { CaptureMetadata } from "../types.js";
 import type { VeloHuntJobView } from "../analysis/veloHuntStore.js";
-import type { AiControl } from "../analysis/aiControl.js";
+import type { AiControl, SkipHeldResult } from "../analysis/aiControl.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { ImporterRegistry, ImporterPrecedence } from "../analysis/importerStore.js";
 import type { ServerClients } from "../integrations/serverSets/types.js";
@@ -153,6 +153,9 @@ export interface RouteContext {
   // textual definition) is safe.
   setControl(caseId: string, patch: Partial<AiControl>): Promise<AiControl>;
   backfill(caseId: string): Promise<void>;
+  // #2498: the analyst accepts the gap — the held screenshots stop being owed. Queued behind the
+  // case's flush and recovery in composition/captureWindows.ts; refused when `token` is stale.
+  skipHeldScreenshots(caseId: string, token: string): Promise<SkipHeldResult>;
   // Run a raw text/log blob through the full import → diff → re-synthesize pipeline (the same chain
   // as the Import button). A hoisted async function in createApp shared by the /import, /tools and
   // Velociraptor ingest paths (still there); graduated for routes/pushNotify.ts's POST /cases/:id/push.

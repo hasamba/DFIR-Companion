@@ -2,7 +2,9 @@ import type { Express, Request, Response } from "express";
 import { deriveAiState, effectiveOutOfDate, type AiState } from "../analysis/aiState.js";
 import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
-import { AiControlStore, describeAnalysisHold } from "../analysis/aiControl.js";
+import { AiControlStore, describeAnalysisHold, holdToken } from "../analysis/aiControl.js";
+import { logActivityWithWarning } from "../analysis/activityLog.js";
+import { frozenCaseRefusal } from "./importCaseGuard.js";
 import { SynthMetaStore } from "../analysis/synthMeta.js";
 import type { RouteContext } from "./context.js";
 
@@ -65,10 +67,21 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
     try {
       const c = await new AiControlStore(store).load(caseId);
       const detail = describeAnalysisHold(c.analysisHold);
-      const screenshotHold = detail ? { detail, gaveUp: c.analysisHold?.gaveUp === true } : null;
-      return { enabled: c.enabled, screenshotHold };
+      const hold = c.analysisHold;
+      const screenshotHold = detail ? { detail, gaveUp: hold?.gaveUp === true } : null;
+      // #2498: what the dashboard needs to offer "skip": how many, why, and which (the token).
+      const offer =
+        hold && detail
+          ? {
+              count: hold.failedSeqs.length,
+              gaveUp: hold.gaveUp === true,
+              token: holdToken(hold),
+              ...(hold.lastError ? { lastError: hold.lastError } : {}),
+            }
+          : null;
+      return { enabled: c.enabled, screenshotHold, offer };
     } catch {
-      return { enabled: true, screenshotHold: null };
+      return { enabled: true, screenshotHold: null, offer: null };
     }
   }
 
@@ -105,9 +118,63 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
         jobs: options.jobManager?.list(caseId) ?? [],
         outOfDate: stale,
       });
-      return res.status(200).json(state);
+      return res.status(200).json({ ...state, screenshotHold: ctl.offer });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
+
+  /**
+   * #2498: `POST /cases/:id/ai-state/skip-held-screenshots { token }` — the analyst accepts the gap
+   * left by screenshots the AI could not analyze. The screenshots stay saved as evidence; they are
+   * only no longer owed to the AI, so the red pill clears and nothing retries them. `token` is the
+   * one GET ai-state handed out: a hold that changed since then is refused (409), never skipped
+   * blind. A closed or archived case is refused by the central case-write gate.
+   */
+  app.post("/cases/:id/ai-state/skip-held-screenshots", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    const token = (req.body as { token?: unknown } | undefined)?.token;
+    if (typeof token !== "string" || !token) return res.status(400).json({ error: "token is required" });
+    try {
+      if (!(await store.caseExists(caseId))) {
+        return res.status(404).json({ error: `case ${caseId} does not exist` });
+      }
+      const result = await ctx.skipHeldScreenshots(caseId, token);
+      if (result.outcome === "stale") {
+        return res.status(409).json({
+          error: "the screenshots waiting for analysis changed — check them again before skipping",
+        });
+      }
+      if (result.outcome === "frozen") {
+        const refusal = await frozenCaseRefusal(store, caseId, "skipping screenshots");
+        return res.status(423).json({ error: refusal ?? `Case "${caseId}" is closed` });
+      }
+      if (result.outcome === "none")
+        return res.status(200).json({ skipped: 0, remaining: 0, sequenceNumbers: [] });
+      const warning = await logActivityWithWarning(options.activityLogStore, options.onActivity, caseId, {
+        category: "ai",
+        action: "screenshots-skipped",
+        detail: describeSkip(result.skipped, result.remaining.length, result.lastError),
+      });
+      return res.status(200).json({
+        skipped: result.skipped.length,
+        remaining: result.remaining.length,
+        sequenceNumbers: result.skipped,
+        ...(warning ? { warning } : {}),
+      });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+}
+
+/** The activity-log line for a skip: which captures, why they were owed, and that they are kept. */
+function describeSkip(skipped: number[], remaining: number, lastError?: string): string {
+  const which = skipped.map((seq) => `#${seq}`).join(", ");
+  const reason = lastError ? ` Last error: ${lastError}.` : "";
+  const rest = remaining > 0 ? ` ${remaining} screenshot(s) stay queued behind a newer capture.` : "";
+  return (
+    `Analyst skipped AI analysis of ${skipped.length} screenshot(s) the AI could not analyze ` +
+    `(capture ${which}).${reason} The screenshots stay saved as evidence.${rest}`
+  );
 }

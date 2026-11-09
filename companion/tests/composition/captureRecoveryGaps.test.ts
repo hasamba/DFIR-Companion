@@ -114,7 +114,7 @@ describe("the AI status names held screenshots instead of reading idle (#2265 it
 
   it("describes a hold that gave up as needing the analyst", () => {
     expect(describeAnalysisHold({ failedSeqs: [1, 2], analyzedThrough: 0, attempts: 3, gaveUp: true })).toBe(
-      "2 screenshot(s) could not be analyzed — turn AI off and on to retry",
+      "2 screenshot(s) could not be analyzed — turn AI off and on to retry, or press Skip screenshots",
     );
     expect(describeAnalysisHold(undefined)).toBeUndefined();
   });
@@ -134,7 +134,8 @@ describe("the AI status names held screenshots instead of reading idle (#2265 it
     });
     expect(gaveUp).toMatchObject({
       state: "error",
-      detail: "1 screenshot(s) could not be analyzed — turn AI off and on to retry",
+      detail:
+        "1 screenshot(s) could not be analyzed — turn AI off and on to retry, or press Skip screenshots",
     });
   });
 });

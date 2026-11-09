@@ -313,6 +313,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     getControl,
     setControl,
     backfill: analysis.backfill,
+    skipHeldScreenshots: analysis.skipHeldScreenshots,
     flush: analysis.flush,
     indexCaptureText,
     ingestStreamed: imports.ingestStreamed,
