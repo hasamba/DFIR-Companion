@@ -11,6 +11,7 @@ import { IOC_WORKER_SOURCE } from "./caseSqliteWorkerIoc.js";
 import { TAGS_WORKER_SOURCE } from "./caseSqliteWorkerTags.js";
 import { SEARCH_WORKER_SOURCE } from "./caseSqliteWorkerSearch.js";
 import { CLOUD_WORKER_SOURCE } from "./caseSqliteWorkerCloud.js";
+import { RUN_GUARD_WORKER_SOURCE } from "./caseSqliteWorkerRunGuard.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -45,7 +46,7 @@ const JOURNAL_SIZE_LIMIT = 64 * 1024 * 1024;
 function openDatabase(path) {
   if (READ_ONLY) return openReadOnlyDatabase(path);
   mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path, { enableForeignKeyConstraints: true });
+  const db = guardRunResults(new DatabaseSync(path, { enableForeignKeyConstraints: true })); // #2445
   db.exec("PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; " +
     "PRAGMA journal_size_limit=" + JOURNAL_SIZE_LIMIT + ";");
   db.exec(${JSON.stringify(CASE_SQLITE_SCHEMA_SQL)} + "PRAGMA user_version=" + SCHEMA_VERSION + ";");
@@ -54,7 +55,7 @@ function openDatabase(path) {
 }
 
 function openReadOnlyDatabase(path) {
-  const db = new DatabaseSync(path, { readOnly: true });
+  const db = guardRunResults(new DatabaseSync(path, { readOnly: true }));
   try {
     db.exec("PRAGMA busy_timeout=10000");
     const mode = String(db.prepare("PRAGMA journal_mode").get().journal_mode);
@@ -616,6 +617,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
   TAGS_WORKER_SOURCE +
   SEARCH_WORKER_SOURCE +
   CLOUD_WORKER_SOURCE +
+  RUN_GUARD_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {
@@ -774,4 +776,5 @@ parentPort.on("message", async (message) => {
 });
 `;
 
+export const CASE_SQLITE_WORKER_SOURCE = WORKER_SOURCE;
 export const caseSqliteWorker = new CaseSqliteWorkerPool(WORKER_SOURCE);

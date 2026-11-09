@@ -320,6 +320,7 @@
     "caseSqliteWorkerTerms.ts": "storage",
     "caseSqliteWorkerSearch.ts": "storage",
     "caseSqliteWorkerCloud.ts": "storage",
+    "caseSqliteWorkerRunGuard.ts": "storage",
     "caseStats.ts": "analysis/case",
     "caseTransientPaths.ts": "storage",
     "capaResultImport.ts": "analysis/ingest",
