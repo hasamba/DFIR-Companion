@@ -116,6 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Large CloudTrail import by path** — a CloudTrail object over 256 KiB imported by path is detected as AWS instead of "could not detect the file type" (closes #2317)
 
 ### Changed
+- **Sigma rules settings** — the tab is split into shared switches, a SigmaHQ section and a Suzaku section, each with its own buttons and rule counts; the rules table gains a Rule set column and filter
 - **Faster S3 trail collection** — each trail folder is listed once instead of once per file, and the next few files download while the current one is saved; about 7× faster on a test bucket, same files and order (closes #2380).
 - **Sigma "not graded" wording** — a Sigma match that did not set the severity reads `Sigma (medium, not graded)` instead of `tag only`, and the details and a hover on the row title say why (closes #2386).
 

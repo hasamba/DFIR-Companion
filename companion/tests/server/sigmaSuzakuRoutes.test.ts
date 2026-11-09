@@ -47,6 +47,9 @@ describe("Suzaku rule update routes", () => {
       previous: null,
       lastCheck: null,
     });
+    // Counts per rule set, so Settings shows each under its own heading.
+    expect(res.body.countsByOrigin.SigmaHQ["aws-cloudtrail"].loaded).toBe(28);
+    expect(res.body.countsByOrigin.Suzaku["aws-cloudtrail"].loaded).toBe(736);
   });
 
   it("refuses an install without a live preview", async () => {
