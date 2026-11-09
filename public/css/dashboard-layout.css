@@ -113,8 +113,16 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; 
    symptom of #880: with no viewport meta the layout never ran below 980px, so nobody could see
    that two dense panels side by side are unreadable on a phone — 375px wide, they resolved to
    291px and 112px. One column below 900px; the panels keep their own inner breakpoints. */
+/* A bare `1fr` is `minmax(auto, 1fr)`: the track grew to the widest section's min-content (the IOCs
+   header, ~15 controls in an unwrapping flex row) and every section took that width, so each view
+   but Now scrolled sideways at 375 and 768px (931px wide). Cap the track at the viewport, let a
+   section shrink, and let header controls wrap. #2457 */
 @media (max-width: 900px) {
-  main { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
+  main { grid-template-columns: minmax(0, 1fr); padding: 12px; gap: 12px; }
+  main > section { min-width: 0; }
+  h2 { flex-wrap: wrap; }
+  /* The findings grid's fixed tracks are ~700px; it scrolls in its own box, not the page. */
+  #findings { overflow-x: auto; }
 }
 section { background: var(--bg-elevated); border-radius: 8px; padding: 12px; }
 /* Click a section's header to collapse/expand it; state persists across reloads. */
