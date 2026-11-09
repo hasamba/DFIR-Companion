@@ -26,7 +26,12 @@ import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
-import { isEntraSignIn, readEntraSignIn } from "./ualLogon.js";
+import {
+  ENTRA_SIGN_IN_CATEGORY_MARKER,
+  entraSignInCategory,
+  isEntraSignIn,
+  readEntraSignIn,
+} from "./ualLogon.js";
 import { ENTRA_RISK_HIDDEN_MARKER } from "./cloudRowWording.js";
 import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
 import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
@@ -411,7 +416,12 @@ function mapSignIn(
   else severity = "Info";
   if (ip) addIoc(sink, "ip", ip);
 
-  let description = `Entra sign-in: ${upn || "?"}`;
+  // The category (#2483) goes right after the prefix, where only the importer writes: the shown
+  // identity has its brackets swapped too, so a display name cannot forge "[non-interactive]".
+  const category = entraSignInCategory(rec);
+  const marker = category ? `${ENTRA_SIGN_IN_CATEGORY_MARKER[category]} ` : "";
+  const shownUser = (upn || "?").replace(/\[/g, "(").replace(/\]/g, ")");
+  let description = `Entra sign-in: ${marker}${shownUser}`;
   if (ip) description += ` from ${ip}`;
   if (city || country) description += ` (${[city, country].filter(Boolean).join(", ")})`;
   if (app) description += ` via ${app}`;
@@ -425,6 +435,7 @@ function mapSignIn(
   if (isRopc) description += " [legacy-auth ROPC — no interactive MFA prompt]";
   if (userAgent) description += ` [ua: ${userAgent}]`;
   description = boundedTextTo(description, 600); // an identity downstream — see mapUal
+  const recordId = str(getCI(rec, "id")).trim(); // the Graph id, as the SP sign-in mapper cites it
 
   return {
     timestamp: normalizeTime(pickStr(rec, ["createdDateTime"])),
@@ -433,9 +444,10 @@ function mapSignIn(
     mitre,
     // `outcome` and `isRopc` are both discriminators: keying on the raw code alone folded an
     // unreadable status into the `0` bucket that genuine successes use, and left a ROPC grant to
-    // merge with an ordinary sign-in by the same user (aggregation keeps ONE description).
+    // merge with an ordinary sign-in by the same user (aggregation keeps ONE description). The
+    // category too (#2483): the shown marker is what the HTTP-library rule grades on.
     aggKey: boundedAggKey(
-      `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}|${userAgent}`.toLowerCase(),
+      `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}|${userAgent}|${category}`.toLowerCase(),
     ),
     sources: ["Entra ID"],
     // Minimal canonical envelope (931.3, #1086, #1100 item 1): just enough structure for a
@@ -447,7 +459,12 @@ function mapSignIn(
     ...(upn
       ? {
           canonical: createCanonicalEvent({
-            event: { category: "authentication", type: "signin", outcome },
+            event: {
+              category: "authentication",
+              type: "signin",
+              outcome,
+              ...(category ? { action: category } : {}),
+            },
             actor: { kind: "account", name: upn },
             account: { name: upn },
             ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
@@ -455,8 +472,16 @@ function mapSignIn(
               observed: pickStr(rec, ["createdDateTime"]),
               normalized: normalizeTime(pickStr(rec, ["createdDateTime"])),
             },
-            evidence: { rawRecords: [{ source: "m365-signin", locator: `record:${index}` }] },
-            producer: { importer: "m365", parserVersion: "1", mappingVersion: "m365-signin-v1" },
+            evidence: {
+              rawRecords: [
+                {
+                  source: "m365-signin",
+                  locator: `record:${index}`,
+                  ...(recordId ? { recordId } : {}),
+                },
+              ],
+            },
+            producer: { importer: "m365", parserVersion: "1", mappingVersion: "m365-signin-v2" },
           }),
         }
       : {}),

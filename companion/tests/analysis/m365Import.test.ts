@@ -256,6 +256,60 @@ describe("parseM365Audit — Entra sign-in & audit", () => {
     expect(r.events).toHaveLength(2);
   });
 
+  // #2483 — the sign-in category (interactive / non-interactive) is shown, cited and keyed.
+  it("shows the sign-in category from signInEventTypes, then isInteractive, and nothing when unknown", () => {
+    const shown = (over: Record<string, unknown>) =>
+      parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: 0 }, ...over })])).events[0];
+    const nonInt = shown({ signInEventTypes: ["nonInteractiveUser"], isInteractive: false });
+    expect(nonInt.description).toMatch(/^Entra sign-in: \[non-interactive\] v@victim\.com from /);
+    expect(nonInt.canonical?.event).toMatchObject({
+      category: "authentication",
+      type: "signin",
+      action: "non-interactive",
+    });
+    expect(shown({ signInEventTypes: ["interactiveUser"] }).description).toMatch(
+      /^Entra sign-in: \[interactive\] v@victim\.com/,
+    );
+    expect(shown({ isInteractive: false }).description).toMatch(/^Entra sign-in: \[non-interactive\] /);
+    expect(shown({ isInteractive: true }).description).toMatch(/^Entra sign-in: \[interactive\] /);
+    expect(shown({ signInEventTypes: ["managedIdentity"] }).description).toMatch(
+      /^Entra sign-in: \[managed identity\] /,
+    );
+    const unknown = shown({});
+    expect(unknown.description).toMatch(/^Entra sign-in: v@victim\.com from /);
+    expect(unknown.canonical?.event.action).toBeUndefined();
+  });
+
+  it("cites the Graph record id on the canonical record and moves the mapping version on", () => {
+    const e = parseM365Audit(JSON.stringify([signinRec({ id: "signin-7", status: { errorCode: 0 } })]))
+      .events[0];
+    expect(e.canonical?.evidence?.rawRecords?.[0]).toMatchObject({
+      source: "m365-signin",
+      recordId: "signin-7",
+    });
+    expect(e.canonical?.producer?.mappingVersion).toBe("m365-signin-v2");
+    const noId = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: 0 } })])).events[0];
+    expect(noId.canonical?.evidence?.rawRecords?.[0]).not.toHaveProperty("recordId");
+  });
+
+  it("keeps an interactive and a non-interactive sign-in by the same user, IP, app and UA apart", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        signinRec({ status: { errorCode: 0 }, signInEventTypes: ["interactiveUser"] }),
+        signinRec({ status: { errorCode: 0 }, signInEventTypes: ["nonInteractiveUser"] }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("the shown identity cannot forge the category marker", () => {
+    const e = parseM365Audit(
+      JSON.stringify([signinRec({ userPrincipalName: "[non-interactive] eve", status: { errorCode: 0 } })]),
+    ).events[0];
+    expect(e.description).toMatch(/^Entra sign-in: \(non-interactive\) eve/);
+    expect(e.canonical?.account?.name).toBe("[non-interactive] eve"); // the record keeps it as stated
+  });
+
   it("maps an Entra directory audit (initiatedBy + targetResources)", () => {
     const audit = {
       activityDateTime: "2023-05-02T09:00:00Z",
