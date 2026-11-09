@@ -38,6 +38,7 @@
 // limitation is stated on the finding rather than left for the reader to know.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
+import { earliestEventTime } from "./coverageEventTime.js";
 
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const SERVICE_BROWSING_MARKER = "[noninteractive account browsing:";
@@ -508,18 +509,16 @@ export const ATTRIBUTION_COVERAGE_ID = "shellbag-attribution-coverage";
  */
 export function attributionCoverageEvent(events: readonly ForensicEvent[]): ForensicEvent | null {
   let missing = 0;
-  let firstTime = "";
   for (const e of events) {
     if (e.id === ATTRIBUTION_COVERAGE_ID) continue;
     const r = readBrowsing(e);
     if (!r) continue;
-    if (!firstTime) firstTime = e.timestamp ?? "";
     if (!r.account) missing++;
   }
   if (missing === 0) return null;
   return {
     id: ATTRIBUTION_COVERAGE_ID,
-    timestamp: firstTime || new Date().toISOString(),
+    timestamp: earliestEventTime(events, (e) => e.id !== ATTRIBUTION_COVERAGE_ID && !!readBrowsing(e)),
     description: `Browsing evidence without an account ${SERVICE_BROWSING_MARKER} ${attributionNote(events)}]`,
     severity: "Medium",
     mitreTechniques: [],

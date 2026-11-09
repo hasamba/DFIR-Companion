@@ -99,7 +99,9 @@
         if (!res.ok) return null;
         const cases = await res.json();
         const meta = Array.isArray(cases) ? cases.find((c) => c && c.caseId === caseId) : null;
-        return meta ? meta.status || null : null;
+        // A case never closed carries no status in the list — absent means open (#2463). A case the
+        // list does not show at all stays unknown.
+        return meta ? meta.status || "open" : null;
       });
     } catch {
       return null;
@@ -144,10 +146,20 @@
     byId("ccaMsg").textContent = "";
     byId("ccaConfirm").disabled = false;
     byId("ccaCancel").disabled = false;
+    setBusy(false);
     byId("closeCaseOverlay").classList.add("open");
   }
 
+  // aria-busy="true" makes the shared modal wiring ignore Escape (#2463), so the dialog cannot be
+  // dismissed past its disabled Cancel while the close is on the wire.
+  function setBusy(busy) {
+    const overlay = byId("closeCaseOverlay");
+    if (busy) overlay.setAttribute("aria-busy", "true");
+    else overlay.removeAttribute("aria-busy");
+  }
+
   function finish(closed) {
+    setBusy(false);
     byId("closeCaseOverlay").classList.remove("open");
     const done = pending;
     pending = null;
@@ -168,6 +180,7 @@
     const choice = byId("ccaKeep").checked ? "keep" : "delete";
     byId("ccaConfirm").disabled = true;
     byId("ccaCancel").disabled = true;
+    setBusy(true);
     byId("ccaMsg").textContent = "closing…";
     const res = await patchClosed(mine.caseId, choice);
     if (pending !== mine) {
@@ -175,10 +188,13 @@
         if (res.body.cloudCredentialsError) alert(res.body.cloudCredentialsError);
         refreshLifecycle(mine.caseId);
       }
+      // The overlay now belongs to the dialog that replaced this one (openDialog cleared the busy
+      // mark); clearing it here could unmark that dialog's own close in flight.
       return;
     }
     if (!res.ok) {
       mine.unknown = !!res.unknown;
+      setBusy(false);
       byId("ccaConfirm").disabled = false;
       byId("ccaCancel").disabled = false;
       byId("ccaMsg").textContent = res.body.error || `Close failed (HTTP ${res.status})`;

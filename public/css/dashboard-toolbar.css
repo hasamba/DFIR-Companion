@@ -245,6 +245,8 @@
 .ev-row.ev-flash, .finding.ev-flash { animation: evFlash 1.5s ease-out; }
 @keyframes evFlash { 0%,40% { background: var(--bg-drop-active); } 100% { background: transparent; } }
 .swimlane-wrap { display: flex; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; background: var(--bg-primary); }
+.swimlane-wrap[hidden] { display: none; }   /* explicit — the display:flex above would override the [hidden] UA rule (#2468) */
+.swimlane-empty { color: var(--text-muted); font-size: 12px; padding: 12px 4px; }
 /* Sized to the longest lane name, so a full host name (HOST-WITH-A-LONG-NAME.corp.example.com) is not cut. */
 .swimlane-labels { width: max-content; min-width: 160px; max-width: 360px; flex-shrink: 0; border-right: 1px solid var(--border-color); overflow: hidden; }
 .swimlane-label { box-sizing: border-box; display: flex; align-items: center; padding: 0 8px;
@@ -309,6 +311,8 @@
 /* A checkbox or radio keeps its own size: at width 100% plus its default margin it overflowed the
    pane (a horizontal scroll bar on Settings → Updates) and sat alone on a line, away from its label. */
 .sfield input[type="checkbox"], .sfield input[type="radio"] { width: auto; margin: 0 6px 0 0; vertical-align: middle; }
+/* The Clear control under a set secret (#2465) — a small text-sized button, not a toolbar button. */
+.sfield .env-secret-clear { margin-top: 4px; font-size: 11px; padding: 1px 8px; }
 /* Dark-mode combo boxes throughout Settings (every <select>, matching the export/push .toolbar-select look).
    Without this, selects fall back to the light browser default while the inputs around them are dark. */
 .settings-modal select { background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 5px; font-size: 13px; }

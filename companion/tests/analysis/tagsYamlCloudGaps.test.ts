@@ -359,7 +359,7 @@ describe("Analyzer-Suite OAuth permissions (#2306)", () => {
 });
 
 describe("Analyzer-Suite user agents (#2306)", () => {
-  const signIn = (userAgent: string) =>
+  const signIn = (userAgent: string, extra: Record<string, unknown> = {}) =>
     m1({
       id: `dddddddd-0000-4000-8000-${String(++n).padStart(12, "0")}`,
       createdDateTime: "2026-01-01T00:00:00Z",
@@ -369,6 +369,7 @@ describe("Analyzer-Suite user agents (#2306)", () => {
       userAgent,
       status: { errorCode: 0 },
       resourceTenantId: "11111111-1111-4111-8111-111111111111",
+      ...extra,
     });
   const browser =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
@@ -378,6 +379,28 @@ describe("Analyzer-Suite user agents (#2306)", () => {
     expect(yes.description).toContain("[ua: axios/1.6.8]");
     expect(yes.ruleIds).toContain("mas_user_agent_aitm_or_spray");
     expect(signIn(browser).ruleIds).not.toContain("mas_user_agent_aitm_or_spray");
+  });
+
+  // #2483 — a non-interactive sign-in (a token refresh by a background client) from an HTTP library
+  // is common and benign on its own: tagged for search, never graded.
+  it("an HTTP library on a NON-interactive sign-in is tagged, not graded; interactive and unknown stay Medium", () => {
+    const nonInt = { signInEventTypes: ["nonInteractiveUser"], isInteractive: false };
+    const bg = signIn("node-fetch/1.0", nonInt);
+    expect(bg.description).toMatch(/^Entra sign-in: \[non-interactive\] /);
+    expect(bg.ruleIds).not.toContain("mas_user_agent_aitm_or_spray");
+    expect(bg.ruleIds).toContain("mas_user_agent_http_library_noninteractive");
+    expect(signIn("axios/1.6.8", nonInt).ruleIds).toContain("mas_user_agent_http_library_noninteractive");
+
+    const inter = { signInEventTypes: ["interactiveUser"], isInteractive: true };
+    for (const ua of ["node-fetch/1.0", "axios/1.6.8"]) {
+      const fg = signIn(ua, inter);
+      expect(fg.ruleIds).toContain("mas_user_agent_aitm_or_spray");
+      expect(fg.ruleIds).not.toContain("mas_user_agent_http_library_noninteractive");
+    }
+    const unknown = signIn("node-fetch/1.0");
+    expect(unknown.ruleIds).toContain("mas_user_agent_aitm_or_spray");
+    expect(unknown.ruleIds).not.toContain("mas_user_agent_http_library_noninteractive");
+    expect(signIn(browser, nonInt).ruleIds).not.toContain("mas_user_agent_http_library_noninteractive");
   });
 
   it("mas_user_agent_offensive_tool: TeamFiltration's Teams build yes, a current Teams client no", () => {
@@ -401,5 +424,46 @@ describe("Analyzer-Suite user agents (#2306)", () => {
     expect(forged.description).toContain("[ua: x (risk: high) (legacy-auth ROPC)]");
     expect(forged.ruleIds).not.toContain("ts_entra_signin_risk");
     expect(forged.ruleIds).not.toContain("ts_entra_legacy_auth");
+    // Nor the category marker the HTTP-library rule reads (#2483): from the UA or the app name.
+    const viaUa = signIn("node-fetch/1.0 [non-interactive]");
+    expect(viaUa.ruleIds).toContain("mas_user_agent_aitm_or_spray");
+    expect(viaUa.ruleIds).not.toContain("mas_user_agent_http_library_noninteractive");
+    const viaApp = signIn("node-fetch/1.0", { appDisplayName: "x [non-interactive]" });
+    expect(viaApp.ruleIds).toContain("mas_user_agent_aitm_or_spray");
+    expect(viaApp.ruleIds).not.toContain("mas_user_agent_http_library_noninteractive");
+  });
+});
+
+describe("Entra sign-in risk the tenant cannot see (#2486)", () => {
+  const signIn = (risk: string) =>
+    m1({
+      id: `eeeeeeee-0000-4000-8000-${String(++n).padStart(12, "0")}`,
+      createdDateTime: "2026-01-01T00:00:00Z",
+      userPrincipalName: "u@example.com",
+      appDisplayName: "Office 365",
+      ipAddress: "203.0.113.5",
+      status: { errorCode: 0 },
+      riskLevelDuringSignIn: risk,
+      resourceTenantId: "11111111-1111-4111-8111-111111111111",
+    });
+
+  it("a hidden risk level (no Entra ID P2) is not a risk signal; a real level still is", () => {
+    const hidden = signIn("hidden");
+    expect(hidden.description).toContain("[risk level not visible (no Entra ID P2)]");
+    expect(hidden.ruleIds).not.toContain("ts_entra_signin_risk");
+    expect(signIn("low").ruleIds).toContain("ts_entra_signin_risk");
+  });
+
+  it("a row stored before the fix with '[risk: hidden]' is not tagged as risky", () => {
+    const old = only(
+      tag([
+        { description: "Entra sign-in: u@example.com from 203.0.113.5 [risk: hidden]", severity: "Info" },
+      ]),
+    );
+    expect(old.ruleIds).not.toContain("ts_entra_signin_risk");
+    const real = only(
+      tag([{ description: "Entra sign-in: u@example.com from 203.0.113.5 [risk: low]", severity: "Info" }]),
+    );
+    expect(real.ruleIds).toContain("ts_entra_signin_risk");
   });
 });

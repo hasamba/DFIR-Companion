@@ -72,6 +72,7 @@ import {
   type Tracked,
 } from "./awsComputeState.js";
 import { omittedRow, summaryRow } from "./awsComputeRow.js";
+import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
 export {
   AWS_COMPUTE_MAX,
@@ -571,7 +572,11 @@ const index = (map: Map<string, Inst[]>, key: string, inst: Inst): void => {
 };
 
 /** One summary row per instance the upload's records form a lifecycle for; the rows say what they rest on. */
-export function awsComputeLifecycles(records: readonly Row[], uploadId: string): MappedEvent[] {
+export function awsComputeLifecycles(
+  records: readonly Row[],
+  uploadId: string,
+  scope: SummaryScope = UPLOAD_SCOPE,
+): MappedEvent[] {
   const t: Tracked = { instances: new Map(), untrackedRecords: 0 };
   const coverage = { records: 0, first: "", last: "" };
   const scanned = scan(records, coverage);
@@ -625,10 +630,12 @@ export function awsComputeLifecycles(records: readonly Row[], uploadId: string):
     );
   const rows = findings
     .slice(0, AWS_COMPUTE_MAX)
-    .map((f) => summaryRow(f.inst, f.facts, f.grade, coverage, uploadId));
+    .map((f) => summaryRow(f.inst, f.facts, f.grade, coverage, uploadId, scope));
   const omitted = Math.max(0, findings.length - AWS_COMPUTE_MAX);
   if (omitted > 0 || t.untrackedRecords > 0)
-    rows.push(omittedRow(omitted, findings[AWS_COMPUTE_MAX]?.grade ?? "Low", t.untrackedRecords, uploadId));
+    rows.push(
+      omittedRow(omitted, findings[AWS_COMPUTE_MAX]?.grade ?? "Low", t.untrackedRecords, uploadId, scope),
+    );
   return rows;
 }
 

@@ -73,12 +73,16 @@ interface StubEl {
   onclick: ((e?: unknown) => unknown) | null;
   onchange: ((e?: unknown) => unknown) | null;
   addEventListener(type: string, fn: (e?: unknown) => unknown): void;
+  setAttribute(name: string, value: string): void;
+  getAttribute(name: string): string | null;
+  removeAttribute(name: string): void;
   focus(): void;
   click(): void;
 }
 
 function stubEl(id: string): StubEl {
   const classes = new Set<string>();
+  const attrs = new Map<string, string>(); // the overlay's aria-busy mark (#2494)
   return {
     id,
     textContent: "",
@@ -95,6 +99,9 @@ function stubEl(id: string): StubEl {
     onclick: null,
     onchange: null,
     addEventListener: () => {},
+    setAttribute: (name, value) => void attrs.set(name, value),
+    getAttribute: (name) => attrs.get(name) ?? null,
+    removeAttribute: (name) => void attrs.delete(name),
     focus: () => {},
     click: () => {},
   };

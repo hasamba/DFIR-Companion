@@ -190,9 +190,23 @@
   // reported #1554 did the arithmetic by hand against a number they could not reconcile, twice.
   // The difference is a fact this function already holds, so it prints it — and says "hidden by
   // filters", because the rows are in the record, not missing from it.
+  // THE ACTIVE VIEW'S SEVERITY FLOOR, NAMED (#2468).
+  //
+  // A cockpit link switches to the view that shows its panel, and Lead / Executive carry a High
+  // floor. No control on screen shows that floor, so "13 hidden by filters" pointed the analyst at
+  // filters that were all off. When the view has a floor and rows are hidden, the label names it.
+  function activeViewFloor() {
+    if (typeof DfirState === "undefined" || typeof DfirState.activeView !== "function") return null;
+    const view = DfirState.activeView();
+    const min = view && view.filters && view.filters.minSeverity;
+    return min ? { name: String(view.name || view.id || "current"), min: String(min) } : null;
+  }
+
   function timelineCountLabel(o) {
     const floor = timelineTotalIsFloor();
     const partial = timelineLoadState();
+    // Named only when the floor itself hid rows (o.viewHidden), never for rows a search or facet hid.
+    const viewFloor = o.viewHidden > 0 ? activeViewFloor() : null;
     const totalText = floor ? `${o.total}+` : `${o.total}`;
     const hidden = Math.max(0, (o.total || 0) - (o.totalFiltered || 0));
     const promoted = o.promotedKept > 0 ? o.promotedKept : 0;
@@ -203,6 +217,7 @@
         ? `${o.totalFiltered} of the first ${o.total} loaded events`
         : `${o.totalFiltered} of ${totalText} events`;
       if (hidden > 0) base += `, ${hidden} hidden by filters`;
+      if (hidden > 0 && viewFloor) base += ` (${viewFloor.name} view: ${viewFloor.min}+)`;
       if (promoted > 0) base += `, ${promoted} promoted kept`;
       if (manual > 0) base += `, ${manual} manual kept`;
       if (partial) base += `; case holds ${partial.total}`;
@@ -228,6 +243,11 @@
           "the record — clear a filter to bring them back."
         : `. The filters above are hiding ${hidden} of this case's ${o.total} forensic-timeline ` +
           "events. They are still in the record — clear a filter to bring them back.";
+      if (viewFloor) {
+        title +=
+          ` The ${viewFloor.name} view shows only ${viewFloor.min} and above in the timeline — switch ` +
+          "to the Analyst view to see every severity.";
+      }
     }
     if (promoted > 0) {
       title +=

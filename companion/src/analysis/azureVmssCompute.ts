@@ -36,6 +36,7 @@ import {
   type Tracked,
 } from "./azureVmssComputeState.js";
 import { omittedRow, summaryRow } from "./azureVmssComputeRow.js";
+import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
 export { VMSS_COMPUTE_MAX, VMSS_MEMBERS_TRACKED_MAX } from "./azureVmssComputeState.js";
 
@@ -359,7 +360,11 @@ const gradeOf = (facts: readonly AzureVmssComputeFact[]): Severity =>
   facts.length >= 2 ? "High" : facts.length === 1 ? "Medium" : "Low";
 
 /** One summary row per Uniform-mode VMSS member EPOCH the upload's records form a lifecycle for. */
-export function azureVmssComputeLifecycles(records: readonly Row[], uploadId: string): MappedEvent[] {
+export function azureVmssComputeLifecycles(
+  records: readonly Row[],
+  uploadId: string,
+  scope: SummaryScope = UPLOAD_SCOPE, // a live collection (#2493): "this collection"
+): MappedEvent[] {
   const t: Tracked = { members: new Map(), untrackedRecords: 0, epochsTracked: 0, attemptsNotJoined: 0 };
   const coverage = { records: 0, first: "", last: "" };
   const scanned = scan(records, coverage);
@@ -402,7 +407,7 @@ export function azureVmssComputeLifecycles(records: readonly Row[], uploadId: st
     );
   const rows = findings
     .slice(0, VMSS_COMPUTE_MAX)
-    .map((f) => summaryRow(f.member, f.epoch, f.facts, f.grade, coverage, uploadId));
+    .map((f) => summaryRow(f.member, f.epoch, f.facts, f.grade, coverage, uploadId, scope));
   const omitted = Math.max(0, findings.length - VMSS_COMPUTE_MAX);
   const epochsBeyond = [...t.members.values()].reduce((n, m) => n + m.epochsBeyond, 0);
   if (omitted > 0 || t.untrackedRecords > 0 || epochsBeyond > 0 || t.attemptsNotJoined > 0)
@@ -414,6 +419,7 @@ export function azureVmssComputeLifecycles(records: readonly Row[], uploadId: st
         uploadId,
         epochsBeyond,
         t.attemptsNotJoined,
+        scope,
       ),
     );
   return rows;

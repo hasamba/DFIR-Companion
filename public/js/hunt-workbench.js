@@ -1,38 +1,5 @@
-const STATIC_FIELDS = [
-  "id",
-  "timestamp",
-  "description",
-  "message",
-  "severity",
-  "host.name",
-  "event.source",
-  "event.category",
-  "event.type",
-  "event.action",
-  "event.outcome",
-  "user.name",
-  "user.domain",
-  "source.ip",
-  "source.port",
-  "destination.ip",
-  "destination.port",
-  "network.protocol",
-  "process.name",
-  "process.pid",
-  "process.executable",
-  "process.command_line",
-  "process.parent.name",
-  "file.path",
-  "file.name",
-  "file.sha256",
-  "file.md5",
-  "registry.key",
-  "service.name",
-  "task.name",
-  "mitre.technique",
-  "related.finding_id",
-  "ioc",
-];
+import { STATIC_FIELDS, renderCatalog } from "./hunt-catalog.js";
+
 const OPERATORS = [
   "=",
   "!=",
@@ -256,6 +223,9 @@ function initialize() {
   // when the list belongs to the open case: another case's analysts and parameters never leak.
   let requestedCase = "";
   let savedCase = "";
+  // The case the catalogue was asked for. Kept apart from requestedCase: the `change` handler sets
+  // requestedCase at once, so reusing it stopped the observer from ever loading the catalogue (#2461).
+  let catalogCase = "";
   let cancelRequest = null;
 
   const caseId = () => (document.getElementById("caseId")?.value || "").trim();
@@ -667,13 +637,17 @@ function initialize() {
   document.getElementById("hqExplain").addEventListener("click", validate);
   runButton.addEventListener("click", () => run());
   cancelButton.addEventListener("click", async () => {
-    running?.abort();
-    if (executionId) {
-      cancelRequest = fetch(endpoint(`/executions/${executionId}/cancel`), {
+    // Send the cancel BEFORE aborting the Run (#2462). Aborting first closes the Run's connection,
+    // the server forgets the execution, and the cancel then answers 404. Capture the id first:
+    // run()'s finally clears it once the abort lands.
+    const id = executionId;
+    if (id) {
+      cancelRequest = fetch(endpoint(`/executions/${id}/cancel`), {
         method: "POST",
       }).catch(() => {});
-      await cancelRequest;
     }
+    running?.abort();
+    if (id) await cancelRequest;
   });
   nextButton.addEventListener("click", () => run(lastCursor));
   document.getElementById("hqSave").addEventListener("click", saveHunt);
@@ -696,16 +670,29 @@ function initialize() {
   // `change` only: the case picker replays input+change on one case change, and an input
   // listener here doubled every saved-hunts request (#1962).
   const loadSavedForCase = () => loadSaved({ keep: false });
-  document.getElementById("caseId")?.addEventListener("change", loadSavedForCase);
+  document.getElementById("caseId")?.addEventListener("change", () => {
+    loadSavedForCase();
+    loadCatalog();
+  });
 
+  // Once per opened case. A failure is not retried until the case changes, so a broken route is
+  // not re-requested on every dashboard re-render.
   async function loadCatalog() {
-    if (!caseId()) return;
+    const forCase = caseId();
+    if (!forCase || forCase === catalogCase) return;
+    catalogCase = forCase;
+    const panel = document.getElementById("hqGrammar");
     try {
       const catalog = await jsonRequest(endpoint("/catalog"));
+      if (catalogCase !== forCase) return;
       fieldNames = catalog.fields.map((field) => field.name);
-      document.getElementById("hqGrammar").textContent = catalog.grammar;
-    } catch {
+      if (panel) panel.textContent = renderCatalog(catalog);
+    } catch (error) {
+      if (catalogCase !== forCase) return;
       fieldNames = [...STATIC_FIELDS];
+      if (panel) {
+        panel.textContent = `Could not load the grammar reference: ${error.message || "request failed"}`;
+      }
     }
   }
 
@@ -771,10 +758,8 @@ function initialize() {
       addPivotButtons();
       // New-case, demo-case and import set the case box without an input/change event. The
       // dashboard re-renders after any case opens, so this is where a silent switch is noticed.
-      if (caseId() !== requestedCase) {
-        loadSavedForCase();
-        loadCatalog();
-      }
+      if (caseId() !== requestedCase) loadSavedForCase();
+      if (caseId() !== catalogCase) loadCatalog();
     });
   }).observe(document.body, { childList: true, subtree: true });
 

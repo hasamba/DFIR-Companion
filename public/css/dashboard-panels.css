@@ -48,6 +48,8 @@
 .lg-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 11px;
   color: var(--text-muted); margin-top: 6px; }
 .lg-leg-item { white-space: nowrap; }
+/* The trailing caption is 376px on one line, wider than a phone. #2457 */
+@media (max-width: 900px) { .lg-leg-item { white-space: normal; } }
 .lg-leg-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
   vertical-align: -1px; margin-right: 4px; }
 .lg-leg-line { display: inline-block; width: 18px; height: 2px; vertical-align: 3px; margin-right: 4px; }

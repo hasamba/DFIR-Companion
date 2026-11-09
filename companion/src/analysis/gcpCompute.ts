@@ -54,6 +54,7 @@ import {
   type Tracked,
 } from "./gcpComputeState.js";
 import { omittedRow, summaryRow } from "./gcpComputeRow.js";
+import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
 export { GCP_COMPUTE_MAX, INSTANCES_TRACKED_MAX } from "./gcpComputeState.js";
 
@@ -263,7 +264,11 @@ const gradeOf = (facts: readonly GcpComputeFact[]): Severity =>
   facts.length >= 2 ? "High" : facts.length === 1 ? "Medium" : "Low";
 
 /** One summary row per instance the upload's records form a lifecycle for. */
-export function gcpComputeLifecycles(records: readonly Row[], uploadId: string): MappedEvent[] {
+export function gcpComputeLifecycles(
+  records: readonly Row[],
+  uploadId: string,
+  scope: SummaryScope = UPLOAD_SCOPE, // a live collection (#2493): "this collection"
+): MappedEvent[] {
   const t: Tracked = { instances: new Map(), untrackedRecords: 0 };
   const coverage = { records: 0, first: "", last: "" };
   const scanned = scan(records, coverage);
@@ -345,9 +350,11 @@ export function gcpComputeLifecycles(records: readonly Row[], uploadId: string):
     );
   const rows = findings
     .slice(0, GCP_COMPUTE_MAX)
-    .map((f) => summaryRow(f.inst, f.facts, f.grade, coverage, uploadId));
+    .map((f) => summaryRow(f.inst, f.facts, f.grade, coverage, uploadId, scope));
   const omitted = Math.max(0, findings.length - GCP_COMPUTE_MAX);
   if (omitted > 0 || t.untrackedRecords > 0)
-    rows.push(omittedRow(omitted, findings[GCP_COMPUTE_MAX]?.grade ?? "Low", t.untrackedRecords, uploadId));
+    rows.push(
+      omittedRow(omitted, findings[GCP_COMPUTE_MAX]?.grade ?? "Low", t.untrackedRecords, uploadId, scope),
+    );
   return rows;
 }

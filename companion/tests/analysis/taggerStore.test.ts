@@ -77,6 +77,37 @@ describe("TaggerStore", () => {
     await expect(readFile(userPath, "utf8")).rejects.toThrow();
   });
 
+  // #2478: a live collection loads the ruleset several times per page; recompiling the same YAML
+  // was ~45% of an AWS collection's import step. Same text → the compiled rules are reused.
+  it("load() reuses the compiled rules while the rule text is unchanged", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    const first = await store.load();
+    const again = await store.load();
+    expect(again.rules).toBe(first.rules);
+    expect(again.source).toBe("default");
+  });
+
+  it("load() recompiles as soon as the rule text changes", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    const before = await store.load();
+    await writeFile(defaultPath, VALID); // edited outside the dashboard
+    const after = await store.load();
+    expect(after.rules).not.toBe(before.rules);
+    expect(after.rules[0].id).toBe("svc");
+    await store.save(`other:\n  any:\n    - { field: message, contains: x }\n  tags: ['o']\n`);
+    const saved = await store.load();
+    expect(saved.source).toBe("user");
+    expect(saved.rules[0].id).toBe("other");
+  });
+
+  it("load() still throws on an invalid ruleset every time, never serving a stale one", async () => {
+    const store = new TaggerStore(userPath, [defaultPath]);
+    await store.load();
+    await writeFile(defaultPath, "bad:\n  any:\n    - { field: nope, contains: x }\n  tags: ['t']\n");
+    await expect(store.load()).rejects.toThrow(/nope/);
+    await expect(store.load()).rejects.toThrow(/nope/);
+  });
+
   it("TAGGER_RULES_FILE env overrides both user file and default", async () => {
     const envPath = join(dir, "env-tags.yaml");
     await writeFile(envPath, `env_rule:\n  any:\n    - { field: message, contains: env }\n  tags: ['e']\n`);

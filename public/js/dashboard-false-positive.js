@@ -193,6 +193,8 @@
                 reason,
                 note,
                 addToWhitelist,
+                // Without it the server stamps the marker and its log entry "anonymous" (#2466).
+                markedBy: investigatorName(),
               }),
             });
             if (!r.ok) throw new Error("HTTP " + r.status);
@@ -201,7 +203,7 @@
             const r = await fetch(`/cases/${caseId}/false-positive/batch`, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ items, reason, note }),
+              body: JSON.stringify({ items, reason, note, markedBy: investigatorName() }),
             });
             if (!r.ok) throw new Error("HTTP " + r.status);
             markers = await r.json();

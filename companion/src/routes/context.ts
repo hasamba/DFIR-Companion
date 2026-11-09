@@ -63,6 +63,9 @@ export type ImportBase = {
   // This attempt's debug recorder (#1736): importers report column mapping, skipped-row reasons and
   // fallbacks to it. Owned by whoever started the attempt; see analysis/importDebug.ts.
   debug?: ImportDebugRecorder;
+  // A live collection's page of a kind whose whole-export summaries the collection builds once
+  // (#2482) — read only by the streamed cloud import; every other kind ignores it.
+  skipSummaries?: boolean;
 };
 
 /**

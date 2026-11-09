@@ -142,6 +142,63 @@ describe("close case dialog failures (#2412)", () => {
     expect(el("ccaConfirm").disabled).toBe(false);
   });
 
+  // #2463: the case list omits `status` for a case that was never closed — absent means open.
+  it("a dropped close on a never-closed case (no status in the list) says it is still open", async () => {
+    const { api, el } = loadClose({
+      "GET /cases/c1/cloud-accounts": { body: { accounts: [ROW] } },
+      "PATCH /cases/c1/status": () => {
+        throw new Error("Failed to fetch");
+      },
+      "GET /cases": { body: [{ caseId: "c1" }] },
+    });
+    void api.closeCaseWithCredentials("c1");
+    await flush();
+    el("ccaConfirm").click();
+    await flush();
+    expect(el("ccaMsg").textContent).toContain("still open");
+    expect(el("ccaMsg").textContent).not.toContain("could not be read");
+  });
+
+  // #2463: Escape must not dismiss the dialog while the close is on the wire — the shared modal
+  // wiring honours aria-busy, so the dialog marks itself busy for exactly that window.
+  it("the dialog is marked busy while the close is on the wire, and not after a failure", async () => {
+    let answer: (r: Route) => void = () => {};
+    const { api, el } = loadClose({
+      "GET /cases/c1/cloud-accounts": { body: { accounts: [ROW] } },
+      "PATCH /cases/c1/status": () => new Promise<Route>((r) => (answer = r)),
+    });
+    void api.closeCaseWithCredentials("c1");
+    await flush();
+    expect(el("closeCaseOverlay").getAttribute("aria-busy")).toBeNull();
+    el("ccaConfirm").click();
+    await flush();
+    expect(el("closeCaseOverlay").getAttribute("aria-busy")).toBe("true");
+    answer({ status: 409, body: { error: "collection running" } });
+    await flush();
+    expect(el("closeCaseOverlay").getAttribute("aria-busy")).toBeNull();
+    expect(el("ccaMsg").textContent).toContain("collection running");
+  });
+
+  it("the busy mark is cleared when the close succeeds and when a close is superseded", async () => {
+    let answer: (r: Route) => void = () => {};
+    const { api, el } = loadClose({
+      "GET /cases/c1/cloud-accounts": { body: { accounts: [ROW] } },
+      "PATCH /cases/c1/status": () => new Promise<Route>((r) => (answer = r)),
+      "GET /cases/c2/cloud-accounts": { body: { accounts: [ROW] } },
+    });
+    void api.closeCaseWithCredentials("c1");
+    await flush();
+    el("ccaConfirm").click();
+    await flush();
+    expect(el("closeCaseOverlay").getAttribute("aria-busy")).toBe("true");
+    void api.closeCaseWithCredentials("c2"); // a fresh dialog is never busy
+    await flush();
+    expect(el("closeCaseOverlay").getAttribute("aria-busy")).toBeNull();
+    answer({ body: { status: "closed" } });
+    await flush();
+    expect(el("closeCaseOverlay").getAttribute("aria-busy")).toBeNull();
+  });
+
   it("a close that never answers, with a case list that never answers, still gives the dialog back", async () => {
     const timers: Array<() => void> = [];
     const { api, el } = loadClose(

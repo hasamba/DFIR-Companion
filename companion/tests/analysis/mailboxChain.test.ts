@@ -443,6 +443,17 @@ describe("what is never claimed", () => {
 });
 
 describe("risk, order, grading", () => {
+  it("#2486: a hidden risk level reads as not visible, never 'hidden'", () => {
+    const rows = chains([
+      signIn({ riskState: "none", riskLevelDuringSignIn: "hidden" }),
+      logon(),
+      access(),
+      rule(),
+    ]);
+    expect(rows[0].description).toContain("carries risk: none, level not visible (no Entra ID P2)");
+    expect(rows[0].description).not.toContain("hidden");
+  });
+
   it("a contemporaneous interactive sign-in of the same user, address and tenant carries its risk verdict, said as contemporaneous", () => {
     const rows = chains([signIn(), logon(), access(), rule()]);
     expect(rows[0].description).toContain(

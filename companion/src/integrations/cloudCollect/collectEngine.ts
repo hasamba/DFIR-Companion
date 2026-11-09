@@ -325,6 +325,10 @@ export async function runCollection(
       await save({ imported: [...imported] });
       report("import", network.subWindows, imported.size);
     },
+    summarized: cp.summarized ?? {},
+    onSummarized: async (kind, pages) => {
+      await save({ summarized: { ...cp.summarized, [kind]: pages } });
+    },
   });
   const pagesSaved = replay.validPages.length + network.pages.length;
   await save({

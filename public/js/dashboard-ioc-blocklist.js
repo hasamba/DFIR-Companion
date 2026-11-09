@@ -35,9 +35,26 @@
     return params;
   }
 
+  // #2468: "Matches 0 of 21 IOCs" still handed a header-only file to the firewall team and closed
+  // the dialog. The newest summary's match count is kept; a known zero disables the three download
+  // buttons and the count line stays as the reason. null means unknown (a summary pending or
+  // failed) and never blocks — a stale count must not stop a download.
+  const BL_DOWNLOAD_BUTTONS = ["blDlTxt", "blDlCsv", "blDlStix"];
+  const BL_NOTHING_TITLE = "No IOC matches these filters — the file would hold only a header. Widen the filters above.";
+  let blLastMatched = null;
+  function setBlocklistMatched(matched) {
+    blLastMatched = matched;
+    for (const id of BL_DOWNLOAD_BUTTONS) {
+      const btn = document.getElementById(id);
+      if (!btn) continue;
+      btn.disabled = matched === 0;
+      btn.title = matched === 0 ? BL_NOTHING_TITLE : "";
+    }
+  }
+
   function downloadIocBlocklist(format) {
     const caseId = document.getElementById("caseId").value.trim();
-    if (!caseId) return;
+    if (!caseId || blLastMatched === 0) return;
     const c = encodeURIComponent(caseId);
     window.location.href = `/cases/${c}/export/ioc-blocklist?${blocklistParams(format)}`;
     closeIocBlocklist();
@@ -69,22 +86,29 @@
     const out = document.getElementById("blMatchCount");
     const caseId = document.getElementById("caseId").value.trim();
     const gen = ++blSummaryGen;
+    setBlocklistMatched(null); // the old count no longer describes the filters
     if (!out) return;
     if (!caseId) {
       out.textContent = "";
       return;
     }
     let text = "";
+    let matched = null;
     try {
       const res = await fetch(
         `/cases/${encodeURIComponent(caseId)}/export/ioc-blocklist?${blocklistParams("summary")}`,
       );
       const body = await res.json();
-      if (res.ok && typeof body.matched === "number") text = blocklistCountText(body);
+      if (res.ok && typeof body.matched === "number") {
+        text = blocklistCountText(body);
+        matched = body.matched;
+      }
     } catch {
       text = "";
     }
-    if (gen === blSummaryGen) out.textContent = text;
+    if (gen !== blSummaryGen) return;
+    out.textContent = text;
+    setBlocklistMatched(matched);
   }
 
   // Redacted case export (#54) moved to js/dashboard-redacted-export.js (#415 tier 3).

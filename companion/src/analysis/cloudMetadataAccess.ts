@@ -38,6 +38,7 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
 import { appendDerivedNote } from "./derivedNote.js";
+import { earliestEventTime } from "./coverageEventTime.js";
 
 /** The link-local addresses and names that serve instance metadata. */
 export const METADATA_TARGETS: readonly string[] = [
@@ -477,9 +478,13 @@ export function metadataCoverageEvent(events: readonly ForensicEvent[]): Forensi
   if (!hasCloudAudit) return null;
   return {
     id: COVERAGE_EVENT_ID,
-    timestamp:
-      events.find((e) => Number.isFinite(Date.parse(e.timestamp ?? "")))?.timestamp ??
-      new Date().toISOString(),
+    // Advice, not an event (#2486): at the earliest cloud-audit record. Graded Medium, not Low: a
+    // case gated at Medium demotes every Low row on each merge, and this note must reach the forensic
+    // timeline so synthesis learns that "nothing found" is not "absent" (#908).
+    timestamp: earliestEventTime(
+      events,
+      (e) => e.id !== COVERAGE_EVENT_ID && CLOUD_AUDIT_RE.test(e.description ?? ""),
+    ),
     description: `Cloud coverage gap ${METADATA_MARKER} ${explainVisibility(false, true)}]`,
     severity: "Medium",
     mitreTechniques: [],

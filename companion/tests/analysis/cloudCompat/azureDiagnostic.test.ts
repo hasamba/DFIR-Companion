@@ -16,7 +16,7 @@ describe("cloud compat — Azure diagnostic settings PT1H.json (#2300)", () => {
     expect(e.severity).toBe("Medium");
     expect(e.mitreTechniques).toEqual(["T1078.004", "T1110"]);
     expect(e.description).toBe(
-      "Entra sign-in: user1@example.com from 203.0.113.10 (Example City, XX) via Example App [FAILED 50126: Invalid username or password.]",
+      "Entra sign-in: [interactive] user1@example.com from 203.0.113.10 (Example City, XX) via Example App [FAILED 50126: Invalid username or password.]",
     );
   });
 });

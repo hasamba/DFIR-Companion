@@ -6,6 +6,7 @@
 // Kept beside canonicalEvent.ts so the envelope schema stays within its size bound.
 
 import { z } from "zod";
+import { scopeBasisSchema } from "./summaryScope.js";
 
 export const entraPathStepSchema = z.object({
   stage: z.enum(["credential", "grant", "sign-in", "action"]),
@@ -33,7 +34,8 @@ export const entraPathBlockSchema = z.object({
   outsideWindow: z.number().int().nonnegative(),
   otherEpisodes: z.number().int().nonnegative(),
   coverage: z.object({ signIns: coverageSchema.optional(), audits: coverageSchema.optional() }),
-  basis: z.literal(
+  // The file form, or its collection form (#2493) — summaryScope.ts.
+  basis: scopeBasisSchema(
     "records of this export only; joined through the application id; consistency, not authorization",
   ),
 });

@@ -167,7 +167,7 @@
     return (
       `<div class="hyp ${escAttr(h.status)}${h.needsReview ? " needs-review" : ""}${h.exhausted ? " exhausted" : ""}" data-id="${id}">` +
       `<div class="hyp-row1">` +
-      `<select class="hyp-status" data-act="hypPatchStatus" data-act-on="change" data-id="${id}">${opts}</select>` +
+      `<select class="hyp-status" aria-label="Hypothesis status" data-act="hypPatchStatus" data-act-on="change" data-id="${id}">${opts}</select>` +
       `<span class="hyp-title">${esc(h.title)}</span>${qualifier}${src}${review}${exhausted}` +
       // #14 deferred: link the NEXT deployed hunt to this hypothesis, so an empty result exhausts it.
       (h.status === "open" && !h.exhausted

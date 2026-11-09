@@ -5,6 +5,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { TimelineDiff } from "./timelineDiff.js";
 import type { IocsDiff } from "./iocsDiff.js";
+import type { ImportDebugRecorder } from "./importDebug.js";
 
 // Lightweight per-case record of the LAST import: when it ran, the detected kind/file, and what it
 // added to (or merged in) the forensic timeline and how many rows actually reached the super-timeline.
@@ -89,6 +90,11 @@ export const importMetaSchema = z.object({
     .nullable()
     .optional()
     .catch(undefined),
+  // The AI extraction's own count (#2460): rows it read and events it kept, before merge dedup and
+  // demote. `addedCount` 0 cannot tell "the AI kept nothing" (a provider failure, at any file size)
+  // from "every event was already in the timeline" (a re-import); this can. Banner-only — it does not
+  // feed classifyImportYield or any prompt. Optional/lenient; absent for older files and non-AI paths.
+  aiExtraction: z.object({ rowsIn: z.number(), kept: z.number() }).optional().catch(undefined),
   // A streamed cloud import's own account of itself (#2303): what it aggregated, capped, skipped or
   // repaired, as sentences (cloudStreamDisclosure.ts). Optional/lenient; absent for other imports.
   streamDisclosure: z.array(z.string()).optional().catch(undefined),
@@ -149,6 +155,27 @@ export interface ImportRecord {
   fpPropagation?: ImportMeta["fpPropagation"]; // FP-pattern propagation suggestions (#15b)
   truncation?: ImportMeta["truncation"]; // cap-hit template truncation (#10 trigger b)
   streamDisclosure?: string[]; // a streamed cloud import's disclosure (#2303)
+  aiExtraction?: ImportMeta["aiExtraction"]; // rows the AI read / events it kept (#2460)
+}
+
+/**
+ * The AI extraction's count for import-meta (#2460), read from the import's debug recorder: the CSV
+ * and log extractors stamp `total` (rows read) up front and `kept` after every batch. Undefined when
+ * the path is not AI or the extractor never counted, so the banner stays silent rather than guess.
+ */
+export function aiExtractionFromDebug(
+  path: ImportRecord["path"],
+  debug: Pick<ImportDebugRecorder, "summary"> | undefined,
+): ImportMeta["aiExtraction"] {
+  if (path !== "ai" || !debug) return undefined;
+  const s = debug.summary();
+  const { total, kept } = s.counts;
+  if (total === undefined || kept === undefined) return undefined;
+  // kept 0 is then not "the AI produced nothing": the analyst's severity floor removed what it
+  // returned, or a cancel stopped it before a batch ran. Both would make the warning false.
+  if (kept === 0 && (s.omitted.below_severity_floor || s.observations.cancelled_between_batches))
+    return undefined;
+  return { rowsIn: total, kept };
 }
 
 /**
@@ -230,6 +257,7 @@ export class ImportMetaStore {
       fpPropagation: rec.fpPropagation ?? [],
       truncation: rec.truncation ?? null,
       ...(rec.streamDisclosure?.length ? { streamDisclosure: rec.streamDisclosure } : {}),
+      ...(rec.aiExtraction ? { aiExtraction: rec.aiExtraction } : {}),
     };
     await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
     return meta;

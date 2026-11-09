@@ -51,6 +51,12 @@
 .ev-geo svg { width: 12px; height: 12px; }
 .ev-col-time { flex-shrink: 0; width: 192px; font-size: 11px; font-family: var(--font-code); align-self: center; color: var(--text-muted); }
 .ev-col-content { flex: 1; min-width: 0; padding-top: 1px; }
+/* Narrow screens: the 178px + 192px leading columns left the message column 0px wide, so a long
+   value spilled past the page edge. Keep the message readable and scroll the timeline itself. #2457 */
+@media (max-width: 900px) {
+  #forensicTimeline { overflow-x: auto; }
+  #forensicTimeline .ev-col-content { min-width: 220px; }
+}
 .ev-origin { color: var(--text-dim); white-space: nowrap; font-size: 11px; }
 .ev-more-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 0.78em; padding: 0 3px; margin-left: 2px; vertical-align: middle; }
 /* Unified per-row [details] disclosure — shared by the forensic timeline and super-timeline so both

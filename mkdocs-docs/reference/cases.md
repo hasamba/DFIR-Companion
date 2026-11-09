@@ -76,6 +76,8 @@ Toolbar **☰ Case lifecycle** menu lets you:
 - **Archive** a case — packages it as a ZIP with a SHA-256 manifest. When it finishes, the status line
   shows where the ZIP file was saved (in the cases folder). See [ZIP Case Archive](#zip-case-archive-restore)
   to bring it back.
+- **Restore** an archived case — puts it back in the case list. A restored case always comes back
+  **Closed**, even if it was open when you archived it. Use **Reopen case** to change it.
 - **🔒 Password…** — set, change, or remove a password on this case (see below)
 - **🗑️ Delete…** a case — permanently removes the case's directory (see below)
 

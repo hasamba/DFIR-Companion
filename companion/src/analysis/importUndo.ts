@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
@@ -46,6 +46,9 @@ export interface ImportCheckpoint {
   // The cloud-record ledger batches the import wrote (#2301, cloudRecordStore.ts): Undo marks them
   // forgotten, so a re-import after Undo adds the records again; Redo marks them remembered again.
   cloudBatches?: string[];
+  // Set only on the undo entry Redo pushes (#2466), so the review digest can tell "redone at `at`"
+  // from a fresh import's checkpoint — both sit on top of the undo stack.
+  redone?: true;
 }
 
 /** The mirror entry of `top`: the same super rows (pair swapped) and the same cloud batches. */
@@ -215,7 +218,10 @@ export function applyRedo(
   if (stack.redo.length === 0) return null;
   const top = stack.redo[stack.redo.length - 1];
   const restore = restoreOf(top, current);
-  const undoEntry = mirrorOf(top, deltaCheckpoint(top.label, at, current, restore));
+  const undoEntry: ImportCheckpoint = {
+    ...mirrorOf(top, deltaCheckpoint(top.label, at, current, restore)),
+    redone: true,
+  };
   const depth = Math.max(1, Math.floor(maxDepth));
   let undo = [...stack.undo, undoEntry];
   if (undo.length > depth) undo = undo.slice(undo.length - depth);
@@ -326,6 +332,7 @@ function normalizeList(v: unknown, sizes: unknown): ImportCheckpoint[] {
       ? o.cloudBatches.filter((b) => typeof b === "string")
       : [];
     if (cloudBatches.length) checkpoint = { ...checkpoint, cloudBatches };
+    if (o.redone === true) checkpoint = { ...checkpoint, redone: true };
     const n: unknown = idx[i];
     // A coerced label/at no longer matches the stored entry, so its size is re-measured instead.
     if (
@@ -394,6 +401,20 @@ export class ImportUndoStore {
       return normalizeStack(JSON.parse(await readFile(this.path(caseId), "utf8")));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptyUndoStack();
+      throw err;
+    }
+  }
+
+  /**
+   * A cheap change key for the stack file (mtime + size), or null when there is none. Lets a polled
+   * reader (the cockpit, #2466) skip parsing a stack that can hold hundreds of MB of deltas.
+   */
+  async stat(caseId: string): Promise<{ mtimeMs: number; size: number } | null> {
+    try {
+      const s = await stat(this.path(caseId));
+      return { mtimeMs: s.mtimeMs, size: s.size };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw err;
     }
   }

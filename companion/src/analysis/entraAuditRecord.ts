@@ -99,6 +99,10 @@ const TYPE_LABELS = new Set([
   "device",
   "other",
 ]);
+// Flag words that UAL writes as their own Actor/Target pair. They are not identifiers, so they add
+// nothing to the identity being built. `NotAgentic` is the value observed in a real UAL directory-
+// change export (#2484); add a value here only when a real export shows it.
+const FLAG_VALUES = new Set(["notagentic"]);
 
 // Entra's agentType values (Microsoft Graph `microsoft.graph.agentic.agentType`). The UAL writes the
 // value as one more identifier pair; it says whether an identity is an AI agent, never what it is
@@ -311,7 +315,7 @@ function readIdentities(raw: unknown): EntraTarget[] {
   };
   for (const e of Array.isArray(raw) ? raw : []) {
     const id = (isObject(e) ? str(getCI(e, "ID")) || str(getCI(e, "Id")) : "").trim();
-    if (!id) continue;
+    if (!id || FLAG_VALUES.has(id.toLowerCase())) continue;
     const prefixed = PREFIXED_ID.exec(id);
     if (prefixed) {
       const guid = prefixed[2].toLowerCase();

@@ -95,6 +95,36 @@ describe("createOutputBudget (#2303)", () => {
     expect(b.finish().aggregates).toHaveLength(1);
   });
 
+  it("leaves a one-row detailed group's description untouched (#2475)", () => {
+    const b = createOutputBudget({ budgets: small() });
+    const input = row("Low", "a");
+    b.route(input, facts("a"));
+    const { aggregates, disclosure } = b.finish();
+    expect(aggregates).toHaveLength(1);
+    expect(aggregates[0].description).toBe(input.description);
+    expect(aggregates[0].description).not.toContain("[aggregated:");
+    expect(disclosure.aggregatedRows.low).toBe(1);
+    expect(disclosure.groups.detailed).toBe(1);
+  });
+
+  it("keeps the note on a detailed group of two or more rows (#2475)", () => {
+    const b = createOutputBudget({ budgets: small() });
+    b.route(row("Low", "a"), facts("a"));
+    b.route(row("Low", "a"), facts("a"));
+    const { aggregates } = b.finish();
+    expect(aggregates).toHaveLength(1);
+    expect(aggregates[0].description).toContain("[aggregated: 2 row(s)");
+    expect(aggregates[0].description).toContain("Low rows are aggregated");
+  });
+
+  it("keeps the note on a one-row coarse group (#2475)", () => {
+    const b = createOutputBudget({ budgets: small({ aggregateGroupsMax: 0 }) });
+    b.route(row("Low", "a"), facts("a"));
+    const { aggregates, disclosure } = b.finish();
+    expect(disclosure.groups.coarse).toBe(1);
+    expect(aggregates[0].description).toContain("[aggregated: 1 row(s)");
+  });
+
   it("drops rows below the import floor and counts them", () => {
     const b = createOutputBudget({ budgets: small(), minSeverity: "Medium" });
     expect(b.route(row("Low", "a"), facts("a"))).toBe("below-floor");

@@ -261,6 +261,54 @@ describe("readEntraAuditRecord — UAL shape", () => {
     })!;
     expect(r.initiator).toMatchObject({ kind: "app", id: SP, name: "Sync" });
   });
+  // #2484: real UAL exports carry a `NotAgentic` flag pair inside a Target identity. It is a flag
+  // word, not an identifier, so it must never become the target's name.
+  const ualTargets = (Target: unknown[]) =>
+    readEntraAuditRecord({
+      Workload: "AzureActiveDirectory",
+      RecordType: 8,
+      Operation: "Update user.",
+      ResultStatus: "Success",
+      UserId: "admin@example.invalid",
+      UserType: 2,
+      Actor: [{ ID: "admin@example.invalid", Type: 5 }],
+      Target,
+      ModifiedProperties: [],
+    })!.targets;
+  it("a NotAgentic flag pair before the display name does not become the target's name", () => {
+    expect(
+      ualTargets([
+        { ID: `User_${USER}`, Type: 2 },
+        { ID: USER, Type: 2 },
+        { ID: "NotAgentic", Type: 2 },
+        { ID: "Jane Analyst", Type: 1 },
+      ]),
+    ).toEqual([{ type: "User", id: USER, name: "Jane Analyst", upn: "" }]);
+  });
+  it("a NotAgentic flag pair after the display name is ignored", () => {
+    expect(
+      ualTargets([
+        { ID: `User_${USER}`, Type: 2 },
+        { ID: "Jane Analyst", Type: 1 },
+        { ID: "NotAgentic", Type: 2 },
+      ]),
+    ).toEqual([{ type: "User", id: USER, name: "Jane Analyst", upn: "" }]);
+  });
+  it("with no display name the identity keeps its id and an empty name", () => {
+    expect(
+      ualTargets([
+        { ID: `User_${USER}`, Type: 2 },
+        { ID: "NotAgentic", Type: 2 },
+      ]),
+    ).toEqual([{ type: "User", id: USER, name: "", upn: "" }]);
+    expect(
+      ualTargets([
+        { ID: "NotAgentic", Type: 2 },
+        { ID: USER, Type: 2 },
+      ]),
+    ).toEqual([{ type: "", id: USER, name: "", upn: "" }]);
+    expect(ualTargets([{ ID: "notagentic", Type: 2 }])).toEqual([]);
+  });
   it("recognises only AzureActiveDirectory records with identity or property arrays", () => {
     expect(isEntraUalRecord({ Workload: "AzureActiveDirectory", Target: [] })).toBe(true);
     expect(isEntraUalRecord({ Workload: "Exchange", Operation: "Set-InboxRule" })).toBe(false);

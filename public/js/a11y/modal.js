@@ -36,6 +36,10 @@ export function openModal(el, opts) {
   const onKeydown = (ev) => {
     if (ev.key === "Escape") {
       ev.stopPropagation();
+      // A dialog busy with a request (aria-busy="true") stays open (#2463): it has disabled its own
+      // Cancel for that window, and Escape must not be a way around it — a later failure would then
+      // be written into a hidden dialog.
+      if (el.getAttribute("aria-busy") === "true") return;
       closeModal(el);
       if (opts && opts.onClose) opts.onClose();
     }

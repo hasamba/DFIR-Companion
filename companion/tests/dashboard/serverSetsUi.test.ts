@@ -107,6 +107,9 @@ function caseServerMarkup(doc: FakeDocument): void {
   pushSelect.appendChild(placeholder);
 }
 
+/** GET /cases/:id/server-set for a case whose set does not resolve: 200 with the reason (#2462). */
+const unresolved = (problem: string) => ({ setId: "", name: "", tools: [], problem });
+
 function loadCaseServers(routes: Routes, globals: Record<string, unknown> = {}) {
   const doc = new FakeDocument();
   serverSetMarkup(doc);
@@ -287,7 +290,7 @@ describe("case header", () => {
     expect(ok.el("caseServersRow").hidden).toBe(false);
     expect(ok.el("caseServersCurrent").textContent).toBe("The open case uses server set: Alpha");
     const bad = loadCaseServers({
-      "GET /cases/C1/server-set": { status: 409, body: { error: "This case's server set was deleted." } },
+      "GET /cases/C1/server-set": { body: unresolved("This case's server set was deleted.") },
     });
     await bad.api.refreshCaseServers("C1");
     const line = bad.el("caseServersCurrent");
@@ -345,7 +348,7 @@ describe("case header", () => {
   it("a case with no usable set puts Change… in the error style", async () => {
     const message = "This case has no server set. Pick one with Change… in the case header.";
     const { api, el, doc } = loadCaseServers({
-      "GET /cases/C1/server-set": { status: 409, body: { error: message } },
+      "GET /cases/C1/server-set": { body: unresolved(message) },
     });
     await api.refreshCaseServers("C1");
     const btn = el("caseServersChangeBtn");
@@ -356,9 +359,19 @@ describe("case header", () => {
     expect(api.veloEnabled).toBe(false);
   });
 
+  it("a failed server-set read still says why", async () => {
+    const { api, el } = loadCaseServers({
+      "GET /cases/C1/server-set": { status: 500, body: { error: "disk read failed" } },
+    });
+    await api.refreshCaseServers("C1");
+    const btn = el("caseServersChangeBtn");
+    expect(changeTip(btn).tip).toBe("No usable server set: disk read failed — click to choose one");
+    expect(btn.classList.contains("case-servers-error")).toBe(true);
+  });
+
   it("the error style clears when the next case has a set", async () => {
     const { api, el } = loadCaseServers({
-      "GET /cases/C1/server-set": { status: 409, body: { error: "no set" } },
+      "GET /cases/C1/server-set": { body: unresolved("no set") },
       "GET /cases/C2/server-set": { body: { setId: "b", name: "Beta", tools: [] } },
     });
     await api.refreshCaseServers("C1");

@@ -76,8 +76,8 @@ test("US-195: starred state is server-backed rather than browser-local", async (
   await fresh.close();
 
   const report = await page.request.get(`/cases/${demoCase}/starred-report`);
-  // 404 with nothing saved and 501 without the store are both honest; a 500 would not be.
-  expect([200, 404, 501], await report.text()).toContain(report.status());
+  // 200 (null when nothing is saved, #2462) and 501 without the store are both honest; a 500 would not be.
+  expect([200, 501], await report.text()).toContain(report.status());
 });
 
 test("US-173: a collect directive refuses cleanly without Velociraptor", async ({ page, demoCase }) => {

@@ -262,6 +262,25 @@ export class SuperTimelineStore {
   }
 
   /**
+   * A live collection's summary rebuild (#2482): drop the rows of its previous build — ids of shape
+   * `<prefix><16 hex>` — that the rebuild does not keep, from this store AND the forensic timeline
+   * (one case database), in one transaction. Never matches a page row.
+   */
+  async dropSummaryRows(
+    caseId: string,
+    prefix: string,
+    keepIds: readonly string[],
+  ): Promise<{ forensic: number; super: number }> {
+    await this.ensureMigrated(caseId);
+    return caseSqliteWorker.request<{ forensic: number; super: number }>({
+      op: "dropSummaryRows",
+      dbPath: this.databasePath(caseId),
+      prefix,
+      keepIds: [...keepIds],
+    });
+  }
+
+  /**
    * Filter, facet, and paginate. Facets keep their semantics (time-window only, independent of
    * origin/label selection) on both paths below.
    *

@@ -179,9 +179,10 @@ export function applySigmaMatches(
   const vetoed = eligible.length > graded.length;
   const lead = graded[0] ?? byLevel[0];
   const more = matches.length > 1 ? ` (+${matches.length - 1} more)` : "";
-  const head = graded.length
-    ? `Sigma: ${lead.title}${more}`
-    : `Sigma (${lead.level}, not graded): ${lead.title}${more}`;
+  // Only a rule that set the severity names itself in the description (#2486): a head on a row the
+  // rule did NOT grade read as "this row was not graded" on rows another rule had graded High. The
+  // matched rules and the reason they did not grade stay in the message lines below.
+  const head = graded.length ? `Sigma: ${lead.title}${more} - ` : "";
   const severity = graded.reduce((s, r) => worstSeverity(s, LEVEL_SEVERITY[r.level]), stamped.severity);
   const mitre = [...stamped.mitre];
   for (const t of matches.flatMap((r) => r.mitre)) if (!mitre.includes(t)) mitre.push(t);
@@ -195,7 +196,7 @@ export function applySigmaMatches(
     ...stamped,
     severity,
     mitre,
-    description: `${head} - ${stamped.description}`.slice(0, 600),
+    description: head ? `${head}${stamped.description}`.slice(0, 600) : stamped.description,
     message: [stamped.message, ...lines].filter(Boolean).join("\n"),
     aggKey: `${stamped.aggKey}|sigma:${matches
       .map((r) => r.id)
