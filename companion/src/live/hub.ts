@@ -68,11 +68,22 @@ export class LiveHub {
   // disabled, signed out, or lost the case. A WeakMap, so every removal path needs no cleanup.
   private readonly guards = new WeakMap<SocketLike, () => boolean>();
 
-  subscribe(caseId: string, socket: SocketLike, stillAllowed?: () => boolean): void {
+  /**
+   * Subscribe the socket; returns false (and closes it) when its re-check already fails. A
+   * revocation that landed after the upgrade check but before this call ran its revalidate()
+   * without this socket. Revocations change the store before they signal, so one check here,
+   * after the socket joins the set, leaves no window: later revocations reach it via revalidate().
+   */
+  subscribe(caseId: string, socket: SocketLike, stillAllowed?: () => boolean): boolean {
     const set = this.subs.get(caseId) ?? new Set<SocketLike>();
     set.add(socket);
     this.subs.set(caseId, set);
-    if (stillAllowed) this.guards.set(socket, stillAllowed);
+    if (!stillAllowed) return true;
+    this.guards.set(socket, stillAllowed);
+    if (passes(stillAllowed)) return true;
+    this.unsubscribe(caseId, socket);
+    socket.terminate?.();
+    return false;
   }
 
   /**
