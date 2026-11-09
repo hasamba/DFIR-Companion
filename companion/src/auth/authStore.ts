@@ -16,6 +16,18 @@ import {
   isGlobalRole,
   isServicePermission,
 } from "./types.js";
+import {
+  ALL_CASES_CASE_ID,
+  AUTHENTICATE_TOKEN_SQL,
+  INSERT_TOKEN_SQL,
+  LIST_TOKENS_SQL,
+  allCasesRowUsable,
+  assertAllCasesExpiry,
+  capAllCasesPermissions,
+  expiryAllowsUse,
+  migrateServiceTokenScope,
+  serviceTokenFromRow as tokenRecordFromRow,
+} from "./serviceTokenScope.js";
 
 const DUMMY_PASSWORD_HASH =
   "scrypt-v1$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -46,6 +58,10 @@ export interface CreateServiceTokenInput {
   permissions: ServicePermission[];
   expiresAt?: string;
 }
+
+export type CreateAllCasesTokenInput = Omit<CreateServiceTokenInput, "caseId">;
+
+const serviceTokenFromRow = (value: unknown): ServiceTokenRecord => tokenRecordFromRow(row(value));
 
 interface ServiceTokenCreated {
   record: ServiceTokenRecord;
@@ -133,31 +149,6 @@ function sessionFromRow(value: unknown): SessionRecord {
   };
 }
 
-function permissionsFromJson(value: unknown): ServicePermission[] {
-  if (typeof value !== "string") return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return [];
-  }
-  return Array.isArray(parsed) ? [...new Set(parsed.filter(isServicePermission))] : [];
-}
-
-function serviceTokenFromRow(value: unknown): ServiceTokenRecord {
-  const source = row(value);
-  return {
-    id: text(source.token_id ?? source.id, "token_id"),
-    identityId: text(source.identity_id, "identity_id"),
-    name: text(source.token_name ?? source.name, "token_name"),
-    caseId: text(source.case_id, "case_id"),
-    permissions: permissionsFromJson(source.permissions_json),
-    createdAt: text(source.token_created_at ?? source.created_at, "token_created_at"),
-    ...(optionalText(source.expires_at) ? { expiresAt: optionalText(source.expires_at) } : {}),
-    ...(optionalText(source.revoked_at) ? { revokedAt: optionalText(source.revoked_at) } : {}),
-  };
-}
-
 export class AuthStore {
   private readonly db: SqliteDatabase;
   /**
@@ -206,6 +197,7 @@ export class AuthStore {
         ");" +
         "CREATE INDEX IF NOT EXISTS auth_audit_time_idx ON auth_audit(timestamp DESC);",
     );
+    migrateServiceTokenScope(this.db);
   }
 
   close(): void {
@@ -602,45 +594,64 @@ export class AuthStore {
   }
 
   createServiceToken(input: CreateServiceTokenInput, actor: AuthIdentity): ServiceTokenCreated {
-    const name = normalizeDisplayName(input.name);
     const permissions = [...new Set(input.permissions.filter(isServicePermission))];
     if (permissions.length === 0) throw new Error("at least one service-token permission is required");
-    if (
-      input.expiresAt &&
-      (!Number.isFinite(Date.parse(input.expiresAt)) || Date.parse(input.expiresAt) <= Date.now())
-    ) {
+    if (input.expiresAt && !expiryAllowsUse(input.expiresAt)) {
       throw new Error("expiresAt must be a future ISO timestamp");
     }
+    return this.insertServiceToken(
+      { name: input.name, caseId: input.caseId, permissions, expiresAt: input.expiresAt, scope: "case" },
+      actor,
+    );
+  }
+
+  /** A token that acts for `owner` on every case they can currently write to (#2474). */
+  createAllCasesServiceToken(input: CreateAllCasesTokenInput, owner: AuthIdentity): ServiceTokenCreated {
+    if (owner.disabled || (owner.kind !== "local" && owner.kind !== "oidc")) {
+      throw new Error("only a signed-in person can own an all-cases token");
+    }
+    const permissions = capAllCasesPermissions(input.permissions.filter(isServicePermission));
+    const expiresAt = assertAllCasesExpiry(input.expiresAt);
+    return this.insertServiceToken(
+      { name: input.name, caseId: ALL_CASES_CASE_ID, permissions, expiresAt, scope: "all-cases", owner },
+      owner,
+    );
+  }
+
+  private insertServiceToken(
+    input: CreateServiceTokenInput & { scope: ServiceTokenRecord["scope"]; owner?: AuthIdentity },
+    actor: AuthIdentity,
+  ): ServiceTokenCreated {
+    const name = normalizeDisplayName(input.name);
     const id = `service:${randomUUID()}`;
     const tokenId = randomUUID();
     const token = `dfirsvc_${randomBytes(32).toString("base64url")}`;
     const now = new Date().toISOString();
+    const scopeDetail = input.owner ? `scope=all-cases owner=${input.owner.id} ` : "";
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db
         .prepare(
-          "INSERT INTO auth_identities " +
-            "(id, kind, display_name, global_role, created_at, updated_at) " +
+          "INSERT INTO auth_identities (id, kind, display_name, global_role, created_at, updated_at) " +
             "VALUES (?, 'service', ?, 'member', ?, ?)",
         )
         .run(id, name, now, now);
       this.db
-        .prepare(
-          "INSERT INTO auth_service_tokens " +
-            "(id, token_hash, identity_id, name, case_id, permissions_json, created_at, expires_at) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
+        .prepare(INSERT_TOKEN_SQL)
         .run(
           tokenId,
           tokenHash(token),
           id,
           name,
           input.caseId,
-          JSON.stringify(permissions),
+          JSON.stringify(input.permissions),
           now,
           input.expiresAt ?? null,
+          input.owner ? "all-cases" : null,
+          input.owner?.id ?? null,
         );
-      this.addAudit(actor, "service-token-created", id, input.caseId, `permissions=${permissions.join(",")}`);
+      const detail = `${scopeDetail}permissions=${input.permissions.join(",")}`;
+      this.addAudit(actor, "service-token-created", id, input.caseId || undefined, detail);
       this.db.exec("COMMIT");
       const identity = this.getIdentity(id) as AuthIdentity;
       return {
@@ -650,8 +661,12 @@ export class AuthStore {
           id: tokenId,
           identityId: id,
           name,
+          scope: input.scope,
           caseId: input.caseId,
-          permissions,
+          ...(input.owner
+            ? { ownerIdentityId: input.owner.id, ownerDisplayName: input.owner.displayName }
+            : {}),
+          permissions: input.permissions,
           createdAt: now,
           ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
         },
@@ -662,37 +677,34 @@ export class AuthStore {
     }
   }
 
+  /** Resolves a bearer token; an all-cases token's owner is re-checked here on every request. */
   authenticateServiceToken(token: string): RequestAuthentication | null {
-    const value = this.hotStatement(
-      "SELECT t.id AS token_id, t.identity_id, t.name AS token_name, t.case_id, " +
-        "t.permissions_json, t.created_at AS token_created_at, t.expires_at, t.revoked_at, i.* " +
-        "FROM auth_service_tokens t JOIN auth_identities i ON i.id=t.identity_id WHERE t.token_hash=?",
-    ).get(tokenHash(token));
+    const value = this.hotStatement(AUTHENTICATE_TOKEN_SQL).get(tokenHash(token));
     if (!value) return null;
     const source = row(value);
-    if (
-      source.disabled === 1 ||
-      source.revoked_at ||
-      (typeof source.expires_at === "string" && Date.parse(source.expires_at) <= Date.now())
-    ) {
-      return null;
+    if (source.disabled === 1 || source.revoked_at || !expiryAllowsUse(source.expires_at)) return null;
+    let record: ServiceTokenRecord;
+    try {
+      record = serviceTokenFromRow(source);
+    } catch {
+      return null; // an unknown stored scope refuses the token; it never degrades to one case
     }
-    return {
-      kind: "service-token",
-      identity: identityFromRow(source),
-      token: serviceTokenFromRow(source),
-    };
+    if (record.scope === "all-cases" && !allCasesRowUsable(source)) return null;
+    if (record.scope === "case" && (!record.caseId || source.owner_identity_id)) return null;
+    return { kind: "service-token", identity: identityFromRow(source), token: record };
   }
 
   listServiceTokens(): ServiceTokenRecord[] {
     return this.db
-      .prepare(
-        "SELECT id AS token_id, identity_id, name AS token_name, case_id, permissions_json, " +
-          "created_at AS token_created_at, expires_at, revoked_at FROM auth_service_tokens " +
-          "ORDER BY created_at DESC",
-      )
+      .prepare(LIST_TOKENS_SQL)
       .all()
-      .map(serviceTokenFromRow);
+      .flatMap((value) => {
+        try {
+          return [serviceTokenFromRow(value)];
+        } catch {
+          return []; // a row with an unknown scope is unusable and is not listed as a case token
+        }
+      });
   }
 
   revokeServiceToken(id: string, actor: AuthIdentity): boolean {

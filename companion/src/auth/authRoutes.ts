@@ -13,7 +13,14 @@ import { readPublicAsset } from "../serverAssets.js";
 import type { TeamAuth } from "./teamAuth.js";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
 import { isValidUsername } from "./authStore.js";
-import { isCaseRole, isGlobalRole, isServicePermission, type RequestAuthentication } from "./types.js";
+import {
+  isCaseRole,
+  isGlobalRole,
+  isServicePermission,
+  type RequestAuthentication,
+  type ServiceTokenRecord,
+} from "./types.js";
+import { parseServiceTokenScope } from "./serviceTokenScope.js";
 
 function bodyObject(req: Request): Record<string, unknown> {
   return req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -133,6 +140,60 @@ function requireCaseAdmin(
     return null;
   }
   return session;
+}
+
+/** Single-case tokens: case administrators of that case. All-cases tokens: the owner or a global admin. */
+function serviceTokenVisible(
+  auth: TeamAuth,
+  session: RequestAuthentication,
+  token: ServiceTokenRecord,
+): boolean {
+  if (token.scope === "case") return auth.canAdminCase(session, token.caseId);
+  return auth.isGlobalAdministrator(session) || token.ownerIdentityId === session.identity.id;
+}
+
+function requireTokenOwnerOrAdmin(
+  auth: TeamAuth,
+  req: Request,
+  res: Response,
+  token: ServiceTokenRecord,
+): RequestAuthentication | null {
+  const session = requireSession(auth, req, res);
+  if (!session) return null;
+  if (!serviceTokenVisible(auth, session, token)) {
+    res.status(404).end();
+    return null;
+  }
+  return session;
+}
+
+/**
+ * Any signed-in person may mint an all-cases token for THEMSELVES (#2474): it grants nothing beyond
+ * their own current write access, capped at capture + write, and must expire within 90 days. A
+ * caseId in the body is ignored — the scope is the owner's cases, never one named here.
+ */
+function createAllCasesToken(
+  auth: TeamAuth,
+  req: Request,
+  res: Response,
+  body: Record<string, unknown>,
+): Response | undefined {
+  const session = requireSession(auth, req, res);
+  if (!session) return undefined;
+  const permissions = Array.isArray(body.permissions) ? body.permissions.filter(isServicePermission) : [];
+  try {
+    const created = auth.store.createAllCasesServiceToken(
+      {
+        name: bodyString(body, "name"),
+        permissions,
+        ...(typeof body.expiresAt === "string" ? { expiresAt: body.expiresAt } : {}),
+      },
+      session.identity,
+    );
+    return res.status(201).json({ ...created.record, token: created.token });
+  } catch (err) {
+    return res.status(400).json({ error: (err as Error).message });
+  }
 }
 
 async function serveHtml(asset: string, res: Response): Promise<void> {
@@ -542,12 +603,17 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
   app.get("/auth/service-tokens", (req: Request, res: Response) => {
     const session = auth.requireSession(req);
     if (!session) return res.status(401).json({ error: "authentication required" });
-    const tokens = auth.store.listServiceTokens().filter((token) => auth.canAdminCase(session, token.caseId));
+    const tokens = auth.store
+      .listServiceTokens()
+      .filter((token) => serviceTokenVisible(auth, session, token));
     return res.status(200).json(tokens);
   });
 
   app.post("/auth/service-tokens", async (req: Request, res: Response) => {
     const body = bodyObject(req);
+    const scope = parseServiceTokenScope(body.scope);
+    if (!scope) return res.status(400).json({ error: "scope must be case or all-cases" });
+    if (scope === "all-cases") return createAllCasesToken(auth, req, res, body);
     const caseId = bodyString(body, "caseId");
     if (!(await existingCase(cases, caseId, res))) return;
     const session = requireCaseAdmin(auth, req, res, caseId);
@@ -574,7 +640,10 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
   app.delete("/auth/service-tokens/:tokenId", (req: Request, res: Response) => {
     const token = auth.store.listServiceTokens().find((candidate) => candidate.id === req.params.tokenId);
     if (!token) return res.status(404).end();
-    const session = requireCaseAdmin(auth, req, res, token.caseId);
+    const session =
+      token.scope === "all-cases"
+        ? requireTokenOwnerOrAdmin(auth, req, res, token)
+        : requireCaseAdmin(auth, req, res, token.caseId);
     if (!session) return;
     const removed = auth.store.revokeServiceToken(req.params.tokenId, session.identity);
     return res.status(removed ? 204 : 404).end();

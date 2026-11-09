@@ -34,11 +34,19 @@ export interface SessionRecord {
   userAgent?: string;
 }
 
+/** One case (the default), or every case the owner can currently write to (#2474). */
+export type ServiceTokenScope = "case" | "all-cases";
+
 export interface ServiceTokenRecord {
   id: string;
   identityId: string;
   name: string;
+  scope: ServiceTokenScope;
+  /** The case for a "case" token; "" for an "all-cases" token. */
   caseId: string;
+  /** The person an "all-cases" token acts for. Its access is that person's, read per request. */
+  ownerIdentityId?: string;
+  ownerDisplayName?: string;
   permissions: ServicePermission[];
   createdAt: string;
   expiresAt?: string;

@@ -317,6 +317,7 @@ describe("actorFrom (#1108)", () => {
         id: "t1",
         identityId: "u1",
         name: "ci-bot",
+        scope: "case",
         caseId: "c1",
         permissions: ["write"],
         createdAt: "2026-01-01T00:00:00Z",

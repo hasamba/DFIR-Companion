@@ -15,7 +15,7 @@ export interface CapturePayload {
 export interface Settings {
   caseId: string;
   companionUrl: string;    // default http://127.0.0.1:4773
-  serviceToken: string;    // optional case-scoped team-mode identity
+  serviceToken: string;    // optional team-mode token (one case, or all the owner's cases)
   intervalSeconds: number; // default and minimum MIN_INTERVAL_SECONDS
   running: boolean;
 }

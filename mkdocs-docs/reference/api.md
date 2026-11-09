@@ -50,7 +50,10 @@ curl -H "Authorization: Bearer $DFIR_TOKEN" http://127.0.0.1:4773/cases
 
 Service-token limits:
 
-- A service token belongs to **one case**. It cannot see or change other cases.
+- A **one-case** service token belongs to one case. It cannot see or change other cases.
+- An **all-cases** service token (`"scope": "all-cases"` when it is created) acts for the person
+  who created it, on every open case where that person is an investigator or case administrator
+  now. It holds `capture` and `write` at most, and it must expire within 90 days.
 - A service token **cannot create cases**, cannot read the jobs list (`/api/jobs`), and cannot call
   any administrator endpoint. For those, sign in with a user account instead:
   `POST /auth/local/login` with `{"username": "...", "password": "..."}`. Keep the `dfir_session`
