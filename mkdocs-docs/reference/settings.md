@@ -37,6 +37,9 @@ to remove it on save (press it again, or type a new value, to cancel). On/off se
 drop-downs with a blank *default* option; choosing it removes the setting. Read-only switches are
 still shown as text, because the dashboard must not change them.
 
+An empty setting left in `.env` by an older version or a hand edit (a bare `KEY=` line) is removed
+the next time you save Settings, so its default applies again. Read-only settings are left as they are.
+
 Jira and ServiceNow have the same flag and stay out of Essential — their whole block is read-only in
 the dashboard by design, a security boundary edited in `.env` and applied by a restart.
 

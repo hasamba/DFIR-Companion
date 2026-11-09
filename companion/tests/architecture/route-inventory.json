@@ -759,6 +759,7 @@
     "ROUTE GET /js/dashboard-view-presets.js",
     "ROUTE GET /js/dashboard-env-settings.js",
     "ROUTE GET /js/dashboard-env-secret-clear.js",
+    "ROUTE GET /js/dashboard-env-empty-lines.js",
     "ROUTE GET /js/dashboard-tls-info.js",
     "ROUTE GET /js/dashboard-decision-model-picker.js",
     "ROUTE GET /js/dashboard-memory-next-steps.js",

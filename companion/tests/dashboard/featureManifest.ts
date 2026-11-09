@@ -1084,6 +1084,13 @@ export const FEATURES: Feature[] = [
     private: ["SET_HINT", "PENDING_HINT"],
   },
   {
+    // Settings → empty KEY= lines already in .env (#2496). emptyLines is private: only the settings
+    // form's load and save may change which keys a save removes.
+    file: "dashboard-env-empty-lines.js",
+    publish: ["recordEmptyEnvLines", "isEmptyEnvLine", "settleEmptyEnvLines"],
+    private: ["emptyLines"],
+  },
+  {
     // Settings → Built-in HTTPS line + local-CA download link (#2285). Called by the settings form
     // each time it loads; holds no state of its own.
     file: "dashboard-tls-info.js",

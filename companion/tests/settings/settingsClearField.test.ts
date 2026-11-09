@@ -67,7 +67,7 @@ async function harness(loaded: Record<string, string>, fields: Fake[]) {
   }
   const api = loadDashboardModule<{ fetchEnvSettings(): Promise<void>; saveSettings(): Promise<boolean> }>(
     "dashboard-env-settings.js",
-    ["dashboard-env-secret-clear.js"],
+    ["dashboard-env-secret-clear.js", "dashboard-env-empty-lines.js"],
     {
       localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
       SECTION_DEFS: [],
@@ -109,9 +109,9 @@ describe("Settings save — a cleared text field (#2465)", () => {
     expect(h.posts).toEqual([{ updates: {}, unset: ["DFIR_TIMESKETCH_URL"] }]);
   });
 
-  it("sends nothing for a text field that loaded blank and is still blank", async () => {
+  it("sends nothing for a blank text field whose key is not in .env", async () => {
     const url = fake("env-DFIR_TIMESKETCH_URL");
-    const h = await harness({ DFIR_TIMESKETCH_URL: "" }, [url]);
+    const h = await harness({}, [url]);
     await h.api.saveSettings();
     expect(h.posts).toEqual([]);
   });
@@ -187,6 +187,52 @@ describe("Settings — the Clear control on a masked secret (#2465)", () => {
     await h.api.fetchEnvSettings();
     expect(proxy.placeholder).toBe("(already set)");
     expect(h.created.filter((c) => c.tagName === "BUTTON")).toHaveLength(1);
+    await h.api.saveSettings();
+    expect(h.posts).toEqual([]);
+  });
+});
+
+/**
+ * AN EMPTY `KEY=` LINE LEFT IN .env BY AN OLDER SAVE OR A HAND EDIT IS REMOVED ON SAVE (#2496).
+ *
+ * The server returns such a line as `KEY: ""`, and a key that is not in the file not at all. The form
+ * used to read both as "blank", so the line could never be removed from Settings.
+ */
+describe("Settings save — an empty KEY= line already in .env (#2496)", () => {
+  it("removes a blank text field whose key loaded as an empty line", async () => {
+    const url = fake("env-DFIR_TIMESKETCH_URL");
+    const h = await harness({ DFIR_TIMESKETCH_URL: "" }, [url]);
+    await h.api.saveSettings();
+    expect(h.posts).toEqual([{ updates: {}, unset: ["DFIR_TIMESKETCH_URL"] }]);
+  });
+
+  it("removes an empty secret line without the Clear control", async () => {
+    const key = fake("env-DFIR_MISP_KEY", "INPUT", "password");
+    const h = await harness({ DFIR_MISP_KEY: "" }, [key]);
+    expect(h.clearButton("DFIR_MISP_KEY")?.hidden ?? true).toBe(true);
+    await h.api.saveSettings();
+    expect(h.posts).toEqual([{ updates: {}, unset: ["DFIR_MISP_KEY"] }]);
+  });
+
+  it("writes a value typed into a field that loaded as an empty line", async () => {
+    const key = fake("env-DFIR_MISP_KEY", "INPUT", "password");
+    const h = await harness({ DFIR_MISP_KEY: "" }, [key]);
+    key.value = "new-key-value";
+    await h.api.saveSettings();
+    expect(h.posts).toEqual([{ updates: { DFIR_MISP_KEY: "new-key-value" }, unset: [] }]);
+  });
+
+  it("does not send the removed line again on a second save", async () => {
+    const url = fake("env-DFIR_TIMESKETCH_URL");
+    const h = await harness({ DFIR_TIMESKETCH_URL: "" }, [url]);
+    await h.api.saveSettings();
+    await h.api.saveSettings();
+    expect(h.posts).toEqual([{ updates: {}, unset: ["DFIR_TIMESKETCH_URL"] }]);
+  });
+
+  it("leaves an empty line for a read-only field in place", async () => {
+    const root = Object.assign(fake("env-DFIR_CASES_ROOT"), { readOnly: true });
+    const h = await harness({ DFIR_CASES_ROOT: "" }, [root]);
     await h.api.saveSettings();
     expect(h.posts).toEqual([]);
   });
