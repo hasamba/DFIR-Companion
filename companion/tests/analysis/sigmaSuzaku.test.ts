@@ -1,9 +1,9 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
-import { bundledSigmaDir, loadSigmaRuleDir } from "../../src/analysis/sigmaBundledRules.js";
+import { bundledSigmaDir, loadSigmaBundle, loadSigmaRuleDir } from "../../src/analysis/sigmaBundledRules.js";
 import { createSigmaImportGrader, sigmaProvenanceToken } from "../../src/analysis/sigmaImportGrade.js";
 import { buildSigmaRuleSet, matchSigmaRecord, type SigmaRuleSet } from "../../src/analysis/sigmaRuleSet.js";
 import { SigmaRuleStore } from "../../src/analysis/sigmaRuleStore.js";
@@ -71,6 +71,28 @@ describe("the bundled Suzaku folder", () => {
       problems: [],
     });
     expect(loadSuzakuRules(undefined, 10_000, {}).problems[0]).toMatch(/no bundled Suzaku rules folder/);
+  });
+});
+
+describe("source isolation", () => {
+  // Windows needs a privilege to create a symlink; the Linux run covers this path.
+  it.skipIf(process.platform === "win32")(
+    "still loads the Suzaku rules when the SigmaHQ folder cannot be read",
+    async () => {
+      const broken = await mkdtemp(join(tmpdir(), "dfir-sigma-broken-"));
+      await mkdir(join(broken, "rules"));
+      // A dangling link: the folder walk's stat throws, as an unreadable file would.
+      await symlink(join(broken, "missing.yml"), join(broken, "rules", "x.yml"));
+      const { set, problem } = loadSigmaBundle(broken, SUZAKU_DIR);
+      expect(problem).toMatch(/the bundled Sigma rules could not be read/);
+      expect(set.inventory.filter((e) => e.origin === "Suzaku" && e.outcome === "loaded")).toHaveLength(736);
+    },
+  );
+
+  it("still loads the Suzaku rules when there is no SigmaHQ folder", () => {
+    const { set, problem } = loadSigmaBundle(undefined, SUZAKU_DIR);
+    expect(problem).toMatch(/no bundled Sigma rules folder/);
+    expect(set.origins[0]?.name).toBe("Suzaku");
   });
 });
 
@@ -229,6 +251,16 @@ describe("the rule store with Suzaku", () => {
     expect(p.usable).toBe(false);
     expect(p.loads["aws-cloudtrail"] ?? 0).toBe(0);
     await expect(s.install(p.token)).rejects.toThrow(/no rule in this release loads/);
+  });
+
+  it("reports a missing Suzaku folder while the setting is on, and keeps SigmaHQ grading", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-sigma-suzaku-"));
+    const s = new SigmaRuleStore(root, SIGMA_DIR, {}, null);
+    const set = s.activeRuleSet();
+    expect(set.problems).toContain("no bundled Suzaku rules folder (data/sigma-suzaku/rules) was found");
+    expect(set.inventory.some((e) => !e.origin && e.outcome === "loaded")).toBe(true);
+    const off = new SigmaRuleStore(root, SIGMA_DIR, { DFIR_SIGMA_SUZAKU_RULES: "off" }, null).activeRuleSet();
+    expect(off.problems).toEqual([]);
   });
 
   it("re-grade lookups see Suzaku rules even when switched off", async () => {

@@ -133,8 +133,12 @@ export function loadSigmaRuleDir(
 }
 
 /** A set of the Suzaku rules alone, for an install whose SigmaHQ folder is missing (#2499). */
-function suzakuOnly(options: SigmaRuleSetOptions, sigmaProblem: string): BundledSigmaLoad {
-  const suzaku = loadSuzakuRules(bundledSuzakuDir(), SIGMA_MAX_RULE_FILES);
+function suzakuOnly(
+  options: SigmaRuleSetOptions,
+  sigmaProblem: string,
+  suzakuDir: string | undefined,
+): BundledSigmaLoad {
+  const suzaku = loadSuzakuRules(suzakuDir, SIGMA_MAX_RULE_FILES);
   const set = buildSigmaRuleSet(
     suzaku.files,
     { release: "none", commit: "master" },
@@ -153,15 +157,24 @@ export function bundledSigmaDir(): string | undefined {
 
 /** The bundled rules, or an empty set with the reason when the folder is missing or unreadable. */
 export function loadBundledSigmaRuleSet(options: SigmaRuleSetOptions = {}): BundledSigmaLoad {
-  const dir = bundledSigmaDir();
-  if (!dir) return suzakuOnly(options, "no bundled Sigma rules folder (data/sigma/rules) was found");
+  return loadSigmaBundle(bundledSigmaDir(), bundledSuzakuDir(), options);
+}
+
+/**
+ * The SigmaHQ folder plus the Suzaku folder (#2499). Either one failing never takes the other down:
+ * a missing or unreadable SigmaHQ folder still loads the Suzaku rules (Codex review).
+ */
+export function loadSigmaBundle(
+  dir: string | undefined,
+  suzakuDir: string | undefined,
+  options: SigmaRuleSetOptions = {},
+): BundledSigmaLoad {
+  if (!dir)
+    return suzakuOnly(options, "no bundled Sigma rules folder (data/sigma/rules) was found", suzakuDir);
   try {
-    return { set: loadSigmaRuleDir(dir, options, bundledSuzakuDir()), dir };
+    return { set: loadSigmaRuleDir(dir, options, suzakuDir), dir };
   } catch (error) {
-    return {
-      set: buildSigmaRuleSet([], { release: "none", commit: "master" }, options),
-      dir,
-      problem: `the bundled Sigma rules could not be read: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    const problem = `the bundled Sigma rules could not be read: ${error instanceof Error ? error.message : String(error)}`;
+    return { ...suzakuOnly(options, problem, suzakuDir), dir };
   }
 }

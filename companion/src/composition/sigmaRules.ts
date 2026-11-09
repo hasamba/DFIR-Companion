@@ -61,7 +61,8 @@ let storeGrader: SigmaImportGrader | undefined;
  * stores; loads the active release synchronously, so the first import already grades with it.
  */
 export function configureSigmaRules(dataRoot: string): SigmaRuleStore {
-  const s = new SigmaRuleStore(dataRoot, bundledSigmaDir(), process.env, bundledSuzakuDir());
+  // null, not undefined, when the Suzaku folder is missing: the store then reports it (#2499).
+  const s = new SigmaRuleStore(dataRoot, bundledSigmaDir(), process.env, bundledSuzakuDir() ?? null);
   s.load();
   store = s;
   storeGrader = createSigmaImportGrader(() => s.activeRuleSet(), {

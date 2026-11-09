@@ -153,8 +153,11 @@ export class SigmaRuleStore {
     private readonly dataRoot: string,
     private readonly bundledDir: string | undefined,
     private readonly env: NodeJS.ProcessEnv = process.env,
-    /** The bundled Suzaku rules folder (#2499); undefined = none. */
-    private readonly suzakuDir?: string,
+    /**
+     * The bundled Suzaku rules folder (#2499). `null` = looked for and missing, which is reported as
+     * a problem while the setting is on (Codex review); undefined = not part of this store (tests).
+     */
+    private readonly suzakuDir?: string | null,
   ) {
     this.activeInfo = this.bundledInfo();
   }
@@ -254,9 +257,9 @@ export class SigmaRuleStore {
    * (re-grade lookups see every rule, every status, whatever the switch says).
    */
   private suzakuPart(all = false): SuzakuPart {
-    if (!this.suzakuDir || (!all && !sigmaSuzakuEnabled(this.env)))
+    if (this.suzakuDir === undefined || (!all && !sigmaSuzakuEnabled(this.env)))
       return { files: [], origins: new Map(), problems: [] };
-    this.suzakuRead ??= loadSuzakuRules(this.suzakuDir, SIGMA_MAX_RULE_FILES, {
+    this.suzakuRead ??= loadSuzakuRules(this.suzakuDir ?? undefined, SIGMA_MAX_RULE_FILES, {
       ...this.env,
       DFIR_SIGMA_SUZAKU_RULES: "on",
     });
@@ -277,7 +280,7 @@ export class SigmaRuleStore {
 
   /** The part of the cache key the Suzaku settings decide. */
   private suzakuKey(): string {
-    return this.suzakuDir && sigmaSuzakuEnabled(this.env)
+    return this.suzakuDir !== undefined && sigmaSuzakuEnabled(this.env)
       ? `${sigmaSuzakuStatusesFromEnv(this.env).statuses.join(",")}@${sigmaSuzakuMinLevelFromEnv(this.env).level}`
       : "off";
   }
