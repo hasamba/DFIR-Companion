@@ -227,3 +227,53 @@ export function holdSkipped(control: AiControl, skipped: readonly number[]): Par
     analysisHold: { ...prior, failedSeqs },
   };
 }
+
+export interface SkipHoldResult {
+  patch: Partial<AiControl>;
+  /** Held captures that stop being owed. */
+  skipped: number[];
+  /** Held captures that stay held: an owed capture that never failed sits below them. */
+  remaining: number[];
+}
+
+/**
+ * #2498: the analyst accepts the gap — the hold's captures stop being owed, and nothing else does.
+ *
+ * releaseHold is NOT enough: a failed capture can sit above `analyzedThrough` (a failure never
+ * raises it), so releasing would leave it above the watermark and a restart or AI off→on would
+ * retry it. Instead the watermark walks up from what is dealt with over held captures and logged
+ * duplicates, and stops at the first capture still owed for another reason (one never analyzed,
+ * one waiting in the live buffer). The watermark only ever covers a contiguous run, so a held
+ * capture above that stop stays held rather than dropping the owed one below it.
+ */
+export function skipHoldPatch(
+  control: AiControl,
+  captures: readonly CaptureMetadata[],
+  inBuffer: ReadonlySet<number> = new Set(),
+): SkipHoldResult {
+  const hold = control.analysisHold;
+  if (!hold || hold.failedSeqs.length === 0) return { patch: {}, skipped: [], remaining: [] };
+  const floor = dealtWithThrough(control);
+  const failed = new Set(hold.failedSeqs);
+  const duplicate = new Set(captures.filter((c) => c.isDuplicate).map((c) => c.sequenceNumber));
+  const candidates = [...new Set([...captures.map((c) => c.sequenceNumber), ...failed])]
+    .filter((seq) => seq > floor)
+    .sort((a, b) => a - b);
+  let through = floor;
+  for (const seq of candidates) {
+    const passable = failed.has(seq) || (duplicate.has(seq) && !inBuffer.has(seq));
+    if (!passable || inBuffer.has(seq)) break;
+    through = seq;
+  }
+  const skipped = hold.failedSeqs.filter((seq) => seq <= through).sort((a, b) => a - b);
+  const remaining = hold.failedSeqs.filter((seq) => seq > through).sort((a, b) => a - b);
+  const lastAnalyzedSeq = Math.max(control.lastAnalyzedSeq, through);
+  const patch: Partial<AiControl> =
+    remaining.length === 0
+      ? { lastAnalyzedSeq, analysisHold: undefined }
+      : {
+          lastAnalyzedSeq,
+          analysisHold: { ...hold, failedSeqs: remaining, analyzedThrough: lastAnalyzedSeq },
+        };
+  return { patch, skipped, remaining };
+}

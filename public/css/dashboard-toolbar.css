@@ -25,7 +25,7 @@
 #aiToggle::before, #synthesize::before, #jevReviewBtn::before, #secondLookBtn::before, #secondOpinion::before, #deepPassBtn::before,
 #importBtn::before, #importCaseBtn::before, #cloudCollectBtn::before,
 #importUndoBtn::before, #importRedoBtn::before, #presentBtn::before,
-#toggleAll::before, #toggleSearchBar::before, #presidioRetryBtn::before, #presidioContinueBtn::before {
+#toggleAll::before, #toggleSearchBar::before, #presidioRetryBtn::before, #presidioContinueBtn::before, #heldSkipBtn::before {
   content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
   margin-right: 6px; background: no-repeat center / contain; }
 #connect::before     { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 15l6-6'/><path d='M11 6l1-1a4 4 0 0 1 6 6l-1 1'/><path d='M13 18l-1 1a4 4 0 0 1-6-6l1-1'/></svg>"); }
@@ -62,6 +62,8 @@
    struck-out shield (go on without that layer). Shown only while the analyzer is down. */
 #presidioRetryBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 12a9 9 0 0 1 15.4-6.4L21 8'/><path d='M21 3v5h-5'/><path d='M21 12a9 9 0 0 1-15.4 6.4L3 16'/><circle cx='12' cy='12' r='1.5'/></svg>"); }
 #presidioContinueBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z'/><path d='M4 4l16 16'/></svg>"); }
+/* Skip screenshots the AI could not analyze (#2498) — a camera with a forward-skip arrow. */
+#heldSkipBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14 18H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3l2-3h5l2 3h1'/><circle cx='8.5' cy='12' r='3'/><path d='M17 9l4 3-4 3z'/><path d='M23 9v6'/></svg>"); }
 #toggleAll::before   { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M7 9l5-5 5 5'/><path d='M7 15l5 5 5-5'/></svg>"); }
 /* Export, Push and Collapse-all are ALWAYS icon-only — their labels never show, so the wider
    labelled actions get the room; hover tooltips keep them discoverable. The dropdowns can't take
@@ -92,6 +94,9 @@
    is not part of the row being compacted; only the row's own controls should lose their labels. */
 .toolbar-main.icons-only button:not(.dv-item) { font-size: 0; padding-left: 9px; padding-right: 9px; }
 .toolbar-main.icons-only button::before { margin-right: 0; }
+/* #2498: rare but important — keep its short label in tight mode, or it reads as one more icon. */
+.toolbar-main.icons-only #heldSkipBtn { font-size: 12px; padding-left: 9px; padding-right: 9px; }
+.toolbar-main.icons-only #heldSkipBtn::before { margin-right: 6px; }
 /* The capture count carries a camera icon (always shown). When space is tight the word
    "Screenshots:" drops and only the camera + number remain, and the AI-status badge is
    compacted (not hidden) — its colored pill (grey/green/yellow/red) still conveys the state

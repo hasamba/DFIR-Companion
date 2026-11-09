@@ -14,7 +14,12 @@ import { warnLine } from "../logging/serverLogger.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
-import { describeAnalysisHold, type AiControl } from "../analysis/aiControl.js";
+import {
+  describeAnalysisHold,
+  holdToken,
+  type AiControl,
+  type SkipHeldResult,
+} from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap, CaseKeyedSet } from "../storage/caseKeyedState.js";
@@ -30,6 +35,7 @@ import {
   recoveryPolicy,
   releaseHold,
   skippedBelow,
+  skipHoldPatch,
 } from "./captureRecovery.js";
 
 export interface CaptureWindowsDeps {
@@ -61,6 +67,8 @@ export interface CaptureWindows {
   resume(caseId: string): Promise<void>;
   /** Analyze everything the case owes, queued behind its flush/recovery so they never overlap (#2250). */
   analyzeOwedExclusive(caseId: string, mode: OwedMode): Promise<OwedOutcome>;
+  /** The analyst accepts the gap: the held screenshots stop being owed (#2498). */
+  skipHeld(caseId: string, token: string): Promise<SkipHeldResult>;
   /** Cases holding a failed window, for the safety-net sweep. */
   readonly heldCases: CaseKeyedSet;
 }
@@ -428,10 +436,57 @@ export function createCaptureWindows(deps: CaptureWindowsDeps): CaptureWindows {
     });
   }
 
+  function skipHeld(caseId: string, token: string): Promise<SkipHeldResult> {
+    return runInCaseScope(store.casesRoot, caseId, () =>
+      serialized(caseId, () => skipHeldNow(caseId, token)),
+    );
+  }
+
+  /**
+   * #2498: queued behind any flush or recovery, so the token is checked against the hold as it is
+   * when the skip runs, not as it was when the request arrived. The control write is the action;
+   * the marker and the idle status after it are best effort and never lose the result.
+   */
+  async function skipHeldNow(caseId: string, token: string): Promise<SkipHeldResult> {
+    // The central write gate checked the case when the request arrived; it may have been closed
+    // while this waited behind a window (#2437). Re-checked here, before anything is changed.
+    const status = (await store.getCaseMeta(caseId).catch(() => null))?.status;
+    if (status === "closed" || status === "archived")
+      return { outcome: "frozen", skipped: [], remaining: [] };
+    await adoptStaleInFlight(caseId);
+    const cur = await getControl(caseId);
+    const hold = cur.analysisHold;
+    if (!hold || hold.failedSeqs.length === 0) return { outcome: "none", skipped: [], remaining: [] };
+    if (holdToken(hold) !== token) return { outcome: "stale", skipped: [], remaining: hold.failedSeqs };
+    let log = "";
+    try {
+      log = await readFile(store.capturesLogPath(caseId), "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; // never skip blind
+    }
+    const inBuffer = new Set((captureBuffers.get(caseId) ?? []).map((c) => c.sequenceNumber));
+    const { patch, skipped, remaining } = skipHoldPatch(cur, parseCaptureLog(log).captures, inBuffer);
+    await setControl(caseId, patch);
+    unrecordedFailures.delete(caseId);
+    try {
+      await clearMarkerUnlessHeld(caseId);
+      await reportIdle(caseId);
+    } catch (err) {
+      warnLine(`[capture-analysis] ${caseId}: skip cleanup failed: ${(err as Error).message}`);
+    }
+    return {
+      outcome: "skipped",
+      skipped,
+      remaining,
+      ...(hold.lastError ? { lastError: hold.lastError } : {}),
+    };
+  }
+
   return {
     flush,
     recover,
     resume,
+    skipHeld,
     analyzeOwedExclusive: (caseId, mode) => {
       // The analyst's AI off→on retries even a hold that gave up, so it re-arms the sweep too.
       if (mode === "backfill") unrecordedFailures.delete(caseId);
