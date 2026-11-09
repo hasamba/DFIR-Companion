@@ -26,7 +26,15 @@ export const cloudStreamDisclosureSchema = z.object({
   aggregatedRows: z.object({ medium: z.number(), low: z.number(), info: z.number() }),
   /** Optional: disclosures stored before #2502 lack it. */
   mediumMerged: z.number().int().nonnegative().optional(),
-  mediumOverflow: z.object({ ruleActorBudget: z.number(), importBudget: z.number() }),
+  /** failedReadBudget and failedReads are optional: disclosures stored before #2481 lack them. */
+  mediumOverflow: z.object({
+    ruleActorBudget: z.number(),
+    importBudget: z.number(),
+    failedReadBudget: z.number().int().nonnegative().optional(),
+  }),
+  failedReads: z
+    .object({ folded: z.number().int().nonnegative(), toSuper: z.number().int().nonnegative() })
+    .optional(),
   groups: z.object({ detailed: z.number(), coarse: z.number(), catchAll: z.number() }),
   superWritten: z.number().int().nonnegative(),
   superBudgetExceeded: z.number().int().nonnegative(),
@@ -40,6 +48,7 @@ export const cloudStreamDisclosureSchema = z.object({
     mediumMax: z.number(),
     aggregateGroupsMax: z.number(),
     coarseGroupsMax: z.number(),
+    failedReadsPerActor: z.number().optional(),
     superRows: z.number(),
   }),
 });
@@ -89,6 +98,7 @@ export function buildCloudStreamDisclosure(i: DisclosureInputs): CloudStreamDisc
     aggregatedRows: { ...o.aggregatedRows },
     mediumMerged: o.mediumMerged,
     mediumOverflow: { ...o.mediumOverflow },
+    failedReads: { ...o.failedReads },
     groups: { ...o.groups },
     superWritten: i.superWritten,
     superBudgetExceeded: o.superBudgetExceeded,
@@ -111,13 +121,18 @@ export function describeCloudStreamDisclosure(d: CloudStreamDisclosure): string[
     documentsJoined: d.documentsJoined,
     garbageSkipped: d.parseErrors,
   });
+  const folded = d.failedReads?.folded ?? 0;
+  // Folded failed reads (#2481) are Medium rows in the super-timeline beside the Low/Info ones.
+  const superKinds = folded ? "Low/Info and folded Medium" : "Low/Info";
   return [
     `streamed from disk${d.gzip ? " (gzip, decompressed on read)" : ""}: ${n(d.records)} record(s), ${d.format}`,
     `kept in detail: ${n(d.individual.critical)} Critical, ${n(d.individual.high)} High, ${n(d.individual.medium)} Medium row(s)`,
     d.mediumMerged
       ? `${n(d.mediumMerged)} of those Medium row(s) merged into a matching kept row (same grouping key as a small-file import)`
       : "",
-    d.superWritten ? `${n(d.superWritten)} Low/Info row(s) written to the super-timeline individually` : "",
+    d.superWritten
+      ? `${n(d.superWritten)} ${superKinds} row(s) written to the super-timeline individually`
+      : "",
     agg
       ? `${n(agg)} row(s) aggregated (${n(d.aggregatedRows.medium)} Medium, ${n(d.aggregatedRows.low)} Low, ${n(d.aggregatedRows.info)} Info) into ${n(d.groups.detailed + d.groups.coarse + d.groups.catchAll)} counted event(s)`
       : "",
@@ -127,11 +142,17 @@ export function describeCloudStreamDisclosure(d: CloudStreamDisclosure): string[
     d.mediumOverflow.importBudget
       ? `${n(d.mediumOverflow.importBudget)} Medium row(s) past the budget of ${n(d.budgets.mediumMax)} individual Medium rows per import`
       : "",
+    d.mediumOverflow.failedReadBudget
+      ? `${n(d.mediumOverflow.failedReadBudget)} failed read-only Medium call(s) past the budget of ${n(d.budgets.failedReadsPerActor ?? 0)} per actor`
+      : "",
+    folded
+      ? `${n(folded)} failed read-only call(s) folded into one counted event per actor, ${n(d.failedReads?.toSuper ?? 0)} of them sent to the super-timeline individually`
+      : "",
     d.groups.coarse || d.groups.catchAll
       ? `aggregation detail capped at ${n(d.budgets.aggregateGroupsMax)} groups: ${n(d.groups.coarse)} coarser group(s) by rule${d.groups.catchAll ? `, ${n(d.groups.catchAll)} catch-all group(s) past ${n(d.budgets.coarseGroupsMax)} coarse groups` : ""}`
       : "",
     d.superBudgetExceeded
-      ? `${n(d.superBudgetExceeded)} Low/Info row(s) not written individually — the super-timeline room for this import (${n(d.budgets.superRows)} rows) was used; they are in the aggregated rows and the stored evidence file`
+      ? `${n(d.superBudgetExceeded)} ${superKinds} row(s) not written individually — the super-timeline room for this import (${n(d.budgets.superRows)} rows) was used; they are in the aggregated rows and the stored evidence file`
       : "",
     d.superEvicted ? `the super-timeline cap evicted ${n(d.superEvicted)} older row(s)` : "",
     d.iocsDropped
