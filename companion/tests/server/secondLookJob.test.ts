@@ -80,7 +80,7 @@ async function harness(opts: { withSuperTimeline?: boolean; jobManager?: JobMana
     ...(withSuper ? { superTimelineStore } : {}),
     ...(opts.jobManager ? { jobManager: opts.jobManager } : {}),
   });
-  return { app, stateStore, store, synthMetaStore: new SynthMetaStore(store), superTimelineStore };
+  return { app, stateStore, store, synthMetaStore: new SynthMetaStore(store), superTimelineStore, provider };
 }
 
 /** One synthesis, so the model's own evidence request is on the synth-meta for the button to read. */
@@ -99,7 +99,7 @@ describe("POST /cases/:id/second-look runs as a job (#2407)", () => {
     const job = jobManager.list("c1").find((j) => j.kind === "second-look");
     expect(job).toMatchObject({
       status: "succeeded",
-      cancellable: false,
+      cancellable: true, // #2425: Cancel is closed only for the promotion window
       label: "second look + re-synthesis",
     });
   });
@@ -139,5 +139,90 @@ describe("POST /cases/:id/second-look runs as a job (#2407)", () => {
     expect(res.status).toBe(500);
     const job = jobManager.list("c1").find((j) => j.kind === "second-look");
     expect(job).toMatchObject({ status: "failed", failure: { code: "second_look_failed" } });
+  });
+});
+
+// #2425: Second Look is cancellable, with safe stop points. Cancel is CLOSED while the promotion
+// writes rows (a cancel frees the case's slot at once, and must never do so mid-write); the sweep
+// before it and the re-synthesis after it stop on the job's signal. A run that promoted rows and
+// then did not finish its re-synthesis still records the sweep and marks the conclusions out of date.
+describe("POST /cases/:id/second-look is cancellable at safe points (#2425)", () => {
+  it("a queued second look can be cancelled: 499, nothing promoted", async () => {
+    const jobManager = new JobManager({ globalConcurrency: 1, perCaseConcurrency: 1 });
+    const { app, stateStore } = await harness({ jobManager });
+    await seedSynthesis(app);
+    const busy = jobManager.register({ caseId: "c1", kind: "synthesis", label: "synthesis" });
+    await busy.ready;
+    const pending = request(app)
+      .post("/cases/c1/second-look")
+      .send({})
+      .then((r) => r);
+    const queued = await pollFor("the second look to queue", async () =>
+      jobManager.list("c1").find((j) => j.kind === "second-look" && j.status === "queued"),
+    );
+    expect(queued.cancellable).toBe(true);
+    expect((await jobManager.cancel(queued.id)).ok).toBe(true);
+    const res = await pending;
+    expect(res.status).toBe(499);
+    expect(res.body.promoted).toBe(0);
+    await jobManager.finish(busy.jobId);
+    expect((await stateStore.load("c1")).forensicTimeline.some((e) => e.id === "rawhit")).toBe(false);
+  });
+
+  it("refuses Cancel while the promotion writes rows", async () => {
+    const jobManager = new JobManager();
+    const { app, stateStore } = await harness({ jobManager });
+    await seedSynthesis(app);
+    const seen: Array<{ cancellable?: boolean; cancel?: string }> = [];
+    const save = stateStore.save.bind(stateStore);
+    stateStore.save = async (state) => {
+      const job = jobManager.list("c1").find((j) => j.kind === "second-look" && j.status === "running");
+      if (job && seen.length === 0) {
+        const result = await jobManager.cancel(job.id);
+        seen.push({ cancellable: job.cancellable, cancel: result.ok ? "ok" : result.reason });
+      }
+      return save(state);
+    };
+    const res = await request(app).post("/cases/c1/second-look").send({ resynthesize: false });
+    expect(res.status).toBe(200);
+    expect(res.body.promoted).toBe(1);
+    expect(seen).toEqual([{ cancellable: false, cancel: "not-cancellable" }]);
+    expect(jobManager.list("c1").find((j) => j.kind === "second-look")?.status).toBe("succeeded");
+  });
+
+  it("a cancel during the re-synthesis answers 499, records the sweep and marks the conclusions out of date", async () => {
+    const jobManager = new JobManager();
+    const { app, stateStore, synthMetaStore, provider } = await harness({ jobManager });
+    await seedSynthesis(app);
+    const analyze = provider.analyze.bind(provider);
+    provider.analyze = async (req) => {
+      const job = jobManager.list("c1").find((j) => j.kind === "second-look" && j.status === "running");
+      if (job) await jobManager.cancel(job.id);
+      return analyze(req);
+    };
+    const res = await request(app).post("/cases/c1/second-look").send({});
+    expect(res.status).toBe(499);
+    expect(res.body.promoted).toBe(1);
+    expect((await stateStore.load("c1")).forensicTimeline.some((e) => e.id === "rawhit")).toBe(true);
+    const meta = await synthMetaStore.load("c1");
+    expect(meta?.secondLook?.promoted).toBe(1);
+    expect(meta?.outOfDate).toBeTruthy();
+    expect(jobManager.list("c1").find((j) => j.kind === "second-look")?.status).toBe("cancelled");
+  });
+
+  it("a failed re-synthesis after promotion records the sweep and marks the conclusions out of date", async () => {
+    const jobManager = new JobManager();
+    const { app, synthMetaStore, provider } = await harness({ jobManager });
+    await seedSynthesis(app);
+    provider.analyze = async () => {
+      throw new Error("provider down (staged)");
+    };
+    const res = await request(app).post("/cases/c1/second-look").send({});
+    expect(res.status).toBe(500);
+    expect(res.body.promoted).toBe(1);
+    const meta = await synthMetaStore.load("c1");
+    expect(meta?.secondLook?.promoted).toBe(1);
+    expect(meta?.outOfDate).toBeTruthy();
+    expect(jobManager.list("c1").find((j) => j.kind === "second-look")?.status).toBe("failed");
   });
 });

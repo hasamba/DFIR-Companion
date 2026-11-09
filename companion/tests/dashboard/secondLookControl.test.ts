@@ -370,6 +370,41 @@ describe("the busy flag", () => {
   });
 });
 
+// #2425: Second Look is cancellable, and a run can stop after it promoted rows. The panel must not
+// call that "did not run": the rows are in the case and only the re-synthesis is missing.
+describe("a run that stopped part-way (#2425)", () => {
+  it("shows a cancel as the server's own words", async () => {
+    const h = await withPreview();
+    const run = h.api.runSecondLook();
+    const msg = "second look cancelled — nothing was promoted";
+    h.pending.shift()!.resolve({ error: msg, promoted: 0 }, { ok: false, status: 499 });
+    await run;
+    await settle();
+    expect(h.el("secondLookStatus").textContent).toBe(msg);
+    expect(h.el("secondLookRunBtn").disabled).toBe(false);
+    expect(h.synthMetaCalls, "nothing changed, so nothing is refreshed").toEqual([]);
+  });
+
+  it("says rows were promoted when the re-synthesis failed after them, and refreshes", async () => {
+    const h = await withPreview();
+    const run = h.api.runSecondLook();
+    h.pending.shift()!.resolve({ error: "provider down", promoted: 3 }, { ok: false, status: 500 });
+    await run;
+    await settle();
+    const text = h.el("secondLookStatus").textContent;
+    expect(text).toContain("promoted 3 raw event(s)");
+    expect(text).toContain("provider down");
+    expect(text).not.toContain("did not run");
+    expect(h.synthMetaCalls).toContain("case-1");
+    const remeasure = h.pending.find((p) => p.url === "/cases/case-1/second-look/preview")!;
+    remeasure.resolve(FULL_PREVIEW);
+    await settle();
+    expect(h.el("secondLookStatus").textContent, "the re-measure keeps the message").toContain(
+      "promoted 3 raw event(s)",
+    );
+  });
+});
+
 // WHERE IT LIVES CHANGED, AND THAT IS THE POINT.
 //
 // It was a card inside the findings panel, under the synthesis strip. The analyst could not find it

@@ -164,7 +164,7 @@ async function sweepCase(
   // Nothing to search for. Skip the super-timeline read entirely rather than scan it for no terms.
   if (!requests.length) return { state, requests, plan: buildSecondLookPlan([]) };
 
-  // A departed preview client skips the super-timeline read (#2128). The run passes no signal.
+  // A departed preview client, or a cancelled run (#2425), skips the super-timeline read (#2128).
   if (signal?.aborted) throw abortError();
   const candidates = await collectSecondLookCandidates(superStore, caseId, window, {
     scopedEvents,
@@ -233,21 +233,50 @@ export async function secondLookPreview(
  * A sweep that promoted nothing never re-synthesises: there is no new evidence to fold in, and a
  * forced call would spend the analyst's money to reproduce the conclusions they already have.
  */
+/**
+ * The run's stop points (#2425). `signal` is the job's: the sweep stops on it, and so does the
+ * re-synthesis. `guardWrite` wraps the promotion — the one write a cancel must never cut loose,
+ * because a cancel frees the case's job slot at once; the route closes Cancel inside it and throws
+ * if a cancel already landed. `onPromotionStarted` fires (with the planned count) just before the
+ * promotion's write begins, so the caller treats even a promotion that threw after saving as having
+ * changed the record.
+ */
+export interface SecondLookRunOptions {
+  resynthesize?: boolean;
+  signal?: AbortSignal;
+  guardWrite?: <T>(write: () => Promise<T>) => Promise<T>;
+  onPromotionStarted?: (count: number) => void;
+}
+
 export async function secondLookRun(
   ctx: SecondLookContext,
   caseId: string,
-  opts: { resynthesize?: boolean; signal?: AbortSignal } = {},
+  opts: SecondLookRunOptions = {},
 ): Promise<SecondLookRunResult | null> {
-  const swept = await sweepCase(ctx, caseId);
+  const swept = await sweepCase(ctx, caseId, opts.signal);
   if (!swept) return null;
   const { requests, plan } = swept;
+  if (opts.signal?.aborted) throw abortError(); // the last stop point before the record changes
+
+  const meta = (): SecondLookMeta => ({
+    promoted: plan.promotions.length,
+    requests: requests.length,
+    matched: plan.resolutions.filter((r) => r.matchedEventIds.length > 0).length,
+    leads: leadReasons(plan),
+    summary: summarizeSecondLook(plan),
+    at: new Date().toISOString(),
+  });
 
   if (plan.promotions.length) {
-    await ctx.promoteSuperTimeline(caseId, plan.promotions, {
-      intent: "second-look",
-      importedAt: new Date().toISOString(),
-      tagById: plan.tagById,
-      note: `Second look: promoted ${plan.promotions.length} raw event(s) matching open questions`,
+    const guard = opts.guardWrite ?? (<T>(write: () => Promise<T>) => write());
+    await guard(() => {
+      opts.onPromotionStarted?.(plan.promotions.length);
+      return ctx.promoteSuperTimeline(caseId, plan.promotions, {
+        intent: "second-look",
+        importedAt: new Date().toISOString(),
+        tagById: plan.tagById,
+        note: `Second look: promoted ${plan.promotions.length} raw event(s) matching open questions`,
+      });
     });
   }
 
@@ -256,26 +285,27 @@ export async function secondLookRun(
   // sweep, which is what makes one press mean exactly one sweep.
   const wantsResynthesis = opts.resynthesize !== false && plan.promotions.length > 0;
   if (wantsResynthesis) {
-    await synthesize(ctx, caseId, { force: true, ...(opts.signal ? { signal: opts.signal } : {}) });
+    try {
+      await synthesize(ctx, caseId, { force: true, ...(opts.signal ? { signal: opts.signal } : {}) });
+    } catch (err) {
+      // #2425: rows are promoted but the re-synthesis failed, stopped at an analyst gate or was
+      // cancelled. The sweep still happened, so its record (and the leads the report reads from
+      // it) is kept. Best effort: the run's own error is what the caller must see.
+      await ctx.opts.synthMetaStore?.recordSecondLook(caseId, meta()).catch(() => undefined);
+      throw err;
+    }
   }
 
   // AFTER the re-synthesis, which rewrites the synth-meta document wholesale. Recording the sweep
   // first would hand the re-synthesis a card to overwrite, and reportWriter.ts reads these leads
   // straight out of that file — a lost merge drops them from the REPORT, not just from a card.
-  const meta: SecondLookMeta = {
-    promoted: plan.promotions.length,
-    requests: requests.length,
-    matched: plan.resolutions.filter((r) => r.matchedEventIds.length > 0).length,
-    leads: leadReasons(plan),
-    summary: summarizeSecondLook(plan),
-    at: new Date().toISOString(),
-  };
-  await ctx.opts.synthMetaStore?.recordSecondLook(caseId, meta);
+  const recorded = meta();
+  await ctx.opts.synthMetaStore?.recordSecondLook(caseId, recorded);
 
   return {
-    promoted: meta.promoted,
-    leads: meta.leads,
-    summary: meta.summary,
+    promoted: recorded.promoted,
+    leads: recorded.leads,
+    summary: recorded.summary,
     resynthesized: wantsResynthesis,
     shapeCapped: plan.shapeCapped,
     truncated: plan.truncated,
