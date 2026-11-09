@@ -131,7 +131,11 @@ export function attachLiveSocket(
   // forever (memory leak) and the next broadcast's `send()` to the half-open socket throws an
   // unhandled 'error' on the WebSocket (no error listener was attached) → process crash.
   const REAPER_INTERVAL_MS = 30_000;
+  // #2449: each tick also re-runs every team-mode socket's upgrade check. This is the backstop for
+  // what sends no signal — a session that simply expires, a case-access sweep — and for any future
+  // auth writer that forgets to call notifyAccessChanged.
   const reaper = setInterval(() => {
+    hub.revalidate();
     const reaped = hub.sweepReaper();
     for (let count = 0; count < reaped; count++)
       void deps.operationalMetrics?.record({ type: "websocket", event: "reap", durationMs: 0 });
@@ -140,7 +144,15 @@ export function attachLiveSocket(
   if (typeof reaper.unref === "function") reaper.unref();
   // Stop sweeping once this server is closed, so a test (or a /settings/reload) that attaches a
   // second WebSocketServer doesn't leave the first one's timer pinging a hub nobody serves.
-  wss.on("close", () => clearInterval(reaper));
+  // #2449: an access-ending auth action (sign-out, disable, demotion, removed case role) re-checks
+  // every open socket at once instead of waiting for the next tick.
+  const stopWatchingAccess = deps.teamAuth?.onAccessChanged(() => {
+    hub.revalidate();
+  });
+  wss.on("close", () => {
+    clearInterval(reaper);
+    stopWatchingAccess?.();
+  });
 
   server.on("upgrade", (req, socket, head) => {
     // Only claim our own path; anything else is left for another handler to answer (or to time out).
@@ -185,7 +197,17 @@ export function attachLiveSocket(
           ws.on("pong", () => {
             sock.isAlive = true;
           });
-          hub.subscribe(caseId, sock);
+          // #2449: in team mode, hand the hub the upgrade's own access check so it can close this
+          // socket once the session or case role behind it is gone. The cookie header it keeps is
+          // the one ws's request object already holds for the socket's life — no new exposure.
+          // Single-user mode passes no guard, so a re-check never closes its sockets.
+          const teamAuth = deps.teamAuth;
+          const cookie = req.headers.cookie;
+          hub.subscribe(
+            caseId,
+            sock,
+            teamAuth ? () => teamAuth.authorizeWebSocket(cookie, caseId) : undefined,
+          );
           sendJobsSnapshot(sock, caseId, deps.jobsFor);
           ws.on("close", () => {
             hub.unsubscribe(caseId, sock);

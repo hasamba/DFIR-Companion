@@ -72,7 +72,9 @@ Findings against these come up in every automated review; they are design decisi
   `DFIR_AUTH_SESSION_HOURS` (default 12, at most 168), however long the browser sits unused. The
   "last seen" time on a session shows activity in the session list. It does not end the session.
   To end one early, sign out, or have an administrator disable the user (which revokes all of
-  that user's sessions).
+  that user's sessions). Signing out, disabling or demoting a user, or removing their case role
+  also closes their open live dashboard connections at once; an expired session loses its live
+  connection within about 30 seconds (#2449).
 - **Anyone who can write to the cases folder on disk is trusted, and backups are not
   content-authenticated.** That includes each case's `state/backups/` directory. Restoring a
   backup checks the filename, allows only the known state files, and runs a SQLite integrity

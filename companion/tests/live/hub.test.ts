@@ -187,3 +187,82 @@ describe("LiveHub.broadcastJobs (#1453)", () => {
     });
   });
 });
+
+// #2449: team mode authorizes a live socket only at upgrade. A socket subscribed with a re-check
+// guard is closed by revalidate() once that guard says no (or throws — fail closed). A socket with
+// no guard (single-user mode) is never touched.
+describe("LiveHub.revalidate (#2449)", () => {
+  function closableSocket(): SocketLike & { sent: string[]; terminated: number } {
+    const socket = {
+      sent: [] as string[],
+      terminated: 0,
+      readyState: 1,
+      OPEN: 1,
+      send(d: string) {
+        socket.sent.push(d);
+      },
+      terminate() {
+        socket.terminated++;
+      },
+    };
+    return socket;
+  }
+
+  it("closes sockets whose guard refuses or throws and keeps allowed and guardless ones", () => {
+    const hub = new LiveHub();
+    const refused = closableSocket();
+    const throwing = closableSocket();
+    const allowed = closableSocket();
+    const guardless = closableSocket();
+    hub.subscribe("c1", refused, () => false);
+    hub.subscribe("c1", throwing, () => {
+      throw new Error("auth store gone");
+    });
+    hub.subscribe("c1", allowed, () => true);
+    hub.subscribe("c2", guardless);
+
+    expect(hub.revalidate()).toBe(2);
+    expect(refused.terminated).toBe(1);
+    expect(throwing.terminated).toBe(1);
+    expect(allowed.terminated).toBe(0);
+    expect(guardless.terminated).toBe(0);
+    expect(hub.connectionCount()).toBe(2);
+
+    hub.broadcastTo("c1", { type: "ping" });
+    expect(refused.sent).toHaveLength(0);
+    expect(throwing.sent).toHaveLength(0);
+    expect(allowed.sent).toHaveLength(1);
+  });
+
+  it("forgets a case whose last socket is revoked", () => {
+    const hub = new LiveHub();
+    hub.subscribe("c1", closableSocket(), () => false);
+    expect(hub.revalidate()).toBe(1);
+    expect(hub.hasSubscribers("c1")).toBe(false);
+    expect(hub.connectionCount()).toBe(0);
+  });
+
+  it("survives a terminate that unsubscribes the socket re-entrantly, as ws's close handler does", () => {
+    const hub = new LiveHub();
+    const sockets = [closableSocket(), closableSocket(), closableSocket()];
+    for (const socket of sockets) {
+      socket.terminate = () => {
+        socket.terminated++;
+        hub.unsubscribe("c1", socket);
+      };
+      hub.subscribe("c1", socket, () => false);
+    }
+    expect(hub.revalidate()).toBe(3);
+    expect(sockets.map((s) => s.terminated)).toEqual([1, 1, 1]);
+    expect(hub.connectionCount()).toBe(0);
+  });
+
+  it("returns 0 and closes nothing when no socket carries a guard (single-user mode)", () => {
+    const hub = new LiveHub();
+    const socket = closableSocket();
+    hub.subscribe("c1", socket);
+    expect(hub.revalidate()).toBe(0);
+    expect(socket.terminated).toBe(0);
+    expect(hub.hasSubscribers("c1")).toBe(true);
+  });
+});

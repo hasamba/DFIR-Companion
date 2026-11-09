@@ -176,7 +176,9 @@ Passwords are stored with salted scrypt hashes, at a cost tuned for rate-limited
 see "Stored passwords" in
 [SECURITY.md](https://github.com/hasamba/DFIR-Companion/blob/master/SECURITY.md#stored-passwords)
 for the parameters and why they differ from encrypted case archives. Session and service-token secrets are stored only
-as SHA-256 digests. Disabling a user revokes their sessions. Local password attempts are rate
+as SHA-256 digests. Disabling a user revokes their sessions. Signing out, disabling or demoting a
+user, or removing their case role also closes their open live dashboard connections at once. An
+expired session loses its live connection within about 30 seconds. Local password attempts are rate
 limited.
 
 ## Capture extension and automation
