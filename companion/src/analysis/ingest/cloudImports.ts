@@ -23,7 +23,7 @@ import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { describeFloor } from "./floorNote.js";
-import { noteEmptyImport, crossUploadSprayRows, mergeAndSaveDelta } from "./importState.js";
+import { noteEmptyImport, crossUploadSprayRows, abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import { recordParsedImport } from "./parsedDebug.js";
 import { sigmaImportNote } from "../sigmaImportGrade.js";
@@ -65,6 +65,7 @@ export async function importM365(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<ImportWithCoverage> {
   // One Sigma snapshot for this whole import, taken before parsing (#2204).
@@ -162,6 +163,7 @@ export async function importM365(
   const delta = deltaSchema.parse(raw);
 
   const state = await ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const s = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
@@ -515,6 +517,7 @@ export async function importLeapp(
     minSeverity?: Severity;
     debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseLeappTsv(text, opts.filename ?? opts.label, { ...opts.leapp, debug: opts.debug });
@@ -549,6 +552,7 @@ export async function importLeapp(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,

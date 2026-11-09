@@ -16,7 +16,7 @@ import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "..
 import { isCollectorEvidenceRow } from "../collectorChildren.js";
 import { openVelociraptorRowStream, type Row } from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
-import { mergeAndSaveDelta } from "./importState.js";
+import { abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 
 /**
@@ -146,6 +146,8 @@ export interface BulkImportOpts {
   onProgress?: (done: number, total: number) => void;
   /** Super-only mode: this artifact's share of the hunt's DFIR_SUPERTIMELINE_MAX (#1982). */
   superMaxEvents?: number;
+  /** #2425: the import job's Cancel, checked before each batch and the final merge (→ rollback). */
+  signal?: AbortSignal;
 }
 
 export interface BulkImportResult {
@@ -507,6 +509,7 @@ export async function runVelociraptorBulk(
       batch.push(item.row);
       lastOffset = item.offset;
       if (batch.length >= sink.batchRows) {
+        abortIfCancelled(opts.signal); // a throw here rolls back the batches already flushed
         await flush(batch, lastOffset);
         batch = [];
         await yieldToLoop();
@@ -527,6 +530,7 @@ export async function runVelociraptorBulk(
         tail.push(toForensicEvent(e, id, opts, stamp));
       }
     }
+    abortIfCancelled(opts.signal);
     if (batch.length || tail.length) await flush(batch, text.length, tail);
     if (toolStores && gate) await releaseToolStores(toolStores.release());
   } catch (err) {
@@ -637,6 +641,7 @@ export async function importVelociraptorBulk(
     // The run's commit point (#1480): the appended rows are only kept once this merge has saved.
     let state: InvestigationState;
     try {
+      abortIfCancelled(opts.signal);
       state = await mergeAndSaveDelta(ctx, caseId, delta, {
         windowSequence: -1,
         timestamp: opts.importedAt,

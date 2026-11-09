@@ -12,6 +12,7 @@ import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
+import { JobManager } from "../../src/analysis/jobManager.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
@@ -362,7 +363,7 @@ class InfoRowProvider implements AIProvider {
   }
 }
 
-async function makeApp(opts: { ai?: boolean; importLock?: ImportLock } = {}) {
+async function makeApp(opts: { ai?: boolean; importLock?: ImportLock; jobManager?: JobManager } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-956-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -386,6 +387,7 @@ async function makeApp(opts: { ai?: boolean; importLock?: ImportLock } = {}) {
     forensicGateControlStore: new ForensicGateControlStore(store),
     activityLogStore: new ActivityLogStore(store),
     ...(opts.importLock ? { importLock: opts.importLock } : {}),
+    ...(opts.jobManager ? { jobManager: opts.jobManager } : {}),
   });
   await request(app)
     .post("/cases")
@@ -445,6 +447,50 @@ describe("dedicated import routes run the commit spine (#956)", () => {
           ),
         );
         expect(run).toBeTruthy();
+      },
+      POLL_TIMEOUT_MS * 2,
+    );
+  }
+
+  // #2425: every dedicated importer honours the job's Cancel at its merge. The importer is held at
+  // a gate on entry; the job is cancelled there; the REAL importer then runs with an aborted signal
+  // and must merge nothing. (The AI kinds stop between batches instead — they keep what they had.)
+  for (const c of CASES.filter((x) => !x.ai)) {
+    it(
+      `POST /cases/:id/${c.route} cancelled while its importer runs merges nothing`,
+      async () => {
+        const jobManager = new JobManager();
+        const { app, pipeline, stateStore, superTimelineStore } = await makeApp({ jobManager });
+        let open!: () => void;
+        const gate = new Promise<void>((r) => (open = r));
+        let entered = 0;
+        const target = pipeline as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
+        for (const name of Object.getOwnPropertyNames(Object.getPrototypeOf(pipeline))) {
+          if (!/^import[A-Z]/.test(name) || typeof target[name] !== "function") continue;
+          const real = target[name].bind(pipeline);
+          target[name] = async (...args: unknown[]) => {
+            entered++;
+            await gate;
+            return real(...args);
+          };
+        }
+        const res = await request(app)
+          .post(`/cases/c1/${c.route}`)
+          .send({ [c.field ?? "text"]: c.text, filename: c.filename });
+        expect(res.status, JSON.stringify(res.body)).toBe(202);
+        const job = await pollFor(`the ${c.kind} importer to start`, async () => {
+          const j = jobManager.list("c1").find((x) => x.kind === "import");
+          return entered && j?.status === "running" ? j : undefined;
+        });
+        expect((await jobManager.cancel(job.id)).ok).toBe(true);
+        open();
+        await pollFor(`the ${c.kind} import to stop`, async () =>
+          jobManager.caseHolds.isHeld("c1") ? undefined : true,
+        );
+        expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+        expect((await superTimelineStore.query("c1", {})).total).toBe(0);
+        const meta = (await request(app).get("/cases/c1/import-meta")).body as Partial<Meta>;
+        expect(meta.lastImportFile ?? "").toBe("");
       },
       POLL_TIMEOUT_MS * 2,
     );
