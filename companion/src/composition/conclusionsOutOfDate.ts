@@ -18,6 +18,7 @@
  */
 import { warnLine } from "../logging/serverLogger.js";
 import { SynthMetaStore } from "../analysis/synthMeta.js";
+import { isTerminal } from "../analysis/jobRegistry.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 
@@ -31,8 +32,6 @@ export interface ConclusionsOutOfDateDeps {
 /** Mark a case's conclusions out of date. Never throws: the change it follows has already landed. */
 export type MarkConclusionsOutOfDate = (caseId: string, reason: string) => Promise<void>;
 
-const ACTIVE_JOB = new Set(["queued", "running"]);
-
 export function createConclusionsOutOfDate(deps: ConclusionsOutOfDateDeps): MarkConclusionsOutOfDate {
   const { store, options } = deps;
   const meta = options.synthMetaStore ?? new SynthMetaStore(store);
@@ -41,7 +40,7 @@ export function createConclusionsOutOfDate(deps: ConclusionsOutOfDateDeps): Mark
   function busy(caseId: string): boolean {
     if (deps.synthInFlight().has(caseId)) return true;
     const jobs = options.jobManager?.list(caseId) ?? [];
-    return jobs.some((job) => ACTIVE_JOB.has(job.status));
+    return jobs.some((job) => !isTerminal(job.status));
   }
 
   return async function markConclusionsOutOfDate(caseId: string, reason: string): Promise<void> {

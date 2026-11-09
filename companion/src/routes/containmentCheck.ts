@@ -23,6 +23,7 @@ import {
 } from "./containmentCheckPlaybook.js";
 import type { RouteContext } from "./context.js";
 import { jevPresidioCheck, sendJevPresidioStop } from "./jevPresidioGate.js";
+import { runAsRouteJob } from "./routeJob.js";
 
 /**
  * The per-finding containment check (#1925) — analyst-pressed, one Jev call per press.
@@ -70,94 +71,117 @@ export function registerContainmentCheckRoutes(app: Express, ctx: RouteContext):
       return res.status(404).json({ error: "case not found" });
     if (running.has(caseId, findingId)) return res.status(409).json({ error: CHECK_RUNNING });
     running.set(caseId, true, findingId);
+    // #2425: a job — in the Jobs panel, "busy", and in the case's one-job slot. Not cancellable.
+    const job = {
+      caseId,
+      kind: "containment-check" as const,
+      label: `containment check (finding ${findingId})`,
+      model: { model: settings.model, provider: "jev" },
+    };
     try {
-      const state = await stateStore.load(caseId);
-      const finding = state.findings.find((f) => f.id === findingId);
-      if (!finding) return res.status(404).json({ error: "finding not found" });
+      return await runAsRouteJob(
+        options.jobManager,
+        res,
+        job,
+        "containment_check_failed",
+        async (recordFailure) => {
+          const state = await stateStore.load(caseId);
+          const finding = state.findings.find((f) => f.id === findingId);
+          if (!finding) {
+            recordFailure(new Error(`finding ${findingId} not found`), "finding_not_found");
+            return res.status(404).json({ error: "finding not found" });
+          }
 
-      // Masked like every Jev call: the revision is read BEFORE the lists load (#1840).
-      const maskedAt = anonRevision(caseId);
-      const anon = await buildImportAnonContext({ log: getServerLogger(), opts: anonOpts }, caseId, state);
-      const mask = anon ? (text: string) => anon.anon.apply(text) : (text: string) => text;
-      const { state: jevState, coverage } = buildContainmentState(finding, state, mask);
+          // Masked like every Jev call: the revision is read BEFORE the lists load (#1840).
+          const maskedAt = anonRevision(caseId);
+          const anon = await buildImportAnonContext(
+            { log: getServerLogger(), opts: anonOpts },
+            caseId,
+            state,
+          );
+          const mask = anon ? (text: string) => anon.anon.apply(text) : (text: string) => text;
+          const { state: jevState, coverage } = buildContainmentState(finding, state, mask);
 
-      let result: JevBatchResult;
-      let answers: ContainmentAnswer[];
-      try {
-        // The Presidio gate on the masked payload, right before it leaves (#1952).
-        await jevPresidioCheck(options, caseId, anon)(jevState);
-        result = await askJev(
-          {
-            baseUrl: settings.baseUrl,
-            model: settings.model,
-            apiKey: settings.apiKey,
-            timeoutMs: settings.timeoutMs,
-            beforeSend: () => assertAnonRevision(caseId, maskedAt, "the containment check"),
-          },
-          jevState,
-          CONTAINMENT_QUESTIONS,
-        );
-        answers = classifyAnswers(result.answers);
-      } catch (err) {
-        if (sendJevPresidioStop(res, err, caseId, options)) return res;
-        const detail = err instanceof Error ? err.message : String(err);
-        getServerLogger().warn(`[jev] ${caseId}: containment check failed — ${detail}`, { caseId });
-        return res.status(502).json({ error: `Decision model containment check failed: ${detail}` });
-      }
+          let result: JevBatchResult;
+          let answers: ContainmentAnswer[];
+          try {
+            // The Presidio gate on the masked payload, right before it leaves (#1952).
+            await jevPresidioCheck(options, caseId, anon)(jevState);
+            result = await askJev(
+              {
+                baseUrl: settings.baseUrl,
+                model: settings.model,
+                apiKey: settings.apiKey,
+                timeoutMs: settings.timeoutMs,
+                beforeSend: () => assertAnonRevision(caseId, maskedAt, "the containment check"),
+              },
+              jevState,
+              CONTAINMENT_QUESTIONS,
+            );
+            answers = classifyAnswers(result.answers);
+          } catch (err) {
+            recordFailure(err); // the job holds on a Presidio approval, and fails otherwise (#2425)
+            if (sendJevPresidioStop(res, err, caseId, options)) return res;
+            const detail = err instanceof Error ? err.message : String(err);
+            getServerLogger().warn(`[jev] ${caseId}: containment check failed — ${detail}`, { caseId });
+            return res.status(502).json({ error: `Decision model containment check failed: ${detail}` });
+          }
 
-      await options.aiCostStore?.record(caseId, "other", "jev", result.model, {
-        inputTokens: result.usage.inputTokens,
-        outputTokens: result.usage.outputTokens,
-        ...(result.usage.costUSD !== undefined ? { costUSD: result.usage.costUSD } : {}),
-      });
+          await options.aiCostStore?.record(caseId, "other", "jev", result.model, {
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            ...(result.usage.costUSD !== undefined ? { costUSD: result.usage.costUSD } : {}),
+          });
 
-      const steps = suggestSteps(answers);
-      const record: ContainmentCheckRecord = {
-        checkId: randomUUID(),
-        rule: RULE_VERSION,
-        model: result.model,
-        checkedAt: new Date().toISOString(),
-        findingId,
-        fingerprint: findingFingerprint(finding),
-        answers,
-        steps,
-        inProgressCaveat: answers.some((a) => a.id === "in_progress" && a.verdict === "yes"),
-      };
-      records.remember(caseId, record);
-
-      void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "ai",
-        action: "jev-containment-check",
-        detail:
-          `containment check on finding ${findingId}: ${steps.length} step(s) suggested from ` +
-          `${coverage.sent} of ${coverage.cited} cited event(s) — nothing was run`,
-        targetType: "finding",
-        targetId: findingId,
-      });
-
-      const tasks: PlaybookTask[] = options.playbookStore ? await options.playbookStore.load(caseId) : [];
-      const inPlaybook = (stepId: string): PlaybookTask | undefined =>
-        tasks.find((t) =>
-          containmentDuplicate(t, { relatedFindingId: findingId, containmentCheck: { stepId } }),
-        );
-      return res.json({
-        checkId: record.checkId,
-        model: record.model,
-        checkedAt: record.checkedAt,
-        answers,
-        steps: steps.map((s) => {
-          const task = inPlaybook(s.id);
-          return {
-            ...s,
-            basisLabels: basisLabels(s.basis),
-            inPlaybook: !!task,
-            ...(task?.shortId ? { taskShortId: task.shortId } : {}),
+          const steps = suggestSteps(answers);
+          const record: ContainmentCheckRecord = {
+            checkId: randomUUID(),
+            rule: RULE_VERSION,
+            model: result.model,
+            checkedAt: new Date().toISOString(),
+            findingId,
+            fingerprint: findingFingerprint(finding),
+            answers,
+            steps,
+            inProgressCaveat: answers.some((a) => a.id === "in_progress" && a.verdict === "yes"),
           };
-        }),
-        coverage,
-        snapshotCaveat: SNAPSHOT_CAVEAT,
-        usage: result.usage,
-      });
+          records.remember(caseId, record);
+
+          void logActivity(options.activityLogStore, options.onActivity, caseId, {
+            category: "ai",
+            action: "jev-containment-check",
+            detail:
+              `containment check on finding ${findingId}: ${steps.length} step(s) suggested from ` +
+              `${coverage.sent} of ${coverage.cited} cited event(s) — nothing was run`,
+            targetType: "finding",
+            targetId: findingId,
+          });
+
+          const tasks: PlaybookTask[] = options.playbookStore ? await options.playbookStore.load(caseId) : [];
+          const inPlaybook = (stepId: string): PlaybookTask | undefined =>
+            tasks.find((t) =>
+              containmentDuplicate(t, { relatedFindingId: findingId, containmentCheck: { stepId } }),
+            );
+          return res.json({
+            checkId: record.checkId,
+            model: record.model,
+            checkedAt: record.checkedAt,
+            answers,
+            steps: steps.map((s) => {
+              const task = inPlaybook(s.id);
+              return {
+                ...s,
+                basisLabels: basisLabels(s.basis),
+                inPlaybook: !!task,
+                ...(task?.shortId ? { taskShortId: task.shortId } : {}),
+              };
+            }),
+            coverage,
+            snapshotCaveat: SNAPSHOT_CAVEAT,
+            usage: result.usage,
+          });
+        },
+      );
     } finally {
       running.delete(caseId, findingId);
     }

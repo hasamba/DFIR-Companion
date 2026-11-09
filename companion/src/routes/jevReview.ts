@@ -21,6 +21,7 @@ import { stateEventResolver } from "../analysis/eventAliasLookup.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 import { jevPresidioCheck, sendJevPresidioStop } from "./jevPresidioGate.js";
+import { runAsRouteJob, type RecordRouteJobFailure } from "./routeJob.js";
 
 /**
  * The Jev second-grader review (#1540) — READ ONLY, analyst-pressed.
@@ -136,8 +137,17 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     }
     running.add(caseId);
     // The finally covers every await after entry, so a store that throws never leaves the case locked.
+    // #2425: a job — in the Jobs panel, "busy", and in the case's one-job slot. Not cancellable.
+    const settings = resolved.settings;
+    const job = { caseId, kind: "jev-review" as const, label: "missed-evidence review" };
     try {
-      return await review(req, res, caseId, resolved.settings);
+      return await runAsRouteJob(
+        options.jobManager,
+        res,
+        { ...job, model: { model: settings.model, provider: "jev" } },
+        "jev_review_failed",
+        (recordFailure) => review(req, res, caseId, settings, recordFailure),
+      );
     } finally {
       running.delete(caseId);
     }
@@ -148,6 +158,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     res: Response,
     caseId: string,
     settings: JevSettings,
+    recordFailure: RecordRouteJobFailure,
   ): Promise<Response> {
     const superStore = options.superTimelineStore!;
     const stateStore = options.stateStore!;
@@ -293,6 +304,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       try {
         await grades.record(caseId, result.model, result.rows);
       } catch (err) {
+        recordFailure(err);
         const detail = err instanceof Error ? err.message : String(err);
         getServerLogger().error(`[jev] ${caseId}: review grades not saved — ${detail}`, { caseId });
         return res.status(500).json({
@@ -315,6 +327,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
 
       return res.json({ ...result, ...coverage, shape });
     } catch (err) {
+      recordFailure(err); // the job holds on a Presidio approval, and fails otherwise (#2425)
       // Before either answer: the requests that did run were billed whichever way the review stopped.
       if (spentBeforeHalt) await recordJevSpend(options, caseId, spentBeforeHalt, settings.model);
       if (sendJevPresidioStop(res, err, caseId, options)) return res;
