@@ -225,4 +225,27 @@ describe("POST /cases/:id/second-look is cancellable at safe points (#2425)", ()
     expect(meta?.outOfDate).toBeTruthy();
     expect(jobManager.list("c1").find((j) => j.kind === "second-look")?.status).toBe("failed");
   });
+
+  it("a promotion that throws after saving still keeps the rows' sweep record and the out-of-date marker", async () => {
+    const jobManager = new JobManager();
+    const { app, stateStore, synthMetaStore } = await harness({ jobManager });
+    await seedSynthesis(app);
+    const save = stateStore.save.bind(stateStore);
+    let thrown = false;
+    stateStore.save = async (state) => {
+      await save(state);
+      const running = jobManager.list("c1").some((j) => j.kind === "second-look" && j.status === "running");
+      if (running && !thrown) {
+        thrown = true;
+        throw new Error("notification failed after the save (staged)");
+      }
+    };
+    const res = await request(app).post("/cases/c1/second-look").send({ resynthesize: false });
+    expect(res.status).toBe(500);
+    expect(res.body.promoted).toBe(1);
+    expect((await stateStore.load("c1")).forensicTimeline.some((e) => e.id === "rawhit")).toBe(true);
+    const meta = await synthMetaStore.load("c1");
+    expect(meta?.secondLook?.promoted).toBe(1);
+    expect(meta?.outOfDate).toBeTruthy();
+  });
 });

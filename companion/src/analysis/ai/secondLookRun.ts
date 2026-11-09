@@ -267,33 +267,37 @@ export async function secondLookRun(
     at: new Date().toISOString(),
   });
 
-  if (plan.promotions.length) {
-    const guard = opts.guardWrite ?? (<T>(write: () => Promise<T>) => write());
-    await guard(() => {
-      opts.onPromotionStarted?.(plan.promotions.length);
-      return ctx.promoteSuperTimeline(caseId, plan.promotions, {
-        intent: "second-look",
-        importedAt: new Date().toISOString(),
-        tagById: plan.tagById,
-        note: `Second look: promoted ${plan.promotions.length} raw event(s) matching open questions`,
-      });
-    });
-  }
-
   // Promotion changed the in-scope timeline → the synthHash differs → this re-synthesis really runs
   // rather than being skipped as unchanged. It sweeps nothing of its own: synthesis no longer has a
   // sweep, which is what makes one press mean exactly one sweep.
   const wantsResynthesis = opts.resynthesize !== false && plan.promotions.length > 0;
-  if (wantsResynthesis) {
-    try {
-      await synthesize(ctx, caseId, { force: true, ...(opts.signal ? { signal: opts.signal } : {}) });
-    } catch (err) {
-      // #2425: rows are promoted but the re-synthesis failed, stopped at an analyst gate or was
-      // cancelled. The sweep still happened, so its record (and the leads the report reads from
-      // it) is kept. Best effort: the run's own error is what the caller must see.
-      await ctx.opts.synthMetaStore?.recordSecondLook(caseId, meta()).catch(() => undefined);
-      throw err;
+  let promotionStarted = false;
+  try {
+    if (plan.promotions.length) {
+      const guard = opts.guardWrite ?? (<T>(write: () => Promise<T>) => write());
+      await guard(() => {
+        promotionStarted = true;
+        opts.onPromotionStarted?.(plan.promotions.length);
+        return ctx.promoteSuperTimeline(caseId, plan.promotions, {
+          intent: "second-look",
+          importedAt: new Date().toISOString(),
+          tagById: plan.tagById,
+          note: `Second look: promoted ${plan.promotions.length} raw event(s) matching open questions`,
+        });
+      });
     }
+    if (wantsResynthesis) {
+      await synthesize(ctx, caseId, { force: true, ...(opts.signal ? { signal: opts.signal } : {}) });
+    }
+  } catch (err) {
+    // #2425: rows may be promoted (even a promotion that threw after saving) but the run did not
+    // finish: the promotion's tail or the re-synthesis failed, stopped at an analyst gate, or was
+    // cancelled. The sweep still happened, so its record — and the leads the report reads from it —
+    // is kept. Best effort: the run's own error is what the caller must see.
+    if (promotionStarted) {
+      await ctx.opts.synthMetaStore?.recordSecondLook(caseId, meta()).catch(() => undefined);
+    }
+    throw err;
   }
 
   // AFTER the re-synthesis, which rewrites the synth-meta document wholesale. Recording the sweep
