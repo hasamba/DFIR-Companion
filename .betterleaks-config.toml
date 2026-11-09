@@ -88,6 +88,17 @@ description = "Fake private-key armor fixtures in the anonymizer redaction tests
 targetRules = ["private-key"]
 paths = ['''companion/tests/analysis/anonymize\.test\.ts''']
 
+# Azure built-in role definition ids (GUID -> role name) in companion/src/analysis/azureBuiltInRoles.ts
+# (PR #2503). These are Microsoft's PUBLIC, documented constants, the same in every tenant
+# (https://learn.microsoft.com/azure/role-based-access-control/built-in-roles), not secrets. A role
+# name next to a GUID trips generic-api-key. Scoped to the one rule and the one file, so a real key
+# anywhere else still fails the scan. `betterleaks git .` reads every fetched branch, so this entry
+# also keeps unrelated PRs green while that branch exists.
+[[allowlists]]
+description = "Public Azure built-in role ids (generic-api-key false positive)"
+targetRules = ["generic-api-key"]
+paths = ['''companion/src/analysis/azureBuiltInRoles\.ts''']
+
 # The betterleaks ruleset files themselves are full of secret-LIKE regex patterns (e.g. the bedrock rule's
 # own anchor string), so the scanner trips over its own definitions. Exclude the config files from scanning.
 [[allowlists]]
