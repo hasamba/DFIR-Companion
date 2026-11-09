@@ -334,6 +334,7 @@
     "clockSkew.ts": "analysis/timeline",
     "clockSkewStore.ts": "analysis/timeline",
     "cloudActivityImport.ts": "analysis/ingest",
+    "cloudCollectorFootprint.ts": "analysis/findings",
     "cloudBulkRead.ts": "analysis/timeline",
     "cloudBulkReadSummaryId.ts": "analysis/timeline",
     "cloudCoverage.ts": "analysis/ingest",

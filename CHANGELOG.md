@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Collector footprint tag** — a cloud collection's own API calls are tagged `dfir-collector` (identity + run window + the collector's read calls; writes stay untagged, grades unchanged), with a Hide collector calls super-timeline switch, off by default (closes #2487)
 - **Failed AWS reads folded per principal** — a streamed CloudTrail import keeps the first 10 failed read-only calls of each principal, then folds the rest into one Medium event listing the actions and counts; each folded call stays in the super-timeline, failed writes never fold (closes #2481)
 - **Suzaku rule updates** — check, review and install newer Suzaku CloudTrail rules (each file verified against GitHub's listing) from the Detection rules box or Settings → Sigma rules, with roll back (closes #2508)
 - **Suzaku CloudTrail rules** — Yamato Security's own ~740 AWS CloudTrail Sigma rules are bundled beside SigmaHQ, with their own switch, statuses and severity floor (default: label only, critical raises); the Sigma engine gains the `exists` modifier (part of #2499)

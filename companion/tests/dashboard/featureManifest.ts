@@ -353,6 +353,7 @@ export const FEATURES: Feature[] = [
       "toggleSuperSelectAll",
       "toggleSuperStarredOnly",
       "toggleSuperTaggedOnly",
+      "toggleSuperHideCollector",
       "toggleSuperGroupRepeats",
     ],
     private: [
@@ -1526,6 +1527,8 @@ export const FEATURES: Feature[] = [
       "setBulkTagTarget",
       "eachTagList",
       "tagsForTarget",
+      "tagPillTitle",
+      "filterTagPills",
     ],
     private: ["tagTarget", "tagsByTarget"],
   },

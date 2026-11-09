@@ -443,6 +443,17 @@ describe("super-timeline Tags filter (unified with analyst tags)", () => {
     expect(tagged.body.events.map((e: { id: string }) => e.id)).toEqual(["e-tagme"]);
     expect(tagged.body.total).toBe(1);
   });
+
+  it("excludeLabels= hides events carrying the label — the Hide collector calls filter (#2487)", async () => {
+    const { app } = await makeTaggedApp();
+    const all = await request(app).get("/cases/c1/super-timeline");
+    await request(app)
+      .post("/cases/c1/tags")
+      .send({ targetType: "event", targetId: "e-tagme", label: "dfir-collector" });
+    const hidden = await request(app).get("/cases/c1/super-timeline?excludeLabels=dfir-collector");
+    expect(hidden.body.total).toBe(all.body.total - 1);
+    expect(hidden.body.events.map((e: { id: string }) => e.id)).not.toContain("e-tagme");
+  });
 });
 
 // ── Promote super events into the forensic timeline (Task 7) ─────────────────────────────────────

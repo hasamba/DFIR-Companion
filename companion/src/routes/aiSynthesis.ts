@@ -398,6 +398,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       exclude: csv(b.exclude),
       excludeHosts: csv(b.excludeHosts),
       labels: csv(b.labels),
+      excludeLabels: csv(b.excludeLabels),
       taggedOnly: b.tagged === true || b.tagged === "1" || b.tagged === "true",
       starred: b.starred === true || b.starred === "1" || b.starred === "true",
       search: typeof b.q === "string" ? b.q : undefined,

@@ -48,6 +48,7 @@ export interface SuperQuery {
   exclude?: string[]; // drop these origins (the dashboard's unchecked boxes) — so unchecking ALL yields 0
   excludeHosts?: string[]; // drop these hosts (the dashboard's unchecked host boxes); use NO_HOST_FACET for undated-host rows
   labels?: string[]; // keep only events carrying at least one of these labels
+  excludeLabels?: string[]; // drop events carrying ANY of these labels (#2487: "Hide collector calls")
   taggedOnly?: boolean; // keep only events carrying at least one tag/label (any)
   starred?: boolean; // keep only events carrying the reserved "starred" label (ANDed with the rest)
   search?: string; // free-text search (dashboard's main filter bar), same fields as the forensic timeline

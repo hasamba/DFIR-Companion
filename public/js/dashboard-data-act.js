@@ -114,6 +114,8 @@
     zoomToTimeWindow: (el) => zoomToTimeWindow(el.dataset.from, el.dataset.to),
     // Super-timeline "Group repeats" (#2391)
     stGroupRepeats: () => toggleSuperGroupRepeats(),
+    // Super-timeline "Hide collector calls" (#2487)
+    stHideCollector: () => toggleSuperHideCollector(),
     stGroupExpand: (el) => {
       const box = document.getElementById(el.dataset.target);
       if (!box) return;

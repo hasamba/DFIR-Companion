@@ -14,8 +14,7 @@ import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
 import { ImportLock } from "./analysis/importLock.js";
 import { createImportMemoryGuard } from "./analysis/importMemoryGuard.js";
 import { resolveEnvFilePath } from "./settings/envManager.js";
-import type { ForensicEvent } from "./analysis/stateTypes.js";
-import { autoTagNewEvents } from "./analysis/taggerAuto.js";
+import { importTagger } from "./routes/routeSettleDeps.js";
 import {
   isHostAllowed,
   parseAllowedOrigins,
@@ -139,24 +138,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   options.jobManager?.useModelResolver(jobModelResolver(options.pipeline));
   options.jobManager?.useServedModels(servedModels); // #1601: stamp the version each AI job ran on
 
-  // Automatic content-based tagger: after an import dual-writes its new events into the super-timeline,
-  // tag just those events (Timesketch tagger analyzer, ported). Best-effort + non-fatal + gated on
-  // TAGGER_AUTO — see analysis/taggerAuto.ts. Bound once here so every import site can fire it.
-  const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
-    autoTagNewEvents(
-      {
-        taggerStore: options.taggerStore,
-        tagsStore: options.tagsStore,
-        stateStore: options.stateStore,
-        analysisRunStore: options.analysisRunStore,
-        operationalMetrics: options.operationalMetrics,
-        onTags: options.onTags,
-        runStateExclusive,
-        logLine,
-      },
-      caseId,
-      added,
-    );
+  // Automatic tagging of an import's new events, after they are dual-written into the super-timeline:
+  // the content tagger (Timesketch tagger analyzer, ported; TAGGER_AUTO-gated — analysis/taggerAuto.ts)
+  // and the cloud collector's own calls (#2487). Best-effort + non-fatal. Bound once here so every
+  // import site can fire it; routes/routeSettleDeps.ts binds the same one.
+  const autoTagImported = importTagger({ options, store, runStateExclusive, logLine });
 
   // Diagnostics runtime state (#118): the capped error rings + per-importer health behind the
   // Health/Diagnostics page. See composition/diagnosticsRings.ts for why redaction is on the way in.
