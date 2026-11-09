@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Cloud Accounts settings tab** — cloud accounts and the cloud proxy/CA settings moved out of the crowded Integrations tab into their own Settings tab, shown in Essential
 - **Super-timeline Group repeats** — an optional view that folds runs of identical rows into one row with a ×N badge that opens each record; nothing is merged (closes #2391).
 - **Detection rules box** — the Content tagger's rule pack box collapses to one line each for the tagger rules and Sigma, with a Review update… button only when a newer release exists; a finished install no longer shows a stale "available" notice (closes #2389).
 
@@ -54,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Live case lifecycle** — another analyst's close, archive or restore refreshes the lifecycle buttons and case list on every open dashboard (closes #2443)
 - **Capture replay memory** — the per-case index that recognises re-sent captures keeps a compact digest per capture instead of the full row, about half the memory (closes #2446)
 - **Linear-time test flake** — the scan-speed tests measure CPU time over batched, best-of-N samples, so a slow Windows runner no longer fails them while quadratic code still does (closes #2444)
+- **GCP Data Access without the role** — Check access and collection now say when a missing Private Logs Viewer role made Google hide Data Access logs, instead of showing no records (closes #2450)
+- **Cloud access check fields** — a GCP or Microsoft account's access check no longer shows the AWS-only trail bucket and key prefix fields
 - **Settings checkboxes** — a checkbox in Settings sits beside its label at its own size, so the Updates tab no longer scrolls sideways.
 - **Honest cloud collection progress** — the job line says how many files are saved and which trail folder it is in, with an ETA estimated from that position, and no fake one-page-away ETA (closes #2384).
 - **Job ETA and Cloud Collection Account field** — the ETA now says how long is left ("16:44 (in about 2 min)") instead of a bare clock time, and the Account dropdown lines up with the date fields beside it.

@@ -224,9 +224,11 @@ describe("the read check's source", () => {
     );
   });
 
-  it("only ever POSTs to entries:list", () => {
+  it("only ever POSTs to entries:list and the permission test", () => {
     // A call site's `method: "POST",` — the GcpRequester type spells it `method: "POST";`.
-    expect([...code.matchAll(/method:\s*"POST"\s*[,}]/g)].length).toBe(1);
+    // #2450: the second is projects.testIamPermissions, which reads the caller's own permissions.
+    expect([...code.matchAll(/method:\s*"POST"\s*[,}]/g)].length).toBe(2);
     expect(code).toMatch(/url: GCP_ENTRIES_LIST_URL,\s*method: "POST"/);
+    expect(code).toMatch(/url: testIamPermissionsUrl\(input\.projectId\),\s*method: "POST"/);
   });
 });

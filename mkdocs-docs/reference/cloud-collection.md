@@ -4,7 +4,7 @@ Cloud collection reads audit logs straight from an AWS account, a Microsoft tena
 project, and saves them as case evidence. It uses a **cloud account**: the credential for one
 account, tenant or project, kept in an encrypted vault.
 
-Add cloud accounts in **Settings → Integrations → Cloud accounts**, with a case open. An account
+Add cloud accounts in **Settings → Cloud Accounts**, with a case open. An account
 belongs to the cases it is attached to, and you need write access to a case to see, add, check or
 use its accounts. Cloud accounts are disabled on the public demo.
 
@@ -398,7 +398,7 @@ same record in a classic unified audit log export.
 ## Network settings
 
 Every cloud request — sign-in token requests included — goes through the cloud TLS and proxy
-settings in **Settings → Integrations → Cloud accounts**: `DFIR_CLOUD_CA`, `DFIR_CLOUD_INSECURE`
+settings in **Settings → Cloud Accounts**: `DFIR_CLOUD_CA`, `DFIR_CLOUD_INSECURE`
 and `DFIR_CLOUD_PROXY_URL`. The standard `HTTPS_PROXY` variable is not used for cloud collection.
 
 ### The machine's own credentials
@@ -498,3 +498,14 @@ duplicates are removed.
 - `roles/logging.viewer` — Admin Activity, System Event and Policy logs, and the list of log sinks
 - `roles/logging.privateLogViewer` — Data Access logs
 - `roles/storage.objectViewer` — on the sink's bucket, only for the log sink source
+
+**Without Private Logs Viewer, Google hides Data Access logs instead of refusing them.** The
+request succeeds and simply holds no Data Access entries, so an empty result cannot tell "none were
+written" from "not allowed to see them". Before it reads Data Access, the collection asks Google
+once whether the account holds `logging.privateLogEntries.list` (`projects.testIamPermissions`,
+which needs no role of its own). When the permission is missing, every Data Access page says so,
+the collection is never reported complete, and the result tells you to grant the role and collect
+again. When Google cannot answer the question (for example the Cloud Resource Manager API is off
+in the project), the result says that an empty Data Access result may mean the role is missing.
+Each page records the answer in its manifest line (`privateLogAccess`). Check access does the same
+test when Data Access comes back empty, and reports **Failed** when the role is missing.

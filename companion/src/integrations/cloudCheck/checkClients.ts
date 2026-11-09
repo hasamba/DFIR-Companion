@@ -28,6 +28,7 @@ import {
   googleAccountClient,
 } from "../cloudTransport/googleAccountAuth.js";
 import { awsAccountCredentials, DEFAULT_AWS_REGION } from "../cloudTransport/awsCredentials.js";
+import { RESOURCE_MANAGER_READ_SCOPE } from "../cloudTransport/googlePrivateLogs.js";
 import type { AwsCheckClients } from "./awsReadCheck.js";
 import type { GcpRequester } from "./gcpReadCheck.js";
 import type { MicrosoftCheckClients } from "./microsoftReadCheck.js";
@@ -98,7 +99,10 @@ async function gcpClient(
   transport: CloudTransport,
 ): Promise<GcpRequester> {
   try {
-    return await googleAccountClient(settings, secrets, transport, [LOGGING_READ_SCOPE]);
+    return await googleAccountClient(settings, secrets, transport, [
+      LOGGING_READ_SCOPE,
+      RESOURCE_MANAGER_READ_SCOPE,
+    ]);
   } catch (err) {
     // The check words its own setup errors (readCheckWording.ts matches CheckSetupError).
     if (err instanceof GoogleAccountSetupError) throw new CheckSetupError(err.message);

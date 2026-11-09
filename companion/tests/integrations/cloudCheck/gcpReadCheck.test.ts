@@ -70,6 +70,41 @@ describe("runGcpReadCheck", () => {
     });
   });
 
+  // #2450: an account without Private Logs Viewer gets an EMPTY Data Access answer, not a 403.
+  it("fails Data Access, naming the role, when the empty answer comes from a missing permission", async () => {
+    const { client, calls } = mockGcp(
+      () => ({}),
+      () => ({}),
+    );
+    const results = await runGcpReadCheck(client, input(["data-access-logs"]));
+    expect(results[0]).toMatchObject({
+      status: "failed",
+      detail: expect.stringContaining("lacks the Private Logs Viewer role (roles/logging.privateLogViewer)"),
+    });
+    expect(calls[1]).toMatchObject({
+      method: "POST",
+      url: "https://cloudresourcemanager.googleapis.com/v1/projects/test-project-01:testIamPermissions",
+      data: { permissions: ["logging.privateLogEntries.list"] },
+    });
+  });
+
+  it("stays not tested, saying the role may be missing, when the permission test fails", async () => {
+    const { client } = mockGcp(
+      () => ({}),
+      () => gcpDenied("Cloud Resource Manager API has not been used in project"),
+    );
+    const results = await runGcpReadCheck(client, input(["data-access-logs"]));
+    expect(results[0].status).toBe("not-tested");
+    expect(results[0].detail).toContain("Cloud Resource Manager API has not been used");
+    expect(results[0].detail).toContain("Google hides Data Access logs instead of refusing them");
+  });
+
+  it("does not test the permission when Data Access entries came back", async () => {
+    const { client, calls } = mockGcp(() => ({ entries: [{}] }));
+    await runGcpReadCheck(client, input(["data-access-logs"]));
+    expect(calls.map((c) => c.url)).toEqual([GCP_ENTRIES_LIST_URL]);
+  });
+
   it("only ever calls entries:list", async () => {
     const { client, calls } = mockGcp(() => ({ entries: [{}] }));
     await runGcpReadCheck(client, input());

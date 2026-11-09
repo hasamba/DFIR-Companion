@@ -89,8 +89,14 @@ export function gcpDenied(message = "Permission denied"): Error {
   });
 }
 
-/** A Google auth client that answers entries:list by which audit log the filter names. */
-export function mockGcp(answer: (filter: string) => { entries?: unknown[] } | Error): {
+/**
+ * A Google auth client that answers entries:list by which audit log the filter names, and the
+ * testIamPermissions call (#2450) with `iam` — by default, the private-log permission is granted.
+ */
+export function mockGcp(
+  answer: (filter: string) => { entries?: unknown[] } | Error,
+  iam: () => { permissions?: string[] } | Error = () => ({ permissions: ["logging.privateLogEntries.list"] }),
+): {
   client: GcpRequester;
   calls: (RecordedCall & { data: Record<string, unknown> })[];
 } {
@@ -99,7 +105,7 @@ export function mockGcp(answer: (filter: string) => { entries?: unknown[] } | Er
     request: async (opts) => {
       const data = opts.data as Record<string, unknown>;
       calls.push({ method: opts.method, url: opts.url, data });
-      const out = answer(String(data.filter));
+      const out = opts.url.endsWith(":testIamPermissions") ? iam() : answer(String(data.filter));
       if (out instanceof Error) throw out;
       return { data: out };
     },

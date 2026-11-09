@@ -177,6 +177,16 @@ describe("the toolbar group labels cost the row no height", () => {
     expect(own).toBeGreaterThan(full);
   });
 
+  // .sfield-row's display:grid beat the hidden attribute, so the AWS-only trail bucket fields of the
+  // cloud access check showed on a GCP or Microsoft account.
+  it("lets a hidden Settings field row stay hidden, after the grid rule", () => {
+    const grid = css.search(/\.sfield-row\s*\{[^}]*display:\s*grid/);
+    const hidden = css.search(/\.sfield-row\[hidden\][^{]*\{[^}]*display:\s*none/);
+    expect(grid).toBeGreaterThan(-1);
+    expect(hidden).toBeGreaterThan(grid);
+    expect(css).toMatch(/\.sfield-row3\[hidden\][^{]*\{[^}]*display:\s*none/);
+  });
+
   it("never leaves a label drawn over an empty group", () => {
     expect(css).toMatch(/\.tb-group:not\(:has\(> :not\(\.tb-group-label\)\)\)\s*\{[^}]*display:\s*none/);
   });
