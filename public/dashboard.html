@@ -3012,19 +3012,26 @@
         </div>
       </div>
 
-      <!-- Sigma rules (#2202, #2204) — the SigmaHQ release that grades cloud and web access log imports, its settings and updates -->
+      <!-- Sigma rules (#2202, #2204, #2499, #2508) — the SigmaHQ and Suzaku rule sets that grade cloud and web access log imports: shared switches, then each set's settings and updates -->
       <div class="stab-pane" id="stab-sigma">
         <div class="sfield-hint" data-safe-style="display:block;margin-bottom:8px">
-          <strong>Sigma rules</strong> from <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener">SigmaHQ</a>
-          (Detection Rule License 1.1) grade AWS CloudTrail, Entra ID sign-in / audit records and web access logs as they are imported.
-          A rule at or above the minimum level raises the event; a lower one only tags it. Changes apply to the next import —
-          cases already imported keep the grading they got, and their report names the release that produced it, until you re-grade them below.
+          <strong>Sigma rules</strong> grade AWS CloudTrail, Entra ID sign-in / audit records, GCP audit logs and web access logs as they are imported,
+          from two rule sets: <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener">SigmaHQ</a> and, for CloudTrail,
+          <a href="https://github.com/Yamato-Security/suzaku-rules" target="_blank" rel="noopener">Suzaku</a> (both Detection Rule License 1.1).
+          A rule at or above its set's minimum level raises the event; a lower one only tags it. Changes apply to the next import —
+          cases already imported keep the grading they got, and their report names the rules that produced it, until you re-grade them below.
         </div>
         <div id="sigmaDemo" class="sfield-hint" data-safe-style="display:block;margin-bottom:8px" hidden>Updates and rule changes are not available in the demo.</div>
         <div id="sigmaNotes" data-safe-style="font-size:12px;margin-bottom:8px"></div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud and web access log imports with Sigma rules<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on)</span></label><select id="env-DFIR_SIGMA_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
-          <div class="sfield"><label for="env-DFIR_SIGMA_MIN_LEVEL">Minimum level that raises severity<span class="sfield-hint">DFIR_SIGMA_MIN_LEVEL — lower levels only tag the event (it stays Info and never reaches the AI)</span></label>
+          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud and web access log imports with Sigma rules (both rule sets)<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on)</span></label><select id="env-DFIR_SIGMA_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_UPDATE_CHECK">Check both rule sets for updates at startup<span class="sfield-hint">DFIR_SIGMA_UPDATE_CHECK — on/off (default off); shows a notice here, never installs</span></label><select id="env-DFIR_SIGMA_UPDATE_CHECK"><option value="">— default (off) —</option><option value="on">on</option><option value="off">off</option></select></div>
+        </div>
+
+        <hr class="settings-hr" />
+        <div data-safe-style="font-weight:600;font-size:14px;margin:4px 0 6px">SigmaHQ rules</div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_SIGMA_MIN_LEVEL">SigmaHQ level that raises severity<span class="sfield-hint">DFIR_SIGMA_MIN_LEVEL — lower levels only tag the event (it stays Info and never reaches the AI)</span></label>
             <select id="env-DFIR_SIGMA_MIN_LEVEL">
               <option value="">— default (high) —</option>
               <option value="critical">critical</option>
@@ -3033,9 +3040,7 @@
               <option value="low">low</option>
             </select>
           </div>
-        </div>
-        <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_RULE_STATUSES">Rule status to use<span class="sfield-hint">DFIR_SIGMA_RULE_STATUSES — deprecated and unsupported rules are never used</span></label>
+          <div class="sfield"><label for="env-DFIR_SIGMA_RULE_STATUSES">SigmaHQ rule status to use<span class="sfield-hint">DFIR_SIGMA_RULE_STATUSES — deprecated and unsupported rules are never used</span></label>
             <div data-safe-style="display:flex;gap:12px;align-items:center">
               <label><input type="checkbox" data-sigma-status="stable" /> stable</label>
               <label><input type="checkbox" data-sigma-status="test" /> test</label>
@@ -3043,10 +3048,30 @@
             </div>
             <input id="env-DFIR_SIGMA_RULE_STATUSES" type="hidden" />
           </div>
-          <div class="sfield"><label for="env-DFIR_SIGMA_UPDATE_CHECK">Check for a new release at startup<span class="sfield-hint">DFIR_SIGMA_UPDATE_CHECK — on/off (default off); shows a notice here, never installs</span></label><select id="env-DFIR_SIGMA_UPDATE_CHECK"><option value="">— default (off) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
+        <div class="sfield">
+          <label>Installed SigmaHQ release</label>
+          <div id="sigmaActive" data-safe-style="font-size:12px;padding:2px 0">Loading…</div>
+          <span class="sfield-hint">Previous (roll-back target): <span id="sigmaPrevious">—</span></span>
+          <div id="sigmaCounts" data-safe-style="font-size:12px;padding:4px 0"></div>
+        </div>
+        <div class="sfield">
+          <label>SigmaHQ updates</label>
+          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="sigmaCheckBtn" type="button" class="btn-mini">Check for SigmaHQ updates</button>
+            <input id="sigmaFile" type="file" accept=".zip,application/zip" aria-label="SigmaHQ release zip" />
+            <button id="sigmaFileBtn" type="button" class="btn-mini">Install from file…</button>
+            <button id="sigmaRollbackBtn" type="button" class="btn-mini">Roll back SigmaHQ</button>
+          </div>
+          <span class="sfield-hint">A download is installed only when it matches the SHA-256 GitHub publishes. Nothing is installed until you review the changes and click Install.</span>
+          <div id="sigmaMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
+          <div id="sigmaPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
+        </div>
+
+        <hr class="settings-hr" />
+        <div data-safe-style="font-weight:600;font-size:14px;margin:4px 0 6px">Suzaku rules</div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_RULES">Also use the Suzaku CloudTrail rules<span class="sfield-hint">DFIR_SIGMA_SUZAKU_RULES — on/off (default on); Yamato Security's own AWS rules, bundled beside SigmaHQ (DRL 1.1). Off = SigmaHQ rules only</span></label><select id="env-DFIR_SIGMA_SUZAKU_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_RULES">Use the Suzaku CloudTrail rules<span class="sfield-hint">DFIR_SIGMA_SUZAKU_RULES — on/off (default on); Yamato Security's own AWS rules, bundled beside SigmaHQ (DRL 1.1). Off = SigmaHQ rules only</span></label><select id="env-DFIR_SIGMA_SUZAKU_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
           <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_MIN_LEVEL">Suzaku level that raises severity<span class="sfield-hint">DFIR_SIGMA_SUZAKU_MIN_LEVEL — most Suzaku rules are one rule per API call, so below this level they only label the event</span></label>
             <select id="env-DFIR_SIGMA_SUZAKU_MIN_LEVEL">
               <option value="">— default (critical) —</option>
@@ -3068,27 +3093,13 @@
           </div>
         </div>
         <div class="sfield">
-          <label>Installed release</label>
-          <div id="sigmaActive" data-safe-style="font-size:12px;padding:2px 0">Loading…</div>
-          <span class="sfield-hint">Previous (roll-back target): <span id="sigmaPrevious">—</span></span>
-          <div id="sigmaCounts" data-safe-style="font-size:12px;padding:4px 0"></div>
-        </div>
-        <div class="sfield">
-          <label>Updates</label>
-          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button id="sigmaCheckBtn" type="button" class="btn-mini">Check for updates</button>
-            <input id="sigmaFile" type="file" accept=".zip,application/zip" aria-label="SigmaHQ release zip" />
-            <button id="sigmaFileBtn" type="button" class="btn-mini">Install from file…</button>
-            <button id="sigmaRollbackBtn" type="button" class="btn-mini">Roll back</button>
-          </div>
-          <span class="sfield-hint">A download is installed only when it matches the SHA-256 GitHub publishes. Nothing is installed until you review the changes and click Install.</span>
-          <div id="sigmaMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
-          <div id="sigmaPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
-        </div>
-        <div class="sfield">
-          <label>Suzaku rules (#2508)</label>
+          <label>Installed Suzaku version</label>
           <div id="suzakuActive" data-safe-style="font-size:12px;padding:2px 0">Loading…</div>
           <span class="sfield-hint">Previous (roll-back target): <span id="suzakuPrevious">—</span></span>
+          <div id="suzakuCounts" data-safe-style="font-size:12px;padding:4px 0"></div>
+        </div>
+        <div class="sfield">
+          <label>Suzaku updates</label>
           <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button id="suzakuCheckBtn" type="button" class="btn-mini">Check for Suzaku updates</button>
             <button id="suzakuRollbackBtn" type="button" class="btn-mini">Roll back Suzaku</button>
@@ -3097,6 +3108,8 @@
           <div id="suzakuMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
           <div id="suzakuPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
         </div>
+
+        <hr class="settings-hr" />
         <div class="sfield">
           <label>Re-grade this case</label>
           <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -3107,8 +3120,8 @@
         </div>
         <div class="sfield">
           <label>Rules <span id="sigmaRulesCount" class="sfield-hint" data-safe-style="display:inline"></span></label>
-          <div class="sigma-rules-tools"><input id="sigmaRulesFilter" type="search" placeholder="Search rules, sources, reasons…" aria-label="Search rules" /><select id="sigmaRulesState" aria-label="Filter by state"><option value="">All states</option></select></div>
-          <div class="sigma-rules-wrap"><table class="sigma-rules-table"><thead><tr><th>Rule</th><th>Log source</th><th>State</th><th aria-label="Actions"></th></tr></thead><tbody id="sigmaRulesBody"></tbody></table><div id="sigmaRulesEmpty" class="sigma-rules-empty" hidden>No rules match the search.</div></div>
+          <div class="sigma-rules-tools"><input id="sigmaRulesFilter" type="search" placeholder="Search rules, sources, reasons…" aria-label="Search rules" /><select id="sigmaRulesOrigin" aria-label="Filter by rule set"><option value="">Both rule sets</option><option value="SigmaHQ">SigmaHQ</option><option value="Suzaku">Suzaku</option></select><select id="sigmaRulesState" aria-label="Filter by state"><option value="">All states</option></select></div>
+          <div class="sigma-rules-wrap"><table class="sigma-rules-table"><thead><tr><th>Rule</th><th>Rule set</th><th>Log source</th><th>State</th><th aria-label="Actions"></th></tr></thead><tbody id="sigmaRulesBody"></tbody></table><div id="sigmaRulesEmpty" class="sigma-rules-empty" hidden>No rules match the search.</div></div>
         </div>
       </div>
 

@@ -102,6 +102,11 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
         },
       },
       counts: inventoryCounts(set.inventory),
+      // Per rule set, so Settings shows SigmaHQ's counts under SigmaHQ and Suzaku's under Suzaku.
+      countsByOrigin: {
+        SigmaHQ: inventoryCounts(set.inventory.filter((e) => !e.origin)),
+        Suzaku: inventoryCounts(set.inventory.filter((e) => e.origin === "Suzaku")),
+      },
       problems: set.problems,
       lastCheck: store.lastCheck ? sigmaCheckAsOfNow(store.lastCheck, store.active().release) : null,
       demoMode: !!options.demoMode,
