@@ -43,6 +43,7 @@
   let slPreviewState = "idle"; // "idle" | "loading" | "ready" | "error"
   let slResult = null; // the last completed run
   let slRunError = "";
+  let slRunPromoted = false; // #2425: the last run promoted rows before it stopped
   let slBusy = false;
   let slRunGen = 0; // whose resolution owns the busy flag
   let slLoadGen = 0;
@@ -223,6 +224,7 @@
     const gen = ++slRunGen;
     slBusy = true;
     slRunError = "";
+    slRunPromoted = false;
     slResult = null;
     renderSecondLook();
     return fetch(`/cases/${encodeURIComponent(caseId)}/second-look`, {
@@ -242,6 +244,21 @@
         // Nothing changed, and the reason names the opt-out, so show it as it came.
         if (r.code === 501 && r.body && r.body.error) {
           slRunError = String(r.body.error);
+          return;
+        }
+        // #2425: a cancel (499) words itself — it may have promoted rows before the analyst stopped
+        // it. Any other failure AFTER rows were promoted must not read "did not run": the rows are in
+        // the case, and only the re-synthesis is missing (the server marked the conclusions stale).
+        const promoted = r.body && Number(r.body.promoted) > 0 ? Number(r.body.promoted) : 0;
+        if (promoted > 0) slRunPromoted = true;
+        if (r.code === 499 && r.body && r.body.error) {
+          slRunError = String(r.body.error);
+          return;
+        }
+        if (!r.ok && promoted > 0) {
+          slRunError =
+            `The second look promoted ${promoted} raw event(s), but the re-synthesis did not finish: ` +
+            `${r.body && r.body.error ? String(r.body.error) : `HTTP ${r.code}`}. The conclusions are marked out of date.`;
           return;
         }
         if (!r.ok) {
@@ -266,7 +283,10 @@
         // preview's own figures are both stale. A run that FAILED changed nothing, and re-measuring
         // would replace the reason on screen with a spinner and disable the button the analyst
         // needs in order to try again.
-        if (!slResult) return;
+        // A run that promoted rows and then stopped changed the case too (#2425): refresh, but keep
+        // its message on screen — the re-measure below leaves slRunError alone for the same case.
+        if (!slResult && !slRunPromoted) return;
+        slRunPromoted = false;
         if (typeof loadSynthMeta === "function") loadSynthMeta(caseId);
         loadSecondLookPreview(caseId);
       });

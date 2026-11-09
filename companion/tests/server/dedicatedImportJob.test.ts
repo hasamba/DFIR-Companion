@@ -60,6 +60,7 @@ describe("dedicated imports run under a job (#2407)", () => {
       return j?.status === "succeeded" ? j : undefined;
     });
     expect(job.label).toBe(`thor: ${res.body.file}`);
+    // #2425: Cancel closes the moment the importer starts, so a finished row is not cancellable.
     expect(job.cancellable).toBe(false);
   });
 
@@ -119,5 +120,67 @@ describe("dedicated imports run under a job (#2407)", () => {
       report: { importers: { recentFailures: Array<{ caseId: string }> } };
     };
     expect(report.importers.recentFailures.filter((f) => f.caseId === "c1")).toEqual([]);
+  });
+
+  // #2425: a dedicated import can be cancelled while it waits for the case's slot. Once its importer
+  // runs, Cancel closes: none of the ~24 importers takes an abort signal, and a cancel then would free
+  // the slot while the importer was still writing rows.
+  it("a queued dedicated import can be cancelled: nothing is imported and no failure is recorded", async () => {
+    const jobManager = new JobManager({ globalConcurrency: 1, perCaseConcurrency: 1 });
+    const { app, superTimelineStore, stateStore } = await makeApp(jobManager);
+    const busy = jobManager.register({ caseId: "c1", kind: "synthesis", label: "synthesis" });
+    await busy.ready;
+    const res = await request(app).post("/cases/c1/import-thor").send({ text: THOR, filename: "thor.json" });
+    expect(res.status).toBe(202);
+    const queued = await pollFor("the import to queue", async () => importJobs(jobManager)[0]);
+    expect(queued).toMatchObject({ status: "queued", cancellable: true });
+    expect((await jobManager.cancel(queued.id)).ok).toBe(true);
+    await jobManager.finish(busy.jobId);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(importJobs(jobManager)[0]?.status).toBe("cancelled");
+    expect((await superTimelineStore.query("c1", {})).total).toBe(0);
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+    const { report } = (await request(app).get("/diagnostics")).body as {
+      report: { importers: { recentFailures: Array<{ caseId: string }> } };
+    };
+    expect(report.importers.recentFailures.filter((f) => f.caseId === "c1")).toEqual([]);
+  });
+
+  it("a running dedicated import refuses Cancel", async () => {
+    const jobManager = new JobManager();
+    const { app, stateStore } = await makeApp(jobManager);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const save = stateStore.save.bind(stateStore);
+    stateStore.save = async (state) => {
+      await gate; // hold the importer mid-write
+      return save(state);
+    };
+    const res = await request(app).post("/cases/c1/import-thor").send({ text: THOR, filename: "thor.json" });
+    expect(res.status).toBe(202);
+    const running = await pollFor("the import to run", async () => {
+      const j = importJobs(jobManager)[0];
+      return j?.status === "running" ? j : undefined;
+    });
+    expect(running.cancellable).toBe(false);
+    expect(await jobManager.cancel(running.id)).toEqual({ ok: false, reason: "not-cancellable" });
+    release();
+    await pollFor("the import to succeed", async () =>
+      importJobs(jobManager)[0]?.status === "succeeded" ? true : undefined,
+    );
+  });
+
+  it("a cancelled queued import leaves nothing that blocks re-creating the case id", async () => {
+    const jobManager = new JobManager({ globalConcurrency: 1, perCaseConcurrency: 1 });
+    const { app } = await makeApp(jobManager);
+    const busy = jobManager.register({ caseId: "c1", kind: "synthesis", label: "synthesis" });
+    await busy.ready;
+    await request(app).post("/cases/c1/import-thor").send({ text: THOR, filename: "thor.json" });
+    const queued = await pollFor("the import to queue", async () => importJobs(jobManager)[0]);
+    await jobManager.cancel(queued.id);
+    await jobManager.finish(busy.jobId);
+    await new Promise((r) => setTimeout(r, 100));
+    await jobManager.forgetCase("c1");
+    expect(jobManager.isStopping("c1")).toBe(false);
   });
 });

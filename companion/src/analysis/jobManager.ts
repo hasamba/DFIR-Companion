@@ -1,8 +1,6 @@
-// Durable background-job manager (#380).
-//
-// The pure registry owns state transitions. This wrapper persists each transition before
-// broadcasting it, admits queued work under global/per-case limits, and turns orphaned queued or
-// running rows into recoverable interrupted jobs during startup.
+// Durable background-job manager (#380). The pure registry owns state transitions. This wrapper
+// persists each transition before broadcasting it, admits queued work under global/per-case limits,
+// and turns orphaned queued or running rows into recoverable interrupted jobs during startup.
 
 import { randomUUID } from "node:crypto";
 import { sanitizeManifestValue } from "./analysisRunHash.js";
@@ -41,7 +39,7 @@ import {
   holdJob,
   interruptJob,
   requeueJob,
-  allowJobCancellation,
+  setJobCancellable,
   getJob,
   findJobByIdempotencyKey,
   listJobs,
@@ -170,14 +168,10 @@ export class JobManager {
     this.onError = opts.onError;
     this.ledger = opts.ledger;
     this.max = Math.max(1, Math.floor(opts.max ?? 100));
-    this.globalConcurrency = Math.max(
-      1,
-      Math.floor(opts.globalConcurrency ?? (opts.ledger ? 4 : Number.MAX_SAFE_INTEGER)),
-    );
-    this.perCaseConcurrency = Math.max(
-      1,
-      Math.floor(opts.perCaseConcurrency ?? (opts.ledger ? 1 : Number.MAX_SAFE_INTEGER)),
-    );
+    const limit = (value: number | undefined, withLedger: number) =>
+      Math.max(1, Math.floor(value ?? (opts.ledger ? withLedger : Number.MAX_SAFE_INTEGER)));
+    this.globalConcurrency = limit(opts.globalConcurrency, 4);
+    this.perCaseConcurrency = limit(opts.perCaseConcurrency, 1);
     this.now = opts.now ?? (() => new Date().toISOString());
     let sequence = 0;
     this.id = opts.id ?? (opts.ledger ? () => `job_${randomUUID()}` : () => `job_${++sequence}`);
@@ -385,6 +379,11 @@ export class JobManager {
     });
   }
 
+  /** #2425: open/close a live job's Cancel; synchronous, so a signal check right after is atomic with cancel. */
+  setCancellable(jobId: string, on: boolean): void {
+    const job = getJob(this.table, jobId);
+    if (job && !isTerminal(job.status)) this.publishPatch(job, setJobCancellable(this.table, jobId, on));
+  }
   async hold(jobId: string, reason: string): Promise<void> {
     await this.terminalTransition(jobId, (table, now) => holdJob(table, jobId, reason, now));
   }
@@ -471,7 +470,7 @@ export class JobManager {
     const now = this.now();
     const requeue = (table: JobTable): JobTable => {
       const requeued = requeueJob(table, jobId, now, repin);
-      return registration.options.cancellable?.(job) ? allowJobCancellation(requeued, jobId) : requeued;
+      return registration.options.cancellable?.(job) ? setJobCancellable(requeued, jobId, true) : requeued;
     };
     const queued = getJob(requeue(this.table), jobId)!;
 

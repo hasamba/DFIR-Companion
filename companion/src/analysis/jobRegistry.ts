@@ -458,8 +458,9 @@ export function requeueJob(
   });
 }
 
-export function allowJobCancellation(table: JobTable, id: string): JobTable {
-  return patchJob(table, id, (job) => (job.cancellable ? job : { ...job, cancellable: true }));
+/** Open or close a job's Cancel (#2425); unchanged rows keep their identity, so nothing is re-persisted. */
+export function setJobCancellable(table: JobTable, id: string, cancellable: boolean): JobTable {
+  return patchJob(table, id, (job) => (job.cancellable === cancellable ? job : { ...job, cancellable }));
 }
 
 export function getJob(table: JobTable, id: string): Job | undefined {

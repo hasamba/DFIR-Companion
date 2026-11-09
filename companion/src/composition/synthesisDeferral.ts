@@ -14,7 +14,7 @@
  *
  * A QUEUED synthesis (still waiting for the case slot) has made no call yet, so superseding it
  * stays free; only a `running` job — or the scheduled live run holding the slot — makes a kick
- * wait.
+ * wait. A running Second Look that re-synthesizes counts as one (#2425, `paysForSynthesis`).
  *
  * Kicks that arrive while one is already waiting collapse into it: one follow-up run per case, the
  * newest kick's start function winning.
@@ -56,6 +56,19 @@ export interface SynthesisDeferral {
   defer(caseId: string, start: () => void, onCancelled: (held: boolean) => void): void;
 }
 
+/**
+ * A job whose run includes a paid synthesis: a synthesis, or a Second Look that re-synthesizes
+ * (#2425). The case's one-job slot already serializes the two when the durable ledger is on and
+ * DFIR_JOBS_PER_CASE is 1; without a ledger the per-case limit is unbounded, so the kick would start
+ * a second paid run beside the Second Look's forced one. A Second Look with re-synthesis off makes
+ * no model call and does not hold a kick back. A cancelled or held Second Look drops the waiting
+ * kick exactly as a cancelled or held synthesis does (see `defer`).
+ */
+function paysForSynthesis(job: Job): boolean {
+  if (job.kind === "synthesis") return true;
+  return job.kind === "second-look" && job.parameters?.resynthesize !== false;
+}
+
 export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisDeferral {
   const waiting: PerCaseMap<Waiter> = deps.casesRoot
     ? new CaseKeyedMap<Waiter>(deps.casesRoot)
@@ -63,7 +76,7 @@ export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisD
 
   function runningIds(caseId: string): string[] {
     const jobs = deps.jobManager?.list(caseId) ?? [];
-    return jobs.filter((job) => job.kind === "synthesis" && job.status === "running").map((job) => job.id);
+    return jobs.filter((job) => job.status === "running" && paysForSynthesis(job)).map((job) => job.id);
   }
 
   function running(caseId: string): boolean {

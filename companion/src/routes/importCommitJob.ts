@@ -11,14 +11,19 @@ import { IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
  * idle case while one ran. The generic route always registered one; this gives the shared commit
  * spine the same row.
  *
- * Not cancellable and not resumable: none of these importers takes an abort signal yet, and the
- * evidence is already stored before the 202, so a failed run is re-imported, not resumed.
+ * Cancellable only while QUEUED (#2425). None of these importers takes an abort signal yet, and a
+ * cancel frees the case's slot at once, so a cancel while the importer runs would let other case
+ * work start while rows were still being written. So Cancel closes at the moment of admission: the
+ * close and the check of the signal happen in one synchronous turn, which makes them atomic with
+ * JobManager.cancel() — either the cancel already landed (the import never starts) or it is refused.
+ * Not resumable: the evidence is stored before the 202, so a failed or cancelled run is re-imported.
  */
 export interface DedicatedImportJob {
   /**
-   * Waits for the job's admission. True: run. False: the job was stopped before it started (its
-   * case was deleted while it queued) — do not run. A job-ledger failure is reported and answers
-   * true: the stored evidence is processed anyway, unregistered, as it was before #2407.
+   * Waits for the job's admission. True: run. False: the job was stopped before it started (the
+   * analyst cancelled it, or its case was deleted, while it queued) — do not run. A job-ledger
+   * failure is reported and answers true: the stored evidence is processed anyway, unregistered, as
+   * it was before #2407.
    */
   admitted(): Promise<boolean>;
   /** The error a stopped job's run throws, which `isStopped` recognises. */
@@ -40,8 +45,16 @@ export function admitDedicatedImport(
     kind: "import",
     label: `${commit.kind}: ${commit.storedName}`,
     detail: IMPORT_JOB_PENDING_DETAIL,
+    cancellable: true, // while queued only — closed at admission, below
     parameters: { kind: commit.kind, storedName: commit.storedName },
   });
+  // A stopped admission still reports its end: a cancel that lands while the start is being written
+  // records the job as running work that must report (#1831), or a later delete of the case would
+  // block re-creating its id until a restart. finish() is a no-op on the terminal row.
+  const settleStopped = async (jobId: string): Promise<false> => {
+    await manager?.finish(jobId);
+    return false;
+  };
   const stoppedError = new Error(STOPPED);
   stoppedError.name = "AbortError";
   return {
@@ -49,15 +62,18 @@ export function admitDedicatedImport(
       if (!job) return true;
       try {
         await job.ready;
-        return true;
       } catch (err) {
-        if ((err as Error).name === "AbortError") return false;
+        if ((err as Error).name === "AbortError") return settleStopped(job.jobId);
         ctx.serverLogger.warn(
           `[import] ${commit.caseId}: ${commit.kind} import has no job row (${(err as Error).message}); processing it anyway`,
           { caseId: commit.caseId },
         );
         return true;
       }
+      // No await between these two lines: that is what makes them atomic with cancel().
+      manager?.setCancellable(job.jobId, false);
+      if (job.signal?.aborted) return settleStopped(job.jobId);
+      return true;
     },
     stopped: () => stoppedError,
     isStopped: (err) => err === stoppedError,

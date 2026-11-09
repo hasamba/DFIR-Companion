@@ -1,6 +1,6 @@
 import type { CustomEntity } from "./anonymize.js";
 import type { NearDuplicate } from "./hostAlias.js";
-import type { Job } from "./jobRegistry.js";
+import { isTerminal, type Job } from "./jobRegistry.js";
 
 /**
  * What a case's AI is ACTUALLY doing, derived from state the server already holds.
@@ -107,7 +107,6 @@ export interface AiStateInput {
   screenshotHold?: { detail: string; gaveUp: boolean } | null;
 }
 
-const ACTIVE: readonly Job["status"][] = ["running", "queued"];
 const BROKEN: readonly Job["status"][] = ["failed", "interrupted"];
 
 function holdsOf(input: AiStateInput): AiHold[] {
@@ -150,7 +149,8 @@ function lastEnded(jobs: readonly Job[]): Job | undefined {
 export function deriveAiState(input: AiStateInput): AiState {
   const holds = holdsOf(input);
   const jobs = input.jobs ?? [];
-  const active = jobs.filter((job) => ACTIVE.includes(job.status));
+  // Active = not terminal, from the job registry itself (#2425): no second copy of the status list.
+  const active = jobs.filter((job) => !isTerminal(job.status));
   const running = active.map((job) => ({ kind: job.kind, label: job.label ?? job.kind }));
 
   const livePaused = !input.enabled;
