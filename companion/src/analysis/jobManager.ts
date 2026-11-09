@@ -325,10 +325,10 @@ export class JobManager {
     };
   }
 
-  progress(jobId: string, done: number, total: number, detail?: string): void {
+  progress(jobId: string, done: number, total: number, detail?: string, stepStartedAt?: string): void {
     const before = getJob(this.table, jobId);
-    if (before)
-      this.publishPatch(before, progressJob(this.table, jobId, { done, total }, detail, this.now()));
+    const progress = { done, total, ...(stepStartedAt ? { stepStartedAt } : {}) };
+    if (before) this.publishPatch(before, progressJob(this.table, jobId, progress, detail, this.now()));
   }
 
   async checkpoint(jobId: string, input: CheckpointInput): Promise<void> {

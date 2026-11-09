@@ -107,13 +107,13 @@ export function progressLine(p: CollectProgress): { done: number; total: number;
     return {
       done: known ? p.pages : 0,
       total: known ? expected.reduce((a, b) => a + b, 0) : 0,
-      detail: `cloud collect — saving pages: ${p.sources.map(sourceText).join(", ")}`,
+      detail: `cloud collect — step 1 of 2, saving pages: ${p.sources.map(sourceText).join(", ")}`,
     };
   }
   return {
     done: p.imported,
     total: Math.max(p.pages, p.imported),
-    detail: `cloud collect — importing ${p.imported}/${p.pages} page(s)`,
+    detail: `cloud collect — step 2 of 2, importing ${p.imported}/${p.pages} page(s) into the case`,
   };
 }
 
@@ -133,6 +133,7 @@ export async function executeCollection(
 ): Promise<CollectionCheckpoint> {
   const manager = ctx.options.jobManager;
   const now = () => new Date().toISOString();
+  let importStep: string | undefined;
   const log = (line: string) => ctx.serverLogger.info(line, { caseId: input.caseId });
   // #2402: never two writers on one collection folder. Refused BEFORE the try, so the refusal does
   // not mark the running collection stopped.
@@ -156,7 +157,9 @@ export async function executeCollection(
         ...(input.signal ? { signal: input.signal } : {}),
         onProgress: (p) => {
           const line = progressLine(p);
-          manager?.progress(input.jobId, line.done, line.total, line.detail);
+          // #2470: the import step counts pages from zero again, so it is a new step of the job.
+          if (p.stage === "import") importStep ??= now();
+          manager?.progress(input.jobId, line.done, line.total, line.detail, importStep);
         },
       },
       input.dir,

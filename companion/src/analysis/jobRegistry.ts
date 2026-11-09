@@ -29,6 +29,13 @@ export type JobPriority = "low" | "normal" | "high";
 export interface JobProgress {
   done: number;
   total: number;
+  /**
+   * When the current step of a multi-step job began (#2470). A job whose steps each count from zero
+   * (a cloud collection downloads N pages, then imports them) sends a new value with the first update
+   * of a step: that update may count lower than the last, and the step's speed and ETA are measured
+   * from here, not from the job's start. Absent: one step, the job's start.
+   */
+  stepStartedAt?: string;
 }
 
 export interface JobCheckpoint {
@@ -189,7 +196,14 @@ export function startJob(table: JobTable, id: string, now: string): JobTable {
 function validProgress(progress: JobProgress): JobProgress {
   const total = Math.max(0, Math.floor(progress.total));
   const done = Math.max(0, Math.min(total, Math.floor(progress.done)));
-  return { done, total };
+  const step = progress.stepStartedAt;
+  const stepOk = typeof step === "string" && Number.isFinite(Date.parse(step));
+  return { done, total, ...(stepOk ? { stepStartedAt: new Date(step).toISOString() } : {}) };
+}
+
+/** An update that begins a new step (#2470): it may count lower than the last update. */
+function beginsNewStep(before: JobProgress, next: JobProgress): boolean {
+  return next.stepStartedAt !== undefined && next.stepStartedAt !== before.stepStartedAt;
 }
 
 function progressMetrics(
@@ -197,8 +211,9 @@ function progressMetrics(
   progress: JobProgress,
   now: string,
 ): Pick<Job, "throughputPerSecond" | "etaAt"> {
-  if (!job.startedAt || progress.done <= 0 || progress.total <= progress.done) return {};
-  const elapsedMs = Date.parse(now) - Date.parse(job.startedAt);
+  const since = progress.stepStartedAt ?? job.startedAt;
+  if (!since || progress.done <= 0 || progress.total <= progress.done) return {};
+  const elapsedMs = Date.parse(now) - Date.parse(since);
   if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return {};
   const throughputPerSecond = progress.done / (elapsedMs / 1000);
   if (!Number.isFinite(throughputPerSecond) || throughputPerSecond <= 0) return {};
@@ -296,7 +311,10 @@ export function progressJob(
   return patchJob(table, id, (job) => {
     if (job.status !== "running") return job;
     const nextProgress = validProgress(progress);
-    if (job.progress && nextProgress.done < job.progress.done) return job;
+    // A late, out-of-order update counts lower than the last one and is dropped — unless it begins a
+    // new step, which counts from zero again (#2470).
+    if (job.progress && nextProgress.done < job.progress.done && !beginsNewStep(job.progress, nextProgress))
+      return job;
     const metrics = now ? progressMetrics(job, nextProgress, now) : {};
     return {
       ...job,
@@ -500,6 +518,7 @@ const manifestValueSchema: z.ZodType<ManifestValue> = z.lazy(() =>
 const progressSchema = z.object({
   done: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
+  stepStartedAt: z.string().datetime().optional(),
 });
 
 export const jobSchema: z.ZodType<Job> = z.object({

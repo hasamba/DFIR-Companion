@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Cloud collection progress** — Background jobs shows the import step ("step 2 of 2, importing N/M pages") with its own ETA instead of freezing on the finished download (closes #2470)
 - **GCP Resource Manager API off** — the Data Access permission test says plainly when the Cloud Resource Manager API is off, with a whole enable link; the setup guide enables it in step 1
 - **Cloud Check access** — the held-accounts list offers Check access on accounts of the open case, and a check panel left open for another case's account closes
 - **Settings field alignment** — boxes in a row of Settings fields line up whatever hint lines sit above them; the Microsoft account form shows only the PEM box or the PFX fields, and its certificate box is styled like the other fields

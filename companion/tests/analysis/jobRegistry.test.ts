@@ -59,6 +59,48 @@ describe("jobRegistry", () => {
     expect(getJob(t2, "job_0")!.updatedAt).toBe(T1);
   });
 
+  // #2470: a cloud collection downloads 29 pages, then imports them from 1 again. The import updates
+  // were dropped as out of order, so the job froze on "29/29".
+  describe("multi-step progress", () => {
+    const T60 = "2026-07-05T00:01:00.000Z";
+    const T70 = "2026-07-05T00:01:10.000Z";
+
+    it("still drops a lower count in the same step", () => {
+      let t = progressJob(withJobs(1), "job_0", { done: 29, total: 29 }, "downloading", T1);
+      t = progressJob(t, "job_0", { done: 5, total: 29 }, "late update", T1);
+      expect(getJob(t, "job_0")).toMatchObject({ progress: { done: 29, total: 29 }, detail: "downloading" });
+    });
+
+    it("accepts a lower count that begins a new step, and keeps later steps' updates", () => {
+      let t = progressJob(withJobs(1), "job_0", { done: 29, total: 29 }, "downloading", T1);
+      t = progressJob(t, "job_0", { done: 0, total: 29, stepStartedAt: T60 }, "importing 0/29", T60);
+      expect(getJob(t, "job_0")).toMatchObject({
+        progress: { done: 0, total: 29, stepStartedAt: T60 },
+        detail: "importing 0/29",
+      });
+      t = progressJob(t, "job_0", { done: 2, total: 29, stepStartedAt: T60 }, "importing 2/29", T70);
+      expect(getJob(t, "job_0")!.progress).toEqual({ done: 2, total: 29, stepStartedAt: T60 });
+      // A late update of the same step is still dropped.
+      t = progressJob(t, "job_0", { done: 1, total: 29, stepStartedAt: T60 }, "importing 1/29", T70);
+      expect(getJob(t, "job_0")!.progress?.done).toBe(2);
+    });
+
+    it("measures a step's speed and ETA from the step's start, not the job's", () => {
+      const started = { ...getJob(withJobs(1), "job_0")!, startedAt: T0 };
+      let t: JobTable = { ...withJobs(1), jobs: [started] } as JobTable;
+      t = progressJob(t, "job_0", { done: 2, total: 12, stepStartedAt: T60 }, "importing", T70);
+      const job = getJob(t, "job_0")!;
+      // 2 pages in the 10 s since the step began → 0.2/s; 10 left → 50 s.
+      expect(job.throughputPerSecond).toBeCloseTo(0.2);
+      expect(job.etaAt).toBe("2026-07-05T00:02:00.000Z");
+    });
+
+    it("ignores a step start that is not a time", () => {
+      const t = progressJob(withJobs(1), "job_0", { done: 1, total: 2, stepStartedAt: "soon" }, "x", T1);
+      expect(getJob(t, "job_0")!.progress).toEqual({ done: 1, total: 2 });
+    });
+  });
+
   it("keeps live parser progress separate from resumable durable checkpoints", () => {
     let table = checkpointJob(
       withJobs(1),
