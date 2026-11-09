@@ -7,6 +7,7 @@
 // envelope schema stays within its size bound.
 
 import { z } from "zod";
+import { scopeBasisSchema } from "./summaryScope.js";
 import { gcpProjectRefSchema } from "./canonicalGcp.js";
 
 const cited = z.object({ time: z.string(), locator: z.string() });
@@ -61,7 +62,8 @@ export const gcpServiceAccountJoinBlockSchema = z.object({
   /** 3 = a credential/key/attachment fact; 2 = a binding fact only; 1 = calls as principal only. */
   admissionTier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
-  basis: z.literal(
+  // The file form, or its collection form (#2493) — summaryScope.ts.
+  basis: scopeBasisSchema(
     "records of this export only; joined by unique id when present, else email; no effective permission is evaluated; a parent-scope binding is counted on this account's own project only, never attributed",
   ),
 });

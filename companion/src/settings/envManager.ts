@@ -173,8 +173,8 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_NSRL_",
   "DFIR_KEV_",
   "DFIR_TOOL_",
-  // Bearer tokens for analyst-registered MCP servers (#296), as DFIR_MCP_<ID>_TOKEN. The _TOKEN
-  // suffix is already in SECRET_SUFFIXES, so GET /settings/env redacts these for free.
+  // The MCP model settings (DFIR_MCP_MODEL, _AGENT_MODEL, _AGENT_TIMEOUT_MS). The Companion holds
+  // no MCP server URLs or bearer tokens (mcpBridge.ts), so no DFIR_MCP_<ID>_TOKEN key is read.
   "DFIR_MCP_",
   "DFIR_NOTIFY_",
   // TLS trust for a self-hosted audit-export collector (#929). The destinations themselves
@@ -462,7 +462,9 @@ export async function getEnvForSettings(): Promise<Record<string, string>> {
 
 /**
  * Update specific keys in the .env file, preserving comments and structure.
- * Keys not already in the file are appended. Empty-string values are skipped.
+ * Keys not already in the file are appended, unless the value is empty: an empty value for a key
+ * already in the file IS written, as `KEY=`. To remove a key, pass it in `unset` — the Settings
+ * modal does that for a cleared field (#2465).
  * `unset` keys lose their line (and a DFIR_VISION_ key its legacy DFIR_AI_ alias, which would
  * otherwise stand in for it again), and are queued for reloadEnvPrefix to drop from process.env.
  */

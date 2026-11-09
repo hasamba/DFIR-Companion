@@ -10,6 +10,7 @@ import { boundedAggKey } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
 import type { GcpComputeBlock, GcpComputeFact, GcpComputeLaunch } from "./canonicalGcpCompute.js";
 import { normalizeTime, type MappedEvent } from "./siemImport.js";
+import { scopeBasis, scopeNoun, UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 import {
   BASIS,
   COVERAGE_NOTE,
@@ -57,7 +58,7 @@ function launchWords(l: Omit<GcpComputeLaunch, "time"> & Timed): string {
   return `recorded insert ${new Date(l.time).toISOString()} by ${show(l.by)} (${l.locators.join(", ")}) — ${facts.join(", ")}`;
 }
 
-function sessionWords(inst: Instance): string[] {
+function sessionWords(inst: Instance, noun: string): string[] {
   if (inst.sessions.size === 0) return [];
   return [...inst.sessions.values()]
     .sort((a, b) => (a.first?.time ?? 0) - (b.first?.time ?? 0))
@@ -69,7 +70,7 @@ function sessionWords(inst: Instance): string[] {
         .join("; ");
       // The attachment interval's own start time disambiguates two sessions for the same email
       // re-attached at different times (Codex code review, finding #5) — never merged into one.
-      return `calls recorded from ${show(s.email, 80)} while it was the instance's recorded service account since ${new Date(s.attachmentFrom).toISOString()} (this account may be shared with other resources this upload does not distinguish): ${plural(s.records, "record")}${s.first ? ` ${new Date(s.first.time).toISOString()} (${s.first.locator})` : ""}${s.last ? ` → ${new Date(s.last.time).toISOString()} (${s.last.locator})` : ""}${cited ? `; ${cited}` : ""}`;
+      return `calls recorded from ${show(s.email, 80)} while it was the instance's recorded service account since ${new Date(s.attachmentFrom).toISOString()} (this account may be shared with other resources this ${noun} does not distinguish): ${plural(s.records, "record")}${s.first ? ` ${new Date(s.first.time).toISOString()} (${s.first.locator})` : ""}${s.last ? ` → ${new Date(s.last.time).toISOString()} (${s.last.locator})` : ""}${cited ? `; ${cited}` : ""}`;
     });
 }
 
@@ -79,11 +80,13 @@ export function summaryRow(
   grade: Severity,
   coverage: { records: number; first: string; last: string },
   uploadId: string,
+  scope: SummaryScope = UPLOAD_SCOPE,
 ): MappedEvent {
+  const noun = scopeNoun(scope);
   const operations = inst.operations.all().sort(byTime);
   const operationsBeyond = Math.max(0, operations.length - OPERATIONS_NAMED_MAX) + inst.operations.beyond;
   const parts = [
-    inst.launch ? launchWords(inst.launch) : "insert not in this upload",
+    inst.launch ? launchWords(inst.launch) : `insert not in this ${noun}`,
     ...(operations.length
       ? [
           `recorded operations${operationsBeyond ? ` (${Math.min(operations.length, OPERATIONS_NAMED_MAX)} named, ${operationsBeyond} further not individually named)` : ""}: ${operations
@@ -92,7 +95,7 @@ export function summaryRow(
             .join("; ")}`,
         ]
       : []),
-    ...sessionWords(inst),
+    ...sessionWords(inst, noun),
     ...(inst.sessionsBeyond
       ? [
           `${plural(inst.sessionsBeyond, "further attached identity's")} calls beyond the tracked bound — not shown`,
@@ -164,7 +167,7 @@ export function summaryRow(
     facts: [...facts],
     notCited,
     coverage,
-    basis: BASIS,
+    basis: scopeBasis(scope, BASIS),
   };
   const observed = new Date(firstTime(inst)).toISOString();
   const mitre = grade === "Low" ? [] : [...new Set(facts.map((f) => FACT_MITRE[f]))];
@@ -198,8 +201,9 @@ export function omittedRow(
   severity: Severity,
   untrackedRecords: number,
   uploadId: string,
+  scope: SummaryScope = UPLOAD_SCOPE,
 ): MappedEvent {
-  const description = `GCP compute lifecycle — ${count ? `${count} further instance${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${GCP_COMPUTE_MAX} reported — not shown` : "no further instance beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming instances past the ${INSTANCES_TRACKED_MAX} tracked — not read` : ""}`;
+  const description = `GCP compute lifecycle — ${count ? `${count} further instance${count === 1 ? "" : "s"} with a lifecycle in this ${scopeNoun(scope)} beyond the ${GCP_COMPUTE_MAX} reported — not shown` : "no further instance beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming instances past the ${INSTANCES_TRACKED_MAX} tracked — not read` : ""}`;
   return {
     timestamp: "",
     description,

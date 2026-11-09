@@ -409,6 +409,61 @@ describe("deriveCockpit — review and card decisions", () => {
     expect(result.sections.changes[0].summary).toBe("velociraptor · Windows.Forensics.CertUtil.json");
   });
 
+  // #2466 — Undo/Redo clears the "last import" record and runs no re-synthesis, so the digest read
+  // "Nothing new" after an import was rolled back. The step itself is the change.
+  describe("undone and redone imports (#2466)", () => {
+    const REVIEWED = {
+      cards: [],
+      reviews: [{ investigatorKey: "alice", investigator: "Alice", reviewedAt: "2026-07-30T10:00:00.000Z" }],
+      history: [],
+    } satisfies CockpitDecisionState;
+
+    it("shows an undo made after the last review", () => {
+      const result = deriveCockpit({
+        state: state(),
+        importSteps: { undone: { label: "thor (0003_thor.json)", at: "2026-07-30T11:50:00.000Z" } },
+        decisions: REVIEWED,
+        investigator: "Alice",
+        now: NOW,
+      });
+      expect(result.sections.changes[0]).toMatchObject({
+        id: "change:import-undo:2026-07-30T11:50:00.000Z",
+        title: "Import undone: thor (0003_thor.json)",
+        severity: "Low",
+        target: { panel: "timeline" },
+      });
+    });
+
+    it("shows a redo made after the last review", () => {
+      const result = deriveCockpit({
+        state: state(),
+        importSteps: { redone: { label: "thor (0003_thor.json)", at: "2026-07-30T11:55:00.000Z" } },
+        decisions: REVIEWED,
+        investigator: "Alice",
+        now: NOW,
+      });
+      expect(result.sections.changes[0]).toMatchObject({
+        id: "change:import-redo:2026-07-30T11:55:00.000Z",
+        title: "Import redone: thor (0003_thor.json)",
+        severity: "Low",
+      });
+    });
+
+    it("shows no step made before the last review", () => {
+      const result = deriveCockpit({
+        state: state(),
+        importSteps: {
+          undone: { label: "a", at: "2026-07-30T09:00:00.000Z" },
+          redone: { label: "b", at: "2026-07-30T09:30:00.000Z" },
+        },
+        decisions: REVIEWED,
+        investigator: "Alice",
+        now: NOW,
+      });
+      expect(result.sections.changes).toEqual([]);
+    });
+  });
+
   it("normalizes an unknown synthesis severity instead of destabilizing card ranking", () => {
     const result = deriveCockpit({
       state: state(),

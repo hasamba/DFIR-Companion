@@ -136,6 +136,20 @@ describe("caseListFailure", () => {
 
   it("reports offline when the fetch itself failed", () => {
     expect(caseListFailure(0)).toMatch(/offline/i);
+    expect(caseListFailure(0, "http://127.0.0.1:4773")).toMatch(/offline/i);
+  });
+
+  // #2473: over https an untrusted team-mode certificate fails exactly like a stopped server.
+  it("names the certificate as a possible cause when an https fetch failed", () => {
+    const message = caseListFailure(0, "https://companion.example:4773");
+    expect(message).toMatch(/certificate/i);
+    expect(message).toMatch(/isn't running/i);
+    expect(message).not.toMatch(/offline/i);
+  });
+
+  it("keeps the HTTP status message for an https server that answered", () => {
+    expect(caseListFailure(500, "https://companion.example:4773")).toContain("500");
+    expect(caseListFailure(401, "https://companion.example:4773")).not.toMatch(/certificate/i);
   });
 
   it("reports the status for any other rejection", () => {

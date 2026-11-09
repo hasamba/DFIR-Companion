@@ -83,6 +83,46 @@ describe("mapEntraAuditRows — happy path", () => {
   });
 });
 
+describe("mapEntraAuditRows — UAL NotAgentic flag (#2484)", () => {
+  const TARGET = "33333333-3333-4333-8333-333333333333";
+  const ual = (Target: unknown[]): Record<string, unknown> => ({
+    Id: "ual-2484",
+    CreationTime: "2023-05-02T09:00:00Z",
+    Workload: "AzureActiveDirectory",
+    RecordType: 8,
+    Operation: "Update user.",
+    ResultStatus: "Success",
+    OrganizationId: "tenant-1",
+    UserId: "admin@example.invalid",
+    UserType: 2,
+    Actor: [{ ID: "admin@example.invalid", Type: 5 }],
+    Target,
+    ModifiedProperties: [],
+  });
+
+  it("shows the target's display name, never the NotAgentic flag", () => {
+    const rec = ual([
+      { ID: `User_${TARGET}`, Type: 2 },
+      { ID: "NotAgentic", Type: 2 },
+      { ID: "Jane Analyst", Type: 1 },
+    ]);
+    const [e] = mapEntraAuditRows(rec, new Map(), 0, noResolve, plain);
+    expect(e.description).toContain("→ Jane Analyst");
+    expect(e.description).not.toContain("NotAgentic");
+    expect(e.canonical?.target).toMatchObject({ name: "Jane Analyst" });
+  });
+
+  it("with no display name, the flag word never appears in the row", () => {
+    const rec = ual([
+      { ID: `User_${TARGET}`, Type: 2 },
+      { ID: "NotAgentic", Type: 2 },
+    ]);
+    const [e] = mapEntraAuditRows(rec, new Map(), 0, noResolve, plain);
+    expect(e.description).not.toContain("NotAgentic");
+    expect(JSON.stringify(e.canonical ?? {})).not.toContain("NotAgentic");
+  });
+});
+
 describe("mapEntraAuditRows — malformed records", () => {
   it("returns no rows for a record that is neither export shape", () => {
     const sink = new Map<string, SiemIoc>();

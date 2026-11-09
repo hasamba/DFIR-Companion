@@ -15,6 +15,7 @@ import { SynthesisModelChoice } from "./synthesisFallback.js";
 import type { SynthesisContext } from "./synthesis.js";
 import { authoredStrings, withGateProbe, withoutVisible } from "./presidioAuthoredText.js";
 import { anonRevision } from "../anonRevision.js";
+import { toReadableAiError } from "./aiReplyUnreadable.js";
 
 // The synthesis model call and its answer parsing, moved out of synthesis.ts (#1734) when the
 // safety-stop fallback pushed that file past its size budget. synthesis.ts is the only caller.
@@ -114,7 +115,7 @@ export async function callSynthesisModel(
     );
   const answerOnce = async (): Promise<Answer> => {
     resolvedModel = undefined;
-    const delta = await ctx.withRetry(
+    const attempts = ctx.withRetry(
       caseId,
       "synthesis",
       async () => {
@@ -159,6 +160,12 @@ export async function callSynthesisModel(
       ctx.opts.retries ?? 3,
       ctx.opts.backoffMs ?? 500,
     );
+    // #2495: an answer still in the wrong shape after every retry reaches the analyst as one plain
+    // sentence. Converted OUTSIDE the retry loop, so each attempt still sees the real ZodError for
+    // its retry note and its saved failed answer.
+    const delta = await attempts.catch((err: unknown) => {
+      throw toReadableAiError(err, ctx.log, caseId, "synthesis");
+    });
     return {
       delta,
       resolvedModel,

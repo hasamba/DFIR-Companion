@@ -133,7 +133,7 @@ describe("PT1H.json — Entra categories grade like the Graph record they carry 
     expect(o.mitre).toEqual(["T1078.004", "T1110"]);
     expect(o.timestamp).toBe("2026-11-01T11:01:00Z");
     expect(o.description).toBe(
-      "Entra sign-in: user1@example.com from 203.0.113.10 (Example City, XX) via Example App [FAILED 50126: Invalid username or password.]",
+      "Entra sign-in: [interactive] user1@example.com from 203.0.113.10 (Example City, XX) via Example App [FAILED 50126: Invalid username or password.]",
     );
   });
 

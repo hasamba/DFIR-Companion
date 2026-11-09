@@ -98,6 +98,14 @@
     };
 
     let _pendingImportFile = null;
+    // An import on the wire cannot be dismissed (#2494): Cancel is disabled, the backdrop is inert
+    // and aria-busy="true" makes the shared modal wiring ignore Escape (#2463). Its failure is
+    // written only into ipMsg, so a dismissed dialog would hide it completely.
+    const importPasswordOverlay = document.getElementById("importPasswordOverlay");
+    function setImportBusy(busy) {
+      if (busy) importPasswordOverlay.setAttribute("aria-busy", "true");
+      else importPasswordOverlay.removeAttribute("aria-busy");
+    }
     document.getElementById("encryptedImportFile").onchange = (e) => {
       const file = e.target.files && e.target.files[0];
       e.target.value = ""; // allow re-selecting the same file
@@ -109,6 +117,7 @@
       // Undo what a warning from the PREVIOUS import left behind (below).
       document.getElementById("ipImport").hidden = false;
       document.getElementById("ipCancel").textContent = "Cancel";
+      setImportBusy(false);
       document.getElementById("importPasswordOverlay").classList.add("open");
       document.getElementById("ipPassword").focus();
     };
@@ -119,7 +128,10 @@
     document
       .getElementById("importPasswordOverlay")
       .addEventListener("click", (e) => {
-        if (e.target.id === "importPasswordOverlay") {
+        if (
+          e.target.id === "importPasswordOverlay" &&
+          importPasswordOverlay.getAttribute("aria-busy") !== "true"
+        ) {
           e.target.classList.remove("open");
           _pendingImportFile = null;
         }
@@ -147,6 +159,7 @@
       const cancelBtn = document.getElementById("ipCancel");
       btn.disabled = true;
       cancelBtn.disabled = true;
+      setImportBusy(true);
       msg.textContent = "reading file…";
       try {
         const arrayBuffer = await file.arrayBuffer();
@@ -209,6 +222,7 @@
             cancelBtn.textContent = "Close";
           } else {
             msg.textContent = "";
+            setImportBusy(false);
             document.getElementById("importPasswordOverlay").classList.remove("open");
           }
           status.textContent = `imported case ${body.caseId} (${c.forensicEvents || 0} events, ${c.findings || 0} findings, ${c.iocs || 0} IOCs)`;
@@ -231,6 +245,7 @@
       } finally {
         btn.disabled = false;
         cancelBtn.disabled = false;
+        setImportBusy(false);
       }
     };
   }

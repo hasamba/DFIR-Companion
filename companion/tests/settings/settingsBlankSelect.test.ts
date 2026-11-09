@@ -26,6 +26,20 @@ interface Field {
   addEventListener: () => void;
 }
 
+/** A select that, like the browser's, falls back to blank when given a value it has no option for. */
+function selectWithOptions(id: string, options: string[]): Field {
+  let current = "";
+  return {
+    ...select(id),
+    get value() {
+      return current;
+    },
+    set value(v: string) {
+      current = options.includes(v) ? v : "";
+    },
+  };
+}
+
 const select = (id: string): Field => ({
   id,
   value: "",
@@ -44,7 +58,7 @@ async function saveAfter(loaded: Record<string, string>, fields: Field[], edit: 
   byId.set("settingsInvestigator", select("settingsInvestigator"));
   const api = loadDashboardModule<{ fetchEnvSettings(): Promise<void>; saveSettings(): Promise<boolean> }>(
     "dashboard-env-settings.js",
-    [],
+    ["dashboard-env-empty-lines.js"],
     {
       localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
       SECTION_DEFS: [],
@@ -85,12 +99,28 @@ describe("Settings save — a select set back to its blank option", () => {
     expect(message).not.toMatch(/no \.env changes/i);
   });
 
-  it("sends nothing for a select that loaded blank and is still blank", async () => {
+  it("sends nothing for a select whose key is not in .env", async () => {
     const fallback = select("env-DFIR_AI_SYNTH_FALLBACK_PROVIDER");
-    const { posts, message } = await saveAfter({ DFIR_AI_SYNTH_FALLBACK_PROVIDER: "" }, [fallback], () => {});
+    const { posts, message } = await saveAfter({}, [fallback], () => {});
 
     expect(posts).toEqual([]);
     expect(message).toMatch(/no \.env changes/i);
+  });
+
+  it("does not erase an unknown value that loaded blank (#1785)", async () => {
+    const fallback = selectWithOptions("env-DFIR_AI_SYNTH_FALLBACK_PROVIDER", ["", "openai"]);
+    const loaded = { DFIR_AI_SYNTH_FALLBACK_PROVIDER: "legacy-provider" };
+    const { posts } = await saveAfter(loaded, [fallback], () => {});
+
+    expect(fallback.value).toBe("");
+    expect(posts).toEqual([]);
+  });
+
+  it("removes a blank select whose key loaded as an empty KEY= line (#2496)", async () => {
+    const fallback = selectWithOptions("env-DFIR_AI_SYNTH_FALLBACK_PROVIDER", ["", "openai"]);
+    const { posts } = await saveAfter({ DFIR_AI_SYNTH_FALLBACK_PROVIDER: "" }, [fallback], () => {});
+
+    expect(posts).toEqual([{ updates: {}, unset: ["DFIR_AI_SYNTH_FALLBACK_PROVIDER"] }]);
   });
 
   it("still writes a changed non-blank select as a value", async () => {

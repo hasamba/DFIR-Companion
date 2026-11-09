@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { z } from "zod";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { callAiJson, type AiCallContext } from "../../src/analysis/ai/aiContext.js";
+import { AiReplyUnreadableError } from "../../src/analysis/ai/aiReplyUnreadable.js";
 import { withRetry } from "../../src/analysis/ai/retry.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import {
@@ -96,6 +98,7 @@ function fakeCtx(primary: AIProvider, fallback?: AIProvider, safetyRetries = 1):
 }
 
 const parseAnswer = (raw: unknown) => (raw as { answer: string }).answer;
+const answerSchema = z.object({ answer: z.string() });
 const state = emptyState("c1");
 
 function call(ctx: AiCallContext, provider: AIProvider, opts?: Parameters<typeof callAiJson>[8]) {
@@ -280,5 +283,47 @@ describe("one-click AI actions fall back on a safety stop (#2083)", () => {
 
     expect(result.markdown).toContain("# view from fallback");
     expect(fallback.calls).toBe(1);
+  });
+});
+
+// #2459: a reply in the wrong shape used to reach the analyst as the raw zod issue dump.
+describe("callAiJson on an AI reply in the wrong shape (#2459)", () => {
+  const strictParse = (raw: unknown) => answerSchema.parse(raw).answer;
+
+  it("rejects with one plain sentence and keeps the schema detail in the server log", async () => {
+    const primary = new Answers({});
+    const { ctx, warnings } = fakeCtx(primary);
+
+    const err = await callAiJson(ctx, "c1", state, primary, "starred-report", "s", "u", strictParse).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(AiReplyUnreadableError);
+    expect((err as Error).message).toBe(
+      "The AI reply could not be read. Try again, or check the AI provider in Settings.",
+    );
+    expect((err as Error).message).not.toMatch(/invalid_type/);
+    const logged = warnings.find((w) => /starred-report/.test(w));
+    expect(logged).toBeDefined();
+    expect(logged).toMatch(/c1/);
+    expect(logged).toMatch(/invalid_type/);
+  });
+
+  it("keeps the retries: the wrap sits outside the retry loop", async () => {
+    const primary = new Answers({});
+    const { ctx } = fakeCtx(primary);
+    const retrying: AiCallContext = { ...ctx, opts: { ...ctx.opts, retries: 2 } };
+
+    await expect(
+      callAiJson(retrying, "c1", state, primary, "starred-report", "s", "u", strictParse),
+    ).rejects.toBeInstanceOf(AiReplyUnreadableError);
+    expect(primary.calls).toBe(3);
+  });
+
+  it("passes any other error through unchanged", async () => {
+    const primary = new Broken();
+    const { ctx } = fakeCtx(primary);
+
+    await expect(call(ctx, primary)).rejects.toMatchObject({ message: "context window exceeded" });
   });
 });

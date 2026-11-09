@@ -123,8 +123,55 @@ describe("late-arriving toolbar content reserves its space", () => {
 describe("the page grid collapses once the narrow layout can actually run", () => {
   it("drops main to a single column on a narrow viewport", () => {
     expect(css).toMatch(
-      /@media[^{]*max-width:\s*900px[^{]*\{[^}]*main\s*\{[^}]*grid-template-columns:\s*1fr/,
+      /@media[^{]*max-width:\s*900px[^{]*\{[^}]*main\s*\{[^}]*grid-template-columns:\s*(?:minmax\(\s*0\s*,\s*)?1fr/,
     );
+  });
+});
+
+// #2457: every view except Now scrolled sideways at 375 and 768px. A bare `1fr` track is
+// `minmax(auto, 1fr)`, so it grew to the widest section's min-content — the IOCs header, ~15
+// controls in a flex row that could not wrap — and every section took that width (931px).
+// The legend caption under the login graph was the last item wider than a 375px phone.
+describe("the narrow layout cannot be pushed wider than the viewport (#2457)", () => {
+  /** The body of the first `@media (max-width: <px>)` block that contains `selector`. */
+  const narrowBlock = (px: number, selector: RegExp): string => {
+    const re = new RegExp(`@media[^{]*max-width:\\s*${px}px[^{]*\\{((?:[^{}]*\\{[^}]*\\})*)[^{}]*\\}`, "g");
+    const hit = [...css.matchAll(re)].map((m) => m[1]).find((body) => selector.test(body));
+    return hit ?? "";
+  };
+
+  it("caps the single page column at the viewport width", () => {
+    const body = narrowBlock(900, /\bmain\s*\{/);
+    expect(body).toMatch(/\bmain\s*\{[^}]*grid-template-columns:\s*minmax\(\s*0\s*,\s*1fr\s*\)/);
+  });
+
+  it("lets a section shrink below its content's min-content width", () => {
+    const body = narrowBlock(900, /main\s*>\s*section\s*\{/);
+    expect(body).toMatch(/main\s*>\s*section\s*\{[^}]*min-width:\s*0/);
+  });
+
+  it("wraps a section header's controls instead of widening the section", () => {
+    const body = narrowBlock(900, /(?:^|[\s}])h2\s*\{/);
+    expect(body).toMatch(/(?:^|[\s}])h2\s*\{[^}]*flex-wrap:\s*wrap/);
+  });
+
+  it("lets the long login-graph legend caption wrap", () => {
+    const body = narrowBlock(900, /\.lg-leg-item\s*\{/);
+    expect(body).toMatch(/\.lg-leg-item\s*\{[^}]*white-space:\s*normal/);
+  });
+
+  // Once the sections stop growing, the two dense desktop tables are wider than a phone: the
+  // findings grid has ~700px of fixed tracks, and a timeline row's 178px + 192px leading columns
+  // squeeze its message column to 0, so a long value spilled to x=1149. Each scrolls on its own.
+  it("scrolls the findings table inside its own box", () => {
+    const body = narrowBlock(900, /#findings\s*\{/);
+    expect(body).toMatch(/#findings\s*\{[^}]*overflow-x:\s*auto/);
+  });
+
+  it("scrolls the forensic timeline inside its own box and keeps its message column readable", () => {
+    const body = narrowBlock(900, /#forensicTimeline\s*\{/);
+    expect(body).toMatch(/#forensicTimeline\s*\{[^}]*overflow-x:\s*auto/);
+    expect(body).toMatch(/#forensicTimeline\s+\.ev-col-content\s*\{[^}]*min-width:\s*\d+px/);
   });
 });
 

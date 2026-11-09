@@ -15,6 +15,7 @@ interface DisplayApi {
     totalPages: number;
     filtering: boolean;
     promotedKept?: number;
+    viewHidden?: number;
   }): { text: string; title: string };
   timelineMoreMatchesBar(): string;
 }
@@ -120,5 +121,60 @@ describe("the Load more events bar (#1916)", () => {
     expect(html).toContain(
       `No events match the current filters.</div>" + (typeof timelineMoreMatchesBar === "function" ? timelineMoreMatchesBar() : "")`,
     );
+  });
+});
+
+// #2468: a cockpit link switches to the view that shows its panel (Lead, Executive …), and those
+// views carry a High floor. The timeline then said "13 hidden by filters" and no control on screen
+// showed that floor. The label now names the view and its floor, and the tooltip says how to clear it.
+describe("the timeline count names a dashboard view's severity floor (#2468)", () => {
+  const SMALL = { caseId: "c", forensicTimeline: rows(23), forensicTimelineTotal: 23 };
+  const withView = (view: unknown) =>
+    display(SMALL, { DfirState: { lastState: () => SMALL, lastFt: () => [], activeView: () => view } });
+  const lead = { id: "lead", name: "Lead", filters: { minSeverity: "High" } };
+  const filtered = {
+    total: 23,
+    totalFiltered: 10,
+    viewHidden: 13,
+    filtering: true,
+    pageSize: 0,
+    totalPages: 1,
+  };
+
+  it("does not name the floor when a search or facet hid the rows and the floor hid none", () => {
+    const lbl = label(withView(lead), { ...filtered, viewHidden: 0 });
+    expect(lbl.text).toBe("(10 of 23 events, 13 hidden by filters)");
+    expect(lbl.title).not.toContain("Lead view");
+  });
+
+  it("is passed the floor's own count by the timeline render", async () => {
+    const page = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(page).toContain("const viewHidden = preViewFloor - visible.length;");
+    expect(page).toContain("totalFiltered, viewHidden, pageSize: tlPageSize");
+  });
+
+  it("names the view and its floor when rows are hidden", () => {
+    const lbl = label(withView(lead), filtered);
+    expect(lbl.text).toBe("(10 of 23 events, 13 hidden by filters (Lead view: High+))");
+    expect(lbl.title).toContain("The Lead view shows only High and above");
+    expect(lbl.title).toContain("Analyst");
+  });
+
+  it("says nothing about a view floor when nothing is hidden", () => {
+    const lbl = label(withView(lead), { ...filtered, totalFiltered: 23 });
+    expect(lbl.text).not.toContain("Lead view");
+    expect(lbl.title).not.toContain("Lead view");
+  });
+
+  it("says nothing for a view without a floor, or with no active view", () => {
+    for (const view of [{ id: "analyst", name: "Analyst", filters: {} }, null]) {
+      const lbl = label(withView(view), filtered);
+      expect(lbl.text).toBe("(10 of 23 events, 13 hidden by filters)");
+      expect(lbl.title).not.toContain(" view shows only");
+    }
+  });
+
+  it("works with a state store that has no active-view accessor", () => {
+    expect(label(display(SMALL), filtered).text).toBe("(10 of 23 events, 13 hidden by filters)");
   });
 });

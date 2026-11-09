@@ -1,3 +1,4 @@
+import { unreachableReason, untrustedCertHint } from "./certTrust.js";
 import {
   DEFAULT_SETTINGS,
   MIN_INTERVAL_SECONDS,
@@ -55,12 +56,20 @@ export function settingsFromForm(form: PopupForm, running: boolean): Settings {
  * "companion offline", which sent analysts to restart a server that was answering perfectly — the
  * companion was in team mode and the request carried no usable token.
  *
+ * Over https a failed fetch may equally be an untrusted team-mode certificate (#2473), so the
+ * wording names both causes there; the popup shows the full certificate hint separately.
+ *
  * @param status The HTTP status, or 0 when the fetch itself failed (no response at all).
+ * @param companionUrl The URL that was asked; only its scheme matters here.
  */
-export function caseListFailure(status: number): string {
+export function caseListFailure(status: number, companionUrl = ""): string {
   if (status === 401) return "token rejected — check the Team service token";
   if (status === 403)
     return "token lacks access — check the token's scope, your case role and its permissions";
-  if (status === 0) return "companion offline — start it, then Refresh";
+  if (status === 0) {
+    return untrustedCertHint(companionUrl)
+      ? unreachableReason(companionUrl)
+      : "companion offline — start it, then Refresh";
+  }
   return `companion refused the case list (HTTP ${status})`;
 }

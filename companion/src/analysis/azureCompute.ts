@@ -54,6 +54,7 @@ import {
   type Vm,
 } from "./azureComputeState.js";
 import { omittedRow, summaryRow } from "./azureComputeRow.js";
+import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
 export { AZURE_COMPUTE_MAX, VMS_TRACKED_MAX } from "./azureComputeState.js";
 
@@ -522,7 +523,11 @@ const gradeOf = (facts: readonly AzureComputeFact[]): Severity =>
   facts.length >= 2 ? "High" : facts.length === 1 ? "Medium" : "Low";
 
 /** One summary row per standalone VM the upload's records form a lifecycle for. */
-export function azureComputeLifecycles(records: readonly Row[], uploadId: string): MappedEvent[] {
+export function azureComputeLifecycles(
+  records: readonly Row[],
+  uploadId: string,
+  scope: SummaryScope = UPLOAD_SCOPE, // a live collection (#2493): "this collection"
+): MappedEvent[] {
   const t: Tracked = {
     vms: new Map(),
     nics: new Map(),
@@ -576,7 +581,7 @@ export function azureComputeLifecycles(records: readonly Row[], uploadId: string
     );
   const rows = findings
     .slice(0, AZURE_COMPUTE_MAX)
-    .map((f) => summaryRow(f.vm, f.facts, f.grade, coverage, uploadId));
+    .map((f) => summaryRow(f.vm, f.facts, f.grade, coverage, uploadId, scope));
   const omitted = Math.max(0, findings.length - AZURE_COMPUTE_MAX);
   const untrackedRecords = t.untrackedRecords + t.untrackedNics + t.untrackedSubnets;
   const nsgWorkBeyond = t.nsgRuleRecordsBeyond + t.vnetInvalidationsBeyond + t.nsgRulesBeyond;
@@ -588,6 +593,7 @@ export function azureComputeLifecycles(records: readonly Row[], uploadId: string
         untrackedRecords,
         uploadId,
         nsgWorkBeyond,
+        scope,
       ),
     );
   return rows;

@@ -144,12 +144,15 @@
       body = { error: e.message };
     }
     if (current.caseId !== id) return; // the analyst moved on; this answer is for the old case
-    if (res.ok) {
+    // An unresolved case answers 200 with the reason in `problem` (#2462), so it is not a logged
+    // failed request; a real error status still lands in the same message.
+    if (res.ok && !body.problem) {
       current = { caseId: id, setId: body.setId || "", tools: Array.isArray(body.tools) ? body.tools : [] };
       paintChange(`Server set: ${body.name || ""} \u2014 click to change`, false);
     } else {
       current = { caseId: id, setId: "", tools: [] };
-      paintChange(`No usable server set: ${body.error || `HTTP ${res.status}`} \u2014 click to choose one`, true);
+      const why = body.problem || body.error || `HTTP ${res.status}`;
+      paintChange(`No usable server set: ${why} \u2014 click to choose one`, true);
     }
     applyCaseTools();
   }

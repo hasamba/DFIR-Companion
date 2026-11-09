@@ -15,6 +15,8 @@ import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { compileRuleset } from "../../src/analysis/taggerRules.js";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { sourceArtifactHash } from "../../src/analysis/canonicalEvent.js";
+import { isLineageRow, lineageIssuance, lineageUse } from "../helpers/awsLineageRecords.js";
+import { spraySignIn } from "../helpers/entraPathRecords.js";
 
 // #2303 — the streaming cloud import end to end: whole-export enrichment parity, dedup across
 // batches, bounded output with disclosure, Info to the super-timeline, gzip, and a failed import
@@ -277,6 +279,58 @@ describe("streaming cloud import (#2303)", () => {
     }
   });
 
+  // #2485 — a collected plain UAL row and a plain Azure Activity row now carry an envelope, so the
+  // streamed import cites their record and stamps the file's hash on them like every other row.
+  it("collected plain UAL and Azure rows cite their record and carry the source-artifact hash", async () => {
+    const { pipeline, write } = await setup();
+    const ualText = JSON.stringify([
+      {
+        Id: "ual-s-1",
+        OrganizationId: "00000000-0000-4000-8000-000000000001",
+        CreationTime: "2026-10-01T10:00:00",
+        Operation: "FileMalwareDetected",
+        Workload: "SharePoint",
+        RecordType: 6,
+        UserId: "user1@example.com",
+        ClientIP: "192.0.2.10",
+      },
+    ]);
+    const m365 = await pipeline.importCloudFile("c1", "m365", await write("u.json", ualText), opts("u1"));
+    const ualRow = m365.state.forensicTimeline.find((e) => /FileMalwareDetected/.test(e.description))!;
+    expect(ualRow.canonical?.evidence.rawRecords[0]).toMatchObject({
+      source: "m365-ual",
+      locator: "record:0",
+      recordId: "ual-s-1",
+    });
+    expect(ualRow.canonical?.evidence.sourceArtifactHash).toBe(sourceArtifactHash(ualText));
+
+    const other = await setup();
+    const azText = JSON.stringify([
+      {
+        eventTimestamp: "2026-10-01T10:00:02Z",
+        operationName: { value: "Microsoft.Compute/virtualMachines/delete" },
+        caller: "ops@example.com",
+        callerIpAddress: "198.51.100.7",
+        resourceId: "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1",
+        status: { value: "Failed" },
+        eventDataId: "az-s-1",
+      },
+    ]);
+    const cloud = await other.pipeline.importCloudFile(
+      "c1",
+      "cloud",
+      await other.write("a.json", azText),
+      opts("a1"),
+    );
+    const azRow = cloud.state.forensicTimeline.find((e) => /virtualMachines\/delete/.test(e.description))!;
+    expect(azRow.canonical?.evidence.rawRecords[0]).toMatchObject({
+      source: "azure-activity",
+      locator: "record:0",
+      recordId: "s1|az-s-1",
+    });
+    expect(azRow.canonical?.evidence.sourceArtifactHash).toBe(sourceArtifactHash(azText));
+  });
+
   it("a cancelled import leaves none of its records seen", async () => {
     const { pipeline, write } = await setup();
     const path = await write("x.json", JSON.stringify([1, 2, 3, 4, 5].map((i) => ual(i, "New-InboxRule"))));
@@ -341,5 +395,51 @@ describe("streaming cloud import (#2303)", () => {
     expect(state.forensicTimeline).toHaveLength(0);
     const again = await pipeline.importCloudFile("c1", "m365", path, opts("lk2"));
     expect(again.disclosure.duplicates).toBe(0);
+  });
+
+  // #2482 — a collection page leaves the whole-export summaries to the collection's summary step.
+  it("skipSummaries builds no whole-export summary rows and claims no summary window", async () => {
+    const text = JSON.stringify({ Records: [lineageIssuance(), lineageUse(1), lineageUse(2)] });
+    const normal = await setup();
+    const withSummaries = await normal.pipeline.importCloudFile(
+      "c1",
+      "aws",
+      await normal.write("ct.json", text),
+      opts("ls1"),
+    );
+    expect(withSummaries.state.forensicTimeline.filter(isLineageRow)).toHaveLength(1);
+    const page = await setup();
+    const skipped = await page.pipeline.importCloudFile(
+      "c1",
+      "aws",
+      await page.write("ct.json", text),
+      opts("ls2", { skipSummaries: true }),
+    );
+    expect(skipped.state.forensicTimeline.filter(isLineageRow)).toHaveLength(0);
+    expect(skipped.disclosure.summaryWindow).toEqual({ max: 0, records: 0, truncated: false });
+    expect(skipped.disclosure.records).toBe(3);
+  });
+
+  // #2493 — an M365 collection page leaves its spray rows to the collection's summary step too.
+  it("skipSummaries builds no per-page password-spray row for an M365 page", async () => {
+    const accounts = ["alice", "bob", "carol", "dave", "erin", "frank"];
+    const text = JSON.stringify(accounts.map((a, i) => spraySignIn(`${a}@example.invalid`, i * 20)));
+    const isSpray = (e: { mitreTechniques: string[] }) => e.mitreTechniques.includes("T1110.003");
+    const normal = await setup();
+    const file = await normal.pipeline.importCloudFile(
+      "c1",
+      "m365",
+      await normal.write("s.json", text),
+      opts("sp1"),
+    );
+    expect(file.state.forensicTimeline.filter(isSpray)).toHaveLength(1);
+    const page = await setup();
+    const skipped = await page.pipeline.importCloudFile(
+      "c1",
+      "m365",
+      await page.write("s.json", text),
+      opts("sp2", { skipSummaries: true }),
+    );
+    expect(skipped.state.forensicTimeline.filter(isSpray)).toHaveLength(0);
   });
 });

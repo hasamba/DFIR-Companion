@@ -41,7 +41,7 @@
         )
         .join("");
       return choices
-        ? `${restore}<select data-rv-reviewer="${escAttr(version.id)}" data-safe-style="font-size:11px;max-width:170px">${choices}</select><button data-rv-submit="${escAttr(version.id)}" data-safe-style="font-size:11px">Submit</button>`
+        ? `${restore}<select aria-label="Reviewer" data-rv-reviewer="${escAttr(version.id)}" data-safe-style="font-size:11px;max-width:170px">${choices}</select><button data-rv-submit="${escAttr(version.id)}" data-safe-style="font-size:11px">Submit</button>`
         : `${restore}<span data-safe-style="color:var(--sev-medium)">No reviewer assigned to this case</span>`;
     }
     if (workflow.status === "peer-review") {

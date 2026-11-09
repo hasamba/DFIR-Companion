@@ -610,6 +610,9 @@ describe("a streamed cloud import writes the super-timeline and never reads it (
             "recordMembers",
             "append",
             "queryWindow",
+            // The sign-in (auth observation) store's uncapped page read: a collection's own spray
+            // attempts (#2493). SuperTimelineStore has no queryPage, so this cannot read super rows.
+            "queryPage",
             "retentionHours",
           ],
           `${rel} calls ${c}`,

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,11 @@ import { awaitActivityEntry } from "../helpers/activityLog.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
-import { POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { POLL_TIMEOUT_MS, pollFor } from "../helpers/poll.js";
+import { JobLedgerStore } from "../../src/analysis/jobLedgerStore.js";
+import { JobManager } from "../../src/analysis/jobManager.js";
+import { getServerLogger, setServerLogger } from "../../src/logging/serverLogger.js";
+import { DEEP_PASS_CHECKPOINT_UNREADABLE } from "../../src/routes/deepPass.js";
 
 class ScriptedProvider implements AIProvider {
   readonly name = "scripted";
@@ -342,6 +346,91 @@ describe("deep-pass routes", () => {
 
       const entry = await awaitActivityEntry(app, "c1", "deep-pass");
       expect(String(entry.detail)).not.toMatch(/fail/i);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+});
+
+// #2495: a damaged saved checkpoint used to send zod's issue list to the Jobs panel as the job error,
+// and left the AI pill at "analyzing — resuming deep pass". The analyst now gets one plain sentence,
+// the issues go to the server log, and the pill ends at "error".
+describe("resuming a deep pass from a damaged checkpoint (#2495)", () => {
+  const previous = getServerLogger();
+  afterEach(() => setServerLogger(previous));
+
+  it(
+    "fails the job with a plain sentence, logs the issues and ends the AI pill at error",
+    async () => {
+      const warns: string[] = [];
+      setServerLogger({
+        debug: () => undefined,
+        info: () => undefined,
+        warn: (msg: string) => void warns.push(msg),
+        error: () => undefined,
+        getLevel: () => "info",
+        setLevel: () => undefined,
+        close: async () => undefined,
+      });
+      const root = await mkdtemp(join(tmpdir(), "dfir-deeppass-resume-"));
+      const store = new CaseStore(root);
+      const stateStore = new StateStore(store);
+      await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await stateStore.save({ ...emptyState("c1"), forensicTimeline: events() });
+      const ledger = new JobLedgerStore(store);
+      const first = new JobManager({ ledger });
+      await first.ready();
+      const started = first.register({
+        caseId: "c1",
+        kind: "deep-pass",
+        cancellable: true,
+        resumable: true,
+        maxRetries: 2,
+        parameters: { minSeverity: "High" },
+      });
+      await started.ready;
+      await first.checkpoint(started.jobId, {
+        done: 1,
+        total: 3,
+        detail: "committed observation batch 1/3",
+        cursor: {
+          nextBatch: 1,
+          totalBatches: 3,
+          floor: "High",
+          selectionHash: "x",
+          observations: [],
+          batchesFailed: 0,
+        },
+      });
+
+      const restarted = new JobManager({ ledger });
+      await restarted.ready();
+      const provider = new ScriptedProvider();
+      const aiStatus: { status: string; detail?: string }[] = [];
+      const app = createApp(store, {
+        pipeline: buildRuntimePipeline({
+          provider,
+          synthesisProvider: provider,
+          stateStore,
+          store,
+          imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+        }),
+        stateStore,
+        aiConfigured: true,
+        jobManager: restarted,
+        onAiStatus: (_caseId, evt) => void aiStatus.push(evt),
+      });
+
+      const res = await request(app).post(`/api/jobs/${started.jobId}/resume`);
+      expect(res.status).toBe(202);
+      const failed = await pollFor("resumed deep pass failing", async () => {
+        const job = restarted.get(started.jobId);
+        return job?.status === "failed" ? job : undefined;
+      });
+
+      expect(failed.error).toBe(DEEP_PASS_CHECKPOINT_UNREADABLE);
+      expect(failed.error).not.toMatch(/invalid_string|invalid_type|selectionHash/);
+      expect(aiStatus.at(-1)).toMatchObject({ status: "error", detail: DEEP_PASS_CHECKPOINT_UNREADABLE });
+      expect(warns.some((w) => w.includes(started.jobId) && w.includes("selectionHash"))).toBe(true);
     },
     POLL_TIMEOUT_MS * 2,
   );

@@ -116,7 +116,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
-    parsed: { records: 2, shows: "Entra sign-in: user1@example.com" },
+    parsed: { records: 2, shows: "Entra sign-in: [interactive] user1@example.com" },
     note: "",
   },
   {
@@ -207,7 +207,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
-    parsed: { records: 2, shows: "Entra sign-in: user1@example.com" },
+    parsed: { records: 2, shows: "Entra sign-in: [interactive] user1@example.com" },
     note: "",
   },
   {
@@ -238,7 +238,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
-    parsed: { records: 2, shows: "Entra sign-in: user1@example.com" },
+    parsed: { records: 2, shows: "Entra sign-in: [interactive] user1@example.com" },
     note: "`ResultType` + `UserPrincipalName` + `AppDisplayName` claim it ahead of Azure Activity. The `Status` string (or `ResultType`) is read, so a wrong password grades Medium as in Graph.",
   },
   {
@@ -248,7 +248,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
-    parsed: { records: 2, shows: "Entra sign-in: user1@example.com" },
+    parsed: { records: 2, shows: "Entra sign-in: [interactive] user1@example.com" },
     note: "Same columns and mapping as the JSON row.",
   },
   {
@@ -258,7 +258,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
-    parsed: { records: 1, shows: "Entra sign-in: user1@example.com" },
+    parsed: { records: 1, shows: "Entra sign-in: [non-interactive] user1@example.com" },
     note: "As `SigninLogs` (JSON).",
   },
   {
@@ -268,7 +268,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
-    parsed: { records: 1, shows: "Entra sign-in: user1@example.com" },
+    parsed: { records: 1, shows: "Entra sign-in: [non-interactive] user1@example.com" },
     note: "As `SigninLogs` (CSV).",
   },
   {
@@ -339,7 +339,7 @@ export const COMPAT_ROWS: readonly CompatRow[] = [
     detectedToday: "m365",
     expected: "m365",
     status: "works",
-    parsed: { records: 1, shows: "Entra sign-in: user1@example.com" },
+    parsed: { records: 1, shows: "Entra sign-in: [interactive] user1@example.com" },
     note: "Claimed by an Entra (`microsoft.aadiam`) `resourceId` + Entra category + `properties`; the Graph sign-in under `properties` is unwrapped and grades like the Graph record (#2304).",
   },
   {

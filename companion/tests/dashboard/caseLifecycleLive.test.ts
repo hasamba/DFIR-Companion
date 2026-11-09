@@ -12,14 +12,25 @@ const LIFECYCLE = read("dashboard-case-lifecycle.js");
 const CONNECT = read("dashboard-case-connect.js");
 const LIVE = read("dashboard-live-socket.js");
 
-type El = { style: { display: string }; dataset: Record<string, string>; classes: Set<string> };
+type El = {
+  style: { display: string };
+  dataset: Record<string, string>;
+  classes: Set<string>;
+  attrs: Record<string, string>;
+};
 
-function el(): El & { classList: { toggle: (c: string, on: boolean) => void } } {
+function el(): El & {
+  classList: { toggle: (c: string, on: boolean) => void };
+  setAttribute: (name: string, value: string) => void;
+} {
   const classes = new Set<string>();
+  const attrs: Record<string, string> = {};
   return {
     style: { display: "" },
     dataset: {},
     classes,
+    attrs,
+    setAttribute: (name: string, value: string) => void (attrs[name] = String(value)),
     classList: { toggle: (c: string, on: boolean) => void (on ? classes.add(c) : classes.delete(c)) },
   };
 }
@@ -67,6 +78,8 @@ describe("case lifecycle controls repaint on a live push (#2443)", () => {
     expect(shown(h.els.closeBtn)).toBe(false);
     expect(shown(h.els.reopenBtn)).toBe(true);
     expect(h.els.lifecycleBtn.classes.has("lc-closed")).toBe(true);
+    // The icon-only button's screen-reader name follows the state, not the load-time tip (#2469).
+    expect(h.els.lifecycleBtn.attrs["aria-label"]).toBe("Case lifecycle: closed");
     expect(h.caseListLoads).toHaveLength(1);
   });
 
@@ -80,6 +93,7 @@ describe("case lifecycle controls repaint on a live push (#2443)", () => {
       .sort();
     expect(visible).toEqual(["deleteCaseBtn", "restoreCaseBtn"]);
     expect(h.els.lifecycleBtn.classes.has("lc-archived")).toBe(true);
+    expect(h.els.lifecycleBtn.attrs["aria-label"]).toBe("Case lifecycle: archived");
   });
 
   it("drops an answer for a case that is no longer on screen", async () => {

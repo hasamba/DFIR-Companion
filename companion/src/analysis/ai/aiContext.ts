@@ -15,6 +15,7 @@ import type { CaseFleetInventory } from "../velociraptorClientStore.js";
 import type { KevCatalog } from "../kev.js";
 import type { PresidioCoverage } from "./providerCall.js";
 import { SynthesisModelChoice, type SynthesisFallback } from "./synthesisFallback.js";
+import { toReadableAiError } from "./aiReplyUnreadable.js";
 
 /**
  * What an AI-backed pipeline method needs from AnalysisPipeline, and nothing else (#418).
@@ -142,7 +143,13 @@ export async function callAiJson<T>(
   const answer = choice
     ? () => askWithFallback(ctx, caseId, kind, choice, ask, options)
     : () => ask(provider);
-  return ctx.withRetry(caseId, kind, async () => parse(await answer()), retries, backoffMs);
+  // The schema wrap sits OUTSIDE the retry loop (#2459): a bad shape is still retried as before,
+  // and only the final failure is turned into a plain sentence for the analyst.
+  try {
+    return await ctx.withRetry(caseId, kind, async () => parse(await answer()), retries, backoffMs);
+  } catch (err) {
+    throw toReadableAiError(err, ctx.log, caseId, kind);
+  }
 }
 
 /** The opt-in safety-stop fallback for one callAiJson call (#2083). */

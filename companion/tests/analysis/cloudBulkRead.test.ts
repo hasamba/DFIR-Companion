@@ -556,6 +556,22 @@ describe("regressions", () => {
     expect(summarizeBulkReads(out).filter((e) => e.id === "cloud-object-logging-coverage")).toHaveLength(1);
   });
 
+  // #2486: the coverage rows sit at the EARLIEST cloud record's time, never the first in array order.
+  it("places the object-logging gap at the earliest cloud record, whatever the array order", () => {
+    const lists = [5, 1, 3].map((m, i) => read({ resource: `bucket-${i}`, action: "ListBucket", min: m }));
+    const coverage = summarizeBulkReads(lists).find((e) => e.id === "cloud-object-logging-coverage");
+    expect(coverage?.timestamp).toBe(at(1));
+  });
+
+  it("places the truncation note at the earliest cloud record, whatever the array order", () => {
+    const reads = Array.from({ length: MAX_RECORDS_PER_GROUP + 10 }, (_v, i) =>
+      read({ resource: `corp-data/f-${i}.csv`, min: 10 + i * 0.001 }),
+    );
+    const early = read({ resource: "corp-data/early.csv", min: 2 });
+    const note = summarizeBulkReads([...reads, early]).find((e) => e.id === TRUNCATION_COVERAGE_ID);
+    expect(note?.timestamp).toBe(at(2));
+  });
+
   it("says nothing about object logging when object reads are present", () => {
     expect(
       summarizeBulkReads(manyReads(3)).find((e) => e.id === "cloud-object-logging-coverage"),

@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures/test.js";
 
 // Covers: NO USER STORY EXISTS.
@@ -16,6 +17,40 @@ import { test, expect } from "../fixtures/test.js";
 // test was passing for the same reason — vacuously, with no emulation applied at all. Each test
 // below now asserts the emulation took hold before asserting anything about the page, so this
 // cannot silently regress into a test that proves nothing.
+
+/** How far the page scrolls sideways, plus the first few elements past the right edge. */
+async function measureOverflow(page: Page): Promise<{ amount: number; culprits: string[] }> {
+  return page.evaluate(() => {
+    const doc = document.documentElement;
+    const amount = doc.scrollWidth - doc.clientWidth;
+    if (amount <= 1) return { amount, culprits: [] as string[] };
+    // Name what actually escapes, so the failure is actionable instead of a bare number. The page
+    // has ~18,000 elements, so a capped scan never reached the offenders (#2457). Report only the
+    // outermost escape, and skip anything inside a box that scrolls or clips it — that content
+    // does not widen the page.
+    const clipped = (el: Element): boolean => {
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        if (getComputedStyle(p).overflowX !== "visible") return true;
+      }
+      return false;
+    };
+    const culprits: string[] = [];
+    for (const el of document.querySelectorAll("body *")) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.right <= doc.clientWidth + 1) continue;
+      const parent = el.parentElement;
+      if (parent && parent !== document.body && parent.getBoundingClientRect().right > doc.clientWidth + 1)
+        continue;
+      if (clipped(el)) continue;
+      const section = el.closest("section")?.id || "-";
+      culprits.push(
+        `${section}: ${el.tagName}#${el.id || "-"}.${el.className || "-"} right=${Math.round(r.right)}`,
+      );
+      if (culprits.length >= 5) break;
+    }
+    return { amount, culprits };
+  });
+}
 
 test("reduced motion: no element keeps a perceptible transition or animation", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -74,21 +109,7 @@ test("narrow screen: the page does not scroll sideways at 380px", async ({ page,
   await expect(page.locator("#swimlaneLabels .swimlane-label").first()).toBeAttached({ timeout: 30_000 });
   await page.waitForLoadState("networkidle");
 
-  const overflow = await page.evaluate(() => {
-    const doc = document.documentElement;
-    const amount = doc.scrollWidth - doc.clientWidth;
-    if (amount <= 1) return { amount, culprits: [] as string[] };
-    // Name what actually escapes, so the failure is actionable instead of a bare number.
-    const culprits: string[] = [];
-    for (const el of [...document.querySelectorAll("body *")].slice(0, 4000)) {
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > doc.clientWidth + 1) {
-        culprits.push(`${el.tagName}#${el.id || "-"}.${el.className || "-"} right=${Math.round(r.right)}`);
-      }
-      if (culprits.length >= 5) break;
-    }
-    return { amount, culprits };
-  });
+  const overflow = await measureOverflow(page);
 
   // A page that scrolls sideways on a narrow display is unusable one-handed in the field. One pixel
   // of slack absorbs sub-pixel rounding; beyond that is a real layout escape.
@@ -106,3 +127,35 @@ test("narrow screen: the skip link still works at 380px", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page.locator("#main")).toBeFocused();
 });
+
+// #2457: the 380px test above only ever measured the default layout. Every built-in view except Now
+// scrolled sideways at phone AND tablet width (931px wide), because the IOCs header could not wrap
+// and the single page column grew to its width. Each view shows a different mix of sections, so
+// each one is measured, through the real view menu.
+const NARROW_VIEWS = ["analyst", "lead", "executive", "triage", "report", "deep-dive", "hunt-prep"];
+
+for (const width of [375, 768]) {
+  test(`narrow screen: no built-in view scrolls sideways at ${width}px`, async ({ page, demoCase }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+    expect(await page.evaluate(() => window.innerWidth)).toBe(width);
+    await expect(page.locator("#swimlaneLabels .swimlane-label").first()).toBeAttached({ timeout: 30_000 });
+    await page.waitForLoadState("networkidle");
+
+    const failures: string[] = [];
+    for (const view of NARROW_VIEWS) {
+      await page.locator("#dashViewBtn").click();
+      const menu = page.locator("#dashViewMenu");
+      await expect(menu).toBeVisible();
+      await menu.locator(`.dv-item[data-view="${view}"]`).click();
+      await expect(menu).toBeHidden();
+      await page.waitForLoadState("networkidle");
+      const overflow = await measureOverflow(page);
+      if (overflow.amount > 1) {
+        failures.push(`${view}: ${overflow.amount}px (${overflow.culprits.join(" | ")})`);
+      }
+    }
+
+    expect(failures, `views that scroll sideways at ${width}px:\n${failures.join("\n")}`).toEqual([]);
+  });
+}

@@ -153,6 +153,10 @@ describe("locked-case messages", () => {
     expect(LOCKED_PUSH_ERROR).toBe("Case is locked — enter the case password in the extension popup, then push again");
     expect(pushErrorMessage(429, undefined, "c1", "http://x")).toMatch(/too many wrong case passwords/i);
     expect(pushErrorMessage(0, undefined, "c1", "http://x")).toBe("Companion offline at http://x");
+    const https = pushErrorMessage(0, undefined, "c1", "https://x:4773");
+    expect(https).toMatch(/certificate/i);
+    expect(https).toContain("https://x:4773/tls/ca.crt");
+    expect(https).not.toMatch(/offline/i);
     expect(pushErrorMessage(404, undefined, "c1", "http://x")).toContain('Case "c1" not found');
   });
 });

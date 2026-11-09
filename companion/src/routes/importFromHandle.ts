@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import type { FileHandle } from "node:fs/promises";
 import { IMPORT_FILE_UNKNOWN_MESSAGE, unknownImportResponse } from "../analysis/importKindHints.js";
 import { createImportDebugRecorder } from "../analysis/importDebug.js";
+import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
@@ -223,6 +224,7 @@ export async function importFromHandle(
                 path: aiDependent ? "ai" : "deterministic",
                 fpPropagation,
                 truncation,
+                aiExtraction: aiExtractionFromDebug(aiDependent ? "ai" : "deterministic", debug), // #2460
               });
               options.onImportMeta?.(caseId);
             }

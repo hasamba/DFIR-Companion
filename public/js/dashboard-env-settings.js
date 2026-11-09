@@ -6,10 +6,7 @@
 // one save does not rebuild every integration client on the server (#178). As a page-wide global
 // that snapshot was one stray assignment away from being wrong.
 (function () {
-  // What the .env fields held when the modal was last populated. Save submits EVERY field, so this
-  // is how we tell which groups the analyst actually TOUCHED and therefore which to apply live —
-  // without it, one save would rebuild every integration client on the server (#178).
-  let loadedEnvValues = {};
+  let loadedEnvValues = {}; // what the fields held at the last load — see the header (#178)
   const CUSTOM_MODEL_VALUE = "__custom__";
   const MANUAL_MODEL_LABEL = "Enter model ID manually…";
   const modelRequestVersions = new Map();
@@ -254,6 +251,7 @@
       if (!r.ok) return;
       const { env } = await r.json();
       loadedEnvValues = {};
+      window.recordEmptyEnvLines?.(env); // raw values: an empty KEY= line is removed on save (#2496)
       for (const [key, val] of Object.entries(env)) {
         const el = document.getElementById("env-" + key);
         if (!el) continue;
@@ -261,9 +259,10 @@
           el.value = val || "";
           el.dispatchEvent(new Event("dfir:envloaded"));
         } else if (el.type === "password") {
-          // Secrets come back masked and the input starts empty, so ANY value typed here is a change.
+          // Secrets come back masked and start empty, so ANY typed value is a change. Clear: #2465.
           el.value = "";
           el.placeholder = val === "••••••••" ? "(already set)" : "(not set)";
+          window.decorateSecretClear?.(el, val === "••••••••");
         } else {
           el.value = val || "";
         }
@@ -600,22 +599,24 @@
     document.querySelectorAll("[id^='env-']").forEach((el) => {
       const key = el.id.replace(/^env-/, "");
       if (el.readOnly || el.disabled) return;
+      const emptyLine = window.isEmptyEnvLine?.(key) === true; // blank over `KEY=` → remove (#2496)
       let val;
       if (el.type === "password") {
-        // Secrets load blank behind a "(already set)" placeholder, so only a typed value is a change.
+        // Secrets load blank behind "(already set)": only a typed value, or Clear (#2465), is a change.
         val = el.value.trim();
-        if (!val) return;
+        if (!val) return void ((window.secretClearPending?.(el) || emptyLine) && unset.push(key));
       } else if (el.tagName === "SELECT") {
         // A blank option means "not set / default / same as …" (#1785). Picked over a loaded value,
         // it removes the key. Blank at load and blank now is no change — an unknown .env value also
         // loads blank, and it must not be erased.
         if (!el.value) {
-          if (loadedEnvValues[key]) unset.push(key);
+          if (loadedEnvValues[key] || emptyLine) unset.push(key);
           return;
         }
         val = el.value;
       } else {
-        val = el.value.trim();
+        val = el.value.trim(); // emptied over a loaded value removes the key, never `KEY=` (#2465)
+        if (!val && (loadedEnvValues[key] || emptyLine)) return void unset.push(key);
       }
       if (val !== (loadedEnvValues[key] ?? "")) updates[key] = val;
     });
@@ -638,9 +639,9 @@
           const { rebuilt, inEffect } = await applySavedEnvGroups(changed);
           // The saved values are the new baseline, so saving twice without reopening the modal
           // doesn't rebuild the same clients again.
-          changed.forEach((k) => {
-            loadedEnvValues[k] = updates[k] ?? "";
-          });
+          changed.forEach((k) => (loadedEnvValues[k] = updates[k] ?? ""));
+          window.secretClearSettle?.(unset);
+          window.settleEmptyEnvLines?.(unset);
           // Say what actually happened to THESE keys. Two ways to get this wrong, and the code has
           // been both: branching on `rebuilt` alone told the analyst to restart for DFIR_KEV_,
           // which was already live; branching on `applied` told them an AI model change was live

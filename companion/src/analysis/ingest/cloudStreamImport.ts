@@ -73,6 +73,12 @@ export interface CloudStreamImportOptions {
   /** Tag the rows written straight to the super-timeline (the settle tagger never sees them). */
   onSuperRows?: (rows: ForensicEvent[]) => Promise<void>;
   signal?: AbortSignal;
+  /**
+   * Build none of the provider's whole-export summaries (#2482): a live collection's page, whose
+   * summaries the collection's summary step builds once over every page (cloudCollectionSummary.ts).
+   * It skips the M365 spray rows too (#2493); MFA fatigue stays per page — its ids upsert.
+   */
+  skipSummaries?: boolean;
   /** Test seams; production uses the named constants. */
   batchRecords?: number;
   summaryRecords?: number;
@@ -147,7 +153,8 @@ export async function importCloudFile(
 ): Promise<CloudStreamImportResult> {
   const provider = streamProvider(kind);
   const size = opts.batchRecords ?? CLOUD_STREAM_BATCH_RECORDS;
-  const acc = newAccumulator(opts.summaryRecords ?? SUMMARY_RECORDS_MAX, opts.iocsMax);
+  const windowMax = opts.skipSummaries ? 0 : (opts.summaryRecords ?? SUMMARY_RECORDS_MAX);
+  const acc = newAccumulator(windowMax, opts.iocsMax);
   const ledgerBatch = `${opts.idPrefix}.${randomUUID().slice(0, 8)}`;
   try {
     const pre = await preliminaryPass(path, provider, size, opts.signal);
@@ -220,7 +227,7 @@ async function finish(
   const { individual, aggregates, disclosure: output } = deps.budget.finish();
   const summaries = acc.window.length ? provider.summaries(acc.window, pre) : [];
   const spray =
-    provider.kind === "m365" && acc.observations.appended
+    provider.kind === "m365" && acc.observations.appended && !opts.skipSummaries
       ? await streamSprayRows(ctx, caseId, opts.idPrefix, acc.observations.earliest)
       : { events: [], truncated: false };
   // MFA fatigue (#2306) across every batch of this import and earlier imports, from the same store.
@@ -257,7 +264,7 @@ async function finish(
     summaryWindow: {
       max: acc.windowMax,
       records: acc.window.length,
-      truncated: stats.records > acc.windowMax,
+      truncated: !opts.skipSummaries && stats.records > acc.windowMax,
     },
     sprayHistoryTruncated: spray.truncated,
   });

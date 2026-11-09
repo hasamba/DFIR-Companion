@@ -239,8 +239,8 @@ export class TaggerStore {
 
   /** Load + compile the active ruleset. Throws (YAML/validation error) rather than partially load. */
   async load(): Promise<CompiledRuleset & { source: RulesSource }> {
-    const active = await this.readActive();
-    const compiled = compileText(active.text);
+    const active = await this.readActiveText();
+    const compiled = compileTextCached(active.text);
     return { ...compiled, source: active.source };
   }
 
@@ -528,6 +528,23 @@ export class TaggerStore {
       return { ruleCount: compiled.rules.length };
     });
   }
+}
+
+/**
+ * #2478: the last rule text compiled, and its rules. load() runs several times per imported page
+ * (pre-grade, the per-batch super-row tagger, the settle tagger), and a live AWS collection imports
+ * thousands of 50-record pages: re-parsing the same YAML was ~45% of its import step. Keyed by the
+ * full text, so any edit — dashboard, rule pack, or by hand — recompiles on the next load, and a
+ * text that fails to compile is never stored (it throws every time). The rules are read-only to
+ * every caller; a regex condition resets its lastIndex before each use (taggerRules.ts).
+ */
+let lastCompiled: { text: string; ruleset: CompiledRuleset } | undefined;
+
+function compileTextCached(text: string): CompiledRuleset {
+  if (lastCompiled?.text === text) return lastCompiled.ruleset;
+  const ruleset = compileText(text);
+  lastCompiled = { text, ruleset };
+  return ruleset;
 }
 
 /** Parse YAML text and compile it into a ruleset. Empty/whitespace text → an empty ruleset. */

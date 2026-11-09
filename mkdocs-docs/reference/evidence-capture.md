@@ -22,6 +22,17 @@ extension controls.
 
 Browser-internal pages, local files, data URLs, and private/incognito tabs cannot be captured.
 
+!!! warning "Companion unreachable over https"
+    In team mode the Companion uses HTTPS with its own certificate. If the browser does not trust
+    that certificate, the extension gets no answer at all — the same as when the Companion is not
+    running. With an `https://` Companion URL the popup therefore says the Companion "isn't running,
+    or this browser doesn't trust its certificate", and shows a link to
+    `https://<server>:<port>/tls/ca.crt`. Download it, install it as a trusted certificate
+    authority (your operating system's store; Firefox uses its own Authorities list), restart the
+    browser, then click **Refresh cases**. Clicking through the browser's warning page is not
+    enough for the extension. See
+    [Running over HTTPS](team-authentication.md#running-over-https).
+
 ## Recognised Consoles (One-Click Push)
 
 After origin approval, the extension can inject a push button into:

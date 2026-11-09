@@ -28,6 +28,18 @@ behind a self-signed certificate is dead without one of them, and the error it f
 setting at all, so burying the flag under All left the connect flow failing with no visible knob to
 reach for. Prefer a `_CA` bundle where you have one: it keeps verification on.
 
+### Clearing a setting
+
+Emptying a text field and saving **removes** that setting from `.env`, so its default applies again.
+It is never saved as an empty value. Secrets (API keys, tokens, passwords, the cloud proxy URL) load
+blank and show *(already set)*, so emptying them changes nothing: press **Clear** beside a set secret
+to remove it on save (press it again, or type a new value, to cancel). On/off settings are
+drop-downs with a blank *default* option; choosing it removes the setting. Read-only switches are
+still shown as text, because the dashboard must not change them.
+
+An empty setting left in `.env` by an older version or a hand edit (a bare `KEY=` line) is removed
+the next time you save Settings, so its default applies again. Read-only settings are left as they are.
+
 Jira and ServiceNow have the same flag and stay out of Essential — their whole block is read-only in
 the dashboard by design, a security boundary edited in `.env` and applied by a restart.
 
@@ -681,15 +693,16 @@ Preset panel layouts:
 
 | View | Best for |
 |------|----------|
-| **Analyst** *(default)* | All technical panels, in the app's intended reading order |
-| **Lead** | Findings, timeline, playbook, hunting |
-| **Executive** | Findings, attack path, countermeasures, exposure |
-| **Triage** | Timeline, IOCs, MITRE, assets |
-| **Report** | Report-oriented panel order |
-| **Deep-Dive** | Evidence chain, hypotheses, threads, notebook |
-| **Hunt-Prep** | Hunting profile, adversary hints, next techniques, query translator |
+| **Now** *(default)* | Decision cockpit only — active leads, contradictions, gaps, live work, changes and report blockers. Near-duplicate host merges appear here when one is pending |
+| **Analyst** | Every core workspace, in the app's intended reading order. No severity filter |
+| **Lead** | Executive summary, findings, playbook, next steps, D3FEND, evidence and cloud coverage gaps, open questions and uncertainties, compliance, host scope and ranking, phases, attack path, timeline, remediation, campaign scope, handoff and case details. High and Critical only |
+| **Executive** | Executive summary, narrative, attack path, findings, playbook, D3FEND, compliance, assets, exposure and case details. Top 5 High/Critical findings only |
+| **Triage** | Findings, host ranking, timeline, Hunt Workbench, kill chain, phases, next steps, handoff, collection plan, fleet collection and IOCs. Sorted by severity |
+| **Report** | Executive summary, narrative, attack path, findings, MITRE, IOCs, host scope, assets, exposure, open questions, cloud coverage, compliance, chain of custody, remediation and case details. Raw timeline hidden |
+| **Deep-Dive** | Timeline, Hunt Workbench and evidence chain up front, then assets, graphs, findings, beacons, anomalies, gaps, threads, MITRE, hypotheses, the super-timeline, Second Look, the notebook and the query translator |
+| **Hunt Prep** | Hunt Workbench, hunting profile, fleet collection, Velociraptor hunts, playbook, next steps, collection plan, coverage gaps, findings, hypotheses, MITRE, adversary hints, playbook match, D3FEND, IOCs and timeline |
 
-A new case (or any case with no saved per-case dashboard-view choice) opens with **Analyst** instead
+A new case (or any case with no saved per-case dashboard-view choice) opens with **Now** instead
 of the raw "Custom" section order. Explicitly picking **Custom** from the dashboard-view menu still
 sticks across reloads. A permanent note below all panels points back here for further customization.
 

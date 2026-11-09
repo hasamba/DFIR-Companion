@@ -204,6 +204,8 @@ interface Harness {
   /** Hold the next POST /execute until release(); abort rejects it like a real fetch. */
   holdExecute: () => { release: () => void };
   savedGets: () => string[];
+  /** The order the cancel POST and the Run's abort happened in, with the ids involved (#2462). */
+  cancelOrder: () => string[];
 }
 
 async function mount(initial: Hunt[]): Promise<Harness> {
@@ -220,6 +222,7 @@ async function mount(initial: Hunt[]): Promise<Harness> {
   let observerCallback: () => void = () => {};
   let executeGate: Promise<void> | null = null;
   const savedGets: string[] = [];
+  const cancelOrder: string[] = [];
 
   vi.stubGlobal("document", {
     readyState: "complete",
@@ -252,7 +255,10 @@ async function mount(initial: Hunt[]): Promise<Harness> {
       const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
       const reply = (value: unknown, ok = true) => ({ ok, status: ok ? 200 : 500, json: async () => value });
       if (url.endsWith("/validate")) return reply({ explanation: "ok" });
-      if (url.endsWith("/cancel")) return reply({ cancelled: true });
+      if (url.endsWith("/cancel")) {
+        cancelOrder.push(`cancel ${url}`);
+        return reply({ cancelled: true });
+      }
       if (url.endsWith("/execute")) {
         const gate = executeGate;
         executeGate = null;
@@ -260,7 +266,12 @@ async function mount(initial: Hunt[]): Promise<Harness> {
           const signal = init.signal;
           const aborted = await Promise.race([
             gate.then(() => false),
-            new Promise<boolean>((resolve) => signal?.addEventListener("abort", () => resolve(true))),
+            new Promise<boolean>((resolve) =>
+              signal?.addEventListener("abort", () => {
+                cancelOrder.push(`abort ${String(body?.executionId)}`);
+                resolve(true);
+              }),
+            ),
           ]);
           if (aborted) {
             // The server records the cancelled run a moment after the client sees its abort.
@@ -338,6 +349,7 @@ async function mount(initial: Hunt[]): Promise<Harness> {
     el,
     settle,
     savedGets: () => savedGets,
+    cancelOrder: () => cancelOrder,
     mutate: async () => {
       observerCallback();
       await settle();
@@ -516,5 +528,23 @@ describe("hunt workbench — execution history panel (#1833)", () => {
 
     expect(h.el("hqSaved").value).toBe("h2");
     expect(h.el("hqHistory").innerHTML).toContain("hq-run-cancelled");
+  });
+
+  // Aborting first closes the Run's connection, the server forgets the execution, and the cancel
+  // then 404s in the console (#2462). Cancel must reach the server while it still holds the run.
+  it("Cancel sends the cancel for the running execution before it aborts the Run", async () => {
+    const h = await mount([EMPTY]);
+    await select(h, "h2");
+    h.holdExecute();
+    const running = h.el("hqRun").fire("click");
+    await h.settle();
+    await h.el("hqCancel").fire("click");
+    await running;
+
+    const [first, second] = h.cancelOrder();
+    expect(first).toMatch(/^cancel .*\/executions\/[^/]+\/cancel$/);
+    expect(second).toMatch(/^abort /);
+    const id = second.slice("abort ".length);
+    expect(first).toContain(`/executions/${id}/cancel`);
   });
 });

@@ -7,6 +7,7 @@
 // Kept beside canonicalEvent.ts so the envelope schema stays within its size bound.
 
 import { z } from "zod";
+import { scopeBasisSchema } from "./summaryScope.js";
 
 const cited = z.object({ time: z.string(), locator: z.string() });
 
@@ -55,7 +56,8 @@ export const awsLineageBlockSchema = z.object({
   /** How many contributing records are not individually cited in evidence.rawRecords. */
   notCited: z.number().int().nonnegative(),
   coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
-  basis: z.literal(
+  // The file form, or its collection form (#2482) — summaryScope.ts.
+  basis: scopeBasisSchema(
     "records of this upload only; joined through the access key id; the workload's addresses are not in this evidence",
   ),
 });

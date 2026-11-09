@@ -80,6 +80,17 @@
 
   // Everything below ran at top level in the inline script, in this order. It stays in that order,
   // inside a function the page calls at the same point — the ordering is the behaviour.
+  // A dialog with a push or import on the wire cannot be dismissed (#2494): its Cancel is disabled,
+  // its backdrop is inert, and aria-busy="true" makes the shared modal wiring ignore Escape (#2463).
+  // Each of these dialogs writes a failure only into its own message line, so a dialog dismissed
+  // mid-request would hide the failure completely.
+  function setDialogBusy(overlay, cancelId, busy) {
+    if (busy) overlay.setAttribute("aria-busy", "true");
+    else overlay.removeAttribute("aria-busy");
+    document.getElementById(cancelId).disabled = busy;
+  }
+  function dialogBusy(overlay) { return overlay.getAttribute("aria-busy") === "true"; }
+
   function initTicketIntegrations() {
     if (initialised) return;
     // ── Push to an external platform (DFIR-IRIS / Timesketch / MISP) ──────────
@@ -192,12 +203,13 @@
     function openNotionModal() {
       document.getElementById("notionMsg").textContent = "";
       syncNotionRows();
+      setDialogBusy(notionOverlay, "notionCancel", false);
       notionOverlay.classList.add("open");
     }
-    function closeNotionModal() { notionOverlay.classList.remove("open"); }
+    function closeNotionModal() { setDialogBusy(notionOverlay, "notionCancel", false); notionOverlay.classList.remove("open"); }
     [...document.querySelectorAll('input[name="notionMode"]')].forEach((r) => { r.onchange = syncNotionRows; });
     document.getElementById("notionCancel").onclick = closeNotionModal;
-    notionOverlay.addEventListener("click", (e) => { if (e.target === notionOverlay) closeNotionModal(); });
+    notionOverlay.addEventListener("click", (e) => { if (e.target === notionOverlay && !dialogBusy(notionOverlay)) closeNotionModal(); });
     document.getElementById("notionExportBtn").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) { document.getElementById("notionMsg").textContent = "connect to a case first"; return; }
@@ -215,6 +227,7 @@
       }
       const btn = document.getElementById("notionExportBtn");
       btn.disabled = true;
+      setDialogBusy(notionOverlay, "notionCancel", true);
       document.getElementById("notionMsg").textContent = "exporting…";
       fetch(`/cases/${c}/push/notion`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || ("HTTP " + r.status)), { pageId: j.pageId, pageUrl: j.pageUrl }); return j; })
@@ -241,12 +254,12 @@
           }
           document.getElementById("notionMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s";
         })
-        .finally(() => { btn.disabled = false; });
+        .finally(() => { btn.disabled = false; setDialogBusy(notionOverlay, "notionCancel", false); });
     };
 
     // ── Import from DFIR-IRIS modal (issue #88) ───────────────────────────────
     const irisImportOverlay = document.getElementById("irisImportOverlay");
-    function closeIrisImportModal() { irisImportOverlay.classList.remove("open"); }
+    function closeIrisImportModal() { setDialogBusy(irisImportOverlay, "irisImportCancel", false); irisImportOverlay.classList.remove("open"); }
     function openIrisImportModal() {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) { document.getElementById("status").textContent = "connect to a case first"; return; }
@@ -255,6 +268,7 @@
       msg.textContent = "";
       document.getElementById("irisCaseIdInput").value = "";
       sel.innerHTML = '<option value="">loading cases…</option>';
+      setDialogBusy(irisImportOverlay, "irisImportCancel", false);
       irisImportOverlay.classList.add("open");
       fetch("/iris/cases")
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
@@ -268,7 +282,7 @@
     }
     // openIrisImportModal is invoked from the "Import case" chooser (importCaseIris button).
     document.getElementById("irisImportCancel").onclick = closeIrisImportModal;
-    irisImportOverlay.addEventListener("click", (e) => { if (e.target === irisImportOverlay) closeIrisImportModal(); });
+    irisImportOverlay.addEventListener("click", (e) => { if (e.target === irisImportOverlay && !dialogBusy(irisImportOverlay)) closeIrisImportModal(); });
     document.getElementById("irisImportRun").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) { document.getElementById("irisImportMsg").textContent = "connect to a case first"; return; }
@@ -281,6 +295,7 @@
       else { document.getElementById("irisImportMsg").textContent = "pick a case or enter an id"; return; }
       const btn = document.getElementById("irisImportRun");
       btn.disabled = true;
+      setDialogBusy(irisImportOverlay, "irisImportCancel", true);
       document.getElementById("irisImportMsg").textContent = "importing…";
       fetch(`/cases/${c}/iris-import`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
@@ -290,7 +305,7 @@
           closeIrisImportModal();
         })
         .catch((err) => document.getElementById("irisImportMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
-        .finally(() => { btn.disabled = false; });
+        .finally(() => { btn.disabled = false; setDialogBusy(irisImportOverlay, "irisImportCancel", false); });
     };
 
     // Published HERE, the moment its own section is wired, rather than at the end of init. The
@@ -424,11 +439,12 @@
       input.value = clickupDefaultList;   // default; overwritten by the saved list if present
       fetch(`/cases/${encodeURIComponent(caseId)}/clickup-export`).then((r) => r.ok ? r.json() : null)
         .then((s) => { if (s && s.listId) input.value = s.listId; }).catch(() => {});
+      setDialogBusy(clickupOverlay, "clickupCancel", false);
       clickupOverlay.classList.add("open");
     }
-    function closeClickupModal() { clickupOverlay.classList.remove("open"); }
+    function closeClickupModal() { setDialogBusy(clickupOverlay, "clickupCancel", false); clickupOverlay.classList.remove("open"); }
     document.getElementById("clickupCancel").onclick = closeClickupModal;
-    clickupOverlay.addEventListener("click", (e) => { if (e.target === clickupOverlay) closeClickupModal(); });
+    clickupOverlay.addEventListener("click", (e) => { if (e.target === clickupOverlay && !dialogBusy(clickupOverlay)) closeClickupModal(); });
     document.getElementById("clickupPushBtn").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) { document.getElementById("clickupMsg").textContent = "connect to a case first"; return; }
@@ -436,6 +452,7 @@
       if (!listId) { document.getElementById("clickupMsg").textContent = "enter a ClickUp list ID"; return; }
       const btn = document.getElementById("clickupPushBtn");
       btn.disabled = true;
+      setDialogBusy(clickupOverlay, "clickupCancel", true);
       document.getElementById("clickupMsg").textContent = "pushing…";
       fetch(`/cases/${encodeURIComponent(caseId)}/push/clickup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ listId }) })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
@@ -449,7 +466,7 @@
           closeClickupModal();
         })
         .catch((err) => document.getElementById("clickupMsg").textContent = "failed: " + err.message + " — restart the companion server if this 404s")
-        .finally(() => { btn.disabled = false; });
+        .finally(() => { btn.disabled = false; setDialogBusy(clickupOverlay, "clickupCancel", false); });
     };
 
     // ── Push to DFIR-IRIS modal (stable per-case name + override) ─────────────
@@ -460,11 +477,12 @@
       input.value = caseId; // placeholder until the saved/default name loads below
       fetch(`/cases/${encodeURIComponent(caseId)}/iris-export`).then((r) => r.ok ? r.json() : null)
         .then((s) => { if (s) input.value = s.caseName || s.defaultCaseName || caseId; }).catch(() => {});
+      setDialogBusy(irisPushOverlay, "irisPushCancel", false);
       irisPushOverlay.classList.add("open");
     }
-    function closeIrisPushModal() { irisPushOverlay.classList.remove("open"); }
+    function closeIrisPushModal() { setDialogBusy(irisPushOverlay, "irisPushCancel", false); irisPushOverlay.classList.remove("open"); }
     document.getElementById("irisPushCancel").onclick = closeIrisPushModal;
-    irisPushOverlay.addEventListener("click", (e) => { if (e.target === irisPushOverlay) closeIrisPushModal(); });
+    irisPushOverlay.addEventListener("click", (e) => { if (e.target === irisPushOverlay && !dialogBusy(irisPushOverlay)) closeIrisPushModal(); });
     document.getElementById("irisPushBtn").onclick = () => {
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) { document.getElementById("irisPushMsg").textContent = "connect to a case first"; return; }
@@ -472,6 +490,7 @@
       if (!caseName) { document.getElementById("irisPushMsg").textContent = "enter an IRIS case name"; return; }
       const btn = document.getElementById("irisPushBtn");
       btn.disabled = true;
+      setDialogBusy(irisPushOverlay, "irisPushCancel", true);
       document.getElementById("irisPushMsg").textContent = "pushing…";
       fetch(`/cases/${encodeURIComponent(caseId)}/push/iris`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ caseName }) })
         .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || ("HTTP " + r.status)), { pageId: j.pageId, pageUrl: j.pageUrl }); return j; })
@@ -487,7 +506,7 @@
           closeIrisPushModal();
         })
         .catch((err) => document.getElementById("irisPushMsg").textContent = "failed: " + err.message)
-        .finally(() => { btn.disabled = false; });
+        .finally(() => { btn.disabled = false; setDialogBusy(irisPushOverlay, "irisPushCancel", false); });
     };
 
     // LAST LINE, on purpose — see the declaration above.

@@ -433,6 +433,8 @@ export interface CollectionCheckpoint {
   subWindows: SubWindowStatus[];
   /** Page files whose import landed in the case. */
   imported: string[];
+  /** #2482: per stream kind, the page count its landed collection summary covers. */
+  summarized?: Partial<Record<string, number>>;
   quarantined: QuarantinedFile[];
   missing: MissingWindow[];
   /** A stop that ended the network stage early (disk full, write error, budget used). */

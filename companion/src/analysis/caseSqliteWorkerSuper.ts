@@ -630,4 +630,48 @@ function setSuperLabels(dbPath, eventId, labels) {
     db.close();
   }
 }
+
+// #2482: a live collection's summary rebuild drops its previous build's rows that the rebuild no
+// longer emits (a capped, ranked builder can displace one), from the forensic timeline AND the
+// super-timeline in ONE transaction. Only ids of the summary's exact shape — its fixed prefix, 16
+// hex digits, an optional run of "x" — are candidates, so a page row can never match.
+function dropSummaryRows(dbPath, prefix, keepIds) {
+  if (!existsSync(dbPath) || typeof prefix !== "string" || !prefix) return { forensic: 0, super: 0 };
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => {
+      const keep = new Set(Array.isArray(keepIds) ? keepIds : []);
+      const shape = /^[0-9a-f]{16}x*$/;
+      const rows = db.prepare(
+        "SELECT row_id, kind, entity_id FROM entities WHERE kind IN ('forensicTimeline','superTimeline') " +
+        "AND entity_id >= ? AND entity_id < ?"
+      ).all(prefix, prefix + "￿");
+      const doomed = rows.filter((r) => {
+        const id = String(r.entity_id || "");
+        return id.startsWith(prefix) && shape.test(id.slice(prefix.length)) && !keep.has(id);
+      });
+      const out = { forensic: 0, super: 0 };
+      const del = db.prepare("DELETE FROM entities WHERE row_id=?");
+      for (const r of doomed) {
+        if (!del.run(r.row_id).changes) continue;
+        if (r.kind === "forensicTimeline") out.forensic++;
+        else out.super++;
+      }
+      for (const [kind, n] of [["forensicTimeline", out.forensic], ["superTimeline", out.super]]) {
+        if (n) db.prepare("UPDATE entity_counts SET count=max(count-?, 0) WHERE kind=?").run(n, kind);
+      }
+      if (out.super) {
+        const ids = JSON.stringify(doomed.filter((r) => r.kind === "superTimeline").map((r) => r.entity_id));
+        for (const table of ["super_labels", "super_set_aside", "super_protected"]) {
+          db.prepare("DELETE FROM " + table + " WHERE event_id IN (SELECT value FROM json_each(?))").run(ids);
+        }
+        bumpSuperGeneration(db);
+        stampSuperContent(db);
+      }
+      return out;
+    });
+  } finally {
+    db.close();
+  }
+}
 `;

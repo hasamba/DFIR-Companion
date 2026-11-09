@@ -104,6 +104,7 @@ async function importCloudFileLogged(
       minSeverity: base.minSeverity,
       debug: base.debug,
       signal: base.signal,
+      ...(base.skipSummaries ? { skipSummaries: true } : {}),
       onProgress: (done, total) =>
         void (
           base.onParseProgress?.(done, total, `reading ${kind} records`) ?? base.onProgress?.(done, total)

@@ -65,14 +65,25 @@ describe("applySigmaMatches", () => {
   it("tags without grading below the minimum level", () => {
     const out = applySigmaMatches(base(), [ref("m", "medium", ["T1098"])], SNAP);
     expect(out.severity).toBe("Info");
-    expect(out.description).toBe("Sigma (medium, not graded): Rule m - AWS cloudtrail StopLogging by alice");
+    // #2486: a rule that did not set the severity puts nothing in the description — a head read as
+    // "this row was not graded" on rows another rule had graded. The message says why.
+    expect(out.description).toBe("AWS cloudtrail StopLogging by alice");
+    expect(out.message).toContain("Sigma rule: Rule m [m]");
+    expect(out.message).toContain("Sigma note: not graded — ");
     expect(out.mitre).toContain("T1098");
+  });
+
+  it("#2486: a row another rule graded High keeps its own description when Sigma only labels it", () => {
+    const out = applySigmaMatches({ ...base(), severity: "High" }, [ref("m", "medium")], SNAP);
+    expect(out.severity).toBe("High");
+    expect(out.description).toBe("AWS cloudtrail StopLogging by alice");
+    expect(out.description).not.toMatch(/^Sigma/);
   });
 
   it("never grades on a threat-hunting rule, whatever its level", () => {
     const out = applySigmaMatches(base(), [{ ...ref("t", "critical"), huntingOnly: true }], SNAP);
     expect(out.severity).toBe("Info");
-    expect(out.description).toMatch(/^Sigma \(critical, not graded\): Rule t - /);
+    expect(out.description).toBe("AWS cloudtrail StopLogging by alice");
     expect(out.message).toContain("threat-hunting rule (labels only, never grades)");
   });
 

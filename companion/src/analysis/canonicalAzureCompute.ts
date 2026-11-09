@@ -21,6 +21,7 @@
 // are out of scope entirely — see RECOMMENDATION-1078.md's design-round-1 section.
 
 import { z } from "zod";
+import { scopeBasisSchema } from "./summaryScope.js";
 
 export const azureComputeLaunchSchema = z.object({
   time: z.string(),
@@ -95,7 +96,8 @@ export const azureComputeBlockSchema = z.object({
   facts: z.array(z.enum(azureComputeFactKinds)),
   notCited: z.number().int().nonnegative(),
   coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
-  basis: z.literal(
+  // The file form, or its collection form (#2493) — summaryScope.ts.
+  basis: scopeBasisSchema(
     "records of this upload only; joined through the VM's resource id; what ran on the VM and its network egress are not in this case's Azure Activity Log exports; the network-security-group join covers only a direct NIC attachment or its subnet's own attachment, resolved as of the rule-write's own time, matched by exact resourceId — a match on one of the two NSGs Azure evaluates never by itself establishes that traffic reaches the VM — see #1077, #1078",
   ),
 });
@@ -128,7 +130,8 @@ export const azureVmssComputeBlockSchema = z.object({
   facts: z.array(z.enum(azureVmssComputeFactKinds)),
   notCited: z.number().int().nonnegative(),
   coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
-  basis: z.literal(
+  // The file form, or its collection form (#2493) — summaryScope.ts.
+  basis: scopeBasisSchema(
     "records of this upload only; joined through the VMSS member's resource id (subscription, resource group, scale-set name, instance id); what ran on the member and its network egress are not in this case's Azure Activity Log exports; a member is excluded ENTIRELY, from its first record, once ANY of its records (in this upload, in any order) carries properties.virtualMachineResourceId — but that field is only exposed from Azure API version 2025-11-01 onward, so absence in this upload is not proof of Uniform mode for older bodies; per-member operations coverage is opportunistic, and an absent member row is never evidence that no scale-set activity occurred; each row is one OBSERVED lifecycle epoch, bounded at a successful delete, never a claim of one proven distinct physical machine — see #1078",
   ),
 });

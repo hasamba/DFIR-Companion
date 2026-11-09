@@ -550,6 +550,13 @@ export class AnalysisPipeline {
     return { state, disclosure };
   }
 
+  // A live collection's whole-export summaries, once over every page of the run (#2482).
+  importCloudCollectionSummary(
+    ...args: ImporterArgs<typeof ingest.importCloudCollectionSummary>
+  ): Promise<ingest.CollectionSummaryResult> {
+    return ingest.importCloudCollectionSummary(this.importCtx, ...args);
+  }
+
   importSentinelLinux(...args: ImporterArgs<typeof ingest.importSentinelLinux>): Promise<InvestigationState> {
     return ingest.importSentinelLinux(this.importCtx, ...args);
   }

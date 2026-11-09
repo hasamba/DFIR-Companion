@@ -378,7 +378,11 @@ and start** runs the collection as a background job.
   each category is its own source with its own filter. The result lists each one, so you can see
   which categories were collected. Category filters exist only on the Graph beta version, so the
   sign-in sources use beta. Graph allows 5 sign-in and directory-audit requests per 10 seconds per
-  app and tenant; the collection keeps to that.
+  app and tenant; the collection keeps to that. Each user sign-in row shows its category right after
+  the prefix (`Entra sign-in: [non-interactive] …`), for collected and imported records that state
+  it. A sign-in from an HTTP library (node-fetch, axios, …) is graded Medium when it is interactive
+  or its category is unknown; on a non-interactive sign-in (a background token refresh) it is only
+  tagged, for search in the super-timeline.
 - **Azure Activity.** Every subscription the app holds a role on is collected, one after another.
   An app that can read no subscription fails this source with what to grant. A subscription that
   refuses its Activity log (no role on it, or it was disabled or deleted) is skipped and the next

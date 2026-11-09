@@ -157,6 +157,25 @@ describe("import status line names each failed file and its reason (#1786)", () 
   });
 });
 
+// #2466 — an empty or blank file read "empty.csv: text is required", the server's internal wording.
+// The file is still sent (its custody receipt is written first, #2111); only the sentence changes.
+describe("an empty file says it is empty (#2466)", () => {
+  it("replaces the server's 'text is required' with a plain sentence", async () => {
+    const fetch = vi.fn(async () => reply(400, { error: "text is required" }));
+    const h = harness({ fetch, readFileTextWithProgress: async () => "" });
+    await h.pick([{ name: "empty.csv", type: "text/csv", size: 0 }]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(h.status.textContent).toContain("empty.csv is empty, nothing to import");
+    expect(h.status.textContent).not.toContain("text is required");
+  });
+
+  it("leaves every other refusal sentence as the server wrote it", async () => {
+    const h = harness({ fetch: vi.fn(async () => reply(409, { error: "an import is already running" })) });
+    await h.pick([{ name: "empty.csv", type: "text/csv", size: 0 }]);
+    expect(h.status.textContent).toContain("empty.csv: an import is already running");
+  });
+});
+
 describe("import status while the host prompt waits (#1772)", () => {
   it("says it is waiting for the analyst, sends nothing, then resumes on the answer", async () => {
     let answer!: (v: string | null) => void;

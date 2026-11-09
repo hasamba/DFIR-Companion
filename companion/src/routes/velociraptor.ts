@@ -26,7 +26,14 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
 import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
-import { caseVelo, defaultVelo, namesCase, requestVelo, type VeloTarget } from "./veloServers.js";
+import {
+  caseVelo,
+  defaultVelo,
+  namedCaseVeloOrNull,
+  namesCase,
+  requestVelo,
+  type VeloTarget,
+} from "./veloServers.js";
 import { errorStatusOf, externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
 import { uploadOutcomeFields } from "./veloUploadFields.js";
 import { NOTEBOOK_URL_ERROR, priorVeloImportToWarn } from "./veloPriorImport.js";
@@ -126,10 +133,14 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   });
 
   // Read a set's persisted client inventory (host ↔ client_id map): the case's set with `?caseId=`,
-  // else the default set (empty when it has no Velociraptor). Empty when never refreshed.
+  // else the default set (empty when it has no Velociraptor). Empty when never refreshed. Settings
+  // reads this on open, so a named case whose set does not resolve or lacks Velociraptor is an empty
+  // 200 too (#2462) — still never the default set's inventory.
   app.get("/velociraptor/clients", async (req: Request, res: Response) => {
-    const vc = namesCase(req) ? requestVelo(ctx, req, res) : undefined;
-    if (namesCase(req) && !vc) return;
+    const named = namesCase(req) ? namedCaseVeloOrNull(ctx, req, res) : undefined;
+    if (named === undefined && namesCase(req)) return; // malformed caseId: 400 already sent
+    if (named === null) return res.status(200).json({ updatedAt: "", clients: [] });
+    const vc = named;
     const inventory = vc ? options.clientInventoryFor?.(vc.setId) : defaultInventory();
     if (!inventory) return res.status(200).json({ updatedAt: "", clients: [] });
     try {
