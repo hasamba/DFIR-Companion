@@ -83,6 +83,8 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
       enabled: sigmaEnabled(),
       active: store.active(),
       previous: store.previous(),
+      // #2499: extra rule sources graded beside SigmaHQ (Suzaku), for the Detection rules box.
+      origins: set.origins,
       contentSha: set.contentSha,
       disabledHash: set.disabledHash,
       exclusionsHash: set.exclusionsHash,

@@ -103,6 +103,14 @@ describe("the Detection rules box (#2389)", () => {
     ).toBeNull();
   });
 
+  it("names the bundled Suzaku rules beside the SigmaHQ release (#2499)", () => {
+    const { api } = harness();
+    const origins = [{ name: "Suzaku", release: "suzaku-2026-11-01" }];
+    expect(
+      api.drSigmaLine({ ...SIGMA, origins, lastCheck: { latest: "r2026-07-01", updateAvailable: false } }),
+    ).toMatchObject({ text: "SigmaHQ r2026-07-01 + Suzaku suzaku-2026-11-01 — current" });
+  });
+
   it("never calls a pack that needs a newer app current", () => {
     const { api } = harness();
     const line = api.drTaggerLine({

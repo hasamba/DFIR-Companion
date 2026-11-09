@@ -88,6 +88,8 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     enabled: true,
     ...(staged ? { staged: true } : {}),
     release: snapshot.ruleSet.release,
+    // #2499: "SigmaHQ r… + Suzaku …" — what the dashboard names as the rules used.
+    rules: sigmaSetLabel(snapshot.ruleSet),
     token: snapshot.token,
     current: plan.files.length > 0 && plan.files.every((f) => f.status === "current"),
     counts: plan.counts,

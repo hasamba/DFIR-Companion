@@ -483,11 +483,12 @@ function sigmaRenderRegrade(r, caseId, applied) {
     return;
   }
   const c = r.counts || {};
+  const rules = r.rules || `SigmaHQ ${r.release}`; // #2499: names Suzaku too when it graded
   const head = applied
-    ? `Re-graded with SigmaHQ ${r.release}.`
+    ? `Re-graded with ${rules}.`
     : r.current && !((Number(c.changed) || 0) + (Number(c.tokenOnly) || 0))
-      ? `Already graded with the current rules (SigmaHQ ${r.release}). A re-grade changes nothing.`
-      : `A re-grade with SigmaHQ ${r.release} would change:`;
+      ? `Already graded with the current rules (${rules}). A re-grade changes nothing.`
+      : `A re-grade with ${rules} would change:`;
   box.appendChild(sigmaEl("div", head));
   box.appendChild(sigmaEl("div", sigmaRegradeCountsText(c)));
   if (applied && r.demoted) box.appendChild(sigmaEl("div", `${r.demoted} row(s) left the forensic timeline; they stay in the super-timeline.`));
