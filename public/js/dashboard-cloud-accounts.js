@@ -341,7 +341,17 @@
     document.querySelectorAll("#cloudAccountForm [data-cloud-provider]").forEach((node) => {
       node.hidden = node.dataset.cloudProvider !== provider;
     });
+    showMsFormat();
     renderPolicy(provider);
+  }
+
+  // A Microsoft certificate is a pasted PEM or a PFX file and password: only the picked one shows.
+  function showMsFormat() {
+    const format = byId("caMsFormat");
+    if (!format) return;
+    const pfx = format.value === "pfx";
+    if (byId("caMsPemField")) byId("caMsPemField").hidden = pfx;
+    if (byId("caMsPfxRow")) byId("caMsPfxRow").hidden = !pfx;
   }
 
   // The provider's minimum read-only policy, in the add/edit form.
@@ -576,6 +586,7 @@
     if (byId("ccClose")) byId("ccClose").onclick = closeCheck;
     byId("cloudAccountForm").addEventListener("submit", saveForm);
     byId("caProvider").addEventListener("change", (e) => showProvider(e.target.value));
+    if (byId("caMsFormat")) byId("caMsFormat").addEventListener("change", showMsFormat);
     document.querySelectorAll(".stab").forEach((tab) => {
       if (tab.dataset.stab === "cloud") tab.addEventListener("click", loadCloudAccounts);
     });
