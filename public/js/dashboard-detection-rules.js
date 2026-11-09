@@ -14,6 +14,18 @@
 const DR_OPEN_KEY = "dfir.detectionRules.open";
 const drState = { tagger: null, sigma: null };
 
+// The Suzaku line (#2508), from GET /sigma/status → settings.suzaku. PURE. None while Suzaku is off.
+function drSuzakuLine(s) {
+  const sz = s && s.settings && s.settings.suzaku;
+  if (!sz || sz.enabled === false || !sz.active) return null;
+  const what = sz.active.release;
+  const lc = sz.lastCheck;
+  if (lc && lc.error) return { label: "Suzaku rules", text: `${what} — the last check failed`, action: "suzaku", button: "Check again" };
+  if (lc && lc.updateAvailable) return { label: "Suzaku rules", text: `${what} — ${lc.latest} available`, action: "suzaku", button: "Review update…" };
+  if (lc) return { label: "Suzaku rules", text: `${what} — current`, action: null };
+  return { label: "Suzaku rules", text: `${what} — not checked`, action: "suzaku", button: "Check for updates" };
+}
+
 // The tagger line, from GET /tagger/pack. PURE.
 function drTaggerLine(st) {
   if (!st) return null;
@@ -67,13 +79,17 @@ function drRunAction(action) {
     openSettingsTab("sigma");
     if (typeof sigmaCheck === "function") sigmaCheck();
   }
+  if (action === "suzaku" && typeof openSettingsTab === "function") {
+    openSettingsTab("sigma");
+    if (typeof suzakuCheck === "function") suzakuCheck();
+  }
 }
 
 function drRender() {
   const box = document.getElementById("detectionRulesBox");
   const lines = document.getElementById("detectionRulesLines");
   if (!box || !lines) return;
-  const shown = [drTaggerLine(drState.tagger), drSigmaLine(drState.sigma)].filter(Boolean);
+  const shown = [drTaggerLine(drState.tagger), drSigmaLine(drState.sigma), drSuzakuLine(drState.sigma)].filter(Boolean);
   box.hidden = shown.length === 0;
   lines.textContent = "";
   for (const line of shown) {

@@ -539,8 +539,16 @@ call, with a success rule and an "attempt" rule for each. The Companion ships th
 default, with their own settings: most are labels only, and only a **critical** Suzaku rule raises an
 event's severity unless you lower `DFIR_SIGMA_SUZAKU_MIN_LEVEL`. At `high`, every routine
 `GetSecretValue` or `CreateUser` would become a High event. Each match names the Suzaku rule, its author
-and a link to it. Turning Suzaku off returns grading to SigmaHQ alone. Installing a newer SigmaHQ
-release does not change the Suzaku rules; they update with the Companion.
+and a link to it. Turning Suzaku off returns grading to SigmaHQ alone.
+
+**Updating the Suzaku rules.** Suzaku publishes no releases, so **Check for Suzaku updates** (in this
+tab, or **Review update…** on the Suzaku line of the Content tagger's Detection rules box) asks GitHub for
+the newest change to Suzaku's CloudTrail rule folder. When there is one, it downloads that exact version,
+checks every file against GitHub's own fingerprint for it, and shows what changes: rules added, changed
+and removed, how many would load with your settings, and how many can raise severity at the Suzaku
+minimum level. Nothing is installed until you click **Install**; **Roll back Suzaku** returns to the
+previous version. Installing a newer SigmaHQ release does not change the Suzaku rules, and Suzaku's daily
+copy of the SigmaHQ rules is never used — SigmaHQ updates come from SigmaHQ's own releases.
 
 The tab also shows:
 
