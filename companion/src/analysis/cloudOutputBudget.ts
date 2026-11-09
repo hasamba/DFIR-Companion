@@ -361,6 +361,8 @@ function createFailedReadTally(actor: string): FailedReadTally {
  */
 function describeFailedReads(e: SiemEvent, t: FailedReadTally, reason: string): SiemEvent {
   const n = e.count ?? 1;
+  // One folded call IS the original row: no note, the same rule as a one-row detailed group (#2475).
+  if (n <= 1) return e;
   const span = e.endTimestamp && e.endTimestamp !== e.timestamp ? `, ${e.timestamp} → ${e.endTimestamp}` : "";
   const ranked = [...t.actions].sort((a, b) => b[1] - a[1]);
   const listed = ranked

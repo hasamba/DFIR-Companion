@@ -370,6 +370,14 @@ describe("failed read-only calls per principal (#2481)", () => {
     expect(disclosure.failedReads.toSuper).toBe(3);
   });
 
+  it("a single folded call keeps its own description, with no aggregated note (#2475)", () => {
+    const b = createOutputBudget({ budgets: budgets() });
+    for (let i = 0; i < 4; i++) b.route(denied("arn:a", `svc:Get${i}`), dFacts("arn:a", `svc:Get${i}`));
+    const { aggregates } = b.finish();
+    expect(aggregates).toHaveLength(1);
+    expect(aggregates[0].description).toBe("AWS svc:Get3 by arn:a from 192.0.2.9 (AccessDenied)");
+  });
+
   it("an unknown principal never folds", () => {
     const b = createOutputBudget({ budgets: budgets() });
     for (let i = 0; i < 6; i++) b.route(denied("", `svc:Get${i}`), dFacts("", `svc:Get${i}`));
