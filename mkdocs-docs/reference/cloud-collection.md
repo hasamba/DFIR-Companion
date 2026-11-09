@@ -38,6 +38,37 @@ Settings → Cloud accounts lists every credential you can see, with its cases, 
 it was last used, and deletes one or several at once. See
 [Settings → Cloud accounts](settings.md#cloud-accounts).
 
+## The collection's own calls
+
+A collection talks to the cloud, and the cloud logs that too: the Microsoft audit-search jobs
+(`AuditSearchCreated`, `AuditSearchCompleted`), the AWS `LookupEvents`, `DescribeRegions`,
+`GetObject` and GuardDuty reads, the GCP `ListLogEntries` and `TestIamPermissions` calls. Those rows
+come back in this or a later collection (or in an export you import) like anyone else's.
+
+After every import, the companion tags each such row **`dfir-collector`**, so you can tell your own
+footprint from the tenant's or an intruder's use of the same APIs. A row is tagged only when all of
+these are true:
+
+- its caller is the identity a collection of this case recorded — the AWS role session or IAM user,
+  the Microsoft app (client) id, the GCP service account. A resumed run uses the identity recorded
+  when it was resumed;
+- its time is inside that run's time talking to the cloud, with five minutes of allowance for clock
+  differences. The same identity at any other time is not tagged;
+- it is one of the read calls the collector makes. **A write, or any other call, by the collector's
+  identity is never tagged**: the collector role is read-only, so such a row stands out;
+- it is a row for one call. Summary rows (credential lineage, compute lifecycles, privilege paths)
+  are never tagged.
+
+Hover the tag to see which collection's identity and run window the row matches. The tag changes
+nothing else: the grade, the MITRE techniques and the row itself stay as the import made them, and
+the row is never dropped. To hide these rows, turn on **Hide collector calls** in the
+[Super-Timeline](dashboard.md#super-timeline). It is off by default and every export keeps them.
+
+!!! note
+    **Clear tagger tags** in the Content tagger also removes these tags. Rows imported before this
+    version are not tagged. A Microsoft audit-search row is tagged only when its user field names the
+    app's client id.
+
 ## Check access
 
 Each account in the list has a **Check access** button. Pick the log sources to test and press

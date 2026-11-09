@@ -54,6 +54,7 @@ import { registerIntelRetirementRoutes } from "../routes/intelRetirement.js";
 import { registerTaggerRoutes } from "../routes/tagger.js";
 import { registerTaggerUpdateRoutes } from "../routes/taggerUpdates.js";
 import { registerSigmaRulesRoutes } from "../routes/sigmaRules.js";
+import { registerSigmaSuzakuRoutes } from "../routes/sigmaSuzaku.js";
 import { registerRulePackRoutes } from "../routes/rulePack.js";
 import { registerSigmaRegradeRoutes } from "../routes/sigmaRegrade.js";
 import { registerCustodyRoutes } from "../routes/custody.js";
@@ -189,6 +190,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerTaggerUpdateRoutes(app, ctx);
   registerRulePackRoutes(app, ctx); // Content tagger → Rule pack: check, review, install, roll back (#2349)
   registerSigmaRulesRoutes(app, ctx); // Settings → Sigma rules: updates, rollback, disabled list (#2204)
+  registerSigmaSuzakuRoutes(app, ctx); // Settings → Sigma rules → Suzaku: check, install, roll back (#2508)
   registerSigmaRegradeRoutes(app, ctx); // re-grade an imported case with the current Sigma rules (#2206)
   // Auto-record chain of custody for every artifact the companion stores (#231). Hooked onto the
   // store rather than onto the ~25 saveImport call sites, so no import route — including ones added

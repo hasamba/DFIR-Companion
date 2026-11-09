@@ -24,6 +24,7 @@ const small = (over: Partial<OutputBudgets> = {}): OutputBudgets => ({
   mediumMax: 10,
   aggregateGroupsMax: 5,
   coarseGroupsMax: 3,
+  failedReadsPerActor: 10,
   superRows: 4,
   ...over,
 });
@@ -50,7 +51,7 @@ describe("createOutputBudget (#2303)", () => {
     expect(individual).toHaveLength(10); // mediumMax
     expect(aggregates).toHaveLength(3); // one per (rule, source address)
     expect(aggregates.reduce((n, e) => n + (e.count ?? 1), 0)).toBe(990);
-    expect(disclosure.mediumOverflow).toEqual({ ruleActorBudget: 0, importBudget: 990 });
+    expect(disclosure.mediumOverflow).toEqual({ ruleActorBudget: 0, importBudget: 990, failedReadBudget: 0 });
     expect(aggregates[0].description).toMatch(
       /^UserLoginFailed from 192\.0\.2\.\d|^UserLoginFailed from 198/,
     );
@@ -236,5 +237,177 @@ describe("createOutputBudget (#2303)", () => {
 
   it("names the default budgets from the constants", () => {
     expect(defaultBudgets(7)).toMatchObject({ mediumMax: MEDIUM_INDIVIDUAL_MAX, superRows: 7 });
+  });
+});
+
+// #2481 — a principal's failed read-only calls (a CSPM scanner denied across dozens of services) are
+// kept one by one up to a per-principal cap, then folded into one counted event per principal that
+// lists the actions; every folded call is still offered to the super-timeline.
+describe("failed read-only calls per principal (#2481)", () => {
+  const denied = (actor: string, op: string, at = "2026-11-09T10:00:00Z", ip = "192.0.2.9"): MappedEvent => ({
+    timestamp: at,
+    description: `AWS ${op} by ${actor} from ${ip} (AccessDenied)`,
+    severity: "Medium",
+    mitre: [],
+    aggKey: `aws|${op}|${actor}|failed|accessdenied|${ip}|${at}`.toLowerCase(),
+  });
+  const dFacts = (actor: string, op: string, failedRead = true) => ({
+    rule: op,
+    actor,
+    ip: "192.0.2.9",
+    failedRead,
+  });
+  const budgets = (over: Partial<OutputBudgets> = {}): OutputBudgets =>
+    small({ mediumPerRuleActor: 25, mediumMax: 1_000, superRows: 1_000, failedReadsPerActor: 3, ...over });
+  const minute = (m: number) => `2026-11-09T10:${String(m).padStart(2, "0")}:00Z`;
+
+  it("keeps the first N failed reads of a principal, then folds the rest into ONE group with the actions", () => {
+    const b = createOutputBudget({ budgets: budgets() });
+    const ops = [
+      "macie2:GetMacieSession",
+      "shield:ListProtections",
+      "s3:GetBucketCors",
+      "fms:GetAdminAccount",
+    ];
+    const decisions = [];
+    for (let i = 0; i < 12; i++) {
+      const op = ops[i % ops.length];
+      decisions.push(b.route(denied("arn:scanner", op, minute(i)), dFacts("arn:scanner", op)));
+    }
+    const { individual, aggregates, disclosure } = b.finish();
+    expect(individual).toHaveLength(3);
+    expect(decisions.slice(0, 3)).toEqual(["forensic", "forensic", "forensic"]);
+    expect(decisions.slice(3).every((d) => d === "super+aggregate")).toBe(true);
+    expect(aggregates).toHaveLength(1);
+    const g = aggregates[0];
+    expect(g.severity).toBe("Medium");
+    expect(g.count).toBe(9);
+    expect(g.timestamp).toBe(minute(3));
+    expect(g.endTimestamp).toBe(minute(11));
+    expect(g.description).toMatch(/^arn:scanner: 9 failed read-only call\(s\) across 4 action\(s\)/);
+    expect(g.description).toContain(`${minute(3)} → ${minute(11)}`);
+    expect(g.description).toContain("fms:GetAdminAccount ×3");
+    expect(g.description).toContain("macie2:GetMacieSession ×2");
+    expect(g.description).toContain("failed read-only calls folded per actor");
+    expect(disclosure.mediumOverflow).toEqual({ ruleActorBudget: 0, importBudget: 0, failedReadBudget: 9 });
+    expect(disclosure.failedReads).toEqual({ folded: 9, toSuper: 9 });
+    expect(disclosure.superIndividual).toBe(9);
+    expect(disclosure.individual.medium).toBe(3);
+    expect(disclosure.aggregatedRows.medium).toBe(9);
+    expect(disclosure.budgets.failedReadsPerActor).toBe(3);
+  });
+
+  it("a single failed read stays exactly as today", () => {
+    const b = createOutputBudget({ budgets: budgets() });
+    expect(b.route(denied("arn:a", "s3:GetBucketCors"), dFacts("arn:a", "s3:GetBucketCors"))).toBe(
+      "forensic",
+    );
+    const { individual, aggregates, disclosure } = b.finish();
+    expect(individual).toHaveLength(1);
+    expect(individual[0].description).toBe("AWS s3:GetBucketCors by arn:a from 192.0.2.9 (AccessDenied)");
+    expect(aggregates).toHaveLength(0);
+    expect(disclosure.mediumOverflow.failedReadBudget).toBe(0);
+  });
+
+  it("never folds a failed write, however many there are", () => {
+    const b = createOutputBudget({ budgets: budgets() });
+    for (let i = 0; i < 10; i++)
+      b.route(
+        denied("arn:a", `iam:PutRolePolicy${i}`, minute(i)),
+        dFacts("arn:a", `iam:PutRolePolicy${i}`, false),
+      );
+    const { individual, aggregates } = b.finish();
+    expect(individual).toHaveLength(10);
+    expect(aggregates).toHaveLength(0);
+  });
+
+  it("counts the cap per principal: a second principal gets its own N and its own group", () => {
+    const b = createOutputBudget({ budgets: budgets() });
+    for (const actor of ["arn:a", "arn:b"])
+      for (let i = 0; i < 5; i++)
+        b.route(denied(actor, `svc:Get${i}`, minute(i)), dFacts(actor, `svc:Get${i}`));
+    const { individual, aggregates } = b.finish();
+    expect(individual).toHaveLength(6);
+    expect(
+      aggregates.map((e) => /^(\S+): (\d+) failed read-only/.exec(e.description)?.slice(1, 3)).sort(),
+    ).toEqual([
+      ["arn:a", "2"],
+      ["arn:b", "2"],
+    ]);
+  });
+
+  it("a repeat of a kept failed read merges into its row (#2502) and spends no cap", () => {
+    const b = createOutputBudget({ budgets: budgets() });
+    const same = denied("arn:a", "s3:GetBucketCors");
+    for (let i = 0; i < 6; i++) b.route(same, dFacts("arn:a", "s3:GetBucketCors"));
+    for (let i = 0; i < 2; i++) b.route(denied("arn:a", `svc:Get${i}`), dFacts("arn:a", `svc:Get${i}`));
+    const { individual, aggregates, disclosure } = b.finish();
+    expect(individual).toHaveLength(3);
+    expect(individual.find((e) => e.description.includes("GetBucketCors"))?.count).toBe(6);
+    expect(aggregates).toHaveLength(0);
+    expect(disclosure.mediumMerged).toBe(5);
+  });
+
+  it("offers folded calls to the super-timeline only while its room lasts, and counts the rest", () => {
+    const b = createOutputBudget({ budgets: budgets({ superRows: 2 }) });
+    const got = [];
+    for (let i = 0; i < 7; i++)
+      got.push(b.route(denied("arn:a", `svc:Get${i}`), dFacts("arn:a", `svc:Get${i}`)));
+    expect(got.slice(3)).toEqual(["super+aggregate", "super+aggregate", "aggregate", "aggregate"]);
+    const { disclosure } = b.finish();
+    expect(disclosure.failedReads.toSuper).toBe(2);
+    expect(disclosure.superBudgetExceeded).toBe(2);
+  });
+
+  it("past the import budget, a failed read folds into its principal's group, not a per-address group", () => {
+    const b = createOutputBudget({ budgets: budgets({ mediumMax: 1 }) });
+    b.route(row("Medium", "someone"), facts("someone"));
+    for (let i = 0; i < 3; i++) b.route(denied("arn:a", `svc:Get${i}`), dFacts("arn:a", `svc:Get${i}`));
+    const { aggregates, disclosure } = b.finish();
+    expect(aggregates).toHaveLength(1);
+    expect(aggregates[0].description).toMatch(/^arn:a: 3 failed read-only call\(s\) across 3 action\(s\)/);
+    expect(disclosure.mediumOverflow).toEqual({ ruleActorBudget: 0, importBudget: 3, failedReadBudget: 0 });
+    expect(disclosure.failedReads.toSuper).toBe(3);
+  });
+
+  it("a single folded call keeps its own description, with no aggregated note (#2475)", () => {
+    const b = createOutputBudget({ budgets: budgets() });
+    for (let i = 0; i < 4; i++) b.route(denied("arn:a", `svc:Get${i}`), dFacts("arn:a", `svc:Get${i}`));
+    const { aggregates } = b.finish();
+    expect(aggregates).toHaveLength(1);
+    expect(aggregates[0].description).toBe("AWS svc:Get3 by arn:a from 192.0.2.9 (AccessDenied)");
+  });
+
+  it("an unknown principal never folds", () => {
+    const b = createOutputBudget({ budgets: budgets() });
+    for (let i = 0; i < 6; i++) b.route(denied("", `svc:Get${i}`), dFacts("", `svc:Get${i}`));
+    const { individual, aggregates } = b.finish();
+    expect(individual).toHaveLength(6);
+    expect(aggregates).toHaveLength(0);
+  });
+
+  it("lists at most 20 actions and says how many more there were", () => {
+    const b = createOutputBudget({ budgets: budgets({ failedReadsPerActor: 0 }) });
+    for (let i = 0; i < 25; i++) b.route(denied("arn:a", `svc:Get${i}`), dFacts("arn:a", `svc:Get${i}`));
+    const d = b.finish().aggregates[0].description;
+    expect(d).toContain("across 25 action(s)");
+    expect(d).toContain("(+5 more action(s))");
+    expect(d).not.toContain("svc:Get24 ×");
+  });
+
+  it("keeps the source-record relation of every folded call", () => {
+    const members: string[] = [];
+    const b = createOutputBudget({
+      budgets: budgets({ failedReadsPerActor: 0 }),
+      provenance: { groupOf: (k) => `g:${k}`, onMember: (_g, ref) => members.push(ref) },
+    });
+    for (let i = 0; i < 4; i++)
+      b.route(
+        { ...denied("arn:a", `svc:Get${i}`), recordRefs: [`rec-${i}`], sourceRecordId: `rec-${i}` },
+        dFacts("arn:a", `svc:Get${i}`),
+      );
+    const g = b.finish().aggregates[0];
+    expect(members).toEqual(["rec-0", "rec-1", "rec-2", "rec-3"]);
+    expect(g.sourceRecords?.count).toBe(4);
   });
 });

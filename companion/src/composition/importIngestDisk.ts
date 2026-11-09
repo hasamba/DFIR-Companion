@@ -61,6 +61,7 @@ export function createDiskIngest(deps: DiskIngestDeps): IngestDiskFile {
   const statusOf = statusFromStore(store);
   const diskCtx = {
     options,
+    store,
     runStateExclusive: deps.runStateExclusive,
     serverLogger: getServerLogger(),
     demoteForensic: deps.demoteForensic,

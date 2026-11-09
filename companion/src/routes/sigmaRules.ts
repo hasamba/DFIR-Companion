@@ -15,6 +15,7 @@ import { SigmaStoreError, sigmaCheckAsOfNow, type SigmaRuleStore } from "../anal
 import { SIGMA_RELEASE_MAX_ZIP_BYTES } from "../analysis/sigmaReleaseArchive.js";
 import { SIGMA_EXCLUSION_LIMITS } from "../analysis/sigmaExclusions.js";
 import { computeSigmaCoverage, inventoryCounts } from "../analysis/sigmaCoverage.js";
+import { suzakuStatus } from "./sigmaSuzaku.js";
 import {
   sigmaMinLevelFromEnv,
   sigmaSuzakuEnabled,
@@ -94,12 +95,18 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
         updateCheck: sigmaUpdateCheckEnabled(),
         // #2499: the bundled Suzaku rules' own switch, statuses and severity floor.
         suzaku: {
+          ...suzakuStatus(options.suzakuRuleStore),
           enabled: sigmaSuzakuEnabled(),
           statuses: sigmaSuzakuStatusesFromEnv(),
           minLevel: sigmaSuzakuMinLevelFromEnv(),
         },
       },
       counts: inventoryCounts(set.inventory),
+      // Per rule set, so Settings shows SigmaHQ's counts under SigmaHQ and Suzaku's under Suzaku.
+      countsByOrigin: {
+        SigmaHQ: inventoryCounts(set.inventory.filter((e) => !e.origin)),
+        Suzaku: inventoryCounts(set.inventory.filter((e) => e.origin === "Suzaku")),
+      },
       problems: set.problems,
       lastCheck: store.lastCheck ? sigmaCheckAsOfNow(store.lastCheck, store.active().release) : null,
       demoMode: !!options.demoMode,

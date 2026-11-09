@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Preview what the AI will see** — from the Anon dialog, see the first request any AI action would send, clear and masked text side by side with the unmasked system prompt and what Presidio would hold; nothing is sent, spent or saved (closes #2491)
+- **Collector footprint tag** — a cloud collection's own API calls are tagged `dfir-collector` (identity + run window + the collector's read calls; writes stay untagged, grades unchanged), with a Hide collector calls super-timeline switch, off by default (closes #2487)
+- **Failed AWS reads folded per principal** — a streamed CloudTrail import keeps the first 10 failed read-only calls of each principal, then folds the rest into one Medium event listing the actions and counts; each folded call stays in the super-timeline, failed writes never fold (closes #2481)
+- **Suzaku rule updates** — check, review and install newer Suzaku CloudTrail rules (each file verified against GitHub's listing) from the Detection rules box or Settings → Sigma rules, with roll back (closes #2508)
 - **Suzaku CloudTrail rules** — Yamato Security's own ~740 AWS CloudTrail Sigma rules are bundled beside SigmaHQ, with their own switch, statuses and severity floor (default: label only, critical raises); the Sigma engine gains the `exists` modifier (part of #2499)
 - **All my cases service tokens** — one capture-extension token for every case its owner can edit, checked live against the owner's roles, capped at capture + write, expiring within 90 days (closes #2474)
 - **Cloud Accounts settings tab** — cloud accounts and the cloud proxy/CA settings moved out of the crowded Integrations tab into their own Settings tab, shown in Essential
@@ -115,6 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Large CloudTrail import by path** — a CloudTrail object over 256 KiB imported by path is detected as AWS instead of "could not detect the file type" (closes #2317)
 
 ### Changed
+- **Sigma rules settings** — the tab is split into shared switches, a SigmaHQ section and a Suzaku section, each with its own buttons and rule counts; the rules table gains a Rule set column and filter
 - **Faster S3 trail collection** — each trail folder is listed once instead of once per file, and the next few files download while the current one is saved; about 7× faster on a test bucket, same files and order (closes #2380).
 - **Sigma "not graded" wording** — a Sigma match that did not set the severity reads `Sigma (medium, not graded)` instead of `tag only`, and the details and a hover on the row title say why (closes #2386).
 

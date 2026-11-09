@@ -239,6 +239,21 @@ describe("cloud collection engine (#2311)", () => {
     expect(await counts(t)).toEqual(base.counts);
   });
 
+  it("records each run's network span and the caller a resume ran as (#2487)", async () => {
+    const t = await tempCase();
+    const fs = faultFs();
+    const session = fakeSession({ pages: 2 });
+    await start(t, fs, session);
+    await run(t, fs, session);
+    await run(t, fs, session, pipelineImporter(t), true);
+    const m = await manifestOf(t);
+    const resume = m.entries.find((e) => e.type === "resume");
+    expect(resume).toMatchObject({ type: "resume", caller: "arn:aws:iam::123456789012:role/collector" });
+    const cp = JSON.parse(await readFile(collectionPaths(t.dir).checkpoint, "utf8")) as CollectionCheckpoint;
+    expect(cp.networkSpans?.map((s) => s.from)).toEqual([m.header!.startedAt, (resume as { at: string }).at]);
+    for (const s of cp.networkSpans ?? []) expect(s.to >= s.from).toBe(true);
+  });
+
   it("a crash mid-import then a re-import gives the same event and finding counts", async () => {
     const base = await baseline(2);
     const t = await tempCase();

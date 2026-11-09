@@ -40,12 +40,14 @@ function superLabelClause(where, params, mapIds, matchIds, sidecarCondition, sid
 // 50k tags. A NULL entity_id is never IN anything, so it fails every label test, as before.
 const SUPER_EVENT_TAG = "SELECT 1 FROM tags t WHERE t.target_type='event' AND t.target_id=e.entity_id";
 
-function superTagLabelClause(where, params, tagCondition, sidecarCondition, conditionParams) {
-  where.push(
-    "(e.entity_id IN (SELECT t.target_id FROM tags t WHERE t.target_type='event' AND " + tagCondition + ") OR " +
+function superTagLabelSql(tagCondition, sidecarCondition) {
+  return "(e.entity_id IN (SELECT t.target_id FROM tags t WHERE t.target_type='event' AND " + tagCondition + ") OR " +
     "(e.entity_id IN (SELECT l.event_id FROM super_labels l WHERE " + sidecarCondition + ") AND " +
-    "NOT EXISTS (" + SUPER_EVENT_TAG + ")))"
-  );
+    "NOT EXISTS (" + SUPER_EVENT_TAG + ")))";
+}
+
+function superTagLabelClause(where, params, tagCondition, sidecarCondition, conditionParams) {
+  where.push(superTagLabelSql(tagCondition, sidecarCondition));
   params.push(...conditionParams, ...conditionParams);
 }
 
@@ -64,6 +66,14 @@ function superTagFilterClauses(query, where, params) {
   }
   if (query.taggedOnly) superTagLabelClause(where, params, "t.label<>?", "l.label<>?", [SUPER_STARRED]);
   if (query.starred) superTagLabelClause(where, params, "t.label=?", "l.label=?", [SUPER_STARRED]);
+  const hidden = Array.isArray(query.excludeLabels) ? query.excludeLabels : [];
+  if (hidden.length) {
+    // #2487: the NOT of the same precedence — a row is hidden when its effective labels (its event
+    // tags, else its sidecar labels) carry any hidden label. A NULL entity_id carries no label.
+    where.push("(e.entity_id IS NULL OR NOT (" + superTagLabelSql(
+      "t.label IN (SELECT value FROM json_each(?))", "l.label IN (SELECT value FROM json_each(?))") + "))");
+    params.push(superJsonList(hidden), superJsonList(hidden));
+  }
 }
 
 function superFilterClauses(query, fromTags) {
@@ -110,6 +120,17 @@ function superFilterClauses(query, fromTags) {
   if (query.starred) {
     superLabelClause(where, params, mapIds, mapIds.filter((id) => mapLabels(id).includes(SUPER_STARRED)),
       "l.label=?", [SUPER_STARRED]);
+  }
+  const hidden = Array.isArray(query.excludeLabels) ? query.excludeLabels : [];
+  if (hidden.length) {
+    // #2487: the NOT of superLabelClause — the map's ids by their map labels, every other row by its sidecar.
+    const hideIds = mapIds.filter((id) => mapLabels(id).some((l) => hidden.includes(l)));
+    where.push(
+      "(e.entity_id IS NULL OR (e.entity_id NOT IN (SELECT value FROM json_each(?)) AND " +
+      "(e.entity_id IN (SELECT value FROM json_each(?)) OR NOT EXISTS (SELECT 1 FROM super_labels l " +
+      "WHERE l.event_id=e.entity_id AND l.label IN (SELECT value FROM json_each(?))))))"
+    );
+    params.push(superJsonList(hideIds), superJsonList(mapIds), superJsonList(hidden));
   }
   return { where, params, map, mapIds };
 }

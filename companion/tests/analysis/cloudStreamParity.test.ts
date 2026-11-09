@@ -283,6 +283,10 @@ describe("streamed CloudTrail import parity (#2362)", () => {
 // wording (disclosures, notes, timeline, coverage). The #2502 time-span fix alone changes nothing here.
 // Re-pinned for #2475 too: a one-row detailed group no longer carries the "[aggregated: 1 row(s) — …]"
 // note, so those descriptions lose that suffix; no count changes.
+// Re-pinned for #2481: only the disclosures hash moved. The set has no failed calls, so nothing folds;
+// each disclosure gained three fields — mediumOverflow.failedReadBudget 0, failedReads {0, 0} and
+// budgets.failedReadsPerActor 10. Stripping exactly those three reproduced the previous hash
+// (b41790f4ea7b0e23); every other section, count and note is unchanged.
 const PINNED = {
   counts: {
     compute: 30,
@@ -309,7 +313,7 @@ const PINNED = {
     "db:iocs": "7de5df26c23c75f9",
     "db:superTimeline": "8beed3d432925a0d",
     "db:timeline": "0a3505cb7f4a4ebe",
-    disclosures: "b41790f4ea7b0e23",
+    disclosures: "9446777ef7052706",
     forensicTimeline: "952a8006b6bd4d4a",
     iocs: "b4186cc3f6e10f06",
     notes: "86e38fbe1e668482",

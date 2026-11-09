@@ -26,6 +26,8 @@ import {
 } from "./sigmaExclusions.js";
 import { fieldResolvers, SIGMA_LOG_SOURCES } from "./sigmaLogSources.js";
 import {
+  SIGMA_LEVELS,
+  type SigmaLevel,
   buildSigmaRuleSet,
   type SigmaInventoryEntry,
   type SigmaRuleFile,
@@ -53,7 +55,13 @@ import {
   sigmaSuzakuMinLevelFromEnv,
   sigmaSuzakuStatusesFromEnv,
 } from "./sigmaSettings.js";
-import { loadSuzakuRules, SUZAKU_ORIGIN_KEY, type SuzakuLoad } from "./sigmaSuzakuRules.js";
+import {
+  bundledSuzakuSource,
+  loadSuzakuRules,
+  SUZAKU_ORIGIN_KEY,
+  type SuzakuLoad,
+  type SuzakuSource,
+} from "./sigmaSuzakuRules.js";
 import type { SigmaRuleOrigin } from "./sigmaRuleSet.js";
 
 const ALL_STATUSES = [...SIGMA_STATUS_CHOICES, "deprecated", "unsupported"];
@@ -143,8 +151,10 @@ export class SigmaRuleStore {
   private exclusionsKey = "none";
   private startupProblems: string[] = [];
   private cache?: { key: string; set: SigmaRuleSet; files: SigmaRuleFile[] };
-  /** The bundled Suzaku rules, read once (#2499); they never change while the server runs. */
-  private suzakuRead?: SuzakuLoad;
+  /** The Suzaku rules read for one active version (#2499), re-read when an install changes it (#2508). */
+  private suzakuRead?: { key: string; load: SuzakuLoad };
+  /** Where the Suzaku rules come from: the bundled folder, or the installed-version store (#2508). */
+  private readonly suzaku?: SuzakuSource;
   private pending?: Pending;
   private chain: Promise<unknown> = Promise.resolve();
   lastCheck?: SigmaLatestCheck;
@@ -154,11 +164,17 @@ export class SigmaRuleStore {
     private readonly bundledDir: string | undefined,
     private readonly env: NodeJS.ProcessEnv = process.env,
     /**
-     * The bundled Suzaku rules folder (#2499). `null` = looked for and missing, which is reported as
-     * a problem while the setting is on (Codex review); undefined = not part of this store (tests).
+     * The Suzaku rules (#2499): a source (the installed-version store, #2508), a bundled folder, or
+     * `null` = looked for and missing, which is reported while the setting is on; undefined = none.
      */
-    private readonly suzakuDir?: string | null,
+    suzaku?: SuzakuSource | string | null,
   ) {
+    this.suzaku =
+      suzaku === undefined
+        ? undefined
+        : typeof suzaku === "object" && suzaku
+          ? suzaku
+          : bundledSuzakuSource(suzaku);
     this.activeInfo = this.bundledInfo();
   }
 
@@ -257,13 +273,21 @@ export class SigmaRuleStore {
    * (re-grade lookups see every rule, every status, whatever the switch says).
    */
   private suzakuPart(all = false): SuzakuPart {
-    if (this.suzakuDir === undefined || (!all && !sigmaSuzakuEnabled(this.env)))
+    if (!this.suzaku || (!all && !sigmaSuzakuEnabled(this.env)))
       return { files: [], origins: new Map(), problems: [] };
-    this.suzakuRead ??= loadSuzakuRules(this.suzakuDir ?? undefined, SIGMA_MAX_RULE_FILES, {
-      ...this.env,
-      DFIR_SIGMA_SUZAKU_RULES: "on",
-    });
-    const read = this.suzakuRead;
+    const active = this.suzaku.activeSource();
+    if (this.suzakuRead?.key !== active.key)
+      this.suzakuRead = {
+        key: active.key,
+        load: loadSuzakuRules(active.dir, SIGMA_MAX_RULE_FILES, {
+          ...this.env,
+          DFIR_SIGMA_SUZAKU_RULES: "on",
+        }),
+      };
+    const read = {
+      ...this.suzakuRead.load,
+      problems: [...active.problems, ...this.suzakuRead.load.problems],
+    };
     if (!read.origin) return { files: [], origins: new Map(), problems: read.problems };
     const statuses = all ? ALL_STATUSES : sigmaSuzakuStatusesFromEnv(this.env).statuses;
     return {
@@ -278,10 +302,49 @@ export class SigmaRuleStore {
     };
   }
 
+  /**
+   * How a candidate Suzaku version would load NOW (#2508): the active SigmaHQ rules plus the candidate,
+   * built together (SigmaHQ wins a duplicate id), with the current statuses, disabled list and floor.
+   */
+  measureSuzaku(files: readonly SigmaRuleFile[]): { loads: number; raises: number } {
+    this.activeRuleSet();
+    const sigmahq = this.cache?.files ?? [];
+    const floor = sigmaSuzakuMinLevelFromEnv(this.env).level;
+    const origin = {
+      name: "Suzaku",
+      release: "candidate",
+      commit: "candidate",
+      urlBase: "",
+      statuses: sigmaSuzakuStatusesFromEnv(this.env).statuses,
+      minLevel: floor,
+    };
+    const set = buildSigmaRuleSet(
+      [...sigmahq, ...files],
+      { release: this.activeInfo.release, commit: this.activeInfo.commit },
+      {
+        statuses: sigmaStatusesFromEnv(this.env).statuses,
+        disabled: this.effectiveDisabled(),
+        origins: new Map([[SUZAKU_ORIGIN_KEY, origin]]),
+      },
+    );
+    const loaded = [...set.sources.values()].flatMap((src) => [
+      ...src.always,
+      ...[...src.index.values()].flatMap((m) => [...m.values()].flat()),
+    ]);
+    const suzaku = [
+      ...new Map(loaded.filter((r) => r.ref.origin === "Suzaku").map((r) => [r.ref.id, r.ref])).values(),
+    ];
+    const rank = (l: SigmaLevel) => SIGMA_LEVELS.indexOf(l);
+    return {
+      loads: suzaku.length,
+      raises: suzaku.filter((r) => !r.huntingOnly && rank(r.level) >= rank(floor)).length,
+    };
+  }
+
   /** The part of the cache key the Suzaku settings decide. */
   private suzakuKey(): string {
-    return this.suzakuDir !== undefined && sigmaSuzakuEnabled(this.env)
-      ? `${sigmaSuzakuStatusesFromEnv(this.env).statuses.join(",")}@${sigmaSuzakuMinLevelFromEnv(this.env).level}`
+    return this.suzaku && sigmaSuzakuEnabled(this.env)
+      ? `${this.suzaku.activeSource().key}:${sigmaSuzakuStatusesFromEnv(this.env).statuses.join(",")}@${sigmaSuzakuMinLevelFromEnv(this.env).level}`
       : "off";
   }
 

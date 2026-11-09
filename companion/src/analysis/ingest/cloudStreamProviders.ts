@@ -90,6 +90,8 @@ const pick = (rec: Row, keys: string[]): string => {
   }
   return "";
 };
+/** CloudTrail's readOnly flag: a JSON boolean, or "true" in a console CSV / stringified export. */
+const isReadOnly = (v: unknown): boolean => v === true || /^true$/i.test(str(v).trim());
 const firstIp = (raw: string): string =>
   /(\d{1,3}(?:\.\d{1,3}){3})/.exec(raw)?.[1] ?? raw.replace(/^\[|\]:\d+$/g, "");
 
@@ -198,6 +200,8 @@ const aws: StreamProvider = {
       "userIdentity.accessKeyId",
     ]),
     ip: pick(rec, ["sourceIPAddress"]),
+    // A failed read (#2481): the console CSV adapter maps "Read-only" / "Error code" to these fields.
+    failedRead: isReadOnly(getCI(rec, "readOnly")) && pick(rec, ["errorCode"]) !== "",
   }),
   // The lineage and compute summaries read the raw window only (#2362): no re-mapping.
   summaries: (window) => cloudTrailSummaries(window),
