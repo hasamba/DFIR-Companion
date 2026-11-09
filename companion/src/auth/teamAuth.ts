@@ -17,6 +17,15 @@ import {
   type RequestAuthentication,
 } from "./types.js";
 import type { OidcClient } from "./oidcClient.js";
+import {
+  allCasesGate,
+  allCasesVisible,
+  auditAllCasesRequest,
+  isAllCasesToken,
+  type TeamAuthMiddlewareOptions,
+} from "./allCasesGate.js";
+
+export type { CaseLifecycle, TeamAuthMiddlewareOptions } from "./allCasesGate.js";
 
 export const SESSION_COOKIE = "dfir_session";
 export const OIDC_STATE_COOKIE = "dfir_oidc_state";
@@ -156,6 +165,27 @@ export class TeamAuth {
     return role !== null && caseRoleAllows(role, permission);
   }
 
+  /**
+   * Whether an all-cases token's OWNER may write to `caseId` right now (#2474). Read from the store
+   * on every call, so a removed or downgraded role stops the token on its next request. Only an
+   * explicit write-capable case role counts: a global administrator's implicit access is not handed
+   * to a bearer credential.
+   */
+  private ownerMayWrite(auth: RequestAuthentication, caseId: string): boolean {
+    if (auth.kind !== "service-token" || auth.token.scope !== "all-cases" || !auth.token.ownerIdentityId) {
+      return false;
+    }
+    const role = this.store.getCaseRole(auth.token.ownerIdentityId, caseId);
+    return role !== null && caseRoleAllows(role, "write");
+  }
+
+  /** The token is pinned to `caseId`, or is an all-cases token whose owner may write there now. */
+  private serviceReachesCase(auth: RequestAuthentication, caseId: string): boolean {
+    if (auth.kind !== "service-token" || !caseId) return false;
+    if (auth.token.scope === "case") return auth.token.caseId === caseId;
+    return this.ownerMayWrite(auth, caseId);
+  }
+
   private serviceCaseAllowed(
     auth: RequestAuthentication,
     caseId: string,
@@ -163,7 +193,7 @@ export class TeamAuth {
   ): boolean {
     return (
       auth.kind === "service-token" &&
-      auth.token.caseId === caseId &&
+      this.serviceReachesCase(auth, caseId) &&
       servicePermissionAllows(auth.token.permissions, permission)
     );
   }
@@ -176,10 +206,12 @@ export class TeamAuth {
 
   private authorized(auth: RequestAuthentication, policy: RequestPolicy, req: Request): boolean {
     if (policy.kind === "case-list") {
-      return (
-        auth.kind === "session" ||
-        (auth.kind === "service-token" && servicePermissionAllows(auth.token.permissions, "read"))
-      );
+      if (auth.kind === "session") return true;
+      if (auth.kind !== "service-token") return false;
+      if (servicePermissionAllows(auth.token.permissions, "read")) return true;
+      // A capture-only all-cases token may read the case LIST (the extension's picker) and nothing
+      // else under this policy — /global/iocs still needs read (#2474).
+      return isAllCasesToken(auth) && auth.token.permissions.includes("capture") && req.path === "/cases";
     }
     if (policy.kind === "authenticated") return auth.kind === "session";
     if (policy.kind === "global") {
@@ -197,7 +229,7 @@ export class TeamAuth {
       return (
         this.sessionCaseAllowed(auth, caseId, "write") ||
         (auth.kind === "service-token" &&
-          auth.token.caseId === caseId &&
+          this.serviceReachesCase(auth, caseId) &&
           (auth.token.permissions.includes("capture") || auth.token.permissions.includes("write")))
       );
     }
@@ -205,7 +237,7 @@ export class TeamAuth {
   }
 
   private knowsCase(auth: RequestAuthentication, caseId: string): boolean {
-    if (auth.kind === "service-token") return auth.token.caseId === caseId;
+    if (auth.kind === "service-token") return this.serviceReachesCase(auth, caseId);
     return (
       auth.identity.globalRole === "administrator" ||
       this.store.getCaseRole(auth.identity.id, caseId) !== null
@@ -237,7 +269,11 @@ export class TeamAuth {
     res.status(401).json({ error: "authentication required" });
   }
 
-  middleware(): RequestHandler {
+  /**
+   * The request gate. `caseLifecycleOf` (wired by composition/httpStack.ts) tells an all-cases token
+   * whether a case is open; without it an all-cases token reaches no case at all (fail closed).
+   */
+  middleware(options: TeamAuthMiddlewareOptions = {}): RequestHandler {
     return (req: Request, res: Response, next: NextFunction): void => {
       const policy = resolveRequestPolicy(req.method, req.path);
       if (policy.kind === "public") {
@@ -252,32 +288,58 @@ export class TeamAuth {
         this.rejectUnauthenticated(req, res);
         return;
       }
-      if (!this.authorized(auth, policy, req)) {
-        if (policy.kind === "case") {
-          const visible = this.knowsCase(auth, policy.caseId);
-          res.status(visible ? 403 : 404).json({
-            error: visible ? "case role does not permit this action" : "case not found or access denied",
-          });
-          return;
-        }
-        if (policy.kind === "capture") {
-          const caseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
-          const visible = Boolean(caseId) && this.knowsCase(auth, caseId);
-          res.status(visible ? 403 : 404).json({
-            error: visible ? "case role does not permit capture" : "case not found or access denied",
-          });
-          return;
-        }
-        res.status(403).json({ error: "administrator permission required" });
+      if (!isAllCasesToken(auth)) {
+        this.admit(auth, policy, req, res, next);
         return;
       }
-      if (!this.csrfAllowed(auth, req)) {
-        res.status(403).json({ error: "missing or invalid CSRF token" });
-        return;
-      }
-      setRequestAuthentication(req, auth);
-      runWithIdentity(auth.identity, next);
+      auditAllCasesRequest(this.store, auth, policy, req, res);
+      allCasesGate(this, auth, policy, req, res, options.caseLifecycleOf)
+        .then((proceed) => {
+          if (proceed) this.admit(auth, policy, req, res, next);
+        })
+        .catch(() => {
+          if (!res.headersSent) res.status(404).json({ error: "case not found or access denied" });
+        });
     };
+  }
+
+  /** Whether an all-cases token reaches `caseId` through its owner's current role (no status check). */
+  allCasesTokenReaches(auth: RequestAuthentication, caseId: string): boolean {
+    return this.ownerMayWrite(auth, caseId);
+  }
+
+  private admit(
+    auth: RequestAuthentication,
+    policy: RequestPolicy,
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): void {
+    if (!this.authorized(auth, policy, req)) {
+      if (policy.kind === "case") {
+        const visible = this.knowsCase(auth, policy.caseId);
+        res.status(visible ? 403 : 404).json({
+          error: visible ? "case role does not permit this action" : "case not found or access denied",
+        });
+        return;
+      }
+      if (policy.kind === "capture") {
+        const caseId = typeof req.body?.caseId === "string" ? req.body.caseId.trim() : "";
+        const visible = Boolean(caseId) && this.knowsCase(auth, caseId);
+        res.status(visible ? 403 : 404).json({
+          error: visible ? "case role does not permit capture" : "case not found or access denied",
+        });
+        return;
+      }
+      res.status(403).json({ error: "administrator permission required" });
+      return;
+    }
+    if (!this.csrfAllowed(auth, req)) {
+      res.status(403).json({ error: "missing or invalid CSRF token" });
+      return;
+    }
+    setRequestAuthentication(req, auth);
+    runWithIdentity(auth.identity, next);
   }
 
   requireSession(req: Request): RequestAuthentication | null {
@@ -300,6 +362,7 @@ export class TeamAuth {
   visibleCaseIds(req: Request): Set<string> | null {
     const auth = requestAuthentication(req) ?? this.authenticateRequest(req);
     if (!auth) return new Set();
+    if (isAllCasesToken(auth)) return allCasesVisible.get(req) ?? new Set();
     if (auth.kind === "service-token") return new Set([auth.token.caseId]);
     return this.store.visibleCaseIds(auth.identity);
   }

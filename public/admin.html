@@ -70,16 +70,18 @@
     </section>
     <section>
       <h2>Service identities</h2>
-      <p>Create a case-scoped token for the browser extension, collection tooling, or automation. The secret is shown once.</p>
+      <p>Create a token for the browser extension, collection tooling, or automation. The secret is shown once.
+        <b>One case</b> pins the token to a case you administer. <b>All my cases</b> lets the token capture and write to every case where you are an investigator or case administrator, including cases you join later; it stops as soon as you lose that role, the case is closed or archived, or your account is disabled. It can only capture and write, must expire within 90 days, and still needs the case password for a locked case.</p>
       <form id="newToken">
         <label>Name<input name="name" required placeholder="Capture extension" /></label>
-        <label>Case<select name="caseId" id="tokenCaseId" required></select></label>
-        <label>Permissions<select name="permissions" multiple size="5"><option selected>capture</option><option>read</option><option selected>write</option><option>review</option><option>export</option></select></label>
-        <label>Expires at<input name="expiresAt" type="datetime-local" /></label>
+        <label>Scope<select name="scope" id="tokenScope"><option value="case" selected>One case</option><option value="all-cases">All my cases (where I can edit)</option></select></label>
+        <label id="tokenCaseLabel">Case<select name="caseId" id="tokenCaseId" required></select></label>
+        <label>Permissions<select name="permissions" id="tokenPermissions" multiple size="5"><option selected>capture</option><option data-case-only>read</option><option selected>write</option><option data-case-only>review</option><option data-case-only>export</option></select></label>
+        <label>Expires at<input name="expiresAt" id="tokenExpiresAt" type="datetime-local" /></label>
         <button>Create token</button>
       </form>
       <pre id="tokenSecret" hidden></pre>
-      <table><thead><tr><th>Name</th><th>Case</th><th>Permissions</th><th>Expires</th><th>Action</th></tr></thead><tbody id="tokens"></tbody></table>
+      <table><thead><tr><th>Name</th><th>Scope</th><th>Permissions</th><th>Expires</th><th>Action</th></tr></thead><tbody id="tokens"></tbody></table>
     </section>
     <section>
       <h2>My sessions</h2>
@@ -155,7 +157,10 @@
         }).join('');
         var tokens = await api('/auth/service-tokens');
         document.getElementById('tokens').innerHTML = tokens.map(function (t) {
-          return '<tr><td>' + esc(t.name) + '</td><td>' + esc(t.caseId) + '</td><td>' + esc(t.permissions.join(', ')) + '</td><td>' +
+          var scope = t.scope === 'all-cases'
+            ? 'All cases ' + (t.ownerDisplayName || t.ownerIdentityId || 'the owner') + ' can edit'
+            : 'Case ' + t.caseId;
+          return '<tr><td>' + esc(t.name) + '</td><td>' + esc(scope) + '</td><td>' + esc(t.permissions.join(', ')) + '</td><td>' +
             esc(t.expiresAt || 'Never') + '</td><td><button class="danger" data-token="' + esc(t.id) + '">Revoke</button></td></tr>';
         }).join('');
         var sessions = await api('/auth/sessions');
@@ -183,10 +188,32 @@
         api('/auth/cases/' + encodeURIComponent(body.caseId) + '/roles/' + encodeURIComponent(body.identityId),
           {method:'PUT', body:JSON.stringify({role:body.role})}).then(load).then(function () { say('Role saved', true); }).catch(function (e) { say(e.message); });
       });
+      // "All my cases" (#2474): no case picker, capture/write only, expiry required (default 30 days, max 90).
+      function localDateTime(days) {
+        var at = new Date(Date.now() + days * 86400000);
+        return new Date(at.getTime() - at.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      }
+      function applyTokenScope() {
+        var allCases = document.getElementById('tokenScope').value === 'all-cases';
+        var caseSelect = document.getElementById('tokenCaseId');
+        var expires = document.getElementById('tokenExpiresAt');
+        document.getElementById('tokenCaseLabel').hidden = allCases;
+        caseSelect.disabled = allCases;
+        caseSelect.required = !allCases;
+        Array.from(document.getElementById('tokenPermissions').options).forEach(function (option) {
+          if (option.hasAttribute('data-case-only')) { option.disabled = allCases; if (allCases) option.selected = false; }
+        });
+        expires.required = allCases;
+        expires.max = allCases ? localDateTime(90) : '';
+        if (allCases && !expires.value) expires.value = localDateTime(30);
+      }
+      document.getElementById('tokenScope').addEventListener('change', applyTokenScope);
+      document.getElementById('newToken').addEventListener('reset', function () { setTimeout(applyTokenScope, 0); });
       document.getElementById('newToken').addEventListener('submit', function (event) {
         event.preventDefault(); var form = event.currentTarget; var body = formObject(form);
         body.permissions = Array.from(form.elements.permissions.selectedOptions).map(function (o) { return o.value; });
         if (body.expiresAt) body.expiresAt = new Date(body.expiresAt).toISOString(); else delete body.expiresAt;
+        if (body.scope === 'all-cases') delete body.caseId;
         api('/auth/service-tokens', {method:'POST', body:JSON.stringify(body)}).then(function (created) {
           var secret = document.getElementById('tokenSecret'); secret.hidden = false;
           secret.textContent = 'Copy this token now; it will not be shown again:\n\n' + created.token;

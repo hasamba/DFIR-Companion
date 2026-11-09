@@ -56,4 +56,19 @@ describe("team authentication UI", () => {
     expect(account).toContain("Account &amp; team");
     expect(account).not.toContain("Access administration");
   });
+
+  it("offers an all-my-cases token scope that drops the case picker and shows the scope plainly (#2474)", async () => {
+    const account = await loadPublic("admin.html");
+    expect(account).toMatch(
+      /<select name="scope" id="tokenScope">[\s\S]*value="case" selected[\s\S]*value="all-cases"/,
+    );
+    // The hidden case picker must not block submission for someone who administers no case.
+    expect(account).toContain("caseSelect.disabled = allCases;");
+    expect(account).toContain("caseSelect.required = !allCases;");
+    expect(account).toContain("expires.required = allCases;");
+    expect(account).toContain("localDateTime(90)");
+    expect(account).toContain("localDateTime(30)");
+    expect(account).toContain("' can edit'");
+    expect(account).toContain("<th>Scope</th>");
+  });
 });

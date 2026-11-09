@@ -29,7 +29,8 @@
  */
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import type { Buffer } from "node:buffer";
-import type { CaseStore } from "../storage/caseStore.js";
+import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
+import type { CaseLifecycle } from "../auth/teamAuth.js";
 import type { AppOptions } from "./appOptions.js";
 import { createOriginGuard } from "../http/originGuard.js";
 import { createSecurityHeaders } from "../http/securityHeaders.js";
@@ -280,7 +281,7 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
 
   if (options.teamAuth) {
     registerTeamAuthRoutes(app, options.teamAuth, store);
-    app.use(options.teamAuth.middleware());
+    app.use(options.teamAuth.middleware({ caseLifecycleOf: (caseId) => caseLifecycleOf(store, caseId) }));
   }
   app.use("/cases/:id", createCaseIdGate());
   // Gates every /cases/:id/* route behind that case's password, when one is set. Mounted
@@ -386,4 +387,17 @@ const CLIENT_ERROR_MESSAGES: Readonly<Record<number, string>> = {
 
 function clientErrorMessage(status: number): string {
   return CLIENT_ERROR_MESSAGES[status] ?? "client error";
+}
+
+/**
+ * Whether a case is open, closed, archived or missing — what an all-cases service token checks on
+ * every case request (#2474). The id is validated before any filesystem path is built from it: on
+ * POST /captures it comes from the body, ahead of the route's own validation.
+ */
+async function caseLifecycleOf(store: CaseStore, caseId: string): Promise<CaseLifecycle> {
+  if (!isValidCaseId(caseId)) return "missing";
+  if (store.isInArchive(caseId)) return "archived";
+  const meta = await store.getCaseMeta(caseId);
+  if (!meta) return "missing";
+  return meta.status === "closed" || meta.status === "archived" ? meta.status : "open";
 }

@@ -60,7 +60,7 @@ export function settingsFromForm(form: PopupForm, running: boolean): Settings {
 export function caseListFailure(status: number): string {
   if (status === 401) return "token rejected — check the Team service token";
   if (status === 403)
-    return "token lacks access — check the token's case and permissions";
+    return "token lacks access — check the token's scope, your case role and its permissions";
   if (status === 0) return "companion offline — start it, then Refresh";
   return `companion refused the case list (HTTP ${status})`;
 }

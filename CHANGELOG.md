@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **All my cases service tokens** — one capture-extension token for every case its owner can edit, checked live against the owner's roles, capped at capture + write, expiring within 90 days (closes #2474)
 - **Cloud Accounts settings tab** — cloud accounts and the cloud proxy/CA settings moved out of the crowded Integrations tab into their own Settings tab, shown in Essential
 - **Super-timeline Group repeats** — an optional view that folds runs of identical rows into one row with a ×N badge that opens each record; nothing is merged (closes #2391).
 - **Detection rules box** — the Content tagger's rule pack box collapses to one line each for the tagger rules and Sigma, with a Review update… button only when a newer release exists; a finished install no longer shows a stale "available" notice (closes #2389).

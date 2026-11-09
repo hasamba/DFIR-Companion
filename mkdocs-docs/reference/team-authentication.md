@@ -11,7 +11,8 @@ Team mode adds:
 - a local emergency account when the identity provider is unavailable;
 - reader, investigator, reviewer, and administrator access per case;
 - immutable user identities in activity and chain-of-custody records;
-- case-scoped service identities for the capture extension and automation;
+- service identities for the capture extension and automation, scoped to one case or to all the
+  cases their owner can edit;
 - an authentication audit covering sign-ins, role changes, users, tokens, and cloud accounts.
 
 Local account passwords have one rule: they must contain at least six characters.
@@ -183,8 +184,34 @@ limited.
 
 ## Capture extension and automation
 
-In **Account & team → Service identities**, create a token for one case and choose the smallest needed
-permissions:
+In **Account & team → Service identities**, pick a **Scope**:
+
+- **One case** (the default) pins the token to one case. Only an administrator of that case can
+  create it. Use it for collection tooling and automation.
+- **All my cases** lets one token capture and write to every case where you hold the investigator or
+  case administrator role, including cases you are added to later. Any signed-in user can create one
+  for themselves; no case-administrator role is needed. Use it for your own capture extension, so
+  that switching cases needs no new token.
+
+### All my cases tokens
+
+An **All my cases** token never has more access than you, and it follows your access as it changes:
+
+- Access is checked on every request against your current case roles. If you lose the investigator
+  or administrator role on a case, if the case is closed or archived, or if your account is
+  disabled, the token stops working for that case at once.
+- A reader or reviewer role does not count, and neither does global administrator access by itself:
+  the token reaches only cases where you hold the investigator or case administrator role.
+- Permissions are capped at `capture` and `write`, whatever you select. It cannot review, export,
+  or administer.
+- An expiry date is required. The form suggests 30 days; the maximum is 90 days.
+- A password-locked case stays locked. The extension still asks for the case password.
+- Every request the token makes on a case is recorded in the authentication audit with the token,
+  the case, and the result.
+- The token list shows the scope as "All cases *name* can edit". You see your own tokens. Global
+  administrators see and can revoke everyone's.
+
+For a **One case** token, choose the smallest needed permissions:
 
 - `capture` for screenshot ingestion;
 - `write` for imported artifacts or push ingestion (it also permits reading that case in the
@@ -192,8 +219,10 @@ permissions:
 - `read`, `review`, or `export` only when that automation needs the corresponding operation.
 
 The token is shown once. Paste it into **DFIR Capture → Team service token**. The extension stores
-it in that browser profile and sends it as a Bearer credential. A token cannot list or access a
-different case, even if the caller knows its ID.
+it in that browser profile and sends it as a Bearer credential. With a **One case** token the
+extension's case list shows that case only, and the token cannot list or access a different case,
+even if the caller knows its ID. With an **All my cases** token the case list shows every open case
+you can edit; pick another case in the popup to switch.
 
 For scripts:
 
@@ -202,7 +231,7 @@ curl -H "Authorization: Bearer $DFIR_SERVICE_TOKEN" \
   https://dfir.example.com/cases/CASE_ID/state
 ```
 
-Revoke a token from **Access** when a collector is retired or a browser profile is lost.
+Revoke a token from **Account & team → Service identities** when a collector is retired or a browser profile is lost.
 
 ## Concurrency and storage
 
