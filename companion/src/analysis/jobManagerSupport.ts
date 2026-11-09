@@ -63,6 +63,7 @@ export function nextAdmissibleJob(
   table: JobTable,
   globalConcurrency: number,
   perCaseConcurrency: number,
+  isHeld: (caseId: string | null) => boolean = () => false, // a case held without a row (caseHolds.ts)
 ): Job | undefined {
   const running = table.jobs.filter((job) => job.status === "running");
   if (running.length >= globalConcurrency) return undefined;
@@ -73,7 +74,7 @@ export function nextAdmissibleJob(
   }
   return table.jobs
     .filter((job) => {
-      if (job.status !== "queued") return false;
+      if (job.status !== "queued" || isHeld(job.caseId)) return false;
       return (runningByScope.get(job.caseId ?? "global") ?? 0) < perCaseConcurrency;
     })
     .sort(

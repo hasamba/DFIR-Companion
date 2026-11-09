@@ -24,6 +24,7 @@ import {
 } from "./jobServedModel.js";
 import type { ServedModelRegistry } from "./servedModels.js";
 import { StoppingJobs, staleScopeRegistration } from "./stoppingJobs.js";
+import { CaseHolds } from "./caseHolds.js";
 import {
   emptyJobTable,
   createJob,
@@ -151,6 +152,10 @@ export class JobManager {
   // until it lands; an exclusive registration of the same kind marks the attempt superseded.
   private readonly resuming = new Map<string, { superseded: boolean; cancellable: boolean }>();
   private readonly stopping = new StoppingJobs(); // a deleted case's work still winding down (#1831)
+  readonly caseHolds = new CaseHolds(
+    () => void this.scheduleQueued(), // #2425: a case slot held in memory, no row (caseHolds.ts)
+    (caseId) => !listJobs(this.table, { caseId }).some((job) => job.status === "running"),
+  );
   private readonly onJob?: (caseId: string | null) => void;
   private readonly onError?: (error: Error) => void;
   private readonly ledger?: JobLedgerStore;
@@ -584,13 +589,10 @@ export class JobManager {
   // Removal changes nothing about scheduling: the case's concurrency slot is freed here either way.
   private dropForExclusiveRegistration(job: Job): void {
     if (!job.cancellable) return;
-    // WHO DELETES THE LEDGER ROW depends on whether the INSERT has already landed, because
-    // register() supersedes synchronously and cannot wait to find out. Settled durability means the
-    // row is on disk and this path owns the DELETE. Unsettled means the insert is still in flight
-    // (or has not started), and persistNewAndSchedule owns it — it re-reads the table after its
-    // insert returns and deletes the row it finds superseded. Either way the ledger loses the row,
-    // which is what matters: restore() is the one place it would ever be read again, and it would
-    // come back as a `cancelled` job the analyst never cancelled.
+    // WHO DELETES THE LEDGER ROW depends on whether the INSERT landed (register() supersedes
+    // synchronously). Settled durability: the row is on disk and this path deletes it. Unsettled:
+    // persistNewAndSchedule deletes it after its insert returns. Either way restore() never brings
+    // it back as a `cancelled` job the analyst never cancelled.
     const durability = this.durabilities.get(job.id);
     const inLedger = durability?.settled() === true;
     this.stopping.aborted(job);
@@ -629,6 +631,7 @@ export class JobManager {
       this.admissions.get(next.id)?.resolve();
       this.emit(next.caseId);
     }
+    this.caseHolds.wake();
   }
 
   private scheduleQueued(): Promise<void> {
@@ -643,16 +646,11 @@ export class JobManager {
           try {
             await this.persistUpdate(started);
           } catch (error) {
-            // The start is already applied in memory, so a failed ledger write cannot simply
-            // propagate: the job would stay "running" to every reader, its admission would never
-            // settle (runResumedJob's await hangs for good), and nextAdmissible would keep counting
-            // it against perCaseConcurrency — the case would never admit another job until a
-            // restart. Fail it in memory instead and hand the error to whoever waits on the
-            // admission. Then keep going rather than stopping the pass: the failed job is terminal
-            // so nextAdmissible cannot pick it again (no spin), and every other queued job still
-            // gets its chance — breaking here would strand them until some later registration or
-            // terminal transition happened to schedule another pass. The failure is retryable, so
-            // if the ledger is genuinely down each job fails visibly and can be resumed.
+            // The start is already applied in memory, so a failed write cannot just propagate: the
+            // row would stay "running" for good and hold its case's slot until a restart. Fail it in
+            // memory, hand the error to its admission, and keep the pass going (the failed row is
+            // terminal, so no spin; breaking would strand every other queued job). Retryable, so a
+            // job that failed while the ledger was down can be resumed.
             const normalized = toError(error);
             this.table = failJob(
               this.table,
@@ -678,12 +676,15 @@ export class JobManager {
           this.admissions.get(next.id)?.resolve();
           this.emit(started.caseId);
         }
+        this.caseHolds.wake();
       });
     return this.scheduling;
   }
 
   private nextAdmissible(): Job | undefined {
-    return nextAdmissibleJob(this.table, this.globalConcurrency, this.perCaseConcurrency);
+    return nextAdmissibleJob(this.table, this.globalConcurrency, this.perCaseConcurrency, (c) =>
+      this.caseHolds.isHeld(c),
+    );
   }
 
   private async terminalTransition(

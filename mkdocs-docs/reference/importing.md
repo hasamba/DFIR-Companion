@@ -3043,6 +3043,29 @@ to the case's own log, under one prefix you can grep for: `[import]`.
 
 If the server dies mid-import, the last `[import]` line names the file and how far it got.
 
+### Cancelling an import
+
+An import from a format's own button (THOR, SIEM, Chainsaw, Hayabusa, Velociraptor, KAPE, M365,
+AWS, Plaso, Wazuh, LEAPP and the other dedicated importers) shows in the **Jobs** panel and can be
+cancelled there while it waits for the case **and** while it runs. What a cancel leaves depends on
+how far the import got:
+
+- **Before it writes to the case** (the usual case: most importers parse the whole file first and
+  write once at the end) — nothing from that file is added. The stored evidence stays, so you can
+  import it again. No failure is reported.
+- **A batched Velociraptor import** stops before its next batch and removes the batches it already
+  wrote, so again nothing from that file stays.
+- **A CSV or log import** (an AI import, run in batches) keeps the batches it already finished. They
+  are graded and filtered like any other import and appear in the import history with an undo
+  point, so **Undo** removes them. The activity log marks that import as cancelled.
+
+Once the importer has finished, Cancel closes, so a cancel never leaves an import half graded.
+Until a cancelled import has fully stopped, no synthesis or other job starts on the case.
+
+If the job list cannot be saved (for example a full disk), an import still runs, so the evidence is
+processed. It shows as a failed job with a note that the evidence was processed anyway, and it waits
+for the case's running jobs and keeps new ones out until it ends.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.

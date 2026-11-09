@@ -180,6 +180,28 @@ const baseOpts = (label = "0018_velo-flow_Windows.NTFS.MFT.json") => ({
   importedAt: IMPORTED_AT,
 });
 
+describe("runVelociraptorBulk — a cancel rolls back its own rows (#2425)", () => {
+  it("a cancel after a batch landed stops before the next one, and the run's rows are gone", async () => {
+    const sink = memorySink({ batchRows: 10, gate: "Info" });
+    const cancel = new AbortController();
+    const rows = Array.from({ length: 30 }, (_, i) => mftRow(i + 1));
+    await expect(
+      runVelociraptorBulk(
+        sink,
+        "c1",
+        artifactMap(rows),
+        // The analyst presses Cancel as the first batch reports its progress.
+        { ...baseOpts(), signal: cancel.signal, onProgress: () => cancel.abort() },
+        "forensic",
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(sink.rollbacks).toHaveLength(1);
+    expect(sink.forensic).toEqual([]);
+    expect(sink.superRows).toEqual([]);
+    expect(sink.runs).toEqual([]);
+  });
+});
+
 describe("runVelociraptorBulk — forensic mode", () => {
   it("writes per batch: tagged rows to the forensic table, every row to the super-timeline, one log line each", async () => {
     const rows = Array.from({ length: 12_000 }, (_, i) => mftRow(i + 1));

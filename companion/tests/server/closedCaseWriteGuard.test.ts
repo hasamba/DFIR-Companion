@@ -16,8 +16,9 @@ import { TagsStore } from "../../src/analysis/tags.js";
 
 // #2404: analyst writes that change the case's record had no closed/archived check — import
 // undo/redo, finding workflow and severity restore, hypotheses, playbook, remediation, cockpit.
-// The central gate (composition/caseWriteGuard.ts) now refuses each on a frozen case with 423,
-// and lets every one of them through on an open case.
+// The central gate (composition/caseWriteGuard.ts) now refuses each on a frozen case with 423 —
+// since #2437 by default, for every write route not on its allowlist — and lets every one of them
+// through on an open case. tests/server/frozenCaseDenyByDefault.test.ts walks the whole route stack.
 
 const WRITES: ReadonlyArray<readonly ["post" | "patch" | "put" | "delete", string]> = [
   ["post", "/import/undo"],
@@ -217,18 +218,20 @@ describe("closed and archived cases refuse case-changing writes (#2404)", () => 
     expect((await request(app).post("/cases/c1/false-positive/suggest").send({})).status).not.toBe(423);
   });
 
-  it("leaves the notes beside the record editable: a notebook entry, a comment and a pin (#2437)", async () => {
+  // Owner decision (#2437, 2026-11-09): notes, comments and pins freeze too — reopen to annotate.
+  it("refuses a notebook entry, a comment and a pin on a closed case, and keeps reads as POST (#2437)", async () => {
     const { app } = await makeApp();
     await request(app).patch("/cases/c1/status").send({ status: "closed" });
     const note = await request(app).post("/cases/c1/notebook").send({ text: "reviewer note after close" });
-    expect(note.status).toBe(201);
+    expect(note.status).toBe(423);
+    expect(note.body.error).toMatch(/closed — reopen it before changing it/);
     const comment = await request(app)
       .post("/cases/c1/comments")
       .send({ targetType: "finding", targetId: "f1", text: "looks right", author: "rev" });
-    expect(comment.status).toBe(201);
-    expect((await request(app).post("/cases/c1/pinned-findings").send({ findingId: "f1" })).status).not.toBe(
-      423,
-    );
+    expect(comment.status).toBe(423);
+    expect((await request(app).post("/cases/c1/pinned-findings").send({ findingId: "f1" })).status).toBe(423);
     expect((await request(app).post("/cases/c1/tags/tagger-for").send({ ids: [] })).status).not.toBe(423);
+    expect((await request(app).patch("/cases/c1/status").send({ status: "open" })).status).toBe(200);
+    expect((await request(app).post("/cases/c1/notebook").send({ text: "after reopen" })).status).toBe(201);
   });
 });

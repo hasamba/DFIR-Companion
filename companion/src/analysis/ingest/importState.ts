@@ -31,6 +31,26 @@ import type { WindowContext } from "../stateMerge.js";
  */
 
 /**
+ * The cancel an importer reports before it merged anything (#2425): the case holds nothing of the
+ * import, so there is nothing to settle. Named AbortError, like every other cancel.
+ */
+export class ImportCancelledError extends Error {
+  constructor() {
+    super("import processing cancelled; stored evidence retained");
+    this.name = "AbortError";
+  }
+}
+
+/**
+ * Throws an ImportCancelledError when the import's job was cancelled (#2425). Every importer calls it
+ * inside the state lock right before its merge, so a cancel that lands while the import parses or
+ * waits for the case merges nothing: the evidence stays stored and the case is as it was before.
+ */
+export function abortIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new ImportCancelledError();
+}
+
+/**
  * The load → merge → save → announce tail all deterministic imports share.
  *
  * Exported because it was not actually being shared: every wrapper in platformImports.ts had this
@@ -60,11 +80,7 @@ export async function commitDelta(
   },
 ): Promise<InvestigationState> {
   return ctx.withStateLock(caseId, async () => {
-    if (opts.signal?.aborted) {
-      throw Object.assign(new Error("import processing cancelled; stored evidence retained"), {
-        name: "AbortError",
-      });
-    }
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
@@ -225,6 +241,7 @@ export async function persistPlasoParsed(
     importedAt: string;
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };

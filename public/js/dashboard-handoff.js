@@ -115,8 +115,8 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text, type: "handoff", author: typeof investigatorName === "function" ? investigatorName() : "" }),
         })
-          .then((r) => {
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          .then(async (r) => {
+            if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`); // 423 on a closed case (#2437)
             ta.value = "";
             say("Handoff note saved to the notebook.");
             loadHandoff(currentCaseId);

@@ -92,6 +92,14 @@
     wirePinnedDrag();
   }
 
+  // A refused pin change (a closed case answers 423, #2437) shows the server's sentence and yields
+  // null, so the caller never paints an error body as the pin list.
+  async function pinRefusalOr(r) {
+    if (r.ok) return r.json();
+    const b = await r.json().catch(() => ({}));
+    flashPinMsg(b.error || "Pin change failed (HTTP " + r.status + ")");
+    return null;
+  }
   function togglePin(fid) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId || !fid) return;
@@ -100,8 +108,8 @@
       fetch(`/cases/${caseId}/pinned-findings/${encodeURIComponent(id)}`, {
         method: "DELETE",
       })
-        .then((r) => r.json())
-        .then(applyPinResponse)
+        .then(pinRefusalOr)
+        .then((d) => d && applyPinResponse(d))
         .catch(() => {});
     } else {
       fetch(`/cases/${caseId}/pinned-findings`, {
@@ -117,7 +125,7 @@
             );
             return null;
           }
-          return r.json();
+          return pinRefusalOr(r);
         })
         .then((d) => {
           if (d) applyPinResponse(d);
@@ -248,8 +256,8 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ order }),
     })
-      .then((r) => r.json())
-      .then(applyPinResponse)
+      .then(pinRefusalOr)
+      .then((d) => (d ? applyPinResponse(d) : loadPins(caseId)))
       .catch(() => {});
   }
 

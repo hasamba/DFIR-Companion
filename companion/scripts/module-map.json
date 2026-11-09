@@ -596,6 +596,7 @@
     "irisImport.ts": "analysis/ingest",
     "jobLedgerStore.ts": "analysis/case",
     "jobLedgerWorker.ts": "analysis/case",
+    "caseHolds.ts": "analysis/case",
     "jobManager.ts": "analysis/case",
     "jobManagerSupport.ts": "analysis/case",
     "jobRegistry.ts": "analysis/case",

@@ -9,7 +9,7 @@ import { SNORT_SOURCE, parseSnortLog, type SnortImportOptions } from "../snortIm
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { pickImportYear } from "../timeYearClamp.js";
 import { describeFloor } from "./floorNote.js";
-import { noteEmptyImport, mergeAndSaveDelta } from "./importState.js";
+import { noteEmptyImport, abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import { recordParsedImport } from "./parsedDebug.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
@@ -112,6 +112,7 @@ export async function importNetwork(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   // Pass the import filename so per-stream Zeek JSON (conn.json / dns.json / … with no `_path`)
@@ -156,6 +157,7 @@ export async function importNetwork(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,

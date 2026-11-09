@@ -47,14 +47,7 @@ export function registerCustodyRoutes(app: Express, ctx: RouteContext): void {
     const caseId = req.params.id;
     if (!(await store.caseExists(caseId)))
       return res.status(404).json({ error: `case ${caseId} does not exist` });
-    // Same write guard as the other evidence routes: a closed or archived case takes no new records.
-    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res
-        .status(423)
-        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before recording custody` });
-    }
+    // #2437: a closed or archived case is refused by the central gate (composition/caseWriteGuard.ts).
     const artifactPath = typeof req.body?.artifactPath === "string" ? req.body.artifactPath.trim() : "";
     if (!artifactPath) return res.status(400).json({ error: "artifactPath is required" });
     const collectedBy = typeof req.body?.collectedBy === "string" ? req.body.collectedBy.trim() : "";

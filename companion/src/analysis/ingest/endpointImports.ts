@@ -28,6 +28,7 @@ import {
   hostIdentityDelta,
   knownHostIdentity,
   noteEmptyImport,
+  abortIfCancelled,
   mergeAndSaveDelta,
 } from "./importState.js";
 import { bulkPathApplies, importVelociraptorBulk } from "./velociraptorBulk.js";
@@ -61,6 +62,7 @@ export async function importThor(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseThorReport(jsonText, { ...opts.thor, debug: opts.debug });
@@ -88,6 +90,7 @@ export async function importThor(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
@@ -115,6 +118,7 @@ export async function importChainsaw(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const known = await knownHostIdentity(ctx, caseId); // the case's rename ledger seeds the parse (#1495)
@@ -151,6 +155,7 @@ export async function importChainsaw(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
@@ -178,6 +183,7 @@ export async function importVelociraptor(
     veloUrl?: string; // the originating hunt/flow's GUI URL (only known for a live hunt/flow import) — stamped onto every event so the forensic timeline's "↗ Velociraptor" link resolves, mirroring the super-only path
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   // Rows often carry no _Source; use the (Velociraptor-named) filename as the fallback artifact
@@ -203,6 +209,7 @@ export async function importVelociraptor(
       minSeverity: opts.minSeverity,
       veloUrl: opts.veloUrl,
       onProgress: opts.onProgress,
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
     if (done) return done;
   }
@@ -264,6 +271,7 @@ export async function importVelociraptor(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
@@ -290,6 +298,7 @@ export async function importKape(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseKapeCsv(text, { ...opts.kape, debug: opts.debug });
@@ -318,6 +327,7 @@ export async function importKape(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
@@ -431,6 +441,7 @@ export async function importCybertriage(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseCybertriage(text, { ...opts.cybertriage, debug: opts.debug });
@@ -462,6 +473,7 @@ export async function importCybertriage(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,

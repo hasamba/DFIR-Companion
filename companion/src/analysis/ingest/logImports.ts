@@ -23,7 +23,7 @@ import {
 import { SYSLOG_SOURCE, parseSyslogProgress, type SyslogImportOptions } from "../syslogImport.js";
 import { pickImportYear } from "../timeYearClamp.js";
 import { describeFloor } from "./floorNote.js";
-import { noteEmptyImport, noteParsed, mergeAndSaveDelta } from "./importState.js";
+import { noteEmptyImport, noteParsed, abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 
@@ -362,6 +362,7 @@ export async function importAuditd(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // #1736
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseAuditdLog(text, { ...opts.auditd, debug: opts.debug });
@@ -392,6 +393,7 @@ export async function importAuditd(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
@@ -418,6 +420,7 @@ export async function importJournald(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // #1736
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseJournald(text, { ...opts.journald, debug: opts.debug });
@@ -448,6 +451,7 @@ export async function importJournald(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
@@ -474,6 +478,7 @@ export async function importSysdig(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // #1736
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseSysdig(text, { ...opts.sysdig, debug: opts.debug });
@@ -505,6 +510,7 @@ export async function importSysdig(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,

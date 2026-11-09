@@ -5,11 +5,13 @@ import { logActivity } from "../analysis/activityLog.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
+import { ImportJournalLostError } from "./importSettleDiff.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import type { ManifestValue } from "../analysis/analysisRunTypes.js";
-import { formatImportMerged, formatImportStart } from "../logging/importLog.js";
+import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
+import { abortIfCancelled, ImportCancelledError } from "../analysis/ingest/importState.js";
 import { safeKind, createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug } from "./importDebugEmit.js";
 import { admitDedicatedImport, type DedicatedImportJob } from "./importCommitJob.js";
@@ -54,10 +56,11 @@ export interface DedicatedImportCommit {
   parameters?: Record<string, ManifestValue>;
   /**
    * The importer call. Runs inside the section; a throw is recorded as an import failure. It gets
-   * this attempt's debug recorder (#1736) as `{ debug }`, to spread into the importer's options. A
-   * spread, not a named property, so an importer that does not read `debug` yet still type-checks.
+   * this attempt's debug recorder (#1736) and the job's Cancel (#2425) as `{ debug, signal }`, to
+   * spread into the importer's options. A spread, not named properties, so an importer that does not
+   * read one of them still type-checks. An AbortError thrown by the importer is a cancel, not a failure.
    */
-  run: (withDebug: { debug: ImportDebugRecorder }) => Promise<unknown>;
+  run: (withDebug: { debug: ImportDebugRecorder; signal?: AbortSignal }) => Promise<unknown>;
 }
 
 /**
@@ -125,12 +128,32 @@ export function commitDedicatedImport(
   // busy". Admission comes BEFORE the section, as on the generic route: with the durable ledger's
   // one-job-per-case slot the import queues behind other case work instead of running beside it.
   const job: DedicatedImportJob = admitDedicatedImport(ctx, commit);
+  const signal = job.signal;
+  // #2425: set when a cancel landed while the importer ran. Whatever it had already saved (CSV / log
+  // batches) is settled below like any import — so no row skips the tagger — and recorded, so Undo
+  // removes it. When nothing landed, the import is reported as cancelled instead.
+  let partial = false;
+  let runStarted = Date.now();
+  // The analyst's decision, not a failure: one "cancelled" line, no failure-ring entry. fail() is a
+  // no-op on the cancelled row, and settles the row of a case deleted mid-import (#1831).
+  const reportCancelled = async (err: unknown): Promise<void> => {
+    await job.fail(err);
+    ctx.serverLogger.info(formatImportCancelled(caseId, storedName, Date.now() - runStarted), { caseId });
+    emitImportDebug(caseId, debug, "cancelled");
+    options.onAiStatus?.(caseId, {
+      status: "idle",
+      at: new Date().toISOString(),
+      detail: "import processing cancelled; stored evidence retained",
+    });
+  };
   const run = async (): Promise<void> => {
     if (!(await job.admitted())) throw job.stopped();
+    runStarted = Date.now();
     section = await beginImportSection(importLock, caseId, options.stateStore, {
       incomingEvents: commit.linesIn,
     });
     baseline = section.baseline;
+    abortIfCancelled(signal); // cancelled while it waited for the section: nothing ran
     // #1438: the start line is the last thing in the log before a crash mid-parse; the merged line
     // carries the wall time. The FAILED line is recordImportFailure's (the `.catch` below), once.
     ctx.serverLogger.info(formatImportStart({ caseId, label: storedName, kind, lines: commit.linesIn }), {
@@ -143,7 +166,15 @@ export function commitDedicatedImport(
       { caseId },
     );
     const startedAt = Date.now();
-    await commit.run({ debug });
+    try {
+      await commit.run({ debug, ...(signal ? { signal } : {}) });
+    } catch (err) {
+      // A cancel can surface as a throw mid-import (an aborted model call) after earlier batches
+      // were saved. Not a failure: what landed is settled below. An importer that stopped before
+      // merging anything (ImportCancelledError) has nothing to settle; anything else still fails.
+      if (!signal?.aborted || err instanceof ImportCancelledError) throw err;
+    }
+    partial = job.closeCancel();
     ctx.serverLogger.info(formatImportMerged(caseId, storedName, Date.now() - startedAt), { caseId });
   };
 
@@ -161,6 +192,10 @@ export function commitDedicatedImport(
             `superRetained=${settled.superTimelineAddedCount} superEvicted=${settled.superTimelineEvicted?.count ?? 0}`,
           { caseId },
         );
+        const changed =
+          tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length;
+        if (partial && !changed && !settled.superTimelineAddedCount)
+          return reportCancelled(new Error("import cancelled before it wrote anything"));
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         try {
           // Proactive FP-pattern propagation (#15b), as the generic route does it: do the NEW
@@ -198,17 +233,19 @@ export function commitDedicatedImport(
             action: "import",
             detail:
               `${label} — +${tDiff.added.length} event(s), +${iDiff.added.length} IOC(s)` +
-              (commit.activitySuffix ?? ""),
+              (commit.activitySuffix ?? "") +
+              (partial ? " — cancelled; kept what was imported before the cancel" : ""),
           });
           // #76: snapshot the pre-import state for undo — only when the import changed something,
           // so a no-op re-import does not pile up dead levels.
-          if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
+          if (changed) {
             await pushImportCheckpoint(caseId, baseline, label);
           }
         } catch {
           /* non-fatal — the import is merged and settled; only its bookkeeping failed */
         }
       } else {
+        if (partial) return reportCancelled(new Error("import cancelled"));
         ctx.serverLogger.debug(
           `[import-debug] ${caseId}: commit kind=${safeKind(kind)} not settled (no settle deps)`,
           {
@@ -235,6 +272,13 @@ export function commitDedicatedImport(
     .catch(async (err) => {
       // Never admitted (its case was deleted while it queued): nothing ran, so nothing failed.
       if (job.isStopped(err)) return;
+      // #2425: cancelled before anything of it reached the case (while it waited for the section, or
+      // the importer stopped before its merge / rolled its batches back). Only when the job's own
+      // signal fired: an AbortError from elsewhere (a provider timeout) is a real failure.
+      if ((err as Error)?.name === "AbortError" && signal?.aborted) return reportCancelled(err);
+      // A batched importer cancelled before its first batch, into a case that had no state yet:
+      // nothing was written, so the settle finds no journal to read. Still a cancel, not a failure.
+      if (partial && err instanceof ImportJournalLostError && baseline?.empty) return reportCancelled(err);
       await job.fail(err);
       recordImportFailure(caseId, kind, storedName, err, debug);
       recordAiError(caseId, "import", err);
@@ -248,5 +292,6 @@ export function commitDedicatedImport(
       // Unconditional: a section left held would wedge every later import for this case.
       section?.release();
       section = null;
+      job.release(); // after the section: no other case work starts before this import is done
     });
 }

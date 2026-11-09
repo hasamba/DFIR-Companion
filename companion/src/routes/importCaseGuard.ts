@@ -117,19 +117,6 @@ export async function frozenCaseRefusal(
   return `Case "${caseId}" is ${status} — ${action} before ${purpose}`;
 }
 
-/**
- * frozenCaseRefusal as Express middleware: 423 on a closed or archived case, otherwise next(). Used
- * by ingest routes registered BEFORE caseWriteGuard's gate, such as the tool-run routes (#2071).
- */
-export function refuseFrozenCase(store: CaseStore) {
-  return function refuseFrozenCaseGate(req: Request, res: Response, next: NextFunction): void {
-    frozenCaseRefusal(store, req.params.id).then((refusal) => {
-      if (refusal) res.status(423).json({ error: refusal });
-      else next();
-    }, next);
-  };
-}
-
 // The two routes that consume the analyst's "asset for this import" (#1496): the unified sniffing
 // import and the server-side file import both thread it through buildImportBase. Every other route
 // in EVIDENCE_IMPORT_ROUTES builds its options from its own body fields and never reads it.
