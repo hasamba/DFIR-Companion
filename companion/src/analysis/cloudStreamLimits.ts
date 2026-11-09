@@ -30,9 +30,12 @@ export const JSON_RECORD_MAX_CHARS = 16 * 1024 * 1024;
 /** One CSV record larger than this is force-split (parseCsvRecordsFromLines' own guard). */
 export const CSV_RECORD_MAX_CHARS = 8 * 1024 * 1024;
 
-/** Medium rows kept individually per (rule, actor) before that pair's rows are aggregated. */
+/**
+ * Distinct Medium rows kept in detail per (rule, actor) before that pair's rows are aggregated.
+ * Rows sharing the importer's grouping key merge into one detail row and count once (#2502).
+ */
 export const MEDIUM_INDIVIDUAL_PER_RULE_ACTOR = 25;
-/** Medium rows kept individually per import, across all rules and actors. */
+/** Distinct Medium rows kept in detail per import, across all rules and actors. */
 export const MEDIUM_INDIVIDUAL_MAX = 10_000;
 
 /** Distinct aggregated groups (Medium overflow, Low, Info) one import may create at full detail. */
