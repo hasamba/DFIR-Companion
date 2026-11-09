@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import { wholeCaseLoads, type WholeCaseLoadOptions } from "./wholeCaseLoadLimit.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { isStringTooLongError } from "../storage/boundedRead.js";
+import { readOnlyStateOverlay } from "../storage/readOnlyScope.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { requestIocCandidates } from "./iocCandidatesRequest.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
@@ -283,6 +284,8 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
   }
 
   async load(caseId: string, opts: WholeCaseLoadOptions = {}): Promise<InvestigationState> {
+    const staged = readOnlyStateOverlay()?.get(caseId); // an AI preview's own promotion (#2491)
+    if (staged) return staged as InvestigationState;
     // #1915: capped across the process; see WholeCaseLoadOptions for slimCanonical and signal.
     return wholeCaseLoads.run(() => this.loadState(caseId, [], opts.slimCanonical === true), opts.signal);
   }
@@ -330,6 +333,8 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
   }
 
   async save(state: InvestigationState): Promise<void> {
+    const overlay = readOnlyStateOverlay(); // inside an AI preview: held in memory, never written
+    if (overlay) return void overlay.set(state.caseId, state);
     await this.saveFull(state);
   }
 

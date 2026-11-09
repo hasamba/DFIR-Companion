@@ -12,7 +12,7 @@ import { reconsiderKeyQuestions, reconsiderNextSteps } from "../analysis/fpCasca
 import { patternKey } from "../analysis/prevalence.js";
 import type { LearnedPatternInput } from "../analysis/learnedPatterns.js";
 import { DEFAULT_SOURCE_TRUST } from "../analysis/sourceTrust.js";
-import { findSimilarEvents, findSimilarFindings } from "../analysis/falsePositiveSimilarity.js";
+import { parseSimilarKind, similarCandidates, similarLabel } from "./aiActionArgs.js";
 import { ScopeStore, type ScopeWindow } from "../analysis/scope.js";
 import { PinLimitError } from "../analysis/pinnedFindings.js";
 import { FINDING_WORKFLOW_STATUSES, type FindingWorkflowStatus } from "../analysis/findingWorkflow.js";
@@ -20,7 +20,6 @@ import { type NotebookEntryType, NOTEBOOK_ENTRY_TYPES } from "../analysis/notebo
 import { mentionEvent } from "../analysis/notifications.js";
 import { sanitizeRuleInput } from "../analysis/iocWhitelist.js";
 import { STARRED_LABEL } from "../analysis/superTimeline.js";
-import type { ForensicEvent, Finding } from "../analysis/stateTypes.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 
@@ -342,38 +341,26 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/false-positive/suggest", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     try {
-      const kind = req.body?.kind === "event" ? "event" : req.body?.kind === "finding" ? "finding" : null;
+      const kind = parseSimilarKind(req.body);
       const ref = String(req.body?.ref ?? "").trim();
       if (!kind || !ref)
         return res.status(400).json({ error: "kind ('event'|'finding') and ref are required" });
       const state = await options.stateStore.load(req.params.id);
-      const anchor =
-        kind === "event"
-          ? state.forensicTimeline.find((e) => e.id === ref)
-          : state.findings.find((f) => f.id === ref);
-      if (!anchor) return res.status(404).json({ error: `${kind} ${ref} not found` });
-
-      const deterministic =
-        kind === "event"
-          ? findSimilarEvents(anchor as ForensicEvent, state.forensicTimeline)
-          : findSimilarFindings(anchor as Finding, state.findings);
+      const similar = similarCandidates(state, kind, ref);
+      if (!similar) return res.status(404).json({ error: `${kind} ${ref} not found` });
+      const { deterministic, anchorLabel, rest } = similar;
 
       if (!req.body?.ai) return res.status(200).json({ candidates: deterministic });
       if (!options.pipeline || !options.pipeline.hasSynthesisProvider()) {
         return res.status(200).json({ candidates: deterministic, aiUnavailable: true });
       }
 
-      const pool = kind === "event" ? state.forensicTimeline : state.findings;
-      const anchorLabel =
-        kind === "event" ? (anchor as ForensicEvent).description : (anchor as Finding).title;
-      const seen = new Set(deterministic.map((c) => c.id));
-      const rest = pool.filter((item) => item.id !== ref && !seen.has(item.id)).slice(0, 100);
       const aiIds = await options.pipeline.suggestFalsePositiveSimilarAi(
         req.params.id,
         ref,
         anchorLabel,
         rest.map((r) => r.id),
-        rest.map((r) => (kind === "event" ? (r as ForensicEvent).description : (r as Finding).title)),
+        rest.map((r) => similarLabel(kind, r)),
       );
       // Defense-in-depth, not redundant: suggestFalsePositiveSimilarAi already validates aiIds
       // against the candidate list it was given (dropping any hallucinated id), but this is a
@@ -384,7 +371,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         .map((r) => ({
           id: r.id,
           kind,
-          label: kind === "event" ? (r as ForensicEvent).description : (r as Finding).title,
+          label: similarLabel(kind, r),
           // Pinned to 0, not a "zero-confidence" match — this keeps AI-sourced candidates sorting
           // after every scored deterministic candidate when a UI sorts descending by score.
           // `reasons` (below) is what tells the dashboard this candidate came from the AI pass.

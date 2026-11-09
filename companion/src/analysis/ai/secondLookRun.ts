@@ -1,5 +1,6 @@
 import { abortError } from "../abortable.js";
 import { filterFalsePositiveEvents } from "../falsePositive.js";
+import { rethrowIfAiPreview } from "./aiPreviewScope.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import { loadHostAliasIndex, type CaseStateReader } from "../hostScopeLoad.js";
 import { rankConnectiveIocs } from "../iocAnchors.js";
@@ -290,6 +291,7 @@ export async function secondLookRun(
       await synthesize(ctx, caseId, { force: true, ...(opts.signal ? { signal: opts.signal } : {}) });
     }
   } catch (err) {
+    rethrowIfAiPreview(err); // a preview records nothing (#2491)
     // #2425: rows may be promoted (even a promotion that threw after saving) but the run did not
     // finish: the promotion's tail or the re-synthesis failed, stopped at an analyst gate, or was
     // cancelled. The sweep still happened, so its record — and the leads the report reads from it —
