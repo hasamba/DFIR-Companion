@@ -1095,7 +1095,7 @@ describe("parseM365Audit — plain UAL row provenance (#2485)", () => {
     RecordType: 6,
     OrganizationId: TENANT,
     UserId: "alice@victim.com",
-    UserKey: "i:0h.f|membership|1003@live.com",
+    UserKey: "i:0h.f|membership|1003@example.com",
     ClientIP: "198.51.100.44",
     ObjectId: "https://victim.sharepoint.com/sites/x/doc.docx",
   });
