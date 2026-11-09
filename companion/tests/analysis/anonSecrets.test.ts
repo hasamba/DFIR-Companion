@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { expectLinearScan } from "../helpers/growth.js";
 import { redactSecretText, SECRET_PLACEHOLDER as PH } from "../../src/analysis/anonSecrets.js";
 import { isSecretKey } from "../../src/analysis/anonSecretKeys.js";
 import { createAnonymizer, type AnonPolicy, type KnownEntities } from "../../src/analysis/anonymize.js";
@@ -188,14 +189,10 @@ describe("redactSecretText — forensic evidence survives", () => {
 
   it("scans adversarial text in linear time", () => {
     const bait = (n: number) => `"password":"${"\\\\".repeat(n)}` + ` password= ${" ".repeat(n)}`;
-    const time = (n: number) => {
-      const t = Date.now();
-      redactSecretText(bait(n).repeat(20));
-      return Date.now() - t;
-    };
-    time(500);
-    const small = Math.max(time(2000), 1);
-    expect(time(8000) / small).toBeLessThan(8);
+    // Shared growth harness (tests/helpers/growth.ts, from loadTest): CPU time, batched, best-of-3,
+    // after a full-size warm-up. Over an 8x input, linear costs ~8x and quadratic ~64x; the limit is
+    // 32x the baseline + 25 CPU-ms, so timer grain and runner load cannot fail it (#2444).
+    expectLinearScan("redactSecretText", (n) => redactSecretText(bait(n).repeat(20)), 2000);
   });
 });
 

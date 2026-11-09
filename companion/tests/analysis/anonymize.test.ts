@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { expectLinearScan } from "../helpers/growth.js";
 import {
   createAnonymizer,
   isInternalIp,
@@ -513,17 +514,12 @@ describe("anonymizer — secret redaction (one-way)", () => {
 
   it("scans a log full of key headers in linear time", () => {
     // A lazy scan with no length bound re-walks the rest of the input for every BEGIN marker, so
-    // artifact text full of them costs O(n^2). Over a 4x input, linear is ~4x and quadratic ~16x.
+    // artifact text full of them costs O(n^2). Measured with the shared growth harness
+    // (tests/helpers/growth.ts, from loadTest): CPU time, batched, best-of-3. Over an 8x input,
+    // linear is ~8x and quadratic ~64x; the limit is 32x the baseline + 25 CPU-ms (#2444).
     const a = createAnonymizer(policy({}, true), NONE);
     const bait = (n: number) => "-----BEGIN PRIVATE KEY-----\n.\n".repeat(n);
-    const time = (n: number) => {
-      const t = Date.now();
-      a.apply(bait(n));
-      return Date.now() - t;
-    };
-    time(500); // warm up
-    const small = Math.max(time(2000), 1);
-    expect(time(8000) / small).toBeLessThan(8);
+    expectLinearScan("anonymizer key-header scan", (n) => a.apply(bait(n)), 500);
   });
 });
 
