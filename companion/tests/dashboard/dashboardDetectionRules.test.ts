@@ -70,6 +70,32 @@ function harness() {
 const PACK_STATUS = { inUse: "pack", installed: { version: "rules-2026.11.06.2" } };
 const SIGMA = { enabled: true, active: { release: "r2026-07-01" } };
 
+describe("the Sigma line with unreleased SigmaHQ changes (#2518)", () => {
+  it("says the newest release is installed but the main branch has unreleased changes", () => {
+    const { api } = harness();
+    expect(
+      api.drSigmaLine({
+        ...SIGMA,
+        lastCheck: {
+          latest: "r2026-07-01",
+          updateAvailable: false,
+          main: { gradedChanges: 10, date: "2026-11-07" },
+        },
+      }),
+    ).toMatchObject({
+      text: "SigmaHQ r2026-07-01 — newest release; 10 unreleased change(s) on SigmaHQ's main branch",
+      action: "sigma",
+      button: "Review…",
+    });
+    expect(
+      api.drSigmaLine({
+        ...SIGMA,
+        lastCheck: { latest: "r2026-07-01", updateAvailable: false, main: { gradedChanges: 0 } },
+      })?.text,
+    ).toBe("SigmaHQ r2026-07-01 — current");
+  });
+});
+
 describe("the Suzaku line (#2508)", () => {
   const sz = (suzaku: Record<string, unknown>) => ({ ...SIGMA, settings: { suzaku } });
   const active = { release: "suzaku-2026-11-01", source: "bundled" };

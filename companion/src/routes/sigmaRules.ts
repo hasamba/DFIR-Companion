@@ -30,6 +30,8 @@ const fetchAsset = (url: string, timeoutMs: number) => fetchOutbound(url, { time
 
 const previewBody = z.union([
   z.object({ source: z.literal("latest") }),
+  // #2518: SigmaHQ's newest main-branch commit, opt-in and verified against GitHub's listing.
+  z.object({ source: z.literal("main") }),
   z.object({
     source: z.literal("file"),
     name: z.string().min(1).max(200),
@@ -141,7 +143,7 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
     const store = need(res);
     if (!store) return;
     try {
-      const check = await store.checkLatest(fetch);
+      const check = await store.checkLatest(fetch, true);
       if (check.error) return res.status(502).json({ error: check.error, check });
       // Check shows what would change in one click when a newer release exists — nothing installed.
       const preview = check.updateAvailable ? await store.previewLatest(fetch, fetchAsset) : null;
@@ -156,10 +158,14 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
     if (!store) return;
     const body = previewBody.safeParse(req.body);
     if (!body.success)
-      return res.status(400).json({ error: 'send {source:"latest"} or {source:"file", name, zipBase64}' });
+      return res
+        .status(400)
+        .json({ error: 'send {source:"latest"}, {source:"main"} or {source:"file", name, zipBase64}' });
     try {
       if (body.data.source === "latest")
         return res.json({ preview: await store.previewLatest(fetch, fetchAsset) });
+      if (body.data.source === "main")
+        return res.json({ preview: await store.previewMain(fetch, fetchAsset) });
       const bytes = Buffer.from(body.data.zipBase64, "base64");
       const preview = await store.preview(bytes, {
         source: "file",

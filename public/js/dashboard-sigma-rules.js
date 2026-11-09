@@ -113,7 +113,7 @@ function sigmaRenderStatus(s) {
   box.textContent = "";
   for (const n of notes) box.appendChild(sigmaEl("div", n));
   const demo = !!s.demoMode;
-  ["sigmaCheckBtn", "sigmaFileBtn", "sigmaRollbackBtn"].forEach((id) => {
+  ["sigmaCheckBtn", "sigmaFileBtn", "sigmaRollbackBtn", "sigmaMainBtn"].forEach((id) => {
     const b = document.getElementById(id);
     if (b) b.disabled = demo || (id === "sigmaRollbackBtn" && !s.previous);
   });
@@ -333,11 +333,36 @@ function sigmaRenderMeasure(r) {
   box.appendChild(out);
 }
 
+// #2518: what the check found on SigmaHQ's main branch, in plain words. PURE.
+function sigmaMainSentence(main) {
+  if (!main) return "";
+  if (main.error) return ` Could not check SigmaHQ's main branch: ${main.error}`;
+  if (!main.gradedChanges) return " No newer changes on SigmaHQ's main branch touch the rules this companion grades.";
+  return ` SigmaHQ's main branch has ${main.gradedChanges} newer change(s) to the rules this companion grades (newest ${main.date}). They are unreleased; "Install SigmaHQ main-branch rules…" reviews them.`;
+}
+
+// #2518: never just "up to date" — name the release, its date, and any unreleased changes. PURE.
+function sigmaCheckSentence(check) {
+  const when = check.publishedAt ? ` (published ${String(check.publishedAt).slice(0, 10)})` : "";
+  return `The newest SigmaHQ release is ${check.latest}${when}; you have ${check.installed}.${sigmaMainSentence(check.main)}`;
+}
+
+async function sigmaPreviewMain() {
+  sigmaMsg("Downloading SigmaHQ's main branch and checking every file against GitHub…");
+  try {
+    const r = await sigmaFetch("/sigma/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "main" }) });
+    sigmaMsg(`Review SigmaHQ main-branch rules ${r.preview.release.release} below. They are unreleased; nothing is installed until you click Install.`);
+    sigmaRenderPreview(r.preview);
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
 async function sigmaCheck() {
   sigmaMsg("Checking SigmaHQ for a newer release…");
   try {
     const r = await sigmaFetch("/sigma/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-    if (!r.check.updateAvailable) sigmaMsg(`Up to date: the latest SigmaHQ release is ${r.check.latest}.`);
+    if (!r.check.updateAvailable) sigmaMsg(sigmaCheckSentence(r.check));
     else {
       sigmaMsg(`Release ${r.check.latest} is available. Review the changes below; nothing is installed until you click Install.`);
       sigmaRenderPreview(r.preview);
@@ -652,6 +677,7 @@ function initSigmaRules() {
   document.getElementById("sigmaCheckBtn")?.addEventListener("click", sigmaCheck);
   document.getElementById("sigmaFileBtn")?.addEventListener("click", sigmaInstallFile);
   document.getElementById("sigmaRollbackBtn")?.addEventListener("click", sigmaRollback);
+  document.getElementById("sigmaMainBtn")?.addEventListener("click", sigmaPreviewMain);
   document.getElementById("suzakuCheckBtn")?.addEventListener("click", suzakuCheck);
   document.getElementById("suzakuRollbackBtn")?.addEventListener("click", suzakuRollback);
   document.getElementById("sigmaRegradeBtn")?.addEventListener("click", sigmaRegradePreview);
