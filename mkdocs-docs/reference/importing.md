@@ -2838,9 +2838,11 @@ disk in batches of 5,000 records and never holds it whole, so memory does not gr
 
 - **Critical and High rows: always kept, one event each.** Nothing graded High is ever folded into
   a count.
-- **Medium rows: kept one by one, up to a budget** — 25 per rule and actor (for example 25
-  `Set-Mailbox` by one admin), and 10,000 per import. Past the first budget, that actor's rows for
-  that rule become one counted event. Past the second, the rest are counted per rule and source
+- **Medium rows: kept in detail, up to a budget** — 25 distinct rows per rule and actor (for
+  example 25 `Set-Mailbox` by one admin), and 10,000 per import. Rows that a small-file import would
+  merge (for example the same sign-in repeated by one user from one address) become one counted row with its first and
+  last time, and use the budget once. Past the first budget, that actor's other rows for that rule
+  become one counted event. Past the second, the rest are counted per rule and source
   address — a password spray against a million accounts becomes one counted event per attacking
   address, not a million events.
 - **Low rows: counted** in the forensic timeline, and kept one by one in the super-timeline.
