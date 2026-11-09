@@ -2522,8 +2522,8 @@
                 <div class="sfield" data-essential><label for="caMsClient">Application (client) ID</label><input id="caMsClient" /></div>
                 <div class="sfield" data-essential><label for="caMsFormat">Certificate<span class="sfield-hint">App-only sign-in with a certificate</span></label><select id="caMsFormat"><option value="pem">PEM (certificate and private key)</option><option value="pfx">PFX file and password</option></select></div>
               </div>
-              <div class="sfield" data-essential><label for="caMsPem">Certificate PEM<span class="sfield-hint">Paste the certificate and its unencrypted private key</span></label><textarea id="caMsPem" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
-              <div class="sfield-row">
+              <div class="sfield" id="caMsPemField" data-essential><label for="caMsPem">Certificate PEM<span class="sfield-hint">Paste the certificate and its unencrypted private key</span></label><textarea id="caMsPem" rows="4" spellcheck="false" autocomplete="off"></textarea></div>
+              <div class="sfield-row" id="caMsPfxRow" hidden>
                 <div class="sfield" data-essential><label for="caMsPfx">PFX file</label><input id="caMsPfx" type="file" accept=".pfx,.p12" /></div>
                 <div class="sfield" data-essential><label for="caMsPfxPassword">PFX password</label><input id="caMsPfxPassword" type="password" autocomplete="new-password" /></div>
               </div>

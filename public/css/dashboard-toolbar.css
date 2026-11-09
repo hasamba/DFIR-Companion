@@ -314,6 +314,13 @@
 .sfield-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
 .sfield-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 4px; }
 .sfield-row[hidden], .sfield-row3[hidden] { display: none; }
+/* A field with a hint line sat its box lower than a neighbour without one. Each field in a row is a
+   subgrid of three shared rows — label, box, the note under the box — so titles, boxes and notes line
+   up across the row whatever each one holds. No row field has more than three children. */
+:is(.sfield-row, .sfield-row3) { row-gap: 0; }
+:is(.sfield-row, .sfield-row3) > .sfield { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
+.sfield textarea { width: 100%; box-sizing: border-box; background: var(--bg-primary); color: var(--text-bright); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px; font-family: var(--font-code); font-size: 12px; resize: vertical; }
+.sfield[hidden] { display: none; }
 .diag-support-action { min-width: 220px; }
 .settings-group-head { font-size: 11px; color: var(--accent); font-weight: 600; margin: 10px 0 4px; }
 .settings-hr { border: none; border-top: 1px solid var(--border-color); margin: 12px 0; }
