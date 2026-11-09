@@ -108,6 +108,24 @@ describe("Settings modal group placement", () => {
     expect(settingsPane(html, "ai")).not.toContain('id="env-DFIR_PRESIDIO_URL"');
     expect(settingsPane(html, "integrations")).toContain('id="env-DFIR_PRESIDIO_URL"');
   });
+
+  // The Integrations tab grew too long, so cloud accounts got a tab of their own.
+  it("gives cloud accounts their own tab, outside Integrations", async () => {
+    const html = await dashboardHtml();
+    expect(html).toMatch(/<button class="stab" data-stab="cloud">Cloud Accounts<\/button>/);
+    const cloud = settingsPane(html, "cloud");
+    const integrations = settingsPane(html, "integrations");
+    for (const id of [
+      "cloudAccountsHead",
+      "cloudAccountsPanel",
+      "cloudAccountForm",
+      "env-DFIR_CLOUD_CA",
+      "env-DFIR_CLOUD_PROXY_URL",
+    ]) {
+      expect(cloud, id).toContain(`id="${id}"`);
+      expect(integrations, id).not.toContain(`id="${id}"`);
+    }
+  });
 });
 
 describe("Settings modal ⇄ POST /settings/env allowlist", () => {
