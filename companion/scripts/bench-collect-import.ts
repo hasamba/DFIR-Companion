@@ -235,6 +235,10 @@ function timedImporter(inner: CollectPageImporter, timers: Timers): CollectPageI
     landed: (c, l) => timers.time("landed", () => inner.landed(c, l)),
     forgetAttempt: (c, l) => timers.time("forget", () => inner.forgetAttempt(c, l)),
     settleLanded: (c, l) => inner.settleLanded(c, l),
+    // #2482's once-per-collection summary step: passed through, timed as part of the settle.
+    summarizesPerCollection: (kind) => inner.summarizesPerCollection(kind),
+    importSummary: (c, req, signal) =>
+      timers.time("baselineSettle", () => inner.importSummary(c, req, signal)),
     importPage: async (c, page, signal) => {
       const t0 = performance.now();
       const before = timers.ms.importer;
