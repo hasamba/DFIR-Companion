@@ -440,3 +440,62 @@ describe("parseCloudActivity — compute-lifecycle wiring (#1066)", () => {
     expect(azureRow?.canonical?.evidence?.rawRecords.map((rr) => rr.locator)).toContain("record:0");
   });
 });
+
+// #2476: the Activity Log writes a Started and a Succeeded (sometimes an Accepted) event for ONE
+// call. The status rode in the aggregation key, but the row only prints it when the call failed —
+// so one burst showed as two or three entries that looked identical. The non-failure lifecycle
+// statuses now share one key segment; a failed call stays its own group, and grades are unchanged.
+describe("parseCloudActivity — Azure lifecycle statuses fold into one entry (#2476)", () => {
+  const OP = "Microsoft.Network/taggedTrafficConsumers/validate/action";
+  const burst = (statuses: string[]) =>
+    statuses.map((s) => azure(OP, { status: { value: s }, httpRequest: undefined, caller: "platform-guid" }));
+
+  it("a Started + Succeeded burst gives one counted entry", () => {
+    const r = parseCloudActivity(JSON.stringify(burst(["Started", "Succeeded", "Started", "Succeeded"])));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].severity).toBe("Low");
+  });
+
+  it("Accepted joins the same entry, case-insensitively", () => {
+    const r = parseCloudActivity(JSON.stringify(burst(["started", "ACCEPTED", "Succeeded"])));
+    expect(r.events).toHaveLength(1);
+  });
+
+  it("the Log-Analytics Start / Accept / Success words fold the same way", () => {
+    const la = (s: string) => ({
+      TimeGenerated: "2023-07-01T12:00:00Z",
+      OperationNameValue: OP,
+      Caller: "platform-guid",
+      ActivityStatusValue: s,
+      ResourceId: "/subscriptions/abc/resourceGroups/rg/providers/Microsoft.Network/x",
+      Type: "AzureActivity",
+    });
+    const r = parseCloudActivity(JSON.stringify([la("Start"), la("Accept"), la("Success")]));
+    expect(r.events).toHaveLength(1);
+  });
+
+  it("a Failed call stays a separate, Medium entry", () => {
+    const r = parseCloudActivity(JSON.stringify(burst(["Started", "Succeeded", "Failed"])));
+    expect(r.events).toHaveLength(2);
+    const failed = r.events.find((e) => e.description.includes("[Failed]"));
+    expect(failed?.severity).toBe("Medium");
+    expect(r.events.filter((e) => !e.description.includes("[Failed]"))).toHaveLength(1);
+  });
+
+  it("a status outside the lifecycle (Canceled) keeps its own group", () => {
+    const r = parseCloudActivity(JSON.stringify(burst(["Succeeded", "Canceled"])));
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("a tenant user's call keeps its own group and its Low grade", () => {
+    const user = azure(OP, {
+      caller: "alice@contoso.example",
+      httpRequest: { clientIpAddress: "203.0.113.5" },
+    });
+    const r = parseCloudActivity(JSON.stringify([...burst(["Started", "Succeeded"]), user]));
+    expect(r.events).toHaveLength(2);
+    const alice = r.events.find((e) => e.description.includes("alice@contoso.example"));
+    expect(alice?.severity).toBe("Low");
+    expect(alice?.description).toContain("from 203.0.113.5");
+  });
+});

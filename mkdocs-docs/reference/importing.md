@@ -2848,6 +2848,11 @@ super-timeline always streams. Any other file is held in memory whole and refuse
 (`DFIR_MAX_IMPORT_FILE_MB`). A smaller cloud export takes the whole-file path, which keeps at most
 2,000 aggregated events (`DFIR_MAX_EVENTS`), most severe first.
 
+**Azure Activity: one call, one entry.** The Activity Log writes a *Started* and a *Succeeded*
+event (sometimes an *Accepted* one too) for one management call. These are counted together in one
+entry, so a burst of calls shows as one counted row and not as two or three rows that look the
+same. A *Failed* call is always its own entry, graded Medium as before.
+
 **Drop folder.** The drop folder reads a file up to 200 MB whole (`DFIR_DROP_MAX_BYTES`). A cloud
 export or a Plaso super-timeline over that size is streamed instead of refused, and a `.gz` cloud
 export is decompressed while it is read, at any size. The streamed import's note (which budgets were

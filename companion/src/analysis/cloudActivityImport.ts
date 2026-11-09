@@ -125,6 +125,20 @@ function isListKeys(action: string): boolean {
   return /storageaccounts\/listkeys\/action/i.test((action ?? "").trim());
 }
 
+/** The non-failure lifecycle words of ONE Azure call — REST/az shape and Log-Analytics shape. */
+const AZURE_LIFECYCLE_STATUS_RE = /^(started|accepted|succeeded|start|accept|success)$/i;
+const AZURE_LIFECYCLE_KEY = "lifecycle";
+
+/**
+ * The status segment of the Azure aggregation key (#2476). The Activity Log writes a Started and
+ * a Succeeded (sometimes an Accepted) event for one call, and the row only prints the status when
+ * the call failed — so keying on the raw word split one burst into entries that looked identical.
+ * Those lifecycle words share one segment; Failed and any other status keep their own.
+ */
+function azureAggStatus(status: string): string {
+  return AZURE_LIFECYCLE_STATUS_RE.test(status.trim()) ? AZURE_LIFECYCLE_KEY : status;
+}
+
 function matchRule(rules: Rule[], key: string): { severity: Severity; mitre: string[] } | null {
   const k = key.toLowerCase();
   for (const [re, severity, mitre] of rules) if (re.test(k)) return { severity, mitre };
@@ -332,7 +346,7 @@ function mapAzure(
     // it, listings of DIFFERENT storage accounts by the same caller/IP collapse into one row, and
     // the key→read correlator can only ever see the first account.
     aggKey: boundedAggKey(
-      `azure|${op}|${caller}|${ip}|${status}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : (isObjectRead(op) || isListKeys(op)) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
+      `azure|${op}|${caller}|${ip}|${azureAggStatus(status)}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : (isObjectRead(op) || isListKeys(op)) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
     ),
     sources: ["Azure Activity"],
     ...(logging
