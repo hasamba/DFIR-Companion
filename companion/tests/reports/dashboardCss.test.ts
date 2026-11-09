@@ -187,6 +187,22 @@ describe("the toolbar group labels cost the row no height", () => {
     expect(css).toMatch(/\.sfield-row3\[hidden\][^{]*\{[^}]*display:\s*none/);
   });
 
+  // The Microsoft account form: Tenant ID has a hint line, Application ID none, so their boxes sat at
+  // different heights; and its certificate textarea had no field styling at all.
+  it("lines up the boxes of a Settings field row whatever the hint lines above them", () => {
+    // A subgrid of label / box / note rows, so a note under one box does not push its neighbour down.
+    expect(css).toMatch(
+      /:is\(\.sfield-row, \.sfield-row3\) > \.sfield\s*\{[^}]*grid-row:\s*span 3;[^}]*grid-template-rows:\s*subgrid/,
+    );
+    expect(css).toMatch(/\.sfield\[hidden\]\s*\{[^}]*display:\s*none/);
+  });
+
+  it("styles a Settings textarea like the other fields", () => {
+    expect(css).toMatch(
+      /\.sfield textarea\s*\{[^}]*width:\s*100%[^}]*background:\s*var\(--bg-primary\)[^}]*border:\s*1px solid/,
+    );
+  });
+
   it("never leaves a label drawn over an empty group", () => {
     expect(css).toMatch(/\.tb-group:not\(:has\(> :not\(\.tb-group-label\)\)\)\s*\{[^}]*display:\s*none/);
   });

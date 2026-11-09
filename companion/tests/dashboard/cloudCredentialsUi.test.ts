@@ -56,7 +56,7 @@ function loadList(routes: Record<string, Route>, confirmAnswer = true) {
       return confirmAnswer;
     },
   });
-  return { api, net, confirms, el: (id: string) => doc.getElementById(id) as FakeEl };
+  return { api, net, confirms, doc, el: (id: string) => doc.getElementById(id) as FakeEl };
 }
 
 const inputs = (root: FakeEl) => root.descendants().filter((d) => d.tagName === "INPUT");
@@ -232,5 +232,32 @@ describe("revoke-in-the-cloud reminder in the markup", () => {
     for (const id of ["closeCaseOverlay", "deleteCaseOverlay"])
       expect(block(id)).toMatch(/revoke the key or app secret in AWS, Azure or GCP/);
     expect(block("closeCaseOverlay")).toMatch(/id="ccaDelete"[^>]*checked/);
+  });
+});
+
+// The Microsoft form showed the PEM box and the PFX fields together; only the picked format shows.
+describe("Microsoft certificate format", () => {
+  it("shows the PEM box or the PFX fields, by the picked format", async () => {
+    const { api, el, doc } = loadList({
+      "GET /cases/c1/cloud-accounts": { body: { accounts: [] } },
+      "GET /cloud-accounts": { body: { admin: false, keyState: "present", accounts: [] } },
+    });
+    doc.add("select", "caMsFormat");
+    doc.add("div", "caMsPemField", "caMsPfxRow");
+    api.initCloudAccounts();
+    await flush();
+    el("caMsFormat").value = "pfx";
+    el("caMsFormat").fire("change");
+    expect(el("caMsPemField").hidden).toBe(true);
+    expect(el("caMsPfxRow").hidden).toBe(false);
+    el("caMsFormat").value = "pem";
+    el("caMsFormat").fire("change");
+    expect(el("caMsPemField").hidden).toBe(false);
+    expect(el("caMsPfxRow").hidden).toBe(true);
+  });
+
+  it("starts the PFX fields hidden, matching the PEM default", () => {
+    expect(HTML).toMatch(/<div class="sfield-row" id="caMsPfxRow" hidden>/);
+    expect(HTML).toMatch(/<div class="sfield" id="caMsPemField" data-essential>/);
   });
 });
