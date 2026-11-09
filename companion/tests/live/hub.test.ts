@@ -266,3 +266,15 @@ describe("LiveHub.revalidate (#2449)", () => {
     expect(hub.hasSubscribers("c1")).toBe(true);
   });
 });
+
+describe("LiveHub.authEpoch (#2441)", () => {
+  it("starts at 0 and moves on every dropCase of that case only", () => {
+    const hub = new LiveHub();
+    expect(hub.authEpoch("c1")).toBe(0);
+    hub.dropCase("c1");
+    expect(hub.authEpoch("c1")).toBe(1);
+    hub.dropCase("c1");
+    expect(hub.authEpoch("c1")).toBe(2);
+    expect(hub.authEpoch("c2")).toBe(0);
+  });
+});

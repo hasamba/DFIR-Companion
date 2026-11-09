@@ -116,6 +116,16 @@ function sendJobsSnapshot(sock: SocketLike, caseId: string, jobsFor: WsUpgradeDe
     });
 }
 
+// The `caseId` an upgrade asks for, read the way authorizeWsUpgrade reads it. Only keys the epoch
+// snapshot: a malformed or missing id is refused by the authorization itself.
+function requestedCaseId(url: string | undefined): string {
+  try {
+    return new URL(url ?? "", "http://localhost").searchParams.get("caseId")?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function attachLiveSocket(
   server: Server | HttpsServer,
   hub: LiveHub,
@@ -159,8 +169,15 @@ export function attachLiveSocket(
     const path = new URL(req.url ?? "", "http://localhost").pathname;
     if (path !== "/ws") return;
 
+    // #2441: captured BEFORE authorizing. A drop (password change) that lands while the case
+    // metadata is being read would otherwise be missed by a socket subscribed on the old salt.
+    const epochAtStart = hub.authEpoch(requestedCaseId(req.url));
     void authorizeWsUpgrade({ url: req.url, headers: req.headers }, deps)
-      .then((decision) => {
+      .then((authorized) => {
+        const decision: WsUpgradeDecision =
+          authorized.ok && hub.authEpoch(authorized.caseId) !== epochAtStart
+            ? { ok: false, reason: "case access changed while the socket was being authorized" }
+            : authorized;
         if (!decision.ok) {
           void deps.operationalMetrics?.record({ type: "websocket", event: "reject", durationMs: 0 });
           // Refuse before the handshake: the client gets an HTTP error and never has a socket.
@@ -170,6 +187,11 @@ export function attachLiveSocket(
         }
         const { caseId } = decision;
         wss.handleUpgrade(req, socket, head, (ws) => {
+          // The same check at subscribe time, in case the handshake yielded in between.
+          if (hub.authEpoch(caseId) !== epochAtStart) {
+            ws.terminate();
+            return;
+          }
           const connectedAt = Date.now();
           void deps.operationalMetrics?.record({ type: "websocket", event: "connect", durationMs: 0 });
           if (connectedAt - lastDisconnectAt <= REAPER_INTERVAL_MS)

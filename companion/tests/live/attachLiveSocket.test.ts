@@ -177,3 +177,65 @@ describe("a dropped case's sockets close, and the old cookie cannot reconnect (#
     again.socket.terminate();
   });
 });
+
+// #2441: an upgrade that read the case metadata BEFORE a password change, but subscribed AFTER the
+// change's dropCase ran, was admitted on the old salt and missed the drop. In single-user mode such
+// a socket has no re-check guard, so it streamed the case indefinitely. The gate now refuses an
+// upgrade whose case was dropped while it was being authorized.
+describe("an upgrade authorized across a password change is refused (#2441)", () => {
+  it("refuses a socket whose metadata read straddled the rotation, and sends it no broadcast", async () => {
+    let readStarted!: () => void;
+    const started = new Promise<void>((resolve) => (readStarted = resolve));
+    let releaseRead!: () => void;
+    const released = new Promise<void>((resolve) => (releaseRead = resolve));
+    const pausedStore = {
+      getCaseMeta: async (id: string) => {
+        const meta = await store.getCaseMeta(id); // the OLD salt
+        readStarted();
+        await released;
+        return meta;
+      },
+    } as unknown as CaseStore;
+    const pausedHub = new LiveHub();
+    const pausedServer = createServer();
+    attachLiveSocket(pausedServer, pausedHub, { store: pausedStore, secret, allowedOrigins: [] });
+    await new Promise<void>((resolve) => pausedServer.listen(0, "127.0.0.1", resolve));
+    const pausedPort = (pausedServer.address() as { port: number }).port;
+    try {
+      const meta = await store.getCaseMeta("locked");
+      const token = signUnlockToken("locked", meta!.password!.salt, secret, 60_000, false);
+      const socket = new WebSocket(`ws://127.0.0.1:${pausedPort}/ws?caseId=locked`, {
+        headers: {
+          cookie: `${unlockCookieName("locked")}=${token}`,
+          origin: `http://127.0.0.1:${pausedPort}`,
+        },
+      });
+      const received: string[] = [];
+      socket.on("message", (data) => received.push(String(data)));
+      const settled = new Promise<"open" | "closed">((resolve) => {
+        socket.on("open", () => resolve("open"));
+        socket.on("close", () => resolve("closed"));
+        socket.on("error", () => resolve("closed"));
+      });
+
+      await started;
+      // The password route: rotate the salt, then drop the case's sockets.
+      await store.updateCaseMeta("locked", { password: await hashCasePassword("other-secret") });
+      pausedHub.dropCase("locked");
+      releaseRead();
+
+      const outcome = await settled;
+      pausedHub.broadcast({
+        caseId: "locked",
+        findings: [{ secret: "exfiltrated" }],
+      } as unknown as InvestigationState);
+      await new Promise((r) => setTimeout(r, 50));
+      socket.terminate();
+      expect(outcome).toBe("closed");
+      expect(received.some((m) => m.includes("exfiltrated"))).toBe(false);
+      expect(pausedHub.connectionCount()).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => pausedServer.close(() => resolve()));
+    }
+  });
+});

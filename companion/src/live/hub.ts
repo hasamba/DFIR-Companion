@@ -45,8 +45,19 @@ export class LiveHub {
       this.forgetter = new CaseForgetter(casesRoot, (caseId) => this.dropCase(caseId));
   }
 
+  // #2441: bumped by every dropCase. An upgrade reads it before it authorizes and refuses itself if
+  // it moved, so a socket authorized against the case as it was before a drop (a password change,
+  // a delete) can never subscribe after it. Kept for the process's life: the compare needs the old value.
+  private readonly epochs = new Map<string, number>();
+
+  /** The case's authorization epoch: changes whenever its sockets are dropped (#2441). */
+  authEpoch(caseId: string): number {
+    return this.epochs.get(caseId) ?? 0;
+  }
+
   /** Close and forget every socket subscribed to the case. */
   dropCase(caseId: string): void {
+    this.epochs.set(caseId, this.authEpoch(caseId) + 1);
     const set = this.subs.get(caseId);
     this.subs.delete(caseId);
     for (const socket of set ?? []) socket.terminate?.();
