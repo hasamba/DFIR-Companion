@@ -238,6 +238,11 @@
     if (admin && caseId && !(a.caseIds || []).includes(caseId))
       actions.appendChild(button("Attach to this case", () => attachTo(a, `${url}/attach`, caseId)));
     if (admin && !a.locked) actions.appendChild(button("Edit", () => openForm(a, url)));
+    // The check runs through the case, so it is offered on an account of the open case only.
+    if (caseId && !a.locked && (a.caseIds || []).includes(caseId))
+      actions.appendChild(
+        button("Check access", () => openCheck(a, `${caseBase(caseId)}/${encodeURIComponent(a.id)}`)),
+      );
     if (canDelete(a, admin)) actions.appendChild(button("Delete", () => deleteAccount(a, url)));
     row.appendChild(actions);
     return row;
@@ -332,6 +337,7 @@
     const admin = all.ok && all.body.admin !== false;
     keyLine(admin ? all.body : inCase.body);
     renderCaseList(box, caseId, inCase);
+    closeStaleCheck(caseId, inCase);
     renderHeldList(caseId, all);
     const add = byId("cloudAccountAddBtn");
     if (add) add.disabled = !caseId && !admin;
@@ -384,12 +390,20 @@
     if (!panel) return;
     const sources = CHECK_SOURCES[account.provider] || [];
     const made = sources.map(([id, label]) => ({ id, ...checkbox(id, label) }));
-    checking = { account, url, boxes: made.map((m) => [m.id, m.box]) };
+    checking = { account, url, caseId: currentCaseId(), boxes: made.map((m) => [m.id, m.box]) };
     byId("ccTitle").textContent = `Check access: ${account.name}`;
     byId("ccSources").replaceChildren(...made.map((m) => m.wrap));
     byId("ccS3Fields").hidden = account.provider !== "aws";
     byId("ccResult").replaceChildren();
     panel.hidden = false;
+  }
+
+  // A check panel left open for an account that is no longer in the open case (another case was
+  // opened, or the account was detached or deleted) would read as the only check there is: close it.
+  function closeStaleCheck(caseId, inCase) {
+    if (!checking) return;
+    const accounts = inCase.ok && Array.isArray(inCase.body.accounts) ? inCase.body.accounts : [];
+    if (checking.caseId !== caseId || !accounts.some((a) => a.id === checking.account.id)) closeCheck();
   }
 
   function closeCheck() {

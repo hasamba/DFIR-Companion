@@ -189,3 +189,59 @@ describe("minimum policy and Check access", () => {
     expect(el("cloudCheckPanel").hidden).toBe(true);
   });
 });
+
+// The Check access panel stayed open for an account of another case, and the held list had no
+// Check access, so an account just added to the open case looked impossible to check.
+describe("Check access from the held list, and a stale check panel", () => {
+  const OTHER = { ...ACCOUNT, id: "a9", name: "GCP lab", provider: "gcp", caseIds: ["c0"], otherCases: 0 };
+
+  it("offers Check access on a held account of the open case only, through the case route", async () => {
+    const { api, net, el } = load({
+      "GET /cases/c1/cloud-accounts": { body: { keyState: "present", accounts: [ACCOUNT] } },
+      "GET /cloud-accounts": { body: { keyState: "present", accounts: [ACCOUNT, OTHER] } },
+      "POST /cases/c1/cloud-accounts/a1/check": { body: { report: { results: [], summary: "ok" } } },
+    });
+    api.initCloudAccounts();
+    await flush();
+    const rows = el("cloudAccountsAllList").children;
+    const labels = (row: FakeEl) =>
+      row
+        .descendants()
+        .filter((d) => d.tagName === "BUTTON")
+        .map((d) => d.textContent);
+    expect(labels(rows[0])).toContain("Check access");
+    expect(labels(rows[1])).not.toContain("Check access");
+    buttonIn(rows[0], "Check access").click();
+    expect(el("ccTitle").textContent).toBe("Check access: AWS prod");
+    el("ccRun").click();
+    await flush();
+    expect(net.calls.find((c) => c.method === "POST")?.url).toBe("/cases/c1/cloud-accounts/a1/check");
+  });
+
+  it("closes the check panel when the list reloads for a case without that account", async () => {
+    const { api, el } = load({
+      "GET /cases/c1/cloud-accounts": { body: { keyState: "present", accounts: [ACCOUNT] } },
+      "GET /cases/c2/cloud-accounts": { body: { keyState: "present", accounts: [] } },
+      "GET /cloud-accounts": { status: 403, body: {} },
+    });
+    api.initCloudAccounts();
+    await flush();
+    buttonIn(el("cloudAccountsList"), "Check access").click();
+    expect(el("cloudCheckPanel").hidden).toBe(false);
+    el("caseId").value = "c2";
+    await api.loadCloudAccounts();
+    expect(el("cloudCheckPanel").hidden).toBe(true);
+  });
+
+  it("keeps the check panel open when the account is still in the open case", async () => {
+    const { api, el } = load({
+      "GET /cases/c1/cloud-accounts": { body: { keyState: "present", accounts: [ACCOUNT] } },
+      "GET /cloud-accounts": { status: 403, body: {} },
+    });
+    api.initCloudAccounts();
+    await flush();
+    buttonIn(el("cloudAccountsList"), "Check access").click();
+    await api.loadCloudAccounts();
+    expect(el("cloudCheckPanel").hidden).toBe(false);
+  });
+});

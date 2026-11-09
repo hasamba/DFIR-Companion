@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Cloud Check access** — the held-accounts list offers Check access on accounts of the open case, and a check panel left open for another case's account closes
 - **Settings field alignment** — boxes in a row of Settings fields line up whatever hint lines sit above them; the Microsoft account form shows only the PEM box or the PFX fields, and its certificate box is styled like the other fields
 - **Case saves on newer Node releases** — saves that rewrite an indexed timeline row no longer fail with "Value is too large" on Node releases that range-check SQLite row ids, which broke import, undo/redo, deep pass and Sigma re-grade (closes #2445)
 - **Password change disconnects open dashboards** — setting or changing a case password closes every live dashboard connection on that case; reconnecting needs the new password (part of #2441)
