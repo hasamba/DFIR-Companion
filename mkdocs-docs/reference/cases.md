@@ -79,6 +79,17 @@ Toolbar **☰ Case lifecycle** menu lets you:
 - **🔒 Password…** — set, change, or remove a password on this case (see below)
 - **🗑️ Delete…** a case — permanently removes the case's directory (see below)
 
+**What a closed or archived case still accepts.** A closed or archived case is the record you hand
+over, so it stays as it was when you closed it:
+
+- Opening it changes nothing. The playbook and the coach card show the saved tasks; new tasks are
+  not added until you reopen the case.
+- Closing or archiving stops a synthesis, a deep pass or an enrichment that is still running, so its
+  results do not land in the closed case. A running import still finishes and is recorded.
+- False-positive marks, the scope window, source trust and tags (stars too) are refused, because
+  they change what the report says. Reopen (or restore) the case to change them.
+- Notebook entries, comments and pinned findings stay editable, so a reviewer can still add notes.
+
 The toolbar also shows a disk-space warning if the cases folder is running low.
 
 ## Case Password Protection

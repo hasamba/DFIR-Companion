@@ -19,6 +19,7 @@ import {
   runningCollectionRefusal,
   type ReleaseReport,
 } from "./cloudCredentialRelease.js"; // #2347
+import { stopConclusionJobs } from "./caseCloseJobs.js"; // #2437
 import { archiveCase } from "../analysis/caseArchive.js";
 import {
   exportEncryptedCase,
@@ -222,6 +223,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (running) return res.status(409).json({ error: running });
       const updated = await store.setCaseStatus(id, status); // 409 for an archived case (#1809)
       logLine(`[lifecycle] case=${id} status=${status}`);
+      if (status === "closed") logStopped(id, await stopConclusionJobs(ctx, id));
       const released =
         status === "closed" && credentials === "delete"
           ? await releaseOnCaseEnd(ctx, req, id, "case closed")
@@ -239,6 +241,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // their file; it just means the case stays visible in the active list until retried.
   // An archived case keeps no credentials (#2347), and their release is a prerequisite: if it
   // fails, the case is not moved (`credentials: true`), so it never leaves the list still holding them.
+  const logStopped = (id: string, n: number) =>
+    n && logLine(`[lifecycle] case=${id} stopped ${n} running analysis job(s)`);
   async function removeCaseFromActiveListBestEffort(
     id: string,
     logPrefix: string,
@@ -248,6 +252,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     if (!release.ok) return { removed: false, error: release.error, credentials: true };
     try {
       await store.archiveCaseFolder(id, "archived"); // move + status in one locked step (#1809)
+      logStopped(id, await stopConclusionJobs(ctx, id));
       logLine(`${logPrefix} case=${id} removed from active list (moved to _archived/)`);
       return { removed: true, released: release.report };
     } catch (err) {

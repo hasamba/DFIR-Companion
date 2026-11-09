@@ -48,7 +48,9 @@ const INGEST_FROZEN_WHEN_CLOSED = new Set([
  * cockpit. Each had no closed/archived check, so a frozen case could still be rewritten through
  * them. `[method, path pattern]`, the pattern relative to /cases/:id and matched lowercased.
  * Reads, reopen/archive/restore/delete and exports are not listed, so a frozen case still serves
- * them. Annotations (notebook, comments, tags, pins) are a separate product call (follow-up).
+ * them. #2437 adds the marks that change what the report says: false-positive marks, the scope
+ * window, source trust and tags (a star is the reserved "starred" tag, so it freezes too). Notes
+ * beside the record (notebook, comments, pins) stay editable on a closed case by product decision.
  */
 const CASE_CHANGES_FROZEN_WHEN_CLOSED: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", /^\/import\/(undo|redo)$/],
@@ -69,6 +71,12 @@ const CASE_CHANGES_FROZEN_WHEN_CLOSED: ReadonlyArray<readonly [string, RegExp]> 
   ["PATCH", /^\/remediation\/[^/]+\/status$/],
   ["PATCH", /^\/cockpit\/cards\/[^/]+$/],
   ["POST", /^\/cockpit\/review$/],
+  ["POST", /^\/false-positive(\/batch|\/remove)?$/], // not /suggest: it only ranks candidates
+  ["POST", /^\/scope$/],
+  ["PUT", /^\/source-trust$/],
+  ["POST", /^\/tags$/], // not /tags/tagger-for: a read sent as POST
+  ["DELETE", /^\/tags\/[^/]+$/],
+  ["POST", /^\/iocs\/bulk-tag$/],
 ];
 
 function purposeOf(method: string, rel: string): string | null {

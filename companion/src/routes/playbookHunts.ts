@@ -21,6 +21,7 @@ import { buildHuntingProfile } from "../analysis/huntOutcomes.js";
 import { playbookTaskEvent, type NotificationEvent } from "../analysis/notifications.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
+import { isFrozenCase } from "./importCaseGuard.js";
 
 /**
  * Playbook + hunt-suggestion/outcome domain (issues #36, #70, #157). The per-case investigation
@@ -86,13 +87,14 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
 
   // Load the persisted hunt suggestions (#70), dropping any whose task was reworded/deleted since
   // generation, and write the pruned set back so stale ones don't keep returning. Best-effort — a
-  // store hiccup never breaks the playbook read (returns []).
-  const loadFreshHunts = async (caseId: string, tasks: readonly PlaybookTask[]) => {
+  // store hiccup never breaks the playbook read (returns []). `persist: false` (a closed or archived
+  // case, #2437) still filters the answer but saves nothing: a read never changes a frozen case.
+  const loadFreshHunts = async (caseId: string, tasks: readonly PlaybookTask[], persist: boolean) => {
     if (!options.playbookHuntStore) return [];
     try {
       const persisted = await options.playbookHuntStore.load(caseId);
       const fresh = selectFreshHunts(persisted, tasks);
-      if (fresh.changed)
+      if (fresh.changed && persist)
         await options.playbookHuntStore.save(caseId, {
           generatedAt: persisted.generatedAt,
           suggestions: fresh.suggestions,
@@ -155,15 +157,14 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
         : await options.playbookStore.load(req.params.id);
       // Persisted AI hunt suggestions, filtered to tasks that are UNCHANGED since generation (#70) —
       // so they survive a page refresh but a reworded/deleted task drops its stale hunt.
-      const huntSuggestions = await loadFreshHunts(req.params.id, tasks);
-      return res
-        .status(200)
-        .json({
-          tasks: withBlockedState(tasks),
-          stats: playbookStats(tasks),
-          control: await loadPlaybookControl(req.params.id),
-          huntSuggestions,
-        });
+      const frozen = await isFrozenCase(ctx.store, req.params.id);
+      const huntSuggestions = await loadFreshHunts(req.params.id, tasks, !frozen);
+      return res.status(200).json({
+        tasks: withBlockedState(tasks),
+        stats: playbookStats(tasks),
+        control: await loadPlaybookControl(req.params.id),
+        huntSuggestions,
+      });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -176,13 +177,11 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
     try {
       const tasks = await syncPlaybook(req.params.id);
       options.onPlaybook?.(req.params.id);
-      return res
-        .status(200)
-        .json({
-          tasks: withBlockedState(tasks),
-          stats: playbookStats(tasks),
-          control: await loadPlaybookControl(req.params.id),
-        });
+      return res.status(200).json({
+        tasks: withBlockedState(tasks),
+        stats: playbookStats(tasks),
+        control: await loadPlaybookControl(req.params.id),
+      });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

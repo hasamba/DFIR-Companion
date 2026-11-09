@@ -97,6 +97,15 @@ export function registerImportCaseGuard(app: Express, store: CaseStore): void {
  * `purpose` ends the sentence. Ingest routes say "importing evidence", and the manual /events and
  * /iocs gate (composition/caseWriteGuard.ts) keeps its "adding evidence" wording.
  */
+/**
+ * True when the case is closed or archived (#2437). For a read path that must not write a frozen
+ * case. Unreadable metadata counts as not frozen, as in frozenCaseRefusal below.
+ */
+export async function isFrozenCase(store: CaseStore, caseId: string): Promise<boolean> {
+  const status = (await store.getCaseMeta(caseId).catch(() => null))?.status;
+  return status === "closed" || status === "archived";
+}
+
 export async function frozenCaseRefusal(
   store: CaseStore,
   caseId: string,
