@@ -206,7 +206,7 @@ An **All my cases** token never has more access than you, and it follows your ac
   or administer.
 - An expiry date is required. The form suggests 30 days; the maximum is 90 days.
 - A password-locked case stays locked. The extension still asks for the case password.
-- Every request the token makes on a case is recorded in the authentication audit with the token,
+- Every request the token makes is recorded in the authentication audit with the token,
   the case, and the result.
 - The token list shows the scope as "All cases *name* can edit". You see your own tokens. Global
   administrators see and can revoke everyone's.

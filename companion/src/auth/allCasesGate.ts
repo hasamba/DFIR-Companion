@@ -11,10 +11,9 @@
  *    an all-cases token that set is computed here — the owner's write-capable cases that are open —
  *    and handed to the route through a per-request WeakMap, because the route's filter is
  *    synchronous and the case state is not.
- * 3. AUDIT. Every request that names a case is recorded with the token, the case and the outcome
- *    (status code), written when the response closes so refusals are recorded as well as
- *    successes. A list request acts on no case and is recorded only when it is refused, so the
- *    extension's picker refreshes do not drown the audit.
+ * 3. AUDIT. Every request is recorded with the token, the case it named (none for the case list or
+ *    the cross-case IOC pivot) and the outcome (status code), written when the response closes so
+ *    refusals are recorded as well as successes.
  */
 import type { Request, Response } from "express";
 import type { AuthStore } from "./authStore.js";
@@ -122,7 +121,6 @@ export function auditAllCasesRequest(
   res.once("close", () => {
     const caseId = policyCaseId(policy, req);
     const status = res.writableFinished ? String(res.statusCode) : "aborted";
-    if (!caseId && res.writableFinished && res.statusCode < 400) return;
     try {
       store.addAudit(
         auth.identity,

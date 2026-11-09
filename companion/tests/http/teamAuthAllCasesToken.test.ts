@@ -274,10 +274,12 @@ describe("all-cases service tokens (#2474)", () => {
     expect((await capture(token, "w1")).status).toBe(400);
   });
 
-  it("audits every case request with the token, the case and the outcome", async () => {
+  it("audits every request with the token, the case and the outcome", async () => {
     const { admin, token } = await world();
     await capture(token, "w1");
     await capture(token, "x1");
+    expect((await request(app).get("/cases").set(bearer(token))).status).toBe(200);
+    expect((await request(app).get("/global/iocs?value=x").set(bearer(token))).status).toBeLessThan(500);
     const audit = (await admin.agent.get("/auth/audit")).body as Array<Record<string, string>>;
     const rows = audit.filter((event) => event.action === "service-token-request");
     expect(rows).toEqual(
@@ -287,6 +289,8 @@ describe("all-cases service tokens (#2474)", () => {
           detail: expect.stringMatching(/POST \/captures status=400/),
         }),
         expect.objectContaining({ caseId: "x1", detail: expect.stringMatching(/status=404/) }),
+        expect.objectContaining({ detail: expect.stringMatching(/^GET \/cases status=200 owner=/) }),
+        expect.objectContaining({ detail: expect.stringMatching(/^GET \/global\/iocs status=/) }),
       ]),
     );
     expect(rows.every((event) => event.actorDisplayName === "capture extension")).toBe(true);

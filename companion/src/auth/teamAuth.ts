@@ -295,7 +295,15 @@ export class TeamAuth {
       auditAllCasesRequest(this.store, auth, policy, req, res);
       allCasesGate(this, auth, policy, req, res, options.caseLifecycleOf)
         .then((proceed) => {
-          if (proceed) this.admit(auth, policy, req, res, next);
+          if (!proceed) return;
+          // The lookup awaited the filesystem; the token may have been revoked, expired, or its
+          // owner disabled meanwhile. Resolve it again and admit only the fresh answer.
+          const fresh = this.authenticateRequest(req);
+          if (!isAllCasesToken(fresh) || fresh.token.id !== auth.token.id) {
+            this.rejectUnauthenticated(req, res);
+            return;
+          }
+          this.admit(fresh, policy, req, res, next);
         })
         .catch(() => {
           if (!res.headersSent) res.status(404).json({ error: "case not found or access denied" });
@@ -362,7 +370,11 @@ export class TeamAuth {
   visibleCaseIds(req: Request): Set<string> | null {
     const auth = requestAuthentication(req) ?? this.authenticateRequest(req);
     if (!auth) return new Set();
-    if (isAllCasesToken(auth)) return allCasesVisible.get(req) ?? new Set();
+    if (isAllCasesToken(auth)) {
+      // Precomputed before an await; drop any case whose role went away since (read again now).
+      const open = allCasesVisible.get(req) ?? new Set<string>();
+      return new Set([...open].filter((caseId) => this.ownerMayWrite(auth, caseId)));
+    }
     if (auth.kind === "service-token") return new Set([auth.token.caseId]);
     return this.store.visibleCaseIds(auth.identity);
   }
