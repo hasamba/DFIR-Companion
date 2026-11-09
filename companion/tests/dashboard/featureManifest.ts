@@ -580,8 +580,9 @@ export const FEATURES: Feature[] = [
     // same load-time trap in a shape that looks deliberate — and is 113 of the block's 149 lines.
     file: "dashboard-case-lifecycle.js",
     initializer: "initCaseLifecycle",
-    publish: ["initCaseLifecycle", "loadCaseLifecycle"],
-    private: [],
+    publish: ["initCaseLifecycle", "loadCaseLifecycle", "loadLifecycleChange"],
+    // The last painted case + status (#2443): a live change hides a menu opened before it.
+    private: ["paintedLifecycle"],
   },
   {
     // Close case: asks Delete or Keep for the case's cloud credentials first (#2347).

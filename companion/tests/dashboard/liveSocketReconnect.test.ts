@@ -386,6 +386,8 @@ const MISSED_TYPES = [
   // #1691: the two case settings a dashboard control shows.
   "confidence_control_changed",
   "report_template_changed",
+  // #2443: another analyst closed, reopened, archived or restored a case.
+  "case_lifecycle_changed",
 ];
 
 describe("a reconnect re-reads every push-driven panel the gap missed (#1681)", () => {

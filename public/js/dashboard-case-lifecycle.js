@@ -12,11 +12,28 @@
   // ── Case lifecycle (#119) ───────────────────────────────────────────────
   // Load the case's status (open/closed) and update the toolbar button + label. Returns its
   // promise so proceedConnect() can gate the loading overlay on it (see showCaseLoadingOverlay).
+  //
+  // #2443: a live push can trigger this, so an answer for a case that is no longer on screen (a
+  // switch, or a cancelled load that set activeCaseId to null) is dropped, never painted.
+  let paintedLifecycle = null; // { caseId, status } last painted — see the menu hide below
   function loadCaseLifecycle(caseId, signal) {
     return fetch("/cases", signal ? { signal } : undefined)
       .then((r) => (r.ok ? r.json() : []))
       .then((cases) => {
+        if (typeof activeCaseId !== "undefined" && activeCaseId !== caseId)
+          return;
         const meta = cases.find((c) => c.caseId === caseId);
+        const status = meta ? meta.status : null;
+        // A menu opened before the change would offer an action that no longer applies.
+        const menu = document.getElementById("lifecycleMenu");
+        if (
+          menu &&
+          paintedLifecycle &&
+          paintedLifecycle.caseId === caseId &&
+          paintedLifecycle.status !== status
+        )
+          menu.style.display = "none";
+        paintedLifecycle = { caseId, status };
         const isClosed = meta && meta.status === "closed";
         const isArchived = meta && meta.status === "archived";
         const btn = document.getElementById("lifecycleBtn");
@@ -56,6 +73,13 @@
             isClosed || isArchived ? "block" : "none";
       })
       .catch(() => {});
+  }
+
+  // #2443: someone closed, reopened, archived or restored a case — maybe this one, maybe another
+  // in the case list. The push is bare, so re-read both; GET /cases applies this viewer's access.
+  function loadLifecycleChange(caseId) {
+    if (typeof loadCaseList === "function") loadCaseList();
+    return loadCaseLifecycle(caseId);
   }
 
   // Was (function wireLifecycleButtons(){…})() at the bottom of the block.
@@ -180,5 +204,6 @@
   }
 
   window.loadCaseLifecycle = loadCaseLifecycle;
+  window.loadLifecycleChange = loadLifecycleChange;
   window.initCaseLifecycle = initCaseLifecycle;
 })();

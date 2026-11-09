@@ -137,6 +137,7 @@
     "clock_skew_changed",
     "confidence_control_changed",
     "report_template_changed",
+    "case_lifecycle_changed",
   ];
 
   function stillCurrent(sock, caseId) {

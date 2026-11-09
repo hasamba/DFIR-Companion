@@ -674,6 +674,7 @@
     // case state, which redraws the IOC panels; an unmerge (DELETE) edits only the alias map, which
     // no panel shows. forensic_gate_changed: no panel shows the per-case gate, and changing it
     // re-grades nothing already imported. Add a branch here if a panel ever shows either.
+    else if (msg.type === "case_lifecycle_changed") loadLifecycleChange(caseId);
     else if (msg.type === "scope_changed") {
       // The same commit loadScope makes — the window came from the server either way, so the
       // two controls are a sink here. Unlike loadScope this path then redraws, because the
