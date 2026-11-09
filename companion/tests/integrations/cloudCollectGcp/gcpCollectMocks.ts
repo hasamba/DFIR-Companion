@@ -45,17 +45,30 @@ export interface MockReply {
   headers?: Record<string, string>;
 }
 
-/** A wire answered by `handler`; every request is recorded, its JSON body parsed. */
-export function mockWire(handler: (req: GcpWireRequest & { json?: Record<string, unknown> }) => MockReply): {
+/** The private-log permission granted, as projects.testIamPermissions answers (#2450). */
+export const IAM_GRANTED: MockReply = { body: { permissions: ["logging.privateLogEntries.list"] } };
+
+/**
+ * A wire answered by `handler`; every request is recorded, its JSON body parsed. The
+ * testIamPermissions call (#2450) is answered by `iam` instead — granted by default — and recorded
+ * in `iamCalls`, so `calls` stays the Logging and Storage traffic.
+ */
+export function mockWire(
+  handler: (req: GcpWireRequest & { json?: Record<string, unknown> }) => MockReply,
+  iam: () => MockReply = () => IAM_GRANTED,
+): {
   wire: GcpWire;
   calls: Array<GcpWireRequest & { json?: Record<string, unknown> }>;
+  iamCalls: GcpWireRequest[];
 } {
   const calls: Array<GcpWireRequest & { json?: Record<string, unknown> }> = [];
+  const iamCalls: GcpWireRequest[] = [];
   const wire: GcpWire = async (req): Promise<GcpWireResponse> => {
     const json = req.body ? (JSON.parse(req.body) as Record<string, unknown>) : undefined;
     const call = { ...req, ...(json ? { json } : {}) };
-    calls.push(call);
-    const reply = handler(call);
+    const isIam = req.url.endsWith(":testIamPermissions");
+    (isIam ? iamCalls : calls).push(call);
+    const reply = isIam ? iam() : handler(call);
     const raw = typeof reply.body === "string" ? reply.body : JSON.stringify(reply.body ?? {});
     return {
       status: reply.status ?? 200,
@@ -63,7 +76,7 @@ export function mockWire(handler: (req: GcpWireRequest & { json?: Record<string,
       body: new Uint8Array(Buffer.from(raw)),
     };
   };
-  return { wire, calls };
+  return { wire, calls, iamCalls };
 }
 
 /** A Google API error body. */

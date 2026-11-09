@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **GCP Data Access without the role** — Check access and collection now say when a missing Private Logs Viewer role made Google hide Data Access logs, instead of showing no records (closes #2450)
 - **Cloud access check fields** — a GCP or Microsoft account's access check no longer shows the AWS-only trail bucket and key prefix fields
 - **Settings checkboxes** — a checkbox in Settings sits beside its label at its own size, so the Updates tab no longer scrolls sideways.
 - **Honest cloud collection progress** — the job line says how many files are saved and which trail folder it is in, with an ETA estimated from that position, and no fake one-page-away ETA (closes #2384).

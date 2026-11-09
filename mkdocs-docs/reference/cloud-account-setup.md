@@ -425,7 +425,8 @@ permissions and its certificate at once. Remove its **Reader** assignment from e
 | AWS **AccessDenied** on a CloudTrail, EC2 or GuardDuty call | The policy is missing that action, or is not attached to the user. Re-check AWS step 2 and step 3. |
 | AWS bucket listing works, file read **AccessDenied** | The trail is KMS-encrypted: add the `kms:Decrypt` block with the trail's key ARN. If the key belongs to another account, its key policy must also allow your user. |
 | AWS **InvalidClientTokenId** or **SignatureDoesNotMatch** | The access key ID or secret was pasted wrongly, or the key was deleted. Edit the account and paste them again. |
-| GCP **403 PERMISSION_DENIED** on Data Access logs | The service account lacks **Private Logs Viewer**. |
+| GCP Data Access **Failed: this account lacks the Private Logs Viewer role** | Add **Private Logs Viewer** to the service account. Google gives no error without it: it hides Data Access logs, so the companion asks Google about the permission. |
+| GCP Data Access **Not tested**, with "could not be tested" | Google could not answer the permission question, often because the **Cloud Resource Manager API** is off in the project. Enable it, or check by hand that the service account has **Private Logs Viewer**. |
 | GCP **403** on everything | Wrong Project ID, or the roles were granted in another project. |
 | Microsoft **AADSTS700027** or **AADSTS700016** | The certificate uploaded to the app does not match the one in the companion, or the client ID or tenant ID is wrong. |
 | Microsoft **403 / Authorization_RequestDenied** | Admin consent was not granted (Microsoft step 5), or the permission was added as *Delegated* instead of *Application*. |
