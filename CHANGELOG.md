@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **One credential history per collection** — a live AWS collection builds its credential lineages and compute lifecycles once over the whole run (first 25,000 records, truncation disclosed), so no duplicate rows or false "no issuance record"; Resume drops rows the rebuild no longer reports (closes #2482)
+- **Microsoft, GCP and Azure summaries per collection** — Entra privilege paths, mailbox chains, password spray, GCP service-account joins and GCP/Azure compute lifecycles are built once per live collection, so a privilege path whose sign-ins and audits land on different pages can reach High (closes #2493)
+- **Faster large cloud imports** — compiled tagger rules are reused across pages (100k AWS records: 54.7 → 36.5 min) and `npm run bench:collect-import` measures the import step (closes #2478)
 - **M365 and Azure rows cite their source record** — plain unified-audit-log rows and Azure Activity rows now carry their source record id and file hash instead of a legacy citation (closes #2485)
 - **Entra target names** — UAL directory changes no longer show "NotAgentic" as the target's name (closes #2484)
 - **Non-interactive Entra sign-ins** — sign-in rows show interactive / non-interactive and their record id; script user agents on non-interactive sign-ins are tagged, not graded Medium (closes #2483)
