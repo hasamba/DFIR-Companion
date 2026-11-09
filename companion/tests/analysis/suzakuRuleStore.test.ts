@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -123,6 +123,37 @@ describe("Suzaku rule updates", () => {
     const q = await fresh.preview(COMMIT, gh.fetchFn, gh.fetchAsset, (f) => sigma.measureSuzaku(f));
     await fresh.install(q.token, (f) => sigma.measureSuzaku(f));
     expect(fresh.previous()).toMatchObject({ id: "bundled" });
+  });
+
+  // Windows needs a privilege to create a symlink; the Linux run covers this path.
+  it.skipIf(process.platform === "win32")(
+    "falls back when a later rule in the install cannot be read, not just the first",
+    async () => {
+      const { root, suzaku, gh, measure } = await stores();
+      const p = await suzaku.preview(COMMIT, gh.fetchFn, gh.fetchAsset, measure);
+      const installed = await suzaku.install(p.token, measure);
+      const rules = join(root, "sigma", "suzaku", "installs", installed.id, "rules", "aws", "cloudtrail");
+      await symlink(join(rules, "gone.yml"), join(rules, "zz_unreadable.yml"));
+      const fresh = new SuzakuRuleStore(root, SUZAKU_DIR);
+      fresh.load();
+      expect(fresh.active().id).toBe("bundled");
+      expect(fresh.activeSource().problems[0]).toMatch(/could not be read/);
+    },
+  );
+
+  it("grades with an installed version even when the bundled folder is missing", async () => {
+    const { root, suzaku, gh, measure } = await stores();
+    const p = await suzaku.preview(COMMIT, gh.fetchFn, gh.fetchAsset, measure);
+    await suzaku.install(p.token, measure);
+    const noBundle = new SuzakuRuleStore(root, undefined);
+    noBundle.load();
+    const set = new SigmaRuleStore(root, SIGMA_DIR, {}, noBundle).activeRuleSet();
+    expect(set.origins[0]).toMatchObject({ release: "suzaku-2026-11-20-aaaaaaa" });
+    // With neither an install nor a bundled folder, the missing folder is reported.
+    const empty = new SuzakuRuleStore(await mkdtemp(join(tmpdir(), "dfir-suzaku-none-")), undefined);
+    empty.load();
+    const none = new SigmaRuleStore(root, SIGMA_DIR, {}, empty).activeRuleSet();
+    expect(none.problems).toContain("no bundled Suzaku rules folder (data/sigma-suzaku/rules) was found");
   });
 
   it("ignores a manifest naming a folder with corrupt metadata", async () => {

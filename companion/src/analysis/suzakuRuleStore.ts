@@ -180,7 +180,10 @@ export class SuzakuRuleStore implements SuzakuSource {
       const meta = JSON.parse(readFileSync(join(dir, "release.json"), "utf8")) as Record<string, unknown>;
       if (typeof meta.commit !== "string" || !/^[0-9a-f]{40}$/.test(meta.commit)) return undefined;
       if (!statSync(join(dir, RULES_SUBDIR)).isDirectory()) return undefined;
-      if (suzakuRuleFiles(dir, 1).files.length === 0) return undefined;
+      // Read EVERY rule, not a sample: a later unreadable file must send the store to the bundled
+      // copy rather than leave an install that loads nothing (Codex review).
+      const read = suzakuRuleFiles(dir, SUZAKU_MAX_RULE_FILES);
+      if (read.files.length === 0 || read.overflow) return undefined;
       return {
         id,
         release: typeof meta.release === "string" ? meta.release : id,

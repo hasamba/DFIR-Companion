@@ -63,12 +63,12 @@ let storeGrader: SigmaImportGrader | undefined;
  */
 export function configureSigmaRules(dataRoot: string): SigmaRuleStore {
   // The Suzaku rules come from the installed-version store (#2508): the bundled folder until an
-  // analyst installs a newer commit. A missing bundled folder is reported while the setting is on.
+  // analyst installs a newer commit. Always connected — even with the bundled folder missing, an
+  // installed version still grades; with neither, the store reports the missing folder.
   const suzaku = new SuzakuRuleStore(dataRoot, bundledSuzakuDir());
   suzaku.load();
   suzakuStore = suzaku;
-  const dir = bundledSuzakuDir();
-  const s = new SigmaRuleStore(dataRoot, bundledSigmaDir(), process.env, dir ? suzaku : null);
+  const s = new SigmaRuleStore(dataRoot, bundledSigmaDir(), process.env, suzaku);
   s.load();
   store = s;
   storeGrader = createSigmaImportGrader(() => s.activeRuleSet(), {
