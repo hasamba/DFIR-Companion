@@ -2,9 +2,12 @@
 // here, one at a time, and the output stays bounded however many rows the export has:
 //
 //   Critical / High → always an individual forensic event.
-//   Medium          → individual up to MEDIUM_INDIVIDUAL_PER_RULE_ACTOR per (rule, actor) and
-//                     MEDIUM_INDIVIDUAL_MAX per import; past either, aggregated — per (rule, actor)
-//                     when that pair used its budget, per (rule, source address) when the import did.
+//   Medium          → kept in detail up to MEDIUM_INDIVIDUAL_PER_RULE_ACTOR distinct rows per
+//                     (rule, actor) and MEDIUM_INDIVIDUAL_MAX per import; past either, aggregated —
+//                     per (rule, actor) when that pair used its budget, per (rule, source address)
+//                     when the import did. Rows sharing the importer's own aggKey merge into one
+//                     detail row and spend the budget once, as a whole-file import merges them
+//                     (#2502); a later matching row joins that row even after the budgets are spent.
 //   Low             → aggregated in the forensic timeline, and written individually to the
 //                     super-timeline while its per-import room lasts.
 //   Info            → written individually to the super-timeline while its room lasts; past it,
@@ -62,6 +65,8 @@ export interface OutputDisclosure {
   individual: { critical: number; high: number; medium: number };
   superIndividual: number;
   aggregatedRows: { medium: number; low: number; info: number };
+  /** Medium rows kept in detail by joining a matching detail row (same aggKey, #2502). */
+  mediumMerged: number;
   mediumOverflow: { ruleActorBudget: number; importBudget: number };
   groups: { detailed: number; coarse: number; catchAll: number };
   /** Low/Info rows that found no room in the super-timeline and are only in aggregates. */
@@ -92,6 +97,13 @@ export function createOutputBudget(opts: {
     maxEvents: Infinity,
     provenance: opts.provenance,
   });
+  // In-budget Medium rows merge by the importer's aggKey (#2502); Critical/High above stay one each.
+  const mediumAgg = createEventAggregator({
+    aggregate: true,
+    maxEvents: Infinity,
+    provenance: opts.provenance,
+  });
+  const mediumKeys = new Set<string>();
   const aggregateAgg: EventAggregator = createEventAggregator({
     aggregate: true,
     maxEvents: Infinity,
@@ -110,6 +122,7 @@ export function createOutputBudget(opts: {
     individual: { critical: 0, high: 0, medium: 0 },
     superIndividual: 0,
     aggregatedRows: { medium: 0, low: 0, info: 0 },
+    mediumMerged: 0,
     mediumOverflow: { ruleActorBudget: 0, importBudget: 0 },
     groups: { detailed: 0, coarse: 0, catchAll: 0 },
     superBudgetExceeded: 0,
@@ -155,13 +168,21 @@ export function createOutputBudget(opts: {
   }
 
   function routeMedium(row: MappedEvent, f: RowFacts): RouteDecision {
+    if (mediumKeys.has(row.aggKey)) {
+      // Joins a detail row already kept: no new forensic row, so no budget is spent.
+      d.individual.medium++;
+      d.mediumMerged++;
+      mediumAgg.add(row);
+      return "forensic";
+    }
     const pair = `${clip(f.rule)}|${clip(f.actor)}`;
     const used = perRuleActor.get(pair) ?? 0;
     if (mediumKept < b.mediumMax && used < b.mediumPerRuleActor) {
       perRuleActor.set(pair, used + 1);
       mediumKept++;
       d.individual.medium++;
-      individualAgg.add(row);
+      mediumKeys.add(row.aggKey);
+      mediumAgg.add(row);
       return "forensic";
     }
     const actorSpent = used >= b.mediumPerRuleActor;
@@ -204,7 +225,8 @@ export function createOutputBudget(opts: {
       return routeLowInfo(row, facts, sev);
     },
     finish() {
-      const individual = individualAgg.finish().events;
+      // Each aggregator sorts most-severe first; mediumAgg holds only Medium, so this is one order.
+      const individual = [...individualAgg.finish().events, ...mediumAgg.finish().events];
       const aggregates = aggregateAgg
         .finish()
         .events.map((e) => describeAggregate(e, tierOf.get(e.aggKey ?? "")));

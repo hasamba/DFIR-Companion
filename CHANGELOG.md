@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Cloud audit row details** — Azure role grants name the role, assignee and scope; Entra rows list each changed property; targets no longer show "NotAgentic"; an app's empty self-update is Low, not High (#2503)
 - **Revoked service tokens show as revoked** — Account & team no longer lists a revoked token with a live Revoke button that seemed to do nothing; it shows "Revoked <time>", and revoking says so
 - **Cloud collection progress** — Background jobs shows the import step ("step 2 of 2, importing N/M pages") with its own ETA instead of freezing on the finished download (closes #2470)
 - **Cancel Second Look and queued imports** — Second Look can be cancelled from the Jobs panel except while it writes promoted rows, a dedicated import can be cancelled while it waits, and a Second Look whose re-synthesis does not finish keeps its sweep record and marks the conclusions out of date (part of #2425)

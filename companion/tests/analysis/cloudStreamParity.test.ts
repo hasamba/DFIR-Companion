@@ -276,7 +276,11 @@ describe("streamed CloudTrail import parity (#2362)", () => {
   }, 120_000);
 });
 
-// Computed by the pre-optimisation code (master 8e7f1c5d) and identical across runs.
+// Computed by the pre-optimisation code (master 8e7f1c5d) and identical across runs. Re-pinned once
+// for #2502, a deliberate output change: two in-budget Medium rows sharing one grouping key now merge
+// into one counted detail row (forensic 2348 -> 2347, graded 300 -> 299; member rows unchanged at
+// 2705, so no record is lost), and the disclosure gained mediumMerged plus the "kept in detail"
+// wording (disclosures, notes, timeline, coverage). The #2502 time-span fix alone changes nothing here.
 const PINNED = {
   counts: {
     compute: 30,
@@ -284,28 +288,28 @@ const PINNED = {
       cloudRecord: 5270,
       cloudRecordBatch: 4,
       cloudRecordMember: 2705,
-      forensicTimeline: 2348,
+      forensicTimeline: 2347,
       iocs: 41,
       superTimeline: 2500,
       timeline: 3,
     },
-    forensic: 2348,
-    graded: 300,
+    forensic: 2347,
+    graded: 299,
     iocs: 41,
     lineages: 36,
   },
   hashes: {
-    coverage: "6044619287281819",
+    coverage: "92a60725c7a87a3d",
     "db:cloudRecord": "55eeaad28f712d39",
     "db:cloudRecordBatch": "d7a32e76dfef0950",
-    "db:cloudRecordMember": "ffa1075c5c71e979",
-    "db:forensicTimeline": "8d7ca76514182876",
+    "db:cloudRecordMember": "2260533dd0f4bdd7",
+    "db:forensicTimeline": "ecc9f803ca01174b",
     "db:iocs": "7de5df26c23c75f9",
     "db:superTimeline": "8beed3d432925a0d",
-    "db:timeline": "c2ad8dac7730f5fe",
-    disclosures: "17408c7ea84e60a3",
-    forensicTimeline: "0d1779e2ef7c20d1",
+    "db:timeline": "0a3505cb7f4a4ebe",
+    disclosures: "b41790f4ea7b0e23",
+    forensicTimeline: "efc70bed57153d76",
     iocs: "b4186cc3f6e10f06",
-    notes: "cf42153931e63238",
+    notes: "86e38fbe1e668482",
   },
 };

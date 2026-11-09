@@ -24,6 +24,8 @@ export const cloudStreamDisclosureSchema = z.object({
   preGradeRaised: z.number().int().nonnegative(),
   individual: z.object({ critical: z.number(), high: z.number(), medium: z.number() }),
   aggregatedRows: z.object({ medium: z.number(), low: z.number(), info: z.number() }),
+  /** Optional: disclosures stored before #2502 lack it. */
+  mediumMerged: z.number().int().nonnegative().optional(),
   mediumOverflow: z.object({ ruleActorBudget: z.number(), importBudget: z.number() }),
   groups: z.object({ detailed: z.number(), coarse: z.number(), catchAll: z.number() }),
   superWritten: z.number().int().nonnegative(),
@@ -85,6 +87,7 @@ export function buildCloudStreamDisclosure(i: DisclosureInputs): CloudStreamDisc
     preGradeRaised: i.preGradeRaised,
     individual: { ...o.individual },
     aggregatedRows: { ...o.aggregatedRows },
+    mediumMerged: o.mediumMerged,
     mediumOverflow: { ...o.mediumOverflow },
     groups: { ...o.groups },
     superWritten: i.superWritten,
@@ -110,7 +113,10 @@ export function describeCloudStreamDisclosure(d: CloudStreamDisclosure): string[
   });
   return [
     `streamed from disk${d.gzip ? " (gzip, decompressed on read)" : ""}: ${n(d.records)} record(s), ${d.format}`,
-    `kept individually: ${n(d.individual.critical)} Critical, ${n(d.individual.high)} High, ${n(d.individual.medium)} Medium`,
+    `kept in detail: ${n(d.individual.critical)} Critical, ${n(d.individual.high)} High, ${n(d.individual.medium)} Medium row(s)`,
+    d.mediumMerged
+      ? `${n(d.mediumMerged)} of those Medium row(s) merged into a matching kept row (same grouping key as a small-file import)`
+      : "",
     d.superWritten ? `${n(d.superWritten)} Low/Info row(s) written to the super-timeline individually` : "",
     agg
       ? `${n(agg)} row(s) aggregated (${n(d.aggregatedRows.medium)} Medium, ${n(d.aggregatedRows.low)} Low, ${n(d.aggregatedRows.info)} Info) into ${n(d.groups.detailed + d.groups.coarse + d.groups.catchAll)} counted event(s)`

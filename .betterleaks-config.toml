@@ -88,6 +88,15 @@ description = "Fake private-key armor fixtures in the anonymizer redaction tests
 targetRules = ["private-key"]
 paths = ['''companion/tests/analysis/anonymize\.test\.ts''']
 
+# Azure's built-in role ids are public, Microsoft-published GUIDs (learn.microsoft.com "Azure built-in
+# roles"). The table maps each to its name, and names such as "User Access Administrator" or "Key Vault
+# Secrets Officer" put a secret-like keyword next to a GUID. Scoped to the one rule and the one file, which
+# holds only that table, so a real key committed anywhere else still fails the scan.
+[[allowlists]]
+description = "Public Azure built-in role ids in the role-name table"
+targetRules = ["generic-api-key"]
+paths = ['''companion/src/analysis/azureBuiltInRoles\.ts''']
+
 # The betterleaks ruleset files themselves are full of secret-LIKE regex patterns (e.g. the bedrock rule's
 # own anchor string), so the scanner trips over its own definitions. Exclude the config files from scanning.
 [[allowlists]]
