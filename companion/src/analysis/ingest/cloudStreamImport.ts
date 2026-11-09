@@ -76,6 +76,7 @@ export interface CloudStreamImportOptions {
   /**
    * Build none of the provider's whole-export summaries (#2482): a live collection's page, whose
    * summaries the collection's summary step builds once over every page (cloudCollectionSummary.ts).
+   * It skips the M365 spray rows too (#2493); MFA fatigue stays per page — its ids upsert.
    */
   skipSummaries?: boolean;
   /** Test seams; production uses the named constants. */
@@ -226,7 +227,7 @@ async function finish(
   const { individual, aggregates, disclosure: output } = deps.budget.finish();
   const summaries = acc.window.length ? provider.summaries(acc.window, pre) : [];
   const spray =
-    provider.kind === "m365" && acc.observations.appended
+    provider.kind === "m365" && acc.observations.appended && !opts.skipSummaries
       ? await streamSprayRows(ctx, caseId, opts.idPrefix, acc.observations.earliest)
       : { events: [], truncated: false };
   // MFA fatigue (#2306) across every batch of this import and earlier imports, from the same store.

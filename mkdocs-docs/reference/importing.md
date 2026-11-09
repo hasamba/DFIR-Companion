@@ -2882,7 +2882,9 @@ disk in batches of 5,000 records and never holds it whole, so memory does not gr
   the room the case's super-timeline has left (`DFIR_SUPERTIMELINE_MAX`, 100,000 rows by default), so
   one import never pushes out the rows earlier imports put there. Rows past that room are counted.
 - **Whole-export summaries** (credential lineages, compute lifecycles, privilege paths, mailbox
-  chains, service-account joins) are built over the first 25,000 records of a larger file.
+  chains, service-account joins) are built over the first 25,000 records of a larger file. A live
+  collection builds them once over its first 25,000 records per log type, not per page (see
+  "Collection jobs and evidence manifest").
 - **CloudTrail cross-account pairs** (the two records one cross-account action writes, one per
   account) become one row only when both records are in the same batch of 5,000 records. A pair
   split across two batches stays two rows; neither record is lost.
@@ -2992,8 +2994,22 @@ how many records the summaries cover. A stopped or partial run gets them over th
 **Resume** rebuilds the same rows over every page — no second row — and removes, from both
 timelines, a row the rebuild no longer reports (for example a key pushed past the 256 lineages
 shown by a busier one). Tagger rules run again on the rebuilt rows. Two collections, or a
-collection and a file upload, still give two rows for the same key. The other providers'
-whole-export summaries are still built per page. Other background jobs of the case wait behind a running
+collection and a file upload, still give two rows for the same key.
+
+**The same for Microsoft and GCP.** The same step builds the Microsoft and GCP whole-export
+summaries once per collection run, one set per log type (`summary-m365` for Entra and the audit
+log, `summary-cloud` for Azure Activity and GCP audit logs): the Entra privilege paths, the mailbox
+chains, the GCP service-account joins and the GCP, Azure VM and Azure scale-set compute
+lifecycles. Directory audits and sign-ins are collected as separate sources, so they are always on
+different pages; built once over both, a path with a new credential, a privileged grant, the
+sign-in with that credential and the action reaches **High**. These rows say "this collection",
+not "this export" or "this upload". **Password spray** is also read once over the whole run: a
+spray spread over several pages of one run is one row, not "across N uploads" — that wording stays
+for a spray across separate collections or uploads. A record saved twice (a re-read page window) is
+read once. **MFA fatigue** is still found page by page: each page replaces the same row, so it
+never repeats.
+
+Other background jobs of the case wait behind a running
 collection while `DFIR_JOBS_PER_CASE` is 1.
 
 **The result** is **complete** (every source's results for the window were read to the end),

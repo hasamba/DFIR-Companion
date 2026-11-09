@@ -29,6 +29,7 @@ import { boundedAggKey } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
 import type { GcpProjectRef } from "./canonicalGcp.js";
 import type { GcpServiceAccountJoinBlock } from "./canonicalGcpServiceAccountJoin.js";
+import { scopeBasis, scopeNoun, UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 import {
   field,
   lower,
@@ -196,7 +197,10 @@ function touchProjects(agg: SaAgg, ...refs: (GcpProjectRef | undefined)[]): void
 }
 
 /** One export's per-service-account join rows. */
-export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
+export function gcpServiceAccountJoins(
+  records: readonly Row[],
+  scope: SummaryScope = UPLOAD_SCOPE, // a live collection (#2493): "this collection"
+): MappedEvent[] {
   const coverage = { records: 0, first: "", last: "" };
   const aliasPairs: { email: string; uniqueId: string }[] = [];
   const scanned: { pp: Row; rec: Row; method: string; service: string; time: number; locator: string }[] = [];
@@ -351,7 +355,7 @@ export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
   }
 
   const rows = [...aggs.entries()]
-    .map(([identity, agg]) => buildRow(identity, agg, parentScopeByProject, coverage))
+    .map(([identity, agg]) => buildRow(identity, agg, parentScopeByProject, coverage, scope))
     .filter((r): r is { row: MappedEvent; grade: Severity; tier: 1 | 2 | 3 } => r !== null)
     .sort(
       (a, b) => b.tier - a.tier || RANK[b.grade] - RANK[a.grade] || a.row.aggKey.localeCompare(b.row.aggKey),
@@ -359,7 +363,7 @@ export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
 
   const kept = rows.slice(0, GCP_SA_JOIN_MAX).map((r) => r.row);
   if (rows.length > GCP_SA_JOIN_MAX)
-    kept.push(omittedRow(rows.length - GCP_SA_JOIN_MAX, rows[GCP_SA_JOIN_MAX].grade));
+    kept.push(omittedRow(rows.length - GCP_SA_JOIN_MAX, rows[GCP_SA_JOIN_MAX].grade, scope));
   return kept;
 }
 
@@ -370,7 +374,9 @@ function buildRow(
   agg: SaAgg,
   parentScopeByProject: ReadonlyMap<string, number>,
   coverage: { records: number; first: string; last: string },
+  scope: SummaryScope,
 ): { row: MappedEvent; grade: Severity; tier: 1 | 2 | 3 } | null {
+  const noun = scopeNoun(scope, "export");
   const hasDirect =
     agg.bindingsAsMember.length ||
     agg.bindingsAsResource.length ||
@@ -501,7 +507,7 @@ function buildRow(
     );
   if (agg.callsAsPrincipal.length)
     parts.push(
-      `authenticated principal of ${plural(agg.callsAsPrincipal.length, "call")} in this export${callsShown.beyond ? ` (+${callsShown.beyond} beyond the retained bound)` : ""}`,
+      `authenticated principal of ${plural(agg.callsAsPrincipal.length, "call")} in this ${noun}${callsShown.beyond ? ` (+${callsShown.beyond} beyond the retained bound)` : ""}`,
     );
   if (agg.bindingsAsMember.length && agg.callsAsPrincipal.length)
     parts.push(
@@ -509,11 +515,11 @@ function buildRow(
     );
   if (parentScopeCount)
     parts.push(
-      `${plural(parentScopeCount, "parent-scope binding")} recorded on this account's own project${homeProject ? ` (${show(homeProject.value, 40)})` : ""} in this export — nominally may apply to this account; inheritance not evaluated`,
+      `${plural(parentScopeCount, "parent-scope binding")} recorded on this account's own project${homeProject ? ` (${show(homeProject.value, 40)})` : ""} in this ${noun} — nominally may apply to this account; inheritance not evaluated`,
     );
   parts.push("no effective permission is ever claimed");
   parts.push(
-    `${plural(coverage.records, "record")} of this export read (${coverage.first.slice(0, 10)} → ${coverage.last.slice(0, 10)})`,
+    `${plural(coverage.records, "record")} of this ${noun} read (${coverage.first.slice(0, 10)} → ${coverage.last.slice(0, 10)})`,
   );
 
   const description = `${head} — ${parts.join(" — ")}`.slice(0, DESCRIPTION_MAX);
@@ -540,7 +546,7 @@ function buildRow(
     ...(upgrade ? { upgrade } : {}),
     admissionTier: tier,
     coverage,
-    basis: BASIS,
+    basis: scopeBasis(scope, BASIS),
   };
 
   const allTimes = [
@@ -597,8 +603,8 @@ function buildRow(
   return { row, grade: top, tier };
 }
 
-function omittedRow(count: number, severity: Severity): MappedEvent {
-  const description = `GCP service account join: ${count} further account${count === 1 ? "" : "s"} with a join in this export beyond the ${GCP_SA_JOIN_MAX} reported — not shown`;
+function omittedRow(count: number, severity: Severity, scope: SummaryScope): MappedEvent {
+  const description = `GCP service account join: ${count} further account${count === 1 ? "" : "s"} with a join in this ${scopeNoun(scope, "export")} beyond the ${GCP_SA_JOIN_MAX} reported — not shown`;
   return {
     timestamp: "",
     description,

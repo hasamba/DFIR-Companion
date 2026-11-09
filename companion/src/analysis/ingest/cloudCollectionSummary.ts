@@ -11,8 +11,9 @@
 //
 // THE LEDGER IS NOT CONSULTED. Every record on disk is already in the cloud-record ledger — its page
 // import put it there — so the dedup gate would blank the whole window. The records are read raw;
-// the overlap between sub-windows is folded by the summary builders themselves, which group records
-// on their own event ids (awsLineage.ts / awsCompute.ts `scan`). The step writes no ledger batch.
+// a record read twice (a re-fetched page window) is blanked in the window by its cloud identity, and the
+// AWS builders also fold on their own event ids (awsLineage.ts / awsCompute.ts `scan`). The step
+// writes no ledger batch.
 //
 // REPLAY-SAFE BY ID. Row ids are fixed per collection, kind and row identity (the row's aggKey), not
 // positional. A rebuild — Resume of a run that imported more pages after its summary landed, or a
@@ -34,6 +35,7 @@ import { openCloudRecordStream } from "../cloudStreamReader.js";
 import { SUMMARY_RECORDS_MAX } from "../cloudStreamLimits.js";
 import type { SummaryScope } from "../summaryScope.js";
 import { commitDelta, noteEmptyImport } from "./importState.js";
+import { collectionSprayRows } from "./cloudStreamSpray.js";
 import type { ImportContext } from "./importContext.js";
 import {
   streamProvider,
@@ -47,6 +49,8 @@ type Row = Record<string, unknown>;
 export interface CollectionSummaryPage {
   /** The saved page file on disk. */
   path: string;
+  /** Its page import's batch (its id prefix): the batch its sign-in observations carry (#2493). */
+  batch?: string;
   /** Its record count from the manifest — the truncation disclosure's total. */
   records: number;
 }
@@ -91,12 +95,21 @@ async function readWindow(
   signal?: AbortSignal,
 ): Promise<Row[]> {
   const window: Row[] = [];
+  // A record fetched twice (a re-fetched page window) is blanked in place, as the ledger blanks a
+  // duplicate (#2493): not every builder folds on its own record ids, and locators stay positional.
+  const seen = new Set<string>();
   for (const page of pages) {
     if (window.length >= max) break;
     abortIfCancelled(signal);
     const stream = await openCloudRecordStream(page.path, { adapt: provider.csvAdapt });
     for await (const raw of stream.records) {
-      for (const rec of provider.prepare([raw], pre)) if (window.length < max) window.push(rec);
+      const recs = provider.prepare([raw], pre);
+      const keys = provider.identities(recs).map((id) => id.key);
+      recs.forEach((rec, i) => {
+        if (window.length >= max) return;
+        window.push(seen.has(keys[i]) ? {} : rec);
+        seen.add(keys[i]);
+      });
       if (window.length >= max) break;
     }
   }
@@ -118,6 +131,9 @@ async function preliminary(
   }
   return learner.finish();
 }
+
+const pageBatches = (pages: readonly CollectionSummaryPage[]): ReadonlySet<string> =>
+  new Set(pages.flatMap((p) => (p.batch ? [p.batch] : [])));
 
 /**
  * The row's fixed id: the collection's prefix and the row's identity. An "omitted" row's key carries
@@ -172,8 +188,13 @@ export async function importCloudCollectionSummary(
     pages: pages.length,
     uploadId: `collection:${opts.collectionId}`,
   };
+  // M365 spray (#2493): read from the sign-in store over every page batch of the run, as one upload.
+  const spray =
+    kind === "m365"
+      ? await collectionSprayRows(ctx, caseId, opts.idPrefix, pageBatches(pages))
+      : { events: [], truncated: false };
   const events = applySeverityFloor(
-    window.length ? provider.collectionSummaries(window, scope, pre) : [],
+    [...(window.length ? provider.collectionSummaries(window, scope, pre) : []), ...spray.events],
     opts.minSeverity,
   );
   const clause = windowClause(provider.source, facts, max);

@@ -22,6 +22,7 @@
 // is not covered.
 
 import { z } from "zod";
+import { scopeBasisSchema } from "./summaryScope.js";
 
 const cited = z.object({ time: z.string(), locator: z.string() });
 
@@ -92,7 +93,8 @@ export const gcpComputeBlockSchema = z.object({
   facts: z.array(z.enum(gcpComputeFactKinds)),
   notCited: z.number().int().nonnegative(),
   coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
-  basis: z.literal(
+  // The file form, or its collection form (#2493) — summaryScope.ts.
+  basis: scopeBasisSchema(
     "records of this upload only; joined through the instance's resource name; what ran on the instance and its network egress are not in this case's GCP Cloud Audit Log exports; the firewall join covers only the network-wide (no target tags or service accounts) case, by exact network-string match on the instance's first network interface, and an attached email is never claimed unique to this instance — see #1073, #1077, #1078",
   ),
 });

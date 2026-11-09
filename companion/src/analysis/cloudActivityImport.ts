@@ -55,6 +55,7 @@ import type { JsonRepairs } from "./tolerantJson.js";
 import { applySigmaToRecordRows, sigmaMatchesFor, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
 import { GCP_AUDIT } from "./sigmaLogSources.js";
 import { shortGcpMethod } from "./cloudRowWording.js";
+import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
 type Row = Record<string, unknown>;
 
@@ -65,6 +66,8 @@ export interface CloudActivityImportOptions extends CloudRecordParseOptions {
   maxIocs?: number;
   /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
   debug?: ImportDebugRecorder;
+  /** A live collection's summary step (#2493): the summaries say "this collection" and key to it. */
+  scope?: SummaryScope;
   /** The Sigma snapshot this import is graded with (#2346) — GCP audit records only. */
   sigma?: SigmaGradingSnapshot;
 }
@@ -619,8 +622,11 @@ function parseActivityRecords(
   // The per-service-account join (#1065): built over every GCP record of this export, appended
   // AFTER the source-row cap under its own bound — `maxEvents` bounds source rows, a summary
   // never evicts one, and `kept`/`dropped`/`groups` count source rows alone.
+  // A live collection's summaries (#2493) say "this collection" and key their rows to it, not to a file.
+  const scope = opts.scope ?? UPLOAD_SCOPE;
+  const summaryUpload = scope.kind === "collection" ? scope.uploadId : uploadId;
   const summaries = sawGcp
-    ? aggregateEvents(gcpServiceAccountJoins(records), {
+    ? aggregateEvents(gcpServiceAccountJoins(records, scope), {
         aggregate: opts.aggregate,
         minSeverity: opts.minSeverity,
         maxEvents: GCP_SA_JOIN_MAX + 1,
@@ -634,7 +640,7 @@ function parseActivityRecords(
   // into the ORIGINAL upload, not into a filtered array, or a mixed-provider upload's two joins
   // would both cite "record:0" for two different raw records (Codex code review, finding #3).
   const azureLifecycles = sawAzure
-    ? aggregateEvents(azureComputeLifecycles(records, uploadId), {
+    ? aggregateEvents(azureComputeLifecycles(records, summaryUpload, scope), {
         aggregate: opts.aggregate,
         minSeverity: opts.minSeverity,
         maxEvents: AZURE_COMPUTE_MAX + 1,
@@ -644,14 +650,14 @@ function parseActivityRecords(
   // (never colliding with the standalone parser above), so it is safe to run unconditionally
   // alongside it over the SAME full records array, for the same mixed-provider-locator reason.
   const azureVmssLifecycles = sawAzure
-    ? aggregateEvents(azureVmssComputeLifecycles(records, uploadId), {
+    ? aggregateEvents(azureVmssComputeLifecycles(records, summaryUpload, scope), {
         aggregate: opts.aggregate,
         minSeverity: opts.minSeverity,
         maxEvents: VMSS_COMPUTE_MAX + 1,
       }).events
     : [];
   const gcpLifecycles = sawGcp
-    ? aggregateEvents(gcpComputeLifecycles(records, uploadId), {
+    ? aggregateEvents(gcpComputeLifecycles(records, summaryUpload, scope), {
         aggregate: opts.aggregate,
         minSeverity: opts.minSeverity,
         maxEvents: GCP_COMPUTE_MAX + 1,

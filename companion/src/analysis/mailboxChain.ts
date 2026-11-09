@@ -25,6 +25,7 @@ import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { getCI, normalizeTime, str, type MappedEvent } from "./siemImport.js";
 import { isEntraSignIn, isUalLogon, readEntraSignIn, readUalLogon, type EntraSignIn } from "./ualLogon.js";
 import { ENTRA_RISK_HIDDEN_WORDS } from "./cloudRowWording.js";
+import { scopeBasis, scopeNoun, UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
 type Row = Record<string, unknown>;
 
@@ -40,8 +41,10 @@ const NAME_MAX = 80;
 const DESCRIPTION_MAX = 1400;
 const WINDOW_MS = MAILBOX_CHAIN_WINDOW_HOURS * 3_600_000;
 const RANK: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
-const COVERAGE_NOTE =
-  "continuous coverage of the window is not established by this export; licence, audit configuration and retention are not in this evidence";
+const CHAIN_BASIS =
+  "records of this export only; joined through the mailbox and the stated join; configured, not delivered; accessed, not read";
+const coverageNote = (noun: string): string =>
+  `continuous coverage of the window is not established by this ${noun}; licence, audit configuration and retention are not in this evidence`;
 const DELIVERY_NOTE = "delivery through the forwarding is not in this evidence";
 const SYNC_NOTE = "possible offline copy after a folder sync — inferred, not observed";
 
@@ -474,7 +477,10 @@ const byTime = (a: Step, b: Step): number =>
   (a.time ?? Infinity) - (b.time ?? Infinity) || a.recordId.localeCompare(b.recordId);
 
 /** One summary row per (tenant, mailbox, join) whose export records form a chain; the rows say what they rest on. */
-export function mailboxChains(records: readonly Row[]): MappedEvent[] {
+export function mailboxChains(
+  records: readonly Row[],
+  scope: SummaryScope = UPLOAD_SCOPE, // a live collection (#2493): "this collection"
+): MappedEvent[] {
   const coverage = new Map<string, ExportCoverage>();
   const cover = (tenant: string, kind: keyof ExportCoverage, time: string) => {
     const k = lower(tenant);
@@ -592,12 +598,15 @@ export function mailboxChains(records: readonly Row[]): MappedEvent[] {
         unlinked: unlinked.get(f.m.tenant) ?? 0,
       },
       coverage.get(f.m.tenant),
+      scope,
     ),
   );
   // The omitted row carries the highest grade among the omitted, so a severity floor that keeps
   // any omitted finding keeps the count too.
   if (findings.length > MAILBOX_CHAINS_MAX)
-    rows.push(omittedRow(findings.length - MAILBOX_CHAINS_MAX, findings[MAILBOX_CHAINS_MAX].chain.grade));
+    rows.push(
+      omittedRow(findings.length - MAILBOX_CHAINS_MAX, findings[MAILBOX_CHAINS_MAX].chain.grade, scope),
+    );
   return rows;
 }
 
@@ -616,7 +625,9 @@ function summaryRow(
   chain: Chain,
   counts: Counts,
   coverage: ExportCoverage | undefined,
+  scope: SummaryScope,
 ): MappedEvent {
+  const noun = scopeNoun(scope, "export");
   const { ambiguous, incomplete, beyond, unlinked } = counts;
   const e = chain.episode;
   const stepWords = (s: Step) =>
@@ -634,7 +645,7 @@ function summaryRow(
       kind === "mailboxAudit" ? "Exchange mailbox-audit" : kind === "logons" ? "UAL logon" : "sign-in";
     return c
       ? `no ${what} among the ${c.records} supplied ${log} records (earliest ${c.earliest.slice(0, 10)}, latest ${c.latest.slice(0, 10)})`
-      : `${log} log not in this export`;
+      : `${log} log not in this ${noun}`;
   };
   const s = chain.stages;
   const parts = [
@@ -661,7 +672,7 @@ function summaryRow(
   // cut to what remains.
   const tail = [
     `items listed: ${chain.itemsListed} across the ${plural(chain.cited.length, "cited record")}${chain.operationsUnlisted ? `; ${chain.operationsUnlisted} operations in aggregated records, items not listed` : ""}`,
-    COVERAGE_NOTE,
+    coverageNote(noun),
     ...(ambiguous
       ? [
           `${plural(ambiguous, "record")} by this actor from this address inside the window match${ambiguous === 1 ? "es" : ""} two or more sessions — not joined`,
@@ -672,7 +683,7 @@ function summaryRow(
       : []),
     ...(unlinked
       ? [
-          `${plural(unlinked, "change")} name${unlinked === 1 ? "s" : ""} a mailbox by an alias or name no record of this export links — not joined`,
+          `${plural(unlinked, "change")} name${unlinked === 1 ? "s" : ""} a mailbox by an alias or name no record of this ${noun} links — not joined`,
         ]
       : []),
     ...(beyond ? [`${plural(beyond, "step")} beyond the bound, not evaluated`] : []),
@@ -720,8 +731,7 @@ function summaryRow(
       ...(coverage?.logons ? { logons: coverage.logons } : {}),
       ...(coverage?.signIns ? { signIns: coverage.signIns } : {}),
     },
-    basis:
-      "records of this export only; joined through the mailbox and the stated join; configured, not delivered; accessed, not read",
+    basis: scopeBasis(scope, CHAIN_BASIS),
   };
   const first = chain.ordered[0];
   const observed = iso(e.first);
@@ -756,8 +766,8 @@ function summaryRow(
   };
 }
 
-function omittedRow(count: number, severity: Severity): MappedEvent {
-  const description = `Mailbox chain: ${count} further mailbox chain${count === 1 ? "" : "s"} in this export beyond the ${MAILBOX_CHAINS_MAX} reported — not shown`;
+function omittedRow(count: number, severity: Severity, scope: SummaryScope): MappedEvent {
+  const description = `Mailbox chain: ${count} further mailbox chain${count === 1 ? "" : "s"} in this ${scopeNoun(scope, "export")} beyond the ${MAILBOX_CHAINS_MAX} reported — not shown`;
   return {
     timestamp: "",
     description,

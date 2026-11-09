@@ -20,8 +20,8 @@ import type { ManifestPage } from "./collectTypes.js";
 export interface CollectionSummaryRequest {
   kind: StreamKind;
   collectionId: string;
-  /** Page files in page order, with their manifest record counts. */
-  pages: Array<{ path: string; records: number }>;
+  /** Page files in page order, with their manifest record counts and page import batches (#2493). */
+  pages: Array<{ path: string; records: number; batch?: string }>;
   label: string;
   idPrefix: string;
   importedAt: string;
@@ -53,6 +53,12 @@ export function summaryLabel(collectionId: string, kind: StreamKind): string {
   return `evidence/cloud/${collectionId}/summary-${kind}`;
 }
 
+/** The fixed per-page id prefix: replays of a page write the same row ids (and observation batch). */
+export function pageIdPrefix(collectionId: string, seq: number): string {
+  const short = collectionId.replace(/[^A-Za-z0-9]/g, "").slice(-8);
+  return `cc${short}p${seq}`;
+}
+
 /** The fixed id prefix of one kind's collection summary (the rows add their own identity). */
 export function summaryIdPrefix(collectionId: string, kind: StreamKind): string {
   const short = collectionId.replace(/[^A-Za-z0-9]/g, "").slice(-8);
@@ -80,7 +86,11 @@ export async function runSummaryStep(importer: SummaryImporter, input: SummarySt
     const req: CollectionSummaryRequest = {
       kind,
       collectionId: input.collectionId,
-      pages: pages.map((p) => ({ path: join(input.pagesDir, p.file), records: p.records })),
+      pages: pages.map((p) => ({
+        path: join(input.pagesDir, p.file),
+        records: p.records,
+        batch: pageIdPrefix(input.collectionId, p.seq),
+      })),
       label: summaryLabel(input.collectionId, kind),
       idPrefix: summaryIdPrefix(input.collectionId, kind),
       importedAt: pages[pages.length - 1].retrievedAt,

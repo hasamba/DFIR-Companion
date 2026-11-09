@@ -15,6 +15,7 @@ import type {
   AzureNsgObservation,
 } from "./canonicalAzureCompute.js";
 import { normalizeTime, type MappedEvent } from "./siemImport.js";
+import { scopeBasis, scopeNoun, UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 import {
   AZURE_COMPUTE_MAX,
   BASIS,
@@ -91,11 +92,12 @@ export function summaryRow(
   grade: Severity,
   coverage: { records: number; first: string; last: string },
   uploadId: string,
+  scope: SummaryScope = UPLOAD_SCOPE,
 ): MappedEvent {
   const operations = vm.operations.all().sort(byTime);
   const operationsBeyond = Math.max(0, operations.length - OPERATIONS_NAMED_MAX) + vm.operations.beyond;
   const parts = [
-    vm.launch ? launchWords(vm.launch) : "write/launch not in this upload",
+    vm.launch ? launchWords(vm.launch) : `write/launch not in this ${scopeNoun(scope)}`,
     ...(operations.length
       ? [
           `recorded operations${operationsBeyond ? ` (${Math.min(operations.length, OPERATIONS_NAMED_MAX)} named, ${operationsBeyond} further not individually named)` : ""}: ${operations
@@ -177,7 +179,7 @@ export function summaryRow(
     facts: [...facts],
     notCited,
     coverage,
-    basis: BASIS,
+    basis: scopeBasis(scope, BASIS),
   };
   const observed = new Date(firstTime(vm)).toISOString();
   const mitre = grade === "Low" ? [] : [...new Set(facts.map((f) => FACT_MITRE[f]))];
@@ -221,8 +223,9 @@ export function omittedRow(
   untrackedRecords: number,
   uploadId: string,
   nsgWorkBeyond = 0,
+  scope: SummaryScope = UPLOAD_SCOPE,
 ): MappedEvent {
-  const description = `Azure compute lifecycle — ${count ? `${count} further VM${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${AZURE_COMPUTE_MAX} reported — not shown` : "no further VM beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming VMs/NICs/subnets past their own tracked bound — not read` : ""}${nsgWorkBeyond ? `; ${plural(nsgWorkBeyond, "NSG-rule record/rule/VNet-invalidation")} past its own examined bound (up to ${NSG_RULE_RECORDS_MAX}) — not read` : ""}`;
+  const description = `Azure compute lifecycle — ${count ? `${count} further VM${count === 1 ? "" : "s"} with a lifecycle in this ${scopeNoun(scope)} beyond the ${AZURE_COMPUTE_MAX} reported — not shown` : "no further VM beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming VMs/NICs/subnets past their own tracked bound — not read` : ""}${nsgWorkBeyond ? `; ${plural(nsgWorkBeyond, "NSG-rule record/rule/VNet-invalidation")} past its own examined bound (up to ${NSG_RULE_RECORDS_MAX}) — not read` : ""}`;
   return {
     timestamp: "",
     description,

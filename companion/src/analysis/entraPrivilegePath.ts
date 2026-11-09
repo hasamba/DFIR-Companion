@@ -28,6 +28,7 @@ import type { CapabilityClass, RoleTier } from "./entraCapabilities.js";
 import { isServicePrincipalSignIn, readSpSignIn, type SpSignIn } from "./entraAuditImport.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { normalizeTime, type MappedEvent } from "./siemImport.js";
+import { scopeBasis, scopeNoun, UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
 type Row = Record<string, unknown>;
 
@@ -38,6 +39,8 @@ export const PRIVILEGE_PATHS_MAX = 256;
 const STEPS_NAMED_MAX = 8;
 const NAME_MAX = 60;
 const DESCRIPTION_MAX = 900;
+const ENTRA_PATH_BASIS =
+  "records of this export only; joined through the application id; consistency, not authorization";
 const WINDOW_MS = PRIVILEGE_PATH_WINDOW_DAYS * 86_400_000;
 
 /** The capability classes that control the tenant — a grant of one is the privileged step. */
@@ -497,7 +500,12 @@ export interface ExportCoverage {
 }
 
 /** One summary row per application whose export records form a path; the rows say what they rest on. */
-export function entraPrivilegePaths(records: readonly Row[], resolve: Resolver): MappedEvent[] {
+export function entraPrivilegePaths(
+  records: readonly Row[],
+  resolve: Resolver,
+  scope: SummaryScope = UPLOAD_SCOPE, // a live collection (#2493): "this collection"
+): MappedEvent[] {
+  const noun = scopeNoun(scope, "export");
   const exportTenant = exportTenantOf(records);
   const subjectOf = learnSubjectResolver(records, exportTenant);
   const chains = new Map<string, Chain>();
@@ -601,8 +609,9 @@ export function entraPrivilegePaths(records: readonly Row[], resolve: Resolver):
     );
   const rows = findings
     .slice(0, PRIVILEGE_PATHS_MAX)
-    .map((f) => summaryRow(f.chain, f.best, f.others, f.beyond, coverage.get(f.chain.tenant)));
-  if (findings.length > PRIVILEGE_PATHS_MAX) rows.push(omittedRow(findings.length - PRIVILEGE_PATHS_MAX));
+    .map((f) => summaryRow(f.chain, f.best, f.others, f.beyond, coverage.get(f.chain.tenant), scope));
+  if (findings.length > PRIVILEGE_PATHS_MAX)
+    rows.push(omittedRow(findings.length - PRIVILEGE_PATHS_MAX, noun));
   return rows.map((row) =>
     unlinked
       ? {
@@ -610,7 +619,7 @@ export function entraPrivilegePaths(records: readonly Row[], resolve: Resolver):
           description: row.description
             .replace(
               /\]$/,
-              `; ${unlinked} change${unlinked === 1 ? "" : "s"} named an application by an id no record of this export links to an app id — not joined]`,
+              `; ${unlinked} change${unlinked === 1 ? "" : "s"} named an application by an id no record of this ${noun} links to an app id — not joined]`,
             )
             .slice(0, DESCRIPTION_MAX),
         }
@@ -624,7 +633,9 @@ function summaryRow(
   others: Episode[],
   beyond: number,
   coverage: ExportCoverage | undefined,
+  scope: SummaryScope,
 ): MappedEvent {
+  const noun = scopeNoun(scope, "export");
   const iso = (t: number | null) => (t === null ? "time not readable" : new Date(t).toISOString());
   const stepWords = (s: Step) => `${iso(s.time)} ${s.words}`;
   const named = (steps: Step[], label: string): string[] => {
@@ -637,10 +648,10 @@ function summaryRow(
   const absence = (kind: "signIns" | "audits", what: string): string => {
     const c = coverage?.[kind];
     if (c)
-      return `no ${what} inside the window among the ${c.records} ${kind === "signIns" ? "sign-in" : "directory-audit"} records of this export (${c.first.slice(0, 10)} → ${c.last.slice(0, 10)})`;
+      return `no ${what} inside the window among the ${c.records} ${kind === "signIns" ? "sign-in" : "directory-audit"} records of this ${noun} (${c.first.slice(0, 10)} → ${c.last.slice(0, 10)})`;
     if (kind === "signIns" && coverage?.signInTenantsUnjoined)
-      return `the sign-in records of this export name ${coverage.signInTenantsUnjoined} tenants and the directory-audit records name none — not joined`;
-    return `${kind === "signIns" ? "sign-in" : "directory-audit"} log not in this export`;
+      return `the sign-in records of this ${noun} name ${coverage.signInTenantsUnjoined} tenants and the directory-audit records name none — not joined`;
+    return `${kind === "signIns" ? "sign-in" : "directory-audit"} log not in this ${noun}`;
   };
   const unmatchedSignIns = e.signIns.filter((s) => s !== e.signIn);
   const otherActions = e.actions.filter((a) => a !== e.action);
@@ -720,7 +731,7 @@ function summaryRow(
       ...(coverage?.signIns ? { signIns: coverage.signIns } : {}),
       ...(coverage?.audits ? { audits: coverage.audits } : {}),
     },
-    basis: "records of this export only; joined through the application id; consistency, not authorization",
+    basis: scopeBasis(scope, ENTRA_PATH_BASIS),
   };
   const mitre = [
     ...(e.stages >= 1 ? ["T1098.001"] : []),
@@ -760,8 +771,8 @@ function summaryRow(
   };
 }
 
-function omittedRow(count: number): MappedEvent {
-  const description = `Entra privilege path: ${count} further application${count === 1 ? "" : "s"} with a path in this export beyond the ${PRIVILEGE_PATHS_MAX} reported — not shown`;
+function omittedRow(count: number, noun: string): MappedEvent {
+  const description = `Entra privilege path: ${count} further application${count === 1 ? "" : "s"} with a path in this ${noun} beyond the ${PRIVILEGE_PATHS_MAX} reported — not shown`;
   return {
     timestamp: "",
     description,

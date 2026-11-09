@@ -17,28 +17,38 @@ export type SummaryScope =
 
 export const UPLOAD_SCOPE: SummaryScope = { kind: "upload" };
 
-/** The noun a summary row uses for what it was built over: "upload" or "collection". */
-export function scopeNoun(scope: SummaryScope): "upload" | "collection" {
-  return scope.kind;
+/**
+ * The noun a summary row uses for what it was built over: the file form's own noun — "upload", or
+ * "export" for the Microsoft / GCP builders that always said so (#2493) — or "collection".
+ */
+export function scopeNoun<F extends "upload" | "export" = "upload">(
+  scope: SummaryScope,
+  fileNoun?: F,
+): F | "upload" | "collection" {
+  return scope.kind === "collection" ? "collection" : (fileNoun ?? "upload");
 }
 
-const UPLOAD_HEAD = "records of this upload only; ";
+// The file form's head: "upload" (#2482's AWS summaries) or "export" (#2493's Microsoft / GCP ones).
+const UPLOAD_HEADS = ["records of this upload only; ", "records of this export only; "] as const;
+const fileHead = (basis: string): string | undefined => UPLOAD_HEADS.find((h) => basis.startsWith(h));
 const COLLECTION_HEAD =
   /^records of this collection only \(\d+ pages?; record:N counts the records of the pages in page order\); /;
 
 /**
  * A summary block's `basis` sentence for `scope`. `uploadBasis` is the file form, which starts
- * "records of this upload only; "; a collection's form says so and what its locators count.
+ * "records of this upload only; " (or "… export only; "); a collection's form says so and what
+ * its locators count.
  */
 export function scopeBasis(scope: SummaryScope, uploadBasis: string): string {
-  if (scope.kind === "upload" || !uploadBasis.startsWith(UPLOAD_HEAD)) return uploadBasis;
+  const head = fileHead(uploadBasis);
+  if (scope.kind === "upload" || !head) return uploadBasis;
   const pages = `${scope.pages} page${scope.pages === 1 ? "" : "s"}`;
-  return `records of this collection only (${pages}; record:N counts the records of the pages in page order); ${uploadBasis.slice(UPLOAD_HEAD.length)}`;
+  return `records of this collection only (${pages}; record:N counts the records of the pages in page order); ${uploadBasis.slice(head.length)}`;
 }
 
 /** The schema of a `basis` sentence: the upload form exactly, or its collection form. */
 export function scopeBasisSchema<T extends string>(uploadBasis: T): z.ZodType<string> {
-  const tail = uploadBasis.slice(UPLOAD_HEAD.length);
+  const tail = uploadBasis.slice(fileHead(uploadBasis)?.length ?? 0);
   return z.union([
     z.literal(uploadBasis),
     z.string().refine((s) => COLLECTION_HEAD.test(s) && s.replace(COLLECTION_HEAD, "") === tail),

@@ -24,7 +24,9 @@
 import { join } from "node:path";
 import type { StreamKind } from "../../analysis/ingest/cloudStreamProviders.js";
 import type { ManifestPage } from "./collectTypes.js";
-import { runSummaryStep, type SummaryImporter } from "./collectSummary.js";
+import { pageIdPrefix, runSummaryStep, type SummaryImporter } from "./collectSummary.js";
+
+export { pageIdPrefix };
 
 export interface PageImportRequest {
   kind: StreamKind;
@@ -104,12 +106,6 @@ export function ledgerForget(store: LedgerSwitch | undefined): CollectPageImport
 /** The label every row of a page carries: collection id + page file in one string. */
 export function pageLabel(collectionId: string, file: string): string {
   return `evidence/cloud/${collectionId}/${file}`;
-}
-
-/** The fixed per-page id prefix: replays of a page write the same row ids. */
-export function pageIdPrefix(collectionId: string, seq: number): string {
-  const short = collectionId.replace(/[^A-Za-z0-9]/g, "").slice(-8);
-  return `cc${short}p${seq}`;
 }
 
 function abortIfCancelled(signal?: AbortSignal): void {

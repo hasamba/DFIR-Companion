@@ -76,7 +76,7 @@ export interface StreamProvider {
   /**
    * The whole-export summaries over a live collection's window — every page of one run, in page
    * order (#2482, cloudCollectionSummary.ts). A provider that has it summarizes once per collection:
-   * its collection pages skip `summaries`. One without it keeps per-page summaries (#2493).
+   * its collection pages skip `summaries` (and M365 pages their spray rows, #2493).
    */
   collectionSummaries?(window: Row[], scope: SummaryScope, pre: Preliminary): SiemEvent[];
   undated?(pre: Preliminary): UndatedRows | undefined;
@@ -158,6 +158,17 @@ const m365: StreamProvider = {
     });
     return r.events.slice(r.kept);
   },
+  // A collection's privilege paths and mailbox chains: one per collection run, not one per page (#2493);
+  // its spray is read from the sign-in store over all of the run's pages (cloudStreamSpray.ts).
+  collectionSummaries(window, scope, pre) {
+    const r = parseM365Audit("", {
+      prepared: { normalized: window, undated: { rows: 0, mixedOrders: false } },
+      resolver: pre.resolver,
+      spraySummary: false,
+      scope,
+    });
+    return r.events.slice(r.kept);
+  },
   undated: (pre) => pre.dateOrder?.undated,
 };
 
@@ -222,6 +233,11 @@ const cloudActivity: StreamProvider = {
   }),
   summaries(window) {
     const r = parseCloudActivity("", { records: window });
+    return r.events.slice(r.kept);
+  },
+  // A collection's service-account joins and compute lifecycles: one per collection run (#2493).
+  collectionSummaries(window, scope) {
+    const r = parseCloudActivity("", { records: window, scope });
     return r.events.slice(r.kept);
   },
 };

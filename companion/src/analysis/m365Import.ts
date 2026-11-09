@@ -26,6 +26,7 @@ import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
+import type { SummaryScope } from "./summaryScope.js";
 import {
   ENTRA_SIGN_IN_CATEGORY_MARKER,
   entraSignInCategory,
@@ -105,6 +106,8 @@ export interface M365ImportOptions {
   resolver?: Resolver;
   rowsOnly?: boolean;
   spraySummary?: boolean;
+  /** A live collection's summary step (#2493): the summaries say "this collection". */
+  scope?: SummaryScope;
 }
 
 export interface M365ParseResult {
@@ -710,8 +713,8 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   const summaries = [
     ...(sawAudit || sawUal
       ? [
-          ...derived(entraPrivilegePaths(fresh, resolve), PRIVILEGE_PATHS_MAX + 1),
-          ...(sawUal ? derived(mailboxChains(fresh), MAILBOX_CHAINS_MAX + 1) : []),
+          ...derived(entraPrivilegePaths(fresh, resolve, opts.scope), PRIVILEGE_PATHS_MAX + 1),
+          ...(sawUal ? derived(mailboxChains(fresh, opts.scope), MAILBOX_CHAINS_MAX + 1) : []),
         ]
       : []),
     ...(sprayCandidates.length && opts.spraySummary !== false
