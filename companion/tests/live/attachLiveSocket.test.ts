@@ -145,3 +145,35 @@ describe("attachLiveSocket sends the job list on subscribe (#1453)", () => {
     }
   });
 });
+
+// #2441 (part B): a password change calls hub.dropCase for the case. An already-open socket that
+// was admitted under the old salt must be closed, and its reconnect with the old cookie refused.
+describe("a dropped case's sockets close, and the old cookie cannot reconnect (#2441)", () => {
+  function connect(cookie: string): Promise<{ socket: WebSocket; settled: "open" | "closed" }> {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?caseId=locked`, {
+      headers: { cookie, origin: `http://127.0.0.1:${port}` },
+    });
+    return new Promise((resolve) => {
+      socket.on("open", () => resolve({ socket, settled: "open" }));
+      socket.on("close", () => resolve({ socket, settled: "closed" }));
+      socket.on("error", () => resolve({ socket, settled: "closed" }));
+    });
+  }
+
+  it("closes an unlocked socket on dropCase, and refuses its reconnect after the salt rotates", async () => {
+    const meta = await store.getCaseMeta("locked");
+    const token = signUnlockToken("locked", meta!.password!.salt, secret, 60_000, false);
+    const cookie = `${unlockCookieName("locked")}=${token}`;
+
+    const first = await connect(cookie);
+    expect(first.settled).toBe("open");
+    const closed = new Promise<void>((resolve) => first.socket.on("close", () => resolve()));
+    hub.dropCase("locked");
+    await closed; // the test times out if the socket is never closed
+
+    await store.updateCaseMeta("locked", { password: await hashCasePassword("other-secret") });
+    const again = await connect(cookie);
+    expect(again.settled).toBe("closed");
+    again.socket.terminate();
+  });
+});

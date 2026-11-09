@@ -56,7 +56,7 @@ function isHttpsRequest(req: Request): boolean {
  *     valid unlock for a case (and whether it was "remember"-signed), used by the lock-status route.
  */
 export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): void {
-  const { store, instanceSecret, readUnlockState } = ctx;
+  const { store, instanceSecret, readUnlockState, options } = ctx;
 
   app.get("/cases/:id/lock-status", async (req: Request, res: Response) => {
     try {
@@ -139,6 +139,9 @@ export function registerCasePasswordRoutes(app: Express, ctx: RouteContext): voi
       // existing cookie) should require going through the real unlock prompt afterward, same
       // as anyone else — matching the analyst's expectation that setting a password protects
       // the case immediately, not just for other people.
+      // #2441: the rotated salt refuses old cookies on HTTP, but a live socket was checked only
+      // at connect. Close every open one on the case so its reconnect is re-checked too.
+      options.onCasePasswordChanged?.(id);
       return res.status(200).json(sanitizeCaseMeta(updated));
     } catch (err) {
       // The case was deleted after the existence check (#1808); updateCaseMeta no longer recreates it.

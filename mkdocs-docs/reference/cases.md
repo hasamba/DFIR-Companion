@@ -101,7 +101,7 @@ the extension retries waiting screenshots on its own about once a minute, and at
 you do not have to take another capture. A
 wrong password is tried only once, so the extension cannot lock you out of your own case. Webhooks
 that use a push key keep working on a locked case. Setting or changing a password does not auto-unlock the browser that set it;
-you're prompted the same as anyone else. Leaving a case you unlocked without "remember" forgets the unlock in this browser only. To shut out every browser that has unlocked the case, including one that saved a copy of the unlock, change the password. **Remove password** is only available when the case is
+you're prompted the same as anyone else. Leaving a case you unlocked without "remember" forgets the unlock in this browser only. To shut out every browser that has unlocked the case, including one that saved a copy of the unlock, change the password. Dashboards that already have the case open are disconnected at once. **Remove password** is only available when the case is
 currently unlocked and has a password set.
 
 ## Permanently Deleting a Case

@@ -232,6 +232,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     sigmaRuleStore: sigmaRules,
     rulePackStore,
     onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
+    onCasePasswordChanged: (caseId) => hub.dropCase(caseId),
     activityLogStore,
     auditExportStore,
     auditExportCursors,

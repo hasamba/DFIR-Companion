@@ -197,6 +197,9 @@ export interface AppOptions {
   reportTemplateStore?: ReportTemplateStore;
   reportTemplateControlStore?: ReportTemplateControlStore;
   onReportTemplate?: (caseId: string) => void;
+  // #2441: a case password was set or changed, so its salt rotated. Close every open live
+  // dashboard socket on the case; each one reconnects and is re-checked against the new salt.
+  onCasePasswordChanged?: (caseId: string) => void;
   // Dashboard view presets (#142): GLOBAL role/phase layouts (sections + severity/top-N filter +
   // matching report template) the dashboard applies. Built-ins editable in place, custom via CRUD.
   dashboardViewStore?: DashboardViewStore;

@@ -64,9 +64,10 @@ Findings against these come up in every automated review; they are design decisi
   of the browser session. The server keeps no list of
   issued unlocks, so a copy of that cookie taken earlier stays valid until it expires: 12 hours, or
   up to a year with "remember". To cut off every copy, change the case password. That rotates the
-  value every unlock is bound to, and from the next request each one is refused. A live
-  dashboard connection that is already open is not closed by the change. It loses access on
-  its next reconnect. A server-side list of revoked unlocks is tracked separately (#2416).
+  value every unlock is bound to, and from the next request each one is refused. Setting or
+  changing the password also closes every live dashboard connection that is open on the case at
+  once, so each one must unlock again (#2441). A server-side list of revoked unlocks, to cut off
+  one unlock without changing the password, is tracked separately (#2441).
 - **Team-mode sessions have a fixed lifetime and no idle timeout.** A sign-in lasts
   `DFIR_AUTH_SESSION_HOURS` (default 12, at most 168), however long the browser sits unused. The
   "last seen" time on a session shows activity in the session list. It does not end the session.
