@@ -221,7 +221,10 @@ export async function importSandbox(
   void labRowsWritten;
   const delta = deltaSchema.parse(raw);
 
-  return commitDelta(ctx, caseId, delta, opts);
+  // #2425: the append is the commit point. Rows already in the super-timeline cannot be rolled
+  // back, so a Cancel that lands from here on is ignored: the registry merge, import record and
+  // undo checkpoint still happen, instead of leaving untracked lab rows behind a "cancelled" note.
+  return commitDelta(ctx, caseId, delta, { ...opts, signal: undefined });
 }
 
 // Import memory-forensics tool output (Volatility 3 or Rekall). Deterministic (no AI call): each
