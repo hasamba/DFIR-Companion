@@ -221,6 +221,8 @@ function describeAggregate(
 ): SiemEvent {
   if (!tier) return e;
   const n = e.count ?? 1;
+  // A one-row detailed group folded nothing in: it IS the original row, so no note (#2475).
+  if (tier.tier === "detailed" && n <= 1) return e;
   const span = e.endTimestamp && e.endTimestamp !== e.timestamp ? `, ${e.timestamp} → ${e.endTimestamp}` : "";
   const note = `[aggregated: ${n} row(s)${span} — ${tier.reason}]`;
   if (tier.tier === "detailed") return { ...e, description: `${e.description} ${note}` };
