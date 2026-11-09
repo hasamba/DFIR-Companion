@@ -1087,8 +1087,8 @@ export const FEATURES: Feature[] = [
     // Settings → empty KEY= lines already in .env (#2496). emptyLines is private: only the settings
     // form's load and save may change which keys a save removes.
     file: "dashboard-env-empty-lines.js",
-    publish: ["recordEmptyEnvLines", "isEmptyEnvLine", "settleEmptyEnvLines"],
-    private: ["emptyLines"],
+    publish: ["recordEmptyEnvLines", "isEmptyEnvLine", "settleEmptyEnvLines", "switchLoadValue"],
+    private: ["emptyLines", "SWITCH_LOAD_VALUE"],
   },
   {
     // Settings → Built-in HTTPS line + local-CA download link (#2285). Called by the settings form
