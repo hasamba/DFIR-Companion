@@ -341,6 +341,7 @@
     "coverageEventTime.ts": "analysis/timeline",
     "coach.ts": "analysis/ai",
     "cockpit.ts": "analysis/workflow",
+    "cockpitImportSteps.ts": "analysis/workflow",
     "handoffBrief.ts": "analysis/workflow",
     "cockpitStore.ts": "analysis/workflow",
     "cockpitStory.ts": "analysis/workflow",

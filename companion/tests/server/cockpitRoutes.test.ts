@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import { PinnedFindingsStore } from "../../src/analysis/pinnedFindings.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { AssetOverridesStore } from "../../src/analysis/assetOverrides.js";
+import { ImportUndoStore, emptyUndoStack, pushCheckpoint } from "../../src/analysis/importUndo.js";
 
 async function makeApp() {
   const root = await mkdtemp(join(tmpdir(), "dfir-cockpit-routes-"));
@@ -21,12 +22,14 @@ async function makeApp() {
   const findingWorkflowStore = new FindingWorkflowStore(cases);
   const pinnedFindingsStore = new PinnedFindingsStore(cases);
   const activityLogStore = new ActivityLogStore(cases);
+  const importUndoStore = new ImportUndoStore(cases);
   const app = createApp(cases, {
     stateStore,
     hypothesisStore,
     findingWorkflowStore,
     pinnedFindingsStore,
     activityLogStore,
+    importUndoStore,
   });
   await request(app)
     .post("/cases")
@@ -62,7 +65,7 @@ async function makeApp() {
     ],
     updatedAt: "2026-07-30T10:00:00.000Z",
   });
-  return { app, findingWorkflowStore, pinnedFindingsStore, activityLogStore };
+  return { app, stateStore, importUndoStore, findingWorkflowStore, pinnedFindingsStore, activityLogStore };
 }
 
 describe("cockpit routes", () => {
@@ -241,5 +244,55 @@ describe("cockpit routes — story hosts follow the analyst's host merge (#2066)
     const res = await request(app).get("/cases/c1/cockpit");
     expect(res.status).toBe(200);
     expect(res.body.story.shape.hosts).toEqual(["WS01", "ws01.sub.example"]);
+  });
+});
+
+// #2466 — Undo clears the "last import" record and runs no re-synthesis; the digest still names it.
+describe("cockpit routes — an undone import is a change since the last review (#2466)", () => {
+  it("shows an undone import on the Since your last review card", async () => {
+    const { app, stateStore, importUndoStore } = await makeApp();
+    const current = await stateStore.load("c1");
+    await importUndoStore.save(
+      "c1",
+      pushCheckpoint(emptyUndoStack(), {
+        label: "thor (0003_thor.json)",
+        at: "2026-07-30T10:00:00.000Z",
+        state: { ...current, forensicTimeline: [] },
+      }),
+    );
+    expect((await request(app).post("/cases/c1/import/undo")).status).toBe(200);
+
+    const cockpit = await request(app).get("/cases/c1/cockpit");
+    expect(cockpit.status).toBe(200);
+    expect(cockpit.body.sections.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: "Import undone: thor (0003_thor.json)", severity: "Low" }),
+      ]),
+    );
+  });
+
+  // The cockpit is polled and the stack can hold hundreds of MB of deltas: parse it only on change.
+  it("re-reads the undo stack only when the stack file changed", async () => {
+    const { app, stateStore, importUndoStore } = await makeApp();
+    const current = await stateStore.load("c1");
+    const checkpoint = (label: string) => ({
+      label,
+      at: "2026-07-30T10:00:00.000Z",
+      state: { ...current, forensicTimeline: [] },
+    });
+    await importUndoStore.save("c1", pushCheckpoint(emptyUndoStack(), checkpoint("thor (0003_thor.json)")));
+    const load = vi.spyOn(importUndoStore, "load");
+
+    expect((await request(app).get("/cases/c1/cockpit")).status).toBe(200);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect((await request(app).get("/cases/c1/cockpit")).status).toBe(200);
+    expect(load).toHaveBeenCalledTimes(1); // unchanged file → cached steps
+
+    await importUndoStore.save(
+      "c1",
+      pushCheckpoint(emptyUndoStack(), checkpoint("a longer label so the file size changes")),
+    );
+    expect((await request(app).get("/cases/c1/cockpit")).status).toBe(200);
+    expect(load).toHaveBeenCalledTimes(2);
   });
 });

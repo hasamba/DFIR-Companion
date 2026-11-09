@@ -1,3 +1,4 @@
+import { importStepCards, type ImportSteps } from "./cockpitImportSteps.js";
 import { deriveCockpitStory, type CockpitStory } from "./cockpitStory.js";
 import type { FindingWorkflow } from "./findingWorkflow.js";
 import type { HostAliasIndex, NearDuplicate } from "./hostAlias.js";
@@ -109,6 +110,8 @@ export interface CockpitInput {
   pinnedFindingIds?: readonly string[];
   jobs?: readonly Job[];
   importMeta?: ImportMeta;
+  // The latest Undo / Redo of an import (#2466, cockpitImportSteps.ts) — both clear importMeta.
+  importSteps?: ImportSteps;
   synthMeta?: SynthMeta;
   decisions?: CockpitDecisionState;
   // Host pairs still awaiting a merge decision (analysis/hostDuplicateGate.ts). Optional so every
@@ -467,6 +470,7 @@ function changeCards(input: CockpitInput, lastReviewedAt: string | null): Cockpi
       },
     });
   }
+  cards.push(...importStepCards(input.importSteps, (at) => isAfter(at, lastReviewedAt)));
   if (input.synthMeta && isAfter(input.synthMeta.lastSynthesizedAt, lastReviewedAt)) {
     for (const changed of input.synthMeta.lastDiff?.severityChanged ?? []) {
       cards.push({

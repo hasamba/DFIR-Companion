@@ -44,7 +44,7 @@ Below it, the cockpit lists:
 - running or failed imports and analyses;
 - blockers that prevent the case from being report-ready; and
 - a concise digest of findings/imports/synthesis changes since this investigator last marked the
-  case reviewed.
+  case reviewed. An import you undo or redo shows here too ("Import undone: …").
 
 Every card opens its owning workspace and, where evidence exists, links to the exact forensic event.
 Lead cards can be pinned, dismissed, deferred, or assigned. These actions are kept with the case and
@@ -561,8 +561,9 @@ Each IOC shows:
 
 **Inline quick-actions** — any detected value (IP/hash/domain/SID/URL/path) inside an event row or an
 IOC value is itself clickable, opening a tray to copy it, mark it benign, mark it confirmed-malicious,
-or suggest a hunt — without leaving the timeline to find the IOC's own row. Outcomes are recorded to
-the investigation log.
+or suggest a hunt — without leaving the timeline to find the IOC's own row. The benign and
+confirmed-malicious outcomes are recorded to the investigation log, under your investigator name.
+Copy and hunt change nothing in the case, so they are not logged.
 
 ---
 

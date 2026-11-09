@@ -3,6 +3,7 @@ import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { caseOpenState } from "./caseOpenState.js";
 import { deriveCockpit, type CockpitAction, type CockpitSnapshot } from "../analysis/cockpit.js";
 import { CockpitStore } from "../analysis/cockpitStore.js";
+import { importStepsOf, type ImportSteps } from "../analysis/cockpitImportSteps.js";
 import type { HostAliasIndex } from "../analysis/hostAlias.js";
 import { loadHostAliasIndex, loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
@@ -93,6 +94,30 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
     }
   }
 
+  // Derived undo/redo steps per case, keyed by the stack file's mtime + size. The cockpit is polled
+  // and the stack can hold hundreds of MB of deltas, so it is parsed only when the file changed.
+  const importStepsCache = new Map<string, { key: string; steps: ImportSteps }>();
+
+  /**
+   * The latest Undo / Redo of an import (#2466). Fail-quiet like the two loaders above: an
+   * unreadable stack costs one change card, never the whole cockpit.
+   */
+  async function importSteps(caseId: string): Promise<ImportSteps | undefined> {
+    const undoStore = options.importUndoStore;
+    if (!undoStore) return undefined;
+    try {
+      const file = await undoStore.stat(caseId);
+      const key = file ? `${file.mtimeMs}:${file.size}` : "absent";
+      const cached = importStepsCache.get(caseId);
+      if (cached?.key === key) return cached.steps;
+      const steps = file ? importStepsOf(await undoStore.load(caseId)) : {};
+      importStepsCache.set(caseId, { key, steps });
+      return steps;
+    } catch {
+      return undefined;
+    }
+  }
+
   async function loadSnapshot(
     caseId: string,
     requestedInvestigator?: unknown,
@@ -108,7 +133,7 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
       ? await caseOpenState(store, stateStore).load(caseId, { signal })
       : await stateStore.load(caseId);
     if (signal?.aborted) return null; // #2121: the caller has gone, derive nothing for it
-    const [hypotheses, workflows, pins, importMeta, synthMeta, decisions, hostDuplicates, aliasIndex] =
+    const [hypotheses, workflows, pins, importMeta, synthMeta, decisions, hostDuplicates, aliasIndex, steps] =
       await Promise.all([
         options.hypothesisStore?.load(caseId) ?? Promise.resolve([]),
         options.findingWorkflowStore?.load(caseId) ?? Promise.resolve([]),
@@ -118,6 +143,7 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
         cockpitStore.load(caseId),
         pendingHostDuplicates(caseId, state),
         hostAliasIndex(caseId),
+        importSteps(caseId),
       ]);
     return deriveCockpit({
       state,
@@ -126,6 +152,7 @@ export function registerCockpitRoutes(app: Express, ctx: RouteContext): void {
       ...(options.pinnedFindingsStore ? { pinnedFindingIds: pins.map((pin) => pin.findingId) } : {}),
       jobs: options.jobManager?.list(caseId) ?? [],
       importMeta,
+      ...(steps ? { importSteps: steps } : {}),
       synthMeta,
       decisions,
       hostDuplicates,
