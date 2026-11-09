@@ -31,6 +31,7 @@ import { gcpCoverage, azureCoverage } from "./cloudCoverageBuilders.js";
 import { azureRawRecords, azureRowCanonical } from "./cloudRowCanonical.js";
 import { azureActivityRecordId } from "./cloudRecordIdentity.js";
 import { adaptAzureDiagnosticActivity } from "./azureDiagnosticRecord.js";
+import { azureRequestBody, decodeAzureRoleAssignment } from "./azureRoleAssignment.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
   aggregateEvents,
@@ -303,11 +304,7 @@ function mapAzure(
   const logging = decodeAzureLogging(
     op,
     resource,
-    getPath(rec, "properties.requestbody") ??
-      getPath(rec, "properties.requestBody") ??
-      getPath(rec, "Properties.requestbody") ??
-      getPath(rec, "Properties.requestBody") ??
-      getPath(rec, "properties"),
+    azureRequestBody(rec) ?? getPath(rec, "properties"),
     azureFailure,
   );
   if (logging) {
@@ -315,10 +312,13 @@ function mapAzure(
     mitre.length = 0;
     mitre.push(...logging.mitre);
   }
+  // A role assignment names the role, the principal and the scope its request body grants.
+  const roleGrant = decodeAzureRoleAssignment(op, rec);
   let description = `Azure ${op}`;
   if (caller) description += ` by ${caller}`;
   if (ip) description += ` from ${ip}`;
   if (exec) description += ` → ${exec.display} — the script body is not in the Activity Log`;
+  else if (roleGrant?.titleSuffix) description += roleGrant.titleSuffix;
   else if (shortRes && !logging) description += ` on ${shortRes}`;
   if (failed) description += ` [${status}]`;
   // A logging row goes through the logging renderer: every slot neutralised, the qualifiers reserved.
@@ -333,6 +333,7 @@ function mapAzure(
   return {
     timestamp: normalizeTime(observed),
     description,
+    ...(roleGrant ? { message: roleGrant.message } : {}),
     severity,
     mitre,
     // The RESOURCE is part of the key for an object read. Without it, aggregation folded every
@@ -352,7 +353,7 @@ function mapAzure(
     // it, listings of DIFFERENT storage accounts by the same caller/IP collapse into one row, and
     // the key→read correlator can only ever see the first account.
     aggKey: boundedAggKey(
-      `azure|${op}|${caller}|${ip}|${azureAggStatus(status)}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : (isObjectRead(op) || isListKeys(op)) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
+      `azure|${op}|${caller}|${ip}|${azureAggStatus(status)}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : (isObjectRead(op) || isListKeys(op)) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}${roleGrant?.keySegment ?? ""}`.toLowerCase(),
     ),
     sources: ["Azure Activity"],
     ...(logging

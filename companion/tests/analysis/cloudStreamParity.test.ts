@@ -276,10 +276,13 @@ describe("streamed CloudTrail import parity (#2362)", () => {
   }, 120_000);
 });
 
-// Computed by the pre-optimisation code (master 8e7f1c5d) and identical across runs.
-// Re-pinned for #2475 (forensicTimeline, db:forensicTimeline only): a one-row detailed group no longer
-// carries the "[aggregated: 1 row(s) — …]" note, so 1,684 descriptions lose that suffix. Stripping it
-// from the old rows reproduces the new rows exactly; every count and every other hash is unchanged.
+// Computed by the pre-optimisation code (master 8e7f1c5d) and identical across runs. Re-pinned once
+// for #2502, a deliberate output change: two in-budget Medium rows sharing one grouping key now merge
+// into one counted detail row (forensic 2348 -> 2347, graded 300 -> 299; member rows unchanged at
+// 2705, so no record is lost), and the disclosure gained mediumMerged plus the "kept in detail"
+// wording (disclosures, notes, timeline, coverage). The #2502 time-span fix alone changes nothing here.
+// Re-pinned for #2475 too: a one-row detailed group no longer carries the "[aggregated: 1 row(s) — …]"
+// note, so those descriptions lose that suffix; no count changes.
 const PINNED = {
   counts: {
     compute: 30,
@@ -287,28 +290,28 @@ const PINNED = {
       cloudRecord: 5270,
       cloudRecordBatch: 4,
       cloudRecordMember: 2705,
-      forensicTimeline: 2348,
+      forensicTimeline: 2347,
       iocs: 41,
       superTimeline: 2500,
       timeline: 3,
     },
-    forensic: 2348,
-    graded: 300,
+    forensic: 2347,
+    graded: 299,
     iocs: 41,
     lineages: 36,
   },
   hashes: {
-    coverage: "6044619287281819",
+    coverage: "92a60725c7a87a3d",
     "db:cloudRecord": "55eeaad28f712d39",
     "db:cloudRecordBatch": "d7a32e76dfef0950",
-    "db:cloudRecordMember": "ffa1075c5c71e979",
-    "db:forensicTimeline": "9ede19e99837e237",
+    "db:cloudRecordMember": "2260533dd0f4bdd7",
+    "db:forensicTimeline": "47e419e317d56d07",
     "db:iocs": "7de5df26c23c75f9",
     "db:superTimeline": "8beed3d432925a0d",
-    "db:timeline": "c2ad8dac7730f5fe",
-    disclosures: "17408c7ea84e60a3",
-    forensicTimeline: "8e7aa1d94b54703d",
+    "db:timeline": "0a3505cb7f4a4ebe",
+    disclosures: "b41790f4ea7b0e23",
+    forensicTimeline: "952a8006b6bd4d4a",
     iocs: "b4186cc3f6e10f06",
-    notes: "cf42153931e63238",
+    notes: "86e38fbe1e668482",
   },
 };

@@ -51,6 +51,8 @@ export interface EntraInitiator {
   appId: string;
   name: string;
   ip: string;
+  /** Every object id the record states for the initiator (UAL spreads one actor over several). */
+  objectIds?: string[];
 }
 
 export interface EntraAuditRecord {
@@ -101,6 +103,18 @@ const TYPE_LABELS = new Set([
 // nothing to the identity being built. `NotAgentic` is the value observed in a real UAL directory-
 // change export (#2484); add a value here only when a real export shows it.
 const FLAG_VALUES = new Set(["notagentic"]);
+
+// Entra's agentType values (Microsoft Graph `microsoft.graph.agentic.agentType`). The UAL writes the
+// value as one more identifier pair; it says whether an identity is an AI agent, never what it is
+// called, so it is dropped rather than read as a display name.
+const AGENT_TYPES = new Set([
+  "notagentic",
+  "agenticapp",
+  "agenticappinstance",
+  "agentidentityblueprintprincipal",
+  "agentiduser",
+  "unknownfuturevalue",
+]);
 
 const digest = (s: string): string => createHash("sha256").update(s).digest("hex").slice(0, DIGEST_HEX);
 export const isGuid = (s: string): boolean => GUID.test(s.trim());
@@ -240,6 +254,7 @@ function readGraph(rec: Row): EntraAuditRecord {
           appId: str(getCI(app, "appId")),
           name: str(getCI(app, "displayName")),
           ip: "",
+          objectIds: [str(getCI(app, "servicePrincipalId"))].filter(Boolean),
         }
       : isObject(user) && (str(getCI(user, "id")) || str(getCI(user, "userPrincipalName")))
         ? {
@@ -249,6 +264,7 @@ function readGraph(rec: Row): EntraAuditRecord {
             appId: "",
             name: str(getCI(user, "displayName")),
             ip: str(getCI(user, "ipAddress")),
+            objectIds: [str(getCI(user, "id"))].filter(Boolean),
           }
         : { kind: "unknown", id: "", upn: "", appId: "", name: "", ip: "" };
   const rawTargets = getCI(rec, "targetResources");
@@ -310,6 +326,7 @@ function readIdentities(raw: unknown): EntraTarget[] {
     }
     if (!cur) cur = start();
     const lower = id.toLowerCase();
+    if (AGENT_TYPES.has(lower)) continue;
     if (TYPE_LABELS.has(lower)) cur.type = cur.type || id;
     else if (isGuid(id)) cur.id = cur.id || lower;
     else if (id.includes("@")) cur.upn = cur.upn || id;
@@ -343,6 +360,9 @@ function readUal(rec: Row): EntraAuditRecord {
     appId: actorIsApp && isGuid(userId) ? userId.toLowerCase() : "",
     name: actor?.name ?? (actorIsApp && !isGuid(userId) ? userId : ""),
     ip: str(getCI(rec, "ActorIpAddress")) || str(getCI(rec, "ClientIP")),
+    objectIds: [
+      ...new Set([...actors.map((a) => a.id), PREFIXED_ID.exec(userId)?.[2] ?? ""].filter(Boolean)),
+    ].map((x) => x.toLowerCase()),
   };
   const props: EntraProp[] = [];
   const mp = getCI(rec, "ModifiedProperties");

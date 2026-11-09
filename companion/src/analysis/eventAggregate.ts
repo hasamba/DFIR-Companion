@@ -193,6 +193,9 @@ export function createEventAggregator(opts: AggregateOptions = {}): EventAggrega
         if (m.partlyReadArtifact) existing.partlyReadArtifact ??= m.partlyReadArtifact;
         const t = m.timestamp;
         if (t) {
+          // Seed the end from the group's first time BEFORE the start can move (#2502): a group
+          // created from its newest row (newest-first exports) otherwise lost that time as its end.
+          if (!existing.endTimestamp && existing.timestamp) existing.endTimestamp = existing.timestamp;
           if (!existing.timestamp || t < existing.timestamp) existing.timestamp = t;
           if (!existing.endTimestamp || t > existing.endTimestamp) existing.endTimestamp = t;
         }
