@@ -13,6 +13,7 @@ import type { ManifestValue } from "../analysis/analysisRunTypes.js";
 import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
 import { abortIfCancelled, ImportCancelledError } from "../analysis/ingest/importState.js";
 import { safeKind, createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { emitImportDebug } from "./importDebugEmit.js";
 import { admitDedicatedImport, type DedicatedImportJob } from "./importCommitJob.js";
 
@@ -225,6 +226,7 @@ export function commitDedicatedImport(
               path: commit.path,
               fpPropagation,
               truncation,
+              aiExtraction: aiExtractionFromDebug(commit.path, debug), // #2460
             });
             options.onImportMeta?.(caseId);
           }

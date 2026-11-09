@@ -65,7 +65,7 @@ The top of the dashboard shows:
 - Case name and investigator
 - Screenshot count and last capture time
 - Last synthesis time and what changed
-- Last import time and how many new events/IOCs it added
+- Last import time and how many new events/IOCs it added. When an AI-triage import (CSV or log) produced no events from a file that had rows, the banner shows a red warning instead of only "no new events": check the AI provider and re-import, and treat the file as not analyzed, not as clean. A re-import whose events were all already in the timeline does not trigger it.
 - A severity summary badge (Critical / High / Medium counts)
 
 **Synthesis coverage audit** — the synth-meta card (next to the last-synthesis time) shows how many in-window events a run actually considered vs. omitted (by prompt-size budget, false-positive filter, or scope window), plus how many budget-omitted events were Critical/High — visibility into what a large-timeline synthesis run left out.

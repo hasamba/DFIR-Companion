@@ -15,6 +15,7 @@ import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
 import { safeKind, createImportDebugRecorder } from "../analysis/importDebug.js";
+import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { decodeImportedText } from "../ingest/decodeText.js";
 
 const importParametersSchema = z.object({
@@ -204,6 +205,16 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
                 path: parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",
                 fpPropagation: [],
                 truncation: null,
+                // #2460: a resume past batch 0 counts only the batches it re-ran, so "kept 0" there
+                // would not mean the file yielded nothing — leave the count out rather than mislead.
+                ...(startBatch === 0
+                  ? {
+                      aiExtraction: aiExtractionFromDebug(
+                        parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",
+                        recorder,
+                      ),
+                    }
+                  : {}),
               });
               options.onImportMeta?.(job.caseId);
             } catch (error) {

@@ -461,7 +461,16 @@
     // that produced ZERO events is a blind spot, not a clean source — say so with a directive action,
     // instead of a bland "no new events". Mirrors the server classifyImportYield (path ai / +0 / >=500).
     let yieldWarn = "";
-    if (
+    // #2460: the AI extraction's OWN count says it kept nothing from a file that had rows — at any
+    // size. addedCount 0 alone cannot say this (a re-import of present events also adds 0). More
+    // precise than the 500-line check below, so it wins and that one is skipped. Never suggests AI
+    // off: with AI off a CSV/log is saved as evidence but not analyzed at all.
+    const ax = m.aiExtraction;
+    if (m.path === "ai" && ax && (ax.rowsIn || 0) > 0 && (ax.kept || 0) === 0) {
+      const label = m.lastImportFile || m.lastImportKind || "this file";
+      const rows = `${ax.rowsIn.toLocaleString()} row${ax.rowsIn === 1 ? "" : "s"}`;
+      yieldWarn = `<div class="sm-line" data-safe-style="color:var(--badge-danger-text);font-weight:600">⚠️ ${esc(label)}: AI extraction produced no events from ${rows}. Check the AI provider (Settings → AI) and re-import. Until then, treat this file as not analyzed, not as clean.</div>`;
+    } else if (
       m.path === "ai" &&
       (m.addedCount || 0) === 0 &&
       (m.linesIn || 0) >= 500

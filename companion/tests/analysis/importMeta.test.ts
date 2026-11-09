@@ -3,7 +3,13 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
-import { describeImportSource, importMetaSchema, ImportMetaStore } from "../../src/analysis/importMeta.js";
+import {
+  aiExtractionFromDebug,
+  describeImportSource,
+  importMetaSchema,
+  ImportMetaStore,
+} from "../../src/analysis/importMeta.js";
+import { createImportDebugRecorder } from "../../src/analysis/importDebug.js";
 import type { TimelineDiff } from "../../src/analysis/timelineDiff.js";
 import type { IocsDiff } from "../../src/analysis/iocsDiff.js";
 
@@ -241,5 +247,74 @@ describe("ImportMetaStore", () => {
     expect(meta.lastDiff?.added.length).toBe(500); // list capped
     expect(meta.iocsAddedCount).toBe(700); // true total preserved
     expect(meta.iocsDiff?.added.length).toBe(500); // list capped
+  });
+});
+
+// #2460: an AI-triage import that kept 0 of N rows must be told apart from a re-import whose events
+// were all already in the timeline — both show addedCount 0. The extraction's own kept count is the
+// discriminator, so it is stored on import-meta.
+describe("aiExtraction (#2460)", () => {
+  let store: ImportMetaStore;
+  beforeEach(async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-2460-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    store = new ImportMetaStore(cases);
+  });
+
+  it("round-trips the rows the AI read and the events it kept", async () => {
+    await store.record("c1", {
+      kind: "csv",
+      file: "0001_sysmon.csv",
+      diff: { added: [], removed: [] },
+      iocsDiff: NO_IOCS,
+      path: "ai",
+      aiExtraction: { rowsIn: 14, kept: 0 },
+    });
+    expect((await store.load("c1")).aiExtraction).toEqual({ rowsIn: 14, kept: 0 });
+  });
+
+  it("an older import-meta file without the field loads cleanly as not recorded", () => {
+    const meta = importMetaSchema.parse({ lastImportedAt: "2026-01-01T00:00:00Z", path: "ai" });
+    expect(meta.aiExtraction).toBeUndefined();
+  });
+
+  it("a malformed value loads as not recorded instead of failing the whole file", () => {
+    const meta = importMetaSchema.parse({ path: "ai", aiExtraction: { rowsIn: "x" } });
+    expect(meta.aiExtraction).toBeUndefined();
+  });
+});
+
+describe("aiExtractionFromDebug (#2460)", () => {
+  it("reads rows in and events kept from an AI import's debug recorder", () => {
+    const debug = createImportDebugRecorder();
+    debug.counts({ total: 14, kept: 0 });
+    expect(aiExtractionFromDebug("ai", debug)).toEqual({ rowsIn: 14, kept: 0 });
+    debug.counts({ kept: 3 });
+    expect(aiExtractionFromDebug("ai", debug)).toEqual({ rowsIn: 14, kept: 3 });
+  });
+
+  it("is absent for a deterministic import, even when its importer counted rows", () => {
+    const debug = createImportDebugRecorder();
+    debug.counts({ total: 14, kept: 0 });
+    expect(aiExtractionFromDebug("deterministic", debug)).toBeUndefined();
+  });
+
+  it("is absent when the model DID return events and the analyst's severity floor removed them", () => {
+    const debug = createImportDebugRecorder();
+    debug.counts({ total: 14, kept: 0 });
+    debug.omitted("below_severity_floor", 5);
+    expect(aiExtractionFromDebug("ai", debug)).toBeUndefined();
+  });
+
+  it("is absent when the import was cancelled between batches (kept 0 is not a result)", () => {
+    const debug = createImportDebugRecorder();
+    debug.counts({ total: 14, kept: 0 });
+    debug.observed("cancelled_between_batches");
+    expect(aiExtractionFromDebug("ai", debug)).toBeUndefined();
+  });
+
+  it("is absent when the AI extraction never counted (no recorder, or it never ran)", () => {
+    expect(aiExtractionFromDebug("ai", undefined)).toBeUndefined();
+    expect(aiExtractionFromDebug("ai", createImportDebugRecorder())).toBeUndefined();
   });
 });
