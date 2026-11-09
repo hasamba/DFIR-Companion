@@ -163,6 +163,8 @@ This prevents running the same hunt twice and helps you see what's been covered.
 
 Write in plain English. Get VQL, KQL, SPL, ES|QL, Sigma, YARA, or Suricata. One-click deploy for VQL.
 
+Only the languages allowed by the **Hunt platforms** setting (`DFIR_HUNT_PLATFORMS`) appear; blank means all seven.
+
 See [Dashboard Panels → Query Translator](dashboard.md#query-translator) for details.
 
 ---

@@ -299,7 +299,7 @@ The dashboard loads the first 10,000 events of a large case. The heading then sh
 
 The Lead and Executive views show only High and above in the timeline. A decision-cockpit link can switch to one of them. When that floor hides rows, the heading names it, for example "10 of 23 events, 13 hidden by filters (Lead view: High+)". Switch to the Analyst view to see every severity.
 
-Each row shows a compact title line (timestamp, severity badge, description, source tool(s), asset, `NEW` badge if added in the last import); a **[details ▶]** toggle expands the full description, MITRE, related findings, decoded payloads, evidence link, and the raw tool message in one shared panel below the row. Row actions:
+Each row shows a compact title line (timestamp, severity badge, description, source tool(s), asset, `NEW` badge if added in the last import); a **[details ▶]** toggle expands the full description, MITRE, related findings, decoded payloads, evidence link, and the raw tool message (shown only when it differs from the description) in one shared panel below the row. Row actions:
 
 - **💡 Explain** button — AI explains this event, gives ATT&CK context, and suggests pivot queries
 - **🚫 Mark False Positive** — excludes this event from analysis
@@ -313,7 +313,7 @@ Each row shows a compact title line (timestamp, severity badge, description, sou
 - **🔍 Screenshot text** — full-text search across OCR'd screenshots
 - **Exclude** — chip-list control next to the toolbar search bar; hides timeline events / IOCs / findings matching any of several exclude terms
 - **Corroboration lens** — show only events observed by 2+ or 3+ distinct tools (see below)
-- **Pagination** — 100 / 250 / 500 / All rows per page; the Prev/Next bar sits above the event rows
+- **Pagination** — 50 (default) / 100 / 250 / 500 / All rows per page; the Prev/Next bar sits above the event rows
 
 !!! tip
     Drag a time range on the **Timeline Swimlane** (below) to instantly scope the timeline to that window.
@@ -413,7 +413,7 @@ A visual chart with:
 
 In the tactic view, each lane is one ATT&CK tactic in kill-chain order, with Reconnaissance first and Uncategorized last.
 
-Useful for spotting lateral movement (events jumping between assets) and attack timing. Drag a time range to scope the timeline to that window. Exports as SVG.
+Useful for spotting lateral movement (events jumping between assets) and attack timing. Drag a time range to scope the timeline to that window. The **⤓ PNG** button downloads the swimlane as a PNG image, for reports.
 
 On a case with no forensic-timeline events (or a scope with none in it), the panel says "No forensic-timeline events to chart yet." in place of an empty chart.
 
@@ -774,6 +774,8 @@ Type a plain-English description of what you want to hunt for. Select the output
 | **Sigma** | Cross-SIEM |
 | **YARA** | File/memory |
 | **Suricata** | Network IDS |
+
+The languages offered follow the **Hunt platforms** setting (`DFIR_HUNT_PLATFORMS`). Leave it blank to offer all seven; set it to a comma-separated list to offer only those.
 
 ---
 
