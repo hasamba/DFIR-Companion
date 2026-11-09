@@ -137,6 +137,22 @@ describe("live sockets lose access with their session (#2449)", () => {
     expect((await connect(cookie)).outcome).toBe("refused");
   });
 
+  it("closes a socket whose session ended after its upgrade check but before it subscribed", async () => {
+    const { cookie, token } = sessionCookie(member);
+    const original = teamAuth.authorizeWebSocket.bind(teamAuth);
+    // The upgrade check passes, then the session ends and the access signal fires — all before the
+    // socket is subscribed, so that signal's re-check pass cannot see it yet.
+    vi.spyOn(teamAuth, "authorizeWebSocket").mockImplementationOnce((c, id) => {
+      const allowed = original(c, id);
+      authStore.deleteSessionByToken(token);
+      teamAuth.notifyAccessChanged();
+      return allowed;
+    });
+    const { client } = await connect(cookie);
+    expect(await closesSoon(client)).toBe(true);
+    expect(await receivesBroadcast(client)).toBe(false);
+  });
+
   it("closes a signed-out session's socket", async () => {
     const { cookie, token } = sessionCookie(member);
     const client = await openClient(cookie);

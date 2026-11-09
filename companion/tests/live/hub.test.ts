@@ -214,12 +214,16 @@ describe("LiveHub.revalidate (#2449)", () => {
     const throwing = closableSocket();
     const allowed = closableSocket();
     const guardless = closableSocket();
-    hub.subscribe("c1", refused, () => false);
+    // Access is revoked AFTER subscribe; revalidate() is what has to notice.
+    let revoked = false;
+    hub.subscribe("c1", refused, () => !revoked);
     hub.subscribe("c1", throwing, () => {
-      throw new Error("auth store gone");
+      if (revoked) throw new Error("auth store gone");
+      return true;
     });
     hub.subscribe("c1", allowed, () => true);
     hub.subscribe("c2", guardless);
+    revoked = true;
 
     expect(hub.revalidate()).toBe(2);
     expect(refused.terminated).toBe(1);
@@ -236,7 +240,9 @@ describe("LiveHub.revalidate (#2449)", () => {
 
   it("forgets a case whose last socket is revoked", () => {
     const hub = new LiveHub();
-    hub.subscribe("c1", closableSocket(), () => false);
+    let revoked = false;
+    hub.subscribe("c1", closableSocket(), () => !revoked);
+    revoked = true;
     expect(hub.revalidate()).toBe(1);
     expect(hub.hasSubscribers("c1")).toBe(false);
     expect(hub.connectionCount()).toBe(0);
@@ -245,16 +251,35 @@ describe("LiveHub.revalidate (#2449)", () => {
   it("survives a terminate that unsubscribes the socket re-entrantly, as ws's close handler does", () => {
     const hub = new LiveHub();
     const sockets = [closableSocket(), closableSocket(), closableSocket()];
+    let revoked = false;
     for (const socket of sockets) {
       socket.terminate = () => {
         socket.terminated++;
         hub.unsubscribe("c1", socket);
       };
-      hub.subscribe("c1", socket, () => false);
+      hub.subscribe("c1", socket, () => !revoked);
     }
+    revoked = true;
     expect(hub.revalidate()).toBe(3);
     expect(sockets.map((s) => s.terminated)).toEqual([1, 1, 1]);
     expect(hub.connectionCount()).toBe(0);
+  });
+
+  it("refuses and closes a socket whose guard already fails at subscribe (revoked mid-upgrade)", () => {
+    const hub = new LiveHub();
+    const refused = closableSocket();
+    const throwing = closableSocket();
+    expect(hub.subscribe("c1", refused, () => false)).toBe(false);
+    expect(
+      hub.subscribe("c1", throwing, () => {
+        throw new Error("auth store gone");
+      }),
+    ).toBe(false);
+    expect(refused.terminated).toBe(1);
+    expect(throwing.terminated).toBe(1);
+    expect(hub.hasSubscribers("c1")).toBe(false);
+    expect(hub.subscribe("c1", closableSocket(), () => true)).toBe(true);
+    expect(hub.subscribe("c1", closableSocket())).toBe(true);
   });
 
   it("returns 0 and closes nothing when no socket carries a guard (single-user mode)", () => {

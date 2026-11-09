@@ -225,11 +225,13 @@ export function attachLiveSocket(
           // Single-user mode passes no guard, so a re-check never closes its sockets.
           const teamAuth = deps.teamAuth;
           const cookie = req.headers.cookie;
-          hub.subscribe(
+          const subscribed = hub.subscribe(
             caseId,
             sock,
             teamAuth ? () => teamAuth.authorizeWebSocket(cookie, caseId) : undefined,
           );
+          // Revoked between the upgrade check and now: the hub already closed it (#2449).
+          if (!subscribed) return;
           sendJobsSnapshot(sock, caseId, deps.jobsFor);
           ws.on("close", () => {
             hub.unsubscribe(caseId, sock);
