@@ -5562,8 +5562,8 @@
       // under 2+ correctly shows nothing (you can't be corroborated by 2 distinct tools within 1).
       if (DfirTimelineView.corrobTimeline() > 1) visible = visible.filter(e => realSourceCount(e.sources, DfirFacets.sources.matcher()) >= DfirTimelineView.corrobTimeline());
       const view = DfirState.activeView();
-      const viewSevFiltering = !!(view && view.filters && view.filters.minSeverity);
-      const preViewFloor = visible.length; if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity, e)); const viewHidden = preViewFloor - visible.length;   // dashboard-view severity floor (#142); a promoted row rides through it, as it does the server's cut (#1554); viewHidden lets the count name the floor (#2468)
+      const viewSevFiltering = !!(view && view.filters && view.filters.minSeverity); const preViewFloor = visible.length;
+      if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity, e)); const viewHidden = preViewFloor - visible.length;   // dashboard-view severity floor (#142); a promoted row rides through it, as it does the server's cut (#1554); viewHidden lets the count name the floor (#2468)
       visible = sortTimelineEvents(visible);
       renderTimelineHeatmap(visible);   // buckets the FULL filtered set, not the paginated slice below (#219)
 
