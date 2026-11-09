@@ -14,7 +14,7 @@ export interface SigmaLatestCheck {
    * SigmaHQ's main branch (#2518): newer unreleased changes to the graded folders, so the check never
    * says "up to date" while they exist. Absent when not asked; `error` when GitHub could not answer.
    */
-  main?: SigmaMainSummary | { error: string };
+  main?: SigmaMainSummary | { error: string } | { stale: true };
 }
 
 /**
@@ -22,13 +22,24 @@ export interface SigmaLatestCheck {
  * said "New Sigma release available" after that release was installed (or the reverse after a roll
  * back). An errored check is left as it is.
  */
-export function sigmaCheckAsOfNow(check: SigmaLatestCheck, installed: string): SigmaLatestCheck {
-  if (check.error || !check.latest) return { ...check, installed };
-  return {
+export function sigmaCheckAsOfNow(
+  check: SigmaLatestCheck,
+  installed: string,
+  installedCommit?: string,
+): SigmaLatestCheck {
+  // #2518: a main-branch count made against other installed rules says nothing now — mark it stale.
+  const stale =
+    !!check.main &&
+    "installedCommit" in check.main &&
+    !!installedCommit &&
+    check.main.installedCommit !== installedCommit;
+  const base: SigmaLatestCheck = {
     ...check,
     installed,
-    updateAvailable: releaseIsUpdate(check.latest, check.publishedAt, installed),
+    ...(stale ? { main: { stale: true as const } } : {}),
   };
+  if (check.error || !check.latest) return base;
+  return { ...base, updateAvailable: releaseIsUpdate(check.latest, check.publishedAt, installed) };
 }
 
 /**

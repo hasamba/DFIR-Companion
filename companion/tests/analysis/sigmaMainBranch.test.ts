@@ -27,7 +27,9 @@ const FILES: Record<string, string> = {
   "rules-emerging-threats/2026/x.yml": RULE.replace("c001", "c002").replace("Main Only Rule", "ET Rule"),
 };
 
-function fakeSigmaHQ(opts: { archive?: Record<string, string>; others?: Record<string, string> } = {}) {
+function fakeSigmaHQ(
+  opts: { archive?: Record<string, string>; others?: Record<string, string>; ahead?: string[] } = {},
+) {
   const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status });
   const commit = (sha: string, date: string) => ({
     sha,
@@ -45,6 +47,10 @@ function fakeSigmaHQ(opts: { archive?: Record<string, string>; others?: Record<s
   const fetchFn = (async (input: string | URL) => {
     const url = String(input);
     if (url.includes(`/commits/${INSTALLED}`)) return json(commit(INSTALLED, "2026-07-01"));
+    if (url.includes(`/compare/${INSTALLED}...${MAIN}`)) {
+      const ahead = opts.ahead ?? [MAIN, T("d"), T("e")];
+      return json({ total_commits: ahead.length, commits: ahead.map((sha) => ({ sha })) });
+    }
     if (url.includes("/commits?sha=master&per_page=1")) return json([commit(MAIN, "2026-11-07")]);
     if (url.includes("path=rules%2Fcloud%2Faws"))
       return json([commit(MAIN, "2026-11-07"), commit(T("d"), "2026-10-21")]);
@@ -89,6 +95,28 @@ describe("the main-branch summary", () => {
       date: "2026-11-07",
       gradedChanges: 3,
       label: `main-2026-11-07-ccccccc-unreleased`,
+      installedCommit: INSTALLED,
+    });
+  });
+
+  it("does not count a same-day commit the installed rules already contain", async () => {
+    // T("e") is listed by the date query but is an ancestor of the installed commit.
+    const { fetchFn } = fakeSigmaHQ({ ahead: [MAIN, T("d")] });
+    expect((await sigmaMainSummary(fetchFn, INSTALLED)).gradedChanges).toBe(2);
+  });
+
+  it("marks the count stale once other rules are installed or rolled back to", () => {
+    const check = {
+      checkedAt: "x",
+      latest: "r2026-07-01",
+      publishedAt: "2026-07-09T00:00:00Z",
+      installed: "r2026-07-01",
+      updateAvailable: false,
+      main: { commit: MAIN, date: "2026-11-07", gradedChanges: 0, label: "l", installedCommit: MAIN },
+    };
+    expect(sigmaCheckAsOfNow(check, "r2026-07-01", INSTALLED).main).toEqual({ stale: true });
+    expect(sigmaCheckAsOfNow(check, "main-2026-11-07-ccccccc-unreleased", MAIN).main).toMatchObject({
+      gradedChanges: 0,
     });
   });
 });

@@ -49,6 +49,8 @@ export interface SigmaMainSummary {
   gradedChanges: number;
   /** The release name an install of this commit gets. */
   label: string;
+  /** The installed commit the count was made against: a different one makes the count stale. */
+  installedCommit: string;
 }
 
 async function getJson(fetchFn: typeof fetch, url: string, what: string): Promise<unknown> {
@@ -104,7 +106,38 @@ export async function sigmaMainSummary(
     }
   }
   if (installed) shas.delete(installed.sha);
-  return { commit: latest.sha, date: latest.date, gradedChanges: shas.size, label: sigmaMainLabel(latest) };
+  // A same-day commit already in the installed rules is not "newer": keep only commits the checked tip
+  // has and the installed commit does not (Codex review). GitHub lists at most 250 of them; past that
+  // the date filter above is the best answer available.
+  const ahead = installed ? await commitsAhead(fetchFn, installed.sha, latest.sha) : undefined;
+  const newer = ahead ? [...shas].filter((s) => ahead.has(s)) : [...shas];
+  return {
+    commit: latest.sha,
+    date: latest.date,
+    gradedChanges: newer.length,
+    label: sigmaMainLabel(latest),
+    installedCommit,
+  };
+}
+
+/** Commits reachable from `head` but not from `base`, or undefined when GitHub listed only some. */
+async function commitsAhead(
+  fetchFn: typeof fetch,
+  base: string,
+  head: string,
+): Promise<Set<string> | undefined> {
+  if (base === head) return new Set();
+  const json = (await getJson(fetchFn, `${API}/compare/${base}...${head}`, "comparing SigmaHQ commits")) as {
+    total_commits?: unknown;
+    commits?: unknown;
+  };
+  const list = Array.isArray(json.commits) ? json.commits : [];
+  if (typeof json.total_commits !== "number" || json.total_commits > list.length) return undefined;
+  return new Set(
+    list.flatMap((c) =>
+      typeof (c as { sha?: unknown }).sha === "string" ? [(c as { sha: string }).sha] : [],
+    ),
+  );
 }
 
 type TreeEntry = { path?: unknown; type?: unknown; sha?: unknown; mode?: unknown };

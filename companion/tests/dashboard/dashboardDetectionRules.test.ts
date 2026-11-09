@@ -93,6 +93,15 @@ describe("the Sigma line with unreleased SigmaHQ changes (#2518)", () => {
         lastCheck: { latest: "r2026-07-01", updateAvailable: false, main: { gradedChanges: 0 } },
       })?.text,
     ).toBe("SigmaHQ r2026-07-01 — current");
+    expect(
+      api.drSigmaLine({
+        ...SIGMA,
+        lastCheck: { latest: "r2026-07-01", updateAvailable: false, main: { stale: true } },
+      }),
+    ).toMatchObject({
+      text: "SigmaHQ r2026-07-01 — the rules changed since the last check",
+      button: "Check again",
+    });
   });
 });
 

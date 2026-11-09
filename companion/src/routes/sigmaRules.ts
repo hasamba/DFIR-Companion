@@ -110,7 +110,9 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
         Suzaku: inventoryCounts(set.inventory.filter((e) => e.origin === "Suzaku")),
       },
       problems: set.problems,
-      lastCheck: store.lastCheck ? sigmaCheckAsOfNow(store.lastCheck, store.active().release) : null,
+      lastCheck: store.lastCheck
+        ? sigmaCheckAsOfNow(store.lastCheck, store.active().release, store.active().commit)
+        : null,
       demoMode: !!options.demoMode,
     });
   });

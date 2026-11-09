@@ -337,6 +337,7 @@ function sigmaRenderMeasure(r) {
 function sigmaMainSentence(main) {
   if (!main) return "";
   if (main.error) return ` Could not check SigmaHQ's main branch: ${main.error}`;
+  if (main.stale) return " The installed rules changed since SigmaHQ's main branch was checked — check again.";
   if (!main.gradedChanges) return " No newer changes on SigmaHQ's main branch touch the rules this companion grades.";
   return ` SigmaHQ's main branch has ${main.gradedChanges} newer change(s) to the rules this companion grades (newest ${main.date}). They are unreleased; "Install SigmaHQ main-branch rules…" reviews them.`;
 }
