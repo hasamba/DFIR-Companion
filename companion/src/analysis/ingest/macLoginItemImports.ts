@@ -5,7 +5,7 @@ import { resolveExtractedFrom } from "../siemImport.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import { recordParseResult } from "../parseDebugTally.js";
-import { noteEmptyImport, mergeAndSaveDelta } from "./importState.js";
+import { noteEmptyImport, abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -27,6 +27,7 @@ export async function importMacLoginItem(
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder;
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseMacLoginItemBtm(bytes, opts.macLoginItem);
@@ -71,6 +72,7 @@ export async function importMacLoginItem(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,

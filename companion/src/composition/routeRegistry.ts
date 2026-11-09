@@ -121,6 +121,10 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   // FIRST, ahead of every /cases/:id route: a write to a case that was never created is a 404,
   // never a new directory on disk (#1570). A gate only covers what is registered after it.
   mountCaseWriteExistsGate(app, store);
+  // SECOND: a closed or archived case refuses every case-changing request that is not on the
+  // allowlist (#2437, deny by default). Ahead of every /cases/:id route, cloud, push, tool and MCP
+  // included, because a gate only covers what is registered after it. See composition/caseWriteGuard.ts.
+  mountCaseWriteGuard(app, store);
   registerSystemRoutes(app, ctx);
   registerSupportBundleRoutes(app, ctx);
   // The basemap under the Geographic Map panel, proxied so the dashboard keeps `img-src 'self'`
@@ -146,11 +150,6 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   // tests/architecture/routeInventory.test.ts records that interleaving. See composition/aiRateLimit.ts.
   mountAiRateLimit(app);
 
-  // Freeze the MANUAL evidence routes on a closed or archived case, the way every automated
-  // ingest path already freezes itself. Same placement reasoning as the gate above — it only
-  // covers what follows it, and both routes it guards are registered below. See
-  // composition/caseWriteGuard.ts.
-  mountCaseWriteGuard(app, store);
   // Admit the heavy whole-case GETs (/state, swimlane, gaps, exports, ...) a few at a time, and 503
   // a burst past the queue (#1915). Above every route family it covers. See composition/heavyReadGate.ts.
   mountHeavyReadGate(app);

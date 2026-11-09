@@ -27,6 +27,7 @@ import {
   hostIdentityDelta,
   knownHostIdentity,
   noteEmptyImport,
+  abortIfCancelled,
   mergeAndSaveDelta,
 } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
@@ -52,6 +53,7 @@ export async function importHayabusa(
     partlyReadArtifact?: string; // the pull read had no source list: stamp every event (#1651)
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const known = await knownHostIdentity(ctx, caseId); // the case's rename ledger seeds the parse (#1495)
@@ -88,6 +90,7 @@ export async function importHayabusa(
   const delta = deltaSchema.parse(raw);
 
   return ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const state = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,

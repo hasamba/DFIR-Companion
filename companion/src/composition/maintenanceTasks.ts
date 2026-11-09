@@ -17,6 +17,7 @@ import { startupRulePackCheck } from "./rulePack.js";
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
 import type { CaseStore } from "../storage/caseStore.js";
+import { reconcileArchiveLabels } from "../storage/caseArchiveReconcile.js";
 import { BackupManager, resolveBackupConfig } from "../storage/backupManager.js";
 import { EvidenceIntegrityMonitor, resolveIntegrityConfig } from "../analysis/custodyIntegrity.js";
 import type { CustodyStore } from "../analysis/custody.js";
@@ -117,6 +118,16 @@ export function startMaintenanceTasks({
     );
   };
   sweepStaging(EXPORT_STAGING_DIRNAME);
+  // #2437: a crash between an archive/restore folder move and its relabel leaves the folder and the
+  // status disagreeing. Reconciled to "archived" once at startup, so Restore works on it again.
+  void reconcileArchiveLabels(store, (id, e) =>
+    warnLine(`[archive] could not reconcile case=${id} folder and status: ${e.message}`),
+  ).then(
+    (healed) => {
+      if (healed > 0) logLine(`[archive] reconciled ${healed} case(s) whose folder and status disagreed`);
+    },
+    (e: unknown) => warnLine(`[archive] folder/status reconcile failed: ${(e as Error).message}`),
+  );
   sweepStaging(SHARED_DELIVERY_DIRNAME);
   const deliverySweepTimer = setInterval(
     () => sweepStaging(SHARED_DELIVERY_DIRNAME),

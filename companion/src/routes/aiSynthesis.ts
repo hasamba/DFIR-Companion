@@ -88,7 +88,7 @@ import { yieldToEventLoop } from "../analysis/yieldToEventLoop.js";
  *     the moved handler bodies keep their original log calls verbatim.
  */
 export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, getControl, setControl, backfill, syncPlaybook } = ctx;
+  const { options, getControl, setControl, backfill, syncPlaybook } = ctx;
 
   // Module-private wrappers mirroring createApp's logLine/errLine (serverLogger.info/error), so the
   // moved handler bodies keep their original `logLine(...)` / `errLine(...)` calls verbatim.
@@ -156,13 +156,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
       return res.status(501).json({ error: "AI provider not configured for synthesis" });
     const caseId = req.params.id;
-    const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
-    if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
-      const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      return res
-        .status(423)
-        .json({ error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running synthesis` });
-    }
+    // #2437: a closed or archived case is refused by the central gate (composition/caseWriteGuard.ts).
     // Per-run Chain-of-Thought toggle (#121): "deepReasoning" enables extended thinking for THIS run
     // only (no .env edit + restart) — an optional thinkingTokens overrides the budget. Off otherwise.
     const deepReasoning = (req.body as { deepReasoning?: unknown })?.deepReasoning === true;

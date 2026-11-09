@@ -96,7 +96,14 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     fetch(`/cases/${caseId}/notebook/${id}`, { method: "DELETE" })
-      .then(() => loadNotebook(caseId))
+      .then(async (r) => {
+        // A refused delete (a closed case answers 423, #2437) says why instead of failing silently.
+        if (!r.ok) {
+          const msg = document.getElementById("nbMsg");
+          if (msg) msg.textContent = "failed: " + ((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
+        }
+        loadNotebook(caseId);
+      })
       .catch(() => {});
   }
 
@@ -125,8 +132,9 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ text, type }),
         })
-          .then((r) => {
-            if (!r.ok) throw new Error("HTTP " + r.status);
+          .then(async (r) => {
+            // The server's own sentence: a closed case answers 423 "reopen it before changing it" (#2437).
+            if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
             return r.json();
           })
           .then(() => {
@@ -142,8 +150,9 @@
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ text, type, author: investigatorName() }),
         })
-          .then((r) => {
-            if (!r.ok) throw new Error("HTTP " + r.status);
+          .then(async (r) => {
+            // The server's own sentence: a closed case answers 423 "reopen it before changing it" (#2437).
+            if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
             return r.json();
           })
           .then(() => {

@@ -80,15 +80,33 @@ Toolbar **☰ Case lifecycle** menu lets you:
 - **🗑️ Delete…** a case — permanently removes the case's directory (see below)
 
 **What a closed or archived case still accepts.** A closed or archived case is the record you hand
-over, so it stays as it was when you closed it:
+over, so it stays as it was when you closed it. Anything that would change it is refused with
+"Case … is closed — reopen it before …" (or "archived — restore it before …"). New actions are
+refused too, unless they are on the short list below.
 
 - Opening it changes nothing. The playbook and the coach card show the saved tasks; new tasks are
   not added until you reopen the case.
 - Closing or archiving stops a synthesis, a deep pass or an enrichment that is still running, so its
   results do not land in the closed case. A running import still finishes and is recorded.
-- False-positive marks, the scope window, source trust and tags (stars too) are refused, because
-  they change what the report says. Reopen (or restore) the case to change them.
-- Notebook entries, comments and pinned findings stay editable, so a reviewer can still add notes.
+- Refused: new evidence and imports, re-running the content tagger or a Sigma re-grade, applying the
+  IOC whitelist or NSRL, applying a second opinion, promoting from the super-timeline, merging hosts,
+  restoring a state backup, host-scope decisions, the correlation profile, false-positive marks, the
+  scope window, source trust, tags and stars, notebook entries, comments and pinned findings. Reopen
+  (or restore) the case to change any of them.
+- Still accepted:
+    - Reopen, close, archive, restore, delete and the encrypted export.
+    - Case password, unlock and "forget this browser's unlock". Removing a push key. Checking,
+      detaching or removing the case's cloud credentials.
+    - Reports and pushes to IRIS, Timesketch, MISP, Notion, ClickUp, Jira and ServiceNow.
+    - Questions and summaries that save nothing: Ask, the view and executive summaries, the
+      remediation plan, the hypothesis review, hunt and memory suggestions, super-timeline hunt
+      searches, rule previews and dry runs, and custody verification.
+    - Stopping work that is already running: cancelling a hunt search, stopping a live monitor,
+      discarding an MCP preview, and checking on a Velociraptor hunt that was launched before the
+      close.
+- If the companion stops in the middle of an archive or a restore, the case folder and its status
+  can disagree. At the next start, the companion puts such a case back in the archived state, so
+  **Restore** works on it again.
 
 The toolbar also shows a disk-space warning if the cases folder is running low.
 

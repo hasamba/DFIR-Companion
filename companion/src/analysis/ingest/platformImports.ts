@@ -21,7 +21,7 @@ import { detectTool } from "../toolDetect.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "../wazuhImport.js";
 import { YARA_SOURCE, parseYaraOutput, type YaraImportOptions } from "../yaraImport.js";
 import { describeFloor } from "./floorNote.js";
-import { commitDelta, noteEmptyImport, noteParsed } from "./importState.js";
+import { abortIfCancelled, commitDelta, noteEmptyImport, noteParsed } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { ForensicEvent } from "../stateTypes.js";
@@ -51,6 +51,7 @@ export async function importSiem(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // #1736
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseSiemExport(jsonText, { ...opts.siem, debug: opts.debug });
@@ -160,6 +161,7 @@ export async function importSandbox(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // #1736
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   // No severity floor here: the floor gates what reaches the FORENSIC timeline, and nothing from
@@ -196,6 +198,7 @@ export async function importSandbox(
   // Rows first, then the registry: a crash between the two leaves searchable rows with no tag on
   // the sighting, never a tag pointing at rows that do not exist. (The two-store write is the
   // property of every import path today; a recoverable import run is a separate change.)
+  abortIfCancelled(opts.signal); // #2425: before the lab rows, which no rollback would remove
   const labRowsWritten = ctx.opts.superTimelineStore
     ? await ctx.opts.superTimelineStore.append(caseId, labRows)
     : 0;
@@ -218,7 +221,10 @@ export async function importSandbox(
   void labRowsWritten;
   const delta = deltaSchema.parse(raw);
 
-  return commitDelta(ctx, caseId, delta, opts);
+  // #2425: the append is the commit point. Rows already in the super-timeline cannot be rolled
+  // back, so a Cancel that lands from here on is ignored: the registry merge, import record and
+  // undo checkpoint still happen, instead of leaving untracked lab rows behind a "cancelled" note.
+  return commitDelta(ctx, caseId, delta, { ...opts, signal: undefined });
 }
 
 // Import memory-forensics tool output (Volatility 3 or Rekall). Deterministic (no AI call): each
@@ -239,6 +245,7 @@ export async function importMemory(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // #1736
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseMemoryOrIntact(text, { ...opts.memory, filename: opts.label, debug: opts.debug });
@@ -297,6 +304,7 @@ export async function importEmail(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // #1736
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseEmail(text, { ...opts.email, debug: opts.debug });
@@ -349,6 +357,7 @@ export async function importTheHive(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // #1736
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseTheHive(text, { ...opts.thehive, debug: opts.debug });
@@ -441,6 +450,7 @@ export async function importWazuh(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // #1736
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseWazuhAlerts(text, { ...opts.wazuh, debug: opts.debug });

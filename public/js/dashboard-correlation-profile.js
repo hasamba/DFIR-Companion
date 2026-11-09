@@ -54,8 +54,14 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ profileName, windowSeconds }),
     })
-      .then((r) => {
-        if (!r.ok) throw new Error("HTTP " + r.status);
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          // A closed case answers 423 with its own sentence (#2437); say that, not "restart".
+          const err = new Error(body.error || "HTTP " + r.status);
+          err.serverMessage = body.error;
+          throw err;
+        }
         return r.json();
       })
       .then((p) => {
@@ -63,9 +69,11 @@
         document.getElementById("status").textContent =
           "Correlation profile saved — takes effect on next synthesis.";
       })
-      .catch(() => {
+      .catch((e) => {
         document.getElementById("status").textContent =
-          "Correlation profile save failed — restart the companion server.";
+          e && e.serverMessage
+            ? "Correlation profile not saved: " + e.serverMessage
+            : "Correlation profile save failed — restart the companion server.";
       });
   }
 

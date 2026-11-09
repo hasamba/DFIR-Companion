@@ -55,6 +55,7 @@ export async function importPlaso(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
     debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parsePlasoCsv(text, { ...opts.plaso, debug: opts.debug });

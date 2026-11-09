@@ -11,7 +11,7 @@ import { describeJsonRepairs, jsonRepairNote } from "../tolerantJson.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import type { Severity } from "../stateTypes.js";
 import { describeFloor } from "./floorNote.js";
-import { noteEmptyImport, mergeAndSaveDelta } from "./importState.js";
+import { noteEmptyImport, abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import { recordParsedImport } from "./parsedDebug.js";
 import { sigmaImportNote } from "../sigmaImportGrade.js";
@@ -39,6 +39,7 @@ export async function importAws(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<ImportWithCoverage> {
   // One Sigma snapshot for this whole import, taken before parsing (#2204).
@@ -97,6 +98,7 @@ export async function importAws(
   const delta = deltaSchema.parse(raw);
 
   const state = await ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const s = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
@@ -124,6 +126,7 @@ export async function importCloudActivity(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     debug?: ImportDebugRecorder;
     onProgress?: (done: number, total: number) => void;
+    signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<ImportWithCoverage> {
   // One Sigma snapshot for this whole import (#2204); it grades the GCP records only (#2346).
@@ -185,6 +188,7 @@ export async function importCloudActivity(
   const delta = deltaSchema.parse(raw);
 
   const state = await ctx.withStateLock(caseId, async () => {
+    abortIfCancelled(opts.signal);
     const s = await mergeAndSaveDelta(ctx, caseId, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,

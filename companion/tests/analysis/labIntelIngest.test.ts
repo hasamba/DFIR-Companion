@@ -374,3 +374,39 @@ describe("the registry survives the reducers", () => {
     expect(mergeConcurrentAdditions(base, next, latest).labIntel?.map((r) => r.runId)).toEqual(["1", "2"]);
   });
 });
+
+describe("sandbox import cancel (#2425)", () => {
+  it("finishes the registry write once the lab rows are in, even if Cancel lands during the append", async () => {
+    const controller = new AbortController();
+    const append = superTimelineStore.append.bind(superTimelineStore);
+    superTimelineStore.append = async (...args: Parameters<typeof append>) => {
+      const written = await append(...args);
+      controller.abort(); // the analyst presses Cancel after the rows are already stored
+      return written;
+    };
+    await pipeline.importSandbox("c1", capeReport(), {
+      label: "cape.json",
+      idPrefix: "sb1",
+      importedAt: "2026-09-10T11:00:00Z",
+      signal: controller.signal,
+    });
+    const rows = await superTimelineStore.collect("c1", (e) => e);
+    expect(rows.length).toBeGreaterThan(0);
+    const state = await stateStore.load("c1");
+    expect(state.labIntel?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("writes nothing when Cancel lands before the lab rows", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      pipeline.importSandbox("c1", capeReport(), {
+        label: "cape.json",
+        idPrefix: "sb1",
+        importedAt: "2026-09-10T11:00:00Z",
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/cancelled/);
+    expect(await superTimelineStore.collect("c1", (e) => e)).toEqual([]);
+  });
+});

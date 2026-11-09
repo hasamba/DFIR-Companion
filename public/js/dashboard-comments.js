@@ -101,8 +101,9 @@
         text,
       }),
     })
-      .then((r) => {
-        if (!r.ok) throw new Error("HTTP " + r.status);
+      .then(async (r) => {
+        // The server's own sentence: a closed case answers 423 "reopen it before changing it" (#2437).
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
         return r.json();
       })
       .then(() => {
