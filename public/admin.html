@@ -33,6 +33,8 @@
     code,pre { background:#0b1016; border-radius:5px; padding:3px 6px; }
     pre { white-space:pre-wrap; word-break:break-all; padding:12px; }
     #message { min-height:20px; color:#ffaaa7; }
+    .revoked-row td { opacity:.6; }
+    .revoked { font-style:italic; }
     .good { color:#83e0aa !important; }
   </style>
 </head>
@@ -160,8 +162,13 @@
           var scope = t.scope === 'all-cases'
             ? 'All cases ' + (t.ownerDisplayName || t.ownerIdentityId || 'the owner') + ' can edit'
             : 'Case ' + t.caseId;
-          return '<tr><td>' + esc(t.name) + '</td><td>' + esc(scope) + '</td><td>' + esc(t.permissions.join(', ')) + '</td><td>' +
-            esc(t.expiresAt || 'Never') + '</td><td><button class="danger" data-token="' + esc(t.id) + '">Revoke</button></td></tr>';
+          // A revoked token stays listed for the record, but it says so and offers no second Revoke:
+          // a live button on a dead token looked like a Revoke that did nothing.
+          var action = t.revokedAt
+            ? '<span class="revoked">Revoked ' + esc(t.revokedAt) + '</span>'
+            : '<button class="danger" data-token="' + esc(t.id) + '">Revoke</button>';
+          return '<tr' + (t.revokedAt ? ' class="revoked-row"' : '') + '><td>' + esc(t.name) + '</td><td>' + esc(scope) + '</td><td>' +
+            esc(t.permissions.join(', ')) + '</td><td>' + esc(t.expiresAt || 'Never') + '</td><td>' + action + '</td></tr>';
         }).join('');
         var sessions = await api('/auth/sessions');
         document.getElementById('sessions').innerHTML = sessions.map(function (s) {
@@ -228,7 +235,8 @@
         if (button.dataset.token) action = api('/auth/service-tokens/' + encodeURIComponent(button.dataset.token), {method:'DELETE'});
         if (button.dataset.roleCase) action = api('/auth/cases/' + encodeURIComponent(button.dataset.roleCase) +
           '/roles/' + encodeURIComponent(button.dataset.roleUser), {method:'DELETE'});
-        if (action) action.then(load).then(function () { say('Saved', true); }).catch(function (e) { say(e.message); });
+        var done = button.dataset.token ? 'Service token revoked' : 'Saved';
+        if (action) action.then(load).then(function () { say(done, true); }).catch(function (e) { say(e.message); });
       });
       document.getElementById('revokeOthers').addEventListener('click', function () {
         api('/auth/sessions/others', {method:'DELETE'}).then(load).then(function () { say('Other sessions signed out', true); }).catch(function (e) { say(e.message); });
