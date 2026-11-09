@@ -377,3 +377,58 @@ describe("Settings reload ⇄ RELOADABLE_ENV_PREFIXES", () => {
     expect(await browserPrefixes()).toContain(key);
   });
 });
+
+/**
+ * ON/OFF SETTINGS ARE DROP-DOWNS, NOT FREE TEXT (#2465).
+ *
+ * A free-text on/off field saved anything with HTTP 200, and each parser reads junk its own way —
+ * for the TLS and internal-URL switches a typo could move a security posture. Every editable switch
+ * is a select with a blank "default" option, which reuses the #1785 blank-option → unset contract.
+ * Read-only fields stay inputs: a select has no readonly, and nothing can be typed into them anyway.
+ */
+describe("Settings on/off switches (#2465)", () => {
+  const FLAG_ONLY = ["DFIR_SYNTH_INCLUDE_INFO", "DFIR_JEV_ENABLED", "DFIR_SYNTH_GROUP"];
+
+  it("has no editable on/off/true/false free-text field", async () => {
+    const html = await dashboardHtml();
+    const offenders = [...html.matchAll(/<input\b[^>]*\bid="env-([A-Za-z0-9_]+)"[^>]*>/g)]
+      .filter((m) => !/\breadonly\b|\bdisabled\b/i.test(m[0]))
+      .filter((m) => /\bplaceholder="(on|off|true|false|yes|no)"/i.test(m[0]) || FLAG_ONLY.includes(m[1]))
+      .map((m) => m[1]);
+    expect(offenders).toEqual([]);
+  });
+
+  it("gives every switch select a blank default option first", async () => {
+    const html = await dashboardHtml();
+    const keys = [
+      "DFIR_AI_AUTO_SYNTHESIZE",
+      "TAGGER_AUTO",
+      "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
+      "DFIR_KEV_ALLOW_INTERNAL_URL",
+      "DFIR_CLOUD_INSECURE",
+      "DFIR_OCR_DEBUG",
+      "DFIR_UPDATE_CHECK",
+      ...FLAG_ONLY,
+    ];
+    for (const key of keys) {
+      const m = html.match(new RegExp(`<select id="env-${key}">\\s*<option value="">`));
+      expect(m, `${key} should be a select with a blank first option`).not.toBeNull();
+    }
+  });
+
+  it("offers only values each parser reads the intended way", async () => {
+    const html = await dashboardHtml();
+    const options = (key: string) => {
+      const m = html.match(new RegExp(`<select id="env-${key}">([\\s\\S]*?)</select>`));
+      return [...(m?.[1] ?? "").matchAll(/<option value="([^"]*)"/g)].map((o) => o[1]);
+    };
+    // Truthy on ANY non-empty string: an "off" option would switch it ON.
+    expect(options("DFIR_OCR_DEBUG")).toEqual(["", "1"]);
+    expect(options("DFIR_AI_DEBUG_USAGE")).toEqual(["", "1"]);
+    // Strict === "true".
+    expect(options("DFIR_TLS_ALLOW_INSECURE_EXTERNAL")).toEqual(["", "true", "false"]);
+    // Only "off" switches these off.
+    expect(options("DFIR_AI_AUTO_SYNTHESIZE")).toEqual(["", "on", "off"]);
+    expect(options("DFIR_DROP_ENABLED")).toEqual(["", "on", "off"]);
+  });
+});

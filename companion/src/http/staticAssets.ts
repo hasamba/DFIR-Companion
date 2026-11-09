@@ -242,6 +242,8 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-view-presets.js": "application/javascript; charset=utf-8",
   // The .env settings form — read, test Presidio, and save only the groups that changed.
   "/js/dashboard-env-settings.js": "application/javascript; charset=utf-8",
+  // Settings → the Clear control beside a set secret (#2465).
+  "/js/dashboard-env-secret-clear.js": "application/javascript; charset=utf-8",
   // Settings → Built-in HTTPS: certificate fingerprints and the local-CA download link (#2285).
   "/js/dashboard-tls-info.js": "application/javascript; charset=utf-8",
   "/js/dashboard-decision-model-picker.js": "application/javascript; charset=utf-8",

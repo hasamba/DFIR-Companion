@@ -28,6 +28,15 @@ behind a self-signed certificate is dead without one of them, and the error it f
 setting at all, so burying the flag under All left the connect flow failing with no visible knob to
 reach for. Prefer a `_CA` bundle where you have one: it keeps verification on.
 
+### Clearing a setting
+
+Emptying a text field and saving **removes** that setting from `.env`, so its default applies again.
+It is never saved as an empty value. Secrets (API keys, tokens, passwords, the cloud proxy URL) load
+blank and show *(already set)*, so emptying them changes nothing: press **Clear** beside a set secret
+to remove it on save (press it again, or type a new value, to cancel). On/off settings are
+drop-downs with a blank *default* option; choosing it removes the setting. Read-only switches are
+still shown as text, because the dashboard must not change them.
+
 Jira and ServiceNow have the same flag and stay out of Essential — their whole block is read-only in
 the dashboard by design, a security boundary edited in `.env` and applied by a restart.
 

@@ -363,6 +363,7 @@
   <script src="/js/dashboard-view-presets.js"></script>
   <!-- The .env settings form. initEnvSettings() wires the Presidio test controls. -->
   <script src="/js/dashboard-env-settings.js"></script>
+  <script src="/js/dashboard-env-secret-clear.js"></script>
   <!-- Settings → Built-in HTTPS info line and certificate link (#2285). -->
   <script src="/js/dashboard-tls-info.js"></script>
   <!-- Settings → Decision model: the OpenRouter decision-model picker (#2224). -->
@@ -1478,24 +1479,24 @@
           <div class="sfield"><label for="env-DFIR_PHASE_GAP_S">Phase gap (s)<span class="sfield-hint">DFIR_PHASE_GAP_S</span></label><input id="env-DFIR_PHASE_GAP_S" placeholder="300" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_AI_AUTO_SYNTHESIZE">Auto-synthesize<span class="sfield-hint">DFIR_AI_AUTO_SYNTHESIZE (on/off)</span></label><input id="env-DFIR_AI_AUTO_SYNTHESIZE" placeholder="on" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_AUTO_SYNTHESIZE">Auto-synthesize<span class="sfield-hint">DFIR_AI_AUTO_SYNTHESIZE (on/off)</span></label><select id="env-DFIR_AI_AUTO_SYNTHESIZE"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
           <div class="sfield"><label for="env-DFIR_AI_AUTO_SYNTHESIZE_MS">Auto-synthesize debounce (ms)<span class="sfield-hint">DFIR_AI_AUTO_SYNTHESIZE_MS</span></label><input id="env-DFIR_AI_AUTO_SYNTHESIZE_MS" placeholder="8000" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-TAGGER_AUTO">Content tagger auto-run<span class="sfield-hint">TAGGER_AUTO (true/false)</span></label><input id="env-TAGGER_AUTO" placeholder="true" /></div>
+          <div class="sfield"><label for="env-TAGGER_AUTO">Content tagger auto-run<span class="sfield-hint">TAGGER_AUTO (true/false)</span></label><select id="env-TAGGER_AUTO"><option value="">— default (true) —</option><option value="true">true</option><option value="false">false</option></select></div>
           <div class="sfield"><label for="env-TAGGER_SCOPE">Content tagger scope<span class="sfield-hint">TAGGER_SCOPE (forensic/super/both)</span></label><input id="env-TAGGER_SCOPE" placeholder="both" /></div>
-          <div class="sfield"><label for="env-DFIR_RULE_PACK_UPDATE_CHECK">Check for a new detection-rule pack at startup<span class="sfield-hint">DFIR_RULE_PACK_UPDATE_CHECK — on/off (default off); shows a notice in Content tagger → Rule pack, never installs</span></label><input id="env-DFIR_RULE_PACK_UPDATE_CHECK" placeholder="off" /></div>
+          <div class="sfield"><label for="env-DFIR_RULE_PACK_UPDATE_CHECK">Check for a new detection-rule pack at startup<span class="sfield-hint">DFIR_RULE_PACK_UPDATE_CHECK — on/off (default off); shows a notice in Content tagger → Rule pack, never installs</span></label><select id="env-DFIR_RULE_PACK_UPDATE_CHECK"><option value="">— default (off) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_ANONYMIZE">Anonymize default<span class="sfield-hint">DFIR_ANONYMIZE (on/off) — <b>read-only here</b>: a security toggle the dashboard must not be able to flip. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_ANONYMIZE" placeholder="on" readonly /></div>
           <div class="sfield"><label for="env-DFIR_FLUSH_INTERVAL_MS">Screenshot flush interval (ms)<span class="sfield-hint">DFIR_FLUSH_INTERVAL_MS</span></label><input id="env-DFIR_FLUSH_INTERVAL_MS" placeholder="300000" /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_DEDUP">Duplicate screenshot detection<span class="sfield-hint">DFIR_DEDUP — skips a capture only if it's byte-identical to the one before it (screen didn't change). Any change is analyzed. Set <code>off</code> to analyze every screenshot regardless</span></label><input id="env-DFIR_DEDUP" placeholder="on" /></div>
-          <div class="sfield"><label for="env-DFIR_OCR_SEARCH">Screenshot OCR search<span class="sfield-hint">DFIR_OCR_SEARCH — local Tesseract OCR indexing of every capture, searchable from the filter bar; local-only, no AI. Set <code>off</code> to disable if performance is a concern</span></label><input id="env-DFIR_OCR_SEARCH" placeholder="on" /></div>
+          <div class="sfield"><label for="env-DFIR_DEDUP">Duplicate screenshot detection<span class="sfield-hint">DFIR_DEDUP — skips a capture only if it's byte-identical to the one before it (screen didn't change). Any change is analyzed. Set <code>off</code> to analyze every screenshot regardless</span></label><select id="env-DFIR_DEDUP"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
+          <div class="sfield"><label for="env-DFIR_OCR_SEARCH">Screenshot OCR search<span class="sfield-hint">DFIR_OCR_SEARCH — local Tesseract OCR indexing of every capture, searchable from the filter bar; local-only, no AI. Set <code>off</code> to disable if performance is a concern</span></label><select id="env-DFIR_OCR_SEARCH"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_OCR_DEBUG">OCR redaction debug log<span class="sfield-hint">DFIR_OCR_DEBUG — per-screenshot log of which words OCR read and redacted (local log only, never sent to the cloud)</span></label><input id="env-DFIR_OCR_DEBUG" placeholder="off" /></div>
+          <div class="sfield"><label for="env-DFIR_OCR_DEBUG">OCR redaction debug log<span class="sfield-hint">DFIR_OCR_DEBUG — per-screenshot log of which words OCR read and redacted (local log only, never sent to the cloud)</span></label><select id="env-DFIR_OCR_DEBUG"><option value="">— default (off) —</option><option value="1">on</option></select></div>
           <div class="sfield"><label for="env-DFIR_OCR_DEBUG_DIR">OCR redaction debug dir<span class="sfield-hint">DFIR_OCR_DEBUG_DIR — also write each redacted screenshot copy here so you can eyeball the black boxes</span></label><input id="env-DFIR_OCR_DEBUG_DIR" placeholder="(off)" /></div>
         </div>
         <div class="sfield-row">
@@ -1509,7 +1510,7 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_ATOMIC_WRITE_RETRIES">Atomic-save retries<span class="sfield-hint">DFIR_ATOMIC_WRITE_RETRIES — retries on a transient Windows lock (AV/indexer/sync client) during the state save's final rename (default 20)</span></label><input id="env-DFIR_ATOMIC_WRITE_RETRIES" placeholder="20" /></div>
           <div class="sfield"><label for="env-DFIR_MAX_EVENTS">SIEM/EDR import event cap<span class="sfield-hint">DFIR_MAX_EVENTS — safety cap on events emitted by a single SIEM/EDR JSON import (default 2000)</span></label><input id="env-DFIR_MAX_EVENTS" placeholder="2000" /></div>
-          <div class="sfield"><label for="env-DFIR_IMPORT_MEMORY_GUARD">Import memory guard<span class="sfield-hint">DFIR_IMPORT_MEMORY_GUARD — refuse an import that would exhaust the server's memory on a very large case (on/off, default on)</span></label><input id="env-DFIR_IMPORT_MEMORY_GUARD" placeholder="on" /></div>
+          <div class="sfield"><label for="env-DFIR_IMPORT_MEMORY_GUARD">Import memory guard<span class="sfield-hint">DFIR_IMPORT_MEMORY_GUARD — refuse an import that would exhaust the server's memory on a very large case (on/off, default on)</span></label><select id="env-DFIR_IMPORT_MEMORY_GUARD"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_IMPORT_RATE_MAX">Deterministic-import rate limit<span class="sfield-hint">DFIR_IMPORT_RATE_MAX — requests/min for Velociraptor/THOR/Chainsaw/Hayabusa imports, drawn from a separate pool than the AI request budget (default 300)</span></label><input id="env-DFIR_IMPORT_RATE_MAX" placeholder="300" /></div>
@@ -1517,7 +1518,7 @@
         </div>
         <div class="settings-group-head">Evidence drop folder (auto-import inbox)</div>
         <div class="sfield-row3">
-          <div class="sfield"><label for="env-DFIR_DROP_ENABLED">Enabled<span class="sfield-hint">DFIR_DROP_ENABLED — set "off" to disable the per-case drop/ folder watcher entirely</span></label><input id="env-DFIR_DROP_ENABLED" placeholder="on" /></div>
+          <div class="sfield"><label for="env-DFIR_DROP_ENABLED">Enabled<span class="sfield-hint">DFIR_DROP_ENABLED — set "off" to disable the per-case drop/ folder watcher entirely</span></label><select id="env-DFIR_DROP_ENABLED"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
           <div class="sfield"><label for="env-DFIR_DROP_POLL_S">Poll interval (s)<span class="sfield-hint">DFIR_DROP_POLL_S — how often each case's drop folder is swept (clamped 2..600)</span></label><input id="env-DFIR_DROP_POLL_S" placeholder="10" /></div>
           <div class="sfield"><label for="env-DFIR_DROP_MAX_BYTES">Max file size (bytes)<span class="sfield-hint">DFIR_DROP_MAX_BYTES — per-file size cap (default 200 MB); cloud audit exports and Plaso super-timelines stream and are exempt, other larger files fail</span></label><input id="env-DFIR_DROP_MAX_BYTES" placeholder="209715200" /></div>
         </div>
@@ -1610,7 +1611,7 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_SYNTH_KNOWN_UNKNOWNS_MAX">Known-unknowns max<span class="sfield-hint">DFIR_SYNTH_KNOWN_UNKNOWNS_MAX — coverage-gap bullets injected into synthesis + hunt prompts (default 10; 0 = disable)</span></label><input id="env-DFIR_SYNTH_KNOWN_UNKNOWNS_MAX" placeholder="10" /></div>
           <div class="sfield"><label for="env-DFIR_SYNTH_CLOUD_COVERAGE_MAX">Cloud-coverage max<span class="sfield-hint">DFIR_SYNTH_CLOUD_COVERAGE_MAX — per-upload cloud coverage lines injected into the synthesis prompt (default 10; 0 = disable)</span></label><input id="env-DFIR_SYNTH_CLOUD_COVERAGE_MAX" placeholder="10" /></div>
-          <div class="sfield"><label for="env-DFIR_SYNTH_ADVERSARY_HINTS">Feed adversary hints to synthesis<span class="sfield-hint">DFIR_SYNTH_ADVERSARY_HINTS — on/off; feeds matched threat actors into the synthesis prompt as hypotheses (default off — can bias the model)</span></label><input id="env-DFIR_SYNTH_ADVERSARY_HINTS" placeholder="off" /></div>
+          <div class="sfield"><label for="env-DFIR_SYNTH_ADVERSARY_HINTS">Feed adversary hints to synthesis<span class="sfield-hint">DFIR_SYNTH_ADVERSARY_HINTS — on/off; feeds matched threat actors into the synthesis prompt as hypotheses (default off — can bias the model)</span></label><select id="env-DFIR_SYNTH_ADVERSARY_HINTS"><option value="">— default (off) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_LEARNED_PATTERN_MIN_COUNT">Learned-pattern recurrence floor<span class="sfield-hint">DFIR_LEARNED_PATTERN_MIN_COUNT — times a dismissed marker must recur before it down-weights new look-alike activity (unset = built-in default)</span></label><input id="env-DFIR_LEARNED_PATTERN_MIN_COUNT" placeholder="(default)" /></div>
@@ -1818,7 +1819,7 @@
           </div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SYNTH_INCLUDE_INFO">Include Info events in synthesis<span class="sfield-hint">DFIR_SYNTH_INCLUDE_INFO — send Info-severity events prompt seats too (default off; they'd otherwise crowd out graded detections). Info events always remain in the case/timeline/coverage report either way</span></label><input id="env-DFIR_SYNTH_INCLUDE_INFO" placeholder="0" /></div>
+          <div class="sfield"><label for="env-DFIR_SYNTH_INCLUDE_INFO">Include Info events in synthesis<span class="sfield-hint">DFIR_SYNTH_INCLUDE_INFO — send Info-severity events prompt seats too (default off; they'd otherwise crowd out graded detections). Info events always remain in the case/timeline/coverage report either way</span></label><select id="env-DFIR_SYNTH_INCLUDE_INFO"><option value="">— default (off) —</option><option value="1">1 (on)</option><option value="0">0 (off)</option></select></div>
           <div class="sfield"><label for="env-DFIR_DEEP_PASS_MAX_BATCHES">Deep-pass max batches<span class="sfield-hint">DFIR_DEEP_PASS_MAX_BATCHES — hard ceiling on batches for an analyst-triggered deep pass; above it the run is refused and a floor that would fit is suggested (default 30)</span></label><input id="env-DFIR_DEEP_PASS_MAX_BATCHES" placeholder="30" /></div>
         </div>
         <div class="settings-group-head" data-essential>Text model — synthesis and imports (optional, can be a stronger model)</div>
@@ -1992,7 +1993,7 @@
         </div>
         <div class="settings-group-head" data-essential>Missed evidence review (Decision model) &mdash; off by default</div>
         <div class="sfield-row3" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_JEV_ENABLED">Enable the review<span class="sfield-hint">DFIR_JEV_ENABLED &mdash; a fast decision model re-grades the Info-graded super-timeline rows the analysis AI never reads, on a button the analyst presses. The review writes nothing; promoting a reviewed row into the forensic timeline is a separate press that asks first. Set <code>1</code> to offer it (default off)</span></label><input id="env-DFIR_JEV_ENABLED" placeholder="0" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_JEV_ENABLED">Enable the review<span class="sfield-hint">DFIR_JEV_ENABLED &mdash; a fast decision model re-grades the Info-graded super-timeline rows the analysis AI never reads, on a button the analyst presses. The review writes nothing; promoting a reviewed row into the forensic timeline is a separate press that asks first. Set <code>1</code> to offer it (default off)</span></label><select id="env-DFIR_JEV_ENABLED"><option value="">— default (off) —</option><option value="1">1 (on)</option><option value="0">0 (off)</option></select></div>
           <div class="sfield" data-essential>
             <label for="env-DFIR_JEV_PROVIDER">Provider<span class="sfield-hint">DFIR_JEV_PROVIDER</span></label>
             <select id="env-DFIR_JEV_PROVIDER">
@@ -2024,13 +2025,13 @@
         </div>
         <div class="settings-group-head">Synthesis detection-burst grouping</div>
         <div class="sfield-row3">
-          <div class="sfield"><label for="env-DFIR_SYNTH_GROUP">Enable grouping<span class="sfield-hint">DFIR_SYNTH_GROUP — collapse repeated hits of the SAME detection/severity into ONE prompt row (hit count, host spread, time span); set 0 to send one row per occurrence (default on)</span></label><input id="env-DFIR_SYNTH_GROUP" placeholder="1" /></div>
+          <div class="sfield"><label for="env-DFIR_SYNTH_GROUP">Enable grouping<span class="sfield-hint">DFIR_SYNTH_GROUP — collapse repeated hits of the SAME detection/severity into ONE prompt row (hit count, host spread, time span); set 0 to send one row per occurrence (default on)</span></label><select id="env-DFIR_SYNTH_GROUP"><option value="">— default (on) —</option><option value="1">1 (on)</option><option value="0">0 (off)</option></select></div>
           <div class="sfield"><label for="env-DFIR_SYNTH_GROUP_GAP_SECONDS">Grouping gap (s)<span class="sfield-hint">DFIR_SYNTH_GROUP_GAP_SECONDS — max gap between consecutive hits before a NEW burst starts (default 3600)</span></label><input id="env-DFIR_SYNTH_GROUP_GAP_SECONDS" placeholder="3600" /></div>
           <div class="sfield"><label for="env-DFIR_SYNTH_GROUP_MIN_REPEATS">Grouping min repeats<span class="sfield-hint">DFIR_SYNTH_GROUP_MIN_REPEATS — minimum hits before a burst is collapsed (default 4)</span></label><input id="env-DFIR_SYNTH_GROUP_MIN_REPEATS" placeholder="4" /></div>
         </div>
         <div class="settings-group-head">Debugging & custom prompts</div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_AI_DEBUG_USAGE">Log token usage<span class="sfield-hint">DFIR_AI_DEBUG_USAGE — on to log prompt-cache token usage to the console</span></label><input id="env-DFIR_AI_DEBUG_USAGE" placeholder="off" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_DEBUG_USAGE">Log token usage<span class="sfield-hint">DFIR_AI_DEBUG_USAGE — on to log prompt-cache token usage to the console</span></label><select id="env-DFIR_AI_DEBUG_USAGE"><option value="">— default (off) —</option><option value="1">on</option></select></div>
         </div>
         <div class="settings-group-head">CLI provider binaries (only if not on PATH)</div>
         <div class="sfield-row">
@@ -2098,10 +2099,10 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_LOG_MAX_TEMPLATES">Log-extraction template cap<span class="sfield-hint">DFIR_LOG_MAX_TEMPLATES — distinct collapsed log-line templates kept for the AI log-extraction prompt (unset = built-in default)</span></label><input id="env-DFIR_LOG_MAX_TEMPLATES" placeholder="(default)" /></div>
-          <div class="sfield"><label for="env-DFIR_REPORT_SYNTH_COVERAGE">Report synthesis-coverage footnote<span class="sfield-hint">DFIR_REPORT_SYNTH_COVERAGE — add a "§3.4 Synthesis coverage" footnote to the exported report (off by default)</span></label><input id="env-DFIR_REPORT_SYNTH_COVERAGE" placeholder="off" /></div>
+          <div class="sfield"><label for="env-DFIR_REPORT_SYNTH_COVERAGE">Report synthesis-coverage footnote<span class="sfield-hint">DFIR_REPORT_SYNTH_COVERAGE — add a "§3.4 Synthesis coverage" footnote to the exported report (off by default)</span></label><select id="env-DFIR_REPORT_SYNTH_COVERAGE"><option value="">— default (off) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_REPORT_MODEL_PERF">Report model-performance footnote<span class="sfield-hint">DFIR_REPORT_MODEL_PERF — add a "§3.5 Model performance" footnote (synth model, findings vs safety-net backfill, second-opinion agreement rate) to the exported report (off by default)</span></label><input id="env-DFIR_REPORT_MODEL_PERF" placeholder="off" /></div>
+          <div class="sfield"><label for="env-DFIR_REPORT_MODEL_PERF">Report model-performance footnote<span class="sfield-hint">DFIR_REPORT_MODEL_PERF — add a "§3.5 Model performance" footnote (synth model, findings vs safety-net backfill, second-opinion agreement rate) to the exported report (off by default)</span></label><select id="env-DFIR_REPORT_MODEL_PERF"><option value="">— default (off) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
         <div class="settings-group-head">Inline prompt overrides</div>
         <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Prompts are normally pointed at a file above — the inline form exists for deployments that inject configuration as environment variables. Shown here so an inline override is never invisible.</p>
@@ -2153,7 +2154,7 @@
           <div class="sfield"><label for="env-DFIR_MISP_ANALYSIS">Analysis state (0-2)<span class="sfield-hint">DFIR_MISP_ANALYSIS</span></label><input id="env-DFIR_MISP_ANALYSIS" placeholder="1" /></div>
         </div>
         <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_MISP_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_MISP_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_MISP_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_MISP_INSECURE — true to accept self-signed certs (lab only)</span></label><select id="env-DFIR_MISP_INSECURE"><option value="">— default (false) —</option><option value="true">true</option><option value="false">false</option></select></div>
           <div class="sfield"><label for="env-DFIR_MISP_TIMELINE_LIMIT">Timeline push limit<span class="sfield-hint">DFIR_MISP_TIMELINE_LIMIT — max FORENSIC-timeline events pushed per export (default 5000); costs one round-trip per event, so a huge timeline can block the export for hours. Past the cap the most severe events are kept (Info cut first) and the push warns it truncated</span></label><input id="env-DFIR_MISP_TIMELINE_LIMIT" placeholder="5000" /></div>
         </div>
         <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
@@ -2167,7 +2168,7 @@
         </div>
         <div class="sfield-row" data-essential>
           <div class="sfield"><label for="env-DFIR_YETI_CA">CA bundle<span class="sfield-hint">DFIR_YETI_CA</span></label><input id="env-DFIR_YETI_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_YETI_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_YETI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_YETI_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_YETI_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_YETI_INSECURE — true to accept self-signed certs (lab only)</span></label><select id="env-DFIR_YETI_INSECURE"><option value="">— default (false) —</option><option value="true">true</option><option value="false">false</option></select></div>
         </div>
         <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="yetiReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the YETI settings, rebuilds the provider, and exchanges the API key for a token — the same call enrichment makes first. Applies WITHOUT restarting the server.">Test / reconnect</button>
@@ -2180,7 +2181,7 @@
         </div>
         <div class="sfield-row" data-essential>
           <div class="sfield"><label for="env-DFIR_OPENCTI_CA">CA bundle<span class="sfield-hint">DFIR_OPENCTI_CA</span></label><input id="env-DFIR_OPENCTI_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_OPENCTI_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_OPENCTI_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_OPENCTI_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_OPENCTI_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_OPENCTI_INSECURE — true to accept self-signed certs (lab only)</span></label><select id="env-DFIR_OPENCTI_INSECURE"><option value="">— default (false) —</option><option value="true">true</option><option value="false">false</option></select></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_OPENCTI_MALICIOUS_SCORE">Malicious score threshold<span class="sfield-hint">DFIR_OPENCTI_MALICIOUS_SCORE — x_opencti_score ≥ this → malicious (default 75)</span></label><input id="env-DFIR_OPENCTI_MALICIOUS_SCORE" placeholder="75" /></div>
@@ -2277,7 +2278,7 @@
         <div class="srestart-note" data-essential>⚠ All integration settings require a server restart to take effect</div>
         <div class="settings-group-head" data-essential>TLS (all integrations)</div>
         <div class="sfield-row" data-essential>
-          <div class="sfield" data-essential><label for="env-DFIR_TLS_ALLOW_INSECURE_EXTERNAL">Allow insecure TLS to external hosts<span class="sfield-hint">DFIR_TLS_ALLOW_INSECURE_EXTERNAL — a DFIR_*_INSECURE=1 setting is refused for NON-loopback hosts (MITM risk: an on-path attacker can harvest the API key) unless this is true. Default false. Prefer a DFIR_*_CA bundle, which keeps verification ON.</span></label><input id="env-DFIR_TLS_ALLOW_INSECURE_EXTERNAL" placeholder="false" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_TLS_ALLOW_INSECURE_EXTERNAL">Allow insecure TLS to external hosts<span class="sfield-hint">DFIR_TLS_ALLOW_INSECURE_EXTERNAL — a DFIR_*_INSECURE=1 setting is refused for NON-loopback hosts (MITM risk: an on-path attacker can harvest the API key) unless this is true. Default false. Prefer a DFIR_*_CA bundle, which keeps verification ON.</span></label><select id="env-DFIR_TLS_ALLOW_INSECURE_EXTERNAL"><option value="">— default (false) —</option><option value="true">true</option><option value="false">false</option></select></div>
         </div>
         <div class="settings-group-head">Presidio (optional external PII detector)</div>
         <div class="sfield-row">
@@ -2325,7 +2326,7 @@
         <div class="sfield-row3" data-essential>
           <div class="sfield"><label for="env-DFIR_NOTION_MAX_TIMELINE">Max timeline rows<span class="sfield-hint">DFIR_NOTION_MAX_TIMELINE</span></label><input id="env-DFIR_NOTION_MAX_TIMELINE" placeholder="500" /></div>
           <div class="sfield"><label for="env-DFIR_NOTION_CA">CA bundle<span class="sfield-hint">DFIR_NOTION_CA</span></label><input id="env-DFIR_NOTION_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_NOTION_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_NOTION_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_NOTION_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_NOTION_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_NOTION_INSECURE — true to accept self-signed certs (lab only)</span></label><select id="env-DFIR_NOTION_INSECURE"><option value="">— default (false) —</option><option value="true">true</option><option value="false">false</option></select></div>
         </div>
         <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="notionReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the Notion settings, rebuilds the client, and asks Notion who the token belongs to — applies WITHOUT restarting the server.">Test / reconnect</button>
@@ -2338,7 +2339,7 @@
         </div>
         <div class="sfield-row" data-essential>
           <div class="sfield"><label for="env-DFIR_CLICKUP_CA">CA bundle<span class="sfield-hint">DFIR_CLICKUP_CA</span></label><input id="env-DFIR_CLICKUP_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_CLICKUP_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_CLICKUP_INSECURE — true to accept self-signed certs (lab only)</span></label><input id="env-DFIR_CLICKUP_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_CLICKUP_INSECURE">Skip TLS verify<span class="sfield-hint">DFIR_CLICKUP_INSECURE — true to accept self-signed certs (lab only)</span></label><select id="env-DFIR_CLICKUP_INSECURE"><option value="">— default (false) —</option><option value="true">true</option><option value="false">false</option></select></div>
         </div>
         <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
           <button id="clickupReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the ClickUp settings, rebuilds the client, and asks ClickUp who the token belongs to — applies WITHOUT restarting the server.">Test / reconnect</button>
@@ -2417,7 +2418,7 @@
         <div class="sfield-row3" data-essential>
           <div class="sfield"><label for="env-DFIR_PUBLIC_URL">Public base URL<span class="sfield-hint">DFIR_PUBLIC_URL — base URL used in notification deep-links back to the case (default derived from host:port)</span></label><input id="env-DFIR_PUBLIC_URL" placeholder="http://127.0.0.1:4773" /></div>
           <div class="sfield"><label for="env-DFIR_NOTIFY_CA">Webhook CA bundle<span class="sfield-hint">DFIR_NOTIFY_CA — CA bundle path for self-hosted webhook endpoints (Mattermost, etc.)</span></label><input id="env-DFIR_NOTIFY_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield" data-essential><label for="env-DFIR_NOTIFY_INSECURE">Skip webhook TLS verify<span class="sfield-hint">DFIR_NOTIFY_INSECURE — true to accept self-signed certs on webhook endpoints (lab only)</span></label><input id="env-DFIR_NOTIFY_INSECURE" placeholder="false" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_NOTIFY_INSECURE">Skip webhook TLS verify<span class="sfield-hint">DFIR_NOTIFY_INSECURE — true to accept self-signed certs on webhook endpoints (lab only)</span></label><select id="env-DFIR_NOTIFY_INSECURE"><option value="">— default (false) —</option><option value="true">true</option><option value="false">false</option></select></div>
         </div>
 
         <div class="settings-group-head">Jira (read-only)</div>
@@ -2470,7 +2471,7 @@
         <div class="settings-group-head" id="cloudAccountsHead" data-essential>Cloud accounts (AWS, Microsoft, GCP)</div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_CLOUD_CA">Cloud CA bundle<span class="sfield-hint">DFIR_CLOUD_CA — PEM CA bundle (e.g. a TLS-inspecting proxy's CA) trusted for every cloud request, token endpoints included. Added to the built-in trust; verification stays ON.</span></label><input id="env-DFIR_CLOUD_CA" placeholder="path/to/ca.pem" /></div>
-          <div class="sfield"><label for="env-DFIR_CLOUD_INSECURE">Cloud: skip TLS verify<span class="sfield-hint">DFIR_CLOUD_INSECURE — true to accept any certificate. Cloud hosts are never loopback, so this also needs DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true. Lab only; prefer the CA bundle.</span></label><input id="env-DFIR_CLOUD_INSECURE" placeholder="false" /></div>
+          <div class="sfield"><label for="env-DFIR_CLOUD_INSECURE">Cloud: skip TLS verify<span class="sfield-hint">DFIR_CLOUD_INSECURE — true to accept any certificate. Cloud hosts are never loopback, so this also needs DFIR_TLS_ALLOW_INSECURE_EXTERNAL=true. Lab only; prefer the CA bundle.</span></label><select id="env-DFIR_CLOUD_INSECURE"><option value="">— default (false) —</option><option value="true">true</option><option value="false">false</option></select></div>
           <div class="sfield"><label for="env-DFIR_CLOUD_PROXY_URL">Cloud proxy URL<span class="sfield-hint">DFIR_CLOUD_PROXY_URL — http(s)://host:port proxy every cloud request tunnels through. HTTPS_PROXY is not read for cloud collection.</span></label><input id="env-DFIR_CLOUD_PROXY_URL" type="password" placeholder="http://proxy.corp:3128" /></div>
           <div class="sfield"><label for="env-DFIR_CLOUD_M365_QUERY_BUDGET">Microsoft query budget (per tenant, 24 h)<span class="sfield-hint">DFIR_CLOUD_M365_QUERY_BUDGET — audit query submissions this companion may use per Microsoft tenant in a rolling 24 h (1–200, default 50). Microsoft guarantees at least 200 per tenant, shared with every other tool; a collection stops "partial — budget used" before passing this. Restart to apply.</span></label><input id="env-DFIR_CLOUD_M365_QUERY_BUDGET" type="number" min="1" max="200" placeholder="50" /></div>
         </div>
@@ -2996,7 +2997,7 @@
 
         <div class="sfield">
           <label for="env-DFIR_KEV_ALLOW_INTERNAL_URL">Allow an internal mirror URL<span class="sfield-hint">DFIR_KEV_ALLOW_INTERNAL_URL — the feed URL is fetched by the SERVER, so one pointing at a loopback, private or link-local address is refused; that is how a feed field turns into a way to read the host's own internal services. Set <code>true</code> only if your organisation mirrors the KEV feed inside its network (it permits <code>http</code> too). Default false. "Load from server file" above needs no networking freedom at all.</span></label>
-          <input id="env-DFIR_KEV_ALLOW_INTERNAL_URL" placeholder="false" />
+          <select id="env-DFIR_KEV_ALLOW_INTERNAL_URL"><option value="">— default (false) —</option><option value="true">true</option><option value="false">false</option></select>
         </div>
 
         <div class="sfield">
@@ -3020,7 +3021,7 @@
         <div id="sigmaDemo" class="sfield-hint" data-safe-style="display:block;margin-bottom:8px" hidden>Updates and rule changes are not available in the demo.</div>
         <div id="sigmaNotes" data-safe-style="font-size:12px;margin-bottom:8px"></div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud and web access log imports with Sigma rules<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on)</span></label><input id="env-DFIR_SIGMA_RULES" placeholder="on" /></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud and web access log imports with Sigma rules<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on)</span></label><select id="env-DFIR_SIGMA_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
           <div class="sfield"><label for="env-DFIR_SIGMA_MIN_LEVEL">Minimum level that raises severity<span class="sfield-hint">DFIR_SIGMA_MIN_LEVEL — lower levels only tag the event (it stays Info and never reaches the AI)</span></label>
             <select id="env-DFIR_SIGMA_MIN_LEVEL">
               <option value="">— default (high) —</option>
@@ -3040,7 +3041,7 @@
             </div>
             <input id="env-DFIR_SIGMA_RULE_STATUSES" type="hidden" />
           </div>
-          <div class="sfield"><label for="env-DFIR_SIGMA_UPDATE_CHECK">Check for a new release at startup<span class="sfield-hint">DFIR_SIGMA_UPDATE_CHECK — on/off (default off); shows a notice here, never installs</span></label><input id="env-DFIR_SIGMA_UPDATE_CHECK" placeholder="off" /></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_UPDATE_CHECK">Check for a new release at startup<span class="sfield-hint">DFIR_SIGMA_UPDATE_CHECK — on/off (default off); shows a notice here, never installs</span></label><select id="env-DFIR_SIGMA_UPDATE_CHECK"><option value="">— default (off) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
         <div class="sfield">
           <label>Installed release</label>
@@ -3100,7 +3101,7 @@
         </div>
         <div class="settings-group-head">Read-only</div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_UPDATE_CHECK">Update check<span class="sfield-hint">DFIR_UPDATE_CHECK — on/off for the newer-release notice.</span></label><input id="env-DFIR_UPDATE_CHECK" placeholder="off" /></div>
+          <div class="sfield"><label for="env-DFIR_UPDATE_CHECK">Update check<span class="sfield-hint">DFIR_UPDATE_CHECK — on/off for the newer-release notice.</span></label><select id="env-DFIR_UPDATE_CHECK"><option value="">— not set (the Updates toggle decides) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
       </div>
 
