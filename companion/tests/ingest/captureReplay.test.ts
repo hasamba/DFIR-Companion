@@ -8,7 +8,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { AuditLogNeedsRepairError } from "../../src/storage/auditLogNeedsRepairError.js";
 import { ingestCapture, _resetDedupCache } from "../../src/ingest/captureIngest.js";
-import { _resetReplayIndex } from "../../src/ingest/captureReplay.js";
+import { _resetReplayIndex, _replayIndexEntry } from "../../src/ingest/captureReplay.js";
 import { hashCasePassword } from "../../src/analysis/casePassword.js";
 import { resetLimiters } from "../../src/http/rateLimiter.js";
 
@@ -144,6 +144,101 @@ describe("ingestCapture — re-sent captures (#2397)", () => {
     await writeFile(logPath, good, "utf8"); // the analyst repairs the line
     expect((await ingestCapture(store, body({ imageBase64: img }))).replayed).toBe(true);
     expect(await logLines()).toHaveLength(1);
+  });
+});
+
+describe("ingestCapture — a compact replay index (#2446)", () => {
+  async function expectReplayEqualsLogRow(img: string): Promise<void> {
+    const again = await ingestCapture(store, body({ imageBase64: img }));
+    const { replayed, ...rest } = again;
+    expect(replayed).toBe(true);
+    const [row] = await logLines();
+    expect(rest).toEqual(row);
+    expect(JSON.stringify(rest)).toBe(JSON.stringify(row)); // same key order as the log row
+  }
+
+  it("answers a re-send with exactly the log row, in memory and after a restart", async () => {
+    const img = await png(1);
+    await ingestCapture(store, body({ imageBase64: img }));
+    await expectReplayEqualsLogRow(img);
+    _resetReplayIndex();
+    await expectReplayEqualsLogRow(img);
+    expect(await logLines()).toHaveLength(1);
+  });
+
+  it("replays a stored duplicate as a duplicate", async () => {
+    const img = await png(1);
+    await ingestCapture(store, body({ imageBase64: img, captureId: undefined }));
+    const stored = await ingestCapture(store, body({ imageBase64: img }));
+    expect(stored.isDuplicate).toBe(true);
+    for (const reset of [false, true]) {
+      if (reset) _resetReplayIndex();
+      const again = await ingestCapture(store, body({ imageBase64: img }));
+      expect(again.replayed).toBe(true);
+      expect(again.isDuplicate).toBe(true);
+      expect(again.screenshotFile).toBe(stored.screenshotFile);
+    }
+    expect(await logLines()).toHaveLength(2);
+  });
+
+  it.each([
+    ["timestamp", "2026-11-08T10:00:30.000Z"],
+    ["url", "https://example.test/other"],
+    ["tabTitle", "Other tab"],
+    ["triggerType", "manual"],
+  ])("stores the same id and image with a different %s as a new capture", async (field, value) => {
+    const img = await png(1);
+    await ingestCapture(store, body({ imageBase64: img }));
+    const other = await ingestCapture(store, body({ imageBase64: img, [field]: value }));
+    expect(other.replayed).toBeUndefined();
+    expect(await logLines()).toHaveLength(2);
+  });
+
+  it("does not confuse values that only move across a field boundary", async () => {
+    const img = await png(1);
+    await ingestCapture(store, body({ imageBase64: img, url: "https://e.test/a", tabTitle: "bc" }));
+    const other = await ingestCapture(
+      store,
+      body({ imageBase64: img, url: "https://e.test/ab", tabTitle: "c" }),
+    );
+    expect(other.replayed).toBeUndefined();
+    expect(await logLines()).toHaveLength(2);
+  });
+
+  it("keeps a digest and the reply fields per capture, not the whole row", async () => {
+    const img = await png(1);
+    const id = body().captureId;
+    await ingestCapture(store, body({ imageBase64: img }));
+    await ingestCapture(store, body({ imageBase64: img })); // builds the index from the log
+    _resetReplayIndex();
+    await ingestCapture(store, body({ imageBase64: img }));
+    const entries = _replayIndexEntry(store, "c1", id) ?? [];
+    expect(entries).toHaveLength(1);
+    expect(Object.keys(entries[0]).sort()).toEqual([
+      "isDuplicate",
+      "keyDigest",
+      "screenshotFile",
+      "sequenceNumber",
+    ]);
+    expect(entries[0].keyDigest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("keeps the compact entry for a capture remembered in memory", async () => {
+    const a = await png(1);
+    const b = await png(200);
+    const id = body().captureId;
+    await ingestCapture(store, body({ imageBase64: a }));
+    await ingestCapture(store, body({ imageBase64: b })); // index loaded, then this row remembered
+    const entries = _replayIndexEntry(store, "c1", id) ?? [];
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) {
+      expect(Object.keys(entry).sort()).toEqual([
+        "isDuplicate",
+        "keyDigest",
+        "screenshotFile",
+        "sequenceNumber",
+      ]);
+    }
   });
 });
 

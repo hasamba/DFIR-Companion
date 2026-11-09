@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import type { CaptureMetadata } from "../types.js";
@@ -17,6 +18,12 @@ import { AuditLogNeedsRepairError } from "../storage/auditLogNeedsRepairError.js
  * A repeat must match on everything the extension sends unchanged — the id, the image bytes and
  * the capture's own details. Anything else is treated as new evidence and stored: different bytes
  * are never discarded on the strength of an id alone.
+ *
+ * The index lives as long as the case, so it keeps only what a match needs (#2446): a SHA-256
+ * digest of the compared fields, plus the three stored fields the reply needs. The rest of the
+ * reply comes from the re-send itself — on a match those fields are equal by definition. A cap was
+ * not used (an evicted id would store a duplicate) and neither was a streaming load (the sequence
+ * allocator reads the same log in full at the same moment, so the peak would not drop).
  */
 
 /** The fields a genuine re-send carries unchanged. */
@@ -26,10 +33,18 @@ export interface ReplayKey {
   timestamp: string;
   url: string;
   tabTitle: string;
-  triggerType: string;
+  triggerType: CaptureMetadata["triggerType"];
 }
 
-type IdIndex = Map<string, CaptureMetadata[]>;
+/** What a re-send must match, plus what the reply needs. Everything else comes from the request. */
+interface ReplayEntry {
+  keyDigest: string;
+  sequenceNumber: number;
+  screenshotFile: string;
+  isDuplicate: boolean;
+}
+
+type IdIndex = Map<string, ReplayEntry[]>;
 
 // One index per cases root, keyed by (case id, generation) and forgotten on delete, like the dedup
 // hash cache: a same-id successor case never inherits its predecessor's ids.
@@ -45,20 +60,47 @@ function indexes(store: CaseStore): CaseKeyedMap<IdIndex> {
   return map;
 }
 
-function sameCapture(stored: CaptureMetadata, key: ReplayKey): boolean {
-  return (
-    stored.contentHash === key.contentHash &&
-    stored.timestamp === key.timestamp &&
-    stored.url === key.url &&
-    stored.tabTitle === key.tabTitle &&
-    stored.triggerType === key.triggerType
-  );
+type ComparedFields = Pick<CaptureMetadata, "contentHash" | "timestamp" | "url" | "tabTitle" | "triggerType">;
+
+/**
+ * One digest of the five compared fields. A false match would answer new evidence with an old
+ * record and drop it, so this is a full SHA-256 — never truncated, never a non-cryptographic hash
+ * (the same SHA-256 already identifies the screenshot bytes). The fields go in as a JSON array so
+ * no two tuples encode alike: ["a","bc"] is not ["ab","c"]. A hand-edited row with a missing or
+ * non-string field still digests (undefined becomes null); a zod-validated request never matches
+ * it, so that capture is stored, not dropped.
+ */
+function keyDigest(fields: ComparedFields): string {
+  const tuple = [fields.contentHash, fields.timestamp, fields.url, fields.tabTitle, fields.triggerType];
+  return createHash("sha256").update(JSON.stringify(tuple)).digest("hex");
 }
 
 function addTo(index: IdIndex, metadata: CaptureMetadata): void {
   if (!metadata.captureId) return;
+  const entry: ReplayEntry = {
+    keyDigest: keyDigest(metadata),
+    sequenceNumber: metadata.sequenceNumber,
+    screenshotFile: metadata.screenshotFile,
+    isDuplicate: metadata.isDuplicate,
+  };
   const list = index.get(metadata.captureId) ?? [];
-  index.set(metadata.captureId, [...list, metadata]);
+  index.set(metadata.captureId, [...list, entry]);
+}
+
+/** The stored record, rebuilt in the same key order as the log row persistCapture writes. */
+function rebuildRecord(caseId: string, key: ReplayKey, entry: ReplayEntry): CaptureMetadata {
+  return {
+    caseId,
+    sequenceNumber: entry.sequenceNumber,
+    timestamp: key.timestamp,
+    url: key.url,
+    tabTitle: key.tabTitle,
+    triggerType: key.triggerType,
+    contentHash: key.contentHash,
+    isDuplicate: entry.isDuplicate,
+    screenshotFile: entry.screenshotFile,
+    captureId: key.captureId,
+  };
 }
 
 /**
@@ -103,7 +145,9 @@ export async function findReplay(
     index = await loadIndex(store, caseId);
     cache.set(caseId, index);
   }
-  return index.get(key.captureId)?.find((stored) => sameCapture(stored, key));
+  const digest = keyDigest(key);
+  const entry = index.get(key.captureId)?.find((stored) => stored.keyDigest === digest);
+  return entry ? rebuildRecord(caseId, key, entry) : undefined;
 }
 
 /** Record a capture that just landed (on disk and in the log). */
@@ -122,4 +166,13 @@ export function isIdReusedForOtherContent(store: CaseStore, caseId: string, capt
 // Exposed for test isolation.
 export function _resetReplayIndex(): void {
   indexByRoot.clear();
+}
+
+// Exposed for tests: what the index holds for one capture id (#2446).
+export function _replayIndexEntry(
+  store: CaseStore,
+  caseId: string,
+  captureId: string,
+): readonly ReplayEntry[] | undefined {
+  return indexes(store).get(caseId)?.get(captureId);
 }
