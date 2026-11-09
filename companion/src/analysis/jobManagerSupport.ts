@@ -94,3 +94,12 @@ export function ledgerWriteFailure(job: Job, ledgerStatus: string, failure: Erro
       `the ledger still shows it ${ledgerStatus} until restart`,
   );
 }
+
+/** Run a side-channel callback (a WebSocket push, an error report); its own failure is swallowed. */
+export function callQuietly(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // The caller's operation must not fail because a listener did.
+  }
+}

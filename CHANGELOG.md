@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Cloud collection progress** — Background jobs shows the import step ("step 2 of 2, importing N/M pages") with its own ETA instead of freezing on the finished download (closes #2470)
 - **Cancel Second Look and queued imports** — Second Look can be cancelled from the Jobs panel except while it writes promoted rows, a dedicated import can be cancelled while it waits, and a Second Look whose re-synthesis does not finish keeps its sweep record and marks the conclusions out of date (part of #2425)
 - **Cancel a running import** — a dedicated import can be cancelled while it runs: nothing from the file is kept if it stopped before writing, a batched Velociraptor import rolls back, and an AI CSV/log import keeps its graded batches; the case stays held until the import stops, even when the job ledger refused its row (closes #2425)
 - **GCP Resource Manager API off** — the Data Access permission test says plainly when the Cloud Resource Manager API is off, with a whole enable link; the setup guide enables it in step 1

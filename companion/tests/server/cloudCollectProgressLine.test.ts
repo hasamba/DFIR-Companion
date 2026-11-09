@@ -86,3 +86,16 @@ describe("cloud collect progress line (#2384)", () => {
     expect(q.walk).toEqual({ at: 1, of: 4 });
   });
 });
+
+// #2470: the two steps say which is running, so a finished download never reads as a finished job.
+describe("cloud collect progress steps (#2470)", () => {
+  it("names step 1 while downloading and step 2 while importing", () => {
+    expect(progressLine(net([])).detail).toMatch(/^cloud collect — step 1 of 2, saving pages: /);
+    const line = progressLine({ stage: "import", pages: 29, records: 0, imported: 10, sources: [] });
+    expect(line).toEqual({
+      done: 10,
+      total: 29,
+      detail: "cloud collect — step 2 of 2, importing 10/29 page(s) into the case",
+    });
+  });
+});
