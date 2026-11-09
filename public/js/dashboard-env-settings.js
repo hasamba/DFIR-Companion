@@ -245,6 +245,20 @@
     AI_MODEL_PICKERS.forEach(wireAiModelPicker);
   }
 
+  // A switch offers only its canonical values, but its parser may accept more. A stored value the
+  // switch has no option for loads as NO selection, and its blank "default" option then cannot
+  // remove it (the save sees blank-at-load, blank-now). These map every value the parser accepts
+  // onto the option it means. The baseline records the mapped value, so an unchanged save still
+  // leaves the .env line exactly as it was.
+  const SWITCH_LOAD_VALUE = {
+    // analysis/sigmaSettings.ts: on unless off / 0 / false / no, trimmed, any case (#2509).
+    DFIR_SIGMA_SUZAKU_RULES: (val) => {
+      const v = String(val ?? "").trim().toLowerCase();
+      if (!v) return "";
+      return ["off", "0", "false", "no"].includes(v) ? "off" : "on";
+    },
+  };
+
   async function fetchEnvSettings() {
     try {
       const r = await fetch("/settings/env");
@@ -256,7 +270,7 @@
         const el = document.getElementById("env-" + key);
         if (!el) continue;
         if (el.tagName === "SELECT") {
-          el.value = val || "";
+          el.value = (SWITCH_LOAD_VALUE[key] ? SWITCH_LOAD_VALUE[key](val) : val) || "";
           el.dispatchEvent(new Event("dfir:envloaded"));
         } else if (el.type === "password") {
           // Secrets come back masked and start empty, so ANY typed value is a change. Clear: #2465.
