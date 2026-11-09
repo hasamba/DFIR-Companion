@@ -74,6 +74,7 @@ describe("buildSigmaRuleSet", () => {
         mitre: ["T1562.008"],
         huntingOnly: false,
         fields: ["eventsource", "eventname"],
+        requiredFields: ["eventsource", "eventname"],
       },
     ]);
   });

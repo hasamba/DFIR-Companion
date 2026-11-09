@@ -150,3 +150,20 @@ program.
   commit 75f38d73dbae5efd9d981bb01993d97c23fdedb0: its list of permissions that
   allow privilege escalation was used as a reference for which methods matter.
   Copyright Rhino Security Labs. Licensed under the BSD 3-Clause License.
+
+
+================================================================================
+Suzaku CloudTrail Sigma rules — Yamato Security
+================================================================================
+
+Used in: companion/data/sigma-suzaku/rules/aws/cloudtrail/ (#2499)
+
+The Sigma rules in the folder above are copied verbatim from
+Yamato-Security/suzaku-rules (https://github.com/Yamato-Security/suzaku-rules),
+folder suzaku/aws/cloudtrail, at upstream commit
+56c5275e99fce54b40c75e586d670ce771fe0fd8 (2026-11-01). They are licensed under the
+Detection Rule License (DRL) 1.1; the licence text ships beside them as
+companion/data/sigma-suzaku/LICENSE.DRL-1.1.md. As the DRL requires, every match the
+program records names the rule's author and links the rule at that commit. The rule
+authors are named in each rule's `author` field. Yamato Security does not endorse
+this program.

@@ -8,6 +8,7 @@ import {
   isEventFile,
   issueTitle,
   parseCsv,
+  markerFileOf,
   readRecordedCommit,
   renderReport,
   summariseEventFile,
@@ -327,19 +328,37 @@ describe("rule-file groups — Panther and Sentinel GCP (#2346)", () => {
   });
 });
 
-describe("tags.yaml records the upstream commit each hand port came from", () => {
-  const tagsYaml = readFileSync(new URL("../../data/tags.yaml", import.meta.url), "utf8");
+describe("each source's marker file records the upstream commit it came from", () => {
+  const text = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
 
   it.each(UPSTREAM_GROUPS.map((g) => [g.name, g] as const))(
     "%s: a 40-hex SHA and a valid date",
     (_name, group) => {
-      const recorded = readRecordedCommit(tagsYaml, group.marker);
+      const recorded = readRecordedCommit(text(markerFileOf(group)), group.marker, markerFileOf(group));
       expect(recorded.sha).toMatch(/^[0-9a-f]{40}$/);
       expect(Number.isNaN(Date.parse(recorded.date))).toBe(false);
     },
   );
 
-  it("throws when the line is missing", () => {
-    expect(() => readRecordedCommit("# nothing here", "Upstream commit")).toThrow(/no "# Upstream commit/);
+  it("throws when the line is missing, naming the file", () => {
+    expect(() => readRecordedCommit("# nothing here", "Upstream commit")).toThrow(
+      /tags\.yaml has no "# Upstream commit/,
+    );
+    expect(() => readRecordedCommit("", "X", "data/sigma-suzaku/UPSTREAM")).toThrow(
+      /^data\/sigma-suzaku\/UPSTREAM has no/,
+    );
+  });
+
+  it("watches the bundled Suzaku folder with its marker beside the rules, not in tags.yaml (#2499)", () => {
+    const g = UPSTREAM_GROUPS.find((x) => x.id === "suzaku-aws")!;
+    expect(g).toMatchObject({
+      kind: "rule-files",
+      repo: "Yamato-Security/suzaku-rules",
+      watchPath: "suzaku/aws/cloudtrail",
+      marker: "Suzaku rules upstream commit",
+    });
+    expect(markerFileOf(g)).toBe("data/sigma-suzaku/UPSTREAM");
+    expect(text("data/tags.yaml")).not.toMatch(/Suzaku rules upstream commit/);
+    expect(markerFileOf(UPSTREAM_GROUPS[0])).toBe("data/tags.yaml");
   });
 });

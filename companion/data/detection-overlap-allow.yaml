@@ -1,7 +1,8 @@
 # Detection-overlap allowlist (#2348) — read by companion/tests/analysis/detectionOverlap.test.ts.
 #
 # An imported cloud event can be graded by three paths: the importer's own grading, the bundled
-# SigmaHQ rules (data/sigma, import-time, default settings) and the tagger rules (data/tags.yaml).
+# Sigma rules (data/sigma = SigmaHQ, data/sigma-suzaku = Suzaku #2499; import-time, default settings)
+# and the tagger rules (data/tags.yaml).
 # Severity only ever rises, so when two paths grade the same event differently the higher grade
 # silently wins. The check runs synthetic samples (tests/analysis/fixtures/detectionSamples/)
 # through all three and FAILS on such a disagreement unless the pair is listed here.
@@ -51,3 +52,9 @@ entries:
       Medium by the Analyzer-Suite tagger rule (a user agent is client-supplied and never proves the
       tool used), and the Sigma rule Discovery Using AzureHound grades it High. High stands: an
       attacker rarely fakes an AzureHound user agent, and it marks Entra reconnaissance.
+  - rules: [importer:cloudtrail, sigma:0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d]
+    reason: >-
+      #2499: Suzaku's "IAM Admin Policy Attached" (critical) grades a successful attach of
+      AdministratorAccess / PowerUserAccess / IAMFullAccess above the importer's High for any policy
+      attach. A narrow rule raising a broad grade on purpose; Critical is the only Suzaku level that
+      raises severity by default (DFIR_SIGMA_SUZAKU_MIN_LEVEL=critical), a decision the maintainer made.

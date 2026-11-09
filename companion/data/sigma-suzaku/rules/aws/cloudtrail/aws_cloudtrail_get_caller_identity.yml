@@ -1,0 +1,24 @@
+title: Get Caller Identity
+id: 0e854216-b78f-4e05-9d62-1314cf16bb40
+status: test
+description: |
+    The "whoami" for AWS. Attackers will often use this to determine the identity of the current user or role. This is a common first step in AWS reconnaissance.
+    After stealing long-term or short-term access keys, attackers often run `aws sts get-caller-identity` to determine the identity of the compromised user or role.
+    Any IAM user or role can call this API, and it is often used in scripts to verify the identity of the caller.
+references:
+    - https://hackingthe.cloud/aws/general-knowledge/using_stolen_iam_credentials/
+author: Zach Mathis (@yamatosecurity)
+date: 2025-04-24
+modified: 2025-05-31
+tags:
+    - attack.discovery
+logsource:
+    product: aws
+    service: cloudtrail
+detection:
+    selection:
+        eventName: 'GetCallerIdentity'
+    condition: selection
+falsepositives:
+    - Users trying to determine their identity in AWS and/or testing their access key validity.
+level: low

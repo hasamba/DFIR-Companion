@@ -17,8 +17,26 @@ export interface SigmaStatusSetting {
   defaulted: boolean;
 }
 
+/** The Suzaku rules (#2499) load experimental by default: 711 of the 741 bundled files are experimental. */
+export const DEFAULT_SUZAKU_STATUSES = ["stable", "test", "experimental"];
+
 export function sigmaStatusesFromEnv(env: NodeJS.ProcessEnv = process.env): SigmaStatusSetting {
-  const raw = (env.DFIR_SIGMA_RULE_STATUSES ?? "")
+  return readStatuses(env.DFIR_SIGMA_RULE_STATUSES, DEFAULT_SIGMA_STATUSES);
+}
+
+/** DFIR_SIGMA_SUZAKU_STATUSES (#2499): the Suzaku rules' own status filter. */
+export function sigmaSuzakuStatusesFromEnv(env: NodeJS.ProcessEnv = process.env): SigmaStatusSetting {
+  return readStatuses(env.DFIR_SIGMA_SUZAKU_STATUSES, DEFAULT_SUZAKU_STATUSES);
+}
+
+const OFF = new Set(["off", "0", "false", "no"]);
+
+/** DFIR_SIGMA_SUZAKU_RULES (#2499): on unless it says off / 0 / false / no. */
+export const sigmaSuzakuEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  !OFF.has(env.DFIR_SIGMA_SUZAKU_RULES?.trim().toLowerCase() ?? "");
+
+function readStatuses(value: string | undefined, fallback: readonly string[]): SigmaStatusSetting {
+  const raw = (value ?? "")
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
@@ -29,7 +47,7 @@ export function sigmaStatusesFromEnv(env: NodeJS.ProcessEnv = process.env): Sigm
   const statuses = SIGMA_STATUS_CHOICES.filter((s) => ok.includes(s));
   return statuses.length
     ? { statuses: [...statuses], ignored, defaulted: false }
-    : { statuses: [...DEFAULT_SIGMA_STATUSES], ignored, defaulted: true };
+    : { statuses: [...fallback], ignored, defaulted: true };
 }
 
 export interface SigmaLevelSetting {
@@ -43,6 +61,18 @@ export function sigmaMinLevelFromEnv(env: NodeJS.ProcessEnv = process.env): Sigm
   if (!raw) return { level: "high" };
   const level = SIGMA_MIN_LEVEL_CHOICES.find((l) => l === raw);
   return level ? { level } : { level: "high", invalid: raw };
+}
+
+/**
+ * DFIR_SIGMA_SUZAKU_MIN_LEVEL (#2499): the lowest Suzaku rule level that raises severity. Default
+ * critical — most Suzaku rules are one rule per API call with no context, so at `high` every routine
+ * GetSecretValue or CreateUser would become High and flood the forensic timeline. Below it they label.
+ */
+export function sigmaSuzakuMinLevelFromEnv(env: NodeJS.ProcessEnv = process.env): SigmaLevelSetting {
+  const raw = env.DFIR_SIGMA_SUZAKU_MIN_LEVEL?.trim().toLowerCase() ?? "";
+  if (!raw) return { level: "critical" };
+  const level = SIGMA_MIN_LEVEL_CHOICES.find((l) => l === raw);
+  return level ? { level } : { level: "critical", invalid: raw };
 }
 
 const ON = new Set(["on", "1", "true", "yes"]);

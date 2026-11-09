@@ -9,8 +9,10 @@ export interface UpstreamGroup {
   readonly kind?: "csv-lists" | "event-files" | "rule-files";
   readonly name: string;
   readonly repo: string;
-  /** The tags.yaml comment label in front of "<sha> (<date>)". */
+  /** The comment label in front of "<sha> (<date>)". */
   readonly marker: string;
+  /** The file (relative to companion/) holding the marker; default data/tags.yaml (#2499). */
+  readonly markerFile?: string;
   /** Upstream path whose newest commit is the comparison head. */
   readonly watchPath: string;
   readonly files: readonly string[];
@@ -56,7 +58,8 @@ export type ListDir = (repo: string, dir: string, ref: string) => Promise<Map<st
 
 export const UPSTREAM_GROUPS: readonly UpstreamGroup[];
 export function recordedCommitPattern(marker: string): RegExp;
-export function readRecordedCommit(tagsYaml: string, marker: string): RecordedCommit;
+export function readRecordedCommit(tagsYaml: string, marker: string, fileName?: string): RecordedCommit;
+export function markerFileOf(group: UpstreamGroup): string;
 export function parseCsv(text: string): string[][];
 export function parseList(text: string, label: string): { header: string[]; entries: Map<string, string[]> };
 export function diffList(baseText: string, headText: string, label?: string): ListDiff;

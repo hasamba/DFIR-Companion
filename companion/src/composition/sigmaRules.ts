@@ -1,9 +1,11 @@
-// Server wiring for the import-time Sigma rules (#2202): load the bundled SigmaHQ rules once, log
+// Server wiring for the import-time Sigma rules (#2202): load the bundled SigmaHQ rules (and the
+// bundled Suzaku rules, #2499) once, log
 // what loaded, and hand the importers a grader that checks DFIR_SIGMA_RULES on every import — so
 // switching it off in Settings takes effect on the next import, without a restart.
 
 import { bundledSigmaDir, loadBundledSigmaRuleSet } from "../analysis/sigmaBundledRules.js";
 import { SigmaRuleStore } from "../analysis/sigmaRuleStore.js";
+import { bundledSuzakuDir } from "../analysis/sigmaSuzakuRules.js";
 import { sigmaMinLevelFromEnv, sigmaUpdateCheckEnabled } from "../analysis/sigmaSettings.js";
 import { createSigmaImportGrader, type SigmaImportGrader } from "../analysis/sigmaImportGrade.js";
 import type { SigmaRuleSet } from "../analysis/sigmaRuleSet.js";
@@ -31,7 +33,8 @@ export function sigmaInventorySummary(set: SigmaRuleSet): string {
         .map(([k, n]) => `${n} ${k}`)
         .join(", ")}`,
   );
-  return `Sigma rules ${set.release} — ${parts.join("; ")}`;
+  const origins = set.origins.map((o) => ` + ${o.name} ${o.release}`).join("");
+  return `Sigma rules ${set.release}${origins} — ${parts.join("; ")}`;
 }
 
 let cached: SigmaImportGrader | undefined;
@@ -58,7 +61,7 @@ let storeGrader: SigmaImportGrader | undefined;
  * stores; loads the active release synchronously, so the first import already grades with it.
  */
 export function configureSigmaRules(dataRoot: string): SigmaRuleStore {
-  const s = new SigmaRuleStore(dataRoot, bundledSigmaDir());
+  const s = new SigmaRuleStore(dataRoot, bundledSigmaDir(), process.env, bundledSuzakuDir());
   s.load();
   store = s;
   storeGrader = createSigmaImportGrader(() => s.activeRuleSet(), {

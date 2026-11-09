@@ -17,6 +17,9 @@ import { SIGMA_EXCLUSION_LIMITS } from "../analysis/sigmaExclusions.js";
 import { computeSigmaCoverage, inventoryCounts } from "../analysis/sigmaCoverage.js";
 import {
   sigmaMinLevelFromEnv,
+  sigmaSuzakuEnabled,
+  sigmaSuzakuMinLevelFromEnv,
+  sigmaSuzakuStatusesFromEnv,
   sigmaStatusesFromEnv,
   sigmaUpdateCheckEnabled,
 } from "../analysis/sigmaSettings.js";
@@ -87,6 +90,12 @@ export function registerSigmaRulesRoutes(app: Express, ctx: RouteContext): void 
         statuses: sigmaStatusesFromEnv(),
         minLevel: sigmaMinLevelFromEnv(),
         updateCheck: sigmaUpdateCheckEnabled(),
+        // #2499: the bundled Suzaku rules' own switch, statuses and severity floor.
+        suzaku: {
+          enabled: sigmaSuzakuEnabled(),
+          statuses: sigmaSuzakuStatusesFromEnv(),
+          minLevel: sigmaSuzakuMinLevelFromEnv(),
+        },
       },
       counts: inventoryCounts(set.inventory),
       problems: set.problems,

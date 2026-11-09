@@ -259,6 +259,7 @@ function readFieldMatch(
     }
     return { field, modifiers: [], values: [], nullValue: true };
   }
+  if (mods.includes("exists") && opts.allowNull) return readExists(fieldPath, field, mods, raw, out);
   const modifiers: SigmaModifier[] = [];
   for (const mod of mods) {
     if ((SIGMA_MODIFIERS as readonly string[]).includes(mod)) modifiers.push(mod as SigmaModifier);
@@ -274,6 +275,28 @@ function readFieldMatch(
   if (!values) return null;
   if (!checkModifierValues(fieldPath, modifiers, values, out)) return null;
   return { field, modifiers, values };
+}
+
+/** `field|exists: true|false` (#2499): the only modifier on the field, with one boolean. */
+function readExists(
+  fieldPath: string,
+  field: string,
+  mods: readonly string[],
+  raw: unknown,
+  out: Refusals,
+): SigmaFieldMatch | null {
+  if (mods.length > 1) {
+    out.add(fieldPath, "the exists modifier cannot be combined with another modifier");
+    return null;
+  }
+  const text = typeof raw === "string" ? raw.trim().toLowerCase() : undefined;
+  const value =
+    typeof raw === "boolean" ? raw : text === "true" ? true : text === "false" ? false : undefined;
+  if (value === undefined) {
+    out.add(fieldPath, "the exists modifier takes true or false");
+    return null;
+  }
+  return { field, modifiers: [], values: [], exists: value };
 }
 
 function readFieldMap(path: string, raw: Plain, out: Refusals, opts: SigmaParseOptions): SigmaFieldMatch[] {

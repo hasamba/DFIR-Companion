@@ -1,0 +1,3 @@
+# The Suzaku rule folder bundled here, read by the weekly upstream rule check (#2343,
+# companion/scripts/upstreamRulesDiff.mjs). Move it forward in the same PR as any re-sync.
+# Suzaku rules upstream commit: 56c5275e99fce54b40c75e586d670ce771fe0fd8 (2026-11-01)

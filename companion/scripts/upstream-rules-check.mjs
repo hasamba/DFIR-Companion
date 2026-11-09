@@ -20,12 +20,13 @@ import {
   groupChanged,
   hasChanges,
   issueTitle,
+  markerFileOf,
   readRecordedCommit,
   renderReport,
 } from "./upstreamRulesDiff.mjs";
 
 const run = promisify(execFile);
-const TAGS_YAML = new URL("../data/tags.yaml", import.meta.url);
+const COMPANION = new URL("../", import.meta.url);
 const MAX_BUFFER = 32 * 1024 * 1024;
 
 async function gh(args) {
@@ -105,10 +106,14 @@ function parseArgs(argv) {
 
 async function main() {
   const { dryRun, bodyFile } = parseArgs(process.argv.slice(2));
-  const tagsYaml = readFileSync(TAGS_YAML, "utf8");
   const results = [];
   for (const group of UPSTREAM_GROUPS) {
-    const { sha: base } = readRecordedCommit(tagsYaml, group.marker);
+    const file = markerFileOf(group);
+    const { sha: base } = readRecordedCommit(
+      readFileSync(new URL(file, COMPANION), "utf8"),
+      group.marker,
+      file,
+    );
     const head = await latestCommit(group);
     results.push(await compareGroup(group, base, head, fetchFile, listFiles, listDir));
   }
