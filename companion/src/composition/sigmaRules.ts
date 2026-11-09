@@ -6,6 +6,7 @@
 import { bundledSigmaDir, loadBundledSigmaRuleSet } from "../analysis/sigmaBundledRules.js";
 import { SigmaRuleStore } from "../analysis/sigmaRuleStore.js";
 import { bundledSuzakuDir } from "../analysis/sigmaSuzakuRules.js";
+import { SuzakuRuleStore } from "../analysis/suzakuRuleStore.js";
 import { sigmaMinLevelFromEnv, sigmaUpdateCheckEnabled } from "../analysis/sigmaSettings.js";
 import { createSigmaImportGrader, type SigmaImportGrader } from "../analysis/sigmaImportGrade.js";
 import type { SigmaRuleSet } from "../analysis/sigmaRuleSet.js";
@@ -61,8 +62,13 @@ let storeGrader: SigmaImportGrader | undefined;
  * stores; loads the active release synchronously, so the first import already grades with it.
  */
 export function configureSigmaRules(dataRoot: string): SigmaRuleStore {
-  // null, not undefined, when the Suzaku folder is missing: the store then reports it (#2499).
-  const s = new SigmaRuleStore(dataRoot, bundledSigmaDir(), process.env, bundledSuzakuDir() ?? null);
+  // The Suzaku rules come from the installed-version store (#2508): the bundled folder until an
+  // analyst installs a newer commit. Always connected — even with the bundled folder missing, an
+  // installed version still grades; with neither, the store reports the missing folder.
+  const suzaku = new SuzakuRuleStore(dataRoot, bundledSuzakuDir());
+  suzaku.load();
+  suzakuStore = suzaku;
+  const s = new SigmaRuleStore(dataRoot, bundledSigmaDir(), process.env, suzaku);
   s.load();
   store = s;
   storeGrader = createSigmaImportGrader(() => s.activeRuleSet(), {
@@ -70,6 +76,11 @@ export function configureSigmaRules(dataRoot: string): SigmaRuleStore {
     minLevel: () => sigmaMinLevelFromEnv().level,
   });
   const log = getServerLogger();
+  void suzaku
+    .init()
+    .catch((error: unknown) =>
+      getServerLogger().warn(`Suzaku rules: startup clean-up failed: ${(error as Error).message}`),
+    );
   void s.init().then(
     () => {
       const set = s.activeRuleSet();
@@ -80,6 +91,11 @@ export function configureSigmaRules(dataRoot: string): SigmaRuleStore {
   );
   return s;
 }
+
+let suzakuStore: SuzakuRuleStore | undefined;
+
+/** The installed Suzaku rules store (#2508), once configured. */
+export const suzakuRuleStore = (): SuzakuRuleStore | undefined => suzakuStore;
 
 /** The installed-rules store, once configured. */
 export const sigmaRuleStore = (): SigmaRuleStore | undefined => store;
@@ -97,4 +113,9 @@ export async function startupSigmaUpdateCheck(fetchFn: typeof fetch): Promise<vo
   if (r.error) log.warn(`Sigma update check failed: ${r.error}`);
   else if (r.updateAvailable)
     log.info(`New Sigma release available: ${r.latest} (installed: ${r.installed})`);
+  // #2508: the same opt-in startup check also asks about the Suzaku rules — a notice, never an install.
+  const sz = suzakuStore ? await suzakuStore.checkLatest(fetchFn) : undefined;
+  if (sz?.error) log.warn(`Suzaku rules update check failed: ${sz.error}`);
+  else if (sz?.updateAvailable)
+    log.info(`New Suzaku rules available: ${sz.latest} (installed: ${sz.installed})`);
 }
