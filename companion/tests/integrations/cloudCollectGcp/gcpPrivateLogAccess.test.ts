@@ -87,14 +87,34 @@ describe("the collector's Data Access permission test", () => {
   it("notes, without marking unverified, when the permission test itself fails", async () => {
     const { wire } = mockWire(entries, () => ({
       status: 403,
-      body: googleError(403, "PERMISSION_DENIED", "Cloud Resource Manager API has not been used in project"),
+      body: googleError(403, "PERMISSION_DENIED", "The caller does not have permission"),
     }));
     const got = await gcpCollectSession({ wire, settings: SETTINGS }).fetchPage(page("data_access"));
     expect(got.unverified).toBeUndefined();
     expect(got.note).toContain(
-      "could not be tested (the permission test answered HTTP 403 PERMISSION_DENIED: Cloud Resource Manager API",
+      "could not be tested (the permission test answered HTTP 403 PERMISSION_DENIED: The caller does not have permission)",
     );
     expect(got.requestParams).toMatchObject({ privateLogAccess: "unknown" });
+  });
+
+  it("says plainly that the Cloud Resource Manager API is off, with a whole enable link", async () => {
+    const { wire } = mockWire(entries, () => ({
+      status: 403,
+      body: {
+        error: {
+          code: 403,
+          status: "PERMISSION_DENIED",
+          message:
+            "Cloud Resource Manager API has not been used in project 123456789012 before or it is disabled.",
+          details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "SERVICE_DISABLED" }],
+        },
+      },
+    }));
+    const got = await gcpCollectSession({ wire, settings: SETTINGS }).fetchPage(page("data_access"));
+    expect(got.note).toContain(
+      "(the Cloud Resource Manager API is off in this project; enable it at " +
+        `https://console.cloud.google.com/apis/library/cloudresourcemanager.googleapis.com?project=${PROJECT})`,
+    );
   });
 
   it("words a transport error as fixed text, never the error's own message", async () => {

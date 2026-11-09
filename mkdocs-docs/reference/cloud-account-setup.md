@@ -220,6 +220,14 @@ them, and give the companion a **key** for the service account.
 2. In the project picker at the top, select the project to investigate. Write down its
    **Project ID** (shown in the picker and on the dashboard — it is not always the same as the
    project's name).
+3. Turn on the **Cloud Resource Manager API**: open
+   [its page in the API library](https://console.cloud.google.com/apis/library/cloudresourcemanager.googleapis.com)
+   (check the project picker still shows your project) and click **Enable**. It is free and gives
+   nobody new access. The companion uses it to ask Google whether the service account may read
+   Data Access logs: without the Private Logs Viewer role Google hides those logs instead of
+   refusing them, so this question is the only way to tell "none were written" from "not allowed".
+   Without the API, Check access and collection say they could not tell. With gcloud:
+   `gcloud services enable cloudresourcemanager.googleapis.com --project <project-id>`.
 
 ### Step 2 — Create the service account
 
@@ -426,7 +434,8 @@ permissions and its certificate at once. Remove its **Reader** assignment from e
 | AWS bucket listing works, file read **AccessDenied** | The trail is KMS-encrypted: add the `kms:Decrypt` block with the trail's key ARN. If the key belongs to another account, its key policy must also allow your user. |
 | AWS **InvalidClientTokenId** or **SignatureDoesNotMatch** | The access key ID or secret was pasted wrongly, or the key was deleted. Edit the account and paste them again. |
 | GCP Data Access **Failed: this account lacks the Private Logs Viewer role** | Add **Private Logs Viewer** to the service account. Google gives no error without it: it hides Data Access logs, so the companion asks Google about the permission. |
-| GCP Data Access **Not tested**, with "could not be tested" | Google could not answer the permission question, often because the **Cloud Resource Manager API** is off in the project. Enable it, or check by hand that the service account has **Private Logs Viewer**. |
+| GCP Data Access **Not tested**: "the Cloud Resource Manager API is off in this project" | Enable the API with the link in the message (GCP step 1), wait a minute, and run Check access again. |
+| GCP Data Access **Not tested**, with another "could not be tested" reason | Google could not answer the permission question. Check by hand that the service account has **Private Logs Viewer**. |
 | GCP **403** on everything | Wrong Project ID, or the roles were granted in another project. |
 | Microsoft **AADSTS700027** or **AADSTS700016** | The certificate uploaded to the app does not match the one in the companion, or the client ID or tenant ID is wrong. |
 | Microsoft **403 / Authorization_RequestDenied** | Admin consent was not granted (Microsoft step 5), or the permission was added as *Delegated* instead of *Application*. |

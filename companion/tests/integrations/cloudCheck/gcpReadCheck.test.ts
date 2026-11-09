@@ -91,12 +91,43 @@ describe("runGcpReadCheck", () => {
   it("stays not tested, saying the role may be missing, when the permission test fails", async () => {
     const { client } = mockGcp(
       () => ({}),
-      () => gcpDenied("Cloud Resource Manager API has not been used in project"),
+      () => gcpDenied("The caller does not have permission"),
     );
     const results = await runGcpReadCheck(client, input(["data-access-logs"]));
     expect(results[0].status).toBe("not-tested");
-    expect(results[0].detail).toContain("Cloud Resource Manager API has not been used");
+    expect(results[0].detail).toContain("HTTP 403 PERMISSION_DENIED: The caller does not have permission");
     expect(results[0].detail).toContain("Google hides Data Access logs instead of refusing them");
+  });
+
+  // Lab run: the project had the Resource Manager API off, and the 200-character cap cut Google's
+  // console link in half. That answer is worded plainly, with a whole link.
+  it("says plainly that the Cloud Resource Manager API is off, with a whole enable link", async () => {
+    const off = Object.assign(new Error("Request failed with status code 403"), {
+      name: "GaxiosError",
+      response: {
+        status: 403,
+        data: {
+          error: {
+            status: "PERMISSION_DENIED",
+            message:
+              "Cloud Resource Manager API has not been used in project 123456789012 before or it is disabled. " +
+              "Enable it by visiting https://console.developers.google.com/apis/api/cloudresourcemanager.googleapis.com/overview?project=123456789012 then retry.",
+            details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "SERVICE_DISABLED" }],
+          },
+        },
+      },
+    });
+    const { client } = mockGcp(
+      () => ({}),
+      () => off,
+    );
+    const results = await runGcpReadCheck(client, input(["data-access-logs"]));
+    expect(results[0].status).toBe("not-tested");
+    expect(results[0].detail).toContain(
+      "the Cloud Resource Manager API is off in this project; enable it at " +
+        "https://console.cloud.google.com/apis/library/cloudresourcemanager.googleapis.com?project=test-project-01",
+    );
+    expect(results[0].detail).not.toContain("console.developers.google.com");
   });
 
   it("does not test the permission when Data Access entries came back", async () => {
