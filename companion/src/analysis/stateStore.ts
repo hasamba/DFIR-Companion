@@ -4,7 +4,7 @@ import { performance } from "node:perf_hooks";
 import { wholeCaseLoads, type WholeCaseLoadOptions } from "./wholeCaseLoadLimit.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { isStringTooLongError } from "../storage/boundedRead.js";
-import { readOnlyStateOverlay, runStorageUpkeep } from "../storage/readOnlyScope.js";
+import { readOnlyStateOverlay } from "../storage/readOnlyScope.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { requestIocCandidates } from "./iocCandidatesRequest.js";
 import { type ForensicEvent, type InvestigationState, emptyState } from "./stateTypes.js";
@@ -262,14 +262,11 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
     }
 
     try {
-      // A legacy case's one-time move into SQLite: storage upkeep, allowed in an AI preview (#2491).
-      return await runStorageUpkeep(() =>
-        caseSqliteWorker.request<boolean>({
-          op: "migrateState",
-          dbPath,
-          jsonPath: this.legacyPath(caseId),
-        }),
-      );
+      return await caseSqliteWorker.request<boolean>({
+        op: "migrateState",
+        dbPath,
+        jsonPath: this.legacyPath(caseId),
+      });
     } catch (err) {
       if (isStringTooLongError(err)) throw this.legacyTooLargeError(caseId);
       throw err;

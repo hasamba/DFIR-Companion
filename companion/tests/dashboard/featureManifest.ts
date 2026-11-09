@@ -1826,6 +1826,7 @@ export const FEATURES: Feature[] = [
       "propagateFalsePositive",
       "paintIocImportMeta",
       "doAsk",
+      "askHistoryFor",
       "isNewEvent",
       "isNewIoc",
     ],

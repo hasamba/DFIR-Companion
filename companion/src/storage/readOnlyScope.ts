@@ -37,15 +37,6 @@ export function runReadOnly<T>(fn: () => Promise<T>): Promise<T> {
   return scope.run({ states: new Map() }, fn);
 }
 
-/**
- * Run `fn` outside the read-only scope: storage-format upkeep a READ performs (a one-time schema
- * migration, a derived-index refresh). Any read of the case — opening the dashboard — does the same
- * upkeep and it changes no case content, so a preview may let it through. Never wrap a content write.
- */
-export function runStorageUpkeep<T>(fn: () => T): T {
-  return scope.exit(fn);
-}
-
 /** True inside runReadOnly. */
 export function isReadOnlyScope(): boolean {
   return scope.getStore() !== undefined;

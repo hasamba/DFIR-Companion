@@ -81,8 +81,9 @@ function errorSentence(err: unknown): string {
     return "The real action would stop first and ask you to decide on near-duplicate host names (the merge panel).";
   if (err instanceof ReadOnlyScopeWriteError)
     return (
-      "This action has to write to the case before it calls the AI (for example a one-time storage " +
-      "upgrade of an older case), and a preview never writes. Open or run the case normally once, then preview again."
+      "This action has to update the case's storage before it can read it (a pending storage upgrade " +
+      "or retention clean-up), and a preview never changes the case. Open the case's timeline or " +
+      "super-timeline once so the upkeep runs, then preview again."
     );
   return err instanceof Error ? err.message : String(err);
 }

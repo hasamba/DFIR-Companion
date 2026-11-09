@@ -14,7 +14,6 @@ import {
   readOnlyStateOverlay,
   ReadOnlyScopeWriteError,
   runReadOnly,
-  runStorageUpkeep,
 } from "../../src/storage/readOnlyScope.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
@@ -42,8 +41,6 @@ describe("read-only storage scope", () => {
     await runReadOnly(async () => {
       expect(isReadOnlyScope()).toBe(true);
       expect(() => beginCaseWrite("/tmp/x/state.json")).toThrow(ReadOnlyScopeWriteError);
-      // Storage upkeep a read performs is let through.
-      expect(runStorageUpkeep(() => isReadOnlyScope())).toBe(false);
     });
     expect(isReadOnlyScope()).toBe(false);
   });

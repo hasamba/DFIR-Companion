@@ -83,6 +83,9 @@
       const el = $(`aiPreviewParam-${name}`);
       if (el && el.value.trim()) params[name] = el.value.trim();
     }
+    // Ask sends the panel's current thread with the question, exactly as the Ask button does.
+    if (key === "ask" && typeof window.askHistoryFor === "function")
+      params.history = window.askHistoryFor(caseNow());
     // The view summary reads exactly the filters the super-timeline is showing, minus pagination.
     if (key === "view-summary" && typeof window.superQueryString === "function") {
       const p = new URLSearchParams(window.superQueryString());

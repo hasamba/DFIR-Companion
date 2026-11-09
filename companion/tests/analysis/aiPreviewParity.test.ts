@@ -22,6 +22,7 @@ import { runAiPreview, type AiPreviewCapture } from "../../src/analysis/ai/aiPre
 import { AI_PREVIEW_ACTIONS } from "../../src/routes/aiPreviewActions.js";
 import type { RouteContext } from "../../src/routes/context.js";
 import type { Logger } from "../../src/logging/logger.js";
+import { ReadOnlyScopeWriteError } from "../../src/storage/readOnlyScope.js";
 import type { PresidioClient } from "../../src/analysis/presidio.js";
 
 // #2491 — "Preview what the AI will see" must show EXACTLY what the provider receives. For every
@@ -298,5 +299,21 @@ describe("AI preview — anonymization off and Presidio (#2491)", () => {
     expect(call.presidio.state).toBe("scan-failed");
     expect(call.presidio.message).toMatch(/not reachable/);
     expect(h.provider.sent).toHaveLength(0);
+  });
+});
+
+describe("AI preview — storage upkeep is never run by a preview (#2491)", () => {
+  it("a super-timeline migration that is due (it can evict rows) is refused, and the case is untouched", async () => {
+    const h = await harness();
+    const tags = (h.options as unknown as { tagsStore: TagsStore }).tagsStore;
+    // A tag change after the last read leaves the super-timeline's derived state due for upkeep.
+    await tags.add(h.caseId, { targetType: "event", targetId: "raw1", author: "a", label: "triage" });
+    const before = await snapshot(h.root);
+    const prepared = await AI_PREVIEW_ACTIONS["view-summary"].prepare(h.pipeline, h.options, h.caseId, {});
+    const preview = await runAiPreview(prepared as () => Promise<unknown>);
+    expect(await snapshot(h.root)).toEqual(before);
+    expect(h.provider.sent).toHaveLength(0);
+    expect(preview.outcome).toBe("error");
+    expect((preview as { error: unknown }).error).toBeInstanceOf(ReadOnlyScopeWriteError);
   });
 });
