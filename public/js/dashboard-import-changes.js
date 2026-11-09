@@ -461,7 +461,16 @@
     // that produced ZERO events is a blind spot, not a clean source — say so with a directive action,
     // instead of a bland "no new events". Mirrors the server classifyImportYield (path ai / +0 / >=500).
     let yieldWarn = "";
-    if (
+    // #2460: the AI extraction's OWN count says it kept nothing from a file that had rows — at any
+    // size. addedCount 0 alone cannot say this (a re-import of present events also adds 0). More
+    // precise than the 500-line check below, so it wins and that one is skipped. Never suggests AI
+    // off: with AI off a CSV/log is saved as evidence but not analyzed at all.
+    const ax = m.aiExtraction;
+    if (m.path === "ai" && ax && (ax.rowsIn || 0) > 0 && (ax.kept || 0) === 0) {
+      const label = m.lastImportFile || m.lastImportKind || "this file";
+      const rows = `${ax.rowsIn.toLocaleString()} row${ax.rowsIn === 1 ? "" : "s"}`;
+      yieldWarn = `<div class="sm-line" data-safe-style="color:var(--badge-danger-text);font-weight:600">⚠️ ${esc(label)}: AI extraction produced no events from ${rows}. Check the AI provider (Settings → AI) and re-import. Until then, treat this file as not analyzed, not as clean.</div>`;
+    } else if (
       m.path === "ai" &&
       (m.addedCount || 0) === 0 &&
       (m.linesIn || 0) >= 500
@@ -613,6 +622,35 @@
     const total = Number(a.eventCount);
     if (!Number.isFinite(used) || !Number.isFinite(total) || used >= total) return "";
     return `<div data-safe-style="color:var(--tag-orange-text);font-size:12px;margin-top:4px">⚠ answered from ${esc(String(used))} of ${esc(String(total))} in-scope events — the timeline was trimmed to fit the model</div>`;
+  }
+
+  // #2468: on an empty case the Ask panel showed only its text box. When the loaded state says the
+  // case has no forensic-timeline events and no findings, a muted sentence says the answer would
+  // have nothing to read. The text box stays usable. The sentence is tagged so it only ever
+  // replaces itself or an empty box — never an answer, a "thinking…" line or a thread note.
+  const ASK_EMPTY_HTML =
+    "<div data-ask-empty data-safe-style='color:var(--text-muted)'>No forensic-timeline events or findings yet — import evidence first; until then an answer has nothing to read.</div>";
+  function askCaseIsEmpty(st) {
+    if (!st || st.forensicTimelineTotalIsLowerBound) return false;
+    const events =
+      typeof st.forensicTimelineTotal === "number"
+        ? st.forensicTimelineTotal
+        : Array.isArray(st.forensicTimeline)
+          ? st.forensicTimeline.length
+          : -1;
+    const findings = Array.isArray(st.findings) ? st.findings.length : -1;
+    return events === 0 && findings === 0;
+  }
+  function paintAskEmptyHint(st) {
+    const box = document.getElementById("askAnswer");
+    if (!box) return;
+    const showingHint = box.innerHTML.includes("data-ask-empty");
+    if (box.innerHTML !== "" && !showingHint) return;
+    if (st && askCaseIsEmpty(st)) box.innerHTML = ASK_EMPTY_HTML;
+    else if (showingHint) box.innerHTML = "";
+  }
+  if (typeof DfirState !== "undefined" && DfirState.onLastStateChange) {
+    DfirState.onLastStateChange(paintAskEmptyHint);
   }
 
   function doAsk() {

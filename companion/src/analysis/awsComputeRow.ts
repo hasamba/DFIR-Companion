@@ -16,6 +16,7 @@ import type {
 } from "./canonicalAwsCompute.js";
 import { enumerationWindow, type ShapeHit } from "./awsLineage.js";
 import { normalizeTime, type MappedEvent } from "./siemImport.js";
+import { scopeBasis, scopeNoun, UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 import {
   AWS_COMPUTE_MAX,
   BASIS,
@@ -123,11 +124,15 @@ function ruleWords(inst: Inst, r: Rule): string {
   return `${r.action === "authorize" ? "AuthorizeSecurityGroupIngress" : "RevokeSecurityGroupIngress"} recorded on ${show(r.groupId, 30)}: ${r.protocol}${r.ports ? ` ${r.ports}` : ""} from ${show(r.source, 60)}${r.anySource ? " (any address)" : ""} ${whoAt(r.time, r.by, r.locator)}${orderWords(orderOf(inst, r.time))}`;
 }
 
-function sessionWords(inst: Inst, coverage: { records: number; first: string; last: string }): string[] {
+function sessionWords(
+  inst: Inst,
+  coverage: { records: number; first: string; last: string },
+  noun: string,
+): string[] {
   const sess = inst.session;
   if (!sess.first || !sess.last)
     return [
-      `no call using instance-role credentials among the ${plural(coverage.records, "record")} of this upload (${coverage.first.slice(0, 19)}Z → ${coverage.last.slice(0, 19)}Z)`,
+      `no call using instance-role credentials among the ${plural(coverage.records, "record")} of this ${noun} (${coverage.first.slice(0, 19)}Z → ${coverage.last.slice(0, 19)}Z)`,
     ];
   const sources = [...sess.sources.values()].sort((a, b) => a.first.time - b.first.time);
   const beyond = sources.length - Math.min(sources.length, SOURCES_NAMED_MAX) + sess.overflowSources.size;
@@ -162,7 +167,9 @@ export function summaryRow(
   grade: Severity,
   coverage: { records: number; first: string; last: string },
   uploadId: string,
+  scope: SummaryScope = UPLOAD_SCOPE,
 ): MappedEvent {
+  const noun = scopeNoun(scope);
   const lifecycle = inst.lifecycle.all();
   const sess = inst.session;
   const rules = [...inst.rules.values()].flatMap((b) => b.all()).sort(byTime);
@@ -176,7 +183,7 @@ export function summaryRow(
   ].sort(byTime);
   const changesBeyond = Math.max(0, changes.length - CHANGES_NAMED_MAX) + inst.lifecycle.beyond + rulesBeyond;
   const parts = [
-    inst.launch ? launchWords(inst.launch) : "launch not in this upload",
+    inst.launch ? launchWords(inst.launch) : `launch not in this ${noun}`,
     ...(changes.length
       ? [
           `recorded configuration changes${changesBeyond ? ` (${Math.min(changes.length, CHANGES_NAMED_MAX)} named, ${changesBeyond} further not individually named)` : ""}: ${changes
@@ -191,7 +198,7 @@ export function summaryRow(
         : `DisassociateAddress: association ${show(a.associationId ?? "", 30)} ${whoAt(a.time, a.by, a.locator)}`,
     ),
     ...(inst.addressesBeyond ? [`+${plural(inst.addressesBeyond, "further address record")}`] : []),
-    ...sessionWords(inst, coverage),
+    ...sessionWords(inst, coverage, noun),
     ...(inst.remote.length
       ? [
           `remote-access requests (requested; whether anything ran is not in CloudTrail): ${inst.remote
@@ -238,7 +245,9 @@ export function summaryRow(
     ...(notCited ? [`${plural(notCited, "further record")} not individually cited`] : []),
     LIMIT_NOTE,
     COVERAGE_NOTE,
-    inst.terminatedAt !== null ? `terminated ${iso(inst.terminatedAt)}` : "not terminated within this upload",
+    inst.terminatedAt !== null
+      ? `terminated ${iso(inst.terminatedAt)}`
+      : `not terminated within this ${noun}`,
   ].join("; ");
   const head = `AWS compute lifecycle: ${show(inst.id, 30)} (account ${show(inst.account, 12)}, ${show(inst.region, 20)})`;
   const room = DESCRIPTION_MAX - head.length - tail.length - 6;
@@ -299,7 +308,7 @@ export function summaryRow(
     terminated: inst.terminatedAt !== null,
     notCited,
     coverage,
-    basis: BASIS,
+    basis: scopeBasis(scope, BASIS),
   };
   const observed = iso(firstTime(inst));
   const mitre =
@@ -342,8 +351,9 @@ export function omittedRow(
   severity: Severity,
   untrackedRecords: number,
   uploadId: string,
+  scope: SummaryScope = UPLOAD_SCOPE,
 ): MappedEvent {
-  const description = `AWS compute lifecycle — ${count ? `${count} further instance${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${AWS_COMPUTE_MAX} reported — not shown` : "no further instance beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming instances past the ${INSTANCES_TRACKED_MAX} tracked — not read` : ""}`;
+  const description = `AWS compute lifecycle — ${count ? `${count} further instance${count === 1 ? "" : "s"} with a lifecycle in this ${scopeNoun(scope)} beyond the ${AWS_COMPUTE_MAX} reported — not shown` : "no further instance beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming instances past the ${INSTANCES_TRACKED_MAX} tracked — not read` : ""}`;
   return {
     timestamp: "",
     description,

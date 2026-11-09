@@ -111,7 +111,8 @@
   function renderDeepPassFloors(cap, floors) {
     const host = document.getElementById("deepPassFloors");
     if (!host) return;
-    if (!floors.length) { host.innerHTML = "No graded events in scope — nothing for a deep pass to read."; return; }
+    // All-zero floors (an empty case) read as no floors at all (#2468).
+    if (!floors.some(f => f.events > 0)) { host.innerHTML = "No graded events in scope — nothing for a deep pass to read."; applyDeepPassGate(); return; }
     const rows = floors.map(f => {
       const empty = !f.events;
       return `<tr data-dp-row="${esc(f.floor)}">`

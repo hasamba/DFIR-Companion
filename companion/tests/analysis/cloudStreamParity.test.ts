@@ -281,6 +281,8 @@ describe("streamed CloudTrail import parity (#2362)", () => {
 // into one counted detail row (forensic 2348 -> 2347, graded 300 -> 299; member rows unchanged at
 // 2705, so no record is lost), and the disclosure gained mediumMerged plus the "kept in detail"
 // wording (disclosures, notes, timeline, coverage). The #2502 time-span fix alone changes nothing here.
+// Re-pinned for #2475 too: a one-row detailed group no longer carries the "[aggregated: 1 row(s) — …]"
+// note, so those descriptions lose that suffix; no count changes.
 const PINNED = {
   counts: {
     compute: 30,
@@ -303,12 +305,12 @@ const PINNED = {
     "db:cloudRecord": "55eeaad28f712d39",
     "db:cloudRecordBatch": "d7a32e76dfef0950",
     "db:cloudRecordMember": "2260533dd0f4bdd7",
-    "db:forensicTimeline": "ecc9f803ca01174b",
+    "db:forensicTimeline": "47e419e317d56d07",
     "db:iocs": "7de5df26c23c75f9",
     "db:superTimeline": "8beed3d432925a0d",
     "db:timeline": "0a3505cb7f4a4ebe",
     disclosures: "b41790f4ea7b0e23",
-    forensicTimeline: "efc70bed57153d76",
+    forensicTimeline: "952a8006b6bd4d4a",
     iocs: "b4186cc3f6e10f06",
     notes: "86e38fbe1e668482",
   },

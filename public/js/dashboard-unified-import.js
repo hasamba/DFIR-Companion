@@ -20,7 +20,11 @@
   // One failed file, as the status line shows it (#1786): its name and the server's own sentence
   // (413 size cap, 409, 429, 500, 501, a refusal reason). A bare "N failed" count sent the analyst
   // to the file format when the fix was a setting. Not prefixed twice when the sentence names it.
+  // The server's word for an empty or blank body is internal (#2466); the analyst sees what it means.
+  // The file is still sent, so its custody receipt is written as before (#2111).
+  const EMPTY_BODY_ERROR = "text is required";
   function fileFailure(name, reason) {
+    if (reason === EMPTY_BODY_ERROR) return `${name} is empty, nothing to import`;
     const why = String(reason || "failed");
     return why.includes(name) ? why : `${name}: ${why}`;
   }

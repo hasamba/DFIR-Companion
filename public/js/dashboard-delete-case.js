@@ -14,7 +14,23 @@
     document.getElementById("dcPassword").value = "";
     document.getElementById("dcPasswordConfirm").value = "";
     document.getElementById("dcMsg").textContent = "";
+    setBusy(false);
     document.getElementById("deleteCaseOverlay").classList.add("open");
+  }
+  // A delete on the wire cannot be dismissed (#2494): Cancel is disabled, the backdrop is inert and
+  // aria-busy="true" makes the shared modal wiring ignore Escape (#2463). A failure that came back
+  // after the dialog was dismissed would be written into a hidden dialog.
+  function setBusy(busy) {
+    const overlay = document.getElementById("deleteCaseOverlay");
+    if (busy) overlay.setAttribute("aria-busy", "true");
+    else overlay.removeAttribute("aria-busy");
+    document.getElementById("dcCancel").disabled = busy;
+  }
+  function isBusy() {
+    return (
+      document.getElementById("deleteCaseOverlay").getAttribute("aria-busy") ===
+      "true"
+    );
   }
   function closeDeleteCase() {
     document.getElementById("deleteCaseOverlay").classList.remove("open");
@@ -45,6 +61,7 @@
     }
     const btn = document.getElementById("dcDelete");
     btn.disabled = true;
+    setBusy(true);
     msg.textContent = "deleting… (may take a while for large cases)";
     try {
       const res = await fetch(`/cases/${encodeURIComponent(caseId)}/delete`, {
@@ -77,6 +94,7 @@
         const body = await res.json();
         deleted = body.deleted;
       }
+      setBusy(false);
       closeDeleteCase();
       if (deleted) {
         // The case is gone — reset the whole dashboard to "no case selected" rather than trying
@@ -99,6 +117,7 @@
       msg.textContent = "delete failed: " + err.message;
     } finally {
       btn.disabled = false;
+      setBusy(false);
     }
   }
 
@@ -111,7 +130,7 @@
     document
       .getElementById("deleteCaseOverlay")
       .addEventListener("click", (e) => {
-        if (e.target.id === "deleteCaseOverlay") closeDeleteCase();
+        if (e.target.id === "deleteCaseOverlay" && !isBusy()) closeDeleteCase();
       });
     document.querySelectorAll('input[name="dcArchiveFirst"]').forEach((r) => {
       r.addEventListener("change", () => {

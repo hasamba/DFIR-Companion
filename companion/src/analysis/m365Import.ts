@@ -26,10 +26,18 @@ import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
-import { isEntraSignIn, readEntraSignIn } from "./ualLogon.js";
+import type { SummaryScope } from "./summaryScope.js";
+import {
+  ENTRA_SIGN_IN_CATEGORY_MARKER,
+  entraSignInCategory,
+  isEntraSignIn,
+  readEntraSignIn,
+} from "./ualLogon.js";
+import { ENTRA_RISK_HIDDEN_MARKER } from "./cloudRowWording.js";
 import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
 import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { m365Coverage } from "./cloudCoverageBuilders.js";
+import { ualRowCanonical } from "./cloudRowCanonical.js";
 import {
   applySigmaMatches,
   applySigmaToRecordRows,
@@ -98,6 +106,8 @@ export interface M365ImportOptions {
   resolver?: Resolver;
   rowsOnly?: boolean;
   spraySummary?: boolean;
+  /** A live collection's summary step (#2493): the summaries say "this collection". */
+  scope?: SummaryScope;
 }
 
 export interface M365ParseResult {
@@ -259,7 +269,12 @@ function classify(rec: Row): Kind {
 
 // ───────────────────────────── mappers ─────────────────────────────
 
-function mapUal(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorder): MappedEvent {
+function mapUal(
+  rec: Row,
+  sink: Map<string, SiemIoc>,
+  index: number,
+  debug?: ImportDebugRecorder,
+): MappedEvent {
   const op = pickStr(rec, ["Operation", "Operations"], (k) => debug?.field("action", k)) || "operation";
   const workload = pickStr(rec, ["Workload"]);
   const user = pickStr(rec, ["UserId", "UserKey", "UserIds"], (k) => debug?.field("user", k));
@@ -289,10 +304,13 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorde
   if (failed) description += " [FAILED]";
   description = boundedTextTo(description, 600);
 
+  const observed = pickStr(rec, ["CreationTime", "CreationDate", "TimeGenerated"], (k) =>
+    debug?.field("timestamp", k),
+  );
+  const timestamp = normalizeTime(observed);
+
   return {
-    timestamp: normalizeTime(
-      pickStr(rec, ["CreationTime", "CreationDate", "TimeGenerated"], (k) => debug?.field("timestamp", k)),
-    ),
+    timestamp,
     description,
     severity,
     mitre: [...(def.mitre ?? [])],
@@ -305,6 +323,18 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorde
       `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}`.toLowerCase(),
     ),
     sources: ["Microsoft 365"],
+    // The row cites its own record (#2485) instead of the legacy upgrade's `event:<id>`.
+    canonical: ualRowCanonical({
+      operation: op,
+      user,
+      ip,
+      observed,
+      normalized: timestamp,
+      failed,
+      tenant: pickStr(rec, ["OrganizationId"]),
+      recordId: pickStr(rec, ["Id"]),
+      index,
+    }),
   };
 }
 
@@ -410,17 +440,26 @@ function mapSignIn(
   else severity = "Info";
   if (ip) addIoc(sink, "ip", ip);
 
-  let description = `Entra sign-in: ${upn || "?"}`;
+  // The category (#2483) goes right after the prefix, where only the importer writes: the shown
+  // identity has its brackets swapped too, so a display name cannot forge "[non-interactive]".
+  const category = entraSignInCategory(rec);
+  const marker = category ? `${ENTRA_SIGN_IN_CATEGORY_MARKER[category]} ` : "";
+  const shownUser = (upn || "?").replace(/\[/g, "(").replace(/\]/g, ")");
+  let description = `Entra sign-in: ${marker}${shownUser}`;
   if (ip) description += ` from ${ip}`;
   if (city || country) description += ` (${[city, country].filter(Boolean).join(", ")})`;
   if (app) description += ` via ${app}`;
   if (outcome === "unknown") description += " [outcome unknown: unreadable status]";
   else if (outcome !== "success")
     description += ` [FAILED${code === null ? "" : ` ${code}`}${failureReason ? `: ${oneLine(failureReason).slice(0, 80)}` : ""}]`;
-  if (risk && risk !== "none") description += ` [risk: ${risk}]`;
+  // "hidden" is what Graph returns when the tenant has no Entra ID P2 licence: no risk check was
+  // possible. "[risk: hidden]" read as "there is a hidden risk" (#2486).
+  if (risk === "hidden") description += ` ${ENTRA_RISK_HIDDEN_MARKER}`;
+  else if (risk && risk !== "none") description += ` [risk: ${risk}]`;
   if (isRopc) description += " [legacy-auth ROPC — no interactive MFA prompt]";
   if (userAgent) description += ` [ua: ${userAgent}]`;
   description = boundedTextTo(description, 600); // an identity downstream — see mapUal
+  const recordId = str(getCI(rec, "id")).trim(); // the Graph id, as the SP sign-in mapper cites it
 
   return {
     timestamp: normalizeTime(pickStr(rec, ["createdDateTime"])),
@@ -429,9 +468,10 @@ function mapSignIn(
     mitre,
     // `outcome` and `isRopc` are both discriminators: keying on the raw code alone folded an
     // unreadable status into the `0` bucket that genuine successes use, and left a ROPC grant to
-    // merge with an ordinary sign-in by the same user (aggregation keeps ONE description).
+    // merge with an ordinary sign-in by the same user (aggregation keeps ONE description). The
+    // category too (#2483): the shown marker is what the HTTP-library rule grades on.
     aggKey: boundedAggKey(
-      `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}|${userAgent}`.toLowerCase(),
+      `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}|${userAgent}|${category}`.toLowerCase(),
     ),
     sources: ["Entra ID"],
     // Minimal canonical envelope (931.3, #1086, #1100 item 1): just enough structure for a
@@ -443,7 +483,12 @@ function mapSignIn(
     ...(upn
       ? {
           canonical: createCanonicalEvent({
-            event: { category: "authentication", type: "signin", outcome },
+            event: {
+              category: "authentication",
+              type: "signin",
+              outcome,
+              ...(category ? { action: category } : {}),
+            },
             actor: { kind: "account", name: upn },
             account: { name: upn },
             ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
@@ -451,8 +496,16 @@ function mapSignIn(
               observed: pickStr(rec, ["createdDateTime"]),
               normalized: normalizeTime(pickStr(rec, ["createdDateTime"])),
             },
-            evidence: { rawRecords: [{ source: "m365-signin", locator: `record:${index}` }] },
-            producer: { importer: "m365", parserVersion: "1", mappingVersion: "m365-signin-v1" },
+            evidence: {
+              rawRecords: [
+                {
+                  source: "m365-signin",
+                  locator: `record:${index}`,
+                  ...(recordId ? { recordId } : {}),
+                },
+              ],
+            },
+            producer: { importer: "m365", parserVersion: "1", mappingVersion: "m365-signin-v2" },
           }),
         }
       : {}),
@@ -558,7 +611,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       // replaces the plain row; any other Exchange operation keeps it.
       const exchange = isExchangeRecord(rec) ? mapExchangeRow(rec, iocSink, at) : null;
       if (exchange) opts.debug?.fallback("exchange_decoder");
-      mapped.push(exchange ?? mapUal(rec, iocSink, opts.debug));
+      mapped.push(exchange ?? mapUal(rec, iocSink, at, opts.debug));
       sawUal = true;
     } else if (kind === "signin") {
       const row = mapSignIn(rec, iocSink, at, opts.debug);
@@ -660,8 +713,8 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   const summaries = [
     ...(sawAudit || sawUal
       ? [
-          ...derived(entraPrivilegePaths(fresh, resolve), PRIVILEGE_PATHS_MAX + 1),
-          ...(sawUal ? derived(mailboxChains(fresh), MAILBOX_CHAINS_MAX + 1) : []),
+          ...derived(entraPrivilegePaths(fresh, resolve, opts.scope), PRIVILEGE_PATHS_MAX + 1),
+          ...(sawUal ? derived(mailboxChains(fresh, opts.scope), MAILBOX_CHAINS_MAX + 1) : []),
         ]
       : []),
     ...(sprayCandidates.length && opts.spraySummary !== false

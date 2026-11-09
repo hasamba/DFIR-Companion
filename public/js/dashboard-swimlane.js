@@ -90,6 +90,7 @@
         // An error answer (server still busy, #1915) is not "no events": keep the lanes on screen.
         .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))).then(d => {
           swLanes = Array.isArray(d.lanes) ? d.lanes : [];
+          swShowEmpty(!swLanes.length);
           swDataMinMs = d.minTime ? Date.parse(d.minTime) : 0;
           swDataMaxMs = d.maxTime ? Date.parse(d.maxTime) : 0;
           if (swDataMinMs === swDataMaxMs) { swDataMinMs -= 60000; swDataMaxMs += 60000; }
@@ -98,6 +99,16 @@
           if (det) det.hidden = true;
           swRenderLabels(); swRenderCanvas(); swUpdateZoomLabel(); swSelToolbar();
         }).catch(() => {});
+    }
+
+    // #2468: a successful load with no lanes is an empty case (or a scope with nothing in it). Say
+    // so in a sentence instead of a blank chart. Only a SUCCESSFUL answer flips this — an error keeps
+    // whatever is on screen, as above.
+    function swShowEmpty(empty) {
+      const msg = document.getElementById("swimlaneEmpty");
+      const wrap = document.getElementById("swimlaneWrap");
+      if (msg) msg.hidden = !empty;
+      if (wrap) wrap.hidden = empty;
     }
 
     function scheduleSwimlaneReload() {

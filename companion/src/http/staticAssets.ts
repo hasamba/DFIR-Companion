@@ -30,6 +30,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/settings-search.js": "application/javascript; charset=utf-8",
   "/js/case-load-progress.js": "application/javascript; charset=utf-8",
   "/js/hunt-workbench.js": "application/javascript; charset=utf-8",
+  "/js/hunt-catalog.js": "application/javascript; charset=utf-8",
   "/js/diagnostics-panel.js": "application/javascript; charset=utf-8",
   // Pure helpers lifted out of dashboard.html's inline script (#415). CLASSIC scripts, not modules
   // — the dashboard calls them by bare name, so they have to declare real globals; see
@@ -242,6 +243,10 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-view-presets.js": "application/javascript; charset=utf-8",
   // The .env settings form — read, test Presidio, and save only the groups that changed.
   "/js/dashboard-env-settings.js": "application/javascript; charset=utf-8",
+  // Settings → the Clear control beside a set secret (#2465).
+  "/js/dashboard-env-secret-clear.js": "application/javascript; charset=utf-8",
+  // Settings → remove empty KEY= lines an older save left in .env (#2496).
+  "/js/dashboard-env-empty-lines.js": "application/javascript; charset=utf-8",
   // Settings → Built-in HTTPS: certificate fingerprints and the local-CA download link (#2285).
   "/js/dashboard-tls-info.js": "application/javascript; charset=utf-8",
   "/js/dashboard-decision-model-picker.js": "application/javascript; charset=utf-8",

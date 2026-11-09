@@ -76,6 +76,9 @@
     btn.dataset.tip = view
       ? `Dashboard view: ${view.name} — click to switch or edit`
       : "Dashboard view: Custom — click to choose a layout preset";
+    // The button is icon-only: tooltips.js names it from data-tip once, at load, so keep the
+    // screen-reader name in step with the view or it keeps announcing the first one. #2469
+    btn.setAttribute("aria-label", `Dashboard view: ${view ? view.name : "Custom"}`);
   }
   function closeDashViewMenu() {
     const m = document.getElementById("dashViewMenu");

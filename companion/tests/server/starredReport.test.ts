@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { TagsStore } from "../../src/analysis/tags.js";
 import { StarredReportStore } from "../../src/analysis/starredReportStore.js";
+import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 
 class CapturingProvider implements AIProvider {
@@ -111,9 +112,12 @@ describe("POST /cases/:id/starred-report after a fold (#1715)", () => {
 });
 
 describe("saved starred report (GET/PUT /cases/:id/starred-report)", () => {
-  it("404 before anything is saved; round-trips after PUT", async () => {
+  // Nothing saved yet is an ordinary state on every case load: 200 null, not a console-logged 404 (#2462).
+  it("200 null before anything is saved; round-trips after PUT", async () => {
     const { app } = await harness();
-    expect((await request(app).get("/cases/c1/starred-report")).status).toBe(404);
+    const none = await request(app).get("/cases/c1/starred-report");
+    expect(none.status).toBe(200);
+    expect(none.body).toBeNull();
     const put = await request(app)
       .put("/cases/c1/starred-report")
       .send({ markdown: "# saved", eventCount: 3 });
@@ -235,5 +239,64 @@ describe("synthesis-provider gate (no vision provider)", () => {
     const r = await request(app).post("/cases/c1/view-summary").send({});
     expect(r.status).toBe(200);
     expect(r.body.eventCount).toBe(1);
+  });
+});
+
+// #2459: an AI reply in the wrong shape (here `{}`, no `markdown`) must reach the analyst as one
+// plain sentence, never as the zod issue dump.
+describe("AI reply in the wrong shape (#2459)", () => {
+  class EmptyReply implements AIProvider {
+    readonly name = "empty";
+    readonly model = "mock-model";
+    async analyze(): Promise<AnalyzeResult> {
+      return { rawText: "{}" };
+    }
+  }
+
+  async function badReplyHarness() {
+    const root = await mkdtemp(join(tmpdir(), "dfir-starred-badreply-"));
+    const store = new CaseStore(root);
+    const stateStore = new StateStore(store);
+    const provider = new EmptyReply();
+    const superStore = new SuperTimelineStore(store);
+    const pipeline = new AnalysisPipeline({
+      provider,
+      synthesisProvider: provider,
+      stateStore,
+      superTimelineStore: superStore,
+      retries: 0,
+      backoffMs: 0,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+    const app = createApp(store, {
+      pipeline,
+      stateStore,
+      aiConfigured: true,
+      tagsStore: new TagsStore(store),
+      superTimelineStore: superStore,
+      starredReportStore: new StarredReportStore(store),
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await superStore.append("c1", [sev("v1", "2026-06-01T09:00:00Z", "mimikatz.exe executed")]);
+    await request(app)
+      .post("/cases/c1/tags")
+      .send({ targetType: "event", targetId: "v1", label: "starred", author: "an" });
+    return app;
+  }
+
+  it("starred-report answers with a plain sentence, not the schema dump", async () => {
+    const app = await badReplyHarness();
+    const r = await request(app).post("/cases/c1/starred-report").send({});
+    expect(r.status).toBe(500);
+    expect(r.body.error).toMatch(/AI reply could not be read/);
+    expect(r.body.error).not.toMatch(/invalid_type/);
+  });
+
+  it("view-summary answers with a plain sentence, not the schema dump", async () => {
+    const app = await badReplyHarness();
+    const r = await request(app).post("/cases/c1/view-summary").send({});
+    expect(r.status).toBe(500);
+    expect(r.body.error).toMatch(/AI reply could not be read/);
+    expect(r.body.error).not.toMatch(/invalid_type/);
   });
 });

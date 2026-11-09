@@ -28,6 +28,8 @@ import { classifyAzureFailure, decodeAzureLogging } from "./loggingChangeCloud.j
 import { renderLoggingDescription } from "./loggingChange.js";
 import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { gcpCoverage, azureCoverage } from "./cloudCoverageBuilders.js";
+import { azureRawRecords, azureRowCanonical } from "./cloudRowCanonical.js";
+import { azureActivityRecordId } from "./cloudRecordIdentity.js";
 import { adaptAzureDiagnosticActivity } from "./azureDiagnosticRecord.js";
 import { azureRequestBody, decodeAzureRoleAssignment } from "./azureRoleAssignment.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
@@ -53,6 +55,8 @@ import { readCloudRecords } from "./cloudRecords.js";
 import type { JsonRepairs } from "./tolerantJson.js";
 import { applySigmaToRecordRows, sigmaMatchesFor, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
 import { GCP_AUDIT } from "./sigmaLogSources.js";
+import { shortGcpMethod } from "./cloudRowWording.js";
+import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
 type Row = Record<string, unknown>;
 
@@ -63,6 +67,8 @@ export interface CloudActivityImportOptions extends CloudRecordParseOptions {
   maxIocs?: number;
   /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
   debug?: ImportDebugRecorder;
+  /** A live collection's summary step (#2493): the summaries say "this collection" and key to it. */
+  scope?: SummaryScope;
   /** The Sigma snapshot this import is graded with (#2346) — GCP audit records only. */
   sigma?: SigmaGradingSnapshot;
 }
@@ -125,6 +131,20 @@ function isListKeys(action: string): boolean {
   return /storageaccounts\/listkeys\/action/i.test((action ?? "").trim());
 }
 
+/** The non-failure lifecycle words of ONE Azure call — REST/az shape and Log-Analytics shape. */
+const AZURE_LIFECYCLE_STATUS_RE = /^(started|accepted|succeeded|start|accept|success)$/i;
+const AZURE_LIFECYCLE_KEY = "lifecycle";
+
+/**
+ * The status segment of the Azure aggregation key (#2476). The Activity Log writes a Started and
+ * a Succeeded (sometimes an Accepted) event for one call, and the row only prints the status when
+ * the call failed — so keying on the raw word split one burst into entries that looked identical.
+ * Those lifecycle words share one segment; Failed and any other status keep their own.
+ */
+function azureAggStatus(status: string): string {
+  return AZURE_LIFECYCLE_STATUS_RE.test(status.trim()) ? AZURE_LIFECYCLE_KEY : status;
+}
+
 function matchRule(rules: Rule[], key: string): { severity: Severity; mitre: string[] } | null {
   const k = key.toLowerCase();
   for (const [re, severity, mitre] of rules) if (re.test(k)) return { severity, mitre };
@@ -179,7 +199,8 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>, locator: string): MappedEv
   const shortSvc = service.replace(/\.googleapis\.com$/i, "");
   const shortRes = resource.split("/").slice(-2).join("/");
   // Every imported string in the head is neutralised (brackets, controls, bidi) and bounded.
-  let head = `GCP ${neutral(method, 120)}${shortSvc ? ` (${neutral(shortSvc, 40)})` : ""}`;
+  // The title shows the method without its versioned package (#2486); the record keeps it whole.
+  let head = `GCP ${neutral(shortGcpMethod(method), 120)}${shortSvc ? ` (${neutral(shortSvc, 40)})` : ""}`;
   if (principal) head += ` by ${neutral(principal, 80)}`;
   if (ip) head += ` from ${ip}`;
   // The object name is kept whole here: the row's digest-preserving clip (#940) is what bounds it.
@@ -307,6 +328,7 @@ function mapAzure(
   const observed = pickStr(rec, ["eventTimestamp", "time", "TimeGenerated", "timeStamp"], (k) =>
     debug?.field("timestamp", k),
   );
+  const recordId = azureActivityRecordId(rec); // the key the Azure record dedup uses (#2485)
 
   return {
     timestamp: normalizeTime(observed),
@@ -331,7 +353,7 @@ function mapAzure(
     // it, listings of DIFFERENT storage accounts by the same caller/IP collapse into one row, and
     // the key→read correlator can only ever see the first account.
     aggKey: boundedAggKey(
-      `azure|${op}|${caller}|${ip}|${status}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : (isObjectRead(op) || isListKeys(op)) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}${roleGrant?.keySegment ?? ""}`.toLowerCase(),
+      `azure|${op}|${caller}|${ip}|${azureAggStatus(status)}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : (isObjectRead(op) || isListKeys(op)) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}${roleGrant?.keySegment ?? ""}`.toLowerCase(),
     ),
     sources: ["Azure Activity"],
     ...(logging
@@ -347,7 +369,7 @@ function mapAzure(
             ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
             cloud: { provider: "azure", ...(resource ? { resource } : {}) },
             time: { observed, normalized: normalizeTime(observed) },
-            evidence: { rawRecords: [{ source: "azure-activity", locator: `record:${recordIndex}` }] },
+            evidence: { rawRecords: azureRawRecords(recordIndex, recordId) },
             producer: {
               importer: "azure-activity",
               parserVersion: "1",
@@ -395,7 +417,7 @@ function mapAzure(
               ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
               cloud: { provider: "azure", ...(resource ? { resource } : {}) },
               time: { observed, normalized: normalizeTime(observed) },
-              evidence: { rawRecords: [{ source: "azure-activity", locator: `record:${recordIndex}` }] },
+              evidence: { rawRecords: azureRawRecords(recordIndex, recordId) },
               producer: {
                 importer: "azure-activity",
                 parserVersion: "1",
@@ -404,7 +426,20 @@ function mapAzure(
               },
             }),
           }
-        : {}),
+        : {
+            // Every other operation cites its own record too (#2485), not the legacy `event:<id>`.
+            canonical: azureRowCanonical({
+              operation: op,
+              caller,
+              ip,
+              resource,
+              observed,
+              normalized: normalizeTime(observed),
+              failed,
+              index: recordIndex,
+              recordId,
+            }),
+          }),
   };
 }
 
@@ -588,8 +623,11 @@ function parseActivityRecords(
   // The per-service-account join (#1065): built over every GCP record of this export, appended
   // AFTER the source-row cap under its own bound — `maxEvents` bounds source rows, a summary
   // never evicts one, and `kept`/`dropped`/`groups` count source rows alone.
+  // A live collection's summaries (#2493) say "this collection" and key their rows to it, not to a file.
+  const scope = opts.scope ?? UPLOAD_SCOPE;
+  const summaryUpload = scope.kind === "collection" ? scope.uploadId : uploadId;
   const summaries = sawGcp
-    ? aggregateEvents(gcpServiceAccountJoins(records), {
+    ? aggregateEvents(gcpServiceAccountJoins(records, scope), {
         aggregate: opts.aggregate,
         minSeverity: opts.minSeverity,
         maxEvents: GCP_SA_JOIN_MAX + 1,
@@ -603,7 +641,7 @@ function parseActivityRecords(
   // into the ORIGINAL upload, not into a filtered array, or a mixed-provider upload's two joins
   // would both cite "record:0" for two different raw records (Codex code review, finding #3).
   const azureLifecycles = sawAzure
-    ? aggregateEvents(azureComputeLifecycles(records, uploadId), {
+    ? aggregateEvents(azureComputeLifecycles(records, summaryUpload, scope), {
         aggregate: opts.aggregate,
         minSeverity: opts.minSeverity,
         maxEvents: AZURE_COMPUTE_MAX + 1,
@@ -613,14 +651,14 @@ function parseActivityRecords(
   // (never colliding with the standalone parser above), so it is safe to run unconditionally
   // alongside it over the SAME full records array, for the same mixed-provider-locator reason.
   const azureVmssLifecycles = sawAzure
-    ? aggregateEvents(azureVmssComputeLifecycles(records, uploadId), {
+    ? aggregateEvents(azureVmssComputeLifecycles(records, summaryUpload, scope), {
         aggregate: opts.aggregate,
         minSeverity: opts.minSeverity,
         maxEvents: VMSS_COMPUTE_MAX + 1,
       }).events
     : [];
   const gcpLifecycles = sawGcp
-    ? aggregateEvents(gcpComputeLifecycles(records, uploadId), {
+    ? aggregateEvents(gcpComputeLifecycles(records, summaryUpload, scope), {
         aggregate: opts.aggregate,
         minSeverity: opts.minSeverity,
         maxEvents: GCP_COMPUTE_MAX + 1,

@@ -193,6 +193,21 @@ function applyIocNoiseFilters(list, opts) {
   return { visible: out, suppressed: false };
 }
 
+// THE IOC PANEL'S EMPTY-STATE SENTENCE (#2468), plain text. With "Flagged only" on, every empty
+// list used to say "enrich the IOCs first" — even when flagged IOCs existed and a provenance, type
+// or other lens had hidden them. The enrichment hint now covers only the case it describes (Flagged
+// on, nothing flagged at all); every other empty list names the lenses that are on.
+// o: { total, flaggedOnly, flaggedTotal, lenses: string[] (active lens names), noise: boolean }
+function iocEmptyStateText(o) {
+  if (!(o.total > 0)) return "No IOCs yet";
+  if (o.flaggedOnly && !(o.flaggedTotal > 0))
+    return "No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.";
+  const lenses = Array.isArray(o.lenses) ? o.lenses.filter(Boolean) : [];
+  const named = lenses.length ? ` (active: ${lenses.join(", ")})` : "";
+  const noise = o.noise ? " Turn off “Signal only” / “Hide FP/no-intel” / “Hide OS system paths” to see everything." : "";
+  return `No IOCs match the filter${named}.${noise}`;
+}
+
 // Said out loud when the lenses above stand down, because their toggles still read as ON: without
 // it the panel looks like it is ignoring its own filters. Empty string when nothing was suppressed.
 function iocNoiseNoticeHtml(suppressed, shown) {
@@ -246,6 +261,7 @@ window.DfirIoc = {
   sortIocsForDisplay,
   applyIocNoiseFilters,
   iocNoiseNoticeHtml,
+  iocEmptyStateText,
   iocFilterKey,
   resolveIocPage,
   scoreCoversTag,

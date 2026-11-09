@@ -1565,7 +1565,9 @@ not in this evidence; privileged change: iam CreateAccessKey at 10:03:10Z (recor
 second source; record retention and the trails' selectors are not in this evidence; issuance and
 14 uses in this upload]`. It is built over every record of ONE upload, before aggregation and the
 event cap, because the data-plane rows a credential is used for are Info and leave the forensic
-timeline at import; a lineage across uploads is not built.
+timeline at import; a lineage across uploads is not built. A **live cloud collection** counts as
+one upload: its lineage is built once over every page of the run (see "Collection jobs and
+evidence manifest" below), and its rows say "this collection" instead of "this upload".
 
 - **Joined through the access key id only** (or the Identity Center credential id). A session name
   or a role's display name never joins: two sessions named `ci-42` under two keys are two rows.
@@ -1621,7 +1623,8 @@ configuration replaced, start; recorded facts: startup configuration replaced af
 any-address ingress rule recorded on a group the instance holds (2 kinds); what ran on the
 instance and its network egress are not in CloudTrail; record retention and the trails' selectors
 are not in this evidence; terminated …]`. Built over every record of one upload, like the
-credential lineage; a lifecycle across uploads is not built.
+credential lineage; a lifecycle across uploads is not built. A live cloud collection counts as one
+upload here too.
 
 - **Joined through the instance id only**, scoped by the owning account (the launch response's
   `ownerId`, else the record's recipient account — never the caller's) and the region. An image
@@ -1672,13 +1675,19 @@ serviceAccounts/svc@…` — High whatever the policy change was, the member and
 the impersonation chain and the key behind the call ignored. Each record now reads for what it
 states, and every capability is nominal:
 
-`GCP google.iam.admin.v1.SetIAMPolicy (iam) by alice@corp.example from 203.0.113.11 on
+`GCP SetIAMPolicy (iam) by alice@corp.example from 203.0.113.11 on
 serviceAccounts/svc@acme.iam.gserviceaccount.com — authority over service account
 svc@acme.iam.gserviceaccount.com granted to user:bob@corp.example — added a binding for
 roles/iam.serviceAccountTokenCreator, whose documented permissions include: generating access
 tokens and ID tokens for the service account, signing blobs and JWTs (nominal; conditions, deny
 policies, principal access boundaries and inheritance are not evaluated by this record)`
 
+- **The method name, shortened in the title.** The versioned API package in front of the method
+  (`google.iam.admin.v1.`, `google.cloud.orgpolicy.v2.`) is left out, so
+  `google.iam.admin.v1.CreateServiceAccount` reads `CreateServiceAccount`, the same way `SetIamPolicy`
+  and `storage.buckets.create` already read. A method without such a package is shown as logged. The
+  full method stays on the event's record. Rows imported before this change keep the long form until
+  you run a Sigma re-grade or import the file again.
 - **Who acted, as the record says.** `principalEmail` is typed only by a documented
   service-account address shape — `name@<project-id>.iam.gserviceaccount.com` (home project, an
   id), `<number>-compute@developer…` (a number), `<id>@appspot…`, or a Google-managed service
@@ -1874,6 +1883,20 @@ the same findings again (or collecting an overlapping window) imports nothing tw
 updated a finding in between, the update is imported as a new event, so each update is on the
 timeline. No Sigma rule reads GuardDuty findings, and the Cloud Coverage panel does not list them.
 
+### Coverage rows on the timeline
+
+Some timeline rows are notes about the evidence, not events: **Cloud coverage gap** (the case has
+cloud audit logs but no host telemetry, so the instance metadata service cannot be checked), **Cloud
+object logging is off**, **Cloud object reads were not all examined** and **Browsing evidence without
+an account**. Their source is `Coverage`, and a re-merge replaces them instead of adding another.
+
+- **Where they sit.** Each one sits at the time of the **earliest** event it describes: the earliest
+  cloud audit record, the earliest cloud object record, or the earliest browsing record. It no longer
+  depends on the order in which the files were imported.
+- **All four are Medium.** A case whose forensic gate is set to Medium removes every Low row from
+  the forensic timeline, so a Low note would never reach AI synthesis there. At Medium, AI synthesis
+  still learns that "nothing found" here does not mean "nothing happened".
+
 ### Sigma rules grade CloudTrail, Entra and GCP imports
 
 AWS CloudTrail records, Entra ID **user sign-ins** and **directory-audit** records (Graph and Log
@@ -1886,13 +1909,15 @@ rules, which by default only label events unless the rule is critical (see
 - **A high or critical rule raises the event** to the rule's level. The description starts with
   `Sigma: <rule title>`. A severity the importer already gave is never lowered.
 - **A rule below the minimum level (default: medium, low or informational), or any rule from SigmaHQ's
-  threat-hunting set, labels the event but does not grade it**: `Sigma (medium, not graded): <title>`.
-  The severity does not change. Any severity the row shows comes from the companion's other rules,
+  threat-hunting set, labels the event but does not grade it.** The description does not change:
+  only a rule that set the severity names itself at the start of the row, so a row another rule
+  graded High never seems to say "not graded". The severity does not change. Any severity the row shows comes from the companion's other rules,
   and an Info row stays Info, goes to the super-timeline, and is never read by the AI. The details
   carry a `Sigma note: not graded — …` line that says why: the rule is below the minimum level, it is
   a threat-hunting rule, or the log source does not let Sigma raise that record. Hover over the row
-  title to see the same reason. Rows imported before this wording read `tag only` until you run a
-  Sigma re-grade.
+  title to see the same reason. Rows imported before this change still start with
+  `Sigma (medium, not graded): <title>` (or the older `tag only`) until you run a Sigma re-grade or
+  import the file again.
 - **Every match is recorded on the event**: the rule id, level, status, author, the SigmaHQ release
   and a link to the rule. The rule's ATT&CK techniques are added to the event.
 - **One event, not two.** When the importer's own tables and a Sigma rule flag the same record, it
@@ -1913,8 +1938,8 @@ rules, which by default only label events unless the rule is critical (see
 
 Which rules run (by default): SigmaHQ `stable` and `test` rules for `aws/cloudtrail`, `azure/signinlogs`,
 `azure/auditlogs` and `gcp/audit`. The 15 bundled GCP audit rules are all `medium`, so at the default
-minimum level (high) they **only label** GCP events — for example `Sigma (medium, not graded): Google
-Cloud Firewall Modified or Deleted`. Set the minimum level to medium to let them raise events. Some of them
+minimum level (high) they **only label** GCP events — the details then list, for example, `Sigma rule:
+Google Cloud Firewall Modified or Deleted` with a `Sigma note: not graded` line. Set the minimum level to medium to let them raise events. Some of them
 name GCP methods the way another log pipeline spells them (`.serviceAccounts.disable` for what a real
 audit log calls `DisableServiceAccount`). The Companion runs the rules as SigmaHQ wrote them and also
 matches the real name for those exact calls, so every one of the 15 fires on real Cloud Audit Log
@@ -1983,6 +2008,10 @@ Unified Audit Log's AzureActiveDirectory record) now read the same way, one row 
   starts `self-grant:` and is High.
 - **Attempts** — `attempted to grant application permission … — failed … [requested, not granted]`,
   Medium, no High: the change did not happen.
+- **Risk the tenant cannot see.** A sign-in whose risk level is `hidden` (the tenant has no Entra
+  ID P2 licence, so no risk check was possible) reads `[risk level not visible (no Entra ID P2)]`,
+  never `[risk: hidden]`, and is not tagged `risk`. A mailbox chain says `level not visible (no Entra
+  ID P2)` the same way. A real level (`[risk: low]`, `[risk: high]`) is shown as before.
 - **Application sign-ins** are rows now (they used to be dropped): `Entra sign-in: application
   Sync (app-id) token issued → Microsoft Graph from 198.51.100.7 credential: clientSecret k-1`.
   The credential type comes from `clientCredentialType`, never from a key id; a secret is Low, a
@@ -2824,6 +2853,11 @@ super-timeline always streams. Any other file is held in memory whole and refuse
 (`DFIR_MAX_IMPORT_FILE_MB`). A smaller cloud export takes the whole-file path, which keeps at most
 2,000 aggregated events (`DFIR_MAX_EVENTS`), most severe first.
 
+**Azure Activity: one call, one entry.** The Activity Log writes a *Started* and a *Succeeded*
+event (sometimes an *Accepted* one too) for one management call. These are counted together in one
+entry, so a burst of calls shows as one counted row and not as two or three rows that look the
+same. A *Failed* call is always its own entry, graded Medium as before.
+
 **Drop folder.** The drop folder reads a file up to 200 MB whole (`DFIR_DROP_MAX_BYTES`). A cloud
 export or a Plaso super-timeline over that size is streamed instead of refused, and a `.gz` cloud
 export is decompressed while it is read, at any size. The streamed import's note (which budgets were
@@ -2853,7 +2887,9 @@ disk in batches of 5,000 records and never holds it whole, so memory does not gr
   the room the case's super-timeline has left (`DFIR_SUPERTIMELINE_MAX`, 100,000 rows by default), so
   one import never pushes out the rows earlier imports put there. Rows past that room are counted.
 - **Whole-export summaries** (credential lineages, compute lifecycles, privilege paths, mailbox
-  chains, service-account joins) are built over the first 25,000 records of a larger file.
+  chains, service-account joins) are built over the first 25,000 records of a larger file. A live
+  collection builds them once over its first 25,000 records per log type, not per page (see
+  "Collection jobs and evidence manifest").
 - **CloudTrail cross-account pairs** (the two records one cross-account action writes, one per
   account) become one row only when both records are in the same batch of 5,000 records. A pair
   split across two batches stays two rows; neither record is lost.
@@ -2950,7 +2986,37 @@ rewritten.
 audit query can take ten minutes) never blocks other imports into the case. Then each saved page is
 imported, one at a time, through the same streaming importer as a large export file, with the same
 grading, budgets and deduplication. Every event names its collection and page file in its sources,
-and carries the provider's record id. Other background jobs of the case wait behind a running
+and carries the provider's record id.
+
+**One AWS credential lineage per collection run.** The CloudTrail credential lineages and compute
+lifecycles are not built page by page. When the last page is imported, they are built once over
+every CloudTrail page of the run, in page order, as if the collection were one large export file:
+a key issued on page 1 and used on pages 2 to 8 gives one row that says where it was issued, with
+every source. The rows appear when the import step ends, not during it, and name
+`summary-aws` of the collection in their sources. They cover the first 25,000 CloudTrail records
+of the collection, the same limit as a large file; for a larger collection the import note says
+how many records the summaries cover. A stopped or partial run gets them over the pages it saved;
+**Resume** rebuilds the same rows over every page — no second row — and removes, from both
+timelines, a row the rebuild no longer reports (for example a key pushed past the 256 lineages
+shown by a busier one). Tagger rules run again on the rebuilt rows. Two collections, or a
+collection and a file upload, still give two rows for the same key.
+
+**The same for Microsoft and GCP.** The same step builds the Microsoft and GCP whole-export
+summaries once per collection run, one set per log type (`summary-m365` for Entra and the audit
+log, `summary-cloud` for Azure Activity and GCP audit logs): the Entra privilege paths, the mailbox
+chains, the GCP service-account joins and the GCP, Azure VM and Azure scale-set compute
+lifecycles. Directory audits and sign-ins are collected as separate sources, so they are always on
+different pages; built once over both, a path with a new credential, a privileged grant, the
+sign-in with that credential and the action reaches **High**. These rows say "this collection",
+not "this export" or "this upload". **Password spray** is also read once over the whole run: a
+spray spread over several pages of one run is one row, not "across N uploads" — that wording stays
+for a spray across separate collections or uploads, and each collection counts as one upload there,
+however many pages it has. A record saved twice (a re-read page window) is read once. If the
+sign-in history of other uploads is too large to read whole, the rebuild keeps every earlier
+summary row of the collection and the import note says so. **MFA fatigue** is still found page by
+page: each page replaces the same row, so it never repeats.
+
+Other background jobs of the case wait behind a running
 collection while `DFIR_JOBS_PER_CASE` is 1.
 
 **The result** is **complete** (every source's results for the window were read to the end),

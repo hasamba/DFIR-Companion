@@ -6,6 +6,7 @@
 // Kept beside canonicalEvent.ts so the envelope schema stays within its size bound.
 
 import { z } from "zod";
+import { scopeBasisSchema } from "./summaryScope.js";
 
 export const mailboxChainStepSchema = z.object({
   stage: z.enum(["sign-in", "access", "persistence", "consequence"]),
@@ -44,7 +45,8 @@ export const mailboxChainBlockSchema = z.object({
     logons: coverageSchema.optional(),
     signIns: coverageSchema.optional(),
   }),
-  basis: z.literal(
+  // The file form, or its collection form (#2493) — summaryScope.ts.
+  basis: scopeBasisSchema(
     "records of this export only; joined through the mailbox and the stated join; configured, not delivered; accessed, not read",
   ),
 });

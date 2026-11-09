@@ -27,6 +27,7 @@ import {
 import type { SigmaRuleRef } from "./sigmaRuleSet.js";
 import { cloudTrailSigmaVeto } from "./sigmaCloudTrailVeto.js";
 import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
+import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
 import { awsCloudTrailCoverage } from "./cloudCoverageBuilders.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
@@ -642,14 +643,19 @@ export function readCloudTrailRecords(text: string): ReturnType<typeof readCloud
  * (#931 item 8), keyed with this upload's identity so an identical re-import folds and two uploads
  * about one instance stay two rows. The order is part of the result: event ids are positional.
  */
-function trailSummaries(fresh: Row[], uploadId: string, opts: AwsImportOptions): SiemEvent[] {
+function trailSummaries(
+  fresh: Row[],
+  uploadId: string,
+  opts: AwsImportOptions,
+  scope: SummaryScope = UPLOAD_SCOPE,
+): SiemEvent[] {
   return [
-    ...aggregateEvents(awsLineages(fresh), {
+    ...aggregateEvents(awsLineages(fresh, scope), {
       aggregate: opts.aggregate,
       minSeverity: opts.minSeverity,
       maxEvents: AWS_LINEAGE_MAX + 1,
     }).events,
-    ...aggregateEvents(awsComputeLifecycles(fresh, uploadId), {
+    ...aggregateEvents(awsComputeLifecycles(fresh, uploadId, scope), {
       aggregate: opts.aggregate,
       minSeverity: opts.minSeverity,
       maxEvents: AWS_COMPUTE_MAX + 1,
@@ -661,11 +667,14 @@ function trailSummaries(fresh: Row[], uploadId: string, opts: AwsImportOptions):
  * The summary rows a streamed import builds over its summary window (#2362): exactly
  * `parseCloudTrail("", { records }).events.slice(kept)`, without mapping, Sigma-grading and
  * aggregating every window record only to throw those rows away. Same early return — no record that
- * maps, no summaries — and the same stamp of the empty text's hash (the caller restamps it).
+ * maps, no summaries — and the same stamp of the empty text's hash (the caller restamps it). A live
+ * collection's summary step (#2482) passes its scope: the rows say "this collection" and key their
+ * compute lifecycles to the collection.
  */
-export function cloudTrailSummaries(records: Row[]): SiemEvent[] {
+export function cloudTrailSummaries(records: Row[], scope: SummaryScope = UPLOAD_SCOPE): SiemEvent[] {
   if (!records.some((rec) => trailAction(rec))) return [];
-  return stampSourceArtifactHash(trailSummaries(records, sourceArtifactHash(""), {}), "");
+  const uploadId = scope.kind === "collection" ? scope.uploadId : sourceArtifactHash("");
+  return stampSourceArtifactHash(trailSummaries(records, uploadId, {}, scope), "");
 }
 
 function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions): AwsParseResult {

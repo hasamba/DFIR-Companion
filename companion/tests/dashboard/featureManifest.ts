@@ -1077,6 +1077,20 @@ export const FEATURES: Feature[] = [
     private: ["loadedEnvValues", "RELOADABLE_ENV_PREFIXES", "LOCAL_PRESIDIO_HOSTS"],
   },
   {
+    // Settings → the Clear control beside a masked secret (#2465). Called by the settings form as it
+    // loads and saves; the pending mark lives on the field itself, so there is no module state.
+    file: "dashboard-env-secret-clear.js",
+    publish: ["decorateSecretClear", "secretClearPending", "secretClearSettle"],
+    private: ["SET_HINT", "PENDING_HINT"],
+  },
+  {
+    // Settings → empty KEY= lines already in .env (#2496). emptyLines is private: only the settings
+    // form's load and save may change which keys a save removes.
+    file: "dashboard-env-empty-lines.js",
+    publish: ["recordEmptyEnvLines", "isEmptyEnvLine", "settleEmptyEnvLines"],
+    private: ["emptyLines"],
+  },
+  {
     // Settings → Built-in HTTPS line + local-CA download link (#2285). Called by the settings form
     // each time it loads; holds no state of its own.
     file: "dashboard-tls-info.js",

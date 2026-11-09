@@ -196,11 +196,11 @@
   #sec-hostranking .hr-kind{color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
   #sec-hostranking .hr-score{margin-left:auto;background:var(--bg-drop-active);color:var(--accent-hover);border:1px solid var(--border-strong);border-radius:4px;padding:0 7px;font-weight:bold;white-space:nowrap}
   #sec-hostranking .hr-badge{border-radius:3px;padding:0 6px;font-size:11px;white-space:nowrap}
-  #sec-hostranking .hr-crit{background:#cf222e22;color:#ff7b72;border:1px solid #cf222e55}
-  #sec-hostranking .hr-high{background:#bb800922;color:#e3b341;border:1px solid #bb800955}
-  #sec-hostranking .hr-med{background:#9aa4b222;color:#9aa4b2;border:1px solid #9aa4b255}
-  #sec-hostranking .hr-tech{color:#6aa9ff}
-  #sec-hostranking .hr-conn{color:#c79bff}
+  #sec-hostranking .hr-crit{background:var(--danger-bg);color:var(--badge-danger-text);border:1px solid var(--danger-border)}
+  #sec-hostranking .hr-high{background:var(--warning-bg);color:var(--badge-warning-text);border:1px solid var(--warning-border)}
+  #sec-hostranking .hr-med{background:var(--bg-primary);color:var(--text-muted);border:1px solid var(--border-subtle)}
+  #sec-hostranking .hr-tech{color:var(--tag-blue-text)}
+  #sec-hostranking .hr-conn{color:var(--tag-purple-text)}
   #sec-hostranking .hr-row{cursor:pointer}
   #sec-hostranking .hr-caret{color:var(--text-muted);font-size:10px;flex-shrink:0;transition:transform .12s}
   #sec-hostranking .hr-row.hr-open .hr-caret{transform:rotate(90deg)}

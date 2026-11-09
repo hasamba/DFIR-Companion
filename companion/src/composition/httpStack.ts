@@ -282,6 +282,10 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
   if (options.teamAuth) {
     registerTeamAuthRoutes(app, options.teamAuth, store);
     app.use(options.teamAuth.middleware({ caseLifecycleOf: (caseId) => caseLifecycleOf(store, caseId) }));
+  } else {
+    // Single-user mode: the dashboard still asks on every boot whether team login is on. Answer
+    // "off" instead of a console-logged 404 (#2462). The body carries no data.
+    app.get("/auth/me", (_req, res) => res.status(200).json({ enabled: false, authenticated: false }));
   }
   app.use("/cases/:id", createCaseIdGate());
   // Gates every /cases/:id/* route behind that case's password, when one is set. Mounted

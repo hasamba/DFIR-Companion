@@ -590,11 +590,18 @@ describe("GET /cases/:id/server-set", () => {
     expect(res.body).toEqual({ setId: s.id, name: "Only Velo", tools: ["velociraptor"] });
   });
 
-  it("409s with the resolver message for an unlinked case", async () => {
+  // An unlinked case is an ordinary state on every case load, so the read answers 200 and carries the
+  // resolver's message as `problem` instead of a console-logged 409 (#2462).
+  it("answers 200 with the resolver message as the problem for an unlinked case", async () => {
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const res = await request(singleUserApp()).get("/cases/c1/server-set");
-    expect(res.status).toBe(409);
-    expect(res.body.error).toBe("This case has no server set. Choose one in the case header.");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      setId: "",
+      name: "",
+      tools: [],
+      problem: "This case has no server set. Choose one in the case header.",
+    });
   });
 });
 

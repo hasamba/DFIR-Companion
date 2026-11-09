@@ -740,6 +740,7 @@ async function dispatch(message) {
     case "migrateSuper": return migrateSuper(message.dbPath, message.eventsPath, message.labelsPath, message.tagsPath, message.excludeAuthorPrefix, message.max, message.setAsideMarkers, message.setAsideVersion);
     case "appendSuper": return appendSuper(message.dbPath, message.events, message.max, message.setAsideMarkers);
     case "rehomeSuper": return rehomeSuper(message.dbPath, message.events, message.setAsideMarkers);
+    case "dropSummaryRows": return dropSummaryRows(message.dbPath, message.prefix, message.keepIds);
     case "scanSuper": return scanSuper(message.dbPath, message.query || {});
     case "querySuper": return querySuper(message.dbPath, message.query || {});
     case "getSuper": return getSuper(message.dbPath, message.id);

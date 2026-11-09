@@ -292,7 +292,11 @@ Share the **CA** fingerprint with the team over a channel you already trust (cha
 
 **The browser extension needs the certificate installed.** Its background uploads cannot show a
 warning page, so a clicked-through exception is not enough. After installing, set the extension's
-companion URL to `https://<server>:<port>` and approve the permission prompt.
+companion URL to `https://<server>:<port>` and approve the permission prompt. Until the
+certificate is trusted, the extension popup cannot tell it apart from a stopped Companion: it says
+the Companion "isn't running, or this browser doesn't trust its certificate" and links to the
+certificate download (see
+[Evidence Capture](evidence-capture.md#capture-modes)).
 
 **Your own certificate.** To use a certificate from your organization instead, set
 `DFIR_HTTPS_CERT` (PEM; may include the chain) and `DFIR_HTTPS_KEY` (unencrypted PEM key). The

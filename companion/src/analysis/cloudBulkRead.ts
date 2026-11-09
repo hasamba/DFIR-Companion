@@ -37,6 +37,7 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
+import { earliestEventTime } from "./coverageEventTime.js";
 import { legacySummaryId, summaryHead, summaryId } from "./cloudBulkReadSummaryId.js";
 
 export { legacySummaryId, summaryHead, summaryId } from "./cloudBulkReadSummaryId.js";
@@ -731,9 +732,7 @@ export function truncationEvent(events: readonly ForensicEvent[], dropped: numbe
   if (dropped <= 0) return null;
   return {
     id: TRUNCATION_COVERAGE_ID,
-    timestamp:
-      events.find((e) => Number.isFinite(Date.parse(e.timestamp ?? "")))?.timestamp ??
-      new Date().toISOString(),
+    timestamp: earliestEventTime(events, (e) => e.id !== TRUNCATION_COVERAGE_ID && !!readCloudRecord(e)),
     description: `Cloud object reads were not all examined ${BULK_READ_MARKER} ${dropped} object-read record(s) past the per-principal cap of ${MAX_RECORDS_PER_GROUP} were not examined, so any bulk read among them is NOT reflected above. Narrow the import — by principal, by bucket, or by time — and re-import to cover the rest.]`,
     severity: "Medium",
     mitreTechniques: [],
@@ -746,19 +745,17 @@ export function truncationEvent(events: readonly ForensicEvent[], dropped: numbe
 export function objectLoggingEvent(events: readonly ForensicEvent[]): ForensicEvent | null {
   let reads = 0;
   let lists = 0;
-  let firstTime = "";
   for (const e of events) {
     if (e.id === LOGGING_COVERAGE_ID) continue;
     const r = readCloudRecord(e);
     if (!r) continue;
-    if (!firstTime) firstTime = e.timestamp ?? "";
     if (r.object) reads++;
     else if (LIST_ONLY_RE.test(r.action)) lists++;
   }
   if (reads > 0 || lists === 0) return null;
   return {
     id: LOGGING_COVERAGE_ID,
-    timestamp: firstTime || new Date().toISOString(),
+    timestamp: earliestEventTime(events, (e) => e.id !== LOGGING_COVERAGE_ID && !!readCloudRecord(e)),
     description: `Cloud object logging is off ${BULK_READ_MARKER} ${objectLoggingNote(events)}]`,
     severity: "Medium",
     mitreTechniques: [],

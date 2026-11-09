@@ -315,8 +315,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   app.post("/cases/:id/archive", withArchiveBarrier(ctx, archiveRoute));
 
   // Restore a case previously archived via the removeFromList option: moves it back from
-  // _archived/ into the active cases root and sets status to "closed" (the state it must have
-  // been in to be archived) — use PATCH /cases/:id/status afterward to reopen it if needed.
+  // _archived/ into the active cases root and sets status to "closed". Archiving does not require a
+  // closed case, so this can differ from the status it had before: closed is the conservative
+  // choice for a handed-over record, and every change then goes through an explicit Reopen
+  // (PATCH /cases/:id/status). The dashboard's status line says so (#2466).
   app.post("/cases/:id/restore", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;

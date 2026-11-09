@@ -113,6 +113,15 @@ export const M365_SAMPLES: readonly DetectionSample[] = [
 
   // ── Entra sign-in ──
   m("signin.axios", GAPS, signInBase({ userAgent: "axios/1.6.8" })),
+  m(
+    "signin.nodeFetch.nonInteractive",
+    GAPS,
+    signInBase({
+      userAgent: "node-fetch/1.0",
+      signInEventTypes: ["nonInteractiveUser"],
+      isInteractive: false,
+    }),
+  ),
   m("signin.teamFiltration", GAPS, signInBase({ userAgent: TEAMFILTRATION })),
   m("signin.aadInternals", GAPS, signInBase({ userAgent: "AADInternals" })),
   m("signin.pythonRequests", GAPS, signInBase({ userAgent: "python-requests/2.31" })),

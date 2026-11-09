@@ -388,6 +388,15 @@ describe("regressions", () => {
     expect(out?.description).toContain("carry no account");
   });
 
+  it("#2486: places the attribution gap at the earliest browsing record, whatever the array order", () => {
+    const out = attributionCoverageEvent([
+      ev({ description: "Process created: x.exe", timestamp: "2025-12-01T00:00:00Z" }),
+      { ...bag("alice"), timestamp: "2026-01-03T10:00:00Z" },
+      { ...bag("not recorded by this collection", "C:\\x"), timestamp: "2026-01-02T10:00:00Z" },
+    ]);
+    expect(out?.timestamp).toBe("2026-01-02T10:00:00Z");
+  });
+
   it("says nothing when everything is attributed", () => {
     expect(attributionCoverageEvent([bag("alice")])).toBeNull();
   });

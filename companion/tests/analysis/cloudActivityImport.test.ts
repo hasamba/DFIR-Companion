@@ -56,13 +56,29 @@ describe("parseCloudActivity — GCP", () => {
     const r = parseCloudActivity(JSON.stringify([gcp("google.iam.admin.v1.CreateServiceAccountKey")]));
     expect(r.format).toBe("gcp");
     const e = r.events[0];
-    expect(e.description).toContain("GCP google.iam.admin.v1.CreateServiceAccountKey (iam)");
+    // #2486: the versioned "google.<svc>.<ver>." prefix is left out of the title, kept on the record.
+    expect(e.description).toContain("GCP CreateServiceAccountKey (iam)");
+    expect(e.description).not.toContain("google.iam.admin.v1.");
     expect(e.description).toContain("by attacker@acme.com");
     expect(e.severity).toBe("High");
     expect(e.mitreTechniques).toContain("T1098.001");
     expect(e.sources).toEqual(["GCP Audit"]);
     expect(e.timestamp).toBe("2023-07-01T10:00:00.123456789Z");
     expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("203.0.113.11");
+  });
+
+  it.each([
+    ["google.iam.admin.v1.CreateServiceAccount", "GCP CreateServiceAccount ("],
+    ["google.cloud.orgpolicy.v2.OrgPolicy.DeletePolicy", "GCP OrgPolicy.DeletePolicy ("],
+    ["google.logging.v2.ConfigServiceV2.DeleteBucket", "GCP ConfigServiceV2.DeleteBucket ("],
+    ["google.cloud.securitycenter.v1beta1.SecurityCenter.SetMute", "GCP SecurityCenter.SetMute ("],
+    ["storage.buckets.create", "GCP storage.buckets.create ("],
+    ["SetIamPolicy", "GCP SetIamPolicy ("],
+    ["google.longrunning.Operations.GetOperation", "GCP google.longrunning.Operations.GetOperation ("],
+  ])("#2486: the title shows %s as a short method name", (method, head) => {
+    const r = parseCloudActivity(JSON.stringify([gcp(method)]));
+    expect(r.events[0].description.startsWith(head)).toBe(true);
+    expect(r.events[0].canonical?.event?.action).toBe(method);
   });
 
   it("setIamPolicy on storage maps to data-exposure (T1530)", () => {
@@ -422,5 +438,129 @@ describe("parseCloudActivity — compute-lifecycle wiring (#1066)", () => {
     const azureRow = r.events.find((e) => e.description.startsWith("Azure compute lifecycle:"));
     expect(gcpRow?.canonical?.evidence?.rawRecords.map((rr) => rr.locator)).toContain("record:1");
     expect(azureRow?.canonical?.evidence?.rawRecords.map((rr) => rr.locator)).toContain("record:0");
+  });
+});
+
+// #2476: the Activity Log writes a Started and a Succeeded (sometimes an Accepted) event for ONE
+// call. The status rode in the aggregation key, but the row only prints it when the call failed —
+// so one burst showed as two or three entries that looked identical. The non-failure lifecycle
+// statuses now share one key segment; a failed call stays its own group, and grades are unchanged.
+describe("parseCloudActivity — Azure lifecycle statuses fold into one entry (#2476)", () => {
+  const OP = "Microsoft.Network/taggedTrafficConsumers/validate/action";
+  const burst = (statuses: string[]) =>
+    statuses.map((s) => azure(OP, { status: { value: s }, httpRequest: undefined, caller: "platform-guid" }));
+
+  it("a Started + Succeeded burst gives one counted entry", () => {
+    const r = parseCloudActivity(JSON.stringify(burst(["Started", "Succeeded", "Started", "Succeeded"])));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].severity).toBe("Low");
+  });
+
+  it("Accepted joins the same entry, case-insensitively", () => {
+    const r = parseCloudActivity(JSON.stringify(burst(["started", "ACCEPTED", "Succeeded"])));
+    expect(r.events).toHaveLength(1);
+  });
+
+  it("the Log-Analytics Start / Accept / Success words fold the same way", () => {
+    const la = (s: string) => ({
+      TimeGenerated: "2023-07-01T12:00:00Z",
+      OperationNameValue: OP,
+      Caller: "platform-guid",
+      ActivityStatusValue: s,
+      ResourceId: "/subscriptions/abc/resourceGroups/rg/providers/Microsoft.Network/x",
+      Type: "AzureActivity",
+    });
+    const r = parseCloudActivity(JSON.stringify([la("Start"), la("Accept"), la("Success")]));
+    expect(r.events).toHaveLength(1);
+  });
+
+  it("a Failed call stays a separate, Medium entry", () => {
+    const r = parseCloudActivity(JSON.stringify(burst(["Started", "Succeeded", "Failed"])));
+    expect(r.events).toHaveLength(2);
+    const failed = r.events.find((e) => e.description.includes("[Failed]"));
+    expect(failed?.severity).toBe("Medium");
+    expect(r.events.filter((e) => !e.description.includes("[Failed]"))).toHaveLength(1);
+  });
+
+  it("a status outside the lifecycle (Canceled) keeps its own group", () => {
+    const r = parseCloudActivity(JSON.stringify(burst(["Succeeded", "Canceled"])));
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("a tenant user's call keeps its own group and its Low grade", () => {
+    const user = azure(OP, {
+      caller: "alice@contoso.example",
+      httpRequest: { clientIpAddress: "203.0.113.5" },
+    });
+    const r = parseCloudActivity(JSON.stringify([...burst(["Started", "Succeeded"]), user]));
+    expect(r.events).toHaveLength(2);
+    const alice = r.events.find((e) => e.description.includes("alice@contoso.example"));
+    expect(alice?.severity).toBe("Low");
+    expect(alice?.description).toContain("from 203.0.113.5");
+  });
+});
+
+// #2485: every Azure Activity row cites its source record — not only the logging-change and
+// listKeys rows — so a collected or uploaded row never falls back to the legacy upgrade.
+describe("parseCloudActivity — Azure row provenance (#2485)", () => {
+  const SUB = "/subscriptions/abc/resourceGroups/rg/providers";
+  it("a plain Azure operation carries an azure-activity-v1 envelope with its record id", () => {
+    const nsg = `${SUB}/Microsoft.Network/networkSecurityGroups/nsg1`;
+    const r = parseCloudActivity(
+      JSON.stringify([
+        azure("Microsoft.Network/networkSecurityGroups/write", { eventDataId: "ed-1", resourceId: nsg }),
+        azure("Microsoft.Compute/virtualMachines/delete", {
+          eventDataId: "ed-2",
+          status: { value: "Failed" },
+        }),
+      ]),
+    );
+    const write = r.events.find((e) => /networkSecurityGroups\/write/.test(e.description))!;
+    expect(write.canonical?.evidence.rawRecords).toEqual([
+      { source: "azure-activity", locator: "record:0", recordId: "abc|ed-1" },
+    ]);
+    expect(write.canonical?.producer).toMatchObject({
+      importer: "azure-activity",
+      mappingVersion: "azure-activity-v1",
+    });
+    expect(write.canonical?.event).toMatchObject({
+      category: "cloud",
+      action: "Microsoft.Network/networkSecurityGroups/write",
+      outcome: "success",
+    });
+    expect(write.canonical?.actor).toEqual({ kind: "account", name: "admin@acme.com" });
+    expect(write.canonical?.network?.source).toEqual({
+      address: "203.0.113.22",
+      provenance: "edge-observed",
+    });
+    expect(write.canonical?.cloud).toMatchObject({ provider: "azure", resource: nsg });
+    const del = r.events.find((e) => /virtualMachines\/delete/.test(e.description))!;
+    expect(del.canonical?.event.outcome).toBe("failure");
+    expect(del.canonical?.evidence.rawRecords[0]).toMatchObject({
+      locator: "record:1",
+      recordId: "abc|ed-2",
+    });
+  });
+
+  it("the logging-change and listKeys envelopes carry the record id too", () => {
+    const r = parseCloudActivity(
+      JSON.stringify([
+        azure("Microsoft.Insights/diagnosticSettings/delete", { eventDataId: "ed-3" }),
+        azure("Microsoft.Storage/storageAccounts/listKeys/action", {
+          eventDataId: "ed-4",
+          resourceId: "/subscriptions/abc/resourceGroups/rg1/providers/Microsoft.Storage/storageAccounts/sa1",
+        }),
+      ]),
+    );
+    const logging = r.events.find((e) => e.canonical?.event.type === "logging-change")!;
+    expect(logging.canonical?.evidence.rawRecords[0]).toMatchObject({ recordId: "abc|ed-3" });
+    const keys = r.events.find((e) => e.canonical?.event.type === "storage-key-list")!;
+    expect(keys.canonical?.evidence.rawRecords[0]).toMatchObject({ recordId: "abc|ed-4" });
+  });
+
+  it("a record with no stable id still cites its locator", () => {
+    const e = parseCloudActivity(JSON.stringify([azure("Microsoft.Network/publicIPAddresses/write")]))
+      .events[0];
+    expect(e.canonical?.evidence.rawRecords).toEqual([{ source: "azure-activity", locator: "record:0" }]);
   });
 });

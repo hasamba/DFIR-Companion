@@ -44,7 +44,7 @@ Below it, the cockpit lists:
 - running or failed imports and analyses;
 - blockers that prevent the case from being report-ready; and
 - a concise digest of findings/imports/synthesis changes since this investigator last marked the
-  case reviewed.
+  case reviewed. An import you undo or redo shows here too ("Import undone: …").
 
 Every card opens its owning workspace and, where evidence exists, links to the exact forensic event.
 Lead cards can be pinned, dismissed, deferred, or assigned. These actions are kept with the case and
@@ -65,7 +65,7 @@ The top of the dashboard shows:
 - Case name and investigator
 - Screenshot count and last capture time
 - Last synthesis time and what changed
-- Last import time and how many new events/IOCs it added
+- Last import time and how many new events/IOCs it added. When an AI-triage import (CSV or log) produced no events from a file that had rows, the banner shows a red warning instead of only "no new events": check the AI provider and re-import, and treat the file as not analyzed, not as clean. A re-import whose events were all already in the timeline does not trigger it.
 - A severity summary badge (Critical / High / Medium counts)
 
 **Synthesis coverage audit** — the synth-meta card (next to the last-synthesis time) shows how many in-window events a run actually considered vs. omitted (by prompt-size budget, false-positive filter, or scope window), plus how many budget-omitted events were Critical/High — visibility into what a large-timeline synthesis run left out.
@@ -297,7 +297,9 @@ The core of the investigation. A table of all forensic events, sorted by timesta
 
 The dashboard loads the first 10,000 events of a large case. The heading then shows the case total and how many are loaded, for example "70000 events, first 10000 loaded". With a filter on, the heading reads like "40 of the first 10000 loaded events, 9960 hidden by filters; case holds 70000". Filters and paging cover the loaded events only. Press **Load more events** at the end of the list to load the next batch.
 
-Each row shows a compact title line (timestamp, severity badge, description, source tool(s), asset, `NEW` badge if added in the last import); a **[details ▶]** toggle expands the full description, MITRE, related findings, decoded payloads, evidence link, and the raw tool message in one shared panel below the row. Row actions:
+The Lead and Executive views show only High and above in the timeline. A decision-cockpit link can switch to one of them. When that floor hides rows, the heading names it, for example "10 of 23 events, 13 hidden by filters (Lead view: High+)". Switch to the Analyst view to see every severity.
+
+Each row shows a compact title line (timestamp, severity badge, description, source tool(s), asset, `NEW` badge if added in the last import); a **[details ▶]** toggle expands the full description, MITRE, related findings, decoded payloads, evidence link, and the raw tool message (shown only when it differs from the description) in one shared panel below the row. Row actions:
 
 - **💡 Explain** button — AI explains this event, gives ATT&CK context, and suggests pivot queries
 - **🚫 Mark False Positive** — excludes this event from analysis
@@ -311,7 +313,7 @@ Each row shows a compact title line (timestamp, severity badge, description, sou
 - **🔍 Screenshot text** — full-text search across OCR'd screenshots
 - **Exclude** — chip-list control next to the toolbar search bar; hides timeline events / IOCs / findings matching any of several exclude terms
 - **Corroboration lens** — show only events observed by 2+ or 3+ distinct tools (see below)
-- **Pagination** — 100 / 250 / 500 / All rows per page; the Prev/Next bar sits above the event rows
+- **Pagination** — 50 (default) / 100 / 250 / 500 / All rows per page; the Prev/Next bar sits above the event rows
 
 !!! tip
     Drag a time range on the **Timeline Swimlane** (below) to instantly scope the timeline to that window.
@@ -411,7 +413,9 @@ A visual chart with:
 
 In the tactic view, each lane is one ATT&CK tactic in kill-chain order, with Reconnaissance first and Uncategorized last.
 
-Useful for spotting lateral movement (events jumping between assets) and attack timing. Drag a time range to scope the timeline to that window. Exports as SVG.
+Useful for spotting lateral movement (events jumping between assets) and attack timing. Drag a time range to scope the timeline to that window. The **⤓ PNG** button downloads the swimlane as a PNG image, for reports.
+
+On a case with no forensic-timeline events (or a scope with none in it), the panel says "No forensic-timeline events to chart yet." in place of an empty chart.
 
 ---
 
@@ -561,8 +565,9 @@ Each IOC shows:
 
 **Inline quick-actions** — any detected value (IP/hash/domain/SID/URL/path) inside an event row or an
 IOC value is itself clickable, opening a tray to copy it, mark it benign, mark it confirmed-malicious,
-or suggest a hunt — without leaving the timeline to find the IOC's own row. Outcomes are recorded to
-the investigation log.
+or suggest a hunt — without leaving the timeline to find the IOC's own row. The benign and
+confirmed-malicious outcomes are recorded to the investigation log, under your investigator name.
+Copy and hunt change nothing in the case, so they are not logged.
 
 ---
 
@@ -733,6 +738,8 @@ A free-text question box. Type any question in natural language:
 
 The AI answers using the forensic timeline plus the **evidence-chain graph** — so it can trace multi-hop paths.
 
+On a case with no forensic-timeline events and no findings, the panel says so under the question box: an answer would have nothing to read until you import evidence.
+
 It also reads your own decisions on the case, so the answer respects them instead of contradicting them:
 
 | Your work | What the model is told |
@@ -767,6 +774,8 @@ Type a plain-English description of what you want to hunt for. Select the output
 | **Sigma** | Cross-SIEM |
 | **YARA** | File/memory |
 | **Suricata** | Network IDS |
+
+The languages offered follow the **Hunt platforms** setting (`DFIR_HUNT_PLATFORMS`). Leave it blank to offer all seven; set it to a comma-separated list to offer only those.
 
 ---
 

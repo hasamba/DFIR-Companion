@@ -244,7 +244,9 @@ describe("bundled SigmaHQ GCP audit rules (#2346)", () => {
 
   it("keeps the raw method name in the event; the alias is used only for matching", () => {
     const r = parse([SAMPLES["Google Cloud Service Account Disabled or Deleted"]]);
-    expect(r.events[0].description).toContain("google.iam.admin.v1.DisableServiceAccount");
+    // #2486: the title shows the method without its versioned package; the record keeps it whole.
+    expect(r.events[0].description).toContain("GCP DisableServiceAccount (iam)");
+    expect(r.events[0].canonical?.event?.action).toBe("google.iam.admin.v1.DisableServiceAccount");
     expect(r.events[0].description).not.toContain("serviceAccounts.disable");
   });
 
@@ -260,9 +262,9 @@ describe("bundled SigmaHQ GCP audit rules (#2346)", () => {
     const without = parseCloudActivity(JSON.stringify([rec]), { aggregate: false });
     const r = parse([rec]);
     expect(r.events[0].severity).toBe(without.events[0].severity);
-    expect(r.events[0].description).toMatch(
-      /^Sigma \(medium, not graded\): Google Cloud SQL Database Modified or Deleted - GCP /,
-    );
+    // #2486: a rule that did not grade leaves the description as the importer wrote it.
+    expect(r.events[0].description).toBe(without.events[0].description);
+    expect(r.events[0].message).toContain("Sigma rule: Google Cloud SQL Database Modified or Deleted [");
     expect(r.events[0].message).toMatch(
       /author Austin Songer @austinsonger, SigmaHQ r2026-07-01, https:\/\/github\.com\/SigmaHQ\/sigma\/blob\/552f3fee/,
     );

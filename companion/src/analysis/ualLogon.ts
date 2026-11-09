@@ -123,3 +123,38 @@ export function readEntraSignIn(rec: Row): EntraSignIn {
     observed: str(getCI(rec, "createdDateTime")).trim(),
   };
 }
+
+/** An Entra sign-in's category as the row shows it (#2483); "" when the record does not say. */
+export type EntraSignInCategory =
+  "interactive" | "non-interactive" | "service-principal" | "managed-identity" | "";
+
+const SIGN_IN_EVENT_TYPES: Readonly<Record<string, EntraSignInCategory>> = {
+  interactiveuser: "interactive",
+  noninteractiveuser: "non-interactive",
+  serviceprincipal: "service-principal",
+  managedidentity: "managed-identity",
+};
+
+/** How a sign-in row shows its category; the tagger's HTTP-library rules read "[non-interactive]". */
+export const ENTRA_SIGN_IN_CATEGORY_MARKER: Readonly<Record<Exclude<EntraSignInCategory, "">, string>> = {
+  interactive: "[interactive]",
+  "non-interactive": "[non-interactive]",
+  "service-principal": "[service principal]",
+  "managed-identity": "[managed identity]",
+};
+
+/**
+ * The sign-in category: Graph beta's `signInEventTypes` first, then `isInteractive` (true / false),
+ * else "" — a v1.0 or hand-made export that says neither is not guessed at.
+ */
+export function entraSignInCategory(rec: Row): EntraSignInCategory {
+  const types = getCI(rec, "signInEventTypes");
+  for (const t of Array.isArray(types) ? types : [types]) {
+    const category = SIGN_IN_EVENT_TYPES[str(t).trim().toLowerCase()];
+    if (category) return category;
+  }
+  const interactive = str(getCI(rec, "isInteractive")).trim().toLowerCase();
+  if (interactive === "true") return "interactive";
+  if (interactive === "false") return "non-interactive";
+  return "";
+}

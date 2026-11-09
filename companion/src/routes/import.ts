@@ -29,6 +29,7 @@ import { registerWazuhImportRoute } from "./importWazuh.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { buildImportBase, importJobParameters } from "./importBase.js";
 import { createImportDebugRecorder } from "../analysis/importDebug.js";
+import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { settleForensicImport } from "./importSettle.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
 import { cloudStream } from "./importCloudStream.js";
@@ -375,6 +376,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   path: aiDependent ? "ai" : "deterministic",
                   fpPropagation,
                   truncation,
+                  aiExtraction: aiExtractionFromDebug(aiDependent ? "ai" : "deterministic", debug), // #2460
                 });
                 options.onImportMeta?.(caseId);
               }

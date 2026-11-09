@@ -1,3 +1,4 @@
+import { untrustedCertMessage } from "./certTrust.js";
 import type { CaseCredential } from "./types.js";
 
 // The password for a password-locked case (#2135). The companion refuses evidence for a locked case
@@ -130,7 +131,13 @@ export function pushErrorMessage(
   companionUrl: string,
 ): string {
   if (isLockedRejection(status, errorMessage)) return LOCKED_PUSH_ERROR;
-  if (status === 0) return `Companion offline at ${companionUrl}`;
+  if (status === 0) {
+    // Over https a failed fetch may be an untrusted team-mode certificate, not a stopped server (#2473).
+    const certHint = untrustedCertMessage(companionUrl);
+    return certHint
+      ? `Can't reach the companion at ${companionUrl} — it isn't running, or this browser doesn't trust its certificate. ${certHint}`
+      : `Companion offline at ${companionUrl}`;
+  }
   if (status === 404) return `Case "${caseId}" not found — re-select it in the popup`;
   if (status === 400) return "Companion couldn't detect the artifact format";
   if (status === 429) return "Too many wrong case passwords — wait a few minutes, then push again";

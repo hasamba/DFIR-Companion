@@ -55,6 +55,11 @@
             : isClosed
               ? "Case CLOSED — click to reopen or archive"
               : "Case ACTIVE — click to close or archive";
+          // Icon-only: keep the screen-reader name in step with the case state. #2469
+          btn.setAttribute(
+            "aria-label",
+            `Case lifecycle: ${isArchived ? "archived" : isClosed ? "closed" : "active"}`,
+          );
         }
         // Archived cases can only be restored — close/reopen/archive don't apply until then.
         if (closeBtn)
@@ -175,7 +180,8 @@
       openEncryptedExport();
     });
 
-    // Restore an archived case back to the active list (status becomes "closed").
+    // Restore an archived case back to the active list. It always comes back closed — even one that
+    // was open when it was archived — so the status line says so and names the way out (#2466).
     restoreCaseBtn.addEventListener("click", async () => {
       menu.style.display = "none";
       const caseId = document.getElementById("caseId").value.trim();
@@ -190,7 +196,7 @@
         loadCaseLifecycle(caseId);
         loadCaseList();
         document.getElementById("status").textContent =
-          `case "${caseId}" restored (now closed)`;
+          `case "${caseId}" restored — it comes back closed; use Reopen case to make changes`;
       } catch (e) {
         alert("Restore error: " + e.message);
       }

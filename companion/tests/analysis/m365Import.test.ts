@@ -142,6 +142,20 @@ describe("parseM365Audit — Entra sign-in & audit", () => {
     expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("203.0.113.50");
   });
 
+  it("#2486: a hidden risk level says the tenant cannot see risk, never '[risk: hidden]'", () => {
+    const signin = {
+      createdDateTime: "2023-05-02T08:00:00Z",
+      userPrincipalName: "victim@victim.com",
+      ipAddress: "203.0.113.50",
+      status: { errorCode: 0 },
+      riskLevelDuringSignIn: "hidden",
+    };
+    const e = parseM365Audit(JSON.stringify([signin])).events[0];
+    expect(e.description).toContain("[risk level not visible (no Entra ID P2)]");
+    expect(e.description).not.toContain("[risk: hidden]");
+    expect(e.severity).toBe("Info");
+  });
+
   it("maps a failed Entra sign-in (errorCode != 0) as Medium", () => {
     const signin = {
       createdDateTime: "2023-05-02T08:05:00Z",
@@ -240,6 +254,60 @@ describe("parseM365Audit — Entra sign-in & audit", () => {
       ]),
     );
     expect(r.events).toHaveLength(2);
+  });
+
+  // #2483 — the sign-in category (interactive / non-interactive) is shown, cited and keyed.
+  it("shows the sign-in category from signInEventTypes, then isInteractive, and nothing when unknown", () => {
+    const shown = (over: Record<string, unknown>) =>
+      parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: 0 }, ...over })])).events[0];
+    const nonInt = shown({ signInEventTypes: ["nonInteractiveUser"], isInteractive: false });
+    expect(nonInt.description).toMatch(/^Entra sign-in: \[non-interactive\] v@victim\.com from /);
+    expect(nonInt.canonical?.event).toMatchObject({
+      category: "authentication",
+      type: "signin",
+      action: "non-interactive",
+    });
+    expect(shown({ signInEventTypes: ["interactiveUser"] }).description).toMatch(
+      /^Entra sign-in: \[interactive\] v@victim\.com/,
+    );
+    expect(shown({ isInteractive: false }).description).toMatch(/^Entra sign-in: \[non-interactive\] /);
+    expect(shown({ isInteractive: true }).description).toMatch(/^Entra sign-in: \[interactive\] /);
+    expect(shown({ signInEventTypes: ["managedIdentity"] }).description).toMatch(
+      /^Entra sign-in: \[managed identity\] /,
+    );
+    const unknown = shown({});
+    expect(unknown.description).toMatch(/^Entra sign-in: v@victim\.com from /);
+    expect(unknown.canonical?.event.action).toBeUndefined();
+  });
+
+  it("cites the Graph record id on the canonical record and moves the mapping version on", () => {
+    const e = parseM365Audit(JSON.stringify([signinRec({ id: "signin-7", status: { errorCode: 0 } })]))
+      .events[0];
+    expect(e.canonical?.evidence?.rawRecords?.[0]).toMatchObject({
+      source: "m365-signin",
+      recordId: "signin-7",
+    });
+    expect(e.canonical?.producer?.mappingVersion).toBe("m365-signin-v2");
+    const noId = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: 0 } })])).events[0];
+    expect(noId.canonical?.evidence?.rawRecords?.[0]).not.toHaveProperty("recordId");
+  });
+
+  it("keeps an interactive and a non-interactive sign-in by the same user, IP, app and UA apart", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        signinRec({ status: { errorCode: 0 }, signInEventTypes: ["interactiveUser"] }),
+        signinRec({ status: { errorCode: 0 }, signInEventTypes: ["nonInteractiveUser"] }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("the shown identity cannot forge the category marker", () => {
+    const e = parseM365Audit(
+      JSON.stringify([signinRec({ userPrincipalName: "[non-interactive] eve", status: { errorCode: 0 } })]),
+    ).events[0];
+    expect(e.description).toMatch(/^Entra sign-in: \(non-interactive\) eve/);
+    expect(e.canonical?.account?.name).toBe("[non-interactive] eve"); // the record keeps it as stated
   });
 
   it("maps an Entra directory audit (initiatedBy + targetResources)", () => {
@@ -1011,5 +1079,83 @@ describe("parseM365Audit — password-spray fan-out (931.3, #1086)", () => {
     const r = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: 0 } })]));
     expect(r.events[0].canonical?.account?.name).toBe("v@victim.com");
     expect(r.events[0].canonical?.event.category).toBe("authentication");
+  });
+});
+
+// #2485: a plain UAL row (no Exchange / Entra decoder) cites its own source record — source,
+// locator and record id — instead of reaching the case with no envelope and getting the legacy
+// upgrade's `legacy-forensic-event` / `event:<id>` citation on read.
+describe("parseM365Audit — plain UAL row provenance (#2485)", () => {
+  const TENANT = "00000000-0000-4000-8000-0000000000aa";
+  const ad = (id: string, op: string) => ({
+    Id: id,
+    CreationTime: "2026-11-01T10:01:00",
+    Operation: op,
+    Workload: "SharePoint",
+    RecordType: 6,
+    OrganizationId: TENANT,
+    UserId: "alice@victim.com",
+    UserKey: "i:0h.f|membership|1003@example.com",
+    ClientIP: "198.51.100.44",
+    ObjectId: "https://victim.sharepoint.com/sites/x/doc.docx",
+  });
+  const graph = (id: string, op: string) => ({
+    id,
+    createdDateTime: "2026-11-01T10:01:00Z",
+    auditLogRecordType: "SharePointFileOperation",
+    operation: op,
+    organizationId: TENANT,
+    userPrincipalName: "alice@victim.com",
+    clientIp: "198.51.100.44",
+    service: "SharePoint",
+    auditData: ad(id, op),
+  });
+
+  it("classic Search-UnifiedAuditLog shape: m365-ual / record:N / bare Id", () => {
+    const r = parseM365Audit(
+      JSON.stringify([ualRow(ad("u-1", "FileAccessed")), ualRow(ad("u-2", "FileDeleted"))]),
+    );
+    const e = r.events.find((x) => /FileDeleted/.test(x.description))!;
+    expect(e.canonical?.evidence.rawRecords).toEqual([
+      { source: "m365-ual", locator: "record:1", recordId: "u-2" },
+    ]);
+    expect(e.canonical?.producer).toMatchObject({ importer: "m365", mappingVersion: "m365-ual-v1" });
+    expect(e.canonical?.event).toMatchObject({
+      category: "cloud",
+      action: "FileDeleted",
+      outcome: "success",
+    });
+    expect(e.canonical?.actor).toEqual({ kind: "account", name: "alice@victim.com" });
+    expect(e.canonical?.network?.source).toEqual({ address: "198.51.100.44", provenance: "edge-observed" });
+    expect(e.canonical?.cloud).toMatchObject({ provider: "m365", tenant: TENANT });
+    expect(e.canonical?.authentication).toBeUndefined(); // no Login Graph claim for a generic operation
+  });
+
+  it("Graph auditLogQuery shape cites the Graph record id", () => {
+    const r = parseM365Audit(JSON.stringify([graph("g-7", "FileDeleted")]));
+    expect(r.events[0].canonical?.evidence.rawRecords[0]).toMatchObject({
+      source: "m365-ual",
+      locator: "record:0",
+      recordId: "g-7",
+    });
+  });
+
+  it("a failed operation reads as a failure; a row with no Id still cites its locator", () => {
+    const rec = { ...ad("", "FileDeleted"), Id: undefined, ResultStatus: "Failed" };
+    const e = parseM365Audit(JSON.stringify([rec])).events[0];
+    expect(e.canonical?.event.outcome).toBe("failure");
+    expect(e.canonical?.evidence.rawRecords).toEqual([{ source: "m365-ual", locator: "record:0" }]);
+  });
+
+  it("the read-time upgrade keeps the import-time envelope; UserLoggedIn never joins the Login Graph", async () => {
+    const { upgradeForensicEvent } = await import("../../src/analysis/canonicalEvent.js");
+    const { parseLoginEvent } = await import("../../src/analysis/loginGraph.js");
+    type FE = Parameters<typeof upgradeForensicEvent>[0];
+    const r = parseM365Audit(JSON.stringify([ualRow(ad("u-9", "UserLoggedIn"))]));
+    const fe = { ...r.events[0], id: "ev-1", sourceScreenshots: [] } as unknown as FE;
+    const up = upgradeForensicEvent(fe);
+    expect(up.canonical?.producer.importer).toBe("m365");
+    expect(up.canonical?.evidence.rawRecords[0]).toMatchObject({ source: "m365-ual", recordId: "u-9" });
+    expect(parseLoginEvent(fe)).toBeNull();
   });
 });

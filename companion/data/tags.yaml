@@ -849,7 +849,7 @@ ts_entra_legacy_auth:
 ts_entra_signin_risk:
   description: Sign-in carrying a risk signal (Timesketch anomalous / impossible-travel — risk only)
   any:
-    - { field: description, regex: '^Entra sign-in:[^\n]*\[risk: (?!none)\S', flags: 'i' }
+    - { field: description, regex: '^Entra sign-in:[^\n]*\[risk: (?!none|hidden\])\S', flags: 'i' }
   tags: ['signin', 'risk']
   view: 'M365 sign-ins'
 
@@ -2239,8 +2239,22 @@ mas_user_agent_aitm_or_spray:
   description: Sign-in from an HTTP library the suite associates with AiTM phishing kits or password spraying
   any:
     - { field: description, regex: '^Entra sign-in:[^\n]*\[ua: [^\]]*(?:agentaxios|axios/|fasthttp|Go-http-client/|go-resty/|GuzzleHttp/|node-fetch/|okhttp/|Python-urllib/|\bundici\b|\bnode\b)', flags: 'i' }
+  # Local narrowing (#2483), not a re-port: a NON-interactive sign-in (a background token refresh)
+  # from an HTTP library is routine, so it gets the tag-only rule below instead. m365Import writes the
+  # category marker right after the prefix, where no record field can reach. Interactive and
+  # unknown-category sign-ins (an export without signInEventTypes / isInteractive) stay Medium.
+  none:
+    - { field: description, regex: '^Entra sign-in: \[non-interactive\] ' }
   tags: ['analyzer_suite', 'suspicious_user_agent', 'aitm_or_spray']
   severity: Medium
+  view: 'Analyzer-Suite user agents'
+
+mas_user_agent_http_library_noninteractive:
+  description: Non-interactive sign-in (token refresh) from an HTTP library the suite associates with AiTM kits or spraying; tagged for search, not graded
+  all:
+    - { field: description, regex: '^Entra sign-in: \[non-interactive\] ' }
+    - { field: description, regex: '^Entra sign-in:[^\n]*\[ua: [^\]]*(?:agentaxios|axios/|fasthttp|Go-http-client/|go-resty/|GuzzleHttp/|node-fetch/|okhttp/|Python-urllib/|\bundici\b|\bnode\b)', flags: 'i' }
+  tags: ['analyzer_suite', 'suspicious_user_agent', 'http_library_noninteractive']
   view: 'Analyzer-Suite user agents'
 
 mas_user_agent_offensive_tool:
