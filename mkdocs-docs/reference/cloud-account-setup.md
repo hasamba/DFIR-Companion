@@ -154,7 +154,7 @@ block. The last block must not end with a comma.
 
 ### Step 5 — Add it to the companion
 
-In **Settings → Integrations → Cloud accounts**, with the case open:
+In **Settings → Cloud Accounts**, with the case open:
 
 1. Click **+ Add cloud account**.
 2. **Name:** for example `client AWS prod`. **Provider:** *AWS account*.
@@ -267,7 +267,7 @@ keys (newer organizations do by default). Either:
 
 ### Step 5 — Add it to the companion
 
-In **Settings → Integrations → Cloud accounts**, with the case open:
+In **Settings → Cloud Accounts**, with the case open:
 
 1. Click **+ Add cloud account**. **Name:** for example `client GCP`. **Provider:** *GCP project*.
 2. **Project ID:** from step 1.
@@ -390,7 +390,7 @@ can read.
 
 ### Step 7 — Add it to the companion
 
-In **Settings → Integrations → Cloud accounts**, with the case open:
+In **Settings → Cloud Accounts**, with the case open:
 
 1. Click **+ Add cloud account**. **Name:** for example `client M365`. **Provider:**
    *Microsoft tenant*.

@@ -4,7 +4,7 @@ Cloud collection reads audit logs straight from an AWS account, a Microsoft tena
 project, and saves them as case evidence. It uses a **cloud account**: the credential for one
 account, tenant or project, kept in an encrypted vault.
 
-Add cloud accounts in **Settings → Integrations → Cloud accounts**, with a case open. An account
+Add cloud accounts in **Settings → Cloud Accounts**, with a case open. An account
 belongs to the cases it is attached to, and you need write access to a case to see, add, check or
 use its accounts. Cloud accounts are disabled on the public demo.
 
@@ -398,7 +398,7 @@ same record in a classic unified audit log export.
 ## Network settings
 
 Every cloud request — sign-in token requests included — goes through the cloud TLS and proxy
-settings in **Settings → Integrations → Cloud accounts**: `DFIR_CLOUD_CA`, `DFIR_CLOUD_INSECURE`
+settings in **Settings → Cloud Accounts**: `DFIR_CLOUD_CA`, `DFIR_CLOUD_INSECURE`
 and `DFIR_CLOUD_PROXY_URL`. The standard `HTTPS_PROXY` variable is not used for cloud collection.
 
 ### The machine's own credentials

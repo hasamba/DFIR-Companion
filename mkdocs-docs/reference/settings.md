@@ -268,7 +268,7 @@ DFIR-IRIS, Timesketch and Velociraptor steps also save into the default set, not
 ### Cloud accounts
 
 A cloud account holds the credential that cloud collection uses for one AWS account, one Microsoft
-tenant or one GCP project. Find the list at Settings → Integrations → **Cloud accounts**. The
+tenant or one GCP project. Find the list at Settings → **Cloud Accounts**. The
 list shows in **All** settings mode.
 
 For a click-by-click guide to creating the identity in each cloud, see

@@ -577,7 +577,7 @@
     byId("cloudAccountForm").addEventListener("submit", saveForm);
     byId("caProvider").addEventListener("change", (e) => showProvider(e.target.value));
     document.querySelectorAll(".stab").forEach((tab) => {
-      if (tab.dataset.stab === "integrations") tab.addEventListener("click", loadCloudAccounts);
+      if (tab.dataset.stab === "cloud") tab.addEventListener("click", loadCloudAccounts);
     });
     loadCloudAccounts();
   }
