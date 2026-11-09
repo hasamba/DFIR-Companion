@@ -47,21 +47,35 @@ function sigmaReleaseLine(r) {
   return `${r.release} (${src}${when}${verified})`;
 }
 
-// The statuses field is a plain env input the generic Settings save posts; the three checkboxes
-// are a view of it, kept in step both ways.
+// Each statuses field is a plain env input the generic Settings save posts; its three checkboxes
+// are a view of it, kept in step both ways. One group for the SigmaHQ rules, one for the Suzaku
+// rules (#2499), each with its own default.
+const SIGMA_STATUS_GROUPS = [
+  { input: "env-DFIR_SIGMA_RULE_STATUSES", selector: "[data-sigma-status]", key: "sigmaStatus", fallback: "stable,test" },
+  {
+    input: "env-DFIR_SIGMA_SUZAKU_STATUSES",
+    selector: "[data-sigma-suzaku-status]",
+    key: "sigmaSuzakuStatus",
+    fallback: "stable,test,experimental",
+  },
+];
+
 function sigmaSyncStatusBoxes() {
-  const input = document.getElementById("env-DFIR_SIGMA_RULE_STATUSES");
-  if (!input) return;
-  const set = new Set((input.value || "stable,test").split(",").map((s) => s.trim().toLowerCase()));
-  document.querySelectorAll("[data-sigma-status]").forEach((box) => {
-    box.checked = set.has(box.dataset.sigmaStatus);
-  });
+  for (const g of SIGMA_STATUS_GROUPS) {
+    const input = document.getElementById(g.input);
+    if (!input) continue;
+    const set = new Set((input.value || g.fallback).split(",").map((s) => s.trim().toLowerCase()));
+    document.querySelectorAll(g.selector).forEach((box) => {
+      box.checked = set.has(box.dataset[g.key]);
+    });
+  }
 }
 
-function sigmaStatusBoxChanged() {
-  const input = document.getElementById("env-DFIR_SIGMA_RULE_STATUSES");
+function sigmaStatusBoxChanged(event) {
+  const g = SIGMA_STATUS_GROUPS.find((x) => event && event.target && event.target.matches(x.selector));
+  const input = g && document.getElementById(g.input);
   if (!input) return;
-  const picked = [...document.querySelectorAll("[data-sigma-status]")].filter((b) => b.checked).map((b) => b.dataset.sigmaStatus);
+  const picked = [...document.querySelectorAll(g.selector)].filter((b) => b.checked).map((b) => b.dataset[g.key]);
   input.value = picked.join(",");
 }
 
@@ -81,6 +95,10 @@ function sigmaRenderStatus(s) {
   const st = s.settings && s.settings.statuses;
   if (st && st.ignored && st.ignored.length) notes.push(`Ignored statuses: ${st.ignored.join(", ")} — only stable, test and experimental can be used.`);
   if (s.settings && s.settings.minLevel && s.settings.minLevel.invalid) notes.push(`"${s.settings.minLevel.invalid}" is not a level; using high.`);
+  const sz = s.settings && s.settings.suzaku;
+  if (sz && sz.statuses && sz.statuses.ignored && sz.statuses.ignored.length) notes.push(`Ignored Suzaku statuses: ${sz.statuses.ignored.join(", ")} — only stable, test and experimental can be used.`);
+  if (sz && sz.minLevel && sz.minLevel.invalid) notes.push(`"${sz.minLevel.invalid}" is not a level; Suzaku rules raise severity at critical.`);
+  if (sz && !sz.enabled) notes.push("Suzaku rules are switched off (DFIR_SIGMA_SUZAKU_RULES=off).");
   const lc = s.lastCheck;
   if (lc && lc.updateAvailable) notes.push(`New Sigma release available: ${lc.latest}. Use Check for updates to preview it.`);
   const box = document.getElementById("sigmaNotes");
@@ -465,11 +483,12 @@ function sigmaRenderRegrade(r, caseId, applied) {
     return;
   }
   const c = r.counts || {};
+  const rules = r.rules || `SigmaHQ ${r.release}`; // #2499: names Suzaku too when it graded
   const head = applied
-    ? `Re-graded with SigmaHQ ${r.release}.`
+    ? `Re-graded with ${rules}.`
     : r.current && !((Number(c.changed) || 0) + (Number(c.tokenOnly) || 0))
-      ? `Already graded with the current rules (SigmaHQ ${r.release}). A re-grade changes nothing.`
-      : `A re-grade with SigmaHQ ${r.release} would change:`;
+      ? `Already graded with the current rules (${rules}). A re-grade changes nothing.`
+      : `A re-grade with ${rules} would change:`;
   box.appendChild(sigmaEl("div", head));
   box.appendChild(sigmaEl("div", sigmaRegradeCountsText(c)));
   if (applied && r.demoted) box.appendChild(sigmaEl("div", `${r.demoted} row(s) left the forensic timeline; they stay in the super-timeline.`));
@@ -530,7 +549,9 @@ function initSigmaRules() {
   document.getElementById("sigmaRegradeBtn")?.addEventListener("click", sigmaRegradePreview);
   document.getElementById("sigmaRulesFilter")?.addEventListener("input", sigmaFilterRules);
   document.getElementById("sigmaRulesState")?.addEventListener("change", sigmaFilterRules);
-  document.querySelectorAll("[data-sigma-status]").forEach((box) => box.addEventListener("change", sigmaStatusBoxChanged));
+  document
+    .querySelectorAll("[data-sigma-status], [data-sigma-suzaku-status]")
+    .forEach((box) => box.addEventListener("change", sigmaStatusBoxChanged));
 }
 
 // Self-start, the way js/hunt-workbench.js does: guarded so a page-less test context loads it cleanly.

@@ -18,7 +18,7 @@ import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { createApp } from "../../src/server.js";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { loadBundledSigmaRuleSet } from "../../src/analysis/sigmaBundledRules.js";
-import { createSigmaImportGrader } from "../../src/analysis/sigmaImportGrade.js";
+import { createSigmaImportGrader, sigmaSetLabel } from "../../src/analysis/sigmaImportGrade.js";
 import { splitSigmaOverlay } from "../../src/analysis/sigmaRegrade.js";
 import type { SigmaRuleSet } from "../../src/analysis/sigmaRuleSet.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
@@ -133,7 +133,7 @@ describe("POST /cases/:id/sigma/regrade runs as a job (#2425)", () => {
     expect(jobs[0]).toMatchObject({
       status: "succeeded",
       cancellable: false,
-      label: `Sigma re-grade (SigmaHQ ${SET_ON.release})`,
+      label: `Sigma re-grade (${sigmaSetLabel(SET_ON)})`,
     });
   });
 

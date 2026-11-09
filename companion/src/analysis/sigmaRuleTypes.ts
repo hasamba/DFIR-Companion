@@ -31,6 +31,11 @@ export interface SigmaFieldMatch {
    * `allowNull` (the import-time engine, #2202); `values` is then empty and `modifiers` too.
    */
   nullValue?: true;
+  /**
+   * `field|exists: true|false` (#2499) — whether the key holds a value. Import-time only (parsed with
+   * `allowNull`, like `nullValue`); `values` and `modifiers` are then empty.
+   */
+  exists?: boolean;
 }
 
 /**

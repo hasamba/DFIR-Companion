@@ -10,6 +10,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { bundledSigmaDir } from "../../../../src/analysis/sigmaBundledRules.js";
 import {
+  bundledSuzakuDir,
+  SUZAKU_NAME,
+  SUZAKU_PATH_PREFIX,
+} from "../../../../src/analysis/sigmaSuzakuRules.js";
+import {
   AWS_CLOUDTRAIL,
   AZURE_AUDIT_LOGS,
   AZURE_SIGNIN_LOGS,
@@ -89,6 +94,8 @@ const PLAIN_MODIFIERS = new Set(["contains", "startswith", "endswith", "all"]);
 
 function valueFor(f: SigmaFieldMatch): string | undefined {
   if (f.nullValue) return undefined;
+  // `exists: true` (#2499) needs any value; `exists: false` needs the key left out.
+  if (f.exists !== undefined) return f.exists ? "SampleValue" : undefined;
   const odd = f.modifiers.find((m) => !PLAIN_MODIFIERS.has(m));
   if (odd) throw new NotBuildable(`field ${f.field} uses the '${odd}' modifier`);
   if (!f.values.length) throw new NotBuildable(`field ${f.field} has no value`);
@@ -156,12 +163,18 @@ function build(rule: SigmaRule, source: string): Row {
 export function buildCloudSigmaSamples(set: SigmaRuleSet): SigmaBuild[] {
   const dir = bundledSigmaDir();
   if (!dir) throw new Error("the bundled Sigma rules folder (data/sigma) is missing");
+  const suzakuDir = bundledSuzakuDir();
+  // A Suzaku rule's path is the upstream repo's (suzaku/…); its file sits under data/sigma-suzaku/rules.
+  const fileOf = (e: { path: string; origin?: string }): string =>
+    e.origin === SUZAKU_NAME && suzakuDir
+      ? join(suzakuDir, "rules", e.path.slice(SUZAKU_PATH_PREFIX.length))
+      : join(dir, e.path);
   return set.inventory
     .filter((e) => e.outcome === "loaded" && e.source && e.source in CLOUD_SIGMA_SOURCES)
     .map((e): SigmaBuild => {
       const source = e.source as string;
       const head = { ruleId: e.id, title: e.title, source };
-      const parsed = parseSigmaRule(readFileSync(join(dir, e.path), "utf8"), { allowNull: true });
+      const parsed = parseSigmaRule(readFileSync(fileOf(e), "utf8"), { allowNull: true });
       if (!parsed.ok) return { ...head, notBuilt: "the rule did not parse here" };
       try {
         const record = build(parsed.rule, source);

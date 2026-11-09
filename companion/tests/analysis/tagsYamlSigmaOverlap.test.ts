@@ -11,7 +11,7 @@ import { runTagger } from "../../src/analysis/tagger.js";
 import { createPreGrader } from "../../src/analysis/cloudStreamPreGrade.js";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { parseM365Audit } from "../../src/analysis/m365Import.js";
-import { loadBundledSigmaRuleSet } from "../../src/analysis/sigmaBundledRules.js";
+import { bundledSigmaDir, loadSigmaRuleDir } from "../../src/analysis/sigmaBundledRules.js";
 import { createSigmaImportGrader } from "../../src/analysis/sigmaImportGrade.js";
 import type { MappedEvent, SiemEvent } from "../../src/analysis/siemImport.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -19,7 +19,8 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 const RULES = compileText(
   readFileSync(fileURLToPath(new URL("../../data/tags.yaml", import.meta.url)), "utf8"),
 );
-const sigma = createSigmaImportGrader(loadBundledSigmaRuleSet().set).snapshot();
+// SigmaHQ alone: these heads are SigmaHQ rules (a Suzaku rule may grade the same record, #2499).
+const sigma = createSigmaImportGrader(loadSigmaRuleDir(bundledSigmaDir()!)).snapshot();
 
 function tagged(e: SiemEvent) {
   const event = { ...e, id: "e0", relatedFindingIds: [], sourceScreenshots: [] } as unknown as ForensicEvent;

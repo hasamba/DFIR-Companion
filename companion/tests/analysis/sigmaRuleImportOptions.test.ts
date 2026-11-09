@@ -91,3 +91,62 @@ describe("parseSigmaRule null values", () => {
     expect(r.ok).toBe(false);
   });
 });
+
+// `Field|exists: true|false` (#2499) — the standard Sigma presence test, which most Suzaku CloudTrail
+// rules use to split a successful call from a failed attempt. Import-time only, like `field: null`.
+const WITH_EXISTS = `
+title: Failed attempt
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  sel:
+    eventName: CreateUser
+  err:
+    errorCode|exists: true
+  condition: sel and err
+`;
+
+describe("parseSigmaRule exists modifier", () => {
+  it("parses `exists: true` with the import-time option", () => {
+    const r = parseSigmaRule(WITH_EXISTS, { allowNull: true });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const sel = r.rule.detection.selections[1];
+    expect(sel).toEqual({
+      kind: "map",
+      name: "err",
+      fields: [{ field: "errorCode", modifiers: [], values: [], exists: true }],
+    });
+  });
+
+  it("parses `exists: false` and a quoted boolean", () => {
+    const f = parseSigmaRule(WITH_EXISTS.replace("exists: true", "exists: false"), { allowNull: true });
+    expect(f.ok && f.rule.detection.selections[1]).toMatchObject({ fields: [{ exists: false }] });
+    const q = parseSigmaRule(WITH_EXISTS.replace("exists: true", "exists: 'true'"), { allowNull: true });
+    expect(q.ok && q.rule.detection.selections[1]).toMatchObject({ fields: [{ exists: true }] });
+  });
+
+  it("refuses a non-boolean value", () => {
+    const r = parseSigmaRule(WITH_EXISTS.replace("exists: true", "exists: AccessDenied"), {
+      allowNull: true,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.refusals[0].message).toMatch(/exists modifier takes true or false/);
+  });
+
+  it("refuses exists combined with another modifier", () => {
+    const r = parseSigmaRule(WITH_EXISTS.replace("errorCode|exists", "errorCode|contains|exists"), {
+      allowNull: true,
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it("still refuses exists without the option (the hunt compiler's view)", () => {
+    const r = parseSigmaRule(WITH_EXISTS);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.refusals[0].message).toMatch(/exists modifier is not supported/);
+  });
+});

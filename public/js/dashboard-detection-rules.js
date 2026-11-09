@@ -31,7 +31,9 @@ function drTaggerLine(st) {
 // The Sigma line, from GET /sigma/status. PURE.
 function drSigmaLine(s) {
   if (!s || !s.active) return null;
-  const what = `SigmaHQ ${s.active.release}`;
+  // #2499: the bundled Suzaku rules are named beside the SigmaHQ release when they grade.
+  const extra = (s.origins || []).map((o) => ` + ${o.name} ${o.release}`).join("");
+  const what = `SigmaHQ ${s.active.release}${extra}`;
   const lc = s.lastCheck;
   if (s.enabled === false) return { label: "Sigma rules", text: `${what} — grading switched off`, action: null };
   if (lc && lc.error) return { label: "Sigma rules", text: `${what} — the last check failed`, action: "sigma", button: "Check again" };

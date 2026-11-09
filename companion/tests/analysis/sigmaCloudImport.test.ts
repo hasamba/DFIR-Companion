@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { parseM365Audit } from "../../src/analysis/m365Import.js";
-import { loadBundledSigmaRuleSet } from "../../src/analysis/sigmaBundledRules.js";
+import { bundledSigmaDir, loadSigmaRuleDir } from "../../src/analysis/sigmaBundledRules.js";
 import { createSigmaImportGrader } from "../../src/analysis/sigmaImportGrade.js";
 import { cloudTrailSigmaVeto } from "../../src/analysis/sigmaCloudTrailVeto.js";
 import type { SigmaRuleRef } from "../../src/analysis/sigmaRuleSet.js";
 
 // Import-time Sigma grading through the real importers and the bundled SigmaHQ rules (#2202).
-// Records are synthetic and shaped like the exports the importers already accept.
+// Records are synthetic and shaped like the exports the importers already accept. SigmaHQ alone:
+// these pin SigmaHQ rule behaviour; the Suzaku rules beside them are covered in sigmaSuzaku.test.ts.
 
-const { set } = loadBundledSigmaRuleSet();
+const set = loadSigmaRuleDir(bundledSigmaDir()!);
 const sigma = createSigmaImportGrader(set).snapshot();
 
 const trail = (records: object[]) => JSON.stringify({ Records: records });

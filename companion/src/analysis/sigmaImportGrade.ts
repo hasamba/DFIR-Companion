@@ -45,8 +45,9 @@ export interface SigmaGradingSnapshot {
   ruleSet: SigmaRuleSet;
   minLevel: SigmaLevel;
   /**
-   * `sigma:<release>:<content>:<statuses>:<min level>:<disabled>:<exclusions>` — stamped on every
-   * graded event. The exclusions part (#2218) keeps imports graded under different exclusions apart.
+   * `sigma:<release>:<content>:<statuses>:<min level>:<disabled>:<exclusions>[:<origin>=<release>=<statuses>…]`
+   * — stamped on every graded event. The exclusions part (#2218) keeps imports graded under different
+   * exclusions apart; one trailing part per extra rule source (#2499, Suzaku) keeps its own statuses.
    */
   token: string;
 }
@@ -67,7 +68,20 @@ export function sigmaProvenanceToken(set: SigmaRuleSet, minLevel: SigmaLevel): s
     minLevel,
     set.disabledHash,
     set.exclusionsHash,
+    ...set.origins.map((o) =>
+      [
+        tokenPart(o.name.toLowerCase()),
+        tokenPart(o.release),
+        o.statuses.map(tokenPart).join("+") || "_",
+        ...(o.minLevel ? [o.minLevel] : []),
+      ].join("="),
+    ),
   ].join(":");
+}
+
+/** "SigmaHQ r2026-07-01", plus " + Suzaku suzaku-2026-11-01" for each extra rule source (#2499). */
+export function sigmaSetLabel(set: Pick<SigmaRuleSet, "release" | "origins">): string {
+  return [`SigmaHQ ${set.release}`, ...set.origins.map((o) => `${o.name} ${o.release}`)].join(" + ");
 }
 
 export function createSigmaImportGrader(
@@ -109,7 +123,7 @@ function messageLine(r: SigmaRuleRef): string {
   const author = r.author ? `, author ${r.author}` : "";
   const modified = r.modified ? `, modified ${r.modified}` : "";
   const hunting = r.huntingOnly ? ", threat-hunting rule (labels only, never grades)" : "";
-  return `Sigma rule: ${r.title} [${r.id}] — level ${r.level}, status ${r.status}${modified}${hunting}${author}, SigmaHQ ${r.release}, ${r.url}`;
+  return `Sigma rule: ${r.title} [${r.id}] — level ${r.level}, status ${r.status}${modified}${hunting}${author}, ${r.origin ?? "SigmaHQ"} ${r.release}, ${r.url}`;
 }
 
 /** #2386: the head of the line that says why a matched rule did not set the severity. */
@@ -122,6 +136,8 @@ export const NOT_GRADED_NOTE = "Sigma note: not graded — ";
 function notGradedReason(lead: SigmaRuleRef, minLevel: SigmaLevel, vetoed: boolean): string {
   if (vetoed) return "this log source does not let Sigma raise this record's severity (see the note below)";
   if (lead.huntingOnly) return "a threat-hunting rule labels events but never sets their severity";
+  if (lead.gradeFloor && lead.origin)
+    return `${lead.origin} rules below the "${lead.gradeFloor}" level label events but do not set severity (Settings → Suzaku minimum level); any severity shown comes from the companion's other rules`;
   return `Sigma rules below the "${minLevel}" level label events but do not set severity (Settings → Sigma minimum level); any severity shown comes from the companion's other rules`;
 }
 
@@ -157,7 +173,8 @@ export function applySigmaMatches(
   const minLevel = snapshot.minLevel;
   const byLevel = [...matches].sort((a, b) => rank(b.level) - rank(a.level));
   // A threat-hunting rule is low-fidelity by design: it tags, it never grades (#2204).
-  const eligible = byLevel.filter((r) => !r.huntingOnly && rank(r.level) >= rank(minLevel));
+  // A rule from a source with its own floor (#2499: Suzaku) raises only at or above that floor.
+  const eligible = byLevel.filter((r) => !r.huntingOnly && rank(r.level) >= rank(r.gradeFloor ?? minLevel));
   const graded = veto ? eligible.filter(veto.mayGrade) : eligible;
   const vetoed = eligible.length > graded.length;
   const lead = graded[0] ?? byLevel[0];
@@ -211,9 +228,16 @@ export function applySigmaToRecordRows(
 export function sigmaImportNote(snapshot: SigmaGradingSnapshot | undefined, rowsMatched = 0): string {
   if (!snapshot) return "";
   const set = snapshot.ruleSet;
+  // Each extra source (#2499, Suzaku) names its own release, statuses and severity floor.
+  const extra = set.origins
+    .map(
+      (o) =>
+        `; ${o.name} ${o.release}, statuses ${o.statuses.join(", ")}, raises at ${o.minLevel ?? snapshot.minLevel} and above`,
+    )
+    .join("");
   return (
     `; Sigma: SigmaHQ ${set.release} (content ${set.contentSha}), statuses ${set.statuses.join(", ")}, ` +
-    `raises at ${snapshot.minLevel} and above, disabled list ${set.disabledHash}, ` +
+    `raises at ${snapshot.minLevel} and above${extra}, disabled list ${set.disabledHash}, ` +
     `exclusions ${set.exclusionsHash}, ${rowsMatched} row(s) matched`
   );
 }

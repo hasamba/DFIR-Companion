@@ -3043,6 +3043,28 @@
           </div>
           <div class="sfield"><label for="env-DFIR_SIGMA_UPDATE_CHECK">Check for a new release at startup<span class="sfield-hint">DFIR_SIGMA_UPDATE_CHECK — on/off (default off); shows a notice here, never installs</span></label><input id="env-DFIR_SIGMA_UPDATE_CHECK" placeholder="off" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_RULES">Also use the Suzaku CloudTrail rules<span class="sfield-hint">DFIR_SIGMA_SUZAKU_RULES — on/off (default on); Yamato Security's own AWS rules, bundled beside SigmaHQ (DRL 1.1). Off = SigmaHQ rules only</span></label><input id="env-DFIR_SIGMA_SUZAKU_RULES" placeholder="on" /></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_MIN_LEVEL">Suzaku level that raises severity<span class="sfield-hint">DFIR_SIGMA_SUZAKU_MIN_LEVEL — most Suzaku rules are one rule per API call, so below this level they only label the event</span></label>
+            <select id="env-DFIR_SIGMA_SUZAKU_MIN_LEVEL">
+              <option value="">— default (critical) —</option>
+              <option value="critical">critical</option>
+              <option value="high">high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+            </select>
+          </div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_STATUSES">Suzaku rule status to use<span class="sfield-hint">DFIR_SIGMA_SUZAKU_STATUSES — default all three: most Suzaku rules are experimental</span></label>
+            <div data-safe-style="display:flex;gap:12px;align-items:center">
+              <label><input type="checkbox" data-sigma-suzaku-status="stable" /> stable</label>
+              <label><input type="checkbox" data-sigma-suzaku-status="test" /> test</label>
+              <label><input type="checkbox" data-sigma-suzaku-status="experimental" /> experimental</label>
+            </div>
+            <input id="env-DFIR_SIGMA_SUZAKU_STATUSES" type="hidden" />
+          </div>
+        </div>
         <div class="sfield">
           <label>Installed release</label>
           <div id="sigmaActive" data-safe-style="font-size:12px;padding:2px 0">Loading…</div>

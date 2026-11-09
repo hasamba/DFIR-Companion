@@ -1878,7 +1878,10 @@ timeline. No Sigma rule reads GuardDuty findings, and the Cloud Coverage panel d
 
 AWS CloudTrail records, Entra ID **user sign-ins** and **directory-audit** records (Graph and Log
 Analytics exports), and **GCP Cloud Audit Log** records are checked against bundled [SigmaHQ](https://github.com/SigmaHQ/sigma) rules as
-they are imported. No AI is involved, and the same file always gets the same result.
+they are imported. No AI is involved, and the same file always gets the same result. CloudTrail records
+are also checked against the bundled [Suzaku](https://github.com/Yamato-Security/suzaku-rules) CloudTrail
+rules, which by default only label events unless the rule is critical (see
+[Settings → Sigma rules](settings.md#sigma-rules)).
 
 - **A high or critical rule raises the event** to the rule's level. The description starts with
   `Sigma: <rule title>`. A severity the importer already gave is never lowered.
