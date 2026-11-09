@@ -592,3 +592,37 @@ describe("code round 1", () => {
     expect(r.description).toContain("1 further record not individually cited");
   });
 });
+
+// #2482 — a live collection's lineage is built once over every page of the run, and its words say
+// so; a file upload keeps "this upload".
+describe("collection scope (#2482)", () => {
+  const COLLECTION = { kind: "collection", pages: 8, uploadId: "collection:cc-1" } as const;
+
+  it("a collection lineage names the collection, never 'this upload', and states what its locators count", () => {
+    const records = [
+      issuance({ responseElements: null }),
+      use(),
+      use({ eventTime: at(600), sourceIPAddress: IP2 }),
+    ];
+    const [row] = awsLineages(records, COLLECTION);
+    expect(row.description).toContain(
+      "no issuance record in this collection exposes this credential id (3 records, 2024-05-01T09:00:00 → 2024-05-01T09:10:00)",
+    );
+    expect(row.description).toMatch(/2 uses, issuance not in this collection\]$/);
+    expect(row.description).not.toContain("upload");
+    expect(row.canonical?.awsLineage?.basis).toMatch(/^records of this collection only \(8 pages/);
+    expect(row.canonical?.awsLineage?.basis).toContain(
+      "record:N counts the records of the pages in page order",
+    );
+  });
+
+  it("an issued key's row says 'in this collection'; the file-upload default is unchanged; the identity is the same", () => {
+    const records = [issuance(), use(), use({ eventTime: at(3600), sourceIPAddress: IP2 })];
+    const [inCollection] = awsLineages(records, COLLECTION);
+    const [inUpload] = awsLineages(records);
+    expect(inCollection.description).toMatch(/issuance and 2 uses in this collection\]$/);
+    expect(inUpload.description).toMatch(/issuance and 2 uses in this upload\]$/);
+    expect(inUpload.canonical?.awsLineage?.basis).toMatch(/^records of this upload only;/);
+    expect(inCollection.aggKey).toBe(inUpload.aggKey);
+  });
+});

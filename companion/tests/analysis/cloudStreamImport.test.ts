@@ -15,6 +15,7 @@ import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { compileRuleset } from "../../src/analysis/taggerRules.js";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { sourceArtifactHash } from "../../src/analysis/canonicalEvent.js";
+import { isLineageRow, lineageIssuance, lineageUse } from "../helpers/awsLineageRecords.js";
 
 // #2303 — the streaming cloud import end to end: whole-export enrichment parity, dedup across
 // batches, bounded output with disclosure, Info to the super-timeline, gzip, and a failed import
@@ -393,5 +394,28 @@ describe("streaming cloud import (#2303)", () => {
     expect(state.forensicTimeline).toHaveLength(0);
     const again = await pipeline.importCloudFile("c1", "m365", path, opts("lk2"));
     expect(again.disclosure.duplicates).toBe(0);
+  });
+
+  // #2482 — a collection page leaves the whole-export summaries to the collection's summary step.
+  it("skipSummaries builds no whole-export summary rows and claims no summary window", async () => {
+    const text = JSON.stringify({ Records: [lineageIssuance(), lineageUse(1), lineageUse(2)] });
+    const normal = await setup();
+    const withSummaries = await normal.pipeline.importCloudFile(
+      "c1",
+      "aws",
+      await normal.write("ct.json", text),
+      opts("ls1"),
+    );
+    expect(withSummaries.state.forensicTimeline.filter(isLineageRow)).toHaveLength(1);
+    const page = await setup();
+    const skipped = await page.pipeline.importCloudFile(
+      "c1",
+      "aws",
+      await page.write("ct.json", text),
+      opts("ls2", { skipSummaries: true }),
+    );
+    expect(skipped.state.forensicTimeline.filter(isLineageRow)).toHaveLength(0);
+    expect(skipped.disclosure.summaryWindow).toEqual({ max: 0, records: 0, truncated: false });
+    expect(skipped.disclosure.records).toBe(3);
   });
 });

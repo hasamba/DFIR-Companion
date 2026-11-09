@@ -4,13 +4,18 @@
 //
 // The replay logic itself — "did this page land?", "forget a dead attempt" — is the engine's
 // (integrations/cloudCollect/collectImport.ts); this file only supplies the case operations.
+//
+// A page of a kind that summarizes per collection skips its own whole-export summaries; the
+// collection summary (#2482) is landed and settled here like a page, under its fixed label.
 
 import { captureImportBaseline, releaseImportBaseline } from "../analysis/importBaseline.js";
+import { summarizesPerCollection } from "../analysis/ingest/cloudStreamProviders.js";
 import {
   ledgerForget,
   timelineLanded,
   type CollectPageImporter,
 } from "../integrations/cloudCollect/collectImport.js";
+import type { CollectionSummaryRequest } from "../integrations/cloudCollect/collectSummary.js";
 import type { RouteContext } from "./context.js";
 import { runDiskImport } from "./importCloudStream.js";
 import { settleForensicImport } from "./importSettle.js";
@@ -35,6 +40,32 @@ async function settleLanded(ctx: RouteContext, caseId: string, label: string): P
   await ctx.demoteForensic(caseId);
 }
 
+/** Land one collection summary and settle it, as an undoable import with its own baseline. */
+async function importSummary(
+  ctx: RouteContext,
+  caseId: string,
+  req: CollectionSummaryRequest,
+  signal?: AbortSignal,
+): Promise<void> {
+  const store = stateStoreOf(ctx);
+  const pipeline = ctx.options.pipeline;
+  if (!pipeline) throw new Error("pipeline is not configured");
+  const baseline = await captureImportBaseline(store, caseId);
+  try {
+    await pipeline.importCloudCollectionSummary(caseId, req.kind, req.pages, {
+      collectionId: req.collectionId,
+      label: req.label,
+      idPrefix: req.idPrefix,
+      importedAt: req.importedAt,
+      ...(signal ? { signal } : {}),
+    });
+    const settle = routeSettleDeps(ctx);
+    if (settle) await settleForensicImport(settle, caseId, baseline, req.label);
+  } finally {
+    await releaseImportBaseline(store, baseline);
+  }
+}
+
 export function caseCollectImporter(ctx: RouteContext): CollectPageImporter {
   const store = stateStoreOf(ctx);
   return {
@@ -42,6 +73,8 @@ export function caseCollectImporter(ctx: RouteContext): CollectPageImporter {
     landed: timelineLanded(store),
     forgetAttempt: ledgerForget(ctx.options.cloudRecordStore),
     settleLanded: (caseId, label) => settleLanded(ctx, caseId, label),
+    summarizesPerCollection,
+    importSummary: (caseId, req, signal) => importSummary(ctx, caseId, req, signal),
     importPage: async (caseId, page, signal) => {
       // Inside the section the engine holds: the baseline is only honest while it is held.
       const baseline = await captureImportBaseline(store, caseId);
@@ -50,6 +83,7 @@ export function caseCollectImporter(ctx: RouteContext): CollectPageImporter {
           label: page.label,
           idPrefix: page.idPrefix,
           importedAt: page.importedAt,
+          skipSummaries: summarizesPerCollection(page.kind),
           ...(signal ? { signal } : {}),
         });
         const settle = routeSettleDeps(ctx);

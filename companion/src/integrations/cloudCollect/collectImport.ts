@@ -17,10 +17,14 @@
 //     attempt are not written twice.
 // Every row carries its provenance: the label `evidence/cloud/<collectionId>/<page file>` is on
 // each row's sources list, and the provider record ids ride on `sourceRecords` (#2301).
+//
+// After the last page, the summary step (#2482, collectSummary.ts) builds the whole-export summaries
+// of each kind that summarizes per collection ONCE over every page; those pages skip their own.
 
 import { join } from "node:path";
 import type { StreamKind } from "../../analysis/ingest/cloudStreamProviders.js";
 import type { ManifestPage } from "./collectTypes.js";
+import { runSummaryStep, type SummaryImporter } from "./collectSummary.js";
 
 export interface PageImportRequest {
   kind: StreamKind;
@@ -30,8 +34,12 @@ export interface PageImportRequest {
   importedAt: string;
 }
 
-/** How the stage reaches the case. Production: routes/cloudCollectImporter.ts; tests: a pipeline. */
-export interface CollectPageImporter {
+/**
+ * How the stage reaches the case. Production: routes/cloudCollectImporter.ts; tests: a pipeline.
+ * `importPage` skips the whole-export summaries of a kind that `summarizesPerCollection`; the
+ * summary step's `importSummary` builds them once over the collection (#2482).
+ */
+export interface CollectPageImporter extends SummaryImporter {
   /** Run `fn` with the case's import section held. */
   withImportSection<T>(caseId: string, fn: () => Promise<T>): Promise<T>;
   /** True when a page's import committed in the case (a timeline entry carries its label). */
@@ -61,6 +69,10 @@ export interface ImportStageInput {
   signal?: AbortSignal;
   /** Called after each page lands — the caller checkpoints it. */
   onImported: (file: string) => Promise<void>;
+  /** Per kind, the page count the landed collection summary covers (#2482; from the checkpoint). */
+  summarized?: Readonly<Partial<Record<string, number>>>;
+  /** Called after a kind's collection summary lands — the caller checkpoints it. */
+  onSummarized?: (kind: StreamKind, pages: number) => Promise<void>;
 }
 
 /** The case reads the replay check needs, shared by the production importer and the tests. */
@@ -165,5 +177,6 @@ export async function runImportStage(
     await input.onImported(page.file);
     imported++;
   }
+  await runSummaryStep(importer, { ...input, summarized: input.summarized ?? {} });
   return imported;
 }

@@ -1565,7 +1565,9 @@ not in this evidence; privileged change: iam CreateAccessKey at 10:03:10Z (recor
 second source; record retention and the trails' selectors are not in this evidence; issuance and
 14 uses in this upload]`. It is built over every record of ONE upload, before aggregation and the
 event cap, because the data-plane rows a credential is used for are Info and leave the forensic
-timeline at import; a lineage across uploads is not built.
+timeline at import; a lineage across uploads is not built. A **live cloud collection** counts as
+one upload: its lineage is built once over every page of the run (see "Collection jobs and
+evidence manifest" below), and its rows say "this collection" instead of "this upload".
 
 - **Joined through the access key id only** (or the Identity Center credential id). A session name
   or a role's display name never joins: two sessions named `ci-42` under two keys are two rows.
@@ -1621,7 +1623,8 @@ configuration replaced, start; recorded facts: startup configuration replaced af
 any-address ingress rule recorded on a group the instance holds (2 kinds); what ran on the
 instance and its network egress are not in CloudTrail; record retention and the trails' selectors
 are not in this evidence; terminated …]`. Built over every record of one upload, like the
-credential lineage; a lifecycle across uploads is not built.
+credential lineage; a lifecycle across uploads is not built. A live cloud collection counts as one
+upload here too.
 
 - **Joined through the instance id only**, scoped by the owning account (the launch response's
   `ownerId`, else the record's recipient account — never the caller's) and the region. An image
@@ -2976,7 +2979,19 @@ rewritten.
 audit query can take ten minutes) never blocks other imports into the case. Then each saved page is
 imported, one at a time, through the same streaming importer as a large export file, with the same
 grading, budgets and deduplication. Every event names its collection and page file in its sources,
-and carries the provider's record id. Other background jobs of the case wait behind a running
+and carries the provider's record id.
+
+**One AWS credential lineage per collection run.** The CloudTrail credential lineages and compute
+lifecycles are not built page by page. When the last page is imported, they are built once over
+every CloudTrail page of the run, in page order, as if the collection were one large export file:
+a key issued on page 1 and used on pages 2 to 8 gives one row that says where it was issued, with
+every source. The rows appear when the import step ends, not during it, and name
+`summary-aws` of the collection in their sources. They cover the first 25,000 CloudTrail records
+of the collection, the same limit as a large file; for a larger collection the import note says
+how many records the summaries cover. A stopped or partial run gets them over the pages it saved;
+**Resume** rebuilds the same rows over every page — no second row. Two collections, or a
+collection and a file upload, still give two rows for the same key. The other providers'
+whole-export summaries are still built per page. Other background jobs of the case wait behind a running
 collection while `DFIR_JOBS_PER_CASE` is 1.
 
 **The result** is **complete** (every source's results for the window were read to the end),

@@ -1,6 +1,7 @@
 // AWS credential lineage (#931 item 5, chain half — #979): which later calls used the credential
 // an issuance minted, from which sources, beside which shapes — built over the records of ONE
-// CloudTrail upload inside the importer (the data-plane rows a credential is used for are Info
+// CloudTrail upload inside the importer — or, for a live collection (#2482), over every page of ONE
+// collection run, read once at the end of its import step (the data-plane rows a credential is used for are Info
 // and leave the forensic timeline at import; the importer aggregates them before any merge).
 //
 // What one row rests on, and what it never says:
@@ -31,10 +32,13 @@ import {
 } from "./awsIdentity.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { cleanIp, getCI, normalizeTime, str, type MappedEvent } from "./siemImport.js";
+import { scopeBasis, scopeNoun, UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
 type Row = Record<string, unknown>;
 
 export const AWS_LINEAGE_MAX = 256;
+const LINEAGE_BASIS =
+  "records of this upload only; joined through the access key id; the workload's addresses are not in this evidence";
 /** Sources tracked per key (the rest counted); locators cited per row; sources named in the words. */
 export const SOURCES_PER_KEY_MAX = 64;
 const RAW_RECORDS_MAX = 256;
@@ -406,7 +410,7 @@ function scan(records: readonly Row[]): Scanned[] {
 }
 
 /** One summary row per credential whose upload records form a lineage; the rows say what they rest on. */
-export function awsLineages(records: readonly Row[]): MappedEvent[] {
+export function awsLineages(records: readonly Row[], scope: SummaryScope = UPLOAD_SCOPE): MappedEvent[] {
   const keys = new Map<string, Key>();
   const coverage = { records: 0, first: "", last: "" };
   // Issuance requests whose response was unavailable, by (role arn, session name) — listed beside
@@ -493,9 +497,11 @@ export function awsLineages(records: readonly Row[]): MappedEvent[] {
         (b.k.first?.time ?? 0) - (a.k.first?.time ?? 0) ||
         a.k.credentialId.localeCompare(b.k.credentialId),
     );
-  const rows = findings.slice(0, AWS_LINEAGE_MAX).map((f) => summaryRow(f.k, f.shapes, f.grade, coverage));
+  const rows = findings
+    .slice(0, AWS_LINEAGE_MAX)
+    .map((f) => summaryRow(f.k, f.shapes, f.grade, coverage, scope));
   if (findings.length > AWS_LINEAGE_MAX)
-    rows.push(omittedRow(findings.length - AWS_LINEAGE_MAX, findings[AWS_LINEAGE_MAX].grade));
+    rows.push(omittedRow(findings.length - AWS_LINEAGE_MAX, findings[AWS_LINEAGE_MAX].grade, scope));
   return rows;
 }
 
@@ -538,14 +544,16 @@ function summaryRow(
   shapes: readonly AwsLineageShape[],
   grade: Severity,
   coverage: { records: number; first: string; last: string },
+  scope: SummaryScope,
 ): MappedEvent {
+  const noun = scopeNoun(scope);
   const sources = [...k.sources.values()].sort((a, b) => a.first.time - b.first.time);
   const range = `(${coverage.records} records, ${coverage.first.slice(0, 19)} → ${coverage.last.slice(0, 19)})`;
   const issuanceWords = k.issuance
     ? `issued ${k.issuance.time} by ${k.issuance.action}${k.issuance.role ? ` of ${show(k.issuance.role)}` : ""}${k.issuance.sessionName ? ` as session ${show(k.issuance.sessionName, 40)}` : ""}${k.issuance.by ? ` by ${show(k.issuance.by)}` : ""}${k.issuance.mfa ? ` (MFA device ${show(k.issuance.mfa, 40)})` : " (MFA not recorded on the issuance)"}${k.issuance.sourceIdentity ? `; stated human identity ${show(k.issuance.sourceIdentity, 40)}` : ""} — ${k.issuance.locator}`
     : k.workload
       ? `delivered by the service to the ${k.workload}; no STS record is expected`
-      : `no issuance record in this upload exposes this credential id ${range}`;
+      : `no issuance record in this ${noun} exposes this credential id ${range}`;
   const unresolvedWords = k.unresolvedRequests.length
     ? [
         `${plural(k.unresolvedRequests.length, "issuance request")} for this role and session ${k.unresolvedRequests
@@ -620,8 +628,8 @@ function summaryRow(
     k.workload
       ? `workload key (${k.workload})`
       : k.issuance
-        ? `issuance and ${plural(k.uses, "use")} in this upload`
-        : `${plural(k.uses, "use")}, issuance not in this upload`,
+        ? `issuance and ${plural(k.uses, "use")} in this ${noun}`
+        : `${plural(k.uses, "use")}, issuance not in this ${noun}`,
   ].join("; ");
   const head = `AWS credential lineage: ${show(k.credentialId, 40)}${k.account ? ` (account ${show(k.account, 12)})` : ""}`;
   const room = DESCRIPTION_MAX - head.length - tail.length - 6;
@@ -653,8 +661,7 @@ function summaryRow(
     chained: k.chained,
     notCited,
     coverage,
-    basis:
-      "records of this upload only; joined through the access key id; the workload's addresses are not in this evidence",
+    basis: scopeBasis(scope, LINEAGE_BASIS),
   };
   const observed = k.issuance?.time ?? iso(k.first!.time);
   return {
@@ -685,8 +692,8 @@ function summaryRow(
   };
 }
 
-function omittedRow(count: number, severity: Severity): MappedEvent {
-  const description = `AWS credential lineage: ${count} further credential${count === 1 ? "" : "s"} with a lineage in this upload beyond the ${AWS_LINEAGE_MAX} reported — not shown`;
+function omittedRow(count: number, severity: Severity, scope: SummaryScope): MappedEvent {
+  const description = `AWS credential lineage: ${count} further credential${count === 1 ? "" : "s"} with a lineage in this ${scopeNoun(scope)} beyond the ${AWS_LINEAGE_MAX} reported — not shown`;
   return {
     timestamp: "",
     description,

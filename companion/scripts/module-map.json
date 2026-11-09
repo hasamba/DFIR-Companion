@@ -215,6 +215,7 @@
     "awsIdentity.ts": "analysis/detect",
     "awsImport.ts": "analysis/ingest",
     "awsLineage.ts": "analysis/ingest",
+    "summaryScope.ts": "shared",
     "awsReplicas.ts": "analysis/ingest",
     "bamRowMap.ts": "analysis/ingest",
     "bashHistoryImport.ts": "analysis/ingest",

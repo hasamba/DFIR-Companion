@@ -23,6 +23,7 @@ import {
   timelineLanded,
   type CollectPageImporter,
 } from "../../src/integrations/cloudCollect/collectImport.js";
+import { summarizesPerCollection } from "../../src/analysis/ingest/cloudStreamProviders.js";
 
 /** A CloudTrail record. Synthetic: documentation account id, TEST-NET source address. */
 export function trailRecord(i: number, name = i % 3 === 0 ? "StopLogging" : "CreateAccessKey") {
@@ -168,20 +169,37 @@ export type TempCase = Awaited<ReturnType<typeof tempCase>>;
 /**
  * The page importer over the real pipeline. `hooks.duringPage` runs after each streamed batch and
  * may throw a kill; `hooks.noCleanup` makes the importer's own failure cleanup a no-op, which is
- * what a hard kill leaves on disk (its catch never ran).
+ * what a hard kill leaves on disk (its catch never ran). The collection summary (#2482) is built
+ * through the real pipeline too, and its rows are copied to the super-timeline the way the
+ * production settle's dual-write does (an id the store holds is skipped).
  */
 export function pipelineImporter(
   t: TempCase,
   hooks: { duringPage?: (label: string, batch: number) => void; noCleanup?: () => boolean } = {},
-): CollectPageImporter & { imports: string[] } {
+): CollectPageImporter & { imports: string[]; summaries: string[] } {
   const imports: string[] = [];
+  const summaries: string[] = [];
   const ledger = {
     claimBatches: (c: string, l: string) => t.cloudRecordStore.claimBatches(c, l),
     setBatchesActive: (c: string, b: string[], a: boolean) => t.cloudRecordStore.setBatchesActive(c, b, a),
   };
   return {
     imports,
+    summaries,
     withImportSection: (_caseId, fn) => fn(),
+    summarizesPerCollection,
+    importSummary: async (caseId, req, signal) => {
+      summaries.push(req.label);
+      const { state } = await t.pipeline.importCloudCollectionSummary(caseId, req.kind, req.pages, {
+        collectionId: req.collectionId,
+        label: req.label,
+        idPrefix: req.idPrefix,
+        importedAt: req.importedAt,
+        ...(signal ? { signal } : {}),
+      });
+      const rows = state.forensicTimeline.filter((e) => e.sourceScreenshots.includes(req.label));
+      await t.superTimelineStore.appendReporting(caseId, rows);
+    },
     landed: timelineLanded(t.stateStore),
     forgetAttempt: ledgerForget(ledger),
     settleLanded: async () => {},
@@ -197,6 +215,7 @@ export function pipelineImporter(
           idPrefix: page.idPrefix,
           importedAt: page.importedAt,
           batchRecords: 1,
+          skipSummaries: summarizesPerCollection(page.kind),
           ...(signal ? { signal } : {}),
           onProgress: () => hooks.duringPage?.(page.label, ++batch),
         });

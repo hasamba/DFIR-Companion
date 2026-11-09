@@ -30,6 +30,7 @@ import { cloudTrailConsoleRow } from "../cloudRecords.js";
 import { parseCloudActivity } from "../cloudActivityImport.js";
 import { guardDutyRemoteIp, parseGuardDuty, GUARDDUTY_SOURCE } from "../guardDutyImport.js";
 import { unwrapGuardDutyRecords } from "../guardDutyRecord.js";
+import type { SummaryScope } from "../summaryScope.js";
 
 type Row = Record<string, unknown>;
 
@@ -72,6 +73,12 @@ export interface StreamProvider {
   facts(rec: Row): RowFacts;
   /** The whole-export summary rows over the summary window (fresh records, duplicates blanked). */
   summaries(window: Row[], pre: Preliminary): SiemEvent[];
+  /**
+   * The whole-export summaries over a live collection's window — every page of one run, in page
+   * order (#2482, cloudCollectionSummary.ts). A provider that has it summarizes once per collection:
+   * its collection pages skip `summaries`. One without it keeps per-page summaries (#2493).
+   */
+  collectionSummaries?(window: Row[], scope: SummaryScope, pre: Preliminary): SiemEvent[];
   undated?(pre: Preliminary): UndatedRows | undefined;
 }
 
@@ -183,6 +190,8 @@ const aws: StreamProvider = {
   }),
   // The lineage and compute summaries read the raw window only (#2362): no re-mapping.
   summaries: (window) => cloudTrailSummaries(window),
+  // A collection's lineage and compute lifecycles: one per collection run, not one per page (#2482).
+  collectionSummaries: (window, scope) => cloudTrailSummaries(window, scope),
 };
 
 const cloudActivity: StreamProvider = {
@@ -259,4 +268,9 @@ export function isStreamKind(kind: string): kind is StreamKind {
 
 export function streamProvider(kind: StreamKind): StreamProvider {
   return PROVIDERS[kind];
+}
+
+/** Whether a collection builds this kind's whole-export summaries once, over all its pages (#2482). */
+export function summarizesPerCollection(kind: StreamKind): boolean {
+  return !!PROVIDERS[kind].collectionSummaries;
 }
