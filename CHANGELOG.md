@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Cloud access check fields** — a GCP or Microsoft account's access check no longer shows the AWS-only trail bucket and key prefix fields
 - **Settings checkboxes** — a checkbox in Settings sits beside its label at its own size, so the Updates tab no longer scrolls sideways.
 - **Honest cloud collection progress** — the job line says how many files are saved and which trail folder it is in, with an ETA estimated from that position, and no fake one-page-away ETA (closes #2384).
 - **Job ETA and Cloud Collection Account field** — the ETA now says how long is left ("16:44 (in about 2 min)") instead of a bare clock time, and the Account dropdown lines up with the date fields beside it.

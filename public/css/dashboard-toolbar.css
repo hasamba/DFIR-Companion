@@ -313,6 +313,7 @@
 .sfield-hint { display: block; font-size: 10px; color: var(--text-faint); margin-top: 2px; }
 .sfield-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
 .sfield-row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+.sfield-row[hidden], .sfield-row3[hidden] { display: none; }
 .diag-support-action { min-width: 220px; }
 .settings-group-head { font-size: 11px; color: var(--accent); font-weight: 600; margin: 10px 0 4px; }
 .settings-hr { border: none; border-top: 1px solid var(--border-color); margin: 12px 0; }
