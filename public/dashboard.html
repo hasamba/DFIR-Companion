@@ -7,6 +7,7 @@
        CSS entirely: below 980px never happens, so no narrow breakpoint in the stylesheet has ever
        run in a browser. #880 -->
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="DFIR Companion analyst dashboard — case evidence, forensic timeline, findings and reports." />
   <title>DFIR Companion Dashboard</title>
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
@@ -5417,7 +5418,7 @@
       const headerRow = `<div class="ioc-header-row">`
         + `<input type="checkbox" class="ioc-cb" id="iocSelectAll" ${allSel ? "checked" : ""} title="Select / deselect all visible IOCs" />`
         + `<span>Type</span><span>${countLabel}</span>`
-        + `<span class="tl-pagesize-wrap" title="IOCs per page"><select class="tl-pagesize-sel" data-act="iocSetPageSize" data-act-on="change">${iocPageSizeOpts}</select></span>`
+        + `<span class="tl-pagesize-wrap" title="IOCs per page"><select class="tl-pagesize-sel" aria-label="IOCs per page" data-act="iocSetPageSize" data-act-on="change">${iocPageSizeOpts}</select></span>`
         + `</div>`;
       const rows = pageVisible.map(i => {
         const isNew = typeof isNewIoc === "function" && isNewIoc(i.value);
@@ -5609,7 +5610,7 @@
         + `<div class="ev-header-sev">Severity${sortArrows("severity")}</div>`
         + `<div class="ev-header-time">Timestamp (UTC)${sortArrows("date")}</div>`
         + `<div data-safe-style="flex:1">Message</div>`
-        + `<div class="tl-pagesize-wrap" title="Rows per page"><select class="tl-pagesize-sel" data-act="tlSetPageSize" data-act-on="change">${pageSizeOpts}</select></div>`
+        + `<div class="tl-pagesize-wrap" title="Rows per page"><select class="tl-pagesize-sel" aria-label="Rows per page" data-act="tlSetPageSize" data-act-on="change">${pageSizeOpts}</select></div>`
         + `</div>`;
 
       const tld = loadTlDisplay();   // per-browser timeline-row display toggles (Settings → General)

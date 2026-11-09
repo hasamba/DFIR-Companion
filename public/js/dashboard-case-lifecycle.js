@@ -55,6 +55,11 @@
             : isClosed
               ? "Case CLOSED — click to reopen or archive"
               : "Case ACTIVE — click to close or archive";
+          // Icon-only: keep the screen-reader name in step with the case state. #2469
+          btn.setAttribute(
+            "aria-label",
+            `Case lifecycle: ${isArchived ? "archived" : isClosed ? "closed" : "active"}`,
+          );
         }
         // Archived cases can only be restored — close/reopen/archive don't apply until then.
         if (closeBtn)
