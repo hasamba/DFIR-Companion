@@ -663,3 +663,32 @@ describe("a streamed cloud import writes the super-timeline and never reads it (
     for (const id of superIds) expect(forensicIds.has(id)).toBe(false);
   });
 });
+
+describe("the collector-footprint tag reads no raw record and grades nothing (#2487)", () => {
+  // It runs at the import tagger seam over the rows an import already hands the tagger: it never
+  // queries or scans the super-timeline, feeds no AI, and writes only event tags — never a grade.
+  const MODULES = [
+    "../../src/analysis/cloudCollectorFootprint.ts",
+    "../../src/integrations/cloudCollect/collectRuns.ts",
+  ];
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("touches neither timeline store and imports nothing AI-related", () => {
+    for (const rel of MODULES) {
+      const src = read(rel);
+      expect(src, rel).not.toMatch(
+        /superTimelineStore|stateStore|eventBatches|scanWindow|\.query\(|promote/i,
+      );
+      for (const [, spec] of src.matchAll(/from "([^"]+)"/g))
+        expect(spec, `${rel} imports ${spec}`).not.toMatch(/\/ai\/|providers?\/|prompt|synth|jev/i);
+    }
+  });
+
+  it("never writes a severity, MITRE technique or origin", () => {
+    const code = read(MODULES[0])
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join("\n");
+    expect(code).not.toMatch(/\b(severity|mitreTechniques|origin)\s*[:=](?!=)/);
+  });
+});

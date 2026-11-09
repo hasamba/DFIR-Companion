@@ -309,6 +309,7 @@ export class SuperTimelineStore {
           exclude: q.exclude ?? [],
           excludeHosts: q.excludeHosts ?? [],
           labels: q.labels ?? [],
+          excludeLabels: q.excludeLabels ?? [],
           taggedOnly: q.taggedOnly === true,
           starred: q.starred === true,
           offset,
@@ -388,6 +389,7 @@ export class SuperTimelineStore {
     const excludeSet = q.exclude?.length ? new Set(q.exclude) : null;
     const excludeHostSet = q.excludeHosts?.length ? new Set(q.excludeHosts) : null;
     const labelSet = q.labels?.length ? new Set(q.labels) : null;
+    const hiddenLabels = q.excludeLabels?.length ? new Set(q.excludeLabels) : null;
     const events: ForensicEvent[] = [];
     let total = 0;
     const ceiling = q.countCeiling;
@@ -404,6 +406,7 @@ export class SuperTimelineStore {
       if (excludeSet && excludeSet.has(origin)) continue;
       if (excludeHostSet && excludeHostSet.has(host)) continue;
       if (labelSet && !labels.some((label) => labelSet.has(label))) continue;
+      if (hiddenLabels && labels.some((label) => hiddenLabels.has(label))) continue;
       if (q.taggedOnly && !labels.some((label) => label !== STARRED_LABEL)) continue;
       if (q.starred && !labels.includes(STARRED_LABEL)) continue;
       if (q.search && !eventMatchesSearch(event, q.search)) continue;

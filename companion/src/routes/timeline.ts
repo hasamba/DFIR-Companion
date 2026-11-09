@@ -208,6 +208,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
           exclude: csv(req.query.exclude),
           excludeHosts: csv(req.query.excludeHosts),
           labels: csv(req.query.labels),
+          excludeLabels: csv(req.query.excludeLabels),
           taggedOnly: req.query.tagged === "1" || req.query.tagged === "true",
           starred: req.query.starred === "1" || req.query.starred === "true",
           search: typeof req.query.q === "string" ? req.query.q : undefined,

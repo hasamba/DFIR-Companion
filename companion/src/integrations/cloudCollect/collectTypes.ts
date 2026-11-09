@@ -337,6 +337,8 @@ export interface ManifestSkip {
 export interface ManifestResume {
   type: "resume";
   at: string;
+  /** #2487: the identity this resume ran as (credentials can change between runs). Absent on older lines. */
+  caller?: string;
 }
 
 export type ManifestEntry =
@@ -442,6 +444,12 @@ export interface CollectionCheckpoint {
   /** #2312: the acquired cutoff and retention notes per source, written at the end of a run. */
   coverage?: SourceCoverage[];
   error?: string;
+  /**
+   * #2487: when each run's network stage talked to the cloud — `from` is the run's start (the header's
+   * `startedAt` or its resume line's `at`), `to` the moment its network stage ended. The span the
+   * collector's own calls are matched in (collectRuns.ts).
+   */
+  networkSpans?: Array<{ from: string; to: string }>;
   startedAt: string;
   updatedAt: string;
 }
