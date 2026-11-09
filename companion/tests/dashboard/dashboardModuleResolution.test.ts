@@ -178,11 +178,41 @@ describe("every name an extracted module reads resolves to something", () => {
     expect(pageDeclared.size, "no page bindings found").toBeGreaterThan(50);
   });
 
+  /**
+   * Names an ES-module script (`<script type="module">`, e.g. hunt-workbench.js) binds with a
+   * static `import { a, b } from "./x.js"`. Each counts only when the sibling file exists and
+   * really exports that name, so a wrong import still fails here (#2461 split hunt-catalog.js).
+   */
+  const importedNames = (src: string): Set<string> => {
+    const names = new Set<string>();
+    for (const m of src.matchAll(/^import\s*\{([^}]*)\}\s*from\s*["']\.\/([\w.-]+\.js)["']/gm)) {
+      let exported = "";
+      try {
+        exported = readFileSync(join(JS_DIR, m[2]), "utf8");
+      } catch {
+        continue;
+      }
+      for (const raw of m[1].split(",")) {
+        const [source, alias] = raw.trim().split(/\s+as\s+/);
+        if (!source) continue;
+        const exportRe = new RegExp(
+          `^export\\s+(?:const|let|var|function|class|async\\s+function)\\s+${source}\\b`,
+          "m",
+        );
+        if (exportRe.test(exported)) names.add((alias ?? source).trim());
+      }
+    }
+    return names;
+  };
+
   it("leaves no module reading a name nothing provides", () => {
     const unresolved: string[] = [];
     for (const file of moduleFiles) {
       const script = scriptFor(file);
-      const own = new Set(topLevelBindings(script).map((b) => b.name));
+      const own = new Set([
+        ...topLevelBindings(script).map((b) => b.name),
+        ...importedNames(readFileSync(join(JS_DIR, file), "utf8")),
+      ]);
       for (const name of freeIdentifiers(script).keys()) {
         if (own.has(name) || published.has(name) || windowAssigned.has(name)) continue;
         if (pageDeclared.has(name) || PLATFORM.has(name) || VENDOR.has(name)) continue;
