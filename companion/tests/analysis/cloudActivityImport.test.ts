@@ -56,13 +56,29 @@ describe("parseCloudActivity — GCP", () => {
     const r = parseCloudActivity(JSON.stringify([gcp("google.iam.admin.v1.CreateServiceAccountKey")]));
     expect(r.format).toBe("gcp");
     const e = r.events[0];
-    expect(e.description).toContain("GCP google.iam.admin.v1.CreateServiceAccountKey (iam)");
+    // #2486: the versioned "google.<svc>.<ver>." prefix is left out of the title, kept on the record.
+    expect(e.description).toContain("GCP CreateServiceAccountKey (iam)");
+    expect(e.description).not.toContain("google.iam.admin.v1.");
     expect(e.description).toContain("by attacker@acme.com");
     expect(e.severity).toBe("High");
     expect(e.mitreTechniques).toContain("T1098.001");
     expect(e.sources).toEqual(["GCP Audit"]);
     expect(e.timestamp).toBe("2023-07-01T10:00:00.123456789Z");
     expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("203.0.113.11");
+  });
+
+  it.each([
+    ["google.iam.admin.v1.CreateServiceAccount", "GCP CreateServiceAccount ("],
+    ["google.cloud.orgpolicy.v2.OrgPolicy.DeletePolicy", "GCP OrgPolicy.DeletePolicy ("],
+    ["google.logging.v2.ConfigServiceV2.DeleteBucket", "GCP ConfigServiceV2.DeleteBucket ("],
+    ["google.cloud.securitycenter.v1beta1.SecurityCenter.SetMute", "GCP SecurityCenter.SetMute ("],
+    ["storage.buckets.create", "GCP storage.buckets.create ("],
+    ["SetIamPolicy", "GCP SetIamPolicy ("],
+    ["google.longrunning.Operations.GetOperation", "GCP google.longrunning.Operations.GetOperation ("],
+  ])("#2486: the title shows %s as a short method name", (method, head) => {
+    const r = parseCloudActivity(JSON.stringify([gcp(method)]));
+    expect(r.events[0].description.startsWith(head)).toBe(true);
+    expect(r.events[0].canonical?.event?.action).toBe(method);
   });
 
   it("setIamPolicy on storage maps to data-exposure (T1530)", () => {

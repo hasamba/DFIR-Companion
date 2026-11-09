@@ -27,6 +27,7 @@ import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
 import { isEntraSignIn, readEntraSignIn } from "./ualLogon.js";
+import { ENTRA_RISK_HIDDEN_MARKER } from "./cloudRowWording.js";
 import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
 import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { m365Coverage } from "./cloudCoverageBuilders.js";
@@ -417,7 +418,10 @@ function mapSignIn(
   if (outcome === "unknown") description += " [outcome unknown: unreadable status]";
   else if (outcome !== "success")
     description += ` [FAILED${code === null ? "" : ` ${code}`}${failureReason ? `: ${oneLine(failureReason).slice(0, 80)}` : ""}]`;
-  if (risk && risk !== "none") description += ` [risk: ${risk}]`;
+  // "hidden" is what Graph returns when the tenant has no Entra ID P2 licence: no risk check was
+  // possible. "[risk: hidden]" read as "there is a hidden risk" (#2486).
+  if (risk === "hidden") description += ` ${ENTRA_RISK_HIDDEN_MARKER}`;
+  else if (risk && risk !== "none") description += ` [risk: ${risk}]`;
   if (isRopc) description += " [legacy-auth ROPC — no interactive MFA prompt]";
   if (userAgent) description += ` [ua: ${userAgent}]`;
   description = boundedTextTo(description, 600); // an identity downstream — see mapUal

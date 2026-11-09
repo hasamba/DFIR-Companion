@@ -12,6 +12,7 @@ import {
   instanceCredentialUseAway,
   isInstanceRoleIdentity,
   explainVisibility,
+  metadataCoverageEvent,
   METADATA_TARGETS,
 } from "../../src/analysis/cloudMetadataAccess.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -374,5 +375,27 @@ describe("reachability", () => {
   it("has its marker stripped before correlation keys a duplicate", () => {
     // The registry correlate.ts reads (derivedNote.ts), exercised: the note comes off the key.
     expect(cleanDescription(`base text [metadata credential access: a reason]`)).toBe("base text");
+  });
+});
+
+// #2486: the coverage gap is advice, not an event — a fixed, documented place (the earliest cloud
+// audit record) and graded Low, which still reaches the forensic timeline and the AI.
+describe("the cloud coverage gap row", () => {
+  it("sits at the earliest cloud-audit record and is graded Low", () => {
+    const out = metadataCoverageEvent([
+      ev({ description: "Shellbag: C:\\x", timestamp: "2025-06-01T00:00:00Z" }),
+      ev({ description: "AWS GetObject (s3) by a", timestamp: "2026-01-03T10:00:00Z" }),
+      ev({ description: "GCP SetIamPolicy (cloudresourcemanager) by b", timestamp: "2026-01-01T09:00:00Z" }),
+      ev({ description: "Azure activity: x", timestamp: "not a time" }),
+    ]);
+    expect(out?.timestamp).toBe("2026-01-01T09:00:00Z");
+    expect(out?.severity).toBe("Low");
+    expect(out?.description).toMatch(/^Cloud coverage gap /);
+  });
+
+  it("is absent when the case holds host telemetry", () => {
+    expect(
+      metadataCoverageEvent([ev({ description: "AWS GetObject (s3) by a" }), ev({ processName: "curl" })]),
+    ).toBeNull();
   });
 });

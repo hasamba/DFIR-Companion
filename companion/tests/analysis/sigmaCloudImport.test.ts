@@ -51,9 +51,9 @@ describe("CloudTrail with import-time Sigma", () => {
     const r = parseCloudTrail(trail([rec]), { sigma });
     expect(r.events).toHaveLength(1);
     expect(r.events[0].severity).toBe("High");
-    expect(r.events[0].description).toMatch(
-      /^Sigma \(medium, not graded\): AWS CloudTrail Important Change - /,
-    );
+    // #2486: the importer graded it High; a medium Sigma rule that did not grade adds no head.
+    expect(r.events[0].description).toMatch(/^AWS StopLogging \(cloudtrail\)/);
+    expect(r.events[0].message).toMatch(/^Sigma rule: AWS CloudTrail Important Change \[/m);
     expect(r.events[0].mitreTechniques).toContain("T1562.008");
   });
 
@@ -245,7 +245,8 @@ describe("Entra with import-time Sigma", () => {
       graph([signIn({ status: { errorCode: 50053, failureReason: "Account is locked" } })]),
       { sigma },
     );
-    expect(r.events[0].description).toMatch(/^Sigma \(medium, not graded\): Account Lockout - /);
+    expect(r.events[0].description).toMatch(/^Entra sign-in: /);
+    expect(r.events[0].message).toMatch(/^Sigma rule: Account Lockout \[/m);
   });
 
   it("grades a Graph directory-audit record by its activity name", () => {

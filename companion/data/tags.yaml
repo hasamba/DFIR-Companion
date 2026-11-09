@@ -849,7 +849,7 @@ ts_entra_legacy_auth:
 ts_entra_signin_risk:
   description: Sign-in carrying a risk signal (Timesketch anomalous / impossible-travel — risk only)
   any:
-    - { field: description, regex: '^Entra sign-in:[^\n]*\[risk: (?!none)\S', flags: 'i' }
+    - { field: description, regex: '^Entra sign-in:[^\n]*\[risk: (?!none|hidden\])\S', flags: 'i' }
   tags: ['signin', 'risk']
   view: 'M365 sign-ins'
 

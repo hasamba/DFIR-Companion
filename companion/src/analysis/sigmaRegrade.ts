@@ -20,6 +20,7 @@ import { PROMOTED_MARKER } from "./labIntel.js";
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import type { SiemEvent } from "./siemImport.js";
 import { splitSigmaOverlay } from "./sigmaOverlay.js";
+import { currentCloudWording } from "./cloudRowWording.js";
 
 // Moved to sigmaOverlay.ts (#2350) so the tagger can read it; re-exported for existing callers.
 export { splitSigmaOverlay };
@@ -121,8 +122,9 @@ export function recordKey(e: Pick<ForensicEvent, "canonical">): string | undefin
 
 /** Two base texts read the same: equal, or one is the other cut at the 600-character cap. */
 function sameBase(a: string, b: string): boolean {
-  const x = a.trim();
-  const y = b.trim();
+  // A row stored in an importer's older wording (#2486) still reads as its re-parsed record.
+  const x = currentCloudWording(a.trim());
+  const y = currentCloudWording(b.trim());
   if (x === y) return true;
   const [short, long] = x.length < y.length ? [x, y] : [y, x];
   return short.length >= 40 && long.startsWith(short);

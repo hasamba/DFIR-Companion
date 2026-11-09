@@ -26,7 +26,8 @@ describe("web server access logs", () => {
   it("only tags the same request when the server did not answer it, and says why", () => {
     const e = event([line("GET", weblogic, 404)]);
     expect(e.severity).not.toBe("High");
-    expect(e.description).toMatch(/^Sigma \(high, not graded\): Oracle WebLogic Exploit CVE-2020-14882/);
+    expect(e.description).not.toMatch(/^Sigma/);
+    expect(e.message).toMatch(/^Sigma rule: Oracle WebLogic Exploit CVE-2020-14882/m);
     expect(e.message).toMatch(/did not answer this request with 2xx\/3xx/);
   });
 
@@ -44,7 +45,8 @@ describe("web server access logs", () => {
 
   it("matches a URL-encoded traversal through its decoding", () => {
     const e = event([line("GET", "/a/%2e%2e%2f%2e%2e%2f%2e%2e%2fetc/passwd", 200)]);
-    expect(e.description).toMatch(/^Sigma \(medium, not graded\): .*Path Traversal/i);
+    expect(e.description).not.toMatch(/^Sigma/);
+    expect(e.message).toMatch(/^Sigma rule: .*Path Traversal/im);
   });
 
   it("reports the pack and the matched rows, and stamps every graded row", () => {
@@ -97,7 +99,8 @@ describe("proxy access logs", () => {
     const r = parse([line("GET", "http://a.test/x.ps1", 200, "-", ""), ...proxyLines.slice(1)]);
     // Rows come back severity-first, so find the empty-UA request by its target.
     const e = r.events.find((x) => x.description.includes("x.ps1"));
-    expect(e?.description).toMatch(/^Sigma \(medium, not graded\): HTTP Request With Empty User Agent/);
+    expect(e?.description).not.toMatch(/^Sigma/);
+    expect(e?.message).toMatch(/^Sigma rule: HTTP Request With Empty User Agent/m);
   });
 });
 

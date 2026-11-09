@@ -445,6 +445,48 @@ describe("Re-grade raises a real GCP audit record through the method alias (#234
   ]);
   const snapMedium = createSigmaImportGrader(setOn, { minLevel: () => "medium" }).snapshot()!;
 
+  // #2486: rows stored before the title dropped the versioned method package still pair with
+  // their re-parsed record, and come back in the new wording.
+  it("pairs a row stored with the long GCP method name and rewrites it to the short one", () => {
+    const rows = parseCloudActivity(text, { aggregate: false }).events;
+    const longForm = (d: string) => d.replace(/^GCP (\w+) \(iam\)/, "GCP google.iam.admin.v1.$1 (iam)");
+    const map = new Map<string, StoredRow>(
+      rows.map((e, i) => [
+        `g${i + 1}`,
+        {
+          forensic: {
+            ...e,
+            description: longForm(e.description),
+            id: `g${i + 1}`,
+            relatedFindingIds: [],
+            sourceScreenshots: [FILE],
+          },
+        },
+      ]),
+    );
+    expect(map.get("g1")!.forensic!.description).toMatch(
+      /^GCP google\.iam\.admin\.v1\.DisableServiceAccount/,
+    );
+    const p = planSigmaRegrade({
+      files: [
+        {
+          file: FILE,
+          importer: "gcp-audit",
+          rows: map,
+          reparsed: reparseForRegrade("gcp-audit", text, snapMedium),
+        },
+      ],
+      token: snapMedium.token,
+      gate: "Low",
+      ruleMitre,
+    });
+    expect(p.counts.unmatched).toBe(0);
+    const g1 = p.rows.find((r) => r.id === "g1")!;
+    expect(g1.forensic!.after.description).toMatch(
+      /^Sigma: Google Cloud Service Account Disabled or Deleted - GCP DisableServiceAccount \(iam\)/,
+    );
+  });
+
   it("raises only DisableServiceAccount on an import never graded by Sigma", () => {
     const rows = parseCloudActivity(text, { aggregate: false }).events;
     const map = new Map<string, StoredRow>(
@@ -473,7 +515,7 @@ describe("Re-grade raises a real GCP audit record through the method alias (#234
     expect(changed[0].after).toBe("Medium");
     const after = changed[0].forensic!.after;
     expect(after.description).toMatch(/^Sigma: Google Cloud Service Account Disabled or Deleted - /);
-    expect(after.description).toContain("google.iam.admin.v1.DisableServiceAccount");
+    expect(after.description).toContain("GCP DisableServiceAccount (iam)");
     for (const r of p.rows.filter((x) => x.id !== "g1"))
       expect(r.forensic!.after.message ?? "").not.toContain("Sigma rule:");
   });

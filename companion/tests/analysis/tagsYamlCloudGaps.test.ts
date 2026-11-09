@@ -403,3 +403,37 @@ describe("Analyzer-Suite user agents (#2306)", () => {
     expect(forged.ruleIds).not.toContain("ts_entra_legacy_auth");
   });
 });
+
+describe("Entra sign-in risk the tenant cannot see (#2486)", () => {
+  const signIn = (risk: string) =>
+    m1({
+      id: `eeeeeeee-0000-4000-8000-${String(++n).padStart(12, "0")}`,
+      createdDateTime: "2026-01-01T00:00:00Z",
+      userPrincipalName: "u@example.com",
+      appDisplayName: "Office 365",
+      ipAddress: "203.0.113.5",
+      status: { errorCode: 0 },
+      riskLevelDuringSignIn: risk,
+      resourceTenantId: "11111111-1111-4111-8111-111111111111",
+    });
+
+  it("a hidden risk level (no Entra ID P2) is not a risk signal; a real level still is", () => {
+    const hidden = signIn("hidden");
+    expect(hidden.description).toContain("[risk level not visible (no Entra ID P2)]");
+    expect(hidden.ruleIds).not.toContain("ts_entra_signin_risk");
+    expect(signIn("low").ruleIds).toContain("ts_entra_signin_risk");
+  });
+
+  it("a row stored before the fix with '[risk: hidden]' is not tagged as risky", () => {
+    const old = only(
+      tag([
+        { description: "Entra sign-in: u@example.com from 203.0.113.5 [risk: hidden]", severity: "Info" },
+      ]),
+    );
+    expect(old.ruleIds).not.toContain("ts_entra_signin_risk");
+    const real = only(
+      tag([{ description: "Entra sign-in: u@example.com from 203.0.113.5 [risk: low]", severity: "Info" }]),
+    );
+    expect(real.ruleIds).toContain("ts_entra_signin_risk");
+  });
+});

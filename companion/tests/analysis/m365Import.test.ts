@@ -142,6 +142,20 @@ describe("parseM365Audit — Entra sign-in & audit", () => {
     expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("203.0.113.50");
   });
 
+  it("#2486: a hidden risk level says the tenant cannot see risk, never '[risk: hidden]'", () => {
+    const signin = {
+      createdDateTime: "2023-05-02T08:00:00Z",
+      userPrincipalName: "victim@victim.com",
+      ipAddress: "203.0.113.50",
+      status: { errorCode: 0 },
+      riskLevelDuringSignIn: "hidden",
+    };
+    const e = parseM365Audit(JSON.stringify([signin])).events[0];
+    expect(e.description).toContain("[risk level not visible (no Entra ID P2)]");
+    expect(e.description).not.toContain("[risk: hidden]");
+    expect(e.severity).toBe("Info");
+  });
+
   it("maps a failed Entra sign-in (errorCode != 0) as Medium", () => {
     const signin = {
       createdDateTime: "2023-05-02T08:05:00Z",

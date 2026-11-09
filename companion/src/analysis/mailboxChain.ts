@@ -24,6 +24,7 @@ import { isExchangeRecord } from "./exchangeAuditImport.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { getCI, normalizeTime, str, type MappedEvent } from "./siemImport.js";
 import { isEntraSignIn, isUalLogon, readEntraSignIn, readUalLogon, type EntraSignIn } from "./ualLogon.js";
+import { ENTRA_RISK_HIDDEN_WORDS } from "./cloudRowWording.js";
 
 type Row = Record<string, unknown>;
 
@@ -49,6 +50,9 @@ const show = (v: string, max = NAME_MAX): string => {
   return shown.length > max ? `${shown.slice(0, max - 1)}…` : shown;
 };
 const lower = (s: string): string => s.trim().toLowerCase();
+/** A sign-in's risk level in words: "hidden" (no Entra ID P2) is no check, not a hidden risk (#2486). */
+const riskLevelWords = (level: string): string =>
+  lower(level) === "hidden" ? `level ${ENTRA_RISK_HIDDEN_WORDS}` : show(level, 12);
 const ms = (iso: string): number | null => {
   const t = Date.parse(normalizeTime(iso));
   return Number.isFinite(t) ? t : null;
@@ -207,7 +211,7 @@ function logonStep(rec: Row, index: number, signIns: readonly EntraSignIn[]): Lo
             Math.abs(ms(s.observed)! - time) <= RISK_JOIN_MINUTES * 60_000,
         );
   const riskWords = risk
-    ? ` — a contemporaneous sign-in in the sign-in log (${Math.round(Math.abs(ms(risk.observed)! - time!) / 60_000)} min apart) carries risk: ${show(risk.riskState || "none", 24)}${risk.riskLevel ? `, ${show(risk.riskLevel, 12)}` : ""} — not established as the same sign-in`
+    ? ` — a contemporaneous sign-in in the sign-in log (${Math.round(Math.abs(ms(risk.observed)! - time!) / 60_000)} min apart) carries risk: ${show(risk.riskState || "none", 24)}${risk.riskLevel ? `, ${riskLevelWords(risk.riskLevel)}` : ""} — not established as the same sign-in`
     : "";
   return {
     user: l.user,

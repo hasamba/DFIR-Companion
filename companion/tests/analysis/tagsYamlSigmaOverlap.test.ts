@@ -1,5 +1,5 @@
-// #2350 — import-time Sigma puts its head at the START of a row's description ("Sigma: <title> - "
-// or "Sigma (<level>, not graded): <title> - "), and the cloud tagger rules are anchored on the
+// #2350 — import-time Sigma puts its head at the START of a row's description ("Sigma: <title> - ";
+// before #2486 also "Sigma (<level>, not graded): <title> - " on a row Sigma did not grade), and the cloud tagger rules are anchored on the
 // importer's own prefix ("^AWS ModifySnapshotAttribute (", "^Entra audit:", "^Entra sign-in:").
 // The tagger must still match those rules on a Sigma-matched row, through the real importers, the
 // bundled Sigma rules and the SHIPPED tags.yaml — and in the streamed pre-grade too.
@@ -91,7 +91,8 @@ const one = (events: SiemEvent[]): SiemEvent => {
 describe("tagger rules match regardless of the import-time Sigma head (#2350)", () => {
   it("cloud_aws_snapshot_shared on a public snapshot share with a Sigma match: tag, T1537, High", () => {
     const row = one(parseCloudTrail(trail([snapshotShare]), { sigma }).events);
-    expect(row.description).toMatch(/^Sigma /);
+    expect(row.description).not.toMatch(/^Sigma/); // #2486: no head when Sigma did not grade
+    expect(row.message).toMatch(/^Sigma rule: /m);
     const t = tagged(row);
     expect(t.ruleIds).toContain("cloud_aws_snapshot_shared");
     expect(t.mitre).toContain("T1537");
@@ -100,13 +101,15 @@ describe("tagger rules match regardless of the import-time Sigma head (#2350)", 
 
   it("ts_aws_iam_persistence on CreateAccessKey with a Sigma match", () => {
     const row = one(parseCloudTrail(trail([createAccessKey]), { sigma }).events);
-    expect(row.description).toMatch(/^Sigma /);
+    expect(row.description).not.toMatch(/^Sigma/); // #2486: no head when Sigma did not grade
+    expect(row.message).toMatch(/^Sigma rule: /m);
     expect(tagged(row).ruleIds).toContain("ts_aws_iam_persistence");
   });
 
   it("ts_entra_service_principal_created on an Entra 'Add service principal' audit with a Sigma match", () => {
     const row = one(parseM365Audit(graph([audit("Add service principal")]), { sigma }).events);
-    expect(row.description).toMatch(/^Sigma /);
+    expect(row.description).not.toMatch(/^Sigma/); // #2486: no head when Sigma did not grade
+    expect(row.message).toMatch(/^Sigma rule: /m);
     expect(tagged(row).ruleIds).toContain("ts_entra_service_principal_created");
   });
 
@@ -132,7 +135,8 @@ describe("tagger rules match regardless of the import-time Sigma head (#2350)", 
 describe("streamed cloud pre-grade sees past the Sigma head (#2350)", () => {
   it("raises an Info row with a tag-only Sigma head that a High tagger rule matches", () => {
     const row = one(parseCloudTrail(trail([snapshotShare]), { sigma }).events);
-    expect(row.description).toMatch(/^Sigma /);
+    expect(row.description).not.toMatch(/^Sigma/); // #2486: no head when Sigma did not grade
+    expect(row.message).toMatch(/^Sigma rule: /m);
     const info: MappedEvent = {
       timestamp: row.timestamp,
       description: row.description,

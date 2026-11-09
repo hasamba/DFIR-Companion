@@ -52,6 +52,7 @@ import { readCloudRecords } from "./cloudRecords.js";
 import type { JsonRepairs } from "./tolerantJson.js";
 import { applySigmaToRecordRows, sigmaMatchesFor, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
 import { GCP_AUDIT } from "./sigmaLogSources.js";
+import { shortGcpMethod } from "./cloudRowWording.js";
 
 type Row = Record<string, unknown>;
 
@@ -178,7 +179,8 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>, locator: string): MappedEv
   const shortSvc = service.replace(/\.googleapis\.com$/i, "");
   const shortRes = resource.split("/").slice(-2).join("/");
   // Every imported string in the head is neutralised (brackets, controls, bidi) and bounded.
-  let head = `GCP ${neutral(method, 120)}${shortSvc ? ` (${neutral(shortSvc, 40)})` : ""}`;
+  // The title shows the method without its versioned package (#2486); the record keeps it whole.
+  let head = `GCP ${neutral(shortGcpMethod(method), 120)}${shortSvc ? ` (${neutral(shortSvc, 40)})` : ""}`;
   if (principal) head += ` by ${neutral(principal, 80)}`;
   if (ip) head += ` from ${ip}`;
   // The object name is kept whole here: the row's digest-preserving clip (#940) is what bounds it.

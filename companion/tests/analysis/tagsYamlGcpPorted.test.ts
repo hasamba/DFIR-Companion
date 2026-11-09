@@ -224,7 +224,7 @@ describe("ported GCP rules (#2346) — the rendered head they read", () => {
   it("pins the GCP head the rules key on", () => {
     const { row } = grade(rec("google.iam.admin.v1.UpdateRole", "iam.googleapis.com"), false);
     expect(row.description).toMatch(
-      /^GCP google\.iam\.admin\.v1\.UpdateRole \(iam\) by alice@example\.com from 198\.51\.100\.7 on things\/t1/,
+      /^GCP UpdateRole \(iam\) by alice@example\.com from 198\.51\.100\.7 on things\/t1/,
     );
     const agent = grade(rec("google.iam.admin.v1.UpdateRole", "iam.googleapis.com", AGENT), false).row;
     expect(agent.description).toContain(` by ${AGENT} `);

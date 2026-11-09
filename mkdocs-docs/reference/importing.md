@@ -1672,13 +1672,19 @@ serviceAccounts/svc@…` — High whatever the policy change was, the member and
 the impersonation chain and the key behind the call ignored. Each record now reads for what it
 states, and every capability is nominal:
 
-`GCP google.iam.admin.v1.SetIAMPolicy (iam) by alice@corp.example from 203.0.113.11 on
+`GCP SetIAMPolicy (iam) by alice@corp.example from 203.0.113.11 on
 serviceAccounts/svc@acme.iam.gserviceaccount.com — authority over service account
 svc@acme.iam.gserviceaccount.com granted to user:bob@corp.example — added a binding for
 roles/iam.serviceAccountTokenCreator, whose documented permissions include: generating access
 tokens and ID tokens for the service account, signing blobs and JWTs (nominal; conditions, deny
 policies, principal access boundaries and inheritance are not evaluated by this record)`
 
+- **The method name, shortened in the title.** The versioned API package in front of the method
+  (`google.iam.admin.v1.`, `google.cloud.orgpolicy.v2.`) is left out, so
+  `google.iam.admin.v1.CreateServiceAccount` reads `CreateServiceAccount`, the same way `SetIamPolicy`
+  and `storage.buckets.create` already read. A method without such a package is shown as logged. The
+  full method stays on the event's record. Rows imported before this change keep the long form until
+  you run a Sigma re-grade or import the file again.
 - **Who acted, as the record says.** `principalEmail` is typed only by a documented
   service-account address shape — `name@<project-id>.iam.gserviceaccount.com` (home project, an
   id), `<number>-compute@developer…` (a number), `<id>@appspot…`, or a Google-managed service
@@ -1874,6 +1880,21 @@ the same findings again (or collecting an overlapping window) imports nothing tw
 updated a finding in between, the update is imported as a new event, so each update is on the
 timeline. No Sigma rule reads GuardDuty findings, and the Cloud Coverage panel does not list them.
 
+### Coverage rows on the timeline
+
+Some timeline rows are notes about the evidence, not events: **Cloud coverage gap** (the case has
+cloud audit logs but no host telemetry, so the instance metadata service cannot be checked), **Cloud
+object logging is off**, **Cloud object reads were not all examined** and **Browsing evidence without
+an account**. Their source is `Coverage`, and a re-merge replaces them instead of adding another.
+
+- **Where they sit.** Each one sits at the time of the **earliest** event it describes: the earliest
+  cloud audit record, the earliest cloud object record, or the earliest browsing record. It no longer
+  depends on the order in which the files were imported.
+- **Cloud coverage gap is Low.** It is advice, so it is graded Low, not Medium. Low still reaches the
+  forensic timeline, so AI synthesis still learns that "nothing found" here does not mean "nothing
+  happened". The other three stay Medium, because each one says that evidence was dropped or is
+  missing.
+
 ### Sigma rules grade CloudTrail, Entra and GCP imports
 
 AWS CloudTrail records, Entra ID **user sign-ins** and **directory-audit** records (Graph and Log
@@ -1883,13 +1904,15 @@ they are imported. No AI is involved, and the same file always gets the same res
 - **A high or critical rule raises the event** to the rule's level. The description starts with
   `Sigma: <rule title>`. A severity the importer already gave is never lowered.
 - **A rule below the minimum level (default: medium, low or informational), or any rule from SigmaHQ's
-  threat-hunting set, labels the event but does not grade it**: `Sigma (medium, not graded): <title>`.
-  The severity does not change. Any severity the row shows comes from the companion's other rules,
+  threat-hunting set, labels the event but does not grade it.** The description does not change:
+  only a rule that set the severity names itself at the start of the row, so a row another rule
+  graded High never seems to say "not graded". The severity does not change. Any severity the row shows comes from the companion's other rules,
   and an Info row stays Info, goes to the super-timeline, and is never read by the AI. The details
   carry a `Sigma note: not graded — …` line that says why: the rule is below the minimum level, it is
   a threat-hunting rule, or the log source does not let Sigma raise that record. Hover over the row
-  title to see the same reason. Rows imported before this wording read `tag only` until you run a
-  Sigma re-grade.
+  title to see the same reason. Rows imported before this change still start with
+  `Sigma (medium, not graded): <title>` (or the older `tag only`) until you run a Sigma re-grade or
+  import the file again.
 - **Every match is recorded on the event**: the rule id, level, status, author, the SigmaHQ release
   and a link to the rule. The rule's ATT&CK techniques are added to the event.
 - **One event, not two.** When the importer's own tables and a Sigma rule flag the same record, it
@@ -1910,8 +1933,8 @@ they are imported. No AI is involved, and the same file always gets the same res
 
 Which rules run (by default): SigmaHQ `stable` and `test` rules for `aws/cloudtrail`, `azure/signinlogs`,
 `azure/auditlogs` and `gcp/audit`. The 15 bundled GCP audit rules are all `medium`, so at the default
-minimum level (high) they **only label** GCP events — for example `Sigma (medium, not graded): Google
-Cloud Firewall Modified or Deleted`. Set the minimum level to medium to let them raise events. Some of them
+minimum level (high) they **only label** GCP events — the details then list, for example, `Sigma rule:
+Google Cloud Firewall Modified or Deleted` with a `Sigma note: not graded` line. Set the minimum level to medium to let them raise events. Some of them
 name GCP methods the way another log pipeline spells them (`.serviceAccounts.disable` for what a real
 audit log calls `DisableServiceAccount`). The Companion runs the rules as SigmaHQ wrote them and also
 matches the real name for those exact calls, so every one of the 15 fires on real Cloud Audit Log
@@ -1980,6 +2003,10 @@ Unified Audit Log's AzureActiveDirectory record) now read the same way, one row 
   starts `self-grant:` and is High.
 - **Attempts** — `attempted to grant application permission … — failed … [requested, not granted]`,
   Medium, no High: the change did not happen.
+- **Risk the tenant cannot see.** A sign-in whose risk level is `hidden` (the tenant has no Entra
+  ID P2 licence, so no risk check was possible) reads `[risk level not visible (no Entra ID P2)]`,
+  never `[risk: hidden]`, and is not tagged `risk`. A mailbox chain says `level not visible (no Entra
+  ID P2)` the same way. A real level (`[risk: low]`, `[risk: high]`) is shown as before.
 - **Application sign-ins** are rows now (they used to be dropped): `Entra sign-in: application
   Sync (app-id) token issued → Microsoft Graph from 198.51.100.7 credential: clientSecret k-1`.
   The credential type comes from `clientCredentialType`, never from a key id; a secret is Low, a
