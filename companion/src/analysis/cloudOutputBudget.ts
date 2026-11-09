@@ -8,6 +8,10 @@
 //                     when the import did. Rows sharing the importer's own aggKey merge into one
 //                     detail row and spend the budget once, as a whole-file import merges them
 //                     (#2502); a later matching row joins that row even after the budgets are spent.
+//                     A failed read-only call (#2481) also spends a per-actor budget of
+//                     MEDIUM_FAILED_READS_PER_ACTOR across all actions; past it — or past the import
+//                     budget — it folds into one counted event per actor that lists the actions, and
+//                     is sent to the super-timeline individually while the import's room lasts.
 //   Low             → aggregated in the forensic timeline, and written individually to the
 //                     super-timeline while its per-import room lasts.
 //   Info            → written individually to the super-timeline while its room lasts; past it,
@@ -26,6 +30,7 @@ import { createEventAggregator, type AggregateProvenance, type EventAggregator }
 import {
   AGGREGATE_GROUPS_MAX,
   COARSE_GROUPS_MAX,
+  MEDIUM_FAILED_READS_PER_ACTOR,
   MEDIUM_INDIVIDUAL_MAX,
   MEDIUM_INDIVIDUAL_PER_RULE_ACTOR,
 } from "./cloudStreamLimits.js";
@@ -35,6 +40,8 @@ export interface OutputBudgets {
   mediumMax: number;
   aggregateGroupsMax: number;
   coarseGroupsMax: number;
+  /** Distinct failed read-only Medium rows kept in detail per actor (#2481). */
+  failedReadsPerActor: number;
   /** Rows this import may write to the super-timeline individually. */
   superRows: number;
 }
@@ -45,6 +52,7 @@ export function defaultBudgets(superRows: number): OutputBudgets {
     mediumMax: MEDIUM_INDIVIDUAL_MAX,
     aggregateGroupsMax: AGGREGATE_GROUPS_MAX,
     coarseGroupsMax: COARSE_GROUPS_MAX,
+    failedReadsPerActor: MEDIUM_FAILED_READS_PER_ACTOR,
     superRows,
   };
 }
@@ -54,6 +62,8 @@ export interface RowFacts {
   rule: string; // the operation / API action
   actor: string; // the principal
   ip: string; // the source address, or ""
+  /** A read-only call that failed (CloudTrail: readOnly with an errorCode) — #2481. */
+  failedRead?: boolean;
 }
 
 export type RouteDecision = "forensic" | "super" | "aggregate" | "super+aggregate" | "below-floor";
@@ -67,9 +77,12 @@ export interface OutputDisclosure {
   aggregatedRows: { medium: number; low: number; info: number };
   /** Medium rows kept in detail by joining a matching detail row (same aggKey, #2502). */
   mediumMerged: number;
-  mediumOverflow: { ruleActorBudget: number; importBudget: number };
+  /** Why Medium rows were not kept in detail; failedReadBudget = the per-actor failed-read cap (#2481). */
+  mediumOverflow: { ruleActorBudget: number; importBudget: number; failedReadBudget: number };
+  /** Failed read-only calls folded into their actor's group, and how many went to the super-timeline. */
+  failedReads: { folded: number; toSuper: number };
   groups: { detailed: number; coarse: number; catchAll: number };
-  /** Low/Info rows that found no room in the super-timeline and are only in aggregates. */
+  /** Low/Info rows (and folded failed reads) that found no room in the super-timeline. */
   superBudgetExceeded: number;
   budgets: OutputBudgets;
 }
@@ -84,6 +97,9 @@ type Tier = "detailed" | "coarse" | "catchAll";
 
 const RULE_MAX = 160;
 const clip = (s: string): string => (s.length > RULE_MAX ? s.slice(0, RULE_MAX) : s);
+/** An actor's identity key is bounded far above any real principal, so distinct ARNs never collide. */
+const ACTOR_KEY_MAX = 2_048;
+const FAILED_READ_REASON = "failed read-only calls folded per actor";
 
 export function createOutputBudget(opts: {
   budgets: OutputBudgets;
@@ -110,6 +126,8 @@ export function createOutputBudget(opts: {
     provenance: opts.provenance,
   });
   const perRuleActor = new Map<string, number>();
+  const failedReadsKept = new Map<string, number>();
+  const failedReadGroups = new Map<string, FailedReadTally>();
   const tierOf = new Map<string, { tier: Tier; reason: string; rule: string; ip: string }>();
   let detailed = 0;
   let coarse = 0;
@@ -123,7 +141,8 @@ export function createOutputBudget(opts: {
     superIndividual: 0,
     aggregatedRows: { medium: 0, low: 0, info: 0 },
     mediumMerged: 0,
-    mediumOverflow: { ruleActorBudget: 0, importBudget: 0 },
+    mediumOverflow: { ruleActorBudget: 0, importBudget: 0, failedReadBudget: 0 },
+    failedReads: { folded: 0, toSuper: 0 },
     groups: { detailed: 0, coarse: 0, catchAll: 0 },
     superBudgetExceeded: 0,
     budgets: b,
@@ -165,6 +184,32 @@ export function createOutputBudget(opts: {
     if (sev === "Medium") d.aggregatedRows.medium++;
     else if (sev === "Low") d.aggregatedRows.low++;
     else d.aggregatedRows.info++;
+    return key;
+  }
+
+  /** A failed read past its actor's (or the import's) budget: one group per actor, and the super-timeline. */
+  function foldFailedRead(
+    row: MappedEvent,
+    f: RowFacts,
+    actorKey: string,
+    why: keyof OutputDisclosure["mediumOverflow"],
+  ) {
+    d.mediumOverflow[why]++;
+    d.failedReads.folded++;
+    const detailedKey = `budget|Medium|failedRead|${actorKey}`;
+    if (aggregate(row, f, "Medium", detailedKey, FAILED_READ_REASON) === detailedKey) {
+      const tally = failedReadGroups.get(detailedKey) ?? createFailedReadTally(clip(f.actor));
+      failedReadGroups.set(detailedKey, tally);
+      tally.add(clip(f.rule));
+    }
+    if (superUsed < b.superRows) {
+      superUsed++;
+      d.superIndividual++;
+      d.failedReads.toSuper++;
+      return "super+aggregate";
+    }
+    d.superBudgetExceeded++;
+    return "aggregate";
   }
 
   function routeMedium(row: MappedEvent, f: RowFacts): RouteDecision {
@@ -177,8 +222,13 @@ export function createOutputBudget(opts: {
     }
     const pair = `${clip(f.rule)}|${clip(f.actor)}`;
     const used = perRuleActor.get(pair) ?? 0;
-    if (mediumKept < b.mediumMax && used < b.mediumPerRuleActor) {
+    // An empty actor never folds as a failed read: unknown principals keep the ordinary path.
+    const failedActor = f.failedRead && f.actor ? f.actor.slice(0, ACTOR_KEY_MAX) : null;
+    const failedUsed = failedActor === null ? 0 : (failedReadsKept.get(failedActor) ?? 0);
+    const failedSpent = failedActor !== null && failedUsed >= b.failedReadsPerActor;
+    if (!failedSpent && mediumKept < b.mediumMax && used < b.mediumPerRuleActor) {
       perRuleActor.set(pair, used + 1);
+      if (failedActor !== null) failedReadsKept.set(failedActor, failedUsed + 1);
       mediumKept++;
       d.individual.medium++;
       mediumKeys.add(row.aggKey);
@@ -186,6 +236,13 @@ export function createOutputBudget(opts: {
       return "forensic";
     }
     const actorSpent = used >= b.mediumPerRuleActor;
+    if (failedActor !== null)
+      return foldFailedRead(
+        row,
+        f,
+        failedActor,
+        failedSpent ? "failedReadBudget" : actorSpent ? "ruleActorBudget" : "importBudget",
+      );
     if (actorSpent) d.mediumOverflow.ruleActorBudget++;
     else d.mediumOverflow.importBudget++;
     const reason = actorSpent
@@ -227,11 +284,23 @@ export function createOutputBudget(opts: {
     finish() {
       // Each aggregator sorts most-severe first; mediumAgg holds only Medium, so this is one order.
       const individual = [...individualAgg.finish().events, ...mediumAgg.finish().events];
-      const aggregates = aggregateAgg
-        .finish()
-        .events.map((e) => describeAggregate(e, tierOf.get(e.aggKey ?? "")));
+      const aggregates = aggregateAgg.finish().events.map((e) => {
+        const failed = failedReadGroups.get(e.aggKey ?? "");
+        return failed
+          ? describeFailedReads(e, failed, FAILED_READ_REASON)
+          : describeAggregate(e, tierOf.get(e.aggKey ?? ""));
+      });
       d.groups = { detailed, coarse, catchAll };
-      return { individual, aggregates, disclosure: { ...d, budgets: { ...b } } };
+      return {
+        individual,
+        aggregates,
+        disclosure: {
+          ...d,
+          mediumOverflow: { ...d.mediumOverflow },
+          failedReads: { ...d.failedReads },
+          budgets: { ...b },
+        },
+      };
     },
   };
 }
@@ -254,5 +323,64 @@ function describeAggregate(
   return {
     ...rest,
     description: `${scope}: ${n} ${e.severity} row(s) aggregated ${note}; example: ${e.description}`,
+  };
+}
+
+/** How many distinct actions one actor's failed-read group tracks by name; past it, calls are counted. */
+const FAILED_READ_ACTIONS_TRACKED = 200;
+/** How many of those actions the group's description names. */
+const FAILED_READ_ACTIONS_LISTED = 20;
+
+interface FailedReadTally {
+  actor: string;
+  /** Calls per action, in first-seen order. */
+  actions: Map<string, number>;
+  /** Calls to actions past FAILED_READ_ACTIONS_TRACKED (their names are not kept). */
+  untracked: number;
+  add(action: string): void;
+}
+
+function createFailedReadTally(actor: string): FailedReadTally {
+  const t: FailedReadTally = {
+    actor,
+    actions: new Map(),
+    untracked: 0,
+    add(action) {
+      const n = t.actions.get(action);
+      if (n !== undefined) t.actions.set(action, n + 1);
+      else if (t.actions.size < FAILED_READ_ACTIONS_TRACKED) t.actions.set(action, 1);
+      else t.untracked++;
+    },
+  };
+  return t;
+}
+
+/**
+ * A principal's folded failed reads (#2481): who, how many, across which actions, when — the actions
+ * named with their counts, most-called first. Actor and action names are clipped like every rule name.
+ */
+function describeFailedReads(e: SiemEvent, t: FailedReadTally, reason: string): SiemEvent {
+  const n = e.count ?? 1;
+  // One folded call IS the original row: no note, the same rule as a one-row detailed group (#2475).
+  if (n <= 1) return e;
+  const span = e.endTimestamp && e.endTimestamp !== e.timestamp ? `, ${e.timestamp} → ${e.endTimestamp}` : "";
+  const ranked = [...t.actions].sort((a, b) => b[1] - a[1]);
+  const listed = ranked
+    .slice(0, FAILED_READ_ACTIONS_LISTED)
+    .map(([action, k]) => `${action} ×${k}`)
+    .join(", ");
+  const moreActions = ranked.length - Math.min(ranked.length, FAILED_READ_ACTIONS_LISTED);
+  const more = [
+    moreActions ? `+${moreActions} more action(s)` : "",
+    t.untracked ? `${t.untracked} call(s) to further actions not named` : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+  const actions = `${t.untracked ? "at least " : ""}${t.actions.size} action(s)`;
+  return {
+    ...e,
+    description:
+      `${t.actor}: ${n} failed read-only call(s) across ${actions}${span} — ${listed}` +
+      `${more ? ` (${more})` : ""} [aggregated: ${n} row(s) — ${reason}]`,
   };
 }
