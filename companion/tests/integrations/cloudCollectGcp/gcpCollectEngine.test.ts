@@ -261,6 +261,19 @@ describe("GCP collection through the engine", () => {
       'Log sink not used: sink "narrow": its filter cannot be proven to keep every audit entry.',
     );
   });
+  // #2450: Google hides Data Access from an account without Private Logs Viewer, with no error.
+  it("never reports complete when the account cannot read Data Access, and says why", async () => {
+    const t = await tempCase();
+    const { wire } = mockWire(
+      () => ({ body: { entries: [gcpAuditEntry(1)] } }),
+      () => ({ body: {} }),
+    );
+    const { cp } = await collect(t, gcpCollectSession({ wire, settings: SETTINGS }));
+    expect(cp.status).toBe("partial");
+    expect(cp.coverage?.[0].notes.join(" ")).toContain(
+      "Data Access logs were not collected: this account lacks the Private Logs Viewer role",
+    );
+  });
   it("keeps an empty sink window's listing as evidence only: saved, never imported, even on replay (#2340)", async () => {
     const t = await tempCase();
     // The day folder holds an object of ANOTHER hour, so the listing has an `items` array.

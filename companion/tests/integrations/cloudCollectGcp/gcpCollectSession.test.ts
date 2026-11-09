@@ -1,3 +1,7 @@
+import {
+  RESOURCE_MANAGER_READ_SCOPE,
+  testIamPermissionsUrl,
+} from "../../../src/integrations/cloudTransport/googlePrivateLogs.js";
 import { describe, expect, it } from "vitest";
 import {
   GCP_AUDIT_SOURCE,
@@ -239,7 +243,7 @@ describe("the GCS sink path", () => {
 });
 
 describe("gcpCollectProvider.open", () => {
-  it("signs in with the Logging and Storage read scopes over the transport, and closes it", async () => {
+  it("signs in with the Logging, Storage and Resource Manager read scopes over the transport, and closes it", async () => {
     const seen: { scopes?: string[]; closed: boolean; urls: string[] } = { closed: false, urls: [] };
     const fetch: CloudFetch = async (url, init) => {
       seen.urls.push(String(url));
@@ -266,8 +270,9 @@ describe("gcpCollectProvider.open", () => {
     } as OpenCloudAccount;
     const session = provider.open(account);
     await session.fetchPage({ source: GCP_AUDIT_SOURCE, subWindowId: "s:0", window: WINDOW });
-    expect(seen.scopes).toEqual([LOGGING_READ_SCOPE, STORAGE_READ_SCOPE]);
-    expect(seen.urls).toEqual([GCP_ENTRIES_LIST_URL]);
+    // #2450: the permission test needs the Resource Manager read scope, and goes first.
+    expect(seen.scopes).toEqual([LOGGING_READ_SCOPE, STORAGE_READ_SCOPE, RESOURCE_MANAGER_READ_SCOPE]);
+    expect(seen.urls).toEqual([testIamPermissionsUrl(SETTINGS.projectId), GCP_ENTRIES_LIST_URL]);
     await session.close?.();
     expect(seen.closed).toBe(true);
     expect(() => provider.open({ ...account, provider: "aws" } as OpenCloudAccount)).toThrow(

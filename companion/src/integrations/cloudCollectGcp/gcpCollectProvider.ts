@@ -14,6 +14,11 @@
 // path finishes on it, across a resume too. Logging page tokens expire after 24 h; a rejected token
 // is a CursorExpiredError and the engine restarts the sub-window (gcpErrors.ts).
 //
+// Data Access is a private log: an account without the Private Logs Viewer role gets it silently
+// left out of entries:list, not refused (#2450). Before the first request that covers Data Access,
+// the session asks Google once whether the account holds the permission; every such page records
+// the answer, and a missing permission marks the page unverified with a note saying so.
+//
 // No @google-cloud/logging: its gRPC and REST-fallback paths bypass the cloud transport (#2310). All
 // traffic — the token exchange included — goes over the transport (gcpWire.ts, googleAccountAuth.ts).
 
@@ -49,6 +54,15 @@ import {
   logsFor,
 } from "./gcpFilter.js";
 import { GcpHttpError, throwForStatus } from "./gcpErrors.js";
+import {
+  RESOURCE_MANAGER_READ_SCOPE,
+  dataAccessNote,
+  privateLogAccessFrom,
+  testIamPermissionsBody,
+  testIamPermissionsUrl,
+  unknownAccess,
+  type PrivateLogAccess,
+} from "../cloudTransport/googlePrivateLogs.js";
 import { gcpSinkPager } from "./gcpSinkPages.js";
 import { authorizedWire, type GcpHeaderSource, type GcpWire } from "./gcpWire.js";
 
@@ -128,12 +142,57 @@ function parsePage(body: Uint8Array): { entries: number; next?: string } {
   };
 }
 
+/** Google's own error text from a failed call's body, when it has one. */
+function googleMessage(body: Uint8Array): string {
+  try {
+    const err = (
+      JSON.parse(Buffer.from(body).toString("utf8")) as { error?: { status?: unknown; message?: unknown } }
+    ).error;
+    const parts = [err?.status, err?.message].filter((v): v is string => typeof v === "string" && v !== "");
+    return parts.length ? ` ${parts.join(": ")}` : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Asks Google whether the account may read private logs (#2450). Never throws, unless aborted. */
+export async function testPrivateLogAccess(
+  wire: GcpWire,
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<PrivateLogAccess> {
+  try {
+    const res = await wire({
+      method: "POST",
+      url: testIamPermissionsUrl(projectId),
+      body: JSON.stringify(testIamPermissionsBody()),
+      ...(signal ? { signal } : {}),
+    });
+    if (res.status < 200 || res.status >= 300)
+      return unknownAccess(`the permission test answered HTTP ${res.status}${googleMessage(res.body)}`);
+    return privateLogAccessFrom(JSON.parse(Buffer.from(res.body).toString("utf8")));
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    // A transport error can quote the proxy URL, which may hold a password: fixed text only.
+    return unknownAccess(
+      err instanceof SyntaxError
+        ? "the permission test answered with a body that is not JSON"
+        : "the permission test got no answer",
+    );
+  }
+}
+
+type AccessProbe = (signal?: AbortSignal) => Promise<PrivateLogAccess>;
+
 async function apiPage(
   deps: GcpSessionDeps,
   req: CollectPageRequest,
   extra: Record<string, string>,
+  probe: AccessProbe,
 ): Promise<CollectPage> {
-  const filter = gcpAuditFilter(deps.settings.projectId, req.window, logsFor(req.partition));
+  const logs = logsFor(req.partition);
+  const access = logs.includes("data_access") ? await probe(req.signal) : undefined;
+  const filter = gcpAuditFilter(deps.settings.projectId, req.window, logs);
   const res = await deps.wire({
     method: "POST",
     url: GCP_ENTRIES_LIST_URL,
@@ -142,11 +201,14 @@ async function apiPage(
   });
   throwForStatus(res, { hadPageToken: !!req.pageToken });
   const { entries, next } = parsePage(res.body);
+  const note = access ? dataAccessNote(access) : undefined;
   return {
     body: res.body,
     extension: "json",
     recordCount: entries,
     ...(next ? { nextPageToken: next } : {}),
+    ...(note ? { note } : {}),
+    ...(access?.state === "missing" ? { unverified: true } : {}),
     requestParams: {
       route: "logging-api",
       url: GCP_ENTRIES_LIST_URL,
@@ -154,6 +216,7 @@ async function apiPage(
       filter,
       orderBy: "timestamp asc",
       pageSize: String(GCP_PAGE_SIZE),
+      ...(access ? { privateLogAccess: access.state } : {}),
       ...extra,
     },
   };
@@ -163,6 +226,15 @@ async function apiPage(
 export function gcpCollectSession(deps: GcpSessionDeps): CloudCollectSession {
   const now = deps.now ?? Date.now;
   const sink = gcpSinkPager(deps.wire, deps.settings.projectId, now);
+  // One permission test per session; an aborted one is forgotten so a later request asks again.
+  let access: Promise<PrivateLogAccess> | undefined;
+  const probe: AccessProbe = (signal) => {
+    access ??= testPrivateLogAccess(deps.wire, deps.settings.projectId, signal).catch((err: unknown) => {
+      access = undefined;
+      throw err;
+    });
+    return access;
+  };
   return {
     identity: async () => ({
       accountRef: deps.settings.projectId,
@@ -177,10 +249,11 @@ export function gcpCollectSession(deps: GcpSessionDeps): CloudCollectSession {
       if (req.source === GCP_SINK_SOURCE && !req.pageToken) {
         const route = await sink.route(req.window, req.signal);
         if (route.ok) return sink.page(req);
-        const page = await apiPage(deps, req, { sinkRejected: route.reason });
-        return { ...page, note: `Log sink not used: ${route.reason}. Collected from the Logging API.` };
+        const page = await apiPage(deps, req, { sinkRejected: route.reason }, probe);
+        const sinkNote = `Log sink not used: ${route.reason}. Collected from the Logging API.`;
+        return { ...page, note: page.note ? `${sinkNote} ${page.note}` : sinkNote };
       }
-      return apiPage(deps, req, {});
+      return apiPage(deps, req, {}, probe);
     },
     close: () => deps.close?.(),
   };
@@ -199,7 +272,7 @@ export interface GcpProviderOptions {
   fetchFor?: (transport: CloudTransport) => CloudFetch;
 }
 
-const COLLECT_SCOPES = [LOGGING_READ_SCOPE, STORAGE_READ_SCOPE];
+const COLLECT_SCOPES = [LOGGING_READ_SCOPE, STORAGE_READ_SCOPE, RESOURCE_MANAGER_READ_SCOPE];
 
 export function gcpCollectProvider(opts: GcpProviderOptions): CloudCollectProvider {
   const authClient = opts.authClient ?? googleAccountClient;
