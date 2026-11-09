@@ -308,6 +308,8 @@ export async function runCollection(
   });
   const kinds = new Map(deps.sources.map((s) => [s.id, s.streamKind]));
   const imported = new Set(cp.imported);
+  // #2470: say the import step has begun at once — a page can take minutes to import.
+  report("import", network.subWindows, imported.size);
   await runImportStage(deps.importer, {
     caseId: cp.caseId,
     collectionId: cp.collectionId,

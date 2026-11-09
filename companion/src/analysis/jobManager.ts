@@ -8,6 +8,7 @@ import { manifestValueSchema, type ManifestValue } from "./analysisRunTypes.js";
 import type { JobLedgerStore } from "./jobLedgerStore.js";
 import {
   abortError,
+  callQuietly,
   deferred,
   ledgerWriteFailure,
   nextAdmissibleJob,
@@ -53,6 +54,7 @@ import {
   type JobPriority,
   type JobResourceBudget,
   type JobTable,
+  type JobStep,
 } from "./jobRegistry.js";
 
 export interface JobManagerOptions {
@@ -319,10 +321,10 @@ export class JobManager {
     };
   }
 
-  progress(jobId: string, done: number, total: number, detail?: string): void {
+  progress(jobId: string, done: number, total: number, detail?: string, step?: JobStep): void {
     const before = getJob(this.table, jobId);
     if (before)
-      this.publishPatch(before, progressJob(this.table, jobId, { done, total }, detail, this.now()));
+      this.publishPatch(before, progressJob(this.table, jobId, { done, total, ...step }, detail, this.now()));
   }
 
   async checkpoint(jobId: string, input: CheckpointInput): Promise<void> {
@@ -780,19 +782,13 @@ export class JobManager {
     this.budgetTimers.delete(jobId);
   }
 
+  // A WebSocket failure must never break the evidence operation that triggered the transition.
   private emit(caseId: string | null): void {
-    try {
-      this.onJob?.(caseId);
-    } catch {
-      // A WebSocket failure must never break the evidence operation that triggered the transition.
-    }
+    callQuietly(() => this.onJob?.(caseId));
   }
 
+  // Error reporting is a side channel. The original operation still receives its own failure.
   private reportError(error: Error): void {
-    try {
-      this.onError?.(error);
-    } catch {
-      // Error reporting is a side channel. The original operation still receives its own failure.
-    }
+    callQuietly(() => this.onError?.(error));
   }
 }

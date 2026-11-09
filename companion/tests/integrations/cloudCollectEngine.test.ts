@@ -133,6 +133,30 @@ describe("cloud collection engine (#2311)", () => {
     expect(stop.sourceRecords?.refs.some((r) => r.includes("00000000-0000-4000-b000-"))).toBe(true);
   });
 
+  // #2470: the import step is reported the moment it begins, at 0 imported, then once per page.
+  it("reports the import step as soon as it begins, before the first page lands", async () => {
+    const t = await tempCase();
+    const fs = faultFs();
+    const session = fakeSession({ pages: 3 });
+    await start(t, fs, session);
+    const seen: string[] = [];
+    await runCollection(
+      {
+        fs,
+        session,
+        importer: pipelineImporter(t),
+        sources: SOURCES,
+        now,
+        onProgress: (p) => seen.push(`${p.stage}:${p.imported}/${p.pages}`),
+      },
+      t.dir,
+      { resume: false },
+    );
+    const imports = seen.filter((s) => s.startsWith("import:"));
+    expect(imports).toEqual(["import:0/3", "import:1/3", "import:2/3", "import:3/3"]);
+    expect(seen.indexOf("import:0/3")).toBeGreaterThan(seen.lastIndexOf("network:0/3"));
+  });
+
   it("kill between the page rename and its manifest line: resume quarantines the orphan, no gap, no duplicate", async () => {
     const base = await baseline(3);
     const t = await tempCase();
