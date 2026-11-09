@@ -72,13 +72,6 @@ describe("auth routes signal access changes (#2449)", () => {
     return res.body.id as string;
   }
 
-  async function login(username: string): Promise<Session> {
-    const agent = request.agent(app);
-    const res = await agent.post("/auth/local/login").send({ username, password: PASSWORD });
-    expect(res.status).toBe(200);
-    return withCsrf(agent);
-  }
-
   it("signals after a sign-out", async () => {
     const admin = await bootstrap();
     signal.mockClear();

@@ -257,7 +257,7 @@ describe("a re-grade admitted after the case closed is refused (#2437)", () => {
     expect(res.body.error).toMatch(/closed/);
     expect(await target()).toEqual(before);
     const job = regradeJobs(jobManager)[0];
-    expect(isTerminal(job!.status), job!.status).toBe(true);
+    expect(isTerminal(job.status), job.status).toBe(true);
     expect(job).toMatchObject({ status: "failed", failure: { code: "case_frozen" } });
   });
 

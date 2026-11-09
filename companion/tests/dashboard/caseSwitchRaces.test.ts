@@ -216,13 +216,13 @@ function connectHarness(fetchImpl: FetchFn, unlocked: string | null = null, reme
       return page.mod.activeUnlockedCaseId;
     },
     set activeUnlockedCaseId(v) {
-      page.mod.activeUnlockedCaseId = v as string | null;
+      page.mod.activeUnlockedCaseId = v;
     },
     get activeUnlockRemembered() {
       return page.mod.activeUnlockRemembered;
     },
     set activeUnlockRemembered(v) {
-      page.mod.activeUnlockRemembered = v as boolean;
+      page.mod.activeUnlockRemembered = v;
     },
     forgetActiveCaseIfNotRemembered: () => page.mod.forgetActiveCaseIfNotRemembered?.(),
   };
@@ -310,9 +310,7 @@ describe("a cancelled password prompt leaves the case on screen unlocked (#2442)
     p.mod.adoptCaseUnlock("A", false); // a same-case reconnect keeps its unlock
     expect(p.fetch).not.toHaveBeenCalled();
     p.mod.adoptCaseUnlock("B", false);
-    expect(p.fetch.mock.calls.map((c) => [c[0], (c[1] as { method?: string } | undefined)?.method])).toEqual([
-      ["/cases/A/lock", "POST"],
-    ]);
+    expect(p.fetch.mock.calls.map((c) => [c[0], c[1]?.method])).toEqual([["/cases/A/lock", "POST"]]);
     expect(p.mod.activeUnlockedCaseId).toBe("B");
     expect(p.mod.activeUnlockRemembered).toBe(false);
   });
