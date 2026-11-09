@@ -3,6 +3,7 @@ import { logActivity } from "../analysis/activityLog.js";
 import { deepPassCheckpointSchema, type DeepPassCheckpoint } from "../analysis/deepPass.js";
 import type { Job } from "../analysis/jobRegistry.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
+import { getServerLogger } from "../logging/serverLogger.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
@@ -17,6 +18,14 @@ export function deepPassFallbackNote(result: { batchesOnFallback?: number; fallb
     ? `${result.batchesOnFallback} batch(es) read by the fallback model ${result.fallbackModel} after a safety stop`
     : "";
 }
+
+/**
+ * What the analyst sees when a resume finds its saved progress damaged (#2495). The checkpoint is
+ * local saved state, not an AI reply, so the #2459 AI wording would name the wrong cause. The zod
+ * issue list goes to the server log instead.
+ */
+export const DEEP_PASS_CHECKPOINT_UNREADABLE =
+  "The saved deep-pass progress could not be read; start the deep pass again.";
 
 interface DeepPassOutcome {
   events: number;
@@ -72,6 +81,21 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
     });
   };
 
+  // #2495: a damaged checkpoint fails the resume with a plain sentence; the issues go to the log.
+  const readCheckpoint = (
+    job: Pick<Job, "id" | "caseId" | "lastCheckpoint">,
+  ): DeepPassCheckpoint | undefined => {
+    const cursor = job.lastCheckpoint?.cursor;
+    if (!cursor) return undefined;
+    const parsed = deepPassCheckpointSchema.safeParse(cursor);
+    if (parsed.success) return parsed.data;
+    getServerLogger().warn(
+      `[deep-pass] job ${job.id}: saved checkpoint failed its schema: ${JSON.stringify(parsed.error.issues)}`,
+      job.caseId ? { caseId: job.caseId } : undefined,
+    );
+    throw new Error(DEEP_PASS_CHECKPOINT_UNREADABLE);
+  };
+
   const execute = async (
     job: Pick<Job, "id" | "caseId" | "lastCheckpoint">,
     minSeverity: Severity,
@@ -81,9 +105,7 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
       throw new Error("deep-pass pipeline or case is unavailable");
     }
     const caseId = job.caseId;
-    const resumeFrom = job.lastCheckpoint?.cursor
-      ? deepPassCheckpointSchema.parse(job.lastCheckpoint.cursor)
-      : undefined;
+    const resumeFrom = readCheckpoint(job);
     return options.pipeline.deepPass(caseId, {
       minSeverity,
       ...(signal ? { signal } : {}),
@@ -109,8 +131,17 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
       throw new Error("saved deep-pass parameters are invalid");
     }
     aiStatus(job.caseId, "analyzing", `resuming deep pass (${minSeverity}+)`);
-    const result = await execute(job, minSeverity, signal);
-    await warnJob(job.id, result);
+    let result: DeepPassOutcome;
+    try {
+      result = await execute(job, minSeverity, signal);
+      await warnJob(job.id, result);
+    } catch (error) {
+      // #2495: without this the pill stayed at "resuming deep pass" after a failed resume.
+      // Rethrown so the job manager still marks the job failed.
+      const message = String((error as Error).message ?? "");
+      aiStatus(job.caseId, isAnalystDecisionGate(error) ? "blocked" : "error", message);
+      throw error;
+    }
     aiStatus(job.caseId, "idle", result.aborted ? "deep pass cancelled — nothing was written" : undefined);
     recordResult(job.caseId, minSeverity, result);
   });

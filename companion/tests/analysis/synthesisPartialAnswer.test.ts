@@ -151,14 +151,20 @@ describe("synthesis on a partial model answer (#1602)", () => {
 
   it("a failed synthesis leaves one raw-answer file per failed attempt, and the original error", async () => {
     const p = pipelineAnswering([JSON.stringify({ findings: [FINDING] })]);
-    await expect(p.synthesize("c1")).rejects.toThrow(/summary/);
+    // #2495: the analyst gets the plain sentence; the original schema error is kept on `cause`.
+    await expect(p.synthesize("c1")).rejects.toSatisfy(
+      (err: Error) => /AI reply could not be read/.test(err.message) && /summary/.test(String(err.cause)),
+    );
     expect(prompts).toHaveLength(4);
     expect(await failedFiles()).toHaveLength(4);
   });
 
   it("warns when there is no store to save the answer to, and still fails with the original error", async () => {
     const p = pipelineAnswering([JSON.stringify({ findings: [FINDING] })], false);
-    await expect(p.synthesize("c1")).rejects.toThrow(/summary/);
+    // #2495: the analyst gets the plain sentence; the original schema error is kept on `cause`.
+    await expect(p.synthesize("c1")).rejects.toSatisfy(
+      (err: Error) => /AI reply could not be read/.test(err.message) && /summary/.test(String(err.cause)),
+    );
     expect(warns.some((w) => w.includes("raw answer not saved"))).toBe(true);
   });
 });

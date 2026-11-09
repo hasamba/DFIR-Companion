@@ -24,6 +24,7 @@ import {
   type ProviderCallContext,
 } from "./providerCall.js";
 import { anonRevision } from "../anonRevision.js";
+import { toReadableAiError } from "./aiReplyUnreadable.js";
 
 /**
  * The three AI EXTRACTION calls (#418): screenshots, CSV rows, log lines → forensic events.
@@ -114,7 +115,10 @@ export async function analyzeWindow(
         });
         ctx.recordRetry?.(caseId, "extract", err);
       },
-    );
+    ).catch((err: unknown) => {
+      // #2495: a reply still in the wrong shape reaches the AI pill as one plain sentence.
+      throw toReadableAiError(err, ctx.log, caseId, "extract");
+    });
 
     const last = analyzable[analyzable.length - 1];
     // Renumber model-chosen event ids like the CSV/log path below does (#2175): a reused id would
