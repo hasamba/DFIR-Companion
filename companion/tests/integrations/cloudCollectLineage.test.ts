@@ -12,7 +12,15 @@ import {
   tempCase,
   type TempCase,
 } from "../helpers/cloudCollectFakes.js";
-import { isLineageRow, lineageIssuance, lineageUse, LINEAGE_KEY } from "../helpers/awsLineageRecords.js";
+import {
+  computeLaunch,
+  isComputeRow,
+  isLineageRow,
+  lineageIssuance,
+  lineageUse,
+  LINEAGE_KEY,
+} from "../helpers/awsLineageRecords.js";
+import { AWS_LINEAGE_MAX } from "../../src/analysis/awsLineage.js";
 
 // #2482 — a live collection builds ONE credential lineage per credential over every page of the run,
 // at the end of its import step, instead of one per page.
@@ -198,6 +206,83 @@ describe("one credential lineage per collection run (#2482)", () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  it("a rebuild across the lineage and compute caps drops the rows it no longer emits, from both timelines", async () => {
+    const t = await tempCase();
+    const key = (k: number) => `ASIAEXAMPLEKEY${String(k).padStart(6, "0")}`;
+    const inst = (k: number) => `i-${String(k).padStart(17, "0")}`;
+    const n = AWS_LINEAGE_MAX; // 256, the same bound as the compute lifecycles
+    // Page 1: exactly n Low lineages and n launches — every one reported, nothing omitted.
+    const page1 = Array.from({ length: n }, (_, j) => {
+      const k = j + 1;
+      return [
+        lineageIssuance(4 * k, key(k)),
+        lineageUse(4 * k + 2, key(k)),
+        computeLaunch(4 * k + 1, inst(k)),
+      ];
+    }).flat();
+    // Page 2: a NEWER lineage (ranked above the oldest) and an EARLIER launch (ranked above the latest).
+    const page2 = [
+      lineageIssuance(4 * (n + 1), key(n + 1)),
+      lineageUse(4 * (n + 1) + 2, key(n + 1)),
+      computeLaunch(1, inst(n + 1)),
+    ];
+    const write = async (name: string, recs: Record<string, unknown>[]) => {
+      const path = join(t.root, name);
+      await writeFile(path, JSON.stringify({ Records: recs }));
+      return { path, records: recs.length };
+    };
+    const pages = [await write("p1.json", page1), await write("p2.json", page2)];
+    const label = "evidence/cloud/cc-cap/summary-aws";
+    const build = async (upTo: number) => {
+      const r = await t.pipeline.importCloudCollectionSummary("c1", "aws", pages.slice(0, upTo), {
+        collectionId: "cc-cap",
+        label,
+        idPrefix: "cccapsaws",
+        importedAt: "2026-10-02T00:00:00Z",
+      });
+      // What the production settle's dual-write does with the build's rows.
+      await t.superTimelineStore.appendReporting(
+        "c1",
+        r.state.forensicTimeline.filter((e) => r.ids.includes(e.id)),
+      );
+      return r;
+    };
+    const both = async () => {
+      const forensic = (await t.stateStore.load("c1")).forensicTimeline;
+      const superRows = (await t.superTimelineStore.query("c1", { limit: 5000 })).events;
+      return { forensic, super: superRows };
+    };
+    const first = await build(1);
+    expect(first.rows).toBe(2 * n);
+    const before = await both();
+    for (const rows of [before.forensic, before.super]) {
+      expect(rows.filter(isLineageRow)).toHaveLength(n);
+      expect(rows.filter(isComputeRow)).toHaveLength(n);
+    }
+    expect(before.forensic.some((e) => e.description.includes(key(1)))).toBe(true);
+    expect(before.forensic.some((e) => e.description.includes(inst(n)))).toBe(true);
+
+    const second = await build(2);
+    expect(second.rows).toBe(2 * n + 2); // n + an omitted row, twice
+    const after = await both();
+    for (const rows of [after.forensic, after.super]) {
+      expect(rows.filter(isLineageRow)).toHaveLength(n + 1);
+      expect(rows.filter(isComputeRow)).toHaveLength(n + 1);
+      // The displaced rows are gone; the new ones are in.
+      expect(rows.some((e) => isLineageRow(e) && e.description.includes(`lineage: ${key(1)} `))).toBe(false);
+      expect(rows.some((e) => isComputeRow(e) && e.description.includes(`lifecycle: ${inst(n)} `))).toBe(
+        false,
+      );
+      expect(rows.some((e) => e.description.includes(`lineage: ${key(n + 1)} `))).toBe(true);
+      expect(rows.some((e) => e.description.includes(`lifecycle: ${inst(n + 1)} `))).toBe(true);
+      expect(rows.filter((e) => e.description.includes("further credential"))).toHaveLength(1);
+      expect(rows.filter((e) => e.description.includes("further instance"))).toHaveLength(1);
+    }
+    // Only this summary's rows: the second build kept exactly the ids it reports.
+    const summaryIds = after.forensic.filter((e) => e.id.startsWith("cccapsaws")).map((e) => e.id);
+    expect(new Set(summaryIds)).toEqual(new Set(second.ids));
   });
 
   it("a kind without per-collection summaries runs no summary step", async () => {

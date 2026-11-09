@@ -2989,7 +2989,9 @@ every source. The rows appear when the import step ends, not during it, and name
 `summary-aws` of the collection in their sources. They cover the first 25,000 CloudTrail records
 of the collection, the same limit as a large file; for a larger collection the import note says
 how many records the summaries cover. A stopped or partial run gets them over the pages it saved;
-**Resume** rebuilds the same rows over every page — no second row. Two collections, or a
+**Resume** rebuilds the same rows over every page — no second row — and removes, from both
+timelines, a row the rebuild no longer reports (for example a key pushed past the 256 lineages
+shown by a busier one). Tagger rules run again on the rebuilt rows. Two collections, or a
 collection and a file upload, still give two rows for the same key. The other providers'
 whole-export summaries are still built per page. Other background jobs of the case wait behind a running
 collection while `DFIR_JOBS_PER_CASE` is 1.

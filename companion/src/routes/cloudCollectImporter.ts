@@ -40,7 +40,16 @@ async function settleLanded(ctx: RouteContext, caseId: string, label: string): P
   await ctx.demoteForensic(caseId);
 }
 
-/** Land one collection summary and settle it, as an undoable import with its own baseline. */
+/**
+ * Land one collection summary and settle it, as an undoable import with its own baseline.
+ *
+ * A rebuild (Resume, or a replay after a crash between the summary's commit and its settle) upserts
+ * rows the baseline already holds, and the settle only dual-writes and tags rows NEW to the case —
+ * so a Low summary a tagger rule would raise could be demoted untagged. Every kept row the baseline
+ * already held is therefore dual-written (by id: a copy the store holds is skipped) and offered to
+ * the tagger first, as page recovery does (settleLanded); the settle then handles the new ones and
+ * demotes.
+ */
 async function importSummary(
   ctx: RouteContext,
   caseId: string,
@@ -52,7 +61,7 @@ async function importSummary(
   if (!pipeline) throw new Error("pipeline is not configured");
   const baseline = await captureImportBaseline(store, caseId);
   try {
-    await pipeline.importCloudCollectionSummary(caseId, req.kind, req.pages, {
+    const built = await pipeline.importCloudCollectionSummary(caseId, req.kind, req.pages, {
       collectionId: req.collectionId,
       label: req.label,
       idPrefix: req.idPrefix,
@@ -60,7 +69,15 @@ async function importSummary(
       ...(signal ? { signal } : {}),
     });
     const settle = routeSettleDeps(ctx);
-    if (settle) await settleForensicImport(settle, caseId, baseline, req.label);
+    if (!settle) return;
+    const held = new Set(baseline.outline.ids);
+    const kept = new Set(built.ids);
+    const rebuilt = built.state.forensicTimeline.filter((e) => kept.has(e.id) && held.has(e.id));
+    if (rebuilt.length) {
+      await ctx.options.superTimelineStore?.appendReporting(caseId, rebuilt); // dedups by id
+      await settle.autoTagImported(caseId, rebuilt);
+    }
+    await settleForensicImport(settle, caseId, baseline, req.label);
   } finally {
     await releaseImportBaseline(store, baseline);
   }

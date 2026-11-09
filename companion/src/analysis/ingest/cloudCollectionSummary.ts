@@ -17,8 +17,13 @@
 // REPLAY-SAFE BY ID. Row ids are fixed per collection, kind and row identity (the row's aggKey), not
 // positional. A rebuild — Resume of a run that imported more pages after its summary landed, or a
 // replay after a crash — upserts the same rows in place (the merge keeps their revision history),
-// and rewrites any super-timeline copy an earlier build's settle wrote, by id. Nothing else is
-// deleted or rewritten: page rows are never touched.
+// and rewrites any super-timeline copy an earlier build's settle wrote, by id. A row the earlier
+// build emitted and the rebuild does not (a capped, ranked builder — 256 lineages, the compute
+// bound — can displace one, and an "omitted" row can disappear) is then dropped from BOTH timelines
+// in one transaction, so no row survives with stale coverage. The drop runs after the merge, not
+// inside it; a crash between the two leaves the checkpoint behind, and the replay converges (same
+// upsert, same drop). Only ids of this collection+kind's exact summary shape are dropped: page rows
+// are never touched.
 
 import { createHash } from "node:crypto";
 import { deltaSchema } from "../responseSchema.js";
@@ -68,6 +73,8 @@ export interface CollectionSummaryResult {
   records: number;
   windowRecords: number;
   truncated: boolean;
+  /** The ids of the summary rows this build kept — the settle hands exactly these on (#2482). */
+  ids: string[];
 }
 
 function abortIfCancelled(signal?: AbortSignal): void {
@@ -130,7 +137,7 @@ function rowIds(events: readonly SiemEvent[], idPrefix: string): string[] {
 
 function windowClause(
   source: string,
-  r: Omit<CollectionSummaryResult, "state" | "rows">,
+  r: Omit<CollectionSummaryResult, "state" | "rows" | "ids">,
   max: number,
 ): string {
   const base = `${source} collection summary over ${r.windowRecords} record(s) of ${r.pages} page(s)`;
@@ -179,7 +186,7 @@ export async function importCloudCollectionSummary(
       window.length,
       clause,
     );
-    return { state, rows: 0, ...facts };
+    return { state: await dropSuperseded(ctx, caseId, state, opts.idPrefix, []), rows: 0, ids: [], ...facts };
   }
   const ids = rowIds(events, opts.idPrefix);
   const delta = deltaSchema.parse({
@@ -202,7 +209,42 @@ export async function importCloudCollectionSummary(
     signal: opts.signal,
   });
   await rewriteSuperCopies(ctx, caseId, state, new Set(ids));
-  return { state, rows: events.length, ...facts };
+  const settled = await dropSuperseded(ctx, caseId, state, opts.idPrefix, ids);
+  return { state: settled, rows: events.length, ids, ...facts };
+}
+
+const SUMMARY_ID_TAIL = /^[0-9a-f]{16}x*$/;
+
+/**
+ * Drop the earlier builds' rows of this collection+kind that this build did not keep, from both
+ * timelines. Returns the state as it now reads. Without a super-timeline store (minimal wirings)
+ * only the forensic rows exist to drop.
+ */
+async function dropSuperseded(
+  ctx: ImportContext,
+  caseId: string,
+  state: InvestigationState,
+  idPrefix: string,
+  keep: readonly string[],
+): Promise<InvestigationState> {
+  const kept = new Set(keep);
+  const store = ctx.opts.superTimelineStore;
+  if (store) {
+    const dropped = await store.dropSummaryRows(caseId, idPrefix, keep);
+    return dropped.forensic ? ctx.opts.stateStore.load(caseId) : state;
+  }
+  const stale = state.forensicTimeline
+    .map((e) => e.id)
+    .filter(
+      (id) => id.startsWith(idPrefix) && SUMMARY_ID_TAIL.test(id.slice(idPrefix.length)) && !kept.has(id),
+    );
+  if (!stale.length) return state;
+  const rows = await ctx.opts.stateStore.forensicRowsById(caseId, stale);
+  await ctx.opts.stateStore.deleteForensicRows(
+    caseId,
+    rows.map((r) => r.rowId),
+  );
+  return ctx.opts.stateStore.load(caseId);
 }
 
 /**

@@ -19,8 +19,8 @@ const base = (i: number) => ({
   eventID: `00000000-0000-4000-a000-${String(i).padStart(12, "0")}`,
 });
 
-/** The AssumeRole that issued LINEAGE_KEY. */
-export function lineageIssuance(i = 0): Record<string, unknown> {
+/** The AssumeRole that issued `key` (LINEAGE_KEY by default). */
+export function lineageIssuance(i = 0, key = LINEAGE_KEY): Record<string, unknown> {
   return {
     ...base(i),
     eventSource: "sts.amazonaws.com",
@@ -36,7 +36,7 @@ export function lineageIssuance(i = 0): Record<string, unknown> {
     },
     requestParameters: { roleArn: ROLE, roleSessionName: "ci-42" },
     responseElements: {
-      credentials: { accessKeyId: LINEAGE_KEY, expiration: "Oct 1, 2026, 10:00:00 PM" },
+      credentials: { accessKeyId: key, expiration: "Oct 1, 2026, 10:00:00 PM" },
       assumedRoleUser: {
         arn: `arn:aws:sts::${LINEAGE_ACCT}:assumed-role/Deploy/ci-42`,
         assumedRoleId: "AROAEXAMPLEID:ci-42",
@@ -45,8 +45,8 @@ export function lineageIssuance(i = 0): Record<string, unknown> {
   };
 }
 
-/** A use of LINEAGE_KEY; `i` sets its time and id, odd `i` comes from the second source. */
-export function lineageUse(i: number): Record<string, unknown> {
+/** A use of `key`; `i` sets its time and id, odd `i` comes from the second source. */
+export function lineageUse(i: number, key = LINEAGE_KEY): Record<string, unknown> {
   return {
     ...base(i),
     eventSource: "s3.amazonaws.com",
@@ -57,7 +57,7 @@ export function lineageUse(i: number): Record<string, unknown> {
       principalId: "AROAEXAMPLEID:ci-42",
       arn: `arn:aws:sts::${LINEAGE_ACCT}:assumed-role/Deploy/ci-42`,
       accountId: LINEAGE_ACCT,
-      accessKeyId: LINEAGE_KEY,
+      accessKeyId: key,
       sessionContext: {
         sessionIssuer: {
           type: "Role",
@@ -72,5 +72,32 @@ export function lineageUse(i: number): Record<string, unknown> {
   };
 }
 
+/** A RunInstances that launched `instanceId`; `i` sets its time and id. */
+export function computeLaunch(i: number, instanceId: string): Record<string, unknown> {
+  return {
+    ...base(i),
+    eventSource: "ec2.amazonaws.com",
+    eventName: "RunInstances",
+    sourceIPAddress: LINEAGE_IP,
+    userIdentity: {
+      type: "IAMUser",
+      principalId: "AIDAEXAMPLE",
+      arn: `arn:aws:iam::${LINEAGE_ACCT}:user/alice`,
+      accountId: LINEAGE_ACCT,
+      userName: "alice",
+    },
+    requestParameters: { instanceType: "t3.micro" },
+    responseElements: {
+      ownerId: LINEAGE_ACCT,
+      instancesSet: {
+        items: [{ instanceId, imageId: "ami-0123456789abcdef0", instanceState: { name: "pending" } }],
+      },
+    },
+  };
+}
+
 export const isLineageRow = (e: { description: string }): boolean =>
   e.description.startsWith("AWS credential lineage:");
+
+export const isComputeRow = (e: { description: string }): boolean =>
+  e.description.startsWith("AWS compute lifecycle");
