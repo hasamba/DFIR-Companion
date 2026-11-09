@@ -31,7 +31,7 @@ function harness(src: string, els: Record<string, Record<string, unknown>>) {
   };
   runInNewContext(src, sandbox);
   const fn = (name: string) => win[name] as (...a: unknown[]) => unknown;
-  return { fetches, fn, els };
+  return { fetches, fn, els, win: win as { location: { href: string } } };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -190,5 +190,60 @@ describe("block-list dialog match count (#1807)", () => {
     h.fetches[0].resolve({ error: "boom" }, false);
     await settle();
     expect(b.els.blMatchCount.textContent).toBe("");
+  });
+});
+
+// #2468: the dialog said "Matches 0 of 21 IOCs" and still handed over a header-only file and closed.
+// A zero match now blocks the download and keeps the dialog open, with the count as the reason. An
+// unknown count (summary pending or failed) never blocks — the count must not go stale on the analyst.
+describe("block-list download with nothing to block (#2468)", () => {
+  const DL = ["blDlTxt", "blDlCsv", "blDlStix"] as const;
+  const click = (els: Record<string, Record<string, unknown>>, id: string) =>
+    (els[id].onclick as () => void)();
+
+  it("disables the downloads and keeps the dialog open when nothing matches", async () => {
+    const b = blocklistEls();
+    const h = harness(BLOCKLIST, b.els);
+    h.fn("initIocBlocklist")();
+    h.fn("openIocBlocklist")();
+    h.fetches[0].resolve(summary(0, 21, { "no-actionable-intel": 21 }));
+    await settle();
+    for (const id of DL) {
+      expect(b.els[id].disabled).toBe(true);
+      expect(String(b.els[id].title)).toContain("No IOC matches");
+    }
+    click(b.els, "blDlCsv");
+    expect(h.win.location.href).toBe("");
+  });
+
+  it("re-enables the downloads when a filter change brings matches back", async () => {
+    const b = blocklistEls();
+    const h = harness(BLOCKLIST, b.els);
+    h.fn("initIocBlocklist")();
+    h.fn("openIocBlocklist")();
+    h.fetches[0].resolve(summary(0, 5, { "below-min-severity": 5 }));
+    await settle();
+    b.fire("blMinSev");
+    h.fetches[1].resolve(summary(3, 5, { "below-min-severity": 2 }));
+    await settle();
+    for (const id of DL) expect(b.els[id].disabled).toBe(false);
+    click(b.els, "blDlTxt");
+    expect(h.win.location.href).toContain("format=txt");
+  });
+
+  it("allows the download while the count is unknown", async () => {
+    const b = blocklistEls();
+    const h = harness(BLOCKLIST, b.els);
+    h.fn("initIocBlocklist")();
+    h.fn("openIocBlocklist")();
+    h.fetches[0].resolve(summary(0, 5));
+    await settle();
+    b.fire("blMinSev"); // a new count is pending: the old 0 must not block
+    for (const id of DL) expect(b.els[id].disabled).toBe(false);
+    h.fetches[1].resolve({ error: "boom" }, false);
+    await settle();
+    for (const id of DL) expect(b.els[id].disabled).toBe(false);
+    click(b.els, "blDlStix");
+    expect(h.win.location.href).toContain("format=stix");
   });
 });

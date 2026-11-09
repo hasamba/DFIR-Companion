@@ -59,6 +59,8 @@ The dialog shows how many IOCs match your filters, and why the others are left o
 below the minimum severity, or no usable threat-intel verdict. An IOC that was never enriched, or
 whose verdict expired or was revoked, counts as Info. Run enrichment, then export again. The TXT
 header records the same count on a `# Matched N of M IOCs` line, with one line per reason.
+When the count is 0, the three download buttons are off and the dialog stays open, so you cannot
+send a header-only file by mistake. Widen the filters to turn them back on.
 
 ---
 

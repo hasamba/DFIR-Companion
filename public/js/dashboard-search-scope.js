@@ -291,11 +291,23 @@
   const RESYNTH_UP_TO_DATE_CONFIRM =
     "Conclusions are already up to date. Run synthesis again anyway? This spends provider time.";
 
+  // #2468: on an empty case the question above is wrong — there is nothing to be up to date WITH —
+  // and the server then answers "nothing to synthesize". Only a loaded state that positively says
+  // the forensic timeline is empty skips the question; the POST still goes, so the server's answer
+  // stays the one the analyst reads. No state yet, or a search floor, is unknown, not empty.
+  function forensicTimelineKnownEmpty() {
+    const st = typeof DfirState !== "undefined" && DfirState.lastState ? DfirState.lastState() : null;
+    if (!st || st.forensicTimelineTotalIsLowerBound) return false;
+    if (typeof st.forensicTimelineTotal === "number") return st.forensicTimelineTotal === 0;
+    return Array.isArray(st.forensicTimeline) && st.forensicTimeline.length === 0;
+  }
+
   function resynthesize() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     const pill = document.getElementById("aiStatus");
-    if (pill && pill.className === "ai-idle" && !confirm(RESYNTH_UP_TO_DATE_CONFIRM)) return;
+    if (pill && pill.className === "ai-idle" && !forensicTimelineKnownEmpty() && !confirm(RESYNTH_UP_TO_DATE_CONFIRM))
+      return;
     // A second press superseded the first run, and the first request's 499 then read "synthesis
     // failed". The button stays off until this request settles.
     const button = document.getElementById("synthesize");

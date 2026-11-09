@@ -297,6 +297,8 @@ The core of the investigation. A table of all forensic events, sorted by timesta
 
 The dashboard loads the first 10,000 events of a large case. The heading then shows the case total and how many are loaded, for example "70000 events, first 10000 loaded". With a filter on, the heading reads like "40 of the first 10000 loaded events, 9960 hidden by filters; case holds 70000". Filters and paging cover the loaded events only. Press **Load more events** at the end of the list to load the next batch.
 
+The Lead and Executive views show only High and above in the timeline. A decision-cockpit link can switch to one of them. When that floor hides rows, the heading names it, for example "10 of 23 events, 13 hidden by filters (Lead view: High+)". Switch to the Analyst view to see every severity.
+
 Each row shows a compact title line (timestamp, severity badge, description, source tool(s), asset, `NEW` badge if added in the last import); a **[details ▶]** toggle expands the full description, MITRE, related findings, decoded payloads, evidence link, and the raw tool message in one shared panel below the row. Row actions:
 
 - **💡 Explain** button — AI explains this event, gives ATT&CK context, and suggests pivot queries
@@ -412,6 +414,8 @@ A visual chart with:
 In the tactic view, each lane is one ATT&CK tactic in kill-chain order, with Reconnaissance first and Uncategorized last.
 
 Useful for spotting lateral movement (events jumping between assets) and attack timing. Drag a time range to scope the timeline to that window. Exports as SVG.
+
+On a case with no forensic-timeline events (or a scope with none in it), the panel says "No forensic-timeline events to chart yet." in place of an empty chart.
 
 ---
 
@@ -733,6 +737,8 @@ A free-text question box. Type any question in natural language:
 - "List all C2 IP addresses and their first-seen times."
 
 The AI answers using the forensic timeline plus the **evidence-chain graph** — so it can trace multi-hop paths.
+
+On a case with no forensic-timeline events and no findings, the panel says so under the question box: an answer would have nothing to read until you import evidence.
 
 It also reads your own decisions on the case, so the answer respects them instead of contradicting them:
 

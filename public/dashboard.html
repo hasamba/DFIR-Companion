@@ -3816,6 +3816,7 @@
         <button class="ev-bulk-btn" id="swimlaneSelFp" title="Mark every selected event as a false positive (exclude from analysis)">🚫 Mark False Positive</button>
         <button class="ev-bulk-btn" id="swimlaneSelClear" data-safe-style="color:var(--text-muted)">✕ Clear</button>
       </div>
+      <div id="swimlaneEmpty" class="swimlane-empty" hidden>No forensic-timeline events to chart yet. Import evidence, or widen the investigation scope, and the chart fills in.</div>
       <div class="swimlane-wrap" id="swimlaneWrap">
         <div class="swimlane-labels" id="swimlaneLabels"></div>
         <div class="swimlane-canvas-wrap">
@@ -5391,11 +5392,10 @@
         cnt.textContent = ` (${scope}${flaggedTotal ? ` · ${flaggedTotal} flagged` : ""}${observationTotal ? ` · ${observationTotal} observation${observationTotal !== 1 ? "s" : ""}` : ""}${pageSuffix})`;
       }
       if (!visible.length) {
-        el.innerHTML = showFlaggedIocsOnly
-          ? "<div data-safe-style='color:var(--text-muted)'>No malicious/suspicious IOCs — enrich the IOCs first, or none came back flagged.</div>"
-          : (DfirTimelineView.search() || DfirTimelineView.excludeTerms().length > 0 || iocTypeHidden > 0 || DfirTimelineView.corrobIocs() > 1 || (typeof iocProvenanceFiltersActive === "function" && iocProvenanceFiltersActive()) || noiseFiltersActive) && iocs.length > 0
-            ? `<div data-safe-style='color:var(--text-muted)'>No IOCs match the filter.${noiseFiltersActive ? " Turn off “Signal only” / “Hide FP/no-intel” / “Hide OS system paths” to see everything." : ""}</div>`
-          : "<div data-safe-style='color:var(--text-muted)'>No IOCs yet</div>";
+        // The enrichment hint only when nothing is flagged at all; otherwise name the lenses that hid them (#2468).
+        const lenses = [showFlaggedIocsOnly && "Flagged only", DfirTimelineView.search() && "search", DfirTimelineView.excludeTerms().length > 0 && "exclude terms", iocTypeHidden > 0 && "type",
+          DfirTimelineView.corrobIocs() > 1 && "corroboration", typeof iocProvenanceFiltersActive === "function" && iocProvenanceFiltersActive() && "provenance / risk"];
+        el.innerHTML = `<div data-safe-style='color:var(--text-muted)'>${esc(DfirIoc.iocEmptyStateText({ total: iocs.length, flaggedOnly: showFlaggedIocsOnly, flaggedTotal, lenses, noise: noiseFiltersActive }))}</div>`;
         updateIocBulkBar();
         return;
       }
@@ -5563,7 +5563,7 @@
       if (DfirTimelineView.corrobTimeline() > 1) visible = visible.filter(e => realSourceCount(e.sources, DfirFacets.sources.matcher()) >= DfirTimelineView.corrobTimeline());
       const view = DfirState.activeView();
       const viewSevFiltering = !!(view && view.filters && view.filters.minSeverity);
-      if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity, e));   // dashboard-view severity floor (#142); a promoted row rides through it, as it does the server's cut (#1554)
+      const preViewFloor = visible.length; if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity, e)); const viewHidden = preViewFloor - visible.length;   // dashboard-view severity floor (#142); a promoted row rides through it, as it does the server's cut (#1554); viewHidden lets the count name the floor (#2468)
       visible = sortTimelineEvents(visible);
       renderTimelineHeatmap(visible);   // buckets the FULL filtered set, not the paginated slice below (#219)
 
@@ -5576,7 +5576,7 @@
       renderEvIdFilterChip(visible.length, ft.length);
 
       renderTimelineCount(document.getElementById('timelineCount'), {
-        total: ft.length, totalFiltered, pageSize: tlPageSize, page: tlPage, totalPages, promotedKept: promotedKeptCount(visible, filtering ? activeSevs : null, viewSevFiltering ? viewMeetsMinSev : null), manualKept: manualKeptCount(visible, filtering ? activeSevs : null, viewSevFiltering ? viewMeetsMinSev : null),
+        total: ft.length, totalFiltered, viewHidden, pageSize: tlPageSize, page: tlPage, totalPages, promotedKept: promotedKeptCount(visible, filtering ? activeSevs : null, viewSevFiltering ? viewMeetsMinSev : null), manualKept: manualKeptCount(visible, filtering ? activeSevs : null, viewSevFiltering ? viewMeetsMinSev : null),
         filtering: filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter(),
       });
       _updateSearchCount(totalFiltered, ft.length);
