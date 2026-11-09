@@ -181,7 +181,7 @@
           (t.shortId
             ? `<span class="pb-shortid">${esc(t.shortId)}</span>`
             : "") +
-          `<select class="pb-status" data-act="pbPatchStatus" data-act-on="change" data-id="${escAttr(t.id)}">${opts}</select>` +
+          `<select class="pb-status" aria-label="Task status" data-act="pbPatchStatus" data-act-on="change" data-id="${escAttr(t.id)}">${opts}</select>` +
           `<span class="pb-pri pb-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>` +
           `<span class="pb-title">${esc(t.title)}</span>` +
           blockedBadge +

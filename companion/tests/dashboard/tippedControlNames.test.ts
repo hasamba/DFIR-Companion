@@ -68,3 +68,18 @@ describe("page-size selects are named (#2469)", () => {
     expect(HTML).toMatch(/<meta\s+name="description"\s+content="[^"]+"/);
   });
 });
+
+describe("script-rendered selects are named (part of #2492)", () => {
+  // These selects are built as template strings, so no <label> or wrapper title names them.
+  const cases: Array<[string, RegExp]> = [
+    ["dashboard-hypotheses.js", /<select\b[^>]*\bhyp-status\b[^>]*>/g],
+    ["dashboard-playbook.js", /<select\b[^>]*\bpb-status\b[^>]*>/g],
+    ["dashboard-report-versions.js", /<select\b[^>]*\bdata-rv-reviewer=[^>]*>/g],
+  ];
+  it.each(cases)("%s: its status/reviewer select carries an aria-label", (file, re) => {
+    const src = readFileSync(new URL(file, JS_DIR), "utf8");
+    const selects = src.match(re) ?? [];
+    expect(selects.length).toBeGreaterThanOrEqual(1);
+    for (const tag of selects) expect(tag).toMatch(/\saria-label="[^"]+"/);
+  });
+});
