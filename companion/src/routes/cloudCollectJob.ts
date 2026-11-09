@@ -36,6 +36,7 @@ import type { QueryBudget } from "../integrations/cloudCollect/collectBudget.js"
 import { redactedErrorMessage } from "../analysis/redactPaths.js";
 import { caseCollectImporter } from "./cloudCollectImporter.js";
 import type { RouteContext } from "./context.js";
+import type { JobStep } from "../analysis/jobRegistry.js";
 
 /**
  * The job's warning for a run that did not fail: the stop reason when the network stage stopped
@@ -133,7 +134,7 @@ export async function executeCollection(
 ): Promise<CollectionCheckpoint> {
   const manager = ctx.options.jobManager;
   const now = () => new Date().toISOString();
-  let importStep: string | undefined;
+  let importStep: JobStep | undefined;
   const log = (line: string) => ctx.serverLogger.info(line, { caseId: input.caseId });
   // #2402: never two writers on one collection folder. Refused BEFORE the try, so the refusal does
   // not mark the running collection stopped.
@@ -157,8 +158,9 @@ export async function executeCollection(
         ...(input.signal ? { signal: input.signal } : {}),
         onProgress: (p) => {
           const line = progressLine(p);
-          // #2470: the import step counts pages from zero again, so it is a new step of the job.
-          if (p.stage === "import") importStep ??= now();
+          // #2470: the import step counts pages from zero again, so it is a new step of the job; a
+          // resumed run's already-imported pages are its baseline, not work done in this step.
+          if (p.stage === "import") importStep ??= { stepStartedAt: now(), stepBaseline: p.imported };
           manager?.progress(input.jobId, line.done, line.total, line.detail, importStep);
         },
       },

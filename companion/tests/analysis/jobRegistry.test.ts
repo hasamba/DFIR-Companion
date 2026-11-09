@@ -87,12 +87,34 @@ describe("jobRegistry", () => {
 
     it("measures a step's speed and ETA from the step's start, not the job's", () => {
       const started = { ...getJob(withJobs(1), "job_0")!, startedAt: T0 };
-      let t: JobTable = { ...withJobs(1), jobs: [started] } as JobTable;
+      let t: JobTable = { ...withJobs(1), jobs: [started] };
       t = progressJob(t, "job_0", { done: 2, total: 12, stepStartedAt: T60 }, "importing", T70);
       const job = getJob(t, "job_0")!;
       // 2 pages in the 10 s since the step began → 0.2/s; 10 left → 50 s.
       expect(job.throughputPerSecond).toBeCloseTo(0.2);
       expect(job.etaAt).toBe("2026-07-05T00:02:00.000Z");
+    });
+
+    // Codex review: a collection resumed at 990/1000 imported pages would have counted all 990 as work
+    // done in the new step — a speed of hundreds per second and an ETA of under a second.
+    it("counts only the work since the step began, for a step resumed part-way", () => {
+      const started = { ...getJob(withJobs(1), "job_0")!, startedAt: T0 };
+      let t: JobTable = { ...withJobs(1), jobs: [started] };
+      const step = { stepStartedAt: T60, stepBaseline: 990 };
+      t = progressJob(t, "job_0", { done: 990, total: 1000, ...step }, "importing", T60);
+      expect(getJob(t, "job_0")!.etaAt).toBeUndefined();
+      t = progressJob(
+        t,
+        "job_0",
+        { done: 991, total: 1000, ...step },
+        "importing",
+        "2026-07-05T00:02:00.000Z",
+      );
+      const job = getJob(t, "job_0")!;
+      // 1 page in 60 s → 1/60 per second; 9 left → 540 s after 00:02:00.
+      expect(job.throughputPerSecond).toBeCloseTo(1 / 60);
+      expect(job.etaAt).toBe("2026-07-05T00:11:00.000Z");
+      expect(job.progress).toEqual({ done: 991, total: 1000, stepStartedAt: T60, stepBaseline: 990 });
     });
 
     it("ignores a step start that is not a time", () => {
