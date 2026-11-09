@@ -27,7 +27,7 @@ import type { RouteContext } from "./context.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { rewriteRows } from "../analysis/forensicRowRewrite.js";
-import { sigmaImportNote, type SigmaGradingSnapshot } from "../analysis/sigmaImportGrade.js";
+import { sigmaImportNote, sigmaSetLabel, type SigmaGradingSnapshot } from "../analysis/sigmaImportGrade.js";
 import {
   finalizeRegradedRow,
   regradeMergeRow,
@@ -88,6 +88,8 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     enabled: true,
     ...(staged ? { staged: true } : {}),
     release: snapshot.ruleSet.release,
+    // #2499: "SigmaHQ r… + Suzaku …" — what the dashboard names as the rules used.
+    rules: sigmaSetLabel(snapshot.ruleSet),
     token: snapshot.token,
     current: plan.files.length > 0 && plan.files.every((f) => f.status === "current"),
     counts: plan.counts,
@@ -210,7 +212,7 @@ export function registerSigmaRegradeRoutes(app: Express, ctx: RouteContext): voi
     void logActivity(options.activityLogStore, options.onActivity, caseId, {
       category: "triage",
       action: "sigma-regrade",
-      detail: `Sigma re-grade with SigmaHQ ${snapshot.ruleSet.release}: ${c.raised} raised, ${c.lowered} lowered, ${c.unchanged} unchanged, ${demoted} left the forensic timeline`,
+      detail: `Sigma re-grade with ${sigmaSetLabel(snapshot.ruleSet)}: ${c.raised} raised, ${c.lowered} lowered, ${c.unchanged} unchanged, ${demoted} left the forensic timeline`,
     });
     // `changed` tells the caller to mark the conclusions out of date once its job has ended.
     return { changed, body: { ...summary(prepared), applied: true, demoted } };
@@ -310,5 +312,5 @@ function stagedToken(raw: unknown): string | undefined {
 }
 
 function regradeLabel(snapshot: SigmaGradingSnapshot): string {
-  return `Sigma re-grade (SigmaHQ ${snapshot.ruleSet.release})`;
+  return `Sigma re-grade (${sigmaSetLabel(snapshot.ruleSet)})`;
 }

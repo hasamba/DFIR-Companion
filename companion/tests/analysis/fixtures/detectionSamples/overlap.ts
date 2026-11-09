@@ -126,7 +126,8 @@ function sigmaEntries(s: DetectionSample, sigmaRow: SiemEvent, importerRow: Siem
     if (!ref) throw new Error(`sample ${s.id}: Sigma rule ${id} matched but is not in the loaded set`);
     const raises =
       !ref.huntingOnly &&
-      SIGMA_LEVELS.indexOf(ref.level) >= SIGMA_LEVELS.indexOf(SIGMA?.minLevel ?? "high") &&
+      // A source with its own floor (#2499: Suzaku) raises only at or above it, as the grader does.
+      SIGMA_LEVELS.indexOf(ref.level) >= SIGMA_LEVELS.indexOf(ref.gradeFloor ?? SIGMA?.minLevel ?? "high") &&
       (veto ? veto.mayGrade(ref) : true);
     if (raises)
       entries.push({

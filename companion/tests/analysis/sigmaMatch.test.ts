@@ -210,3 +210,43 @@ describe("incomplete evaluation (three-valued)", () => {
     expect(evalOn("  sel:\n    list: v1", rec)).toBe(true);
   });
 });
+
+describe("exists modifier (#2499)", () => {
+  const yes = "  sel:\n    errorCode|exists: true";
+  const no = "  sel:\n    errorCode|exists: false";
+
+  it("matches a field that holds a value, and not an absent one", () => {
+    expect(evalOn(yes, { errorCode: "AccessDenied" })).toBe(true);
+    expect(evalOn(yes, {})).toBe(false);
+    expect(evalOn(no, {})).toBe(true);
+    expect(evalOn(no, { errorCode: "AccessDenied" })).toBe(false);
+  });
+
+  it("treats a null, empty-string or empty-array value as not existing (flattened CSV exports)", () => {
+    for (const v of [null, "", []]) {
+      expect(evalOn(yes, { errorCode: v })).toBe(false);
+      expect(evalOn(no, { errorCode: v })).toBe(true);
+    }
+  });
+
+  it("counts a number or an object as existing", () => {
+    expect(evalOn(yes, { errorCode: 0 })).toBe(true);
+    expect(evalOn(yes, { errorCode: { a: 1 } })).toBe(true);
+  });
+
+  it("splits success from attempt under negation", () => {
+    const d = "  sel:\n    eventName: CreateUser\n  err:\n    errorCode|exists: true";
+    expect(evalOn(d, { eventName: "CreateUser" }, "sel and not err")).toBe(true);
+    expect(evalOn(d, { eventName: "CreateUser", errorCode: "X" }, "sel and not err")).toBe(false);
+    expect(evalOn(d, { eventName: "CreateUser", errorCode: "X" }, "sel and err")).toBe(true);
+  });
+
+  it("is unknown, never a match, when a truncated lookup found no value", () => {
+    const r = rule(yes);
+    const truncated = () => ({ present: false, values: [], incomplete: true });
+    expect(r.evaluate({}, truncated)).toBe("incomplete");
+    expect(rule(no).evaluate({}, truncated)).toBe("incomplete");
+    const hit = () => ({ present: true, values: ["X"], incomplete: true });
+    expect(r.evaluate({}, hit)).toBe(true);
+  });
+});

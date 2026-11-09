@@ -10,7 +10,7 @@ const { set, problem, dir } = loadBundledSigmaRuleSet();
 function tally(): Record<string, number> {
   const out: Record<string, number> = {};
   for (const e of set.inventory) {
-    const key = `${e.source ?? "-"}:${e.outcome}`;
+    const key = `${e.origin ? `${e.origin}:` : ""}${e.source ?? "-"}:${e.outcome}`;
     out[key] = (out[key] ?? 0) + 1;
   }
   return out;
@@ -42,12 +42,19 @@ describe("bundled Sigma rules", () => {
       "web-proxy:loaded": 46,
       "web-proxy:status": 2,
       "web-proxy:refused": 3,
+      // #2499: the Suzaku CloudTrail rules (741 files). The 5 refused are multi-document correlation
+      // rules, which the engine does not run.
+      "Suzaku:aws-cloudtrail:loaded": 736,
+      "Suzaku:-:refused": 5,
     });
   });
 
   it("refuses only for reasons the analyst can act on", () => {
-    const reasons = set.inventory.filter((e) => e.outcome === "refused").flatMap((e) => e.reasons ?? []);
-    for (const r of reasons) expect(r).toMatch(/is not available in|modifier is not supported/);
+    const refused = set.inventory.filter((e) => e.outcome === "refused");
+    for (const r of refused.filter((e) => !e.origin).flatMap((e) => e.reasons ?? []))
+      expect(r).toMatch(/is not available in|modifier is not supported/);
+    for (const r of refused.filter((e) => e.origin === "Suzaku").flatMap((e) => e.reasons ?? []))
+      expect(r).toMatch(/more than one YAML document/);
   });
 
   it("disables only rules that are actually in the bundle", () => {
@@ -62,8 +69,8 @@ describe("bundled Sigma rules", () => {
     ).toEqual([...disabled.keys()].sort());
   });
 
-  it("loads no experimental rule", () => {
-    const experimental = set.inventory.filter((e) => e.outcome === "status");
+  it("loads no experimental SigmaHQ rule", () => {
+    const experimental = set.inventory.filter((e) => e.outcome === "status" && !e.origin);
     expect(experimental.every((e) => e.reasons?.[0] === "status is experimental")).toBe(true);
   });
 });

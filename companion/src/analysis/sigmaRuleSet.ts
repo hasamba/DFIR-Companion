@@ -42,6 +42,36 @@ export interface SigmaRuleFile {
   /** Path relative to the release root, e.g. rules/cloud/aws/cloudtrail/x.yml. */
   path: string;
   text: string;
+  /**
+   * Key into `SigmaRuleSetOptions.origins` for a rule that is not from the SigmaHQ release (#2499:
+   * Suzaku). Absent = the release named by the set's meta.
+   */
+  origin?: string;
+}
+
+/** The project a rule comes from when it is not the SigmaHQ release itself (#2499). */
+export const SIGMAHQ_ORIGIN = "SigmaHQ";
+
+/** A second rule source bundled beside the SigmaHQ release (#2499), with its own status filter. */
+export interface SigmaRuleOrigin {
+  /** Shown on every match and in every note, e.g. "Suzaku" — the DRL names the rule set. */
+  name: string;
+  release: string;
+  commit: string;
+  /** `${urlBase}/${commit}/${path}` links the rule; paths are the upstream repo's own paths. */
+  urlBase: string;
+  statuses: readonly string[];
+  /** The lowest level of THIS source's rules that raises severity; absent = the shared minimum. */
+  minLevel?: SigmaLevel;
+}
+
+/** What a set records about each extra origin that contributed files — for notes and the token. */
+export interface SigmaOriginSummary {
+  name: string;
+  release: string;
+  commit: string;
+  statuses: string[];
+  minLevel?: SigmaLevel;
 }
 
 export interface SigmaReleaseMeta {
@@ -59,6 +89,10 @@ export interface SigmaRuleRef {
   path: string;
   url: string;
   release: string;
+  /** The project the rule comes from (#2499); absent on refs recorded before it = SigmaHQ. */
+  origin?: string;
+  /** Its source's own minimum level to raise severity (#2499: Suzaku); absent = the snapshot's. */
+  gradeFloor?: SigmaLevel;
   mitre: string[];
   /** The rule's own `modified` (or `date`) — versions the match (#2204). */
   modified?: string;
@@ -66,6 +100,12 @@ export interface SigmaRuleRef {
   huntingOnly: boolean;
   /** Lower-cased field names the rule's detection reads (#2203: a rule that constrains sc-status). */
   fields?: string[];
+  /**
+   * Lower-cased fields tested by value in a selection the condition REQUIRES (#2499) — not under a
+   * `not`, not inside an `or`, not an `exists` test. The #2351 not-found veto reads it: a rule that
+   * only excludes an error code (`not filter`) has not decided about a not-found failure.
+   */
+  requiredFields?: string[];
 }
 
 /** The release folders a rule set is read from, in load order. */
@@ -79,7 +119,10 @@ export interface SigmaInventoryEntry {
   id: string;
   title: string;
   outcome: SigmaInventoryOutcome;
+  /** The log source (aws-cloudtrail, …) — not the project; that is `origin`. */
   source?: string;
+  /** The project the rule comes from, when not SigmaHQ (#2499). */
+  origin?: string;
   reasons?: string[];
 }
 
@@ -103,8 +146,10 @@ export interface SigmaRuleSet {
   commit: string;
   /** Sentences about the folder itself (too many files, unreadable) — shown in status and logged. */
   problems: string[];
-  /** The statuses this set was built with (lower-case). */
+  /** The statuses the SigmaHQ rules were filtered with (lower-case). */
   statuses: string[];
+  /** Extra rule sources that contributed files, e.g. Suzaku (#2499); [] for SigmaHQ alone. */
+  origins: SigmaOriginSummary[];
   /** First 12 hex of a SHA-256 over every rule file's path and text: identifies the content. */
   contentSha: string;
   /** First 8 hex of a SHA-256 over the sorted disabled ids ("none" when empty). */
@@ -124,6 +169,8 @@ export interface SigmaRuleSetOptions {
   /** Rule id → records to skip for that rule (#2218). */
   exclusions?: ReadonlyMap<string, readonly SigmaExclusionSpec[]>;
   sources?: readonly SigmaLogSourceDef[];
+  /** Origin key → the extra source it names (#2499). */
+  origins?: ReadonlyMap<string, SigmaRuleOrigin>;
 }
 
 // ── Building ──────────────────────────────────────────────────────────────────────────────────
@@ -136,6 +183,18 @@ function ruleFields(rule: SigmaRule): string[] {
         ? s.alternatives.flat().map((f) => f.field)
         : [],
   );
+}
+
+/**
+ * Lower-cased fields the rule tests by VALUE — an `exists`-only field is left out (#2499). Readers of
+ * `ref.fields` ask "did this rule decide about this field's value?" (the #2351 not-found veto on
+ * errorCode, #2203 sc-status); "is there an error at all" has not decided which error.
+ */
+function valueFields(rule: SigmaRule, only?: ReadonlySet<string>): string[] {
+  const all = rule.detection.selections
+    .filter((s) => !only || only.has(s.name))
+    .flatMap((s) => (s.kind === "map" ? s.fields : s.kind === "list" ? s.alternatives.flat() : []));
+  return [...new Set(all.filter((f) => f.exists === undefined).map((f) => f.field.toLowerCase()))];
 }
 
 /** Selections the top-level condition requires to be true. */
@@ -157,7 +216,13 @@ function gateOf(rule: SigmaRule, def: SigmaLogSourceDef): { field: string; value
     const sel = byName.get(name);
     if (sel?.kind !== "map") continue;
     for (const f of sel.fields) {
-      if (!indexFields.has(f.field.toLowerCase()) || f.modifiers.length || f.nullValue) continue;
+      if (
+        !indexFields.has(f.field.toLowerCase()) ||
+        f.modifiers.length ||
+        f.nullValue ||
+        f.exists !== undefined
+      )
+        continue;
       const literal = f.values.every((v) => typeof v !== "string" || !/[*?\\]/.test(v));
       if (literal)
         return { field: f.field.toLowerCase(), values: f.values.map((v) => String(v).toLowerCase()) };
@@ -180,17 +245,31 @@ function classify(
   opts: Required<SigmaRuleSetOptions>,
 ): Classified {
   const parsed = parseSigmaRule(file.text, { allowNull: true });
-  const base = { path: file.path, id: file.path, title: file.path };
+  const origin = file.origin === undefined ? undefined : opts.origins.get(file.origin);
+  const base = {
+    path: file.path,
+    id: file.path,
+    title: file.path,
+    ...(origin ? { origin: origin.name } : {}),
+  };
+  if (file.origin !== undefined && !origin)
+    return { entry: { ...base, outcome: "refused", reasons: [`unknown rule source ${file.origin}`] } };
   if (!parsed.ok)
     return {
       entry: { ...base, outcome: "refused", reasons: parsed.refusals.map((r) => `${r.path}: ${r.message}`) },
     };
   const rule = parsed.rule;
-  const head = { path: file.path, id: rule.id ?? file.path, title: rule.title };
+  const head = {
+    path: file.path,
+    id: rule.id ?? file.path,
+    title: rule.title,
+    ...(origin ? { origin: origin.name } : {}),
+  };
   const def = opts.sources.find((s) => s.matches(rule.logsource));
   if (!def) return { entry: { ...head, outcome: "no-source" } };
   const status = rule.status?.trim().toLowerCase() ?? "";
-  if (!opts.statuses.includes(status))
+  const statuses = origin ? origin.statuses.map((s) => s.toLowerCase()) : opts.statuses;
+  if (!statuses.includes(status))
     return {
       entry: { ...head, source: def.id, outcome: "status", reasons: [`status is ${status || "missing"}`] },
     };
@@ -219,12 +298,17 @@ function classify(
     status,
     ...(rule.author ? { author: rule.author } : {}),
     path: file.path,
-    url: `https://github.com/SigmaHQ/sigma/blob/${meta.commit}/${file.path}`,
-    release: meta.release,
+    url: origin
+      ? `${origin.urlBase}/${origin.commit}/${file.path}`
+      : `https://github.com/SigmaHQ/sigma/blob/${meta.commit}/${file.path}`,
+    release: origin ? origin.release : meta.release,
+    ...(origin ? { origin: origin.name } : {}),
+    ...(origin?.minLevel ? { gradeFloor: origin.minLevel } : {}),
     mitre: rule.mitreTechniques,
     ...(rule.modified || rule.date ? { modified: rule.modified ?? rule.date } : {}),
     huntingOnly: file.path.startsWith(`${SIGMA_HUNTING_DIR}/`),
-    fields: [...new Set(ruleFields(rule).map((f) => f.toLowerCase()))],
+    fields: valueFields(rule),
+    requiredFields: valueFields(rule, new Set(requiredSelections(rule.detection.condition))),
   };
   const loadedRule = { ref, compiled, order: 0 };
   return {
@@ -258,6 +342,28 @@ function disabledHash(disabled: ReadonlyMap<string, string>): string {
     .slice(0, 8);
 }
 
+/** The extra origins that contributed at least one file, in first-file order. */
+function originSummaries(
+  files: readonly SigmaRuleFile[],
+  origins: ReadonlyMap<string, SigmaRuleOrigin>,
+): SigmaOriginSummary[] {
+  const keys = [...new Set(files.flatMap((f) => (f.origin === undefined ? [] : [f.origin])))];
+  return keys.flatMap((k) => {
+    const o = origins.get(k);
+    return o
+      ? [
+          {
+            name: o.name,
+            release: o.release,
+            commit: o.commit,
+            statuses: o.statuses.map((s) => s.toLowerCase()),
+            ...(o.minLevel ? { minLevel: o.minLevel } : {}),
+          },
+        ]
+      : [];
+  });
+}
+
 /** Build the rule set from rule texts. Never throws; every file lands in the inventory. */
 export function buildSigmaRuleSet(
   files: readonly SigmaRuleFile[],
@@ -269,6 +375,7 @@ export function buildSigmaRuleSet(
     disabled: options.disabled ?? new Map(),
     exclusions: options.exclusions ?? new Map(),
     sources: options.sources ?? SIGMA_LOG_SOURCES,
+    origins: options.origins ?? new Map(),
   };
   const sources = new Map<string, SourceRules>();
   const inventory: SigmaInventoryEntry[] = [];
@@ -312,6 +419,7 @@ export function buildSigmaRuleSet(
     commit: meta.commit,
     problems: [],
     statuses: [...opts.statuses],
+    origins: originSummaries(files, opts.origins),
     contentSha: contentSha(files),
     disabledHash: disabledHash(opts.disabled),
     exclusionsHash: sigmaExclusionsHash(opts.exclusions),

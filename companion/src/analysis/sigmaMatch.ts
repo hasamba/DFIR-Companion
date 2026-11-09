@@ -165,7 +165,19 @@ function valueTest(field: SigmaFieldMatch, value: SigmaScalar): ValueTest {
 
 type FieldEval = (lookup: SigmaFieldLookup) => SigmaTri;
 
+/**
+ * Whether a lookup holds a value for `exists` (#2499). A null, an empty string or an empty array does
+ * not count: flattened CSV / SIEM exports write every column on every row, so an `errorCode` column
+ * that is empty on a successful call must not read as "this call failed".
+ */
+const holdsValue = (l: SigmaFieldLookup): boolean => l.values.some((v) => v !== null && v !== "");
+
 function compileField(field: SigmaFieldMatch): FieldEval {
+  if (field.exists !== undefined) {
+    const want = field.exists;
+    // A retained value settles it; with none, a truncated lookup cannot establish absence.
+    return (l) => (holdsValue(l) ? want : l.incomplete ? "incomplete" : !want);
+  }
   if (field.nullValue) {
     // Absent or JSON null. A retained non-null value settles it (false); otherwise a truncated
     // lookup cannot establish absence, so the answer is unknown, never a match (Codex review).

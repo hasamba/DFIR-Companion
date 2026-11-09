@@ -18,6 +18,7 @@ import {
   type SigmaRuleSet,
   type SigmaRuleSetOptions,
 } from "./sigmaRuleSet.js";
+import { bundledSuzakuDir, loadSuzakuRules, suzakuOrigins } from "./sigmaSuzakuRules.js";
 
 /** Most rule files read from one folder; a release has ~3,300 rules in all. */
 export const SIGMA_MAX_RULE_FILES = 10_000;
@@ -101,8 +102,15 @@ export function readDisabledList(text: string): Map<string, string> {
   return out;
 }
 
-/** Load one Sigma folder (release.json, disabled.yml, rules/**). */
-export function loadSigmaRuleDir(root: string, options: SigmaRuleSetOptions = {}): SigmaRuleSet {
+/**
+ * Load one Sigma folder (release.json, disabled.yml, rules/**), plus the bundled Suzaku rules when
+ * `suzakuDir` is given and DFIR_SIGMA_SUZAKU_RULES is on (#2499).
+ */
+export function loadSigmaRuleDir(
+  root: string,
+  options: SigmaRuleSetOptions = {},
+  suzakuDir?: string,
+): SigmaRuleSet {
   let disabled = new Map<string, string>();
   try {
     disabled = readDisabledList(readFileSync(join(root, "disabled.yml"), "utf8"));
@@ -110,16 +118,36 @@ export function loadSigmaRuleDir(root: string, options: SigmaRuleSetOptions = {}
     // no disabled list: every rule is eligible
   }
   const { files, overflow } = ruleFiles(root);
-  const set = buildSigmaRuleSet(files, readMeta(root), {
+  const suzaku = suzakuDir ? loadSuzakuRules(suzakuDir, SIGMA_MAX_RULE_FILES - files.length) : undefined;
+  const set = buildSigmaRuleSet([...files, ...(suzaku?.files ?? [])], readMeta(root), {
     ...options,
     disabled: new Map([...disabled, ...(options.disabled ?? [])]),
+    origins: suzaku ? suzakuOrigins(suzaku) : new Map(),
   });
-  return overflow
-    ? {
-        ...set,
-        problems: [...set.problems, `more than ${SIGMA_MAX_RULE_FILES} rule files; the rest were not read`],
-      }
-    : set;
+  const problems = [
+    ...set.problems,
+    ...(overflow ? [`more than ${SIGMA_MAX_RULE_FILES} rule files; the rest were not read`] : []),
+    ...(suzaku?.problems ?? []),
+  ];
+  return { ...set, problems };
+}
+
+/** A set of the Suzaku rules alone, for an install whose SigmaHQ folder is missing (#2499). */
+function suzakuOnly(
+  options: SigmaRuleSetOptions,
+  sigmaProblem: string,
+  suzakuDir: string | undefined,
+): BundledSigmaLoad {
+  const suzaku = loadSuzakuRules(suzakuDir, SIGMA_MAX_RULE_FILES);
+  const set = buildSigmaRuleSet(
+    suzaku.files,
+    { release: "none", commit: "master" },
+    {
+      ...options,
+      origins: suzakuOrigins(suzaku),
+    },
+  );
+  return { set: { ...set, problems: [...set.problems, ...suzaku.problems] }, problem: sigmaProblem };
 }
 
 /** The folder the bundled rules ship in, or undefined when it is missing. */
@@ -129,20 +157,24 @@ export function bundledSigmaDir(): string | undefined {
 
 /** The bundled rules, or an empty set with the reason when the folder is missing or unreadable. */
 export function loadBundledSigmaRuleSet(options: SigmaRuleSetOptions = {}): BundledSigmaLoad {
-  const dir = bundledSigmaDir();
-  if (!dir) {
-    return {
-      set: buildSigmaRuleSet([], { release: "none", commit: "master" }, options),
-      problem: "no bundled Sigma rules folder (data/sigma/rules) was found",
-    };
-  }
+  return loadSigmaBundle(bundledSigmaDir(), bundledSuzakuDir(), options);
+}
+
+/**
+ * The SigmaHQ folder plus the Suzaku folder (#2499). Either one failing never takes the other down:
+ * a missing or unreadable SigmaHQ folder still loads the Suzaku rules (Codex review).
+ */
+export function loadSigmaBundle(
+  dir: string | undefined,
+  suzakuDir: string | undefined,
+  options: SigmaRuleSetOptions = {},
+): BundledSigmaLoad {
+  if (!dir)
+    return suzakuOnly(options, "no bundled Sigma rules folder (data/sigma/rules) was found", suzakuDir);
   try {
-    return { set: loadSigmaRuleDir(dir, options), dir };
+    return { set: loadSigmaRuleDir(dir, options, suzakuDir), dir };
   } catch (error) {
-    return {
-      set: buildSigmaRuleSet([], { release: "none", commit: "master" }, options),
-      dir,
-      problem: `the bundled Sigma rules could not be read: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    const problem = `the bundled Sigma rules could not be read: ${error instanceof Error ? error.message : String(error)}`;
+    return { ...suzakuOnly(options, problem, suzakuDir), dir };
   }
 }

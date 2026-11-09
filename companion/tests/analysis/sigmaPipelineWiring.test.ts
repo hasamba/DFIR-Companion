@@ -62,7 +62,7 @@ describe("Sigma grader wiring", () => {
     expect(ev?.severity).toBe("High");
     expect(ev?.description).toMatch(/^Sigma: AWS SecurityHub Findings Evasion/);
     expect(note).toMatch(
-      /; Sigma: SigmaHQ r2026-07-01 \(content [0-9a-f]{12}\), statuses stable, test, raises at high and above, disabled list [0-9a-f]{8}, exclusions none, 1 row\(s\) matched$/,
+      /; Sigma: SigmaHQ r2026-07-01 \(content [0-9a-f]{12}\), statuses stable, test, raises at high and above; Suzaku suzaku-2026-11-01, statuses stable, test, experimental, raises at critical and above, disabled list [0-9a-f]{8}, exclusions none, 1 row\(s\) matched$/,
     );
   });
 
@@ -98,7 +98,7 @@ describe("server Sigma settings", () => {
 
   it("summarises the inventory per log source", () => {
     expect(sigmaInventorySummary(bundledSigmaGrader().snapshot()!.ruleSet)).toMatch(
-      /^Sigma rules r2026-07-01 — aws-cloudtrail: .*28 loaded/,
+      /^Sigma rules r2026-07-01 \+ Suzaku suzaku-2026-11-01 — aws-cloudtrail: .*764 loaded/,
     );
   });
 
