@@ -2,6 +2,7 @@ import { DEFAULT_SETTINGS, normalizeCompanionUrl, type Settings } from "./types.
 import { requestSettingsUpdate, type UpdateSettingsResult } from "./settingsClient.js";
 import type { SettingsExpectation } from "./settingsStore.js";
 import { caseListFailure, clampIntervalSeconds, settingsFromForm } from "./popupSettings.js";
+import { unreachableReason, untrustedCertHint, type UntrustedCertHint } from "./certTrust.js";
 import { ADAPTERS } from "./adapters/registry.js";
 import { OVERRIDE_NONE } from "./adapters/override.js";
 import {
@@ -267,7 +268,7 @@ async function refreshStatus(s: Settings): Promise<void> {
       el.className = "off";
     }
   } catch (err) {
-    el.textContent = `${prefix} — companion offline: ${(err as Error).message} (${s.companionUrl}/health)`;
+    el.textContent = `${prefix} — ${unreachableReason(s.companionUrl)}: ${(err as Error).message} (${s.companionUrl}/health)`;
     el.className = "off";
   }
 }
@@ -293,6 +294,25 @@ interface CaseListResult {
   missing?: boolean;
 }
 
+// The full "install the certificate" explanation for an https companion that gave no response
+// (#2473). It cannot live in the case <option>, which holds no link and truncates. Built from DOM
+// nodes so the URL is only ever text; the link opens in a new tab.
+function showCertHint(hint: UntrustedCertHint | null): void {
+  const el = document.getElementById("certHint");
+  if (!el) return;
+  el.replaceChildren();
+  el.hidden = !hint;
+  if (!hint) return;
+  const link = document.createElement("a");
+  link.href = "#";
+  link.textContent = hint.caUrl;
+  link.onclick = (e) => {
+    e.preventDefault();
+    void browserApi.tabs.create({ url: hint.caUrl });
+  };
+  el.append(hint.before, link, hint.after);
+}
+
 async function loadCases(
   companionUrl: string,
   selectedId: string,
@@ -313,7 +333,8 @@ async function loadCases(
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const cases = (await res.json()) as Array<{ caseId: string; name: string; hasPassword?: boolean }>;
     if (isStale()) return { ok: false, stale: true };
-    const missing = !!selectedId && !cases.some((c) => c.caseId === selectedId);
+    showCertHint(null);
+    const missing =!!selectedId && !cases.some((c) => c.caseId === selectedId);
     lockedCases = new Set(cases.filter((c) => c.hasPassword === true).map((c) => c.caseId));
     sel.innerHTML = "";
     if (cases.length === 0) {
@@ -332,7 +353,8 @@ async function loadCases(
     if (isStale()) return { ok: false, stale: true };
     // Unreachable, unauthorized, or an endpoint the server does not have — keep the last-used case
     // selectable either way so Start still works once the cause is fixed.
-    const failure = caseListFailure(status);
+    const failure = caseListFailure(status, companionUrl);
+    showCertHint(status === 0 ? untrustedCertHint(companionUrl) : null);
     sel.innerHTML = "";
     if (selectedId) sel.appendChild(new Option(`${selectedId} (last used — ${failure})`, selectedId));
     else sel.appendChild(new Option(`(${failure})`, ""));
