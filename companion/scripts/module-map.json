@@ -336,6 +336,7 @@
     "cloudCoverage.ts": "analysis/ingest",
     "cloudCoverageBuilders.ts": "analysis/ingest",
     "cloudMetadataAccess.ts": "analysis/timeline",
+    "cloudRowCanonical.ts": "analysis/ingest",
     "cloudRowWording.ts": "analysis/ingest",
     "clrUsageLogNote.ts": "analysis/timeline",
     "coverageEventTime.ts": "analysis/timeline",

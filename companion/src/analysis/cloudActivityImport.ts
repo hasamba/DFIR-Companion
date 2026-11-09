@@ -28,6 +28,8 @@ import { classifyAzureFailure, decodeAzureLogging } from "./loggingChangeCloud.j
 import { renderLoggingDescription } from "./loggingChange.js";
 import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { gcpCoverage, azureCoverage } from "./cloudCoverageBuilders.js";
+import { azureRawRecords, azureRowCanonical } from "./cloudRowCanonical.js";
+import { azureActivityRecordId } from "./cloudRecordIdentity.js";
 import { adaptAzureDiagnosticActivity } from "./azureDiagnosticRecord.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
@@ -323,6 +325,7 @@ function mapAzure(
   const observed = pickStr(rec, ["eventTimestamp", "time", "TimeGenerated", "timeStamp"], (k) =>
     debug?.field("timestamp", k),
   );
+  const recordId = azureActivityRecordId(rec); // the key the Azure record dedup uses (#2485)
 
   return {
     timestamp: normalizeTime(observed),
@@ -362,7 +365,7 @@ function mapAzure(
             ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
             cloud: { provider: "azure", ...(resource ? { resource } : {}) },
             time: { observed, normalized: normalizeTime(observed) },
-            evidence: { rawRecords: [{ source: "azure-activity", locator: `record:${recordIndex}` }] },
+            evidence: { rawRecords: azureRawRecords(recordIndex, recordId) },
             producer: {
               importer: "azure-activity",
               parserVersion: "1",
@@ -410,7 +413,7 @@ function mapAzure(
               ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
               cloud: { provider: "azure", ...(resource ? { resource } : {}) },
               time: { observed, normalized: normalizeTime(observed) },
-              evidence: { rawRecords: [{ source: "azure-activity", locator: `record:${recordIndex}` }] },
+              evidence: { rawRecords: azureRawRecords(recordIndex, recordId) },
               producer: {
                 importer: "azure-activity",
                 parserVersion: "1",
@@ -419,7 +422,20 @@ function mapAzure(
               },
             }),
           }
-        : {}),
+        : {
+            // Every other operation cites its own record too (#2485), not the legacy `event:<id>`.
+            canonical: azureRowCanonical({
+              operation: op,
+              caller,
+              ip,
+              resource,
+              observed,
+              normalized: normalizeTime(observed),
+              failed,
+              index: recordIndex,
+              recordId,
+            }),
+          }),
   };
 }
 

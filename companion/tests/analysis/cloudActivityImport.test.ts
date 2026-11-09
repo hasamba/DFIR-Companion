@@ -499,3 +499,68 @@ describe("parseCloudActivity — Azure lifecycle statuses fold into one entry (#
     expect(alice?.description).toContain("from 203.0.113.5");
   });
 });
+
+// #2485: every Azure Activity row cites its source record — not only the logging-change and
+// listKeys rows — so a collected or uploaded row never falls back to the legacy upgrade.
+describe("parseCloudActivity — Azure row provenance (#2485)", () => {
+  const SUB = "/subscriptions/abc/resourceGroups/rg/providers";
+  it("a plain Azure operation carries an azure-activity-v1 envelope with its record id", () => {
+    const nsg = `${SUB}/Microsoft.Network/networkSecurityGroups/nsg1`;
+    const r = parseCloudActivity(
+      JSON.stringify([
+        azure("Microsoft.Network/networkSecurityGroups/write", { eventDataId: "ed-1", resourceId: nsg }),
+        azure("Microsoft.Compute/virtualMachines/delete", {
+          eventDataId: "ed-2",
+          status: { value: "Failed" },
+        }),
+      ]),
+    );
+    const write = r.events.find((e) => /networkSecurityGroups\/write/.test(e.description))!;
+    expect(write.canonical?.evidence.rawRecords).toEqual([
+      { source: "azure-activity", locator: "record:0", recordId: "abc|ed-1" },
+    ]);
+    expect(write.canonical?.producer).toMatchObject({
+      importer: "azure-activity",
+      mappingVersion: "azure-activity-v1",
+    });
+    expect(write.canonical?.event).toMatchObject({
+      category: "cloud",
+      action: "Microsoft.Network/networkSecurityGroups/write",
+      outcome: "success",
+    });
+    expect(write.canonical?.actor).toEqual({ kind: "account", name: "admin@acme.com" });
+    expect(write.canonical?.network?.source).toEqual({
+      address: "203.0.113.22",
+      provenance: "edge-observed",
+    });
+    expect(write.canonical?.cloud).toMatchObject({ provider: "azure", resource: nsg });
+    const del = r.events.find((e) => /virtualMachines\/delete/.test(e.description))!;
+    expect(del.canonical?.event.outcome).toBe("failure");
+    expect(del.canonical?.evidence.rawRecords[0]).toMatchObject({
+      locator: "record:1",
+      recordId: "abc|ed-2",
+    });
+  });
+
+  it("the logging-change and listKeys envelopes carry the record id too", () => {
+    const r = parseCloudActivity(
+      JSON.stringify([
+        azure("Microsoft.Insights/diagnosticSettings/delete", { eventDataId: "ed-3" }),
+        azure("Microsoft.Storage/storageAccounts/listKeys/action", {
+          eventDataId: "ed-4",
+          resourceId: "/subscriptions/abc/resourceGroups/rg1/providers/Microsoft.Storage/storageAccounts/sa1",
+        }),
+      ]),
+    );
+    const logging = r.events.find((e) => e.canonical?.event.type === "logging-change")!;
+    expect(logging.canonical?.evidence.rawRecords[0]).toMatchObject({ recordId: "abc|ed-3" });
+    const keys = r.events.find((e) => e.canonical?.event.type === "storage-key-list")!;
+    expect(keys.canonical?.evidence.rawRecords[0]).toMatchObject({ recordId: "abc|ed-4" });
+  });
+
+  it("a record with no stable id still cites its locator", () => {
+    const e = parseCloudActivity(JSON.stringify([azure("Microsoft.Network/publicIPAddresses/write")]))
+      .events[0];
+    expect(e.canonical?.evidence.rawRecords).toEqual([{ source: "azure-activity", locator: "record:0" }]);
+  });
+});

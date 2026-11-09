@@ -36,6 +36,7 @@ import { ENTRA_RISK_HIDDEN_MARKER } from "./cloudRowWording.js";
 import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
 import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { m365Coverage } from "./cloudCoverageBuilders.js";
+import { ualRowCanonical } from "./cloudRowCanonical.js";
 import {
   applySigmaMatches,
   applySigmaToRecordRows,
@@ -265,7 +266,12 @@ function classify(rec: Row): Kind {
 
 // ───────────────────────────── mappers ─────────────────────────────
 
-function mapUal(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorder): MappedEvent {
+function mapUal(
+  rec: Row,
+  sink: Map<string, SiemIoc>,
+  index: number,
+  debug?: ImportDebugRecorder,
+): MappedEvent {
   const op = pickStr(rec, ["Operation", "Operations"], (k) => debug?.field("action", k)) || "operation";
   const workload = pickStr(rec, ["Workload"]);
   const user = pickStr(rec, ["UserId", "UserKey", "UserIds"], (k) => debug?.field("user", k));
@@ -295,10 +301,13 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorde
   if (failed) description += " [FAILED]";
   description = boundedTextTo(description, 600);
 
+  const observed = pickStr(rec, ["CreationTime", "CreationDate", "TimeGenerated"], (k) =>
+    debug?.field("timestamp", k),
+  );
+  const timestamp = normalizeTime(observed);
+
   return {
-    timestamp: normalizeTime(
-      pickStr(rec, ["CreationTime", "CreationDate", "TimeGenerated"], (k) => debug?.field("timestamp", k)),
-    ),
+    timestamp,
     description,
     severity,
     mitre: [...(def.mitre ?? [])],
@@ -311,6 +320,18 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>, debug?: ImportDebugRecorde
       `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}`.toLowerCase(),
     ),
     sources: ["Microsoft 365"],
+    // The row cites its own record (#2485) instead of the legacy upgrade's `event:<id>`.
+    canonical: ualRowCanonical({
+      operation: op,
+      user,
+      ip,
+      observed,
+      normalized: timestamp,
+      failed,
+      tenant: pickStr(rec, ["OrganizationId"]),
+      recordId: pickStr(rec, ["Id"]),
+      index,
+    }),
   };
 }
 
@@ -587,7 +608,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       // replaces the plain row; any other Exchange operation keeps it.
       const exchange = isExchangeRecord(rec) ? mapExchangeRow(rec, iocSink, at) : null;
       if (exchange) opts.debug?.fallback("exchange_decoder");
-      mapped.push(exchange ?? mapUal(rec, iocSink, opts.debug));
+      mapped.push(exchange ?? mapUal(rec, iocSink, at, opts.debug));
       sawUal = true;
     } else if (kind === "signin") {
       const row = mapSignIn(rec, iocSink, at, opts.debug);

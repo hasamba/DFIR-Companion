@@ -29,6 +29,10 @@ Each envelope points back to its raw record by a stable locator and records the 
 source artifact when the importer has the original file. It also names the importer, parser,
 mapping, and deterministic rule versions used.
 
+Every Microsoft 365 Unified Audit Log row and every Azure Activity row, uploaded or collected,
+cites the record it came from: its place in the file and the record's own id. Before, most of these
+rows cited only their event id. A row that stands for several identical records cites one of them.
+
 Every normalized leaf field carries its own provenance:
 
 - **raw** means the value came directly from named source fields;

@@ -1081,3 +1081,81 @@ describe("parseM365Audit — password-spray fan-out (931.3, #1086)", () => {
     expect(r.events[0].canonical?.event.category).toBe("authentication");
   });
 });
+
+// #2485: a plain UAL row (no Exchange / Entra decoder) cites its own source record — source,
+// locator and record id — instead of reaching the case with no envelope and getting the legacy
+// upgrade's `legacy-forensic-event` / `event:<id>` citation on read.
+describe("parseM365Audit — plain UAL row provenance (#2485)", () => {
+  const TENANT = "00000000-0000-4000-8000-0000000000aa";
+  const ad = (id: string, op: string) => ({
+    Id: id,
+    CreationTime: "2026-11-01T10:01:00",
+    Operation: op,
+    Workload: "SharePoint",
+    RecordType: 6,
+    OrganizationId: TENANT,
+    UserId: "alice@victim.com",
+    UserKey: "i:0h.f|membership|1003@live.com",
+    ClientIP: "198.51.100.44",
+    ObjectId: "https://victim.sharepoint.com/sites/x/doc.docx",
+  });
+  const graph = (id: string, op: string) => ({
+    id,
+    createdDateTime: "2026-11-01T10:01:00Z",
+    auditLogRecordType: "SharePointFileOperation",
+    operation: op,
+    organizationId: TENANT,
+    userPrincipalName: "alice@victim.com",
+    clientIp: "198.51.100.44",
+    service: "SharePoint",
+    auditData: ad(id, op),
+  });
+
+  it("classic Search-UnifiedAuditLog shape: m365-ual / record:N / bare Id", () => {
+    const r = parseM365Audit(
+      JSON.stringify([ualRow(ad("u-1", "FileAccessed")), ualRow(ad("u-2", "FileDeleted"))]),
+    );
+    const e = r.events.find((x) => /FileDeleted/.test(x.description))!;
+    expect(e.canonical?.evidence.rawRecords).toEqual([
+      { source: "m365-ual", locator: "record:1", recordId: "u-2" },
+    ]);
+    expect(e.canonical?.producer).toMatchObject({ importer: "m365", mappingVersion: "m365-ual-v1" });
+    expect(e.canonical?.event).toMatchObject({
+      category: "cloud",
+      action: "FileDeleted",
+      outcome: "success",
+    });
+    expect(e.canonical?.actor).toEqual({ kind: "account", name: "alice@victim.com" });
+    expect(e.canonical?.network?.source).toEqual({ address: "198.51.100.44", provenance: "edge-observed" });
+    expect(e.canonical?.cloud).toMatchObject({ provider: "m365", tenant: TENANT });
+    expect(e.canonical?.authentication).toBeUndefined(); // no Login Graph claim for a generic operation
+  });
+
+  it("Graph auditLogQuery shape cites the Graph record id", () => {
+    const r = parseM365Audit(JSON.stringify([graph("g-7", "FileDeleted")]));
+    expect(r.events[0].canonical?.evidence.rawRecords[0]).toMatchObject({
+      source: "m365-ual",
+      locator: "record:0",
+      recordId: "g-7",
+    });
+  });
+
+  it("a failed operation reads as a failure; a row with no Id still cites its locator", () => {
+    const rec = { ...ad("", "FileDeleted"), Id: undefined, ResultStatus: "Failed" };
+    const e = parseM365Audit(JSON.stringify([rec])).events[0];
+    expect(e.canonical?.event.outcome).toBe("failure");
+    expect(e.canonical?.evidence.rawRecords).toEqual([{ source: "m365-ual", locator: "record:0" }]);
+  });
+
+  it("the read-time upgrade keeps the import-time envelope; UserLoggedIn never joins the Login Graph", async () => {
+    const { upgradeForensicEvent } = await import("../../src/analysis/canonicalEvent.js");
+    const { parseLoginEvent } = await import("../../src/analysis/loginGraph.js");
+    type FE = Parameters<typeof upgradeForensicEvent>[0];
+    const r = parseM365Audit(JSON.stringify([ualRow(ad("u-9", "UserLoggedIn"))]));
+    const fe = { ...r.events[0], id: "ev-1", sourceScreenshots: [] } as unknown as FE;
+    const up = upgradeForensicEvent(fe);
+    expect(up.canonical?.producer.importer).toBe("m365");
+    expect(up.canonical?.evidence.rawRecords[0]).toMatchObject({ source: "m365-ual", recordId: "u-9" });
+    expect(parseLoginEvent(fe)).toBeNull();
+  });
+});
