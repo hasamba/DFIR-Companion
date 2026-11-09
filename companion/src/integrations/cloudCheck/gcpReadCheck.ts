@@ -27,7 +27,9 @@ import {
 import { checkFailureReason } from "./readCheckWording.js";
 import {
   MISSING_ROLE_REASON,
+  looksLikeResourceManagerOff,
   privateLogAccessFrom,
+  resourceManagerOffReason,
   testIamPermissionsBody,
   testIamPermissionsUrl,
   unknownAccess,
@@ -81,7 +83,11 @@ async function privateLogAccess(client: GcpRequester, input: GcpCheckInput): Pro
     });
     return privateLogAccessFrom(res.data);
   } catch (err) {
-    return unknownAccess(checkFailureReason(err, input.secrets));
+    const reason = checkFailureReason(err, input.secrets);
+    const details = JSON.stringify((err as { response?: { data?: unknown } } | null)?.response?.data ?? "");
+    if (looksLikeResourceManagerOff(`${reason} ${details}`))
+      return unknownAccess(resourceManagerOffReason(input.projectId));
+    return unknownAccess(reason);
   }
 }
 

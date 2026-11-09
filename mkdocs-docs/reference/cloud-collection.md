@@ -505,7 +505,8 @@ written" from "not allowed to see them". Before it reads Data Access, the collec
 once whether the account holds `logging.privateLogEntries.list` (`projects.testIamPermissions`,
 which needs no role of its own). When the permission is missing, every Data Access page says so,
 the collection is never reported complete, and the result tells you to grant the role and collect
-again. When Google cannot answer the question (for example the Cloud Resource Manager API is off
-in the project), the result says that an empty Data Access result may mean the role is missing.
+again. The question runs on the **Cloud Resource Manager API**, so enable it in the project (free,
+no new access). When it is off, the result says so with the enable link, and that an empty Data
+Access result may mean the role is missing.
 Each page records the answer in its manifest line (`privateLogAccess`). Check access does the same
 test when Data Access comes back empty, and reports **Failed** when the role is missing.

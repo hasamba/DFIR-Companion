@@ -57,7 +57,9 @@ import { GcpHttpError, throwForStatus } from "./gcpErrors.js";
 import {
   RESOURCE_MANAGER_READ_SCOPE,
   dataAccessNote,
+  looksLikeResourceManagerOff,
   privateLogAccessFrom,
+  resourceManagerOffReason,
   testIamPermissionsBody,
   testIamPermissionsUrl,
   unknownAccess,
@@ -168,8 +170,11 @@ export async function testPrivateLogAccess(
       body: JSON.stringify(testIamPermissionsBody()),
       ...(signal ? { signal } : {}),
     });
-    if (res.status < 200 || res.status >= 300)
+    if (res.status < 200 || res.status >= 300) {
+      if (looksLikeResourceManagerOff(Buffer.from(res.body).toString("utf8")))
+        return unknownAccess(resourceManagerOffReason(projectId));
       return unknownAccess(`the permission test answered HTTP ${res.status}${googleMessage(res.body)}`);
+    }
     return privateLogAccessFrom(JSON.parse(Buffer.from(res.body).toString("utf8")));
   } catch (err) {
     if (signal?.aborted) throw err;

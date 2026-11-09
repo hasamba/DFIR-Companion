@@ -17,8 +17,8 @@ export const PRIVATE_LOG_PERMISSION = "logging.privateLogEntries.list";
 /** The OAuth scope projects.testIamPermissions accepts for a read-only caller. */
 export const RESOURCE_MANAGER_READ_SCOPE = "https://www.googleapis.com/auth/cloud-platform.read-only";
 
-/** The longest reason kept from a failed permission test. */
-const REASON_MAX = 200;
+/** The longest reason kept from a failed permission test (room for the enable link below). */
+const REASON_MAX = 300;
 
 export type PrivateLogAccess =
   { state: "granted" } | { state: "missing" } | { state: "unknown"; reason: string };
@@ -36,6 +36,27 @@ export function privateLogAccessFrom(answer: unknown): PrivateLogAccess {
   const granted = (answer && typeof answer === "object" ? answer : {}) as { permissions?: unknown };
   const list = Array.isArray(granted.permissions) ? granted.permissions : [];
   return list.includes(PRIVATE_LOG_PERMISSION) ? { state: "granted" } : { state: "missing" };
+}
+
+/**
+ * The permission test runs on the Cloud Resource Manager API, which a project can have switched off.
+ * Google then answers 403 with reason SERVICE_DISABLED and a long message whose console link a
+ * length cap cut in half (lab run, #2450 follow-up). That answer gets a plain reason and a whole link.
+ */
+export function looksLikeResourceManagerOff(text: string): boolean {
+  return (
+    /SERVICE_DISABLED/.test(text) ||
+    /Cloud Resource Manager API has not been used in project|cloudresourcemanager\.googleapis\.com[^"]*(?:disabled|not been used)/i.test(
+      text,
+    )
+  );
+}
+
+export function resourceManagerOffReason(projectId: string): string {
+  return (
+    "the Cloud Resource Manager API is off in this project; enable it at " +
+    `https://console.cloud.google.com/apis/library/cloudresourcemanager.googleapis.com?project=${encodeURIComponent(projectId)}`
+  );
 }
 
 export function unknownAccess(reason: string): PrivateLogAccess {
