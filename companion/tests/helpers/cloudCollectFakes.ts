@@ -145,12 +145,13 @@ export async function tempCase() {
   const stateStore = new StateStore(cases);
   const superTimelineStore = new SuperTimelineStore(cases);
   const cloudRecordStore = new CloudRecordStore(cases);
+  const authObservationStore = new AuthObservationStore(cases, 168);
   const pipeline = new AnalysisPipeline({
     stateStore,
     superTimelineStore,
     cloudRecordStore,
     cloudCoverageStore: new CloudCoverageStore(cases),
-    authObservationStore: new AuthObservationStore(cases, 168),
+    authObservationStore,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   return {
@@ -160,6 +161,7 @@ export async function tempCase() {
     superTimelineStore,
     cloudRecordStore,
     pipeline,
+    authObservationStore,
     dir: join(cases.caseDir("c1"), "evidence", "cloud", "cc-test-abc123"),
   };
 }

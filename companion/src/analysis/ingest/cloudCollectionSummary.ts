@@ -24,7 +24,8 @@
 // in one transaction, so no row survives with stale coverage. The drop runs after the merge, not
 // inside it; a crash between the two leaves the checkpoint behind, and the replay converges (same
 // upsert, same drop). Only ids of this collection+kind's exact summary shape are dropped: page rows
-// are never touched.
+// are never touched. A build whose evidence was not read in full (the sign-in history behind M365
+// spray was capped, #2493) drops nothing and says so in its note.
 
 import { createHash } from "node:crypto";
 import { deltaSchema } from "../responseSchema.js";
@@ -191,13 +192,17 @@ export async function importCloudCollectionSummary(
   // M365 spray (#2493): read from the sign-in store over every page batch of the run, as one upload.
   const spray =
     kind === "m365"
-      ? await collectionSprayRows(ctx, caseId, opts.idPrefix, pageBatches(pages))
+      ? await collectionSprayRows(ctx, caseId, pageBatches(pages))
       : { events: [], truncated: false };
   const events = applySeverityFloor(
     [...(window.length ? provider.collectionSummaries(window, scope, pre) : []), ...spray.events],
     opts.minSeverity,
   );
-  const clause = windowClause(provider.source, facts, max);
+  // Evidence not read in full (a capped sign-in history) never reconciles away an earlier row.
+  const complete = !spray.truncated;
+  const clause = windowClause(provider.source, facts, max) + (complete ? "" : INCOMPLETE_NOTE);
+  const reconcile = (s: InvestigationState, keep: string[]) =>
+    complete ? dropSuperseded(ctx, caseId, s, opts.idPrefix, keep) : Promise.resolve(s);
   if (!events.length) {
     const state = await noteEmptyImport(
       ctx,
@@ -207,7 +212,7 @@ export async function importCloudCollectionSummary(
       window.length,
       clause,
     );
-    return { state: await dropSuperseded(ctx, caseId, state, opts.idPrefix, []), rows: 0, ids: [], ...facts };
+    return { state: await reconcile(state, []), rows: 0, ids: [], ...facts };
   }
   const ids = rowIds(events, opts.idPrefix);
   const delta = deltaSchema.parse({
@@ -230,11 +235,13 @@ export async function importCloudCollectionSummary(
     signal: opts.signal,
   });
   await rewriteSuperCopies(ctx, caseId, state, new Set(ids));
-  const settled = await dropSuperseded(ctx, caseId, state, opts.idPrefix, ids);
+  const settled = await reconcile(state, ids);
   return { state: settled, rows: events.length, ids, ...facts };
 }
 
 const SUMMARY_ID_TAIL = /^[0-9a-f]{16}x*$/;
+const INCOMPLETE_NOTE =
+  "; the sign-in history of other uploads was capped at the store's query limit, so earlier summary rows of this collection were kept, not reconciled";
 
 /**
  * Drop the earlier builds' rows of this collection+kind that this build did not keep, from both

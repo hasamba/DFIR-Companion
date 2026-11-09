@@ -3005,9 +3005,11 @@ different pages; built once over both, a path with a new credential, a privilege
 sign-in with that credential and the action reaches **High**. These rows say "this collection",
 not "this export" or "this upload". **Password spray** is also read once over the whole run: a
 spray spread over several pages of one run is one row, not "across N uploads" — that wording stays
-for a spray across separate collections or uploads. A record saved twice (a re-read page window) is
-read once. **MFA fatigue** is still found page by page: each page replaces the same row, so it
-never repeats.
+for a spray across separate collections or uploads, and each collection counts as one upload there,
+however many pages it has. A record saved twice (a re-read page window) is read once. If the
+sign-in history of other uploads is too large to read whole, the rebuild keeps every earlier
+summary row of the collection and the import note says so. **MFA fatigue** is still found page by
+page: each page replaces the same row, so it never repeats.
 
 Other background jobs of the case wait behind a running
 collection while `DFIR_JOBS_PER_CASE` is 1.
