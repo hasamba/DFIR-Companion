@@ -254,10 +254,17 @@ describe("TimesketchClient bounded response (issue #686)", () => {
 class MockTimesketch implements TimesketchClientLike {
   sketches: TimesketchSketchRef[] = [];
   timelines: TimesketchTimelineRef[] = [];
-  uploads: { sketchId: number; timelineName: string; jsonl: string }[] = [];
+  uploads: { sketchId: number; timelineName: string; jsonl: string; dataLabel?: string }[] = [];
   deletedTimelines: number[] = [];
+  renames: { timelineId: number; name: string; color?: string }[] = [];
+  calls: string[] = []; // call order: "list", "delete:<id>", "upload", "chunk", "rename:<id>"
   loggedIn = false;
-  private seq = 10;
+  // Failure switches (#2414).
+  failUpload = false;
+  failChunkAt = 0; // 1-based chunk number that throws (0 = never)
+  failRename = false;
+  failDeleteIds: number[] = [];
+  private seq = 100;
 
   async login() {
     this.loggedIn = true;
@@ -271,26 +278,64 @@ class MockTimesketch implements TimesketchClientLike {
     return ref;
   }
   async listTimelines() {
-    return this.timelines;
+    this.calls.push("list");
+    return [...this.timelines];
   }
   async deleteTimeline(_sketchId: number, timelineId: number) {
+    this.calls.push(`delete:${timelineId}`);
+    if (this.failDeleteIds.includes(timelineId)) throw new Error(`delete ${timelineId} refused`);
     this.deletedTimelines.push(timelineId);
     this.timelines = this.timelines.filter((t) => t.id !== timelineId);
   }
-  async uploadEvents(sketchId: number, timelineName: string, jsonl: string) {
-    this.uploads.push({ sketchId, timelineName, jsonl });
+  // Like Timesketch: an upload creates (or reuses, by name) the timeline before it can fail later.
+  private ensureTimeline(name: string): number {
+    const hit = this.timelines.find((t) => t.name === name);
+    if (hit) return hit.id;
+    const id = this.seq++;
+    this.timelines.push({ id, name });
+    return id;
   }
-  chunks: { sketchId: number; timelineName: string; jsonl: string; indexName?: string; last: boolean }[] = [];
+  async uploadEvents(
+    sketchId: number,
+    timelineName: string,
+    jsonl: string,
+    opts: { dataLabel?: string } = {},
+  ) {
+    this.calls.push("upload");
+    const timelineId = this.ensureTimeline(timelineName);
+    if (this.failUpload) throw new Error("upload refused");
+    this.uploads.push({ sketchId, timelineName, jsonl, dataLabel: opts.dataLabel });
+    return { timelineId, color: "A1B2C3" };
+  }
+  chunks: {
+    sketchId: number;
+    timelineName: string;
+    jsonl: string;
+    indexName?: string;
+    last: boolean;
+    dataLabel?: string;
+  }[] = [];
   async uploadEventsChunk(
     sketchId: number,
     timelineName: string,
     jsonl: string,
-    chunk: { indexName?: string; last: boolean },
+    chunk: { indexName?: string; last: boolean; dataLabel?: string },
   ) {
+    this.calls.push("chunk");
+    const timelineId = this.ensureTimeline(timelineName);
     this.chunks.push({ sketchId, timelineName, jsonl, ...chunk });
-    return { indexName: chunk.indexName ?? `idx-${this.chunks.length}` };
+    if (this.failChunkAt === this.chunks.length) throw new Error(`chunk ${this.chunks.length} refused`);
+    return { indexName: chunk.indexName ?? `idx-${this.chunks.length}`, timelineId, color: "A1B2C3" };
+  }
+  async renameTimeline(_sketchId: number, timelineId: number, name: string, opts: { color?: string } = {}) {
+    this.calls.push(`rename:${timelineId}`);
+    if (this.failRename) throw new Error("rename refused");
+    this.renames.push({ timelineId, name, color: opts.color });
+    this.timelines = this.timelines.map((t) => (t.id === timelineId ? { ...t, name } : t));
   }
 }
+
+const STAGING = / \(staging [0-9a-f]{6}\)$/;
 
 function sampleState(): InvestigationState {
   return {
@@ -481,10 +526,18 @@ describe("pushSuperTimelineToTimesketch", () => {
       { n: 2, indexName: "idx-1", last: false },
       { n: 1, indexName: "idx-1", last: true },
     ]);
-    expect(
-      m.chunks.every((c) => c.sketchId === 42 && c.timelineName === "DFIR-Companion Super Timeline"),
-    ).toBe(true);
-    expect(m.deletedTimelines).toEqual([8]); // clean-replaced once, before the first chunk
+    // #2414: every chunk goes to ONE staging timeline under ONE unique data label; the old
+    // timeline is removed only after the last chunk was accepted, then the staging one is renamed.
+    expect(m.chunks.every((c) => c.sketchId === 42 && c.timelineName === m.chunks[0].timelineName)).toBe(
+      true,
+    );
+    expect(m.chunks[0].timelineName).toMatch(/^DFIR-Companion Super Timeline \(staging [0-9a-f]{6}\)$/);
+    expect(new Set(m.chunks.map((c) => c.dataLabel))).toEqual(new Set([m.chunks[0].dataLabel]));
+    expect(m.chunks[0].dataLabel).toMatch(/^dfir-companion-[0-9a-f]{6}$/);
+    expect(m.deletedTimelines).toEqual([8]); // replaced once, after the last chunk
+    expect(m.calls.indexOf("delete:8")).toBeGreaterThan(m.calls.lastIndexOf("chunk"));
+    expect(res.timelineName).toBe("DFIR-Companion Super Timeline");
+    expect(m.timelines.map((t) => t.name)).toEqual(["DFIR-Companion Super Timeline"]);
     expect(res.events).toBe(5);
     expect(res.omitted).toBe(0);
     expect(res.replacedTimeline).toBe(true);
@@ -535,5 +588,159 @@ describe("pushSuperTimelineToTimesketch", () => {
     expect(m.chunks).toHaveLength(1);
     expect(m.chunks[0].last).toBe(true);
     expect(res.warnings.filter((w) => w.includes("2"))).toHaveLength(1);
+  });
+});
+
+// ---- #2414: upload first, then swap -----------------------------------------
+
+describe("Timesketch re-push swaps safely (#2414)", () => {
+  const FORENSIC = "DFIR-Companion Forensic Timeline";
+  const SUPER = "DFIR-Companion Super Timeline";
+
+  async function* batches(events: ForensicEvent[], size = 1): AsyncGenerator<ForensicEvent[]> {
+    for (let i = 0; i < events.length; i += size) yield events.slice(i, i + size);
+  }
+  function rows(n: number): ForensicEvent[] {
+    return Array.from({ length: n }, (_, i) =>
+      event({ timestamp: `2026-06-04T08:0${i}:00Z`, description: `row ${i}` }),
+    );
+  }
+  function existing(...timelines: TimesketchTimelineRef[]): MockTimesketch {
+    const m = new MockTimesketch();
+    m.sketches.push({ id: 42, name: "Case Alpha" });
+    m.timelines.push(...timelines);
+    return m;
+  }
+
+  it("forensic push uploads before any delete, and deletes only timelines that existed before the upload", async () => {
+    const m = existing({ id: 7, name: FORENSIC });
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() });
+    expect(m.calls.indexOf("upload")).toBeLessThan(m.calls.indexOf("delete:7"));
+    expect(m.deletedTimelines).toEqual([7]); // never the freshly uploaded staging timeline
+    expect(m.calls.indexOf("rename:100")).toBeGreaterThan(m.calls.indexOf("delete:7"));
+    expect(res.replacedTimeline).toBe(true);
+    expect(res.timelineName).toBe(FORENSIC);
+    expect(m.timelines).toEqual([{ id: 100, name: FORENSIC }]);
+    expect(m.renames).toEqual([{ timelineId: 100, name: FORENSIC, color: "A1B2C3" }]);
+    expect(res.warnings).toEqual([]);
+  });
+
+  it("uploads under a staging name with a unique data label, different on every push", async () => {
+    const m = existing({ id: 7, name: FORENSIC });
+    await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() });
+    await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() });
+    expect(m.uploads).toHaveLength(2);
+    for (const u of m.uploads) {
+      expect(u.timelineName.startsWith(FORENSIC)).toBe(true);
+      expect(u.timelineName).toMatch(STAGING);
+      expect(u.dataLabel).toMatch(/^dfir-companion-[0-9a-f]{6}$/);
+    }
+    expect(m.uploads[0].dataLabel).not.toBe(m.uploads[1].dataLabel);
+    expect(m.uploads[0].timelineName).not.toBe(m.uploads[1].timelineName);
+    expect(m.timelines.map((t) => t.name)).toEqual([FORENSIC]); // second push replaced the first
+  });
+
+  it("a failed upload keeps the old timeline, removes the partial staging one, and rethrows", async () => {
+    const m = existing({ id: 7, name: FORENSIC });
+    m.failUpload = true;
+    await expect(pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() })).rejects.toThrow(
+      "upload refused",
+    );
+    expect(m.deletedTimelines).not.toContain(7);
+    expect(m.deletedTimelines).toEqual([100]); // the staging timeline the failed upload created
+    expect(m.timelines).toEqual([{ id: 7, name: FORENSIC }]);
+    expect(m.renames).toEqual([]);
+  });
+
+  it("super push: a chunk-2 failure keeps the old timeline and cleans up the staging one", async () => {
+    const m = existing({ id: 8, name: SUPER });
+    m.failChunkAt = 2;
+    await expect(
+      pushSuperTimelineToTimesketch(
+        m,
+        { sketchName: "Case Alpha", events: batches(rows(5), 2) },
+        { chunkEvents: 2 },
+      ),
+    ).rejects.toThrow("chunk 2 refused");
+    expect(m.chunks).toHaveLength(2);
+    expect(m.chunks[0].timelineName).toMatch(STAGING);
+    expect(m.chunks[1].timelineName).toBe(m.chunks[0].timelineName);
+    expect(m.chunks[1].dataLabel).toBe(m.chunks[0].dataLabel);
+    expect(m.deletedTimelines).toEqual([100]);
+    expect(m.timelines).toEqual([{ id: 8, name: SUPER }]);
+    expect(m.renames).toEqual([]);
+  });
+
+  it("super push: a store read failure mid-stream also keeps the old timeline", async () => {
+    const m = existing({ id: 8, name: SUPER });
+    async function* broken(): AsyncGenerator<ForensicEvent[]> {
+      yield rows(2);
+      throw new Error("store read failed");
+    }
+    await expect(
+      pushSuperTimelineToTimesketch(m, { sketchName: "Case Alpha", events: broken() }, { chunkEvents: 2 }),
+    ).rejects.toThrow("store read failed");
+    expect(m.timelines).toEqual([{ id: 8, name: SUPER }]);
+  });
+
+  it("a failed staging cleanup is named in the rethrown error, and the old timeline still survives", async () => {
+    const m = existing({ id: 7, name: FORENSIC });
+    m.failUpload = true;
+    m.failDeleteIds = [100];
+    await expect(pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() })).rejects.toThrow(
+      /upload refused.*staging.*delete 100 refused/,
+    );
+    expect(m.timelines.some((t) => t.id === 7)).toBe(true);
+  });
+
+  it("a failed rename succeeds with a warning, keeps the data under the staging name, and is not '(replaced)'", async () => {
+    const m = existing({ id: 7, name: FORENSIC });
+    m.failRename = true;
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() });
+    expect(m.deletedTimelines).toEqual([7]);
+    expect(res.timelineName).toMatch(STAGING);
+    expect(res.replacedTimeline).toBe(false);
+    expect(res.warnings.some((w) => w.includes("rename refused") && w.includes("next push"))).toBe(true);
+    expect(m.timelines).toEqual([{ id: 100, name: res.timelineName }]);
+  });
+
+  it("an old timeline that cannot be deleted is kept, the new one stays under its staging name, with a warning", async () => {
+    const m = existing({ id: 7, name: FORENSIC });
+    m.failDeleteIds = [7];
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() });
+    expect(res.replacedTimeline).toBe(false);
+    expect(res.timelineName).toMatch(STAGING);
+    expect(m.renames).toEqual([]); // no duplicate managed name next to the stale copy
+    expect(res.warnings.some((w) => w.includes("delete 7 refused"))).toBe(true);
+  });
+
+  it("the next push tidies a leftover staging timeline from an earlier failed rename", async () => {
+    const m = existing({ id: 7, name: `${FORENSIC} (staging abc123)` }, { id: 9, name: SUPER });
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() });
+    expect(m.deletedTimelines).toEqual([7]); // the super timeline is not the forensic push's to touch
+    expect(res.replacedTimeline).toBe(true);
+    expect(m.timelines.map((t) => t.name).sort()).toEqual([FORENSIC, SUPER].sort());
+  });
+
+  it("the super push never treats the forensic timeline, or its staging leftovers, as its own", async () => {
+    const m = existing({ id: 7, name: FORENSIC }, { id: 6, name: `${FORENSIC} (staging abc123)` });
+    const res = await pushSuperTimelineToTimesketch(m, {
+      sketchName: "Case Alpha",
+      events: batches(rows(2)),
+    });
+    expect(m.deletedTimelines).toEqual([]);
+    expect(res.replacedTimeline).toBe(false);
+    expect(res.timelineName).toBe(SUPER);
+  });
+
+  it("a timeline list failure before the upload still uploads and renames, with a warning", async () => {
+    const m = existing({ id: 7, name: FORENSIC });
+    m.listTimelines = async () => {
+      throw new Error("list refused");
+    };
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Alpha", state: sampleState() });
+    expect(m.uploads).toHaveLength(1);
+    expect(res.replacedTimeline).toBe(false);
+    expect(res.warnings.some((w) => w.includes("list refused"))).toBe(true);
   });
 });

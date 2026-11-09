@@ -281,11 +281,63 @@ export class TimesketchClient {
   // does for the no-file path (`requests.post(..., data=dict)`). A multipart/form-data body is
   // mishandled by some Timesketch deployments (proxy/WSGI), which then see no fields and abort with
   // "Unable to upload data without supplying a sketch to associate it with".
-  async uploadEvents(sketchId: number, timelineName: string, jsonl: string): Promise<void> {
+  //
+  // Returns the created timeline's id and colour from the 201 body (Timesketch answers with the
+  // timeline object) — the upload-first swap (#2414) renames that timeline afterwards. The upload
+  // already succeeded when the body is unreadable, so that is not an error: the caller falls back to
+  // finding the timeline by name.
+  async uploadEvents(
+    sketchId: number,
+    timelineName: string,
+    jsonl: string,
+    opts: { dataLabel?: string } = {},
+  ): Promise<UploadedTimeline> {
     const res = await this.send("POST", `${this.apiRoot}/upload/`, {
-      body: uploadForm(sketchId, timelineName, jsonl, { last: true }),
+      body: uploadForm(sketchId, timelineName, jsonl, { last: true, dataLabel: opts.dataLabel }),
     });
     if (!res.ok) throw await this.errorFor(res, "upload events");
+    const body = await readBoundedJson(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: "Timesketch",
+    }).catch(() => undefined);
+    return uploadedTimeline(firstObject(body));
+  }
+
+  // Rename a timeline in place (#2414 — the last step of the upload-first swap). Upstream
+  // TimelineResource.post validates TimelineForm built from the JSON body plus the X-CSRFToken
+  // header: `name` (required, ≤255), `description`, and `color` (required, exactly 6 hex digits —
+  // no "#"). The colour is the one the upload reported, else read from the sketch detail (not the
+  // timeline GET, which runs a datastore count that can fail while the index is still being built),
+  // else white. The description is set to the new name, as the upload itself does on create.
+  async renameTimeline(
+    sketchId: number,
+    timelineId: number,
+    name: string,
+    opts: { color?: string } = {},
+  ): Promise<void> {
+    const color =
+      normalizeColor(opts.color) ??
+      (await this.timelineColor(sketchId, timelineId)) ??
+      DEFAULT_TIMELINE_COLOR;
+    const finalName = name.slice(0, 255);
+    const res = await this.send("POST", `${this.apiRoot}/sketches/${sketchId}/timelines/${timelineId}/`, {
+      json: { name: finalName, description: finalName, color },
+    });
+    if (!res.ok) throw await this.errorFor(res, "rename timeline");
+  }
+
+  private async timelineColor(sketchId: number, timelineId: number): Promise<string | undefined> {
+    const res = await this.send("GET", `${this.apiRoot}/sketches/${sketchId}/`);
+    if (!res.ok) return undefined; // the rename still goes ahead with the default colour
+    const sketch = firstObject(
+      await readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "Timesketch" }).catch(
+        (err) => rethrowIfTooLarge(err, {}),
+      ),
+    );
+    const timelines = Array.isArray(sketch?.timelines)
+      ? (sketch.timelines as Array<Record<string, unknown>>)
+      : [];
+    return normalizeColor(timelines.find((t) => Number(t.id) === timelineId)?.color);
   }
 
   // One chunk of a streamed upload (#1444) — the official importer's own protocol: every chunk but
@@ -296,8 +348,8 @@ export class TimesketchClient {
     sketchId: number,
     timelineName: string,
     jsonl: string,
-    chunk: { indexName?: string; last: boolean },
-  ): Promise<{ indexName: string }> {
+    chunk: { indexName?: string; last: boolean; dataLabel?: string },
+  ): Promise<UploadedTimeline & { indexName: string }> {
     const res = await this.send("POST", `${this.apiRoot}/upload/`, {
       body: uploadForm(sketchId, timelineName, jsonl, chunk),
     });
@@ -315,15 +367,39 @@ export class TimesketchClient {
         res.status,
         "http",
       );
-    return { indexName };
+    return { ...uploadedTimeline(obj), indexName };
   }
+}
+
+export interface UploadedTimeline {
+  timelineId?: number;
+  color?: string;
+}
+
+const DEFAULT_TIMELINE_COLOR = "FFFFFF";
+// The default upload label. The push passes its own unique label instead (#2414): Timesketch reuses
+// any sketch index that carries the label, so a shared one appends into the old timeline's index.
+const DEFAULT_DATA_LABEL = "dfir-companion";
+
+function normalizeColor(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const hex = value.trim().replace(/^#/, "");
+  return /^[0-9a-fA-F]{6}$/.test(hex) ? hex : undefined;
+}
+
+function uploadedTimeline(obj: Record<string, unknown> | undefined): UploadedTimeline {
+  const id = Number(obj?.id);
+  return {
+    timelineId: Number.isInteger(id) && id > 0 ? id : undefined,
+    color: normalizeColor(obj?.color),
+  };
 }
 
 function uploadForm(
   sketchId: number,
   timelineName: string,
   jsonl: string,
-  chunk: { indexName?: string; last: boolean },
+  chunk: { indexName?: string; last: boolean; dataLabel?: string },
 ): URLSearchParams {
   const form = new URLSearchParams();
   form.set("sketch_id", String(sketchId));
@@ -331,7 +407,7 @@ function uploadForm(
   form.set("events", jsonl);
   form.set("provider", "DFIR Companion");
   form.set("context", "DFIR Companion forensic timeline");
-  form.set("data_label", "dfir-companion");
+  form.set("data_label", chunk.dataLabel ?? DEFAULT_DATA_LABEL);
   form.set("enable_stream", chunk.last ? "false" : "true");
   if (chunk.indexName) form.set("index_name", chunk.indexName);
   return form;
