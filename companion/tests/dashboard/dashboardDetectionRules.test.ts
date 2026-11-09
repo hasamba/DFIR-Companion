@@ -12,6 +12,7 @@ type Line = { label: string; text: string; action: string | null; button?: strin
 interface Api {
   drTaggerLine: (st: unknown) => Line;
   drSigmaLine: (s: unknown) => Line;
+  drSuzakuLine: (s: unknown) => Line;
   drSetTagger: (st: unknown) => void;
   drSetSigma: (s: unknown) => void;
   drRunAction: (a: string) => void;
@@ -60,6 +61,7 @@ function harness() {
     DfirRulePack: { checkRulePack: () => did.push("tagger-check") },
     openSettingsTab: (t: string) => did.push(`settings:${t}`),
     sigmaCheck: () => did.push("sigma-check"),
+    suzakuCheck: () => did.push("suzaku-check"),
   });
   const buttons = () => els.detectionRulesLines.all().filter((e) => e.tag === "button");
   return { api, els, did, buttons };
@@ -67,6 +69,56 @@ function harness() {
 
 const PACK_STATUS = { inUse: "pack", installed: { version: "rules-2026.11.06.2" } };
 const SIGMA = { enabled: true, active: { release: "r2026-07-01" } };
+
+describe("the Suzaku line (#2508)", () => {
+  const sz = (suzaku: Record<string, unknown>) => ({ ...SIGMA, settings: { suzaku } });
+  const active = { release: "suzaku-2026-11-01", source: "bundled" };
+
+  it("offers a check, then a review when a newer commit exists, and nothing when current", () => {
+    const { api } = harness();
+    expect(api.drSuzakuLine(sz({ enabled: true, active }))).toMatchObject({
+      label: "Suzaku rules",
+      text: "suzaku-2026-11-01 — not checked",
+      action: "suzaku",
+      button: "Check for updates",
+    });
+    expect(
+      api.drSuzakuLine(
+        sz({
+          enabled: true,
+          active,
+          lastCheck: { updateAvailable: true, latest: "suzaku-2026-11-20-aaaaaaa" },
+        }),
+      ),
+    ).toMatchObject({
+      text: "suzaku-2026-11-01 — suzaku-2026-11-20-aaaaaaa available",
+      button: "Review update…",
+    });
+    expect(
+      api.drSuzakuLine(sz({ enabled: true, active, lastCheck: { updateAvailable: false } }))?.action,
+    ).toBeNull();
+    expect(api.drSuzakuLine(sz({ enabled: true, active, lastCheck: { error: "x" } }))?.button).toBe(
+      "Check again",
+    );
+  });
+
+  it("is absent while Suzaku is switched off or the server has no Suzaku store", () => {
+    const { api } = harness();
+    expect(api.drSuzakuLine(sz({ enabled: false, active }))).toBeNull();
+    expect(api.drSuzakuLine(sz({ enabled: true }))).toBeNull();
+    expect(api.drSuzakuLine(SIGMA)).toBeNull();
+  });
+
+  it("renders beside the Sigma line and its button opens the Suzaku check in Settings", () => {
+    const { api, els, did, buttons } = harness();
+    api.drSetSigma(sz({ enabled: true, active }));
+    expect(els.detectionRulesLines.textContent).toContain("Suzaku rules");
+    const btn = buttons().find((b) => b.textContent === "Check for updates" && did.length === 0);
+    api.drRunAction("suzaku");
+    expect(did).toEqual(["settings:sigma", "suzaku-check"]);
+    expect(btn).toBeDefined();
+  });
+});
 
 describe("the Detection rules box (#2389)", () => {
   it("is mounted around the rule pack panel, collapsed, and served before the rule pack script", async () => {

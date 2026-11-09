@@ -110,6 +110,7 @@ function sigmaRenderStatus(s) {
     if (b) b.disabled = demo || (id === "sigmaRollbackBtn" && !s.previous);
   });
   document.getElementById("sigmaDemo").hidden = !demo;
+  suzakuRender(s);
   // #2389: keep the Detection rules box's Sigma line in step after a check, install or roll back.
   if (window.DfirDetectionRules) window.DfirDetectionRules.drSetSigma(s);
 }
@@ -396,6 +397,96 @@ async function sigmaRollback() {
   }
 }
 
+// ── Suzaku rule updates (#2508) ──────────────────────────────────────────────────────────────
+// Suzaku publishes no releases: the unit is the newest commit to its CloudTrail folder. Every string
+// below comes from GitHub or the server and is rendered with textContent.
+
+function suzakuMsg(text, isError) {
+  const box = document.getElementById("suzakuMessage");
+  if (!box) return;
+  box.textContent = text || "";
+  box.style.color = isError ? "var(--danger, #e5534b)" : "";
+}
+
+function suzakuVersionLine(v) {
+  if (!v) return "none";
+  return v.source === "bundled" ? `${v.release} (bundled with the app)` : `${v.release} (downloaded from GitHub${v.installedAt ? `, ${v.installedAt.slice(0, 10)}` : ""})`;
+}
+
+function suzakuRender(s) {
+  const sz = s && s.settings && s.settings.suzaku;
+  const active = document.getElementById("suzakuActive");
+  if (!active) return;
+  active.textContent = sz && sz.active ? suzakuVersionLine(sz.active) : "not available on this server";
+  document.getElementById("suzakuPrevious").textContent = sz && sz.previous ? suzakuVersionLine(sz.previous) : "none";
+  const demo = !!(s && s.demoMode);
+  const check = document.getElementById("suzakuCheckBtn");
+  const back = document.getElementById("suzakuRollbackBtn");
+  if (check) check.disabled = demo || !(sz && sz.active);
+  if (back) back.disabled = demo || !(sz && sz.previous);
+}
+
+function suzakuRenderPreview(p) {
+  const box = document.getElementById("suzakuPreview");
+  box.textContent = "";
+  box.hidden = false;
+  box.dataset.token = p.token;
+  const d = p.diff || {};
+  const m = p.measure || {};
+  box.appendChild(sigmaEl("div", `Version: ${p.release.release} (commit ${String(p.release.commit).slice(0, 12)})`));
+  box.appendChild(sigmaEl("div", `${(d.added || []).length} rule(s) added, ${(d.changed || []).length} changed, ${(d.removed || []).length} removed.`));
+  box.appendChild(sigmaEl("div", `${m.loads || 0} rule(s) would load with the current settings; ${m.raises || 0} of them can raise severity at the current Suzaku minimum level.`));
+  if (!p.usable) {
+    box.appendChild(sigmaEl("div", "None of these rules would load with the current settings, so this version cannot be installed."));
+    return;
+  }
+  const btn = sigmaEl("button", "Install", "btn-mini");
+  btn.type = "button";
+  btn.addEventListener("click", suzakuInstall);
+  box.appendChild(btn);
+}
+
+async function suzakuCheck() {
+  suzakuMsg("Checking GitHub for newer Suzaku rules…");
+  try {
+    const r = await sigmaFetch("/sigma/suzaku/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    if (!r.check.updateAvailable) suzakuMsg(`Up to date: ${r.check.installed} is the newest Suzaku version.`);
+    else if (r.preview) {
+      suzakuMsg(`${r.check.latest} is available. Review the changes below; nothing is installed until you click Install.`);
+      suzakuRenderPreview(r.preview);
+    } else suzakuMsg(`${r.check.latest} is available, but it could not be downloaded: ${r.previewError || "unknown error"}`, true);
+    await loadSigmaRules();
+  } catch (e) {
+    suzakuMsg(e.message, true);
+  }
+}
+
+async function suzakuInstall() {
+  const preview = document.getElementById("suzakuPreview");
+  const token = preview && preview.dataset.token;
+  if (!token) return;
+  try {
+    const r = await sigmaFetch("/sigma/suzaku/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+    delete preview.dataset.token;
+    preview.hidden = true;
+    suzakuMsg(`Installed ${r.active.release}. It grades the next import; existing cases keep their grading.`);
+    await loadSigmaRules();
+  } catch (e) {
+    suzakuMsg(e.message, true);
+  }
+}
+
+async function suzakuRollback() {
+  if (!confirm("Switch back to the previous Suzaku rules? It grades the next import; existing cases keep their grading.")) return;
+  try {
+    const r = await sigmaFetch("/sigma/suzaku/rollback", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    suzakuMsg(`Rolled back to ${r.active.release}.`);
+    await loadSigmaRules();
+  } catch (e) {
+    suzakuMsg(e.message, true);
+  }
+}
+
 async function sigmaToggleRule(id, disable) {
   if (sigmaDemoActive()) return;
   let reason = "";
@@ -546,6 +637,8 @@ function initSigmaRules() {
   document.getElementById("sigmaCheckBtn")?.addEventListener("click", sigmaCheck);
   document.getElementById("sigmaFileBtn")?.addEventListener("click", sigmaInstallFile);
   document.getElementById("sigmaRollbackBtn")?.addEventListener("click", sigmaRollback);
+  document.getElementById("suzakuCheckBtn")?.addEventListener("click", suzakuCheck);
+  document.getElementById("suzakuRollbackBtn")?.addEventListener("click", suzakuRollback);
   document.getElementById("sigmaRegradeBtn")?.addEventListener("click", sigmaRegradePreview);
   document.getElementById("sigmaRulesFilter")?.addEventListener("input", sigmaFilterRules);
   document.getElementById("sigmaRulesState")?.addEventListener("change", sigmaFilterRules);
