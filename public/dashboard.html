@@ -3086,6 +3086,18 @@
           <div id="sigmaPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
         </div>
         <div class="sfield">
+          <label>Suzaku rules (#2508)</label>
+          <div id="suzakuActive" data-safe-style="font-size:12px;padding:2px 0">Loading…</div>
+          <span class="sfield-hint">Previous (roll-back target): <span id="suzakuPrevious">—</span></span>
+          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="suzakuCheckBtn" type="button" class="btn-mini">Check for Suzaku updates</button>
+            <button id="suzakuRollbackBtn" type="button" class="btn-mini">Roll back Suzaku</button>
+          </div>
+          <span class="sfield-hint">Suzaku publishes no releases, so this looks for the newest change to its CloudTrail rule folder on GitHub. Every file must match GitHub's fingerprint for it at that change. Nothing is installed until you review the changes and click Install.</span>
+          <div id="suzakuMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
+          <div id="suzakuPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
+        </div>
+        <div class="sfield">
           <label>Re-grade this case</label>
           <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button id="sigmaRegradeBtn" type="button" class="btn-mini">Preview re-grade of the open case</button>
