@@ -7,7 +7,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { deltaSchema, type AnalysisDelta } from "../../src/analysis/responseSchema.js";
 import { mergeDelta, type WindowContext } from "../../src/analysis/stateMerge.js";
 import { mergeIntoCase } from "../../src/analysis/caseMerge.js";
-import { mergeTrigger } from "../../src/analysis/mergeIndex.js";
+import { MERGE_FLAG_TRIGGER, mergeIndexEntry, mergeTrigger } from "../../src/analysis/mergeIndex.js";
 import {
   COVERAGE_EVENT_ID,
   METADATA_MARKER,
@@ -231,6 +231,27 @@ describe("cloud coverage row — the incremental merge places it as the full mer
     ).toBe(true);
     const s = await expectSame();
     expect(coverageOf(s)?.timestamp).toBe("2026-10-05T10:00:00.000Z");
+  });
+
+  it("re-indexes a case indexed before the change once, then takes the fast path", async () => {
+    await importBoth(delta(page("a", 10)));
+    await importBoth(delta(page("b", 11)));
+    // As the previous build left it: the coverage row indexed as a trigger, under the old stamp.
+    const state = await store.load("inc");
+    const position = state.forensicTimeline.findIndex((e) => e.id === COVERAGE_EVENT_ID);
+    const row = state.forensicTimeline[position];
+    const snap = await store.mergeSnapshot("inc");
+    await store.mergeIndexWrite(
+      "inc",
+      snap!.generation,
+      [{ position, index: { ...mergeIndexEntry(row), flags: MERGE_FLAG_TRIGGER, clean: true } }],
+      { stamp: "1:previous-build", stable: true },
+    );
+    expect(await importBoth(delta(page("c", 9)))).toBe(false); // the full merge rebuilds the index
+    await expectSame();
+    expect(await importBoth(delta(page("d", 8)))).toBe(true);
+    const s = await expectSame();
+    expect(coverageOf(s)?.timestamp).toBe(at(8, 10, 0));
   });
 
   it("falls back to the full merge when no cloud record has a readable time", async () => {
