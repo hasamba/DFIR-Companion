@@ -11,7 +11,8 @@ SigmaHQ release named in `version.txt`; nothing in `rules/` is edited by hand.
   or `proxy` category — `rules/web/webserver_generic`, `rules/web/proxy_generic` and the matching
   files under `rules-emerging-threats/` (#2203) — and `rules/cloud/gcp/audit` (15 rules, product
   `gcp`, service `gcp.audit`; #2346), extracted from the same release asset after checking its
-  sha256. `rules/cloud/gcp/gworkspace` is not included: it reads Google Workspace admin / login
+  sha256, and `rules/cloud/azure/activity_logs` (33 rules in the release asset, product `azure`,
+  service `activitylogs`; #2500), extracted the same way. `rules/cloud/gcp/gworkspace` is not included: it reads Google Workspace admin / login
   logs, which the Companion does not import as such.
 - License: the rules are released under the Detection Rule License (DRL) 1.1 —
   `LICENSE.DRL-1.1.md`, and SigmaHQ's own `LICENSE`. Every match the Companion records names the

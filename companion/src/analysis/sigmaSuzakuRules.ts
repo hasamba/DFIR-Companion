@@ -1,4 +1,5 @@
-// The Suzaku project's own CloudTrail Sigma rules (#2499), bundled verbatim in data/sigma-suzaku
+// The Suzaku project's own Sigma rules — AWS CloudTrail (#2499), Microsoft 365 and Azure Activity
+// (#2500) — bundled verbatim in data/sigma-suzaku
 // beside the SigmaHQ release (data/sigma). They join the SigmaHQ rules in ONE rule set — so the
 // inventory, the disabled list, exclusions, re-grade lookups and the provenance token cover both —
 // but carry their own origin: their own status filter (DFIR_SIGMA_SUZAKU_STATUSES), their own
@@ -22,7 +23,7 @@ import type { SigmaRuleFile, SigmaRuleOrigin } from "./sigmaRuleSet.js";
 export const SUZAKU_ORIGIN_KEY = "suzaku";
 export const SUZAKU_NAME = "Suzaku";
 export const SUZAKU_URL_BASE = "https://github.com/Yamato-Security/suzaku-rules/blob";
-/** Rule paths are the upstream repo's own (suzaku/aws/cloudtrail/x.yml), so the link is exact. */
+/** Rule paths are the upstream repo's own (suzaku/aws/cloudtrail/x.yml, suzaku/m365/x.yml), so the link is exact. */
 export const SUZAKU_PATH_PREFIX = "suzaku/";
 const MAX_FILE_BYTES = 128 * 1024;
 

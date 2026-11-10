@@ -20,6 +20,35 @@ export const signInBase = (o: Record<string, unknown> = {}): Record<string, unkn
 });
 
 /** An Entra directory-audit record in the Graph shape — the base for audit samples. */
+/** A unified-audit-log record (#2500): an operation the importer does not grade, so a rule's own
+ * `Operation` overwrites it. */
+export const ualBase = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
+  CreationTime: "2026-03-01T10:00:00",
+  Id: "00000000-0000-0000-0000-0000000000c1",
+  Operation: "MailItemsAccessed",
+  OrganizationId: "00000000-0000-0000-0000-0000000000aa",
+  RecordType: 2,
+  ResultStatus: "Succeeded",
+  UserKey: "user@example.com",
+  UserType: 0,
+  Workload: "Exchange",
+  ClientIP: "198.51.100.10",
+  UserId: "user@example.com",
+  ...o,
+});
+
+/** An Azure Activity Log event, REST shape (#2500): a neutral read a rule's operationName overwrites. */
+export const azureActivityBase = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
+  eventTimestamp: "2026-03-01T10:00:00Z",
+  caller: "user@example.com",
+  correlationId: "00000000-0000-0000-0000-0000000000c2",
+  resourceId: "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg1",
+  operationName: { value: "Microsoft.Resources/subscriptions/resourceGroups/read" },
+  status: { value: "Succeeded" },
+  httpRequest: { clientIpAddress: "198.51.100.10" },
+  ...o,
+});
+
 export const auditBase = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
   id: "aaaaaaaa-0000-4000-8000-000000000001",
   activityDateTime: "2026-03-01T10:00:00Z",

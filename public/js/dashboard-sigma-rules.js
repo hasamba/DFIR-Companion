@@ -439,7 +439,7 @@ async function sigmaRollback() {
 }
 
 // ── Suzaku rule updates (#2508) ──────────────────────────────────────────────────────────────
-// Suzaku publishes no releases: the unit is the newest commit to its CloudTrail folder. Every string
+// Suzaku publishes no releases: the unit is a commit, compared by its watched rule folders. Every string
 // below comes from GitHub or the server and is rendered with textContent.
 
 function suzakuMsg(text, isError) {

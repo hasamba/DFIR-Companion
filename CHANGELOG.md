@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sigma grades Microsoft 365 and Azure Activity logs** — Suzaku's 21 Microsoft 365 and 4 Azure Activity rules and SigmaHQ's 33 Azure Activity rules are bundled and graded at import; the Suzaku updater now tracks all three folders (closes #2500)
 - **Azure caller names** — an Azure activity row whose caller is a service-principal id shows the name an Entra sign-in or directory-audit upload taught the case, when exactly one name is known; a conflicting name or Undo removes it (closes #2490)
 - **SigmaHQ main-branch rules** — the check names the newest release and counts unreleased main-branch changes to graded rules, and an opt-in install brings them in verified against GitHub's listing (closes #2518)
 - **Preview what the AI will see** — from the Anon dialog, see the first request any AI action would send, clear and masked text side by side with the unmasked system prompt and what Presidio would hold; nothing is sent, spent or saved (closes #2491)

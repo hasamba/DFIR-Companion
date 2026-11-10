@@ -1,4 +1,4 @@
-// Settings → Sigma rules → Suzaku (#2508): check GitHub for a newer Suzaku CloudTrail commit, preview
+// Settings → Sigma rules → Suzaku (#2508): check GitHub for a newer Suzaku rules commit, preview
 // what it changes, install it, roll it back. Every route is POST, so the public demo's read-only gate
 // refuses all of them. The archive download goes through the SSRF-guarded fetchOutbound; the client
 // pins it to GitHub's hosts and verifies every file against its git blob SHA.
@@ -48,7 +48,7 @@ export function registerSigmaSuzakuRoutes(app: Express, ctx: RouteContext): void
     if (!check.updateAvailable || !check.latestCommit || !check.latestDate)
       return res.json({ check, preview: null });
     try {
-      const commit = { sha: check.latestCommit, date: check.latestDate };
+      const commit = { sha: check.latestCommit, date: check.latestDate, folders: check.latestFolders };
       const preview = await s.suzaku.preview(commit, fetch, fetchAsset, (f) => s.sigma.measureSuzaku(f));
       return res.json({ check, preview });
     } catch (err) {

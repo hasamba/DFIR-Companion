@@ -42,9 +42,14 @@ describe("bundled Sigma rules", () => {
       "web-proxy:loaded": 46,
       "web-proxy:status": 2,
       "web-proxy:refused": 3,
+      // #2500: SigmaHQ rules/cloud/azure/activity_logs (33 in the release asset).
+      "azure-activitylogs:loaded": 33,
       // #2499: the Suzaku CloudTrail rules (741 files). The 5 refused are multi-document correlation
       // rules, which the engine does not run.
       "Suzaku:aws-cloudtrail:loaded": 736,
+      // #2500: suzaku/m365 (21) and suzaku/azure/activity_logs (4), all loaded.
+      "Suzaku:azure-m365:loaded": 21,
+      "Suzaku:azure-activitylogs:loaded": 4,
       "Suzaku:-:refused": 5,
     });
   });

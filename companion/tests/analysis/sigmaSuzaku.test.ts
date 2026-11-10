@@ -52,9 +52,14 @@ describe("the bundled Suzaku folder", () => {
   it("reads every rule file with its upstream path and the Suzaku origin", () => {
     const load = loadSuzakuRules(SUZAKU_DIR, 10_000, {});
     expect(load.problems).toEqual([]);
-    expect(load.files).toHaveLength(741);
+    // #2500: + suzaku/m365 (21) and suzaku/azure/activity_logs (4).
+    expect(load.files).toHaveLength(766);
     expect(
-      load.files.every((f) => f.path.startsWith("suzaku/aws/cloudtrail/") && f.origin === SUZAKU_ORIGIN_KEY),
+      load.files.every(
+        (f) =>
+          /^suzaku\/(aws\/cloudtrail|m365|azure\/activity_logs)\//.test(f.path) &&
+          f.origin === SUZAKU_ORIGIN_KEY,
+      ),
     ).toBe(true);
     expect(load.origin).toMatchObject({
       name: "Suzaku",
@@ -85,7 +90,7 @@ describe("source isolation", () => {
       await symlink(join(broken, "missing.yml"), join(broken, "rules", "x.yml"));
       const { set, problem } = loadSigmaBundle(broken, SUZAKU_DIR);
       expect(problem).toMatch(/the bundled Sigma rules could not be read/);
-      expect(set.inventory.filter((e) => e.origin === "Suzaku" && e.outcome === "loaded")).toHaveLength(736);
+      expect(set.inventory.filter((e) => e.origin === "Suzaku" && e.outcome === "loaded")).toHaveLength(761);
     },
   );
 
@@ -227,7 +232,7 @@ describe("the rule store with Suzaku", () => {
     set.inventory.filter((e) => e.origin === "Suzaku" && e.outcome === "loaded").length;
 
   it("loads Suzaku by default and drops it when switched off", async () => {
-    expect(suzakuLoaded((await store()).activeRuleSet())).toBe(736);
+    expect(suzakuLoaded((await store()).activeRuleSet())).toBe(761);
     const off = (await store({ DFIR_SIGMA_SUZAKU_RULES: "off" })).activeRuleSet();
     expect(suzakuLoaded(off)).toBe(0);
     expect(off.origins).toEqual([]);

@@ -16,7 +16,9 @@ import {
 } from "../../../../src/analysis/sigmaSuzakuRules.js";
 import {
   AWS_CLOUDTRAIL,
+  AZURE_ACTIVITY,
   AZURE_AUDIT_LOGS,
+  AZURE_M365,
   AZURE_SIGNIN_LOGS,
   GCP_AUDIT,
   fieldResolvers,
@@ -26,7 +28,7 @@ import { parseSigmaRule } from "../../../../src/analysis/sigmaRule.js";
 import type { SigmaRuleSet } from "../../../../src/analysis/sigmaRuleSet.js";
 import type { SigmaCondition, SigmaFieldMatch, SigmaRule } from "../../../../src/analysis/sigmaRuleTypes.js";
 import { cloudTrailBase } from "./aws.js";
-import { auditBase, signInBase } from "./m365.js";
+import { auditBase, azureActivityBase, signInBase, ualBase } from "./m365.js";
 import { gcpBase } from "./gcp.js";
 import type { DetectionSample } from "./types.js";
 
@@ -46,6 +48,9 @@ export const CLOUD_SIGMA_SOURCES: Record<
   },
   "azure-signinlogs": { def: AZURE_SIGNIN_LOGS, base: () => signInBase(), kind: "m365" },
   "azure-auditlogs": { def: AZURE_AUDIT_LOGS, base: () => auditBase(), kind: "m365" },
+  // #2500: a UAL record (AuditData already merged) and an Azure Activity REST event.
+  "azure-m365": { def: AZURE_M365, base: () => ualBase(), kind: "m365" },
+  "azure-activitylogs": { def: AZURE_ACTIVITY, base: () => azureActivityBase(), kind: "azure" },
   // Not built (#2346): a sample built from a GCP rule carries the rule's own spelling of the method
   // (`.serviceAccounts.disable`), which hid that real records never matched. The rules are checked
   // with real-shaped hand samples (gcp.ts SIGMA_REAL_SAMPLES) instead.

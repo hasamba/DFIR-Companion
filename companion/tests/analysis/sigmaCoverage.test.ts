@@ -79,10 +79,15 @@ describe("computeSigmaCoverage", () => {
     expect(cov.graded).toBe(0);
   });
 
-  it("covers Entra ID when one of its two sources has loaded rules, and says SP sign-ins are not graded", () => {
+  it("covers Entra ID when one of its sources has loaded rules, and says SP sign-ins are not graded", () => {
     const cov = computeSigmaCoverage([{ origin: SIGMA_ORIGIN_ENTRA, events: 5 }], inventory, true);
     expect(cov.rows[0].state).toBe("covered");
-    expect(cov.rows[0].sigmaSources.map((s) => s.id)).toEqual(["azure-signinlogs", "azure-auditlogs"]);
+    // #2500: Entra directory changes exported through the M365 unified audit log are Entra ID rows too.
+    expect(cov.rows[0].sigmaSources.map((s) => s.id)).toEqual([
+      "azure-signinlogs",
+      "azure-auditlogs",
+      "azure-m365",
+    ]);
     expect(cov.rows[0].caveat).toMatch(/service-principal/);
   });
 

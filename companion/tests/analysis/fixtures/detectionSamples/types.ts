@@ -2,8 +2,9 @@
 // REAL importer accepts, so the importer, the bundled Sigma rules and the shipped tagger rules all
 // read the same evidence. Records are synthetic: documentation IPs, example.* domains, fake ids.
 
-/** Which importer reads the record. "m365" covers UAL, Entra sign-in and Entra directory audit. */
-export type DetectionSampleKind = "cloudtrail" | "m365" | "gcp";
+/** Which importer reads the record. "m365" covers UAL, Entra sign-in and Entra directory audit;
+ * "gcp" and "azure" (Azure Activity Log, #2500) are both read by the cloud-activity importer. */
+export type DetectionSampleKind = "cloudtrail" | "m365" | "gcp" | "azure";
 
 export interface DetectionSample {
   /** Stable, unique name — printed in every report line. */
