@@ -182,6 +182,53 @@ export const RESPONDER: readonly Rec[] = [
 
 const KEY_ARN = `arn:aws:kms:us-west-1:${LAB_ACCOUNT}:key/11111111-2222-3333-4444-555555555555`;
 
+const OWN_TRAILS = `arn:aws:cloudtrail:*:${LAB_ACCOUNT}:trail/*`;
+const callerIsOwn = { StringEquals: { "kms:CallerAccount": LAB_ACCOUNT } };
+
+/** The key policy the CloudTrail wizard writes: this account, the CloudTrail service, and `*` held to this account. */
+const TRAIL_KEY_POLICY = {
+  Version: "2012-10-17",
+  Id: "Key policy created by CloudTrail",
+  Statement: [
+    {
+      Sid: "Enable IAM User Permissions",
+      Effect: "Allow",
+      Principal: { AWS: [`arn:aws:iam::${LAB_ACCOUNT}:root`, LAB_ACCOUNT] },
+      Action: "kms:*",
+      Resource: "*",
+    },
+    {
+      Sid: "Allow CloudTrail to encrypt logs",
+      Effect: "Allow",
+      Principal: { Service: "cloudtrail.amazonaws.com" },
+      Action: "kms:GenerateDataKey*",
+      Resource: "*",
+      Condition: { StringLike: { "kms:EncryptionContext:aws:cloudtrail:arn": [OWN_TRAILS] } },
+    },
+    {
+      Sid: "Allow principals in the account to decrypt log files",
+      Effect: "Allow",
+      Principal: { AWS: "*" },
+      Action: ["kms:Decrypt", "kms:ReEncryptFrom"],
+      Resource: "*",
+      Condition: {
+        ...callerIsOwn,
+        StringLike: { "kms:EncryptionContext:aws:cloudtrail:arn": [OWN_TRAILS] },
+      },
+    },
+    {
+      Sid: "Allow alias creation during setup",
+      Effect: "Allow",
+      Principal: { AWS: "*" },
+      Action: ["kms:CreateAlias"],
+      Resource: "*",
+      Condition: {
+        StringEquals: { "kms:CallerAccount": LAB_ACCOUNT, "kms:ViaService": "ec2.us-west-1.amazonaws.com" },
+      },
+    },
+  ],
+};
+
 /** The CloudTrail console wizard, all inside two seconds — the logging the responder turned on. */
 export const WIZARD_BURST: readonly Rec[] = [
   R("23:53:36", "kms", "CreateKey", WIZARD, {
@@ -190,6 +237,10 @@ export const WIZARD_BURST: readonly Rec[] = [
       description: "The key created by CloudTrail to encrypt log files.",
       origin: "AWS_KMS",
       keyUsage: "ENCRYPT_DECRYPT",
+      policy: JSON.stringify(TRAIL_KEY_POLICY),
+    },
+    responseElements: {
+      keyMetadata: { aWSAccountId: LAB_ACCOUNT, origin: "AWS_KMS", keyManager: "CUSTOMER" },
     },
   }),
   R("23:53:36", "kms", "CreateAlias", WIZARD, {

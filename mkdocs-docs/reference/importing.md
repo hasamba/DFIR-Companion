@@ -1911,6 +1911,17 @@ Measured on the public SANS 504 S3 ransomware lab, where the noise used to bury 
   be in the same upload (or the same streamed window).
 - **The lineage row states the enumeration burst**: how many read calls, across how many services,
   over what span, and which were denied.
+- **A bucket policy is graded by who it lets in.** A `PutBucketPolicy` whose every Allow statement
+  names only AWS services (for example `cloudtrail.amazonaws.com`) or the bucket's own account is
+  Medium, and the row says `policy grants only …`. An outside account, `*` (even with a condition),
+  or a policy the importer cannot read in full stays High.
+- **ATT&CK techniques that CloudTrail proves wrong are withheld.** A generic bundled rule can tag a
+  row on the event name alone. CloudTrail removes the technique, but keeps the rule's match line and
+  adds an `ATT&CK … withheld` note, in four cases: T1565 on an object write by an AWS service; T1486
+  on the `AWS_KMS` key whose policy grants only CloudTrail and this account; T1048 on a bucket policy
+  for AWS services or this account only; and T1110 on one failed console sign-in that a success by the
+  same principal from the same source follows within 10 minutes. Several failures keep T1110. The
+  grade never changes, and no other log source does this.
 
 ### Coverage rows on the timeline
 

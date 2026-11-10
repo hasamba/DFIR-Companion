@@ -18,14 +18,9 @@ import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
 import { decodeIamChange, renderAwsDescription } from "./iamChange.js";
 import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
 import { mergeReplicaGroups, type ReplicaCandidate } from "./awsReplicas.js";
-import {
-  applySigmaMatches,
-  sigmaMatchesFor,
-  unionSigmaMatches,
-  type SigmaGradingSnapshot,
-} from "./sigmaImportGrade.js";
+import { sigmaMatchesFor, unionSigmaMatches, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
 import type { SigmaRuleRef } from "./sigmaRuleSet.js";
-import { cloudTrailSigmaVeto } from "./sigmaCloudTrailVeto.js";
+import { gradeCloudTrailRows } from "./cloudTrailRowGrade.js";
 import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
 import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
@@ -33,9 +28,8 @@ import { awsCloudTrailCoverage } from "./cloudCoverageBuilders.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
 import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
-import { awsExposureGrade, awsExposurePosture } from "./awsExposure.js";
+import { awsRecordExposure } from "./awsExposure.js";
 import { failedCallIsProbe, genericFloor } from "./awsServiceGrade.js";
-import { raiseRansomwarePrecursors } from "./awsPrecursorGrade.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -310,10 +304,10 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   if (issuance?.severity) severity = worst(severity, issuance.severity);
   for (const t of issuance?.mitre ?? []) if (!mitre.includes(t)) mitre.push(t);
 
-  // A snapshot share / public bucket ACL or policy, as the request states it (#2306).
-  const exposure = awsExposurePosture(name, getCI(rec, "requestParameters"), str(getCI(rec, "errorCode")));
-  // A snapshot un-share lowers the table's base grade (#2338) — before the failed-call/root floors below.
-  const exposureGrade = awsExposureGrade(name, getCI(rec, "requestParameters"));
+  // A snapshot share / public bucket ACL or policy, as the request states it (#2306). A snapshot
+  // un-share (#2338) or a bucket policy for AWS services / this account only (#2542) lowers the
+  // table's base grade — before the failed-call/root floors below.
+  const { posture: exposure, grade: exposureGrade } = awsRecordExposure(name, rec, who2.accounts.recipient);
   if (exposureGrade) severity = issuance?.severity ? worst(exposureGrade, issuance.severity) : exposureGrade;
   const identity = principal(getCI(rec, "userIdentity"));
   const { name: who, isRoot } = identity;
@@ -727,23 +721,14 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
   // independent of the optional aggregation. The Sigma matches of EVERY replica of a row are
   // applied after the merge, so a match on the replica the merge did not keep is not lost and the
   // merge's re-rendered description cannot overwrite the rule title.
-  const snapshot = opts.sigma;
   const merged = mergeReplicaGroups(candidates).map((g) => ({
     // A merged cross-account pair stands for every replica record it carries (#2301).
     event: g.members.length > 1 ? withReplicaRecords(g.event, g.members) : g.event,
     sigma: unionSigmaMatches(g.members.map((c) => c.sigma)),
     recordIndex: g.members[0].recordIndex,
   }));
-  const graded = merged.map((g) =>
-    snapshot
-      ? applySigmaMatches(g.event, g.sigma, snapshot, undefined, cloudTrailSigmaVeto(g.event))
-      : g.event,
-  );
-  // A bucket-recovery check by a key that just escalated itself is raised in context (#2542).
-  const mapped = raiseRansomwarePrecursors(
-    graded,
-    merged.map((g) => records[g.recordIndex]),
-  );
+  // Sigma, the ATT&CK veto and the in-context precursor raise (#2542, cloudTrailRowGrade.ts).
+  const mapped = gradeCloudTrailRows(merged, records, opts.sigma);
   const sigmaRows = merged.filter((g) => g.sigma.length > 0).length;
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (candidates.length > mapped.length)
