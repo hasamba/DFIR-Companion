@@ -250,9 +250,14 @@
   const EVENT_CAP = 50;
   const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+  // The spoken name STARTS with exactly what the cell shows — the name, then the count badge and
+  // the severity letter — so a voice-control user can say what they see (#2492, WCAG 2.5.3 label in
+  // name). The id, full severity and split counts follow for screen-reader users. The cell's parts
+  // are separated by spaces in the markup (a flex row renders none) so its text reads "Name 4 C".
   function cellLabel(id, name, agg) {
-    if (!agg) return `${id} ${name}, not seen in this case`;
-    return `${id} ${name}, ${agg.worst}, ${plural(agg.findingIds.length, "finding")}, ${plural(agg.eventIds.length, "event")}`;
+    if (!agg) return `${name} — ${id}, not seen in this case`;
+    const shown = `${name} ${agg.findingIds.length + agg.eventIds.length} ${agg.worst.charAt(0)}`;
+    return `${shown} — ${id}, ${agg.worst}, ${plural(agg.findingIds.length, "finding")}, ${plural(agg.eventIds.length, "event")}`;
   }
 
   // Hover text for a cell's number and letter; a parent's count includes its sub-techniques.
@@ -266,13 +271,13 @@
     const sev = agg ? ` mm-hit mm-sev-${esc(agg.worst)}` : "";
     const tail = agg
       ? `<span class="mm-badge" aria-hidden="true" title="${escAttr(badgeTitle(agg, withSubs))}">` +
-        `${agg.findingIds.length + agg.eventIds.length}</span>` +
+        `${agg.findingIds.length + agg.eventIds.length}</span> ` +
         `<span class="mm-sevl" aria-hidden="true" title="${escAttr(`Worst severity: ${agg.worst}`)}">` +
         `${esc(agg.worst.charAt(0))}</span>`
       : "";
     return (
       `<button type="button" class="mm-cell mm-nav${sev}${extraClass}" data-tid="${escAttr(id)}" tabindex="-1" ` +
-      `aria-label="${escAttr(cellLabel(id, name, agg))}"><span class="mm-name">${esc(name)}</span>${tail}</button>`
+      `aria-label="${escAttr(cellLabel(id, name, agg))}"><span class="mm-name">${esc(name)}</span>${tail ? ` ${tail}` : ""}</button>`
     );
   }
 

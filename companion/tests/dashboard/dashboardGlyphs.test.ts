@@ -125,14 +125,14 @@ describe("evNodeGlyph", () => {
 
 describe("tagColor", () => {
   it.each([
-    ["confirmed-malicious", "#ff6b6b"],
-    ["c2-comms", "#ff6b6b"],
-    ["exfil", "#ff6b6b"],
-    ["false-positive", "#6bcB77"],
-    ["benign-admin", "#6bcB77"],
-    ["needs-review", "#ffd93b"],
-    ["key-evidence", "#6aa9ff"],
-    ["pivot-point", "#6aa9ff"],
-    ["anything-else", "#9aa4b2"],
+    ["confirmed-malicious", "var(--c-ff6b6b)"],
+    ["c2-comms", "var(--c-ff6b6b)"],
+    ["exfil", "var(--c-ff6b6b)"],
+    ["false-positive", "var(--c-6bcb77)"],
+    ["benign-admin", "var(--c-6bcb77)"],
+    ["needs-review", "var(--c-ffd93b)"],
+    ["key-evidence", "var(--c-6aa9ff)"],
+    ["pivot-point", "var(--c-6aa9ff)"],
+    ["anything-else", "var(--c-9aa4b2)"],
   ])("%s -> %s", (label, colour) => expect(g.tagColor(label)).toBe(colour));
 });

@@ -213,7 +213,9 @@ h2 .add-toggle:hover, h2 .add-toggle.active { color: var(--sev-medium); border-c
 .src-menu-link:hover { text-decoration: underline; }
 /* Per-column sort arrows in the Forensic Timeline header (#104): ▲ asc / ▼ desc, on the
    Timestamp column (by date) and the Message column (by severity). The active direction lights up. */
-.tl-sortarrows { display: inline-flex; flex-direction: column; vertical-align: middle; margin-left: 4px; line-height: 0.8; }
+/* Side by side, each in a 24px-wide slot (#2492): stacked 6px arrows had no room for a 24px target. */
+.tl-sortarrows { display: inline-flex; flex-direction: row; vertical-align: middle; margin-left: 2px; line-height: 0.8; }
+.tl-sortarrows .tl-arrow { min-width: 24px; text-align: center; }
 .tl-arrow { background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer; font-size: 8px; line-height: 0.8; color: var(--border-strong); }
 .tl-arrow:hover { color: var(--text-muted); }
 .tl-arrow.active { color: var(--accent); }

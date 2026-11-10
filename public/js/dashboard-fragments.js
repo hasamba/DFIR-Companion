@@ -341,7 +341,7 @@ function execLedgerHtml(uncertainties) {
     (detail ? `<span class="exec-gap">${esc(detail)}</span>` : "") +
     `</li>`;
   const block = (title, rows) =>
-    rows.length ? `<div class="exec-block"><h4>${title}</h4><ul>${rows.join("")}</ul></div>` : "";
+    rows.length ? `<div class="exec-block"><h3>${title}</h3><ul>${rows.join("")}</ul></div>` : "";
   return (
     block("Assessment", known.map((u) => item(u, ""))) +
     block("Still unconfirmed", open.map((u) => item(u, u.gap)))

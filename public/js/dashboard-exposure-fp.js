@@ -73,7 +73,7 @@
             // — e.g. Shodan's https://www.shodan.io/host/<ip>.
             const head = r.breach
               ? r.sourceUrl
-                ? ` · <a href="${escAttr(r.sourceUrl)}" target="_blank" rel="noopener" data-safe-style="color:var(--accent);text-decoration:none"><strong>${esc(r.breach)}</strong> ↗</a>`
+                ? ` · <a href="${escAttr(r.sourceUrl)}" target="_blank" rel="noopener" data-safe-style="color:var(--accent);text-decoration:underline"><strong>${esc(r.breach)}</strong> ↗</a>`
                 : ` · <strong>${esc(r.breach)}</strong>`
               : "";
             return (

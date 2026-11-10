@@ -65,7 +65,14 @@ function renderSigmaCoverage(box, data) {
   const allOrigins = rows.map((r) => String(r.origin));
   const table = sigmaCovEl("table");
   const head = sigmaCovEl("tr");
-  for (const h of ["Origin", "Events", "Coverage", "Sigma sources and rules", ""]) head.appendChild(sigmaCovEl("th", h));
+  // The last column holds the pivot button. Its header is spoken but not shown (#2492): a blank <th>
+  // leaves the buttons with no column header for a screen reader.
+  // Only the TEXT is hidden — hiding the cell itself collapses the column and squeezes the buttons.
+  for (const h of ["Origin", "Events", "Coverage", "Sigma sources and rules", "Action"]) {
+    const th = sigmaCovEl("th", h === "Action" ? "" : h);
+    if (h === "Action") th.appendChild(sigmaCovEl("span", h, "visually-hidden"));
+    head.appendChild(th);
+  }
   table.appendChild(head);
   for (const row of rows) {
     const tr = sigmaCovEl("tr");

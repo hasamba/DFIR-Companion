@@ -85,14 +85,16 @@ function evNodeGlyph(n, x, y, color) {
 }
 
 // Colour a label by triage meaning: threat=red, benign=green, review=yellow, evidence=blue.
+// Theme tokens, not hex (#2492): the dark theme resolves them to the same bright colours as before,
+// the light theme to darker shades that keep this 10px text at 4.5:1 on light rows.
 function tagColor(label) {
   const THREAT = ["confirmed-malicious","c2-comms","exfil","credential-access","initial-access","lateral-movement","persistence"];
   const BENIGN = ["false-positive","benign-admin"];
-  if (THREAT.includes(label)) return "#ff6b6b";
-  if (BENIGN.includes(label)) return "#6bcB77";
-  if (label === "needs-review") return "#ffd93b";
-  if (label === "key-evidence" || label === "pivot-point") return "#6aa9ff";
-  return "#9aa4b2";
+  if (THREAT.includes(label)) return "var(--c-ff6b6b)";
+  if (BENIGN.includes(label)) return "var(--c-6bcb77)";
+  if (label === "needs-review") return "var(--c-ffd93b)";
+  if (label === "key-evidence" || label === "pivot-point") return "var(--c-6aa9ff)";
+  return "var(--c-9aa4b2)";
 }
 
 function geoSevColor(sev) {

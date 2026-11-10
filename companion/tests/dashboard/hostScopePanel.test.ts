@@ -40,7 +40,7 @@ function ledger(over: Record<string, unknown> = {}) {
 describe("host scope panel", () => {
   it("puts the gap list above the host table", () => {
     const html = panel.renderHostScope(ledger());
-    expect(html.indexOf("Scope gaps")).toBeLessThan(html.indexOf("<h4>Hosts</h4>"));
+    expect(html.indexOf("Scope gaps")).toBeLessThan(html.indexOf("<h3>Hosts</h3>"));
     expect(html).toContain("never collected");
   });
 

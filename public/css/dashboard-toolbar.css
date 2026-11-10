@@ -195,7 +195,8 @@
 .kc-phase { min-width: 100px; flex: 1 1 100px; border: 1px solid var(--border-color); border-radius: 6px;
   background: var(--bg-primary); cursor: pointer; transition: background .1s; }
 .kc-phase:not(.kc-empty):hover { background: var(--bg-secondary); }
-.kc-phase.kc-empty { opacity: 0.35; cursor: default; }
+.kc-phase.kc-empty { cursor: default; border-style: dashed; background: transparent; }
+.kc-phase.kc-empty .kc-tac, .kc-phase.kc-empty .kc-count { color: var(--text-muted); }
 .kc-phase.kc-active { background: var(--bg-secondary); border-color: var(--border-strong); }
 .kc-phase-header { padding: 8px 10px; border-top: 3px solid var(--border-color); border-radius: 5px 5px 0 0; }
 .kc-tac { display: block; font-size: 10px; color: var(--text-muted); font-weight: 600;
