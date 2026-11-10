@@ -256,7 +256,7 @@
         const el = document.getElementById("env-" + key);
         if (!el) continue;
         if (el.tagName === "SELECT") {
-          el.value = val || "";
+          el.value = (window.switchLoadValue ? window.switchLoadValue(key, val) : val) || ""; // #2509
           el.dispatchEvent(new Event("dfir:envloaded"));
         } else if (el.type === "password") {
           // Secrets come back masked and start empty, so ANY typed value is a change. Clear: #2465.

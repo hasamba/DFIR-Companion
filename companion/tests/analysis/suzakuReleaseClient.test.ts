@@ -3,11 +3,12 @@ import {
   downloadSuzakuRules,
   gitBlobSha,
   latestSuzakuCommit,
+  sameSuzakuFolders,
 } from "../../src/analysis/suzakuReleaseClient.js";
-import { fakeGitHub, ruleText, SHA_A } from "./fixtures/suzakuGitHub.js";
+import { fakeFolders, fakeGitHub, ruleText, SHA_A } from "./fixtures/suzakuGitHub.js";
 
 // #2508: the Suzaku rule updater's GitHub client — newest commit, folder listing, archive download,
-// and per-file verification against git blob SHAs.
+// and per-file verification against git blob SHAs. #2500: one snapshot of three watched folders.
 
 const FILES = {
   "aws_one.yml": ruleText("00000000-0000-0000-0000-000000000001", "One"),
@@ -16,10 +17,32 @@ const FILES = {
 const repo = { sha: SHA_A, date: "2026-11-20", files: FILES };
 
 describe("latestSuzakuCommit", () => {
-  it("reads the newest commit touching the CloudTrail folder", async () => {
+  it("reads the head of main and the watched folders' identities in two calls", async () => {
     const gh = fakeGitHub(repo);
-    expect(await latestSuzakuCommit(gh.fetchFn)).toEqual({ sha: SHA_A, date: "2026-11-20" });
-    expect(gh.calls[0]).toContain("path=suzaku%2Faws%2Fcloudtrail");
+    expect(await latestSuzakuCommit(gh.fetchFn)).toEqual({
+      sha: SHA_A,
+      date: "2026-11-20",
+      folders: fakeFolders(FILES),
+    });
+    expect(gh.calls).toHaveLength(2);
+    expect(gh.calls[0]).toContain("/commits?sha=main&per_page=1");
+    expect(gh.calls[1]).toMatch(/\/git\/trees\/a{40}\?recursive=1$/);
+  });
+
+  it("walks the folders one level at a time when GitHub truncates the listing", async () => {
+    const gh = fakeGitHub({ ...repo, truncated: true });
+    expect((await latestSuzakuCommit(gh.fetchFn)).folders).toEqual(fakeFolders(FILES));
+  });
+
+  it("a change to one folder alone changes the identity; a commit outside them does not", () => {
+    const m365 = { ...FILES, "m365/m365_x.yml": ruleText("00000000-0000-0000-0000-000000000003", "X") };
+    const a = fakeFolders(FILES);
+    const b = fakeFolders(m365);
+    expect(b["suzaku/m365"]).not.toBe(a["suzaku/m365"]);
+    expect(b["suzaku/aws/cloudtrail"]).toBe(a["suzaku/aws/cloudtrail"]);
+    expect(sameSuzakuFolders(a, fakeFolders({ ...FILES }))).toBe(true);
+    expect(sameSuzakuFolders(a, b)).toBe(false);
+    expect(sameSuzakuFolders(a, undefined)).toBe(false);
   });
 
   it("refuses an answer without a commit SHA", async () => {
@@ -32,9 +55,30 @@ describe("downloadSuzakuRules", () => {
   it("returns every listed rule, verified, and never reads the SigmaHQ mirror", async () => {
     const gh = fakeGitHub({ ...repo, others: { "sigma/aws/x.yml": "title: mirror" } });
     const d = await downloadSuzakuRules({ sha: SHA_A, date: "2026-11-20" }, gh.fetchFn, gh.fetchAsset);
-    expect(d.files.map((f) => f.name)).toEqual(["aws_one.yml", "aws_two.yml"]);
+    expect(d.files.map((f) => f.path)).toEqual(["aws/cloudtrail/aws_one.yml", "aws/cloudtrail/aws_two.yml"]);
+    expect(d.commit.folders).toEqual(fakeFolders(FILES));
     expect(d.files[0].text).toBe(FILES["aws_one.yml"]);
     expect(gh.calls.some((u) => u.endsWith(`/zipball/${SHA_A}`))).toBe(true);
+  });
+
+  it("takes every watched folder, keeping two files of the same name apart", async () => {
+    const same = ruleText("00000000-0000-0000-0000-000000000004", "Same");
+    const files = { ...FILES, "m365/same.yml": same, "azure/activity_logs/same.yml": `${same}# other\n` };
+    const gh = fakeGitHub({ ...repo, files });
+    const d = await downloadSuzakuRules(repo, gh.fetchFn, gh.fetchAsset);
+    expect(d.files.map((f) => f.path)).toEqual([
+      "aws/cloudtrail/aws_one.yml",
+      "aws/cloudtrail/aws_two.yml",
+      "azure/activity_logs/same.yml",
+      "m365/same.yml",
+    ]);
+  });
+
+  it("ignores a file in a sub-folder of a watched folder", async () => {
+    const files = { ...FILES, "m365/old/x.yml": ruleText("00000000-0000-0000-0000-000000000005", "Old") };
+    const gh = fakeGitHub({ ...repo, files });
+    const d = await downloadSuzakuRules(repo, gh.fetchFn, gh.fetchAsset);
+    expect(d.files.map((f) => f.path)).not.toContain("m365/old/x.yml");
   });
 
   it("fails when a file does not match GitHub's listing", async () => {

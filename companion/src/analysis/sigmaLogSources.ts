@@ -20,8 +20,9 @@ type Resolver = string | ((record: Row) => SigmaFieldLookup);
 export interface SigmaFieldTable {
   /** Lower-cased Sigma field name → where to read it (all are read and their values merged). */
   exact: Readonly<Record<string, readonly Resolver[]>>;
-  /** Lower-cased prefix → replacement prefixes, for open-ended nested objects. */
-  prefixes?: readonly { from: string; to: readonly string[] }[];
+  /** Lower-cased prefix → replacement prefixes, for open-ended nested objects. `derive` builds the
+   * resolvers from the rest of the field name instead, for shapes a path cannot express (#2500). */
+  prefixes?: readonly { from: string; to: readonly string[]; derive?: (rest: string) => Resolver[] }[];
   /** Lower-cased field names that look mappable but have no equivalent, with the reason. */
   unavailable?: Readonly<Record<string, string>>;
 }
@@ -40,11 +41,13 @@ export interface SigmaLogSourceDef {
 }
 
 // The importers' own `sources` labels (awsImport.ts, m365Import.ts + entraAuditImport.ts,
-// combinedLogImport.ts COMBINED_LOG_SOURCE, gcpRow.ts). sigmaCoverage.test.ts pins them to those files.
+// combinedLogImport.ts COMBINED_LOG_SOURCE, gcpRow.ts, cloudActivityImport.ts mapAzure). sigmaCoverage.test.ts pins them to those files.
 export const SIGMA_ORIGIN_CLOUDTRAIL = "AWS CloudTrail";
 export const SIGMA_ORIGIN_ENTRA = "Entra ID";
 export const SIGMA_ORIGIN_WEB = "Web Access Log";
 export const SIGMA_ORIGIN_GCP = "GCP Audit";
+export const SIGMA_ORIGIN_M365 = "Microsoft 365";
+export const SIGMA_ORIGIN_AZURE_ACTIVITY = "Azure Activity";
 
 const same = (...names: string[]): Record<string, string[]> =>
   Object.fromEntries(names.map((n) => [n.toLowerCase(), [n]]));
@@ -290,6 +293,135 @@ export const GCP_AUDIT: SigmaLogSourceDef = {
   origins: [SIGMA_ORIGIN_GCP],
 };
 
+// ── Microsoft 365 unified audit log + Azure Activity Log (#2500) ─────────────────────────────
+
+/** Most elements one UAL name/value collection is scanned for before the lookup stops (incomplete). */
+export const SIGMA_NAME_VALUE_MAX_ELEMENTS = 1_000;
+
+const keyOf = (row: Row, key: string): unknown => {
+  const lower = key.toLowerCase();
+  for (const k of Object.keys(row)) if (k.toLowerCase() === lower) return row[k];
+  return undefined;
+};
+
+/** A UAL `Value` as the text Sigma compares: arrays give one value per item, objects their JSON. */
+function nameValueTexts(v: unknown): (string | null)[] {
+  if (v === null || v === undefined) return [null];
+  if (Array.isArray(v)) return v.flatMap(nameValueTexts);
+  if (typeof v === "object") return [JSON.stringify(v)];
+  return [String(v)];
+}
+
+/** The elements one collection leaf holds: an element's JSON text, or a whole array written as a
+ * JSON string (lookupPath hands back a string leaf as written). Leaves past the JSON cap were
+ * already marked incomplete by lookupPath. */
+function collectionElements(text: string | null): Row[] {
+  if (typeof text !== "string") return [];
+  const t = text.trimStart();
+  if (t[0] !== "{" && t[0] !== "[") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+  return items.filter((x): x is Row => !!x && typeof x === "object" && !Array.isArray(x));
+}
+
+/**
+ * A field inside a UAL name/value collection — `Parameters`, `ExtendedProperties`,
+ * `OperationProperties` — which Microsoft writes as `[{ "Name": "X", "Value": "…" }, …]`. Suzaku's
+ * rules name the member directly (`Parameters.ForwardingSmtpAddress`), so `<collection>.<key>` reads
+ * the Value of every element whose Name is key (case-insensitively; duplicates give every value).
+ * The collection is read through lookupPath, so a stringified array and its incomplete flag carry
+ * over; a scan past the element cap is incomplete, never "absent". An element with no such Name is
+ * absent, so `|exists` is false. `ModifiedProperties` is not one of these: its elements carry
+ * OldValue / NewValue, two different facts, and a field under it stays refused.
+ */
+export function ualNameValue(collection: string, key: string): (record: Row) => SigmaFieldLookup {
+  return (record) => {
+    const coll = lookupPath(record, collection);
+    let incomplete = coll.incomplete;
+    const elements = coll.values.flatMap(collectionElements);
+    if (elements.length > SIGMA_NAME_VALUE_MAX_ELEMENTS) incomplete = true;
+    const values: (string | null)[] = [];
+    let present = false;
+    for (const el of elements.slice(0, SIGMA_NAME_VALUE_MAX_ELEMENTS)) {
+      const name = keyOf(el, "Name");
+      if (typeof name !== "string" || name.trim().toLowerCase() !== key.toLowerCase()) continue;
+      present = true;
+      values.push(...nameValueTexts(keyOf(el, "Value")));
+    }
+    return { present, values, incomplete };
+  };
+}
+
+const UAL_NAME_VALUE = ["Parameters", "ExtendedProperties", "OperationProperties"];
+
+export const AZURE_M365: SigmaLogSourceDef = {
+  id: "azure-m365",
+  label: "Microsoft 365 unified audit log",
+  matches: (ls) => is(ls, "azure", "m365"),
+  fields: {
+    exact: {
+      ...same(
+        "Workload",
+        "RecordType",
+        "UserId",
+        "UserKey",
+        "UserType",
+        "ClientIP",
+        "ResultStatus",
+        "ObjectId",
+        "OrganizationId",
+        ...UAL_NAME_VALUE,
+      ),
+      // A UAL CSV export names the column `Operations`; its AuditData JSON says `Operation`.
+      operation: ["Operation", "Operations"],
+    },
+    // Both readings are merged: an export that already flattened the collection into an object (or
+    // a dotted column) is read at the plain path, Microsoft's own array shape through Name/Value.
+    prefixes: UAL_NAME_VALUE.map((c) => ({
+      from: `${c.toLowerCase()}.`,
+      to: [`${c}.`],
+      derive: (rest: string) => [ualNameValue(c, rest)],
+    })),
+    unavailable: {
+      modifiedproperties:
+        "its elements hold an old and a new value — two facts — and the Companion does not pick one",
+    },
+  },
+  indexFields: ["Operation"],
+  // Entra directory changes exported through the UAL are written as Entra ID rows (m365Import.ts).
+  origins: [SIGMA_ORIGIN_M365, SIGMA_ORIGIN_ENTRA],
+};
+
+export const AZURE_ACTIVITY: SigmaLogSourceDef = {
+  id: "azure-activitylogs",
+  label: "Azure Activity Log",
+  matches: (ls) => is(ls, "azure", "activitylogs"),
+  fields: {
+    // The three export shapes cloudActivityImport.ts reads: REST (`operationName.value`), the
+    // diagnostic-settings PT1H.json (`operationName` as a string) and Log Analytics AzureActivity
+    // (`OperationNameValue`, `CategoryValue`, `Properties` / `Properties_d` as JSON text).
+    exact: {
+      operationname: ["operationName.value", "operationName", "OperationNameValue", "OperationName"],
+      operationnamevalue: ["OperationNameValue", "operationName.value", "operationName"],
+      categoryvalue: ["CategoryValue", "category.value", "category"],
+      category: ["category.value", "category", "CategoryValue"],
+      resourceprovidervalue: ["ResourceProviderValue", "resourceProviderName.value", "resourceProviderName"],
+      resourceid: ["resourceId", "ResourceId"],
+      caller: ["caller", "Caller"],
+      calleripaddress: ["callerIpAddress", "CallerIpAddress", "httpRequest.clientIpAddress"],
+      activitystatusvalue: ["ActivityStatusValue", "status.value", "status"],
+    },
+    prefixes: [{ from: "properties.", to: ["properties.", "Properties_d."] }],
+  },
+  indexFields: ["operationName"],
+  origins: [SIGMA_ORIGIN_AZURE_ACTIVITY],
+};
+
 const category = (ls: SigmaLogsource, name: string): boolean =>
   ls.category?.toLowerCase() === name && !ls.product && !ls.service;
 
@@ -358,6 +490,8 @@ export const SIGMA_LOG_SOURCES: readonly SigmaLogSourceDef[] = [
   AZURE_SIGNIN_LOGS,
   AZURE_AUDIT_LOGS,
   GCP_AUDIT,
+  AZURE_M365,
+  AZURE_ACTIVITY,
   WEB_SERVER,
   WEB_PROXY,
 ];
@@ -372,7 +506,9 @@ export function fieldResolvers(def: SigmaLogSourceDef, field: string): Resolver[
   const exact = def.fields.exact[lower];
   if (exact) return [...exact];
   for (const p of def.fields.prefixes ?? []) {
-    if (lower.startsWith(p.from)) return p.to.map((t) => t + field.slice(p.from.length));
+    if (!lower.startsWith(p.from)) continue;
+    const rest = field.slice(p.from.length);
+    return [...p.to.map((t) => t + rest), ...(p.derive?.(rest) ?? [])];
   }
   return { refused: `the field ${field} is not available in ${def.label}` };
 }

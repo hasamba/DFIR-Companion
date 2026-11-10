@@ -3093,7 +3093,7 @@
         <hr class="settings-hr" />
         <div data-safe-style="font-weight:600;font-size:14px;margin:4px 0 6px">Suzaku rules</div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_RULES">Use the Suzaku CloudTrail rules<span class="sfield-hint">DFIR_SIGMA_SUZAKU_RULES — on/off (default on); Yamato Security's own AWS rules, bundled beside SigmaHQ (DRL 1.1). Off = SigmaHQ rules only</span></label><select id="env-DFIR_SIGMA_SUZAKU_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_RULES">Use the Suzaku rules<span class="sfield-hint">DFIR_SIGMA_SUZAKU_RULES — on/off (default on); Yamato Security's own AWS CloudTrail, Microsoft 365 and Azure Activity rules, bundled beside SigmaHQ (DRL 1.1). Off = SigmaHQ rules only</span></label><select id="env-DFIR_SIGMA_SUZAKU_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
           <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_MIN_LEVEL">Suzaku level that raises severity<span class="sfield-hint">DFIR_SIGMA_SUZAKU_MIN_LEVEL — most Suzaku rules are one rule per API call, so below this level they only label the event</span></label>
             <select id="env-DFIR_SIGMA_SUZAKU_MIN_LEVEL">
               <option value="">— default (critical) —</option>
@@ -3126,7 +3126,7 @@
             <button id="suzakuCheckBtn" type="button" class="btn-mini">Check for Suzaku updates</button>
             <button id="suzakuRollbackBtn" type="button" class="btn-mini">Roll back Suzaku</button>
           </div>
-          <span class="sfield-hint">Suzaku publishes no releases, so this looks for the newest change to its CloudTrail rule folder on GitHub. Every file must match GitHub's fingerprint for it at that change. Nothing is installed until you review the changes and click Install.</span>
+          <span class="sfield-hint">Suzaku publishes no releases, so this looks for the newest change to its CloudTrail, Microsoft 365 and Azure Activity rule folders on GitHub. Every file must match GitHub's fingerprint for it at that change. Nothing is installed until you review the changes and click Install.</span>
           <div id="suzakuMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
           <div id="suzakuPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
         </div>

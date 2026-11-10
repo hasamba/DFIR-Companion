@@ -44,6 +44,7 @@ import {
   sigmaMatchesFor,
   type SigmaGradingSnapshot,
 } from "./sigmaImportGrade.js";
+import { AZURE_M365 } from "./sigmaLogSources.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
   isServicePrincipalSignIn,
@@ -594,6 +595,10 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     if (refs.length) sigmaRows++;
     return refs;
   };
+  // Every UAL record, whichever decoder wrote its rows, is graded by the M365 log source (#2500) on the
+  // normalized record (AuditData merged over the export's outer columns).
+  const gradeUal = (rows: MappedEvent[], rec: Row): MappedEvent[] =>
+    snapshot && rows.length ? applySigmaToRecordRows(rows, sigmaFor(AZURE_M365.id, rec), snapshot) : rows;
   const indexBase = opts.recordIndexBase ?? 0;
   const rowRecords: number[] = [];
   normalized.forEach((rec, index) => {
@@ -609,7 +614,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     const kind = classify(rec);
     if (kind === "ual" && isEntraUalRecord(rec)) {
       // An Entra directory change exported through the UAL: the same decoder as the Graph shape.
-      mapped.push(...mapEntraAuditRows(rec, iocSink, at, resolve, opSeverity));
+      mapped.push(...gradeUal(mapEntraAuditRows(rec, iocSink, at, resolve, opSeverity), rec));
       opts.debug?.fallback("entra_ual_decoder");
       sawUal = true;
     } else if (kind === "ual") {
@@ -617,7 +622,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       // replaces the plain row; any other Exchange operation keeps it.
       const exchange = isExchangeRecord(rec) ? mapExchangeRow(rec, iocSink, at) : null;
       if (exchange) opts.debug?.fallback("exchange_decoder");
-      mapped.push(exchange ?? mapUal(rec, iocSink, at, opts.debug));
+      mapped.push(...gradeUal([exchange ?? mapUal(rec, iocSink, at, opts.debug)], rec));
       sawUal = true;
     } else if (kind === "signin") {
       const row = mapSignIn(rec, iocSink, at, opts.debug);

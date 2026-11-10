@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { bundledSigmaDir } from "../../src/analysis/sigmaBundledRules.js";
 import {
   downloadSigmaMain,
+  SIGMA_GRADED_PATHS,
   sigmaMainLabel,
   sigmaMainSummary,
 } from "../../src/analysis/sigmaMainBranchClient.js";
@@ -86,6 +87,24 @@ function fakeSigmaHQ(
   };
   return { fetchFn, fetchAsset };
 }
+
+describe("the graded SigmaHQ folders", () => {
+  it("cover every folder of the bundle that holds rules (#2500), so no graded rule's change is missed", async () => {
+    const { readdirSync } = await import("node:fs");
+    const root = join(bundledSigmaDir()!, "rules");
+    const ruleDirs: string[] = [];
+    const walk = (rel: string): void => {
+      const entries = readdirSync(join(root, rel), { withFileTypes: true });
+      if (entries.some((e) => e.isFile() && e.name.endsWith(".yml"))) ruleDirs.push(`rules/${rel}`);
+      for (const e of entries) if (e.isDirectory()) walk(rel ? `${rel}/${e.name}` : e.name);
+    };
+    walk("");
+    const unwatched = ruleDirs.filter(
+      (d) => !SIGMA_GRADED_PATHS.some((p) => d === p || d.startsWith(`${p}/`)),
+    );
+    expect(unwatched).toEqual([]);
+  });
+});
 
 describe("the main-branch summary", () => {
   it("counts each newer commit that touches a graded folder once", async () => {

@@ -22,9 +22,10 @@ export const SIGMA_REGRADE_IMPORTERS: ReadonlySet<string> = new Set([
   "m365",
   "m365-audit",
   "combined-log",
-  // GCP Cloud Audit Log rows (#2346). A stored cloud-activity file can also hold Azure Activity
-  // records; those rows are written by another importer, are never Sigma-graded, and stay as they are.
+  // GCP Cloud Audit Log rows (#2346) and Azure Activity rows (#2500): both parsed again from the
+  // stored cloud-activity file.
   "gcp-audit",
+  "azure-activity",
 ]);
 
 const ALL = { aggregate: false, maxEvents: Number.MAX_SAFE_INTEGER } as const;
@@ -64,7 +65,8 @@ export function reparseForRegrade(
   if (importer === "m365" || importer === "m365-audit")
     return parseM365Audit(text, { ...ALL, sigma: snapshot }).events;
   if (importer === "combined-log") return parseCombinedLog(text, { ...ALL, sigma: snapshot }).events;
-  if (importer === "gcp-audit") return parseCloudActivity(text, { ...ALL, sigma: snapshot }).events;
+  if (importer === "gcp-audit" || importer === "azure-activity")
+    return parseCloudActivity(text, { ...ALL, sigma: snapshot }).events;
   return [];
 }
 

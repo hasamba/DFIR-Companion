@@ -1,8 +1,8 @@
-// Installed Suzaku CloudTrail rules (#2508): which version is active (the bundled copy or a commit
+// Installed Suzaku rules (#2508; CloudTrail, Microsoft 365 and Azure Activity since #2500): which version is active (the bundled copy or a commit
 // downloaded from GitHub), and check / preview / install / roll back. Nothing installs on its own.
 //
 //   <dataRoot>/sigma/suzaku/installs/<id>/  one immutable folder per install, laid out like the
-//                                           bundled data/sigma-suzaku (release.json + rules/aws/cloudtrail)
+//                                           bundled data/sigma-suzaku (release.json + rules/<folder>/…)
 //   <dataRoot>/sigma/suzaku/staging/<token>/ the one previewed-but-not-installed commit
 //   <dataRoot>/sigma/suzaku/active.json     { active, previous, generation } — "bundled" is a value
 //
@@ -32,8 +32,9 @@ import {
   downloadSuzakuRules,
   latestSuzakuCommit,
   SUZAKU_MAX_RULE_FILES,
+  sameSuzakuFolders,
   SUZAKU_REPO,
-  SUZAKU_WATCH_PATH,
+  SUZAKU_WATCH_PATHS,
   type SuzakuCommit,
 } from "./suzakuReleaseClient.js";
 import type { ReleaseAssetFetch } from "./githubReleaseDownload.js";
@@ -59,6 +60,8 @@ export interface SuzakuVersionInfo {
   date?: string;
   source: "bundled" | "github";
   installedAt?: string;
+  /** Watched folder → git tree SHA (#2500). Absent on an install made before #2500 (CloudTrail only). */
+  folders?: Record<string, string>;
 }
 
 export interface SuzakuCheck {
@@ -68,6 +71,8 @@ export interface SuzakuCheck {
   latest?: string;
   latestCommit?: string;
   latestDate?: string;
+  /** The checked snapshot's folder identities, pinned for the preview (#2500). */
+  latestFolders?: Record<string, string>;
   updateAvailable: boolean;
   error?: string;
 }
@@ -114,17 +119,26 @@ const paths = (dataRoot: string) => {
 
 const releaseLabel = (c: SuzakuCommit): string => `suzaku-${c.date}-${c.sha.slice(0, 7)}`;
 
-/** Loader paths (suzaku/aws/cloudtrail/<name>): what the rule set sees. */
-const loaderFiles = (files: readonly { name: string; text: string }[]): SigmaRuleFile[] =>
-  files.map((f) => ({
-    path: `${SUZAKU_PATH_PREFIX}aws/cloudtrail/${f.name}`,
-    text: f.text,
-    origin: SUZAKU_ORIGIN_KEY,
-  }));
+/** Loader paths (suzaku/<folder>/<name>): what the rule set sees. */
+const loaderFiles = (files: readonly { path: string; text: string }[]): SigmaRuleFile[] =>
+  files.map((f) => ({ path: `${SUZAKU_PATH_PREFIX}${f.path}`, text: f.text, origin: SUZAKU_ORIGIN_KEY }));
 
-/** Disk paths (rules/aws/cloudtrail/<name>): what writeReleaseDir lays out under a folder. */
-const diskFiles = (files: readonly { name: string; text: string }[]): SigmaRuleFile[] =>
-  files.map((f) => ({ path: `rules/aws/cloudtrail/${f.name}`, text: f.text }));
+/** Disk paths (rules/<folder>/<name>): what writeReleaseDir lays out under a folder. */
+const diskFiles = (files: readonly { path: string; text: string }[]): SigmaRuleFile[] =>
+  files.map((f) => ({ path: `rules/${f.path}`, text: f.text }));
+
+/** release.json's `folders`, when it names every watched folder with a tree SHA. */
+function readFolders(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const rec = raw as Record<string, unknown>;
+  const out: Record<string, string> = {};
+  for (const p of SUZAKU_WATCH_PATHS) {
+    const v = rec[p];
+    if (typeof v !== "string" || !/^[0-9a-f]{40}$/.test(v)) return undefined;
+    out[p] = v;
+  }
+  return out;
+}
 
 function readManifest(file: string): Manifest {
   try {
@@ -169,8 +183,24 @@ export class SuzakuRuleStore implements SuzakuSource {
   // ── Reads ──────────────────────────────────────────────────────────────────────────────────
 
   private bundledInfo(): SuzakuVersionInfo {
-    const meta = this.bundledDir ? readSuzakuMeta(this.bundledDir) : { release: "none", commit: "main" };
-    return { id: BUNDLED, release: meta.release, commit: meta.commit, source: "bundled" };
+    if (!this.bundledDir) return { id: BUNDLED, release: "none", commit: "main", source: "bundled" };
+    const meta = readSuzakuMeta(this.bundledDir);
+    let folders: Record<string, string> | undefined;
+    try {
+      folders = readFolders(
+        (JSON.parse(readFileSync(join(this.bundledDir, "release.json"), "utf8")) as Record<string, unknown>)
+          .folders,
+      );
+    } catch {
+      folders = undefined;
+    }
+    return {
+      id: BUNDLED,
+      release: meta.release,
+      commit: meta.commit,
+      source: "bundled",
+      ...(folders ? { folders } : {}),
+    };
   }
 
   /** An install folder's info, or undefined when it is not complete (metadata + at least one rule). */
@@ -184,7 +214,9 @@ export class SuzakuRuleStore implements SuzakuSource {
       // copy rather than leave an install that loads nothing (Codex review).
       const read = suzakuRuleFiles(dir, SUZAKU_MAX_RULE_FILES);
       if (read.files.length === 0 || read.overflow) return undefined;
+      const folders = readFolders(meta.folders);
       return {
+        ...(folders ? { folders } : {}),
         id,
         release: typeof meta.release === "string" ? meta.release : id,
         commit: meta.commit,
@@ -246,7 +278,7 @@ export class SuzakuRuleStore implements SuzakuSource {
       ...c,
       installed: now.release,
       installedCommit: now.commit,
-      updateAvailable: !c.error && !!c.latestCommit && c.latestCommit !== now.commit,
+      updateAvailable: !c.error && !!c.latestFolders && !sameSuzakuFolders(c.latestFolders, now.folders),
     };
   }
 
@@ -263,7 +295,13 @@ export class SuzakuRuleStore implements SuzakuSource {
     return run;
   }
 
-  /** Ask GitHub for the newest commit touching the Suzaku CloudTrail folder. Never throws. */
+  /**
+   * Ask GitHub for the head of Suzaku's main branch and its watched folders. An update is a change
+   * to any watched folder — the identity is the folders' tree SHAs, not the commit, so the repo's
+   * daily SigmaHQ-mirror commits are not updates. A version with no recorded folders (an install
+   * made before #2500 holds only CloudTrail) always has one: installing adds the new folders.
+   * Never throws.
+   */
   async checkLatest(fetchFn: typeof fetch): Promise<SuzakuCheck> {
     const now = this.active();
     const base = { checkedAt: new Date().toISOString(), installed: now.release, installedCommit: now.commit };
@@ -274,7 +312,8 @@ export class SuzakuRuleStore implements SuzakuSource {
         latest: releaseLabel(latest),
         latestCommit: latest.sha,
         latestDate: latest.date,
-        updateAvailable: latest.sha !== now.commit,
+        ...(latest.folders ? { latestFolders: latest.folders } : {}),
+        updateAvailable: !sameSuzakuFolders(latest.folders, now.folders),
       };
     } catch (error) {
       this.lastCheck = { ...base, updateAvailable: false, error: (error as Error).message };
@@ -302,6 +341,7 @@ export class SuzakuRuleStore implements SuzakuSource {
         commit: commit.sha,
         date: commit.date,
         source: "github",
+        ...(download.commit.folders ? { folders: download.commit.folders } : {}),
       };
       const p = paths(this.dataRoot);
       await pruneExcept(p.staging, new Set());
@@ -320,7 +360,8 @@ export class SuzakuRuleStore implements SuzakuSource {
     return {
       origin: "Suzaku",
       repo: SUZAKU_REPO,
-      path: SUZAKU_WATCH_PATH,
+      paths: [...SUZAKU_WATCH_PATHS],
+      ...(info.folders ? { folders: info.folders } : {}),
       release: info.release,
       commit: info.commit,
       date: info.date,

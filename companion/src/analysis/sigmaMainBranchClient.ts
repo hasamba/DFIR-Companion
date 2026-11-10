@@ -31,6 +31,7 @@ export const SIGMA_GRADED_PATHS = [
   "rules/cloud/aws/cloudtrail",
   "rules/cloud/azure/signin_logs",
   "rules/cloud/azure/audit_logs",
+  "rules/cloud/azure/activity_logs",
   "rules/cloud/gcp/audit",
   "rules/web/webserver_generic",
   "rules/web/proxy_generic",
