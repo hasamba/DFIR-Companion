@@ -79,6 +79,8 @@ let taggerStore: TaggerStore;
 let gate: ForensicGateControlStore;
 let lock: StateLock;
 let pipelines: Record<"full" | "inc", AnalysisPipeline>;
+/** Incremental merges the "inc" pipeline committed: each tells the dashboards "changed", not a state. */
+let fastMerges = 0;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "dfir-merge-eq-"));
@@ -92,12 +94,14 @@ beforeEach(async () => {
   await writeFile(join(root, "rules.yaml"), RULES);
   taggerStore = new TaggerStore(join(root, "user.yaml"), [join(root, "rules.yaml")]);
   lock = new StateLock();
+  fastMerges = 0;
   const make = (incrementalMerge: boolean) =>
     new AnalysisPipeline({
       provider: new MockProvider("mock", "{}"),
       stateStore,
       stateLock: lock,
       incrementalMerge,
+      ...(incrementalMerge ? { onStateChanged: () => void fastMerges++ } : {}),
       imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
     });
   pipelines = { full: make(false), inc: make(true) };
@@ -192,6 +196,45 @@ function firstDiff(a: unknown, b: unknown, path = ""): string {
 
 const at = (n: number) => `2026-09-30T10:0${n}:00.000Z`;
 
+/**
+ * One page of CloudTrail records as a live AWS collection saves it: mostly read-only noise (Info,
+ * demoted), every fifth record a High/Medium operation. `first` numbers the records; `day` dates them.
+ */
+async function trailPage(name: string, first: number, n: number, day: number): Promise<string> {
+  const ops = [
+    ["DescribeInstances", "ec2.amazonaws.com", true],
+    ["CreateAccessKey", "iam.amazonaws.com", false],
+    ["ListBuckets", "s3.amazonaws.com", true],
+    ["StopLogging", "cloudtrail.amazonaws.com", false],
+    ["AttachUserPolicy", "iam.amazonaws.com", false],
+  ] as const;
+  const Records = Array.from({ length: n }, (_, k) => {
+    const i = first + k;
+    const [eventName, eventSource, readOnly] = i % 5 === 0 ? ops[1 + ((i / 5) % 4)] : ops[(i % 2) * 2];
+    const user = `ops${i % 7}`;
+    return {
+      eventVersion: "1.09",
+      eventID: `00000000-0000-4000-b000-${i.toString(16).padStart(12, "0")}`,
+      eventTime: `2026-10-${String(day).padStart(2, "0")}T10:${String(k % 60).padStart(2, "0")}:00Z`,
+      eventSource,
+      eventName,
+      awsRegion: "us-east-1",
+      sourceIPAddress: `198.51.100.${i % 200}`,
+      userAgent: "aws-cli/2.15.0",
+      readOnly,
+      userIdentity: {
+        type: "IAMUser",
+        arn: `arn:aws:iam::123456789012:user/${user}`,
+        accountId: "123456789012",
+        userName: user,
+      },
+    };
+  });
+  const path = join(root, name);
+  await writeFile(path, JSON.stringify({ Records }));
+  return path;
+}
+
 describe("import + settle through the incremental merge matches the full merge (#1874)", () => {
   it("SIEM service, Spooler and Sysmon process rows, import after import, with a re-import", async () => {
     let n = 0;
@@ -211,6 +254,30 @@ describe("import + settle through the incremental merge matches the full merge (
         }),
       );
     }
+  });
+
+  // #2504: a live AWS collection imports page after page (newest first, as LookupEvents pages run).
+  // A cloud-only case carries the cloud coverage row, which used to send every page down the full
+  // merge. Every page after the first now takes the incremental merge, and the case, the import's
+  // counts and its undo checkpoint are the full merge's — through the real importer and the real
+  // settle (dual-write, content tagger, demote of the Info noise).
+  it("CloudTrail pages of a live collection, page after page: the fast path, and the full merge's result", async () => {
+    const days = [20, 19, 18, 21, 17];
+    for (let n = 1; n <= days.length; n++) {
+      const path = await trailPage(`page-${n}.json`, (n - 1) * 40, 40, days[n - 1]);
+      await importBoth((p, caseId) =>
+        p.importCloudFile(caseId, "aws", path, {
+          label: `cc-page-${n}.json`,
+          idPrefix: `cc${n}`,
+          importedAt: at(n),
+        }),
+      );
+      expect(fastMerges).toBe(n - 1); // the first page indexes the case through the full merge
+    }
+    const state = await stateStore.load("inc");
+    const coverage = state.forensicTimeline.find((e) => e.id === "cloud-metadata-coverage");
+    expect(coverage?.timestamp).toBe("2026-10-17T10:00:00Z");
+    expect(state.forensicTimeline.some((e) => e.severity === "Info")).toBe(false); // demoted
   });
 
   it("returns the rows it wrote and tells the dashboards the case changed, instead of the whole case", async () => {

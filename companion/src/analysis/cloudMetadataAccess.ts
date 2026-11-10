@@ -476,20 +476,38 @@ export function metadataCoverageEvent(events: readonly ForensicEvent[]): Forensi
     if (hasHostTelemetry) return null; // the gap does not exist
   }
   if (!hasCloudAudit) return null;
+  // Advice, not an event (#2486): at the earliest cloud-audit record.
+  return coverageEventAt(earliestEventTime(events, isCoverageCandidate));
+}
+
+/** A row the coverage event's time is taken from: a cloud-audit record, never the event itself. */
+export function isCoverageCandidate(e: ForensicEvent): boolean {
+  return e.id !== COVERAGE_EVENT_ID && CLOUD_AUDIT_RE.test(e.description ?? "");
+}
+
+const COVERAGE_DESCRIPTION = `Cloud coverage gap ${METADATA_MARKER} ${explainVisibility(false, true)}]`;
+
+/**
+ * The coverage event placed at `timestamp`. The incremental importer merge (#2504) builds it here
+ * too, from the case-wide earliest cloud-audit time it computes itself, so both merges write the
+ * same row.
+ */
+export function coverageEventAt(timestamp: string): ForensicEvent {
   return {
     id: COVERAGE_EVENT_ID,
-    // Advice, not an event (#2486): at the earliest cloud-audit record. Graded Medium; the severity
-    // gate never demotes it whatever the grade (#2497), so synthesis still learns that "nothing
-    // found" is not "absent" (#908) on a case gated at High.
-    timestamp: earliestEventTime(
-      events,
-      (e) => e.id !== COVERAGE_EVENT_ID && CLOUD_AUDIT_RE.test(e.description ?? ""),
-    ),
-    description: `Cloud coverage gap ${METADATA_MARKER} ${explainVisibility(false, true)}]`,
+    timestamp,
+    // Graded Medium; the severity gate never demotes it whatever the grade (#2497), so synthesis
+    // still learns that "nothing found" is not "absent" (#908) on a case gated at High.
+    description: COVERAGE_DESCRIPTION,
     severity: "Medium",
     mitreTechniques: [],
     relatedFindingIds: [],
     sourceScreenshots: [],
     sources: [COVERAGE_SOURCE],
   };
+}
+
+/** The coverage event exactly as generated: its note is advice, read by no correlation pass. */
+export function isGeneratedCoverageRow(e: ForensicEvent): boolean {
+  return e.id === COVERAGE_EVENT_ID && e.description === COVERAGE_DESCRIPTION;
 }

@@ -24,6 +24,8 @@ import {
   mergeIndexEntry,
   mergeTrigger,
 } from "./mergeIndex.js";
+import { COVERAGE_EVENT_ID } from "./cloudMetadataAccess.js";
+import { placeCoverage } from "./incrementalMergeCoverage.js";
 import {
   NEW_ROW_BASE,
   compareFinal,
@@ -49,11 +51,12 @@ import {
  * merge instead: a case whose index is missing or from another build, rows another writer changed in
  * bulk, a correlation pass with work to do (the triggers in mergeIndex.ts), a delta that cites events
  * or carries lab intel, duplicate event ids, a timeline not in time order, a correlation bucket
- * spanning most of the case, the cloud metadata coverage row falling due, or a write that raced it.
+ * spanning most of the case, a cloud coverage row due with no readable cloud time, or a write that
+ * raced it.
  */
 
 /** Bump when the merge's semantics or the index's contents change: every case re-indexes once. */
-export const MERGE_INDEX_VERSION = 1;
+export const MERGE_INDEX_VERSION = 2; // 2: the cloud coverage row is no trigger (#2504)
 
 export type IncrementalResult =
   { ok: true; state: InvestigationState; read: number; written: number } | { ok: false; reason: string };
@@ -100,8 +103,10 @@ export async function mergeIncrementally(
   const clamped = await clampHeld(store, caseId, snap, held, delta, ctx);
   const chained = chainHeld(snap, held, clamped.working, clamped.year, ctx);
   if (typeof chained === "string") return fallback(chained);
+  const rows = chained.coverageDue ? await placeCoverage(store, caseId, held, chained.rows) : chained.rows;
+  if (typeof rows === "string") return fallback(rows);
   const limit = Math.max(5000, Math.floor(snap.rowCount / 2));
-  const corr = await correlateHeld(store, caseId, snap, held, chained.rows, limit);
+  const corr = await correlateHeld(store, caseId, snap, held, rows, limit);
   if (typeof corr === "string") return fallback(corr);
 
   const iocPart = await mergeIocPart(store, caseId, delta, ctx, overview, [...corr.absorbedInto.keys()]);
@@ -162,7 +167,10 @@ async function applyOrExplain(
   }
 }
 
-/** The stored rows the delta names, every stale row, and every row a subset-safe pass reads. */
+/**
+ * The stored rows the delta names, the cloud coverage row (placeCoverage replaces it), every stale
+ * row, and every row a subset-safe pass reads.
+ */
 async function readHeld(
   store: StateStore,
   caseId: string,
@@ -173,9 +181,9 @@ async function readHeld(
     // Work-log rows included: the upsert skips them, and a stored row read for nothing is harmless.
     ...new Set((delta.forensicEvents ?? []).map((e) => e.id)),
   ];
-  const named = incomingIds.length ? await store.mergeRows(caseId, { ids: incomingIds }) : [];
+  const named = await store.mergeRows(caseId, { ids: [...incomingIds, COVERAGE_EVENT_ID] });
   if (new Set(named.map((r) => eventOf(r).id)).size !== named.length)
-    return "an incoming event id is stored more than once";
+    return "an event id the merge reads is stored more than once";
   const stale = snap.stale.length ? await store.mergeRows(caseId, { rowIds: snap.stale }) : [];
   // Every row a subset-safe pass reads (mergeIndex.ts mergeLoadAlways), so it sees all of its input.
   const always = snap.clean.load ? await store.mergeRows(caseId, { flagMask: MERGE_FLAG_LOAD }) : [];
@@ -243,7 +251,7 @@ function chainHeld(
   working: readonly HeldRow[],
   year: number | null,
   ctx: WindowContext,
-): { rows: HeldRow[] } | string {
+): { rows: HeldRow[]; coverageDue: boolean } | string {
   for (const h of working) {
     const why = mergeTrigger(h.event);
     if (why) return `a correlation pass has work: ${why}`;
@@ -271,8 +279,8 @@ function chainHeld(
     if (flags & MERGE_FLAG_PROCESS) process++;
     if (flags & MERGE_FLAG_CLOUD_AUDIT) cloud++;
   }
-  if (cloud > 0 && process === 0) return "the cloud metadata coverage row is due";
-  return { rows };
+  // Due: the full merge would replace the coverage row; placeCoverage does it the same way (#2504).
+  return { rows, coverageDue: cloud > 0 && process === 0 };
 }
 
 interface Correlated {
