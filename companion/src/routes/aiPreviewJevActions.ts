@@ -12,7 +12,7 @@ import { AnonymizationChangedError, anonRevision } from "../analysis/anonRevisio
 import { containmentRequest } from "./containmentCheckPrepare.js";
 import { jevMasking, type JevMasking } from "./jevMasking.js";
 import { jevScanText } from "./jevPresidioGate.js";
-import { reviewCaseContext, selectReviewRows } from "./jevReviewPrepare.js";
+import { reviewCaseContext, selectReviewRows, type ReviewRequest } from "./jevReviewPrepare.js";
 import type { RouteContext } from "./context.js";
 import type { RouteAiPreviewAction } from "./aiPreviewRouteAction.js";
 
@@ -89,13 +89,8 @@ function jevSettingsOr(): JevSettings | string {
 const identity = (t: string): string => t;
 
 /** The first batch the real review would send, from the same rows, mask and grader. */
-async function previewReview(ctx: RouteContext, caseId: string, settings: JevSettings, all: boolean) {
-  const { state, candidates } = await selectReviewRows(
-    ctx.options,
-    caseId,
-    settings,
-    all ? { all: true } : {},
-  );
+async function previewReview(ctx: RouteContext, caseId: string, settings: JevSettings, body: ReviewRequest) {
+  const { state, candidates } = await selectReviewRows(ctx.options, caseId, settings, body);
   if (!candidates.length) return; // the real review asks nothing either
   const masking = await jevMasking(ctx.store, caseId, state);
   const shape = settings.shape;
@@ -168,7 +163,17 @@ export const JEV_PREVIEW_ACTIONS: Readonly<Record<string, RouteAiPreviewAction>>
       if (typeof settings === "string") return settings;
       if (!ctx.options.superTimelineStore || !ctx.options.stateStore)
         return "the super-timeline is not configured";
-      return () => previewReview(ctx, caseId, settings, params.all === true || params.all === "true");
+      // The same body fields the review route reads: `all`, `limit`, `filters` (selectReviewRows).
+      const filters =
+        params.filters && typeof params.filters === "object" && !Array.isArray(params.filters)
+          ? params.filters
+          : undefined;
+      const body: ReviewRequest = {
+        all: params.all === true || params.all === "true",
+        ...(params.limit !== undefined ? { limit: params.limit } : {}),
+        ...(filters ? { filters } : {}),
+      };
+      return () => previewReview(ctx, caseId, settings, body);
     },
   },
   "containment-check": {

@@ -373,6 +373,14 @@ describe("AI preview — the decision-model requests (#2515)", () => {
     expect(JSON.parse(call.systemPrompt)).toEqual(wire.questions);
   });
 
+  it("review: honours the same limit the review route reads", async () => {
+    const h = await harness();
+    const res = await preview(h, "jev-review", { limit: 1 });
+    expect(Object.keys(JSON.parse(res.body.call.maskedPrompt).rows)).toHaveLength(1);
+    await request(h.app).post("/cases/c1/jev/review").send({ limit: 1 });
+    expect(JSON.parse(res.body.call.maskedPrompt)).toEqual(JSON.parse(bodies[0]).state);
+  });
+
   it("containment check: parity with the real check's body, and a missing finding is the real error", async () => {
     const h = await harness();
     const res = await preview(h, "containment-check", { findingId: "f1" });
