@@ -15,6 +15,7 @@ import type { CloudRecordIdentity } from "../cloudRecordIdentity.js";
 import { cloudActivityRecordProvider, cloudRecordIdentity } from "../cloudRecordIdentity.js";
 import type { RecordGate } from "../cloudRecordGate.js";
 import type { SigmaGradingSnapshot } from "../sigmaImportGrade.js";
+import type { PrincipalNameRecord } from "../principalNames.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { RowFacts } from "../cloudOutputBudget.js";
 import type { StoredAuthObservation } from "../authObservationStore.js";
@@ -44,6 +45,8 @@ export interface BatchMapping {
   format: string;
   sigmaRows: number;
   signInObservations: Array<Omit<StoredAuthObservation, "importBatch">>;
+  /** Id → name pairs the batch's records state (#2490); M365 only. */
+  principalNames?: PrincipalNameRecord[];
 }
 
 export interface BatchContext {
@@ -137,7 +140,7 @@ const m365: StreamProvider = {
       debug: ctx.debug,
       rowsOnly: true,
     });
-    return { ...asMapping(r), signInObservations: r.signInObservations };
+    return { ...asMapping(r), signInObservations: r.signInObservations, principalNames: r.principalNames };
   },
   facts: (rec) => ({
     rule:

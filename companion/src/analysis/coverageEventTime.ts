@@ -1,4 +1,4 @@
-// Where a coverage row sits on the forensic timeline (#2486).
+// Where a coverage row sits on the forensic timeline (#2486), and how the severity gate knows one (#2497).
 //
 // A coverage row ("Cloud coverage gap", "Cloud object logging is off", "Cloud object reads were not
 // all examined", "Browsing evidence without an account") is advice about the evidence, not an event,
@@ -26,4 +26,31 @@ export function earliestEventTime(
     best = e.timestamp;
   }
   return best ?? new Date().toISOString();
+}
+
+// The four coverage rows are also exempt from the severity gate (#2497). They are graded Medium, so
+// a case gated at High used to demote them on every import and synthesis lost the "nothing found is
+// not absent" warning (#908). A row counts as one only when it carries one of the fixed ids the
+// merge builders mint AND the "Coverage" source — never by `sources` alone, which an AI import may
+// fill with any string (the same reasoning as the manual-id rule, #1919).
+
+/** The source every coverage row carries. */
+export const COVERAGE_SOURCE = "Coverage";
+
+/** The fixed id of each coverage row, so a re-merge replaces it instead of adding another. */
+export const METADATA_COVERAGE_ID = "cloud-metadata-coverage";
+export const OBJECT_LOGGING_COVERAGE_ID = "cloud-object-logging-coverage";
+export const BULK_READ_TRUNCATION_ID = "cloud-bulk-read-truncated";
+export const BROWSING_ATTRIBUTION_ID = "shellbag-attribution-coverage";
+
+export const COVERAGE_NOTE_IDS: ReadonlySet<string> = new Set([
+  METADATA_COVERAGE_ID,
+  OBJECT_LOGGING_COVERAGE_ID,
+  BULK_READ_TRUNCATION_ID,
+  BROWSING_ATTRIBUTION_ID,
+]);
+
+/** True for a coverage row the merge built — the rows the severity gate never demotes. */
+export function isCoverageNote(e: ForensicEvent): boolean {
+  return COVERAGE_NOTE_IDS.has(e.id) && (e.sources ?? []).includes(COVERAGE_SOURCE);
 }

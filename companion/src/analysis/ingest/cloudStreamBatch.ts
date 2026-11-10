@@ -22,6 +22,7 @@ import type { ImportDebugRecorder } from "../importDebug.js";
 import type { ImportContext } from "./importContext.js";
 import type { Preliminary, StreamProvider } from "./cloudStreamProviders.js";
 import { STREAM_IOCS_MAX } from "../cloudStreamLimits.js";
+import { mergePrincipalNames, type PrincipalNameRecord } from "../principalNames.js";
 
 type Row = Record<string, unknown>;
 
@@ -46,6 +47,7 @@ export interface StreamAccumulator {
   observations: { appended: number; earliest: string; latest: string };
   members: SourceRecordMember[]; // flushed after every batch
   superSeq: number;
+  principalNames: PrincipalNameRecord[]; // #2490: every batch's id → name pairs (bounded by the ledger cap)
 }
 
 export function newAccumulator(windowMax: number, iocsMax = STREAM_IOCS_MAX): StreamAccumulator {
@@ -68,6 +70,7 @@ export function newAccumulator(windowMax: number, iocsMax = STREAM_IOCS_MAX): St
     observations: { appended: 0, earliest: "", latest: "" },
     members: [],
     superSeq: 0,
+    principalNames: [],
   };
 }
 
@@ -169,6 +172,8 @@ function noteMapping(m: ReturnType<StreamProvider["map"]>, acc: StreamAccumulato
   acc.coverage = mergeCoverageDrafts(acc.coverage, m.coverage);
   if (m.format !== "empty") acc.formats.add(m.format);
   acc.sigmaRows += m.sigmaRows;
+  if (m.principalNames?.length)
+    acc.principalNames = mergePrincipalNames(acc.principalNames, m.principalNames);
   for (const ioc of m.iocs) {
     const k = `${ioc.type}|${ioc.value}`;
     if (acc.iocs.has(k)) continue;

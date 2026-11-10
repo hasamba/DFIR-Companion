@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Sigma grades Microsoft 365 and Azure Activity logs** — Suzaku's 21 Microsoft 365 and 4 Azure Activity rules and SigmaHQ's 33 Azure Activity rules are bundled and graded at import; the Suzaku updater now tracks all three folders (closes #2500)
+- **Azure caller names** — an Azure activity row whose caller is a service-principal id shows the name an Entra sign-in or directory-audit upload taught the case, when exactly one name is known; a conflicting name or Undo removes it (closes #2490)
 - **SigmaHQ main-branch rules** — the check names the newest release and counts unreleased main-branch changes to graded rules, and an opt-in install brings them in verified against GitHub's listing (closes #2518)
 - **Preview what the AI will see** — from the Anon dialog, see the first request any AI action would send, clear and masked text side by side with the unmasked system prompt and what Presidio would hold; nothing is sent, spent or saved (closes #2491)
 - **Collector footprint tag** — a cloud collection's own API calls are tagged `dfir-collector` (identity + run window + the collector's read calls; writes stay untagged, grades unchanged), with a Hide collector calls super-timeline switch, off by default (closes #2487)
@@ -54,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Faster live cloud collection import** — each page of a cloud-only case now commits only its own rows instead of re-reading and re-saving the whole case; a 20,000-record AWS import went from 340 s to 160 s (closes #2504)
+- **Coverage notes survive a High gate** — the four coverage notes (cloud coverage gap, object logging off, object reads not all examined, browsing without an account) stay on the forensic timeline whatever the severity gate, still graded Medium; an affected case gets them back on its next import (closes #2497)
 - **One credential history per collection** — a live AWS collection builds its credential lineages and compute lifecycles once over the whole run (first 25,000 records, truncation disclosed), so no duplicate rows or false "no issuance record"; Resume drops rows the rebuild no longer reports (closes #2482)
 - **GitHub rate-limit errors explained** — rule and update checks now say GitHub's hourly limit is used up and when to retry, instead of a bare "403" (closes #2520)
 - **Microsoft, GCP and Azure summaries per collection** — Entra privilege paths, mailbox chains, password spray, GCP service-account joins and GCP/Azure compute lifecycles are built once per live collection, so a privilege path whose sign-ins and audits land on different pages can reach High (closes #2493)

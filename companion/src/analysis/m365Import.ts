@@ -53,6 +53,8 @@ import {
   mapSpSignIn,
   type Resolver,
 } from "./entraAuditImport.js";
+import { principalNamesFromRecords } from "./principalNameHarvest.js";
+import type { PrincipalNameRecord } from "./principalNames.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -136,6 +138,8 @@ export interface M365ParseResult {
   mapped?: MappedEvent[];
   /** For each `mapped` row, the index (in this batch) of the record it came from. */
   rowRecords?: number[];
+  /** Id → name pairs every record states (#2490), duplicates and Info rows included. */
+  principalNames: PrincipalNameRecord[];
 }
 
 interface OpDef {
@@ -556,6 +560,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       sprayCandidates: [],
       signInObservations: [],
       repairs,
+      principalNames: [],
     };
   }
 
@@ -568,6 +573,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   // Object-id → app-id facts other records of this export state (entraAuditImport.ts): the only
   // way a consent record, which names its API by object id alone, can identify Microsoft Graph.
   const resolve = opts.resolver ?? learnApiResolver(normalized);
+  const principalNames = principalNamesFromRecords(normalized); // before the duplicate gate (#2490)
   // Coverage (#1063): normalized, since Workload/Operation/RecordType/OrganizationId can sit
   // inside the raw record's `AuditData` envelope until normalizeRecord unwraps it.
   const uploadId = sourceArtifactHash(text);
@@ -697,6 +703,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       repairs,
       mapped,
       rowRecords,
+      principalNames,
       ...(undated.rows ? { undatedRows: undated } : {}),
     };
   const capped = aggregateEvents(mapped, {
@@ -755,6 +762,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     signInObservations,
     sigmaRowsMatched: sigmaRows,
     repairs,
+    principalNames,
     ...(undated.rows ? { undatedRows: undated } : {}),
   };
 }

@@ -390,6 +390,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     assetRecord:
       primary.assetRecord ??
       events.find((e) => e.assetRecord && (e.asset ?? "") === (primary.asset ?? ""))?.assetRecord,
+    callerName: primary.callerName, // the suffix the caller-name carry wrote follows the shown text (#2490)
     message: primary.message ?? events.find((e) => e.message)?.message,
     veloUrl: primary.veloUrl ?? events.find((e) => e.veloUrl)?.veloUrl,
     partlyReadArtifact: partlyReadArtifactOf(events), // every member, not the primary (#1651)

@@ -38,7 +38,7 @@
 // limitation is stated on the finding rather than left for the reader to know.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
-import { earliestEventTime } from "./coverageEventTime.js";
+import { BROWSING_ATTRIBUTION_ID, COVERAGE_SOURCE, earliestEventTime } from "./coverageEventTime.js";
 
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const SERVICE_BROWSING_MARKER = "[noninteractive account browsing:";
@@ -498,7 +498,7 @@ export function attributionNote(events: readonly ForensicEvent[]): string {
 }
 
 /** The id of the attribution-coverage event, so a re-merge replaces it. */
-export const ATTRIBUTION_COVERAGE_ID = "shellbag-attribution-coverage";
+export const ATTRIBUTION_COVERAGE_ID = BROWSING_ATTRIBUTION_ID;
 
 /**
  * One event saying how much browsing evidence could not be attributed, when some of it could not.
@@ -524,6 +524,6 @@ export function attributionCoverageEvent(events: readonly ForensicEvent[]): Fore
     mitreTechniques: [],
     relatedFindingIds: [],
     sourceScreenshots: [],
-    sources: ["Coverage"],
+    sources: [COVERAGE_SOURCE],
   };
 }
