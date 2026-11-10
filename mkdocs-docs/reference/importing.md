@@ -2860,6 +2860,18 @@ event (sometimes an *Accepted* one too) for one management call. These are count
 entry, so a burst of calls shows as one counted row and not as two or three rows that look the
 same. A *Failed* call is always its own entry, graded Medium as before.
 
+**Azure Activity: caller names.** The Activity Log names a service principal (an application) by
+its id, a long GUID. When an Entra sign-in export or an Entra directory-audit export in the same
+case names that id, the Azure row shows the name in parentheses after the id:
+`… by 3f2a…6666 (backup-automation) …`. Names are learned from every record of those uploads,
+including sign-ins graded Info that never reach the forensic timeline, and from an upload of records
+the case already holds. The id stays on the row, grouping still uses the id, and the super-timeline
+copy keeps the id only. The name is shown only when the case knows exactly one name for the id: a
+second, different name for the same id removes it, and so does Undo of the import that taught it.
+Undo puts back the case as it was before an import, so undoing a *later* import also forgets a name
+learned after it. Only the Graph shape of a directory audit teaches names (not the M365 Unified
+Audit Log shape), and a name is shown at most 64 characters long, without brackets or parentheses.
+
 **Drop folder.** The drop folder reads a file up to 200 MB whole (`DFIR_DROP_MAX_BYTES`). A cloud
 export or a Plaso super-timeline over that size is streamed instead of refused, and a `.gz` cloud
 export is decompressed while it is read, at any size. The streamed import's note (which budgets were

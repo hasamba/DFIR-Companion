@@ -116,7 +116,8 @@ export async function importM365(
   recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length + derived.length, parsed.events.length);
   if (crossRows.length > 0) opts.debug?.fallback("cross_upload_spray", crossRows.length);
   if (fatigueRows.length > 0) opts.debug?.fallback("mfa_fatigue", fatigueRows.length);
-  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+  // An upload whose only output is principal names (#2490: Info sign-ins, re-uploaded records) still saves them.
+  if (parsed.events.length === 0 && parsed.iocs.length === 0 && !parsed.principalNames.length)
     return {
       state: await noteEmptyImport(
         ctx,
@@ -159,6 +160,7 @@ export async function importM365(
       jsonRepairNote(parsed.repairs) +
       undatedRowsNote(parsed.undatedRows),
     summary: "",
+    ...(parsed.principalNames.length ? { principalNames: parsed.principalNames } : {}),
   };
   const delta = deltaSchema.parse(raw);
 

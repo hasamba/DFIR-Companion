@@ -13,6 +13,8 @@ import { settleIocsDiff, settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
 import { capBuildTimeScoped, capLabSetupScoped, stampEngineBootScoped } from "./importSettleCap.js";
 import { flagCaseLookalikesScoped } from "./importSettleLookalike.js";
+import { nameCallersScoped } from "./importSettleNames.js";
+import { principalLedgerChanged } from "../analysis/principalNames.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
 import {
   isForeignToImport,
@@ -120,6 +122,12 @@ export interface SettledImport {
   forensicCount: number;
   /** The case after demote — only when a legacy `demoteForensicForCase` produced it. */
   state?: InvestigationState;
+  /**
+   * The import taught the case a principal name, or a conflict (#2490). The checkpoint gates read
+   * it: an upload of Info-only sign-ins adds no forensic row or IOC, and Undo must still be able to
+   * take back the names it taught.
+   */
+  principalNamesChanged?: boolean;
 }
 
 /**
@@ -229,6 +237,12 @@ export async function settleForensicImport(
   changed ||= engineBoot > 0;
   const demoted = await demote(deps, caseId);
   changed ||= demoted.removed > 0;
+  // Caller names (#2490): after demote, so only rows that stay in the forensic record are rewritten.
+  const namesChanged = principalLedgerChanged(baseline.overview, ledger);
+  const named = await lock(caseId, () =>
+    nameCallersScoped(store, caseId, ledger, { scanAll: namesChanged || !scope.touchedKnown, candidates }),
+  );
+  changed ||= named > 0;
   // #1874: from the rows that can change it, not a keyed read of the whole timeline (importSettleDiff.ts).
   const { timelineDiff, forensicCount } = await settleTimelineDiff(store, caseId, baseline);
   debug(
@@ -256,6 +270,7 @@ export async function settleForensicImport(
     addedEvents,
     forensicCount,
     ...(demoted.state ? { state: demoted.state } : {}),
+    ...(namesChanged ? { principalNamesChanged: true } : {}),
   };
 }
 
