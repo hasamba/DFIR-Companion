@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { lookupAwsAction, parseCloudTrail } from "../../../../src/analysis/awsImport.js";
 import { parseCloudActivity } from "../../../../src/analysis/cloudActivityImport.js";
+import { parseGoogleWorkspaceReport } from "../../../../src/analysis/googleWorkspaceImport.js";
 import { matchGcpRule } from "../../../../src/analysis/gcpSeverityRules.js";
 import { parseM365Audit } from "../../../../src/analysis/m365Import.js";
 import { loadBundledSigmaRuleSet } from "../../../../src/analysis/sigmaBundledRules.js";
@@ -74,6 +75,7 @@ function parse(s: DetectionSample, rec: Row, withSigma: boolean): SiemEvent[] {
   const sigma = withSigma ? SIGMA : undefined;
   if (s.kind === "cloudtrail") return parseCloudTrail(text(s, rec), { sigma }).events;
   if (s.kind === "m365") return parseM365Audit(text(s, rec), { aggregate: false, sigma }).events;
+  if (s.kind === "gws") return parseGoogleWorkspaceReport(text(s, rec), { aggregate: false, sigma }).events;
   return parseCloudActivity(text(s, rec), { aggregate: false, sigma }).events;
 }
 
@@ -97,7 +99,9 @@ function importerFloor(s: DetectionSample): Severity {
       ? { ...rec, eventName: PROBE }
       : s.kind === "azure"
         ? { ...rec, operationName: { value: `Microsoft.${PROBE}/things/write` } }
-        : { ...rec, protoPayload: { ...(rec.protoPayload as Row), methodName: PROBE } };
+        : s.kind === "gws"
+          ? { ...rec, events: [{ ...((rec.events as Row[])[0] ?? {}), name: PROBE }] }
+          : { ...rec, protoPayload: { ...(rec.protoPayload as Row), methodName: PROBE } };
   return parse(s, probe, false)[0]?.severity ?? "Info";
 }
 

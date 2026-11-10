@@ -2,7 +2,7 @@
 // client calls, built from a list of rule files. Synthetic data only.
 import { createHash } from "node:crypto";
 import { createZip } from "../../../src/analysis/zipArchive.js";
-import { gitBlobSha } from "../../../src/analysis/suzakuReleaseClient.js";
+import { gitBlobSha, SUZAKU_WATCH_PATHS } from "../../../src/analysis/suzakuReleaseClient.js";
 import type { ReleaseAssetFetch } from "../../../src/analysis/githubReleaseDownload.js";
 
 export const SHA_A = "a".repeat(40);
@@ -26,7 +26,7 @@ export interface FakeRepo {
   truncated?: boolean;
 }
 
-export const WATCHED = ["suzaku/aws/cloudtrail", "suzaku/m365", "suzaku/azure/activity_logs"];
+export const WATCHED: readonly string[] = SUZAKU_WATCH_PATHS;
 
 /** A file key as its full repo path. */
 const repoPath = (key: string): string =>
@@ -68,7 +68,7 @@ export function fakeGitHub(repo: FakeRepo): {
     Object.entries(repo.files)
       .filter(([k]) => repoPath(k).startsWith(`${folder}/`))
       .map(([k, t]) => blob(repoPath(k).slice(folder.length + 1), t));
-  // Per-level trees for the walk: root → suzaku → aws/m365/azure → cloudtrail/activity_logs.
+  // Per-level trees for the walk: root → suzaku → aws/m365/azure/gws → cloudtrail/activity_logs/<app>.
   const trees: Record<string, unknown[]> = {
     [repo.sha]: [
       { path: "suzaku", type: "tree", sha: T("1") },
@@ -78,9 +78,15 @@ export function fakeGitHub(repo: FakeRepo): {
       { path: "aws", type: "tree", sha: T("2") },
       { path: "m365", type: "tree", sha: folders["suzaku/m365"] },
       { path: "azure", type: "tree", sha: T("4") },
+      { path: "gws", type: "tree", sha: T("5") },
     ],
     [T("2")]: [{ path: "cloudtrail", type: "tree", sha: folders["suzaku/aws/cloudtrail"] }],
     [T("4")]: [{ path: "activity_logs", type: "tree", sha: folders["suzaku/azure/activity_logs"] }],
+    [T("5")]: ["admin", "calendar", "drive", "login"].map((app) => ({
+      path: app,
+      type: "tree",
+      sha: folders[`suzaku/gws/${app}`],
+    })),
     ...Object.fromEntries(WATCHED.map((f) => [folders[f], inFolder(f)])),
   };
   const recursive = [

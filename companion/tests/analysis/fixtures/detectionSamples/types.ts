@@ -3,8 +3,9 @@
 // read the same evidence. Records are synthetic: documentation IPs, example.* domains, fake ids.
 
 /** Which importer reads the record. "m365" covers UAL, Entra sign-in and Entra directory audit;
- * "gcp" and "azure" (Azure Activity Log, #2500) are both read by the cloud-activity importer. */
-export type DetectionSampleKind = "cloudtrail" | "m365" | "gcp" | "azure";
+ * "gcp" and "azure" (Azure Activity Log, #2500) are both read by the cloud-activity importer;
+ * "gws" is a Google Workspace Reports API activity (#2522). */
+export type DetectionSampleKind = "cloudtrail" | "m365" | "gcp" | "azure" | "gws";
 
 export interface DetectionSample {
   /** Stable, unique name — printed in every report line. */

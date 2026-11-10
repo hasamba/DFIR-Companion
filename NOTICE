@@ -157,11 +157,12 @@ Suzaku Sigma rules — Yamato Security
 ================================================================================
 
 Used in: companion/data/sigma-suzaku/rules/aws/cloudtrail/ (#2499),
-         companion/data/sigma-suzaku/rules/m365/ and rules/azure/activity_logs/ (#2500)
+         companion/data/sigma-suzaku/rules/m365/ and rules/azure/activity_logs/ (#2500),
+         companion/data/sigma-suzaku/rules/gws/ (#2522)
 
 The Sigma rules in the folders above are copied verbatim from
 Yamato-Security/suzaku-rules (https://github.com/Yamato-Security/suzaku-rules),
-folders suzaku/aws/cloudtrail, suzaku/m365 and suzaku/azure/activity_logs, at upstream commit
+folders suzaku/aws/cloudtrail, suzaku/m365, suzaku/azure/activity_logs and suzaku/gws, at upstream commit
 56c5275e99fce54b40c75e586d670ce771fe0fd8 (2026-11-01). They are licensed under the
 Detection Rule License (DRL) 1.1; the licence text ships beside them as
 companion/data/sigma-suzaku/LICENSE.DRL-1.1.md. As the DRL requires, every match the

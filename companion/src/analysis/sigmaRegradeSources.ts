@@ -10,6 +10,7 @@ import { parseCloudTrail } from "./awsImport.js";
 import { parseM365Audit } from "./m365Import.js";
 import { parseCombinedLog } from "./combinedLogImport.js";
 import { parseCloudActivity } from "./cloudActivityImport.js";
+import { parseGoogleWorkspaceReport } from "./googleWorkspaceImport.js";
 import type { SigmaGradingSnapshot } from "./sigmaImportGrade.js";
 import type { ForensicEvent } from "./stateTypes.js";
 import type { SiemEvent } from "./siemImport.js";
@@ -26,6 +27,9 @@ export const SIGMA_REGRADE_IMPORTERS: ReadonlySet<string> = new Set([
   // stored cloud-activity file.
   "gcp-audit",
   "azure-activity",
+  // Google Workspace rows (#2522). Only rows imported since then carry the envelope that pairs them;
+  // an older generic Workspace row has no envelope, so the re-grade never selects it.
+  "google-workspace",
 ]);
 
 const ALL = { aggregate: false, maxEvents: Number.MAX_SAFE_INTEGER } as const;
@@ -67,6 +71,8 @@ export function reparseForRegrade(
   if (importer === "combined-log") return parseCombinedLog(text, { ...ALL, sigma: snapshot }).events;
   if (importer === "gcp-audit" || importer === "azure-activity")
     return parseCloudActivity(text, { ...ALL, sigma: snapshot }).events;
+  if (importer === "google-workspace")
+    return parseGoogleWorkspaceReport(text, { ...ALL, sigma: snapshot }).events;
   return [];
 }
 

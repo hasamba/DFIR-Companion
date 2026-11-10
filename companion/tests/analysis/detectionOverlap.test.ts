@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { AWS_SAMPLES } from "./fixtures/detectionSamples/aws.js";
 import { M365_SAMPLES } from "./fixtures/detectionSamples/m365.js";
 import { GCP_SAMPLES } from "./fixtures/detectionSamples/gcp.js";
+import { GWS_SAMPLES } from "./fixtures/detectionSamples/gws.js";
 import { buildCloudSigmaSamples, CLOUD_SIGMA_SOURCES } from "./fixtures/detectionSamples/sigmaBuilt.js";
 import { readAllowlist } from "./fixtures/detectionSamples/allowlist.js";
 import {
@@ -45,7 +46,7 @@ const ALLOW_TEXT = readFileSync(
 );
 
 const builds = buildCloudSigmaSamples(SIGMA_SET);
-const handSamples = [...AWS_SAMPLES, ...M365_SAMPLES, ...GCP_SAMPLES];
+const handSamples = [...AWS_SAMPLES, ...M365_SAMPLES, ...GCP_SAMPLES, ...GWS_SAMPLES];
 
 // Grade every hand sample, and every built Sigma sample whose rule really fired through the importer.
 const results = handSamples.map((s) => ({ s, ...gradeSample(s) }));

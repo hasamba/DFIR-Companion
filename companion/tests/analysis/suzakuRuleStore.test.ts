@@ -130,6 +130,10 @@ describe("Suzaku rule updates", () => {
     expect(Object.keys(suzaku.active().folders ?? {}).sort()).toEqual([
       "suzaku/aws/cloudtrail",
       "suzaku/azure/activity_logs",
+      "suzaku/gws/admin",
+      "suzaku/gws/calendar",
+      "suzaku/gws/drive",
+      "suzaku/gws/login",
       "suzaku/m365",
     ]);
   });

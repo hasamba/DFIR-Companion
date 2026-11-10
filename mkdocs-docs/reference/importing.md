@@ -1899,13 +1899,14 @@ an account**. Their source is `Coverage`, and a re-merge replaces them instead o
   happened". A case that lost a note to a High gate before this change gets it back on the next
   import that holds the evidence the note describes.
 
-### Sigma rules grade CloudTrail, Microsoft 365, Entra, Azure Activity and GCP imports
+### Sigma rules grade CloudTrail, Microsoft 365, Entra, Azure Activity, GCP and Google Workspace imports
 
 AWS CloudTrail records, Entra ID **user sign-ins** and **directory-audit** records (Graph and Log
 Analytics exports), **Azure Activity Log** records (REST, diagnostic-settings and Log Analytics
-exports) and **GCP Cloud Audit Log** records are checked against bundled [SigmaHQ](https://github.com/SigmaHQ/sigma) rules as
+exports), **GCP Cloud Audit Log** records and **Google Workspace** audit activity (admin, login and Drive
+events from a Reports API export) are checked against bundled [SigmaHQ](https://github.com/SigmaHQ/sigma) rules as
 they are imported. No AI is involved, and the same file always gets the same result. CloudTrail,
-**Microsoft 365 unified audit log** and Azure Activity records are also checked against the bundled
+**Microsoft 365 unified audit log**, Azure Activity and Google Workspace records are also checked against the bundled
 [Suzaku](https://github.com/Yamato-Security/suzaku-rules) rules for them, which by default only label
 events unless the rule is critical (see
 [Settings → Sigma rules](settings.md#sigma-rules)).
@@ -1933,6 +1934,10 @@ events unless the rule is critical (see
   saying why. A denied or otherwise failed attempt can still be raised. A rule that checks the error
   code itself still grades.
 - **A cross-account CloudTrail action** (two records, one row) keeps the matches of both records.
+- **A Google Workspace record with several events** is checked one event at a time: each event's row
+  carries only the rules that event matched. A rule for one Workspace application (login, admin, Drive)
+  runs only on that application's events. Workspace rows imported before this change cannot be re-graded;
+  import the file again to grade them.
 - **An Entra audit record or a GCP record that becomes several rows** (a GCP IAM policy change with
   several binding changes) carries its match on the first row, with a note that the rule matched the
   whole record.
