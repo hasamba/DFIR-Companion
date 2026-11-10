@@ -271,7 +271,8 @@ async function finish(
   const coverage = acc.coverage.map((d) => ({ ...d, uploadId: stats.textHash || d.uploadId }));
   const clauses = describeCloudStreamDisclosure(disclosure);
   const undated = undatedRowsNote(provider.undated?.(pre));
-  if (!events.length && !acc.iocs.size) {
+  // An upload whose only output is principal names (#2490) still saves them.
+  if (!events.length && !acc.iocs.size && !acc.principalNames.length) {
     const detail = [...clauses, undated.slice(2)].filter(Boolean).join("; ");
     const state = await noteEmptyImport(ctx, caseId, opts, provider.source, stats.records, detail);
     return { state, coverage, disclosure };
@@ -298,6 +299,7 @@ async function finish(
       `; ${clauses.join("; ")}` +
       undated,
     summary: "",
+    ...(acc.principalNames.length ? { principalNames: acc.principalNames } : {}),
   });
   // commitDelta checks the signal INSIDE the lock: a cancel that lands while the import waits for
   // the case (behind another write) merges nothing, and the caller's cleanup deactivates the ledger.

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Azure caller names** — an Azure activity row whose caller is a service-principal id shows the name an Entra sign-in or directory-audit upload taught the case, when exactly one name is known; a conflicting name or Undo removes it (closes #2490)
 - **SigmaHQ main-branch rules** — the check names the newest release and counts unreleased main-branch changes to graded rules, and an opt-in install brings them in verified against GitHub's listing (closes #2518)
 - **Preview what the AI will see** — from the Anon dialog, see the first request any AI action would send, clear and masked text side by side with the unmasked system prompt and what Presidio would hold; nothing is sent, spent or saved (closes #2491)
 - **Collector footprint tag** — a cloud collection's own API calls are tagged `dfir-collector` (identity + run window + the collector's read calls; writes stay untagged, grades unchanged), with a Hide collector calls super-timeline switch, off by default (closes #2487)

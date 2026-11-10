@@ -523,10 +523,10 @@ export interface ForensicEvent extends EventRevisionFields {
   md5?: string;
   path?: string; // file path the event concerns (normalized lowercased for matching)
   asset?: string; // host/computer/FQDN this event pertains to (the affected asset)
-  // The host name the record itself wrote, kept only on a Windows-log row that named no collector
-  // and is not a forwarded event (#1495): the provenance a rename the case learns LATER may re-home
-  // from, and re-home back if the rename is later contradicted. Never set by a model.
+  // The host name a Windows-log row that named no collector and is not forwarded wrote (#1495): what a
+  // rename the case learns LATER re-homes from, and back if it is contradicted. Never set by a model.
   assetRecord?: string;
+  callerName?: string; // the name principalNameCarry.ts inserted after a GUID caller (#2490); never a model's
   sources?: string[]; // distinct tools/imports that reported this event (corroboration)
   // Finer-grained source than `sources` ("Windows.NTFS.MFT" vs "Windows.Detection.Sigma"), set by
   // importers that know it; the super-timeline origin filter tells a raw row from its detection by it.
@@ -758,10 +758,11 @@ export interface InvestigationState {
   // The renames the case has learned (#1495): every (former → current) edge a Windows-log import
   // found — from a collector identity that differed from the record's name (#1417) or from the
   // machine's own rename evidence (#1489) — with the bound each rests on, plus every collector
-  // identity seen, which no rename may fold. Unioned by mergeHostRenameRecords on every merge;
-  // consumed by every later import and by the settle-time carry pass. Optional so old state loads.
+  // identity seen, which no rename may fold. Unioned on every merge; read by later imports and the settle
+  // carry; optional so old state loads. `principalNames` (#2490): id → name facts, principalNameCarry.ts.
   hostRenames?: HostRenameRecord[];
   collectorHostnames?: string[];
+  principalNames?: import("./principalNames.js").PrincipalNameRecord[];
   intelRetirementDecisions?: IntelRetirementDecision[]; // #1024 review decisions by finding id, newest wins
   eventAliases?: Readonly<Record<string, string>>; // #1715 correlation lineage — see eventAliases.ts
   // READ-TIME projection only (#969): the case's remediation boundaries, loaded from their side

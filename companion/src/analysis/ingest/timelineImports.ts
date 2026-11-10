@@ -30,6 +30,7 @@ function recordPlasoParse(
 import { isLabProduced, PROMOTED_MARKER } from "../labIntel.js";
 import { stateEventResolver } from "../eventAliasLookup.js";
 import { promotionOutcome, type PromotionOutcome } from "./promotionOutcome.js";
+import { principalNameCarrier } from "../principalNameCarry.js";
 
 /**
  * Whole-timeline sources. Plaso arrives already normalised into timeline rows, and
@@ -225,11 +226,16 @@ function stampPromoted(
   // The delta schema strips unknown keys, so the stamp cannot ride through mergeWithAliases;
   // apply it by id afterwards, like the provenance markers below. An earlier stamp is kept.
   const promotedIds = new Set(events.map((e) => e.id));
+  // A promoted Azure row shows its caller's name like every other one (#2490): the super-timeline
+  // copy keeps the raw id, so the name is applied here, from the case's ledger.
+  const name = principalNameCarrier(merged);
   let state: InvestigationState = {
     ...merged,
-    forensicTimeline: merged.forensicTimeline.map((e) =>
-      promotedIds.has(e.id) && !e.promotedAt ? { ...e, promotedAt: importedAt } : e,
-    ),
+    forensicTimeline: merged.forensicTimeline.map((e) => {
+      if (!promotedIds.has(e.id)) return e;
+      const named = name(e);
+      return named.promotedAt ? named : { ...named, promotedAt: importedAt };
+    }),
   };
   // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
   // provenance through the delta schema, so apply them here by id (union with any existing). Lets the

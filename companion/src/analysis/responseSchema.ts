@@ -178,6 +178,11 @@ export const deltaSchema = z.object({
     )
     .optional(),
   collectorHostnames: z.array(z.string().min(1)).optional(),
+  // Cloud principal id → name facts a cloud importer learned (#2490) — deterministic importers only,
+  // never the model (stripped in stripAiExtractedFrom).
+  principalNames: z
+    .array(z.object({ id: z.string().min(1), names: z.array(z.string().min(1)).min(1) }))
+    .optional(),
   // Real incident events with their actual timestamps, extracted from the evidence.
   forensicEvents: z
     .array(
@@ -605,7 +610,8 @@ export function citesEvents(delta: AnalysisDelta): boolean {
 // extraction/synthesis call site (never at the deterministic-importer call sites, which build
 // their delta objects field-by-field and set extractedFrom themselves via resolveExtractedFrom).
 export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
-  const { hostRenames: _renames, collectorHostnames: _collectors, ...rest } = delta; // #1495: a model never asserts a rename or a collector
+  // #1495/#2490: a model never asserts a rename, a collector or a principal's name.
+  const { hostRenames: _renames, collectorHostnames: _collectors, principalNames: _names, ...rest } = delta;
   return {
     ...rest,
     // #1266: `provenance` is stripped with it. A model can neither MARK an IOC (a false "weak

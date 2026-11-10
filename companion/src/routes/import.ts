@@ -383,7 +383,13 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
               logImportActivity(options, caseId, `${kind} (${storedName})`, { timeline: tDiff, iocs: iDiff });
               // #76: snapshot the pre-import state for undo — but only when the import actually changed
               // something (skip a no-op re-import so undo doesn't pile up dead levels).
-              if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
+              if (
+                tDiff.added.length ||
+                tDiff.removed.length ||
+                iDiff.added.length ||
+                iDiff.removed.length ||
+                settled.principalNamesChanged // #2490: names an Undo must be able to take back
+              ) {
                 await pushImportCheckpoint(caseId, baseline, `${kind} (${storedName})`);
               }
             } catch {
