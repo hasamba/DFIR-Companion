@@ -23,7 +23,8 @@ const SCAN_CLEAN_JOIN = "JOIN merge_rows m ON m.row_id=e.row_id AND m.version=e.
 export const MERGE_SCAN_SQL = {
   cleanCounts:
     "SELECT count(*) AS n, total((m.flags & 1) <> 0) AS t, total((m.flags & 2) <> 0) AS p, " +
-    "total((m.flags & 4) <> 0) AS c, total((m.flags & 8) <> 0) AS l FROM entities e " +
+    "total((m.flags & 4) <> 0) AS c, total((m.flags & 8) <> 0) AS l, " +
+    "total((m.flags & 16) <> 0) AS a, total((m.flags & 32) <> 0) AS f FROM entities e " +
     SCAN_CLEAN_JOIN +
     " WHERE e.kind='forensicTimeline'",
   stale:
@@ -112,7 +113,7 @@ function mergeSnapshot(dbPath) {
         stale: db.prepare(MERGE_SCAN_SQL.stale).all().map((r) => Number(r.row_id)),
         clean: {
           rows: Number(counts.n), trigger: Number(counts.t), process: Number(counts.p),
-          cloud: Number(counts.c), load: Number(counts.l),
+          cloud: Number(counts.c), load: Number(counts.l), launch: Number(counts.a), flow: Number(counts.f),
         },
         years: db.prepare(MERGE_SCAN_SQL.years).all().map((r) => [Number(r.year), Number(r.n)]),
         dirtyKeys: db.prepare("SELECT key FROM merge_dirty_keys").all().map((r) => r.key),
@@ -615,7 +616,16 @@ export interface MergeSnapshot {
   /** Forensic rows with no index, or written since it was taken, in timeline order. */
   stale: number[];
   /** Clean rows, and how many of them carry each flag. */
-  clean: { rows: number; trigger: number; process: number; cloud: number; load: number };
+  clean: {
+    rows: number;
+    trigger: number;
+    process: number;
+    cloud: number;
+    load: number;
+    /** AWS compute summaries (MERGE_FLAG_AWS_LAUNCH) and AWS flow rows (MERGE_FLAG_AWS_FLOW), #2539. */
+    launch: number;
+    flow: number;
+  };
   /** [year, clean rows dated in it]. */
   years: [number, number][];
   dirtyKeys: string[];

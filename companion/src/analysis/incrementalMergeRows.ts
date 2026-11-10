@@ -7,6 +7,7 @@ import { correlateEventsTracked, correlationGroups } from "./correlate.js";
 import { runTimelineChain } from "./stateMerge.js";
 import { correlationKeys } from "./mergeIndex.js";
 import { groupBulkReadsWithDropped, objectLoggingEvent } from "./cloudBulkRead.js";
+import { storageKeyJoinsForm } from "./azureStorageKeyToRead.js";
 
 /**
  * The row-level helpers of the incremental importer merge (#1874): reading stored rows, the
@@ -22,17 +23,25 @@ export interface HeldRow {
 }
 
 /**
- * Why the cloud bulk-read pass could act on these rows, or null (#2536). Cloud object reads are LOAD
- * rows, so the merge holds every one of them — but the pass, once it has a group, a truncation or the
- * object-logging coverage row, also reads role assumptions and the case's recurring readers, which are
- * not LOAD rows, and it can replace a stored summary out of place. So the decision rests only on what
+ * Why a cloud pass over LOAD rows could act on these rows, or null.
+ *
+ * The bulk-read pass (#2536). Cloud object reads are LOAD rows, so the merge holds every one of them —
+ * but the pass, once it has a group, a truncation or the object-logging coverage row, also reads role
+ * assumptions and the case's recurring readers, which are not LOAD rows, and it can replace a stored
+ * summary out of place. So the decision rests only on what
  * the held reads alone decide, exactly as the full merge's pass decides it: with none of the three,
  * summarizeBulkReads returns its input untouched in both paths.
+ *
+ * The storage key → read join (#2539). Listings and account-key object ops are LOAD rows, so the
+ * held rows decide whether a join forms exactly as the full merge's pass does; with none,
+ * correlateStorageKeyToRead returns its input untouched. A join adds and replaces rows out of place,
+ * which the incremental merge does not carry, so it falls back.
  */
-export function bulkReadWork(events: readonly ForensicEvent[]): string | null {
+export function cloudPassWork(events: readonly ForensicEvent[]): string | null {
   const { groups, dropped } = groupBulkReadsWithDropped(events);
   if (groups.length > 0 || dropped > 0 || objectLoggingEvent(events) !== null)
     return "a correlation pass has work: cloud bulk read";
+  if (storageKeyJoinsForm(events)) return "a correlation pass has work: storage key join";
   return null;
 }
 

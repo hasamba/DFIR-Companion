@@ -17,6 +17,8 @@ import {
 } from "./stateMerge.js";
 import {
   MERGE_FLAG_CLOUD_AUDIT,
+  MERGE_FLAG_AWS_LAUNCH,
+  MERGE_FLAG_AWS_FLOW,
   MERGE_FLAG_LOAD,
   MERGE_FLAG_PROCESS,
   MERGE_FLAG_TRIGGER,
@@ -28,7 +30,7 @@ import { COVERAGE_EVENT_ID } from "./cloudMetadataAccess.js";
 import { placeCoverage } from "./incrementalMergeCoverage.js";
 import {
   NEW_ROW_BASE,
-  bulkReadWork,
+  cloudPassWork,
   compareFinal,
   correlationClosure,
   eventOf,
@@ -59,7 +61,10 @@ import {
 /** Bump when the merge's semantics or the index's contents change: every case re-indexes once. */
 // 2: the cloud coverage row is no trigger (#2504)
 // 3: cloud object reads are LOAD rows, not triggers (#2536)
-export const MERGE_INDEX_VERSION = 3;
+// 4: metadata/storage-key/AWS-compute rows are no triggers; storage-key rows are LOAD rows; the
+//    AWS_LAUNCH/AWS_FLOW counts (#2539). Rows indexed under 3 carry neither count bit, so a bump is
+//    required: a compute summary arriving over v3-indexed flows would otherwise skip the fallback.
+export const MERGE_INDEX_VERSION = 4;
 
 export type IncrementalResult =
   { ok: true; state: InvestigationState; read: number; written: number } | { ok: false; reason: string };
@@ -259,7 +264,7 @@ function chainHeld(
     const why = mergeTrigger(h.event);
     if (why) return `a correlation pass has work: ${why}`;
   }
-  const bulk = bulkReadWork(working.map((h) => h.event));
+  const bulk = cloudPassWork(working.map((h) => h.event));
   if (bulk) return bulk;
   const chained = runTimelineChain(
     working.map((h) => h.event),
@@ -272,23 +277,31 @@ function chainHeld(
   if (chained.length !== working.length || chained.some((e, i) => e.id !== working[i].event.id))
     return "the chain added, removed or reordered a row";
   // The pass reads the rows as the year clamp left them; judge them that way too (#2536).
-  const bulkAfter = bulkReadWork(chained);
+  const bulkAfter = cloudPassWork(chained);
   if (bulkAfter) return bulkAfter;
   const rows = working.map((h, i) => ({ ...h, event: chained[i] }));
-  // The metadata coverage row's two case-wide counts after this merge: stored counts of the clean
-  // rows, less the held clean rows' stored flags, plus every held row as it now reads.
-  let { process, cloud } = snap.clean;
+  // The case-wide counts after this merge: stored counts of the clean rows, less the held clean
+  // rows' stored flags, plus every held row as it now reads. process/cloud drive the metadata
+  // coverage row (#2504); launch/flow the AWS flow attribution passes (#2539).
+  let { process, cloud, launch, flow } = snap.clean;
   for (const r of held.values()) {
     if (!isClean(r)) continue;
-    if (r.index!.flags & MERGE_FLAG_PROCESS) process--;
-    if (r.index!.flags & MERGE_FLAG_CLOUD_AUDIT) cloud--;
+    const stored = r.index!.flags;
+    if (stored & MERGE_FLAG_PROCESS) process--;
+    if (stored & MERGE_FLAG_CLOUD_AUDIT) cloud--;
+    if (stored & MERGE_FLAG_AWS_LAUNCH) launch--;
+    if (stored & MERGE_FLAG_AWS_FLOW) flow--;
   }
   for (const h of rows) {
     const flags = mergeIndexEntry(h.event).flags;
     if (flags & MERGE_FLAG_TRIGGER) return `a correlation pass has work: ${mergeTrigger(h.event)}`;
     if (flags & MERGE_FLAG_PROCESS) process++;
     if (flags & MERGE_FLAG_CLOUD_AUDIT) cloud++;
+    if (flags & MERGE_FLAG_AWS_LAUNCH) launch++;
+    if (flags & MERGE_FLAG_AWS_FLOW) flow++;
   }
+  // With no flow the attribution passes map nothing; with no launch the attribution index is empty.
+  if (launch > 0 && flow > 0) return "a correlation pass has work: AWS compute record and VPC flow";
   // Due: the full merge would replace the coverage row; placeCoverage does it the same way (#2504).
   return { rows, coverageDue: cloud > 0 && process === 0 };
 }

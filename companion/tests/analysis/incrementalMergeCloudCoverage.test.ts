@@ -283,9 +283,9 @@ describe("cloud coverage row — merge index trigger (#2504)", () => {
     expect(mergeTrigger({ ...row, description: `${row.description} certutil -urlcache` })).not.toBeNull();
   });
 
-  it("any other row carrying the metadata note is still a trigger", () => {
-    expect(mergeTrigger({ ...cloud, description: `GET / ${METADATA_MARKER} something]` })).toBe(
-      "a correlation note",
-    );
+  // #2539: the metadata passes are per-row rewrites and never strip or re-read the note, so a marked
+  // row is inert — it used to be a trigger, which sent every later import down the full merge.
+  it("any other row carrying the metadata note is inert (#2539)", () => {
+    expect(mergeTrigger({ ...cloud, description: `GET / ${METADATA_MARKER} something]` })).toBeNull();
   });
 });
