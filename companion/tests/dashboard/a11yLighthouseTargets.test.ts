@@ -185,3 +185,96 @@ describe("Codex review follow-ups (#2492)", () => {
     expect(rules(".ev-col-ctrl .comment-chip").join(";")).toMatch(/padding-left:\s*3px/);
   });
 });
+
+// The dense ATT&CK / D3FEND chip grids (#2492, option 3): the user chose to keep them compact for
+// mouse users and give them 24px targets only when the primary pointer is coarse (touch screens).
+describe("dense grid chips reach 24px on touch screens only (#2492)", () => {
+  const SELECTORS = [
+    "#sec-adversary .adv-tech",
+    "#sec-d3fend .d3f-cover",
+    "#sec-d3fend .mit-tech",
+    "#sec-d3fend .d3f-cm",
+    "#sec-d3fend .mit-name",
+  ];
+
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  /** [start, end) of every `@media (pointer: coarse) { … }` block, braces included. */
+  function coarseBlocks(): Array<[number, number]> {
+    const out: Array<[number, number]> = [];
+    for (const m of src.matchAll(/@media\s*\(\s*pointer\s*:\s*coarse\s*\)\s*\{/g)) {
+      let depth = 1;
+      let i = (m.index ?? 0) + m[0].length;
+      while (i < src.length && depth > 0) {
+        if (src[i] === "{") depth++;
+        else if (src[i] === "}") depth--;
+        i++;
+      }
+      out.push([m.index ?? 0, i]);
+    }
+    return out;
+  }
+
+  const bodiesFor = (text: string, selector: string) =>
+    [...text.matchAll(/([^{}]*)\{([^{}]*)\}/g)]
+      .filter((r) => r[1].split(",").some((s) => s.trim() === selector))
+      .map((r) => r[2]);
+
+  /** Rule bodies for `selector` inside a coarse-pointer block. */
+  const coarseRules = (selector: string) =>
+    coarseBlocks().flatMap(([a, b]) => bodiesFor(src.slice(src.indexOf("{", a) + 1, b - 1), selector));
+
+  /** Rule bodies for `selector` outside every coarse-pointer block (what a mouse user gets). */
+  function mouseRules(selector: string): string[] {
+    let text = src;
+    for (const [a, b] of coarseBlocks().reverse()) text = text.slice(0, a) + text.slice(b);
+    return bodiesFor(text, selector);
+  }
+
+  it.each(SELECTORS)("%s is at least 24px tall under a coarse pointer", (selector) => {
+    const body = coarseRules(selector).join(";");
+    expect(body, `no pointer:coarse rule for ${selector}`).toMatch(/min-height:\s*24px/);
+  });
+
+  it.each(["#sec-adversary .adv-tech", "#sec-d3fend .d3f-cover", "#sec-d3fend .mit-tech"])(
+    "%s is at least 24px wide under a coarse pointer",
+    (selector) => {
+      expect(coarseRules(selector).join(";")).toMatch(/min-width:\s*24px/);
+    },
+  );
+
+  it.each(SELECTORS)("%s keeps its compact size for mouse users", (selector) => {
+    const bodies = mouseRules(selector);
+    expect(bodies.length, `rules for ${selector}`).toBeGreaterThan(0);
+    for (const b of bodies) expect(b).not.toMatch(/min-(height|width)\s*:/);
+  });
+});
+
+// Found while verifying the touch change in the dark theme: white text on --success (#2f8f4e) is
+// 4.06:1. The two solid green buttons darken their own background instead of changing the shared
+// token, which is also used as a text colour on dark panels.
+describe("solid green buttons keep white text readable (#2492)", () => {
+  const MIX = "color-mix(in srgb,var(--success) 80%,#000)";
+  const darken = (hex: string) =>
+    "#" +
+    [1, 3, 5]
+      .map((i) =>
+        Math.round(parseInt(hex.slice(i, i + 2), 16) * 0.8)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("");
+
+  it.each(["#sec-hostranking .hr-apply", "#sec-adversary .adv-next-hunt"])(
+    "%s darkens --success",
+    (selector) => {
+      expect(rules(selector).join(";").replace(/\s+/g, "")).toContain(
+        `background:${MIX.replace(/\s+/g, "")}`,
+      );
+    },
+  );
+
+  it.each(["light", "dark"] as const)("white on the darkened green is at least 4.5:1 in %s", (theme) => {
+    expect(contrastHex("#ffffff", darken(resolve("var(--success)", theme)))).toBeGreaterThanOrEqual(4.5);
+  });
+});

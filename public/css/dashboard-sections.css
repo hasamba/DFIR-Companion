@@ -187,7 +187,7 @@
   #sec-hostranking .hr-empty{color:var(--text-muted);font-size:12px}
   #sec-hostranking .hr-scope{margin-bottom:10px;font-size:12px;color:var(--text-primary);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   #sec-hostranking .hr-scope b{color:var(--text-bright)}
-  #sec-hostranking .hr-apply{background:var(--success);border:0;color:#fff;border-radius:4px;padding:2px 10px;font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0}
+  #sec-hostranking .hr-apply{background:color-mix(in srgb,var(--success) 80%,#000);border:0;color:#fff;border-radius:4px;padding:2px 10px;font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0}
   #sec-hostranking .hr-apply:disabled{opacity:.6;cursor:default}
   #sec-hostranking .hr-list{display:flex;flex-direction:column;gap:6px}
   #sec-hostranking .hr-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--bg-secondary);border:1px solid var(--border-subtle);border-left:3px solid var(--accent);border-radius:5px;padding:5px 9px;font-size:12px}
@@ -293,7 +293,7 @@
   #sec-adversary .adv-next-name{color:var(--text-bright);font-size:12px;font-weight:600}
   #sec-adversary .adv-next-rare{color:var(--tag-purple-text);font-size:11px;background:var(--info-bg);border:1px solid var(--info-border);border-radius:3px;padding:0 5px}
   #sec-adversary .adv-next-support{margin-left:auto;color:var(--text-muted);font-size:11px;white-space:nowrap}
-  #sec-adversary .adv-next-hunt{background:var(--success);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400}
+  #sec-adversary .adv-next-hunt{background:color-mix(in srgb,var(--success) 80%,#000);border:0;color:#fff;border-radius:4px;padding:1px 8px;font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:400}
   #sec-adversary .adv-next-hunt:disabled{opacity:.6;cursor:default}
   #sec-adversary .adv-next-ds{color:var(--text-muted);font-size:11px;margin:2px 0 0 4px;font-style:italic}
 
@@ -371,6 +371,11 @@
   #sec-d3fend .d3f-cover{color:var(--accent);background:var(--bg-secondary);border:1px solid var(--border-subtle);border-radius:3px;padding:0 5px;font-size:10px;text-decoration:none}
   #sec-d3fend .d3f-cover:hover{text-decoration:underline}
   #sec-d3fend .d3f-cover-more{color:var(--text-muted);font-size:10px;cursor:help}
+  /* #2492: 24px touch targets (WCAG 2.2 SC 2.5.8) for the dense ATT&CK / D3FEND grids, on touch screens only — mouse users keep the compact layout */
+  @media (pointer: coarse){
+    #sec-adversary .adv-tech,#sec-d3fend .d3f-cover,#sec-d3fend .mit-tech{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:24px;min-width:24px}
+    #sec-d3fend .d3f-cm,#sec-d3fend .mit-name{display:inline-flex;align-items:center;min-height:24px}
+  }
 
 
   #sec-compliance .cmp-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
