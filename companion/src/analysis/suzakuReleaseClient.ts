@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import { readCappedBody, type ReleaseAssetFetch } from "./githubReleaseDownload.js";
 import { readZip } from "./zipArchive.js";
+import { githubErrorMessage } from "./githubHttpError.js";
 
 export const SUZAKU_REPO = "Yamato-Security/suzaku-rules";
 export const SUZAKU_WATCH_PATH = "suzaku/aws/cloudtrail";
@@ -49,7 +50,7 @@ async function getJson(
   timeoutMs = 15_000,
 ): Promise<unknown> {
   const resp = await fetchFn(url, { headers: HEADERS, signal: AbortSignal.timeout(timeoutMs) });
-  if (!resp.ok) throw new Error(`GitHub returned ${resp.status} ${what}`);
+  if (!resp.ok) throw new Error(githubErrorMessage(resp, what));
   return resp.json();
 }
 
@@ -122,7 +123,7 @@ async function fetchArchive(sha: string, fetchAsset: ReleaseAssetFetch): Promise
       throw new Error("the Suzaku archive came from a host other than GitHub; nothing was installed");
     }
     if (!fetched.response.ok || !fetched.response.body)
-      throw new Error(`GitHub returned ${fetched.response.status} downloading the Suzaku rules`);
+      throw new Error(githubErrorMessage(fetched.response, "downloading the Suzaku rules"));
     return await readCappedBody(fetched.response.body, SUZAKU_MAX_ZIP_BYTES, "Suzaku rules archive");
   } finally {
     await fetched.dispose();

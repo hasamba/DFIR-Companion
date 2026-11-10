@@ -15,6 +15,7 @@ import { SIGMA_RELEASE_MAX_ENTRIES, SIGMA_RELEASE_MAX_ZIP_BYTES } from "./sigmaR
 import { SIGMA_RULE_DIRS } from "./sigmaRuleSet.js";
 import { gitBlobSha } from "./suzakuReleaseClient.js";
 import { createZip, readZip } from "./zipArchive.js";
+import { githubErrorMessage } from "./githubHttpError.js";
 
 const API = "https://api.github.com/repos/SigmaHQ/sigma";
 const BRANCH = "master";
@@ -55,7 +56,7 @@ export interface SigmaMainSummary {
 
 async function getJson(fetchFn: typeof fetch, url: string, what: string): Promise<unknown> {
   const resp = await fetchFn(url, { headers: HEADERS, signal: AbortSignal.timeout(15_000) });
-  if (!resp.ok) throw new Error(`GitHub returned ${resp.status} ${what}`);
+  if (!resp.ok) throw new Error(githubErrorMessage(resp, what));
   return resp.json();
 }
 
@@ -191,7 +192,7 @@ async function fetchArchive(sha: string, fetchAsset: ReleaseAssetFetch): Promise
       throw new Error("the SigmaHQ archive came from a host other than GitHub; nothing was installed");
     }
     if (!fetched.response.ok || !fetched.response.body)
-      throw new Error(`GitHub returned ${fetched.response.status} downloading SigmaHQ's main branch`);
+      throw new Error(githubErrorMessage(fetched.response, "downloading SigmaHQ's main branch"));
     return await readCappedBody(
       fetched.response.body,
       SIGMA_RELEASE_MAX_ZIP_BYTES,
