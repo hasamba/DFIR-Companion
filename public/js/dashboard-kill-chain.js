@@ -361,7 +361,7 @@
           `data-act="kcSelect" data-tac="${escAttr(tac)}">` +
           `<div class="kc-phase-header" data-safe-style="border-top-color:${topColor}">` +
           `<span class="kc-tac">${esc(tac)}</span>` +
-          `<span class="kc-count" data-safe-style="color:${isEmpty ? "#2a2f3a" : topColor}">${count}</span>` +
+          `<span class="kc-count" data-safe-style="color:${isEmpty ? "var(--text-muted)" : topColor}">${count}</span>` +
           `</div>` +
           `</div>`
         );

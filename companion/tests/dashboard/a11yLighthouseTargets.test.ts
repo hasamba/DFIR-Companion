@@ -171,3 +171,17 @@ describe("IOC actions and sort arrows meet the 24px target by spacing (#2492)", 
     expect(rules(".tl-sortarrows .tl-arrow").join(";")).toMatch(/min-width:\s*24px/);
   });
 });
+
+describe("Codex review follow-ups (#2492)", () => {
+  it("an empty kill-chain count uses a theme colour (a safe-style colour beats any stylesheet)", () => {
+    const kc = read("js/dashboard-kill-chain.js");
+    expect(kc).not.toContain("#2a2f3a");
+    expect(kc).toContain('isEmpty ? "var(--text-muted)"');
+  });
+
+  it("timeline controls cannot overflow the column: margins zeroed, count chip trimmed, wrap allowed", () => {
+    expect(rules(".ev-col-ctrl").join(";")).toMatch(/flex-wrap:\s*wrap/);
+    expect(rules(".ev-col-ctrl > *").join(";")).toMatch(/margin-left:\s*0/);
+    expect(rules(".ev-col-ctrl .comment-chip").join(";")).toMatch(/padding-left:\s*3px/);
+  });
+});

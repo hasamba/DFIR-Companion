@@ -31,7 +31,7 @@
 .ev-col-sev { flex-shrink: 0; width: 92px; margin-right: 6px; display: flex; align-items: center; gap: 7px; font-weight: 650; font-size: 12px; align-self: center; }
 .ev-col-sev .ev-sq { width: 9px; height: 9px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
 .ev-header-sev { width: 92px; margin-right: 6px; flex-shrink: 0; }
-.ev-col-ctrl { display: flex; align-items: center; gap: 0; flex-shrink: 0; width: 178px; margin-right: 6px; padding-top: 1px; }
+.ev-col-ctrl { display: flex; flex-wrap: wrap; align-items: center; gap: 0; flex-shrink: 0; width: 178px; margin-right: 6px; padding-top: 1px; }
 /* Buttons default to flex-shrink:1, which silently compresses (and can visually clip) their
    icon/count once the row's icon set (star/comment/tag/hunt/explain/geo) nears the column's
    width budget — pin them to their natural size instead; the column's own width + margin above
@@ -44,8 +44,12 @@
    height stay as they were. Seven slots (168px) fit the 178px column; a comment count widens its
    own slot. */
 .ev-col-ctrl > * {
-  min-width: 24px; justify-content: center; text-align: center;
+  min-width: 24px; margin-left: 0; margin-right: 0; justify-content: center; text-align: center;
 }
+/* A comment count makes the chip wider than its slot already; trim its side padding so a two-digit
+   count still fits the column. A larger count wraps (flex-wrap above) instead of overflowing into
+   the timestamp column. */
+.ev-col-ctrl .comment-chip { padding-left: 3px; padding-right: 3px; }
 #forensicTimeline.tl-no-icons .ev-col-ctrl > * { min-width: 0; }
 /* Action icons hidden (Settings → Timeline row display) → reclaim the control column's width, keep just the checkbox. */
 #forensicTimeline.tl-no-icons .ev-col-ctrl, #forensicTimeline.tl-no-icons .ev-header-ctrl { width: 22px; }
