@@ -64,7 +64,9 @@ import {
 // 4: metadata/storage-key/AWS-compute rows are no triggers; storage-key rows are LOAD rows; the
 //    AWS_LAUNCH/AWS_FLOW counts (#2539). Rows indexed under 3 carry neither count bit, so a bump is
 //    required: a compute summary arriving over v3-indexed flows would otherwise skip the fallback.
-export const MERGE_INDEX_VERSION = 4;
+// 5: a CloudTrail selector change that selects S3 object activity is a LOAD row (#2564). Rows
+//    indexed under 4 lack that bit, so the merge would not see the object-logging note is due.
+export const MERGE_INDEX_VERSION = 5;
 
 export type IncrementalResult =
   { ok: true; state: InvestigationState; read: number; written: number } | { ok: false; reason: string };

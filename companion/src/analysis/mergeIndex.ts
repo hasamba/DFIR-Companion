@@ -17,6 +17,7 @@ import { PRECURSOR_CLASSES } from "./ransomwarePrecursor.js";
 import { CLOUD_AUDIT_RE, COVERAGE_EVENT_ID, isGeneratedCoverageRow } from "./cloudMetadataAccess.js";
 import { readCloudRecord } from "./cloudBulkRead.js";
 import { isStorageKeyJoinInput } from "./azureStorageKeyToRead.js";
+import { selectsObjects } from "./objectLoggingWindow.js";
 import { isAwsFlowEvent } from "./awsFlowResourceAttribution.js";
 import { readBrowsing } from "./serviceAccountBrowsing.js";
 import { commandOf, configRisks, escapeBehavior } from "./containerEscape.js";
@@ -182,6 +183,8 @@ export function mergeTrigger(e: ForensicEvent): string | null {
 export function mergeLoadAlways(e: ForensicEvent): boolean {
   if (readCloudRecord(e) !== null) return true;
   if (isStorageKeyJoinInput(e)) return true;
+  // The time-aware object-logging note's anchor: without it held, a stored note never refreshes (#2564).
+  if (selectsObjects(e)) return true;
   if (!e.asset) return false;
   const mitre = e.mitreTechniques ?? [];
   if (mitre.includes("T1560.001") || mitre.includes("T1041")) return true;

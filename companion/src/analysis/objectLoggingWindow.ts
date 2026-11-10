@@ -21,8 +21,11 @@ const SELECTOR_ACTIONS = new Set(["puteventselectors", "createtrail", "updatetra
 const msOf = (e: ForensicEvent): number => Date.parse(e.timestamp ?? "");
 const isAws = (e: ForensicEvent): boolean => e.canonical?.cloud?.provider === "aws";
 
-/** A successful CloudTrail selector change whose resulting selectors name S3 object activity. */
-function selectsObjects(e: ForensicEvent): boolean {
+/**
+ * A successful CloudTrail selector change whose resulting selectors name S3 object activity. The
+ * merge index marks these LOAD rows (mergeIndex.ts), so every merge sees the note's anchor (#2564).
+ */
+export function selectsObjects(e: ForensicEvent): boolean {
   const block = e.canonical?.loggingChange;
   if (!block || block.provider !== "aws" || block.failure || block.state === "requested") return false;
   if (!SELECTOR_ACTIONS.has((e.canonical?.event?.action ?? "").toLowerCase())) return false;
