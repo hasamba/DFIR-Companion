@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Small-file cloud imports stay fast after an S3 read** — one GetBucketPolicy-style read row no longer forces every later import down the slow full rebuild; a few thousand small CloudTrail files take minutes, not hours (closes #2536)
+- **Cloud imports stay fast after instance-metadata, storage-key and EC2 rows** — those rows no longer force every later import down the slow full rebuild either (closes #2539)
+- **Live collections no longer push uploads out of Cloud Coverage** — a live collection is one row per account that grows as pages land ("across N collected pages"), so manual exports stay listed for the analyst and the AI (closes #2538)
+- **GitHub retry time in UTC with its date** — a throttled rule-source check says "try again after YYYY-MM-DD HH:MM UTC", whatever the server's locale or timezone (closes #2525)
+- **Sigma Check spends less of GitHub's hourly limit** — a repeat check reuses the main-branch count while SigmaHQ's main branch and the installed rules are unchanged (2 calls, not 12) (closes #2526)
 - **Faster live cloud collection import** — each page of a cloud-only case now commits only its own rows instead of re-reading and re-saving the whole case; a 20,000-record AWS import went from 340 s to 160 s (closes #2504)
 - **Coverage notes survive a High gate** — the four coverage notes (cloud coverage gap, object logging off, object reads not all examined, browsing without an account) stay on the forensic timeline whatever the severity gate, still graded Medium; an affected case gets them back on its next import (closes #2497)
 - **One credential history per collection** — a live AWS collection builds its credential lineages and compute lifecycles once over the whole run (first 25,000 records, truncation disclosed), so no duplicate rows or false "no issuance record"; Resume drops rows the rebuild no longer reports (closes #2482)
