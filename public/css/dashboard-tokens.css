@@ -397,7 +397,7 @@
   --sev-critical:          #ca2527;
   --sev-high:              #a45300;
   --sev-medium:            #7a6000;
-  --sev-low:               #007a2c;
+  --sev-low:               #007529; /* #2492: 4.75:1 on --bg-tertiary (was 4.44) */
   --sev-info:              #2563c9;
   --text-dim:              #5a6573;
   --text-faint:            #5f6a78;

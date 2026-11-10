@@ -204,9 +204,9 @@
     return (
       statusBoard(ledger) +
       nearDuplicateWarnings(ledger) +
-      `<h4>Scope gaps</h4>` +
+      `<h3>Scope gaps</h3>` +
       gapList(ledger) +
-      `<h4>Hosts</h4>` +
+      `<h3>Hosts</h3>` +
       hostTable(ledger)
     );
   }

@@ -440,10 +440,23 @@
     return true;
   }
 
+  // A list only while it holds collection rows (#2492): an empty state or an error message inside
+  // role=list is a list with no list items, which a screen reader announces as an empty list.
+  function setListRole(rows, isList) {
+    if (isList) {
+      rows.setAttribute("role", "list");
+      rows.setAttribute("aria-label", "Cloud collections of this case");
+    } else {
+      rows.removeAttribute("role");
+      rows.removeAttribute("aria-label");
+    }
+  }
+
   function fillRows(rows, caseId, collections) {
     rows.replaceChildren();
     for (const c of collections) rows.appendChild(collectionRow(caseId, c));
     if (!collections.length) rows.appendChild(el("p", "No collections yet.", "cc-note"));
+    setListRole(rows, collections.length > 0);
   }
 
   // A progress poll (#2379): asks the collection list only and replaces the rows only. The start
@@ -454,6 +467,7 @@
     if (hideForDemo(list)) return;
     if (!list.ok) {
       rowsBox.replaceChildren(el("p", list.body.error || `Cloud collection is not available (HTTP ${list.status}).`, "cc-missing"));
+      setListRole(rowsBox, false);
       return;
     }
     const collections = list.body.collections || [];
@@ -502,8 +516,6 @@
     }
     box.appendChild(msg);
     const rows = el("div", null, "cc-list");
-    rows.setAttribute("role", "list");
-    rows.setAttribute("aria-label", "Cloud collections of this case");
     const collections = list.body.collections || [];
     fillRows(rows, id, collections);
     box.appendChild(rows);

@@ -198,7 +198,9 @@ describe("drawing the matrix", () => {
 
   it("labels a hit cell with id, name, severity and counts, and shows badge and letter", () => {
     const html = draw([hit("T1059.001", "High", { findingIds: ["f1", "f2", "f3"], eventIds: ["e1", "e2"] })]);
-    expect(html).toContain('aria-label="T1059.001 PowerShell, High, 3 findings, 2 events"');
+    // The spoken name starts with exactly what the cell shows — name, count, letter (#2492,
+    // WCAG 2.5.3 label in name) — then adds the id, the full severity and the split counts.
+    expect(html).toContain('aria-label="PowerShell 5 H — T1059.001, High, 3 findings, 2 events"');
     expect(html).toMatch(/mm-hit mm-sev-High[^>]*data-tid="T1059.001"/);
     expect(html).toContain('<span class="mm-badge" aria-hidden="true" title="3 findings, 2 events">5</span>');
     expect(html).toContain('<span class="mm-sevl" aria-hidden="true" title="Worst severity: High">H</span>');
@@ -210,7 +212,7 @@ describe("drawing the matrix", () => {
       hit("T1059.001", "Critical", { eventIds: ["e1"] }),
     ]);
     expect(html).toContain(
-      'aria-label="T1059 Command and Scripting Interpreter, Critical, 0 findings, 2 events"',
+      'aria-label="Command and Scripting Interpreter 2 C — T1059, Critical, 0 findings, 2 events"',
     );
     expect(html).toContain('title="0 findings, 2 events (with its sub-techniques)"');
     expect(html).toContain('data-toggle="T1059" tabindex="-1" aria-expanded="true"');
@@ -219,6 +221,28 @@ describe("drawing the matrix", () => {
     expect(html).toContain('data-toggle="T1053" tabindex="-1" aria-expanded="false"');
     expect(html).toContain(">+1</button>");
     expect(html).not.toContain('data-tid="T1053.005"');
+  });
+
+  it("begins every cell's spoken name with the cell's visible text (#2492)", () => {
+    const html = draw([hit("T1059.001", "High", { findingIds: ["f1"], eventIds: ["e1", "e2"] })]);
+    const cells = [
+      ...html.matchAll(
+        /<button type="button" class="mm-cell[^"]*"[^>]*aria-label="([^"]*)">([\s\S]*?)<\/button>/g,
+      ),
+    ];
+    expect(cells.length).toBeGreaterThan(3);
+    for (const [, label, inner] of cells) {
+      const visible = inner
+        .replace(/<[^>]+>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      expect(label.startsWith(visible), `"${label}" vs "${visible}"`).toBe(true);
+    }
+  });
+
+  it("starts an unseen cell's spoken name with its visible name (#2492)", () => {
+    const html = draw([hit("T1059.001", "Medium")]);
+    expect(html).toMatch(/aria-label="Scheduled Task\/Job — T1053, not seen in this case"/);
   });
 
   it("writes a hostile technique name as text", () => {

@@ -146,11 +146,11 @@ describe("scoreCoversTag", () => {
 
 describe("verdictColor", () => {
   it.each([
-    ["malicious", "#ff6b6b"],
-    ["suspicious", "#ffd93b"],
-    ["harmless", "#6bcB77"],
-    ["unknown", "#9aa4b2"],
-    [undefined, "#9aa4b2"],
+    ["malicious", "var(--c-ff6b6b)"],
+    ["suspicious", "var(--c-ffd93b)"],
+    ["harmless", "var(--c-6bcb77)"],
+    ["unknown", "var(--c-9aa4b2)"],
+    [undefined, "var(--c-9aa4b2)"],
   ])("%s -> %s", (verdict, colour) => expect(ioc.verdictColor(verdict)).toBe(colour));
 });
 
@@ -160,7 +160,7 @@ describe("enrichBadges", () => {
   it("colours a badge by verdict and names the source", () => {
     const html = withEnrichment({ source: "virustotal", verdict: "malicious" });
     expect(html).toContain("virustotal");
-    expect(html).toContain("#ff6b6b");
+    expect(html).toContain("var(--c-ff6b6b)");
   });
 
   it("escapes a source name, which comes from provider configuration", () => {

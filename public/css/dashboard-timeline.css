@@ -31,7 +31,7 @@
 .ev-col-sev { flex-shrink: 0; width: 92px; margin-right: 6px; display: flex; align-items: center; gap: 7px; font-weight: 650; font-size: 12px; align-self: center; }
 .ev-col-sev .ev-sq { width: 9px; height: 9px; border-radius: 2px; background: currentColor; flex-shrink: 0; }
 .ev-header-sev { width: 92px; margin-right: 6px; flex-shrink: 0; }
-.ev-col-ctrl { display: flex; align-items: center; gap: 2px; flex-shrink: 0; width: 178px; margin-right: 6px; padding-top: 1px; }
+.ev-col-ctrl { display: flex; align-items: center; gap: 0; flex-shrink: 0; width: 178px; margin-right: 6px; padding-top: 1px; }
 /* Buttons default to flex-shrink:1, which silently compresses (and can visually clip) their
    icon/count once the row's icon set (star/comment/tag/hunt/explain/geo) nears the column's
    width budget — pin them to their natural size instead; the column's own width + margin above
@@ -39,6 +39,14 @@
 .ev-col-ctrl .comment-chip, .ev-col-ctrl .tag-add, .ev-col-ctrl .hunt-add, .ev-col-ctrl .explain-btn, .ev-col-ctrl .ev-geo {
   margin-left: 0; flex-shrink: 0;
 }
+/* 24px target size by spacing (WCAG 2.2 SC 2.5.8, #2492): each control gets a 24px-wide slot with
+   its glyph centred, so neighbouring centres are 24px apart. Width only — the glyphs and the row
+   height stay as they were. Seven slots (168px) fit the 178px column; a comment count widens its
+   own slot. */
+.ev-col-ctrl > * {
+  min-width: 24px; justify-content: center; text-align: center;
+}
+#forensicTimeline.tl-no-icons .ev-col-ctrl > * { min-width: 0; }
 /* Action icons hidden (Settings → Timeline row display) → reclaim the control column's width, keep just the checkbox. */
 #forensicTimeline.tl-no-icons .ev-col-ctrl, #forensicTimeline.tl-no-icons .ev-header-ctrl { width: 22px; }
 .ev-checkbox { width: 13px; height: 13px; cursor: pointer; accent-color: var(--accent); flex-shrink: 0; margin: 0; }
@@ -154,7 +162,11 @@
 /* Context that must NOT live inside the indicator itself (#177) — the host a private IP belongs
    to, an observed port, why the analyst added it. Shown beside the value, never part of it. */
 .ioc-note-chip { font-size: 10.5px; color: var(--text-muted); font-style: italic; }
-.ioc-actions-cell { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 2px; }
+.ioc-actions-cell { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 0; }
+/* 24px target size (#2492): a 24x24 slot per control, glyph centred, no gap. The controls can wrap to
+   a second line (the hunt pivot is added late); two 24px lines fit the row's existing height. */
+.ioc-actions-cell > * { min-width: 24px; min-height: 24px; justify-content: center; text-align: center; }
+.ioc-actions-cell > .hq-pivot { margin-left: 0 !important; }
 .vql-result-wrap { overflow: auto; max-height: 260px; border: 1px solid var(--border-color); border-radius: 5px; }
 .vql-result { border-collapse: collapse; font-size: 11px; width: 100%; }
 .vql-result th, .vql-result td { border: 1px solid var(--border-color); padding: 3px 6px; text-align: left; vertical-align: top; white-space: nowrap; }

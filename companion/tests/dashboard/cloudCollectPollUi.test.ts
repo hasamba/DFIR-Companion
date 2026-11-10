@@ -303,3 +303,45 @@ describe("the region checkbox layout (#2379)", () => {
       expect(span).toContain(sel);
   });
 });
+
+// #2492: the collection list is announced as a list only while it holds collection rows. An empty
+// state or an error message inside role=list is a list with no list items (axe aria-required-children).
+describe("the Cloud Collection list semantics (#2492)", () => {
+  const list = (q: (sel: string) => FakeEl) => q(".cc-list");
+
+  it("is a list while it holds rows", async () => {
+    const { api, q } = load({});
+    await api.loadCloudCollect("c1");
+    await flush();
+    expect(list(q).getAttribute("role")).toBe("list");
+  });
+
+  it("is not a list when there are no collections", async () => {
+    const { api, q } = load({ "GET /cases/c1/cloud-collect": listOf() });
+    await api.loadCloudCollect("c1");
+    await flush();
+    expect(list(q).getAttribute("role")).toBeNull();
+    expect(list(q).getAttribute("aria-label")).toBeNull();
+  });
+
+  it("drops the list role when a poll empties it, and when a poll fails", async () => {
+    const answers = changing(listOf(collection("cc-1", "running", 1)));
+    const { api, q, timers } = load({ "GET /cases/c1/cloud-collect": answers.route });
+    await api.loadCloudCollect("c1");
+    await flush();
+    expect(list(q).getAttribute("role")).toBe("list");
+    answers.set({ status: 500, body: { error: "down" } });
+    await timers.tick();
+    expect(list(q).getAttribute("role")).toBeNull();
+  });
+
+  it("drops the list role when a poll returns no collections", async () => {
+    const answers = changing(listOf(collection("cc-1", "running", 1)));
+    const { api, q, timers } = load({ "GET /cases/c1/cloud-collect": answers.route });
+    await api.loadCloudCollect("c1");
+    await flush();
+    answers.set(listOf());
+    await timers.tick();
+    expect(list(q).getAttribute("role")).toBeNull();
+  });
+});

@@ -29,8 +29,8 @@ describe("setup wizard, AI step", () => {
     );
     expect(heads).toContain("Vision model");
     expect(heads).toContain("Synthesis model");
-    expect(pane).toMatch(/<label>Vision provider/);
-    expect(pane).toMatch(/<label>Synth provider/);
+    expect(pane).toMatch(/<label for="wizProvider">Vision provider/);
+    expect(pane).toMatch(/<label for="wizSynthProvider">Synth provider/);
   });
 
   it("lets the synthesis model use a provider of its own", async () => {

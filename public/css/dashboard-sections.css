@@ -67,7 +67,7 @@
   .now-card-title .now-pin{color:var(--badge-warning-text)}
   .now-card-summary,.now-card-action{margin-top:4px;font-size:11px;line-height:1.4;color:var(--text-muted)}
   .now-card-action{color:var(--badge-warning-text)}
-  .now-card-meta{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:7px;font-size:10px;color:var(--text-faint)}
+  .now-card-meta{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:7px;font-size:10px;color:var(--text-faint)}
   .now-card-meta button{padding:1px 6px;font-size:10px;text-transform:none;letter-spacing:0;font-weight:400;background:var(--badge-bg-neutral);border-color:var(--border-color);color:var(--text-muted)}
   .now-card-meta button:hover{color:var(--text-bright);border-color:var(--accent)}
   .now-evidence{color:var(--accent-hover)!important}
@@ -93,7 +93,7 @@
      shipped every one of their class names with nothing here to match them. At browser defaults the
      board stacked vertically with each count run straight into its label, and the table's automatic
      layout handed most of the width to the criteria column while the other five squeezed. */
-  #sec-host-scope h4{margin:16px 0 7px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
+  #sec-host-scope h3{margin:16px 0 7px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted)}
   #sec-host-scope .hs-empty{color:var(--text-muted);font-size:12px}
   #sec-host-scope code{font-family:var(--font-code);font-size:12px;color:var(--text-bright)}
   /* The board is the table's filter, so the tiles are real buttons and inherit the page's solid
@@ -281,7 +281,7 @@
   #sec-adversary .adv-tech{background:var(--bg-secondary);color:var(--accent);border:1px solid var(--border-subtle);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
   #sec-adversary .adv-tech:hover{text-decoration:underline}
   #sec-adversary .adv-tech-exact{background:var(--bg-drop-active);color:var(--accent-hover);border-color:var(--border-strong);font-weight:bold}
-  #sec-adversary .adv-tech-base{opacity:0.6}
+  #sec-adversary .adv-tech-base{color:var(--text-muted)}
   #sec-adversary .adv-next{margin-top:12px;border-top:1px solid var(--border-subtle);padding-top:10px}
   #sec-adversary .adv-next-h{color:var(--badge-warning-text);font-size:12px;font-weight:bold;margin-bottom:2px}
   #sec-adversary .adv-next-sub{color:var(--text-muted);font-size:11px;margin-bottom:8px}
@@ -314,7 +314,7 @@
   #sec-playbook-match .pm-step{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12px;padding:3px 6px;border-radius:4px;border-left:3px solid var(--border-color);background:var(--bg-secondary)}
   #sec-playbook-match .pm-step.pm-matched{border-left-color:var(--sev-low)}
   #sec-playbook-match .pm-step.pm-ooo{border-left-color:var(--badge-warning-text)}
-  #sec-playbook-match .pm-step.pm-missing{border-left-color:var(--sev-critical);opacity:.85}
+  #sec-playbook-match .pm-step.pm-missing{border-left-color:var(--sev-critical)}
   #sec-playbook-match .pm-step-n{color:var(--text-muted);font-size:11px;min-width:16px}
   #sec-playbook-match .pm-step-tech{color:var(--accent);text-decoration:none;font-size:11px}
   #sec-playbook-match .pm-step-tech:hover{text-decoration:underline}
@@ -598,7 +598,7 @@
   .exec-cols{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:28px}
   .exec-cols .prose{column-count:1;max-width:82ch}
   .exec-assess{border-left:1px solid var(--border-subtle);padding-left:24px;display:grid;gap:16px;align-content:start}
-  .exec-block h4{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+  .exec-block h3{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
   .exec-block ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
   .exec-u{display:grid;grid-template-columns:100px minmax(0,1fr);column-gap:10px;font-size:14px;line-height:1.5;color:var(--text-primary)}
   .exec-status{padding-top:2px;font-family:var(--font-code);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}

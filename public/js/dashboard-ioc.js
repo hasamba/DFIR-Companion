@@ -10,8 +10,15 @@
 // nothing" from "we never looked", and the tests pin that difference.
 
 // Threat-intel enrichment badges for an IOC (VirusTotal / MalwareBazaar / AbuseIPDB).
+// Theme tokens, not hex (#2492): unchanged in the dark theme, readable in the light one.
 function verdictColor(v) {
-  return v === "malicious" ? "#ff6b6b" : v === "suspicious" ? "#ffd93b" : v === "harmless" ? "#6bcB77" : "#9aa4b2";
+  return v === "malicious"
+    ? "var(--c-ff6b6b)"
+    : v === "suspicious"
+      ? "var(--c-ffd93b)"
+      : v === "harmless"
+        ? "var(--c-6bcb77)"
+        : "var(--c-9aa4b2)";
 }
 
 // Link a MITRE technique id (T1059 / T1059.001) to its attack.mitre.org page.

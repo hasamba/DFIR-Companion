@@ -84,11 +84,12 @@
     // (narrativeHtml, js/dashboard-fragments.js); plain prose otherwise.
     narrativeView.innerHTML = narrativeViewHtml(narrative, state.forensicTimeline);
 
+    // Theme tokens, not hex (#2492): the label text must stay readable in the light theme.
     const PRIO = {
-      critical: "#ff5c5c",
-      high: "#ff9f43",
-      medium: "#ffd93b",
-      low: "#6bcB77",
+      critical: "var(--c-ff5c5c)",
+      high: "var(--c-ff9f43)",
+      medium: "var(--c-ffd93b)",
+      low: "var(--c-6bcb77)",
     };
 
     // Structured collection directives (investigation-guidance #8, phase 3): render a one-click
@@ -123,7 +124,7 @@
     document.getElementById("nextSteps").innerHTML = ns.length
       ? ns
           .map((s) => {
-            const color = PRIO[s.priority] || "#9aa4b2";
+            const color = PRIO[s.priority] || "var(--c-9aa4b2)";
             return (
               `<div class="step-row" data-safe-style="--step-color:${color}">` +
               `<span class="step-priority">${esc(String(s.priority || "").toUpperCase())}</span> ${esc(s.action)}` +
@@ -191,20 +192,20 @@
     const UNC_META = {
       confirmed: {
         label: "Confirmed",
-        color: "#6bcb77",
+        color: "var(--c-6bcb77)",
         desc: "directly evidenced",
       },
       inferred: {
         label: "Inferred",
-        color: "#ffd93b",
+        color: "var(--c-ffd93b)",
         desc: "deduced from indirect evidence",
       },
       speculated: {
         label: "Speculated",
-        color: "#ff9f43",
+        color: "var(--c-ff9f43)",
         desc: "plausible guess, little evidence",
       },
-      unknown: { label: "Unknown", color: "#9aa4b2", desc: "no basis yet" },
+      unknown: { label: "Unknown", color: "var(--c-9aa4b2)", desc: "no basis yet" },
     };
     const UNC_ORDER = { speculated: 0, unknown: 1, inferred: 2, confirmed: 3 };
     const unc = (state.uncertainties || [])
