@@ -1,5 +1,5 @@
 import type { Response } from "express";
-import type { buildImportAnonContext } from "../analysis/ai/providerCall.js";
+import type { CaseMasker } from "../analysis/ai/maskRequest.js";
 import { PresidioApprovalRequired, PresidioScanError } from "../analysis/presidio.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
@@ -13,8 +13,6 @@ import type { RouteContext } from "./context.js";
  * the send, and fails closed the same way every other AI call does — a new value holds the call
  * for approval, an unreachable analyzer stops it.
  */
-
-type AnonContext = Awaited<ReturnType<typeof buildImportAnonContext>>;
 
 /** Every string value in a Jev state, except the static top-level `note` (instructions, not case data). */
 export function jevScanText(state: unknown): string {
@@ -37,11 +35,12 @@ export function jevScanText(state: unknown): string {
 export function jevPresidioCheck(
   options: RouteContext["options"],
   caseId: string,
-  anon: AnonContext,
+  masker: CaseMasker,
 ): (state: unknown) => Promise<void> {
   const pipeline = options.pipeline;
-  if (!anon || !pipeline) return async () => {};
-  return (state) => pipeline.presidioGateMasked(caseId, jevScanText(state), anon.known, anon.control);
+  const known = masker.known;
+  if (!known || !pipeline) return async () => {};
+  return (state) => pipeline.presidioGateMasked(caseId, jevScanText(state), known, masker.control);
 }
 
 /** Answer a Presidio stop the way every other AI route does; false when `err` is not one. */

@@ -3,7 +3,9 @@ import { PresidioScanError } from "../presidio.js";
 import { AnonymizationChangedError, anonRevision } from "../anonRevision.js";
 import type { InvestigationState } from "../stateTypes.js";
 import { maskRequest, type MaskedRequest } from "./maskRequest.js";
-import { authoredFor } from "./presidioAuthoredText.js";
+import type { KnownEntities } from "../anonymize.js";
+import type { AnonControl } from "../anonControl.js";
+import { authoredFor, type AuthoredText } from "./presidioAuthoredText.js";
 import { presidioEnabledFor, presidioHeldValues } from "./presidioScan.js";
 import type { ProviderCallContext } from "./providerCallContext.js";
 import {
@@ -62,7 +64,7 @@ async function captureOnce(
   for (let attempt = 1; attempt <= MAX_ANON_ATTEMPTS; attempt++) {
     const revision = anonRevision(caseId);
     const masked = await maskRequest(ctx, caseId, state, req);
-    const presidio = await presidioPreview(ctx, caseId, masked, presidioCovered(revision));
+    const presidio = await presidioPreview(ctx, caseId, masked, presidioCovered(revision), revision);
     if (anonRevision(caseId) !== revision) continue;
     return {
       kind: label,
@@ -92,15 +94,44 @@ async function presidioPreview(
   caseId: string,
   m: MaskedRequest,
   covered: boolean,
+  revision: number,
 ): Promise<AiPreviewPresidio> {
   // The real gate only ever runs on masked text: with anonymization off it does not run at all.
   if (!m.known || !ctx.opts.presidio || !presidioEnabledFor(m.control)) return { state: "off", held: [] };
-  if (covered) return { state: "not-gated", held: [] };
+  if (covered) {
+    // An import's whole-payload pre-scan covered this batch (#2515): show what THAT scan would do,
+    // as long as it masked with the revision this batch is covered by.
+    const preScan = activeAiPreview()?.preScan;
+    return preScan && preScan.revision === revision ? preScan.presidio : { state: "not-gated", held: [] };
+  }
+  const authored = await authoredFor(ctx.opts.aiAuthoredStore, ctx.log, caseId, { spans: m.spans });
+  return presidioPreviewText(ctx, caseId, m.maskedPrompt, m.known, m.control, authored);
+}
+
+/**
+ * What the real gate would do with this masked text — the same `presidioHeldValues` question, with
+ * nothing saved or held. Also asked for the Jev states (#2515), which the real routes gate the same way.
+ */
+export async function presidioPreviewText(
+  ctx: ProviderCallContext,
+  caseId: string,
+  maskedText: string,
+  known: KnownEntities,
+  control: AnonControl | null,
+  authored?: AuthoredText,
+): Promise<AiPreviewPresidio> {
+  if (!ctx.opts.presidio || !presidioEnabledFor(control)) return { state: "off", held: [] };
+  return presidioOutcome(() => presidioHeldValues(ctx, caseId, maskedText, known, control, authored));
+}
+
+/** Held values → the preview's Presidio answer; a scan failure is the real call's stop, not a crash. */
+export async function presidioOutcome(
+  held: () => Promise<ReadonlyArray<{ category: string; value: string }>>,
+): Promise<AiPreviewPresidio> {
   try {
-    const authored = await authoredFor(ctx.opts.aiAuthoredStore, ctx.log, caseId, { spans: m.spans });
-    const held = await presidioHeldValues(ctx, caseId, m.maskedPrompt, m.known, m.control, authored);
-    return held.length
-      ? { state: "would-hold", held: held.map((e) => ({ category: e.category, value: e.value })) }
+    const values = await held();
+    return values.length
+      ? { state: "would-hold", held: values.map((e) => ({ category: e.category, value: e.value })) }
       : { state: "clear", held: [] };
   } catch (err) {
     if (err instanceof PresidioScanError) return { state: "scan-failed", held: [], message: err.message };

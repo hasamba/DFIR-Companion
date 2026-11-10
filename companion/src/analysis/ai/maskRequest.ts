@@ -52,6 +52,35 @@ export async function knownEntitiesFor(
   return known;
 }
 
+/**
+ * The case's masker: its control and policy and — when anonymization is on — its known entities and
+ * anonymizer. THE one place that builds them (#2515): `maskRequest` (every gated AI call and the
+ * preview), the import pre-scan and the Jev routes all come here. `mask` is the anonymizer's own
+ * `apply`, or the identity function when anonymization is off for the case. Writes nothing.
+ */
+export interface CaseMasker {
+  readonly control: AnonControl | null;
+  readonly policy: ReturnType<typeof toAnonPolicy>;
+  /** null when anonymization is off for the case. */
+  readonly known: KnownEntities | null;
+  readonly anon: Anonymizer | null;
+  readonly mask: (text: string) => string;
+}
+
+export async function caseMasker(
+  ctx: ProviderCallContext,
+  caseId: string,
+  state: InvestigationState,
+): Promise<CaseMasker> {
+  const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
+  const policy = toAnonPolicy(control);
+  // Off: no entity list is read at all, and Presidio (which needs `known`) does not run either.
+  if (!policy.enabled) return { control, policy, known: null, anon: null, mask: (t) => t };
+  const known = await knownEntitiesFor(ctx, caseId, state);
+  const anon = createAnonymizer(policy, known);
+  return { control, policy, known, anon, mask: (t) => anon.apply(t) };
+}
+
 /** Mask one request's user prompt exactly as the provider will receive it. Writes nothing. */
 export async function maskRequest(
   ctx: ProviderCallContext,
@@ -59,17 +88,14 @@ export async function maskRequest(
   state: InvestigationState,
   req: Pick<AnalyzeRequest, "userPrompt">,
 ): Promise<MaskedRequest> {
-  const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
-  const policy = toAnonPolicy(control);
+  const { control, policy, known, anon, mask } = await caseMasker(ctx, caseId, state);
   // The AI-field markers (aiSpan.ts) come out first, whatever happens next: nothing is sent with them.
   const segments = splitAiSpans(req.userPrompt);
   const plainPrompt = segments.map((sg) => sg.text).join("");
-  if (!policy.enabled)
+  if (!known || !anon)
     return { control, policy, plainPrompt, maskedPrompt: plainPrompt, spans: [], known: null, anon: null };
-  const known = await knownEntitiesFor(ctx, caseId, state);
-  const anon = createAnonymizer(policy, known);
   // Mask FIRST, then let Presidio look at the result. It never sees a real hostname, IP,
   // username, email, SID or secret — only what our own detectors could not find.
-  const { masked, spans } = maskSegments(segments, (t) => anon.apply(t));
+  const { masked, spans } = maskSegments(segments, mask);
   return { control, policy, plainPrompt, maskedPrompt: masked, spans, known, anon };
 }

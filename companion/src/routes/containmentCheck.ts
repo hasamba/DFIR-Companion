@@ -1,16 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
-import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
-import { anonRevision, assertAnonRevision } from "../analysis/anonRevision.js";
-import { AnonControlStore } from "../analysis/anonControl.js";
-import { CustomEntitiesStore } from "../analysis/anonEntities.js";
-import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
+import { assertAnonRevision } from "../analysis/anonRevision.js";
 import { askJev, type JevBatchResult } from "../analysis/ai/jev/jevClient.js";
 import { resolveJevSettings } from "../analysis/ai/jev/jevConfig.js";
 import { CONTAINMENT_QUESTIONS } from "../analysis/ai/jev/containmentQuestions.js";
 import { RULE_VERSION, classifyAnswers, suggestSteps } from "../analysis/ai/jev/containmentRule.js";
-import { buildContainmentState, findingFingerprint } from "../analysis/ai/jev/containmentState.js";
+import { findingFingerprint } from "../analysis/ai/jev/containmentState.js";
 import { containmentDuplicate, type ContainmentAnswer } from "../analysis/playbookContainment.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { getServerLogger } from "../logging/serverLogger.js";
@@ -22,6 +18,7 @@ import {
   type ContainmentCheckRecord,
 } from "./containmentCheckPlaybook.js";
 import type { RouteContext } from "./context.js";
+import { containmentRequest } from "./containmentCheckPrepare.js";
 import { jevPresidioCheck, sendJevPresidioStop } from "./jevPresidioGate.js";
 import { runAsRouteJob } from "./routeJob.js";
 
@@ -49,15 +46,6 @@ export function registerContainmentCheckRoutes(app: Express, ctx: RouteContext):
   // Per finding, per case incarnation: a double press must not buy the same check twice.
   const running = new CaseKeyedMap<true>(casesRoot);
   const records = new ContainmentCheckRecords(casesRoot);
-  // The anonymizer's own stores, over the case files. AppOptions carries none of them — only the
-  // pipeline does — so `opts: options` would build no anonymizer and send the finding in clear.
-  // These are stateless file readers; the pipeline builds the same three over the same store.
-  const anonOpts = {
-    anonStore: new AnonControlStore(store),
-    customEntitiesStore: new CustomEntitiesStore(store),
-    discoveredStore: new DiscoveredEntitiesStore(store),
-  };
-
   app.post("/cases/:id/findings/:findingId/containment-check", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     const findingId = req.params.findingId;
@@ -86,27 +74,20 @@ export function registerContainmentCheckRoutes(app: Express, ctx: RouteContext):
         "containment_check_failed",
         async (recordFailure) => {
           const state = await stateStore.load(caseId);
-          const finding = state.findings.find((f) => f.id === findingId);
-          if (!finding) {
+          // The finding and its cited events, masked by the shared step (#2515) — the AI preview
+          // builds the same request through the same function.
+          const built = await containmentRequest(store, caseId, state, findingId);
+          if (!built) {
             recordFailure(new Error(`finding ${findingId} not found`), "finding_not_found");
             return res.status(404).json({ error: "finding not found" });
           }
-
-          // Masked like every Jev call: the revision is read BEFORE the lists load (#1840).
-          const maskedAt = anonRevision(caseId);
-          const anon = await buildImportAnonContext(
-            { log: getServerLogger(), opts: anonOpts },
-            caseId,
-            state,
-          );
-          const mask = anon ? (text: string) => anon.anon.apply(text) : (text: string) => text;
-          const { state: jevState, coverage } = buildContainmentState(finding, state, mask);
+          const { finding, jevState, coverage, maskedAt, masker } = built;
 
           let result: JevBatchResult;
           let answers: ContainmentAnswer[];
           try {
             // The Presidio gate on the masked payload, right before it leaves (#1952).
-            await jevPresidioCheck(options, caseId, anon)(jevState);
+            await jevPresidioCheck(options, caseId, masker)(jevState);
             result = await askJev(
               {
                 baseUrl: settings.baseUrl,

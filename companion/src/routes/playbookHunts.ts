@@ -11,7 +11,7 @@ import {
 } from "../analysis/playbook.js";
 import {
   selectFreshHunts,
-  pendingHuntTasks,
+  planPlaybookHuntRun,
   mergePersistedHunts,
   EMPTY_PERSISTED_HUNTS,
   PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT,
@@ -263,8 +263,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       const persisted = options.playbookHuntStore
         ? await options.playbookHuntStore.load(req.params.id)
         : { ...EMPTY_PERSISTED_HUNTS };
-      const fresh = force ? { suggestions: [], taskHashes: {} } : selectFreshHunts(persisted, tasks);
-      const pending = pendingHuntTasks(tasks, fresh.taskHashes);
+      const { fresh, pending } = planPlaybookHuntRun(persisted, tasks, force);
       // Concurrently (best-effort, no-op when the API is off): refresh the client inventory so a host
       // enrolled MID-INVESTIGATION is resolvable at deploy time, AND fetch the server's REAL CLIENT
       // artifact names so the model only references artifacts that EXIST. Skip the artifact fetch when

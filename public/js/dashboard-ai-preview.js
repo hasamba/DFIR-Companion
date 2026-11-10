@@ -31,6 +31,13 @@
     ["translate-query", "Translate a query", ["request"]],
     ["tagger-rule", "Suggest a tagger rule", ["description"]],
     ["fp-similar", "Find similar false positives (AI pass)", ["kind", "ref"]],
+    // #2515 — the file is chosen here: it is not in the case, and nothing is imported.
+    ["extract-csv", "CSV read — AI extraction of a file you choose", ["fileCsv"]],
+    ["extract-log", "Log read — AI extraction of a file you choose", ["fileLog"]],
+    ["extract-screenshot", "Screenshot read — AI extraction of one image you choose", ["fileImage", "tabTitle", "url"]],
+    ["playbook-hunts", "Playbook hunt suggestions", ["force", "taskId", "excludeVql"]],
+    ["jev-review", "Missed-evidence review (decision model)", ["all"]],
+    ["containment-check", "Containment check on a finding (decision model)", ["findingId"]],
   ];
   const PARAM_LABELS = {
     minSeverity: "Lowest severity to read",
@@ -43,7 +50,19 @@
     description: "Rule description",
     kind: "Event or finding",
     ref: "Event or finding id",
+    fileCsv: "CSV file",
+    fileLog: "Log file",
+    fileImage: "Screenshot (PNG, JPEG or WebP)",
+    tabTitle: "Tab title (optional)",
+    url: "Page address (optional)",
+    force: "Regenerate every task (not only new or changed ones)",
+    taskId: "One task id (optional — regenerate just that task)",
+    excludeVql: "VQL to avoid (optional — defaults to the task's current suggestion)",
+    all: "Read every row (the full read, not the capped one)",
+    findingId: "Finding id",
   };
+  const FILE_ACCEPT = { fileCsv: ".csv,text/csv", fileLog: ".log,.txt,text/plain", fileImage: "image/png,image/jpeg,image/webp" };
+  const CHECKBOXES = new Set(["force", "all"]);
   const PRESIDIO_TEXT = {
     off: "Presidio does not run on this request (not configured, off for this case, or anonymization is off).",
     "not-gated": "Presidio is not run on this request — an import pre-scan already covered it.",
@@ -63,6 +82,10 @@
       input = `<select id="${id}">${["Critical", "High", "Medium", "Low"]
         .map((s) => `<option${s === "Medium" ? " selected" : ""}>${s}</option>`)
         .join("")}</select>`;
+    } else if (FILE_ACCEPT[name]) {
+      input = `<input id="${id}" type="file" accept="${escAttr(FILE_ACCEPT[name])}" />`;
+    } else if (CHECKBOXES.has(name)) {
+      input = `<input id="${id}" type="checkbox" />`;
     } else if (name === "kind") {
       input = `<select id="${id}"><option value="event">event</option><option value="finding">finding</option></select>`;
     } else {
@@ -76,12 +99,34 @@
     $("aiPreviewParams").innerHTML = entry ? entry[2].map(paramInput).join("") : "";
   }
 
-  function collectParams(key) {
+  // The chosen file, read in the browser: text for a CSV or log, a data URL for a screenshot.
+  function readFile(file, asDataUrl) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("the file could not be read"));
+      if (asDataUrl) reader.readAsDataURL(file);
+      else reader.readAsText(file);
+    });
+  }
+
+  async function fileParams(name, file) {
+    if (name === "fileImage")
+      return { imageBase64: await readFile(file, true), mimeType: file.type, fileName: file.name };
+    return { text: await readFile(file, false), fileName: file.name };
+  }
+
+  async function collectParams(key) {
     const entry = ACTIONS.find((a) => a[0] === key);
     const params = {};
     for (const name of entry ? entry[2] : []) {
       const el = $(`aiPreviewParam-${name}`);
-      if (el && el.value.trim()) params[name] = el.value.trim();
+      if (!el) continue;
+      if (FILE_ACCEPT[name]) {
+        if (el.files && el.files[0]) Object.assign(params, await fileParams(name, el.files[0]));
+      } else if (CHECKBOXES.has(name)) {
+        if (el.checked) params[name] = true;
+      } else if (el.value.trim()) params[name] = el.value.trim();
     }
     // Ask sends the panel's current thread with the question, exactly as the Ask button does.
     if (key === "ask" && typeof window.askHistoryFor === "function")
@@ -122,6 +167,14 @@
     const held = c.presidio.held.length
       ? `<ul>${c.presidio.held.map((h) => `<li>${esc(h.category)}: ${esc(h.value)}</li>`).join("")}</ul>`
       : "";
+    const notes = (c.notes || []).length
+      ? `<ul class="ai-preview-note">${c.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>`
+      : "";
+    // A decision model (Jev) has no system prompt: its instructions are the questions it is asked.
+    const instructions =
+      c.provider === "jev"
+        ? "Questions — sent UNMASKED (the decision model's instructions, not case data)"
+        : "System prompt — sent UNMASKED (the product's instructions, not case data)";
     return (
       (d.multiRequest ? `<div class="ai-preview-warn">${esc(d.multiRequest)}</div>` : "") +
       `<div class="ai-preview-note">Request "${esc(c.kind)}" to ${esc(c.provider)} / ${esc(c.model)}. ` +
@@ -132,9 +185,10 @@
       `<div class="ai-preview-panes">${pane("Clear text (never sent when masking is on)", esc(c.clearPrompt))}` +
       pane("Masked text — sent to the provider", highlightTokens(c.maskedPrompt)) +
       `</div>` +
+      notes +
       `<div class="ai-preview-note"><strong>${esc(PRESIDIO_TEXT[c.presidio.state] || "")}</strong> ${esc(c.presidio.message || "")}${held}</div>` +
       images +
-      pane("System prompt — sent UNMASKED (the product's instructions, not case data)", esc(c.systemPrompt))
+      pane(instructions, esc(c.systemPrompt))
     );
   }
 
@@ -148,7 +202,7 @@
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ai-preview`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: key, params: collectParams(key) }),
+        body: JSON.stringify({ action: key, params: await collectParams(key) }),
       });
       const d = await r.json().catch(() => ({}));
       if (d.outcome === "captured") out.innerHTML = renderCall(d);

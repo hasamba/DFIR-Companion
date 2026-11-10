@@ -342,6 +342,8 @@ export interface RouteContext {
   //                         (no-op-safe write); returns the task list.
   //   loadPlaybookControl — read the per-case IR-template toggle (defaults when no store).
   syncPlaybook(caseId: string): Promise<PlaybookTask[]>;
+  //   previewPlaybook     — syncPlaybook's answer with nothing saved (#2515, the AI preview).
+  previewPlaybook(caseId: string): Promise<PlaybookTask[]>;
   loadPlaybookControl(caseId: string): Promise<PlaybookControl>;
   // Fire a notification event to all matching channels (best-effort, fire-and-forget). A stable
   // const arrow in createApp shared by create-case + the drop-import path (both still there);

@@ -582,22 +582,15 @@ export class CaseStore {
 
   /**
    * The next-safe recovery number for an append-only .jsonl audit log; 0 when the log does not
-   * exist yet. `Math.max(nonEmptyLineCount, highest value of `field` seen)`, never just a line
-   * count (#1119, Codex code-review finding H1/M1) and never just the field's own max in
-   * isolation:
-   *   - A reservation burned by a failed append never produced a line at all, so a line count alone
-   *     under-reports how many numbers were issued once a restart forgets the in-memory high-water
-   *     mark — the field's own max recovers past that gap.
-   *   - Some historical custody rows predate the `seq` field entirely (#231) and would count as 0
-   *     toward the max if only the field were read — the line count still recovers the correct
-   *     floor for those, exactly matching the pre-#1119 behavior for a fully legacy log.
-   * A NON-EMPTY line that fails to parse as JSON is a truncated/corrupted write, never silently
-   * skipped: it throws, because silently recovering past it risks reissuing that very row's own
-   * number (Codex's H1 finding — a burned reservation and a genuinely corrupted append are
-   * indistinguishable from a line count alone, so this fails closed and asks for repair instead of
-   * guessing). A row that parses but simply lacks `field` (the legacy-custody case above) is not an
-   * error — it still counts toward the line-count floor, just not toward the field's own max.
-   * The throw is an AuditLogNeedsRepairError (#2252), so a route can name the case and the line.
+   * exist yet. `Math.max(nonEmptyLineCount, highest value of `field` seen)` (#1119, Codex H1/M1):
+   *   - a reservation burned by a failed append wrote no line, so a line count alone under-reports
+   *     after a restart forgets the in-memory high-water mark — the field's own max recovers past it;
+   *   - historical custody rows predate `seq` (#231) and would count as 0 toward the max — the line
+   *     count still gives the right floor, exactly the pre-#1119 behavior for a fully legacy log.
+   * A NON-EMPTY line that fails to parse is a truncated/corrupted write and THROWS (a burned
+   * reservation and a corrupted append are indistinguishable from a count, so this fails closed and
+   * asks for repair rather than risk reissuing that row's number). A parsed row lacking `field` is not
+   * an error: it counts toward the line floor only. Throws AuditLogNeedsRepairError (#2252).
    */
   private async maxSequenceInLog(
     caseId: string,
@@ -760,6 +753,13 @@ export class CaseStore {
   async nextCustodySeq(caseId: string): Promise<number> {
     return this.reserveSequence("custody", caseId, () =>
       this.maxSequenceInLog(caseId, "custody", this.custodyLogPath(caseId), "seq"),
+    );
+  }
+
+  /** The number nextImportSeq would reserve, reserving nothing (#2515). */
+  peekNextImportSeq(caseId: string): Promise<number> {
+    return this.sequences.peek("import", caseId, () =>
+      this.maxSequenceInLog(caseId, "import", this.importsLogPath(caseId), "sequenceNumber"),
     );
   }
 

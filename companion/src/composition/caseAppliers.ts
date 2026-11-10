@@ -74,6 +74,8 @@ export interface CaseAppliers {
   applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
   loadPlaybookControl(caseId: string): Promise<PlaybookControl>;
   syncPlaybook(caseId: string): Promise<PlaybookTask[]>;
+  /** syncPlaybook's answer with nothing saved (#2515 — the AI preview). */
+  previewPlaybook(caseId: string): Promise<PlaybookTask[]>;
 }
 
 export function createCaseAppliers({
@@ -291,7 +293,11 @@ export function createCaseAppliers({
   }
 
   // Re-derive against current state honoring the case's template setting (no-op-safe write).
-  async function syncPlaybook(caseId: string): Promise<PlaybookTask[]> {
+  const syncPlaybook = (caseId: string): Promise<PlaybookTask[]> => derivePlaybook(caseId, true);
+  // The same derivation, saving nothing (#2515): the AI preview's playbook-hunt tasks.
+  const previewPlaybook = (caseId: string): Promise<PlaybookTask[]> => derivePlaybook(caseId, false);
+
+  async function derivePlaybook(caseId: string, persist: boolean): Promise<PlaybookTask[]> {
     if (!options.playbookStore || !options.stateStore)
       return options.playbookStore ? options.playbookStore.load(caseId) : [];
     // #2437: a closed or archived case is the handed-over record, and opening it must not change it.
@@ -305,7 +311,10 @@ export function createCaseAppliers({
     );
     // #1418: the AI-written per-finding tasks; a finding without one gets the deterministic fallback.
     const findingTasks = options.findingTaskStore ? await options.findingTaskStore.load(caseId) : {};
-    return options.playbookStore.sync(caseId, state, { useTemplates, aliasIndex, findingTasks });
+    const opts = { useTemplates, aliasIndex, findingTasks };
+    return persist
+      ? options.playbookStore.sync(caseId, state, opts)
+      : options.playbookStore.previewSync(caseId, state, opts);
   }
 
   return {
@@ -316,5 +325,6 @@ export function createCaseAppliers({
     applyNsrlToCase,
     loadPlaybookControl,
     syncPlaybook,
+    previewPlaybook,
   };
 }

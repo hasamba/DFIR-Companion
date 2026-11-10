@@ -371,3 +371,17 @@ export function mergePersistedHunts(
   for (const t of pendingTasks) taskHashes[t.id] = taskFingerprint(t);
   return { generatedAt, suggestions: [...fresh.suggestions, ...newSuggestions], taskHashes };
 }
+
+// The tasks one press of Generate sends (#70): the incremental set, or every open task when the analyst
+// forces a full regenerate. Shared by the route and "Preview what the AI will see" (#2515). Pure.
+export function planPlaybookHuntRun(
+  persisted: PersistedPlaybookHunts | undefined,
+  tasks: readonly PlaybookTask[],
+  force: boolean,
+): {
+  fresh: { suggestions: PlaybookHuntSuggestion[]; taskHashes: Record<string, string> };
+  pending: PlaybookTask[];
+} {
+  const fresh = force ? { suggestions: [], taskHashes: {} } : selectFreshHunts(persisted, tasks);
+  return { fresh, pending: pendingHuntTasks(tasks, fresh.taskHashes) };
+}

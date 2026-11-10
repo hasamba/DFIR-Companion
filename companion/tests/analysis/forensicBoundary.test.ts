@@ -477,6 +477,8 @@ describe("the containment check reads the forensic timeline only (#1925)", () =>
     for (const rel of [
       "../../src/routes/containmentCheck.ts",
       "../../src/routes/containmentCheckPlaybook.ts",
+      // #2515: the request the route and the AI preview both build.
+      "../../src/routes/containmentCheckPrepare.ts",
       "../../src/analysis/ai/jev/containmentState.ts",
     ]) {
       const src = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");

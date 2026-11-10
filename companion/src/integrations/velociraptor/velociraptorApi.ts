@@ -883,17 +883,11 @@ export class VelociraptorClient {
     return readHuntArtifactRows(read, cat, artifact, sources, this.rowCap(collect), !!order);
   }
 
-  // List the server's artifacts of a given type — CLIENT (collectable, for triage bundles) or
-  // CLIENT_EVENT (continuous client monitoring, for the live-monitor picker, #84). Returns metadata
-  // only (no evidence), so the per-query row cap is NOT applied. The type is filtered in TYPESCRIPT
-  // (not VQL): `artifact_definitions()` reports the type with inconsistent casing/spacing across
-  // versions (`CLIENT_EVENT` / `client_event` / `Client Event`), and a VQL `=~`/`lowercase()` filter
-  // missed them → empty picker. Fetching all + normalizing the type string in TS is version-proof.
-  //
-  // The result is CACHED per type for ARTIFACT_CATALOG_TTL_MS (the catalog changes only when someone
-  // edits an artifact on the server, but every call costs a subprocess spawn). Pass `{ refresh: true }`
-  // to bypass + repopulate — used by the picker's "Browse server artifacts" button (the analyst's
-  // "I just added an artifact, why isn't it listed?" flow) and by the run-bundle pre-flight.
+  // List the server's artifacts of a type — CLIENT (triage bundles) or CLIENT_EVENT (live-monitor
+  // picker, #84). Metadata only, so no row cap. The type is filtered in TS, not VQL: versions report it
+  // as `CLIENT_EVENT` / `client_event` / `Client Event`, and a VQL filter missed them (empty picker).
+  // CACHED per type for ARTIFACT_CATALOG_TTL_MS (each read spawns a subprocess). `{ refresh: true }`
+  // bypasses + repopulates — the picker's "Browse server artifacts" button and the run-bundle pre-flight.
   async listClientArtifacts(
     type: "client" | "client_event" = "client",
     opts: { refresh?: boolean } = {},
@@ -903,14 +897,20 @@ export class VelociraptorClient {
     if (opts.refresh || !hit || Date.now() - hit.at >= ARTIFACT_CATALOG_TTL_MS) {
       const rows = this.fetchClientArtifacts(wanted);
       this.artifactCache.set(wanted, { at: Date.now(), rows });
-      // Never serve a failure from cache: drop the entry (unless a newer fetch already replaced it) so
-      // the next call retries instead of replaying the error for the rest of the TTL.
+      // Never serve a failure from cache: drop it (unless a newer fetch replaced it) so the next call retries.
       rows.catch(() => {
         if (this.artifactCache.get(wanted)?.rows === rows) this.artifactCache.delete(wanted);
       });
     }
     // Copy: callers must not be able to mutate the cached array shared with the next caller.
     return [...(await this.artifactCache.get(wanted)!.rows)];
+  }
+
+  // #2515: the catalog already fetched, never a new read (the AI preview); a failed fetch = none.
+  async cachedClientArtifacts(): Promise<{ at: number; rows: VeloArtifactInfo[] } | undefined> {
+    const hit = this.artifactCache.get("client");
+    const rows = hit && (await hit.rows.catch(() => undefined));
+    return hit && rows ? { at: hit.at, rows: [...rows] } : undefined;
   }
 
   // Drop the cached artifact catalog (one type, or all) so the next listClientArtifacts() re-queries.
