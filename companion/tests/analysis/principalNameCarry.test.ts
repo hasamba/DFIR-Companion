@@ -148,3 +148,30 @@ describe("mergeConcurrentAdditions — follows the ledger an import wrote during
     expect(merged.forensicTimeline[0].description).toBe(`Azure op/write by ${SP}`);
   });
 });
+
+// Codex review: Undo while the model runs removes the name; the synthesis save must not bring it back.
+describe("mergeConcurrentAdditions — an Undo during synthesis stays undone (#2490)", () => {
+  it("a name the snapshot had and Undo took away is not restored, nor its suffix", async () => {
+    const { mergeConcurrentAdditions } = await import("../../src/analysis/ai/synthesisPersist.js");
+    const loaded = nameCallers({
+      ...emptyState("c1"),
+      ...named,
+      forensicTimeline: [row(`Azure op/write by ${SP}`)],
+    }).state;
+    const latest = nameCallers({ ...loaded, principalNames: undefined }).state;
+    expect(latest.forensicTimeline[0].description).toBe(`Azure op/write by ${SP}`);
+    const merged = mergeConcurrentAdditions(loaded, { ...loaded, lastSummary: "s" }, latest);
+    expect(merged.principalNames).toBeUndefined();
+    expect(merged.forensicTimeline[0].description).toBe(`Azure op/write by ${SP}`);
+  });
+
+  it("a conflict Undo took away is not restored either", async () => {
+    const { mergeConcurrentAdditions } = await import("../../src/analysis/ai/synthesisPersist.js");
+    const conflict = ledger({ id: SP, names: ["backup-automation", "other"] });
+    const loaded = { ...emptyState("c1"), ...conflict, forensicTimeline: [row(`Azure op/write by ${SP}`)] };
+    const latest = nameCallers({ ...loaded, ...named }).state;
+    const merged = mergeConcurrentAdditions(loaded, { ...loaded }, latest);
+    expect(merged.principalNames).toEqual(named.principalNames);
+    expect(merged.forensicTimeline[0].description).toBe(`Azure op/write by ${SP} (backup-automation)`);
+  });
+});

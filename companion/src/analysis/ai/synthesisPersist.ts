@@ -7,7 +7,6 @@ import { mergeIntelState } from "../intelHistory.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "../labIntel.js";
 import { mergeHostRenameRecords } from "../hostRenameRecord.js";
 import { carryHostRenames } from "../hostRenameCarry.js";
-import { mergePrincipalNames } from "../principalNames.js";
 import { nameCallers } from "../principalNameCarry.js";
 import { recordEventAliases } from "../eventAliases.js";
 import { remapAbsorbedEventIds } from "../absorbedCitations.js";
@@ -139,12 +138,15 @@ export function mergeConcurrentAdditions(
   // rename carry is re-run for the same reason (#1495): a row an import re-homed while synthesis
   // ran is taken from `next` too, and the unioned ledger below would otherwise be saved beside the
   // old asset — the pass recomputes every eligible row from its record name, so it lands the same.
-  // The caller-name carry likewise (#2490): a row named, or un-named by a conflict, while synthesis
-  // ran is taken from `next`, so every eligible row is recomputed against the unioned ledger.
-  const principalNames = mergePrincipalNames(next.principalNames, latest.principalNames);
+  // The caller-name carry likewise (#2490): a row named, or un-named, while synthesis ran is taken
+  // from `next`, so every eligible row is recomputed. The LATEST ledger is authoritative, an empty one
+  // included: synthesis never writes names (a model delta cannot carry them), and a union with the
+  // snapshot would bring back a name an Undo took away while the model was thinking.
+  const principalNames = latest.principalNames ?? [];
+  const { principalNames: _snapshotNames, ...nextWithoutNames } = next;
   const renamed = carryHostRenames(
     annotateSightingsWithLabIntel({
-      ...next,
+      ...nextWithoutNames,
       forensicTimeline: addedEvents.length
         ? sortByEventTime([...next.forensicTimeline, ...addedEvents])
         : next.forensicTimeline,
