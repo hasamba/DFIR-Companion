@@ -7,6 +7,7 @@ import type { KnownEntities } from "../anonymize.js";
 import type { AnonControl } from "../anonControl.js";
 import { authoredFor, type AuthoredText } from "./presidioAuthoredText.js";
 import { presidioEnabledFor, presidioHeldValues } from "./presidioScan.js";
+import { previewDiff } from "./previewDiff.js";
 import type { ProviderCallContext } from "./providerCallContext.js";
 import {
   activeAiPreview,
@@ -80,6 +81,9 @@ async function captureOnce(
         handling: masked.anon && ctx.opts.ocrRunner ? "ocr-required" : "sent-as-is",
       })),
       presidio,
+      ...(masked.anon
+        ? { diff: previewDiff(masked.plainPrompt, masked.maskedPrompt, masked.anon, masked.policy) }
+        : {}),
     };
   }
   throw new AnonymizationChangedError(

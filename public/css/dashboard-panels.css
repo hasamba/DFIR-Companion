@@ -644,6 +644,29 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 @media (max-width: 760px) { .ai-preview-panes { grid-template-columns: 1fr; } }
 .ai-preview-pane pre { margin: 0; padding: 8px; max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: break-word;
   font-size: 11px; background: var(--bg-primary); color: var(--text-bright); border-radius: 6px; }
-.ai-preview-token { background: var(--brand-teal-deep); color: var(--brand-teal-ink); border-radius: 3px; padding: 0 2px; }
+.ai-preview-token { background: var(--diff-add-word); color: var(--diff-add-text); font-weight: 700; border-radius: 3px; padding: 0 2px; }
+/* The GitHub-style diff (#2531): one grid, so a wrapped clear line keeps its masked partner beside it. */
+.aip-bar { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; justify-content: space-between; margin: 6px 0; }
+.aip-summary { font-size: 12px; font-weight: 600; color: var(--text-bright); }
+.aip-only { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.aip-only input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.aip-diff { max-height: 480px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-primary);
+  font-family: var(--font-code); font-size: 11px; line-height: 1.5; color: var(--text-bright); }
+.aip-row { display: grid; grid-template-columns: 4.5em minmax(0, 1fr) 3.5em minmax(0, 1fr); }
+.aip-head { position: sticky; top: 0; z-index: 1; background: var(--bg-secondary); font-family: inherit; font-weight: 600; color: var(--text-muted); }
+.aip-ln { padding: 0 6px; text-align: right; color: var(--text-faint); user-select: none; border-right: 1px solid var(--border-subtle); }
+.aip-cell { padding: 0 8px; white-space: pre-wrap; word-break: break-word; min-width: 0; }
+.aip-left { border-right: 1px solid var(--border-color); }
+.aip-chg > .aip-ln:nth-child(1), .aip-chg > .aip-left { background: var(--diff-del-bg); }
+.aip-chg > .aip-ln:nth-child(3), .aip-chg > .aip-right { background: var(--diff-add-bg); }
+.aip-warned:not(.aip-chg) > .aip-right, .aip-warned:not(.aip-chg) > .aip-ln:nth-child(3) { background: var(--diff-warn-bg); }
+.aip-del, .aip-add, .aip-warn { font-weight: 700; border-radius: 3px; padding: 0 1px; }
+.aip-del { background: var(--diff-del-word); color: var(--diff-del-text); }
+.aip-add { background: var(--diff-add-word); color: var(--diff-add-text); }
+.aip-warn { background: var(--diff-warn-word); color: var(--diff-warn-text); text-decoration: underline dotted; }
+.aip-hot { outline: 2px solid var(--accent); outline-offset: 1px; }
+.aip-gap { padding: 2px 8px; text-align: center; font-family: inherit; font-size: 11px; color: var(--text-muted);
+  background: var(--bg-secondary); border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+@media (max-width: 760px) { .aip-row { grid-template-columns: 3em minmax(0, 1fr) 2.5em minmax(0, 1fr); } }
 #aiPreviewBtn::before { content: ""; display: inline-block; width: 14px; height: 14px; vertical-align: middle; margin-right: 6px;
   background: no-repeat center / contain url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa4b2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z'/><circle cx='12' cy='12' r='3'/></svg>"); }

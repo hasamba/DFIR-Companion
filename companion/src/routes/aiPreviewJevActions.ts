@@ -7,6 +7,7 @@ import type { JevQuestion } from "../analysis/ai/jev/jevClient.js";
 import { resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
 import { batchJevState, gradeEvents } from "../analysis/ai/jev/jevGrader.js";
 import { buildContainmentState } from "../analysis/ai/jev/containmentState.js";
+import { previewDiff } from "../analysis/ai/previewDiff.js";
 import { CONTAINMENT_QUESTIONS } from "../analysis/ai/jev/containmentQuestions.js";
 import { AnonymizationChangedError, anonRevision } from "../analysis/anonRevision.js";
 import { containmentRequest } from "./containmentCheckPrepare.js";
@@ -63,15 +64,20 @@ async function captureJev(
       "The anonymization settings or hidden values changed while the preview was being built, so the " +
         "real request would be held too. Run the preview again.",
     );
+  const clearPrompt = JSON.stringify(b.clear, null, 2);
+  const maskedPrompt = JSON.stringify(b.masked, null, 2);
   return {
     kind,
     provider: "jev",
     model: settings.model,
     // A decision model has no system prompt: its instructions are the questions, sent unmasked.
     systemPrompt: JSON.stringify(b.questions, null, 2),
-    clearPrompt: JSON.stringify(b.clear, null, 2),
-    maskedPrompt: JSON.stringify(b.masked, null, 2),
+    clearPrompt,
+    maskedPrompt,
     anonymized: b.masker.anon !== null,
+    ...(b.masker.anon
+      ? { diff: previewDiff(clearPrompt, maskedPrompt, b.masker.anon, b.masker.policy) }
+      : {}),
     images: [],
     presidio,
     notes: [

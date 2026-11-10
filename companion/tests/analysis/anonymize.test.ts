@@ -915,6 +915,20 @@ describe("anonymizer — discoveries()", () => {
   });
 });
 
+describe("anonymizer — pairs() (#2531)", () => {
+  it("returns each minted token with the real value restore() maps it back to", () => {
+    const a = createAnonymizer(policy({ USER: true, IP: true }, true), NONE);
+    const masked = a.apply("WIN11\\vagrant on 10.0.0.5 password = hunter2trustno1");
+    const pairs = a.pairs();
+    expect(pairs).toContainEqual({ token: "ANON_USER_1", value: "vagrant", category: "USER" });
+    expect(pairs).toContainEqual({ token: "ANON_IP_1", value: "10.0.0.5", category: "IP" });
+    for (const p of pairs) expect(a.restore(p.token)).toBe(p.value);
+    for (const p of pairs) expect(masked).toContain(p.token);
+    // One-way secrets have no pair.
+    expect(pairs.some((p) => p.value.includes("hunter2"))).toBe(false);
+  });
+});
+
 describe("anonymizer — encoded command-line blobs (CMD)", () => {
   const B64 = "aQBlAHgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAKQA=";
   it("tokenizes the base64 after -enc but keeps the readable command; restore reverses", () => {

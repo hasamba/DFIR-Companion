@@ -247,9 +247,23 @@ describe("AI preview == as-sent request, for every covered action (#2491)", () =
       expect(call.anonymized).toBe(true);
       // The masking really ran: the custom entities are in the clear text and not in the masked text.
       expect(call.maskedPrompt).not.toContain(HOST);
+      // #2531: the real request carries only its usual fields — the preview's map never rides along.
+      expect(Object.keys(sent!).sort()).not.toContain("diff");
+      expect(JSON.stringify(sent)).not.toContain('"pairs"');
       if (NO_CASE_TEXT.has(key)) return;
       expect(call.clearPrompt).toContain(HOST);
       expect(call.clearPrompt).not.toBe(call.maskedPrompt);
+      // #2531: the diff comes from the real masking step's own map and lines up with both texts.
+      const diff = call.diff!;
+      expect(diff.mode, key).toBe("text");
+      const host = diff.pairs.findIndex((p) => p.value.toLowerCase() === HOST.toLowerCase());
+      expect(host).toBeGreaterThanOrEqual(0);
+      const mark = diff.marks.find((m) => m.pair === host)!;
+      expect(call.clearPrompt.slice(mark.c[0], mark.c[1]).toLowerCase()).toBe(HOST.toLowerCase());
+      expect(call.maskedPrompt.slice(mark.m[0], mark.m[1])).toBe(diff.pairs[host].token);
+      for (const p of diff.pairs) expect(call.maskedPrompt).toContain(p.token);
+      // ... and never reaches a log line.
+      expect(h.logged.filter((l) => l.includes(diff.pairs[host].token))).toEqual([]);
     });
   }
 });

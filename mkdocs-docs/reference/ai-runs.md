@@ -452,14 +452,38 @@ Open the **Anon** toolbar dialog and press **Preview what the AI will see**. Pic
 in what it needs (an event id, a question, a technique, a file), and press **Preview**. You see the
 first request that action would send:
 
-- the **clear text** and the **masked text** side by side, with every token (`ANON_HOST_1`, …)
-  highlighted — the masked side is exactly what the provider receives;
+- the **clear text** (left) and the **masked text** (right) lined up line by line, like a code diff —
+  the masked side is exactly what the provider receives (see "Reading the changes" below);
 - the **system prompt**, labelled as sent **unmasked**;
 - what **Presidio** would do: nothing, or the values it would hold for your approval, or that its
   scan cannot run — the real action would stop at that point;
 - for an action that sends screenshots, which ones would be OCR-redacted first (OCR itself is not
   run in the preview);
 - notes on anything the preview could not do exactly as the real press does (below).
+
+#### Reading the changes
+
+- A **changed line** has a red background on the left and a green background on the right. Inside
+  it, the original value is **bold red** on the left and the token that replaced it is **bold green**
+  on the right. Lines with nothing replaced stay plain.
+- **Hover** a value or a token: its partner on the other side is outlined, and the tip shows the pair
+  (for example `WS-FIN-07 → ANON_HOST_1`). The same value is the same token everywhere in the request.
+- The **summary line** above the panes counts what was replaced, by kind — for example "14 values
+  replaced in 9 lines: 4 hosts, 3 users, 5 IP addresses, 2 custom terms".
+- **Amber** marks text on the masked side that *looks like* an IP address, an email address, a domain
+  or a host name and was sent as it is. The tip reads "looks like … — not masked". It is a guess from
+  the text's shape, not a finding: an attacker's public domain is often meant to stay visible. Check
+  each one, and add a custom value in the Anon dialog if it should be hidden.
+- **Show only changed lines** (off by default) hides the unchanged lines and keeps every changed or
+  amber line with its line numbers; a bar shows how many unchanged lines were hidden between them.
+- A secret (a password, a key, a token) is removed one way and has no token to pair with: it is
+  marked red and green but not linked.
+- The pairs come from the masking step itself, not from guessing. A line that changed in a way the
+  preview cannot match value by value — a decision-model row that was cut to its length limit after
+  masking — is shown as changed with no inline marks. If nothing can be lined up, the two texts are
+  shown side by side with a note.
+- The **system prompt** is sent unmasked, so it gets no diff.
+- The value-to-token pairs exist only in the dialog. They are not sent, logged or saved.
 
 **Nothing is sent and nothing is saved.** The preview runs the real action — the same prompt, built
 from the forensic timeline the same way — and stops it just before the provider call. It does not

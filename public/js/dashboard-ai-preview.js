@@ -2,7 +2,8 @@
 //
 // The server runs the REAL action and stops it at the AI-call gate: nothing is sent to a provider,
 // nothing is spent and nothing in the case changes. This dialog shows the clear text and the masked
-// text side by side, highlights the masked tokens, and shows the system prompt (sent unmasked).
+// text as a GitHub-style diff (#2531, dashboard-ai-preview-diff.js), and the system prompt (sent
+// unmasked, no diff).
 //
 // Everything rendered here is case text — adversary-controlled — so every value goes through esc().
 // IIFE-wrapped: in a classic script anything at this level would join the shared global scope.
@@ -150,6 +151,17 @@
     return `<div class="ai-preview-pane"><div class="asset-subhead">${esc(title)}</div><pre>${html}</pre></div>`;
   }
 
+  // The clear and masked texts: the GitHub-style diff when masking is on (#2531,
+  // dashboard-ai-preview-diff.js), the plain pair otherwise.
+  function texts(c) {
+    if (c.anonymized && typeof window.aiPreviewDiffHtml === "function") return window.aiPreviewDiffHtml(c, false);
+    return (
+      `<div class="ai-preview-panes">${pane("Clear text (never sent when masking is on)", esc(c.clearPrompt))}` +
+      pane("Masked text — sent to the provider", highlightTokens(c.maskedPrompt)) +
+      `</div>`
+    );
+  }
+
   function renderCall(d) {
     const c = d.call;
     const images = c.images.length
@@ -182,9 +194,7 @@
         ? "Anonymization is on: the right-hand text is what the provider receives."
         : "Anonymization is OFF for this case: the provider receives the clear text.") +
       `</div>` +
-      `<div class="ai-preview-panes">${pane("Clear text (never sent when masking is on)", esc(c.clearPrompt))}` +
-      pane("Masked text — sent to the provider", highlightTokens(c.maskedPrompt)) +
-      `</div>` +
+      texts(c) +
       notes +
       `<div class="ai-preview-note"><strong>${esc(PRESIDIO_TEXT[c.presidio.state] || "")}</strong> ${esc(c.presidio.message || "")}${held}</div>` +
       images +
@@ -205,7 +215,10 @@
         body: JSON.stringify({ action: key, params: await collectParams(key) }),
       });
       const d = await r.json().catch(() => ({}));
-      if (d.outcome === "captured") out.innerHTML = renderCall(d);
+      if (d.outcome === "captured") {
+        out.innerHTML = renderCall(d);
+        if (d.call.diff && typeof window.aiPreviewDiffWire === "function") window.aiPreviewDiffWire(out, d.call);
+      }
       else if (d.outcome === "no-ai-call") out.innerHTML = `<div class="ai-preview-note">${esc(d.message)}</div>`;
       else out.innerHTML = `<div class="ai-preview-warn">${esc(d.error || "HTTP " + r.status)}</div>`;
     } catch (e) {
