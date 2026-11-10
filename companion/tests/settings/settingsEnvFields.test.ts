@@ -408,6 +408,7 @@ describe("Settings on/off switches (#2465)", () => {
       "DFIR_CLOUD_INSECURE",
       "DFIR_OCR_DEBUG",
       "DFIR_UPDATE_CHECK",
+      "DFIR_SIGMA_SUZAKU_RULES", // #2509
       ...FLAG_ONLY,
     ];
     for (const key of keys) {
@@ -430,5 +431,7 @@ describe("Settings on/off switches (#2465)", () => {
     // Only "off" switches these off.
     expect(options("DFIR_AI_AUTO_SYNTHESIZE")).toEqual(["", "on", "off"]);
     expect(options("DFIR_DROP_ENABLED")).toEqual(["", "on", "off"]);
+    // On unless off / 0 / false / no (#2509); the dashboard maps those aliases to "off" on load.
+    expect(options("DFIR_SIGMA_SUZAKU_RULES")).toEqual(["", "on", "off"]);
   });
 });
