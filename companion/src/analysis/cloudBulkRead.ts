@@ -37,6 +37,7 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
+import { objectLoggingWindowEvent } from "./objectLoggingWindow.js";
 import {
   BULK_READ_TRUNCATION_ID,
   COVERAGE_SOURCE,
@@ -748,6 +749,8 @@ export function truncationEvent(events: readonly ForensicEvent[], dropped: numbe
 }
 
 export function objectLoggingEvent(events: readonly ForensicEvent[]): ForensicEvent | null {
+  const window = objectLoggingWindowEvent(events, BULK_READ_MARKER); // logging began part-way (#2542)
+  if (window) return window;
   let reads = 0;
   let lists = 0;
   for (const e of events) {

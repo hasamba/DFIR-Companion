@@ -28,6 +28,7 @@ const ct = (id: string, from: string, eventSource: string, eventName: string, ex
 const GAPS = "tagsYamlCloudGaps";
 const TS = "tagsYamlRemainingSources (Timesketch AWS)";
 const SIGMA = "sigmaCloudImport";
+const LAB = "awsSans504Lab (#2542)";
 const TD = "tagsYamlTrailDiscover (#2345)";
 const S3_BROWSER = "S3 Browser 11.5.7 https://s3browser.com";
 
@@ -206,5 +207,40 @@ export const AWS_SAMPLES: readonly DetectionSample[] = [
       arn: "arn:aws:iam::111111111111:root",
     },
     responseElements: { PasswordRecoveryRequested: "Success" },
+  }),
+  // #2542: AWS log delivery (an AWSService caller) and a read-only "not found" answer — the importer
+  // now leaves both at Info — and a self-granted *:* inline policy, which it grades Critical.
+  ...[
+    ["PutObject", false, "AccessDenied"],
+    ["HeadBucket", true, "AccessDenied"],
+    ["PutObject", false, ""],
+  ].map(([name, readOnly, errorCode], i) =>
+    ct(`aws.2542.service.${name}.${i}`, LAB, "s3.amazonaws.com", name as string, {
+      userIdentity: { type: "AWSService", invokedBy: "delivery.logs.amazonaws.com" },
+      sourceIPAddress: "delivery.logs.amazonaws.com",
+      userAgent: "delivery.logs.amazonaws.com",
+      readOnly,
+      ...(errorCode ? { errorCode, errorMessage: "Access Denied" } : {}),
+      requestParameters: { bucketName: "example-log", key: `AWSLogs/111111111111/x-${i}.log.gz` },
+    }),
+  ),
+  ct(
+    "aws.2542.notfound.GetBucketObjectLockConfiguration",
+    LAB,
+    "s3.amazonaws.com",
+    "GetBucketObjectLockConfiguration",
+    {
+      readOnly: true,
+      errorCode: "ObjectLockConfigurationNotFoundError",
+      errorMessage: "Object Lock configuration does not exist for this bucket",
+      requestParameters: { bucketName: "example-eng" },
+    },
+  ),
+  ct("aws.2542.PutUserPolicy.self.admin", LAB, "iam.amazonaws.com", "PutUserPolicy", {
+    requestParameters: {
+      userName: "alice",
+      policyName: "examplepolicy1",
+      policyDocument: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}',
+    },
   }),
 ];

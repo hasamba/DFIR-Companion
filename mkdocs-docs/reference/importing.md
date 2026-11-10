@@ -1883,12 +1883,47 @@ the same findings again (or collecting an overlapping window) imports nothing tw
 updated a finding in between, the update is imported as a new event, so each update is on the
 timeline. No Sigma rule reads GuardDuty findings, and the Cloud Coverage panel does not list them.
 
+### CloudTrail grading: attack steps above the AWS-service noise
+
+Measured on the public SANS 504 S3 ransomware lab, where the noise used to bury the attack:
+
+- **A full-admin inline policy is Critical.** A `PutUserPolicy`, `PutRolePolicy` or `PutGroupPolicy`
+  whose document allows every action on every resource with no condition is Critical (it was High).
+  When the policy names the caller's own user (or the role of the caller's session), the row says
+  `granted to the caller itself`. A conditional grant, a `NotAction` / `NotResource` grant, an
+  escalation permission such as `iam:PassRole`, and a policy version stay High.
+- **AWS services acting on their own stay at Info.** A call by an `AWSService` caller (log delivery
+  writing into a bucket, CloudTrail writing its own files) is no longer Low for an unknown write or
+  Medium for a failed call. The importer's own table, its decoders and the bundled rules still grade
+  such a call.
+- **A read-only "not found" answer is not a probe.** A failed read whose error says the thing does
+  not exist or is not enabled (`NoSuchBucketPolicy`, `ObjectLockConfigurationNotFoundError`,
+  `NoSuchWebsiteConfiguration`, `DashboardNotFoundError`, `InsightNotEnabledException`, also
+  `NoSuchEntity` / `NoSuchBucket`) is no longer raised to Medium. A denied read (`AccessDenied`) and
+  any failed write still are.
+- **Bucket recovery checks after a privileged change are High.** `GetBucketVersioning`,
+  `GetBucketObjectLockConfiguration` and `PutBucketVersioning` set to `Suspended` are raised to High
+  when the same access key granted itself a policy or created an access key earlier in the same
+  upload. The row says which change and when. On their own, these calls keep their grade: every S3
+  console page makes them.
+- **A key made by `CreateAccessKey` gets a credential-lineage row**, even with one use: issued when
+  and by whom, its first use and source, and the key that created it. The creation and the use must
+  be in the same upload (or the same streamed window).
+- **The lineage row states the enumeration burst**: how many read calls, across how many services,
+  over what span, and which were denied.
+
 ### Coverage rows on the timeline
 
 Some timeline rows are notes about the evidence, not events: **Cloud coverage gap** (the case has
 cloud audit logs but no host telemetry, so the instance metadata service cannot be checked), **Cloud
 object logging is off**, **Cloud object reads were not all examined** and **Browsing evidence without
 an account**. Their source is `Coverage`, and a re-merge replaces them instead of adding another.
+
+- **Object logging that began part-way.** When a CloudTrail selector change turns on S3 object
+  logging and the case has no object-level record before it, the object-logging note reads **Cloud
+  object logging begins at &lt;time&gt;**. It says that object reads, overwrites and deletes before
+  that time cannot be seen, and that other trails' selectors are not in the evidence. It is the same
+  note, so the forensic gate keeps it too.
 
 - **Where they sit.** Each one sits at the time of the **earliest** event it describes: the earliest
   cloud audit record, the earliest cloud object record, or the earliest browsing record. It no longer

@@ -31,6 +31,8 @@ import {
   type CredentialIssuance,
 } from "./awsIdentity.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
+import { ACCESS_KEY_ISSUANCE_ACTION, readAccessKeyIssuance } from "./awsAccessKeyIssuance.js";
+import { burstWords, isDenial, trackRead, type ReadCall } from "./awsEnumerationBurst.js";
 import { cleanIp, getCI, normalizeTime, str, type MappedEvent } from "./siemImport.js";
 import { scopeBasis, scopeNoun, UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
@@ -192,6 +194,8 @@ interface Key {
   /** Enumeration calls, the earliest by time, bounded; the count of every one. */
   enumeration: ShapeHit[];
   enumerationCount: number;
+  /** Every read-only use, the earliest by time, bounded — the burst the row states (#2542). */
+  reads: ReadCall[];
   /** Per kind: the earliest shape, the earliest AFTER the second source (the decisive one), a few more for the words, the count. */
   shapes: Record<
     Exclude<AwsLineageShape["kind"], "enumeration">,
@@ -227,6 +231,7 @@ function keyFor(keys: Map<string, Key>, account: string, credentialId: string): 
         secondSourceAt: null,
         enumeration: [],
         enumerationCount: 0,
+        reads: [],
         shapes: {
           "privileged-change": { earliest: null, decisive: null, named: [], count: 0 },
           "remote-execution": { earliest: null, decisive: null, named: [], count: 0 },
@@ -329,6 +334,12 @@ function recordUse(
   if (!k.issuerArn && who.issuer?.arn) k.issuerArn = who.issuer.arn;
   if (!k.sessionName && who.session.name) k.sessionName = who.session.name;
   if (who.invokedBy) k.serviceInvoked += 1;
+  if (/^(true|1)$/i.test(str(getCI(rec, "readOnly")).trim()))
+    trackRead(k.reads, {
+      time,
+      call: `${serviceOf(str(getCI(rec, "eventSource")))} ${str(getCI(rec, "eventName"))}`,
+      denied: isDenial(str(getCI(rec, "errorCode"))),
+    });
 }
 
 /** Pass 2: the shapes, judged against the second source's time known from pass 1. */
@@ -435,34 +446,45 @@ export function awsLineages(records: readonly Row[], scope: SummaryScope = UPLOA
       rec,
       index,
     );
-    if (issuance) {
-      if (issuance.result === "issued" && issuance.issuedKey) {
-        const k = keyFor(keys, owningAccount(issuance, caller), issuance.issuedKey);
-        if (!k.issuance || time < k.issuance.at)
-          k.issuance = {
-            at: time,
-            action: issuance.action,
-            time: iso(time),
-            locator,
+    // An STS issuance, or a long-term key issued by IAM CreateAccessKey (#2542) — lineage only.
+    const created = readAccessKeyIssuance(rec);
+    const issued =
+      issuance?.result === "issued" && issuance.issuedKey
+        ? {
+            key: issuance.issuedKey,
+            account: owningAccount(issuance, caller),
+            action: issuance.action as string,
             ...(issuance.role?.arn ? { role: issuance.role.arn } : {}),
             ...(issuance.sessionName ? { sessionName: issuance.sessionName } : {}),
             ...(issuance.sourceIdentity ? { sourceIdentity: issuance.sourceIdentity } : {}),
             ...(issuance.mfaSerial ? { mfa: issuance.mfaSerial } : {}),
-            by: `${who.kind}${who.arn ? ` ${who.arn}` : ""}`,
-          };
-        // Chaining: the key that signed this issuance issued the new one.
-        const signer = who.credential.accessKeyId;
-        if (signer && lower(signer) !== lower(issuance.issuedKey)) {
-          const parent = keyFor(keys, caller, signer);
-          if (parent.chained.length < CHAIN_MAX)
-            parent.chained.push({ credentialId: issuance.issuedKey, direction: "issued", locator });
-          if (k.chained.length < CHAIN_MAX)
-            k.chained.push({ credentialId: signer, direction: "issued-from", locator });
-        }
-      } else if (issuance.result === "unknown" && issuance.role?.arn) {
-        const rk = `${lower(issuance.role.arn)}|${lower(issuance.sessionName)}`;
-        (unresolved.get(rk) ?? unresolved.set(rk, []).get(rk)!).push({ time, locator });
+          }
+        : created && caller
+          ? { key: created.issuedKey, account: caller, action: created.action as string }
+          : null;
+    if (issued) {
+      const { key, account, ...words } = issued;
+      const k = keyFor(keys, account, key);
+      if (!k.issuance || time < k.issuance.at)
+        k.issuance = {
+          at: time,
+          time: iso(time),
+          locator,
+          ...words,
+          by: `${who.kind}${who.arn ? ` ${who.arn}` : ""}`,
+        };
+      // Chaining: the key that signed this issuance issued the new one.
+      const signer = who.credential.accessKeyId;
+      if (signer && lower(signer) !== lower(key)) {
+        const parent = keyFor(keys, caller, signer);
+        if (parent.chained.length < CHAIN_MAX)
+          parent.chained.push({ credentialId: key, direction: "issued", locator });
+        if (k.chained.length < CHAIN_MAX)
+          k.chained.push({ credentialId: signer, direction: "issued-from", locator });
       }
+    } else if (issuance?.result === "unknown" && issuance.role?.arn) {
+      const rk = `${lower(issuance.role.arn)}|${lower(issuance.sessionName)}`;
+      (unresolved.get(rk) ?? unresolved.set(rk, []).get(rk)!).push({ time, locator });
     }
     // The use: every record signed with a key — the issuance call itself is a use of ITS signer.
     const signer = who.credential.accessKeyId || who.credential.credentialId;
@@ -550,7 +572,7 @@ function summaryRow(
   const sources = [...k.sources.values()].sort((a, b) => a.first.time - b.first.time);
   const range = `(${coverage.records} records, ${coverage.first.slice(0, 19)} → ${coverage.last.slice(0, 19)})`;
   const issuanceWords = k.issuance
-    ? `issued ${k.issuance.time} by ${k.issuance.action}${k.issuance.role ? ` of ${show(k.issuance.role)}` : ""}${k.issuance.sessionName ? ` as session ${show(k.issuance.sessionName, 40)}` : ""}${k.issuance.by ? ` by ${show(k.issuance.by)}` : ""}${k.issuance.mfa ? ` (MFA device ${show(k.issuance.mfa, 40)})` : " (MFA not recorded on the issuance)"}${k.issuance.sourceIdentity ? `; stated human identity ${show(k.issuance.sourceIdentity, 40)}` : ""} — ${k.issuance.locator}`
+    ? `issued ${k.issuance.time} by ${k.issuance.action}${k.issuance.role ? ` of ${show(k.issuance.role)}` : ""}${k.issuance.sessionName ? ` as session ${show(k.issuance.sessionName, 40)}` : ""}${k.issuance.by ? ` by ${show(k.issuance.by)}` : ""}${k.issuance.mfa ? ` (MFA device ${show(k.issuance.mfa, 40)})` : k.issuance.action === ACCESS_KEY_ISSUANCE_ACTION ? " (a long-term access key)" : " (MFA not recorded on the issuance)"}${k.issuance.sourceIdentity ? `; stated human identity ${show(k.issuance.sourceIdentity, 40)}` : ""} — ${k.issuance.locator}`
     : k.workload
       ? `delivered by the service to the ${k.workload}; no STS record is expected`
       : `no issuance record in this ${noun} exposes this credential id ${range}`;
@@ -579,8 +601,11 @@ function summaryRow(
     k.shapes["privileged-change"].count +
     k.shapes["remote-execution"].count +
     (shapes.some((s) => s.kind === "enumeration") ? 1 : 0);
+  const enumeration = shapes.find((s) => s.kind === "enumeration");
+  const burst = enumeration ? burstWords(k.reads, Date.parse(enumeration.time)) : "";
   const parts = [
     issuanceWords,
+    ...(burst ? [burst] : []),
     ...unresolvedWords,
     `uses: ${plural(k.uses, "record")} ${iso(k.first!.time)} (${k.first!.locator}) → ${iso(k.last!.time)} (${k.last!.locator})`,
     `first use from each source: ${sourceWords.join("; ")}${beyondSources ? `; +${plural(beyondSources, "more source")}` : ""}${k.untrackedRecords ? `; ${plural(k.untrackedRecords, "record")} from untracked sources` : ""}`,
@@ -608,7 +633,9 @@ function summaryRow(
       .map((c) =>
         c.direction === "issued"
           ? `chained: issued ${show(c.credentialId, 30)} (${c.locator})`
-          : `issued from a session of ${show(c.credentialId, 30)} (${c.locator})`,
+          : k.issuance?.action === ACCESS_KEY_ISSUANCE_ACTION
+            ? `created by a call signed with ${show(c.credentialId, 30)} (${c.locator})`
+            : `issued from a session of ${show(c.credentialId, 30)} (${c.locator})`,
       ),
   ];
   // One deduplicated evidence list: the issuance, the bounds, the decisive shape, then every other

@@ -34,6 +34,8 @@ import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
 import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
 import { awsExposureGrade, awsExposurePosture } from "./awsExposure.js";
+import { failedCallIsProbe, genericFloor } from "./awsServiceGrade.js";
+import { raiseRansomwarePrecursors } from "./awsPrecursorGrade.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -240,7 +242,10 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
 
   const readOnly = truthy(getCI(rec, "readOnly"));
   const def = lookupAwsAction(source, name);
-  let severity: Severity = def?.severity ?? (readOnly ? "Info" : "Low");
+  // Who called, in the record's words (#931 item 5): the kind, the credential, the session's
+  // issuer and attributes, the accounts — and, for an STS call, what it issued.
+  const who2 = readAwsIdentity(rec);
+  let severity: Severity = def?.severity ?? genericFloor(readOnly, who2.kind); // #2542
   const mitre = [...(def?.mitre ?? [])];
   // Systems Manager remote execution (#931 item 7): the phase, target, document, id, status and
   // payload are the evidence; see ssmExecution.ts for what is and is not claimed.
@@ -271,6 +276,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     // A document that has no digest of its own keys on the record; an exported record without an
     // eventID still has its position in the file.
     str(getCI(rec, "eventID")).trim() || `record:${recordIndex}`,
+    getCI(rec, "userIdentity"),
   );
   if (iam) {
     if (iam.severityFloor) severity = worst(severity, iam.severityFloor);
@@ -293,9 +299,6 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     mitre.length = 0;
     mitre.push(...logging.mitre);
   }
-  // Who called, in the record's words (#931 item 5): the kind, the credential, the session's
-  // issuer and attributes, the accounts — and, for an STS call, what it issued.
-  const who2 = readAwsIdentity(rec);
   const issuance = readCredentialIssuance(
     name,
     getCI(rec, "requestParameters"),
@@ -337,7 +340,8 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   // #1081), and this blanket bump would otherwise silently re-elevate it back to Medium, since a
   // not-found logging call necessarily has a non-empty errorCode (self-found during #1081's own
   // implementation, same class of bug as Codex's design-review finding #2 for GCP's head text).
-  if (errorCode && !logging) severity = worst(severity, "Medium");
+  // Not for an AWS service acting on its own, nor a read-only "not found" answer (awsServiceGrade.ts).
+  if (!logging && failedCallIsProbe(errorCode, readOnly, who2.kind)) severity = worst(severity, "Medium");
   // Root doing anything mutating is worth a look.
   if (isRoot && !readOnly) severity = worst(severity, "Medium");
 
@@ -730,10 +734,15 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
     sigma: unionSigmaMatches(g.members.map((c) => c.sigma)),
     recordIndex: g.members[0].recordIndex,
   }));
-  const mapped = merged.map((g) =>
+  const graded = merged.map((g) =>
     snapshot
       ? applySigmaMatches(g.event, g.sigma, snapshot, undefined, cloudTrailSigmaVeto(g.event))
       : g.event,
+  );
+  // A bucket-recovery check by a key that just escalated itself is raised in context (#2542).
+  const mapped = raiseRansomwarePrecursors(
+    graded,
+    merged.map((g) => records[g.recordIndex]),
   );
   const sigmaRows = merged.filter((g) => g.sigma.length > 0).length;
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
