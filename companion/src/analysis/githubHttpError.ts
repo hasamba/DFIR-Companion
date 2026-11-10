@@ -7,8 +7,9 @@
 // Secondary limit: GitHub's short-term throttling (429, or retry-after) — it says nothing about the
 // hourly quota, so its message does not claim the quota is used up.
 //
-// The time is absolute and names its zone: the message is stored with the check result and shown
-// again later, where a relative "in 5 minutes" would be wrong.
+// The time is absolute, in UTC and with its date ("2026-11-10 05:57 UTC"): the message is stored
+// with the check result and shown again later, where a relative "in 5 minutes" would be wrong, and
+// it must read the same whatever the server's locale or timezone (#2525).
 
 export interface GithubThrottle {
   kind: "primary" | "secondary";
@@ -50,8 +51,9 @@ export function classifyGithubThrottle(resp: Response, now = new Date()): Github
   return undefined;
 }
 
+/** "2026-11-10 05:57 UTC" — fixed zone and format, so a stored message reads the same on any host. */
 function clock(at: Date): string {
-  return at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
+  return `${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
 /** The error message for a non-OK GitHub response; `what` names the operation ("listing …"). */

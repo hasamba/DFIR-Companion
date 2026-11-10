@@ -71,18 +71,43 @@ describe("classifyGithubThrottle", () => {
 });
 
 describe("githubErrorMessage", () => {
-  it("names the hourly limit and an absolute time with its zone", () => {
-    const reset = new Date("2026-11-10T05:57:00Z");
-    const msg = githubErrorMessage(
+  // #2525: the message is stored and shown later, so the time is UTC with its date — the same on
+  // every host, whatever its locale or timezone.
+  const primary = (reset: Date) =>
+    githubErrorMessage(
       res(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": epoch(reset) }),
       "listing SigmaHQ releases",
       NOW,
     );
-    expect(msg).toMatch(
-      /^GitHub's hourly limit for anonymous requests is used up \(listing SigmaHQ releases\)/,
+
+  it("names the hourly limit and an absolute UTC time with its date", () => {
+    expect(primary(new Date("2026-11-10T05:57:00Z"))).toBe(
+      "GitHub's hourly limit for anonymous requests is used up (listing SigmaHQ releases) — try again after 2026-11-10 05:57 UTC",
     );
-    expect(msg).toMatch(/try again after \d{1,2}:\d{2}\s?\S+/);
-    expect(msg).not.toMatch(/403|minutes/);
+  });
+
+  it("prints the same UTC time whatever the host's timezone", () => {
+    const saved = process.env.TZ;
+    try {
+      process.env.TZ = "America/New_York";
+      expect(primary(new Date("2026-11-10T05:57:00Z"))).toMatch(/try again after 2026-11-10 05:57 UTC$/);
+    } finally {
+      if (saved === undefined) delete process.env.TZ;
+      else process.env.TZ = saved;
+    }
+  });
+
+  it("carries the next day's date when the retry time crosses midnight", () => {
+    const late = new Date("2026-11-10T23:50:00Z");
+    expect(githubErrorMessage(res(429, { "retry-after": "1200" }), "x", late)).toBe(
+      "GitHub is temporarily limiting requests (x) — try again after 2026-11-11 00:10 UTC",
+    );
+  });
+
+  it("gives the secondary limit's retry-after as a UTC time", () => {
+    expect(githubErrorMessage(res(429, { "retry-after": "120" }), "x", NOW)).toBe(
+      "GitHub is temporarily limiting requests (x) — try again after 2026-11-10 05:02 UTC",
+    );
   });
 
   it("says GitHub is temporarily limiting requests for secondary throttling", () => {
