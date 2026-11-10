@@ -88,6 +88,25 @@ function fakeSigmaHQ(
   return { fetchFn, fetchAsset };
 }
 
+/** Wrap a fake so each test can count the GitHub URLs a call fetches (#2526). */
+function recording(fetchFn: typeof fetch, opts: { failInstalledOnce?: boolean } = {}) {
+  const urls: string[] = [];
+  let failInstalled = opts.failInstalledOnce ?? false;
+  const wrapped = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    urls.push(url);
+    if (failInstalled && url.includes(`/commits/${INSTALLED}`)) {
+      failInstalled = false;
+      return new Response(JSON.stringify({ message: "rate limited" }), { status: 403 });
+    }
+    return fetchFn(input, init);
+  }) as typeof fetch;
+  return { fetchFn: wrapped, urls };
+}
+
+const FULL_SUMMARY_CALLS = 3 + SIGMA_GRADED_PATHS.length; // tip, installed, each folder, compare
+const pathListings = (urls: string[]) => urls.filter((u) => u.includes("/commits?sha=master&path=")).length;
+
 describe("the graded SigmaHQ folders", () => {
   it("cover every folder of the bundle that holds rules (#2500), so no graded rule's change is missed", async () => {
     const { readdirSync } = await import("node:fs");
@@ -116,6 +135,42 @@ describe("the main-branch summary", () => {
       label: `main-2026-11-07-ccccccc-unreleased`,
       installedCommit: INSTALLED,
     });
+  });
+
+  it("reuses the previous summary with one tip lookup while nothing changed upstream (#2526)", async () => {
+    const rec = recording(fakeSigmaHQ().fetchFn);
+    const first = await sigmaMainSummary(rec.fetchFn, INSTALLED);
+    expect(rec.urls).toHaveLength(FULL_SUMMARY_CALLS);
+    rec.urls.length = 0;
+    expect(await sigmaMainSummary(rec.fetchFn, INSTALLED, first)).toEqual(first);
+    expect(rec.urls).toHaveLength(1);
+    expect(rec.urls[0]).toContain("/commits?sha=master&per_page=1");
+  });
+
+  it("recounts when the main-branch tip moved", async () => {
+    const rec = recording(fakeSigmaHQ().fetchFn);
+    const first = await sigmaMainSummary(rec.fetchFn, INSTALLED);
+    rec.urls.length = 0;
+    const again = await sigmaMainSummary(rec.fetchFn, INSTALLED, {
+      ...first,
+      commit: T("f"),
+      gradedChanges: 99,
+    });
+    expect(rec.urls).toHaveLength(FULL_SUMMARY_CALLS);
+    expect(again).toEqual(first);
+  });
+
+  it("recounts when the installed commit changed", async () => {
+    const rec = recording(fakeSigmaHQ().fetchFn);
+    const first = await sigmaMainSummary(rec.fetchFn, INSTALLED);
+    rec.urls.length = 0;
+    const again = await sigmaMainSummary(rec.fetchFn, INSTALLED, {
+      ...first,
+      installedCommit: T("9"),
+      gradedChanges: 99,
+    });
+    expect(rec.urls).toHaveLength(FULL_SUMMARY_CALLS);
+    expect(again).toEqual(first);
   });
 
   it("does not count a same-day commit the installed rules already contain", async () => {
@@ -181,6 +236,31 @@ describe("a main-branch install through the store", () => {
     expect(p.usable).toBe(true);
     const active = await store.install(p.token);
     expect(active).toMatchObject({ release: "main-2026-11-07-ccccccc-unreleased", commit: MAIN });
+  });
+  it("a repeat check reuses the main-branch count instead of listing every folder again (#2526)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-sigma-main-"));
+    const store = new SigmaRuleStore(root, bundledSigmaDir(), {});
+    await store.init();
+    const rec = recording(fakeSigmaHQ().fetchFn);
+    const first = await store.checkLatest(rec.fetchFn, true);
+    expect(first.main).toMatchObject({ commit: MAIN });
+    expect(pathListings(rec.urls)).toBe(SIGMA_GRADED_PATHS.length);
+    const second = await store.checkLatest(rec.fetchFn, true);
+    expect(second.main).toEqual(first.main);
+    expect(pathListings(rec.urls)).toBe(SIGMA_GRADED_PATHS.length);
+  });
+
+  it("never reuses a failed main-branch check", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-sigma-main-"));
+    const store = new SigmaRuleStore(root, bundledSigmaDir(), {});
+    await store.init();
+    expect(store.active().commit).toBe(INSTALLED);
+    const rec = recording(fakeSigmaHQ().fetchFn, { failInstalledOnce: true });
+    const first = await store.checkLatest(rec.fetchFn, true);
+    expect(first.main).toHaveProperty("error");
+    const second = await store.checkLatest(rec.fetchFn, true);
+    expect(second.main).toMatchObject({ commit: MAIN, gradedChanges: 3 });
+    expect(pathListings(rec.urls)).toBe(SIGMA_GRADED_PATHS.length);
   });
 });
 

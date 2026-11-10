@@ -84,12 +84,18 @@ export const sigmaMainLabel = (c: SigmaMainCommit): string =>
 /**
  * The main branch against the installed rules: newest commit, and how many main-branch commits since
  * the installed commit's date touch a graded folder (a commit touching two folders counts once).
+ *
+ * `previous` is the last successful summary. When the main-branch tip and the installed commit are
+ * both unchanged, the folder listings and the compare can only return the same answer, so it is
+ * reused: a repeat check costs one GitHub call here instead of about eleven (#2526).
  */
 export async function sigmaMainSummary(
   fetchFn: typeof fetch,
   installedCommit: string,
+  previous?: SigmaMainSummary,
 ): Promise<SigmaMainSummary> {
   const latest = await latestSigmaMainCommit(fetchFn);
+  if (previous?.commit === latest.sha && previous.installedCommit === installedCommit) return previous;
   const installed = SHA.test(installedCommit)
     ? commitOf(
         await getJson(fetchFn, `${API}/commits/${installedCommit}`, "reading the installed SigmaHQ commit"),
