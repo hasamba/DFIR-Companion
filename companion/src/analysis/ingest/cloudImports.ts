@@ -355,7 +355,9 @@ export async function importGoogleWorkspace(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<ImportWithCoverage> {
-  const parsedRaw = parseGoogleWorkspaceReport(text, { ...opts.gws, debug: opts.debug });
+  // One Sigma snapshot for this whole import, taken before parsing (#2204, #2522).
+  const sigma = ctx.opts.sigmaGrader?.snapshot();
+  const parsedRaw = parseGoogleWorkspaceReport(text, { ...opts.gws, debug: opts.debug, sigma });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
@@ -379,7 +381,8 @@ export async function importGoogleWorkspace(
       `Google Workspace import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
       describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      `, ${parsed.iocs.length} IOC(s)`,
+      `, ${parsed.iocs.length} IOC(s)` +
+      sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

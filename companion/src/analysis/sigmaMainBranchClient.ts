@@ -33,6 +33,7 @@ export const SIGMA_GRADED_PATHS = [
   "rules/cloud/azure/audit_logs",
   "rules/cloud/azure/activity_logs",
   "rules/cloud/gcp/audit",
+  "rules/cloud/gcp/gworkspace",
   "rules/web/webserver_generic",
   "rules/web/proxy_generic",
 ] as const;

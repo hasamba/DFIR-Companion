@@ -74,6 +74,27 @@ describe("downloadSuzakuRules", () => {
     ]);
   });
 
+  it("takes each Google Workspace application folder, and nothing in gws/ outside them (#2522)", async () => {
+    const files = {
+      ...FILES,
+      "gws/admin/a.yml": ruleText("00000000-0000-0000-0000-000000000006", "A"),
+      "gws/login/l.yml": ruleText("00000000-0000-0000-0000-000000000007", "L"),
+      "gws/drive/d.yml": ruleText("00000000-0000-0000-0000-000000000008", "D"),
+      "gws/calendar/c.yml": ruleText("00000000-0000-0000-0000-000000000009", "C"),
+      "gws/stray.yml": ruleText("00000000-0000-0000-0000-00000000000a", "Stray"),
+    };
+    for (const truncated of [false, true]) {
+      const gh = fakeGitHub({ ...repo, files, truncated });
+      const d = await downloadSuzakuRules(repo, gh.fetchFn, gh.fetchAsset);
+      expect(d.files.map((f) => f.path).filter((p) => p.startsWith("gws/"))).toEqual([
+        "gws/admin/a.yml",
+        "gws/calendar/c.yml",
+        "gws/drive/d.yml",
+        "gws/login/l.yml",
+      ]);
+    }
+  });
+
   it("ignores a file in a sub-folder of a watched folder", async () => {
     const files = { ...FILES, "m365/old/x.yml": ruleText("00000000-0000-0000-0000-000000000005", "Old") };
     const gh = fakeGitHub({ ...repo, files });

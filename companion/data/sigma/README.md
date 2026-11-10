@@ -12,8 +12,11 @@ SigmaHQ release named in `version.txt`; nothing in `rules/` is edited by hand.
   files under `rules-emerging-threats/` (#2203) — and `rules/cloud/gcp/audit` (15 rules, product
   `gcp`, service `gcp.audit`; #2346), extracted from the same release asset after checking its
   sha256, and `rules/cloud/azure/activity_logs` (33 rules in the release asset, product `azure`,
-  service `activitylogs`; #2500), extracted the same way. `rules/cloud/gcp/gworkspace` is not included: it reads Google Workspace admin / login
-  logs, which the Companion does not import as such.
+  service `activitylogs`; #2500), extracted the same way, and `rules/cloud/gcp/gworkspace` (10 rules,
+  product `gcp`, service `google_workspace.admin` / `.login`; #2522), extracted the same way. They read
+  the Google Workspace Reports API import; `eventService` / `protoPayload.serviceName` is the
+  application's Cloud Logging service (`admin.googleapis.com`, `login.googleapis.com`). The three login
+  rules are `experimental`, so they load only when that status is switched on.
 - License: the rules are released under the Detection Rule License (DRL) 1.1 —
   `LICENSE.DRL-1.1.md`, and SigmaHQ's own `LICENSE`. Every match the Companion records names the
   rule's author and links the rule, as the DRL requires.

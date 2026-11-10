@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sigma grades Google Workspace activity** — Suzaku's 18 loadable Google Workspace rules and SigmaHQ's 10 are bundled and graded per event at import (labels only at the defaults); the Suzaku updater also tracks the four Workspace folders (closes #2522)
 - **AI preview shows changes like a code diff** — changed lines red and green, each value bold red beside its bold green token, hover links the pair, a summary by kind, amber "looks like … — not masked" guesses, and a "Show only changed lines" switch (closes #2531)
 - **AI preview for imports, playbook hunts and decision-model checks** — preview a CSV, log or screenshot read on a file you choose (nothing imported), playbook hunts from the stored fleet list (no refresh), and the missed-evidence review and containment check, now on the shared masking step (closes #2515)
 - **Sigma grades Microsoft 365 and Azure Activity logs** — Suzaku's 21 Microsoft 365 and 4 Azure Activity rules and SigmaHQ's 33 Azure Activity rules are bundled and graded at import; the Suzaku updater now tracks all three folders (closes #2500)

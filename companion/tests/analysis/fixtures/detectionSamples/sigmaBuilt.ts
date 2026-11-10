@@ -21,6 +21,8 @@ import {
   AZURE_M365,
   AZURE_SIGNIN_LOGS,
   GCP_AUDIT,
+  GWS_SIGMA_APPS,
+  gwsSourceFor,
   fieldResolvers,
   type SigmaLogSourceDef,
 } from "../../../../src/analysis/sigmaLogSources.js";
@@ -30,6 +32,7 @@ import type { SigmaCondition, SigmaFieldMatch, SigmaRule } from "../../../../src
 import { cloudTrailBase } from "./aws.js";
 import { auditBase, azureActivityBase, signInBase, ualBase } from "./m365.js";
 import { gcpBase } from "./gcp.js";
+import { gwsBase, gwsParam } from "./gws.js";
 import type { DetectionSample } from "./types.js";
 
 type Row = Record<string, unknown>;
@@ -37,7 +40,14 @@ type Row = Record<string, unknown>;
 /** The cloud log sources in scope, with the importer and base record each one's samples use. */
 export const CLOUD_SIGMA_SOURCES: Record<
   string,
-  { def: SigmaLogSourceDef; base: () => Row; kind: DetectionSample["kind"]; notBuilt?: string }
+  {
+    def: SigmaLogSourceDef;
+    base: () => Row;
+    kind: DetectionSample["kind"];
+    notBuilt?: string;
+    /** Writes a field the generic path writer cannot place (a Workspace event's name or parameter). */
+    write?: (rec: Row, field: string, value: string) => Row;
+  }
 > = {
   // A neutral read call: the importer needs an event name, and a rule that names one overwrites it.
   "aws-cloudtrail": {
@@ -60,7 +70,41 @@ export const CLOUD_SIGMA_SOURCES: Record<
     kind: "gcp",
     notBuilt: "GCP rules are checked with real-shaped hand samples, not rule-shaped built ones",
   },
+  // #2522: one source per Workspace application, each built on a neutral event of that application.
+  ...Object.fromEntries(
+    GWS_SIGMA_APPS.map((app) => [
+      `gws-${app}`,
+      { def: gwsSourceFor(app)!, base: () => gwsBase(app), kind: "gws" as const, write: gwsWrite(app) },
+    ]),
+  ),
 };
+
+/**
+ * A Workspace field written where the Reports API carries it (#2522): the event name on the one
+ * event, the service only when it is the sample application's own, a bare name as a parameter.
+ * Anything else (id / actor paths) takes the generic path writer.
+ */
+function gwsWrite(app: string): (rec: Row, field: string, value: string) => Row {
+  return (rec, field, value) => {
+    const f = field.toLowerCase();
+    const events = (rec.events as Row[]) ?? [];
+    const event = { ...(events[0] ?? {}) };
+    if (f === "eventname" || f === "protopayload.metadata.event.eventname")
+      return { ...rec, events: [{ ...event, name: value }] };
+    if (f === "eventservice" || f === "protopayload.servicename") {
+      if (value.toLowerCase() === `${app}.googleapis.com`) return rec;
+      throw new NotBuildable(`field ${field} names ${value}, not this application's service`);
+    }
+    if (!/^[A-Za-z0-9_]+$/.test(field)) throw new GenericPath();
+    const params = ((event.parameters as Row[]) ?? []).filter(
+      (p) => String(p.name).toLowerCase() !== field.toLowerCase(),
+    );
+    return { ...rec, events: [{ ...event, parameters: [...params, gwsParam(field, value)] }] };
+  };
+}
+
+/** Thrown by a source's writer to hand a field back to the generic path writer. */
+class GenericPath extends Error {}
 
 export interface SigmaBuild {
   ruleId: string;
@@ -136,11 +180,24 @@ function derived(field: string, value: string): Array<[string, unknown]> {
   throw new NotBuildable(`field ${field} is derived and has no stand-in`);
 }
 
-function apply(rec: Row, def: SigmaLogSourceDef, f: SigmaFieldMatch, done: Map<string, string>): Row {
+function apply(
+  rec: Row,
+  def: SigmaLogSourceDef,
+  f: SigmaFieldMatch,
+  done: Map<string, string>,
+  write?: (rec: Row, field: string, value: string) => Row,
+): Row {
   const value = valueFor(f);
   if (value === undefined) return rec;
   const resolvers = fieldResolvers(def, f.field);
   if (!Array.isArray(resolvers)) throw new NotBuildable(resolvers.refused);
+  if (write) {
+    try {
+      return write(rec, f.field, value);
+    } catch (err) {
+      if (!(err instanceof GenericPath)) throw err;
+    }
+  }
   const path = resolvers.find((r): r is string => typeof r === "string");
   const writes: Array<[string, unknown]> = path
     ? [[path, written(done, path, value)]]
@@ -149,7 +206,7 @@ function apply(rec: Row, def: SigmaLogSourceDef, f: SigmaFieldMatch, done: Map<s
 }
 
 function build(rule: SigmaRule, source: string): Row {
-  const { def, base, notBuilt } = CLOUD_SIGMA_SOURCES[source];
+  const { def, base, notBuilt, write } = CLOUD_SIGMA_SOURCES[source];
   if (notBuilt) throw new NotBuildable(notBuilt);
   const names = positives(rule.detection.condition);
   let rec = base();
@@ -159,7 +216,7 @@ function build(rule: SigmaRule, source: string): Row {
     if (!sel) throw new NotBuildable(`selection ${name} is not defined`);
     if (sel.kind === "keywords") throw new NotBuildable(`selection ${name} is a keyword list`);
     const fields = sel.kind === "map" ? sel.fields : (sel.alternatives[0] ?? []);
-    for (const f of fields) rec = apply(rec, def, f, done);
+    for (const f of fields) rec = apply(rec, def, f, done, write);
   }
   return rec;
 }

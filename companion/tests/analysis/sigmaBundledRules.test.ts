@@ -44,13 +44,22 @@ describe("bundled Sigma rules", () => {
       "web-proxy:refused": 3,
       // #2500: SigmaHQ rules/cloud/azure/activity_logs (33 in the release asset).
       "azure-activitylogs:loaded": 33,
+      // #2522: SigmaHQ rules/cloud/gcp/gworkspace (10). The three login rules are experimental, outside
+      // the default statuses.
+      "gws-admin:loaded": 7,
+      "gws-login:status": 3,
       // #2499: the Suzaku CloudTrail rules (741 files). The 5 refused are multi-document correlation
       // rules, which the engine does not run.
       "Suzaku:aws-cloudtrail:loaded": 736,
       // #2500: suzaku/m365 (21) and suzaku/azure/activity_logs (4), all loaded.
       "Suzaku:azure-m365:loaded": 21,
       "Suzaku:azure-activitylogs:loaded": 4,
-      "Suzaku:-:refused": 5,
+      // #2522: suzaku/gws (20). The 2 more refused are its multi-document correlations (calendar mass
+      // invite, login from many addresses), so calendar has no rule that loads.
+      "Suzaku:gws-admin:loaded": 8,
+      "Suzaku:gws-login:loaded": 8,
+      "Suzaku:gws-drive:loaded": 2,
+      "Suzaku:-:refused": 7,
     });
   });
 

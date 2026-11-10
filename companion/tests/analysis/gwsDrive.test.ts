@@ -555,7 +555,10 @@ describe("decodeGwsDrive — access records read for what the event means", () =
     expect(e.description).toBe(
       "Google Workspace drive: rename by alice@corp.example → Q3 plan from 203.0.113.10",
     );
-    expect(e.canonical).toBeUndefined();
+    // #2522: the generic row now carries the record's own envelope (no Drive block, no outcome claimed).
+    expect(e.canonical?.event).toEqual({ category: "cloud", type: "activity", action: "rename" });
+    expect(e.canonical?.producer?.mappingVersion).toBe("gws-activity-v1");
+    expect(e.canonical).not.toHaveProperty("driveAccess");
   });
 });
 

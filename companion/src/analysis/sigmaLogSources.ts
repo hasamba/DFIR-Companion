@@ -25,6 +25,9 @@ export interface SigmaFieldTable {
   prefixes?: readonly { from: string; to: readonly string[]; derive?: (rest: string) => Resolver[] }[];
   /** Lower-cased field names that look mappable but have no equivalent, with the reason. */
   unavailable?: Readonly<Record<string, string>>;
+  /** For an open-ended name space (#2522: a Workspace event's parameters): where a field the table
+   * does not name is read, or undefined to refuse it as usual. Consulted after exact and prefixes. */
+  fallback?: (field: string) => Resolver[] | undefined;
 }
 
 export interface SigmaLogSourceDef {
@@ -48,6 +51,7 @@ export const SIGMA_ORIGIN_WEB = "Web Access Log";
 export const SIGMA_ORIGIN_GCP = "GCP Audit";
 export const SIGMA_ORIGIN_M365 = "Microsoft 365";
 export const SIGMA_ORIGIN_AZURE_ACTIVITY = "Azure Activity";
+export const SIGMA_ORIGIN_GWS = "Google Workspace";
 
 const same = (...names: string[]): Record<string, string[]> =>
   Object.fromEntries(names.map((n) => [n.toLowerCase(), [n]]));
@@ -422,6 +426,108 @@ export const AZURE_ACTIVITY: SigmaLogSourceDef = {
   origins: [SIGMA_ORIGIN_AZURE_ACTIVITY],
 };
 
+// ── Google Workspace audit activity (#2522) ──────────────────────────────────────────────────
+
+/** A Reports API parameter's value(s) as the text Sigma compares, by its wire kind. */
+function gwsParamTexts(el: Row): (string | null)[] {
+  const out: (string | null)[] = [];
+  for (const kind of ["value", "boolValue", "intValue"]) {
+    const v = keyOf(el, kind);
+    if (v !== undefined) out.push(...nameValueTexts(v));
+  }
+  for (const kind of ["multiValue", "multiIntValue"]) {
+    const v = keyOf(el, kind);
+    if (Array.isArray(v)) out.push(...v.flatMap(nameValueTexts));
+  }
+  for (const kind of ["messageValue", "multiMessageValue"]) {
+    const v = keyOf(el, kind);
+    if (v !== undefined && v !== null) out.push(JSON.stringify(v));
+  }
+  return out;
+}
+
+/**
+ * A Workspace event parameter. The Reports API writes an event's parameters as
+ * `[{ "name": "NEW_VALUE", "value": "true" }, { "name": "is_suspicious", "boolValue": true }, …]`, and
+ * Suzaku and SigmaHQ rules name the parameter directly (`NEW_VALUE`, `new_value`, `is_suspicious`), so
+ * a field reads every element of that name, case-insensitively. Read through lookupPath, so a
+ * stringified array and its incomplete flag carry over; a scan past the element cap is incomplete,
+ * never "absent". The record is one event (the importer narrows it), so a sibling event's parameters
+ * are never read.
+ */
+export function gwsParameter(key: string): (record: Row) => SigmaFieldLookup {
+  return (record) => {
+    const coll = lookupPath(record, "events.parameters");
+    let incomplete = coll.incomplete;
+    const elements = coll.values.flatMap(collectionElements);
+    if (elements.length > SIGMA_NAME_VALUE_MAX_ELEMENTS) incomplete = true;
+    const values: (string | null)[] = [];
+    let present = false;
+    for (const el of elements.slice(0, SIGMA_NAME_VALUE_MAX_ELEMENTS)) {
+      const name = keyOf(el, "name");
+      if (typeof name !== "string" || name.trim().toLowerCase() !== key.toLowerCase()) continue;
+      present = true;
+      values.push(...gwsParamTexts(el));
+    }
+    return { present, values, incomplete };
+  };
+}
+
+/** The Workspace applications whose Cloud Logging service is `<app>.googleapis.com` — the name
+ * SigmaHQ's Workspace rules select on (`eventService`, `protoPayload.serviceName`). */
+const GWS_LOGGING_SERVICES: ReadonlySet<string> = new Set(["admin", "login"]);
+
+function gwsService(record: Row): SigmaFieldLookup {
+  const app = firstText(record, "id.applicationName")?.trim().toLowerCase();
+  return found(app && GWS_LOGGING_SERVICES.has(app) ? [`${app}.googleapis.com`] : []);
+}
+
+/** The Workspace applications a Sigma rule can name (`service: google_workspace.<app>`). Calendar
+ * records import as generic rows; the one bundled calendar rule is a correlation and is refused. */
+export const GWS_SIGMA_APPS = ["admin", "login", "drive", "calendar"] as const;
+
+const GWS_PARAMETER_NAME = /^[A-Za-z0-9_]+$/;
+
+function googleWorkspaceSource(app: (typeof GWS_SIGMA_APPS)[number]): SigmaLogSourceDef {
+  return {
+    id: `gws-${app}`,
+    label: `Google Workspace ${app} activity`,
+    matches: (ls) => is(ls, "gcp", `google_workspace.${app}`),
+    fields: {
+      exact: {
+        // Suzaku names the Reports API event `eventName`; SigmaHQ uses the Cloud Logging spelling.
+        eventname: ["events.name"],
+        "protopayload.metadata.event.eventname": ["events.name"],
+        eventtype: ["events.type"],
+        eventservice: [gwsService],
+        "protopayload.servicename": [gwsService],
+        ...same(
+          "id.time",
+          "id.applicationName",
+          "id.customerId",
+          "id.uniqueQualifier",
+          "actor.email",
+          "actor.profileId",
+          "actor.callerType",
+          "actor.key",
+          "ipAddress",
+          "ownerDomain",
+        ),
+      },
+      fallback: (field) => (GWS_PARAMETER_NAME.test(field) ? [gwsParameter(field)] : undefined),
+    },
+    indexFields: ["eventName"],
+    origins: [SIGMA_ORIGIN_GWS],
+  };
+}
+
+export const GWS_SOURCES: readonly SigmaLogSourceDef[] = GWS_SIGMA_APPS.map(googleWorkspaceSource);
+
+/** The source that grades one Workspace application's events, or undefined when none does. */
+export function gwsSourceFor(app: string): SigmaLogSourceDef | undefined {
+  return GWS_SOURCES.find((d) => d.id === `gws-${app.trim().toLowerCase()}`);
+}
+
 const category = (ls: SigmaLogsource, name: string): boolean =>
   ls.category?.toLowerCase() === name && !ls.product && !ls.service;
 
@@ -492,6 +598,7 @@ export const SIGMA_LOG_SOURCES: readonly SigmaLogSourceDef[] = [
   GCP_AUDIT,
   AZURE_M365,
   AZURE_ACTIVITY,
+  ...GWS_SOURCES,
   WEB_SERVER,
   WEB_PROXY,
 ];
@@ -510,6 +617,8 @@ export function fieldResolvers(def: SigmaLogSourceDef, field: string): Resolver[
     const rest = field.slice(p.from.length);
     return [...p.to.map((t) => t + rest), ...(p.derive?.(rest) ?? [])];
   }
+  const fallback = def.fields.fallback?.(field);
+  if (fallback) return fallback;
   return { refused: `the field ${field} is not available in ${def.label}` };
 }
 

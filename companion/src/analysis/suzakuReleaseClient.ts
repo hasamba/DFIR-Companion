@@ -24,6 +24,11 @@ export const SUZAKU_WATCH_PATHS = [
   "suzaku/aws/cloudtrail",
   "suzaku/m365",
   "suzaku/azure/activity_logs",
+  // Google Workspace (#2522): upstream keeps one folder per application.
+  "suzaku/gws/admin",
+  "suzaku/gws/calendar",
+  "suzaku/gws/drive",
+  "suzaku/gws/login",
 ] as const;
 const BRANCH = "main";
 const API = `https://api.github.com/repos/${SUZAKU_REPO}`;

@@ -7,6 +7,10 @@
   "folders": {
     "suzaku/aws/cloudtrail": "8ce309b49e837f2f9ee83355b1bccac4c2dcc9bd",
     "suzaku/m365": "9c846796467f84fec5193500f75e761bb3a8ef0c",
-    "suzaku/azure/activity_logs": "49756092f009440d43dc30db97229995a5ea1ff3"
+    "suzaku/azure/activity_logs": "49756092f009440d43dc30db97229995a5ea1ff3",
+    "suzaku/gws/admin": "286a6963abdcea6043ac8eefd57ce797562f6b27",
+    "suzaku/gws/calendar": "70eeedf98abab139e81ece9921a9d563aad7d658",
+    "suzaku/gws/drive": "f3928062ca5971e44ce769cc651db19a0cbf5e39",
+    "suzaku/gws/login": "a053e134120a1bc588d16f7812308e4cc44961a2"
   }
 }

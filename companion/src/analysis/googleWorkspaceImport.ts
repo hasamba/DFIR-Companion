@@ -30,6 +30,8 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
+import { applySigmaMatches, sigmaMatchesFor, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
+import { gwsSourceFor } from "./sigmaLogSources.js";
 
 // Deterministic importer for Google Workspace Admin SDK Reports API activities — the third identity
 // ingest path, beside m365Import.ts (Entra) and oktaImport.ts. No AI call.
@@ -60,6 +62,8 @@ export interface GoogleWorkspaceImportOptions {
   maxIocs?: number;
   /** This attempt's import debug recorder (#1736): decisions and counts only, never row content. */
   debug?: ImportDebugRecorder;
+  /** The Sigma snapshot this import is graded with (#2522): admin, login, Drive and calendar events. */
+  sigma?: SigmaGradingSnapshot;
 }
 
 export interface GoogleWorkspaceParseResult {
@@ -74,6 +78,8 @@ export interface GoogleWorkspaceParseResult {
   format: string; // "google-workspace" | "empty"
   /** Per-upload coverage drafts (#1063) — applicationName per tenant. */
   coverage: CloudCoverageDraft[];
+  /** Rows a Sigma rule matched (#2522); 0 without a snapshot. */
+  sigmaRowsMatched: number;
 }
 
 interface EventDef {
@@ -462,6 +468,8 @@ function gwsEnvelope(
   extra: Record<string, unknown>,
   extraFields: Record<string, string[]> = {},
   resource = "",
+  /** Omitted for a generic row (#2522): its record states no outcome, and a login_failure is not one. */
+  outcome: "success" | null = "success",
 ): MappedEvent["canonical"] {
   const who = readActor(rec);
   const tenant = text(getPath(rec, "id.customerId"));
@@ -470,7 +478,7 @@ function gwsEnvelope(
   const { self, impersonated, selfFields } = actorEntities(who);
   const principalId = who.kind === "user" ? who.profileId : who.kind === "key" ? who.key : who.appId;
   return createCanonicalEvent({
-    event: { category: "cloud", type, action: name, outcome: "success" },
+    event: { category: "cloud", type, action: name, ...(outcome ? { outcome } : {}) },
     ...(self ? { actor: self } : {}),
     ...(impersonated ? { subject: impersonated } : {}),
     ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
@@ -655,7 +663,31 @@ function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: str
     mitre: [...(def.mitre ?? [])],
     aggKey: boundedAggKey(baseKey.toLowerCase()),
     sources: ["Google Workspace"],
+    // The record's own envelope (#2522), so a Sigma verdict is stamped and the re-grade can pair the row.
+    canonical: gwsEnvelope(rec, name, ip, locator, "activity", "gws-activity-v1", {}, {}, "", null),
   };
+}
+
+/**
+ * One event's row graded by the import's Sigma snapshot (#2522). The rules read the record narrowed
+ * to this ONE event — one record fans out into a row per event, so a sibling event's name or
+ * parameters must never satisfy a rule on this row. Applications no Sigma source covers stay as mapped.
+ */
+function gradeEvent(
+  row: MappedEvent,
+  rec: Row,
+  event: Row,
+  opts: GoogleWorkspaceImportOptions,
+  onMatch: () => void,
+): MappedEvent {
+  const snapshot = opts.sigma;
+  const source = snapshot ? gwsSourceFor(text(getPath(rec, "id.applicationName"))) : undefined;
+  if (!snapshot || !source) return row;
+  const matches = sigmaMatchesFor(snapshot, source.id, { ...rec, events: [event] }, (n) =>
+    opts.debug?.observed("sigma_incomplete", n),
+  );
+  if (matches.length) onMatch();
+  return applySigmaMatches(row, matches, snapshot);
 }
 
 export function parseGoogleWorkspaceReport(
@@ -673,6 +705,7 @@ export function parseGoogleWorkspaceReport(
     summaries: 0,
     format: "empty",
     coverage: [],
+    sigmaRowsMatched: 0,
   };
 
   const trimmed = input.trim();
@@ -689,6 +722,7 @@ export function parseGoogleWorkspaceReport(
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
+  let sigmaRows = 0;
   records.forEach((raw, recordIndex) => {
     if (!isObject(raw)) {
       opts.debug?.skipped("not_an_object");
@@ -708,10 +742,12 @@ export function parseGoogleWorkspaceReport(
         opts.debug?.skipped("not_an_object");
         return;
       }
-      mapped.push(mapEvent(rec, e, iocSink, `record:${recordIndex}/event:${eventIndex}`));
+      const row = mapEvent(rec, e, iocSink, `record:${recordIndex}/event:${eventIndex}`);
+      mapped.push(gradeEvent(row, rec, e, opts, () => sigmaRows++));
     });
   });
 
+  if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   const aggregated = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
@@ -753,5 +789,6 @@ export function parseGoogleWorkspaceReport(
     summaries: summaries.length,
     format: mapped.length ? "google-workspace" : "empty",
     coverage,
+    sigmaRowsMatched: sigmaRows,
   };
 }
