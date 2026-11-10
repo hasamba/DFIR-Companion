@@ -6,6 +6,7 @@ import { upgradeForensicEvent } from "./canonicalEvent.js";
 import { correlateEventsTracked, correlationGroups } from "./correlate.js";
 import { runTimelineChain } from "./stateMerge.js";
 import { correlationKeys } from "./mergeIndex.js";
+import { groupBulkReadsWithDropped, objectLoggingEvent } from "./cloudBulkRead.js";
 
 /**
  * The row-level helpers of the incremental importer merge (#1874): reading stored rows, the
@@ -18,6 +19,21 @@ export interface HeldRow {
   event: ForensicEvent;
   /** First appearance in the pre-sort timeline: the stored ordinal, or past every ordinal. */
   pre: number;
+}
+
+/**
+ * Why the cloud bulk-read pass could act on these rows, or null (#2536). Cloud object reads are LOAD
+ * rows, so the merge holds every one of them — but the pass, once it has a group, a truncation or the
+ * object-logging coverage row, also reads role assumptions and the case's recurring readers, which are
+ * not LOAD rows, and it can replace a stored summary out of place. So the decision rests only on what
+ * the held reads alone decide, exactly as the full merge's pass decides it: with none of the three,
+ * summarizeBulkReads returns its input untouched in both paths.
+ */
+export function bulkReadWork(events: readonly ForensicEvent[]): string | null {
+  const { groups, dropped } = groupBulkReadsWithDropped(events);
+  if (groups.length > 0 || dropped > 0 || objectLoggingEvent(events) !== null)
+    return "a correlation pass has work: cloud bulk read";
+  return null;
 }
 
 /** Past every stored ordinal: where the full merge appends a new event before sorting. */

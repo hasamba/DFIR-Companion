@@ -28,6 +28,7 @@ import { COVERAGE_EVENT_ID } from "./cloudMetadataAccess.js";
 import { placeCoverage } from "./incrementalMergeCoverage.js";
 import {
   NEW_ROW_BASE,
+  bulkReadWork,
   compareFinal,
   correlationClosure,
   eventOf,
@@ -56,7 +57,9 @@ import {
  */
 
 /** Bump when the merge's semantics or the index's contents change: every case re-indexes once. */
-export const MERGE_INDEX_VERSION = 2; // 2: the cloud coverage row is no trigger (#2504)
+// 2: the cloud coverage row is no trigger (#2504)
+// 3: cloud object reads are LOAD rows, not triggers (#2536)
+export const MERGE_INDEX_VERSION = 3;
 
 export type IncrementalResult =
   { ok: true; state: InvestigationState; read: number; written: number } | { ok: false; reason: string };
@@ -256,6 +259,8 @@ function chainHeld(
     const why = mergeTrigger(h.event);
     if (why) return `a correlation pass has work: ${why}`;
   }
+  const bulk = bulkReadWork(working.map((h) => h.event));
+  if (bulk) return bulk;
   const chained = runTimelineChain(
     working.map((h) => h.event),
     [],
@@ -263,7 +268,12 @@ function chainHeld(
     (events) => clampToYear(events, year),
     false,
   );
-  if (chained.length !== working.length) return "the chain added or removed a row";
+  // Rows are matched back to held rows by position, so the chain must keep every id in place.
+  if (chained.length !== working.length || chained.some((e, i) => e.id !== working[i].event.id))
+    return "the chain added, removed or reordered a row";
+  // The pass reads the rows as the year clamp left them; judge them that way too (#2536).
+  const bulkAfter = bulkReadWork(chained);
+  if (bulkAfter) return bulkAfter;
   const rows = working.map((h, i) => ({ ...h, event: chained[i] }));
   // The metadata coverage row's two case-wide counts after this merge: stored counts of the clean
   // rows, less the held clean rows' stored flags, plus every held row as it now reads.

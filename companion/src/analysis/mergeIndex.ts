@@ -98,7 +98,7 @@ const INERT_NOTES = new Set([
   "confirmed exfiltration", // exfilCorrelate: never stripped
   "timestomp corroboration", // timestompCorroborate: never stripped
   "ransomware precursors", // ransomwarePrecursor: never stripped; its rows are LOAD rows anyway
-  "cloud bulk read", // summaries: inert without read records, which are a trigger
+  "cloud bulk read", // summaries: re-produced only from read records, which are LOAD rows (#2536)
   "renamed binary",
   "build-time",
   "shared source mtime",
@@ -156,7 +156,6 @@ export function mergeTrigger(e: ForensicEvent): string | null {
   if (/certutil/i.test(`${e.processName ?? ""} ${e.commandLine ?? ""} ${description}`)) return "certutil";
   if (metadataTarget(searchText(e)) !== "" || isInstanceRoleIdentity(`${description} ${e.path ?? ""}`))
     return "instance metadata";
-  if (readCloudRecord(e) !== null) return "cloud object read";
   if (c?.event?.type === "storage-key-list") return "storage key listing";
   if (c?.awsCompute) return "AWS compute record";
   if (readBrowsing(e) !== null) return "browsing record";
@@ -171,10 +170,15 @@ export function mergeTrigger(e: ForensicEvent): string | null {
  * upload link (exfilCorrelate.ts reads staging rows and transfer candidates, nothing else) and the
  * ransomware-precursor clustering (ransomwarePrecursor.ts reads rows carrying a precursor technique).
  * The transfer-tool staging join (transferToolStaging.ts, #1955) reads only rows whose path names a
- * transfer tool or its config. All are supersets of what the pass reads; the merge reads every such
+ * transfer tool or its config. The cloud bulk-read pass (cloudBulkRead.ts summarizeBulkReads, #2536)
+ * groups cloud object reads — checked before the asset test, because cloud rows often carry none; the
+ * incremental merge falls back whenever those reads form any group, truncation or coverage row
+ * (incrementalMergeRows.ts bulkReadWork), since the pass then reads rows that are not LOAD rows.
+ * All are supersets of what the pass reads; the merge reads every such
  * row, so the pass sees all of its input, in timeline order, however many of them the delta touched.
  */
 export function mergeLoadAlways(e: ForensicEvent): boolean {
+  if (readCloudRecord(e) !== null) return true;
   if (!e.asset) return false;
   const mitre = e.mitreTechniques ?? [];
   if (mitre.includes("T1560.001") || mitre.includes("T1041")) return true;
