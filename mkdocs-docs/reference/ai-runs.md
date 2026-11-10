@@ -414,7 +414,7 @@ off, the answer is the first row.
 | Pass | What it does |
 |---|---|
 | **Content tagger** | A rule set run over the **newly imported** events only, straight after import. It raises severity and adds ATT&CK techniques. **This is why an event has a severity with AI off.** A rule you write next week changes what future imports surface, never what past ones did. |
-| **Severity gate** | Splits imports: `Low` and above into the forensic timeline, `Info` into the raw archive only. A row carrying a promotion stamp is exempt whatever its severity, which is why the forensic timeline can hold `Info` rows. |
+| **Severity gate** | Splits imports: `Low` and above into the forensic timeline, `Info` into the raw archive only. A row carrying a promotion stamp, a manual event and the four [coverage rows](importing.md#coverage-rows-on-the-timeline) are exempt whatever their severity, which is why the forensic timeline can hold rows below the gate. |
 | **Named demoters** | Lower one narrow class of row to `Info` with a stated reason — a Windows updater talking to a Microsoft edge, for instance. Never lowers High or Critical, never touches a row you promoted. |
 | **Burst grouping** | Collapses four or more repeats of the same detection within an hour into one prompt row. Prompt only — your case keeps every row. |
 | **Prevalence** | A per-case baseline of command *shapes*. Feeds a rarity bias into what synthesis is shown, and the common/rare tag on a row. |

@@ -37,7 +37,12 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
-import { earliestEventTime } from "./coverageEventTime.js";
+import {
+  BULK_READ_TRUNCATION_ID,
+  COVERAGE_SOURCE,
+  earliestEventTime,
+  OBJECT_LOGGING_COVERAGE_ID,
+} from "./coverageEventTime.js";
 import { legacySummaryId, summaryHead, summaryId } from "./cloudBulkReadSummaryId.js";
 
 export { legacySummaryId, summaryHead, summaryId } from "./cloudBulkReadSummaryId.js";
@@ -709,7 +714,7 @@ export function summarizeBulkReads(
 }
 
 /** The id of the object-logging coverage event, so a re-merge replaces it. */
-export const LOGGING_COVERAGE_ID = "cloud-object-logging-coverage";
+export const LOGGING_COVERAGE_ID = OBJECT_LOGGING_COVERAGE_ID;
 
 /**
  * One event stating that object-level logging was off, when that is what the evidence shows.
@@ -719,7 +724,7 @@ export const LOGGING_COVERAGE_ID = "cloud-object-logging-coverage";
  * timeline.
  */
 /** The id of the truncation-coverage event. */
-export const TRUNCATION_COVERAGE_ID = "cloud-bulk-read-truncated";
+export const TRUNCATION_COVERAGE_ID = BULK_READ_TRUNCATION_ID;
 
 /**
  * One event saying the pass did not read everything, when it did not.
@@ -738,7 +743,7 @@ export function truncationEvent(events: readonly ForensicEvent[], dropped: numbe
     mitreTechniques: [],
     relatedFindingIds: [],
     sourceScreenshots: [],
-    sources: ["Coverage"],
+    sources: [COVERAGE_SOURCE],
   };
 }
 
@@ -761,7 +766,7 @@ export function objectLoggingEvent(events: readonly ForensicEvent[]): ForensicEv
     mitreTechniques: [],
     relatedFindingIds: [],
     sourceScreenshots: [],
-    sources: ["Coverage"],
+    sources: [COVERAGE_SOURCE],
   };
 }
 
