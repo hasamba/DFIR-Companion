@@ -3,5 +3,10 @@
   "repo": "Yamato-Security/suzaku-rules",
   "release": "suzaku-2026-11-01",
   "commit": "56c5275e99fce54b40c75e586d670ce771fe0fd8",
-  "date": "2026-11-01"
+  "date": "2026-11-01",
+  "folders": {
+    "suzaku/aws/cloudtrail": "8ce309b49e837f2f9ee83355b1bccac4c2dcc9bd",
+    "suzaku/m365": "9c846796467f84fec5193500f75e761bb3a8ef0c",
+    "suzaku/azure/activity_logs": "49756092f009440d43dc30db97229995a5ea1ff3"
+  }
 }

@@ -541,13 +541,15 @@ keep the grading they got, and their report names the release and settings that 
 | `DFIR_SIGMA_RULE_STATUSES` | any of `stable`, `test`, `experimental` (deprecated and unsupported are never used) | `stable,test` |
 | `DFIR_SIGMA_MIN_LEVEL` | `critical`, `high`, `medium`, `low` — lower levels only tag the event | `high` |
 | `DFIR_SIGMA_UPDATE_CHECK` | `on` / `off` — one check at startup; shows a notice, never installs | `off` |
-| `DFIR_SIGMA_SUZAKU_RULES` | `on` / `off` — also use the Suzaku CloudTrail rules bundled beside SigmaHQ; `off` = SigmaHQ rules only | `on` |
+| `DFIR_SIGMA_SUZAKU_RULES` | `on` / `off` — also use the Suzaku rules (CloudTrail, Microsoft 365, Azure Activity) bundled beside SigmaHQ; `off` = SigmaHQ rules only | `on` |
 | `DFIR_SIGMA_SUZAKU_STATUSES` | any of `stable`, `test`, `experimental` — the Suzaku rules' own filter (most Suzaku rules are experimental) | `stable,test,experimental` |
 | `DFIR_SIGMA_SUZAKU_MIN_LEVEL` | `critical`, `high`, `medium`, `low` — the lowest Suzaku level that raises severity; below it Suzaku rules only label | `critical` |
 
 **Suzaku rules.** [Suzaku](https://github.com/Yamato-Security/suzaku-rules) (Yamato Security) publishes
-its own AWS CloudTrail Sigma rules beside the SigmaHQ ones — about 740 of them, mostly one rule per API
-call, with a success rule and an "attempt" rule for each. The Companion ships them and grades with them by
+its own Sigma rules beside the SigmaHQ ones: about 740 for AWS CloudTrail, mostly one rule per API
+call, with a success rule and an "attempt" rule for each, plus 21 for the Microsoft 365 unified audit log
+(inbox rules, mail forwarding, role changes, AzureHound and PowerShell sign-ins) and 4 for the Azure
+Activity Log. The Companion ships them and grades with them by
 default, with their own settings: most are labels only, and only a **critical** Suzaku rule raises an
 event's severity unless you lower `DFIR_SIGMA_SUZAKU_MIN_LEVEL`. At `high`, every routine
 `GetSecretValue` or `CreateUser` would become a High event. Each match names the Suzaku rule, its author
@@ -555,7 +557,7 @@ and a link to it. Turning Suzaku off returns grading to SigmaHQ alone.
 
 **Updating the Suzaku rules.** Suzaku publishes no releases, so **Check for Suzaku updates** (in this
 tab, or **Review update…** on the Suzaku line of the Content tagger's Detection rules box) asks GitHub for
-the newest change to Suzaku's CloudTrail rule folder. When there is one, it downloads that exact version,
+the newest change to Suzaku's CloudTrail, Microsoft 365 or Azure Activity rule folder. When there is one, it downloads that exact version,
 checks every file against GitHub's own fingerprint for it, and shows what changes: rules added, changed
 and removed, how many would load with your settings, and how many can raise severity at the Suzaku
 minimum level. Nothing is installed until you click **Install**; **Roll back Suzaku** returns to the

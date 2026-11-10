@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import { bundledSuzakuDir } from "../../src/analysis/sigmaSuzakuRules.js";
 import { SuzakuRuleStore } from "../../src/analysis/suzakuRuleStore.js";
 import { matchSigmaRecord } from "../../src/analysis/sigmaRuleSet.js";
 import { sigmaProvenanceToken } from "../../src/analysis/sigmaImportGrade.js";
-import { fakeGitHub, ruleText, SHA_A } from "./fixtures/suzakuGitHub.js";
+import { fakeFolders, fakeGitHub, ruleText, SHA_A, SHA_B } from "./fixtures/suzakuGitHub.js";
 
 // #2508: installing a newer Suzaku commit, grading with it, rolling back, and falling back when an
 // install cannot be read. GitHub is faked; rule data is synthetic.
@@ -86,6 +86,52 @@ describe("Suzaku rule updates", () => {
     const p = await suzaku.preview(COMMIT, gh.fetchFn, gh.fetchAsset, measure);
     await suzaku.install(p.token, measure);
     expect(suzaku.checkAsOfNow()).toMatchObject({ updateAvailable: false, installedCommit: SHA_A });
+  });
+
+  it("records the folders it installed, and a commit that changes none of them is no update (#2500)", async () => {
+    const { root, suzaku, gh, measure } = await stores();
+    await suzaku.checkLatest(gh.fetchFn);
+    const p = await suzaku.preview(COMMIT, gh.fetchFn, gh.fetchAsset, measure);
+    const installed = await suzaku.install(p.token, measure);
+    const meta = JSON.parse(
+      await readFile(join(root, "sigma", "suzaku", "installs", installed.id, "release.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(meta.folders).toEqual(fakeFolders(FILES));
+    // A later SigmaHQ-mirror commit: a new head SHA, the same watched folders.
+    const mirror = fakeGitHub({ sha: SHA_B, date: "2026-11-21", files: FILES });
+    expect(await suzaku.checkLatest(mirror.fetchFn)).toMatchObject({ updateAvailable: false });
+    // A change to the Microsoft 365 folder alone is one.
+    const m365 = {
+      ...FILES,
+      "m365/m365_new.yml": ruleText("00000000-0000-0000-0000-00000000a003", "M365 New"),
+    };
+    const changed = fakeGitHub({ sha: SHA_B, date: "2026-11-21", files: m365 });
+    expect(await suzaku.checkLatest(changed.fetchFn)).toMatchObject({ updateAvailable: true });
+  });
+
+  it("keeps an install made before #2500 in effect and offers the update that adds the new folders", async () => {
+    const { root, suzaku, gh, measure } = await stores();
+    const p = await suzaku.preview(COMMIT, gh.fetchFn, gh.fetchAsset, measure);
+    const installed = await suzaku.install(p.token, measure);
+    // Rewrite its metadata the way the CloudTrail-only updater wrote it: no `folders`.
+    const metaFile = join(root, "sigma", "suzaku", "installs", installed.id, "release.json");
+    const meta = JSON.parse(await readFile(metaFile, "utf8")) as Record<string, unknown>;
+    delete meta.folders;
+    await writeFile(metaFile, JSON.stringify({ ...meta, path: "suzaku/aws/cloudtrail" }));
+    const fresh = new SuzakuRuleStore(root, SUZAKU_DIR);
+    fresh.load();
+    expect(fresh.active()).toMatchObject({ id: installed.id, source: "github" });
+    expect(fresh.activeSource().problems).toEqual([]);
+    expect(await fresh.checkLatest(gh.fetchFn)).toMatchObject({ updateAvailable: true, latestCommit: SHA_A });
+  });
+
+  it("the bundled copy records its folders, so the same snapshot upstream is no update", async () => {
+    const { suzaku } = await stores();
+    expect(Object.keys(suzaku.active().folders ?? {}).sort()).toEqual([
+      "suzaku/aws/cloudtrail",
+      "suzaku/azure/activity_logs",
+      "suzaku/m365",
+    ]);
   });
 
   it("re-measures at install and refuses when no rule would load now", async () => {

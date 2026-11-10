@@ -1897,13 +1897,15 @@ an account**. Their source is `Coverage`, and a re-merge replaces them instead o
   the forensic timeline, so a Low note would never reach AI synthesis there. At Medium, AI synthesis
   still learns that "nothing found" here does not mean "nothing happened".
 
-### Sigma rules grade CloudTrail, Entra and GCP imports
+### Sigma rules grade CloudTrail, Microsoft 365, Entra, Azure Activity and GCP imports
 
 AWS CloudTrail records, Entra ID **user sign-ins** and **directory-audit** records (Graph and Log
-Analytics exports), and **GCP Cloud Audit Log** records are checked against bundled [SigmaHQ](https://github.com/SigmaHQ/sigma) rules as
-they are imported. No AI is involved, and the same file always gets the same result. CloudTrail records
-are also checked against the bundled [Suzaku](https://github.com/Yamato-Security/suzaku-rules) CloudTrail
-rules, which by default only label events unless the rule is critical (see
+Analytics exports), **Azure Activity Log** records (REST, diagnostic-settings and Log Analytics
+exports) and **GCP Cloud Audit Log** records are checked against bundled [SigmaHQ](https://github.com/SigmaHQ/sigma) rules as
+they are imported. No AI is involved, and the same file always gets the same result. CloudTrail,
+**Microsoft 365 unified audit log** and Azure Activity records are also checked against the bundled
+[Suzaku](https://github.com/Yamato-Security/suzaku-rules) rules for them, which by default only label
+events unless the rule is critical (see
 [Settings → Sigma rules](settings.md#sigma-rules)).
 
 - **A high or critical rule raises the event** to the rule's level. The description starts with

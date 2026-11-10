@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sigma grades Microsoft 365 and Azure Activity logs** — Suzaku's 21 Microsoft 365 and 4 Azure Activity rules and SigmaHQ's 33 Azure Activity rules are bundled and graded at import; the Suzaku updater now tracks all three folders (closes #2500)
 - **SigmaHQ main-branch rules** — the check names the newest release and counts unreleased main-branch changes to graded rules, and an opt-in install brings them in verified against GitHub's listing (closes #2518)
 - **Preview what the AI will see** — from the Anon dialog, see the first request any AI action would send, clear and masked text side by side with the unmasked system prompt and what Presidio would hold; nothing is sent, spent or saved (closes #2491)
 - **Collector footprint tag** — a cloud collection's own API calls are tagged `dfir-collector` (identity + run window + the collector's read calls; writes stay untagged, grades unchanged), with a Hide collector calls super-timeline switch, off by default (closes #2487)

@@ -54,7 +54,7 @@ import { gateRecords, gateRows, isDuplicateRecord, type CloudRecordParseOptions 
 import { readCloudRecords } from "./cloudRecords.js";
 import type { JsonRepairs } from "./tolerantJson.js";
 import { applySigmaToRecordRows, sigmaMatchesFor, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
-import { GCP_AUDIT } from "./sigmaLogSources.js";
+import { AZURE_ACTIVITY, GCP_AUDIT } from "./sigmaLogSources.js";
 import { shortGcpMethod } from "./cloudRowWording.js";
 import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
@@ -468,11 +468,12 @@ export function azureRemoteExecutionTarget(
 }
 
 /**
- * One GCP record's rows graded by the import's Sigma snapshot (#2346). A record that became several
- * rows (one per binding delta) carries the verdict on its first row only, the Entra-audit rule.
- * Azure Activity records never come here: no Sigma log source reads them.
+ * One record's rows graded by the import's Sigma snapshot: GCP Cloud Audit (#2346) and Azure Activity
+ * (#2500). A record that became several rows (one per binding delta) carries the verdict on its first
+ * row only, the Entra-audit rule.
  */
-function gradeGcpRows(
+function gradeRows(
+  sourceId: string,
   rows: MappedEvent[],
   rec: Row,
   opts: CloudActivityImportOptions,
@@ -480,7 +481,7 @@ function gradeGcpRows(
 ): MappedEvent[] {
   const snapshot = opts.sigma;
   if (!snapshot || rows.length === 0) return rows;
-  const matches = sigmaMatchesFor(snapshot, GCP_AUDIT.id, rec, (n) =>
+  const matches = sigmaMatchesFor(snapshot, sourceId, rec, (n) =>
     opts.debug?.observed("sigma_incomplete", n),
   );
   if (matches.length) onMatch();
@@ -562,7 +563,8 @@ function parseActivityRecords(
     if (isGcp(rec)) {
       gcpRecords.push(rec);
       if (duplicate) return;
-      const rows = gradeGcpRows(
+      const rows = gradeRows(
+        GCP_AUDIT.id,
         gateRows(gate, recordIndex, mapGcp(rec, iocSink, `record:${indexBase + recordIndex}`)),
         rec,
         opts,
@@ -579,7 +581,9 @@ function parseActivityRecords(
       const m = mapAzure(rec, iocSink, indexBase + recordIndex, opts.debug);
       if (m) {
         sawAzure = true;
-        mapped.push(...gateRows(gate, recordIndex, [m]));
+        mapped.push(
+          ...gradeRows(AZURE_ACTIVITY.id, gateRows(gate, recordIndex, [m]), rec, opts, () => sigmaRows++),
+        );
         noteRows(recordIndex);
       } else opts.debug?.skipped("missing_required_field");
     } else opts.debug?.skipped("unrecognized_record");

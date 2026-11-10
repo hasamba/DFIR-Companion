@@ -95,7 +95,9 @@ function importerFloor(s: DetectionSample): Severity {
   const probe =
     s.kind === "cloudtrail"
       ? { ...rec, eventName: PROBE }
-      : { ...rec, protoPayload: { ...(rec.protoPayload as Row), methodName: PROBE } };
+      : s.kind === "azure"
+        ? { ...rec, operationName: { value: `Microsoft.${PROBE}/things/write` } }
+        : { ...rec, protoPayload: { ...(rec.protoPayload as Row), methodName: PROBE } };
   return parse(s, probe, false)[0]?.severity ?? "Info";
 }
 
