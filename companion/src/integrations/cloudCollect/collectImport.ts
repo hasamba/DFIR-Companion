@@ -34,6 +34,8 @@ export interface PageImportRequest {
   label: string;
   idPrefix: string;
   importedAt: string;
+  /** The collection the page belongs to: its coverage folds into the collection's one row (#2538). */
+  collectionId: string;
 }
 
 /**
@@ -167,6 +169,7 @@ export async function runImportStage(
         label: pageLabel(input.collectionId, page.file),
         idPrefix: pageIdPrefix(input.collectionId, page.seq),
         importedAt: page.retrievedAt,
+        collectionId: input.collectionId,
       },
       input.signal,
     );

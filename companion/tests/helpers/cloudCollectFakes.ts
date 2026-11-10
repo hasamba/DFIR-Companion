@@ -24,6 +24,7 @@ import {
   type CollectPageImporter,
 } from "../../src/integrations/cloudCollect/collectImport.js";
 import { summarizesPerCollection } from "../../src/analysis/ingest/cloudStreamProviders.js";
+import { collectionCoverageGroup } from "../../src/analysis/cloudCoverageFold.js";
 
 /** A CloudTrail record. Synthetic: documentation account id, TEST-NET source address. */
 export function trailRecord(i: number, name = i % 3 === 0 ? "StopLogging" : "CreateAccessKey") {
@@ -218,6 +219,7 @@ export function pipelineImporter(
           importedAt: page.importedAt,
           batchRecords: 1,
           skipSummaries: summarizesPerCollection(page.kind),
+          coverageGroup: collectionCoverageGroup(page.collectionId),
           ...(signal ? { signal } : {}),
           onProgress: () => hooks.duringPage?.(page.label, ++batch),
         });

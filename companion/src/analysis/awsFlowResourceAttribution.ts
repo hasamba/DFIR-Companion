@@ -59,7 +59,7 @@ interface Launch {
 // Provider-gated (#1294): an Azure/GCP flow row (provider "azure"/"gcp", accountId a subscription or
 // project when the record names one) must never be matched against AWS launches; the AWS flow
 // importer has always stamped provider "aws", so no AWS row is excluded by this.
-function isFlowEvent(e: ForensicEvent): boolean {
+export function isAwsFlowEvent(e: ForensicEvent): boolean {
   const c = e.canonical;
   return c?.event.category === "network" && c.event.type === "flow" && c.cloud?.provider === "aws";
 }
@@ -116,7 +116,7 @@ export function correlateAwsFlowResourceAttribution(events: readonly ForensicEve
   };
 
   return events.map((e) => {
-    if (!isFlowEvent(e)) return e;
+    if (!isAwsFlowEvent(e)) return e;
     const accountId = e.canonical?.cloud?.accountId ?? "";
     if (!accountId) return e;
     const t = ms(e.timestamp);

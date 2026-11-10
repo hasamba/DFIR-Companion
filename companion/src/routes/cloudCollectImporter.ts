@@ -10,6 +10,7 @@
 
 import { captureImportBaseline, releaseImportBaseline } from "../analysis/importBaseline.js";
 import { summarizesPerCollection } from "../analysis/ingest/cloudStreamProviders.js";
+import { collectionCoverageGroup } from "../analysis/cloudCoverageFold.js";
 import {
   ledgerForget,
   timelineLanded,
@@ -101,6 +102,7 @@ export function caseCollectImporter(ctx: RouteContext): CollectPageImporter {
           idPrefix: page.idPrefix,
           importedAt: page.importedAt,
           skipSummaries: summarizesPerCollection(page.kind),
+          coverageGroup: collectionCoverageGroup(page.collectionId),
           ...(signal ? { signal } : {}),
         });
         const settle = routeSettleDeps(ctx);

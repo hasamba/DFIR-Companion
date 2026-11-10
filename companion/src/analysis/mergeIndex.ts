@@ -14,15 +14,10 @@ import { isHiddenStream, isMark } from "./downloadExecution.js";
 import { TIMESTOMP_CORROBORATION_MARKER } from "./timestompCorroborate.js";
 import { isRpcPipeCall, isSmbStagedWrite } from "./smbExecution.js";
 import { PRECURSOR_CLASSES } from "./ransomwarePrecursor.js";
-import {
-  CLOUD_AUDIT_RE,
-  COVERAGE_EVENT_ID,
-  isGeneratedCoverageRow,
-  isInstanceRoleIdentity,
-  metadataTarget,
-  searchText,
-} from "./cloudMetadataAccess.js";
+import { CLOUD_AUDIT_RE, COVERAGE_EVENT_ID, isGeneratedCoverageRow } from "./cloudMetadataAccess.js";
 import { readCloudRecord } from "./cloudBulkRead.js";
+import { isStorageKeyJoinInput } from "./azureStorageKeyToRead.js";
+import { isAwsFlowEvent } from "./awsFlowResourceAttribution.js";
 import { readBrowsing } from "./serviceAccountBrowsing.js";
 import { commandOf, configRisks, escapeBehavior } from "./containerEscape.js";
 import { isTransferToolRow } from "./transferToolStaging.js";
@@ -40,7 +35,8 @@ import { isRunKeyValueRow } from "./runKeyExecution.js";
  * - `flags`: TRIGGER when some chain pass could act on the case because of this row (then the merge
  *   takes the full path); LOAD when a pass that reads only rows like it could (the merge then reads
  *   every such row, and the pass runs over all of them); PROCESS / CLOUD_AUDIT feed the metadata
- *   coverage row's case-wide condition.
+ *   coverage row's case-wide condition; AWS_LAUNCH / AWS_FLOW count AWS compute summaries and AWS
+ *   VPC flow rows, and the merge falls back when a case holds both (#2539).
  */
 export interface MergeIndexEntry {
   timeMs: number | null;
@@ -55,6 +51,10 @@ export const MERGE_FLAG_PROCESS = 2;
 export const MERGE_FLAG_CLOUD_AUDIT = 4;
 /** A row a subset-safe pass reads: every merge reads all of them (mergeLoadAlways). */
 export const MERGE_FLAG_LOAD = 8;
+/** An AWS compute summary: the flow resource attribution's launch index reads it (#2539). */
+export const MERGE_FLAG_AWS_LAUNCH = 16;
+/** An AWS VPC flow row: the rows the flow attribution passes rewrite (#2539). */
+export const MERGE_FLAG_AWS_FLOW = 32;
 
 /**
  * The correlation bucket keys of a row, as groupEvents would key it (on its signature-stamped copy).
@@ -98,7 +98,7 @@ const INERT_NOTES = new Set([
   "confirmed exfiltration", // exfilCorrelate: never stripped
   "timestomp corroboration", // timestompCorroborate: never stripped
   "ransomware precursors", // ransomwarePrecursor: never stripped; its rows are LOAD rows anyway
-  "cloud bulk read", // summaries: inert without read records, which are a trigger
+  "cloud bulk read", // summaries: re-produced only from read records, which are LOAD rows (#2536)
   "renamed binary",
   "build-time",
   "shared source mtime",
@@ -109,6 +109,7 @@ const INERT_NOTES = new Set([
   "transfer tool staged", // transferToolStaging: its rows are LOAD rows, read on every merge
   "attack tool store", // toolStoreFolder: its rows are LOAD rows, read on every merge
   "look-alike account", // lookalikeCaseAccount: written by the import settle, no chain pass reads it
+  "metadata credential access", // cloudMetadataAccess: per-row passes, the note is never stripped or re-read (#2539)
 ]);
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const TRIGGER_NOTE = new RegExp(
@@ -154,11 +155,6 @@ export function mergeTrigger(e: ForensicEvent): string | null {
   if (c?.event?.category === "process" && (c.event.type === "remote_thread" || c.event.type === "tamper"))
     return "process injection";
   if (/certutil/i.test(`${e.processName ?? ""} ${e.commandLine ?? ""} ${description}`)) return "certutil";
-  if (metadataTarget(searchText(e)) !== "" || isInstanceRoleIdentity(`${description} ${e.path ?? ""}`))
-    return "instance metadata";
-  if (readCloudRecord(e) !== null) return "cloud object read";
-  if (c?.event?.type === "storage-key-list") return "storage key listing";
-  if (c?.awsCompute) return "AWS compute record";
   if (readBrowsing(e) !== null) return "browsing record";
   const cmd = commandOf(e);
   if (escapeBehavior(cmd).length > 0 || configRisks(cmd).length > 0) return "container command";
@@ -171,10 +167,21 @@ export function mergeTrigger(e: ForensicEvent): string | null {
  * upload link (exfilCorrelate.ts reads staging rows and transfer candidates, nothing else) and the
  * ransomware-precursor clustering (ransomwarePrecursor.ts reads rows carrying a precursor technique).
  * The transfer-tool staging join (transferToolStaging.ts, #1955) reads only rows whose path names a
- * transfer tool or its config. All are supersets of what the pass reads; the merge reads every such
+ * transfer tool or its config. The cloud bulk-read pass (cloudBulkRead.ts summarizeBulkReads, #2536)
+ * groups cloud object reads — checked before the asset test, because cloud rows often carry none; the
+ * incremental merge falls back whenever those reads form any group, truncation or coverage row
+ * (incrementalMergeRows.ts cloudPassWork), since the pass then reads rows that are not LOAD rows.
+ * The storage key → read join (azureStorageKeyToRead.ts, #2539) reads key listings and account-key
+ * object ops — also checked before the asset test (Azure rows carry none); the merge falls back
+ * whenever those rows form a join. The instance-metadata passes are per-row rewrites and need
+ * nothing here; AWS compute summaries and flows are counted instead (MERGE_FLAG_AWS_LAUNCH/FLOW),
+ * because flow rows are numerous and reading them all would hit the read limit.
+ * All are supersets of what the pass reads; the merge reads every such
  * row, so the pass sees all of its input, in timeline order, however many of them the delta touched.
  */
 export function mergeLoadAlways(e: ForensicEvent): boolean {
+  if (readCloudRecord(e) !== null) return true;
+  if (isStorageKeyJoinInput(e)) return true;
   if (!e.asset) return false;
   const mitre = e.mitreTechniques ?? [];
   if (mitre.includes("T1560.001") || mitre.includes("T1041")) return true;
@@ -190,6 +197,8 @@ export function mergeIndexEntry(e: ForensicEvent): MergeIndexEntry {
   if (mergeLoadAlways(e)) flags |= MERGE_FLAG_LOAD;
   if (e.id !== COVERAGE_EVENT_ID && e.processName) flags |= MERGE_FLAG_PROCESS;
   if (e.id !== COVERAGE_EVENT_ID && CLOUD_AUDIT_RE.test(e.description ?? "")) flags |= MERGE_FLAG_CLOUD_AUDIT;
+  if (e.canonical?.awsCompute) flags |= MERGE_FLAG_AWS_LAUNCH;
+  if (isAwsFlowEvent(e)) flags |= MERGE_FLAG_AWS_FLOW;
   return {
     timeMs: Number.isNaN(t) ? null : t,
     year: yearOf(e.timestamp),

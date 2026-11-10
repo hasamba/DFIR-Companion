@@ -697,11 +697,14 @@ export class SigmaRuleStore {
   // ── GitHub ─────────────────────────────────────────────────────────────────────────────────
 
   async checkLatest(fetchFn: typeof fetch, withMain = false): Promise<SigmaLatestCheck> {
+    // Taken before checkRelease overwrites lastCheck; only a successful summary is reused (#2526).
+    const prev = this.lastCheck?.main;
+    const reuse = prev && "gradedChanges" in prev ? prev : undefined;
     const check = await this.checkRelease(fetchFn);
     if (!withMain) return check;
     let main: SigmaLatestCheck["main"];
     try {
-      main = await sigmaMainSummary(fetchFn, this.activeInfo.commit);
+      main = await sigmaMainSummary(fetchFn, this.activeInfo.commit, reuse);
     } catch (error) {
       main = { error: (error as Error).message };
     }

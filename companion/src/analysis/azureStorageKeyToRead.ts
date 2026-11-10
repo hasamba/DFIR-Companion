@@ -70,7 +70,31 @@ function ms(timestamp: string): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-export function correlateStorageKeyToRead(events: readonly ForensicEvent[]): ForensicEvent[] {
+/**
+ * A row the join reads, or could once its outcome or resource is judged: every storage key listing
+ * and every account-key object op (#2539). A superset of the two predicates above; the incremental
+ * merge reads every such row (mergeIndex.ts mergeLoadAlways).
+ */
+export function isStorageKeyJoinInput(e: ForensicEvent): boolean {
+  const t = e.canonical?.event.type;
+  return (
+    t === "storage-key-list" ||
+    (t === "storage-object-op" && e.canonical?.authentication?.mechanism === "account-key")
+  );
+}
+
+interface StorageKeyJoin {
+  account: string;
+  listing: ForensicEvent;
+  reads: ForensicEvent[];
+}
+
+/** Whether these rows form any key → read join: exactly when correlateStorageKeyToRead adds a row (#2539). */
+export function storageKeyJoinsForm(events: readonly ForensicEvent[]): boolean {
+  return storageKeyJoins(events).length > 0;
+}
+
+function storageKeyJoins(events: readonly ForensicEvent[]): StorageKeyJoin[] {
   const windowMs = storageKeyUseWindowHours() * 3_600_000;
 
   const listingsByAccount = new Map<string, { time: number; event: ForensicEvent }[]>();
@@ -88,9 +112,9 @@ export function correlateStorageKeyToRead(events: readonly ForensicEvent[]): For
       (readsByAccount.get(acct) ?? readsByAccount.set(acct, []).get(acct)!).push({ time: t, event: e });
     }
   }
-  if (listingsByAccount.size === 0) return events as ForensicEvent[];
+  if (listingsByAccount.size === 0) return [];
 
-  const joins: { account: string; listing: ForensicEvent; reads: ForensicEvent[] }[] = [];
+  const joins: StorageKeyJoin[] = [];
   for (const [account, listings] of listingsByAccount) {
     const sortedListings = [...listings].sort((a, b) => a.time - b.time);
     const reads = (readsByAccount.get(account) ?? []).sort((a, b) => a.time - b.time);
@@ -117,6 +141,11 @@ export function correlateStorageKeyToRead(events: readonly ForensicEvent[]): For
       joins.push({ account, listing: sortedListings[idx].event, reads: matchedReads });
     }
   }
+  return joins;
+}
+
+export function correlateStorageKeyToRead(events: readonly ForensicEvent[]): ForensicEvent[] {
+  const joins = storageKeyJoins(events);
   if (joins.length === 0) return events as ForensicEvent[];
 
   joins.sort((a, b) => (ms(a.listing.timestamp) ?? 0) - (ms(b.listing.timestamp) ?? 0));

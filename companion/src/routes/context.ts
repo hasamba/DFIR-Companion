@@ -66,6 +66,8 @@ export type ImportBase = {
   // A live collection's page of a kind whose whole-export summaries the collection builds once
   // (#2482) — read only by the streamed cloud import; every other kind ignores it.
   skipSummaries?: boolean;
+  // A live collection page's Cloud Coverage group (#2538) — read only by the streamed cloud import.
+  coverageGroup?: string;
 };
 
 /**
