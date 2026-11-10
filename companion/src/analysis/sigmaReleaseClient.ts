@@ -10,6 +10,7 @@
 import { parseReleaseAssets } from "./velociraptorRelease.js";
 import { SIGMA_RELEASE_MAX_ZIP_BYTES } from "./sigmaReleaseArchive.js";
 import { downloadVerifiedAsset, type ReleaseAssetFetch } from "./githubReleaseDownload.js";
+import { githubErrorMessage } from "./githubHttpError.js";
 
 export const SIGMA_REPO = "SigmaHQ/sigma";
 export const SIGMA_RELEASE_ASSET = "sigma_all_rules.zip";
@@ -35,7 +36,7 @@ export async function latestSigmaRelease(
     headers: { Accept: "application/vnd.github+json", "User-Agent": "dfir-companion" },
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!resp.ok) throw new Error(`GitHub returned ${resp.status} listing SigmaHQ releases`);
+  if (!resp.ok) throw new Error(githubErrorMessage(resp, "listing SigmaHQ releases"));
   const json = (await resp.json()) as Record<string, unknown>;
   const parsed = parseReleaseAssets(json);
   if (!parsed) throw new Error("could not read the latest SigmaHQ release from GitHub");

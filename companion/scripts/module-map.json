@@ -849,6 +849,7 @@
     "sigmaSettings.ts": "analysis/hunt",
     "sigmaReleaseArchive.ts": "analysis/ingest",
     "sigmaReleaseClient.ts": "analysis/ingest",
+    "githubHttpError.ts": "analysis/case",
     "githubReleaseDownload.ts": "analysis/case",
     "sigmaToVql.ts": "analysis/hunt",
     "sigmaVqlTemplates.ts": "analysis/hunt",

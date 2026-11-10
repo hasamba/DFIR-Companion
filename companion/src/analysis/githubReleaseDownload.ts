@@ -12,6 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { isAllowedAssetUrl } from "./velociraptorRelease.js";
+import { githubErrorMessage } from "./githubHttpError.js";
 
 /** The shape of fetchOutbound's result that a download needs. */
 export type ReleaseAssetFetch = (
@@ -76,7 +77,7 @@ export async function downloadVerifiedAsset(
       throw unexpectedHost(req.label, "after redirect");
     }
     if (!fetched.response.ok || !fetched.response.body)
-      throw new Error(`GitHub returned ${fetched.response.status} downloading the ${req.label}`);
+      throw new Error(githubErrorMessage(fetched.response, `downloading the ${req.label}`));
     const bytes = await readCappedBody(fetched.response.body, req.maxBytes, req.label);
     if (sha256Hex(bytes) !== req.sha256.toLowerCase())
       throw new Error(
