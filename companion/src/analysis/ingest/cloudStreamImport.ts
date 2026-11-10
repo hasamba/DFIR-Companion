@@ -289,6 +289,7 @@ async function finish(
       id: `${opts.idPrefix}i${i + 1}`,
       type: c.type,
       value: c.value,
+      ...(c.note ? { note: c.note } : {}),
     })),
     mitreTechniques: [],
     forensicEvents: withArtifactHash(events, stats.textHash).map((e, i) => ({

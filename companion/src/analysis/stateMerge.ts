@@ -25,7 +25,7 @@ import {
   unionExcludedRefs,
   type ExcludedIocRef,
 } from "./iocMergeSupport.js";
-import { repairIocValue } from "./iocValue.js";
+import { oneLineNote, repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
 import { mergeCanonicalEvents } from "./canonicalMerge.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "./labIntel.js";
@@ -183,7 +183,7 @@ export function mergeIocs(
     // The annotation the value carried, or — with none — what a published vendor range says about
     // the address (#1530). An analyst reading the IOC list then sees "vendor: Microsoft" beside a
     // service address instead of a bare quad that reads like a C2 lead.
-    const incomingNote = repaired.note || vendorNote(incoming.value);
+    const incomingNote = oneLineNote(rawIncoming.note) || repaired.note || vendorNote(incoming.value);
     if (dup) {
       // Union (not overwrite): the same value can legitimately be extracted from
       // different source events across separate import runs — preserve every link.

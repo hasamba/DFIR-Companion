@@ -30,6 +30,7 @@ import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChan
 import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
 import { awsRecordExposure } from "./awsExposure.js";
 import { failedCallIsProbe, genericFloor } from "./awsServiceGrade.js";
+import { addAwsIdentityIocs, awsPrincipal } from "./awsIocCandidates.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -180,44 +181,6 @@ function truthy(v: unknown): boolean {
   return v === true || /^(true|1|yes)$/i.test(str(v).trim());
 }
 
-// The acting principal: IAM user name, the assumed-role's issuer, the ARN, or the type.
-function principal(ui: unknown): {
-  name: string;
-  isRoot: boolean;
-  id?: string;
-  type?: string;
-  arn?: string;
-  accountId?: string;
-} {
-  if (!isObject(ui)) return { name: str(ui), isRoot: false };
-  const type = str(getCI(ui, "type"));
-  const arn = str(getCI(ui, "arn"));
-  // IAM Identity Center users carry NO principalId/userName at the root: the immutable identity is
-  // onBehalfOf.userId inside identityStoreArn. Without it every Identity Center user in an account
-  // keyed as the literal type string and merged into one principal.
-  const id =
-    str(getCI(ui, "principalId")) ||
-    str(getCI(ui, "userId")) ||
-    (str(getPath(ui, "onBehalfOf.userId"))
-      ? `${str(getPath(ui, "onBehalfOf.identityStoreArn"))}#${str(getPath(ui, "onBehalfOf.userId"))}`
-      : "");
-  const accountId = str(getCI(ui, "accountId"));
-  const name =
-    str(getCI(ui, "userName")) ||
-    str(getPath(ui, "sessionContext.sessionIssuer.userName")) ||
-    arn ||
-    str(getCI(ui, "invokedBy")) ||
-    type;
-  return {
-    name,
-    isRoot: /^root$/i.test(type),
-    ...(id ? { id } : {}),
-    ...(type ? { type } : {}),
-    ...(arn ? { arn } : {}),
-    ...(accountId ? { accountId } : {}),
-  };
-}
-
 function shortSource(eventSource: string): string {
   return eventSource.replace(/\.amazonaws\.com$/i, "");
 }
@@ -309,7 +272,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   // table's base grade — before the failed-call/root floors below.
   const { posture: exposure, grade: exposureGrade } = awsRecordExposure(name, rec, who2.accounts.recipient);
   if (exposureGrade) severity = issuance?.severity ? worst(exposureGrade, issuance.severity) : exposureGrade;
-  const identity = principal(getCI(rec, "userIdentity"));
+  const identity = awsPrincipal(getCI(rec, "userIdentity"));
   const { name: who, isRoot } = identity;
   const region = str(getCI(rec, "awsRegion"));
   const errorCode = str(getCI(rec, "errorCode"));
@@ -729,6 +692,11 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
   }));
   // Sigma, the ATT&CK veto and the in-context precursor raise (#2542, cloudTrailRowGrade.ts).
   const mapped = gradeCloudTrailRows(merged, records, opts.sigma);
+  addAwsIdentityIocs(
+    iocSink,
+    mapped,
+    merged.map((g) => records[g.recordIndex]),
+  ); // principals, keys, created names (#2543)
   const sigmaRows = merged.filter((g) => g.sigma.length > 0).length;
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (candidates.length > mapped.length)

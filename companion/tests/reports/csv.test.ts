@@ -57,7 +57,7 @@ describe("CSV renderers", () => {
   it("iocsCsv and timelineCsv produce headers even when empty", () => {
     const state = emptyState("c1");
     expect(iocsCsv(state).trim()).toBe(
-      "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors,provenance",
+      "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors,provenance,note,attribution",
     );
     expect(timelineCsv(state).trim()).toBe("timestamp,windowSequence,description,sourceScreenshots");
   });
@@ -75,7 +75,7 @@ describe("CSV renderers", () => {
     });
     state.iocs.push({ id: "i2", type: "ip", value: "203.0.113.8", firstSeen: "t0" });
     const rows = iocsCsv(state).trim().split("\n");
-    const last = (r: string) => r.split(",").at(-1);
+    const last = (r: string) => r.split(",").at(-3); // provenance; note + attribution follow (#2543)
     expect(last(rows[1])).toBe('"client-reported"');
     expect(last(rows[2])).toBe('""');
   });
@@ -437,12 +437,12 @@ describe("iocsCsv provenance column (#1326)", () => {
     state.iocs.push({ id: "i2", type: "ip", value: "198.51.100.7", firstSeen: "t0" });
     const lines = iocsCsv(state).trim().split("\n");
     expect(lines[0]).toBe(
-      "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors,provenance",
+      "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors,provenance,note,attribution",
     );
     const marked = lines.find((l) => l.includes("203.0.113.9"))!;
     const plain = lines.find((l) => l.includes("198.51.100.7"))!;
-    expect(marked.endsWith(',"client-reported"')).toBe(true);
-    expect(plain.endsWith(',""')).toBe(true);
+    expect(marked.endsWith(',"client-reported","",""')).toBe(true); // then note, attribution (#2543)
+    expect(plain.endsWith(',"","",""')).toBe(true);
     // The value cell itself stays a clean indicator.
     expect(marked.split(",")[2]).toBe('"203.0.113.9"');
   });

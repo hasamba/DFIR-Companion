@@ -124,6 +124,9 @@ export const deltaSchema = z.object({
       // originatingIp; every free-text scraper); stripped from every model response below, same as
       // extractedFrom.
       provenance: z.enum(["client-reported", "mentioned"]).optional(),
+      // #2543: the importer's one-line context for the value; deterministic importers only — stripped
+      // from every model response below, so a model can never plant text beside an indicator.
+      note: z.string().max(500).optional().catch(undefined),
     }),
   ),
   mitreTechniques: z.array(
@@ -618,7 +621,7 @@ export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
     // evidence" claim) nor un-mark one — and because stateMerge.ts clears a marker only on an
     // incoming sighting that carries extractedFrom, a model restating a marked value cannot
     // silently restore its MISP to_ids flag either.
-    iocs: delta.iocs.map(({ extractedFrom, provenance, ...rest }) => rest),
+    iocs: delta.iocs.map(({ extractedFrom, provenance, note, ...rest }) => rest),
     // `origin` is trusted: it keeps a row out of host correlation and off the second-look pool
     // (#932 item 5). The schema carries it so deterministic promotion can transport a lab row, but
     // a model must never be able to assert it on a host observation — a prompt-injected or merely

@@ -11,6 +11,7 @@
 export const SNAPSHOT_STATE_FILES = [
   "investigation.json", // legacy pre-SQLite core; retained in snapshots while a case still has one
   "false-positive.json", // analyst false-positive / known-good markers
+  "ioc-attribution.json", // #2543 analyst IOC labels (attacker / ours / responder / unknown)
   "scope.json", // analyst investigation time-window
   "comments.json", // investigator comments on entities
   "tags.json", // analyst triage labels

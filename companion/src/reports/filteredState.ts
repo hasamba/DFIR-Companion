@@ -15,6 +15,8 @@ import { FindingOutcomeStore, withAnalystOutcomes } from "../analysis/findingOut
 import { RemediationStore } from "../analysis/remediationBoundary.js";
 import { ServedLocationStore } from "../analysis/servedLocation.js";
 import { SensitiveLocationStore } from "../analysis/sensitiveLocation.js";
+import { IocAttributionStore } from "../analysis/iocAttributionStore.js";
+import { withIocAttribution } from "../analysis/iocAttribution.js";
 
 // The one state projection every report artifact reads — markdown, HTML, docx, the CSV and
 // Timesketch exports, the evidence graph, the lateral-movement paths. It was a private method on
@@ -46,6 +48,7 @@ export const FILTERED_STATE_SIDE_FILES: readonly string[] = [
   "remediation-boundaries.json",
   "served-locations.json",
   "sensitive-locations.json",
+  "ioc-attribution.json",
 ];
 
 /**
@@ -90,9 +93,13 @@ export async function loadFilteredState(
   }));
   const servedLocations = await new ServedLocationStore(src.cases).load(caseId);
   const sensitiveLocations = await new SensitiveLocationStore(src.cases).load(caseId);
+  // The analyst's IOC labels (#2543) are a side file too: stamped onto the report's IOCs here, so
+  // the report tables and the block-list read them; the saved state never carries them.
+  const labels = await new IocAttributionStore(src.cases).load(caseId);
   const withOutcomes = withAnalystOutcomes(
     {
       ...scoped,
+      iocs: withIocAttribution(scoped.iocs, labels),
       forensicTimeline: kept,
       ...(boundaries.length ? { remediationBoundaries } : {}),
       ...(servedLocations.length ? { servedLocations } : {}),

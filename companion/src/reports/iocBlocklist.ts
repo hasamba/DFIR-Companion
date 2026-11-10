@@ -9,6 +9,7 @@ import {
   type Severity,
 } from "../analysis/stateTypes.js";
 import { iocToStixPattern } from "./stix.js";
+import { FRIENDLY_ATTRIBUTIONS } from "../analysis/iocAttribution.js";
 import type { StixBundle, StixObject } from "./stix.js";
 
 /** The downloadable block-list file formats. */
@@ -106,6 +107,7 @@ const DEFAULT_MIN_SEVERITY: Severity = "Medium";
 export const BLOCKLIST_EXCLUSION_REASONS = [
   "retired",
   "client-reported",
+  "labelled-ours",
   "ineligible-type",
   "no-actionable-intel",
   "below-min-severity",
@@ -122,6 +124,11 @@ export function blocklistExclusionReason(
   // X-Originating-IP) is a claim, not an observation — a forged header must never be able to
   // put an address on it, whatever intel says about that address. Same rule as MISP to_ids.
   if (ioc.provenance === "client-reported") return "client-reported";
+  // #2543: the analyst labelled the value as the victim's own or the responder's (the report
+  // projection stamps `attribution`, filteredState.ts). Shipping the company's own address as a
+  // block entry would cut it off; checked before the intel floor so it is never misreported as
+  // "no usable verdict".
+  if (ioc.attribution && FRIENDLY_ATTRIBUTIONS.has(ioc.attribution)) return "labelled-ours";
   const eff = effectiveType(ioc);
   if (!eff || !(opts.types ?? DEFAULT_TYPES).includes(eff)) return "ineligible-type";
   // Canonical SEVERITY_RANK: lower = more severe, so "below the floor" is a GREATER rank.
@@ -178,6 +185,8 @@ function reasonText(reason: BlocklistExclusionReason, minSev: Severity): string 
       return "retired";
     case "client-reported":
       return "client-reported (sender-controlled header)";
+    case "labelled-ours":
+      return "labelled ours or responder by the analyst";
     case "ineligible-type":
       return "IOC type not in the block-list or not selected";
     case "no-actionable-intel":
@@ -242,7 +251,7 @@ export function buildIocBlocklistTxt(state: InvestigationState, opts: IocBlockli
     "# DFIR Companion — IOC Block List",
     `# Case: ${opts.caseName?.trim() || state.caseId}`,
     `# Generated: ${ts}`,
-    `# Filters: scope applied, legitimate excluded, client-reported excluded, min severity: ${minSev}${opts.verdictOnly ? ", verdict-confirmed only" : ""}`,
+    `# Filters: scope applied, legitimate excluded, client-reported excluded, labelled ours/responder excluded, min severity: ${minSev}${opts.verdictOnly ? ", verdict-confirmed only" : ""}`,
     ...summaryHeaderLines(summarizeBlocklist(state.iocs, resolved), minSev),
     "",
   ];

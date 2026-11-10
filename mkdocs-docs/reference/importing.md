@@ -1923,6 +1923,35 @@ Measured on the public SANS 504 S3 ransomware lab, where the noise used to bury 
   same principal from the same source follows within 10 minutes. Several failures keep T1110. The
   grade never changes, and no other log source does this.
 
+### CloudTrail identities as IOCs
+
+Besides the caller's IP address, a CloudTrail import adds the identities behind the attack to the
+IOC list, each with a short context note (for example `AWS access key — issued by CreateAccessKey
+for dev-user at 2021-07-29T13:10:42Z`):
+
+- **The IAM user or role** that made a call graded High or Critical, as its full ARN. For an assumed
+  role this is the role's ARN, not the per-session ARN.
+- **Its long-term access key** (`AKIA…`). Session keys (`ASIA…`) change every console session and
+  are not added.
+- **The key a successful `CreateAccessKey` issued**, at any grade.
+- **The policy, user or role a successful call created** — the policy name from `PutUserPolicy`,
+  `PutRolePolicy`, `PutGroupPolicy` or `CreatePolicy`, the user from `CreateUser` or
+  `CreateLoginProfile`, the role from `CreateRole`.
+
+Nothing is added for a call by the account root or by an AWS service. These IOCs have the type
+`other`: they are never sent to a threat-intel provider and never go into the IOC block list. Label
+them in the IOC panel (attacker / ours / responder / unknown) — see the IOC panel in the dashboard
+reference.
+
+With no threat-intel verdict, these IOCs are hidden by the IOC panel's **Signal only** lens (on by
+default) once other IOCs in the case have been enriched. Turn the lens off to see them in the panel.
+In the report's IOC table, one with no threat signal is counted as an observation unless you label
+it.
+
+Records already in the case are not read again, so importing the same files into an existing case
+adds none of these IOCs. Import into a new case to get them for evidence imported before this
+change.
+
 ### Coverage rows on the timeline
 
 Some timeline rows are notes about the evidence, not events: **Cloud coverage gap** (the case has

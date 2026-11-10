@@ -166,6 +166,10 @@
 /* Context that must NOT live inside the indicator itself (#177) — the host a private IP belongs
    to, an observed port, why the analyst added it. Shown beside the value, never part of it. */
 .ioc-note-chip { font-size: 10.5px; color: var(--text-muted); font-style: italic; }
+/* The analyst's attribution label (#2543): attacker in the danger colours, the rest neutral. */
+.ioc-attr-chip { font-size: 10px; padding: 0 5px; border-radius: 3px; border: 1px solid var(--border-color); color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; }
+.ioc-attr-attacker { background: var(--danger-bg); color: var(--badge-danger-text); border-color: var(--danger-border); }
+.ioc-attr-sel { font-size: 10px; max-width: 96px; background: none; color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 3px; }
 .ioc-actions-cell { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 0; }
 /* 24px target size (#2492): a 24x24 slot per control, glyph centred, no gap. The controls can wrap to
    a second line (the hunt pivot is added late); two 24px lines fit the row's existing height. */

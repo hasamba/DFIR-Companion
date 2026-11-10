@@ -60,6 +60,7 @@ describe("GET /cases/:id/export/ioc-blocklist?format=summary (#1807)", () => {
       excluded: {
         retired: 0,
         "client-reported": 0,
+        "labelled-ours": 0,
         "ineligible-type": 1,
         "no-actionable-intel": 1,
         "below-min-severity": 0,
@@ -108,5 +109,20 @@ describe("GET /cases/:id/export/ioc-blocklist?format=summary (#1807)", () => {
     const res = await request(app).get("/cases/c1/export/ioc-blocklist?format=pdf");
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("summary");
+  });
+
+  it("leaves out a value the analyst labelled ours, and says why (#2543)", async () => {
+    const app = await harness(IOCS);
+    await request(app).put("/cases/c1/ioc-attribution").send({ value: "203.0.113.10", label: "ours" });
+    const res = await request(app).get("/cases/c1/export/ioc-blocklist?format=summary&minSeverity=Medium");
+    expect(res.body.matched).toBe(0);
+    expect(res.body.excluded["labelled-ours"]).toBe(1);
+    const txt = await request(app).get("/cases/c1/export/ioc-blocklist?format=txt");
+    expect(txt.text).not.toMatch(/^203\.0\.113\.10$/m);
+    expect(txt.text).toContain("1 labelled ours or responder by the analyst");
+    // Cleared again, the value is back on the list.
+    await request(app).put("/cases/c1/ioc-attribution").send({ value: "203.0.113.10", label: null });
+    const back = await request(app).get("/cases/c1/export/ioc-blocklist?format=summary&minSeverity=Medium");
+    expect(back.body.matched).toBe(1);
   });
 });

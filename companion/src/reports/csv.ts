@@ -54,7 +54,8 @@ export function findingsCsv(state: InvestigationState): string {
 }
 
 export function iocsCsv(state: InvestigationState): string {
-  const header = "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors,provenance";
+  const header =
+    "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors,provenance,note,attribution";
   const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
   const risk = scoreIocsFromState(state); // #63 composite risk (verdict + severity + corroboration)
   // WHEN each verdict applies (#933 item 19) rides in the same cell, in braces, so a spreadsheet
@@ -86,6 +87,10 @@ export function iocsCsv(state: InvestigationState): string {
       // #1326: its own column, never a suffix on the value — the value cell is exactly what a
       // downstream tool would feed a block-list, and a client-reported one must be tellable apart.
       i.provenance ?? "",
+      // #2543: the importer's context note and the analyst's label (report projection), appended
+      // last so every existing column keeps its position.
+      i.note ?? "",
+      i.attribution ?? "",
     ]);
   });
   return [header, ...rows].join("\n") + "\n";

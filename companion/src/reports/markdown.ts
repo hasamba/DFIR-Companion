@@ -24,14 +24,12 @@ import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../anal
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { buildGeoMap } from "../analysis/geoMap.js";
-import { iocValueLabel, mentionedLabel } from "../analysis/iocMentioned.js";
-import { iocSourcesLabel } from "../analysis/iocProvenanceLabel.js";
+import { mentionedLabel } from "../analysis/iocMentioned.js";
+import { iocTableSection } from "./iocTableSection.js";
 import { GAP_BANNER, gapKindLabel } from "../analysis/gapDetect.js";
 import { detectGapsWithWaves, gapOptionsFor } from "../analysis/activityWaves.js";
 import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
-import { deriveIocSources } from "../analysis/iocCorroboration.js";
-import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import { findingHeadingSuffix } from "../analysis/findingGrounding.js";
 import { findingCautionLine } from "./findingCaution.js";
 import {
@@ -806,30 +804,7 @@ function investigation(
     }
   }
 
-  lines.push("### 4.4 Indicators of compromise", "");
-  if (state.iocs.length === 0) {
-    lines.push("_No IOCs extracted yet._", "");
-  } else {
-    const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline); // corroboration: tools that saw it
-    const iocRisk = scoreIocsFromState(state); // composite risk (#63); role splits indicator vs observation
-    const indicators = state.iocs.filter((i) => iocRisk[i.id]?.role !== "observation");
-    lines.push(
-      "| ID | Type | Value | First seen | Sources | Risk |",
-      "| --- | --- | --- | --- | --- | --- |",
-    );
-    for (const i of indicators) {
-      const srcCell = iocSourcesLabel(i, iocSrc[i.id]); // "(⊕ N)" is corroboration; a mention is "(referenced in N)" (#1474)
-      const r = iocRisk[i.id];
-      const riskCell = r ? `**${r.score}**${r.factors.length ? ` — ${r.factors[0]}` : ""}` : "—";
-      const valueCell = iocValueLabel(i); // #1266 "(client-reported)"; #1461 "referenced …; no network record"
-      lines.push(
-        `| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(valueCell)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} | ${cellMd(riskCell)} |`,
-      );
-    }
-    const obs = state.iocs.length - indicators.length;
-    if (obs) lines.push("", `_Plus ${obs} observation(s) with no threat signal (searchable in the case)._`);
-    lines.push("");
-  }
+  iocTableSection(state, lines);
 
   customerExposure(exposure, lines);
   if (kevCatalog) kevCorrelation(state, exposure, kevCatalog, lines);

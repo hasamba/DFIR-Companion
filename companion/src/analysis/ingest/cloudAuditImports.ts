@@ -7,6 +7,7 @@ import { parseCloudActivity, type CloudActivityImportOptions } from "../cloudAct
 import { readCloudRecords } from "../cloudRecords.js";
 import { cloudActivityRecordProvider, cloudRecordIdentity } from "../cloudRecordIdentity.js";
 import { deltaSchema } from "../responseSchema.js";
+import { resolveExtractedFrom } from "../siemImport.js";
 import { describeJsonRepairs, jsonRepairNote } from "../tolerantJson.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import type { Severity } from "../stateTypes.js";
@@ -74,9 +75,17 @@ export async function importAws(
       coverage: parsed.coverage,
     };
 
+  // An identity IOC (#2543) links to the row that produced it, through the row's aggKey.
+  const eventIdByAggKey = new Map(parsed.events.map((e, i) => [e.aggKey ?? "", `${opts.idPrefix}e${i + 1}`]));
   const raw = {
     findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+      id: `${opts.idPrefix}i${i + 1}`,
+      type: c.type,
+      value: c.value,
+      ...(c.note ? { note: c.note } : {}),
+      ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
+    })),
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,

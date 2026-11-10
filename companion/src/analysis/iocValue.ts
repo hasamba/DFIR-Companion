@@ -320,3 +320,13 @@ export function repairIocValue(ioc: { type: string; value: string }): RepairedIo
   // be real evidence. isWellFormedIocValue() is what export layers gate on.
   return { value: canonical || raw };
 }
+
+/** An importer's context note (#2543), on one line and bounded; "" when absent or blank. */
+export function oneLineNote(note: unknown): string {
+  if (typeof note !== "string") return "";
+  return note
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .slice(0, 300);
+}

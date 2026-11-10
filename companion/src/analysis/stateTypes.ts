@@ -326,9 +326,9 @@ export interface IOC {
   aliasValues?: string[];
   // Human annotation that used to be concatenated into `value` (#177) — the host label in
   // "10.10.20.15 (DC01)", a descriptive suffix, an observed port. Split out at ingest by
-  // iocValue.ts so `value` stays the bare indicator (strict consumers like MISP reject anything
-  // else) while the context survives: exports carry it in their comment/annotation field.
+  // iocValue.ts so `value` stays the bare indicator (strict consumers like MISP reject anything else) while the context survives: exports carry it in their comment/annotation field.
   note?: string;
+  attribution?: "attacker" | "ours" | "responder" | "unknown"; // #2543 report projection only (filteredState.ts) — never stored, never AI-read
 }
 
 // Deterministic corroboration rollup for a finding (investigation-guidance #6), computed post-synthesis

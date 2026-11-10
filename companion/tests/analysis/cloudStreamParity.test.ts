@@ -291,6 +291,9 @@ describe("streamed CloudTrail import parity (#2362)", () => {
 // states its burst (read calls, services, span, denied probes) in its description. Only the two
 // forensic-timeline hashes moved; with the burst words suppressed they reproduce the previous
 // hashes (47e419e317d56d07, 952a8006b6bd4d4a). No count, grade or other section changed.
+// Re-pinned for #2543 part 1a: the High+ rows' IAM-user ARNs and long-term keys are now `other` IOCs
+// with a context note (41 -> 65 IOCs; all 24 new ones carry a note). The timeline note states the
+// IOC count, so notes and db:timeline moved with it. No forensic row, grade or coverage changed.
 const PINNED = {
   counts: {
     compute: 30,
@@ -299,13 +302,13 @@ const PINNED = {
       cloudRecordBatch: 4,
       cloudRecordMember: 2705,
       forensicTimeline: 2347,
-      iocs: 41,
+      iocs: 65,
       superTimeline: 2500,
       timeline: 3,
     },
     forensic: 2347,
     graded: 299,
-    iocs: 41,
+    iocs: 65,
     lineages: 36,
   },
   hashes: {
@@ -314,12 +317,12 @@ const PINNED = {
     "db:cloudRecordBatch": "d7a32e76dfef0950",
     "db:cloudRecordMember": "2260533dd0f4bdd7",
     "db:forensicTimeline": "7eeeea4e62b61b44",
-    "db:iocs": "7de5df26c23c75f9",
+    "db:iocs": "4f512b1f74235cce",
     "db:superTimeline": "8beed3d432925a0d",
-    "db:timeline": "0a3505cb7f4a4ebe",
+    "db:timeline": "92dddb73812ed1ad",
     disclosures: "9446777ef7052706",
     forensicTimeline: "f896c4c5af69ca2c",
-    iocs: "b4186cc3f6e10f06",
-    notes: "86e38fbe1e668482",
+    iocs: "313dfcbfb2c46ffb",
+    notes: "0827783fdc6edf7b",
   },
 };
