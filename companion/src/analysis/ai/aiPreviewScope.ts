@@ -48,6 +48,8 @@ export interface AiPreviewCapture {
   readonly anonymized: boolean;
   readonly images: readonly AiPreviewImage[];
   readonly presidio: AiPreviewPresidio;
+  /** Plain-English facts about how this preview differs from a real press (#2515), shown with it. */
+  readonly notes?: readonly string[];
 }
 
 interface PreviewState {
@@ -56,6 +58,13 @@ interface PreviewState {
   failure?: unknown;
   /** How many times the action reached the gate before it stopped. */
   calls: number;
+  /**
+   * An import's whole-payload Presidio pre-scan, answered without saving (#2515), and the
+   * anonymization revision it masked with. It stands for a batch only while that revision is current.
+   */
+  preScan?: { readonly revision: number; readonly presidio: AiPreviewPresidio };
+  /** Disclosures the action's preview adds before it runs (stored inputs used, …) — see noteAiPreview. */
+  notes: string[];
 }
 
 const scope = new AsyncLocalStorage<PreviewState>();
@@ -77,6 +86,36 @@ export function rethrowIfAiPreview(err: unknown): void {
   if (err instanceof AiPreviewCaptured) throw err;
 }
 
+/** Add a plain-English disclosure to the active preview's result. No-op outside a preview. */
+export function noteAiPreview(note: string): void {
+  scope.getStore()?.notes.push(note);
+}
+
+/** Record an import pre-scan's preview answer (see PreviewState.preScan). No-op outside a preview. */
+export function noteAiPreviewPreScan(revision: number, presidio: AiPreviewPresidio): void {
+  const preview = scope.getStore();
+  if (preview) preview.preScan = { revision, presidio };
+}
+
+/**
+ * Record the first request of an action that does not go through the AI-call gate (the Jev review and
+ * containment check, #2515) and stop it. The slot is claimed synchronously, so of several concurrent
+ * requests the first one to reach here is the one shown; every call throws AiPreviewCaptured.
+ * `build` runs only for the first request; a failure there is the preview's outcome.
+ */
+export async function recordAiPreviewCapture(build: () => Promise<AiPreviewCapture>): Promise<never> {
+  const preview = scope.getStore();
+  if (!preview) throw new Error("recordAiPreviewCapture outside an AI preview");
+  if (preview.calls++ === 0) {
+    try {
+      preview.capture = await build();
+    } catch (err) {
+      preview.failure = err;
+    }
+  }
+  throw new AiPreviewCaptured();
+}
+
 /** The active preview, or undefined for every real call. */
 export function activeAiPreview(): PreviewState | undefined {
   return scope.getStore();
@@ -93,7 +132,7 @@ export type AiPreviewResult =
  * real action would have failed with before its first request (a merge decision, no provider, …).
  */
 export async function runAiPreview(action: () => Promise<unknown>): Promise<AiPreviewResult> {
-  const state: PreviewState = { calls: 0 };
+  const state: PreviewState = { calls: 0, notes: [] };
   return runReadOnly(() =>
     scope.run(state, async (): Promise<AiPreviewResult> => {
       let thrown: unknown;
@@ -103,9 +142,13 @@ export async function runAiPreview(action: () => Promise<unknown>): Promise<AiPr
         thrown = err;
       }
       if (state.failure !== undefined) return { outcome: "error", error: state.failure };
-      if (state.capture) return { outcome: "captured", call: state.capture };
+      if (state.capture) return { outcome: "captured", call: withNotes(state.capture, state.notes) };
       if (thrown !== undefined) return { outcome: "error", error: thrown };
       return { outcome: "no-ai-call" };
     }),
   );
+}
+
+function withNotes(call: AiPreviewCapture, notes: readonly string[]): AiPreviewCapture {
+  return notes.length ? { ...call, notes: [...(call.notes ?? []), ...notes] } : call;
 }

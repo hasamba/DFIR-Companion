@@ -70,14 +70,19 @@ export interface DedicatedImportCommit {
  * The stored name keeps the original extension (.log / .txt / .json …) so the artifact round-trips
  * through the evidence endpoint with the right content-type.
  */
+/** An import's stored file name — also the AI extraction's source label. Shared with the AI preview (#2515). */
+export function storedImportName(seq: number, originalName: string, fallbackName: string): string {
+  const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || fallbackName;
+  return `${String(seq).padStart(4, "0")}_${safeName}`;
+}
+
 export async function persistImportEvidence(
   store: CaseStore,
   caseId: string,
   input: { text: string; originalName: string; fallbackName: string; rows: number },
 ): Promise<{ seq: number; storedName: string; importedAt: string }> {
   const seq = await store.nextImportSeq(caseId);
-  const safeName = input.originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || input.fallbackName;
-  const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
+  const storedName = storedImportName(seq, input.originalName, input.fallbackName);
   const importedAt = new Date().toISOString();
   await store.saveImport(caseId, storedName, input.text);
   await store.appendImport(caseId, {

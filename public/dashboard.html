@@ -724,7 +724,7 @@
   <div id="aiPreviewOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="aiPreviewTitle">
     <div class="comment-modal ai-preview-modal">
       <h3 id="aiPreviewTitle" data-safe-style="margin:0 0 6px">Preview what the AI will see</h3>
-      <div class="ai-preview-note">Builds the first request the chosen action would send, exactly as pressing it would — then stops. Nothing is sent to the AI provider, nothing is spent, and nothing in the case changes. Import-time AI reads, playbook hunts and the Jev review are not covered.</div>
+      <div class="ai-preview-note">Builds the first request the chosen action would send, exactly as pressing it would — then stops. Nothing is sent to the AI provider, nothing is spent, and nothing in the case changes. For a CSV, log or screenshot read, choose the file below — it is not imported. Only the provider test-connection calls in Settings are not covered (they carry no case data).</div>
       <div data-safe-style="display:flex;gap:8px;align-items:center;margin:8px 0">
         <label for="aiPreviewAction" data-safe-style="font-size:13px">AI action</label>
         <select id="aiPreviewAction" data-safe-style="flex:1"></select>

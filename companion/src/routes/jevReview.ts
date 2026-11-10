@@ -1,25 +1,17 @@
 import type { Express, Request, Response } from "express";
 import { CaseKeyedSet } from "../storage/caseKeyedState.js";
 import { logActivity } from "../analysis/activityLog.js";
-import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
-import { anonRevision, assertAnonRevision } from "../analysis/anonRevision.js";
-import { AnonControlStore } from "../analysis/anonControl.js";
-import { CustomEntitiesStore } from "../analysis/anonEntities.js";
-import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
+import { assertAnonRevision } from "../analysis/anonRevision.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
 import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
 import { gradeEvents, type JevReviewSpend } from "../analysis/ai/jev/jevGrader.js";
 import { createDecisionModelCatalog } from "../analysis/ai/jev/decisionModels.js";
-import { buildAnalystContext } from "../analysis/ai/jev/jevDecomposed.js";
-import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { markAiBudgetUnspent } from "../http/rateLimiter.js";
-import type { SuperQuery } from "../analysis/superTimeline.js";
-import { rowsInBuildWindow } from "./jevBuildWindow.js";
-import { stateEventResolver } from "../analysis/eventAliasLookup.js";
-import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
+import { jevMasking } from "./jevMasking.js";
+import { reviewCaseContext, selectReviewRows } from "./jevReviewPrepare.js";
 import { jevPresidioCheck, sendJevPresidioStop } from "./jevPresidioGate.js";
 import { runAsRouteJob, type RecordRouteJobFailure } from "./routeJob.js";
 
@@ -41,33 +33,6 @@ import { runAsRouteJob, type RecordRouteJobFailure } from "./routeJob.js";
  * POST /cases/:id/jev/promote, in routes/jevPromote.ts. The two halves are separate modules so
  * that "the grading pass promotes nothing" stays a property of this file and not a promise.
  */
-/**
- * A single super-timeline query is ceilinged by the store, so reading more than one page means
- * paging. Stops at `cap` rows, or when the matched total is in hand, or when a page comes back
- * empty — that last guard is what keeps a filter whose total disagrees with its rows from looping.
- */
-const SUPER_PAGE_ROWS = 2000;
-
-async function readMatchingRows(
-  store: NonNullable<RouteContext["options"]["superTimelineStore"]>,
-  caseId: string,
-  filters: SuperQuery,
-  cap: number,
-): Promise<{ events: ForensicEvent[]; total: number }> {
-  const events: ForensicEvent[] = [];
-  let total = 0;
-  for (;;) {
-    const want = Math.min(SUPER_PAGE_ROWS, cap - events.length);
-    if (want <= 0) break;
-    const page = await store.query(caseId, { ...filters, offset: events.length, limit: want });
-    total = page.total;
-    if (!page.events.length) break;
-    events.push(...page.events);
-    if (events.length >= total) break;
-  }
-  return { events, total };
-}
-
 /** Shown as-is by the panel, after "The review did not run: ". */
 const REVIEW_RUNNING = "a missed-evidence review of this case is already running — wait for it to finish";
 
@@ -77,16 +42,6 @@ const sharedDecisionModelCatalog = createDecisionModelCatalog();
 export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
   const grades = options.jevGradeStore ?? new JevGradeStore(store);
-  // The anonymizer's own stores, over the case files (#1934). AppOptions carries none of them —
-  // only the pipeline's options do — so `opts: options` alone built no anonymizer and every review
-  // sent the rows in clear. Spread LAST so they always win: a test that injects its own store must
-  // not hide this again. Stateless file readers; the pipeline builds the same three over this store.
-  const withAnon = {
-    ...options,
-    anonStore: new AnonControlStore(store),
-    customEntitiesStore: new CustomEntitiesStore(store),
-    discoveredStore: new DiscoveredEntitiesStore(store),
-  };
 
   // Not case-scoped: the settings screen asks this before any case is open, so it can say whether
   // the key field may be left blank instead of promising an inheritance that may not exist (#1547).
@@ -160,72 +115,20 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     settings: JevSettings,
     recordFailure: RecordRouteJobFailure,
   ): Promise<Response> {
-    const superStore = options.superTimelineStore!;
-    const stateStore = options.stateStore!;
-
-    // `all` is the analyst saying "read every row, never mind the cap". Everything else caps at
-    // the configured default. One query cannot answer either: the store ceilings a single page, so
-    // a full read pages until the matched total is in hand.
-    const readAll = req.body?.all === true;
-    const requested = Number(req.body?.limit);
-    const cap = readAll
-      ? Number.POSITIVE_INFINITY
-      : Math.min(
-          settings.maxRows,
-          Number.isFinite(requested) && requested > 0 ? Math.floor(requested) : Number.POSITIVE_INFINITY,
-        );
-    const capForWire = Number.isFinite(cap) ? cap : settings.maxRows;
-    const filters: SuperQuery = { ...(req.body?.filters ?? {}) };
-
-    const state = await stateStore.load(caseId);
-    const { events: read, total } = await readMatchingRows(superStore, caseId, filters, cap);
-
-    // Rows already in the forensic timeline are the ones synthesis can ALREADY see. Reviewing them
-    // would spend the analyst's money re-grading what is not missing. That includes a row the case
-    // holds under ANOTHER id: a second tool's copy of an event, folded into the first tool's (#1761).
-    // The lineage resolves it to that event while the event is live; once the event is gone, the row
-    // resolves to itself and is missing evidence again.
-    const analyzed = new Set(state.forensicTimeline.map((e) => e.id));
-    const canonical = stateEventResolver(state);
-    const unanalyzed = read.filter((e) => !analyzed.has(canonical(e.id)));
-    // Rows inside the host's own build window are the machine being built (#1529). The grader is not
-    // told that, so it grades a Chocolatey firewall change Medium and a provisioning log clear Critical
-    // (#1700). They are set aside here, before anything is spent, and counted so the sum still closes.
-    const setAside = await rowsInBuildWindow(superStore, caseId, state, unanalyzed);
-    const inBuild = setAside.ids;
-    const outsideBuild = unanalyzed.filter((e) => !inBuild.has(e.id));
-    // The collector's own footprint (#1949): rows the importer proved were the investigator's tooling
-    // at work. Graded blind, PersistenceSniper's Add-Type reads as the intruder's. Keyed on the
-    // structured origin, never the note: a Critical keeps the note but no origin, and stays graded.
-    const candidates = outsideBuild.filter((e) => e.origin !== "collector");
-    const collectorFootprint = outsideBuild.length - candidates.length;
-
-    // Coverage, as four facts rather than one flag. `capped` is the ONLY one that may blame the
-    // cap, and it is true only when the cap actually held rows back: an earlier version inferred
-    // truncation from "graded < matched" and told an analyst the cap had stopped a read of 1,344
-    // rows against a 2,000 cap, when the shortfall was 366 rows already in the forensic timeline.
-    const coverage = {
-      matched: total,
-      read: read.length,
-      alreadyAnalyzed: read.length - unanalyzed.length,
-      buildWindow: inBuild.size,
-      buildWindows: setAside.windows,
-      collectorFootprint,
-      graded: candidates.length,
-      capped: read.length < total,
-      cap: capForWire,
-      readAll,
-    };
+    // The rows a review reads, and what it sets aside — shared with the AI preview (#2515).
+    const { state, candidates, coverage } = await selectReviewRows(options, caseId, settings, req.body ?? {});
+    const total = coverage.matched;
+    const collectorFootprint = coverage.collectorFootprint;
 
     if (!candidates.length) {
-      if (inBuild.size || collectorFootprint)
+      if (coverage.buildWindow || collectorFootprint)
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "ai",
           action: "jev-review",
           detail:
             `missed-evidence review graded nothing: ` +
-            (inBuild.size
-              ? `${inBuild.size} archive row(s) sit inside the host's own build window and were set aside, `
+            (coverage.buildWindow
+              ? `${coverage.buildWindow} archive row(s) sit inside the host's own build window and were set aside, `
               : "") +
             (collectorFootprint ? `${collectorFootprint} set aside: collector footprint, ` : "") +
             `${coverage.alreadyAnalyzed} already analyzed`,
@@ -239,17 +142,15 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       });
     }
 
-    // The same (known entities, anonymizer) pair every chat model sits behind. The stores are
-    // always wired (withAnon above), so null means only that the analyst turned masking off for
-    // this case; the identity function is then the honest mask.
+    // The shared masking step (#2515) — the same (known entities, anonymizer) pair every chat model
+    // sits behind; the identity function when the analyst turned masking off for this case.
     // #1840: the review masks every batch with this one snapshot, so it records the revision the
     // snapshot was built at (read BEFORE the lists load) and holds any batch that would leave after
     // a Hide or a settings change. Batches already sent cannot be recalled; the rest are not sent.
-    const maskedAt = anonRevision(caseId);
-    const anon = await buildImportAnonContext({ log: getServerLogger(), opts: withAnon }, caseId, state);
-    const mask = anon ? (text: string) => anon.anon.apply(text) : (text: string) => text;
+    const { maskedAt, masker } = await jevMasking(store, caseId, state);
+    const mask = masker.mask;
     // The Presidio gate on each masked batch, right before it leaves (#1952).
-    const presidioCheck = jevPresidioCheck(withAnon, caseId, anon);
+    const presidioCheck = jevPresidioCheck(options, caseId, masker);
 
     // The analyst's choice in Settings (DFIR_JEV_GRADING), read per request like every Jev setting.
     const shape = settings.shape;
@@ -259,10 +160,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       // The analyst's own authorized/known-good records (#1924), masked like the rows. Read only when
       // the decomposed shape will ask about them, and inside the try: a damaged marker file must not
       // break a single-shape review that never reads it.
-      const caseContext =
-        shape === "decomposed"
-          ? buildAnalystContext(await new FalsePositiveStore(store).load(caseId), mask)
-          : "";
+      const caseContext = await reviewCaseContext(store, caseId, shape, mask);
       const result = await gradeEvents(
         {
           mask,

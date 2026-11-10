@@ -20,13 +20,11 @@ import type { RouteContext } from "./context.js";
  * the AI-call gate, so the prompt it shows is built by the action's own code from the forensic
  * timeline. An entry never builds a prompt itself.
  *
- * NOT here, on purpose (the manual says so too):
- * - import-time AI extraction (CSV / log / screenshot reads): they read an upload or a capture that
- *   is not in the case yet, so there is nothing to preview until the file is given;
- * - playbook hunts: the route refreshes the Velociraptor fleet inventory before it asks — a write and
- *   an external call a preview may not make, and skipping it would preview a different prompt;
- * - the Jev review and containment check: their own client and their own masking path, not the
- *   AI-call gate this preview stops at.
+ * The other covered AI requests need the route's own context and live beside these (#2515):
+ * import-time extraction (aiPreviewImportActions.ts — the analyst chooses the file), playbook hunts
+ * (aiPreviewPlaybookAction.ts — built from the stored fleet inventory, no refresh) and the Jev review
+ * and containment check (aiPreviewJevActions.ts). The ONLY AI calls not previewed are the provider
+ * "test connection" calls in Settings: they carry no case data.
  */
 type Options = RouteContext["options"];
 type Pipeline = NonNullable<Options["pipeline"]>;

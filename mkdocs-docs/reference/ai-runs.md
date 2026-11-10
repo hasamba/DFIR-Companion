@@ -178,7 +178,7 @@ These rewrite your evidence, your findings or your tasks. Read the limitation on
 **Costs.** 1 per batch, using the vision model.
 
 !!! warning "Know this"
-    This is the only path needing a multimodal model. An install configured with a text-only model silently produces no screenshot events. And if OCR redaction fails, the **unredacted** image is sent.
+    This is the only path needing a multimodal model. An install configured with a text-only model silently produces no screenshot events. If OCR redaction cannot read a screenshot, the whole call stops and **nothing is sent** — OCR fails closed.
 
 ### Finding → task
 
@@ -431,7 +431,7 @@ answer.
 
 Three things about that gate are worth knowing. The **system prompt is never masked** — safe for
 the shipped prompts, but a custom prompt file holding real case values would go out in the clear.
-An **OCR failure forwards the unredacted image** with a warning. And if you turn anonymisation off
+An **OCR failure stops the call**: if OCR cannot read a screenshot, nothing is sent. And if you turn anonymisation off
 for a case, the whole chain is skipped, **including the PII scanner**.
 
 !!! danger "Three paths do not use the gate"
@@ -439,8 +439,9 @@ for a case, the whole chain is skipped, **including the PII scanner**.
     streams it to the Claude Code CLI. Nothing masks that text, because the Companion never sees
     it. The command allowlist also cannot be enforced in that mode — only the tool list survives.
 
-    **The missed-evidence review masks correctly, by a different route.** No PII scanner on that
-    text, and no restore step — which is fine, because a grade is a number.
+    **The missed-evidence review and the containment check call the decision model through their own
+    client.** They mask with the same masking step as every other call, and the PII scanner checks
+    what they send. There is no restore step — which is fine, because a grade is a number.
 
     **Import extraction skips the PII scanner per batch**, safe only because the whole payload is
     scanned once up front. The skip and the pre-scan are a pair; neither is correct alone.
@@ -448,8 +449,8 @@ for a case, the whole chain is skipped, **including the PII scanner**.
 ### Preview what the AI will see
 
 Open the **Anon** toolbar dialog and press **Preview what the AI will see**. Pick an AI action, fill
-in what it needs (an event id, a question, a technique), and press **Preview**. You see the first
-request that action would send:
+in what it needs (an event id, a question, a technique, a file), and press **Preview**. You see the
+first request that action would send:
 
 - the **clear text** and the **masked text** side by side, with every token (`ANON_HOST_1`, …)
   highlighted — the masked side is exactly what the provider receives;
@@ -457,7 +458,8 @@ request that action would send:
 - what **Presidio** would do: nothing, or the values it would hold for your approval, or that its
   scan cannot run — the real action would stop at that point;
 - for an action that sends screenshots, which ones would be OCR-redacted first (OCR itself is not
-  run in the preview).
+  run in the preview);
+- notes on anything the preview could not do exactly as the real press does (below).
 
 **Nothing is sent and nothing is saved.** The preview runs the real action — the same prompt, built
 from the forensic timeline the same way — and stops it just before the provider call. It does not
@@ -473,9 +475,20 @@ What to keep in mind:
   without running. The dialog says so when it applies.
 - A second look shows its re-synthesis request as it would look after the promotion — the promotion
   is simulated in memory only.
-- **Not covered:** import-time AI reads (CSV, log and screenshot extraction — they read a file that is
-  not in the case yet), playbook hunts (they refresh the Velociraptor fleet inventory before asking),
-  and the missed-evidence review / containment check (their own masking route).
+- **Import-time AI reads** (CSV, log and screenshot): choose the file in the dialog. The preview reads
+  it the way the AI import would and shows the first batch. **The file is not imported** and nothing
+  is saved. The source label is the stored name the file would get if you imported it now. A
+  screenshot preview takes **one image**; a real capture can send several in one request. The main
+  Import button sends a file to these AI reads only when no built-in importer recognises it.
+- **Playbook hunts**: the real press first refreshes the case's Velociraptor fleet list and fetches
+  the server's artifact list. The preview does neither — it contacts nothing and saves nothing. It
+  uses the fleet list **stored** for the case and tells you when it was stored, and the artifact list
+  the server last fetched (or an empty one, and says so). If the fleet changed since then, the real
+  prompt can name a host differently.
+- **Missed-evidence review and containment check** (decision model): the preview shows the structured
+  state the decision model receives — clear and masked, for exactly the rows the first request
+  carries — and the questions it is asked. These need the decision model set up, not the chat model.
+- **Not covered:** only the provider "test connection" calls in Settings. They carry no case data.
 - It needs the same team permission as running the action, and it is disabled on the public demo.
 
 ## The archive boundary

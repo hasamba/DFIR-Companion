@@ -8,7 +8,6 @@ import {
   type AnalyzeResult,
 } from "../../providers/provider.js";
 import {
-  createAnonymizer,
   isMaskableIpv4,
   isInternalIp,
   type Anonymizer,
@@ -28,7 +27,7 @@ import { noteAiCallStarted } from "../../http/rateLimiter.js";
 import { AnonymizationChangedError, anonRevision } from "../anonRevision.js";
 import { captureIfSafetyStop } from "./safetyStopCapture.js";
 import type { ProviderCallContext } from "./providerCallContext.js";
-import { knownEntitiesFor, maskRequest } from "./maskRequest.js";
+import { maskRequest } from "./maskRequest.js";
 import {
   alreadyApproved,
   capScanLength,
@@ -206,8 +205,29 @@ export async function presidioPreScan(
   anon: Anonymizer,
   control: AnonControl | null,
 ): Promise<void> {
+  const fresh = await presidioPreScanHeld(ctx, caseId, text, known, anon, control);
+  if (fresh.length === 0) return;
+  ctx.log.warn(`[presidio] import pre-scan found ${fresh.length} new PII value(s) needing approval`, {
+    caseId,
+  });
+  await ctx.opts.presidioPendingStore?.save(caseId, fresh);
+  throw new PresidioApprovalRequired(fresh);
+}
+
+/**
+ * The import pre-scan's question without its side effects: the values it WOULD hold. Saves nothing;
+ * throws only the scan-failure error. `presidioPreScan` and the AI preview (#2515) both ask it.
+ */
+export async function presidioPreScanHeld(
+  ctx: ProviderCallContext,
+  caseId: string,
+  text: string,
+  known: KnownEntities,
+  anon: Anonymizer,
+  control: AnonControl | null,
+): Promise<CustomEntity[]> {
   const presidio = ctx.opts.presidio;
-  if (!presidio || !presidioEnabledFor(control)) return;
+  if (!presidio || !presidioEnabledFor(control)) return [];
 
   // TEST-ONLY seam (see PipelineOptions.presidioScanCapsOverride) so a test can force the
   // truncation path with a tiny budget instead of generating megabytes of synthetic text.
@@ -228,38 +248,8 @@ export async function presidioPreScan(
   }
 
   const found = mapFindings(all, presidio.minScore);
-  if (found.length === 0) return;
-
   const alreadyKnown = alreadyApproved(known);
-  const fresh = found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
-  if (fresh.length === 0) return;
-
-  ctx.log.warn(`[presidio] import pre-scan found ${fresh.length} new PII value(s) needing approval`, {
-    caseId,
-  });
-  await ctx.opts.presidioPendingStore?.save(caseId, fresh);
-  throw new PresidioApprovalRequired(fresh);
-}
-
-/**
- * Build the same (known entities, anonymizer) pair analyzeRestored derives per call, so an
- * import's pre-scan sees exactly the masked text the chunk loop would later produce. Returns
- * null when anonymization is off case-wide (mirrors analyzeRestored's own early return for
- * `!policy.enabled`) — with anonymization off there is no masked text for Presidio to see.
- */
-export async function buildImportAnonContext(
-  ctx: ProviderCallContext,
-  caseId: string,
-  state: InvestigationState,
-): Promise<{ known: KnownEntities; anon: Anonymizer; control: AnonControl | null } | null> {
-  const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
-  const policy = toAnonPolicy(control);
-  if (!policy.enabled) return null;
-  const known = await knownEntitiesFor(ctx, caseId, state);
-  // Hands back the control it already loaded so the pre-scan can read the per-case Presidio switch
-  // off the SAME snapshot the anonymizer was built from, rather than re-reading it from disk and
-  // risking a mid-import flip masking one batch under different rules than the scan covered.
-  return { known, anon: createAnonymizer(policy, known), control };
+  return found.filter((e) => !alreadyKnown.has(e.value.toLowerCase()));
 }
 
 /** OCR-redact the image buffers when an external-provider runner is configured. */

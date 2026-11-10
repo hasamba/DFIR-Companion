@@ -199,12 +199,21 @@ export interface JevGraderDeps {
   /**
    * `halted` turns true once any batch of the same review has failed (#2224). The caller checks it
    * before every attempt, retries included, so a run that has already failed sends nothing more.
+   * `batch` names the rows behind `state`, in row-id order; the AI preview (#2515) uses it to show the
+   * clear text of exactly the batch it captured. The real review ignores it.
    */
   readonly ask: (
     state: unknown,
     questions: Readonly<Record<string, JevQuestion>>,
     halted: () => boolean,
+    batch: JevAskBatch,
   ) => Promise<JevBatchResult>;
+}
+
+/** The rows one Jev request carries, and the ids they were sent under. */
+export interface JevAskBatch {
+  readonly events: readonly ForensicEvent[];
+  readonly ids: readonly string[];
 }
 
 /**
@@ -457,6 +466,27 @@ interface AskPlan {
   readonly caseContext: string;
 }
 
+/**
+ * The Jev `state` one batch sends: the rows rendered with `mask`, plus the analyst's context when the
+ * decomposed shape asks about it. The review's request and the AI preview's clear view (#2515, built
+ * with the identity mask over the same rows) both come from here.
+ */
+export function batchJevState(
+  batch: readonly ForensicEvent[],
+  ids: readonly string[],
+  mask: (text: string) => string,
+  shape: JevGradeShape,
+  caseContext: string,
+): Record<string, unknown> {
+  const withContext = shape === "decomposed" && caseContext !== "";
+  return {
+    note: STATE_NOTE,
+    [ROWS_KEY]: Object.fromEntries(batch.map((e, i) => [ids[i], renderRowForJev(e, mask)])),
+    [SUBJECTS_KEY]: Object.fromEntries(batch.map((e, i) => [ids[i], renderRowForToolingQuestion(e, mask)])),
+    ...(withContext ? { [CASE_CONTEXT_KEY]: caseContext } : {}),
+  };
+}
+
 async function askWithSplit(
   deps: JevGraderDeps,
   batch: readonly ForensicEvent[],
@@ -466,21 +496,13 @@ async function askWithSplit(
   spend: RunSpend,
 ): Promise<SplitResult> {
   if (halt.failed) throw new ReviewHalted();
-  const rowText = Object.fromEntries(batch.map((e, i) => [ids[i], renderRowForJev(e, deps.mask)]));
-  const subjectText = Object.fromEntries(
-    batch.map((e, i) => [ids[i], renderRowForToolingQuestion(e, deps.mask)]),
-  );
   try {
     const withContext = plan.shape === "decomposed" && plan.caseContext !== "";
     const result = await deps.ask(
-      {
-        note: STATE_NOTE,
-        [ROWS_KEY]: rowText,
-        [SUBJECTS_KEY]: subjectText,
-        ...(withContext ? { [CASE_CONTEXT_KEY]: plan.caseContext } : {}),
-      },
+      batchJevState(batch, ids, deps.mask, plan.shape, plan.caseContext),
       buildBatchQuestions([...ids], plan.shape, withContext),
       () => halt.failed,
+      { events: batch, ids },
     );
     addSpend(spend, result);
     return {

@@ -1,14 +1,52 @@
 import type { Express, Request, Response } from "express";
 import { runAiPreview, type AiPreviewResult } from "../analysis/ai/aiPreviewScope.js";
 import { HostMergeDecisionRequired } from "../analysis/hostDuplicateGate.js";
-import { ReadOnlyScopeWriteError } from "../storage/readOnlyScope.js";
+import { ReadOnlyScopeWriteError, runReadOnly } from "../storage/readOnlyScope.js";
 import { AI_PREVIEW_ACTIONS } from "./aiPreviewActions.js";
+import { IMPORT_PREVIEW_ACTIONS } from "./aiPreviewImportActions.js";
+import { JEV_PREVIEW_ACTIONS } from "./aiPreviewJevActions.js";
+import { PLAYBOOK_HUNTS_PREVIEW } from "./aiPreviewPlaybookAction.js";
+import type { RouteAiPreviewAction } from "./aiPreviewRouteAction.js";
 import type { RouteContext } from "./context.js";
+
+/** The preview actions that need the route's context (#2515), beside the 21 pipeline actions. */
+const ROUTE_AI_PREVIEW_ACTIONS: Readonly<Record<string, RouteAiPreviewAction>> = {
+  ...IMPORT_PREVIEW_ACTIONS,
+  "playbook-hunts": PLAYBOOK_HUNTS_PREVIEW,
+  ...JEV_PREVIEW_ACTIONS,
+};
+
+type Prepared = (() => Promise<unknown>) | string;
+interface ResolvedAction {
+  readonly label: string;
+  readonly multiRequest?: string;
+  readonly needs: "ai" | "jev";
+  prepare(caseId: string, params: Record<string, unknown>): Promise<Prepared>;
+}
+
+function resolveAction(ctx: RouteContext, key: string): ResolvedAction | undefined {
+  if (Object.hasOwn(AI_PREVIEW_ACTIONS, key)) {
+    const a = AI_PREVIEW_ACTIONS[key];
+    return {
+      label: a.label,
+      multiRequest: a.multiRequest,
+      needs: "ai",
+      prepare: (caseId, params) => a.prepare(ctx.options.pipeline!, ctx.options, caseId, params),
+    };
+  }
+  if (Object.hasOwn(ROUTE_AI_PREVIEW_ACTIONS, key)) {
+    const a = ROUTE_AI_PREVIEW_ACTIONS[key];
+    return { ...a, prepare: (caseId, params) => a.prepare(ctx, caseId, params) };
+  }
+  return undefined;
+}
 
 /**
  * POST /cases/:id/ai-preview — "Preview what the AI will see" (#2491).
  *
- * Body: `{ action, params }`, `action` a key of AI_PREVIEW_ACTIONS. Runs the real action inside an AI
+ * Body: `{ action, params }`, `action` a key of AI_PREVIEW_ACTIONS (the pipeline actions) or of
+ * ROUTE_AI_PREVIEW_ACTIONS (import-time extraction, playbook hunts, the Jev review and containment
+ * check — #2515). The decision-model actions need Jev configured, not the chat model. Runs the real action inside an AI
  * preview (analysis/ai/aiPreviewScope.ts): it stops at the AI-call gate, so NOTHING is sent to a
  * provider, nothing is spent and nothing in the case changes. Answers with the first request the
  * action would send — clear text and masked text side by side — and the system prompt, which is sent
@@ -23,14 +61,15 @@ export function registerAiPreviewRoutes(app: Express, ctx: RouteContext): void {
   const { options, store } = ctx;
 
   app.post("/cases/:id/ai-preview", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
+    const caseId = req.params.id;
+    const key = typeof req.body?.action === "string" ? req.body.action : "";
+    const action = resolveAction(ctx, key);
+    if (!action) return res.status(400).json({ error: `unknown AI action "${key.slice(0, 60)}"` });
+    // A decision-model request needs Jev, not the chat model; its prepare names a missing setup.
+    if (action.needs === "ai" && (!options.pipeline || !options.pipeline.hasSynthesisProvider()))
       return res
         .status(501)
         .json({ error: "AI provider not configured — there is no AI request to preview" });
-    const caseId = req.params.id;
-    const key = typeof req.body?.action === "string" ? req.body.action : "";
-    const action = Object.hasOwn(AI_PREVIEW_ACTIONS, key) ? AI_PREVIEW_ACTIONS[key] : undefined;
-    if (!action) return res.status(400).json({ error: `unknown AI action "${key.slice(0, 60)}"` });
     const rawParams: unknown = req.body?.params;
     const params =
       rawParams && typeof rawParams === "object" && !Array.isArray(rawParams)
@@ -40,12 +79,15 @@ export function registerAiPreviewRoutes(app: Express, ctx: RouteContext): void {
     try {
       if (!(await store.caseExists(caseId)))
         return res.status(404).json({ error: `case ${caseId} does not exist` });
-      const prepared = await action.prepare(options.pipeline, options, caseId, params);
+      // Inside the read-only scope too: an action's prepare-time read must not run storage upkeep.
+      const prepared = await runReadOnly(() => action.prepare(caseId, params));
       if (typeof prepared === "string") return res.status(400).json({ error: prepared });
       const result = await runAiPreview(prepared);
       ctx.serverLogger.info(`[ai-preview] ${key}: ${result.outcome}`, { caseId });
       return sendResult(res, key, action, result);
     } catch (err) {
+      if (err instanceof ReadOnlyScopeWriteError)
+        return sendResult(res, key, action, { outcome: "error", error: err });
       ctx.serverLogger.warn(`[ai-preview] ${key} failed: ${(err as Error).message}`, { caseId });
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -55,7 +97,7 @@ export function registerAiPreviewRoutes(app: Express, ctx: RouteContext): void {
 function sendResult(
   res: Response,
   key: string,
-  action: (typeof AI_PREVIEW_ACTIONS)[string],
+  action: Pick<ResolvedAction, "label" | "multiRequest">,
   result: AiPreviewResult,
 ): Response {
   const base = { action: key, label: action.label };

@@ -48,15 +48,35 @@ export class SequenceAllocator {
       // the store. A read that throws caches nothing, so a corrupted log keeps failing closed.
       // Captures only: the custody log can hold a line written outside this allocator (a crash
       // between append and pin write, #2150), so imports and custody keep reading the log.
-      const generation = currentGeneration(this.casesRoot, caseId);
-      const mark = this.highWater.get(key);
-      const next =
-        kind === "capture" && mark && mark.generation === generation
-          ? mark.seq + 1
-          : Math.max((await maxOnDisk()) + 1, (mark?.seq ?? 0) + 1);
+      const { next, generation } = await this.nextFor(kind, caseId, maxOnDisk);
       this.highWater.set(key, { seq: next, generation });
       return next;
     });
+  }
+
+  /**
+   * The number `reserve` would hand out next, reserving nothing (#2515 — the AI preview shows an
+   * import's source label without changing anything). Another caller can still take it first.
+   */
+  peek(kind: SequenceKind, caseId: string, maxOnDisk: () => Promise<number>): Promise<number> {
+    return this.lock.runExclusive(
+      `${kind}:${caseId}`,
+      async () => (await this.nextFor(kind, caseId, maxOnDisk)).next,
+    );
+  }
+
+  private async nextFor(
+    kind: SequenceKind,
+    caseId: string,
+    maxOnDisk: () => Promise<number>,
+  ): Promise<{ next: number; generation: ReturnType<typeof currentGeneration> }> {
+    const generation = currentGeneration(this.casesRoot, caseId);
+    const mark = this.highWater.get(`${kind}:${caseId}`);
+    const next =
+      kind === "capture" && mark && mark.generation === generation
+        ? mark.seq + 1
+        : Math.max((await maxOnDisk()) + 1, (mark?.seq ?? 0) + 1);
+    return { next, generation };
   }
 
   /** Drop every mark held for a deleted or replaced case (#1866). */

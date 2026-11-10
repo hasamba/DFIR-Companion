@@ -376,6 +376,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     // Playbook derivation helpers (routes/playbookHunts.ts), shared with the staying
     // POST /cases/:id/push/iris route (syncPlaybook).
     syncPlaybook: appliers.syncPlaybook,
+    previewPlaybook: appliers.previewPlaybook,
     loadPlaybookControl: appliers.loadPlaybookControl,
     dropSeen: () => drops.seen,
     dropScanning: () => drops.scanning,

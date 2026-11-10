@@ -239,6 +239,23 @@ export class PlaybookStore {
   // Re-derive auto-tasks from the current case state and merge them into the stored list
   // (idempotent — preserves analyst status/edits). `opts.useTemplates` expands Critical/High
   // findings into IR-phase templates. Writes only when something changed.
+  /**
+   * What `sync` would return, with nothing saved — "Preview what the AI will see" (#2515) builds the
+   * playbook-hunt prompt from these tasks without changing the case.
+   */
+  async previewSync(
+    caseId: string,
+    state: InvestigationState,
+    opts: DeriveOptions = {},
+  ): Promise<PlaybookTask[]> {
+    const { tasks } = mergePlaybook(
+      await this.load(caseId),
+      derivePlaybookTasks(state, opts),
+      new Date().toISOString(),
+    );
+    return sortPlaybookTasks(tasks);
+  }
+
   sync(caseId: string, state: InvestigationState, opts: DeriveOptions = {}): Promise<PlaybookTask[]> {
     return playbookLock.runExclusive(caseId, async () => {
       const existing = await this.load(caseId);

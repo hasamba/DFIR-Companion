@@ -1,4 +1,4 @@
-import { ProviderError, type AIProvider } from "../providers/provider.js";
+import { ProviderError, type AIProvider, type AnalyzeImage } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import type { CaptureMetadata } from "../types.js";
@@ -41,6 +41,7 @@ export {
 import type { ExtractionContext } from "./ai/extraction.js";
 import * as extraction from "./ai/extraction.js";
 import { analyzeRestored, presidioGate } from "./ai/providerCall.js";
+import { presidioPreviewText } from "./ai/aiPreviewCall.js";
 import type { KnownEntities } from "./anonymize.js";
 import type { AnonControl } from "./anonControl.js";
 import type { HuntContext } from "./ai/hunts.js";
@@ -208,6 +209,16 @@ export class AnalysisPipeline {
     return presidioGate(this.aiCtx, caseId, maskedText, known, control);
   }
 
+  /** What that gate would do, with nothing saved or held — the AI preview's Jev answer (#2515). */
+  presidioPreviewMasked(
+    caseId: string,
+    maskedText: string,
+    known: KnownEntities,
+    control: AnonControl | null,
+  ) {
+    return presidioPreviewText(this.aiCtx, caseId, maskedText, known, control);
+  }
+
   // Text features resolve `synthesisProvider ?? provider`, so this preserves OCR-less installs. Do not gate them on hasAiProvider(), which reflects only screenshot/vision capability.
   hasSynthesisProvider(): boolean {
     return Boolean(this.opts.synthesisProvider ?? this.opts.provider);
@@ -265,8 +276,13 @@ export class AnalysisPipeline {
     }
   }
 
-  analyzeWindow(caseId: string, captures: CaptureMetadata[]): Promise<InvestigationState> {
-    return extraction.analyzeWindow(this.aiCtx, caseId, captures);
+  /** `loadImage`: the AI preview's chosen image (#2515); the case's own loader otherwise. */
+  analyzeWindow(
+    caseId: string,
+    captures: CaptureMetadata[],
+    loadImage?: (caseId: string, file: string) => Promise<AnalyzeImage>,
+  ): Promise<InvestigationState> {
+    return extraction.analyzeWindow(this.aiCtx, caseId, captures, loadImage);
   }
 
   analyzeCsv(...args: AiExtractionArgs<typeof extraction.analyzeCsv>): Promise<InvestigationState> {

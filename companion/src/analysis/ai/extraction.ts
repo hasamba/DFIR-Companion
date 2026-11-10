@@ -18,12 +18,16 @@ import { getCsvPrompt, getLogPrompt, getSystemPrompt } from "./prompts/index.js"
 import { type AiCallContext } from "./aiContext.js";
 import { renumberScreenshotEvents } from "./screenshotEventIds.js";
 import {
-  buildImportAnonContext,
   presidioPreScan,
+  presidioPreScanHeld,
   type PresidioCoverage,
   type ProviderCallContext,
 } from "./providerCall.js";
 import { anonRevision } from "../anonRevision.js";
+import { caseMasker } from "./maskRequest.js";
+import { presidioEnabledFor } from "./presidioScan.js";
+import { activeAiPreview, noteAiPreviewPreScan } from "./aiPreviewScope.js";
+import { presidioOutcome } from "./aiPreviewCall.js";
 import { toReadableAiError } from "./aiReplyUnreadable.js";
 
 /**
@@ -74,10 +78,16 @@ interface ImportExtractionOptions {
   debug?: ImportDebugRecorder; // #1736 — rows in, events out; a failed batch throws, so no skip code
 }
 
+/**
+ * `loadImage` defaults to the case's own image loader. "Preview what the AI will see" (#2515) passes
+ * one that returns the image the analyst chose, so the preview runs this same function on a file that
+ * is not in the case.
+ */
 export async function analyzeWindow(
   ctx: ExtractionContext,
   caseId: string,
   captures: CaptureMetadata[],
+  loadImage: ExtractionContext["opts"]["imageLoader"] = ctx.opts.imageLoader,
 ): Promise<InvestigationState> {
   const provider = ctx.requireProvider("screenshot analysis");
   const candidates = captures.filter((c) => !c.isDuplicate);
@@ -85,7 +95,7 @@ export async function analyzeWindow(
 
   return ctx.withStateLock(caseId, async () => {
     const state = await ctx.opts.stateStore.load(caseId);
-    const { analyzable, images } = await loadWindowImages(ctx, caseId, candidates);
+    const { analyzable, images } = await loadWindowImages(ctx, caseId, candidates, loadImage);
     const userPrompt = buildScreenshotPrompt(state, analyzable);
 
     const backoffMs = ctx.opts.backoffMs ?? 500;
@@ -153,10 +163,9 @@ async function loadWindowImages(
   ctx: ExtractionContext,
   caseId: string,
   candidates: CaptureMetadata[],
+  loadImage: ExtractionContext["opts"]["imageLoader"],
 ): Promise<{ analyzable: CaptureMetadata[]; images: AnalyzeImage[] }> {
-  const results = await Promise.allSettled(
-    candidates.map((c) => ctx.opts.imageLoader(caseId, c.screenshotFile)),
-  );
+  const results = await Promise.allSettled(candidates.map((c) => loadImage(caseId, c.screenshotFile)));
   const analyzable: CaptureMetadata[] = [];
   const images: AnalyzeImage[] = [];
   results.forEach((result, i) => {
@@ -265,16 +274,21 @@ async function preScanWholeImport(
   // #1840: read BEFORE the lists load. A batch skips its own gate only while this revision is
   // still current; after an entity or settings change the batch is gated itself.
   const revision = anonRevision(caseId);
-  const importAnonCtx = await buildImportAnonContext(ctx, caseId, state);
-  if (!importAnonCtx) return revision;
-  await presidioPreScan(
-    ctx,
-    caseId,
-    `${buildStateSummary(state)}\n${payloadText}`,
-    importAnonCtx.known,
-    importAnonCtx.anon,
-    importAnonCtx.control,
-  );
+  const { known, anon, control } = await caseMasker(ctx, caseId, state);
+  if (!known || !anon) return revision;
+  const text = `${buildStateSummary(state)}\n${payloadText}`;
+  if (activeAiPreview()) {
+    // "Preview what the AI will see" (#2515): the same whole-import question, nothing saved. The batch
+    // capture reports it while this revision is current (aiPreviewCall.ts).
+    noteAiPreviewPreScan(
+      revision,
+      presidioEnabledFor(control)
+        ? await presidioOutcome(() => presidioPreScanHeld(ctx, caseId, text, known, anon, control))
+        : { state: "off", held: [] },
+    );
+    return revision;
+  }
+  await presidioPreScan(ctx, caseId, text, known, anon, control);
   return revision;
 }
 
@@ -492,7 +506,9 @@ export async function analyzeLog(
   const aggStats: AggregateStats = { distinctTemplates: 0, keptTemplates: 0 };
   const maxTemplates = Number(process.env.DFIR_LOG_MAX_TEMPLATES) || undefined; // else the built-in default
   const templates = aggregateLogLines(lines, { maxTemplates }, aggStats);
-  ctx.recordImportTruncation(caseId, aggStats.distinctTemplates > aggStats.keptTemplates ? aggStats : null);
+  // An in-memory side channel the next import route consumes — a preview (#2515) must not leave one.
+  if (!activeAiPreview())
+    ctx.recordImportTruncation(caseId, aggStats.distinctTemplates > aggStats.keptTemplates ? aggStats : null);
   // Patterns, not rows: the model sees the kept ones; the rest are over the template cap.
   opts.debug?.fallback("log_patterns", templates.length);
   opts.debug?.omitted("over_template_cap", aggStats.distinctTemplates - aggStats.keptTemplates);
