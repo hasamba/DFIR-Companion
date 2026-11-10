@@ -191,6 +191,25 @@ async function firstSent(provider: Recording): Promise<AnalyzeRequest> {
 const CSV = `Time,Host,User,Command\n2026-06-01T00:00:00Z,${HOST},${USER},whoami\n2026-06-01T00:01:00Z,${HOST},${USER},net use\n`;
 const LOG = `2026-06-01T00:00:00Z sshd[1]: Failed password for ${USER} from 10.9.8.7 on ${HOST}\n`;
 
+/** #2531: the call's diff lines the host up with its token on both sides (or marks its line). */
+function expectHostMarked(call: {
+  clearPrompt: string;
+  maskedPrompt: string;
+  diff?: {
+    mode: string;
+    pairs: { token: string; value: string }[];
+    marks: { c: number[]; m: number[]; pair: number }[];
+  };
+}): void {
+  const diff = call.diff!;
+  expect(diff.mode).not.toBe("none");
+  const i = diff.pairs.findIndex((p) => p.value.toLowerCase() === HOST.toLowerCase());
+  expect(i).toBeGreaterThanOrEqual(0);
+  const mark = diff.marks.find((m) => m.pair === i)!;
+  expect(call.clearPrompt.slice(mark.c[0], mark.c[1]).toLowerCase()).toBe(HOST.toLowerCase());
+  expect(call.maskedPrompt.slice(mark.m[0], mark.m[1])).toBe(diff.pairs[i].token);
+}
+
 describe("AI preview — import-time extraction of a chosen file (#2515)", () => {
   it("CSV: shows the first batch as the real import would send it, and imports nothing", async () => {
     const h = await harness();
@@ -202,6 +221,7 @@ describe("AI preview — import-time extraction of a chosen file (#2515)", () =>
     expect(call.maskedPrompt).not.toContain(HOST);
     expect(call.maskedPrompt).not.toContain(USER);
     expect(call.notes.join(" ")).toMatch(/would be stored under/);
+    expectHostMarked(call);
     expect(res.body.multiRequest).toMatch(/first batch/);
 
     // The label is the stored name the real import route gives this file: the number it reserves next.
@@ -365,6 +385,7 @@ describe("AI preview — the decision-model requests (#2515)", () => {
     expect(Object.keys(clear.rows)).toEqual(Object.keys(masked.rows));
     expect(call.clearPrompt).toContain(HOST);
     expect(call.maskedPrompt).not.toContain(HOST);
+    expectHostMarked(call);
 
     await request(h.app).post("/cases/c1/jev/review").send({});
     expect(bodies.length).toBeGreaterThan(0);
@@ -389,6 +410,7 @@ describe("AI preview — the decision-model requests (#2515)", () => {
     const call = res.body.call;
     expect(call.clearPrompt).toContain(HOST);
     expect(call.maskedPrompt).not.toContain(HOST);
+    expectHostMarked(call);
     await request(h.app).post("/cases/c1/findings/f1/containment-check").send({});
     const wire = JSON.parse(bodies[0]);
     expect(JSON.parse(call.maskedPrompt)).toEqual(wire.state);

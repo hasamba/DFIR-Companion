@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { runReadOnly } from "../../storage/readOnlyScope.js";
+import type { PreviewDiff } from "./previewDiff.js";
 
 /**
  * "Preview what the AI will see" (#2491): the scope a preview runs the REAL action in.
@@ -50,6 +51,12 @@ export interface AiPreviewCapture {
   readonly presidio: AiPreviewPresidio;
   /** Plain-English facts about how this preview differs from a real press (#2515), shown with it. */
   readonly notes?: readonly string[];
+  /**
+   * What the masking changed, lined up for the dialog's diff (#2531) — from the real anonymizer's own
+   * value→token map. Present only when anonymization is on. Lives in this capture and the preview
+   * response only: the real send never builds it, and nothing logs or saves it.
+   */
+  readonly diff?: PreviewDiff;
 }
 
 interface PreviewState {

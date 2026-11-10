@@ -115,6 +115,20 @@ export const TIER_B: Record<string, string> = {
   "--info-bg": "color-mix(in oklab, var(--tag-purple-text) 13%, var(--bg-primary))",
   "--info-border": "color-mix(in oklab, var(--tag-purple-text) 34%, var(--bg-primary))",
 
+  // The AI preview's GitHub-style diff (#2531): a removed value (red), the token that replaced it
+  // (green), and text that only looks unmasked (amber). Each is a faint line wash, a stronger word
+  // wash and a bold text colour, all derived from the theme's own status colours so every theme —
+  // light, dark and imported — gets a readable pair without hand-picking.
+  "--diff-del-bg": "color-mix(in oklab, var(--badge-danger-text) 14%, var(--bg-primary))",
+  "--diff-del-word": "color-mix(in oklab, var(--badge-danger-text) 26%, var(--bg-primary))",
+  "--diff-del-text": "var(--tag-red-text)",
+  "--diff-add-bg": "color-mix(in oklab, var(--badge-success-text) 14%, var(--bg-primary))",
+  "--diff-add-word": "color-mix(in oklab, var(--badge-success-text) 26%, var(--bg-primary))",
+  "--diff-add-text": "var(--badge-success-text)",
+  "--diff-warn-bg": "color-mix(in oklab, var(--badge-warning-text) 14%, var(--bg-primary))",
+  "--diff-warn-word": "color-mix(in oklab, var(--badge-warning-text) 30%, var(--bg-primary))",
+  "--diff-warn-text": "var(--badge-warning-text)",
+
   // Row/card selection. Accent-tinted so it reads as "you picked this", not "this is hovered".
   "--surface-selected": "color-mix(in oklab, var(--accent) 15%, var(--bg-secondary))",
 

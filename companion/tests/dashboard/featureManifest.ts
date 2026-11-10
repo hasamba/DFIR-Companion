@@ -640,6 +640,12 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // The preview's GitHub-style diff (#2531). No initializer: the dialog calls it after a capture.
+    file: "dashboard-ai-preview-diff.js",
+    publish: ["aiPreviewDiffHtml", "aiPreviewDiffWire", "aiPreviewDiffSummary"],
+    private: [],
+  },
+  {
     // Explain Event (#141). Its only caller is the timeline's delegated click handler, which calls
     // it from inside a listener rather than binding it — nothing evaluated at load, nothing to defer.
     file: "dashboard-explain-event.js",

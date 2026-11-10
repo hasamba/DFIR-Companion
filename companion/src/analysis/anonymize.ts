@@ -115,6 +115,16 @@ export interface Anonymizer {
   // used to feed OCR-discovered entities back into the case's auto-discovery list. Never includes
   // one-way secrets (those are redacted to a placeholder, not minted as a reversible token).
   discoveries(): CustomEntity[];
+  // Every token this anonymizer minted, with the real value it stands for — the same map restore()
+  // reads. Only "Preview what the AI will see" (#2531) asks for it, and only to mark the changes in
+  // its own response; the real send never reads it. Never includes one-way secrets.
+  pairs(): AnonPair[];
+}
+
+export interface AnonPair {
+  readonly token: string;
+  readonly value: string;
+  readonly category: AnonTokenCategory;
 }
 
 export { SECRET_PLACEHOLDER };
@@ -395,6 +405,14 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return out;
   }
 
+  function pairs(): AnonPair[] {
+    return [...toReal].map(([token, value]) => ({
+      token,
+      value,
+      category: (/^ANON_([A-Z]+)_\d+$/.exec(token)?.[1] ?? "OTHER") as AnonTokenCategory,
+    }));
+  }
+
   // ── detectors (filled in across later tasks; order is fixed in apply()) ──
   function isInternalDomain(domain: string): boolean {
     const d = domain.toLowerCase();
@@ -656,7 +674,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     return value;
   }
 
-  return { apply, restore, restoreDeep, discoveries };
+  return { apply, restore, restoreDeep, discoveries, pairs };
 }
 
 // The noise vocabulary (registry hives, Windows principals, ATT&CK tactic folders, generic words)
