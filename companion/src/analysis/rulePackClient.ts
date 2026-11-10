@@ -28,6 +28,7 @@ import {
   verifyRulesAgainstManifest,
   type RulePackManifest,
 } from "./rulePackManifest.js";
+import { githubErrorMessage } from "./githubHttpError.js";
 
 export const RULE_PACK_REPO = DEFAULT_UPDATE_REPO;
 const ASSET_TIMEOUT_MS = 60_000;
@@ -83,7 +84,7 @@ export async function listRulePackReleases(
     headers: { Accept: "application/vnd.github+json", "User-Agent": "dfir-companion" },
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!resp.ok) throw new Error(`GitHub returned ${resp.status} listing rule pack releases`);
+  if (!resp.ok) throw new Error(githubErrorMessage(resp, "listing rule pack releases"));
   const json: unknown = await resp.json();
   if (!Array.isArray(json)) throw new Error("could not read the release list from GitHub");
   const refs: RulePackReleaseRef[] = [];
