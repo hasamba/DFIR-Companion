@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Faster live cloud collection import** — each page of a cloud-only case now commits only its own rows instead of re-reading and re-saving the whole case; a 20,000-record AWS import went from 340 s to 160 s (closes #2504)
 - **One credential history per collection** — a live AWS collection builds its credential lineages and compute lifecycles once over the whole run (first 25,000 records, truncation disclosed), so no duplicate rows or false "no issuance record"; Resume drops rows the rebuild no longer reports (closes #2482)
 - **Microsoft, GCP and Azure summaries per collection** — Entra privilege paths, mailbox chains, password spray, GCP service-account joins and GCP/Azure compute lifecycles are built once per live collection, so a privilege path whose sign-ins and audits land on different pages can reach High (closes #2493)
 - **Faster large cloud imports** — compiled tagger rules are reused across pages (100k AWS records: 54.7 → 36.5 min) and `npm run bench:collect-import` measures the import step (closes #2478)

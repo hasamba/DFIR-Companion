@@ -43,12 +43,32 @@ export const MERGE_SCAN_SQL = {
     "WHERE e.kind='forensicTimeline' ORDER BY e.ordinal",
 } as const;
 
+// #2504: the earliest clean cloud-audit row (flag 4, MERGE_FLAG_CLOUD_AUDIT) the merge did not hold,
+// for the cloud coverage row's time: the earliest time first, then the first row at that time in
+// timeline order. Both walk merge_rows_cloud_time_idx (caseSqliteSchema.ts), a partial index over the
+// cloud-audit rows with a time, so neither reads or sorts the rest of the case
+// (tests/analysis/mergeScanPlan.test.ts; CROSS JOIN keeps merge_rows the outer loop). A row with no
+// readable time is never the earliest.
+const CLOUD_ROW_JOIN =
+  "FROM merge_rows m CROSS JOIN entities e ON e.row_id=m.row_id AND e.version=m.version " +
+  "WHERE (m.flags & 4) <> 0 AND e.kind='forensicTimeline' AND m.row_id NOT IN (SELECT value FROM json_each(?)) ";
+export const MERGE_EARLIEST_CLOUD_SQL = {
+  time: "SELECT m.time_ms AS t " + CLOUD_ROW_JOIN + "AND m.time_ms IS NOT NULL ORDER BY m.time_ms LIMIT 1",
+  row:
+    "SELECT e.row_id, e.ordinal, e.version, e.payload " +
+    CLOUD_ROW_JOIN +
+    "AND m.time_ms = ? ORDER BY e.ordinal LIMIT 1",
+} as const;
+
 /** Rows per page of the placement scan: bounds what one read allocates, whatever the case size. */
 export const MERGE_SCAN_PAGE = 1024;
 
 export const MERGE_WORKER_SOURCE =
   "const MERGE_SCAN_SQL = " +
   JSON.stringify(MERGE_SCAN_SQL) +
+  ";\n" +
+  "const MERGE_EARLIEST_CLOUD_SQL = " +
+  JSON.stringify(MERGE_EARLIEST_CLOUD_SQL) +
   ";\n" +
   "const MERGE_SCAN_PAGE = " +
   MERGE_SCAN_PAGE +
@@ -139,8 +159,8 @@ function mergeRowsOut(db, rows) {
 }
 
 // Forensic rows by row id, event id, bucket key, index flag (clean rows carrying one of the bits),
-// or clamp year (clean rows on a guessed year other than the dominant one), in timeline order,
-// never the rows named in excludeRowIds.
+// clamp year (clean rows on a guessed year other than the dominant one), or the earliest clean
+// cloud-audit row (#2504), in timeline order, never the rows named in excludeRowIds.
 function mergeRows(dbPath, select) {
   if (!existsSync(dbPath)) return [];
   const db = openDatabase(dbPath);
@@ -160,6 +180,10 @@ function mergeRows(dbPath, select) {
     } else if (typeof select.flagMask === "number") {
       rows = db.prepare(cols + CLEAN_JOIN + " WHERE e.kind='forensicTimeline' AND (m.flags & ?) <> 0 ORDER BY e.ordinal")
         .all(select.flagMask);
+    } else if (select.earliestCloudAudit === true) {
+      const exclude = JSON.stringify(Array.isArray(select.excludeRowIds) ? select.excludeRowIds : []);
+      const first = db.prepare(MERGE_EARLIEST_CLOUD_SQL.time).get(exclude);
+      if (first) rows = db.prepare(MERGE_EARLIEST_CLOUD_SQL.row).all(exclude, first.t);
     } else if (typeof select.clampYear === "number") {
       rows = db.prepare(cols + CLEAN_JOIN + " WHERE e.kind='forensicTimeline' AND m.year_inferred=1 " +
         "AND m.year IS NOT NULL AND m.year<>? ORDER BY e.ordinal").all(select.clampYear);

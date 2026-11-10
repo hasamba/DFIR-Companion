@@ -17,6 +17,7 @@ import { PRECURSOR_CLASSES } from "./ransomwarePrecursor.js";
 import {
   CLOUD_AUDIT_RE,
   COVERAGE_EVENT_ID,
+  isGeneratedCoverageRow,
   isInstanceRoleIdentity,
   metadataTarget,
   searchText,
@@ -125,6 +126,10 @@ const PRECURSOR_TECHNIQUES = new Set(PRECURSOR_CLASSES.flatMap((c) => c.techniqu
  * Each entry is a superset of the pass's own "is there anything to do" test; see the pass modules.
  */
 export function mergeTrigger(e: ForensicEvent): string | null {
+  // The cloud coverage row as generated (#2504): its note is advice that no pass reads, and the one
+  // pass that rewrites the row, metadataCoverageEvent, is handled by the incremental merge itself.
+  // Everything else about the row is still judged, on the row without that note.
+  if (isGeneratedCoverageRow(e)) return mergeTrigger({ ...e, description: "" });
   const description = e.description ?? "";
   const mitre = e.mitreTechniques ?? [];
   const c = e.canonical;
