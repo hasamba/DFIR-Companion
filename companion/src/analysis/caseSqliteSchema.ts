@@ -142,6 +142,9 @@ export const CASE_SQLITE_SCHEMA_SQL =
   "CREATE TABLE IF NOT EXISTS merge_keys (key TEXT NOT NULL, row_id INTEGER NOT NULL REFERENCES entities(row_id) ON DELETE CASCADE, " +
   "PRIMARY KEY(key, row_id)) WITHOUT ROWID;" +
   "CREATE INDEX IF NOT EXISTS merge_keys_row_idx ON merge_keys(row_id);" +
+  // #2504: the cloud-audit rows with a time, by time, for the cloud coverage row's place.
+  "CREATE INDEX IF NOT EXISTS merge_rows_cloud_time_idx ON merge_rows(time_ms) " +
+  "WHERE (flags & 4) <> 0 AND time_ms IS NOT NULL;" +
   "CREATE TABLE IF NOT EXISTS merge_dirty_keys (key TEXT PRIMARY KEY) WITHOUT ROWID;" +
   "CREATE TABLE IF NOT EXISTS merge_generation (id INTEGER PRIMARY KEY CHECK (id = 1), n INTEGER NOT NULL);" +
   "INSERT OR IGNORE INTO merge_generation(id, n) VALUES (1, 0);" +

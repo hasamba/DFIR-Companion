@@ -633,6 +633,28 @@ describe("SuperTimelineStore", () => {
       ).toEqual(["u1"]);
     });
 
+    it("hides rows carrying any excluded label, on the same precedence (#2487)", async () => {
+      await seed();
+      expect((await both({ excludeLabels: ["noise"] })).events.map((e) => e.id)).toEqual([
+        "d1",
+        "d2",
+        "d3",
+        "d4",
+        "u2",
+      ]);
+      expect((await both({ excludeLabels: ["key-evidence", "noise"] })).total).toBe(4);
+      // The map wins for its ids: d3 is hidden by its map label, u1's sidecar "noise" no longer counts.
+      expect((await both({ excludeLabels: ["key-evidence"] }, labelMap)).events.map((e) => e.id)).toEqual([
+        "d1",
+        "d4",
+        "u1",
+        "u2",
+      ]);
+      expect((await both({ excludeLabels: ["noise"] }, labelMap)).total).toBe(6);
+      // The facets stay window-wide whatever is hidden.
+      expect((await both({ excludeLabels: ["noise"] })).labelsAvailable).toEqual(["key-evidence", "noise"]);
+    });
+
     it("an id in the tag map uses the map's labels instead of the sidecar; every other id keeps the sidecar", async () => {
       await seed();
       const r = await both({ labels: ["key-evidence"] }, labelMap);
@@ -677,6 +699,8 @@ describe("SuperTimelineStore", () => {
         { labels: ["from-tags"], from: "2026-08-01T00:00:00Z" },
         { from: "2026-06-02T12:00:00Z", to: "2026-06-30T00:00:00Z" },
         { taggedOnly: true, offset: 1, limit: 1 },
+        { excludeLabels: ["from-tags"] },
+        { excludeLabels: ["key-evidence", "noise"] },
       ];
       for (const q of queries) {
         const label = JSON.stringify(q);

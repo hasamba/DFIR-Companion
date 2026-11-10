@@ -272,6 +272,65 @@ describe("the Sigma rules settings tab", () => {
       expect(empty.hidden).toBe(false);
     });
 
+    it("shows which rule set each rule comes from and filters by it (#2499)", () => {
+      const { mod, nodes } = load(false);
+      const origin = { ...makeNode("select"), value: "" };
+      Object.assign(nodes, { sigmaRulesOrigin: origin });
+      nodes.sigmaRulesBody.querySelectorAll = () => nodes.sigmaRulesBody.children;
+      mod.sigmaRenderRules([
+        { id: "a", title: "Bucket deleted", source: "aws-cloudtrail", outcome: "loaded" },
+        { id: "b", title: "GetSecretValue", source: "aws-cloudtrail", outcome: "loaded", origin: "Suzaku" },
+      ]);
+      const rows = nodes.sigmaRulesBody.children;
+      expect(texts(rows[0])).toContain("SigmaHQ");
+      expect(texts(rows[1])).toContain("Suzaku");
+      origin.value = "Suzaku";
+      (mod as unknown as { sigmaFilterRules: () => void }).sigmaFilterRules();
+      expect(rows.map((r) => r.hidden)).toEqual([true, false]);
+      origin.value = "SigmaHQ";
+      (mod as unknown as { sigmaFilterRules: () => void }).sigmaFilterRules();
+      expect(rows.map((r) => r.hidden)).toEqual([false, true]);
+    });
+
+    it("lays the tab out as shared switches, then SigmaHQ, a divider, then Suzaku with its own buttons", async () => {
+      const html = await readFile(DASHBOARD, "utf8");
+      const pane = html.slice(html.indexOf('id="stab-sigma"'), html.indexOf('id="stab-updates"'));
+      const at = (s: string) => pane.indexOf(s);
+      const order = [
+        'id="env-DFIR_SIGMA_RULES"',
+        ">SigmaHQ rules<",
+        'id="env-DFIR_SIGMA_MIN_LEVEL"',
+        'id="sigmaCheckBtn"',
+        'id="sigmaRollbackBtn"',
+        ">Suzaku rules<",
+        'id="env-DFIR_SIGMA_SUZAKU_RULES"',
+        'id="suzakuCheckBtn"',
+        'id="suzakuRollbackBtn"',
+        "Re-grade this case",
+      ].map(at);
+      expect(order.every((i) => i >= 0)).toBe(true);
+      expect([...order].sort((a, b) => a - b)).toEqual(order);
+      expect(pane.slice(at('id="sigmaRollbackBtn"'), at(">Suzaku rules<"))).toContain(
+        '<hr class="settings-hr" />',
+      );
+      expect(pane).not.toMatch(/\(#\d+\)<\/label>/); // no issue numbers on screen
+    });
+
+    it("never says just 'up to date': names the release, its date and unreleased changes (#2518)", () => {
+      const { mod } = load(false);
+      const m = mod as unknown as { sigmaCheckSentence: (c: unknown) => string };
+      const base = { latest: "r2026-07-01", publishedAt: "2026-07-09T14:51:34Z", installed: "r2026-07-01" };
+      expect(m.sigmaCheckSentence({ ...base, main: { gradedChanges: 10, date: "2026-11-07" } })).toBe(
+        'The newest SigmaHQ release is r2026-07-01 (published 2026-07-09); you have r2026-07-01. SigmaHQ\'s main branch has 10 newer change(s) to the rules this companion grades (newest 2026-11-07). They are unreleased; "Install SigmaHQ main-branch rules…" reviews them.',
+      );
+      expect(m.sigmaCheckSentence({ ...base, main: { gradedChanges: 0 } })).toContain(
+        "No newer changes on SigmaHQ's main branch",
+      );
+      expect(m.sigmaCheckSentence({ ...base, main: { error: "GitHub returned 403" } })).toContain(
+        "Could not check SigmaHQ's main branch: GitHub returned 403",
+      );
+    });
+
     it("lists each exclusion as text, never as HTML (#2218)", () => {
       const { mod, nodes } = load(false);
       mod.sigmaRenderRules(RULES);

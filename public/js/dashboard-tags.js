@@ -157,6 +157,17 @@
     return taggerTagsOf(type, id).concat(tagsByTarget.get(targetKey(type, id)) || []);
   }
 
+  // The hover text of a tag pill. A collector-footprint tag (#2487) says what its author encodes —
+  // the collection whose identity and run window the row matches — instead of the raw author string.
+  const COLLECTOR_NOTE_PREFIX = "tagger:dfir-collector:";
+  function tagPillTitle(t) {
+    const author = String((t && t.author) || "");
+    if (author.startsWith(COLLECTOR_NOTE_PREFIX)) {
+      return `Matches the identity and run window of DFIR Companion collection ${author.slice(COLLECTOR_NOTE_PREFIX.length)} — the collector's own API call (grade unchanged)`;
+    }
+    return `tag by ${author}`;
+  }
+
   function tagPills(type, id) {
     // One pill per label: a tag on an event correlation folded into this one (#1715) may repeat a label.
     const list = tagsOf(type, id).filter(
@@ -167,7 +178,20 @@
     return list
       .map((t) => {
         const c = tagColor(t.label);
-        return `<span class="tag-pill" data-safe-style="color:${c};border-color:${c}" title="tag by ${escAttr(t.author)}">${esc(t.label)}</span>`;
+        return `<span class="tag-pill" data-safe-style="color:${c};border-color:${c}" title="${escAttr(tagPillTitle(t))}">${esc(t.label)}</span>`;
+      })
+      .join("");
+  }
+  // A super-timeline row's pills (js/dashboard-super-timeline.js): each one filters the super-timeline
+  // to that single tag (the st-tag-filter click sets the Tags box and reloads). A collector-footprint
+  // tag (#2487) also says which collection's identity and run window the row matches.
+  function filterTagPills(type, id) {
+    return tagsOf(type, id)
+      .filter((t) => !(t.label === "starred" && t.targetType === "event"))
+      .map((t) => {
+        const c = tagColor(t.label);
+        const note = String(t.author || "").startsWith(COLLECTOR_NOTE_PREFIX) ? `${tagPillTitle(t)}. ` : "";
+        return `<span class="tag-pill st-tag-filter" data-label="${escAttr(t.label)}" data-safe-style="color:${c};border-color:${c};cursor:pointer" title="${escAttr(note)}Filter the super-timeline to this tag">${esc(t.label)}</span>`;
       })
       .join("");
   }
@@ -442,4 +466,6 @@
   window.setBulkTagTarget = setBulkTagTarget;
   window.eachTagList = eachTagList;
   window.tagsForTarget = tagsForTarget;
+  window.tagPillTitle = tagPillTitle;
+  window.filterTagPills = filterTagPills;
 })();

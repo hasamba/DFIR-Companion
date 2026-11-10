@@ -50,6 +50,10 @@ function drSigmaLine(s) {
   if (s.enabled === false) return { label: "Sigma rules", text: `${what} — grading switched off`, action: null };
   if (lc && lc.error) return { label: "Sigma rules", text: `${what} — the last check failed`, action: "sigma", button: "Check again" };
   if (lc && lc.updateAvailable) return { label: "Sigma rules", text: `${what} — ${lc.latest} available`, action: "sigma", button: "Review update…" };
+  // #2518: the newest release, but SigmaHQ's main branch has unreleased changes to graded rules.
+  if (lc && lc.main && lc.main.stale) return { label: "Sigma rules", text: `${what} — the rules changed since the last check`, action: "sigma", button: "Check again" };
+  const unreleased = lc && lc.main && lc.main.gradedChanges;
+  if (unreleased) return { label: "Sigma rules", text: `${what} — newest release; ${unreleased} unreleased change(s) on SigmaHQ's main branch`, action: "sigma", button: "Review…" };
   if (lc) return { label: "Sigma rules", text: `${what} — current`, action: null };
   return { label: "Sigma rules", text: `${what} — not checked`, action: "sigma", button: "Check for updates" };
 }

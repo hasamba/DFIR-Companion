@@ -229,7 +229,13 @@ export async function importFromHandle(
               options.onImportMeta?.(caseId);
             }
             logImportActivity(options, caseId, `${kind} (${storedName})`, { timeline: tDiff, iocs: iDiff });
-            if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
+            if (
+              tDiff.added.length ||
+              tDiff.removed.length ||
+              iDiff.added.length ||
+              iDiff.removed.length ||
+              settled.principalNamesChanged // #2490: names an Undo must be able to take back
+            ) {
               await pushImportCheckpoint(caseId, baseline, `${kind} (${storedName})`);
             }
           } catch {

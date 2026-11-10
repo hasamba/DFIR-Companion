@@ -1,6 +1,7 @@
 // companion/src/analysis/updateCheckRun.ts
 import type { UpdateCheckStore } from "./updateCheckStore.js";
 import { githubReleasesUrl, pickLatestAppRelease, type UpdateResult } from "./updateCheck.js";
+import { githubErrorMessage } from "./githubHttpError.js";
 
 export type FetchLike = typeof fetch;
 
@@ -22,7 +23,7 @@ export async function performUpdateCheck(opts: {
       headers: { Accept: "application/vnd.github+json", "User-Agent": "dfir-companion" },
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!resp.ok) throw new Error(`GitHub returned ${resp.status}`);
+    if (!resp.ok) throw new Error(githubErrorMessage(resp));
     const parsed = pickLatestAppRelease(await resp.json());
     if (!parsed) throw new Error("no app release (v*) found in the release list");
     const result: UpdateResult = {

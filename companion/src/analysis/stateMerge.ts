@@ -30,6 +30,7 @@ import { sanitizeUncertainties } from "./uncertainty.js";
 import { mergeCanonicalEvents } from "./canonicalMerge.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "./labIntel.js";
 import { mergeHostRenameRecords } from "./hostRenameRecord.js";
+import { mergePrincipalNames } from "./principalNames.js";
 import { byEventTime } from "./forensicSort.js";
 import { correlateEventsTracked } from "./correlate.js";
 import { clampOutlierYears } from "./timeYearClamp.js";
@@ -692,6 +693,7 @@ export function assembleMerge(
   const labIntel = upsertLabIntel(state.labIntel, delta.labIntel ?? []);
   // The case's rename ledger and collector identities only grow (#1495): keyed unions, like labIntel.
   const hostRenames = mergeHostRenameRecords(state.hostRenames, delta.hostRenames);
+  const principalNames = mergePrincipalNames(state.principalNames, delta.principalNames); // #2490, same rule
   const collectorHostnames = uniqCaseless([
     ...(state.collectorHostnames ?? []),
     ...(delta.collectorHostnames ?? []),
@@ -776,6 +778,7 @@ export function assembleMerge(
     // round-trip unchanged.
     ...(hostRenames.length ? { hostRenames } : {}),
     ...(collectorHostnames.length ? { collectorHostnames } : {}),
+    ...(principalNames.length ? { principalNames } : {}),
     // Analyst decisions on the intel retirement review (#1024): kept across every merge, keyed by
     // finding id, newest wins — a field this literal does not name is gone after the first merge.
     intelRetirementDecisions: state.intelRetirementDecisions ?? [],

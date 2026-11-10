@@ -1893,9 +1893,11 @@ an account**. Their source is `Coverage`, and a re-merge replaces them instead o
 - **Where they sit.** Each one sits at the time of the **earliest** event it describes: the earliest
   cloud audit record, the earliest cloud object record, or the earliest browsing record. It no longer
   depends on the order in which the files were imported.
-- **All four are Medium.** A case whose forensic gate is set to Medium removes every Low row from
-  the forensic timeline, so a Low note would never reach AI synthesis there. At Medium, AI synthesis
-  still learns that "nothing found" here does not mean "nothing happened".
+- **All four are Medium, and the forensic gate never removes them.** They stay on the forensic
+  timeline whatever gate the case uses, even High or Critical, the same as a row you promoted or
+  typed in. So AI synthesis can still learn that "nothing found" here does not mean "nothing
+  happened". A case that lost a note to a High gate before this change gets it back on the next
+  import that holds the evidence the note describes.
 
 ### Sigma rules grade CloudTrail, Entra and GCP imports
 
@@ -2858,6 +2860,18 @@ event (sometimes an *Accepted* one too) for one management call. These are count
 entry, so a burst of calls shows as one counted row and not as two or three rows that look the
 same. A *Failed* call is always its own entry, graded Medium as before.
 
+**Azure Activity: caller names.** The Activity Log names a service principal (an application) by
+its id, a long GUID. When an Entra sign-in export or an Entra directory-audit export in the same
+case names that id, the Azure row shows the name in parentheses after the id:
+`… by 3f2a…6666 (backup-automation) …`. Names are learned from every record of those uploads,
+including sign-ins graded Info that never reach the forensic timeline, and from an upload of records
+the case already holds. The id stays on the row, grouping still uses the id, and the super-timeline
+copy keeps the id only. The name is shown only when the case knows exactly one name for the id: a
+second, different name for the same id removes it, and so does Undo of the import that taught it.
+Undo puts back the case as it was before an import, so undoing a *later* import also forgets a name
+learned after it. Only the Graph shape of a directory audit teaches names (not the M365 Unified
+Audit Log shape), and a name is shown at most 64 characters long, without brackets or parentheses.
+
 **Drop folder.** The drop folder reads a file up to 200 MB whole (`DFIR_DROP_MAX_BYTES`). A cloud
 export or a Plaso super-timeline over that size is streamed instead of refused, and a `.gz` cloud
 export is decompressed while it is read, at any size. The streamed import's note (which budgets were
@@ -2882,6 +2896,14 @@ disk in batches of 5,000 records and never holds it whole, so memory does not gr
   become one counted event. Past the second, the rest are counted per rule and source
   address — a password spray against a million accounts becomes one counted event per attacking
   address, not a million events.
+- **Failed read-only CloudTrail calls: 10 per principal, then one counted event.** A scanner or
+  CSPM role that is denied on dozens of `Get`/`List`/`Describe` actions no longer fills the forensic
+  timeline. The first 10 distinct failed reads by one principal (across all actions) are kept one by
+  one; a repeat of one of them merges into its row. Past that, the principal's other failed reads
+  become one Medium event: *"`<principal>`: N failed read-only call(s) across M action(s), first →
+  last"*, with each action and its count (the 20 most called are named). Each folded call is still
+  written to the super-timeline, so you can search for it, within the import's super-timeline room.
+  A failed **write** (Put, Create, Delete, Attach…) is never folded this way, and no grade changes.
 - **Low rows: counted** in the forensic timeline, and kept one by one in the super-timeline.
 - **Info rows: kept one by one in the super-timeline**, up to 50,000 per import and never more than
   the room the case's super-timeline has left (`DFIR_SUPERTIMELINE_MAX`, 100,000 rows by default), so

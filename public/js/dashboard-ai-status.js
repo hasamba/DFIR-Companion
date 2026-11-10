@@ -9,6 +9,8 @@
     aiStateSeq++;
     // Any newer state ends the Presidio offer; only an error can bring it back (#1945).
     hidePresidioActions();
+    // Same for the skip offer (#2498): the next ai-state read brings it back if a hold remains.
+    hideHeldSkip();
     if (evt.status === "analyzing") {
       // Drive the progress bar from server-side "kind import — N/M" updates (40 → 95%).
       const m =
@@ -103,6 +105,87 @@
       // #1945: when the analyzer is down, offer the two ways on. Asks the server's health probe,
       // never the error text, so a wording change cannot hide the buttons or show them wrongly.
       offerPresidioActions(activeCaseId);
+      // #2498: a failed screenshot window may have opened a hold. Ask the case, never the text.
+      syncHeldSkip(activeCaseId);
+    }
+  }
+
+  // ── Screenshots the AI could not analyze: Skip them (#2498) ──────────────────────────────────
+  //
+  // The only exit used to be a retry (AI off and on). Skipping is an evidentiary choice: the
+  // screenshots stay saved as evidence, the AI never reads them, and the route records the choice in
+  // the case activity log. The button carries the hold's token, so a hold that changed after it was
+  // shown is refused (409) rather than skipped blind.
+  let heldSkipOffer = null; // { caseId, token } — what the visible button would skip
+  function hideHeldSkip() {
+    heldSkipOffer = null;
+    const b = document.getElementById("heldSkipBtn");
+    if (b) b.style.display = "none";
+  }
+  function showHeldSkip(caseId, hold) {
+    const b = document.getElementById("heldSkipBtn");
+    if (!b) return;
+    if (!hold || !hold.count || !hold.token) return hideHeldSkip();
+    heldSkipOffer = { caseId, token: hold.token };
+    const why = hold.lastError
+      ? ` Last error: ${hold.lastError}. New screenshots may fail the same way.`
+      : "";
+    b.setAttribute(
+      "data-tip",
+      `Stop trying to analyze the ${hold.count} screenshot(s) the AI could not analyze. They stay ` +
+        "saved as evidence, but the AI never reads them. The case activity log records this " +
+        "choice." +
+        why,
+    );
+    b.onclick = () => skipHeldScreenshots(caseId);
+    b.style.display = "";
+  }
+  // Toggles the button only — the pushed status already painted the pill. Any newer push or
+  // correction bumps aiStateSeq, and then this answer is stale and dropped.
+  async function syncHeldSkip(caseId) {
+    if (!caseId || caseId !== activeCaseId) return;
+    const seq = aiStateSeq;
+    try {
+      const s = await getJson(`/cases/${encodeURIComponent(caseId)}/ai-state`);
+      if (seq !== aiStateSeq || caseId !== activeCaseId) return;
+      showHeldSkip(caseId, s.screenshotHold);
+    } catch {
+      // An older server without the field, or a failed read: leave the button hidden.
+    }
+  }
+  async function skipHeldScreenshots(caseId) {
+    const offer = heldSkipOffer;
+    // Bound to the case it was shown for (#2442): never act on a case the analyst left.
+    if (!offer || offer.caseId !== caseId || caseId !== activeCaseId) return hideHeldSkip();
+    const status = document.getElementById("status");
+    try {
+      const r = await fetch(
+        `/cases/${encodeURIComponent(caseId)}/ai-state/skip-held-screenshots`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ token: offer.token }),
+        },
+      );
+      const body = await r.json().catch(() => ({}));
+      if (caseId !== activeCaseId) return;
+      if (r.status === 409) {
+        status.textContent =
+          "Nothing skipped: the screenshots waiting for analysis changed. Check the AI status, then press Skip again.";
+        hideHeldSkip();
+        refreshAiState(caseId);
+        return;
+      }
+      if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
+      aiStateSeq++; // an ai-state read still in flight predates the skip
+      hideHeldSkip();
+      status.textContent =
+        `skipped AI analysis of ${body.skipped} screenshot(s) — kept as evidence` +
+        (body.remaining ? `; ${body.remaining} still queued behind a newer screenshot` : "") +
+        (body.warning ? `. The activity log entry could not be written: ${body.warning}` : "");
+      refreshAiState(caseId);
+    } catch (e) {
+      if (caseId === activeCaseId) status.textContent = "Could not skip the screenshots: " + e.message;
     }
   }
 
@@ -261,6 +344,7 @@
     // A hold rides ALONGSIDE the state: a running import is real work even while synthesis is held,
     // so the pill names the work and appends the hold rather than hiding either one.
     const heldNote = s.holds && s.holds.length ? " (analysis on hold)" : "";
+    showHeldSkip(caseId, s.screenshotHold); // #2498
     if (s.state === "off") setAi("off", s.detail || "off");
     else if (s.state === "blocked")
       setAi("blocked", "on hold — " + (s.detail || "waiting on your decision"));

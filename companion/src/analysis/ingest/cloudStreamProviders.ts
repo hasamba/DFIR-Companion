@@ -15,6 +15,7 @@ import type { CloudRecordIdentity } from "../cloudRecordIdentity.js";
 import { cloudActivityRecordProvider, cloudRecordIdentity } from "../cloudRecordIdentity.js";
 import type { RecordGate } from "../cloudRecordGate.js";
 import type { SigmaGradingSnapshot } from "../sigmaImportGrade.js";
+import type { PrincipalNameRecord } from "../principalNames.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { RowFacts } from "../cloudOutputBudget.js";
 import type { StoredAuthObservation } from "../authObservationStore.js";
@@ -44,6 +45,8 @@ export interface BatchMapping {
   format: string;
   sigmaRows: number;
   signInObservations: Array<Omit<StoredAuthObservation, "importBatch">>;
+  /** Id → name pairs the batch's records state (#2490); M365 only. */
+  principalNames?: PrincipalNameRecord[];
 }
 
 export interface BatchContext {
@@ -90,6 +93,8 @@ const pick = (rec: Row, keys: string[]): string => {
   }
   return "";
 };
+/** CloudTrail's readOnly flag: a JSON boolean, or "true" in a console CSV / stringified export. */
+const isReadOnly = (v: unknown): boolean => v === true || /^true$/i.test(str(v).trim());
 const firstIp = (raw: string): string =>
   /(\d{1,3}(?:\.\d{1,3}){3})/.exec(raw)?.[1] ?? raw.replace(/^\[|\]:\d+$/g, "");
 
@@ -135,7 +140,7 @@ const m365: StreamProvider = {
       debug: ctx.debug,
       rowsOnly: true,
     });
-    return { ...asMapping(r), signInObservations: r.signInObservations };
+    return { ...asMapping(r), signInObservations: r.signInObservations, principalNames: r.principalNames };
   },
   facts: (rec) => ({
     rule:
@@ -198,6 +203,8 @@ const aws: StreamProvider = {
       "userIdentity.accessKeyId",
     ]),
     ip: pick(rec, ["sourceIPAddress"]),
+    // A failed read (#2481): the console CSV adapter maps "Read-only" / "Error code" to these fields.
+    failedRead: isReadOnly(getCI(rec, "readOnly")) && pick(rec, ["errorCode"]) !== "",
   }),
   // The lineage and compute summaries read the raw window only (#2362): no re-mapping.
   summaries: (window) => cloudTrailSummaries(window),

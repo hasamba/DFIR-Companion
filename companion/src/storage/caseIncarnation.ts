@@ -18,6 +18,7 @@
  * event callback it sticks to that callback's resource and leaks into every later tick.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
+import { refuseWriteInReadOnlyScope } from "./readOnlyScope.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
@@ -245,6 +246,7 @@ export function caseWriteRefusalFor(path: string): CaseWriteRefusal | null {
  */
 export function beginCaseWrite(path: string): () => void {
   const target = resolve(path);
+  refuseWriteInReadOnlyScope(target); // an AI preview changes nothing (#2491, readOnlyScope.ts)
   const refusal = refusalFor(target);
   if (refusal) {
     const err = new CaseWriteRefusedError(target, refusal);

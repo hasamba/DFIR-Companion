@@ -231,6 +231,15 @@ async function baseCheckpoint(
   throw new Error(`collection ${header.collectionId}: checkpoint unreadable and manifest header unusable`);
 }
 
+/** The identity a resume runs as, for its manifest line (#2487); absent when the session cannot say. */
+async function resumeCaller(deps: CollectRunDeps): Promise<string | undefined> {
+  try {
+    return (await deps.session.identity(deps.signal)).caller || undefined;
+  } catch {
+    return undefined; // the network stage reports a dead session itself
+  }
+}
+
 /** Start or resume: replay, fetch what is unfinished, import what is not yet in the case. */
 export async function runCollection(
   deps: CollectRunDeps,
@@ -243,8 +252,12 @@ export async function runCollection(
   deps.session.applyFilters?.(replay.header.filters ?? {});
   let cp = await baseCheckpoint(deps, paths, replay.header, dir);
   let derived = replay.subWindows;
+  // #2487: where this run's network stage starts — the span its own API calls are matched in.
+  let segmentStart = replay.header.startedAt;
   if (opts.resume) {
-    await appendManifest(deps.fs, paths, { type: "resume", at: deps.now() });
+    segmentStart = deps.now();
+    const caller = await resumeCaller(deps);
+    await appendManifest(deps.fs, paths, { type: "resume", at: segmentStart, ...(caller ? { caller } : {}) });
     // #2313: a resume retries every window with an item the cloud refused. The restart line is
     // written first, so a crash after it replays to the same restarted window.
     for (const id of windowsToRetry(derived)) {
@@ -304,6 +317,7 @@ export async function runCollection(
   await save({
     subWindows: network.subWindows,
     stage: "import",
+    networkSpans: [...(cp.networkSpans ?? []), { from: segmentStart, to: deps.now() }],
     ...(network.stopReason ? { stopReason: network.stopReason } : {}),
   });
   const kinds = new Map(deps.sources.map((s) => [s.id, s.streamKind]));

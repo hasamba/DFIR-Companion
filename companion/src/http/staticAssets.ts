@@ -165,6 +165,8 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-redacted-export.js": "application/javascript; charset=utf-8",
   // Explain Event (#141) — the plain-language explanation of one timeline event.
   "/js/dashboard-explain-event.js": "application/javascript; charset=utf-8",
+  // Preview what the AI will see (#2491) — the first request an AI action would send.
+  "/js/dashboard-ai-preview.js": "application/javascript; charset=utf-8",
   // Timeline Gaps (#83) — the stretches of time the evidence says nothing about.
   "/js/dashboard-timeline-gaps.js": "application/javascript; charset=utf-8",
   // Unified export menu — one button offering every export the case supports.

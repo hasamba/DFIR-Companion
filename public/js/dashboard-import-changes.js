@@ -759,6 +759,7 @@
   window.propagateFalsePositive = propagateFalsePositive;
   window.paintIocImportMeta = paintIocImportMeta;
   window.doAsk = doAsk;
+  window.askHistoryFor = askHistoryFor; // the AI preview sends the same thread (#2491)
   window.isNewEvent = isNewEvent;
   window.isNewIoc = isNewIoc;
 })();

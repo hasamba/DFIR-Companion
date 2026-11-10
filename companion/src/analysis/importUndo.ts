@@ -7,6 +7,8 @@ import { StateLock } from "./stateLock.js";
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { applyUndoDelta, computeUndoDelta, isStateDelta, type StateDelta } from "./importUndoDelta.js";
 import { carryHostRenames, renameLedgerChanged, type RenameLedger } from "./hostRenameCarry.js";
+import { principalLedgerChanged } from "./principalNames.js";
+import { nameCallers } from "./principalNameCarry.js";
 
 // Per-case UNDO / REDO of imports (#76). A single import can flood the dashboard — it grows the
 // forensic timeline + IOCs, and the synthesis that follows rewrites the findings / MITRE / attacker
@@ -564,9 +566,14 @@ async function rollBackHalf(caseId: string, what: string, undo: () => Promise<un
 // The forensic half of #2221: a step that changes the ledger re-homes every row the restore keeps
 // (one another writer added after the import included) against the ledger it restores, so the
 // forensic rows and their super-timeline copies follow the same ledger.
-function followLedger(before: RenameLedger, restored: InvestigationState): InvestigationState {
-  if (!renameLedgerChanged(before, restored)) return restored;
-  return carryHostRenames(restored, { evenWithoutLedger: true }).state;
+// #2490: the same for caller names — a step that changes the principal-name ledger recomputes every
+// row's name against the ledger it restores (an empty one included), so Undo of the import that
+// taught a name takes it off rows the delta does not restore too (one added after the import).
+function followLedger(before: InvestigationState, restored: InvestigationState): InvestigationState {
+  const rehomed = renameLedgerChanged(before, restored)
+    ? carryHostRenames(restored, { evenWithoutLedger: true }).state
+    : restored;
+  return principalLedgerChanged(before, rehomed) ? nameCallers(rehomed).state : rehomed;
 }
 
 // Non-fatal, like settle's own super re-home: the restore is already committed. A throw may follow a

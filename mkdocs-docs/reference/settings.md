@@ -570,6 +570,14 @@ The tab also shows:
 - **Check for updates** — asks GitHub for the latest SigmaHQ release. When it is newer, the release is
   downloaded and checked against the SHA-256 GitHub publishes, then shown as rules added, changed and
   removed for the log sources the Companion grades. **Nothing is installed until you click Install.**
+- **SigmaHQ releases vs its main branch** — SigmaHQ publishes a release every one to three months, while
+  new rules and fixes land on its main branch almost daily. The check names the newest release and its
+  date, and says how many newer main-branch changes touch the rules the Companion grades. **Install
+  SigmaHQ main-branch rules…** downloads the newest main-branch version as an opt-in: every rule file
+  must match GitHub's own fingerprint for it at that version, the usual preview shows what changes
+  (including rules that would be refused because their fields do not match the importers), and nothing
+  is installed until you click Install. The install is named `main-<date>-<commit>-unreleased` in the
+  status, on every match and in reports; **Roll back** returns to the release.
 - **Install from file** — the same review for a release zip you downloaded yourself (air-gapped labs).
   A file install is marked "not checked against GitHub" and records the file's SHA-256. The zip
   must be 32 MB or smaller; a SigmaHQ release is a few MB.

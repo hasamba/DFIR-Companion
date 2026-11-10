@@ -240,7 +240,7 @@ export function commitDedicatedImport(
           });
           // #76: snapshot the pre-import state for undo — only when the import changed something,
           // so a no-op re-import does not pile up dead levels.
-          if (changed) {
+          if (changed || settled.principalNamesChanged) {
             await pushImportCheckpoint(caseId, baseline, label);
           }
         } catch {

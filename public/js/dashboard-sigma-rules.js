@@ -79,16 +79,24 @@ function sigmaStatusBoxChanged(event) {
   input.value = picked.join(",");
 }
 
+function sigmaRenderCounts(id, counts) {
+  const box = document.getElementById(id);
+  if (!box) return;
+  box.textContent = "";
+  for (const [src, row] of Object.entries(counts || {})) {
+    if (src === "other") continue;
+    const parts = Object.entries(row).map(([k, n]) => `${n} ${k === "status" ? "filtered by status" : k}`);
+    box.appendChild(sigmaEl("div", `${src}: ${parts.join(", ")}`));
+  }
+}
+
 function sigmaRenderStatus(s) {
   document.getElementById("sigmaActive").textContent = sigmaReleaseLine(s.active);
   document.getElementById("sigmaPrevious").textContent = s.previous ? sigmaReleaseLine(s.previous) : "none";
-  const counts = document.getElementById("sigmaCounts");
-  counts.textContent = "";
-  for (const [src, row] of Object.entries(s.counts || {})) {
-    if (src === "other") continue;
-    const parts = Object.entries(row).map(([k, n]) => `${n} ${k === "status" ? "filtered by status" : k}`);
-    counts.appendChild(sigmaEl("div", `${src}: ${parts.join(", ")}`));
-  }
+  // Each rule set's counts under its own heading (servers before #2508 send only the combined counts).
+  const byOrigin = s.countsByOrigin || { SigmaHQ: s.counts || {} };
+  sigmaRenderCounts("sigmaCounts", byOrigin.SigmaHQ);
+  sigmaRenderCounts("suzakuCounts", byOrigin.Suzaku);
   const notes = [];
   if (!s.enabled) notes.push("Sigma grading is switched off (DFIR_SIGMA_RULES=off).");
   for (const p of s.problems || []) notes.push(p);
@@ -105,7 +113,7 @@ function sigmaRenderStatus(s) {
   box.textContent = "";
   for (const n of notes) box.appendChild(sigmaEl("div", n));
   const demo = !!s.demoMode;
-  ["sigmaCheckBtn", "sigmaFileBtn", "sigmaRollbackBtn"].forEach((id) => {
+  ["sigmaCheckBtn", "sigmaFileBtn", "sigmaRollbackBtn", "sigmaMainBtn"].forEach((id) => {
     const b = document.getElementById(id);
     if (b) b.disabled = demo || (id === "sigmaRollbackBtn" && !s.previous);
   });
@@ -140,15 +148,18 @@ function sigmaRenderRules(list) {
   for (const r of shown) {
     const tr = document.createElement("tr");
     tr.dataset.state = r.outcome;
+    const ruleSet = r.origin || "SigmaHQ"; // #2499: which rule set the rule comes from
+    tr.dataset.origin = ruleSet;
     const source = SIGMA_SOURCE_LABELS[r.source] || r.source;
-    // Search matches what the row shows (the source name) and the id the server log uses.
-    tr.dataset.search = `${r.title} ${source} ${r.source} ${(r.reasons || []).join(" ")}`.toLowerCase();
+    // Search matches what the row shows (rule set, source name) and the id the server log uses.
+    tr.dataset.search = `${r.title} ${ruleSet} ${source} ${r.source} ${(r.reasons || []).join(" ")}`.toLowerCase();
     const rule = sigmaEl("td", null, "sigma-rule-cell");
     rule.appendChild(sigmaEl("div", r.title, "sigma-rule-title"));
     const why = (r.reasons || []).join("; ");
     if (why) rule.appendChild(sigmaEl("div", why, "sigma-rule-why"));
     sigmaAppendExclusions(rule, r);
     tr.appendChild(rule);
+    tr.appendChild(sigmaEl("td", ruleSet, "sigma-rule-origin"));
     tr.appendChild(sigmaEl("td", source, "sigma-rule-source"));
     const state = sigmaEl("td");
     const label = r.outcome === "disabled" ? `Disabled (${r.disabledBy || "analyst"})` : SIGMA_STATE_LABELS[r.outcome] || r.outcome;
@@ -192,10 +203,14 @@ function sigmaFilterRules() {
   if (!body || !body.querySelectorAll) return;
   const text = (document.getElementById("sigmaRulesFilter")?.value || "").trim().toLowerCase();
   const state = document.getElementById("sigmaRulesState")?.value || "";
+  const origin = document.getElementById("sigmaRulesOrigin")?.value || "";
   let visible = 0;
   const rows = body.querySelectorAll("tr");
   for (const tr of rows) {
-    const show = (!state || tr.dataset.state === state) && (!text || tr.dataset.search.includes(text));
+    const show =
+      (!state || tr.dataset.state === state) &&
+      (!origin || tr.dataset.origin === origin) &&
+      (!text || tr.dataset.search.includes(text));
     tr.hidden = !show;
     if (show) visible++;
   }
@@ -318,11 +333,37 @@ function sigmaRenderMeasure(r) {
   box.appendChild(out);
 }
 
+// #2518: what the check found on SigmaHQ's main branch, in plain words. PURE.
+function sigmaMainSentence(main) {
+  if (!main) return "";
+  if (main.error) return ` Could not check SigmaHQ's main branch: ${main.error}`;
+  if (main.stale) return " The installed rules changed since SigmaHQ's main branch was checked — check again.";
+  if (!main.gradedChanges) return " No newer changes on SigmaHQ's main branch touch the rules this companion grades.";
+  return ` SigmaHQ's main branch has ${main.gradedChanges} newer change(s) to the rules this companion grades (newest ${main.date}). They are unreleased; "Install SigmaHQ main-branch rules…" reviews them.`;
+}
+
+// #2518: never just "up to date" — name the release, its date, and any unreleased changes. PURE.
+function sigmaCheckSentence(check) {
+  const when = check.publishedAt ? ` (published ${String(check.publishedAt).slice(0, 10)})` : "";
+  return `The newest SigmaHQ release is ${check.latest}${when}; you have ${check.installed}.${sigmaMainSentence(check.main)}`;
+}
+
+async function sigmaPreviewMain() {
+  sigmaMsg("Downloading SigmaHQ's main branch and checking every file against GitHub…");
+  try {
+    const r = await sigmaFetch("/sigma/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "main" }) });
+    sigmaMsg(`Review SigmaHQ main-branch rules ${r.preview.release.release} below. They are unreleased; nothing is installed until you click Install.`);
+    sigmaRenderPreview(r.preview);
+  } catch (e) {
+    sigmaMsg(e.message, true);
+  }
+}
+
 async function sigmaCheck() {
   sigmaMsg("Checking SigmaHQ for a newer release…");
   try {
     const r = await sigmaFetch("/sigma/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-    if (!r.check.updateAvailable) sigmaMsg(`Up to date: the latest SigmaHQ release is ${r.check.latest}.`);
+    if (!r.check.updateAvailable) sigmaMsg(sigmaCheckSentence(r.check));
     else {
       sigmaMsg(`Release ${r.check.latest} is available. Review the changes below; nothing is installed until you click Install.`);
       sigmaRenderPreview(r.preview);
@@ -637,11 +678,13 @@ function initSigmaRules() {
   document.getElementById("sigmaCheckBtn")?.addEventListener("click", sigmaCheck);
   document.getElementById("sigmaFileBtn")?.addEventListener("click", sigmaInstallFile);
   document.getElementById("sigmaRollbackBtn")?.addEventListener("click", sigmaRollback);
+  document.getElementById("sigmaMainBtn")?.addEventListener("click", sigmaPreviewMain);
   document.getElementById("suzakuCheckBtn")?.addEventListener("click", suzakuCheck);
   document.getElementById("suzakuRollbackBtn")?.addEventListener("click", suzakuRollback);
   document.getElementById("sigmaRegradeBtn")?.addEventListener("click", sigmaRegradePreview);
   document.getElementById("sigmaRulesFilter")?.addEventListener("input", sigmaFilterRules);
   document.getElementById("sigmaRulesState")?.addEventListener("change", sigmaFilterRules);
+  document.getElementById("sigmaRulesOrigin")?.addEventListener("change", sigmaFilterRules);
   document
     .querySelectorAll("[data-sigma-status], [data-sigma-suzaku-status]")
     .forEach((box) => box.addEventListener("change", sigmaStatusBoxChanged));

@@ -11,6 +11,7 @@ import {
   INTERRUPTED_COLLECT_MESSAGE,
 } from "../../src/composition/veloHuntStatusTimers.js";
 import { veloServerClients } from "../helpers/serverClientsStub.js";
+import { pollFor, pollBudget, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 import type { AppOptions } from "../../src/composition/appOptions.js";
 
 // #2403: a background poll waits on the network, then used to save the whole copy it read before the
@@ -227,40 +228,64 @@ describe("hunts left mid-collect by a dead process (#2403)", () => {
 });
 
 describe("overlapping hunt status polls (#2403)", () => {
-  it("a stale poll does not cancel the re-arm an overlapping poll just made", async () => {
-    const huntStore = new VeloHuntStore(store);
-    await huntStore.upsert("c1", JOB);
-    const gates = [gate<unknown>(), gate<unknown>()];
-    let call = 0;
-    const { t } = huntTimers(huntStore, async () => {
-      const mine = call++;
-      if (mine >= 2) return { state: "RUNNING" };
-      const answer = await gates[mine].promise;
-      if (mine === 0) throw new Error("ECONNREFUSED"); // A: running -> unreachable
-      return answer;
-    });
-    const realSetTimeout = globalThis.setTimeout;
-    const yieldReal = () => new Promise((r) => realSetTimeout(r, 5));
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    try {
-      t.scheduleVeloHuntStatusPoll("c1", JOB.huntId);
-      const a = t.pollVeloHuntStatus("c1", JOB.huntId); // the scheduled tick
-      const b = t.pollVeloHuntStatus("c1", JOB.huntId); // "Poll now", also started from "running"
-      for (let i = 0; i < 50 && call < 2; i++) await yieldReal();
-      gates[0].release(undefined);
-      await a; // recorded "unreachable" and re-armed
-      gates[1].release({ state: "RUNNING" }); // B is stale now: the row is no longer "running"
-      await b;
-      expect((await huntStore.get("c1", JOB.huntId))?.status).toBe("unreachable");
-      // The chain must still be alive: the next tick fires, polls, and re-arms again.
-      await vi.advanceTimersByTimeAsync(301_000);
-      for (let i = 0; i < 50 && call < 3; i++) await yieldReal();
-      for (let i = 0; i < 20; i++) await yieldReal();
-      expect(call).toBe(3);
-      expect(vi.getTimerCount()).toBe(1);
-    } finally {
-      t.stopVeloHuntStatusPollsForCase("c1");
-      vi.useRealTimers();
-    }
-  });
+  // #2516: this test used to time out at random in CI. The fake client hands out its gates in the
+  // order the polls ARRIVE, and the test released gate 0 and then awaited poll `a` — but each poll
+  // first reads the hunt file, and nothing orders two concurrent reads. When `b`'s read won, `b` held
+  // gate 0, `a` sat on gate 1 (released only after `await a`) and the test deadlocked. The product
+  // code is symmetric — whichever poll records the change owns the re-arm — so the fix is here:
+  // start `b` only once `a` is on the network, and wait on wall-clock deadlines, not loop counts.
+  it(
+    "a stale poll does not cancel the re-arm an overlapping poll just made",
+    async () => {
+      const huntStore = new VeloHuntStore(store);
+      await huntStore.upsert("c1", JOB);
+      const gates = [gate<unknown>(), gate<unknown>()];
+      let call = 0;
+      const { t } = huntTimers(huntStore, async () => {
+        const mine = call++;
+        if (mine >= 2) return { state: "RUNNING" };
+        const answer = await gates[mine].promise;
+        if (mine === 0) throw new Error("ECONNREFUSED"); // A: running -> unreachable
+        return answer;
+      });
+      const calls = (n: number) => async () => (call >= n ? true : undefined);
+      const budget = { timeoutMs: pollBudget(3_000) };
+      // The 300 s ceiling, so the re-arm can never fire by itself inside the test — only when the test
+      // fires it. shouldAdvanceTime keeps every OTHER timer working in real time: atomicWrite's retry
+      // sleep on a transient Windows lock and pollFor's own interval would otherwise hang forever.
+      vi.stubEnv("DFIR_VELO_HUNT_POLL_S", "300");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+      try {
+        t.scheduleVeloHuntStatusPoll("c1", JOB.huntId);
+        const a = t.pollVeloHuntStatus("c1", JOB.huntId); // the scheduled tick
+        await pollFor("poll A asking Velociraptor", calls(1), budget);
+        const b = t.pollVeloHuntStatus("c1", JOB.huntId); // "Poll now", also started from "running"
+        await pollFor("poll B asking Velociraptor", calls(2), budget);
+        gates[0].release(undefined);
+        await a; // recorded "unreachable" and re-armed
+        gates[1].release({ state: "RUNNING" }); // B is stale now: the row is no longer "running"
+        await b;
+        expect((await huntStore.get("c1", JOB.huntId))?.status).toBe("unreachable");
+        expect(vi.getTimerCount()).toBe(1);
+        // The chain must still be alive: the next tick fires, polls, records "running" and re-arms.
+        await vi.advanceTimersToNextTimerAsync();
+        // After the write no retry sleep can be pending, and the re-arm runs right after the write —
+        // so "running" on disk plus exactly one timer means the third poll finished and re-armed.
+        await pollFor(
+          "the next tick recording running and re-arming",
+          async () =>
+            (await huntStore.get("c1", JOB.huntId))?.status === "running" && vi.getTimerCount() === 1
+              ? true
+              : undefined,
+          budget,
+        );
+        expect(call).toBe(3);
+      } finally {
+        t.stopVeloHuntStatusPollsForCase("c1");
+        vi.useRealTimers();
+        vi.unstubAllEnvs();
+      }
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
 });

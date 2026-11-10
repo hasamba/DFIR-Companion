@@ -294,6 +294,7 @@
   <script src="/js/dashboard-redacted-export.js"></script>
   <!-- Explain Event (#141). No initializer. -->
   <script src="/js/dashboard-explain-event.js"></script>
+  <script src="/js/dashboard-ai-preview.js"></script>
   <!-- Timeline Gaps (#83). No initializer. -->
   <script src="/js/dashboard-timeline-gaps.js"></script>
   <!-- Unified export menu. Wiring only. -->
@@ -626,6 +627,7 @@
     <span id="aiStatus" class="ai-unknown" data-safe-style="margin-left:auto; font-weight:bold;">AI: —</span>
     <button id="presidioRetryBtn" type="button" data-safe-style="display:none" data-tip="Check the Presidio analyzer again. If it answers, AI Re-synthesize starts.">Retry Presidio</button>
     <button id="presidioContinueBtn" type="button" data-safe-style="display:none" data-tip="Untick Presidio for this case only, then run AI Re-synthesize. The built-in masking stays on.">Continue without Presidio for this case</button>
+    <button id="heldSkipBtn" type="button" data-safe-style="display:none" data-tip="Stop trying to analyze the screenshots the AI could not analyze. They stay saved as evidence.">Skip screenshots</button>
     <button id="presidioPendingBadge" type="button" data-safe-style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="Presidio found value(s) this case hasn't seen before — open Anonymization to decide, per value, whether to hide it from the AI or leave it visible. The AI call that hit this is on hold until you resolve it.">⚠ Presidio: 0</button>
     <button id="hostDuplicatesBadge" type="button" data-safe-style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="This case has hosts that appear under more than one name. AI analysis is on hold until you confirm whether they are the same machine.">⚠ Duplicate hosts: 0</button>
     <span id="captureCount" data-safe-style="font-weight:bold;"><span class="cc-label">Screenshots:</span> <span id="captureCountNum">0</span></span>
@@ -713,9 +715,26 @@
         </div>
         <div id="anonMsg" data-safe-style="color:var(--text-muted);font-size:12px;margin-top:8px"></div>
         <div data-safe-style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+          <button id="aiPreviewBtn" type="button" data-safe-style="margin-right:auto" data-tip="See the exact text an AI action would send — clear and masked side by side — before it runs. Nothing is sent and nothing is saved. Uses the saved settings: Save first to preview a change.">Preview what the AI will see</button>
           <button id="anonCancel">Cancel</button>
           <button id="anonSave">Save</button>
         </div>
+    </div>
+  </div>
+  <div id="aiPreviewOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="aiPreviewTitle">
+    <div class="comment-modal ai-preview-modal">
+      <h3 id="aiPreviewTitle" data-safe-style="margin:0 0 6px">Preview what the AI will see</h3>
+      <div class="ai-preview-note">Builds the first request the chosen action would send, exactly as pressing it would — then stops. Nothing is sent to the AI provider, nothing is spent, and nothing in the case changes. Import-time AI reads, playbook hunts and the Jev review are not covered.</div>
+      <div data-safe-style="display:flex;gap:8px;align-items:center;margin:8px 0">
+        <label for="aiPreviewAction" data-safe-style="font-size:13px">AI action</label>
+        <select id="aiPreviewAction" data-safe-style="flex:1"></select>
+        <button id="aiPreviewRun" type="button">Preview</button>
+      </div>
+      <div id="aiPreviewParams"></div>
+      <div id="aiPreviewResult" aria-live="polite"></div>
+      <div data-safe-style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button id="aiPreviewClose" type="button">Close</button>
+      </div>
     </div>
   </div>
   <div id="commentOverlay" class="comment-overlay">
@@ -3012,19 +3031,26 @@
         </div>
       </div>
 
-      <!-- Sigma rules (#2202, #2204) — the SigmaHQ release that grades cloud and web access log imports, its settings and updates -->
+      <!-- Sigma rules (#2202, #2204, #2499, #2508) — the SigmaHQ and Suzaku rule sets that grade cloud and web access log imports: shared switches, then each set's settings and updates -->
       <div class="stab-pane" id="stab-sigma">
         <div class="sfield-hint" data-safe-style="display:block;margin-bottom:8px">
-          <strong>Sigma rules</strong> from <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener">SigmaHQ</a>
-          (Detection Rule License 1.1) grade AWS CloudTrail, Entra ID sign-in / audit records and web access logs as they are imported.
-          A rule at or above the minimum level raises the event; a lower one only tags it. Changes apply to the next import —
-          cases already imported keep the grading they got, and their report names the release that produced it, until you re-grade them below.
+          <strong>Sigma rules</strong> grade AWS CloudTrail, Entra ID sign-in / audit records, GCP audit logs and web access logs as they are imported,
+          from two rule sets: <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener">SigmaHQ</a> and, for CloudTrail,
+          <a href="https://github.com/Yamato-Security/suzaku-rules" target="_blank" rel="noopener">Suzaku</a> (both Detection Rule License 1.1).
+          A rule at or above its set's minimum level raises the event; a lower one only tags it. Changes apply to the next import —
+          cases already imported keep the grading they got, and their report names the rules that produced it, until you re-grade them below.
         </div>
         <div id="sigmaDemo" class="sfield-hint" data-safe-style="display:block;margin-bottom:8px" hidden>Updates and rule changes are not available in the demo.</div>
         <div id="sigmaNotes" data-safe-style="font-size:12px;margin-bottom:8px"></div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud and web access log imports with Sigma rules<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on)</span></label><select id="env-DFIR_SIGMA_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
-          <div class="sfield"><label for="env-DFIR_SIGMA_MIN_LEVEL">Minimum level that raises severity<span class="sfield-hint">DFIR_SIGMA_MIN_LEVEL — lower levels only tag the event (it stays Info and never reaches the AI)</span></label>
+          <div class="sfield"><label for="env-DFIR_SIGMA_RULES">Grade cloud and web access log imports with Sigma rules (both rule sets)<span class="sfield-hint">DFIR_SIGMA_RULES — on/off (default on)</span></label><select id="env-DFIR_SIGMA_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_UPDATE_CHECK">Check both rule sets for updates at startup<span class="sfield-hint">DFIR_SIGMA_UPDATE_CHECK — on/off (default off); shows a notice here, never installs</span></label><select id="env-DFIR_SIGMA_UPDATE_CHECK"><option value="">— default (off) —</option><option value="on">on</option><option value="off">off</option></select></div>
+        </div>
+
+        <hr class="settings-hr" />
+        <div data-safe-style="font-weight:600;font-size:14px;margin:4px 0 6px">SigmaHQ rules</div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_SIGMA_MIN_LEVEL">SigmaHQ level that raises severity<span class="sfield-hint">DFIR_SIGMA_MIN_LEVEL — lower levels only tag the event (it stays Info and never reaches the AI)</span></label>
             <select id="env-DFIR_SIGMA_MIN_LEVEL">
               <option value="">— default (high) —</option>
               <option value="critical">critical</option>
@@ -3033,9 +3059,7 @@
               <option value="low">low</option>
             </select>
           </div>
-        </div>
-        <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_RULE_STATUSES">Rule status to use<span class="sfield-hint">DFIR_SIGMA_RULE_STATUSES — deprecated and unsupported rules are never used</span></label>
+          <div class="sfield"><label for="env-DFIR_SIGMA_RULE_STATUSES">SigmaHQ rule status to use<span class="sfield-hint">DFIR_SIGMA_RULE_STATUSES — deprecated and unsupported rules are never used</span></label>
             <div data-safe-style="display:flex;gap:12px;align-items:center">
               <label><input type="checkbox" data-sigma-status="stable" /> stable</label>
               <label><input type="checkbox" data-sigma-status="test" /> test</label>
@@ -3043,10 +3067,33 @@
             </div>
             <input id="env-DFIR_SIGMA_RULE_STATUSES" type="hidden" />
           </div>
-          <div class="sfield"><label for="env-DFIR_SIGMA_UPDATE_CHECK">Check for a new release at startup<span class="sfield-hint">DFIR_SIGMA_UPDATE_CHECK — on/off (default off); shows a notice here, never installs</span></label><select id="env-DFIR_SIGMA_UPDATE_CHECK"><option value="">— default (off) —</option><option value="on">on</option><option value="off">off</option></select></div>
         </div>
+        <div class="sfield">
+          <label>Installed SigmaHQ release</label>
+          <div id="sigmaActive" data-safe-style="font-size:12px;padding:2px 0">Loading…</div>
+          <span class="sfield-hint">Previous (roll-back target): <span id="sigmaPrevious">—</span></span>
+          <div id="sigmaCounts" data-safe-style="font-size:12px;padding:4px 0"></div>
+        </div>
+        <div class="sfield">
+          <label>SigmaHQ updates</label>
+          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="sigmaCheckBtn" type="button" class="btn-mini">Check for SigmaHQ updates</button>
+            <input id="sigmaFile" type="file" accept=".zip,application/zip" aria-label="SigmaHQ release zip" />
+            <button id="sigmaFileBtn" type="button" class="btn-mini">Install from file…</button>
+            <button id="sigmaRollbackBtn" type="button" class="btn-mini">Roll back SigmaHQ</button>
+          </div>
+          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+            <button id="sigmaMainBtn" type="button" class="btn-mini">Install SigmaHQ main-branch rules…</button>
+          </div>
+          <span class="sfield-hint">A release download is installed only when it matches the SHA-256 GitHub publishes. SigmaHQ releases come every one to three months; its main branch gets new rules almost daily but is unreleased — every main-branch file must match GitHub's fingerprint for it at the chosen commit, and the install is named "unreleased" in reports. Nothing is installed until you review the changes and click Install.</span>
+          <div id="sigmaMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
+          <div id="sigmaPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
+        </div>
+
+        <hr class="settings-hr" />
+        <div data-safe-style="font-weight:600;font-size:14px;margin:4px 0 6px">Suzaku rules</div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_RULES">Also use the Suzaku CloudTrail rules<span class="sfield-hint">DFIR_SIGMA_SUZAKU_RULES — on/off (default on); Yamato Security's own AWS rules, bundled beside SigmaHQ (DRL 1.1). Off = SigmaHQ rules only</span></label><select id="env-DFIR_SIGMA_SUZAKU_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
+          <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_RULES">Use the Suzaku CloudTrail rules<span class="sfield-hint">DFIR_SIGMA_SUZAKU_RULES — on/off (default on); Yamato Security's own AWS rules, bundled beside SigmaHQ (DRL 1.1). Off = SigmaHQ rules only</span></label><select id="env-DFIR_SIGMA_SUZAKU_RULES"><option value="">— default (on) —</option><option value="on">on</option><option value="off">off</option></select></div>
           <div class="sfield"><label for="env-DFIR_SIGMA_SUZAKU_MIN_LEVEL">Suzaku level that raises severity<span class="sfield-hint">DFIR_SIGMA_SUZAKU_MIN_LEVEL — most Suzaku rules are one rule per API call, so below this level they only label the event</span></label>
             <select id="env-DFIR_SIGMA_SUZAKU_MIN_LEVEL">
               <option value="">— default (critical) —</option>
@@ -3068,27 +3115,13 @@
           </div>
         </div>
         <div class="sfield">
-          <label>Installed release</label>
-          <div id="sigmaActive" data-safe-style="font-size:12px;padding:2px 0">Loading…</div>
-          <span class="sfield-hint">Previous (roll-back target): <span id="sigmaPrevious">—</span></span>
-          <div id="sigmaCounts" data-safe-style="font-size:12px;padding:4px 0"></div>
-        </div>
-        <div class="sfield">
-          <label>Updates</label>
-          <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button id="sigmaCheckBtn" type="button" class="btn-mini">Check for updates</button>
-            <input id="sigmaFile" type="file" accept=".zip,application/zip" aria-label="SigmaHQ release zip" />
-            <button id="sigmaFileBtn" type="button" class="btn-mini">Install from file…</button>
-            <button id="sigmaRollbackBtn" type="button" class="btn-mini">Roll back</button>
-          </div>
-          <span class="sfield-hint">A download is installed only when it matches the SHA-256 GitHub publishes. Nothing is installed until you review the changes and click Install.</span>
-          <div id="sigmaMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
-          <div id="sigmaPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
-        </div>
-        <div class="sfield">
-          <label>Suzaku rules (#2508)</label>
+          <label>Installed Suzaku version</label>
           <div id="suzakuActive" data-safe-style="font-size:12px;padding:2px 0">Loading…</div>
           <span class="sfield-hint">Previous (roll-back target): <span id="suzakuPrevious">—</span></span>
+          <div id="suzakuCounts" data-safe-style="font-size:12px;padding:4px 0"></div>
+        </div>
+        <div class="sfield">
+          <label>Suzaku updates</label>
           <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button id="suzakuCheckBtn" type="button" class="btn-mini">Check for Suzaku updates</button>
             <button id="suzakuRollbackBtn" type="button" class="btn-mini">Roll back Suzaku</button>
@@ -3097,6 +3130,8 @@
           <div id="suzakuMessage" role="status" data-safe-style="font-size:12px;padding:4px 0"></div>
           <div id="suzakuPreview" data-safe-style="font-size:12px;padding:6px 0" hidden></div>
         </div>
+
+        <hr class="settings-hr" />
         <div class="sfield">
           <label>Re-grade this case</label>
           <div data-safe-style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -3107,8 +3142,8 @@
         </div>
         <div class="sfield">
           <label>Rules <span id="sigmaRulesCount" class="sfield-hint" data-safe-style="display:inline"></span></label>
-          <div class="sigma-rules-tools"><input id="sigmaRulesFilter" type="search" placeholder="Search rules, sources, reasons…" aria-label="Search rules" /><select id="sigmaRulesState" aria-label="Filter by state"><option value="">All states</option></select></div>
-          <div class="sigma-rules-wrap"><table class="sigma-rules-table"><thead><tr><th>Rule</th><th>Log source</th><th>State</th><th aria-label="Actions"></th></tr></thead><tbody id="sigmaRulesBody"></tbody></table><div id="sigmaRulesEmpty" class="sigma-rules-empty" hidden>No rules match the search.</div></div>
+          <div class="sigma-rules-tools"><input id="sigmaRulesFilter" type="search" placeholder="Search rules, sources, reasons…" aria-label="Search rules" /><select id="sigmaRulesOrigin" aria-label="Filter by rule set"><option value="">Both rule sets</option><option value="SigmaHQ">SigmaHQ</option><option value="Suzaku">Suzaku</option></select><select id="sigmaRulesState" aria-label="Filter by state"><option value="">All states</option></select></div>
+          <div class="sigma-rules-wrap"><table class="sigma-rules-table"><thead><tr><th>Rule</th><th>Rule set</th><th>Log source</th><th>State</th><th aria-label="Actions"></th></tr></thead><tbody id="sigmaRulesBody"></tbody></table><div id="sigmaRulesEmpty" class="sigma-rules-empty" hidden>No rules match the search.</div></div>
         </div>
       </div>
 
@@ -4328,6 +4363,7 @@
         <span class="src-legend st-dd" id="stTagWrap" data-safe-style="display:none;margin-left:0" title="Filter to events carrying specific tag(s)"><button type="button" class="src-filter-btn" id="stTagBtn">🏷 Tags</button><div class="src-filter-menu" id="stTagMenu" hidden></div></span>
         <button id="stTaggedOnly" class="ev-bulk-btn" title="Show only events carrying at least one tag">☐ Tagged only</button>
         <button id="stStarredOnly" class="ev-bulk-btn" title="Show only starred events (whole timeline)">☆ Starred only</button>
+        <button id="stHideCollector" class="ev-bulk-btn" data-act="stHideCollector" title="Hide the rows tagged dfir-collector — the cloud collection's own API calls, matched by the identity and run window it recorded. Off on every load; the rows stay in the case and in every export">☐ Hide collector calls</button>
         <button id="stGroupRepeats" class="ev-bulk-btn" data-act="stGroupRepeats" title="Fold runs of identical rows on this page into one row with a ×N badge — a view only, every record stays">☐ Group repeats</button>
         <button id="stStarredReport" class="ev-bulk-btn" title="AI report over ONLY the starred events (one AI call) — the TimeSketch starred-events review workflow">✨ Starred report</button>
         <button id="stViewSummary" class="ev-bulk-btn" title="AI summary of whatever the current filters show (one AI call). Ephemeral — copy it to keep it.">✨ Summarize view</button>
@@ -6147,6 +6183,7 @@
     else dfirFeatureUnavailable("IOC block-list export");
     if (typeof initRedactedExport !== "undefined") initRedactedExport();
     else dfirFeatureUnavailable("Redacted case export");
+    if (typeof initAiPreview !== "undefined") initAiPreview(); else dfirFeatureUnavailable("AI preview");
     // Report versions (#77) binds its own three controls in initReportVersions() — see
     // js/dashboard-report-versions.js. Guarded: they are this module's functions, and reading
     // them here as values would throw at load if that file 404s.

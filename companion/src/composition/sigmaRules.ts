@@ -108,11 +108,16 @@ export function sigmaGrader(): SigmaImportGrader {
 /** The optional startup check (DFIR_SIGMA_UPDATE_CHECK=on): a notice, never an install. */
 export async function startupSigmaUpdateCheck(fetchFn: typeof fetch): Promise<void> {
   if (!store || !sigmaUpdateCheckEnabled()) return;
-  const r = await store.checkLatest(fetchFn);
+  const r = await store.checkLatest(fetchFn, true);
   const log = getServerLogger();
   if (r.error) log.warn(`Sigma update check failed: ${r.error}`);
   else if (r.updateAvailable)
     log.info(`New Sigma release available: ${r.latest} (installed: ${r.installed})`);
+  // #2518: unreleased SigmaHQ changes to the graded rules — a notice, never an install.
+  if (r.main && "gradedChanges" in r.main && r.main.gradedChanges > 0)
+    log.info(
+      `SigmaHQ main branch: ${r.main.gradedChanges} unreleased change(s) to graded rules (newest ${r.main.date})`,
+    );
   // #2508: the same opt-in startup check also asks about the Suzaku rules — a notice, never an install.
   const sz = suzakuStore ? await suzakuStore.checkLatest(fetchFn) : undefined;
   if (sz?.error) log.warn(`Suzaku rules update check failed: ${sz.error}`);

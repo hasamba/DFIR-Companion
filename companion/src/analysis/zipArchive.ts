@@ -156,6 +156,11 @@ export interface ReadZipOptions {
   maxTotalBytes?: number;
   /** Password for encrypted entries. Ignored for unencrypted archives. Never logged or persisted. */
   password?: string;
+  /**
+   * Only entries whose path this accepts are read and inflated (#2518): a caller that wants a few
+   * folders of a large archive never inflates the rest, and the size caps count only what it keeps.
+   */
+  include?: (path: string) => boolean;
 }
 
 /**
@@ -202,6 +207,10 @@ export function readZip(archive: Buffer, opts: ReadZipOptions = {}): ZipEntry[] 
     const localOffset = archive.readUInt32LE(ptr + 42);
     const name = archive.toString("utf8", ptr + 46, ptr + 46 + nameLen);
     const extra = archive.subarray(ptr + 46 + nameLen, ptr + 46 + nameLen + extraLen);
+    if (opts.include && !opts.include(name)) {
+      ptr += 46 + nameLen + extraLen + commentLen;
+      continue;
+    }
 
     // Jump to the local header to find the actual data start (its name/extra lengths may differ).
     // The central record's relative-offset field is equally attacker-controlled — bound it the

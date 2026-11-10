@@ -44,6 +44,8 @@
                                   // unifies with the forensic timeline's tag/star machinery.
   let superTaggedOnly = false;    // filter: only events carrying ≥1 tag (server-side, tagged=1)
   let superStarredOnly = false;   // filter: only starred events (server-side, starred=1)
+  // #2487: hide rows tagged dfir-collector (server-side excludeLabels) — off on every load, never remembered.
+  let superHideCollector = false;
   // #2391: "Group repeats" — a VIEW only: consecutive identical rows on this page fold into the first,
   // with a ×N badge that shows each record. Remembered per browser; off by default.
   const ST_GROUP_KEY = "dfir.superGroupRepeats";
@@ -95,6 +97,7 @@
     if (superSelectedLabels.size) p.set("labels", [...superSelectedLabels].join(","));
     if (superTaggedOnly) p.set("tagged", "1");
     if (superStarredOnly) p.set("starred", "1");
+    if (superHideCollector) p.set("excludeLabels", "dfir-collector");
     p.set("offset", String(superOffset));
     p.set("limit", String(ST_PAGE));
     return p.toString();
@@ -162,7 +165,7 @@
     superSelectedHosts = null;
     superKnownHosts = new Set();
     superPromote = new Set(); superSelectedLabels = new Set();
-    superOffset = 0; superTaggedOnly = false; superStarredOnly = false; paintSuperToggles();
+    superOffset = 0; superTaggedOnly = false; superStarredOnly = false; superHideCollector = false; paintSuperToggles();
     ["stFrom", "stTo", "stTimeframe"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = ""; });
     const list = document.getElementById("superTimelineList"); if (list && superRowsCase !== null) list.innerHTML = "";
   }
@@ -170,6 +173,7 @@
     const t = document.getElementById("stTaggedOnly"), s = document.getElementById("stStarredOnly");
     if (t) { t.textContent = superTaggedOnly ? "☑ Tagged only" : "☐ Tagged only"; t.classList.toggle("active", superTaggedOnly); }
     if (s) { s.textContent = superStarredOnly ? "★ Starred only" : "☆ Starred only"; s.classList.toggle("active", superStarredOnly); }
+    const h = document.getElementById("stHideCollector"); if (h) { h.textContent = superHideCollector ? "☑ Hide collector calls" : "☐ Hide collector calls"; h.classList.toggle("active", superHideCollector); }
   }
 
   function renderSuperFilters(data) {
@@ -356,15 +360,8 @@
     b.classList.toggle("active", superGroupRepeats);
   }
 
-  // Tag pills for a super row, each clickable to filter the super-timeline to that single tag (sets the
-  // Tags box and reloads). Mirrors tagPills() but adds the st-tag-filter affordance.
-  function superTagPills(type, id) {
-    const list = (typeof tagsForTarget === "function" ? tagsForTarget(targetKey(type, id)) : []).filter(t => !(t.label === "starred" && t.targetType === "event"));
-    return list.map(t => {
-      const c = tagColor(t.label);
-      return `<span class="tag-pill st-tag-filter" data-label="${escAttr(t.label)}" data-safe-style="color:${c};border-color:${c};cursor:pointer" title="Filter the super-timeline to this tag">${esc(t.label)}</span>`;
-    }).join("");
-  }
+  // A super row's tag pills, each a one-click tag filter — js/dashboard-tags.js filterTagPills().
+  const superTagPills = (type, id) => (typeof filterTagPills === "function" ? filterTagPills(type, id) : "");
 
   // Reflect the current multi-selection (superPromote) onto the select-all checkbox + count, scoped to
   // the rows currently shown on this page.
@@ -454,6 +451,8 @@
     paintSuperToggles();
     superPage(0);
   }
+
+  function toggleSuperHideCollector() { superHideCollector = !superHideCollector; paintSuperToggles(); superPage(0); } // #2487
 
   // Toggle "Starred only" (server-side starred=1 — filters the WHOLE super-timeline) and reload.
   function toggleSuperStarredOnly() {
@@ -767,7 +766,6 @@
   // Trackable checklist auto-derived (server-side) from the case's next steps + Critical/High
   // findings, plus analyst-added custom tasks. GET re-syncs idempotently (analyst status/edits
   // preserved), so loading the panel always reflects the latest synthesis.
-
   window.initSuperTimeline = initSuperTimeline;
   window.applyTimeframe = applyTimeframe;
   window.clearSuperTime = clearSuperTime;
@@ -786,12 +784,14 @@
   window.superBulkStar = superBulkStar;
   window.superBulkTag = superBulkTag;
   window.superCaseId = superCaseId;
+  window.superQueryString = superQueryString; // #2491 (AI preview)
   window.superPage = superPage;
   window.superScopeToWindow = superScopeToWindow;
   window.toggleSuperPromote = toggleSuperPromote;
   window.toggleSuperSelectAll = toggleSuperSelectAll;
   window.toggleSuperStarredOnly = toggleSuperStarredOnly;
   window.toggleSuperTaggedOnly = toggleSuperTaggedOnly;
+  window.toggleSuperHideCollector = toggleSuperHideCollector;
   window.toggleSuperGroupRepeats = toggleSuperGroupRepeats;
   // The two the page used to write directly.
   window.resetSuperPagination = () => { superOffset = 0; };

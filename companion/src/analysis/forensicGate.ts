@@ -1,5 +1,6 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { isManualId } from "./manualId.js";
+import { isCoverageNote } from "./coverageEventTime.js";
 
 // Info is the "don't know / not suspicious" floor; Low+ is a deliberate signal (source verdict or
 // one of our deterministic rules). The forensic timeline keeps Low+ and above; Info telemetry is
@@ -27,11 +28,13 @@ export function demoteBelowSeverity(
   // exists to keep unreviewed telemetry out, not to remove what an analyst asked to see (#1432). A
   // manual event the analyst typed in stays for the same reason (#1919) — recognised by the manual-
   // id only the manual-entry builders mint, never by `sources`, which an import can fill freely.
-  for (const e of events) (analystPlaced(e) || SEVERITY_RANK[e.severity] >= floor ? kept : demoted).push(e);
+  // A coverage note the merge built stays too (#2497): it tells synthesis that "nothing found" is
+  // not "absent", and a High gate must not silence that.
+  for (const e of events) (exempt(e) || SEVERITY_RANK[e.severity] >= floor ? kept : demoted).push(e);
   return { kept, demoted };
 }
 
-const analystPlaced = (e: ForensicEvent): boolean => !!e.promotedAt || isManualId(e.id);
+const exempt = (e: ForensicEvent): boolean => !!e.promotedAt || isManualId(e.id) || isCoverageNote(e);
 
 // per-case override ?? global env ?? "Low". An unrecognized env value falls back to "Low".
 export function resolveForensicMinSeverity(

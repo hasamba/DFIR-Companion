@@ -30,6 +30,11 @@ const ROUTES_DIR = fileURLToPath(new URL("../../src/routes/", import.meta.url));
 /** Routes that bear AI cost and are deliberately NOT rate-limited. Each needs a reason. */
 const EXCLUDED = new Map([
   [
+    "/ai-preview",
+    "spends no AI budget — the preview stops every action at the AI-call gate, so no provider is " +
+      "ever called (#2491); charging it would cost the analyst an AI slot for a request never sent",
+  ],
+  [
     "/push",
     "external collector ingest, authenticated by a per-case push token rather than a session — " +
       "knowing a caseId is not enough to reach it, and a 20/min cap would throttle a bulk collector",
