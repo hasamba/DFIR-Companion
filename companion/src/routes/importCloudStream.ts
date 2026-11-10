@@ -105,6 +105,7 @@ async function importCloudFileLogged(
       debug: base.debug,
       signal: base.signal,
       ...(base.skipSummaries ? { skipSummaries: true } : {}),
+      ...(base.coverageGroup ? { coverageGroup: base.coverageGroup } : {}),
       onProgress: (done, total) =>
         void (
           base.onParseProgress?.(done, total, `reading ${kind} records`) ?? base.onProgress?.(done, total)

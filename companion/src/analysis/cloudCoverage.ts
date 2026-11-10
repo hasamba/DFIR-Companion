@@ -24,13 +24,13 @@ export const cloudCoverageProviders = ["aws-cloudtrail", "gcp", "azure", "m365",
 export type CloudCoverageProvider = (typeof cloudCoverageProviders)[number];
 
 export const SCOPES_PER_UPLOAD_MAX = 256;
+export const IMPORT_DISCLOSURE_MAX = 24;
+export const IMPORT_DISCLOSURE_TEXT_MAX = 400;
 export const UPLOADS_TRACKED_PER_CASE_MAX = 200;
 const SCOPE_VALUE_MAX = 200;
 const CATEGORY_NAME_MAX = 120;
 const CATEGORIES_PER_SCOPE_MAX = 64;
 const RECORD_TYPE_IDS_MAX = 64;
-const IMPORT_DISCLOSURE_MAX = 24;
-const IMPORT_DISCLOSURE_TEXT_MAX = 400;
 
 export const cloudCoverageCategorySchema = z.object({
   name: z.string().max(CATEGORY_NAME_MAX),
@@ -65,6 +65,8 @@ export const cloudCoverageRecordSchema = z.object({
    * panel; not part of the AI's coverage block, which states coverage, not import mechanics.
    */
   importDisclosure: z.array(z.string().max(IMPORT_DISCLOSURE_TEXT_MAX)).max(IMPORT_DISCLOSURE_MAX).optional(),
+  /** A live collection's row (#2538): how many collected pages have been folded into it. */
+  pages: z.number().int().positive().optional(),
 });
 export type CloudCoverageRecord = z.infer<typeof cloudCoverageRecordSchema>;
 const fileSchema = z.array(cloudCoverageRecordSchema);
@@ -152,38 +154,68 @@ export class CloudCoverageStore {
         // Replace this upload's own records; every other upload's records are untouched.
         next = [...next.filter((r) => r.uploadId !== uploadId), ...fresh];
       }
-
-      // Evict the oldest tracked upload(s), atomically, only as far as needed — re-recording an
-      // already-tracked upload never adds one, so this only fires for a genuinely NEW upload.
-      while (true) {
-        const uploads = new Map<string, string>(); // uploadId -> firstSeenAt
-        for (const r of next) if (!uploads.has(r.uploadId)) uploads.set(r.uploadId, r.uploadFirstSeenAt);
-        if (uploads.size <= UPLOADS_TRACKED_PER_CASE_MAX) break;
-        const oldestId = [...uploads.entries()].sort(
-          (a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]),
-        )[0][0];
-        next = next.filter((r) => r.uploadId !== oldestId);
-      }
-
-      await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
-
-      const everSeen = await this.loadEverSeen(caseId);
-      let everSeenChanged = false;
-      for (const d of drafts) {
-        const existing = everSeen[d.provider] ?? [];
-        const names = new Set(existing);
-        for (const c of d.categories) names.add(c.name);
-        if (names.size > existing.length) {
-          everSeen[d.provider] = [...names].slice(0, SEEN_CATEGORIES_PER_PROVIDER_MAX);
-          everSeenChanged = true;
-        }
-      }
-      if (everSeenChanged) {
-        await atomicWrite(this.everSeenPath(caseId), JSON.stringify(everSeen, null, 2));
-      }
-
-      return next;
+      return this.commit(caseId, next, drafts);
     });
+  }
+
+  /**
+   * Replace one group's records with what `build` makes of its current ones (#2538: a live
+   * collection folds each page into its `collection:<id>` group). Same lock, eviction and ever-seen
+   * update as `record()`; `seen` is what feeds the ever-seen registry.
+   */
+  async replaceGroup(
+    caseId: string,
+    groupId: string,
+    build: (existing: readonly CloudCoverageRecord[]) => CloudCoverageRecord[],
+    seen: readonly CloudCoverageDraft[],
+  ): Promise<CloudCoverageRecord[]> {
+    return lock.runExclusive(caseId, async () => {
+      const current = await this.load(caseId);
+      const fresh = build(current.filter((r) => r.uploadId === groupId)).map((r) => ({
+        ...r,
+        uploadId: groupId,
+      }));
+      return this.commit(caseId, [...current.filter((r) => r.uploadId !== groupId), ...fresh], seen);
+    });
+  }
+
+  /** Evict past the bound, write, and add `seen`'s categories to the ever-seen registry. Lock held. */
+  private async commit(
+    caseId: string,
+    records: readonly CloudCoverageRecord[],
+    seen: readonly CloudCoverageDraft[],
+  ): Promise<CloudCoverageRecord[]> {
+    let next = [...records];
+    // Evict the oldest tracked upload(s), atomically, only as far as needed — re-recording an
+    // already-tracked upload never adds one, so this only fires for a genuinely NEW upload.
+    while (true) {
+      const uploads = new Map<string, string>(); // uploadId -> firstSeenAt
+      for (const r of next) if (!uploads.has(r.uploadId)) uploads.set(r.uploadId, r.uploadFirstSeenAt);
+      if (uploads.size <= UPLOADS_TRACKED_PER_CASE_MAX) break;
+      const oldestId = [...uploads.entries()].sort(
+        (a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]),
+      )[0][0];
+      next = next.filter((r) => r.uploadId !== oldestId);
+    }
+
+    await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+
+    const everSeen = await this.loadEverSeen(caseId);
+    let everSeenChanged = false;
+    for (const d of seen) {
+      const existing = everSeen[d.provider] ?? [];
+      const names = new Set(existing);
+      for (const c of d.categories) names.add(c.name);
+      if (names.size > existing.length) {
+        everSeen[d.provider] = [...names].slice(0, SEEN_CATEGORIES_PER_PROVIDER_MAX);
+        everSeenChanged = true;
+      }
+    }
+    if (everSeenChanged) {
+      await atomicWrite(this.everSeenPath(caseId), JSON.stringify(everSeen, null, 2));
+    }
+
+    return next;
   }
 }
 
@@ -245,6 +277,8 @@ export interface CloudCoverageItem {
   last: string;
   categories: CloudCoverageCategory[];
   importDisclosure?: string[];
+  /** A live collection's row (#2538): the collected pages folded into it. */
+  pages?: number;
 }
 
 export interface CloudCoverageSummary {
@@ -284,6 +318,7 @@ export function summarizeCloudCoverage(
     last: r.last,
     categories: r.categories,
     ...(r.importDisclosure?.length ? { importDisclosure: r.importDisclosure } : {}),
+    ...(r.pages ? { pages: r.pages } : {}),
   }));
   const byProvider = new Map<CloudCoverageProvider, CloudCoverageRecord[]>();
   for (const r of records)
@@ -362,7 +397,10 @@ function itemWords(item: CloudCoverageItem): string {
   const scope = item.scope.value ? `${item.scope.kind} ${item.scope.value}` : "scope not recorded";
   const range = item.first && item.last ? ` (${item.first.slice(0, 10)} → ${item.last.slice(0, 10)})` : "";
   const cats = item.categories.map(categoryWords).join(", ");
-  return `${PROVIDER_LABEL[item.provider]} — ${scope}: ${item.recordCount.toLocaleString()} records${range}. ${cats}.`;
+  const pages = item.pages
+    ? ` across ${item.pages.toLocaleString()} collected page${item.pages === 1 ? "" : "s"}`
+    : "";
+  return `${PROVIDER_LABEL[item.provider]} — ${scope}: ${item.recordCount.toLocaleString()} records${pages}${range}. ${cats}.`;
 }
 
 /** Bounded rendering for the AI block — a count cap, never token-level trimming (the file convention every other bounded block in promptBlocks.ts already follows). */

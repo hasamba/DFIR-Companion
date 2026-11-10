@@ -62,6 +62,7 @@ import { safeAiErrorKind, safeAiPhase } from "./operationalMetrics.js";
 import { type SecondOpinion } from "./secondOpinion.js";
 import { type AggregateStats } from "./logAggregate.js";
 import { persistCloudCoverage, type CloudCoverageSummary } from "./cloudCoverage.js";
+import { persistImportCoverage } from "./cloudCoverageFold.js";
 import { type KevCatalog } from "./kev.js";
 import { type HuntSuggestion } from "./huntSuggest.js";
 import { type PlaybookHuntSuggestion } from "./playbookHunt.js";
@@ -560,11 +561,9 @@ export class AnalysisPipeline {
   ): Promise<{ state: InvestigationState; disclosure: CloudStreamDisclosure }> {
     const { state, coverage, disclosure } = await ingest.importCloudFile(this.importCtx, ...args);
     const importDisclosure = describeCloudStreamDisclosure(disclosure).map((d) => d.slice(0, 400));
-    await persistCloudCoverage(
-      this.opts.cloudCoverageStore,
-      args[0],
-      coverage.map((c) => ({ ...c, importDisclosure })),
-    );
+    const drafts = coverage.map((c) => ({ ...c, importDisclosure }));
+    // A live collection's page folds into its collection's one row (#2538); a manual upload is its own.
+    await persistImportCoverage(this.opts.cloudCoverageStore, args[0], drafts, args[3].coverageGroup);
     return { state, disclosure };
   }
 

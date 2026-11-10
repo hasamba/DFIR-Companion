@@ -339,6 +339,7 @@
     "cloudBulkReadSummaryId.ts": "analysis/timeline",
     "cloudCoverage.ts": "analysis/ingest",
     "cloudCoverageBuilders.ts": "analysis/ingest",
+    "cloudCoverageFold.ts": "analysis/ingest",
     "cloudMetadataAccess.ts": "analysis/timeline",
     "cloudRowCanonical.ts": "analysis/ingest",
     "cloudRowWording.ts": "analysis/ingest",

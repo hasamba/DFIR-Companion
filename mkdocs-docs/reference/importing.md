@@ -3017,6 +3017,12 @@ imported, one at a time, through the same streaming importer as a large export f
 grading, budgets and deduplication. Every event names its collection and page file in its sources,
 and carries the provider's record id.
 
+**One Cloud Coverage row per collection.** The **Cloud Coverage** panel and the AI's coverage
+block show a collection as one row per log type and account, which grows as each page lands
+("… records across N collected pages"); collection pages never push a manually uploaded export
+out of the panel. The record count is a total over the pages, so a record fetched on two pages is
+counted twice.
+
 **One AWS credential lineage per collection run.** The CloudTrail credential lineages and compute
 lifecycles are not built page by page. When the last page is imported, they are built once over
 every CloudTrail page of the run, in page order, as if the collection were one large export file:

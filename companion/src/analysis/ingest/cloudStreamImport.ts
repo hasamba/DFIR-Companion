@@ -79,6 +79,11 @@ export interface CloudStreamImportOptions {
    * It skips the M365 spray rows too (#2493); MFA fatigue stays per page — its ids upsert.
    */
   skipSummaries?: boolean;
+  /**
+   * A live collection page's coverage group (#2538), `collection:<id>`: the pipeline folds the
+   * page's coverage into that collection's one Cloud Coverage row. Unread by the import itself.
+   */
+  coverageGroup?: string;
   /** Test seams; production uses the named constants. */
   batchRecords?: number;
   summaryRecords?: number;
