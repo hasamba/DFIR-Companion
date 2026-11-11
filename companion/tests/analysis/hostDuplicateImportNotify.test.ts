@@ -40,14 +40,18 @@ async function seed(assets: string[]): Promise<void> {
   await stateStore.save(s);
 }
 
-function analysis() {
+// The check is coalesced per case (#2584, hostDuplicateNotify.ts); these tests run it with no
+// quiet period so they observe one kick's outcome. Coalescing has its own suite.
+function analysis(extra: { superTimelineStore?: unknown; quietMs?: number } = {}) {
   return createCaptureAnalysis({
     store: cases,
     options: {
       stateStore,
       assetOverridesStore: new AssetOverridesStore(cases),
       hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
+      ...(extra.superTimelineStore ? { superTimelineStore: extra.superTimelineStore as never } : {}),
     },
+    hostDuplicateNotify: { quietMs: extra.quietMs ?? 0 },
     hasAiProvider: () => false,
     getControl: async () => ({ enabled: false }) as never,
     setControl: async () => ({ enabled: false }) as never,
@@ -113,5 +117,25 @@ describe("import-time near-duplicate notification", () => {
     analysis().resynthesizeInBackground("c1");
     await waitPastSilenceBudget();
     expect(dispatchNotify).not.toHaveBeenCalled();
+  });
+
+  // #2584: the check reads every host name in the super-timeline. One check per import made a large
+  // drop pay one whole-store scan per file. A burst of imports now costs one scan.
+  it("a burst of imports scans the super-timeline once, not once per import", async () => {
+    await seed(["WIN11", "WIN11.windomain.local"]);
+    let scans = 0;
+    const superTimelineStore = {
+      memoizeScan: async () => {
+        scans++;
+        return { assets: new Map(), references: new Map() };
+      },
+    };
+    const a = analysis({ superTimelineStore, quietMs: 50 });
+    for (let i = 0; i < 40; i++) a.resynthesizeInBackground("c1");
+    await waitForDispatch();
+    await waitPastSilenceBudget();
+    expect(scans).toBe(1);
+    expect(dispatchNotify).toHaveBeenCalledTimes(1);
+    a.dispose();
   });
 });

@@ -64,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Large drops no longer slow down file by file on the duplicate-host check** — the "Analysis on hold" check runs once a burst of imports goes quiet (at most every 60 s), not one whole super-timeline scan per file (part of #2584)
 - **Imported names can no longer forge product notes** — note-shaped text in an account, app, rule or file name shows as ⟦ ⟧ and no longer hides a real note or blocks a grade raise (closes #2574)
 - **M365 BEC pairings join across batches and uploads** — delete-after-forward (Critical) and new-user-made-admin (High) are raised however the export was split into streamed batches or files (closes #2570)
 - **Hunt queries escape evidence values per language** — KQL, SPL, ES|QL, VQL, Sigma, YARA and Suricata quote backslashes and line breaks, so a crafted path or URL can no longer break or widen the query (closes #2572)

@@ -389,6 +389,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // app.locals is how the host reaches the outbound transports to stop them on shutdown.
   if (transports.telegramPoller) app.locals.telegramPoller = transports.telegramPoller;
   if (transports.slackSocketMode) app.locals.slackSocketMode = transports.slackSocketMode;
+  app.locals.captureAnalysis = analysis; // shutdown cancels its pending host-duplicate checks (#2584)
 
   // Re-arm any persisted live Velociraptor monitors so streaming survives a restart (#84). Fire-and-
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
@@ -701,6 +702,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   installGracefulShutdown({
     server,
     stopTransports: async () => {
+      app.locals.captureAnalysis?.dispose();
       await app.locals.telegramPoller?.stop();
       await app.locals.slackSocketMode?.stop();
     },

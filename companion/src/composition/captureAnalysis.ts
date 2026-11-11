@@ -26,9 +26,9 @@ import type { AppOptions } from "./appOptions.js";
 import type { AiControl, SkipHeldResult } from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
-import { milestoneEvent } from "../analysis/notifications.js";
 import { createSynthesisDeferral } from "./synthesisDeferral.js";
 import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
+import { createHostDuplicateNotifier, hostDuplicateHoldEvent } from "./hostDuplicateNotify.js";
 import { SynthMetaStore } from "../analysis/synthMeta.js";
 // The class, for its MESSAGE — announceSynthesis words the pre-emptive "blocked" with it so the
 // header pill and the gate's own 409 can never drift into saying different things.
@@ -50,6 +50,8 @@ export interface CaptureAnalysisDeps {
   autoEnrichIfEnabled: (caseId: string) => void;
   /** Fire a notification event (best-effort, fire-and-forget). See composition/caseNotifier.ts. */
   dispatchNotify: (event: NotificationEvent) => void;
+  /** The host-duplicate check's quiet period and maximum wait (#2584); tests shorten them. */
+  hostDuplicateNotify?: { quietMs?: number; maxWaitMs?: number };
 }
 
 export interface CaptureAnalysis {
@@ -79,6 +81,8 @@ export interface CaptureAnalysis {
   resynthesizeInBackground(caseId: string, opts?: { analyst?: boolean }): void;
   /** #2498: the analyst accepts the gap — see CaptureWindows.skipHeld. */
   skipHeldScreenshots(caseId: string, token: string): Promise<SkipHeldResult>;
+  /** Server shutdown: cancel the pending host-duplicate checks (#2584). */
+  dispose(): void;
 }
 
 export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysis {
@@ -477,41 +481,14 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     if (outcome === "no-log" || outcome === "none") await catchUpSynthesis();
   }
 
-  // Tell someone the case is holding on a merge decision. The gate itself lives in synthesize(),
-  // but a case with AI disabled never reaches it — and that case still needs the badge raised, so
-  // detection runs here too. Fully guarded: notifications are a side channel and must never break
-  // an import.
-  //
-  // The per-channel `milestone` toggle defaults to TRUE because this may be the only push a blocked
-  // case produces. An analyst can still opt a channel out; the dashboard badge remains the local
-  // source of truth even when notifications are disabled or delivery fails.
-  async function notifyHostDuplicates(caseId: string): Promise<void> {
-    try {
-      const dismissalStore = options.hostDuplicateDismissalStore;
-      if (!dismissalStore || !options.stateStore || !options.assetOverridesStore) return;
-      const pending = await loadPendingHostDuplicates(
-        {
-          state: options.stateStore,
-          assetOverrides: options.assetOverridesStore,
-          dismissals: dismissalStore,
-          ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
-          ...(options.superTimelineStore ? { superTimeline: options.superTimelineStore } : {}),
-        },
-        caseId,
-      );
-      if (!pending.length) return;
-      dispatchNotify(
-        milestoneEvent(
-          caseId,
-          `Analysis on hold: ${pending.length} possible duplicate host${pending.length === 1 ? "" : "s"}`,
-          pending.map((p) => `• ${p.other} and ${p.canonical} may be the same machine`),
-          new Date().toISOString(),
-        ),
-      );
-    } catch {
-      /* never break an import on a notification */
-    }
-  }
+  // Tell someone the case is holding on a merge decision — coalesced per case (#2584): one check
+  // per burst of imports, never one whole super-timeline scan per file. See hostDuplicateNotify.ts.
+  const hostDuplicateNotifier = createHostDuplicateNotifier({
+    casesRoot: () => store.casesRoot,
+    check: (caseId) => hostDuplicateHoldEvent(options, caseId),
+    deliver: dispatchNotify,
+    ...deps.hostDuplicateNotify,
+  });
 
   /** Best-effort: a marker that cannot be written must never break the import that asked for it. */
   async function markOutOfDate(caseId: string, reason: string): Promise<void> {
@@ -530,7 +507,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     // FIRST, above every early return below. The two guards that follow (no pipeline, no synthesis
     // provider) are exactly the AI-disabled install this notification exists to serve: put this
     // inside the IIFE and the case that can never reach the synthesize() gate also never gets told.
-    void notifyHostDuplicates(caseId);
+    hostDuplicateNotifier.kick(caseId);
     const pipeline = options.pipeline;
     if (!pipeline) return;
     // Gate text synthesis on its provider (with vision fallback), preserving OCR-less installs.
@@ -644,5 +621,6 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     scheduleSynthesis,
     resynthesizeInBackground,
     skipHeldScreenshots: windows.skipHeld, // #2498
+    dispose: () => hostDuplicateNotifier.dispose(),
   };
 }
