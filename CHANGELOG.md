@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Cloud identities as IOCs, with analyst labels** — the IAM user, its access keys, the key it created and the policy it attached become IOCs with a context line; label any IOC attacker / ours / responder / unknown, and block-list exports drop ours and responder (closes #2543)
 - **Sigma grades Google Workspace activity** — Suzaku's 18 loadable Google Workspace rules and SigmaHQ's 10 are bundled and graded per event at import (labels only at the defaults); the Suzaku updater also tracks the four Workspace folders (closes #2522)
 - **AI preview shows changes like a code diff** — changed lines red and green, each value bold red beside its bold green token, hover links the pair, a summary by kind, amber "looks like … — not masked" guesses, and a "Show only changed lines" switch (closes #2531)
 - **AI preview for imports, playbook hunts and decision-model checks** — preview a CSV, log or screenshot read on a file you choose (nothing imported), playbook hunts from the stored fleet list (no refresh), and the missed-evidence review and containment check, now on the shared masking step (closes #2515)
@@ -58,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **CloudTrail attack steps above the AWS-service noise** — on the SANS 504 S3 lab, rows above Info fall from ~15,400 to 37: a self-granted `*:*` policy is Critical, AWS log delivery and read-only "not found" answers stay Info, the attacker's new key gets a lineage row with the enumeration burst, and object-logging gaps are dated (closes #2542)
+- **ATT&CK tags CloudTrail proves wrong are withheld; bucket policies graded by content** — a bundled rule's technique is dropped with a note when the record disproves it, and a policy for AWS services or the account itself is Medium (closes #2542)
+- **S3 versioning check raised across files, in either order** — a key's versioning or Object Lock check after its own admin grant or new key is High even when the steps sit in separate CloudTrail files (closes #2563)
+- **Dated object-logging note agrees on every import** — the incremental merge now gives the same coverage note as a full rebuild (closes #2564)
 - **Small-file cloud imports stay fast after an S3 read** — one GetBucketPolicy-style read row no longer forces every later import down the slow full rebuild; a few thousand small CloudTrail files take minutes, not hours (closes #2536)
 - **Cloud imports stay fast after instance-metadata, storage-key and EC2 rows** — those rows no longer force every later import down the slow full rebuild either (closes #2539)
 - **Live collections no longer push uploads out of Cloud Coverage** — a live collection is one row per account that grows as pages land ("across N collected pages"), so manual exports stay listed for the analyst and the AI (closes #2538)
