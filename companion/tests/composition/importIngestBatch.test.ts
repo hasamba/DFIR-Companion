@@ -23,7 +23,11 @@ import { createCaseAppliers } from "../../src/composition/caseAppliers.js";
 import { importTagger } from "../../src/routes/routeSettleDeps.js";
 import { createDiskIngest } from "../../src/composition/importIngestDisk.js";
 import { createDiskBatchIngest, type BatchFile } from "../../src/composition/importIngestBatch.js";
-import { DROP_BATCH_MARKER } from "../../src/composition/dropBatchMarker.js";
+import {
+  DROP_BATCH_MARKER,
+  createDropBatchMarker,
+  type DropBatchMarker,
+} from "../../src/composition/dropBatchMarker.js";
 import type { AppOptions } from "../../src/composition/appOptions.js";
 import type { ImporterRegistry } from "../../src/analysis/importerStore.js";
 import { sans504Records } from "../analysis/fixtures/sans504Lab.js";
@@ -67,7 +71,7 @@ function resolveImportKind(_name: string, text: string): string {
   return text.includes('"Records"') ? "aws" : "unknown";
 }
 
-async function harness(opts: { lock?: ImportLock } = {}) {
+async function harness(opts: { lock?: ImportLock; tagFailsOnce?: boolean; marker?: DropBatchMarker } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-drop-batch-"));
   roots.push(root);
   const store = new CaseStore(root);
@@ -97,7 +101,15 @@ async function harness(opts: { lock?: ImportLock } = {}) {
     importUndoStore: new ImportUndoStore(store),
   } as unknown as AppOptions;
   const demote = createImportDemote({ options, runStateExclusive });
-  const autoTagImported = importTagger({ options, store, runStateExclusive, logLine: () => {} });
+  const tagger = importTagger({ options, store, runStateExclusive, logLine: () => {} });
+  let tagFails = opts.tagFailsOnce ?? false;
+  const autoTagImported: typeof tagger = async (caseId, added) => {
+    if (tagFails) {
+      tagFails = false;
+      throw new Error("tagger store unavailable");
+    }
+    return tagger(caseId, added);
+  };
   const importLock = opts.lock ?? new ImportLock();
   const appliers = createCaseAppliers({ store, options, runStateExclusive, nsrlDb: () => undefined });
   const pushImportCheckpoint = vi.fn(appliers.pushImportCheckpoint);
@@ -116,6 +128,7 @@ async function harness(opts: { lock?: ImportLock } = {}) {
     resolveImportKind,
     importerRegistry: () => ({ importers: new Map() }) as unknown as ImporterRegistry,
     pushImportCheckpoint,
+    ...(opts.marker ? { marker: opts.marker } : {}),
   });
   const inbox = join(root, "inbox");
   await store.mkdirInCase(store.caseDir("c1"));
@@ -386,10 +399,60 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
     expect(r.rest).toEqual(h.files.slice(2));
   });
 
+  it("keeps the crash marker when the batch's settle fails, and the next recovery settles the rows", async () => {
+    const h = await harness({ tagFailsOnce: true });
+    const r = await h.batch.ingestDiskBatch(
+      "c1",
+      { kind: "aws", assetHost: "", files: h.files, bytes: 1 },
+      () => {},
+    );
+    const ok = r.results.filter((x) => x.ok);
+    expect(ok.length).toBe(h.files.length - 1); // still imported: a tail failure never fails a file
+    expect(ok.every((x) => /settle step failed/.test(x.warning ?? ""))).toBe(true);
+    const marker = createDropBatchMarker(h.store);
+    expect((await marker.read("c1"))?.length).toBe(h.files.length); // every file that reached its import
+    // A second batch must not write over (or clear) the unsettled one: it imports one by one instead.
+    const again = await h.batch.ingestDiskBatch(
+      "c1",
+      { kind: "aws", assetHost: "", files: h.files.slice(0, 2), bytes: 1 },
+      () => {},
+    );
+    expect(again.stop).toBe("fallback");
+    await h.batch.recoverDropBatch("c1");
+    await expect(marker.read("c1")).resolves.toBeNull();
+  });
+
+  it("ends the batch, before the file touches the case, when its crash-marker line cannot be written", async () => {
+    let adds = 0;
+    const real = (store: CaseStore) => createDropBatchMarker(store);
+    const holder: { inner?: DropBatchMarker } = {};
+    const marker: DropBatchMarker = {
+      add: async (caseId, name) => {
+        if (++adds === 3) throw new Error("disk full");
+        return holder.inner!.add(caseId, name);
+      },
+      read: (caseId) => holder.inner!.read(caseId),
+      clear: (caseId) => holder.inner!.clear(caseId),
+    };
+    const h = await harness({ marker });
+    holder.inner = real(h.store);
+    const r = await h.batch.ingestDiskBatch(
+      "c1",
+      { kind: "aws", assetHost: "", files: h.files, bytes: 1 },
+      () => {},
+    );
+    expect(r.stop).toBe("fallback");
+    expect(r.results.map((x) => x.relpath)).toEqual(h.files.slice(0, 2).map((f) => f.relpath));
+    expect(r.rest).toEqual(h.files.slice(2));
+    // Only the two files that ran were stored.
+    const imports = await readFile(join(h.store.caseDir("c1"), "metadata", "imports.jsonl"), "utf8");
+    expect(imports.trim().split("\n")).toHaveLength(2);
+    await expect(marker.read("c1")).resolves.toBeNull(); // the two were settled
+  });
+
   it("settles the rows of a batch a crash interrupted", async () => {
     const h = await harness();
     // Simulate the crash: one file merged inside a section, the marker left behind, no settle.
-    const { createDropBatchMarker } = await import("../../src/composition/dropBatchMarker.js");
     const marker = createDropBatchMarker(h.store);
     const handle = await open(h.files[1].fullPath, "r");
     const pipeline = (h.options as unknown as { pipeline: ReturnType<typeof buildRuntimePipeline> }).pipeline;

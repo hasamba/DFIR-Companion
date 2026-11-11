@@ -3399,7 +3399,8 @@ What the batch shares:
 
 If the batch cannot start (for example, the import memory guard refuses its size), every file of
 the batch is imported one by one instead. If the batch's grading pass or its note fails, the files
-stay imported and their `drop-log.txt` lines say which step failed. A failed Cloud Coverage or
+stay imported and their `drop-log.txt` lines say which step failed; a failed grading pass is run
+again by the next sweep, before any other batch. A failed Cloud Coverage or
 weakness update is retried file by file. A failed Undo step, import summary or run record is written
 to the case log, as on the Import button. A file is never sent to `_failed/` because a shared step
 failed.

@@ -95,9 +95,16 @@ const warn = (caseId: string, what: string, err: unknown): string => {
   return `the batch's ${what} step failed (${reason.slice(0, 200)})`;
 };
 
-/** Run the tail; returns the warnings every imported file of the batch carries. */
-export async function runBatchTail(deps: BatchTailDeps, a: BatchTailArgs): Promise<string[]> {
+/**
+ * Run the tail. `warnings`: what every imported file of the batch carries. `settleFailed`: the one
+ * settle threw, so the batch's crash marker must stay for the next sweep's recovery to settle its rows.
+ */
+export async function runBatchTail(
+  deps: BatchTailDeps,
+  a: BatchTailArgs,
+): Promise<{ warnings: string[]; settleFailed: boolean }> {
   const warnings: string[] = [];
+  let settleFailed = false;
   const { options } = deps.runCtx;
   if (a.collect.empties.length && options.pipeline) {
     const note = batchEmptyNote(a.source, a.collect.empties);
@@ -107,7 +114,8 @@ export async function runBatchTail(deps: BatchTailDeps, a: BatchTailArgs): Promi
   }
   await foldAll(deps, a);
   const settled = await settleBatch(deps, a).catch((e: unknown) => {
-    warnings.push(warn(a.caseId, "settle", e));
+    warnings.push(warn(a.caseId, "settle", e) + " — the next sweep settles these rows");
+    settleFailed = true;
     return null;
   });
   if (settled) await recordOutcome(deps, a, settled);
@@ -126,7 +134,7 @@ export async function runBatchTail(deps: BatchTailDeps, a: BatchTailArgs): Promi
       dropBatchFileNames: listNames(a.collect.imported.map((f) => f.relpath)),
     },
   }).catch((e: unknown) => warn(a.caseId, "analysis-run record", e));
-  return warnings;
+  return { warnings, settleFailed };
 }
 
 // Coverage and weaknesses once; on failure each file's own fold (idempotent per upload / atomic).

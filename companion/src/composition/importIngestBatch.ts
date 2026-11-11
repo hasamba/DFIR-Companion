@@ -44,13 +44,15 @@ import { sniffImportFileHeadDetail } from "../routes/importFileHead.js";
 import { consumeCloudStreamDisclosure, runDiskImport } from "../routes/importCloudStream.js";
 import type { DiskIngestDeps } from "./importIngestDisk.js";
 import { DROP_BATCH_FILE_MAX_BYTES } from "./dropBatchPlan.js";
-import { createDropBatchMarker } from "./dropBatchMarker.js";
+import { createDropBatchMarker, type DropBatchMarker } from "./dropBatchMarker.js";
 import { runBatchTail, type BatchCollect, type BatchTailDeps } from "./importIngestBatchTail.js";
 
 /** Super rows held for the batch's one tagger call before an interim flush (bounds memory). */
 export const BATCH_SUPER_TAG_FLUSH_ROWS = 20_000;
 
 export interface DiskBatchDeps extends DiskIngestDeps {
+  /** Test seam; production writes `state/drop-batch-pending.jsonl` (composition/dropBatchMarker.ts). */
+  marker?: DropBatchMarker;
   resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
   importerRegistry: () => ImporterRegistry;
   pushImportCheckpoint: BatchTailDeps["pushImportCheckpoint"];
@@ -100,7 +102,9 @@ export interface DiskBatchIngest {
   recoverDropBatch: (caseId: string) => Promise<void>;
 }
 
-type FileStep = { mismatch: true } | { mismatch: false; result: BatchFileResult };
+/** One file's step: it ran (and reached the crash marker, or not), or the batch must stop before it. */
+type FileStep =
+  { stop: "mismatch" | "fallback" } | { stop?: undefined; result: BatchFileResult; marked: boolean };
 
 /** One file's hook output; it joins the batch only once that file's import succeeded. */
 interface FileHookOutput {
@@ -111,9 +115,23 @@ interface FileHookOutput {
 
 const sum = (xs: readonly number[]): number => xs.reduce((n, x) => n + x, 0);
 
+/** One file of the batch past its crash-marker line, with what it reports into. */
+interface StoredFile {
+  caseId: string;
+  batch: DropBatchRequest;
+  file: BatchFile;
+  handle: FileHandle;
+  collect: BatchCollect;
+  owe: (rows: number) => void;
+  debug: ImportDebugRecorder;
+  own: FileHookOutput;
+  seq: number;
+  storedName: string;
+}
+
 export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
   const { store, options, importLock } = deps;
-  const marker = createDropBatchMarker(store);
+  const marker = deps.marker ?? createDropBatchMarker(store);
   const diskCtx = {
     options,
     store,
@@ -135,6 +153,9 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
   async function admitted(caseId: string, batch: DropBatchRequest, onFileDone: (r: string) => void) {
     const stateStore = options.stateStore;
     if (!options.pipeline || !stateStore) return fallback(batch, "no pipeline or state store");
+    // An earlier batch's rows still wait for their settle: never write over (or clear) its marker.
+    const pending = await marker.read(caseId).catch(() => ["unreadable"]);
+    if (pending) return fallback(batch, "an earlier batch is not settled yet");
     let outcome: DiskBatchResult | null = null;
     let baselineTaken = false;
     try {
@@ -175,6 +196,8 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
     const results: BatchFileResult[] = [];
     let reserve = 0; // forensic rows merged, not yet dual-written by the settle
     let stop: DiskBatchResult["stop"];
+    let marked = false; // a file of this batch is in the crash marker
+    let settleFailed = false;
     let i = 0;
     options.onImport?.(caseId);
     for (; i < batch.files.length; i++) {
@@ -185,17 +208,18 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
       const file = batch.files[i];
       status(caseId, `drop batch: ${kind} file ${i + 1}/${batch.files.length}`);
       const step = await importOne(caseId, batch, file, collect, (n) => (reserve += n));
-      if (step.mismatch) {
-        stop = "mismatch";
+      if (step.stop) {
+        stop = step.stop;
         break;
       }
+      marked ||= step.marked;
       results.push(step.result);
       onFileDone(file.relpath);
     }
     options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
     if (collect.imported.length) {
       const source = streamProvider(kind).source;
-      const warnings = await runBatchTail(tailDeps, {
+      const tail = await runBatchTail(tailDeps, {
         caseId,
         kind,
         source,
@@ -205,9 +229,16 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
         baseline,
         collect,
       });
-      if (warnings.length) addWarnings(results, warnings.join(" "));
+      if (tail.warnings.length) addWarnings(results, tail.warnings.join(" "));
+      settleFailed = tail.settleFailed;
     }
-    await marker.clear(caseId).catch(() => undefined);
+    // Kept when the settle failed, or when a file that reached its import was never settled (none
+    // imported): the next sweep's recovery settles those rows before any other batch runs.
+    if (marked && (settleFailed || !collect.imported.length)) {
+      getServerLogger().warn(`[drop] ${caseId}: batch not settled — the next sweep settles its rows`, {
+        caseId,
+      });
+    } else await marker.clear(caseId).catch(() => undefined);
     logBatch(caseId, batch, results, startedAt);
     return { results, rest: batch.files.slice(i), ...(stop ? { stop } : {}) };
   }
@@ -240,13 +271,10 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
   ): Promise<FileStep> {
     const debug = createImportDebugRecorder();
     const handle = await openNoFollow(file.fullPath).catch(() => null);
-    if (!handle) return { mismatch: true }; // the solo path names the refusal (link, gone, …)
+    if (!handle) return { stop: "mismatch" }; // the solo path names the refusal (link, gone, …)
     try {
-      if (!(await stillFits(handle, batch.kind, basename(file.relpath), debug))) return { mismatch: true };
-      return {
-        mismatch: false,
-        result: await storeAndImport(caseId, batch, file, handle, collect, owe, debug),
-      };
+      if (!(await stillFits(handle, batch.kind, basename(file.relpath), debug))) return { stop: "mismatch" };
+      return await storeAndImport(caseId, batch, file, handle, collect, owe, debug);
     } finally {
       await handle.close().catch(() => undefined);
     }
@@ -274,14 +302,32 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
     collect: BatchCollect,
     owe: (rows: number) => void,
     debug: ImportDebugRecorder,
-  ): Promise<BatchFileResult> {
+  ): Promise<FileStep> {
     const name = basename(file.relpath);
     // This file's hook output joins the batch only once its import succeeded.
     const own: FileHookOutput = { empties: [], folds: [], rows: [] };
+    let storedName: string;
+    let seq: number;
     try {
-      const seq = await store.nextImportSeq(caseId);
+      seq = await store.nextImportSeq(caseId);
       const safe = name.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.dat";
-      const storedName = `${String(seq).padStart(4, "0")}_${safe}`;
+      storedName = `${String(seq).padStart(4, "0")}_${safe}`;
+      // The crash marker FIRST: a file whose settle is deferred must be recoverable, so a marker that
+      // cannot be written ends the batch before this file touches the case (one by one from here).
+      await marker.add(caseId, storedName);
+    } catch (e) {
+      getServerLogger().warn(`[drop] ${caseId}: batch stopped — ${(e as Error).message}`, { caseId });
+      return { stop: "fallback" };
+    }
+    const f: StoredFile = { caseId, batch, file, handle, collect, owe, debug, own, seq, storedName };
+    return { result: await importStored(f), marked: true };
+  }
+
+  /** Copy, record and import one file whose crash-marker line is written. */
+  async function importStored(f: StoredFile): Promise<BatchFileResult> {
+    const { caseId, batch, file, handle, collect, owe, debug, own, seq, storedName } = f;
+    const name = basename(file.relpath);
+    try {
       const importedAt = new Date().toISOString();
       const saved = await store.saveImportFromHandle(caseId, storedName, handle);
       await store.appendImport(caseId, {
@@ -293,14 +339,6 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
         rows: 0,
         bytes: saved.bytes,
       });
-      await marker
-        .add(caseId, storedName)
-        .catch((e: unknown) =>
-          getServerLogger().warn(
-            `[drop] ${caseId}: batch crash marker not written — ${(e as Error).message}`,
-            { caseId },
-          ),
-        );
       const hooks = batchHooks(caseId, file, own, collect);
       await runDiskImport(diskCtx, batch.kind, caseId, saved.path, storedName, {
         label: storedName,
