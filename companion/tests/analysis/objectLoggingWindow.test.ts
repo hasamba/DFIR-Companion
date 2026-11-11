@@ -2,7 +2,11 @@
 // on part-way holds later object records, so the old "no reads at all" test never fired and the
 // unlogged window read as "nothing happened".
 import { describe, expect, it } from "vitest";
-import { objectLoggingEvent, LOGGING_COVERAGE_ID } from "../../src/analysis/cloudBulkRead.js";
+import {
+  objectLoggingEvent,
+  LOGGING_COVERAGE_ID,
+  summarizeBulkReads,
+} from "../../src/analysis/cloudBulkRead.js";
 import { isCoverageNote } from "../../src/analysis/coverageEventTime.js";
 import { demoteBelowSeverity } from "../../src/analysis/forensicGate.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -92,5 +96,35 @@ describe("objectLoggingEvent — logging that began part-way (#2542)", () => {
   });
   it("leaves the case with no selector change as it was: object reads present → no note", () => {
     expect(objectLoggingEvent([mgmt("2024-05-01T13:00:00Z"), object("2024-05-02T00:00:00Z")])).toBeNull();
+  });
+});
+
+describe("summarizeBulkReads — withdrawing a contradicted window note (#2564)", () => {
+  const stored = (events: ForensicEvent[]) => objectLoggingEvent(events)!;
+  const ids = (events: readonly ForensicEvent[]) => events.map((e) => e.id);
+
+  it("drops a stored window note once an object record earlier than the selector change is present", () => {
+    const base = [mgmt("2024-05-01T13:00:00Z"), selectors()];
+    const note = stored(base);
+    const early = object("2024-05-01T14:00:00Z");
+    const out = summarizeBulkReads([...base, note, early]);
+    expect(ids(out)).not.toContain(LOGGING_COVERAGE_ID);
+    expect(ids(out)).toContain(early.id);
+  });
+  it("keeps the stored window note when the new object record is after the change", () => {
+    const base = [mgmt("2024-05-01T13:00:00Z"), selectors()];
+    const out = summarizeBulkReads([...base, stored(base), object("2024-05-02T14:00:00Z")]);
+    expect(out.filter((e) => e.id === LOGGING_COVERAGE_ID)).toHaveLength(1);
+  });
+  it("leaves the logging-is-off note alone: only the dated variant is withdrawn", () => {
+    const list = ev("2024-05-01T13:00:00Z", "ListObjects", {
+      cloud: { provider: "aws", resource: "example-log" },
+    });
+    const off = objectLoggingEvent([list]);
+    expect(off?.description).toMatch(/^Cloud object logging is off/);
+    const out = summarizeBulkReads([list, off!, selectors(), object("2024-05-01T14:00:00Z")]);
+    expect(out.filter((e) => e.id === LOGGING_COVERAGE_ID).map((e) => e.description)).toEqual([
+      off!.description,
+    ]);
   });
 });

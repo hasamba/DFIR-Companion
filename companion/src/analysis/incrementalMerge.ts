@@ -68,7 +68,9 @@ import {
 //    indexed under 4 lack that bit, so the merge would not see the object-logging note is due.
 // 6: CloudTrail precursor changes and open precursor checks are LOAD rows (#2563). Rows indexed
 //    under 5 lack that bit, so a stored check would not be held when its key's change arrives.
-export const MERGE_INDEX_VERSION = 6;
+// 7: the object-logging coverage row is a LOAD row (#2564 part B). Rows indexed under 6 lack that
+//    bit, so a stored dated note would not be held when an earlier object record contradicts it.
+export const MERGE_INDEX_VERSION = 7;
 
 export type IncrementalResult =
   { ok: true; state: InvestigationState; read: number; written: number } | { ok: false; reason: string };

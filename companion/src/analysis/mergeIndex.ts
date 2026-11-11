@@ -15,7 +15,7 @@ import { TIMESTOMP_CORROBORATION_MARKER } from "./timestompCorroborate.js";
 import { isRpcPipeCall, isSmbStagedWrite } from "./smbExecution.js";
 import { PRECURSOR_CLASSES } from "./ransomwarePrecursor.js";
 import { CLOUD_AUDIT_RE, COVERAGE_EVENT_ID, isGeneratedCoverageRow } from "./cloudMetadataAccess.js";
-import { readCloudRecord } from "./cloudBulkRead.js";
+import { LOGGING_COVERAGE_ID, readCloudRecord } from "./cloudBulkRead.js";
 import { isStorageKeyJoinInput } from "./azureStorageKeyToRead.js";
 import { selectsObjects } from "./objectLoggingWindow.js";
 import { isOpenPrecursorCheck, isPrecursorChange } from "./cloudPrecursorMerge.js";
@@ -187,6 +187,8 @@ export function mergeLoadAlways(e: ForensicEvent): boolean {
   if (isStorageKeyJoinInput(e)) return true;
   // The time-aware object-logging note's anchor: without it held, a stored note never refreshes (#2564).
   if (selectsObjects(e)) return true;
+  // The note itself, so a later import with an earlier object record can withdraw it (#2564).
+  if (e.id === LOGGING_COVERAGE_ID) return true;
   // The cross-upload precursor join (#2563): every privileged change and every open check is held,
   // so the pass raises a stored check when the change arrives, and a new check over a stored change.
   if (isPrecursorChange(e) || isOpenPrecursorCheck(e)) return true;

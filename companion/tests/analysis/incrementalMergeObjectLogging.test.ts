@@ -9,7 +9,7 @@ import { mergeDelta, type WindowContext } from "../../src/analysis/stateMerge.js
 import { mergeIntoCase } from "../../src/analysis/caseMerge.js";
 import { MERGE_FLAG_LOAD, MERGE_FLAG_TRIGGER, mergeIndexEntry } from "../../src/analysis/mergeIndex.js";
 import { LOGGING_COVERAGE_ID } from "../../src/analysis/cloudBulkRead.js";
-import { isCoverageNote } from "../../src/analysis/coverageEventTime.js";
+import { COVERAGE_SOURCE, isCoverageNote } from "../../src/analysis/coverageEventTime.js";
 import { demoteBelowSeverity } from "../../src/analysis/forensicGate.js";
 import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
@@ -176,10 +176,26 @@ describe("incremental merge — the time-aware object-logging note (#2564)", () 
     expect(notes(s)).toHaveLength(1);
   });
 
-  it("a later object read before T keeps both sides equal", async () => {
-    // Retracting the now-contradicted note is deferred (#2564 part B); this pins equivalence only.
+  it("an object read before T in a later import withdraws the note on both sides", async () => {
+    // #2564 part B: the note says no object records exist before T; one now does, so it must go.
+    const first = await importBoth([mgmtRow("m1", at(20, 13)), selectorRow("sel")]);
+    expect(notes(first)).toHaveLength(1);
+    const s = await importBoth([objectRow("o1", at(20, 14))]);
+    expect(notes(s)).toEqual([]);
+    const after = await importBoth([mgmtRow("m2", at(22, 9))]);
+    expect(notes(after)).toEqual([]);
+  });
+
+  it("the same records imported together produce no note", async () => {
+    const s = await importBoth([mgmtRow("m1", at(20, 13)), selectorRow("sel"), objectRow("o1", at(20, 14))]);
+    expect(notes(s)).toEqual([]);
+  });
+
+  it("an object read after T in a later import keeps the note", async () => {
     await importBoth([mgmtRow("m1", at(20, 13)), selectorRow("sel")]);
-    await importBoth([objectRow("o1", at(20, 14))]);
+    const s = await importBoth([objectRow("o1", at(21, 14))]);
+    expect(notes(s)).toHaveLength(1);
+    expect(notes(s)[0].description).toContain("Cloud object logging begins at");
   });
 
   it("the note keeps its id and stays exempt from the severity gate", async () => {
@@ -199,6 +215,19 @@ describe("mergeIndexEntry — selector-change rows (#2564)", () => {
 
   it("a selector change that selects S3 object activity is a LOAD row, not a trigger", () => {
     const { flags } = entry(selectorRow("sel"));
+    expect(flags & MERGE_FLAG_LOAD).toBe(MERGE_FLAG_LOAD);
+    expect(flags & MERGE_FLAG_TRIGGER).toBe(0);
+  });
+
+  it("the stored object-logging note is a LOAD row, so the merge can withdraw it", () => {
+    const note: Ev = {
+      id: LOGGING_COVERAGE_ID,
+      timestamp: at(20, 13),
+      description: `Cloud object logging begins at 2026-10-20T23:53:36Z [cloud bulk read: no object-level records before it.]`,
+      asset: undefined,
+      sources: [COVERAGE_SOURCE],
+    };
+    const { flags } = entry(note);
     expect(flags & MERGE_FLAG_LOAD).toBe(MERGE_FLAG_LOAD);
     expect(flags & MERGE_FLAG_TRIGGER).toBe(0);
   });

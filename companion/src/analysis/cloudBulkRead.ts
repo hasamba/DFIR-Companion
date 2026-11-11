@@ -37,7 +37,7 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
-import { objectLoggingWindowEvent } from "./objectLoggingWindow.js";
+import { objectLoggingWindowEvent, withoutContradictedWindowNote } from "./objectLoggingWindow.js";
 import {
   BULK_READ_TRUNCATION_ID,
   COVERAGE_SOURCE,
@@ -661,10 +661,11 @@ export function recurringPrincipals(events: readonly ForensicEvent[], minDays = 
  * super-timeline, where forty thousand of them belong.
  */
 export function summarizeBulkReads(
-  events: readonly ForensicEvent[],
+  input: readonly ForensicEvent[],
   ctx: BulkContext = {},
   opts: GroupOpts = {},
 ): ForensicEvent[] {
+  const events = withoutContradictedWindowNote(input); // earlier object records arrived (#2564)
   const { groups, dropped } = groupBulkReadsWithDropped(events, opts);
   const coverage = objectLoggingEvent(events);
   const truncated = truncationEvent(events, dropped);
