@@ -65,6 +65,8 @@ export interface CaseAppliers {
     label: string,
     afterState?: InvestigationState,
     superRows?: SuperRowsUndo,
+    /** The stored names whose cloud-ledger batches this step also covers (#2540: a drop batch). */
+    ledgerLabels?: readonly string[],
   ): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
   applyDeobfuscationToCase(
@@ -100,6 +102,7 @@ export function createCaseAppliers({
     label: string,
     afterState?: InvestigationState,
     superRows?: SuperRowsUndo,
+    ledgerLabels: readonly string[] = [],
   ): Promise<void> {
     const undoStore = options.importUndoStore;
     if (!undoStore) return;
@@ -108,7 +111,7 @@ export function createCaseAppliers({
       const built = await checkpointFor(caseId, beforeState, label, at, afterState);
       const withRows = superRows ? { ...built, superRows } : built;
       // The cloud-record ledger batches this import committed (#2301): Undo forgets them.
-      const cloudBatches = (await options.cloudRecordStore?.claimBatches(caseId, label)) ?? [];
+      const cloudBatches = (await options.cloudRecordStore?.claimBatches(caseId, label, ledgerLabels)) ?? [];
       const checkpoint = cloudBatches.length ? { ...withRows, cloudBatches } : withRows;
       // Atomic load->push->save under the store's per-case lock: overlapping imports (e.g. bulk
       // import firing requests seconds apart while the previous one's async work is still in

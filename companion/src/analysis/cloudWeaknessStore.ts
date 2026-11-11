@@ -36,10 +36,18 @@ export class CloudWeaknessStore {
 
   /** Fold one import's draft into the case file. */
   async fold(caseId: string, draft: WeaknessFile): Promise<WeaknessFile> {
+    return this.foldMany(caseId, [draft]);
+  }
+
+  /**
+   * Fold several imports' drafts in order (#2540: a drop-folder batch) — the pure fold applied once
+   * per draft, as one `fold()` each would, with one read and one atomic write.
+   */
+  async foldMany(caseId: string, drafts: readonly WeaknessFile[]): Promise<WeaknessFile> {
     return lock.runExclusive(caseId, async () => {
-      const next = foldWeaknesses(
+      const next = drafts.reduce(
+        (file, draft) => foldWeaknesses(file, draft),
         (await this.load(caseId)) ?? { accounts: [], accountsOverflow: false },
-        draft,
       );
       await atomicWrite(this.path(caseId), JSON.stringify(next));
       return next;

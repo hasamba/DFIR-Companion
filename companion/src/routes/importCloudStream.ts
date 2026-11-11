@@ -87,7 +87,7 @@ async function importCloudFileLogged(
   storedPath: string,
   storedName: string,
   base: ImportBase,
-): Promise<InvestigationState> {
+): Promise<InvestigationState | null> {
   const { serverLogger: log, options } = ctx;
   if (!options.pipeline) throw new Error("pipeline is not configured");
   const bytes = await stat(storedPath)
@@ -106,12 +106,14 @@ async function importCloudFileLogged(
       signal: base.signal,
       ...(base.skipSummaries ? { skipSummaries: true } : {}),
       ...(base.coverageGroup ? { coverageGroup: base.coverageGroup } : {}),
+      ...(base.cloudBatch ? { batch: base.cloudBatch } : {}), // a drop-folder batch (#2540)
       onProgress: (done, total) =>
         void (
           base.onParseProgress?.(done, total, `reading ${kind} records`) ?? base.onProgress?.(done, total)
         ),
       preGradeRules: await preGradeRules(ctx),
-      onSuperRows: settle ? (rows) => settle.autoTagImported(caseId, rows) : undefined,
+      onSuperRows:
+        base.cloudBatch?.superRows ?? (settle ? (rows) => settle.autoTagImported(caseId, rows) : undefined),
     });
     stashDisclosure(caseId, storedName, disclosure);
     log.info(formatImportMerged(caseId, storedName, Date.now() - startedAt), { caseId });
@@ -134,7 +136,7 @@ export function runDiskImport(
   storedPath: string,
   storedName: string,
   base: ImportBase,
-): Promise<InvestigationState> {
+): Promise<InvestigationState | null> {
   return isStreamKind(kind)
     ? importCloudFileLogged(ctx, caseId, kind, storedPath, storedName, base)
     : importPlasoFileLogged(ctx, caseId, storedPath, storedName, base);
@@ -158,7 +160,7 @@ function runStored(
 function runStoredFile(
   ctx: RouteContext,
   a: { kind: string; caseId: string; storedName: string; base: ImportBase },
-): Promise<InvestigationState> {
+): Promise<InvestigationState | null> {
   const storedPath = join(ctx.store.importsDir(a.caseId), a.storedName);
   return runDiskImport(ctx, a.kind, a.caseId, storedPath, a.storedName, a.base);
 }

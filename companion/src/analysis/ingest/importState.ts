@@ -228,6 +228,29 @@ export async function noteEmptyImport(
   return commitDelta(ctx, caseId, delta, opts);
 }
 
+/**
+ * A drop-folder batch's one case-timeline note for the files that added nothing (#2540): the note
+ * those files would each have merged on their own, committed once under the batch's label.
+ */
+export async function commitImportNote(
+  ctx: ImportContext,
+  caseId: string,
+  note: string,
+  opts: { label: string; importedAt: string },
+): Promise<InvestigationState> {
+  const delta = deltaSchema.parse({
+    findings: [],
+    iocs: [],
+    mitreTechniques: [],
+    forensicEvents: [],
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote: note,
+    summary: "",
+  });
+  return commitDelta(ctx, caseId, delta, opts);
+}
+
 // Shared tail of both Plaso entry points: apply the severity floor, build the delta and merge it
 // into the case state. (Keeping this in one place means the in-memory and streaming importers
 // produce identical timeline rows / IOCs / notes.)

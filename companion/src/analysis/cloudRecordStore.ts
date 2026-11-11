@@ -96,11 +96,15 @@ export class CloudRecordStore {
    * rows each ledger commit writes in the SAME transaction as its ledger rows (#2301), so every
    * committed row is claimable whatever failed after it.
    */
-  async claimBatches(caseId: string, checkpointLabel: string): Promise<string[]> {
+  async claimBatches(
+    caseId: string,
+    checkpointLabel: string,
+    alsoLabels: readonly string[] = [], // a drop-folder batch's files (#2540)
+  ): Promise<string[]> {
     return caseSqliteWorker.request<string[]>({
       op: "cloudBatchesForLabels",
       dbPath: this.databasePath(caseId),
-      labels: [...new Set([checkpointLabel, storedNameOf(checkpointLabel)])],
+      labels: [...new Set([checkpointLabel, storedNameOf(checkpointLabel), ...alsoLabels])],
     });
   }
 

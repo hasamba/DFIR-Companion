@@ -45,11 +45,12 @@ import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
 import { readHandleBounded, FileTooLargeError } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "../routes/importFileHead.js";
 import type { IngestDiskFile } from "./importIngestDisk.js";
+import type { DiskBatchIngest } from "./importIngestBatch.js";
+import { runDropSweep } from "./dropBatch.js";
 import { createDropStreamer, isGzipMagic, streamGzipDropFile } from "./dropStreamed.js";
 import {
   selectReadyFiles,
   excludeStuck,
-  stuckMoveNote,
   classifyDropFile,
   shouldIgnoreDropFile,
   isOversize,
@@ -62,7 +63,7 @@ import {
   type StuckDropFile,
 } from "../analysis/dropScan.js";
 import { formatDropLogLines, appendDropLog, buildSweepLogEntries } from "../analysis/dropLog.js";
-import type { DropFailure, PendingRawInput } from "../analysis/dropStatus.js";
+import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
@@ -75,7 +76,6 @@ import { admitIngest, CaseArchivingError } from "../analysis/caseIngestAdmission
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import {
   createDropStuckTracker,
-  joinReasons,
   type DropFingerprint,
   type ProcessedVersion,
 } from "./dropStuck.js";
@@ -85,8 +85,6 @@ import { CaseKeyedMap, CaseKeyedSet, type PerCaseMap, type PerCaseSet } from "..
 export function dropDirOf(store: CaseStore, caseId: string): string {
   return join(store.caseDir(caseId), "drop");
 }
-
-const DROP_CONCURRENCY = 4;
 
 export interface DropFolderDeps {
   store: CaseStore;
@@ -116,6 +114,8 @@ export interface DropFolderDeps {
   // A cloud export or Plaso file streamed from the sweep's own no-follow handle (#2336): a gzip, or
   // a file over DFIR_DROP_MAX_BYTES, imported as Import-from-path imports it instead of refused.
   ingestDiskFile: IngestDiskFile;
+  // Small same-importer files as one merge-and-settle step (#2540); absent → every file on its own.
+  dropBatch?: DiskBatchIngest;
   // The one binary import kind this codebase natively decodes (#1013's own macOS Background Task
   // Management parser) — consulted BEFORE the raw-tool-input routing below claims a matching file,
   // so a real BTM (name + bplist00 magic both required) auto-imports instead of sitting as a
@@ -174,6 +174,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     ingestStreamed,
     ingestMacLoginItemBinary,
     ingestDiskFile,
+    dropBatch,
     liveToolConfigs,
     resolveToolForExt,
     rawExtClaimed,
@@ -612,6 +613,8 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       const { ready, nextStuck } = excludeStuck(settled.ready, listing, stuck.get(caseId) ?? new Map());
       stuck.set(caseId, nextStuck);
       await stuckFiles.retry(dropDir, nextStuck, moveDropFile);
+      // A batch a crash interrupted gets its settle before anything else imports (#2540).
+      await dropBatch?.recoverDropBatch(caseId).catch((e: unknown) => logLine(`[drop] batch recovery failed: ${(e as Error).message}`));
       if (ready.length === 0) return;
 
       // One job per sweep, kind "import" (same panel row as the Import button). Non-cancellable: the
@@ -636,57 +639,24 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       };
 
       const runCache = createToolRunCache();
-      const imported: string[] = [];
-      // Handed to an asynchronous tool this sweep — logged SUBMITTED, with the outcome appended by the
-      // job itself when the analysis resolves.
-      const submitted: { relpath: string; reason: string }[] = [];
-      const failed: DropFailure[] = [];
-      const warned: DropFailure[] = []; // imported, but the JSON kind was a guess (#1824)
-      const pendingRawInputs: PendingRawInput[] = [];
+      // Sorted by relpath, small same-importer files batched (#2540, composition/dropBatch.ts).
       let processed = 0;
-      for (let i = 0; i < ready.length; i += DROP_CONCURRENCY) {
-        const batch = ready.slice(i, i + DROP_CONCURRENCY);
-        await Promise.all(
-          batch.map(async (file) => {
-            try {
-              const res = await processDropFile(caseId, dropDir, file, runCache, modelCall);
-              if (res.pending) {
-                // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
-                // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
-                pendingRawInputs.push(res.pending);
-                return;
-              }
-              // A failed move is named to the analyst, merged into the file's one warning or failure
-              // entry (buildSweepLogEntries reads only the first warning per file) (#2281).
-              const moveNote = await moveDropFile(dropDir, file.relpath, res.ok, file).then(
-                () => undefined,
-                (e) => {
-                  logLine(`[drop] move failed for ${file.relpath}: ${(e as Error).message}`);
-                  return stuckMoveNote(res.ok, (e as Error).message);
-                },
-              );
-              // A submitted file still counts as "imported" for the dashboard's drop banner (it was
-              // accepted and moved), but the drop-log records it as SUBMITTED until the analysis lands.
-              const warning = res.ok ? joinReasons(res.warning, moveNote) : "";
-              if (warning) warned.push({ relpath: file.relpath, reason: warning });
-              if (res.ok && res.submitted) {
-                imported.push(file.relpath);
-                submitted.push({ relpath: file.relpath, reason: joinReasons(res.submitted, moveNote) });
-              } else if (res.ok) imported.push(file.relpath);
-              else
-                failed.push({
-                  relpath: file.relpath,
-                  reason: joinReasons(res.reason ?? "import failed", moveNote),
-                });
-              nextSeen.delete(file.relpath); // moved out of the watched area — forget it
-              pendingLogged.get(caseId)?.delete(file.relpath); // resolved — no longer pending
-            } finally {
-              if (job)
-                options.jobManager?.progress(job.jobId, ++processed, ready.length, basename(file.relpath));
-            }
-          }),
-        );
-      }
+      const { imported, submitted, failed, warned, pendingRawInputs } = await runDropSweep(ready, {
+        caseId,
+        dropDir,
+        processFile: (file) => processDropFile(caseId, dropDir, file, runCache, modelCall),
+        moveDropFile,
+        forget: (relpath) => {
+          nextSeen.delete(relpath);
+          pendingLogged.get(caseId)?.delete(relpath);
+        },
+        progress: (relpath) => {
+          if (job) options.jobManager?.progress(job.jobId, ++processed, ready.length, basename(relpath));
+        },
+        resolveImportKind,
+        recordImportFailure: (name, err, debug) => recordImportFailure(caseId, "drop", name, err, debug),
+        ...(dropBatch ? { dropBatch } : {}),
+      });
       if (job) await options.jobManager?.finish(job.jobId);
       if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;
 

@@ -23,7 +23,7 @@ import type { InvestigationState, Severity, ForensicEvent } from "../stateTypes.
 import type { CompiledRuleset } from "../taggerRules.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
-import type { CloudCoverageDraft } from "../cloudCoverage.js";
+import type { CloudCoverageDraft, CloudCoverageStore } from "../cloudCoverage.js";
 import type { WeaknessFile } from "../awsAccountWeakness.js";
 import { openCloudRecordStream, type CloudStreamStats } from "../cloudStreamReader.js";
 import { createOutputBudget, defaultBudgets } from "../cloudOutputBudget.js";
@@ -42,6 +42,7 @@ import {
   SUPER_ROWS_PER_IMPORT_MAX,
 } from "../cloudStreamLimits.js";
 import { commitDelta, noteEmptyImport } from "./importState.js";
+export { commitImportNote } from "./importState.js"; // a drop-folder batch's one note (#2540)
 import type { ImportContext } from "./importContext.js";
 import {
   memberProvenance,
@@ -87,14 +88,36 @@ export interface CloudStreamImportOptions {
    * page's coverage into that collection's one Cloud Coverage row. Unread by the import itself.
    */
   coverageGroup?: string;
+  /** A drop-folder batch's hooks (#2540): see CloudBatchHooks. */
+  batch?: CloudBatchHooks;
   /** Test seams; production uses the named constants. */
   batchRecords?: number;
   summaryRecords?: number;
   iocsMax?: number;
 }
 
+/**
+ * What a drop-folder batch (#2540, composition/importIngestBatch.ts) takes over from each file's
+ * import, so the batch can do it once: an EMPTY file's case-timeline note (nothing is merged for
+ * it), the coverage and weakness drafts (pipeline.ts), and the super rows' tagging (the logged
+ * runner). `deltaRows` reports an upper bound on the forensic rows the file merges, which the batch
+ * counts against the super-timeline's room until its one settle dual-writes them.
+ */
+export interface CloudBatchHooks {
+  emptyNote(note: { records: number; detail: string }): void;
+  deltaRows(rows: number): void;
+  /** The drafts as `CloudCoverageStore.record()` would take them, and the store they were bound for. */
+  folds(
+    coverage: CloudCoverageDraft[],
+    weaknesses: WeaknessFile | undefined,
+    store: CloudCoverageStore | undefined,
+  ): void;
+  superRows(rows: ForensicEvent[]): Promise<void>;
+}
+
 export interface CloudStreamImportResult {
-  state: InvestigationState;
+  /** Null only for an empty file of a drop-folder batch, which merges nothing (#2540). */
+  state: InvestigationState | null;
   coverage: CloudCoverageDraft[];
   /** CloudTrail only (#2560): the file's account-weakness draft, folded per case by the pipeline. */
   weaknesses?: WeaknessFile;
@@ -290,6 +313,12 @@ async function finish(
   );
   if (!events.length && !promoted.events.length && !acc.iocs.size && !acc.principalNames.length) {
     const detail = [...clauses, undated.slice(2)].filter(Boolean).join("; ");
+    if (opts.batch) {
+      opts.debug?.counts({ total: stats.records, kept: 0 });
+      opts.debug?.observed("no_events");
+      opts.batch.emptyNote({ records: stats.records, detail });
+      return { state: null, coverage, disclosure, weaknesses: acc.weaknesses };
+    }
     const state = await noteEmptyImport(ctx, caseId, opts, provider.source, stats.records, detail);
     return { state, coverage, disclosure, weaknesses: acc.weaknesses };
   }
@@ -323,6 +352,7 @@ async function finish(
     summary: "",
     ...(acc.principalNames.length ? { principalNames: acc.principalNames } : {}),
   });
+  opts.batch?.deltaRows(forensicEvents.length + promoted.events.length);
   // commitDelta checks the signal INSIDE the lock: a cancel that lands while the import waits for
   // the case (behind another write) merges nothing, and the caller's cleanup deactivates the ledger.
   const state = await commitDelta(ctx, caseId, delta, {

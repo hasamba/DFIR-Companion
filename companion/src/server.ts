@@ -212,6 +212,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     applyNsrlToCase: appliers.applyNsrlToCase,
     applyDeobfuscationToCase: appliers.applyDeobfuscationToCase,
     resynthesizeInBackground: analysis.resynthesizeInBackground,
+    pushImportCheckpoint: appliers.pushImportCheckpoint,
   });
   const tools = createExternalTools({
     store,
@@ -233,6 +234,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     ingestStreamed: imports.ingestStreamed,
     ingestMacLoginItemBinary: imports.ingestMacLoginItemStreamed,
     ingestDiskFile: imports.ingestDiskFile,
+    dropBatch: imports.dropBatch, // #2540
     liveToolConfigs: tools.liveToolConfigs,
     resolveToolForExt: tools.resolveToolForExt,
     rawExtClaimed: tools.rawExtClaimed,

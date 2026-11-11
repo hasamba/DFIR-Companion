@@ -28,6 +28,7 @@ import type { PlaybookTask } from "../analysis/playbook.js";
 import type { PlaybookControl } from "../analysis/playbookControl.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
 import type { CombinedLogImportOptions } from "../analysis/combinedLogImport.js";
+import type { CloudBatchHooks } from "../analysis/ingest/cloudStreamImport.js";
 import type { PerCaseMap, PerCaseSet } from "../storage/caseKeyedState.js";
 
 /**
@@ -68,6 +69,8 @@ export type ImportBase = {
   skipSummaries?: boolean;
   // A live collection page's Cloud Coverage group (#2538) — read only by the streamed cloud import.
   coverageGroup?: string;
+  // A drop-folder batch's hooks (#2540) — read only by the streamed cloud import.
+  cloudBatch?: CloudBatchHooks;
 };
 
 /**
@@ -240,6 +243,8 @@ export interface RouteContext {
     afterState?: InvestigationState,
     /** Super-timeline rows rewritten in place (#2220): Undo writes `restore`, Redo `reapply`. */
     superRows?: { restore: ForensicEvent[]; reapply: ForensicEvent[] },
+    /** The stored names whose cloud-ledger batches this step also covers (#2540: a drop batch). */
+    ledgerLabels?: readonly string[],
   ): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
   applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;

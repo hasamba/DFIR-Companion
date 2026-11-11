@@ -63,7 +63,7 @@ import { safeAiErrorKind, safeAiPhase } from "./operationalMetrics.js";
 import { type SecondOpinion } from "./secondOpinion.js";
 import { type AggregateStats } from "./logAggregate.js";
 import { persistCloudCoverage, type CloudCoverageSummary } from "./cloudCoverage.js";
-import { persistImportCoverage } from "./cloudCoverageFold.js";
+import { persistCloudImportFolds } from "./cloudCoverageFold.js";
 import { persistWeaknesses } from "./cloudWeaknessStore.js";
 import { type KevCatalog } from "./kev.js";
 import { type HuntSuggestion } from "./huntSuggest.js";
@@ -562,14 +562,18 @@ export class AnalysisPipeline {
   // A large or gzip cloud export, streamed from disk (#2303); its coverage carries the disclosure.
   async importCloudFile(
     ...args: ImporterArgs<typeof ingest.importCloudFile>
-  ): Promise<{ state: InvestigationState; disclosure: CloudStreamDisclosure }> {
+  ): Promise<{ state: InvestigationState | null; disclosure: CloudStreamDisclosure }> {
     const { state, coverage, disclosure, weaknesses } = await ingest.importCloudFile(this.importCtx, ...args);
     const importDisclosure = describeCloudStreamDisclosure(disclosure).map((d) => d.slice(0, 400));
     const drafts = coverage.map((c) => ({ ...c, importDisclosure, streamDisclosure: disclosure }));
-    // A live collection's page folds into its collection's one row (#2538); a manual upload is its own.
-    await persistImportCoverage(this.opts.cloudCoverageStore, args[0], drafts, args[3].coverageGroup);
-    await persistWeaknesses(this.opts.cloudCoverageStore?.weaknesses(), args[0], weaknesses); // #2560: per case
+    // A collection page folds into its group (#2538), a drop batch takes them (#2540); weaknesses per case (#2560).
+    await persistCloudImportFolds(this.opts.cloudCoverageStore, args[0], drafts, weaknesses, args[3]);
     return { state, disclosure };
+  }
+
+  // A drop-folder batch's one note for its empty files (#2540).
+  commitImportNote(...args: ImporterArgs<typeof ingest.commitImportNote>): Promise<InvestigationState> {
+    return ingest.commitImportNote(this.importCtx, ...args);
   }
 
   // A live collection's whole-export summaries, once over every page of the run (#2482).

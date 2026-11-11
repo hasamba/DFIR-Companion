@@ -140,30 +140,28 @@ export class CloudCoverageStore {
     drafts: readonly CloudCoverageDraft[],
     at: string = new Date().toISOString(),
   ): Promise<CloudCoverageRecord[]> {
+    return lock.runExclusive(caseId, async () =>
+      this.commit(caseId, applyUpload(await this.load(caseId), drafts, at), drafts),
+    );
+  }
+
+  /**
+   * Several uploads at once (#2540: a drop-folder batch), each with its own `at`, applied in order
+   * with the eviction after each — exactly what one `record()` per upload leaves, in one lock and
+   * one write instead of one per upload.
+   */
+  async recordMany(
+    caseId: string,
+    uploads: readonly { drafts: readonly CloudCoverageDraft[]; at: string }[],
+  ): Promise<CloudCoverageRecord[]> {
     return lock.runExclusive(caseId, async () => {
       let next = await this.load(caseId);
-      const byUpload = new Map<string, CloudCoverageDraft[]>();
-      for (const d of drafts) {
-        (byUpload.get(d.uploadId) ?? byUpload.set(d.uploadId, []).get(d.uploadId)!).push(d);
-      }
-      for (const [uploadId, uploadDrafts] of byUpload) {
-        const existingOfThisUpload = next.filter((r) => r.uploadId === uploadId);
-        const firstSeenAt = existingOfThisUpload.length
-          ? existingOfThisUpload.reduce(
-              (min, r) => (r.uploadFirstSeenAt < min ? r.uploadFirstSeenAt : min),
-              existingOfThisUpload[0].uploadFirstSeenAt,
-            )
-          : at;
-        const capped = uploadDrafts.slice(0, SCOPES_PER_UPLOAD_MAX);
-        const fresh: CloudCoverageRecord[] = capped.map((d) => ({
-          ...d,
-          uploadFirstSeenAt: firstSeenAt,
-          importedAt: at,
-        }));
-        // Replace this upload's own records; every other upload's records are untouched.
-        next = [...next.filter((r) => r.uploadId !== uploadId), ...fresh];
-      }
-      return this.commit(caseId, next, drafts);
+      for (const u of uploads) next = evictOldestUploads(applyUpload(next, u.drafts, u.at));
+      return this.commit(
+        caseId,
+        next,
+        uploads.flatMap((u) => u.drafts),
+      );
     });
   }
 
@@ -194,18 +192,7 @@ export class CloudCoverageStore {
     records: readonly CloudCoverageRecord[],
     seen: readonly CloudCoverageDraft[],
   ): Promise<CloudCoverageRecord[]> {
-    let next = [...records];
-    // Evict the oldest tracked upload(s), atomically, only as far as needed — re-recording an
-    // already-tracked upload never adds one, so this only fires for a genuinely NEW upload.
-    while (true) {
-      const uploads = new Map<string, string>(); // uploadId -> firstSeenAt
-      for (const r of next) if (!uploads.has(r.uploadId)) uploads.set(r.uploadId, r.uploadFirstSeenAt);
-      if (uploads.size <= UPLOADS_TRACKED_PER_CASE_MAX) break;
-      const oldestId = [...uploads.entries()].sort(
-        (a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]),
-      )[0][0];
-      next = next.filter((r) => r.uploadId !== oldestId);
-    }
+    const next = evictOldestUploads(records);
 
     await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
 
@@ -225,6 +212,57 @@ export class CloudCoverageStore {
     }
 
     return next;
+  }
+}
+
+/**
+ * One upload's drafts applied to the records, grouped by `uploadId` alone (see `record()`): each
+ * group replaces its own records, keeping that upload's first-seen time. Pure.
+ */
+function applyUpload(
+  records: readonly CloudCoverageRecord[],
+  drafts: readonly CloudCoverageDraft[],
+  at: string,
+): CloudCoverageRecord[] {
+  let next = [...records];
+  const byUpload = new Map<string, CloudCoverageDraft[]>();
+  for (const d of drafts) {
+    (byUpload.get(d.uploadId) ?? byUpload.set(d.uploadId, []).get(d.uploadId)!).push(d);
+  }
+  for (const [uploadId, uploadDrafts] of byUpload) {
+    const existingOfThisUpload = next.filter((r) => r.uploadId === uploadId);
+    const firstSeenAt = existingOfThisUpload.length
+      ? existingOfThisUpload.reduce(
+          (min, r) => (r.uploadFirstSeenAt < min ? r.uploadFirstSeenAt : min),
+          existingOfThisUpload[0].uploadFirstSeenAt,
+        )
+      : at;
+    const capped = uploadDrafts.slice(0, SCOPES_PER_UPLOAD_MAX);
+    const fresh: CloudCoverageRecord[] = capped.map((d) => ({
+      ...d,
+      uploadFirstSeenAt: firstSeenAt,
+      importedAt: at,
+    }));
+    // Replace this upload's own records; every other upload's records are untouched.
+    next = [...next.filter((r) => r.uploadId !== uploadId), ...fresh];
+  }
+  return next;
+}
+
+/**
+ * Evict the oldest tracked upload(s), atomically, only as far as needed — re-recording an
+ * already-tracked upload never adds one, so this only fires for a genuinely NEW upload. Pure.
+ */
+function evictOldestUploads(records: readonly CloudCoverageRecord[]): CloudCoverageRecord[] {
+  let next = [...records];
+  while (true) {
+    const uploads = new Map<string, string>(); // uploadId -> firstSeenAt
+    for (const r of next) if (!uploads.has(r.uploadId)) uploads.set(r.uploadId, r.uploadFirstSeenAt);
+    if (uploads.size <= UPLOADS_TRACKED_PER_CASE_MAX) return next;
+    const oldestId = [...uploads.entries()].sort(
+      (a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]),
+    )[0][0];
+    next = next.filter((r) => r.uploadId !== oldestId);
   }
 }
 
