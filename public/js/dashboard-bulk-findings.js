@@ -219,7 +219,9 @@
     }
     return c;
   }
-  const hq = (s) => `"${String(s).replace(/"/g, '\\"')}"`; // quote a value for a query
+  // Values are quoted per language by js/dashboard-hunt-quote.js (kqlString, splString, vqlString,
+  // yamlString, …). There is deliberately no shared quote helper: the old one escaped `"` but not
+  // `\`, which mis-quoted every Windows path and let a crafted value end the string (#2572).
   const hasAny = (c) =>
     c.hashes.length ||
     c.ips.length ||
@@ -248,28 +250,28 @@
     const out = [];
     if (c.processes.length) {
       const names = c.processes
-        .map((p) => hq(baseName(p).toLowerCase()))
+        .map((p) => vqlString(baseName(p).toLowerCase()))
         .join(", ");
       out.push(
-        `-- running process (live)\nSELECT Pid, Ppid, Name, CommandLine, Exe\nFROM pslist()\nWHERE lowcase(string=Name) IN (${names})${c.parent ? `\n-- expected parent: ${baseName(c.parent)}` : ""}`,
+        `-- running process (live)\nSELECT Pid, Ppid, Name, CommandLine, Exe\nFROM pslist()\nWHERE lowcase(string=Name) IN (${names})${c.parent ? `\n-- expected parent: ${commentText(baseName(c.parent))}` : ""}`,
       );
     }
     if (c.paths.length) {
       out.push(
-        `-- file presence (exact path) + its hashes\nSELECT OSPath, Size, Mtime, hash(path=OSPath) AS Hashes\nFROM glob(globs=${hq(vqlGlob(c.paths[0]))})`,
+        `-- file presence (exact path) + its hashes\nSELECT OSPath, Size, Mtime, hash(path=OSPath) AS Hashes\nFROM glob(globs=${vqlString(vqlGlob(c.paths[0]))})`,
       );
       out.push(
-        `-- or locate it anywhere on C: by name\nSELECT OSPath, Size, Mtime FROM glob(globs=${hq("C:/**/" + baseName(c.paths[0]))})`,
+        `-- or locate it anywhere on C: by name\nSELECT OSPath, Size, Mtime FROM glob(globs=${vqlString("C:/**/" + baseName(c.paths[0]))})`,
       );
     }
     if (c.hashes.length) {
       out.push(
-        `-- on-disk hash sweep (narrow the glob root — hashing every file is expensive)\nSELECT OSPath, Size, Mtime, hash(path=OSPath) AS Hashes\nFROM glob(globs="C:/Users/**")\nWHERE hash(path=OSPath).SHA256 =~ ${hq("(?i)" + c.hashes[0])}`,
+        `-- on-disk hash sweep (narrow the glob root — hashing every file is expensive)\nSELECT OSPath, Size, Mtime, hash(path=OSPath) AS Hashes\nFROM glob(globs="C:/Users/**")\nWHERE hash(path=OSPath).SHA256 =~ ${vqlString("(?i)" + c.hashes[0])}`,
       );
     }
     if (c.ips.length) {
       out.push(
-        `-- active network connections\nSELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote, Raddr.Port AS RemotePort\nFROM netstat()\nWHERE Raddr.IP IN (${c.ips.map(hq).join(", ")})`,
+        `-- active network connections\nSELECT Pid, Name, Status, Laddr.IP AS Local, Raddr.IP AS Remote, Raddr.Port AS RemotePort\nFROM netstat()\nWHERE Raddr.IP IN (${c.ips.map(vqlString).join(", ")})`,
       );
     }
     return out.join("\n\n");
@@ -293,7 +295,7 @@
       const rx = c.processes.map((p) => rxSafe(p)).join("|");
       blocks.push(
         `-- Running processes matching the indicator (filtered at collection via ProcessRegex)\n` +
-          `LET proc_flow <= collect_client(client_id=client_id, artifacts="Windows.System.Pslist",\n    env=dict(ProcessRegex=${hq("(?i)^(" + rx + ")$")}))\n` +
+          `LET proc_flow <= collect_client(client_id=client_id, artifacts="Windows.System.Pslist",\n    env=dict(ProcessRegex=${vqlString("(?i)^(" + rx + ")$")}))\n` +
           `${wait("proc_flow")}\n` +
           `SELECT Pid, Ppid, Name, CommandLine, Exe, Hash.SHA256 AS SHA256\n` +
           `FROM source(client_id=client_id, flow_id=proc_flow.flow_id, artifact="Windows.System.Pslist")`,
@@ -302,7 +304,7 @@
     if (c.paths.length) {
       blocks.push(
         `-- File presence by path / name (FileFinder glob on the client)\n` +
-          `LET file_flow <= collect_client(client_id=client_id, artifacts="Windows.Search.FileFinder",\n    env=dict(SearchFilesGlobTable=${hq("Glob\\n" + vqlGlob(c.paths[0]))}))\n` +
+          `LET file_flow <= collect_client(client_id=client_id, artifacts="Windows.Search.FileFinder",\n    env=dict(SearchFilesGlobTable=${vqlString("Glob\n" + vqlGlob(c.paths[0]))}))\n` +
           `${wait("file_flow")}\n` +
           `SELECT OSPath, Size, Mtime FROM source(client_id=client_id, flow_id=file_flow.flow_id, artifact="Windows.Search.FileFinder")`,
       );
@@ -314,12 +316,12 @@
           `${wait("hash_flow")}\n` +
           `SELECT OSPath, Size, Mtime, Hash.SHA256 AS SHA256\n` +
           `FROM source(client_id=client_id, flow_id=hash_flow.flow_id, artifact="Windows.Search.FileFinder")\n` +
-          `WHERE SHA256 =~ ${hq("(?i)" + c.hashes[0])}`,
+          `WHERE SHA256 =~ ${vqlString("(?i)" + c.hashes[0])}`,
       );
     }
     if (c.ips.length) {
       blocks.push(
-        `-- Active network connections — collect all sockets, then look for the indicator IP(s): ${c.ips.join(", ")}\n` +
+        `-- Active network connections — collect all sockets, then look for the indicator IP(s): ${commentText(c.ips.join(", "))}\n` +
           `LET net_flow <= collect_client(client_id=client_id, artifacts="Windows.Network.Netstat", env=dict())\n` +
           `${wait("net_flow")}\n` +
           `SELECT * FROM source(client_id=client_id, flow_id=net_flow.flow_id, artifact="Windows.Network.Netstat")`,
@@ -338,28 +340,28 @@
     const out = [];
     if (c.host)
       out.push(
-        `// scope to the affected host: | where DeviceName =~ ${hq(c.host)}`,
+        `// scope to the affected host: | where DeviceName =~ ${kqlString(c.host)}`,
       );
     if (c.hashes.length)
       out.push(
-        `DeviceFileEvents\n| where SHA256 in~ (${c.hashes.map(hq).join(", ")}) or MD5 in~ (${c.hashes.map(hq).join(", ")})`,
+        `DeviceFileEvents\n| where SHA256 in~ (${c.hashes.map(kqlString).join(", ")}) or MD5 in~ (${c.hashes.map(kqlString).join(", ")})`,
       );
     if (c.processes.length)
       out.push(
-        `DeviceProcessEvents\n| where FileName in~ (${c.processes.map((p) => hq(baseName(p))).join(", ")})${c.parent ? `\n| where InitiatingProcessFileName =~ ${hq(baseName(c.parent))}` : ""}`,
+        `DeviceProcessEvents\n| where FileName in~ (${c.processes.map((p) => kqlString(baseName(p))).join(", ")})${c.parent ? `\n| where InitiatingProcessFileName =~ ${kqlString(baseName(c.parent))}` : ""}`,
       );
     if (c.ips.length)
       out.push(
-        `DeviceNetworkEvents\n| where RemoteIP in~ (${c.ips.map(hq).join(", ")})`,
+        `DeviceNetworkEvents\n| where RemoteIP in~ (${c.ips.map(kqlString).join(", ")})`,
       );
     if (c.domains.length || c.urls.length)
       out.push(
-        `DeviceNetworkEvents\n| where RemoteUrl has_any (${[...c.domains, ...c.urls].map(hq).join(", ")})`,
+        `DeviceNetworkEvents\n| where RemoteUrl has_any (${[...c.domains, ...c.urls].map(kqlString).join(", ")})`,
       );
     // Match on FileName (reliable) + FolderPath (device prefix stripped, native backslashes kept).
     if (c.paths.length)
       out.push(
-        `DeviceFileEvents\n| where FileName has_any (${c.paths.map((p) => hq(baseName(p))).join(", ")}) or FolderPath has_any (${c.paths.map((p) => hq(cleanWinPath(p))).join(", ")})`,
+        `DeviceFileEvents\n| where FileName has_any (${c.paths.map((p) => kqlString(baseName(p))).join(", ")}) or FolderPath has_any (${c.paths.map((p) => kqlString(cleanWinPath(p))).join(", ")})`,
       );
     return out.join("\n\n");
   }
@@ -368,45 +370,46 @@
     const terms = [];
     if (c.hashes.length)
       terms.push(
-        `(${c.hashes.map((h) => `SHA256=${hq(h)} OR MD5=${hq(h)}`).join(" OR ")})`,
+        `(${c.hashes.map((h) => `SHA256=${splString(h)} OR MD5=${splString(h)}`).join(" OR ")})`,
       );
     if (c.processes.length)
       terms.push(
-        `(${c.processes.map((p) => `process_name=${hq(baseName(p))}`).join(" OR ")})`,
+        `(${c.processes.map((p) => `process_name=${splString(baseName(p))}`).join(" OR ")})`,
       );
-    if (c.parent) terms.push(`parent_process_name=${hq(baseName(c.parent))}`);
+    if (c.parent) terms.push(`parent_process_name=${splString(baseName(c.parent))}`);
     if (c.ips.length)
       terms.push(
-        `(${c.ips.map((ip) => `dest_ip=${hq(ip)} OR src_ip=${hq(ip)}`).join(" OR ")})`,
+        `(${c.ips.map((ip) => `dest_ip=${splString(ip)} OR src_ip=${splString(ip)}`).join(" OR ")})`,
       );
     if (c.domains.length || c.urls.length)
       terms.push(
-        `(${[...c.domains, ...c.urls].map((d) => `query="*${d}*" OR url="*${d}*"`).join(" OR ")})`,
+        `(${[...c.domains, ...c.urls].map((d) => `query=${splContains(d)} OR url=${splContains(d)}`).join(" OR ")})`,
       );
-    // Match on file name (avoids backslash-escaping the full path).
+    // Match on file name. Every value is escaped by splString / splContains (js/dashboard-hunt-quote.js).
     if (c.paths.length)
       terms.push(
-        `(${c.paths.map((p) => `file_name=${hq(baseName(p))} OR file_path="*${baseName(p)}*"`).join(" OR ")})`,
+        `(${c.paths.map((p) => `file_name=${splString(baseName(p))} OR file_path=${splContains(baseName(p))}`).join(" OR ")})`,
       );
     if (!terms.length) return "";
-    return `index=* ${c.host ? `host=${hq(c.host)} ` : ""}${terms.join(" OR ")}\n| table _time host process_name parent_process_name dest_ip url file_path`;
+    return `index=* ${c.host ? `host=${splString(c.host)} ` : ""}${terms.join(" OR ")}\n| table _time host process_name parent_process_name dest_ip url file_path`;
   }
   // Sigma rule skeleton — only meaningful for process/hash indicators.
   function huntSigma(c) {
     if (!c.processes.length && !c.hashes.length) return "";
     const sel = [];
     if (c.processes.length)
-      sel.push(`    Image|endswith: '\\${baseName(c.processes[0])}'`);
+      sel.push(`    Image|endswith: ${yamlString("\\" + baseName(c.processes[0]))}`);
     if (c.parent)
-      sel.push(`    ParentImage|endswith: '\\${baseName(c.parent)}'`);
-    if (c.hashes.length) sel.push(`    Hashes|contains: '${c.hashes[0]}'`);
+      sel.push(`    ParentImage|endswith: ${yamlString("\\" + baseName(c.parent))}`);
+    if (c.hashes.length) sel.push(`    Hashes|contains: ${yamlString(c.hashes[0])}`);
     const tags =
       DfirState.lastState() && Array.isArray(c._mitre) && c._mitre.length
         ? c._mitre
-            .map((t) => `  - attack.${String(t).toLowerCase()}`)
+            .map((t) => `attack.${String(t).toLowerCase()}`)
+            .map((t) => `  - ${/^[a-z0-9._-]+$/.test(t) ? t : yamlString(t)}`)
             .join("\n")
         : "  - attack.execution";
-    return `title: Hunt - ${String(c.label).slice(0, 60)}\nstatus: experimental\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n${sel.join("\n")}\n  condition: selection\nlevel: high\ntags:\n${tags}`;
+    return `title: ${yamlString("Hunt - " + String(c.label).slice(0, 60))}\nstatus: experimental\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  selection:\n${sel.join("\n")}\n  condition: selection\nlevel: high\ntags:\n${tags}`;
   }
 
   // Sigma draft export (#89) and the hunt-query modal moved to js/dashboard-sigma-hunt.js
@@ -452,7 +455,6 @@
   window.clearFindingSelection = clearFindingSelection;
   window.explainChip = explainChip;
   window.hasAny = hasAny;
-  window.hq = hq;
   window.huntChip = huntChip;
   window.huntContextFor = huntContextFor;
   window.huntKql = huntKql;

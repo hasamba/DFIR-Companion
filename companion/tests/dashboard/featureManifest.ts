@@ -452,6 +452,9 @@ export const FEATURES: Feature[] = [
       "openSigmaCompileWith",
       "sigmaCompileChip",
       "compileFindingSigma",
+      "huntEsql",
+      "huntYara",
+      "huntSuricata",
     ],
     // The Sigma/hunt helpers: YAML quoting and value-list building, and the per-format escapers.
     // No mutable state — toastTimer was the only `let` under this banner and it stayed with
@@ -1690,7 +1693,6 @@ export const FEATURES: Feature[] = [
       "clearFindingSelection",
       "explainChip",
       "hasAny",
-      "hq",
       "huntChip",
       "huntContextFor",
       "huntKql",
@@ -2189,6 +2191,7 @@ export const NON_FEATURES = new Set([
   "dashboard-sigma-coverage.js", // Hunt Workbench → Sigma coverage (#2217): reads the DOM, calls one route, holds no state
   "dashboard-sigma-dryrun.js", // Sigma paste card → Dry-run on this case (#2211): called by the card, calls one route, holds no state
   "dashboard-hunt-cql.js", // pure helper: the hunt modal's CrowdStrike CQL card (#2558), holds nothing
+  "dashboard-hunt-quote.js", // pure helper: per-language string quoting for the hunt builders (#2572), holds nothing
   "dashboard-facade.js",
   "dashboard-wizard-server-set.js", // the wizard's save into the default server set: calls routes, holds no state
 ]);

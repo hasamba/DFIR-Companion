@@ -167,6 +167,8 @@ Only the languages allowed by the **Hunt platforms** setting (`DFIR_HUNT_PLATFOR
 
 The 🔍 hunt button on an event or IOC also gives a **CrowdStrike Falcon (CQL)** card. It is made from the indicator without AI, with one query per indicator type, using Falcon event names: `ProcessRollup2` for process names, `NetworkConnectIP4` for IPs, `DnsRequest` for domains, `*Written` events for file names, and `SHA256HashData` / `MD5HashData` for hashes. Paste it into Falcon Advanced Event Search or Next-Gen SIEM. It is LogScale CQL, not the older FQL filter syntax. A value that contains `*` is matched as an exact regular expression, so the `*` cannot widen the search.
 
+Every indicator value in the 🔍 hunt cards (paths, URLs, domains, hosts, hashes) is escaped by the rules of that card's language — VQL, KQL, SPL, ES|QL, Sigma YAML, YARA, Suricata or CQL — so a Windows path is written correctly and a crafted value cannot end the string or add query text.
+
 See [Dashboard Panels → Query Translator](dashboard.md#query-translator) for details.
 
 ---

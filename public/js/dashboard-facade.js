@@ -478,7 +478,6 @@
     "clearFindingSelection",
     "explainChip",
     "hasAny",
-    "hq",
     "huntChip",
     "huntContextFor",
     "huntKql",

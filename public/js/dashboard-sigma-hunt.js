@@ -243,36 +243,36 @@
   function huntEsql(c) {
     const terms = [];
     if (c.hashes.length) {
-      const hs = c.hashes.map((h) => hq(h.toLowerCase())).join(", ");
+      const hs = c.hashes.map((h) => esqlString(h.toLowerCase())).join(", ");
       terms.push(
         `process.hash.sha256 IN (${hs}) OR process.hash.md5 IN (${hs}) OR file.hash.sha256 IN (${hs}) OR file.hash.md5 IN (${hs})`,
       );
     }
     if (c.processes.length)
       terms.push(
-        `TO_LOWER(process.name) IN (${c.processes.map((p) => hq(baseName(p).toLowerCase())).join(", ")})`,
+        `TO_LOWER(process.name) IN (${c.processes.map((p) => esqlString(baseName(p).toLowerCase())).join(", ")})`,
       );
     if (c.parent)
       terms.push(
-        `TO_LOWER(process.parent.name) == ${hq(baseName(c.parent).toLowerCase())}`,
+        `TO_LOWER(process.parent.name) == ${esqlString(baseName(c.parent).toLowerCase())}`,
       );
     if (c.ips.length) {
-      const ips = c.ips.map(hq).join(", ");
+      const ips = c.ips.map(esqlString).join(", ");
       terms.push(`source.ip IN (${ips}) OR destination.ip IN (${ips})`);
     }
     if (c.domains.length || c.urls.length) {
-      const ds = [...c.domains, ...c.urls].map(hq).join(", ");
+      const ds = [...c.domains, ...c.urls].map(esqlString).join(", ");
       terms.push(
         `dns.question.name IN (${ds}) OR url.domain IN (${ds}) OR url.full IN (${ds})`,
       );
     }
     if (c.paths.length) {
-      const ps = c.paths.map((p) => hq(cleanWinPath(p))).join(", ");
+      const ps = c.paths.map((p) => esqlString(cleanWinPath(p))).join(", ");
       terms.push(`file.path IN (${ps}) OR process.executable IN (${ps})`);
     }
     if (!terms.length) return "";
     return (
-      `FROM logs-*\n${c.host ? `| WHERE host.name == ${hq(c.host)}\n` : ""}| WHERE ${terms.join("\n   OR ")}\n` +
+      `FROM logs-*\n${c.host ? `| WHERE host.name == ${esqlString(c.host)}\n` : ""}| WHERE ${terms.join("\n   OR ")}\n` +
       `| KEEP @timestamp, host.name, user.name, process.name, process.parent.name, source.ip, destination.ip, dns.question.name, url.full, file.path\n| SORT @timestamp DESC\n| LIMIT 100`
     );
   }
@@ -296,31 +296,31 @@
           .replace(/^_+|_+$/g, "")
       ).slice(0, 60) || "Hunt_indicator";
     const conds = c.hashes
-      .map((h) => `${yaraHashFn(h)}(0, filesize) == ${hq(h.toLowerCase())}`)
+      .map((h) => `${yaraHashFn(h)}(0, filesize) == ${yaraString(h.toLowerCase())}`)
       .join(" or\n            ");
-    const desc = String(c.label).replace(/"/g, "'").slice(0, 80);
+    const desc = yaraString(`Retro-hunt for confirmed indicator: ${String(c.label).slice(0, 80)}`);
     return (
-      `import "hash"\n\nrule ${name}\n{\n    meta:\n        description = "Retro-hunt for confirmed indicator: ${desc}"\n        author = "DFIR Companion"\n` +
+      `import "hash"\n\nrule ${name}\n{\n    meta:\n        description = ${desc}\n        author = "DFIR Companion"\n` +
       `    // Keys on the sample's hash (its fingerprint, not its bytes). For variant coverage add a\n` +
       `    // strings: block with real byte/string patterns from the sample and OR them into the condition.\n` +
       `    condition:\n        filesize < 50MB and (\n            ${conds}\n        )\n}`
     );
   }
-  // Suricata content escaping — the four content metacharacters must be hex-escaped (|HH|).
+  // Suricata content escaping — the four content metacharacters, and any control character (a line
+  // break would start a new rule), are hex-escaped (|HH|). `|` first: the others emit it.
   const suriContent = (s) =>
     String(s)
       .replace(/\|/g, "|7C|")
-      .replace(/\\/g, "|5C|")
-      .replace(/"/g, "|22|")
-      .replace(/;/g, "|3B|");
-  const suriMsg = (s) => String(s).replace(/[";]/g, ""); // keep the msg string well-formed
+      .replace(/[\\";\u0000-\u001f\u007f]/g, (ch) => `|${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}|`);
+  const suriMsg = (s) => String(s).replace(/[";\\\u0000-\u001f\u007f]/g, ""); // keep the msg (and the rule's line) well-formed
+  const suriIp = (s) => /^[0-9A-Fa-f:.]+(\/\d{1,3})?$/.test(String(s)); // an address, never rule text
   // Suricata/Snort-style rules — hunt the confirmed NETWORK indicator across sensors (IP/domain/URL).
   // Local sid range (9000001+); reassign to your allocated block before deploying.
   function huntSuricata(c) {
-    if (!c.ips.length && !c.domains.length && !c.urls.length) return "";
+    if (!c.ips.some(suriIp) && !c.domains.length && !c.urls.length) return "";
     const out = [];
     let sid = 9000001;
-    for (const ip of c.ips) {
+    for (const ip of c.ips.filter(suriIp)) {
       out.push(
         `alert ip $HOME_NET any -> ${ip} any (msg:"DFIR hunt - traffic to confirmed IP ${suriMsg(ip)}"; flow:to_server; sid:${sid++}; rev:1;)`,
       );
@@ -787,4 +787,7 @@
   window.openSigmaCompileWith = openSigmaCompileWith;
   window.sigmaCompileChip = sigmaCompileChip;
   window.compileFindingSigma = compileFindingSigma;
+  window.huntEsql = huntEsql;
+  window.huntYara = huntYara;
+  window.huntSuricata = huntSuricata;
 })();
