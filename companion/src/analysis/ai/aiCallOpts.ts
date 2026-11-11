@@ -84,6 +84,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get correlationProfileStore() {
       return opts.correlationProfileStore;
     },
+    get mainSourceStore() {
+      return opts.mainSourceStore;
+    },
     get sourceTrustStore() {
       return opts.sourceTrustStore;
     },

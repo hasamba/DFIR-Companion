@@ -144,6 +144,28 @@ describe("renderPlatformGuide", () => {
   });
 });
 
+describe("renderPlatformGuide — CrowdStrike Falcon (#2558)", () => {
+  it("grounds the CrowdStrike target in Falcon event names and fields", () => {
+    const guide = renderPlatformGuide(["crowdstrike"] as HuntPlatform[]);
+    expect(guide).toContain(PLATFORM_LABELS.crowdstrike);
+    expect(guide).toMatch(/CQL/);
+    for (const name of [
+      "#event_simpleName",
+      "ProcessRollup2",
+      "NetworkConnectIP4",
+      "DnsRequest",
+      "ImageFileName",
+      "CommandLine",
+      "RemoteAddressIP4",
+      "DomainName",
+      "SHA256HashData",
+    ]) {
+      expect(guide).toContain(name);
+    }
+    expect(guide).not.toContain("DeviceProcessEvents");
+  });
+});
+
 describe("renderCaseDataSources", () => {
   const stateWith = (timeline: Array<{ sources?: string[] }>): InvestigationState =>
     ({ forensicTimeline: timeline }) as unknown as InvestigationState;

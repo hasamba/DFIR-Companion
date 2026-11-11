@@ -20,6 +20,7 @@
     sigma: "Sigma rule",
     yara: "YARA rule",
     suricata: "Suricata (network)",
+    crowdstrike: "CrowdStrike Falcon (CQL)",
   };
   const NLQ_PLATFORM_ORDER = [
     "velociraptor",
@@ -29,6 +30,7 @@
     "sigma",
     "yara",
     "suricata",
+    "crowdstrike",
   ];
 
   // Render the platform picker from the server's enabled-platforms allowlist (set from /health).

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Hunts and next steps in the case's own query language** — the case's main evidence source (counted per evidence file, override in the Hunts panel) picks the language: AI-written CQL, KQL, ES|QL or SPL hunts copy-ready, VQL unchanged, and "collect X" steps become "search <tool> for …" (closes #2559)
+- **CrowdStrike Falcon (CQL) hunt queries** — an eighth hunt language in the 🔍 hunt modal and the Query Translator, values escaped so `*` cannot widen a query (closes #2558)
+- **Look-alike M365 account and app names** — a new user or app named like a Microsoft brand, the tenant or the admin account (`rnicrosoft-support`) is High with a note (closes #2557)
 - **Cloud identities as IOCs, with analyst labels** — the IAM user, its access keys, the key it created and the policy it attached become IOCs with a context line; label any IOC attacker / ours / responder / unknown, and block-list exports drop ours and responder (closes #2543)
 - **Sigma grades Google Workspace activity** — Suzaku's 18 loadable Google Workspace rules and SigmaHQ's 10 are bundled and graded per event at import (labels only at the defaults); the Suzaku updater also tracks the four Workspace folders (closes #2522)
 - **AI preview shows changes like a code diff** — changed lines red and green, each value bold red beside its bold green token, hover links the pair, a summary by kind, amber "looks like … — not masked" guesses, and a "Show only changed lines" switch (closes #2531)
@@ -59,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Hunt queries escape evidence values per language** — KQL, SPL, ES|QL, VQL, Sigma, YARA and Suricata quote backslashes and line breaks, so a crafted path or URL can no longer break or widen the query (closes #2572)
 - **M365 audit logs no longer show every record twice** — a Splunk export or overlapping Search-UnifiedAuditLog exports of the same record are one record, not a false "conflict" (closes #2548)
 - **Anonymizer cannot be tricked into restoring a real value** — text already shaped like a mask token is never reused as one, so an AI answer never gets a real hostname where the evidence had attacker text (closes #2569)
 - **AI preview marks only real mask tokens** — the fallback view no longer styles planted `ANON_…` text as masked (closes #2566)

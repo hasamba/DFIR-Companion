@@ -20,7 +20,9 @@
 // compete with grounding and the second-opinion diff. Running the pass twice changes nothing more.
 
 import { assertsAbsence } from "./answerContradiction.js";
+import type { MainSourceResult, SourceFamily } from "./caseMainSource.js";
 import { isCloudOnlyCase } from "./cloudOnlyCase.js";
+import { questionFamily, searchRemedy, type SearchRemedy } from "./coverageRemedy.js";
 import {
   CLASS_COLLECTION,
   emptySettledClasses,
@@ -41,6 +43,8 @@ export interface NegativeAnswerCoverageOptions {
   hostOf?: (raw: string) => string;
   /** The events synthesis reasoned over (in scope, not dismissed); the host fallback reads these. */
   scopedEvents?: readonly ForensicEvent[];
+  /** The case's main evidence source (#2559): an EDR/SIEM case is told to search that tool instead. */
+  mainSource?: Pick<MainSourceResult, "effective">;
 }
 
 const STEP_ID_PREFIX = "ns-coverage-";
@@ -122,6 +126,8 @@ interface CoverageGap {
   archiveOnly: boolean;
   /** The first missing class is held on every host lacking it only from this partly read artifact (#1651). */
   partlyRead?: string;
+  /** Search the case's main-source tool instead of collecting with Velociraptor (#2559). */
+  search?: SearchRemedy;
 }
 
 const PARTLY_LOG_SOURCE = "every source of the artifact (its source list could not be looked up last time)";
@@ -140,6 +146,7 @@ function coverageGap(
   q: InvestigationQuestion,
   hosts: string[],
   inv: CollectionInventory,
+  family: SourceFamily | null = null,
 ): CoverageGap | null {
   const required = requiredEvidenceClasses(`${q.question} ${q.answer}`);
   if (!required.length) return null;
@@ -171,7 +178,8 @@ function coverageGap(
   const archiveOnly =
     inv.hunts.some((h) => h.state === "archive-only" && h.artifact === artifact) &&
     !inv.hunts.some((h) => h.state === "super-capped" && h.artifact === artifact);
-  return { missing, uncoveredHosts, artifact, logSource, archiveOnly };
+  const search = archiveOnly ? undefined : searchRemedy(family, missing[0]);
+  return { missing, uncoveredHosts, artifact, logSource, archiveOnly, ...(search ? { search } : {}) };
 }
 
 function hostsText(gap: CoverageGap, none: string): string {
@@ -187,6 +195,11 @@ function qualification(gap: CoverageGap): string {
       `collect ${gap.partlyRead} again.${rest.length ? ` Also not collected raw in full: ${rest.join(", ")}.` : ""}`
     );
   }
+  if (gap.search)
+    return (
+      `${QUALIFICATION_MARK}${gap.missing.join(", ")} evidence was not collected raw on ` +
+      `${hostsText(gap, "any host in this case")}; search ${gap.search.tool} for it (${gap.search.what}).`
+    );
   const verb = gap.archiveOnly ? "search the archive for" : "collect";
   return (
     `${QUALIFICATION_MARK}${gap.missing.join(", ")} evidence was not collected raw on ` +
@@ -207,6 +220,7 @@ function directive(gap: CoverageGap): CollectDirective {
 function coverageStep(q: InvestigationQuestion, gap: CoverageGap): NextStep {
   const where = hostsText(gap, "the affected hosts");
   if (gap.partlyRead) return partlyReadStep(q, gap, where);
+  if (gap.search) return searchStep(q, gap, gap.search, where);
   const action = gap.archiveOnly
     ? `Search the archive for ${gap.artifact} on ${where} and promote the relevant rows to settle: ${q.question}`
     : `Collect ${gap.artifact} (${gap.logSource}) on ${where} to settle: ${q.question}`;
@@ -219,6 +233,24 @@ function coverageStep(q: InvestigationQuestion, gap: CoverageGap): NextStep {
       `could have shown it was not collected raw on ${where}; a detection feed's silence is not evidence of absence.`,
     pointer: gap.logSource,
     ...(gap.archiveOnly ? {} : { collect: directive(gap) }),
+    relatedFindingIds: [...(q.relatedFindingIds ?? [])],
+  };
+}
+
+function searchStep(
+  q: InvestigationQuestion,
+  gap: CoverageGap,
+  search: SearchRemedy,
+  where: string,
+): NextStep {
+  return {
+    id: `${STEP_ID_PREFIX}${slug(q.id)}-${slug(gap.uncoveredHosts[0] ?? "")}`,
+    priority: "high",
+    action: `Search ${search.tool} for ${gap.missing[0]} evidence (${search.what}) on ${where} to settle: ${q.question}`,
+    rationale:
+      `The answer says the activity was not observed, but the ${gap.missing.join(", ")} evidence that ` +
+      `could have shown it was not collected raw on ${where}; a detection feed's silence is not evidence of absence.`,
+    pointer: search.what,
     relatedFindingIds: [...(q.relatedFindingIds ?? [])],
   };
 }
@@ -258,6 +290,7 @@ function sameArchiveSearch(existing: NextStep, host: string, artifact: string): 
 
 function isDuplicateStep(step: NextStep, gap: CoverageGap, steps: readonly NextStep[]): boolean {
   const host = gap.uncoveredHosts[0] ?? "";
+  if (gap.search) return steps.some((s) => s.id === step.id || s.action === step.action);
   return steps.some(
     (s) =>
       s.id === step.id ||
@@ -269,7 +302,7 @@ function qualifyQuestion(q: InvestigationQuestion, gap: CoverageGap): Investigat
   const answer = q.answer.includes(QUALIFICATION_MARK)
     ? q.answer
     : `${q.answer.trimEnd()} ${qualification(gap)}`;
-  const collect = q.collect ?? (gap.archiveOnly ? undefined : directive(gap));
+  const collect = q.collect ?? (gap.archiveOnly || gap.search ? undefined : directive(gap));
   return { ...q, status: "partial", answer, ...(collect ? { collect } : {}) };
 }
 
@@ -286,6 +319,7 @@ function applyUncoveredNegatives(
   inv: CollectionInventory,
   hostOf: (raw: string) => string,
   scopedEvents: readonly ForensicEvent[],
+  mainSource?: Pick<MainSourceResult, "effective">,
 ): Pick<InvestigationState, "keyQuestions" | "nextSteps"> {
   // A tenant-log case has no host to collect from (#2555): every remedy here is a host artifact
   // (Sysmon EVTX, Autoruns), and the cloud absence caveats already reach the model elsewhere.
@@ -295,7 +329,8 @@ function applyUncoveredNegatives(
   const nextSteps = [...state.nextSteps];
   const keyQuestions = state.keyQuestions.map((q) => {
     if (!isCandidate(q)) return q;
-    const gap = coverageGap(q, subjectHosts(q, state, inv, hostOf, scopedEvents), inv);
+    const family = questionFamily(q, state, mainSource);
+    const gap = coverageGap(q, subjectHosts(q, state, inv, hostOf, scopedEvents), inv, family);
     if (!gap) return q;
     const step = coverageStep(q, gap);
     if (!isDuplicateStep(step, gap, nextSteps)) nextSteps.push(step);
@@ -414,6 +449,6 @@ export function applyNegativeAnswerCoverage(
 ): InvestigationState {
   const hostOf = opts.hostOf ?? ((raw: string) => raw);
   const scoped = opts.scopedEvents ?? state.forensicTimeline;
-  const { keyQuestions, nextSteps } = applyUncoveredNegatives(state, inv, hostOf, scoped);
+  const { keyQuestions, nextSteps } = applyUncoveredNegatives(state, inv, hostOf, scoped, opts.mainSource);
   return { ...state, keyQuestions, nextSteps: demoteClearedLogSteps(nextSteps, inv, hostOf) };
 }

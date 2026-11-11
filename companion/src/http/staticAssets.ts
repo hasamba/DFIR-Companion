@@ -130,6 +130,10 @@ export const STATIC_ASSETS: Record<string, string> = {
   // Sigma draft export (#89) and the ES|QL / YARA / Suricata hunt modal built from the same context.
   "/js/dashboard-sigma-hunt.js": "application/javascript; charset=utf-8",
   "/js/dashboard-sigma-dryrun.js": "application/javascript; charset=utf-8",
+  // CrowdStrike Falcon CQL card for the hunt modal (#2558).
+  "/js/dashboard-hunt-cql.js": "application/javascript; charset=utf-8",
+  // Per-language string quoting for the KQL / SPL / ES|QL / VQL / Sigma / YARA hunt builders (#2572).
+  "/js/dashboard-hunt-quote.js": "application/javascript; charset=utf-8",
   // Push ingest token (#84) — the per-case token an external collector posts evidence with.
   "/js/dashboard-push-token.js": "application/javascript; charset=utf-8",
   // Reproducible analysis runs (#377) — the run history for a case and the diff between two runs.
@@ -293,6 +297,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-render.js": "application/javascript; charset=utf-8",
   "/js/dashboard-facet-filters.js": "application/javascript; charset=utf-8",
   "/js/dashboard-hunts-jumps.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-main-source.js": "application/javascript; charset=utf-8", // #2559 main-source line + language hunt cards
   "/js/dashboard-timeline-controls.js": "application/javascript; charset=utf-8",
   "/js/dashboard-cockpit-story.js": "application/javascript; charset=utf-8",
   "/js/dashboard-cockpit.js": "application/javascript; charset=utf-8",

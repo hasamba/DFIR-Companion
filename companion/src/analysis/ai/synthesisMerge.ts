@@ -1,5 +1,6 @@
 import { flagContradictedAnswers } from "../answerContradiction.js";
 import type { CollectionInventory } from "../collectionInventory.js";
+import type { MainSourceResult } from "../caseMainSource.js";
 import { withCloudSeedQuestions } from "../cloudKeyQuestions.js";
 import { applyNegativeAnswerCoverage } from "../negativeAnswerCoverage.js";
 import { buildAssetGraph } from "../assetGraph.js";
@@ -149,6 +150,8 @@ export interface DeltaFoldInput {
   echoedFindingIds?: ReadonlySet<string>;
   /** A tenant-log case with no host (#2555): the cloud key questions are seeded as pinned. */
   cloudOnly?: boolean;
+  /** The case's main evidence source (#2559): which tool the coverage backstop's steps name. */
+  mainSource?: Pick<MainSourceResult, "effective">;
 }
 
 export interface DeltaFoldResult {
@@ -249,7 +252,11 @@ export async function foldSynthesisDelta(
   // A negative answer the case could not have seen is not settled, and a step that asks for a
   // cleared log is flagged (#1588). After the model's own steps are in, so dedupe sees them.
   if (inventory)
-    next = applyNegativeAnswerCoverage(next, inventory, { scopedEvents, ...(hostOf ? { hostOf } : {}) });
+    next = applyNegativeAnswerCoverage(next, inventory, {
+      scopedEvents,
+      ...(hostOf ? { hostOf } : {}),
+      ...(input.mainSource ? { mainSource: input.mainSource } : {}),
+    });
 
   return {
     next,

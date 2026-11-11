@@ -72,6 +72,7 @@ export const PLATFORM_LABELS: Readonly<Record<HuntPlatform, string>> = {
   sigma: "Sigma rule (YAML)",
   yara: "YARA rule",
   suricata: "Suricata rules (network)",
+  crowdstrike: "CrowdStrike Falcon LogScale / NG-SIEM (CQL)",
 };
 
 // Per-platform schema reference fed to the model so it grounds each query in REAL tables / plugins /
@@ -110,6 +111,13 @@ export const PLATFORM_SCHEMA_HINTS: Readonly<Record<HuntPlatform, string>> = {
     'Suricata/Snort NETWORK rule: `alert <proto: ip|dns|tls|http> $HOME_NET any -> <dest> any (msg:"…"; <keyword:content>; ' +
     "sid:9000001; rev:1;)`. Keyword content matches: dns.query / tls.sni / http.host / http.uri. Use for network intents " +
     "(domain/IP/URL/SNI); mark notApplicable for host-only process intents.",
+  crowdstrike:
+    "CrowdStrike Falcon LogScale / Next-Gen SIEM CQL (NOT legacy FQL or Splunk-era Event Search). Filter on the event tag " +
+    "`#event_simpleName=<Event>`, then pipe: `| <field filters> | table([...])` or `| groupBy([...])`. Events: ProcessRollup2 " +
+    "(ImageFileName = full path, CommandLine, ParentBaseFileName, SHA256HashData, MD5HashData, UserName, aid), NetworkConnectIP4 " +
+    "(RemoteAddressIP4, RemotePort, LocalAddressIP4), DnsRequest (DomainName), *Written e.g. PeFileWritten (TargetFileName). " +
+    'ComputerName for the host. Filters: field="value" (`*` is an unescapable wildcard), field=/regex/i, ' +
+    'in(field=F, values=["a","b"], ignoreCase=true).',
 };
 
 /**

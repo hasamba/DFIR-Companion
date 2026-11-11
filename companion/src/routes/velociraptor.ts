@@ -305,12 +305,16 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         typeof req.body?.excludeVql === "string" && req.body.excludeVql.trim()
           ? req.body.excludeVql
           : undefined;
-      const suggestions = await options.pipeline.suggestHunts(
-        req.params.id,
-        excludeVql ? { excludeVql } : undefined,
-      );
-      logLine(`[velociraptor] suggested ${suggestions.length} fleet-hunt(s) for ${req.params.id}`);
-      return res.status(200).json({ suggestions });
+      // #2559: the language follows the case's main evidence source (ai/caseHunts.ts); a VQL case is unchanged.
+      const lang = typeof req.body?.language === "string" ? req.body.language : undefined;
+      const excludeQuery = typeof req.body?.excludeQuery === "string" ? req.body.excludeQuery : undefined;
+      const result = await options.pipeline.caseHunts.suggest(req.params.id, {
+        excludeVql,
+        language: lang,
+        excludeQuery,
+      });
+      logLine(`[velociraptor] suggested ${result.suggestions.length} fleet-hunt(s) for ${req.params.id}`);
+      return res.status(200).json(result);
     } catch (err) {
       return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }

@@ -1,0 +1,57 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`VQL hunt baseline (#2559) > keeps both VQL system prompts byte-identical > HUNT_SUGGEST_PROMPT sha256 1`] = `"6c6c62f0a28dc424c6e4f766b03d9b58a06d810b2bbb1d9965eb7a5356762275"`;
+
+exports[`VQL hunt baseline (#2559) > keeps both VQL system prompts byte-identical > PLAYBOOK_HUNT_PROMPT sha256 1`] = `"e9a2b9998bb075f83a1bc116fa609710437a680f7583eb206533f7eb1e4facb5"`;
+
+exports[`VQL hunt baseline (#2559) > sends the same fleet-hunt user prompt for a Velociraptor case > fleet user prompt 1`] = `
+"SIGNAL CONCENTRATION: the suspicious activity is concentrated on ws01 — focus the attack narrative there; other hosts are likely background/benign.
+
+COMPROMISED ASSETS (host/account ← IoCs seen on it):
+- ws01 (host)
+
+KNOWN UNKNOWNS / OPEN GAPS (evidence we'd expect in an intrusion but don't yet have — treat each as an open question to investigate or hunt; an absence is a lead, not proof):
+- No finding yet explains these ATT&CK phases: Initial Access, Persistence, Privilege Escalation, Lateral Movement, Command and Control, Exfiltration, Impact.
+
+ATTACKER PATH: (not reconstructed)
+
+ATT&CK TECHNIQUES: T1059.001 T1059.001
+
+FINDINGS:
+[f1] [High] PowerShell download cradle ATT&CK: T1059.001 — Encoded PowerShell on WS01
+
+PIVOTABLE INDICATORS:
+(no pivotable IOCs)
+
+FORENSIC TIMELINE (2 in-scope events):
+[2026-04-22T11:41:00Z] [High] Suspicious Windows.EventLogs.Evtx row
+[2026-04-22T11:41:00Z] [High] Suspicious Windows.System.Pslist row
+
+Propose the fleet-hunts as JSON."
+`;
+
+exports[`VQL hunt baseline (#2559) > sends the same playbook-hunt user prompt for a Velociraptor case > playbook user prompt 1`] = `
+"SIGNAL CONCENTRATION: the suspicious activity is concentrated on ws01 — focus the attack narrative there; other hosts are likely background/benign.
+
+COMPROMISED ASSETS (host/account ← IoCs seen on it):
+- ws01 (host)
+
+KNOWN ENDPOINTS (hosts — pick a targetHost ONLY from these): WS01
+
+AVAILABLE VELOCIRAPTOR ARTIFACTS (reference Artifact.<Name> ONLY if <Name> is in this list — else use a raw plugin):
+Windows.System.Pslist
+
+PLAYBOOK TASKS:
+[t1] [high] Collect PowerShell history from WS01 [endpoints: WS01]
+
+ATTACKER PATH: (not reconstructed)
+
+FINDINGS:
+[f1] [High] PowerShell download cradle ATT&CK: T1059.001 — Encoded PowerShell on WS01
+
+FORENSIC TIMELINE (2 in-scope events):
+[2026-04-22T11:41:00Z] [High] <WS01> Suspicious Windows.EventLogs.Evtx row
+[2026-04-22T11:41:00Z] [High] <WS01> Suspicious Windows.System.Pslist row
+
+Propose the per-task hunts as JSON."
+`;

@@ -256,6 +256,7 @@
   <script src="/js/dashboard-settings-tools.js"></script>
   <!-- Sigma draft export (#89) + the hunt-query modal. initHuntModal() binds its controls. -->
   <script src="/js/dashboard-sigma-hunt.js"></script>
+  <script src="/js/dashboard-hunt-cql.js"></script>
   <!-- Sigma paste card → Dry-run on this case (#2211). No initializer: the card calls runSigmaDryRun(). -->
   <script src="/js/dashboard-sigma-dryrun.js"></script>
   <!-- Push ingest token (#84). initPushToken() binds its two buttons. -->
@@ -421,6 +422,7 @@
   <script src="/js/dashboard-render.js"></script>
   <script src="/js/dashboard-facet-filters.js"></script>
   <script src="/js/dashboard-hunts-jumps.js"></script>
+  <script src="/js/dashboard-main-source.js"></script>
   <script src="/js/dashboard-timeline-controls.js"></script>
   <!-- "Story so far" rendering + the brief. cockpitStoryHtml is called by renderCockpit at paint time. -->
   <script src="/js/dashboard-cockpit-story.js"></script>
@@ -442,6 +444,8 @@
   <script src="/js/dashboard-starred.js"></script>
   <script src="/js/dashboard-heatmap.js"></script>
   <script src="/js/dashboard-false-positive.js"></script>
+  <!-- Per-language quoting for the hunt-query builders (#2572). Pure helper; holds nothing. -->
+  <script src="/js/dashboard-hunt-quote.js"></script>
   <script src="/js/dashboard-bulk-findings.js"></script>
   <script src="/js/dashboard-notebook.js"></script>
   <script src="/js/dashboard-collapsible.js"></script>
@@ -3795,7 +3799,7 @@
       <div id="askAnswer"></div>
     </section>
     <section id="sec-nlquery" data-safe-style="grid-column: 1 / -1">
-      <h2>Query Translator <span data-safe-style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">natural language → VQL / KQL / ES|QL / SPL / Sigma / YARA / Suricata</span></h2>
+      <h2>Query Translator <span data-safe-style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">natural language → VQL / KQL / ES|QL / SPL / Sigma / YARA / Suricata / CQL</span></h2>
       <div class="ask-row">
         <input id="nlqInput" placeholder="e.g. PowerShell downloading a file and then executing it · outbound RDP from this host · new local admin accounts" />
         <button id="nlqBtn">Translate</button>
@@ -4221,7 +4225,7 @@
         </details>
       </div>
     </section>
-    <section id="sec-velohunts" data-safe-style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="veloHuntSuggest">—</div></section>
+    <section id="sec-velohunts" data-safe-style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed hunts from the findings, in the query language of the case's main evidence source — sweep the estate for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive hunts in the case's main evidence source language — Velociraptor VQL (deployable to all enrolled endpoints), or CrowdStrike CQL, KQL, ES|QL or SPL to copy into that tool. Review each query before running it" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="mainSourceLine"></div><div id="veloHuntSuggest">—</div></section>
     <section id="sec-false-positive" data-safe-style="grid-column: 1 / -1"><h2>False Positives (excluded from analysis)<span id="fpCount" title="Total false-positive markers in scope; updates in real time"></span>
       <select id="fpReasonFilterSel" title="Show only false-positive markers with this reason" data-safe-style="font-size:12px;margin-left:10px;vertical-align:middle;background:var(--bg-tertiary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:4px;padding:2px 4px">
         <option value="">All reasons</option>
@@ -4882,7 +4886,7 @@
     // Same story as veloEnabled directly above: a /health capability set a few hundred lines below
     // and read by two extracted modules (sigma-hunt, query-translator) by bare name. Moved out of
     // the "Bulk finding operations" banner, where it had nothing to do with bulk findings.
-    let enabledHuntPlatforms = new Set(["velociraptor", "defender", "elastic", "splunk", "sigma", "yara", "suricata"]);
+    let enabledHuntPlatforms = new Set(["velociraptor", "defender", "elastic", "splunk", "sigma", "yara", "suricata", "crowdstrike"]);
     // The investigation scope window moved to js/dashboard-scope.js (#415, tier 2) — it is
     // server-persisted state with three different refresh paths, so it owns them rather than
     // sharing a generic setter. Read it through DfirScope.
@@ -5221,9 +5225,9 @@
     // --- Hunt-pivot query generator -----------------------------------------------
     // From a forensic event or IOC, generate ready-to-adapt hunt/pivot queries for the tools
     // analysts already run: Velociraptor VQL, Microsoft Defender/Sentinel KQL, Elastic ES|QL,
-    // Splunk SPL, a Sigma skeleton, a YARA retro-hunt rule (hash-gated), and Suricata network rules
-    // (IP/domain/URL-gated). Deterministic templating from the entity's structured fields — no AI, no
-    // server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
+    // Splunk SPL, a Sigma skeleton, a YARA retro-hunt rule (hash-gated), Suricata network rules
+    // (IP/domain/URL-gated), and CrowdStrike Falcon CQL (js/dashboard-hunt-cql.js). Deterministic
+    // templating from the entity's structured fields — no AI, no server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
     // confirmed indicator, they don't author detections for it.
     // Starred events (per case, tag-backed) live in public/js/dashboard-starred.js.
 

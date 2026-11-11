@@ -496,6 +496,7 @@
       hideCaseLoadingOverlay,
     );
     resetVeloHuntSuggest(); // clear AI-suggested fleet hunts; analyst regenerates per case on demand
+    if (typeof loadMainSource === "function") loadMainSource(); // #2559 the Hunts panel's main-source line
     resetPlaybookHuntSuggest(); // clear AI-suggested playbook hunts (#70) too
     resetGapHypotheses(); // clear AI gap hypotheses (#96); analyst regenerates per case on demand
     resetMemNextSteps(); // clear AI memory next-steps (#101); analyst regenerates per case on demand

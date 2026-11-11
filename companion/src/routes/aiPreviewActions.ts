@@ -131,7 +131,8 @@ export const AI_PREVIEW_ACTIONS: Readonly<Record<string, AiPreviewAction>> = {
       return question ? () => pipeline.ask(caseId, question, { history }) : "question is required";
     },
   },
-  "velociraptor-hunts": caseOnly("Velociraptor hunt suggestions", (p, c) => p.suggestHunts(c)),
+  // #2559: the same routing as the real press — VQL unchanged, else the main-source language.
+  "velociraptor-hunts": caseOnly("Velociraptor hunt suggestions", (p, c) => p.caseHunts.suggest(c)),
   "technique-hunt": {
     label: "Hunt for one ATT&CK technique",
     prepare: async (pipeline, _o, caseId, params) => {

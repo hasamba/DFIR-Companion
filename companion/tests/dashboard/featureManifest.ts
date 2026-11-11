@@ -452,6 +452,9 @@ export const FEATURES: Feature[] = [
       "openSigmaCompileWith",
       "sigmaCompileChip",
       "compileFindingSigma",
+      "huntEsql",
+      "huntYara",
+      "huntSuricata",
     ],
     // The Sigma/hunt helpers: YAML quoting and value-list building, and the per-format escapers.
     // No mutable state — toastTimer was the only `let` under this banner and it stayed with
@@ -1395,6 +1398,19 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // The case's main evidence source line + override, and the copy-ready hunt cards in that
+    // source's query language (#2559). VQL cards stay in dashboard-hunts-jumps.js / -playbook.js.
+    file: "dashboard-main-source.js",
+    publish: [
+      "loadMainSource",
+      "renderLanguageHunts",
+      "setPlaybookLanguageHunts",
+      "playbookLanguageHuntsHtml",
+      "wirePlaybookLanguageHunts",
+    ],
+    private: ["msState", "fleetLangHunts", "pbLangHunts"],
+  },
+  {
     // Forensic timeline controls. All-initializer: every statement runs at load, so there is no
     // module body. My dispatch rule flagged this as core; the previous commit argues why that flag
     // is over-broad, and this is that argument acted on.
@@ -1690,7 +1706,6 @@ export const FEATURES: Feature[] = [
       "clearFindingSelection",
       "explainChip",
       "hasAny",
-      "hq",
       "huntChip",
       "huntContextFor",
       "huntKql",
@@ -2188,6 +2203,8 @@ export const NON_FEATURES = new Set([
   "dashboard-sigma-rules.js", // Settings → Sigma rules (#2204): reads the DOM, calls /sigma routes, holds no state
   "dashboard-sigma-coverage.js", // Hunt Workbench → Sigma coverage (#2217): reads the DOM, calls one route, holds no state
   "dashboard-sigma-dryrun.js", // Sigma paste card → Dry-run on this case (#2211): called by the card, calls one route, holds no state
+  "dashboard-hunt-cql.js", // pure helper: the hunt modal's CrowdStrike CQL card (#2558), holds nothing
+  "dashboard-hunt-quote.js", // pure helper: per-language string quoting for the hunt builders (#2572), holds nothing
   "dashboard-facade.js",
   "dashboard-wizard-server-set.js", // the wizard's save into the default server set: calls routes, holds no state
 ]);

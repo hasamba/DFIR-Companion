@@ -68,7 +68,7 @@ const MAX_TITLE_LEN = 200;
 const MAX_RATIONALE_LEN = 2000;
 
 // A task is "open" (worth hunting for) when it's still actionable — done/skipped are excluded.
-function isOpenTask(t: PlaybookTask): boolean {
+export function isOpenTask(t: PlaybookTask): boolean {
   return t.status !== "done" && t.status !== "skipped";
 }
 

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { resolveHuntPlatforms, HUNT_PLATFORMS } from "../../src/analysis/huntPlatforms.js";
+import {
+  resolveHuntPlatforms,
+  normalizeHuntPlatform,
+  HUNT_PLATFORMS,
+} from "../../src/analysis/huntPlatforms.js";
 
 describe("resolveHuntPlatforms — DFIR_HUNT_PLATFORMS allowlist", () => {
   it("defaults to ALL platforms when unset / empty / whitespace", () => {
@@ -40,5 +44,28 @@ describe("resolveHuntPlatforms — DFIR_HUNT_PLATFORMS allowlist", () => {
   it("dedupes repeated / aliased duplicates", () => {
     expect(resolveHuntPlatforms("yara yara YARA")).toEqual(["yara"]);
     expect(resolveHuntPlatforms("defender,kql,sentinel")).toEqual(["defender"]);
+  });
+
+  // #2558: CrowdStrike Falcon LogScale / Next-Gen SIEM (CQL) is the eighth platform.
+  it("maps the CrowdStrike aliases (falcon, cql, logscale, humio) to the crowdstrike key", () => {
+    for (const alias of ["crowdstrike", "falcon", "cql", "logscale", "humio", "Falcon", " CQL "]) {
+      expect(resolveHuntPlatforms(alias)).toEqual(["crowdstrike"]);
+    }
+    expect(normalizeHuntPlatform("logscale")).toBe("crowdstrike");
+  });
+
+  it("offers all eight platforms when unset, with crowdstrike appended last so the display order is stable", () => {
+    const all = resolveHuntPlatforms("");
+    expect(all).toHaveLength(8);
+    expect(all[all.length - 1]).toBe("crowdstrike");
+    expect(all.slice(0, 7)).toEqual([
+      "velociraptor",
+      "defender",
+      "elastic",
+      "splunk",
+      "sigma",
+      "yara",
+      "suricata",
+    ]);
   });
 });

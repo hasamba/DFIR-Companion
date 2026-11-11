@@ -38,11 +38,15 @@
           el.innerHTML = `<div class="vhs-empty" data-safe-style="color:var(--sev-high)">error: ${esc(j.error || "could not generate hunts")} — restart the companion server if this 404s</div>`;
           return;
         }
-        renderVeloHuntSuggest(j.suggestions || []);
-        if (msg)
-          msg.textContent = (j.suggestions || []).length
-            ? `${j.suggestions.length} hunt(s) proposed`
-            : "";
+        // #2559: hunts in the main-source language come back beside (or instead of) the VQL ones.
+        const lang = j.languageHunts || [];
+        const notes = j.notes || [];
+        if ((j.suggestions || []).length || (!lang.length && !notes.length)) renderVeloHuntSuggest(j.suggestions || []);
+        else el.innerHTML = "";
+        if (typeof renderLanguageHunts === "function") renderLanguageHunts(el, lang, notes); // empty → renders nothing
+        if (typeof loadMainSource === "function") loadMainSource(); // the line follows new evidence
+        const n = (j.suggestions || []).length + lang.length;
+        if (msg) msg.textContent = n ? `${n} hunt(s) proposed` : "";
       })
       .catch((e) => {
         if (msg) msg.textContent = "";
@@ -209,6 +213,7 @@
         }
         vhsFlat[idx] = replacement;
         renderVeloHuntSuggest(vhsFlat); // re-render (vhsSource unchanged → regen buttons stay)
+        if (typeof renderLanguageHunts === "function") renderLanguageHunts(document.getElementById("veloHuntSuggest")); // #2559 keep them
         if (msg) {
           msg.style.color = "var(--text-muted)";
           msg.textContent = "regenerated one hunt";

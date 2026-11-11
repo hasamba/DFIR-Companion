@@ -26,6 +26,7 @@ import { FIRST_PARTY_UPKEEP, isInternalCertificateSpChange } from "./microsoftFi
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import { applyBecPairing } from "./m365BecPairing.js";
+import { applyM365Lookalike } from "./m365Lookalike.js";
 import { alertDescription, alertMitre, alertSeverity, decodeM365Alert } from "./m365Alert.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
@@ -701,8 +702,8 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     }
   }
 
-  // The BEC pairings (#2550) raise rows that a second record of this export proves.
-  const paired = applyBecPairing(mapped, rowRecords, normalized);
+  // Export-wide raises: the BEC pairings (#2550), then look-alike account and app names (#2557).
+  const paired = applyM365Lookalike(applyBecPairing(mapped, rowRecords, normalized), rowRecords, normalized);
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (opts.rowsOnly)
     return {
@@ -762,7 +763,6 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   const rows = [...capped.events, ...summaries];
   const events = text ? stampSourceArtifactHash(rows, text) : rows;
   const groups = capped.groups;
-
   const represented = capped.events.reduce((n, e) => n + (e.count ?? 1), 0);
   const format = m365Format(sawUal, sawSignin, sawAudit);
 
