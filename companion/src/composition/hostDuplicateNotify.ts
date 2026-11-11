@@ -1,7 +1,7 @@
 import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
 import type { AppOptions } from "./appOptions.js";
-import { currentGeneration, runInGenerationScope } from "../storage/caseIncarnation.js";
+import { currentGeneration, runInGenerationScope, staleCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 
 /**
@@ -134,13 +134,17 @@ export function createHostDuplicateNotifier(deps: HostDuplicateNotifierDeps): Ho
     runInGenerationScope(deps.casesRoot(), slot.caseId, slot.generation, fn);
 
   async function run(slot: CaseCheckSlot): Promise<void> {
+    // The incarnation is re-checked on both sides of the read: a case replaced meanwhile must never
+    // be scanned or told on behalf of its predecessor.
+    const stale = (): boolean => inScope(slot, () => staleCaseScope(slot.caseId) !== null);
+    if (stale()) return;
     let event: NotificationEvent | null = null;
     try {
       event = await inScope(slot, () => deps.check(slot.caseId));
     } catch {
       return; // a side channel: a failed check is never an import failure
     }
-    if (!event || disposed || !slot.live) return;
+    if (!event || disposed || !slot.live || stale()) return;
     try {
       deps.deliver(event);
     } catch {
@@ -165,7 +169,8 @@ export function createHostDuplicateNotifier(deps: HostDuplicateNotifierDeps): Ho
 
   return {
     kick(caseId: string): void {
-      if (disposed) return;
+      // Old work of a deleted or replaced case (an import still finishing) kicks nothing (#1866).
+      if (disposed || staleCaseScope(caseId) !== null) return;
       let slot = slots.get(caseId);
       if (!slot) {
         slot = new CaseCheckSlot(caseId, currentGeneration(deps.casesRoot(), caseId), config);

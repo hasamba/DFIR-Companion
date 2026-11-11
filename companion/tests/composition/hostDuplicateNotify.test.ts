@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { forgetCaseKeyedState } from "../../src/storage/caseKeyedState.js";
-import { runInCaseScope } from "../../src/storage/caseIncarnation.js";
+import { captureCaseScope, runInCaseScope } from "../../src/storage/caseIncarnation.js";
 import {
   createHostDuplicateNotifier,
   HOST_DUPLICATE_NOTIFY_MAX_WAIT_MS,
@@ -177,6 +177,19 @@ describe("host-duplicate notification coalescing (#2584)", () => {
     forgetCaseKeyedState(root, "c1");
     release();
     await vi.advanceTimersByTimeAsync(QUIET);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("old work of a deleted case cannot kick a check for its same-id successor", async () => {
+    const check = vi.fn(async (caseId: string) => event(caseId));
+    const { n, deliver } = notifier(check);
+    const old = captureCaseScope(root, "c1"); // an import of the first incarnation, still finishing
+    await cases.deleteCaseFolder("c1");
+    forgetCaseKeyedState(root, "c1");
+    await cases.createCase({ caseId: "c1", name: "again", investigator: "i", aiProvider: null });
+    old(() => n.kick("c1"));
+    await vi.advanceTimersByTimeAsync(QUIET * 2);
+    expect(check).not.toHaveBeenCalled();
     expect(deliver).not.toHaveBeenCalled();
   });
 
