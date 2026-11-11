@@ -276,10 +276,12 @@ describe("every moved function still resolves at its call sites", () => {
   // etaLeftText, the job row's "ETA 16:44 (in about 2 min)"; 140 with sigmaNotGradedHint and
   // sigmaHinted, the hover saying why a Sigma match did not grade (#2386); 142 with
   // superRepeatGroups and superGroupedHtml, the super-timeline's Group repeats view (#2391); 143
-  // with iocEmptyStateText, the IOC panel's empty-state sentence (#2468).
+  // with iocEmptyStateText, the IOC panel's empty-state sentence (#2468); 146 with
+  // highSeverityEventIds, iocLinkedToHighEvent and iocPinnedSignal, "Signal only" keeping an IOC extracted from a
+  // High/Critical event (#2543).
   // The number is a vacuity guard, not a budget.
-  it("moved 143 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(143);
+  it("moved 146 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(146);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

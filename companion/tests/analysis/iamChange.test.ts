@@ -704,3 +704,66 @@ describe("renderAwsDescription — reserved budgets", () => {
     );
   });
 });
+
+describe("decodeIamChange — full administrator inline policy (#2542)", () => {
+  const admin = doc([{ Effect: "Allow", Action: "*", Resource: "*" }]);
+  const user = { type: "IAMUser", userName: "dev-user", arn: `arn:aws:iam::${ACCT}:user/dev-user` };
+  const decode = (
+    name: string,
+    req: Record<string, unknown>,
+    who: unknown = null,
+    errorCode = "",
+  ): IamChange => decodeIamChange(IAM, name, req, {}, errorCode, "", ACCT, "evt-1", who)!;
+  const put = (target: string, policyDocument: string) => ({
+    userName: target,
+    policyName: "p",
+    policyDocument,
+  });
+
+  it("grades an unconditioned *:* inline policy Critical on all three Put calls", () => {
+    for (const [name, field] of [
+      ["PutUserPolicy", "userName"],
+      ["PutRolePolicy", "roleName"],
+      ["PutGroupPolicy", "groupName"],
+    ]) {
+      const floor = decode(name, { [field]: "x", policyName: "p", policyDocument: admin }).severityFloor;
+      expect(floor, name).toBe("Critical");
+    }
+  });
+  it("keeps High for a conditional *:*, an escalation primitive, NotAction, and a policy version", () => {
+    const conditional = doc([
+      {
+        Effect: "Allow",
+        Action: "*",
+        Resource: "*",
+        Condition: { IpAddress: { "aws:SourceIp": "192.0.2.0/24" } },
+      },
+    ]);
+    const passRole = doc([{ Effect: "Allow", Action: "iam:PassRole", Resource: "*" }]);
+    const notAction = doc([{ Effect: "Allow", NotAction: "iam:*", Resource: "*" }]);
+    for (const d of [conditional, passRole, notAction])
+      expect(decode("PutUserPolicy", put("x", d)).severityFloor).toBe("High");
+    const version = { policyArn: `arn:aws:iam::${ACCT}:policy/p`, policyDocument: admin, setAsDefault: true };
+    expect(decode("CreatePolicyVersion", version).severityFloor).toBe("High");
+  });
+  it("keeps an attempted *:* grant at today's grade", () => {
+    expect(decode("PutUserPolicy", put("x", admin), user, "AccessDenied").severityFloor).toBe("Medium");
+  });
+  it("says when the caller granted the policy to itself, and only then", () => {
+    expect(decode("PutUserPolicy", put("dev-user", admin), user).qualifiers).toContain(
+      "granted to the caller itself",
+    );
+    expect(decode("PutUserPolicy", put("someone-else", admin), user).qualifiers).not.toContain(
+      "granted to the caller itself",
+    );
+    const role = {
+      type: "AssumedRole",
+      sessionContext: { sessionIssuer: { type: "Role", userName: "deploy" } },
+    };
+    const rolePut = { roleName: "deploy", policyName: "p", policyDocument: admin };
+    expect(decode("PutRolePolicy", rolePut, role).qualifiers).toContain("granted to the caller itself");
+    expect(decode("PutUserPolicy", put("dev-user", admin), user, "AccessDenied").qualifiers).toContain(
+      "requested for the caller itself",
+    );
+  });
+});

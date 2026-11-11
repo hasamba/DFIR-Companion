@@ -64,7 +64,13 @@ import {
 // 4: metadata/storage-key/AWS-compute rows are no triggers; storage-key rows are LOAD rows; the
 //    AWS_LAUNCH/AWS_FLOW counts (#2539). Rows indexed under 3 carry neither count bit, so a bump is
 //    required: a compute summary arriving over v3-indexed flows would otherwise skip the fallback.
-export const MERGE_INDEX_VERSION = 4;
+// 5: a CloudTrail selector change that selects S3 object activity is a LOAD row (#2564). Rows
+//    indexed under 4 lack that bit, so the merge would not see the object-logging note is due.
+// 6: CloudTrail precursor changes and open precursor checks are LOAD rows (#2563). Rows indexed
+//    under 5 lack that bit, so a stored check would not be held when its key's change arrives.
+// 7: the object-logging coverage row is a LOAD row (#2564 part B). Rows indexed under 6 lack that
+//    bit, so a stored dated note would not be held when an earlier object record contradicts it.
+export const MERGE_INDEX_VERSION = 7;
 
 export type IncrementalResult =
   { ok: true; state: InvestigationState; read: number; written: number } | { ok: false; reason: string };

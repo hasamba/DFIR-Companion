@@ -626,3 +626,80 @@ describe("collection scope (#2482)", () => {
     expect(inCollection.aggKey).toBe(inUpload.aggKey);
   });
 });
+
+describe("a long-term key issued by IAM CreateAccessKey (#2542)", () => {
+  const NEW_KEY = "AKIAEXAMPLENEWKEY001";
+  const create = (over: Record<string, unknown> = {}) =>
+    rec({
+      eventSource: "iam.amazonaws.com",
+      eventName: "CreateAccessKey",
+      readOnly: false,
+      userIdentity: alice,
+      requestParameters: { userName: "alice" },
+      responseElements: { accessKey: { userName: "alice", accessKeyId: NEW_KEY, status: "Active" } },
+      ...over,
+    });
+  const firstUse = rec({
+    eventTime: at(58),
+    eventSource: "sts.amazonaws.com",
+    eventName: "GetCallerIdentity",
+    readOnly: true,
+    userIdentity: { ...alice, accessKeyId: NEW_KEY },
+  });
+  const rowFor = (records: object[], key: string) =>
+    awsLineages(records as Record<string, unknown>[]).find(
+      (r) => r.canonical?.awsLineage?.credentialId === key,
+    );
+
+  it("joins the issuance to a single use and chains the new key to the key that created it", () => {
+    const row = rowFor([create(), firstUse], NEW_KEY)!;
+    expect(row).toBeDefined();
+    const block = row.canonical!.awsLineage!;
+    expect(block.issuance?.action).toBe("CreateAccessKey");
+    expect(block.issuance?.by).toContain("user/alice");
+    expect(block.account).toBe(ACCT);
+    expect(block.uses.records).toBe(1);
+    expect(block.chained).toEqual([
+      expect.objectContaining({ credentialId: USER_KEY, direction: "issued-from" }),
+    ]);
+    expect(row.description).toContain("by CreateAccessKey");
+    expect(row.description).toContain("a long-term access key");
+    expect(row.description).toContain("created by a call signed with");
+    expect(row.description).not.toContain("issued from a session of");
+  });
+  it("issues nothing on a failed call or a response without the key", () => {
+    const failed = create({ errorCode: "LimitExceeded", responseElements: null });
+    expect(rowFor([failed, firstUse], NEW_KEY)).toBeUndefined();
+    const noKey = create({ responseElements: { accessKey: { userName: "alice" } } });
+    expect(rowFor([noKey, firstUse], NEW_KEY)).toBeUndefined();
+  });
+});
+
+describe("the enumeration burst on the lineage row (#2542, Q4)", () => {
+  it("counts every read in the window, the services and the denied probes", () => {
+    const read = (s: number, eventSource: string, eventName: string, errorCode = "") =>
+      rec({
+        eventTime: at(s),
+        eventSource,
+        eventName,
+        readOnly: true,
+        userIdentity: alice,
+        ...(errorCode ? { errorCode } : {}),
+      });
+    const records = [
+      read(0, "sts.amazonaws.com", "GetCallerIdentity"),
+      read(30, "s3.amazonaws.com", "ListBuckets", "AccessDenied"),
+      read(40, "ec2.amazonaws.com", "DescribeInstances", "Client.UnauthorizedOperation"),
+      read(50, "iam.amazonaws.com", "ListUsers"),
+      read(55, "ec2.amazonaws.com", "DescribeVpcs"),
+      read(60, "iam.amazonaws.com", "GetPolicyVersion"),
+      read(61, "iam.amazonaws.com", "ListUserPolicies"),
+      read(62, "s3.amazonaws.com", "GetBucketPolicy", "NoSuchBucketPolicy"),
+      read(3600, "iam.amazonaws.com", "ListRoles"),
+    ];
+    const row = awsLineages(records)[0];
+    expect(row.description).toContain(
+      "enumeration burst: 8 read calls across 4 services in 1 min (09:00:00 → 09:01:02 UTC), 2 denied probes (s3 ListBuckets, ec2 DescribeInstances)",
+    );
+  });
+});

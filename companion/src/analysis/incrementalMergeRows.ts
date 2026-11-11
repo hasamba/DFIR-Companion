@@ -8,6 +8,7 @@ import { runTimelineChain } from "./stateMerge.js";
 import { correlationKeys } from "./mergeIndex.js";
 import { groupBulkReadsWithDropped, objectLoggingEvent } from "./cloudBulkRead.js";
 import { storageKeyJoinsForm } from "./azureStorageKeyToRead.js";
+import { windowNoteContradicted } from "./objectLoggingWindow.js";
 
 /**
  * The row-level helpers of the incremental importer merge (#1874): reading stored rows, the
@@ -36,11 +37,16 @@ export interface HeldRow {
  * held rows decide whether a join forms exactly as the full merge's pass does; with none,
  * correlateStorageKeyToRead returns its input untouched. A join adds and replaces rows out of place,
  * which the incremental merge does not carry, so it falls back.
+ *
+ * The dated object-logging note (#2564). It and its selector change are LOAD rows, as are object
+ * reads, so the held rows show when an earlier object record contradicts a stored note; the full
+ * merge withdraws it, a removal the incremental merge does not carry, so it falls back.
  */
 export function cloudPassWork(events: readonly ForensicEvent[]): string | null {
   const { groups, dropped } = groupBulkReadsWithDropped(events);
   if (groups.length > 0 || dropped > 0 || objectLoggingEvent(events) !== null)
     return "a correlation pass has work: cloud bulk read";
+  if (windowNoteContradicted(events)) return "a correlation pass has work: object-logging note withdrawn";
   if (storageKeyJoinsForm(events)) return "a correlation pass has work: storage key join";
   return null;
 }

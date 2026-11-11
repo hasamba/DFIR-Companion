@@ -191,13 +191,35 @@ function applyIocNoiseFilters(list, opts) {
 
   // Above the floor sit the two lenses that only ask how far enrichment has got. On a fresh case
   // neither can match anything, which is why they must be able to stand down.
+  // `isPinnedSignal` (#2543): an IOC extracted from a High/Critical event, or one the analyst
+  // labelled, is signal even with no threat-intel verdict (a cloud principal never gets one).
+  const isPinnedSignal = o.isPinnedSignal || (() => false);
   let out = floor;
   if (o.hideFpNoIntel) out = out.filter((i) => !neverEnriched(i));
-  if (o.showSignalIocsOnly) out = out.filter((i) => isFlagged(i) || corroboration(i) >= 2 || enriched(i));
+  if (o.showSignalIocsOnly)
+    out = out.filter((i) => isPinnedSignal(i) || isFlagged(i) || corroboration(i) >= 2 || enriched(i));
 
   // Fall back to the FLOOR, never to the raw list.
   if (!out.length && floor.length) return { visible: floor, suppressed: true };
   return { visible: out, suppressed: false };
+}
+
+// #2543: the ids of the High/Critical events in a timeline, and whether an IOC was extracted from
+// one of them (its `extractedFrom` link — the importer's own event id). Never a text match and never
+// "any linked event": every binary hash is an IOC and process rows carry MITRE tags.
+function highSeverityEventIds(events) {
+  const out = new Set();
+  for (const e of events || []) if (e && (e.severity === "High" || e.severity === "Critical")) out.add(e.id);
+  return out;
+}
+function iocLinkedToHighEvent(i, highIds) {
+  return Array.isArray(i && i.extractedFrom) && i.extractedFrom.some((id) => highIds.has(id));
+}
+// The panel's `isPinnedSignal` predicate: extracted from a High/Critical event of the case's forensic
+// timeline, or carrying an analyst label (attributionOf returns the label, or null).
+function iocPinnedSignal(state, attributionOf) {
+  const highIds = highSeverityEventIds(state && state.forensicTimeline);
+  return (i) => iocLinkedToHighEvent(i, highIds) || (typeof attributionOf === "function" && !!attributionOf(i));
 }
 
 // THE IOC PANEL'S EMPTY-STATE SENTENCE (#2468), plain text. With "Flagged only" on, every empty
@@ -267,6 +289,9 @@ window.DfirIoc = {
   dedupeIocsById,
   sortIocsForDisplay,
   applyIocNoiseFilters,
+  highSeverityEventIds,
+  iocLinkedToHighEvent,
+  iocPinnedSignal,
   iocNoiseNoticeHtml,
   iocEmptyStateText,
   iocFilterKey,

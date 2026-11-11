@@ -56,6 +56,7 @@ export interface IocLike {
     fetchedAt?: string;
     temporal?: Record<string, unknown>;
   }>;
+  extractedFrom?: string[];
 }
 
 export interface FindingLike {
@@ -188,8 +189,18 @@ export interface IocApi {
       isFlagged?: (i: IocLike) => boolean;
       corroboration?: (i: IocLike) => number;
       isSystemPath?: (i: IocLike) => boolean;
+      isPinnedSignal?: (i: IocLike) => boolean;
     },
   ): { visible: IocLike[]; suppressed: boolean };
+  /** Ids of the High/Critical events in a timeline (#2543). */
+  highSeverityEventIds(events: Array<{ id?: string; severity?: string }> | null | undefined): Set<string>;
+  /** Was this IOC extracted from one of those events (its `extractedFrom` link)? */
+  iocLinkedToHighEvent(i: IocLike, highIds: Set<string>): boolean;
+  /** The panel's predicate: High/Critical-linked, or analyst-labelled. */
+  iocPinnedSignal(
+    state: { forensicTimeline?: Array<{ id?: string; severity?: string }> } | null,
+    attributionOf: ((i: IocLike) => string | null) | null,
+  ): (i: IocLike) => boolean;
   iocNoiseNoticeHtml(suppressed: boolean, total: number): string;
   /** An unambiguous string naming what the analyst filters the IOC list on (#1649). */
   iocFilterKey(f: IocFilterInputs): string;

@@ -586,7 +586,9 @@ describe("a streamed cloud import writes the super-timeline and never reads it (
   // The streaming cloud import appends Info/Low rows straight to the super-timeline (the sandbox
   // precedent), after the tagger's severity rules had their chance to raise them. The rows must stay
   // where the model cannot see them: the import only appends and reads the row count for its room;
-  // it never queries, scans or promotes, and its super rows never enter the forensic delta.
+  // it never queries, scans or promotes, and its super rows never enter the forensic delta. The one
+  // exception is not in these modules: they hand the store to the S3 precursor promotion, whose
+  // keyed, capped read the #2563 clause at the end of this file pins.
   const MODULES = [
     "../../src/analysis/ingest/cloudStreamImport.ts",
     "../../src/analysis/ingest/cloudStreamBatch.ts",
@@ -692,5 +694,156 @@ describe("the collector-footprint tag reads no raw record and grades nothing (#2
       .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
       .join("\n");
     expect(code).not.toMatch(/\b(severity|mitreTechniques|origin)\s*[:=](?!=)/);
+  });
+});
+
+describe("the S3 ransomware-precursor promotion is the one automatic super-timeline read (#2563)", () => {
+  // A deliberate exception (ARCHITECTURE.md → "One automatic read: the S3 ransomware-precursor
+  // promotion"; user decision 2026-11-11): a CloudTrail recovery check demoted before its access
+  // key's privileged change arrived is promoted back at High when the change arrives. Bounded:
+  // keyed by access key, the importer-stamped check block and the change time; capped; disclosed;
+  // no AI. These clauses pin each bound.
+  const MODULE = "../../src/analysis/ingest/cloudPrecursorPromote.ts";
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  const code = (rel: string) =>
+    read(rel)
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join("\n");
+
+  it("reads the super-timeline only through one keyed query, and imports nothing AI-related", () => {
+    const src = code(MODULE);
+    const superCalls = [...src.matchAll(/\bstore\.(\w+)\(/g)].map((m) => m[1]);
+    expect(superCalls).toEqual(["query"]);
+    expect(src).toMatch(/store\.query\(caseId, \{ search: key, offset, limit: PAGE_ROWS \}\)/);
+    expect(src).not.toMatch(/eventBatches|scanWindow|queryIndexed|promoteSuperTimeline|memoizeScan/);
+    for (const [, spec] of read(MODULE).matchAll(/from "([^"]+)"/g))
+      expect(spec, `imports ${spec}`).not.toMatch(/\/ai\/|providers?\/|prompt|synth|jev/i);
+  });
+
+  it("states its caps as named constants", async () => {
+    const m = await import("../../src/analysis/ingest/cloudPrecursorPromote.js");
+    expect(m.PRECURSOR_PROMOTE_MAX).toBe(50);
+    expect(m.PRECURSOR_KEYS_MAX).toBe(20);
+    expect(m.PRECURSOR_SCAN_ROWS).toBe(5_000);
+  });
+
+  it("is the only super-timeline read on the import and merge paths", () => {
+    // The importers hand the store to the promotion and nothing else reads it; the merge chain and
+    // the incremental merge never name the super-timeline at all.
+    for (const rel of [
+      "../../src/analysis/ingest/cloudAuditImports.ts",
+      "../../src/analysis/ingest/cloudStreamImport.ts",
+    ]) {
+      const src = code(rel);
+      expect(src, rel).toMatch(
+        /promoteCrossUploadPrecursors\(\s*\{ superTimeline: ctx\.opts\.superTimelineStore,/,
+      );
+      expect(src, rel).not.toMatch(
+        /superTimelineStore[?!]?\.query\(|eventBatches|scanWindow|promoteSuperTimeline/,
+      );
+    }
+    for (const rel of [
+      "../../src/analysis/stateMerge.ts",
+      "../../src/analysis/cloudPrecursorMerge.ts",
+      "../../src/analysis/mergeIndex.ts",
+      "../../src/analysis/incrementalMerge.ts",
+      "../../src/analysis/incrementalMergeRows.ts",
+      "../../src/analysis/caseMerge.ts",
+      "../../src/analysis/awsPrecursorGrade.ts",
+    ])
+      expect(code(rel), rel).not.toMatch(/superTimeline|SuperTimeline/);
+  });
+
+  it("promotes only later checks by the same key, under the cap, whatever the store returns", async () => {
+    const { promoteCrossUploadPrecursors, PRECURSOR_PROMOTE_MAX, withPrecursorRows, emptyPrecursorSeen } =
+      await import("../../src/analysis/ingest/cloudPrecursorPromote.js");
+    const KEY = "AKIAEXAMPLEBOUNDARY1";
+    const env = (key: string, role: "change" | "check", call: string) =>
+      ({
+        schemaVersion: "1.1.0",
+        event: { category: "cloud", type: "api" },
+        authentication: { credentialId: key },
+        awsPrecursor: { role, call },
+      }) as unknown as ForensicEvent["canonical"];
+    const check = (id: string, timestamp: string, key = KEY) =>
+      ev({ id, timestamp, canonical: env(key, "check", "s3 GetBucketVersioning") });
+    const change = ev({
+      id: "chg",
+      timestamp: "2026-01-01T10:00:00Z",
+      canonical: env(KEY, "change", "iam CreateAccessKey"),
+    });
+    // The store is free to over-return (a text search): other keys, earlier rows, non-check rows.
+    const rows = [
+      ...Array.from({ length: PRECURSOR_PROMOTE_MAX + 30 }, (_, i) =>
+        check(`ok${i}`, `2026-01-01T11:${String(i % 60).padStart(2, "0")}:00Z`),
+      ),
+      check("otherkey", "2026-01-01T11:00:00Z", "AKIAEXAMPLEOTHERKEY9"),
+      check("early", "2026-01-01T09:00:00Z"),
+      ev({ id: "notcheck", timestamp: "2026-01-01T11:00:00Z", canonical: env(KEY, "change", "iam X") }),
+    ];
+    const queries: unknown[] = [];
+    const result = await promoteCrossUploadPrecursors(
+      {
+        superTimeline: {
+          query: async (_c, q) => {
+            queries.push(q);
+            const page = rows.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 0));
+            return { events: page, total: rows.length, origins: [], hosts: [], labelsAvailable: [] };
+          },
+        },
+        forensic: {
+          queryForensicTimeline: async () => ({ entities: [], nextCursor: null, total: 0 }),
+          hasForensicEventIds: async () => new Set<string>(),
+        },
+      },
+      "c1",
+      withPrecursorRows(emptyPrecursorSeen(), [change]),
+    );
+    expect(result.events).toHaveLength(PRECURSOR_PROMOTE_MAX);
+    expect(result.events.every((e) => e.id.startsWith("ok") && e.severity === "High")).toBe(true);
+    // Only the key narrows the read; the "early" row is dropped by the join, not by the query.
+    for (const q of queries) {
+      expect(Object.keys(q as object).sort()).toEqual(["limit", "offset", "search"]);
+      expect(q).toMatchObject({ search: KEY.toLowerCase() });
+    }
+    expect(result.events.some((e) => e.id === "early" || e.id === "otherkey")).toBe(false);
+  });
+
+  it("stops a key's scan at the row cap and says so in the import note", async () => {
+    const m = await import("../../src/analysis/ingest/cloudPrecursorPromote.js");
+    const KEY = "AKIAEXAMPLEBOUNDARY2";
+    const change = ev({
+      id: "chg",
+      timestamp: "2026-01-01T10:00:00Z",
+      canonical: {
+        schemaVersion: "1.1.0",
+        event: { category: "cloud", type: "api" },
+        authentication: { credentialId: KEY },
+        awsPrecursor: { role: "change", call: "iam CreateAccessKey" },
+      } as unknown as ForensicEvent["canonical"],
+    });
+    let read = 0;
+    const result = await m.promoteCrossUploadPrecursors(
+      {
+        superTimeline: {
+          // An endless store: every page is full of rows that are not checks.
+          query: async (_c, q) => {
+            read += q.limit ?? 0;
+            const events = Array.from({ length: q.limit ?? 0 }, (_, i) => ev({ id: `n${read}-${i}` }));
+            return { events, total: 1e9, origins: [], hosts: [], labelsAvailable: [] };
+          },
+        },
+        forensic: {
+          queryForensicTimeline: async () => ({ entities: [], nextCursor: null, total: 0 }),
+          hasForensicEventIds: async () => new Set<string>(),
+        },
+      },
+      "c1",
+      m.withPrecursorRows(m.emptyPrecursorSeen(), [change]),
+    );
+    expect(read).toBe(m.PRECURSOR_SCAN_ROWS);
+    expect(result.scanTruncated).toBe(true);
+    expect(m.precursorPromotionNote(result)).toMatch(/stopped after 5000 super-timeline rows/);
   });
 });

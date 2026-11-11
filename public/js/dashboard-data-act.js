@@ -152,6 +152,7 @@
     iocPagePrev: (el) => iocPageStep(-1),
     iocPageNext: (el) => iocPageStep(1),
     iocSetPageSize: (el) => iocSetPageSize(+el.value),
+    iocSetAttribution: (el) => setIocAttribution(el.dataset.value, el.value), // #2543 analyst label
     // ATT&CK / kill chain / hosts
     huntForTechnique: (el) => huntForTechnique(el.dataset.id, el),
     kcSelect: (el) => {

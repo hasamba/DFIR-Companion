@@ -25,7 +25,7 @@ import {
   unionExcludedRefs,
   type ExcludedIocRef,
 } from "./iocMergeSupport.js";
-import { repairIocValue } from "./iocValue.js";
+import { oneLineNote, repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
 import { mergeCanonicalEvents } from "./canonicalMerge.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "./labIntel.js";
@@ -51,6 +51,7 @@ import { markInfectionWindow } from "./mobileInfectionWindow.js";
 import { markAppCorroboration } from "./mobileBackgroundActivity.js";
 import { corroborateInjectionSequences } from "./injectionSequence.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
+import { raiseCasePrecursors } from "./cloudPrecursorMerge.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
 import {
   explainMetadataAccess,
@@ -183,7 +184,7 @@ export function mergeIocs(
     // The annotation the value carried, or — with none — what a published vendor range says about
     // the address (#1530). An analyst reading the IOC list then sees "vendor: Microsoft" beside a
     // service address instead of a bare quad that reads like a C2 lead.
-    const incomingNote = repaired.note || vendorNote(incoming.value);
+    const incomingNote = oneLineNote(rawIncoming.note) || repaired.note || vendorNote(incoming.value);
     if (dup) {
       // Union (not overwrite): the same value can legitimately be extracted from
       // different source events across separate import runs — preserve every link.
@@ -403,9 +404,8 @@ export function runTimelineChain(
   // evidence about a process less true. A process with NO recorded parent is left alone — a
   // snapshot taken after the parent exited looks exactly like an orphan.
   const withParents = markProcessLifetimeSignals(withExfil);
-  // Collapse duplicates / cross-source matches immediately (so re-importing the same
-  // report, or two tools flagging one artifact, never doubles the timeline) — not only
-  // during synthesis. Idempotent.
+  // Collapse duplicates / cross-source matches immediately (so re-importing the same report, or two
+  // tools flagging one artifact, never doubles the timeline) — not only during synthesis. Idempotent.
   // Weigh each MFT timestomp signal against what an INDEPENDENT artifact recorded for the same file
   // (#909 item 8). Runs here because the MFT and ShimCache arrive as separate imports, so this is
   // the first point at which both are in hand. Only ever raises.
@@ -448,8 +448,8 @@ export function runTimelineChain(
   // Several distinct pre-encryption behaviours on one host inside one window (#908 item 3). Runs
   // here, with the other deterministic correlations, because the steps arrive from different
   // importers and no single one of them is remarkable — the combination is the finding. Only ever
-  // raises, and never on one behaviour alone.
-  const withPrecursors = markRansomwarePrecursors(withInjection);
+  // raises, and never on one behaviour alone. Then an S3 check after its key's change, any file (#2563).
+  const withPrecursors = raiseCasePrecursors(markRansomwarePrecursors(withInjection));
   // Say what a certutil transfer actually did — where it connected, what it wrote — by stitching
   // the command to the network and file records of the same process (#908 item 4). Here, because
   // those three legs arrive from different importers.

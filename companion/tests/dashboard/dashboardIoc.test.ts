@@ -407,3 +407,68 @@ describe("intelWhenChip — when the verdict applies (#933 item 19)", () => {
     expect(badge).not.toContain("onmouseover");
   });
 });
+
+// #2543: a cloud identity IOC (`other`) never gets a threat-intel verdict, so "Signal only" hid it as
+// soon as any other IOC was enriched. The user's rule: an IOC extracted from a High/Critical event
+// (its `extractedFrom` link), or one the analyst labelled, is signal. Never "any linked event" and
+// never "any MITRE tag" — every binary hash is an IOC and process rows carry tags (CLAUDE.md §7).
+describe("Signal only keeps IOCs extracted from a High event, and labelled ones (#2543)", () => {
+  const events = [
+    { id: "eHigh", severity: "High" },
+    { id: "eCrit", severity: "Critical" },
+    { id: "eLow", severity: "Low" },
+    { id: "eMed", severity: "Medium" },
+    { id: "eInfo", severity: "Info" },
+  ];
+  const highIds = ioc.highSeverityEventIds(events);
+  const labelled = new Set(["labelled"]);
+  const list = [
+    { id: "enriched", type: "ip", value: "203.0.113.10", enrichments: [{ verdict: "harmless" }] },
+    {
+      id: "highLinked",
+      type: "other",
+      value: "arn:aws:iam::111122223333:user/dev",
+      extractedFrom: ["eHigh"],
+    },
+    { id: "lowLinked", type: "other", value: "AKIAIOSFODNN7EXAMPLE", extractedFrom: ["eLow", "eInfo"] },
+    { id: "medLinked", type: "hash", value: "d41d8cd98f00b204e9800998ecf8427e", extractedFrom: ["eMed"] },
+    { id: "labelled", type: "other", value: "quiet-policy" },
+    { id: "unlinked", type: "other", value: "other-policy" },
+  ];
+  const opts = {
+    hideFpNoIntel: true,
+    showSignalIocsOnly: true,
+    hideSystemPaths: false,
+    isFlagged: () => false,
+    corroboration: () => 0,
+    isPinnedSignal: ioc.iocPinnedSignal({ forensicTimeline: events }, (i) =>
+      labelled.has(String(i.id)) ? "attacker" : null,
+    ),
+  };
+
+  it("collects only High and Critical event ids", () => {
+    expect([...highIds].sort()).toEqual(["eCrit", "eHigh"]);
+    expect(ioc.highSeverityEventIds(null).size).toBe(0);
+  });
+
+  it("keeps the High-linked and the labelled IOC beside an enriched one; drops Low/Medium/unlinked", () => {
+    const out = ioc.applyIocNoiseFilters(list, opts);
+    expect(out.visible.map((i) => i.id)).toEqual(["enriched", "highLinked", "labelled"]);
+    expect(out.suppressed).toBe(false);
+  });
+
+  it("a Critical link counts too; an IOC with no link never does", () => {
+    expect(ioc.iocLinkedToHighEvent({ extractedFrom: ["eCrit"] }, highIds)).toBe(true);
+    expect(ioc.iocLinkedToHighEvent({ value: "x" }, highIds)).toBe(false);
+  });
+
+  it("with no label lookup and no state, nothing is pinned", () => {
+    const pinned = ioc.iocPinnedSignal(null, null);
+    expect(list.filter(pinned)).toEqual([]);
+  });
+
+  it("a pinned IOC the analyst marked false positive stays hidden", () => {
+    const out = ioc.applyIocNoiseFilters(list, { ...opts, isFalsePositive: (i) => i.id === "highLinked" });
+    expect(out.visible.map((i) => i.id)).not.toContain("highLinked");
+  });
+});

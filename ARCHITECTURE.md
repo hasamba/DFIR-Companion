@@ -122,6 +122,9 @@ timeline**, `Info` telemetry into the **super-timeline** only. Then:
 
 > **The model reads the forensic timeline. Nothing automatic reads the raw record.**
 
+One automatic, keyed read is the named exception (#2563): see "One automatic read: the S3
+ransomware-precursor promotion" below. It promotes; the model still never reads the raw record.
+
 The reason is not tidiness. A real case carries tens of thousands of prefetch, amcache and shellbag
 rows. Feeding them to a model exhausts the token budget and drowns the signal that earned the
 forensic cut in the first place.
@@ -134,7 +137,9 @@ super-timeline batch by batch, within a per-import room, while only graded rows 
 aggregates enter the forensic delta. Because those rows never cross the settle seam's tagger, the
 tagger's severity rules are applied to each batch first (`cloudStreamPreGrade.ts`), so a row a rule
 would raise reaches the forensic timeline instead of being counted away. The import only appends
-to the super-timeline and reads its row count; `forensicBoundary.test.ts` enforces both.
+to the super-timeline and reads its row count; `forensicBoundary.test.ts` enforces both. The one
+exception is that a streamed CloudTrail import hands the store to the S3 precursor promotion
+(#2563, below), which makes its own keyed, capped read.
 
 ### One pass lowers a grade, and it runs before the tagger
 
@@ -265,6 +270,40 @@ and not an exception. It sends Jev one finding and the events it cites, resolved
 forensic timeline only (`analysis/ai/jev/containmentState.ts`); a cited id that is not there is
 counted as missing, never fetched from the raw record. `forensicBoundary.test.ts` pins both.
 
+### One automatic read: the S3 ransomware-precursor promotion (#2563)
+
+This is a **deliberate, named exception**, decided by the user on 2026-11-11 ("join in any order").
+A CloudTrail bucket recovery check (`GetBucketVersioning`, `GetBucketObjectLockConfiguration`,
+`PutBucketVersioning` set to Suspended) is raised to High when the same access key made a
+successful privileged change earlier (a policy grant to itself, or `CreateAccessKey`). A trail
+delivered as one file per region and five-minute slice splits the two across files. When the check
+arrives first it is `Info` in its own file and the demote moves it to the super-timeline, so no
+merge pass can raise it later. Obeying "nothing automatic reads the raw record" literally would
+lose the one link that says the recovery check was a ransomware step.
+
+So when a CloudTrail import (whole-file or streamed) brings a precursor change, or a check whose key
+already has a change in the forensic timeline, `analysis/ingest/cloudPrecursorPromote.ts` looks the
+check up in the super-timeline and puts it into the import's forensic delta at High, with a note
+that says it was promoted. The bounds:
+
+- **Keyed and fixed.** The import's own change and check rows name the access keys (an AWS key-id
+  shape only, at most 20 per import). The read is the super-timeline's text query on that key, at
+  most 5,000 rows per key. A row is kept only if its importer-stamped `canonical.awsPrecursor` block
+  says it is a check by that key with an occurrence later than the change (a folded row's last
+  occurrence counts). No other row is ever promoted.
+- **Capped and disclosed.** At most 50 rows per import, earliest first. The import's case timeline
+  note gives the number promoted, the number left behind, and says when the key cap or the per-key
+  scan cap stopped the lookup.
+- **No AI.** The lookup is deterministic and starts no analysis. The model sees a promoted row only
+  once it is in the forensic timeline, the same promote-first shape as `explainEvent` and
+  `starredReport`. The AI still never reads the super-timeline.
+
+The change-first order needs no exception. The merge chain's `cloudPrecursorMerge.ts` pass raises a
+check over a stored change, and the incremental merge holds both halves as LOAD rows. Rows imported
+before #2563 carry no `awsPrecursor` block and are not joined. `forensicBoundary.test.ts` enforces
+the bounds: only this module reads the super-timeline from an import path, only through `query`
+with the key as the search term, under the caps, and it imports nothing AI-related.
+
 ### The second look became a button (#1554)
 
 It used to run at the end of every synthesis, and it was the one automatic path that WROTE into the
@@ -298,6 +337,9 @@ findings used. The model does separate one question from another; that is not th
 which rows will matter, and only the first was true when the work was proposed.
 
 ### `viewSummary` is the one sanctioned exception
+
+It is the one exception that lets a model read the raw record. The S3 precursor promotion (#2563,
+above) is the one automatic read, and it promotes before any model sees a row.
 
 It summarizes whatever the analyst has filtered the raw view down to, which can be thousands of
 rows. Promotion is not available to it: writing thousands of Info events into the forensic timeline

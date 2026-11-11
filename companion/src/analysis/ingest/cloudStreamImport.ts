@@ -56,8 +56,10 @@ import {
   type StreamProvider,
 } from "./cloudStreamProviders.js";
 import { streamSprayRows } from "./cloudStreamSpray.js";
+import { precursorPromotionNote, promoteCrossUploadPrecursors } from "./cloudPrecursorPromote.js";
 import { mfaFatigueRows } from "./mfaFatigueRows.js";
 import { fatigueEventId } from "../mfaFatigue.js";
+import { resolveStreamIocLinks } from "./cloudStreamIocLinks.js";
 
 type Row = Record<string, unknown>;
 
@@ -277,32 +279,44 @@ async function finish(
   const clauses = describeCloudStreamDisclosure(disclosure);
   const undated = undatedRowsNote(provider.undated?.(pre));
   // An upload whose only output is principal names (#2490) still saves them.
-  if (!events.length && !acc.iocs.size && !acc.principalNames.length) {
+  // A CloudTrail recovery check now a precursor — this import's own super rows included (#2563).
+  const promoted = await promoteCrossUploadPrecursors(
+    { superTimeline: ctx.opts.superTimelineStore, forensic: ctx.opts.stateStore },
+    caseId,
+    acc.precursors,
+  );
+  if (!events.length && !promoted.events.length && !acc.iocs.size && !acc.principalNames.length) {
     const detail = [...clauses, undated.slice(2)].filter(Boolean).join("; ");
     const state = await noteEmptyImport(ctx, caseId, opts, provider.source, stats.records, detail);
     return { state, coverage, disclosure };
   }
   const format = [...acc.formats].join("+") || stats.format;
+  const forensicEvents = withArtifactHash(events, stats.textHash).map((e, i) => ({
+    ...e,
+    id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`, // stable fatigue id (#2306)
+    sources: e.sources?.length ? e.sources : [provider.source],
+  }));
+  // Each IOC links to the forensic rows that produced it, as the whole-file path does (#2543).
+  const iocs = resolveStreamIocLinks([...acc.iocs.values()], forensicEvents);
   const delta = deltaSchema.parse({
     findings: [],
-    iocs: [...acc.iocs.values()].map((c, i) => ({
+    iocs: iocs.map((c, i) => ({
       id: `${opts.idPrefix}i${i + 1}`,
       type: c.type,
       value: c.value,
+      ...(c.note ? { note: c.note } : {}),
+      ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
     })),
     mitreTechniques: [],
-    forensicEvents: withArtifactHash(events, stats.textHash).map((e, i) => ({
-      ...e,
-      id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`, // stable fatigue id (#2306)
-      sources: e.sources?.length ? e.sources : [provider.source],
-    })),
+    forensicEvents: [...forensicEvents, ...promoted.events],
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
       `${provider.source} import (${format}): ${events.length} event(s) from ${stats.records} record(s), ${acc.iocs.size} IOC(s)` +
       sigmaImportNote(deps.sigma, acc.sigmaRows) +
       `; ${clauses.join("; ")}` +
-      undated,
+      undated +
+      precursorPromotionNote(promoted),
     summary: "",
     ...(acc.principalNames.length ? { principalNames: acc.principalNames } : {}),
   });

@@ -12,6 +12,7 @@ import { FindingOutcomeStore } from "../../src/analysis/findingOutcome.js";
 import { RemediationStore } from "../../src/analysis/remediationBoundary.js";
 import { ServedLocationStore } from "../../src/analysis/servedLocation.js";
 import { SensitiveLocationStore } from "../../src/analysis/sensitiveLocation.js";
+import { IocAttributionStore } from "../../src/analysis/iocAttributionStore.js";
 import { FILTERED_STATE_SIDE_FILES } from "../../src/reports/filteredState.js";
 import { ReportLiteCache, caseReadRevision, REPORT_LITE_IDLE_MS } from "../../src/reports/reportLiteCache.js";
 import { CaseLoadCoalescer } from "../../src/reports/stateLoadGate.js";
@@ -118,6 +119,7 @@ describe("report-lite cache (#2057)", () => {
       RemediationStore: [priv(new RemediationStore(caseStore), "path", "c1")],
       ServedLocationStore: [priv(new ServedLocationStore(caseStore), "path", "c1")],
       SensitiveLocationStore: [priv(new SensitiveLocationStore(caseStore), "path", "c1")],
+      IocAttributionStore: [priv(new IocAttributionStore(caseStore), "path", "c1")],
     };
     expect([...read].sort()).toEqual(Object.keys(table).sort());
     const files = Object.values(table).flat();

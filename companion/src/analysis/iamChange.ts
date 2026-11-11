@@ -245,6 +245,33 @@ function bindingsFor(source: string, nameLower: string, req: Obj, res: unknown):
   return [];
 }
 
+// The grant postures whose target can be the caller itself (#2542): a user policy on the calling
+// user, a role policy on the role the caller's session was issued for.
+const SELF_USER_GRANTS = new Set(["putuserpolicy", "attachuserpolicy"]);
+const SELF_ROLE_GRANTS = new Set(["putrolepolicy", "attachrolepolicy"]);
+const INLINE_PUTS = new Set(["putuserpolicy", "putrolepolicy", "putgrouppolicy"]);
+export const SELF_GRANT_QUALIFIER = "granted to the caller itself";
+const SELF_REQUEST_QUALIFIER = "requested for the caller itself";
+
+/**
+ * True when a grant call names the caller as its own target: `PutUserPolicy` / `AttachUserPolicy`
+ * on the calling IAM user, `PutRolePolicy` / `AttachRolePolicy` on the role an assumed-role caller's
+ * session was issued for. Compared exactly (IAM names are case-sensitive in the request).
+ */
+export function isSelfGrant(name: string, request: unknown, userIdentity: unknown): boolean {
+  const n = name.toLowerCase();
+  const type = raw(getCI(userIdentity, "type"));
+  if (SELF_USER_GRANTS.has(n) && type === "IAMUser") {
+    const user = raw(getCI(userIdentity, "userName"));
+    return !!user && user === raw(getCI(request, "userName"));
+  }
+  if (SELF_ROLE_GRANTS.has(n) && type === "AssumedRole") {
+    const role = raw(path(userIdentity, ["sessionContext", "sessionIssuer", "userName"]));
+    return !!role && role === raw(getCI(request, "roleName"));
+  }
+  return false;
+}
+
 const SEVERITY_RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 const worstOf = (a: Severity | null, b: Severity | null): Severity | null =>
   !a ? b : !b ? a : SEVERITY_RANK[b] > SEVERITY_RANK[a] ? b : a;
@@ -253,6 +280,7 @@ const worstOf = (a: Severity | null, b: Severity | null): Severity | null =>
  * Decode one CloudTrail record as an IAM change or a role binding, or null when it is neither.
  * `recipientAccountId` is the account the changed resource lives in; without it a trust policy's
  * accounts are named but not compared. `eventId` keys a document that has no digest of its own.
+ * `userIdentity` is the record's caller, read only to say when a grant names the caller itself.
  */
 export function decodeIamChange(
   source: string,
@@ -263,6 +291,7 @@ export function decodeIamChange(
   errorMessage: string,
   recipientAccountId: string,
   eventId = "",
+  userIdentity: unknown = null,
 ): IamChange | null {
   const req: Obj = isObj(request) ? request : {};
   const nameLower = name.toLowerCase();
@@ -286,6 +315,8 @@ export function decodeIamChange(
     verb = postureVerb(posture, nameLower, req, attempted);
     object = objectTuple(posture, nameLower, req, response);
     if (posture.qualifier) qualifiers.push(posture.qualifier);
+    if (isSelfGrant(name, req, userIdentity))
+      qualifiers.push(attempted ? SELF_REQUEST_QUALIFIER : SELF_GRANT_QUALIFIER);
     if (!attempted && posture.floor) floor = worstOf(floor, posture.floor);
     if (posture.floor) for (const t of posture.mitre ?? []) add(t);
     // A key set Active is a credential brought (back) into use — Medium on the requested state.
@@ -311,6 +342,10 @@ export function decodeIamChange(
         } else {
           reading = `${prefix}document: ${read.effect} — ${read.reading}`;
           if (read.broad && !attempted) floor = worstOf(floor, "High");
+          // An inline policy of every action on every resource, unconditioned: full administrator
+          // in effect the moment the call succeeds (#2542). A policy VERSION may never be made
+          // default, so CreatePolicyVersion keeps the broad grant's High.
+          if (read.fullAdmin && !attempted && INLINE_PUTS.has(nameLower)) floor = worstOf(floor, "Critical");
           if (read.broad) add("T1098.003");
         }
         if (read.conditional) qualifiers.push(CONDITIONAL_NOTE);

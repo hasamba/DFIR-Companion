@@ -15,6 +15,9 @@ export interface SiemIoc {
   // resolving sourceAggKeys; empty/absent falls back to iocProvenanceChain.ts's approximate matcher.
   extractedFrom?: string[];
   provenance?: IocProvenance; // #1266 — see stateTypes.ts; plain (absent) wins over marked at every sink
+  // Short context the importer recorded with the value (#2543), e.g. "AWS access key — issued by
+  // CreateAccessKey for dev at …". First sighting wins, here and in stateMerge.ts.
+  note?: string;
 }
 
 // An address inside a vendor's own single-tenant service space is a fact about the vendor, not an
@@ -34,6 +37,7 @@ export function addIoc(
   rawType: SiemIoc["type"],
   value: string,
   provenance?: IocProvenance,
+  note?: string,
 ): void {
   const v = value.trim();
   if (!v) return;
@@ -41,7 +45,8 @@ export function addIoc(
   const type = effectiveType(rawType, v);
   const key = `${type}:${v.toLowerCase()}`;
   const existing = sink.get(key);
-  if (!existing) sink.set(key, { type, value: v, ...(provenance ? { provenance } : {}) });
+  if (!existing)
+    sink.set(key, { type, value: v, ...(provenance ? { provenance } : {}), ...(note ? { note } : {}) });
   // #1266: plain wins, order-independently — a later ordinary sighting un-marks, a later marked one
   // cannot mark. The same rule is applied again at mergeRowIocs and stateMerge.
   else if (existing.provenance && !provenance) {
@@ -70,8 +75,10 @@ export function mergeRowIocs(
         ? existing.provenance
         : undefined
       : ioc.provenance;
+    const note = existing ? (existing.note ?? ioc.note) : ioc.note;
     fileSink.set(key, {
       ...base,
+      ...(note ? { note } : {}),
       ...(provenance ? { provenance } : {}),
       ...(nextKeys.length ? { sourceAggKeys: nextKeys } : {}),
     });

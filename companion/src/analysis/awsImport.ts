@@ -18,14 +18,9 @@ import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
 import { decodeIamChange, renderAwsDescription } from "./iamChange.js";
 import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
 import { mergeReplicaGroups, type ReplicaCandidate } from "./awsReplicas.js";
-import {
-  applySigmaMatches,
-  sigmaMatchesFor,
-  unionSigmaMatches,
-  type SigmaGradingSnapshot,
-} from "./sigmaImportGrade.js";
+import { sigmaMatchesFor, unionSigmaMatches, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
 import type { SigmaRuleRef } from "./sigmaRuleSet.js";
-import { cloudTrailSigmaVeto } from "./sigmaCloudTrailVeto.js";
+import { gradeCloudTrailRows } from "./cloudTrailRowGrade.js";
 import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
 import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
@@ -33,7 +28,9 @@ import { awsCloudTrailCoverage } from "./cloudCoverageBuilders.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
 import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
-import { awsExposureGrade, awsExposurePosture } from "./awsExposure.js";
+import { awsRecordExposure } from "./awsExposure.js";
+import { failedCallIsProbe, genericFloor } from "./awsServiceGrade.js";
+import { addAwsIdentityIocs, awsPrincipal } from "./awsIocCandidates.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -184,44 +181,6 @@ function truthy(v: unknown): boolean {
   return v === true || /^(true|1|yes)$/i.test(str(v).trim());
 }
 
-// The acting principal: IAM user name, the assumed-role's issuer, the ARN, or the type.
-function principal(ui: unknown): {
-  name: string;
-  isRoot: boolean;
-  id?: string;
-  type?: string;
-  arn?: string;
-  accountId?: string;
-} {
-  if (!isObject(ui)) return { name: str(ui), isRoot: false };
-  const type = str(getCI(ui, "type"));
-  const arn = str(getCI(ui, "arn"));
-  // IAM Identity Center users carry NO principalId/userName at the root: the immutable identity is
-  // onBehalfOf.userId inside identityStoreArn. Without it every Identity Center user in an account
-  // keyed as the literal type string and merged into one principal.
-  const id =
-    str(getCI(ui, "principalId")) ||
-    str(getCI(ui, "userId")) ||
-    (str(getPath(ui, "onBehalfOf.userId"))
-      ? `${str(getPath(ui, "onBehalfOf.identityStoreArn"))}#${str(getPath(ui, "onBehalfOf.userId"))}`
-      : "");
-  const accountId = str(getCI(ui, "accountId"));
-  const name =
-    str(getCI(ui, "userName")) ||
-    str(getPath(ui, "sessionContext.sessionIssuer.userName")) ||
-    arn ||
-    str(getCI(ui, "invokedBy")) ||
-    type;
-  return {
-    name,
-    isRoot: /^root$/i.test(type),
-    ...(id ? { id } : {}),
-    ...(type ? { type } : {}),
-    ...(arn ? { arn } : {}),
-    ...(accountId ? { accountId } : {}),
-  };
-}
-
 function shortSource(eventSource: string): string {
   return eventSource.replace(/\.amazonaws\.com$/i, "");
 }
@@ -240,7 +199,10 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
 
   const readOnly = truthy(getCI(rec, "readOnly"));
   const def = lookupAwsAction(source, name);
-  let severity: Severity = def?.severity ?? (readOnly ? "Info" : "Low");
+  // Who called, in the record's words (#931 item 5): the kind, the credential, the session's
+  // issuer and attributes, the accounts — and, for an STS call, what it issued.
+  const who2 = readAwsIdentity(rec);
+  let severity: Severity = def?.severity ?? genericFloor(readOnly, who2.kind); // #2542
   const mitre = [...(def?.mitre ?? [])];
   // Systems Manager remote execution (#931 item 7): the phase, target, document, id, status and
   // payload are the evidence; see ssmExecution.ts for what is and is not claimed.
@@ -271,6 +233,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     // A document that has no digest of its own keys on the record; an exported record without an
     // eventID still has its position in the file.
     str(getCI(rec, "eventID")).trim() || `record:${recordIndex}`,
+    getCI(rec, "userIdentity"),
   );
   if (iam) {
     if (iam.severityFloor) severity = worst(severity, iam.severityFloor);
@@ -293,9 +256,6 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     mitre.length = 0;
     mitre.push(...logging.mitre);
   }
-  // Who called, in the record's words (#931 item 5): the kind, the credential, the session's
-  // issuer and attributes, the accounts — and, for an STS call, what it issued.
-  const who2 = readAwsIdentity(rec);
   const issuance = readCredentialIssuance(
     name,
     getCI(rec, "requestParameters"),
@@ -307,12 +267,12 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   if (issuance?.severity) severity = worst(severity, issuance.severity);
   for (const t of issuance?.mitre ?? []) if (!mitre.includes(t)) mitre.push(t);
 
-  // A snapshot share / public bucket ACL or policy, as the request states it (#2306).
-  const exposure = awsExposurePosture(name, getCI(rec, "requestParameters"), str(getCI(rec, "errorCode")));
-  // A snapshot un-share lowers the table's base grade (#2338) — before the failed-call/root floors below.
-  const exposureGrade = awsExposureGrade(name, getCI(rec, "requestParameters"));
+  // A snapshot share / public bucket ACL or policy, as the request states it (#2306). A snapshot
+  // un-share (#2338) or a bucket policy for AWS services / this account only (#2542) lowers the
+  // table's base grade — before the failed-call/root floors below.
+  const { posture: exposure, grade: exposureGrade } = awsRecordExposure(name, rec, who2.accounts.recipient);
   if (exposureGrade) severity = issuance?.severity ? worst(exposureGrade, issuance.severity) : exposureGrade;
-  const identity = principal(getCI(rec, "userIdentity"));
+  const identity = awsPrincipal(getCI(rec, "userIdentity"));
   const { name: who, isRoot } = identity;
   const region = str(getCI(rec, "awsRegion"));
   const errorCode = str(getCI(rec, "errorCode"));
@@ -337,7 +297,8 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   // #1081), and this blanket bump would otherwise silently re-elevate it back to Medium, since a
   // not-found logging call necessarily has a non-empty errorCode (self-found during #1081's own
   // implementation, same class of bug as Codex's design-review finding #2 for GCP's head text).
-  if (errorCode && !logging) severity = worst(severity, "Medium");
+  // Not for an AWS service acting on its own, nor a read-only "not found" answer (awsServiceGrade.ts).
+  if (!logging && failedCallIsProbe(errorCode, readOnly, who2.kind)) severity = worst(severity, "Medium");
   // Root doing anything mutating is worth a look.
   if (isRoot && !readOnly) severity = worst(severity, "Medium");
 
@@ -723,18 +684,19 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
   // independent of the optional aggregation. The Sigma matches of EVERY replica of a row are
   // applied after the merge, so a match on the replica the merge did not keep is not lost and the
   // merge's re-rendered description cannot overwrite the rule title.
-  const snapshot = opts.sigma;
   const merged = mergeReplicaGroups(candidates).map((g) => ({
     // A merged cross-account pair stands for every replica record it carries (#2301).
     event: g.members.length > 1 ? withReplicaRecords(g.event, g.members) : g.event,
     sigma: unionSigmaMatches(g.members.map((c) => c.sigma)),
     recordIndex: g.members[0].recordIndex,
   }));
-  const mapped = merged.map((g) =>
-    snapshot
-      ? applySigmaMatches(g.event, g.sigma, snapshot, undefined, cloudTrailSigmaVeto(g.event))
-      : g.event,
-  );
+  // Sigma, the ATT&CK veto and the in-context precursor raise (#2542, cloudTrailRowGrade.ts).
+  const mapped = gradeCloudTrailRows(merged, records, opts.sigma);
+  addAwsIdentityIocs(
+    iocSink,
+    mapped,
+    merged.map((g) => records[g.recordIndex]),
+  ); // principals, keys, created names (#2543)
   const sigmaRows = merged.filter((g) => g.sigma.length > 0).length;
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (candidates.length > mapped.length)

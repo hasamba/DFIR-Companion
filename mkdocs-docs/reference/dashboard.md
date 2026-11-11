@@ -531,6 +531,16 @@ above). Every indicator extracted from all evidence:
 
 **Pagination** — the IOC list pages client-side like the timelines (default 100 per page, selectable 50/100/250/500/All) with Prev/Next controls and a "page X of Y" badge, so cases with thousands of IOCs stay responsive. Filters and imports reset to the first page; select-all is page-scoped while selections persist across pages.
 
+**Analyst label** — each IOC row has a small **label…** selector: *attacker*, *ours* (the victim
+organisation's own asset), *responder* or *unknown*. The label shows as a chip beside the value
+(attacker in red), is a **Label** column in the Markdown, HTML and CSV reports, and is recorded in
+the case activity log with who changed it and from what. A labelled IOC is always listed in the
+report's IOC table. The **IOC block list** never contains a value labelled *ours* or *responder*;
+its summary counts them as "labelled ours or responder by the analyst". The label changes nothing
+else: no grade changes, and the AI does not read it. The report IOC table also has a **Context**
+column with the note an importer recorded beside the value (for example, which CloudTrail call used
+an access key).
+
 **IOC exclude list** — the panel's title bar has a control to permanently remove matching indicators
 from this case: exact-value, suffix, or regex rules, scopable to a specific IOC type (e.g. only
 domains). Matching IOCs are purged immediately and never re-imported or re-enriched afterward — unlike

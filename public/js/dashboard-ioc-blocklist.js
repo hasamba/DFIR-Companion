@@ -68,6 +68,7 @@
     ["not-verdict-confirmed", "not verdict-confirmed"],
     ["retired", "retired"],
     ["client-reported", "client-reported"],
+    ["labelled-ours", "labelled ours or responder"],
   ];
 
   function blocklistCountText(summary) {

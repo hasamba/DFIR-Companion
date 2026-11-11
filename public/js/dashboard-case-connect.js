@@ -425,6 +425,7 @@
       ["iocSources", () => loadIocSources(caseId)],
       ["iocProvenance", () => loadIocProvenance(caseId)],
       ["iocRisk", () => loadIocRisk(caseId)],
+      ["iocAttribution", () => loadIocAttribution(caseId)], // #2543 analyst IOC labels
       ["iocProvenanceChains", () => loadIocProvenanceChains(caseId)],
       ["relatedCases", () => loadRelatedCases(caseId)], // #679 cross-case IOC pivot
       ["comments", () => loadComments(caseId)],

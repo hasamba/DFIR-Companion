@@ -1,7 +1,7 @@
 // #2338 — ModifySnapshotAttribute is graded on what the request does, not on the event name alone:
 // a request whose ONLY effect is removing sharing drops to Low; every share, an unreadable or
-// missing request, and anything the reader cannot positively establish stays High. PutBucketAcl /
-// PutBucketPolicy are unchanged here (deferred to #2345).
+// missing request, and anything the reader cannot positively establish stays High. PutBucketAcl is
+// unchanged; PutBucketPolicy is graded by its principals since #2542 (below).
 import { describe, it, expect } from "vitest";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { awsExposureGrade } from "../../src/analysis/awsExposure.js";
@@ -78,7 +78,7 @@ describe("ModifySnapshotAttribute grading (#2338)", () => {
     expect(r).toBe("Medium");
   });
 
-  it("leaves PutBucketAcl / PutBucketPolicy alone (deferred to #2345)", () => {
+  it("leaves PutBucketAcl alone, and keeps an empty bucket policy High", () => {
     expect(awsExposureGrade("PutBucketPolicy", { bucketName: "b", bucketPolicy: { Statement: [] } })).toBe(
       undefined,
     );
@@ -89,5 +89,93 @@ describe("ModifySnapshotAttribute grading (#2338)", () => {
       requestParameters: { bucketName: "b", bucketPolicy: { Statement: [] } },
     });
     expect(policy).toBe("High");
+  });
+});
+
+// #2542 (user decision Q3), reversing the #2345 deferral: a bucket policy is graded on who it lets in.
+// Medium only when every Allow principal is an AWS service or the bucket's own account; an outside
+// account, `*` or a policy the reader cannot positively read stays High.
+describe("PutBucketPolicy grading by content (#2542)", () => {
+  const policyGrade = (bucketPolicy: unknown, over: Record<string, unknown> = {}): string =>
+    grade({
+      eventName: "PutBucketPolicy",
+      eventSource: "s3.amazonaws.com",
+      requestParameters: { bucketName: "example-log", bucketPolicy },
+      ...over,
+    });
+  const allow = (principal: unknown, extra: Record<string, unknown> = {}) => ({
+    Statement: [{ Effect: "Allow", Principal: principal, Action: "s3:PutObject", ...extra }],
+  });
+
+  it("grades a policy for AWS service principals or this account Medium", () => {
+    expect(policyGrade(allow({ Service: "cloudtrail.amazonaws.com" }))).toBe("Medium");
+    expect(policyGrade(allow({ AWS: "arn:aws:iam::111122223333:role/Backup" }))).toBe("Medium");
+    expect(
+      policyGrade(JSON.stringify(allow({ Service: ["logs.amazonaws.com", "cloudtrail.amazonaws.com"] }))),
+    ).toBe("Medium");
+  });
+
+  it("keeps High for an outside account, `*`, a federated principal or NotPrincipal", () => {
+    expect(policyGrade(allow({ AWS: "444455556666" }))).toBe("High");
+    expect(policyGrade(allow("*"))).toBe("High");
+    expect(
+      policyGrade(
+        allow({ AWS: "*" }, { Condition: { StringEquals: { "aws:SourceAccount": "111122223333" } } }),
+      ),
+    ).toBe("High");
+    expect(policyGrade(allow({ Federated: "cognito-identity.amazonaws.com" }))).toBe("High");
+    expect(policyGrade({ Statement: [{ Effect: "Allow", NotPrincipal: { AWS: "111122223333" } }] })).toBe(
+      "High",
+    );
+    // one trusted statement does not excuse an outside one
+    expect(
+      policyGrade({
+        Statement: [
+          { Effect: "Allow", Principal: { Service: "cloudtrail.amazonaws.com" } },
+          { Effect: "Allow", Principal: { AWS: "444455556666" } },
+        ],
+      }),
+    ).toBe("High");
+  });
+
+  it("keeps High for an unreadable or truncated policy, or with no recipient account", () => {
+    expect(
+      policyGrade('{"Statement":[{"Effect":"Allow","Principal":{"Service":"cloudtrail.amazonaws.com"'),
+    ).toBe("High");
+    expect(policyGrade(undefined)).toBe("High");
+    expect(
+      policyGrade(allow({ Service: "cloudtrail.amazonaws.com" }), { recipientAccountId: undefined }),
+    ).toBe("High");
+  });
+
+  it("keeps the failed-call and root floors on a trusted policy", () => {
+    expect(policyGrade(allow({ Service: "cloudtrail.amazonaws.com" }), { errorCode: "AccessDenied" })).toBe(
+      "Medium",
+    );
+    const root = { type: "Root", arn: "arn:aws:iam::111122223333:root", accountId: "111122223333" };
+    expect(policyGrade(allow({ Service: "cloudtrail.amazonaws.com" }), { userIdentity: root })).toBe(
+      "Medium",
+    );
+  });
+
+  it("says what the policy grants on the row", () => {
+    const [row] = parseCloudTrail(
+      JSON.stringify({
+        Records: [
+          {
+            ...base,
+            eventName: "PutBucketPolicy",
+            eventSource: "s3.amazonaws.com",
+            requestParameters: {
+              bucketName: "example-log",
+              bucketPolicy: allow({ Service: "cloudtrail.amazonaws.com" }),
+            },
+          },
+        ],
+      }),
+    ).events;
+    expect(row.description).toMatch(
+      /bucket example-log policy grants only AWS services \(cloudtrail\.amazonaws\.com\)/,
+    );
   });
 });

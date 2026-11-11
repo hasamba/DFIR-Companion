@@ -14,6 +14,7 @@
 import { getCI, isObject, str } from "./siemImport.js";
 import { show } from "./loggingChange.js";
 import type { Severity } from "./stateTypes.js";
+import { policyDoc, trustedOnlyGrant } from "./awsPolicyPrincipals.js";
 
 type Row = Record<string, unknown>;
 const LIST_MAX = 5;
@@ -77,23 +78,25 @@ function aclReading(request: Row): string {
   return "";
 }
 
-function policyDoc(v: unknown): Row | null {
-  if (isObject(v)) return v;
-  if (typeof v !== "string") return null;
-  try {
-    const parsed: unknown = JSON.parse(v);
-    return isObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 const isWorld = (principal: unknown): boolean =>
   principal === "*" || asList(at(principal, "AWS")).some((p) => str(p).trim() === "*");
 
-function policyReading(request: Row): string {
+const requestedPolicy = (request: Row): unknown => getCI(request, "bucketPolicy") ?? getCI(request, "policy");
+
+/** The trusted-only reading of a bucket policy (#2542): AWS services and/or the bucket's own account. */
+function trustedOnlyWords(request: Row, recipient: string): string {
+  const grant = trustedOnlyGrant(requestedPolicy(request), recipient);
+  if (!grant) return "";
+  const who = [
+    ...(grant.services.length ? [`AWS services (${listed(grant.services)})`] : []),
+    ...(grant.ownAccount ? ["this account"] : []),
+  ];
+  return `policy grants only ${who.join(" and ")}`;
+}
+
+function policyReading(request: Row, recipient: string): string {
   const bucket = show(str(getCI(request, "bucketName")) || "?", 60);
-  const doc = policyDoc(getCI(request, "bucketPolicy") ?? getCI(request, "policy"));
+  const doc = policyDoc(requestedPolicy(request));
   if (!doc) return "";
   const world = (asList(getCI(doc, "Statement")).filter(isObject) as Row[]).filter(
     (s) => /^allow$/i.test(str(getCI(s, "Effect"))) && isWorld(getCI(s, "Principal")),
@@ -102,11 +105,17 @@ function policyReading(request: Row): string {
     return `makes bucket ${bucket} public (policy allows Principal "*" with no condition)`;
   if (world.length)
     return `bucket ${bucket} policy allows Principal "*" under a condition (shown, not evaluated)`;
-  return "";
+  const trusted = trustedOnlyWords(request, recipient);
+  return trusted ? `bucket ${bucket} ${trusted}` : "";
 }
 
 /** The exposure posture a ModifySnapshotAttribute / PutBucketAcl / PutBucketPolicy request states, or "". */
-export function awsExposurePosture(eventName: string, request: unknown, errorCode: string): string {
+export function awsExposurePosture(
+  eventName: string,
+  request: unknown,
+  errorCode: string,
+  recipient = "",
+): string {
   if (!isObject(request)) return "";
   const n = eventName.toLowerCase();
   const reading =
@@ -115,7 +124,7 @@ export function awsExposurePosture(eventName: string, request: unknown, errorCod
       : n === "putbucketacl"
         ? aclReading(request)
         : n === "putbucketpolicy"
-          ? policyReading(request)
+          ? policyReading(request, recipient)
           : "";
   return reading && errorCode ? `requested: ${reading} — failed (${show(errorCode, 30)})` : reading;
 }
@@ -142,14 +151,35 @@ function snapshotRemovesOnly(request: Row): boolean {
 
 /**
  * The base grade the request itself establishes (#2338), or undefined to keep the action table's.
- * Only a ModifySnapshotAttribute whose sole effect is removing sharing is lowered, to Low: it stays
- * in the forensic timeline (an un-share can be cleanup after exfiltration) but is not High. Every
- * share, a mixed add/remove, and any missing or unreadable request keeps the table's High.
- * PutBucketAcl / PutBucketPolicy are deliberately NOT lowered: an empty reading there cannot tell a
- * private policy from a cross-account grant (T1537) or a truncated request — deferred to #2345.
+ * - A ModifySnapshotAttribute whose sole effect is removing sharing is lowered, to Low: it stays in
+ *   the forensic timeline (an un-share can be cleanup after exfiltration) but is not High. Every
+ *   share, a mixed add/remove, and any missing or unreadable request keeps the table's High.
+ * - A PutBucketPolicy is Medium when EVERY Allow principal is an AWS service principal or the
+ *   bucket's own (recipient) account (#2542, user decision Q3 — this reverses the #2345 deferral,
+ *   which held that an empty reading could not tell a private policy from a cross-account grant).
+ *   The reading is positive: an outside account, `*` (even conditional), `NotPrincipal`, a
+ *   federated principal, no Allow statement, or a missing / unreadable / truncated policy keeps the
+ *   table's High.
+ * - PutBucketAcl is not lowered.
  */
-export function awsExposureGrade(eventName: string, request: unknown): Severity | undefined {
+export function awsExposureGrade(eventName: string, request: unknown, recipient = ""): Severity | undefined {
   if (!isObject(request)) return undefined;
-  if (eventName.toLowerCase() !== "modifysnapshotattribute") return undefined;
+  const n = eventName.toLowerCase();
+  if (n === "putbucketpolicy")
+    return trustedOnlyGrant(requestedPolicy(request), recipient) ? "Medium" : undefined;
+  if (n !== "modifysnapshotattribute") return undefined;
   return snapshotRemovesOnly(request) ? "Low" : undefined;
+}
+
+/** Both readings of one raw CloudTrail record, for the importer's single call site. */
+export function awsRecordExposure(
+  eventName: string,
+  rec: Row,
+  recipient: string,
+): { posture: string; grade: Severity | undefined } {
+  const request = getCI(rec, "requestParameters");
+  return {
+    posture: awsExposurePosture(eventName, request, str(getCI(rec, "errorCode")), recipient),
+    grade: awsExposureGrade(eventName, request, recipient),
+  };
 }

@@ -770,6 +770,19 @@ export const FEATURES: Feature[] = [
     private: ["blSummaryGen"],
   },
   {
+    // The analyst's IOC attribution label (#2543): the chip, the row selector and the side-file I/O.
+    // No initializer: its one control is rendered into each IOC row and dispatched by data-act.
+    file: "dashboard-ioc-attribution.js",
+    publish: [
+      "loadIocAttribution",
+      "iocAttributionOf",
+      "iocAttributionChip",
+      "iocAttributionSelect",
+      "setIocAttribution",
+    ],
+    private: [],
+  },
+  {
     // Its one control passes saveCaseTemplate as a value.
     file: "dashboard-case-template-picker.js",
     initializer: "initCaseTemplatePicker",

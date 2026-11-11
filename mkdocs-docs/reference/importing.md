@@ -1883,12 +1883,111 @@ the same findings again (or collecting an overlapping window) imports nothing tw
 updated a finding in between, the update is imported as a new event, so each update is on the
 timeline. No Sigma rule reads GuardDuty findings, and the Cloud Coverage panel does not list them.
 
+### CloudTrail grading: attack steps above the AWS-service noise
+
+Measured on the public SANS 504 S3 ransomware lab, where the noise used to bury the attack:
+
+- **A full-admin inline policy is Critical.** A `PutUserPolicy`, `PutRolePolicy` or `PutGroupPolicy`
+  whose document allows every action on every resource with no condition is Critical (it was High).
+  When the policy names the caller's own user (or the role of the caller's session), the row says
+  `granted to the caller itself`. A conditional grant, a `NotAction` / `NotResource` grant, an
+  escalation permission such as `iam:PassRole`, and a policy version stay High.
+- **AWS services acting on their own stay at Info.** A call by an `AWSService` caller (log delivery
+  writing into a bucket, CloudTrail writing its own files) is no longer Low for an unknown write or
+  Medium for a failed call. The importer's own table, its decoders and the bundled rules still grade
+  such a call.
+- **A read-only "not found" answer is not a probe.** A failed read whose error says the thing does
+  not exist or is not enabled (`NoSuchBucketPolicy`, `ObjectLockConfigurationNotFoundError`,
+  `NoSuchWebsiteConfiguration`, `DashboardNotFoundError`, `InsightNotEnabledException`, also
+  `NoSuchEntity` / `NoSuchBucket`) is no longer raised to Medium. A denied read (`AccessDenied`) and
+  any failed write still are.
+- **Bucket recovery checks after a privileged change are High.** `GetBucketVersioning`,
+  `GetBucketObjectLockConfiguration` and `PutBucketVersioning` set to `Suspended` are raised to High
+  when the same access key granted itself a policy or created an access key earlier. The row says
+  which change and when. On their own, these calls keep their grade: every S3 console page makes
+  them.
+- **Per-file imports join in any order.** A trail delivered as one file per region and five-minute
+  slice puts the change and the check in different files. You can import those files one by one
+  (whole-file or gzip, from the drop folder or the Import button), in any order:
+  - **The change first:** the check is raised when its file arrives. The row says `earlier in this
+    case`.
+  - **The check first:** the check is Info in its own file, so it goes to the super-timeline. When
+    the change arrives, the import finds that check by its access key and promotes it to the
+    forensic timeline at High. The row says `promoted from the super-timeline when the change
+    arrived`.
+  - The import's timeline note gives the number of checks promoted. One import promotes at most
+    50 (the earliest first), and the note tells you how many it did not promote. The note also
+    tells you when a limit stopped the search: at most 20 access keys per import, and at most 5,000
+    super-timeline rows per key.
+  - This is the one place where an import reads the super-timeline by itself. It promotes only these
+    checks. The AI never reads the super-timeline: it sees a promoted check only after the check is
+    in the forensic timeline.
+  - Files imported with release 0.45.0 or earlier do not have the data that this join reads, so
+    they are not joined. Import them again to join them.
+  - If you set a minimum severity on the import, Info checks are not kept anywhere, so they cannot
+    be joined later. Import CloudTrail without a minimum severity to keep this join.
+- **A key made by `CreateAccessKey` gets a credential-lineage row**, even with one use: issued when
+  and by whom, its first use and source, and the key that created it. The creation and the use must
+  be in the same upload (or the same streamed window).
+- **The lineage row states the enumeration burst**: how many read calls, across how many services,
+  over what span, and which were denied.
+- **A bucket policy is graded by who it lets in.** A `PutBucketPolicy` whose every Allow statement
+  names only AWS services (for example `cloudtrail.amazonaws.com`) or the bucket's own account is
+  Medium, and the row says `policy grants only …`. An outside account, `*` (even with a condition),
+  or a policy the importer cannot read in full stays High.
+- **ATT&CK techniques that CloudTrail proves wrong are withheld.** A generic bundled rule can tag a
+  row on the event name alone. CloudTrail removes the technique, but keeps the rule's match line and
+  adds an `ATT&CK … withheld` note, in four cases: T1565 on an object write by an AWS service; T1486
+  on the `AWS_KMS` key whose policy grants only CloudTrail and this account; T1048 on a bucket policy
+  for AWS services or this account only; and T1110 on one failed console sign-in that a success by the
+  same principal from the same source follows within 10 minutes. Several failures keep T1110. The
+  grade never changes, and no other log source does this.
+
+### CloudTrail identities as IOCs
+
+Besides the caller's IP address, a CloudTrail import adds the identities behind the attack to the
+IOC list, each with a short context note (for example `AWS access key — issued by CreateAccessKey
+for dev-user at 2021-07-29T13:10:42Z`):
+
+- **The IAM user or role** that made a call graded High or Critical, as its full ARN. For an assumed
+  role this is the role's ARN, not the per-session ARN.
+- **Its long-term access key** (`AKIA…`). Session keys (`ASIA…`) change every console session and
+  are not added.
+- **The key a successful `CreateAccessKey` issued**, at any grade.
+- **The policy, user or role a successful call created** — the policy name from `PutUserPolicy`,
+  `PutRolePolicy`, `PutGroupPolicy` or `CreatePolicy`, the user from `CreateUser` or
+  `CreateLoginProfile`, the role from `CreateRole`.
+
+Nothing is added for a call by the account root or by an AWS service. These IOCs have the type
+`other`: they are never sent to a threat-intel provider and never go into the IOC block list. Label
+them in the IOC panel (attacker / ours / responder / unknown) — see the IOC panel in the dashboard
+reference.
+
+These IOCs never get a threat-intel verdict. One that was extracted from an event graded High or
+Critical, or one you labelled, still counts as signal: the IOC panel's **Signal only** lens (on by
+default) keeps it, and the report's IOC table lists it. One extracted only from a lower-graded event,
+with no label, is hidden by **Signal only** once other IOCs in the case have been enriched, and the
+report counts it as an observation. Turn the lens off, or label the IOC, to see it. The streamed
+CloudTrail importer (every `.json.gz` upload and every large file) records the same link. It counts
+only an event that reached the forensic timeline as its own row. An event that went to the
+super-timeline or into a budget aggregate gives no link.
+
+Records already in the case are not read again, so importing the same files into an existing case
+adds none of these IOCs. Import into a new case to get them for evidence imported before this
+change.
+
 ### Coverage rows on the timeline
 
 Some timeline rows are notes about the evidence, not events: **Cloud coverage gap** (the case has
 cloud audit logs but no host telemetry, so the instance metadata service cannot be checked), **Cloud
 object logging is off**, **Cloud object reads were not all examined** and **Browsing evidence without
 an account**. Their source is `Coverage`, and a re-merge replaces them instead of adding another.
+
+- **Object logging that began part-way.** When a CloudTrail selector change turns on S3 object
+  logging and the case has no object-level record before it, the object-logging note reads **Cloud
+  object logging begins at &lt;time&gt;**. It says that object reads, overwrites and deletes before
+  that time cannot be seen, and that other trails' selectors are not in the evidence. It is the same
+  note, so the forensic gate keeps it too.
 
 - **Where they sit.** Each one sits at the time of the **earliest** event it describes: the earliest
   cloud audit record, the earliest cloud object record, or the earliest browsing record. It no longer

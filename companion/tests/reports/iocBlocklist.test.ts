@@ -429,6 +429,7 @@ describe("#1807 -- block-list exclusion reasons", () => {
       excluded: {
         retired: 1,
         "client-reported": 1,
+        "labelled-ours": 0,
         "ineligible-type": 2,
         "no-actionable-intel": 2,
         "below-min-severity": 2,

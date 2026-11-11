@@ -382,6 +382,6 @@ describe("#1459 -- consumers read a mentioned hash as a mention, not a file on t
     const state = emptyState("c1");
     state.iocs.push({ id: "i1", type: "hash", value: SAMPLE, firstSeen: "t0", provenance: "mentioned" });
     const rows = iocsCsv(state).trim().split("\n");
-    expect(rows[1].split(",").at(-1)).toBe('"mentioned"');
+    expect(rows[1].split(",").at(-3)).toBe('"mentioned"'); // note + attribution follow (#2543)
   });
 });

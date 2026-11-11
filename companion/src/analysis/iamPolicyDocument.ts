@@ -50,6 +50,12 @@ export interface PolicyReading {
   reading: string;
   /** A broad form or an escalation primitive in an Allow statement. */
   broad: boolean;
+  /**
+   * An Allow of every action (`*` / `*:*`) on every resource (`*`) with no Condition — full
+   * administrator, literally (#2542). The NotAction / NotResource forms and a conditional grant are
+   * broad but not this: they are not literally everything.
+   */
+  fullAdmin: boolean;
   /** Escalation primitives an Allow statement's Action covers, canonical names. */
   primitives: string[];
   conditional: boolean;
@@ -243,7 +249,12 @@ const list = (values: string[]): string =>
   (values.length > LIST_SHOWN ? ` (+${values.length - LIST_SHOWN} more)` : "");
 
 // One clause per Allow statement, the broad forms first; a plain grant is summarised by count.
-function allowClause(st: PolicyStatement): { words: string; broad: boolean; primitives: string[] } {
+function allowClause(st: PolicyStatement): {
+  words: string;
+  broad: boolean;
+  fullAdmin: boolean;
+  primitives: string[];
+} {
   const { actions, resources } = st;
   const allActions = actions.op === "Action" && actions.values.some(coversAll);
   const allResources = resources.op === "Resource" && resources.values.includes("*");
@@ -272,7 +283,12 @@ function allowClause(st: PolicyStatement): { words: string; broad: boolean; prim
   // The four broad forms — and only those: an exclusion or an all-actions grant scoped to named
   // resources is summarised, not promoted.
   if (actionsPart && resourcesPart)
-    return { words: `${actionsPart} on ${resourcesPart}`, broad: true, primitives };
+    return {
+      words: `${actionsPart} on ${resourcesPart}`,
+      broad: true,
+      fullAdmin: allActions && allResources && !st.hasCondition,
+      primitives,
+    };
   const parts: string[] = [];
   if (actionsPart) parts.push(`${actionsPart} on ${plural(resources.values.length, "resource")}`);
   for (const s of services) parts.push(`all ${s} actions`);
@@ -281,7 +297,7 @@ function allowClause(st: PolicyStatement): { words: string; broad: boolean; prim
     parts.push(
       `${plural(actions.values.length, "action")} on ${resourcesPart ?? plural(resources.values.length, "resource")}`,
     );
-  return { words: parts.join("; "), broad: primitives.length > 0, primitives };
+  return { words: parts.join("; "), broad: primitives.length > 0, fullAdmin: false, primitives };
 }
 
 function boundReading(text: string): string {
@@ -337,6 +353,7 @@ function readDocument(raw: unknown): PolicyReading | PolicyUnreadable {
     effect: !statements.length ? "empty" : !allows.length ? "denies" : denies ? "mixed" : "grants",
     reading: boundReading(words.join("; ")),
     broad: clauses.some((c) => c.broad),
+    fullAdmin: clauses.some((c) => c.fullAdmin),
     primitives: [...new Set(clauses.flatMap((c) => c.primitives))],
     conditional: statements.some((s) => s.hasCondition),
   };

@@ -284,3 +284,29 @@ describe("ESCALATION_PRIMITIVES", () => {
     );
   });
 });
+
+describe("readPolicyDocument — full administrator (#2542)", () => {
+  it("is set only for an unconditioned Allow of every action on every resource", () => {
+    expect(readable(doc([{ Effect: "Allow", Action: "*", Resource: "*" }])).fullAdmin).toBe(true);
+    expect(readable(doc([{ Effect: "Allow", Action: ["*:*"], Resource: ["*"] }])).fullAdmin).toBe(true);
+  });
+  it("is not set for the exclusion forms, a condition, a Deny, a named resource or a primitive", () => {
+    const cases = [
+      { Effect: "Allow", NotAction: "iam:*", Resource: "*" },
+      { Effect: "Allow", Action: "*", NotResource: "arn:aws:s3:::x" },
+      {
+        Effect: "Allow",
+        Action: "*",
+        Resource: "*",
+        Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } },
+      },
+      { Effect: "Deny", Action: "*", Resource: "*" },
+      { Effect: "Allow", Action: "*", Resource: "arn:aws:s3:::x" },
+      { Effect: "Allow", Action: "iam:PassRole", Resource: "*" },
+    ];
+    for (const st of cases) expect(readable(doc([st])).fullAdmin, JSON.stringify(st)).toBe(false);
+    // The broad grade those forms carry is unchanged.
+    expect(readable(doc([cases[0]])).broad).toBe(true);
+    expect(readable(doc([cases[2]])).broad).toBe(true);
+  });
+});

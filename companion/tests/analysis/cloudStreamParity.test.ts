@@ -287,6 +287,17 @@ describe("streamed CloudTrail import parity (#2362)", () => {
 // each disclosure gained three fields — mediumOverflow.failedReadBudget 0, failedReads {0, 0} and
 // budgets.failedReadsPerActor 10. Stripping exactly those three reproduced the previous hash
 // (b41790f4ea7b0e23); every other section, count and note is unchanged.
+// Re-pinned for #2542 (user decision Q4): a credential-lineage row with an enumeration shape now
+// states its burst (read calls, services, span, denied probes) in its description. Only the two
+// forensic-timeline hashes moved; with the burst words suppressed they reproduce the previous
+// hashes (47e419e317d56d07, 952a8006b6bd4d4a). No count, grade or other section changed.
+// Re-pinned for #2543 part 1a: the High+ rows' IAM-user ARNs and long-term keys are now `other` IOCs
+// with a context note (41 -> 65 IOCs; all 24 new ones carry a note). The timeline note states the
+// IOC count, so notes and db:timeline moved with it. No forensic row, grade or coverage changed.
+// Re-pinned for the #2543 review: a streamed IOC now carries `extractedFrom` (its producing forensic
+// rows), and a later import's sighting unions its links into the stored IOC, so the stored rows'
+// versions move too. Only iocs and db:iocs moved; with the link left out of the delta both reproduce
+// the previous hashes (313dfcbfb2c46ffb, 4f512b1f74235cce). No count or other section changed.
 const PINNED = {
   counts: {
     compute: 30,
@@ -295,13 +306,13 @@ const PINNED = {
       cloudRecordBatch: 4,
       cloudRecordMember: 2705,
       forensicTimeline: 2347,
-      iocs: 41,
+      iocs: 65,
       superTimeline: 2500,
       timeline: 3,
     },
     forensic: 2347,
     graded: 299,
-    iocs: 41,
+    iocs: 65,
     lineages: 36,
   },
   hashes: {
@@ -309,13 +320,13 @@ const PINNED = {
     "db:cloudRecord": "55eeaad28f712d39",
     "db:cloudRecordBatch": "d7a32e76dfef0950",
     "db:cloudRecordMember": "2260533dd0f4bdd7",
-    "db:forensicTimeline": "47e419e317d56d07",
-    "db:iocs": "7de5df26c23c75f9",
+    "db:forensicTimeline": "7eeeea4e62b61b44",
+    "db:iocs": "f56293453ff4d063",
     "db:superTimeline": "8beed3d432925a0d",
-    "db:timeline": "0a3505cb7f4a4ebe",
+    "db:timeline": "92dddb73812ed1ad",
     disclosures: "9446777ef7052706",
-    forensicTimeline: "952a8006b6bd4d4a",
-    iocs: "b4186cc3f6e10f06",
-    notes: "86e38fbe1e668482",
+    forensicTimeline: "f896c4c5af69ca2c",
+    iocs: "d48c8887ce9a17b5",
+    notes: "0827783fdc6edf7b",
   },
 };
