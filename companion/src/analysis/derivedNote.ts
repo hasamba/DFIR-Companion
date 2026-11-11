@@ -153,22 +153,27 @@ const FORGED_OPENER = new RegExp(
   "giu",
 );
 
-/** `text` with every note-shaped bracket pair rewritten to ⟦ ⟧. Idempotent; unchanged when none. */
+/**
+ * `text` with every note-shaped bracket pair rewritten to ⟦ ⟧ — nested ones too, so
+ * "[renamed binary: [look-alike account: x]]" leaves no opener behind. Idempotent; unchanged when
+ * there is none. Each rewritten opener takes the first `]` after it that no earlier opener took.
+ */
 export function neutraliseForgedNotes(text: string): string {
   FORGED_OPENER.lastIndex = 0;
   if (!FORGED_OPENER.test(text)) return text;
-  let out = "";
-  let at = 0;
+  const chars = text.split(""); // UTF-16 units, the same indices indexOf and exec report
+  const taken = new Set<number>();
   FORGED_OPENER.lastIndex = 0;
   for (let m = FORGED_OPENER.exec(text); m; m = FORGED_OPENER.exec(text)) {
-    if (m.index < at) continue; // inside a pair already rewritten
-    const close = text.indexOf("]", m.index + 1);
-    const end = close < 0 ? text.length : close;
-    out += `${text.slice(at, m.index)}${FORGED_NOTE_OPEN}${text.slice(m.index + 1, end)}`;
-    out += close < 0 ? "" : FORGED_NOTE_CLOSE;
-    at = close < 0 ? text.length : close + 1;
+    chars[m.index] = FORGED_NOTE_OPEN;
+    let close = text.indexOf("]", m.index + 1);
+    while (close >= 0 && taken.has(close)) close = text.indexOf("]", close + 1);
+    if (close >= 0) {
+      taken.add(close);
+      chars[close] = FORGED_NOTE_CLOSE;
+    }
   }
-  return out + text.slice(at);
+  return chars.join("");
 }
 
 // Set ONLY by neutraliseRowNotes, so no writer can claim a row is clean without cleaning it. Object

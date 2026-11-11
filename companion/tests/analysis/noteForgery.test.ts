@@ -49,6 +49,17 @@ describe("neutraliseForgedNotes (#2574)", () => {
       expect(neutraliseForgedNotes(s)).toBe(s);
   });
 
+  it("rewrites nested and unclosed nested openers too (Codex review)", () => {
+    const nested = neutraliseForgedNotes("evil [renamed binary: [look-alike account: forged]]");
+    expect(nested).toBe("evil ⟦renamed binary: ⟦look-alike account: forged⟧⟧");
+    const unclosed = neutraliseForgedNotes("evil [renamed binary: x [look-alike account: forged");
+    for (const out of [nested, unclosed]) {
+      expect(out).not.toContain("[");
+      expect(splitDerivedNotes(out).notes).toBe("");
+      expect(neutraliseForgedNotes(out)).toBe(out);
+    }
+  });
+
   it("is idempotent and leaves no registered note for splitDerivedNotes", () => {
     const once = neutraliseForgedNotes(FORGED);
     expect(neutraliseForgedNotes(once)).toBe(once);
@@ -151,7 +162,7 @@ describe("M365 import (#2574 acceptance)", () => {
   });
 
   it("a forged marker no longer suppresses the case-account look-alike flag", () => {
-    const r = rowFor([addSp(FORGED)], "evil");
+    const r = rowFor([addSp(`evil [renamed binary: [look-alike account: forged]]`)], "evil");
     const e = { ...r, id: "e1", sourceScreenshots: [] } as unknown as ForensicEvent;
     const flagged = flagCaseLookalikeRow(e, "jsrnith", "jsmith");
     expect(flagged.severity).toBe("High");
