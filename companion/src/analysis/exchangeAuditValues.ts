@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Severity } from "./stateTypes.js";
 
 // Small value helpers shared by the Exchange audit decoder and its inbox-rule reader.
 
@@ -38,6 +39,10 @@ export const list = (v: string[]): string =>
   v.slice(0, LIST_SHOWN).join(", ") + (v.length > LIST_SHOWN ? ` (+${v.length - LIST_SHOWN} more)` : "");
 export const truthy = (v: string): boolean => /^(true|\$true|1|yes)$/i.test(v.trim());
 export const falsy = (v: string): boolean => /^(false|\$false|0|no)$/i.test(v.trim());
+// `-WhatIf` and `-ValidateOnly` make no change: a successful record of either is a simulation.
+export const isDryRun = (p: Map<string, string>): boolean =>
+  ["whatif", "validateonly"].some((k) => p.has(k) && (truthy(p.get(k) ?? "") || p.get(k) === ""));
+export const DRY_RUN_NOTE = "dry run (WhatIf/ValidateOnly) — no change was made";
 
 /** `{Name, Value}` pairs (Parameters, OperationProperties) → a case-insensitive map. */
 export interface Pairs {
@@ -85,13 +90,94 @@ export const domainOf = (addr: string): string => {
   const m = /@([^@\s>]+)$/.exec(addr.trim().replace(/>$/, ""));
   return m ? m[1].toLowerCase() : "";
 };
-/** `inside`/`outside the mailbox's domain`, or "" for a value that is not an SMTP address. */
-export function domainClass(addr: string, ownerDomain: string): string {
-  const d = domainOf(addr);
-  if (!d || !ownerDomain) return "";
-  return d === ownerDomain ? "inside the mailbox's domain" : "outside the mailbox's domain";
+/**
+ * The domains an address is classed against (#2550). A UPN mailbox gives its own domain ("the
+ * mailbox's domain"). A mailbox named by alias gives none, so the record's other proof of the
+ * tenant is used ("the tenant domains this record names"): the organisation segment of an Exchange path
+ * (`…/Microsoft Exchange Hosted Organizations/<domain>/<alias>`) and the acting person's UPN domain.
+ * No proof → no domains → no class, the safe default.
+ */
+export interface OwnerDomains {
+  domains: readonly string[];
+  basis: "mailbox" | "tenant";
 }
-export const withClass = (addr: string, ownerDomain: string): string => {
-  const c = domainClass(addr, ownerDomain);
+
+const HOSTED_ORG = /Hosted Organizations\/([^/\\]+)/i;
+/** The tenant domain an Exchange organisation path names, or "". */
+export const hostedOrgDomain = (v: string): string => {
+  const d = HOSTED_ORG.exec(v)?.[1]?.trim().toLowerCase() ?? "";
+  return d.includes(".") ? d : "";
+};
+
+// UserType 3 (DcAdmin) and 4 (System) are the service itself; NT AUTHORITY\ is Exchange's own host.
+const SYSTEM_USER_TYPES = new Set([3, 4]);
+const SYSTEM_ACTOR = /^(?:NT AUTHORITY\\|S-1-5-18\b)/i;
+export const isSystemActor = (actor: string, userType: number): boolean =>
+  SYSTEM_USER_TYPES.has(userType) || SYSTEM_ACTOR.test(actor.trim());
+
+export function ownerDomainsOf(o: {
+  mailbox: string;
+  paths: readonly string[];
+  actor: string;
+  actorIsPerson: boolean;
+}): OwnerDomains {
+  if (o.mailbox.includes("@")) return { domains: [domainOf(o.mailbox)].filter(Boolean), basis: "mailbox" };
+  const found = [
+    ...o.paths.map(hostedOrgDomain),
+    o.actorIsPerson && o.actor.includes("@") ? domainOf(o.actor) : "",
+  ].filter(Boolean);
+  return { domains: [...new Set(found)], basis: "tenant" };
+}
+
+const ownerOf = (owner: string | OwnerDomains): OwnerDomains =>
+  typeof owner === "string" ? { domains: owner ? [owner] : [], basis: "mailbox" } : owner;
+
+/** `inside`/`outside the mailbox's domain` (or `the tenant domains this record names`), or "" without a class. */
+export function domainClass(addr: string, owner: string | OwnerDomains): string {
+  const d = domainOf(addr);
+  const o = ownerOf(owner);
+  if (!d || !o.domains.length) return "";
+  const where = o.basis === "mailbox" ? "the mailbox's domain" : "the tenant domains this record names";
+  return o.domains.includes(d) ? `inside ${where}` : `outside ${where}`;
+}
+export const withClass = (addr: string, owner: string | OwnerDomains): string => {
+  const c = domainClass(addr, owner);
   return c ? `${addr} (${c})` : addr;
 };
+
+/** `alias`, `alias@domain` or an Exchange path → the lowercased local name, for a self-grant test. */
+export const localName = (v: string): string =>
+  (v.split("/").filter(Boolean).pop() ?? "").trim().toLowerCase().replace(/@.*$/, "");
+
+/** The last path segment, trimmed and lowercased. */
+const lastSegment = (v: string): string => (v.split("/").filter(Boolean).pop() ?? "").trim().toLowerCase();
+
+/**
+ * Whether a grantee and a mailbox name one principal. Two full UPNs compare whole, so `alice@a` and
+ * `alice@b` stay distinct accounts; an alias or an Exchange path has no domain, so it compares by
+ * local name (#2550 review).
+ */
+export const samePrincipal = (a: string, b: string): boolean => {
+  const x = lastSegment(a);
+  const y = lastSegment(b);
+  return x.includes("@") && y.includes("@") ? x === y : localName(x) === localName(y);
+};
+
+/**
+ * A mailbox permission change's grade (#2550). Widening: FullAccess / SendAs to ANOTHER account by a
+ * person is High (the importer table's own grade); the service provisioning its own mailboxes (a
+ * system or application actor) is Low; a self-grant, a Deny entry and every other right stay Medium.
+ * A narrowing change is Low.
+ */
+export function permissionSeverity(g: {
+  widens: boolean;
+  deny: boolean;
+  rights: string;
+  trustee: string;
+  mailbox: string;
+  byService: boolean;
+}): Severity {
+  if (!g.widens || g.byService) return "Low";
+  const self = !g.trustee || samePrincipal(g.trustee, g.mailbox);
+  return !g.deny && !self && /\b(fullaccess|sendas)\b/i.test(g.rights) ? "High" : "Medium";
+}

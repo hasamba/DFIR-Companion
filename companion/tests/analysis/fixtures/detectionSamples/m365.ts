@@ -81,6 +81,7 @@ const aad = (op: string) => ual("AzureActiveDirectory", op, { RecordType: 8 });
 const GAPS = "tagsYamlCloudGaps";
 const TS = "tagsYamlTimesketchM365";
 const SIGMA = "sigmaCloudImport / tagsYamlSigmaOverlap";
+const BEC = "exchangeAuditBec / m365BecPairing (#2550)";
 const m = (id: string, from: string, record: Record<string, unknown>) => sample("m365", id, from, record);
 
 const BROWSER =
@@ -95,6 +96,30 @@ export const M365_SAMPLES: readonly DetectionSample[] = [
     GAPS,
     exchange("Set-AdminAuditLogConfig", [["UnifiedAuditLogIngestionEnabled", "False"]]),
   ),
+  // #2549: the importer grades the setting — admin audit logging OFF is High (no Sigma rule reads
+  // it); Exchange's own host turning it ON is Info and no path grades it.
+  m(
+    "ual.Set-AdminAuditLogConfig.adminLogOff",
+    "exchangeAuditConfig (#2549)",
+    exchange("Set-AdminAuditLogConfig", [["AdminAuditLogEnabled", "False"]]),
+  ),
+  m("ual.Set-AdminAuditLogConfig.systemOn", "exchangeAuditConfig (#2549)", {
+    ...exchange("Set-AdminAuditLogConfig", [["AdminAuditLogEnabled", "True"]]),
+    UserId: "NT AUTHORITY\\SYSTEM (Microsoft.Exchange.ServiceHost)",
+    UserType: 3,
+  }),
+  m("ual.AddServicePrincipal.firstParty", "entraAuditImport (#2549)", {
+    ...aad("Add service principal."),
+    UserType: 4,
+    UserId: "ServicePrincipal_44444444-4444-4444-8444-444444444444",
+    Actor: [
+      { ID: "Windows Azure Service Management API", Type: 1 },
+      { ID: "797f4846-ba00-4fd7-ba43-dac1f8f63013", Type: 2 },
+      { ID: "ServicePrincipal_44444444-4444-4444-8444-444444444444", Type: 2 },
+      { ID: "ServicePrincipal", Type: 2 },
+    ],
+    Target: [{ ID: "ServicePrincipal_55555555-5555-4555-8555-555555555555", Type: 2 }],
+  }),
   m("ual.New-InboundConnector", GAPS, exchange("New-InboundConnector", [["Name", "c1"]])),
   m("ual.Enable-InboxRule", GAPS, exchange("Enable-InboxRule", [["Identity", "r"]])),
   m(
@@ -139,6 +164,81 @@ export const M365_SAMPLES: readonly DetectionSample[] = [
   m("ual.ResetUserPassword", TS, aad("Reset user password.")),
   m("ual.UserLoggedIn", TS, aad("UserLoggedIn")),
   m("ual.UserLoginFailed", TS, aad("UserLoginFailed")),
+  // #2550 BEC grades: an alias mailbox classed by the actor's domain, a delete rule, a person's and
+  // the service's FullAccess grant, anonymous sharing and an owner's hard delete.
+  m("ual.New-InboxRule.aliasForwardOut", BEC, {
+    ...exchange("New-InboxRule", [
+      ["Name", "Fin"],
+      ["BodyContainsWords", "Invoice;Payments"],
+      ["ForwardTo", "x@example.net"],
+    ]),
+    ObjectId: "ceo\\Fin",
+    UserType: 2,
+  }),
+  m(
+    "ual.New-InboxRule.delete",
+    BEC,
+    exchange("New-InboxRule", [
+      ["Name", ""],
+      ["BodyContainsWords", "x"],
+      ["DeleteMessage", "True"],
+    ]),
+  ),
+  m("ual.Add-MailboxPermission.fullAccess", BEC, {
+    ...exchange("Add-MailboxPermission", [
+      ["Identity", "ceo"],
+      ["User", "helper"],
+      ["AccessRights", "FullAccess"],
+    ]),
+    UserType: 2,
+  }),
+  m("ual.Add-MailboxPermission.system", BEC, {
+    ...exchange("Add-MailboxPermission", [
+      ["Identity", "DiscoverySearchMailbox"],
+      ["User", "Discovery Management"],
+      ["AccessRights", "FullAccess"],
+    ]),
+    UserType: 3,
+    UserId: "NT AUTHORITY\\SYSTEM (Microsoft.Exchange.ServiceHost)",
+  }),
+  m(
+    "ual.AnonymousLinkCreated",
+    BEC,
+    ual("OneDrive", "AnonymousLinkCreated", {
+      RecordType: 14,
+      ObjectId: "https://example-my.sharepoint.com/personal/a/Documents/a.docx",
+    }),
+  ),
+  m(
+    "ual.HardDelete.owner",
+    BEC,
+    ual("Exchange", "HardDelete", {
+      RecordType: 3,
+      LogonType: 0,
+      UserId: "user@example.com",
+      MailboxOwnerUPN: "user@example.com",
+      AffectedItems: [{ Id: "i1", Subject: "s" }],
+    }),
+  ),
+  // #2551: a Security & Compliance alert — the importer grades it, the tagger rule is tag-only.
+  m(
+    "ual.AlertTriggered",
+    "m365Alert (#2551)",
+    ual("SecurityComplianceCenter", "AlertTriggered", {
+      RecordType: 40,
+      UserId: "SecurityComplianceAlerts",
+      ObjectId: "00000000-0000-0000-0000-0000000000d1",
+      AlertId: "00000000-0000-0000-0000-0000000000d1",
+      Name: "Creation of forwarding/redirect rule",
+      Severity: "Low",
+      Data: JSON.stringify({
+        an: "Creation of forwarding/redirect rule",
+        sev: "Low",
+        f3u: "user@example.com",
+        op: "MailRedirect",
+      }),
+    }),
+  ),
 
   // ── Entra sign-in ──
   m("signin.axios", GAPS, signInBase({ userAgent: "axios/1.6.8" })),

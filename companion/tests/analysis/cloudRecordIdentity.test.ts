@@ -5,6 +5,7 @@ import {
   cloudActivityRecordProvider,
   m365RecordProvider,
 } from "../../src/analysis/cloudRecordIdentity.js";
+import { extractM365Records } from "../../src/analysis/m365Import.js";
 
 describe("canonicalJson (#2301)", () => {
   it("sorts keys recursively so key order never changes the hash", () => {
@@ -126,6 +127,109 @@ describe("cloudRecordIdentity per provider (#2301)", () => {
     const a = cloudRecordIdentity("ual", { Id: "u-1", OrganizationId: "t", Operation: "Send" });
     const b = cloudRecordIdentity("ual", { Id: "u-1", OrganizationId: "t", Operation: "Delete" });
     expect(a.key).toBe(b.key);
+    expect(a.payloadHash).not.toBe(b.payloadHash);
+  });
+});
+
+// #2548: a UAL record's payload is its AuditData, not the export envelope around it. Splunk adds
+// `_bkt` / `_cd` / `_indextime` / `_serial`; Search-UnifiedAuditLog pages vary `ResultIndex` /
+// `ResultCount`. Neither may turn the same record into a false "conflict".
+describe("UAL payloadHash hashes the AuditData, not the export envelope (#2548)", () => {
+  const auditData = {
+    Id: "11111111-2222-3333-4444-555555555555",
+    OrganizationId: "org-1",
+    CreationTime: "2026-01-01T10:00:00",
+    Operation: "Add member to role.",
+    Workload: "AzureActiveDirectory",
+    RecordType: 8,
+    UserId: "a@example.test",
+    ObjectId: "b@example.test",
+  };
+  const q = (s: string): string => `"${s.replace(/"/g, '""')}"`;
+  const header =
+    "_bkt,_cd,_indextime,_serial,RecordType,CreationDate,UserIds,Operations,AuditData,ResultIndex,ResultCount";
+  const row = (envelope: string[], ad: string, resultIndex = "1", resultCount = "100"): string =>
+    [
+      ...envelope,
+      "AzureActiveDirectory",
+      "2026-01-01T10:00:00",
+      "a@example.test",
+      "Add member to role.",
+      q(ad),
+      resultIndex,
+      resultCount,
+    ].join(",");
+  const identities = (csv: string) =>
+    extractM365Records(csv).normalized.map((rec) => cloudRecordIdentity("ual", rec));
+
+  it("two Splunk rows of one record, differing only in Splunk columns, share key and payloadHash", () => {
+    const ad = JSON.stringify(auditData);
+    const csv = [
+      header,
+      row(["main~1~A", "1:100", "1700000000", "0"], ad),
+      row(["main~2~B", "2:200", "1700000500", "1"], ad),
+    ].join("\n");
+    const [a, b] = identities(csv);
+    expect(a.key).toBe(b.key);
+    expect(a.payloadHash).toBe(b.payloadHash);
+  });
+
+  it("overlapping exports that differ only in ResultIndex / ResultCount share the payloadHash", () => {
+    const ad = JSON.stringify(auditData);
+    const [a] = identities([header, row(["", "", "", ""], ad, "1", "100")].join("\n"));
+    const [b] = identities([header, row(["", "", "", ""], ad, "57", "5000")].join("\n"));
+    expect(a.payloadHash).toBe(b.payloadHash);
+  });
+
+  it("same Id with different AuditData content is still a conflict", () => {
+    const changed = JSON.stringify({ ...auditData, UserId: "c@example.test" });
+    const csv = [
+      header,
+      row(["main~1~A", "1:100", "1700000000", "0"], JSON.stringify(auditData)),
+      row(["main~1~A", "1:100", "1700000000", "0"], changed),
+    ].join("\n");
+    const [a, b] = identities(csv);
+    expect(a.key).toBe(b.key);
+    expect(a.payloadHash).not.toBe(b.payloadHash);
+  });
+
+  it("pretty-printed, compact and object AuditData hash the same", () => {
+    const compact = cloudRecordIdentity("ual", { ResultIndex: 1, AuditData: JSON.stringify(auditData) });
+    const pretty = cloudRecordIdentity("ual", {
+      ResultIndex: 2,
+      AuditData: JSON.stringify(auditData, null, 2),
+    });
+    const object = cloudRecordIdentity("ual", { ResultIndex: 3, AuditData: auditData });
+    expect(pretty.payloadHash).toBe(compact.payloadHash);
+    expect(object.payloadHash).toBe(compact.payloadHash);
+    expect(compact.payloadHash).toBe(cloudRecordIdentity("ual", auditData).payloadHash);
+  });
+
+  it("a record with no AuditData wrapper hashes the whole record, as before", () => {
+    const rec = { Id: "u-1", OrganizationId: "t", Operation: "Send" };
+    const again = cloudRecordIdentity("ual", { ...rec, ResultIndex: 9 });
+    expect(again.payloadHash).not.toBe(cloudRecordIdentity("ual", rec).payloadHash);
+  });
+
+  it("unparseable AuditData falls back to the whole record without throwing", () => {
+    const a = cloudRecordIdentity("ual", { Id: "u-1", AuditData: "{not json", ResultIndex: 1 });
+    const b = cloudRecordIdentity("ual", { Id: "u-1", AuditData: "{not json", ResultIndex: 2 });
+    expect(a.payloadHash).not.toBe(b.payloadHash);
+  });
+
+  it("a Splunk pair with no record Id collapses to one content-hash key", () => {
+    const { Id: _omit, ...noId } = auditData;
+    const ad = JSON.stringify(noId);
+    const [a, b] = identities(
+      [header, row(["main~1~A", "1:100", "1", "0"], ad), row(["main~2~B", "2:200", "2", "1"], ad)].join("\n"),
+    );
+    expect(a.hashIdentified).toBe(true);
+    expect(a.key).toBe(b.key);
+  });
+
+  it("other providers still hash the whole record", () => {
+    const a = cloudRecordIdentity("graph-audit", { id: "g-1", auditData: { x: 1 }, extra: 1 });
+    const b = cloudRecordIdentity("graph-audit", { id: "g-1", auditData: { x: 1 }, extra: 2 });
     expect(a.payloadHash).not.toBe(b.payloadHash);
   });
 });

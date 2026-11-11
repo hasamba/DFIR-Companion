@@ -19,11 +19,14 @@
 
 import type { Severity } from "./stateTypes.js";
 import { readCloudRecords } from "./cloudRecords.js";
-import { adaptM365ExportRows, type UndatedRows } from "./m365ExportAdapters.js";
+import { adaptM365ExportRows, isExportCsvLocalTime, type UndatedRows } from "./m365ExportAdapters.js";
 import type { JsonRepairs } from "./tolerantJson.js";
 import { isEntraUalRecord } from "./entraAuditRecord.js";
+import { FIRST_PARTY_UPKEEP, isInternalCertificateSpChange } from "./microsoftFirstPartyApps.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
+import { applyBecPairing } from "./m365BecPairing.js";
+import { alertDescription, alertMitre, alertSeverity, decodeM365Alert } from "./m365Alert.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
 import type { SummaryScope } from "./summaryScope.js";
@@ -32,6 +35,7 @@ import {
   entraSignInCategory,
   isEntraSignIn,
   readEntraSignIn,
+  ualFailureDetail,
 } from "./ualLogon.js";
 import { ENTRA_RISK_HIDDEN_MARKER } from "./cloudRowWording.js";
 import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
@@ -180,6 +184,7 @@ const M365_OPS: Record<string, OpDef> = {
   filemalwaredetected: { severity: "High", mitre: ["T1204"] },
   filedownloaded: { severity: "Low", mitre: ["T1530"] },
   filesyncdownloadedfull: { severity: "Low", mitre: ["T1530"] },
+  anonymouslinkcreated: { severity: "Low" }, // anyone-with-the-link sharing (#2550)
   harddelete: { severity: "Low", mitre: ["T1070.008"] },
   softdelete: { severity: "Low", mitre: ["T1070.008"] },
   "disable-antiphishrule": { severity: "High", mitre: ["T1562"] },
@@ -282,7 +287,8 @@ function mapUal(
 ): MappedEvent {
   const op = pickStr(rec, ["Operation", "Operations"], (k) => debug?.field("action", k)) || "operation";
   const workload = pickStr(rec, ["Workload"]);
-  const user = pickStr(rec, ["UserId", "UserKey", "UserIds"], (k) => debug?.field("user", k));
+  const alert = decodeM365Alert(rec, op); // a Security & Compliance alert names its own user (#2551)
+  const user = alert?.user || pickStr(rec, ["UserId", "UserKey", "UserIds"], (k) => debug?.field("user", k));
   // All four are Microsoft 365's own Unified Audit Log fields, recorded by Microsoft's own
   // service infrastructure from the authenticated session's real connection — edge-observed, not
   // client-asserted (#1184 audit).
@@ -294,25 +300,34 @@ function mapUal(
   const target = pickStr(rec, ["ObjectId", "MailboxOwnerUPN", "SiteUrl", "TargetUserOrGroupName"]);
   const result = pickStr(rec, ["ResultStatus", "ResultStatusDetail"]);
   const failed = /fail/i.test(result);
+  // A failed sign-in names its error, and a different error is a different row (#2553).
+  const failure = failed ? ualFailureDetail(rec) : "";
 
-  const def = opSeverity(op);
+  // Microsoft's internal Certificate actor provisioning a service principal is upkeep (#2549).
+  const def = alert
+    ? { severity: alertSeverity(alert), mitre: alertMitre(alert) }
+    : isInternalCertificateSpChange(op, user)
+      ? FIRST_PARTY_UPKEEP
+      : opSeverity(op);
   let severity = def.severity;
   if (failed && severity === "Info") severity = "Low";
   if (ip) addIoc(sink, "ip", ip);
 
-  let description = `M365 ${workload || "audit"}: ${op}`;
-  if (user) description += ` by ${user}`;
+  let description = alert ? alertDescription(workload, op, alert) : `M365 ${workload || "audit"}: ${op}`;
+  if (user && !alert) description += ` by ${user}`;
   if (ip) description += ` from ${ip}`;
   // The target and the description are both identities downstream (correlation keys on the
   // description once aggKey is gone), so each clip keeps a digest of what it removed (#940).
   if (target && target !== user) description += ` → ${boundedTextTo(oneLine(target), 120)}`;
-  if (failed) description += " [FAILED]";
+  if (failed) description += failure ? ` [FAILED ${failure}]` : " [FAILED]";
   description = boundedTextTo(description, 600);
 
   const observed = pickStr(rec, ["CreationTime", "CreationDate", "TimeGenerated"], (k) =>
     debug?.field("timestamp", k),
   );
-  const timestamp = normalizeTime(observed);
+  // A CreationDate still in Export-Csv local shape is one the file's day/month order could not
+  // date (#2552): undated, and counted in the import note, never a raw string read in local time.
+  const timestamp = isExportCsvLocalTime(observed) ? "" : normalizeTime(observed);
 
   return {
     timestamp,
@@ -325,7 +340,7 @@ function mapUal(
     // reads carry it: a hundred management calls by one principal genuinely are one thing, and
     // adding the resource everywhere would undo the aggregation this importer exists to do.
     aggKey: boundedAggKey(
-      `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}`.toLowerCase(),
+      `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}${failure ? `|${failure}` : ""}${alert ? `|${alert.alertId}|${alert.name}` : ""}`.toLowerCase(),
     ),
     sources: ["Microsoft 365"],
     // The row cites its own record (#2485) instead of the legacy upgrade's `event:<id>`.
@@ -686,6 +701,8 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     }
   }
 
+  // The BEC pairings (#2550) raise rows that a second record of this export proves.
+  const paired = applyBecPairing(mapped, rowRecords, normalized);
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (opts.rowsOnly)
     return {
@@ -701,12 +718,12 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       signInObservations,
       sigmaRowsMatched: sigmaRows,
       repairs,
-      mapped,
+      mapped: paired,
       rowRecords,
       principalNames,
       ...(undated.rows ? { undatedRows: undated } : {}),
     };
-  const capped = aggregateEvents(mapped, {
+  const capped = aggregateEvents(paired, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),

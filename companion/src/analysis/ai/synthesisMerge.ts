@@ -1,5 +1,6 @@
 import { flagContradictedAnswers } from "../answerContradiction.js";
 import type { CollectionInventory } from "../collectionInventory.js";
+import { withCloudSeedQuestions } from "../cloudKeyQuestions.js";
 import { applyNegativeAnswerCoverage } from "../negativeAnswerCoverage.js";
 import { buildAssetGraph } from "../assetGraph.js";
 import { buildEvidenceGraph } from "../evidenceGraph.js";
@@ -15,6 +16,7 @@ import { backfillSilenceGapFindings } from "../gapDetect.js";
 import { backfillHostHistoryNote, gapOptionsFor } from "../gapHostHistory.js";
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../activityWaves.js";
 import { backfillHighSeverityFindings, rederiveAutoFindingTechniques } from "../highSeverityFindings.js";
+import { refineFindingTechniques } from "../findingTechniqueRefine.js";
 import { AUTO_FINDING_ID_PREFIX } from "../responseSchema.js";
 import { backfillDefenderEpisodeFindings } from "../defenderEpisodeFindings.js";
 import { backfillScriptCommandFindings } from "../scriptBlockCommandFindings.js";
@@ -145,6 +147,8 @@ export interface DeltaFoldInput {
    * stays independent of the stored state.
    */
   echoedFindingIds?: ReadonlySet<string>;
+  /** A tenant-log case with no host (#2555): the cloud key questions are seeded as pinned. */
+  cloudOnly?: boolean;
 }
 
 export interface DeltaFoldResult {
@@ -197,13 +201,19 @@ export async function foldSynthesisDelta(
     ? recoverProseCitations(resolved, input.promptEventIds, shownIds)
     : { delta: resolved, recovered: [] };
   // A re-issued finding that still cites nothing takes back its prior, in-scope citations (#2047).
-  const { delta, inherited: inheritedCitations } = input.echoedFindingIds
+  const { delta: citedDelta, inherited: inheritedCitations } = input.echoedFindingIds
     ? inheritPriorCitations(recoveredDelta, {
         backing: supportingEventIds(state, markers),
         echoedIds: input.echoedFindingIds,
         scopedIds: shownIds,
       })
     : { delta: recoveredDelta, inherited: [] };
+  // Citations are settled: a model finding's tags follow the sub-techniques its rows carry (#2556).
+  const delta = refineFindingTechniques(
+    citedDelta,
+    new Map(state.forensicTimeline.map((e) => [e.id, e] as const)),
+    membersOf,
+  );
   // Anchor finding timestamps to the last real event time (fallback: existing state time).
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
   const merged = await replaceConclusions(ctx, state, delta, ts, shownIds);
@@ -220,7 +230,8 @@ export async function foldSynthesisDelta(
   const eligibleIds = new Set(scopedEvents.map((e) => e.id));
   const netted = applyBackfills(linked, scopedEvents, eligibleIds, ts, state);
   await yieldToEventLoop();
-  const pinned = preserveAcceptedTechniques(state, await preservePinnedQuestions(ctx, caseId, netted.state));
+  const pinnedQs = await preservePinnedQuestions(ctx, caseId, netted.state);
+  const pinned = preserveAcceptedTechniques(state, withCloudSeedQuestions(pinnedQs, !!input.cloudOnly));
   let next = correctKeyQuestions(pinned, state, scopedEvents);
   // The techniques the timeline CARRIES are deliberately not folded in here (#893). This used to
   // union the scoped events' ids into the table so the ones the model didn't echo — especially the

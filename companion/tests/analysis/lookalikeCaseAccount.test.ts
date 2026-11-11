@@ -141,3 +141,49 @@ describe("flagCaseLookalikeRow", () => {
     expect(flagCaseLookalikeRow(once, "svc-backupl", "svc-backup")).toBe(once);
   });
 });
+
+// #2568: "rn" reads as "m", "vv" as "w", "cl" as "d". Each is two edits, so the one-edit rule missed them.
+describe("caseLookalike — two-letter swaps (#2568)", () => {
+  it("flags an rn/vv/cl copy of a case account", () => {
+    expect(caseLookalike("jsrnith", ["jsmith"])).toBe("jsmith");
+    expect(caseLookalike("contosornarketing", ["contosomarketing"])).toBe("contosomarketing");
+    expect(caseLookalike("svc-vveb", ["svc-web"])).toBe("svc-web");
+    expect(caseLookalike("svc-cleploy", ["svc-deploy"])).toBe("svc-deploy");
+  });
+
+  it("flags the reverse direction (the case holds the two-letter form)", () => {
+    expect(caseLookalike("amold", ["arnold"])).toBe("arnold");
+  });
+
+  it("does not fold a leading two-letter swap (initial + surname)", () => {
+    expect(caseLookalike("rnjones", ["mjones"])).toBeNull();
+    expect(caseLookalike("cljones", ["djones"])).toBeNull();
+    expect(caseLookalike("vvjones", ["wjones"])).toBeNull();
+    expect(caseLookalike("mjones", ["rnjones"])).toBeNull();
+  });
+
+  it("does not flag real names that contain the shapes", () => {
+    expect(caseLookalike("arnold", ["bernard", "kearns"])).toBeNull();
+  });
+
+  it("matches on exact equality after the fold, never one edit on top of it", () => {
+    // "jsrnyth" folds to "jsmyth", one edit from "jsmith", and is three edits raw.
+    expect(caseLookalike("jsrnyth", ["jsmith"])).toBeNull();
+  });
+
+  it("accepts a rare real-name collision as the cost of the cl fold (user decision on #2568)", () => {
+    // "jclayton" folds to "jdayton". Two real people, but it fires only when one is a NEW account or
+    // group member while the other is already in the case; the note names both.
+    expect(caseLookalike("jclayton", ["jdayton"])).toBe("jdayton");
+  });
+});
+
+describe("flagCaseLookalikeRow — two-letter swap note (#2568)", () => {
+  it("does not call a fold-only hit one edit", () => {
+    const row = flagCaseLookalikeRow(ev("User account created (EID 4720)"), "jsrnith", "jsmith");
+    expect(row.severity).toBe("High");
+    expect(row.description).toContain(LOOKALIKE_ACCOUNT_MARKER);
+    expect(row.description).toContain('"jsrnith" looks like case account "jsmith"');
+    expect(row.description).not.toContain("one edit");
+  });
+});

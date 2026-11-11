@@ -1773,13 +1773,14 @@ gcp_discovery:
 # in the same PR.
 
 # ── Suspicious operations ──
+# Tag-only (#2549): the Exchange decoder (exchangeAuditConfig.ts) grades this cmdlet by what it set —
+# logging turned OFF is High + T1562.008; Exchange's own host turning it ON is Info. A blanket High
+# here graded every routine re-enable as anti-forensics.
 mas_operation_audit_config_changed:
-  description: Exchange admin audit-log configuration changed (anti-forensics)
+  description: Exchange admin audit-log configuration changed (graded by the importer on the setting)
   any:
     - { field: description, regex: '^M365 [^:]+: Set-AdminAuditLogConfig\b', flags: 'i' }
   tags: ['analyzer_suite', 'audit_policy', 'anti_forensics']
-  mitre: ['T1562.008']
-  severity: High
   view: 'Analyzer-Suite operations'
 
 mas_operation_mail_flow_change:

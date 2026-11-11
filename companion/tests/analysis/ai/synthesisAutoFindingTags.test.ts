@@ -114,10 +114,12 @@ describe("f-auto-* tags follow the cited events across re-synthesis (#1684)", ()
     expect(tagsOf(second, AUTO)).toEqual(["T1021.002", "T1570"]);
   });
 
-  it("leaves a model finding's tags to the model", async () => {
+  // A model finding is not re-derived wholesale: it keeps the tags it chose that its rows support,
+  // and gains none of the others (#2556 refines and drops, never adds every cited-row tag).
+  it("does not replace a model finding's tags with its events' tags", async () => {
     const state = {
       ...emptyState("c1"),
-      forensicTimeline: [event("e1", ["T1021.002"], ["f1"])],
+      forensicTimeline: [event("e1", ["T1021.002", "T1105"], ["f1"])],
     };
     const next = await fold(
       state,

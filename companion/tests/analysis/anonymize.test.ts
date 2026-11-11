@@ -929,6 +929,50 @@ describe("anonymizer — pairs() (#2531)", () => {
   });
 });
 
+describe("anonymizer — token-shaped literals already in the text (#2569)", () => {
+  const HOST: KnownEntities = { hosts: ["WS-FIN-07"], accounts: [], internalDomains: [] };
+
+  it("never mints a token that is already in the input as a literal", () => {
+    const a = createAnonymizer(policy({ HOST: true }), HOST);
+    expect(a.apply("ANON_HOST_1 on WS-FIN-07")).toBe("ANON_HOST_1 on ANON_HOST_2");
+    const pair = a.pairs().find((p) => p.value === "WS-FIN-07");
+    expect(pair?.token).toBe("ANON_HOST_2");
+  });
+
+  it("restore() brings back only minted tokens, in any letter case", () => {
+    const a = createAnonymizer(policy({ HOST: true }), HOST);
+    a.apply("ANON_HOST_1 on WS-FIN-07 and anon_host_1");
+    expect(a.restore("planted ANON_HOST_1, real ANON_HOST_2, lower anon_host_1")).toBe(
+      "planted ANON_HOST_1, real WS-FIN-07, lower anon_host_1",
+    );
+  });
+
+  it("a literal equal to a token minted by an EARLIER apply() call is escaped, never restored", () => {
+    const a = createAnonymizer(policy({ HOST: true }), HOST);
+    expect(a.apply("logon WS-FIN-07")).toBe("logon ANON_HOST_1");
+    const masked = a.apply("cmd ANON_HOST_1");
+    expect(masked).toBe("cmd ANON-LITERAL_HOST_1");
+    expect(a.restore(masked)).toBe("cmd ANON-LITERAL_HOST_1");
+  });
+
+  it("a lower-case literal reserves its number too", () => {
+    const a = createAnonymizer(policy({ HOST: true }), HOST);
+    expect(a.apply("anon_host_1 WS-FIN-07")).toBe("anon_host_1 ANON_HOST_2");
+  });
+
+  it("custom (Presidio-approved) entities skip a reserved number as well", () => {
+    const known: KnownEntities = { ...NONE, custom: [{ value: "Alice Smith", category: "PERSON" }] };
+    const a = createAnonymizer(policy(), known);
+    expect(a.apply("ANON_PERSON_1 met Alice Smith")).toBe("ANON_PERSON_1 met ANON_PERSON_2");
+    expect(a.restore("ANON_PERSON_1 met ANON_PERSON_2")).toBe("ANON_PERSON_1 met Alice Smith");
+  });
+
+  it("an unknown category is not token-shaped: it passes through and reserves nothing", () => {
+    const a = createAnonymizer(policy({ HOST: true }), HOST);
+    expect(a.apply("ANON_FOO_1 on WS-FIN-07")).toBe("ANON_FOO_1 on ANON_HOST_1");
+  });
+});
+
 describe("anonymizer — encoded command-line blobs (CMD)", () => {
   const B64 = "aQBlAHgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAKQA=";
   it("tokenizes the base64 after -enc but keeps the readable command; restore reverses", () => {

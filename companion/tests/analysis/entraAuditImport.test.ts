@@ -9,6 +9,7 @@ import {
   mapSpSignIn,
   readSpSignIn,
 } from "../../src/analysis/entraAuditImport.js";
+import { parseM365Audit } from "../../src/analysis/m365Import.js";
 import type { SiemIoc } from "../../src/analysis/siemImport.js";
 import type { Severity } from "../../src/analysis/stateTypes.js";
 
@@ -235,5 +236,104 @@ describe("readSpSignIn / mapSpSignIn", () => {
     expect(readSpSignIn(spSignIn({ ipAddress: "not-an-ip" })).ip).toBe("");
     expect(e.description).not.toContain("not-an-ip");
     expect(sink.size).toBe(0);
+  });
+});
+
+// #2549 — Microsoft's own backend services provisioning service principals (app-only, UserType 4)
+// are upkeep: Low, still in the forensic timeline. Keyed on the immutable app id or Microsoft's
+// internal certificate actor shape — never the display name, never a public client, never a
+// credential add, never a person.
+describe("parseM365Audit — Microsoft first-party service principal provisioning (#2549)", () => {
+  const SERVICE_MGMT_APP = "797f4846-ba00-4fd7-ba43-dac1f8f63013"; // Windows Azure Service Management API
+  const AZURE_CLI = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
+  const THIRD_PARTY = "33333333-3333-4333-8333-333333333333";
+  const SP_OBJECT = "44444444-4444-4444-8444-444444444444";
+  const appActor = (name: string, appId: string) => [
+    { ID: name, Type: 1 },
+    { ID: appId, Type: 2 },
+    { ID: `ServicePrincipal_${SP_OBJECT}`, Type: 2 },
+    { ID: SP_OBJECT, Type: 2 },
+    { ID: "ServicePrincipal", Type: 2 },
+  ];
+  const ual = (op: string, over: Record<string, unknown>) => ({
+    CreationTime: "2026-03-01T10:00:00",
+    Id: "00000000-0000-0000-0000-0000000000d1",
+    Operation: op,
+    OrganizationId: "00000000-0000-0000-0000-0000000000aa",
+    RecordType: 8,
+    ResultStatus: "Success",
+    Workload: "AzureActiveDirectory",
+    UserType: 4,
+    UserId: `ServicePrincipal_${SP_OBJECT}`,
+    Target: [
+      { ID: "ServicePrincipal_55555555-5555-4555-8555-555555555555", Type: 2 },
+      { ID: "Some App", Type: 1 },
+    ],
+    ...over,
+  });
+  const grade = (rec: Record<string, unknown>) => {
+    const r = parseM365Audit(JSON.stringify([rec]), { aggregate: false });
+    expect(r.events).toHaveLength(1);
+    return r.events[0];
+  };
+
+  it("a listed Microsoft backend service adding or updating a service principal is Low with no technique", () => {
+    for (const op of ["Add service principal.", "Update service principal."]) {
+      const e = grade(ual(op, { Actor: appActor("Windows Azure Service Management API", SERVICE_MGMT_APP) }));
+      expect(e.severity).toBe("Low");
+      expect(e.mitreTechniques).toEqual([]);
+    }
+  });
+
+  it("Microsoft's internal certificate actor (UserId Certificate, type Other) is Low", () => {
+    const e = grade(
+      ual("Add service principal.", {
+        UserId: "Certificate",
+        Actor: [
+          { ID: "Microsoft Azure AD Internal - Jit Provisioning", Type: 1 },
+          { ID: "Certificate", Type: 2 },
+          { ID: "Other", Type: 2 },
+        ],
+      }),
+    );
+    expect(e.severity).toBe("Low");
+  });
+
+  it("a third-party app named like a Microsoft service stays High (the display name is never read)", () => {
+    const e = grade(
+      ual("Add service principal.", { Actor: appActor("Microsoft Online Services", THIRD_PARTY) }),
+    );
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toContain("T1098.001");
+  });
+
+  it("a public client (Azure CLI) acting app-only stays High", () => {
+    const e = grade(ual("Add service principal.", { Actor: appActor("Microsoft Azure CLI", AZURE_CLI) }));
+    expect(e.severity).toBe("High");
+  });
+
+  it("a credential add by a first-party service stays High", () => {
+    const e = grade(
+      ual("Add service principal credentials.", {
+        Actor: appActor("Windows Azure Service Management API", SERVICE_MGMT_APP),
+      }),
+    );
+    expect(e.severity).toBe("High");
+  });
+
+  it("a person (UPN actor) adding a service principal stays High, whatever client they used", () => {
+    const e = grade(
+      ual("Add service principal.", {
+        UserType: 0,
+        UserId: "admin@example.test",
+        Actor: [
+          { ID: "admin@example.test", Type: 5 },
+          { ID: SERVICE_MGMT_APP, Type: 2 },
+          { ID: "User_66666666-6666-4666-8666-666666666666", Type: 2 },
+          { ID: "User", Type: 2 },
+        ],
+      }),
+    );
+    expect(e.severity).toBe("High");
   });
 });

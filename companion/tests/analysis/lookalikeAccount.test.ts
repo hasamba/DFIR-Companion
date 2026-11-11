@@ -134,3 +134,27 @@ describe("accountChangeOverlay", () => {
     expect(r).toEqual({ description: "d", severity: "Medium" });
   });
 });
+
+// #2568: "rn" reads as "m", "vv" as "w", "cl" as "d". Each is two edits, so the edit count alone missed them.
+describe("lookalikeBuiltin — two-letter swaps (#2568)", () => {
+  it("flags an rn/cl copy of a built-in name", () => {
+    expect(lookalikeBuiltin("adrnin")).toBe("admin");
+    expect(lookalikeBuiltin("adrninistrator")).toBe("administrator");
+    expect(lookalikeBuiltin("adrninistratr")).toBe("administrator");
+    expect(lookalikeBuiltin("clefaultaccount")).toBe("defaultaccount");
+  });
+
+  it("does not flag real names that contain the shapes", () => {
+    expect(lookalikeBuiltin("arnold")).toBeNull();
+    expect(lookalikeBuiltin("bernard")).toBeNull();
+    // Same guard as "sadmin": "admin" accepts a same-length substitution only.
+    expect(lookalikeBuiltin("sadrnin")).toBeNull();
+  });
+
+  it("grades a new account named adrnin High with the built-in note", () => {
+    const field = (data: Record<string, string>) => (k: string) => data[k] ?? "";
+    const r = accountChangeOverlay(4720, field({ TargetUserName: "adrnin" }), "created", "Medium");
+    expect(r?.severity).toBe("High");
+    expect(r?.description).toBe('created [look-alike of built-in account "admin"]');
+  });
+});

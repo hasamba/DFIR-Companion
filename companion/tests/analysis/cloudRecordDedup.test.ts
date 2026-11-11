@@ -104,6 +104,27 @@ describe("cloud record dedup through the M365 import (#2301)", () => {
     expect(lastNote(s3)).toContain("1 duplicate record(s) skipped");
   });
 
+  it("two Splunk-export rows of one UAL record are one record, not a conflict (#2548)", async () => {
+    const { pipeline } = await makePipeline();
+    const q = (v: string): string => `"${v.replace(/"/g, '""')}"`;
+    const ad = (forwardTo: string) => JSON.stringify(ualRule("u-1", "victim@example.com", forwardTo));
+    const header = "_bkt,_cd,_indextime,_serial,RecordType,CreationDate,UserIds,Operations,AuditData";
+    const row = (envelope: string, forwardTo = "drop@example.net") =>
+      `${envelope},1,2026-06-01T10:00:00,victim@example.com,New-InboxRule,${q(ad(forwardTo))}`;
+    const csv = [header, row("main~1~A,1:100,1700000000,0"), row("main~2~B,2:200,1700000500,1")].join("\n");
+    const s1 = await pipeline.importM365("c1", csv, { ...opts("m1"), label: "m1.csv" });
+    expect(lastNote(s1)).toContain("1 duplicate record(s) skipped");
+    expect(lastNote(s1)).not.toContain("conflicting");
+    expect(s1.forensicTimeline.some((e) => e.sourceRecords?.conflict)).toBe(false);
+    expect(s1.forensicTimeline.some((e) => e.description.includes(RECORD_CONFLICT_NOTE.trim()))).toBe(false);
+    const withRef = s1.forensicTimeline.filter((e) => e.sourceRecords?.refs.includes("ual|tenant-a|u-1"));
+    expect(withRef).toHaveLength(1);
+    // A real change to the AuditData under the same id is still a conflict.
+    const altered = [header, row("main~3~C,3:300,1700000900,2", "elsewhere@example.net")].join("\n");
+    const s2 = await pipeline.importM365("c1", altered, { ...opts("m2"), label: "m2.csv" });
+    expect(lastNote(s2)).toContain("1 conflicting record(s) kept and flagged");
+  });
+
   it("an aggregated event carries a bounded sample and its full member list pages from the relation", async () => {
     const { pipeline, cloudRecordStore } = await makePipeline();
     // Failed UAL logons by one user from one IP fold into one counted row.

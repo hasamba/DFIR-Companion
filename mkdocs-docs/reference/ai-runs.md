@@ -56,7 +56,7 @@ These rewrite your evidence, your findings or your tasks. Read the limitation on
 **Costs.** 2 per real run — synthesis, then finding-tasks, using the synthesis model.
 
 !!! warning "Know this"
-    The model sees a sample, not your case. On a big case most rows never reach it. A deterministic backfill is what stops a Critical row vanishing entirely. Toggling anonymisation on or off forces a fresh run.
+    The model sees a sample, not your case. On a big case most rows never reach it. A deterministic backfill is what stops a Critical row vanishing entirely. Toggling anonymisation on or off forces a fresh run. A finding's ATT&CK techniques are checked against the events it cites: a parent technique becomes the sub-technique those events carry, and a technique none of them supports is dropped.
 
 ### Deep pass
 

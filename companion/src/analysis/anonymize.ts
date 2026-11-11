@@ -3,6 +3,7 @@ import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
 import { escapeRegExp } from "./regexEscape.js";
 import { SECRET_PLACEHOLDER, redactSecretText } from "./anonSecrets.js";
+import { scanTokenLiterals } from "./anonTokenLiterals.js";
 import {
   NETBIOS_ACCT,
   UPN_ACCT,
@@ -368,6 +369,7 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   const toToken = new Map<string, string>(); // "CAT:reallower" -> token
   const toReal = new Map<string, string>(); // token (UPPER) -> real value
   const counters: Record<string, number> = {};
+  const reserved = new Set<string>(); // token-shaped literals seen in the input — never minted (#2569)
   // Values the analyst removed from auto-discovery — never tokenize them (leave as-is), even when
   // a pattern matches. The check sits in assign(), the single point every matcher funnels through.
   // A value that is ALSO a custom entity is not vetoed (#1822): custom is an explicit "hide this",
@@ -383,8 +385,11 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
     const key = `${category}:${real.toLowerCase()}`;
     const existing = toToken.get(key);
     if (existing) return existing;
-    counters[category] = (counters[category] ?? 0) + 1;
-    const token = `ANON_${category}_${counters[category]}`;
+    let token: string;
+    do {
+      counters[category] = (counters[category] ?? 0) + 1;
+      token = `ANON_${category}_${counters[category]}`;
+    } while (reserved.has(token));
     toToken.set(key, token);
     toReal.set(token, real);
     return token;
@@ -625,6 +630,10 @@ export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anon
   function apply(text: string): string {
     // A forged sentinel in attacker-influenced text must not turn into a placeholder at the end.
     let t = text.replace(SECRET_SENTINEL_RE, "");
+    // A literal token in the input is never minted later, and one minted already is escaped (#2569).
+    const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok));
+    for (const lit of scan.literals) reserved.add(lit);
+    t = scan.text;
     // Reserve IPv6 literals FIRST — before anonCustom or any other pass — so nothing can
     // substitute inside one. Only when IP masking is active: if the IP category is off, no later
     // step ever reparses an IPv6 literal, so there is nothing to protect it FROM.

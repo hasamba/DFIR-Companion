@@ -26,6 +26,7 @@ import { buildEvidenceGraph } from "./evidenceGraph.js";
 import { byEventTime } from "./forensicSort.js";
 import type { ImportYieldWarning } from "./importMeta.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
+import { isCloudOnlyCase } from "./cloudOnlyCase.js";
 
 // The kill-chain phases an intrusion usually touches. A case with real (Critical/High) findings that
 // has NO finding covering one of these is a conspicuous gap worth calling out ("how did they get
@@ -265,6 +266,50 @@ function uncoveredTacticLabel(tactic: IrisTactic): string {
   return `No finding yet explains ${tactic}${where ? ` — collect ${where}` : ""}.`;
 }
 
+// The tenant logs that would answer each phase on a cloud-only case (#2555). No artifact: there is no
+// host to deploy to. Execution is absent on purpose — a process on a host has no tenant-log meaning.
+const CLOUD_TACTIC_EVIDENCE: Partial<Record<IrisTactic, string>> = {
+  "Initial Access":
+    "Entra sign-in logs and UAL UserLoggedIn / UserLoginFailed (source IPs, user agents, MFA)",
+  Persistence:
+    "inbox/transport rules, mail forwarding, OAuth consents, new accounts and role grants in the UAL",
+  "Privilege Escalation": "directory role assignments and app-role grants in the Entra audit log / UAL",
+  "Lateral Movement":
+    "internal mail sent from the account and access to other mailboxes or SharePoint sites in the UAL",
+  "Command and Control":
+    "sign-in source IPs and user agents (attacker infrastructure) in the Entra sign-in logs",
+  Exfiltration:
+    "MailItemsAccessed, FileDownloaded / FileSyncDownloaded and message trace for the incident window",
+  Impact: "mass delete (HardDelete / SoftDelete), sharing changes and sent-mail fraud in the UAL",
+};
+
+function cloudTacticLabel(tactic: IrisTactic): string {
+  return `No finding yet explains ${tactic} — review ${CLOUD_TACTIC_EVIDENCE[tactic]}.`;
+}
+
+// One uncovered-phase item per core tactic. A cloud-only case gets the tenant-log wording, no host
+// directive, and skips the phases with no tenant-log meaning.
+function uncoveredTacticItems(
+  state: InvestigationState,
+  scopedEvents: readonly ForensicEvent[],
+  topHosts: readonly string[],
+  aliasIndex: HostAliasIndex | undefined,
+  cloudOnly: boolean,
+): KnownUnknownItem[] {
+  const tactics = uncoveredCoreTactics(state);
+  if (cloudOnly) {
+    return tactics
+      .filter((t) => !!CLOUD_TACTIC_EVIDENCE[t])
+      .map((tactic) => ({ kind: "uncovered_tactic", tactic, label: cloudTacticLabel(tactic), collect: [] }));
+  }
+  return tactics.map((tactic) => ({
+    kind: "uncovered_tactic",
+    tactic,
+    label: uncoveredTacticLabel(tactic),
+    collect: tacticCollectDirectives(tactic, state, scopedEvents, topHosts, aliasIndex),
+  }));
+}
+
 // Source-yield trigger (c) (investigation-guidance #10): the case carries network telemetry (Zeek /
 // proxy / firewall / netflow) but NO endpoint-detector feed (EDR / Sigma / AV / EVTX-rule engine), so
 // on-host execution/persistence is likely invisible. A soft LEAD, gated on a real finding so a quiet
@@ -303,18 +348,18 @@ export function buildKnownUnknownItems(
   scopedEvents: ForensicEvent[],
   opts: KnownUnknownsOptions = {},
 ): KnownUnknownItem[] {
-  const items: KnownUnknownItem[] = [];
   const topHosts = rankHosts(state, { aliasIndex: opts.aliasIndex }).topHosts;
 
   // 1. Uncovered ATT&CK phases — one item per phase, each carrying its collection directive.
-  for (const tactic of uncoveredCoreTactics(state)) {
-    items.push({
-      kind: "uncovered_tactic",
-      tactic,
-      label: uncoveredTacticLabel(tactic),
-      collect: tacticCollectDirectives(tactic, state, scopedEvents, topHosts, opts.aliasIndex),
-    });
-  }
+  // A tenant-log case has no host to collect from (#2555): no Windows wording, no endpoint-feed nag.
+  const cloudOnly = isCloudOnlyCase({ events: scopedEvents });
+  const items: KnownUnknownItem[] = uncoveredTacticItems(
+    state,
+    scopedEvents,
+    topHosts,
+    opts.aliasIndex,
+    cloudOnly,
+  );
 
   // 2. Coverage gaps — silent windows (complete = every source dark, the strongest log-tampering
   //    lead). No `collect` here: the dashboard links these to the existing Timeline Gaps panel, which
@@ -357,7 +402,7 @@ export function buildKnownUnknownItems(
       : "";
     items.push({ kind: "yield_gap", label: `${w.message}.${phases}`, collect: [] });
   }
-  const netGap = networkTelemetryWithoutDetector(state);
+  const netGap = cloudOnly ? null : networkTelemetryWithoutDetector(state);
   if (netGap) items.push({ kind: "yield_gap", label: netGap, collect: [] });
 
   // 4. Unobserved playbook steps (#230) — the case's technique sequence resembles a published

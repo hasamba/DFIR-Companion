@@ -6,7 +6,7 @@
 // The look-alike check is per row, against a static built-in list. A look-alike of the case's own
 // service accounts ("svc-backupl") needs every name in the case: lookalikeCaseAccount.ts (#1971).
 import { worstSeverity as worst, type Severity } from "./stateTypes.js";
-import { CONFUSABLES, levenshtein } from "./lookalikeDomains.js";
+import { CONFUSABLES, foldMultiChar, levenshtein } from "./lookalikeDomains.js";
 
 // Groups whose membership IS privilege. An add to one of these is the difference between routine
 // user administration and an attacker granting themselves the domain — so it, not the bare event id,
@@ -115,7 +115,8 @@ function isNear(candidate: string, builtin: string): boolean {
  * The built-in account `name` imitates, or null. The exact built-in name, a localised built-in name,
  * a plural, a numbered copy ("admin2", "krbtgt_12345" — an RODC's real krbtgt) and a name shorter
  * than five characters are never look-alikes. Homoglyphs are folded first, so an all-Cyrillic
- * spelling is caught as well as a single swapped letter.
+ * spelling is caught as well as a single swapped letter. Two-letter shapes ("adrnin" for "admin",
+ * #2568) are folded next, and the folded name is held to the same near-match rule.
  */
 export function lookalikeBuiltin(name: string): string | null {
   const raw = bareName(name);
@@ -124,8 +125,10 @@ export function lookalikeBuiltin(name: string): string | null {
   const base = accountBase(raw);
   if (base.length < MIN_NAME_LENGTH || BUILTIN_ACCOUNTS.includes(base)) return null;
   const folded = foldConfusables(base);
+  const multiFolded = foldMultiChar(folded);
+  const matches = (s: string, builtin: string): boolean => s === builtin || isNear(s, builtin);
   for (const builtin of BUILTIN_ACCOUNTS) {
-    if (folded === builtin || isNear(folded, builtin)) return builtin;
+    if (matches(folded, builtin) || matches(multiFolded, builtin)) return builtin;
   }
   return null;
 }

@@ -100,6 +100,30 @@ describe("live collection coverage (#2538)", () => {
     expect(records[0].pages).toBe(2);
   });
 
+  it("importCloudFile sums two pages of one collection into one disclosure (#2546)", async () => {
+    const t = await tempCase();
+    for (const [seq, first, n] of [
+      [1, 1, 3],
+      [2, 10, 4],
+    ] as const) {
+      const path = join(t.root, `p00000${seq}-ct.json`);
+      const recs = Array.from({ length: n }, (_, i) => trailRecord(first + i));
+      await writeFile(path, JSON.stringify({ Records: recs }));
+      await t.pipeline.importCloudFile("c1", "aws", path, {
+        label: `evidence/cloud/cc-sum/p00000${seq}-ct.json`,
+        idPrefix: `ccsump${seq}`,
+        importedAt: "2026-10-03T00:00:00Z",
+        coverageGroup: "collection:cc-sum",
+      });
+    }
+    const records = await coverage(t);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ recordCount: 7, pages: 2 });
+    expect(records[0].streamDisclosure?.records).toBe(7);
+    const streamed = (records[0].importDisclosure ?? []).filter((s) => s.startsWith("streamed from disk"));
+    expect(streamed).toEqual(["streamed from disk: 7 record(s), json"]);
+  });
+
   it("a manual streamed import with no group is still keyed by its own file (the #2303 path)", async () => {
     const t = await tempCase();
     const path = join(t.root, "manual-ct.json");

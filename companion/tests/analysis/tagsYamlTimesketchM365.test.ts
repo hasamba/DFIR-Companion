@@ -204,6 +204,16 @@ describe("bundled data/tags.yaml — Timesketch M365/Entra parity", () => {
     expect(r).toContain("ts_m365_mass_download");
   });
 
+  // #2551: the alert row now carries the alert name, user and operation after the prefix.
+  it("tags a decoded Security & Compliance AlertTriggered as a Defender action", () => {
+    const data = JSON.stringify({ an: "Forwarding rule", sev: "Low", f3u: "v@v.com", op: "MailRedirect" });
+    const rows = tagged(
+      ual({ Operation: "AlertTriggered", Workload: "SecurityComplianceCenter", RecordType: 40, Data: data }),
+    );
+    expect(rows[0].desc).toContain('"Forwarding rule"');
+    expect(rows[0].ruleIds).toContain("ts_m365_defender_action");
+  });
+
   // ── the benign half: an unrelated operation must not pick up a cloud tag ──
   it("leaves a routine operation untagged", () => {
     const r = ids(ual({ Operation: "MailItemsAccessed", Workload: "Exchange" }));

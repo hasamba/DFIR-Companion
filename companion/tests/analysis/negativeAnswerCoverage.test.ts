@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { applyNegativeAnswerCoverage } from "../../src/analysis/negativeAnswerCoverage.js";
 import { buildCollectionInventory, CLASS_COLLECTION } from "../../src/analysis/collectionInventory.js";
 import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
+import { ualRowCanonical } from "../../src/analysis/cloudRowCanonical.js";
 import {
   emptyState,
   type ForensicEvent,
@@ -579,5 +580,70 @@ describe("applyNegativeAnswerCoverage — step asks for a cleared log", () => {
       expect(n6.priority).toBe("low");
       expect(n6.rationale).not.toContain("Prefer ");
     });
+  });
+});
+
+// #2555: a tenant-log case has no Windows host, so a Sysmon/EVTX or Autoruns remedy is a collection
+// that cannot exist. The cloud-only guard skips pass A there; host-less non-cloud and mixed cases keep
+// today's behaviour.
+describe("applyNegativeAnswerCoverage — cloud-only case (#2555)", () => {
+  const ual = (id: string): ForensicEvent =>
+    ev(id, {
+      description: `M365 MailItemsAccessed ${id}`,
+      sources: ["Microsoft 365"],
+      severity: "High",
+      canonical: ualRowCanonical({
+        operation: "MailItemsAccessed",
+        user: "alice@example.test",
+        ip: "",
+        observed: T,
+        normalized: T,
+        failed: false,
+        tenant: "",
+        recordId: id,
+        index: 0,
+      }),
+    });
+  const entra = (id: string): ForensicEvent =>
+    ev(id, { description: `Entra sign-in: user${id}@example.test`, sources: ["Entra ID"], severity: "High" });
+  const negative = (id: string, question: string, answer: string): InvestigationQuestion => ({
+    id,
+    question,
+    status: "answered",
+    answer,
+    pointer: "",
+  });
+  const negatives = (): InvestigationQuestion[] => [
+    negative("q_lateral_movement", "Was there lateral movement?", "No lateral movement was observed."),
+    negative("q_persistence", "Was persistence established?", "No persistence mechanism was observed."),
+    negative("q_exfil", "Was data exfiltrated?", "No data exfiltration was observed."),
+  ];
+  const run = (events: ForensicEvent[]): InvestigationState =>
+    applyNegativeAnswerCoverage(stateWith(events, negatives()), buildCollectionInventory({ events }));
+
+  it("adds no ns-coverage step and leaves the answers settled on a UAL-only case", () => {
+    const out = run([ual("u1"), ual("u2")]);
+    expect(out.nextSteps.filter((s) => s.id.startsWith("ns-coverage-"))).toEqual([]);
+    expect(out.keyQuestions.map((q) => q.status)).toEqual(["answered", "answered", "answered"]);
+    expect(JSON.stringify(out.keyQuestions)).not.toMatch(/sysmon|evtx|autoruns/i);
+  });
+
+  it("adds no ns-coverage step on an Entra sign-in-only case", () => {
+    const out = run([entra("s1"), entra("s2")]);
+    expect(out.nextSteps).toEqual([]);
+    expect(out.keyQuestions.every((q) => q.status === "answered")).toBe(true);
+  });
+
+  it("keeps the 'any host' qualification on a host-less case with no cloud evidence", () => {
+    const out = run([ev("m1", { sources: ["Manual"], severity: "High" })]);
+    expect(out.keyQuestions[0].status).toBe("partial");
+    expect(out.keyQuestions[0].answer).toContain("any host in this case");
+    expect(out.nextSteps.some((s) => s.id.startsWith("ns-coverage-"))).toBe(true);
+  });
+
+  it("keeps the host remedy on a mixed host + cloud case", () => {
+    const out = run([ual("u1"), chainsaw("c1", "WS01", "High")]);
+    expect(out.keyQuestions[0].status).toBe("partial");
+    expect(out.nextSteps.some((s) => s.id.startsWith("ns-coverage-"))).toBe(true);
   });
 });

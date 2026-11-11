@@ -33,6 +33,13 @@ import {
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { ACCESS_KEY_ISSUANCE_ACTION, readAccessKeyIssuance } from "./awsAccessKeyIssuance.js";
 import { burstWords, isDenial, trackRead, type ReadCall } from "./awsEnumerationBurst.js";
+import {
+  INSTANCE_SPREAD_MIN,
+  INSTANCE_SPREAD_MITRE,
+  instanceSpreadWords,
+  isInstanceCredentialMarkers,
+  trackInstanceAddress,
+} from "./awsInstanceCredential.js";
 import { cleanIp, getCI, normalizeTime, str, type MappedEvent } from "./siemImport.js";
 import { scopeBasis, scopeNoun, UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 
@@ -188,6 +195,8 @@ interface Key {
   locators: string[];
   /** The EARLIEST sources by first use — the second source is exact whatever the file order. */
   sources: Map<string, Source>;
+  /** Distinct PUBLIC addresses this key was used from as an EC2 instance credential (#2545), bounded. */
+  instanceAddresses: Set<string>;
   overflowSources: Set<string>;
   untrackedRecords: number;
   secondSourceAt: number | null;
@@ -226,6 +235,7 @@ function keyFor(keys: Map<string, Key>, account: string, credentialId: string): 
         last: null,
         locators: [],
         sources: new Map(),
+        instanceAddresses: new Set(),
         overflowSources: new Set(),
         untrackedRecords: 0,
         secondSourceAt: null,
@@ -329,6 +339,8 @@ function recordUse(
   const address = cleanIp(str(getCI(rec, "sourceIPAddress"))) || str(getCI(rec, "sourceIPAddress")).trim();
   const agent = str(getCI(rec, "userAgent")).trim();
   trackSource(k, `${address}|${agent}`, address, agent, time, locator);
+  const instance = isInstanceCredentialMarkers(who.kind, who.protocol, who.session.name);
+  trackInstanceAddress(k.instanceAddresses, instance, address);
   if (!k.workload) k.workload = workloadOf(who);
   if (!k.sourceIdentity && who.session.sourceIdentity) k.sourceIdentity = who.session.sourceIdentity;
   if (!k.issuerArn && who.issuer?.arn) k.issuerArn = who.issuer.arn;
@@ -552,9 +564,12 @@ function shapesOf(k: Key): AwsLineageShape[] {
   }));
 }
 
-/** High: a privileged change or remote execution after the first use from a second source; Medium: a shape or a second source; Low: a lineage. Never below the top use row. */
+/** One EC2 instance credential seen from two or more public addresses (#2545). */
+const spread = (k: Key): boolean => k.instanceAddresses.size >= INSTANCE_SPREAD_MIN;
+
+/** High: a privileged change or remote execution after the first use from a second source, or an instance credential's spread; Medium: a shape or a second source; Low: a lineage. Never below the top use row. */
 function gradeOf(k: Key, shapes: readonly AwsLineageShape[]): Severity {
-  const high = shapes.some((s) => s.afterSecondSource && s.kind !== "enumeration");
+  const high = spread(k) || shapes.some((s) => s.afterSecondSource && s.kind !== "enumeration");
   const floor: Severity = high ? "High" : shapes.length || k.sources.size >= 2 ? "Medium" : "Low";
   return RANK[k.top] > RANK[floor] ? k.top : floor;
 }
@@ -649,6 +664,7 @@ function summaryRow(
   const cited = [...new Set([...reserved, ...k.locators])].slice(0, RAW_RECORDS_MAX);
   const notCited = Math.max(0, k.uses + (k.issuance ? 1 : 0) - cited.length);
   const tail = [
+    ...(spread(k) ? [instanceSpreadWords(k.instanceAddresses)] : []),
     ...(decisive ? [shapeLine(decisive)] : []),
     ...(notCited ? [`${plural(notCited, "further record")} not individually cited`] : []),
     COVERAGE_NOTE,
@@ -695,7 +711,15 @@ function summaryRow(
     timestamp: normalizeTime(observed),
     description,
     severity: grade,
-    mitre: grade === "Low" ? [] : [...new Set(shapes.map((s) => SHAPE_MITRE[s.kind]))],
+    mitre:
+      grade === "Low"
+        ? []
+        : [
+            ...new Set([
+              ...shapes.map((s) => SHAPE_MITRE[s.kind]),
+              ...(spread(k) ? INSTANCE_SPREAD_MITRE : []),
+            ]),
+          ],
     aggKey: boundedAggKey(`aws-credential-lineage|${identity}`),
     sources: ["AWS CloudTrail"],
     canonical: createCanonicalEvent({

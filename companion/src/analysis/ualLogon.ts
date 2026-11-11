@@ -77,6 +77,31 @@ export function readUalLogon(rec: Row): UalLogon {
   };
 }
 
+const LOGON_ERROR_MAX = 60;
+const ERROR_NUMBER_MAX = 16;
+// Brackets and line breaks would end the row's "[FAILED …]" bracket early: readers of the row text
+// (cloudBulkRead's target reader stops at " [") rely on it closing where the importer closed it.
+const bracketSafe = (v: string, max: number): string =>
+  v
+    .replace(/[[\]\s]+/g, " ")
+    .trim()
+    .slice(0, max)
+    .trim();
+
+/**
+ * What a failed UAL sign-in row shows inside its "[FAILED …]" bracket (#2553): the record's
+ * `LogonError` and `ErrorNumber`, the same form the Entra sign-in rows use. "" for a record that is
+ * not a UAL logon or names no error. The importer also keys aggregation on it, so an account
+ * lockout is never folded under a different error's row.
+ */
+export function ualFailureDetail(rec: Row): string {
+  if (!isUalLogon(rec)) return "";
+  const { logonError, errorNumber } = readUalLogon(rec);
+  return [bracketSafe(logonError, LOGON_ERROR_MAX), bracketSafe(errorNumber, ERROR_NUMBER_MAX)]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export interface EntraSignIn {
   user: string;
   ip: string;

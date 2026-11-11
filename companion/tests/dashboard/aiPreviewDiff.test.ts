@@ -126,6 +126,27 @@ describe("AI preview diff — rendering (#2531)", () => {
     expect(out).not.toContain("aiPreviewOnlyChanged");
   });
 
+  // #2566 — the fallback styles only tokens the server minted, never a lookalike from case text.
+  it("fallback marks a minted token but not a planted ANON_* literal", () => {
+    const { html } = load();
+    const c = call("a\nx WS-FIN-07 ANON_HOST_9\nb", () => "different ANON_HOST_1 ANON_HOST_9");
+    expect(c.diff.mode).toBe("none");
+    const out = html(c, false);
+    expect(out).toContain(`title="WS-FIN-07 → ANON_HOST_1">ANON_HOST_1</mark>`);
+    expect(out).toMatch(/<mark class="aip-add"[^>]*>ANON_HOST_1<\/mark>/);
+    expect(out).toContain("ANON_HOST_9");
+    expect(out).not.toMatch(/<mark class="aip-add"[^>]*>ANON_HOST_9</);
+  });
+
+  it("fallback does not mark a literal whose prefix is a minted token", () => {
+    const { html } = load();
+    const c = call("a\nx WS-FIN-07\nb", () => "other ANON_HOST_1 ANON_HOST_12");
+    expect(c.diff.mode).toBe("none");
+    const out = html(c, false);
+    expect(out).toMatch(/<mark class="aip-add"[^>]*>ANON_HOST_1<\/mark> ANON_HOST_12/);
+    expect((out.match(/<mark class="aip-add"/g) ?? []).length).toBe(1);
+  });
+
   it("summarises by kind", () => {
     const { summary } = load();
     const c = call(`WS-FIN-07 and ws-fin-07 saw ${EVIL}\nfrom 10.0.0.1`);

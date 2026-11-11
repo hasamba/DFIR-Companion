@@ -155,6 +155,60 @@ function adaptMailboxAudit(rec: Row, order: DateOrder | null): Row {
   };
 }
 
+// ───────────────────────────── UAL CSV CreationDate (#2552) ─────────────────────────────
+
+/** Whether a raw value has the Export-Csv local date shape ("3/25/2021 12:36:42 PM"). */
+export function isExportCsvLocalTime(raw: string): boolean {
+  return LOCAL_TIME.test(raw.trim());
+}
+
+// A Search-UnifiedAuditLog CSV row: the outer `CreationDate` beside the `AuditData` JSON.
+function isUalCsvRow(rec: Row): boolean {
+  return getCI(rec, "AuditData") !== undefined && getCI(rec, "CreationDate") !== undefined;
+}
+
+// AuditData's own CreationTime, when it parses; the mapper merges it over the outer row.
+function auditDataHasTime(rec: Row): boolean {
+  const ad = getCI(rec, "AuditData");
+  if (isObject(ad)) return !!str(getCI(ad, "CreationTime")).trim();
+  if (typeof ad !== "string" || !ad.trim().startsWith("{")) return false;
+  try {
+    const parsed: unknown = JSON.parse(ad);
+    return isObject(parsed) && !!str(getCI(parsed, "CreationTime")).trim();
+  } catch {
+    return false;
+  }
+}
+
+// The Export-Csv local date a row carries (mailbox `LastAccessed`, UAL `CreationDate`), if any.
+function localDateCell(rec: Row): string | undefined {
+  if (isMailboxAuditRow(rec)) return str(getCI(rec, "LastAccessed"));
+  return isUalCsvRow(rec) ? str(getCI(rec, "CreationDate")) : undefined;
+}
+
+// Whether the row's time comes from that local date: always for a mailbox row; for a UAL row only
+// when neither a top-level nor an AuditData CreationTime dates it. Parses AuditData, so callers ask
+// only about rows the file's order could not date.
+function timeNeedsLocalDate(rec: Row): boolean {
+  if (isMailboxAuditRow(rec)) return true;
+  return !str(getCI(rec, "CreationTime")).trim() && !auditDataHasTime(rec);
+}
+
+// The UAL fallback time: CreationDate read in the file's order. CreationDate itself stays raw, and a
+// parsed AuditData CreationTime still wins when normalizeRecord merges it over this row.
+function adaptUalCsv(rec: Row, order: DateOrder | null): Row {
+  if (str(getCI(rec, "CreationTime")).trim()) return rec;
+  const time = exportCsvTime(str(getCI(rec, "CreationDate")), order);
+  return time ? { ...rec, CreationTime: time } : rec;
+}
+
+// An ambiguous local date the file's order left unread, on a row whose time depends on it.
+function isUndated(rec: Row, order: DateOrder | null): boolean {
+  if (order !== null) return false;
+  const t = readLocal(localDateCell(rec) ?? "");
+  return t !== null && ownOrder(t) === null && timeNeedsLocalDate(rec);
+}
+
 /** The record in the shape the M365 mapper reads; any record no adapter claims comes back as is. */
 export function adaptM365ExportRow(rec: Row, order: DateOrder | null = null): Row {
   if (getCI(rec, "TimeGenerated") !== undefined) {
@@ -163,10 +217,11 @@ export function adaptM365ExportRow(rec: Row, order: DateOrder | null = null): Ro
   }
   if (isGraphAuditLogRecord(rec)) return adaptGraphAuditRecord(rec);
   if (isAzureDiagnosticEntra(rec)) return adaptAzureDiagnosticEntra(rec);
-  return isMailboxAuditRow(rec) ? adaptMailboxAudit(rec, order) : rec;
+  if (isMailboxAuditRow(rec)) return adaptMailboxAudit(rec, order);
+  return isUalCsvRow(rec) ? adaptUalCsv(rec, order) : rec;
 }
 
-/** Mailbox audit rows left without a time because the file's day/month order is unknown. */
+/** Mailbox audit and UAL CSV rows left without a time because the file's day/month order is unknown. */
 export interface UndatedRows {
   rows: number;
   /** The file holds both day-first and month-first dates. */
@@ -174,17 +229,15 @@ export interface UndatedRows {
 }
 
 /**
- * Every record of one upload, adapted. The mailbox audit date order is decided once for the whole
- * file (a value with a part above 12 fixes it), and each ambiguous row it could not date is counted.
+ * Every record of one upload, adapted. The Export-Csv date order (mailbox `LastAccessed`, UAL
+ * `CreationDate`) is decided once for the whole file (a value with a part above 12 fixes it), and
+ * each ambiguous row it could not date, and that nothing else dates, is counted.
  */
 export function adaptM365ExportRows(records: readonly Row[]): { rows: Row[]; undated: UndatedRows } {
-  const accessed = records.filter(isMailboxAuditRow).map((r) => str(getCI(r, "LastAccessed")));
-  const { order, mixed } = fileDateOrder(accessed);
+  const cells = records.map(localDateCell).filter((v): v is string => v !== undefined);
+  const { order, mixed } = fileDateOrder(cells);
   const rows = records.map((r) => adaptM365ExportRow(r, order));
-  const undatedCount = accessed.filter((v) => {
-    const t = readLocal(v);
-    return t !== null && ownOrder(t) === null && order === null;
-  }).length;
+  const undatedCount = records.filter((r) => isUndated(r, order)).length;
   return { rows, undated: { rows: undatedCount, mixedOrders: mixed } };
 }
 
@@ -203,12 +256,13 @@ export function createMailboxDateOrderLearner(): {
   return {
     add(records) {
       for (const r of records) {
-        if (!isMailboxAuditRow(r)) continue;
-        const t = readLocal(str(getCI(r, "LastAccessed")));
+        const cell = localDateCell(r);
+        if (cell === undefined) continue;
+        const t = readLocal(cell);
         const own = t ? ownOrder(t) : null;
         if (own === "day-first") dayFirst = true;
         else if (own === "month-first") monthFirst = true;
-        else if (t) ambiguous++;
+        else if (t && timeNeedsLocalDate(r)) ambiguous++;
       }
     },
     finish() {
@@ -225,9 +279,9 @@ export function createMailboxDateOrderLearner(): {
   };
 }
 
-/** The import-note clause for undated mailbox rows; "" when every row could be dated. */
+/** The import-note clause for undated mailbox audit and UAL CSV rows; "" when every row could be dated. */
 export function undatedRowsNote(u: UndatedRows | undefined): string {
   if (!u || u.rows === 0) return "";
   const mixed = u.mixedOrders ? " (it mixes day-first and month-first dates)" : "";
-  return `; ${u.rows} mailbox audit row(s) have no time: the file's day/month order could not be determined${mixed}`;
+  return `; ${u.rows} audit row(s) have no time: the file's day/month order could not be determined${mixed}`;
 }

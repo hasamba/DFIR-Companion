@@ -1159,3 +1159,26 @@ describe("parseM365Audit — plain UAL row provenance (#2485)", () => {
     expect(parseLoginEvent(fe)).toBeNull();
   });
 });
+
+describe("parseM365Audit — unparsed Certificate service-principal rows (#2549)", () => {
+  const row = (op: string, user: string) =>
+    `CreationDate,UserIds,Operations,AuditData\n2026-03-01T10:00:00,${user},"${op}",`;
+  const one = (csv: string) => {
+    const r = parseM365Audit(csv, { aggregate: false });
+    expect(r.events).toHaveLength(1);
+    return r.events[0];
+  };
+
+  it("an SP add/update by Microsoft's internal Certificate actor with empty AuditData is Low", () => {
+    for (const op of ["Add service principal.", "Update service principal."]) {
+      const e = one(row(op, "Certificate"));
+      expect(e.severity).toBe("Low");
+      expect(e.mitreTechniques).toEqual([]);
+    }
+  });
+
+  it("a credential add by Certificate, or an SP add by anyone else, keeps the table's grade", () => {
+    expect(one(row("Add service principal credentials.", "Certificate")).severity).toBe("High");
+    expect(one(row("Add service principal.", "admin@example.test")).severity).toBe("High");
+  });
+});

@@ -13,7 +13,10 @@ import {
   summarizeCloudCoverage,
   type CloudCoverageDraft,
   type CloudCoverageRecord,
+  cloudCoverageRecordSchema,
 } from "../../src/analysis/cloudCoverage.js";
+import { describeCloudStreamDisclosure } from "../../src/analysis/cloudStreamDisclosure.js";
+import { streamDisclosure } from "../helpers/cloudStreamDisclosureFixture.js";
 import {
   collectionCoverageGroup,
   foldCollectionRecords,
@@ -103,21 +106,83 @@ describe("foldCollectionRecords (pure)", () => {
     expect(r2.map((r) => r.pages)).toEqual([2, 2]);
   });
 
-  it("disclosures are unioned without duplicates and stop at 24", () => {
+  // #2546: replaces "disclosures are unioned without duplicates and stop at 24", which pinned the
+  // defect — the row showed the first ~6 pages' per-page sentences beside a whole-collection total,
+  // and a later page's cap sentence was silently dropped.
+  it("a 200-page fold states one summed disclosure: its record count is the row total, page 150's cap is present", () => {
     const g = "collection:abc";
     let rows: CloudCoverageRecord[] = [];
-    for (let i = 0; i < 30; i++) {
-      rows = foldCollectionRecords(
-        rows,
-        g,
-        [page({ importDisclosure: ["the same sentence", `page ${i} sentence`] })],
-        `2026-02-01T00:00:${String(i).padStart(2, "0")}.000Z`,
-      );
+    let duplicates = 0;
+    let medium = 0;
+    for (let i = 0; i < 200; i++) {
+      const records = 50 + (i % 7);
+      const dup = i % 3 === 0 ? 2 : 0;
+      duplicates += dup;
+      medium += 4 + (i % 2);
+      const d = streamDisclosure({
+        records,
+        duplicates: dup,
+        individual: { critical: 0, high: 1, medium: 4 + (i % 2) },
+        superEvicted: i === 150 ? 999 : 0,
+      });
+      const draft = page({
+        recordCount: records,
+        importDisclosure: describeCloudStreamDisclosure(d),
+        streamDisclosure: d,
+      });
+      rows = foldCollectionRecords(rows, g, [draft], "2026-02-01T00:00:00.000Z");
     }
-    const d = rows[0].importDisclosure ?? [];
-    expect(d).toHaveLength(24);
-    expect(new Set(d).size).toBe(24);
-    expect(d[0]).toBe("the same sentence");
+    const [row] = rows;
+    const d = row.importDisclosure ?? [];
+    expect(d.filter((s) => s.startsWith("streamed from disk"))).toHaveLength(1);
+    expect(d[0]).toBe(
+      `streamed from disk: ${row.recordCount.toLocaleString("en-US")} record(s), cloudtrail-json`,
+    );
+    expect(d.filter((s) => s.startsWith("kept in detail"))).toEqual([
+      `kept in detail: 0 Critical, 200 High, ${medium.toLocaleString("en-US")} Medium row(s)`,
+    ]);
+    expect(d).toContain("the super-timeline cap evicted 999 older row(s)");
+    expect(d).toContain(`${duplicates} duplicate record(s) skipped`);
+    expect(row.streamDisclosure?.records).toBe(row.recordCount);
+  });
+
+  it("a row stored before #2546 (strings, no sum) is replaced by the new page's sum and still parses", () => {
+    const g = "collection:abc";
+    const legacy: CloudCoverageRecord = {
+      ...page({
+        uploadId: g,
+        importDisclosure: ["streamed from disk: 50 record(s), cloudtrail-json", "old page 2"],
+      }),
+      uploadFirstSeenAt: "2026-01-01T00:00:00.000Z",
+      importedAt: "2026-01-01T00:00:00.000Z",
+      pages: 2,
+    };
+    expect(cloudCoverageRecordSchema.safeParse(legacy).success).toBe(true);
+    const d = streamDisclosure({ records: 7 });
+    const draft = page({
+      recordCount: 7,
+      importDisclosure: describeCloudStreamDisclosure(d),
+      streamDisclosure: d,
+    });
+    const [row] = foldCollectionRecords([legacy], g, [draft], "2026-02-01T00:00:00.000Z");
+    expect(row.importDisclosure).toEqual(describeCloudStreamDisclosure(d));
+    expect(row.streamDisclosure).toEqual(d);
+    expect(row.pages).toBe(3);
+    expect(cloudCoverageRecordSchema.safeParse(row).success).toBe(true);
+  });
+
+  it("two scopes on one page carry the page's sum once, not once per scope", () => {
+    const d = streamDisclosure({ records: 10 });
+    const rows = foldCollectionRecords(
+      [],
+      "collection:abc",
+      [
+        page({ streamDisclosure: d }),
+        page({ scope: { kind: "account", value: "444455556666" }, streamDisclosure: d }),
+      ],
+      "2026-02-01T00:00:00.000Z",
+    );
+    expect(rows.map((r) => r.streamDisclosure?.records)).toEqual([10, 10]);
   });
 
   it("never mutates its inputs", () => {
@@ -208,6 +273,14 @@ describe("persistCollectionCoverage (store)", () => {
     expect(records).toHaveLength(1);
     expect(records[0].recordCount).toBe(12);
     expect(records[0].pages).toBeUndefined();
+  });
+
+  it("a manual upload never stores the running sum: it is a collection row's field only (#2546)", async () => {
+    const draft = { ...manual("manual-ct", "aws-cloudtrail", 10), streamDisclosure: streamDisclosure() };
+    await persistImportCoverage(store, "c1", [draft]);
+    const records = await store.load("c1");
+    expect(records).toHaveLength(1);
+    expect(records[0].streamDisclosure).toBeUndefined();
   });
 
   it("with a group, persistImportCoverage folds; empty coverage writes nothing", async () => {
