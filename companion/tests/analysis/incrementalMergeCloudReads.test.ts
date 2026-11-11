@@ -22,8 +22,9 @@ import type { ForensicEvent, InvestigationState } from "../../src/analysis/state
 // #2536: a cloud object read row (GetBucketPolicy, GetObject, ListObjects …) used to be a merge
 // trigger, so ONE such row above Info sent every later import down the full merge — a drop folder of
 // thousands of small CloudTrail files went quadratic. Read rows are now LOAD rows: every merge reads
-// all of them, and the merge falls back only when they form a bulk-read group, a truncation or the
-// object-logging coverage row. Every test runs the same imports into "full" (load → mergeDelta →
+// all of them. Until #2544 the merge then fell back whenever they formed a bulk-read group, a
+// truncation or the object-logging coverage row; it now holds everything the pass reads and places
+// what it re-emits (incrementalMergeBulkTail.ts), so those imports stay incremental too. Every test runs the same imports into "full" (load → mergeDelta →
 // save) and "inc" (mergeIntoCase) and compares what a load of each returns after every step.
 
 type Ev = Partial<ForensicEvent> & { id: string; timestamp: string };
@@ -186,22 +187,17 @@ describe("bulk-read findings still fire across files (#2536)", () => {
       });
       const fast = await importBoth(delta(reads));
       const s = await expectSame();
-      // Below the 50-object threshold no group forms and the import stays incremental; once it has
-      // formed the held reads form a group, and the merge falls back to keep the summary exact.
-      if (n < 50) expect(fast).toBe(true);
-      else {
-        expect(fast).toBe(false);
-        expect(summaries(s)).toHaveLength(1);
-      }
+      // Before and after the group forms at 50 objects, the import stays incremental (#2544: it used
+      // to fall back from then on), and the summary is the full merge's.
+      expect(fast).toBe(true);
+      if (n >= 50) expect(summaries(s)).toHaveLength(1);
     }
-    // The fallback is the bulk-read gate, not some other reason.
     const next = delta([readRow("late", at(22, 15), "GetObject", "corp-data/late.csv")]);
     const out = await mergeIncrementally(store, "inc", next, windowCtx(), mergeIndexStamp());
-    expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.reason).toContain("cloud bulk read");
+    expect(out.ok).toBe(true);
   });
 
-  it("a recurring reader whose AssumeRole row came in an earlier file falls back, equal to the full merge", async () => {
+  it("a recurring reader whose AssumeRole row came in an earlier file stays incremental, equal to the full merge", async () => {
     // The assumption is the only corroboration: without it the scheduled principal grades to nothing,
     // with it the group is a summary. It arrives in an earlier file and is not re-sent.
     const assume: Ev = {
@@ -232,19 +228,19 @@ describe("bulk-read findings still fire across files (#2536)", () => {
       });
       const fast = await importBoth(delta(reads));
       const s = await expectSame();
+      expect(fast).toBe(true); // the AssumeRole row is a LOAD row since #2544
       if (n >= 50) {
-        expect(fast).toBe(false);
         expect(summaries(s).some((e) => (e.description ?? "").includes("alice"))).toBe(true);
       }
     }
   });
 
-  it("LIST-only reads that form the object-logging coverage row fall back, equal to the full merge", async () => {
+  it("LIST-only reads that form the object-logging coverage row stay incremental, equal to the full merge", async () => {
     expect(await importBoth(delta(file("seed", 20, 2)))).toBe(false);
-    expect(await importBoth(delta([readRow("l1", at(21, 8), "ListObjects", "corp-data")]))).toBe(false);
+    expect(await importBoth(delta([readRow("l1", at(21, 8), "ListObjects", "corp-data")]))).toBe(true);
     let s = await expectSame();
     expect(s.forensicTimeline.some((e) => e.id === LOGGING_COVERAGE_ID)).toBe(true);
-    expect(await importBoth(delta([readRow("l2", at(21, 9), "ListObjects", "corp-data")]))).toBe(false);
+    expect(await importBoth(delta([readRow("l2", at(21, 9), "ListObjects", "corp-data")]))).toBe(true);
     s = await expectSame();
     expect(s.forensicTimeline.filter((e) => e.id === LOGGING_COVERAGE_ID)).toHaveLength(1);
   });

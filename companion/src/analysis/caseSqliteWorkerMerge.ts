@@ -50,16 +50,24 @@ export const MERGE_SCAN_SQL = {
 // cloud-audit rows with a time, so neither reads or sorts the rest of the case
 // (tests/analysis/mergeScanPlan.test.ts; CROSS JOIN keeps merge_rows the outer loop). A row with no
 // readable time is never the earliest.
-const CLOUD_ROW_JOIN =
-  "FROM merge_rows m CROSS JOIN entities e ON e.row_id=m.row_id AND e.version=m.version " +
-  "WHERE (m.flags & 4) <> 0 AND e.kind='forensicTimeline' AND m.row_id NOT IN (SELECT value FROM json_each(?)) ";
-export const MERGE_EARLIEST_CLOUD_SQL = {
-  time: "SELECT m.time_ms AS t " + CLOUD_ROW_JOIN + "AND m.time_ms IS NOT NULL ORDER BY m.time_ms LIMIT 1",
-  row:
-    "SELECT e.row_id, e.ordinal, e.version, e.payload " +
-    CLOUD_ROW_JOIN +
-    "AND m.time_ms = ? ORDER BY e.ordinal LIMIT 1",
-} as const;
+// #2544: the same pair over the AWS rows (flag 64, MERGE_FLAG_AWS) and merge_rows_aws_time_idx, for the
+// dated object-logging note's start. The flag is spelled literally so each partial index applies.
+function earliestFlaggedSql(flag: 4 | 64): { time: string; row: string } {
+  const join =
+    "FROM merge_rows m CROSS JOIN entities e ON e.row_id=m.row_id AND e.version=m.version " +
+    "WHERE (m.flags & " +
+    flag +
+    ") <> 0 AND e.kind='forensicTimeline' AND m.row_id NOT IN (SELECT value FROM json_each(?)) ";
+  return {
+    time: "SELECT m.time_ms AS t " + join + "AND m.time_ms IS NOT NULL ORDER BY m.time_ms LIMIT 1",
+    row:
+      "SELECT e.row_id, e.ordinal, e.version, e.payload " +
+      join +
+      "AND m.time_ms = ? ORDER BY e.ordinal LIMIT 1",
+  };
+}
+export const MERGE_EARLIEST_CLOUD_SQL = earliestFlaggedSql(4);
+export const MERGE_EARLIEST_AWS_SQL = earliestFlaggedSql(64);
 
 /** Rows per page of the placement scan: bounds what one read allocates, whatever the case size. */
 export const MERGE_SCAN_PAGE = 1024;
@@ -70,6 +78,9 @@ export const MERGE_WORKER_SOURCE =
   ";\n" +
   "const MERGE_EARLIEST_CLOUD_SQL = " +
   JSON.stringify(MERGE_EARLIEST_CLOUD_SQL) +
+  ";\n" +
+  "const MERGE_EARLIEST_AWS_SQL = " +
+  JSON.stringify(MERGE_EARLIEST_AWS_SQL) +
   ";\n" +
   "const MERGE_SCAN_PAGE = " +
   MERGE_SCAN_PAGE +
@@ -161,7 +172,7 @@ function mergeRowsOut(db, rows) {
 
 // Forensic rows by row id, event id, bucket key, index flag (clean rows carrying one of the bits),
 // clamp year (clean rows on a guessed year other than the dominant one), or the earliest clean
-// cloud-audit row (#2504), in timeline order, never the rows named in excludeRowIds.
+// cloud-audit (#2504) or AWS (#2544) row, in timeline order, never the rows named in excludeRowIds.
 function mergeRows(dbPath, select) {
   if (!existsSync(dbPath)) return [];
   const db = openDatabase(dbPath);
@@ -181,10 +192,11 @@ function mergeRows(dbPath, select) {
     } else if (typeof select.flagMask === "number") {
       rows = db.prepare(cols + CLEAN_JOIN + " WHERE e.kind='forensicTimeline' AND (m.flags & ?) <> 0 ORDER BY e.ordinal")
         .all(select.flagMask);
-    } else if (select.earliestCloudAudit === true) {
+    } else if (select.earliestCloudAudit === true || select.earliestAws === true) {
+      const sql = select.earliestAws === true ? MERGE_EARLIEST_AWS_SQL : MERGE_EARLIEST_CLOUD_SQL;
       const exclude = JSON.stringify(Array.isArray(select.excludeRowIds) ? select.excludeRowIds : []);
-      const first = db.prepare(MERGE_EARLIEST_CLOUD_SQL.time).get(exclude);
-      if (first) rows = db.prepare(MERGE_EARLIEST_CLOUD_SQL.row).all(exclude, first.t);
+      const first = db.prepare(sql.time).get(exclude);
+      if (first) rows = db.prepare(sql.row).all(exclude, first.t);
     } else if (typeof select.clampYear === "number") {
       rows = db.prepare(cols + CLEAN_JOIN + " WHERE e.kind='forensicTimeline' AND m.year_inferred=1 " +
         "AND m.year IS NOT NULL AND m.year<>? ORDER BY e.ordinal").all(select.clampYear);

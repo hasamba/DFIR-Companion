@@ -9,6 +9,7 @@
  */
 import type { BulkGroup } from "./cloudBulkRead.js";
 import { neutraliseForgedNotes } from "./derivedNote.js";
+import { BULK_READ_TRUNCATION_ID, OBJECT_LOGGING_COVERAGE_ID } from "./coverageEventTime.js";
 
 const lower = (s: string): string => (s ?? "").trim().toLowerCase();
 
@@ -34,6 +35,19 @@ export function summaryHead(group: BulkGroup): string {
   );
 }
 
+/** Every summary id (current and legacy) starts with this. */
+const SUMMARY_ID_PREFIX = "bulkread-";
+
+/**
+ * An id the bulk-read pass emits or replaces by id: a summary (any form), the truncation row or the
+ * object-logging coverage row. The incremental merge holds every stored row under one (#2544).
+ */
+export function isBulkPassId(id: string): boolean {
+  return (
+    id.startsWith(SUMMARY_ID_PREFIX) || id === BULK_READ_TRUNCATION_ID || id === OBJECT_LOGGING_COVERAGE_ID
+  );
+}
+
 /** Hash a summary key into the 64-bit, two-halves id form summaryId has always used. */
 function hashSummaryKey(key: string): string {
   let h1 = 5381;
@@ -43,7 +57,7 @@ function hashSummaryKey(key: string): string {
     h1 = ((h1 * 33) ^ c) >>> 0;
     h2 = ((h2 * 31) ^ (c + i)) >>> 0;
   }
-  return `bulkread-${h1.toString(36)}${h2.toString(36)}`;
+  return `${SUMMARY_ID_PREFIX}${h1.toString(36)}${h2.toString(36)}`;
 }
 
 /**

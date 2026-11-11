@@ -15,9 +15,10 @@ import { TIMESTOMP_CORROBORATION_MARKER } from "./timestompCorroborate.js";
 import { isRpcPipeCall, isSmbStagedWrite } from "./smbExecution.js";
 import { PRECURSOR_CLASSES } from "./ransomwarePrecursor.js";
 import { CLOUD_AUDIT_RE, COVERAGE_EVENT_ID, isGeneratedCoverageRow } from "./cloudMetadataAccess.js";
-import { LOGGING_COVERAGE_ID, readCloudRecord } from "./cloudBulkRead.js";
+import { LOGGING_COVERAGE_ID, readCloudRecord, roleAssumptions } from "./cloudBulkRead.js";
+import { isBulkPassId } from "./cloudBulkReadSummaryId.js";
 import { isStorageKeyJoinInput } from "./azureStorageKeyToRead.js";
-import { selectsObjects } from "./objectLoggingWindow.js";
+import { isAws, isObjectRecord, selectsObjects } from "./objectLoggingWindow.js";
 import { isOpenPrecursorCheck, isPrecursorChange } from "./cloudPrecursorMerge.js";
 import { isAwsFlowEvent } from "./awsFlowResourceAttribution.js";
 import { readBrowsing } from "./serviceAccountBrowsing.js";
@@ -57,6 +58,8 @@ export const MERGE_FLAG_LOAD = 8;
 export const MERGE_FLAG_AWS_LAUNCH = 16;
 /** An AWS VPC flow row: the rows the flow attribution passes rewrite (#2539). */
 export const MERGE_FLAG_AWS_FLOW = 32;
+/** An AWS row: the dated object-logging note starts at the earliest one in the case (#2544). */
+export const MERGE_FLAG_AWS = 64;
 
 /**
  * The correlation bucket keys of a row, as groupEvents would key it (on its signature-stamped copy).
@@ -172,9 +175,9 @@ export function mergeTrigger(e: ForensicEvent): string | null {
  * ransomware-precursor clustering (ransomwarePrecursor.ts reads rows carrying a precursor technique).
  * The transfer-tool staging join (transferToolStaging.ts, #1955) reads only rows whose path names a
  * transfer tool or its config. The cloud bulk-read pass (cloudBulkRead.ts summarizeBulkReads, #2536)
- * groups cloud object reads — checked before the asset test, because cloud rows often carry none; the
- * incremental merge falls back whenever those reads form any group, truncation or coverage row
- * (incrementalMergeRows.ts cloudPassWork), since the pass then reads rows that are not LOAD rows.
+ * groups cloud object reads — checked before the asset test, because cloud rows often carry none —
+ * and, once it has output, also reads role assumptions and S3 object records and replaces its own
+ * rows by id, so those are LOAD rows too (#2544; incrementalMergeBulkTail.ts places what it re-emits).
  * The storage key → read join (azureStorageKeyToRead.ts, #2539) reads key listings and account-key
  * object ops — also checked before the asset test (Azure rows carry none); the merge falls back
  * whenever those rows form a join. The instance-metadata passes are per-row rewrites and need
@@ -185,6 +188,10 @@ export function mergeTrigger(e: ForensicEvent): string | null {
  */
 export function mergeLoadAlways(e: ForensicEvent): boolean {
   if (readCloudRecord(e) !== null) return true;
+  // What else the bulk-read pass reads once it has output (#2544): the role assumptions a group's
+  // verdict rests on, every S3 object record (the dated note holds only with none before its anchor),
+  // and the rows it replaces by id — its summaries and its truncation row.
+  if (roleAssumptions([e]).length > 0 || isObjectRecord(e) || isBulkPassId(e.id)) return true;
   if (isStorageKeyJoinInput(e)) return true;
   // The time-aware object-logging note's anchor: without it held, a stored note never refreshes (#2564).
   if (selectsObjects(e)) return true;
@@ -212,6 +219,7 @@ export function mergeIndexEntry(e: ForensicEvent): MergeIndexEntry {
   if (e.id !== COVERAGE_EVENT_ID && CLOUD_AUDIT_RE.test(e.description ?? "")) flags |= MERGE_FLAG_CLOUD_AUDIT;
   if (e.canonical?.awsCompute) flags |= MERGE_FLAG_AWS_LAUNCH;
   if (isAwsFlowEvent(e)) flags |= MERGE_FLAG_AWS_FLOW;
+  if (isAws(e)) flags |= MERGE_FLAG_AWS;
   return {
     timeMs: Number.isNaN(t) ? null : t,
     year: yearOf(e.timestamp),
