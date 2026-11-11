@@ -52,6 +52,7 @@ import { markAppCorroboration } from "./mobileBackgroundActivity.js";
 import { corroborateInjectionSequences } from "./injectionSequence.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { raiseCasePrecursors } from "./cloudPrecursorMerge.js";
+import { raiseCaseBecPairs } from "./m365BecMerge.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
 import {
   explainMetadataAccess,
@@ -445,11 +446,10 @@ export function runTimelineChain(
   // second half). Here because the records may arrive in separate imports. Only ever raises;
   // recomputed on every merge.
   const withInjection = corroborateInjectionSequences(withAppCorroboration);
-  // Several distinct pre-encryption behaviours on one host inside one window (#908 item 3). Runs
-  // here, with the other deterministic correlations, because the steps arrive from different
-  // importers and no single one of them is remarkable — the combination is the finding. Only ever
-  // raises, and never on one behaviour alone. Then an S3 check after its key's change, any file (#2563).
-  const withPrecursors = raiseCasePrecursors(markRansomwarePrecursors(withInjection));
+  // Several distinct pre-encryption behaviours on one host inside one window (#908 item 3): the steps
+  // come from different importers and only the combination is the finding. Only ever raises, never on
+  // one behaviour alone. Then S3 checks (#2563) and M365 BEC pairs (#2570) whose halves came apart.
+  const withPrecursors = raiseCaseBecPairs(raiseCasePrecursors(markRansomwarePrecursors(withInjection)));
   // Say what a certutil transfer actually did — where it connected, what it wrote — by stitching
   // the command to the network and file records of the same process (#908 item 4). Here, because
   // those three legs arrive from different importers.

@@ -14,9 +14,8 @@ import {
 } from "./canonicalProvenanceCompact.js";
 import { smbBlockSchema, transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
 import { dnsBlockSchema } from "./canonicalDns.js";
-import { tlsGraphBlockSchema } from "./canonicalTls.js";
+import { tlsCertificateProvenanceFields, tlsGraphBlockSchema } from "./canonicalTls.js";
 import { quarantineAttributeBlockSchema, quarantineBlockSchema } from "./canonicalQuarantine.js";
-import { tlsCertificateProvenanceFields } from "./canonicalTls.js";
 import { defenderBlockSchema } from "./canonicalDefender.js";
 import { mobileBlockSchema } from "./canonicalMobile.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
@@ -37,7 +36,7 @@ import {
   takeoutBlockSchema,
   takeoutLifecycleBlockSchema,
 } from "./canonicalGwsDrive.js";
-import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
+import { m365BecBlockSchema, mailboxChainBlockSchema } from "./canonicalMailbox.js";
 import { memoryRunBlockSchema } from "./canonicalMemoryRun.js";
 import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
 import { recoveredFragmentBlockSchema } from "./canonicalRecoveredFragment.js";
@@ -183,6 +182,7 @@ const envelopeObjectSchema = z.object({
   entra: entraPathBlockSchema.optional(), // entraPrivilegePath.ts, #973; block in canonicalEntra.ts
   awsLineage: awsLineageBlockSchema.optional(), // awsLineage.ts, #979; block in canonicalAwsLineage.ts
   awsPrecursor: awsPrecursorBlockSchema.optional(), // awsPrecursorGrade.ts, #2563: one half of the S3 ransomware-precursor join
+  m365Bec: m365BecBlockSchema.optional(), // m365BecPairing.ts, #2570: one side of an M365 BEC pairing; block in canonicalMailbox.ts
   awsCompute: awsComputeBlockSchema.optional(), // compute-lifecycle summary rows (#931 item 8; Azure/GCP are the second half, #1066)
   azureCompute: azureComputeBlockSchema.optional(),
   azureVmssCompute: azureVmssComputeBlockSchema.optional(),
