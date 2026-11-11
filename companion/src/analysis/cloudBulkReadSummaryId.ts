@@ -8,6 +8,7 @@
  * description and host agree.
  */
 import type { BulkGroup } from "./cloudBulkRead.js";
+import { neutraliseForgedNotes } from "./derivedNote.js";
 
 const lower = (s: string): string => (s ?? "").trim().toLowerCase();
 
@@ -27,7 +28,10 @@ export function summaryHead(group: BulkGroup): string {
     : fingerprint || "an unidentified caller";
   const account = group.account ? ` account ${group.account.slice(0, 32)}` : "";
   const where = group.provider ? ` in ${group.provider}${account}` : account ? ` in${account}` : "";
-  return `Cloud bulk read by ${who}${where}${group.sourceIp ? ` from ${group.sourceIp}` : ""}`;
+  // The principal comes from the canonical envelope, which no import seam rewrote (#2574).
+  return neutraliseForgedNotes(
+    `Cloud bulk read by ${who}${where}${group.sourceIp ? ` from ${group.sourceIp}` : ""}`,
+  );
 }
 
 /** Hash a summary key into the 64-bit, two-halves id form summaryId has always used. */

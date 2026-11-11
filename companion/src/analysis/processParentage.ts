@@ -35,7 +35,7 @@ import type { MappedEvent } from "./siemImport.js";
 import { getCI, str } from "./siemImport.js";
 import { eventData, eventId } from "./veloDetectionNoise.js";
 import { processGuid } from "./processAccess.js";
-import { appendDerivedNote } from "./derivedNote.js";
+import { appendRowNote } from "./derivedNote.js";
 
 type Row = Record<string, unknown>;
 
@@ -137,6 +137,6 @@ export class ParentChildAccessLedger {
 function demote(m: MappedEvent): void {
   m.severity = "Info";
   if (!m.description.includes(OWN_CHILD_MARKER))
-    m.description = appendDerivedNote(m.description, OWN_CHILD_MARKER, OWN_CHILD_NOTE);
+    m.description = appendRowNote(m, OWN_CHILD_MARKER, OWN_CHILD_NOTE); // before aggregation (#2574)
   if (!m.aggKey.endsWith(OWN_CHILD_AGG_SUFFIX)) m.aggKey = `${m.aggKey}${OWN_CHILD_AGG_SUFFIX}`;
 }

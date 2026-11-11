@@ -25,7 +25,7 @@ import {
 } from "./siemImport.js";
 import { type Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
-import { appendDerivedNote } from "./derivedNote.js";
+import { appendRowNote } from "./derivedNote.js";
 import { RENAMED_BINARY_MARKER } from "./renamedBinaryNote.js";
 import { isStagedPath } from "./stagingPaths.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
@@ -185,12 +185,14 @@ function describeRename(f: RenameFacts): string {
 }
 
 // The row's shown text: host suffix and length clip on the BASE, then the rename note, so the note
-// is never cut through its middle by the clip (derivedNote.ts is built for exactly that order).
-function renameDescription(f: RenameFacts, host: string): string {
-  const base = withHostSuffix(describeRename(f), host).slice(0, 600);
-  if (!f.renamed) return base;
+// is never cut through its middle by the clip (derivedNote.ts is built for exactly that order). The
+// note goes on through appendRowNote: it is written before aggregation, so the base (attacker-chosen
+// file names) is neutralised first and a name cannot forge a note (#2574).
+function withRenameNote<T extends { description: string }>(event: T, f: RenameFacts): T {
+  if (!f.renamed) return event;
   const note = `${oneLine(f.onDisk).slice(0, 120)} is really ${oneLine(f.original).slice(0, 120)}`;
-  return appendDerivedNote(base, RENAMED_BINARY_MARKER, note, 600);
+  event.description = appendRowNote(event, RENAMED_BINARY_MARKER, note, 600);
+  return event;
 }
 
 // The PATH is in the key, and digits are NOT stripped. Both were wrong in the first version: the key
@@ -255,18 +257,21 @@ export function mapBinaryRename(
   if (f.sha256) addIoc(sink, "hash", f.sha256);
   else if (f.md5) addIoc(sink, "hash", f.md5);
 
-  return {
-    timestamp: dropTime(row, timestamp),
-    description: renameDescription(f, host),
-    severity: gradeRename(f),
-    // T1036.003 Rename System Utility when it is one, else plain T1036 Masquerading. A row that
-    // proves no rename carries no masquerading technique.
-    mitre: f.renamed ? (f.systemUtility ? ["T1036.003", "T1036"] : ["T1036"]) : [],
-    aggKey: renameAggKey(f, host),
-    sources: ["Velociraptor"],
-    ...(f.path ? { path: f.path } : {}),
-    ...(host ? { asset: host } : {}),
-    ...(f.sha256 ? { sha256: f.sha256 } : {}),
-    ...(f.md5 ? { md5: f.md5 } : {}),
-  };
+  return withRenameNote(
+    {
+      timestamp: dropTime(row, timestamp),
+      description: withHostSuffix(describeRename(f), host).slice(0, 600),
+      severity: gradeRename(f),
+      // T1036.003 Rename System Utility when it is one, else plain T1036 Masquerading. A row that
+      // proves no rename carries no masquerading technique.
+      mitre: f.renamed ? (f.systemUtility ? ["T1036.003", "T1036"] : ["T1036"]) : [],
+      aggKey: renameAggKey(f, host),
+      sources: ["Velociraptor"],
+      ...(f.path ? { path: f.path } : {}),
+      ...(host ? { asset: host } : {}),
+      ...(f.sha256 ? { sha256: f.sha256 } : {}),
+      ...(f.md5 ? { md5: f.md5 } : {}),
+    },
+    f,
+  );
 }

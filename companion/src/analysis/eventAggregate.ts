@@ -4,6 +4,7 @@ import { annotateCollectorDeployment, loadCollectorInfrastructure } from "./coll
 import { annotateBenignOsActivity } from "./benignOsActivity.js";
 import { annotateBidiMasquerade } from "./bidiMasquerade.js";
 import { combineMarkings } from "./tlp.js";
+import { carryNoteMark, neutraliseRowNotes } from "./derivedNote.js";
 
 /**
  * The aggregation half of the shared import path: collapse mapped rows into counted events, apply
@@ -172,6 +173,9 @@ export function createEventAggregator(opts: AggregateOptions = {}): EventAggrega
   return {
     add(m: MappedEvent, ordinal: number = arrivals): void {
       arrivals++;
+      // FIRST, before any annotator below appends a note: a name holding note syntax is importer
+      // text, never a product note (#2574). A row noted before aggregation was neutralised then.
+      neutraliseRowNotes(m);
       // Every importer ends here, so this is the one seam where the collector's own deployment
       // (download from the configured server, msiexec install, the MSI's creation-time change) is
       // recognised for every source at once. Before the floor, so a demoted row is floored as Info.
@@ -223,6 +227,7 @@ export function createEventAggregator(opts: AggregateOptions = {}): EventAggrega
         // promote the whole displayed record to it — never just the number.
         if (SEVERITY_RANK[m.severity] < SEVERITY_RANK[existing.severity]) {
           applyEventIdentity(existing, m);
+          carryNoteMark(m, existing);
         }
         // `count` records repeats; retaining one instance's identity avoids unbounded provenance arrays.
         noteMember(existing, key, m, opts.provenance);
@@ -245,6 +250,7 @@ export function createEventAggregator(opts: AggregateOptions = {}): EventAggrega
           ...(m.origin ? { origin: m.origin } : {}),
         };
         applyEventIdentity(e, m);
+        carryNoteMark(m, e); // a second aggregation must not rewrite this row's own notes
         noteMember(e, key, m, opts.provenance);
         firstOrdinal.set(e, ordinal);
         byKey.set(key, e);
