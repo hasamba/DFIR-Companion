@@ -291,6 +291,14 @@ describe("matching by key and principal", () => {
     for (const e of signed) expect(trustedMarkFor(e, m), e.description).toBeNull();
   });
 
+  it("a source IP that is not edge-observed confers no trust", () => {
+    const c = read.canonical!;
+    const claimed = { ...read, canonical: { ...c, network: { source: { address: COMPANY_IP } } } };
+    expect(trustedMarkFor(claimed as ForensicEvent, ipMark)).toBeNull();
+    expect(c.network?.source?.provenance).toBe("edge-observed");
+    expect(trustedMarkFor(read, ipMark)).not.toBeNull();
+  });
+
   it("does not match a single-call row from another provider in v1", () => {
     const other = {
       ...read,

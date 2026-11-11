@@ -131,7 +131,10 @@ function principalMatches(c: Canonical, m: TrustedMark): boolean {
 
 /** The first mark in `list` that this row's source IP, key or principal matches. */
 function firstMatch(c: Canonical, list: readonly TrustedMark[]): TrustedMark | null {
-  const ip = (c.network?.source?.address ?? "").trim().toLowerCase();
+  // A source IP confers trust only when the recorder observed it (ARCHITECTURE.md § "The
+  // `network.source.provenance` trust flag"): fail closed on a claimed or unstamped address.
+  const source = c.network?.source;
+  const ip = source?.provenance === "edge-observed" ? (source.address ?? "").trim().toLowerCase() : "";
   const key = (c.authentication?.credentialId ?? "").trim().toUpperCase();
   for (const m of list) {
     if (m.kind === "ip") {
