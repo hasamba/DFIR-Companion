@@ -185,6 +185,7 @@ export type MergeRowSelect = (
   | { flagMask: number }
   | { clampYear: number }
   | { earliestCloudAudit: true }
+  | { earliestAws: true }
 ) & { excludeRowIds?: readonly number[] };
 
 /** What captureImportBaseline reads in one transaction (analysis/importBaseline.ts). */

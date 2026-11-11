@@ -28,6 +28,8 @@ import {
 } from "./mergeIndex.js";
 import { COVERAGE_EVENT_ID } from "./cloudMetadataAccess.js";
 import { placeCoverage } from "./incrementalMergeCoverage.js";
+import { placeBulkTail, tailIdsFree } from "./incrementalMergeBulkTail.js";
+import { selectsObjects } from "./objectLoggingWindow.js";
 import {
   NEW_ROW_BASE,
   cloudPassWork,
@@ -72,7 +74,10 @@ import {
 //    bit, so a stored dated note would not be held when an earlier object record contradicts it.
 // 8: rows carrying an M365 BEC pairing block are LOAD rows (#2570). Rows indexed under 7 lack that
 //    bit, so a stored hiding rule or grant would not be held when its partner arrives.
-export const MERGE_INDEX_VERSION = 8;
+// 9: role assumptions, S3 object records and the bulk-read pass's own rows are LOAD rows; the AWS
+//    bit (#2544). Rows indexed under 8 lack them, so a stored summary would not be held and a
+//    re-emitted one would be inserted beside it.
+export const MERGE_INDEX_VERSION = 9;
 
 export type IncrementalResult =
   { ok: true; state: InvestigationState; read: number; written: number } | { ok: false; reason: string };
@@ -119,6 +124,8 @@ export async function mergeIncrementally(
   const clamped = await clampHeld(store, caseId, snap, held, delta, ctx);
   const chained = chainHeld(snap, held, clamped.working, clamped.year, ctx);
   if (typeof chained === "string") return fallback(chained);
+  const taken = await tailIdsFree(store, caseId, chained.rows);
+  if (taken) return fallback(taken);
   const rows = chained.coverageDue ? await placeCoverage(store, caseId, held, chained.rows) : chained.rows;
   if (typeof rows === "string") return fallback(rows);
   const limit = Math.max(5000, Math.floor(snap.rowCount / 2));
@@ -241,6 +248,16 @@ async function clampHeld(
       working = upsert([...held.values()], delta, ctx);
     }
   }
+  // The dated object-logging note starts at the earliest AWS row of the whole case (#2544): with a
+  // selector change held, hold the earliest clean AWS row not yet held. After the clamp, so no row
+  // left unheld moves; the held rows then contain the case's earliest AWS row, first in timeline order.
+  if (working.some((h) => selectsObjects(h.event))) {
+    const [first] = await store.mergeRows(caseId, { earliestAws: true, excludeRowIds: [...held.keys()] });
+    if (first) {
+      held.set(first.rowId, first);
+      working = upsert([...held.values()], delta, ctx);
+    }
+  }
   return { working, year };
 }
 
@@ -281,13 +298,12 @@ function chainHeld(
     (events) => clampToYear(events, year),
     false,
   );
-  // Rows are matched back to held rows by position, so the chain must keep every id in place.
-  if (chained.length !== working.length || chained.some((e, i) => e.id !== working[i].event.id))
-    return "the chain added, removed or reordered a row";
+  // Rows are matched back to held rows in order; only the bulk-read pass may move its own rows (#2544).
+  const rows = placeBulkTail(working, chained);
+  if (typeof rows === "string") return rows;
   // The pass reads the rows as the year clamp left them; judge them that way too (#2536).
   const bulkAfter = cloudPassWork(chained);
   if (bulkAfter) return bulkAfter;
-  const rows = working.map((h, i) => ({ ...h, event: chained[i] }));
   // The case-wide counts after this merge: stored counts of the clean rows, less the held clean
   // rows' stored flags, plus every held row as it now reads. process/cloud drive the metadata
   // coverage row (#2504); launch/flow the AWS flow attribution passes (#2539).

@@ -145,6 +145,9 @@ export const CASE_SQLITE_SCHEMA_SQL =
   // #2504: the cloud-audit rows with a time, by time, for the cloud coverage row's place.
   "CREATE INDEX IF NOT EXISTS merge_rows_cloud_time_idx ON merge_rows(time_ms) " +
   "WHERE (flags & 4) <> 0 AND time_ms IS NOT NULL;" +
+  // #2544: the AWS rows with a time, by time, for the dated object-logging note's start.
+  "CREATE INDEX IF NOT EXISTS merge_rows_aws_time_idx ON merge_rows(time_ms) " +
+  "WHERE (flags & 64) <> 0 AND time_ms IS NOT NULL;" +
   "CREATE TABLE IF NOT EXISTS merge_dirty_keys (key TEXT PRIMARY KEY) WITHOUT ROWID;" +
   "CREATE TABLE IF NOT EXISTS merge_generation (id INTEGER PRIMARY KEY CHECK (id = 1), n INTEGER NOT NULL);" +
   "INSERT OR IGNORE INTO merge_generation(id, n) VALUES (1, 0);" +

@@ -18,7 +18,9 @@ import type { ForensicEvent, InvestigationState } from "../../src/analysis/state
 // (PutEventSelectors selecting AWS::S3::Object). That row was neither a trigger nor a LOAD row, so
 // once stored, a later import never re-read it: the incremental merge took the fast path and left the
 // note at its stored place and start time, while the full merge re-emitted it. A selector row that
-// selects S3 object activity is now a LOAD row, so the merge sees the note is due and falls back.
+// selects S3 object activity is now a LOAD row, so the merge sees the note is due. It then fell back;
+// since #2544 it re-emits the note on the incremental path (incrementalMergeBulkTail.ts) and falls
+// back only to withdraw a contradicted note.
 // Every test runs the same imports into "full" (load → mergeDelta → save) and "inc" (mergeIntoCase)
 // and compares what a load of each returns after every step.
 

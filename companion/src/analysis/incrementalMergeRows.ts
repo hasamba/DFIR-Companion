@@ -6,7 +6,7 @@ import { upgradeForensicEvent } from "./canonicalEvent.js";
 import { correlateEventsTracked, correlationGroups } from "./correlate.js";
 import { runTimelineChain } from "./stateMerge.js";
 import { correlationKeys } from "./mergeIndex.js";
-import { groupBulkReadsWithDropped, objectLoggingEvent } from "./cloudBulkRead.js";
+import { groupBulkReadsWithDropped } from "./cloudBulkRead.js";
 import { storageKeyJoinsForm } from "./azureStorageKeyToRead.js";
 import { windowNoteContradicted } from "./objectLoggingWindow.js";
 
@@ -24,14 +24,15 @@ export interface HeldRow {
 }
 
 /**
- * Why a cloud pass over LOAD rows could act on these rows, or null.
+ * Why a cloud pass over LOAD rows could act on these rows in a way the incremental merge does not
+ * carry, or null.
  *
- * The bulk-read pass (#2536). Cloud object reads are LOAD rows, so the merge holds every one of them —
- * but the pass, once it has a group, a truncation or the object-logging coverage row, also reads role
- * assumptions and the case's recurring readers, which are not LOAD rows, and it can replace a stored
- * summary out of place. So the decision rests only on what
- * the held reads alone decide, exactly as the full merge's pass decides it: with none of the three,
- * summarizeBulkReads returns its input untouched in both paths.
+ * The bulk-read pass needs no gate here since #2544 for its group summaries and the object-logging
+ * coverage row: the merge holds every row it reads or replaces (reads, role assumptions, object
+ * records, its own rows, and the earliest AWS row when a selector change is held), and
+ * incrementalMergeBulkTail.ts places what it re-emits as the full merge does. A truncation (more
+ * reads by one principal than the pass measures) still falls back: it is untested at that scale here,
+ * and a case holding 20,000 read rows is at the read limit anyway.
  *
  * The storage key → read join (#2539). Listings and account-key object ops are LOAD rows, so the
  * held rows decide whether a join forms exactly as the full merge's pass does; with none,
@@ -43,9 +44,8 @@ export interface HeldRow {
  * merge withdraws it, a removal the incremental merge does not carry, so it falls back.
  */
 export function cloudPassWork(events: readonly ForensicEvent[]): string | null {
-  const { groups, dropped } = groupBulkReadsWithDropped(events);
-  if (groups.length > 0 || dropped > 0 || objectLoggingEvent(events) !== null)
-    return "a correlation pass has work: cloud bulk read";
+  if (groupBulkReadsWithDropped(events).dropped > 0)
+    return "a correlation pass has work: cloud bulk read truncated";
   if (windowNoteContradicted(events)) return "a correlation pass has work: object-logging note withdrawn";
   if (storageKeyJoinsForm(events)) return "a correlation pass has work: storage key join";
   return null;

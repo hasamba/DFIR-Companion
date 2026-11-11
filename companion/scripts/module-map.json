@@ -920,6 +920,7 @@
     "caseMerge.ts": "analysis/timeline",
     "incrementalMerge.ts": "analysis/timeline",
     "incrementalMergeRows.ts": "analysis/timeline",
+    "incrementalMergeBulkTail.ts": "analysis/timeline",
     "incrementalMergeCoverage.ts": "analysis/timeline",
     "mergeIndex.ts": "analysis/timeline",
     "stateStore.ts": "storage",
