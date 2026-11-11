@@ -697,6 +697,34 @@ describe("the collector-footprint tag reads no raw record and grades nothing (#2
   });
 });
 
+describe("the trusted-activity tag reads no raw record and grades nothing (#2561)", () => {
+  // The analyst's ours/responder mark tags routine forensic rows (option A: tag only). The matcher and
+  // the recompute never query or scan the super-timeline, feed no AI, and write only event tags.
+  const MODULES = ["../../src/analysis/trustedSourceMarks.ts", "../../src/analysis/trustedActivitySync.ts"];
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("touches neither timeline store and imports nothing AI-related", () => {
+    for (const rel of MODULES) {
+      const src = read(rel);
+      expect(src, rel).not.toMatch(
+        /superTimelineStore|stateStore|eventBatches|scanWindow|\.query\(|promote/i,
+      );
+      for (const [, spec] of src.matchAll(/from "([^"]+)"/g))
+        expect(spec, `${rel} imports ${spec}`).not.toMatch(/\/ai\/|providers?\/|prompt|synth|jev/i);
+    }
+  });
+
+  it("never writes a severity, MITRE technique or origin", () => {
+    for (const rel of MODULES) {
+      const code = read(rel)
+        .split("\n")
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+        .join("\n");
+      expect(code, rel).not.toMatch(/\b(severity|mitreTechniques|origin)\s*[:=](?!=)/);
+    }
+  });
+});
+
 describe("the S3 ransomware-precursor promotion is the one automatic super-timeline read (#2563)", () => {
   // A deliberate exception (ARCHITECTURE.md → "One automatic read: the S3 ransomware-precursor
   // promotion"; user decision 2026-11-11): a CloudTrail recovery check demoted before its access

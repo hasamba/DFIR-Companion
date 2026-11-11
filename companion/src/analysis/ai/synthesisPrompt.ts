@@ -1,4 +1,5 @@
 import type { FalsePositiveMarker } from "../falsePositive.js";
+import type { TrustedRows } from "./synthesisTrust.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import { estimateTokens, remainingBudget, fitItemsToBudget } from "../promptBudget.js";
 import type { ScopeWindow } from "../scope.js";
@@ -66,6 +67,8 @@ export interface SynthesisPromptInput {
   newPromotedIds?: ReadonlySet<string>;
   /** What the case holds (#1588). NOT part of the skip-hash — its hunt signature is. */
   collectionInventory?: CollectionInventory;
+  /** Rows from an analyst-marked trusted source (#2561) — the prompt marker; hashed by the caller. */
+  trusted?: TrustedRows;
 }
 
 /** The prompt, plus what the run record and the second-look sweep need to describe it. */
@@ -142,10 +145,11 @@ export async function buildSynthesisPrompt(
     aliasIndex,
     newPromotedIds: _n,
     collectionInventory,
+    trusted,
     ...preloaded
   } = input;
   const { newPromotedIds } = input;
-  const timeline = createTimelineSelection(state, scopedEvents, aliasIndex, newPromotedIds);
+  const timeline = createTimelineSelection(state, scopedEvents, aliasIndex, newPromotedIds, trusted);
   await yieldToEventLoop(); // #2058: selection and the block builders each take seconds on a large case
   const blocks = await buildSynthesisBlocks(ctx, {
     caseId,

@@ -54,6 +54,7 @@ import { getSynthesisPrompt } from "./prompts/index.js";
 import type { AiCallContext } from "./aiContext.js";
 import { type HuntContext } from "./hunts.js";
 import { buildSynthesisPrompt, type SynthesisPromptContext } from "./synthesisPrompt.js";
+import type { TrustedRows } from "./synthesisTrust.js";
 import { newPromotedIds, nextPromotedSeen, promotedSignature } from "./promotedEvidence.js";
 import { writeFindingTasks } from "./findingTaskPass.js";
 import type { FindingTaskStore } from "../findingTaskStore.js";
@@ -204,6 +205,7 @@ interface PreparedRun {
   inventory: CollectionInventory;
   /** The case's main evidence source (#2559) — which tool the coverage backstop's steps name. */
   mainSource: MainSourceResult;
+  trusted: TrustedRows; // #2561 analyst-marked trusted-source rows: prompt marker + skip-hash
 }
 
 /**
@@ -232,7 +234,7 @@ async function prepareSynthesisRun(
   const scopedEvents = filterFalsePositiveEvents(inWindowEvents, markers);
   // The pure inputs — notebook, hypotheses, prior work, incident type — all loaded BEFORE the hash
   // so changing any of them triggers a fresh synthesis rather than a skip.
-  const { blocks, playbookTasks } = await loadSynthesisInputs(ctx, caseId);
+  const { blocks, playbookTasks, trusted } = await loadSynthesisInputs(ctx, caseId, scopedEvents);
   const promotedSeen = await loadPromotedSeen(ctx, caseId);
   const hunts = await loadHuntJobs(ctx, caseId);
   // In-window, BEFORE the false-positive filter: a row marked benign still proves its source was
@@ -242,6 +244,7 @@ async function prepareSynthesisRun(
   const mainSource = computeMainSource(loaded.forensicTimeline, override); // #2559
   return {
     mainSource,
+    trusted,
     promotedSeen,
     inventory,
     newPromotedIds: newPromotedIds(scopedEvents, promotedSeen),
@@ -266,6 +269,7 @@ async function prepareSynthesisRun(
       // spellings, a row's provenance changed — so the whole rendered inventory is hashed (#1588).
       // The main source (#2559) changes the backstop's step text, so an override change re-runs too.
       inventory: `${renderCollectionInventory(inventory)}\n${inventorySignature(hunts)}\nmain-source:${mainSource.effective}`,
+      trusted,
     }),
   };
 }
@@ -650,6 +654,7 @@ async function synthesizeInScope(
     aliasIndex,
     newPromotedIds: run.newPromotedIds,
     collectionInventory: run.inventory,
+    trusted: run.trusted,
     ...run.blocks,
   });
 

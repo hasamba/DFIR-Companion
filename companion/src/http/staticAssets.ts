@@ -197,6 +197,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   // IOC block-list export — the case's indicators as a firewall or proxy block list.
   "/js/dashboard-ioc-blocklist.js": "application/javascript; charset=utf-8",
   "/js/dashboard-ioc-attribution.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-trusted-activity.js": "application/javascript; charset=utf-8",
   // Per-case report-template picker — which global template this case renders with.
   "/js/dashboard-case-template-picker.js": "application/javascript; charset=utf-8",
   // IOC Whitelist (Phase 2 of #66) — patterns marked never-interesting.

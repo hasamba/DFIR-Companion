@@ -1,19 +1,33 @@
+import { createHash } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
+import { TRUSTED_SOURCE_EVENT, TRUSTED_SOURCE_PATH_PREFIX } from "../analysis/custody.js";
 import {
+  FRIENDLY_ATTRIBUTIONS,
   IOC_ATTRIBUTION_LABELS,
   cleanActor,
   cleanAttributionValue,
   isIocAttributionLabel,
+  type IocAttributionLabel,
 } from "../analysis/iocAttribution.js";
 import { IocAttributionStore } from "../analysis/iocAttributionStore.js";
+import { syncTrustedActivity } from "../analysis/trustedActivitySync.js";
+import { TRUSTED_AUTHOR_PREFIX, classifyMark, honouredTrustedRows } from "../analysis/trustedSourceMarks.js";
+import { requestAuthentication } from "../auth/types.js";
+import { actorFrom } from "./collectionGenerations.js";
 import type { RouteContext } from "./context.js";
+import { trustedSyncDeps } from "./trustedActivityDeps.js";
+
+const isFriendly = (l: IocAttributionLabel | null | undefined): boolean =>
+  !!l && FRIENDLY_ATTRIBUTIONS.has(l);
 
 // The analyst's attribution label on an IOC (#2543 part 1b): attacker / ours / responder / unknown.
 // GET lists every label of the case; PUT sets one value's label, or clears it with `label: null`.
 // Every change is written to the case activity log with the analyst and the old → new label, like
-// the false-positive routes. A label never starts a run and never marks conclusions out of date:
-// the AI does not read it (iocAttribution.ts).
+// the false-positive routes. A label never starts a run. An `ours`/`responder` label on a value the
+// trusted-source matcher can read (an IP, an AWS key id or principal ARN) also re-tags that source's
+// routine rows `trusted-activity` and writes a custody entry (#2561); synthesis is told which rows are
+// trusted. GET /cases/:id/trusted-activity lists the rows whose trusted tag still holds.
 //
 // Its own module rather than routes/findings.ts because that file sits at its size ledger.
 export function registerIocAttributionRoutes(app: Express, ctx: RouteContext): void {
@@ -37,9 +51,18 @@ export function registerIocAttributionRoutes(app: Express, ctx: RouteContext): v
       return res
         .status(400)
         .json({ error: `label must be one of ${IOC_ATTRIBUTION_LABELS.join(", ")} (or null to clear)` });
-    const actor = cleanActor(req.body?.actor);
+    const who = actorFrom(requestAuthentication(req), Boolean(options.teamAuth));
+    const actor = who && who.id !== "local" ? who.displayName : cleanActor(req.body?.actor);
     try {
       const { map, change } = await labels.set(req.params.id, value, raw, actor || "anonymous");
+      if (change.before !== change.after && (isFriendly(change.before) || isFriendly(change.after)))
+        await recordTrustedMark(
+          req.params.id,
+          value,
+          { before: change.before ?? null, after: change.after ?? null },
+          actor,
+          who?.id,
+        );
       if (change.before !== change.after) {
         void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
           category: "triage",
@@ -55,4 +78,59 @@ export function registerIocAttributionRoutes(app: Express, ctx: RouteContext): v
       return res.status(500).json({ error: (err as Error).message });
     }
   });
+
+  app.get("/cases/:id/trusted-activity", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    try {
+      if (!options.stateStore || !options.tagsStore) return res.status(200).json({ rows: {}, count: 0 });
+      const map = await labels.load(caseId);
+      const rows = (await options.stateStore.load(caseId)).forensicTimeline;
+      const tags = (
+        await options.tagsStore.taggerTagsFor(
+          caseId,
+          rows.map((r) => r.id),
+        )
+      ).filter((t) => t.author.startsWith(TRUSTED_AUTHOR_PREFIX));
+      const honoured = honouredTrustedRows(rows, tags, map);
+      return res.status(200).json({ rows: Object.fromEntries(honoured), count: honoured.size });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  /** Re-tag the case, then pin the mark in custody. A custody failure is logged, never thrown. */
+  async function recordTrustedMark(
+    caseId: string,
+    value: string,
+    change: { before: IocAttributionLabel | null; after: IocAttributionLabel | null },
+    actor: string,
+    actorId: string | undefined,
+  ): Promise<void> {
+    const deps = trustedSyncDeps(options, store, (m) => ctx.serverLogger.info(m));
+    const { tagged } = deps ? await syncTrustedActivity(deps, caseId) : { tagged: 0 };
+    if (!options.custodyStore) return;
+    const readable = classifyMark(value, change.after ?? change.before ?? "ours");
+    const trustedSource = { value, before: change.before, after: change.after, rowsTagged: tagged };
+    const at = new Date().toISOString();
+    try {
+      await options.custodyStore.record(caseId, {
+        artifactPath: `${TRUSTED_SOURCE_PATH_PREFIX}${value}`,
+        sha256: createHash("sha256")
+          .update(JSON.stringify({ ...trustedSource, by: actor, at }))
+          .digest("hex"),
+        caseId,
+        event: TRUSTED_SOURCE_EVENT,
+        collectedBy: actor || "anonymous",
+        ...(actorId ? { actorId } : {}),
+        collectedAt: at,
+        source: readable ? `${readable.kind} ${value}` : `${value} (not a source the matcher reads)`,
+        trigger: `trusted-source mark ${change.before ?? "unset"} → ${change.after ?? "unset"}; ${tagged} forensic row(s) tagged trusted-activity`,
+        trustedSource,
+      });
+    } catch (err) {
+      ctx.serverLogger.error(
+        `[ioc-attribution] case=${caseId} trusted mark on ${value} set, but its custody entry failed: ${(err as Error).message}`,
+      );
+    }
+  }
 }

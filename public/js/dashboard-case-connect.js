@@ -426,6 +426,7 @@
       ["iocProvenance", () => loadIocProvenance(caseId)],
       ["iocRisk", () => loadIocRisk(caseId)],
       ["iocAttribution", () => loadIocAttribution(caseId)], // #2543 analyst IOC labels
+      ["trustedActivity", () => loadTrustedActivity(caseId)], // #2561 trusted-source rows
       ["iocProvenanceChains", () => loadIocProvenanceChains(caseId)],
       ["relatedCases", () => loadRelatedCases(caseId)], // #679 cross-case IOC pivot
       ["comments", () => loadComments(caseId)],
@@ -624,7 +625,10 @@
     else if (msg.type === "activity_changed") {
       loadActivityLog(caseId);
       cockpit();
-    } else if (msg.type === "tags_changed") loadTags(caseId);
+    } else if (msg.type === "tags_changed") {
+      loadTags(caseId);
+      if (typeof loadTrustedActivity === "function") loadTrustedActivity(caseId); // #2561
+    }
     else if (msg.type === "pins_changed") {
       loadPins(caseId);
       cockpit();

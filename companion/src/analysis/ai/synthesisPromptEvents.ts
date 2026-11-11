@@ -1,4 +1,6 @@
 import { eventPrevalence, buildPrevalenceIndex, prevalenceTag, rarityScore } from "../prevalence.js";
+import type { HonouredTrust } from "../trustedSourceMarks.js";
+import { trustedPromptTag, type TrustedRows } from "./synthesisTrust.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { resolveHost, type HostAliasIndex } from "../hostAlias.js";
 import { renderStructuredTags } from "../synthEvidence.js";
@@ -89,6 +91,7 @@ export function createTimelineSelection(
   scopedEvents: ForensicEvent[],
   aliasIndex?: HostAliasIndex,
   newPromotedIds: ReadonlySet<string> = NO_IDS,
+  trusted: TrustedRows = new Map(),
 ): TimelineSelection {
   // New promoted rows (#1586) skip the three prompt-only filters that would hide them: the Info
   // filter, burst collapsing and the stratified fill. They are the rows the model most needs to see,
@@ -170,7 +173,7 @@ export function createTimelineSelection(
       return promptEvents;
     },
     renderEvent: (event) =>
-      renderPromptEvent(event, { grouping, prevalenceIndex, isContext, isNew, aliasIndex }),
+      renderPromptEvent(event, { grouping, prevalenceIndex, isContext, isNew, aliasIndex, trusted }),
     fitTo(count) {
       if (count >= promptEvents.length) return;
       current = choose(count);
@@ -341,6 +344,7 @@ interface RenderContext {
   isContext: (id: string) => boolean;
   isNew: (id: string) => boolean;
   aliasIndex?: HostAliasIndex;
+  trusted: TrustedRows;
 }
 
 /**
@@ -362,5 +366,13 @@ function renderPromptEvent(e: ForensicEvent, ctx: RenderContext): string {
   // anchor), not itself a primary verdict-bearing event — so the model weights it as background.
   const prefix = ctx.isContext(e.id) ? "~" : "";
   const description = promptDescription(e.description);
-  return `${prefix}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${description}${renderStructuredTags(e, ctx.aliasIndex)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}${promotedTag(e, ctx.isNew(e.id))}`;
+  return `${prefix}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${description}${renderStructuredTags(e, ctx.aliasIndex)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}${promotedTag(e, ctx.isNew(e.id))}${trustedPromptTag(trustOf(e.id, ctx))}`;
+}
+
+/** A row's trusted mark; a collapsed burst carries it only when EVERY member is trusted (#2561). */
+function trustOf(id: string, ctx: RenderContext): HonouredTrust | undefined {
+  const mark = ctx.trusted.get(id);
+  if (!mark) return undefined;
+  const members = ctx.grouping.memberIdsByRepresentative.get(id);
+  return !members || [...members].every((m) => ctx.trusted.has(m)) ? mark : undefined;
 }

@@ -101,6 +101,10 @@
 .ev-bulk-btn:hover { background: var(--bg-hover); color: #fff; border-color: var(--accent); }
 #evStarFilterBtn { background: transparent; border: 1px solid var(--border-strong); color: var(--text-faint); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 #evStarFilterBtn.active { color: var(--sev-medium); border-color: var(--sev-medium); background: var(--warning-bg); }
+/* #2561 Hide trusted — same shape as ☆ Starred; hidden until the case has a trusted-source row. */
+#evTrustedFilterBtn { background: transparent; border: 1px solid var(--border-strong); color: var(--text-faint); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+#evTrustedFilterBtn.active { color: var(--accent); border-color: var(--accent); }
+#evTrustedFilterBtn[hidden] { display: none; }
 #iocFlaggedBtn { background: transparent; border: 1px solid var(--border-strong); color: var(--text-faint); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
 #iocFlaggedBtn.active { color: var(--sev-high); border-color: var(--sev-high); background: var(--warning-bg); }
 #iocSignalBtn { background: transparent; border: 1px solid var(--border-strong); color: var(--text-faint); border-radius: 5px; padding: 1px 8px; font-size: 11px; cursor: pointer; margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
