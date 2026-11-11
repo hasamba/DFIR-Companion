@@ -24,6 +24,12 @@ import {
   settleCloudRecords,
 } from "./cloudRecordIngest.js";
 import type { ImportWithCoverage } from "./cloudImports.js";
+import {
+  emptyPrecursorSeen,
+  precursorPromotionNote,
+  promoteCrossUploadPrecursors,
+  withPrecursorRows,
+} from "./cloudPrecursorPromote.js";
 
 // Import AWS CloudTrail logs. Deterministic (no AI call): each API-call record is mapped,
 // severity derived from the action (IAM persistence, logging/detection tampering, S3
@@ -77,6 +83,12 @@ export async function importAws(
 
   // An identity IOC (#2543) links to the row that produced it, through the row's aggKey.
   const eventIdByAggKey = new Map(parsed.events.map((e, i) => [e.aggKey ?? "", `${opts.idPrefix}e${i + 1}`]));
+  // A recovery check an earlier file left in the super-timeline, now a precursor (#2563).
+  const promoted = await promoteCrossUploadPrecursors(
+    { superTimeline: ctx.opts.superTimelineStore, forensic: ctx.opts.stateStore },
+    caseId,
+    withPrecursorRows(emptyPrecursorSeen(), parsed.events),
+  );
   const raw = {
     findings: [],
     iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
@@ -87,11 +99,13 @@ export async function importAws(
       ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
     })),
     mitreTechniques: [],
-    forensicEvents: parsed.events.map((e, i) => ({
-      ...e,
-      id: `${opts.idPrefix}e${i + 1}`,
-      sources: e.sources?.length ? e.sources : ["AWS CloudTrail"],
-    })),
+    forensicEvents: parsed.events
+      .map((e, i) => ({
+        ...e,
+        id: `${opts.idPrefix}e${i + 1}`,
+        sources: e.sources?.length ? e.sources : ["AWS CloudTrail"],
+      }))
+      .concat(promoted.events),
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
@@ -101,7 +115,8 @@ export async function importAws(
       `, ${parsed.iocs.length} IOC(s)` +
       sigmaImportNote(sigma, parsedRaw.sigmaRowsMatched) +
       (dedupNote ? `, ${dedupNote}` : "") +
-      jsonRepairNote(parsed.repairs),
+      jsonRepairNote(parsed.repairs) +
+      precursorPromotionNote(promoted),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

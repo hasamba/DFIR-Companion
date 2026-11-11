@@ -18,6 +18,7 @@ import { CLOUD_AUDIT_RE, COVERAGE_EVENT_ID, isGeneratedCoverageRow } from "./clo
 import { readCloudRecord } from "./cloudBulkRead.js";
 import { isStorageKeyJoinInput } from "./azureStorageKeyToRead.js";
 import { selectsObjects } from "./objectLoggingWindow.js";
+import { isOpenPrecursorCheck, isPrecursorChange } from "./cloudPrecursorMerge.js";
 import { isAwsFlowEvent } from "./awsFlowResourceAttribution.js";
 import { readBrowsing } from "./serviceAccountBrowsing.js";
 import { commandOf, configRisks, escapeBehavior } from "./containerEscape.js";
@@ -99,6 +100,7 @@ const INERT_NOTES = new Set([
   "confirmed exfiltration", // exfilCorrelate: never stripped
   "timestomp corroboration", // timestompCorroborate: never stripped
   "ransomware precursors", // ransomwarePrecursor: never stripped; its rows are LOAD rows anyway
+  "ransomware precursor", // cloudPrecursorMerge (#2563): never stripped; marked rows are skipped
   "cloud bulk read", // summaries: re-produced only from read records, which are LOAD rows (#2536)
   "renamed binary",
   "build-time",
@@ -185,6 +187,9 @@ export function mergeLoadAlways(e: ForensicEvent): boolean {
   if (isStorageKeyJoinInput(e)) return true;
   // The time-aware object-logging note's anchor: without it held, a stored note never refreshes (#2564).
   if (selectsObjects(e)) return true;
+  // The cross-upload precursor join (#2563): every privileged change and every open check is held,
+  // so the pass raises a stored check when the change arrives, and a new check over a stored change.
+  if (isPrecursorChange(e) || isOpenPrecursorCheck(e)) return true;
   if (!e.asset) return false;
   const mitre = e.mitreTechniques ?? [];
   if (mitre.includes("T1560.001") || mitre.includes("T1041")) return true;

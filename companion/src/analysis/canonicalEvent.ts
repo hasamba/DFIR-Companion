@@ -55,7 +55,7 @@ import { macFsEventBlockSchema } from "./canonicalMacFsEvent.js";
 import { spotlightUsageBlockSchema } from "./canonicalSpotlightUsage.js";
 import { macLoginItemBlockSchema } from "./canonicalMacLoginItemTarget.js";
 import { powerShellBlockSchema } from "./canonicalPowerShell.js";
-
+import { awsPrecursorBlockSchema } from "./canonicalAwsPrecursor.js";
 // exact-match barrier; bump policy: #1315. 1.1.0 (#1874): compact field provenance; 1.0.0 is migrated on read.
 export const CANONICAL_EVENT_SCHEMA_VERSION = COMPACT_PROVENANCE_SCHEMA_VERSION;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -182,6 +182,7 @@ const envelopeObjectSchema = z.object({
   tlsGraph: tlsGraphBlockSchema.optional(), // tlsGraphRows.ts, #997: cert/name/client-cert/JA3 node one sensor's upload showed
   entra: entraPathBlockSchema.optional(), // entraPrivilegePath.ts, #973; block in canonicalEntra.ts
   awsLineage: awsLineageBlockSchema.optional(), // awsLineage.ts, #979; block in canonicalAwsLineage.ts
+  awsPrecursor: awsPrecursorBlockSchema.optional(), // awsPrecursorGrade.ts, #2563: one half of the S3 ransomware-precursor join
   awsCompute: awsComputeBlockSchema.optional(), // compute-lifecycle summary rows (#931 item 8; Azure/GCP are the second half, #1066)
   azureCompute: azureComputeBlockSchema.optional(),
   azureVmssCompute: azureVmssComputeBlockSchema.optional(),

@@ -66,7 +66,9 @@ import {
 //    required: a compute summary arriving over v3-indexed flows would otherwise skip the fallback.
 // 5: a CloudTrail selector change that selects S3 object activity is a LOAD row (#2564). Rows
 //    indexed under 4 lack that bit, so the merge would not see the object-logging note is due.
-export const MERGE_INDEX_VERSION = 5;
+// 6: CloudTrail precursor changes and open precursor checks are LOAD rows (#2563). Rows indexed
+//    under 5 lack that bit, so a stored check would not be held when its key's change arrives.
+export const MERGE_INDEX_VERSION = 6;
 
 export type IncrementalResult =
   { ok: true; state: InvestigationState; read: number; written: number } | { ok: false; reason: string };

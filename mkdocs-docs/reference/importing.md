@@ -1903,9 +1903,29 @@ Measured on the public SANS 504 S3 ransomware lab, where the noise used to bury 
   any failed write still are.
 - **Bucket recovery checks after a privileged change are High.** `GetBucketVersioning`,
   `GetBucketObjectLockConfiguration` and `PutBucketVersioning` set to `Suspended` are raised to High
-  when the same access key granted itself a policy or created an access key earlier in the same
-  upload. The row says which change and when. On their own, these calls keep their grade: every S3
-  console page makes them.
+  when the same access key granted itself a policy or created an access key earlier. The row says
+  which change and when. On their own, these calls keep their grade: every S3 console page makes
+  them.
+- **Per-file imports join in any order.** A trail delivered as one file per region and five-minute
+  slice puts the change and the check in different files. You can import those files one by one
+  (whole-file or gzip, from the drop folder or the Import button), in any order:
+  - **The change first:** the check is raised when its file arrives. The row says `earlier in this
+    case`.
+  - **The check first:** the check is Info in its own file, so it goes to the super-timeline. When
+    the change arrives, the import finds that check by its access key and promotes it to the
+    forensic timeline at High. The row says `promoted from the super-timeline when the change
+    arrived`.
+  - The import's timeline note gives the number of checks promoted. One import promotes at most
+    50 (the earliest first), and the note tells you how many it did not promote. The note also
+    tells you when a limit stopped the search: at most 20 access keys per import, and at most 5,000
+    super-timeline rows per key.
+  - This is the one place where an import reads the super-timeline by itself. It promotes only these
+    checks. The AI never reads the super-timeline: it sees a promoted check only after the check is
+    in the forensic timeline.
+  - Files imported with release 0.45.0 or earlier do not have the data that this join reads, so
+    they are not joined. Import them again to join them.
+  - If you set a minimum severity on the import, Info checks are not kept anywhere, so they cannot
+    be joined later. Import CloudTrail without a minimum severity to keep this join.
 - **A key made by `CreateAccessKey` gets a credential-lineage row**, even with one use: issued when
   and by whom, its first use and source, and the key that created it. The creation and the use must
   be in the same upload (or the same streamed window).

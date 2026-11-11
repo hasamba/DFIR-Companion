@@ -29,6 +29,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "sacrificial process",
   "timestomp corroboration",
   "ransomware precursors",
+  "ransomware precursor",
   "certutil transfer",
   "metadata credential access",
   "cloud bulk read",

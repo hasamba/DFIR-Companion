@@ -23,6 +23,7 @@ import type { ImportContext } from "./importContext.js";
 import type { Preliminary, StreamProvider } from "./cloudStreamProviders.js";
 import { STREAM_IOCS_MAX } from "../cloudStreamLimits.js";
 import { mergePrincipalNames, type PrincipalNameRecord } from "../principalNames.js";
+import { emptyPrecursorSeen, withPrecursorRows, type PrecursorSeen } from "./cloudPrecursorPromote.js";
 
 type Row = Record<string, unknown>;
 
@@ -48,6 +49,7 @@ export interface StreamAccumulator {
   members: SourceRecordMember[]; // flushed after every batch
   superSeq: number;
   principalNames: PrincipalNameRecord[]; // #2490: every batch's id → name pairs (bounded by the ledger cap)
+  precursors: PrecursorSeen; // #2563: the keys on precursor change/check rows, and each key's earliest change
 }
 
 export function newAccumulator(windowMax: number, iocsMax = STREAM_IOCS_MAX): StreamAccumulator {
@@ -71,6 +73,7 @@ export function newAccumulator(windowMax: number, iocsMax = STREAM_IOCS_MAX): St
     members: [],
     superSeq: 0,
     principalNames: [],
+    precursors: emptyPrecursorSeen(),
   };
 }
 
@@ -224,6 +227,7 @@ export async function processBatch(
   noteMapping(mapping, acc);
   const graded = deps.grader.grade(mapping.mapped);
   acc.preGradeRaised += graded.raised;
+  acc.precursors = withPrecursorRows(acc.precursors, graded.rows);
   const { superRows, kept } = routeRows(graded.rows, mapping.rowRecords, records, deps);
   const mappedRecords = new Set(mapping.rowRecords);
   acc.unmapped += records.filter(
