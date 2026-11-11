@@ -182,6 +182,13 @@ describe("previewDiff — pairs from the anonymizer's own map (#2531)", () => {
     expect(diff.mode).toBe("text");
     expect(marked(clear, masked, diff)).toEqual([["WS-FIN-07", "ANON_HOST_1"]]);
   });
+
+  it("a literal equal to the first host token is not marked and is not reused (#2569)", () => {
+    const clear = "ANON_HOST_1 WS-FIN-07";
+    const { masked, diff } = run(clear);
+    expect(masked).toBe("ANON_HOST_1 ANON_HOST_2");
+    expect(marked(clear, masked, diff)).toEqual([["WS-FIN-07", "ANON_HOST_2"]]);
+  });
 });
 
 describe("previewDiff — possible leaks are guesses on the masked side (#2531)", () => {

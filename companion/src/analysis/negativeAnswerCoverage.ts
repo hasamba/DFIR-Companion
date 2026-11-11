@@ -20,6 +20,7 @@
 // compete with grounding and the second-opinion diff. Running the pass twice changes nothing more.
 
 import { assertsAbsence } from "./answerContradiction.js";
+import { isCloudOnlyCase } from "./cloudOnlyCase.js";
 import {
   CLASS_COLLECTION,
   emptySettledClasses,
@@ -286,6 +287,11 @@ function applyUncoveredNegatives(
   hostOf: (raw: string) => string,
   scopedEvents: readonly ForensicEvent[],
 ): Pick<InvestigationState, "keyQuestions" | "nextSteps"> {
+  // A tenant-log case has no host to collect from (#2555): every remedy here is a host artifact
+  // (Sysmon EVTX, Autoruns), and the cloud absence caveats already reach the model elsewhere.
+  if (isCloudOnlyCase({ events: scopedEvents, hosts: inv.hosts })) {
+    return { keyQuestions: state.keyQuestions, nextSteps: [...state.nextSteps] };
+  }
   const nextSteps = [...state.nextSteps];
   const keyQuestions = state.keyQuestions.map((q) => {
     if (!isCandidate(q)) return q;

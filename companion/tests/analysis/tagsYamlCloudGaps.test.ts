@@ -213,7 +213,7 @@ const ex = (op: string, params: Array<[string, string]> = []) =>
   m1(ual("Exchange", op, { Parameters: params.map(([Name, Value]) => ({ Name, Value })) }));
 
 describe("Analyzer-Suite operations (#2306)", () => {
-  it("mas_operation_audit_config_changed: Set-AdminAuditLogConfig → High; Get-AdminAuditLogConfig no", () => {
+  it("mas_operation_audit_config_changed: Set-AdminAuditLogConfig tagged (graded by the importer, #2549); Get no", () => {
     const yes = ex("Set-AdminAuditLogConfig", [["UnifiedAuditLogIngestionEnabled", "False"]]);
     expect(yes.ruleIds).toContain("mas_operation_audit_config_changed");
     expect(ex("Get-AdminAuditLogConfig").ruleIds).not.toContain("mas_operation_audit_config_changed");

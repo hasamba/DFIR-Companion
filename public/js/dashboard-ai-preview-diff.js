@@ -185,15 +185,35 @@
 
   const HEAD = ["Clear text (never sent when masking is on)", "Masked text — sent to the provider"];
 
+  /**
+   * Spans for the tokens the server minted (d.pairs), found in the raw masked text. A lookalike
+   * ANON_* string from case text is not in the pairs, so it stays plain (#2566). The greedy \d+
+   * takes the whole ANON_HOST_12, so a minted ANON_HOST_1 never matches its prefix.
+   */
+  function mintedSpans(d, text) {
+    const byToken = new Map(d.pairs.map((p, i) => [p.token, i]));
+    const out = [];
+    for (const m of text.matchAll(/ANON_[A-Z]+_\d+/g)) {
+      if (!byToken.has(m[0])) continue;
+      out.push({ s: m.index, e: m.index + m[0].length, cls: "aip-add", attrs: pairAttrs(d, { pair: byToken.get(m[0]) }) });
+    }
+    return out;
+  }
+
+  /** Sorted by start, dropping any span that overlaps the one kept before it (paint() needs that). */
+  function nonOverlapping(spans) {
+    const sorted = spans.slice().sort((a, b) => a.s - b.s);
+    const out = [];
+    for (const sp of sorted) if (!out.length || sp.s >= out[out.length - 1].e) out.push(sp);
+    return out;
+  }
+
   /** The fallback: the texts side by side, tokens and amber marks on the masked side only. */
   function fallbackHtml(call) {
     const d = call.diff;
-    const right = paint(
-      call.maskedPrompt,
-      0,
-      call.maskedPrompt.length,
-      d ? d.warnings.map(warnSpan) : [],
-    ).replace(/ANON_[A-Z]+_\d+/g, (t) => `<mark class="aip-add">${t}</mark>`);
+    const M = call.maskedPrompt;
+    const spans = d ? nonOverlapping(mintedSpans(d, M).concat(d.warnings.map(warnSpan))) : [];
+    const right = paint(M, 0, M.length, spans);
     return (
       `<div class="ai-preview-note">The changes could not be lined up value by value, so the two texts are shown side by side.</div>` +
       `<div class="ai-preview-panes"><div class="ai-preview-pane"><div class="asset-subhead">${esc(HEAD[0])}</div><pre>${esc(call.clearPrompt)}</pre></div>` +

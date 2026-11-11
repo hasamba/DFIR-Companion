@@ -37,6 +37,11 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
+import {
+  INSTANCE_SPREAD_MITRE,
+  isInstanceCredentialMarkers,
+  sessionOfPrincipalId,
+} from "./awsInstanceCredential.js";
 import { appendDerivedNote } from "./derivedNote.js";
 import { COVERAGE_SOURCE, earliestEventTime, METADATA_COVERAGE_ID } from "./coverageEventTime.js";
 
@@ -385,27 +390,68 @@ function sourceAddress(e: ForensicEvent): string {
 }
 
 /**
+ * What a row's STRUCTURED identity says (#2545): "instance" when CloudTrail itself marked the
+ * credential as delivered to an EC2 instance (the IMDS protocol) AND the session is named after an
+ * instance id; "other" for any other typed AWS principal; null when the row carries no structured
+ * AWS identity, and only then is the description text consulted. Both markers are required — a
+ * session name is caller-chosen on AssumeRole — and a typed row never falls back to its text, so an
+ * `sts` ARN rendered into a description (an AssumeRole response) cannot raise it.
+ */
+function structuredIdentity(e: ForensicEvent): "instance" | "other" | null {
+  const c = e.canonical;
+  const type = c?.cloud?.principalType ?? "";
+  if (c?.cloud?.provider !== "aws" || !type) return null;
+  const session = sessionOfPrincipalId(c.cloud?.principalId ?? c.actor?.id ?? "");
+  return isInstanceCredentialMarkers(type, c.authentication?.protocol ?? "", session) ? "instance" : "other";
+}
+
+/** The note. One public address is never proof on its own when the identity came from the record's structure. */
+function useAwayReason(ip: string, reach: "public" | "unreadable", structured: boolean): string {
+  if (reach === "unreadable")
+    return (
+      `An API call was made with an EC2 instance role's credentials, and the source address the log recorded (${ip}) could not be read as an address. ` +
+      "Whether the credentials were used from off the host therefore could not be determined here — this is not a finding that they were, and not evidence that they were not. Read the raw record's source address."
+    );
+  if (structured)
+    return (
+      `An API call was made with an EC2 instance role's credentials from ${ip}, a public address. ` +
+      "This alone does not show the credentials left the instance: an instance behind a NAT gateway presents the gateway's public address, and an instance with a public IP address of its own calls from that address. " +
+      "Compare with the instance's egress address; the same credential used from two or more public addresses is graded High in the credential lineage summary."
+    );
+  return (
+    `An API call was made with an EC2 instance role's credentials from ${ip}, an address outside the network. ` +
+    "Instance-role credentials are meant to be used by the instance itself; a call from outside it means they were taken off the host. " +
+    "One honest alternative exists: an instance behind a NAT gateway presents the gateway's public address, and the audit log records the address it saw. Confirm against the instance's egress address before acting on this."
+  );
+}
+
+/**
  * Instance-role credentials used from an address the instance does not have.
  *
- * This is the half that DOES appear in cloud audit logs, and it is the stronger finding: the
- * metadata request only shows an attempt, while this shows the credentials working somewhere else.
- * The session name of an instance role carries the instance id, so a call made under that identity
- * from a public address means the credentials left the instance.
+ * This is the half that DOES appear in cloud audit logs: the metadata request only shows an
+ * attempt, while this shows the credentials working somewhere else.
  *
- * A NAT gateway is the honest false positive here, and the note says so: an instance behind NAT
- * presents the gateway's public address on egress, and CloudTrail records the address it saw.
+ * On CloudTrail importer rows the identity is read from structured fields (#2545). Before that the
+ * pass needed the whole `sts` ARN in the description, which the importer never renders, so it never
+ * fired on the one CloudTrail importer the product has. Those rows get a Medium note at most: in an
+ * estate without VPC endpoints EVERY instance-role call reaches CloudTrail from a public address
+ * (the NAT gateway's, or the instance's own), so one public address cannot be the High. The High is
+ * the same credential from two or more public addresses — a cross-row fact, judged in the
+ * credential lineage summary (awsLineage.ts), not here. This pass stays per-row, so the incremental
+ * merge needs no trigger for it.
  *
- * The address is read from the canonical envelope FIRST. awsImport puts the caller address there
- * and never sets the flat `srcIp`, so reading only `srcIp` meant this never fired on the one
- * CloudTrail importer the product has — while still firing on proxy and firewall evidence, whose
- * descriptions carry adversary-chosen URLs. It was dead where it mattered and live where it hurt.
+ * Rows without a structured AWS identity keep the whole-ARN text check and its High.
+ *
+ * The address is read from the canonical envelope FIRST: awsImport puts the caller address there
+ * and never sets the flat `srcIp`.
  */
 export function instanceCredentialUseAway(events: readonly ForensicEvent[]): ForensicEvent[] {
   let changed = false;
   const out = events.map((e) => {
     if (alreadyMarked(e.description ?? "")) return e;
-    const text = `${e.description ?? ""} ${e.path ?? ""}`;
-    if (!isInstanceRoleIdentity(text)) return e;
+    const structured = structuredIdentity(e);
+    if (structured === "other") return e;
+    if (structured === null && !isInstanceRoleIdentity(`${e.description ?? ""} ${e.path ?? ""}`)) return e;
     const ip = sourceAddress(e);
     // No address at all is not a gap this pass can speak to — plenty of audit records simply have
     // none. An address that IS recorded but cannot be parsed is different, and is reported below.
@@ -413,24 +459,24 @@ export function instanceCredentialUseAway(events: readonly ForensicEvent[]): For
     const reach = addressReach(ip);
     if (reach === "private") return e;
     changed = true;
-    const severity: Severity = RANK.High > RANK[e.severity] ? "High" : e.severity;
-    const reason =
-      reach === "public"
-        ? `An API call was made with an EC2 instance role's credentials from ${ip}, an address outside the network. ` +
-          "Instance-role credentials are meant to be used by the instance itself; a call from outside it means they were taken off the host. " +
-          "One honest alternative exists: an instance behind a NAT gateway presents the gateway's public address, and the audit log records the address it saw. Confirm against the instance's egress address before acting on this."
-        : `An API call was made with an EC2 instance role's credentials, and the source address the log recorded (${ip}) could not be read as an address. ` +
-          "Whether the credentials were used from off the host therefore could not be determined here — this is not a finding that they were, and not evidence that they were not. Read the raw record's source address.";
+    const ceiling: Severity = structured === "instance" ? "Medium" : "High";
+    const raised: Severity = RANK[ceiling] > RANK[e.severity] ? ceiling : e.severity;
     return {
       ...e,
       // An unreadable address is a gap, not a finding. It is attached so the analyst sees it, but
-      // it does not raise the event.
-      severity: reach === "public" ? severity : e.severity,
+      // it does not raise the event. Nor does the structured single-address note claim the
+      // credential-theft techniques: it says itself that it does not show theft (#2545) — the
+      // lineage row that does (two public addresses) carries them.
+      severity: reach === "public" ? raised : e.severity,
       mitreTechniques:
-        reach === "public"
-          ? [...new Set([...(e.mitreTechniques ?? []), "T1552.005", "T1078.004"])]
+        reach === "public" && structured !== "instance"
+          ? [...new Set([...(e.mitreTechniques ?? []), ...INSTANCE_SPREAD_MITRE])]
           : (e.mitreTechniques ?? []),
-      description: appendDerivedNote(e.description, METADATA_MARKER, reason),
+      description: appendDerivedNote(
+        e.description,
+        METADATA_MARKER,
+        useAwayReason(ip, reach, structured === "instance"),
+      ),
     };
   });
   return changed ? out : (events as ForensicEvent[]);

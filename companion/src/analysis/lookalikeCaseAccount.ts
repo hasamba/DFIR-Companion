@@ -12,12 +12,13 @@
 // in a LATER import does not re-check an earlier "svc-backupl" row.
 //
 // False-positive guards: a numbered copy ("user1"/"user2") is not a look-alike; a pair whose only
-// difference is the first letter ("asmith"/"bsmith", initial + surname) is not one either; machine
+// difference is the first letter ("asmith"/"bsmith", initial + surname) is not one either, and for the
+// same reason a two-letter shape is never folded at the first position ("rnjones"/"mjones"); machine
 // accounts ("PC01$") and service-noise accounts are skipped; a base shorter than five characters is
 // skipped; and the candidate's own name never matches itself.
 import { canonicalAccounts } from "./canonicalEvent.js";
 import { appendDerivedNote } from "./derivedNote.js";
-import { levenshtein } from "./lookalikeDomains.js";
+import { foldMultiChar, levenshtein } from "./lookalikeDomains.js";
 import { accountBase, bareName, foldConfusables, memberCn, MIN_NAME_LENGTH } from "./lookalikeAccount.js";
 import { worstSeverity, type ForensicEvent } from "./stateTypes.js";
 
@@ -97,13 +98,22 @@ function keyed(name: string): Keyed | null {
   return { bare, base, folded: foldConfusables(base) };
 }
 
+// The two-letter fold ("rn" as "m", #2568) from the second character on. A leading swap is an initial
+// + surname pair ("rnjones"/"mjones", "cljones"/"djones") — two real people, as in the guard below.
+const tailFold = (s: string): string => s.slice(0, 1) + foldMultiChar(s.slice(1));
+
+/** Equal only after the two-letter fold. Exact equality: one edit on top of the fold reaches real surnames. */
+const foldsEqual = (a: Keyed, b: Keyed): boolean =>
+  a.folded !== b.folded && tailFold(a.folded) === tailFold(b.folded);
+
 // Same length, first letter changed, rest equal: "asmith"/"bsmith" — two real people.
 const onlyFirstLetterDiffers = (a: string, b: string): boolean =>
   a.length === b.length && a[0] !== b[0] && a.slice(1) === b.slice(1);
 
 /**
  * The case account `name` imitates, or null. A match is one edit after homoglyph folding (or zero
- * edits, when only the fold makes the names equal). Returned as the pool name's bare form.
+ * edits, when only the fold makes the names equal), or exact equality after the two-letter fold
+ * ("jsrnith" for "jsmith"). Returned as the pool name's bare form.
  */
 export function caseLookalike(name: string, pool: Iterable<string>): string | null {
   const cand = keyed(name);
@@ -113,11 +123,20 @@ export function caseLookalike(name: string, pool: Iterable<string>): string | nu
     const other = keyed(p);
     // Same bare name (self) or same base (a numbered sibling) is never a look-alike.
     if (!other || other.bare === cand.bare || other.base === cand.base) continue;
+    if (foldsEqual(cand, other)) return other.bare;
     if (Math.abs(other.folded.length - cand.folded.length) > 1) continue;
     if (onlyFirstLetterDiffers(cand.folded, other.folded)) continue;
     if (levenshtein(cand.folded, other.folded) <= 1) return other.bare;
   }
   return null;
+}
+
+/** "jsrnith" is two edits from "jsmith", so a hit made by the two-letter fold says "looks like". */
+function lookalikeNote(name: string, match: string): string {
+  const a = keyed(name);
+  const b = keyed(match);
+  const relation = a && b && foldsEqual(a, b) ? "looks like" : "is one edit from";
+  return `"${bareName(name)}" ${relation} case account "${match}"`;
 }
 
 /** The row raised to High with a note naming both accounts. Idempotent: a noted row is returned as is. */
@@ -126,10 +145,6 @@ export function flagCaseLookalikeRow(e: ForensicEvent, name: string, match: stri
   return {
     ...e,
     severity: worstSeverity(e.severity, "High"),
-    description: appendDerivedNote(
-      e.description,
-      LOOKALIKE_ACCOUNT_MARKER,
-      `"${bareName(name)}" is one edit from case account "${match}"`,
-    ),
+    description: appendDerivedNote(e.description, LOOKALIKE_ACCOUNT_MARKER, lookalikeNote(name, match)),
   };
 }

@@ -25,6 +25,7 @@ import {
   type EntraProp,
 } from "./entraAuditRecord.js";
 import { KNOWN_APIS } from "./entraCapabilities.js";
+import { isMicrosoftFirstPartyService, isSpProvisioningOperation } from "./microsoftFirstPartyApps.js";
 import {
   addIoc,
   cleanIp,
@@ -186,6 +187,20 @@ function isEmptySelfRefresh(r: EntraAuditRecord): boolean {
   return r.targets.length > 0 && r.targets.every((t) => t.id && own.has(t.id.toLowerCase()));
 }
 
+/**
+ * Microsoft's own backend service adding or updating a service principal app-only (#2549): no UPN,
+ * an app-only actor, and either a listed first-party app id or the internal certificate actor (UAL
+ * UserType 4, UserId `Certificate`, no id at all). Never the display name (an attacker names their
+ * app freely), never a credential add, never a person using a first-party client.
+ */
+function isFirstPartyProvisioning(r: EntraAuditRecord): boolean {
+  const i = r.initiator;
+  if (i.upn || !isSpProvisioningOperation(r.operation)) return false;
+  const appOnly = i.kind === "app" || i.userType === 4;
+  if (appOnly && [i.appId, i.id].some((id) => id && isMicrosoftFirstPartyService(id))) return true;
+  return i.userType === 4 && i.internalCertificate === true && !i.appId && !(i.objectIds ?? []).length;
+}
+
 /** Who acted, what was changed, and every changed property — the text of the row's [details] panel. */
 function auditDetails(r: EntraAuditRecord): string {
   const who = r.initiator.upn || r.initiator.name || r.initiator.id || r.initiator.appId;
@@ -334,9 +349,11 @@ export function mapEntraAuditRows(
       : "";
     // An app's empty refresh of its own service principal names no change at all, so it is no
     // evidence of the credential tampering the table's grade assumes.
-    const def = isEmptySelfRefresh(r)
-      ? { severity: "Low" as Severity, mitre: [] }
-      : plainSeverity(r.operation);
+    // Microsoft's own service provisioning a service principal is upkeep too (#2549).
+    const def =
+      isEmptySelfRefresh(r) || isFirstPartyProvisioning(r)
+        ? { severity: "Low" as Severity, mitre: [] }
+        : plainSeverity(r.operation);
     const targetIds = [
       ...new Set(
         r.targets

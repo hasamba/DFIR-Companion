@@ -111,6 +111,71 @@ export function buildCloudStreamDisclosure(i: DisclosureInputs): CloudStreamDisc
   };
 }
 
+const FORMAT_MAX = 40;
+type Counts<T extends string> = Record<T, number>;
+type NumberKey = {
+  [K in keyof CloudStreamDisclosure]-?: CloudStreamDisclosure[K] extends number ? K : never;
+}[keyof CloudStreamDisclosure];
+function addCounts<T extends string>(a: Counts<T>, b: Counts<T>, keys: readonly T[]): Counts<T> {
+  return Object.fromEntries(keys.map((k) => [k, a[k] + b[k]])) as Counts<T>;
+}
+
+/**
+ * Two disclosures as one (#2546): a live collection's Cloud Coverage row states the running sum of
+ * its pages, summed as numbers BEFORE they become sentences. Counts add, "it happened" flags OR,
+ * formats union; budgets, caps and kind are per-page constants, so the later page's value is kept.
+ * Optional fields missing from older stored shapes count as 0. Pure: neither input changes.
+ */
+export function sumCloudStreamDisclosure(
+  a: CloudStreamDisclosure,
+  b: CloudStreamDisclosure,
+): CloudStreamDisclosure {
+  const formats = [...new Set([...a.format.split("+"), ...b.format.split("+")])];
+  const add = (k: NumberKey): number => a[k] + b[k];
+  return {
+    kind: b.kind,
+    format: formats.join("+").slice(0, FORMAT_MAX),
+    gzip: a.gzip || b.gzip,
+    bytesRead: add("bytesRead"),
+    bytesDecoded: add("bytesDecoded"),
+    records: add("records"),
+    duplicates: add("duplicates"),
+    conflicts: add("conflicts"),
+    unmapped: add("unmapped"),
+    parseErrors: add("parseErrors"),
+    oversizeSkipped: add("oversizeSkipped"),
+    bomStripped: add("bomStripped"),
+    documentsJoined: add("documentsJoined"),
+    belowFloor: add("belowFloor"),
+    preGradeRaised: add("preGradeRaised"),
+    individual: addCounts(a.individual, b.individual, ["critical", "high", "medium"]),
+    aggregatedRows: addCounts(a.aggregatedRows, b.aggregatedRows, ["medium", "low", "info"]),
+    mediumMerged: (a.mediumMerged ?? 0) + (b.mediumMerged ?? 0),
+    mediumOverflow: {
+      ruleActorBudget: a.mediumOverflow.ruleActorBudget + b.mediumOverflow.ruleActorBudget,
+      importBudget: a.mediumOverflow.importBudget + b.mediumOverflow.importBudget,
+      failedReadBudget: (a.mediumOverflow.failedReadBudget ?? 0) + (b.mediumOverflow.failedReadBudget ?? 0),
+    },
+    failedReads: {
+      folded: (a.failedReads?.folded ?? 0) + (b.failedReads?.folded ?? 0),
+      toSuper: (a.failedReads?.toSuper ?? 0) + (b.failedReads?.toSuper ?? 0),
+    },
+    groups: addCounts(a.groups, b.groups, ["detailed", "coarse", "catchAll"]),
+    superWritten: add("superWritten"),
+    superBudgetExceeded: add("superBudgetExceeded"),
+    superEvicted: add("superEvicted"),
+    iocsDropped: add("iocsDropped"),
+    iocsMax: b.iocsMax,
+    summaryWindow: {
+      max: b.summaryWindow.max,
+      records: a.summaryWindow.records + b.summaryWindow.records,
+      truncated: a.summaryWindow.truncated || b.summaryWindow.truncated,
+    },
+    sprayHistoryTruncated: a.sprayHistoryTruncated || b.sprayHistoryTruncated,
+    budgets: { ...b.budgets },
+  };
+}
+
 const n = (x: number): string => x.toLocaleString("en-US");
 
 /** The disclosure as clauses, for the import note and the coverage panel. Only what happened. */

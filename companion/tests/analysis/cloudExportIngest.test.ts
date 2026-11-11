@@ -279,9 +279,7 @@ describe("mailbox audit date order is decided per file (#2302)", () => {
     expect(times(text)).toEqual(["", ""]);
     const { state } = await importFile("mailboxAuditLog-user1@example.com.csv", text);
     const note = state.timeline.map((t) => t.description).find((d) => d.startsWith("Microsoft 365 import"));
-    expect(note).toContain(
-      "2 mailbox audit row(s) have no time: the file's day/month order could not be determined",
-    );
+    expect(note).toContain("2 audit row(s) have no time: the file's day/month order could not be determined");
   });
 
   it("a file mixing both orders reads only the unambiguous rows and discloses the rest", () => {

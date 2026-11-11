@@ -51,18 +51,42 @@ describe("inbox rules — admin cmdlets", () => {
     expect(c.mitre).toEqual(expect.arrayContaining(["T1114.003", "T1564.008"]));
     expect(c.attempted).toBe(false);
   });
-  it("forwarding inside the domain, or hiding without forwarding, is Medium; other actions only are Low", () => {
+  // #2550 (user decision): a rule that deletes mail, or moves it to a known hiding folder, is High;
+  // mark-as-read or a move to an ordinary folder still hides only softly and stays Medium.
+  it("forwarding inside the domain, or soft hiding without forwarding, is Medium; other actions only are Low", () => {
     expect(one(admin("New-InboxRule", { Name: "r", RedirectTo: "bob@example.invalid" })).severity).toBe(
       "Medium",
     );
-    const hide = one(admin("New-InboxRule", { Name: "r", MoveToFolder: "RSS Feeds", MarkAsRead: "True" }));
-    expect(hide.severity).toBe("Medium");
-    expect(hide.words).toContain('moves to "RSS Feeds"');
-    expect(hide.words).toContain("marks as read");
-    expect(hide.mitre).toEqual(["T1564.008"]);
+    const soft = one(admin("New-InboxRule", { Name: "r", MoveToFolder: "Projects", MarkAsRead: "True" }));
+    expect(soft.severity).toBe("Medium");
+    expect(soft.words).toContain('moves to "Projects"');
+    expect(soft.words).toContain("marks as read");
+    expect(soft.mitre).toEqual(["T1564.008"]);
+    expect(soft.hidesHard).toBe(false);
+    expect(one(admin("New-InboxRule", { Name: "r", MarkAsRead: "True" })).severity).toBe("Medium");
     const other = one(admin("New-InboxRule", { Name: "r", ApplyCategory: "Blue" }));
     expect(other.severity).toBe("Low");
     expect(other.mitre).toEqual([]);
+  });
+  it("a rule that deletes, or moves to a known hiding folder, is High (#2550)", () => {
+    const del = one(
+      admin("New-InboxRule", { Name: "", BodyContainsWords: "invoice", DeleteMessage: "True" }),
+    );
+    expect(del.severity).toBe("High");
+    expect(del.mitre).toEqual(["T1564.008"]);
+    expect(del.hidesHard).toBe(true);
+    const rss = one(admin("New-InboxRule", { Name: "r", MoveToFolder: "RSS Feeds", MarkAsRead: "True" }));
+    expect(rss.severity).toBe("High");
+    expect(rss.words).toContain('moves to "RSS Feeds"');
+    expect(
+      one(admin("New-InboxRule", { Name: "r", MoveToFolder: "alice:\\Conversation History" })).severity,
+    ).toBe("High");
+    // A rule that forwards inside the domain AND deletes is still a hiding rule: High, both techniques.
+    const both = one(
+      admin("New-InboxRule", { Name: "r", ForwardTo: "bob@example.invalid", DeleteMessage: "True" }),
+    );
+    expect(both.severity).toBe("High");
+    expect(both.mitre).toEqual(expect.arrayContaining(["T1114.003", "T1564.008"]));
   });
   it("'on every message' only for a successful New-InboxRule with no condition parameter", () => {
     expect(one(admin("New-InboxRule", { Name: "r", ForwardTo: "x@attacker.invalid" })).words).toContain(
@@ -220,7 +244,8 @@ describe("mailbox forwarding and permissions", () => {
     expect(m.posture).toBe(
       "grants FullAccess on alice@example.invalid to helper@attacker.invalid (outside the mailbox's domain)",
     );
-    expect(m.severity).toBe("Medium");
+    // #2550 (user decision): FullAccess / SendAs to another account by a person is High.
+    expect(m.severity).toBe("High");
     expect(m.mitre).toEqual(["T1098.002"]);
     const r = one(
       admin("Add-RecipientPermission", {
@@ -241,6 +266,33 @@ describe("mailbox forwarding and permissions", () => {
         }),
       ).severity,
     ).toBe("Low");
+  });
+  // A 60-character Exchange DN used to fill the posture slot, leaving ~4 characters of the grantee
+  // (#2553). The row text names the last path segment; the full values stay in the target and
+  // the object slot.
+  const DN = "EURPR04A009.PROD.OUTLOOK.COM/Microsoft Exchange Hosted Organizations/contoso.example";
+  it("names the mailbox and the grantee by their last DN segment on a FullAccess grant", () => {
+    const c = one(
+      admin(
+        "Add-MailboxPermission",
+        { Identity: `${DN}/Victim`, User: `${DN}/Vict1m-lookalike`, AccessRights: "FullAccess" },
+        { ObjectId: `${DN}/Victim` },
+      ),
+    );
+    expect(c.posture).toBe("grants FullAccess on Victim to Vict1m-lookalike");
+    expect(c.target).toBe(`${DN}/Vict1m-lookalike`);
+    expect(c.mailbox).toBe(`${DN}/Victim`);
+  });
+  it("names the SendAs trustee in full the same way", () => {
+    const c = one(
+      admin("Add-RecipientPermission", {
+        Identity: `${DN}/Victim`,
+        Trustee: `${DN}/Vict1m-lookalike`,
+        AccessRights: "SendAs",
+      }),
+    );
+    expect(c.posture).toBe("grants SendAs on Victim to Vict1m-lookalike");
+    expect(c.target).toBe(`${DN}/Vict1m-lookalike`);
   });
 });
 
@@ -410,13 +462,19 @@ describe("code review regressions", () => {
     expect(c.mitre).toEqual([]);
     expect(c.words).toContain("stops processing more rules");
   });
-  it("a non-UPN ObjectId is still the mailbox identity; addresses then get no domain class", () => {
+  it("a non-UPN ObjectId is still the mailbox identity; with no domain proof addresses get no class", () => {
+    // An application actor proves no tenant domain, and the alias names none: unclassed, Medium.
     const c = one(
-      admin("New-InboxRule", { Name: "r", ForwardTo: "x@attacker.invalid" }, { ObjectId: "AliceAlias\\r" }),
+      admin(
+        "New-InboxRule",
+        { Name: "r", ForwardTo: "x@attacker.invalid" },
+        { ObjectId: "AliceAlias\\r", UserType: 5, UserId: "00000003-0000-0ff1-ce00-000000000000" },
+      ),
     );
     expect(c.mailbox).toBe("AliceAlias");
     expect(c.words).toContain("forwards to x@attacker.invalid");
     expect(c.words).not.toContain("domain");
+    expect(c.severity).toBe("Medium");
     const other = one(
       admin("New-InboxRule", { Name: "r", ForwardTo: "x@attacker.invalid" }, { ObjectId: "BobAlias\\r" }),
     );

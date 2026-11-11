@@ -409,3 +409,56 @@ describe("buildKnownUnknownItems — unobserved playbook steps (#230)", () => {
     expect(renderKnownUnknowns(items)).toContain("T1003.001");
   });
 });
+
+// #2555: a tenant-log case has no Windows host, so "collect Security.evtx 4688 + Sysmon EID 1" is a
+// collection that cannot exist. The uncovered-phase labels name the cloud logs instead.
+describe("buildKnownUnknownItems — cloud-only case (#2555)", () => {
+  function cloudState(): InvestigationState {
+    const s = emptyState("c");
+    s.findings = [finding("f1", "High", ["T1114.003"])];
+    s.forensicTimeline = [
+      partialEvent({ id: "u1", description: "M365 New-InboxRule by alice", sources: ["Microsoft 365"] }),
+      partialEvent({ id: "s1", description: "Entra sign-in: alice@example.test", sources: ["Entra ID"] }),
+    ];
+    return s;
+  }
+
+  it("labels uncovered phases with cloud sources, no EVTX/Sysmon and no collect directive", () => {
+    const s = cloudState();
+    const items = buildKnownUnknownItems(s, s.forensicTimeline).filter((i) => i.kind === "uncovered_tactic");
+    expect(items.length).toBeGreaterThan(0);
+    for (const i of items) {
+      expect(i.label).not.toMatch(/evtx|sysmon|velociraptor|srum|autoruns/i);
+      expect(i.collect).toEqual([]);
+    }
+    const persistence = items.find((i) => i.tactic === "Persistence");
+    expect(persistence?.label).toMatch(/inbox/i);
+    expect(persistence?.label).toMatch(/OAuth/);
+  });
+
+  it("raises no 'collect endpoint detections' yield gap off tenant-log wording", () => {
+    const s = cloudState();
+    s.forensicTimeline = [
+      ...s.forensicTimeline,
+      partialEvent({
+        id: "u2",
+        description: "M365 Set-Mailbox ProxyAddresses changed",
+        sources: ["Microsoft 365"],
+      }),
+    ];
+    const labels = buildKnownUnknownItems(s, s.forensicTimeline).map((i) => i.label);
+    expect(labels.join(" ")).not.toMatch(/sysmon|evtx/i);
+  });
+
+  it("drops host Execution, which has no cloud meaning", () => {
+    const s = cloudState();
+    const tactics = buildKnownUnknownItems(s, s.forensicTimeline).map((i) => i.tactic);
+    expect(tactics).not.toContain("Execution");
+  });
+
+  it("keeps today's Windows labels on a host case", () => {
+    const s = seriousState();
+    const exec = buildKnownUnknownItems(s, s.forensicTimeline).find((i) => i.tactic === "Execution");
+    expect(exec?.label).toContain("Sysmon EID 1");
+  });
+});

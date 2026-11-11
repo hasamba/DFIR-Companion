@@ -561,7 +561,7 @@ export class AnalysisPipeline {
   ): Promise<{ state: InvestigationState; disclosure: CloudStreamDisclosure }> {
     const { state, coverage, disclosure } = await ingest.importCloudFile(this.importCtx, ...args);
     const importDisclosure = describeCloudStreamDisclosure(disclosure).map((d) => d.slice(0, 400));
-    const drafts = coverage.map((c) => ({ ...c, importDisclosure }));
+    const drafts = coverage.map((c) => ({ ...c, importDisclosure, streamDisclosure: disclosure }));
     // A live collection's page folds into its collection's one row (#2538); a manual upload is its own.
     await persistImportCoverage(this.opts.cloudCoverageStore, args[0], drafts, args[3].coverageGroup);
     return { state, disclosure };

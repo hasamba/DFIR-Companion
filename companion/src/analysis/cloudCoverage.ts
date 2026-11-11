@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
+import { cloudStreamDisclosureSchema } from "./cloudStreamDisclosure.js";
 
 // Per-upload cloud coverage (#931 item 14, coverage half, part B — #1063): what one CloudTrail /
 // GCP / Azure / M365 / Google Workspace upload states about itself — record count, first → last,
@@ -67,6 +68,8 @@ export const cloudCoverageRecordSchema = z.object({
   importDisclosure: z.array(z.string().max(IMPORT_DISCLOSURE_TEXT_MAX)).max(IMPORT_DISCLOSURE_MAX).optional(),
   /** A live collection's row (#2538): how many collected pages have been folded into it. */
   pages: z.number().int().positive().optional(),
+  /** A live collection's row only (#2546): the pages' disclosures summed as numbers; `importDisclosure` is its wording. */
+  streamDisclosure: cloudStreamDisclosureSchema.optional(),
 });
 export type CloudCoverageRecord = z.infer<typeof cloudCoverageRecordSchema>;
 const fileSchema = z.array(cloudCoverageRecordSchema);

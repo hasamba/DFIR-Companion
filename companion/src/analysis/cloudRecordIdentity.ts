@@ -12,8 +12,11 @@
 // A record with no usable id is identified by the SHA-256 of its canonical form and flagged
 // `hashIdentified`, so the analyst can tell a provider id from a content hash.
 //
-// `payloadHash` is always the canonical-form SHA-256: two records under one id whose payloads
-// differ are a CONFLICT (kept and flagged), never silently collapsed. Pure.
+// `payloadHash` is always the canonical-form SHA-256 of the audit record: two records under one id
+// whose payloads differ are a CONFLICT (kept and flagged), never silently collapsed. For UAL the
+// audit record is the `AuditData` payload, not the export envelope around it (#2548): Splunk's
+// `_bkt` / `_cd` / `_indextime` columns and Search-UnifiedAuditLog's per-page `ResultIndex` /
+// `ResultCount` change between exports of the same record and must not make it a conflict. Pure.
 
 import { createHash } from "node:crypto";
 import { getCI, getPath, isObject, str } from "./siemFieldPick.js";
@@ -32,7 +35,7 @@ export type CloudRecordProvider =
 
 export interface CloudRecordIdentity {
   key: string; // "<provider>|<account>|<id…>" or "<provider>|sha256:<hex>"
-  payloadHash: string; // hex SHA-256 of canonicalJson(record)
+  payloadHash: string; // hex SHA-256 of canonicalJson(record) — for UAL, of its AuditData when present
   hashIdentified: boolean; // true when the record carried no usable provider id
 }
 
@@ -146,9 +149,27 @@ const ID_OF: Record<CloudRecordProvider, (rec: Row) => string | null> = {
   guardduty: guardDutyRecordId,
 };
 
+/** A UAL row's parsed `AuditData` (object, or a string holding a JSON object); null when absent or unparseable. */
+function ualAuditData(rec: Row): Row | null {
+  const ad = getCI(rec, "AuditData");
+  if (isObject(ad)) return ad;
+  if (typeof ad !== "string" || !ad.trim().startsWith("{")) return null;
+  try {
+    const parsed: unknown = JSON.parse(ad);
+    return isObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What `payloadHash` covers: for UAL the `AuditData` audit record when present (#2548), else the whole record. */
+function payloadOf(provider: CloudRecordProvider, rec: Row): Row {
+  return provider === "ual" ? (ualAuditData(rec) ?? rec) : rec;
+}
+
 /** The identity of `rec` under `provider`'s id rule, falling back to a flagged content hash. */
 export function cloudRecordIdentity(provider: CloudRecordProvider, rec: Row): CloudRecordIdentity {
-  const payloadHash = sha256(canonicalJson(rec));
+  const payloadHash = sha256(canonicalJson(payloadOf(provider, rec)));
   const id = ID_OF[provider](rec);
   return id
     ? { key: `${provider}|${id}`, payloadHash, hashIdentified: false }

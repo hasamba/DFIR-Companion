@@ -4,8 +4,12 @@ import {
   APP_USER_TYPES,
   CLIENT_MAX,
   digest,
+  DRY_RUN_NOTE,
   domainClass,
-  domainOf,
+  isDryRun,
+  isSystemActor,
+  permissionSeverity,
+  ownerDomainsOf,
   ipOf,
   falsy,
   FOLDER_MAX,
@@ -27,8 +31,15 @@ import {
   values,
   withClass,
 } from "./exchangeAuditValues.js";
-import { ACTION_ADDRESS, readRuleParams, ruleGrade, type RuleReading } from "./exchangeInboxRules.js";
-import type { Pairs } from "./exchangeAuditValues.js";
+import {
+  ACTION_ADDRESS,
+  emptyReading,
+  isHidingFolder,
+  readRuleParams,
+  ruleGrade,
+} from "./exchangeInboxRules.js";
+import { auditConfigCmdlet } from "./exchangeAuditConfig.js";
+import type { OwnerDomains, Pairs } from "./exchangeAuditValues.js";
 
 const TRUNCATED_NOTE = "parameters truncated — the complete values are in the raw record";
 
@@ -40,8 +51,11 @@ const TRUNCATED_NOTE = "parameters truncated — the complete values are in the 
 // messages), who reached which mailbox in which session and through which client, and whether the
 // command succeeded. It does not establish that a forwarded message was delivered, that a bound
 // item was read by a person, or the tenant's verified domains — so an address is classed against
-// the MAILBOX OWNER's domain, never "external to the tenant". A failed or unknown result is an
-// attempt: "attempted to create inbox rule", no completed verb, no success-only technique.
+// the MAILBOX OWNER's domain, never "external to the tenant". A mailbox named by alias has no
+// domain of its own: its addresses are classed against the tenant domains the record itself proves
+// (the Exchange path's organisation segment, the acting person's UPN — #2550), worded "the tenant
+// domains this record names", never the tenant's full list; with no such proof an address stays
+// unclassed. A failed or unknown result is an attempt: no completed verb, no success-only technique.
 //
 // Record types (Microsoft's): 1 ExchangeAdmin (cmdlets, `Parameters[]`), 2 ExchangeItem (one
 // `Item`; also the Outlook-created UpdateInboxRules), 3 ExchangeItemGroup (`AffectedItems[]`),
@@ -51,7 +65,7 @@ const TRUNCATED_NOTE = "parameters truncated — the complete values are in the 
 type Row = Record<string, unknown>;
 
 export interface ExchangeChange {
-  kind: "rule" | "forwarding" | "permission" | "access" | "aggregate" | "item";
+  kind: "rule" | "forwarding" | "permission" | "access" | "aggregate" | "item" | "config";
   recordType: number;
   operation: string;
   posture: string;
@@ -90,6 +104,8 @@ export interface ExchangeChange {
   /** A rule or forwarding whose destination is outside the mailbox's domain; a rule that hides mail. */
   forwardsOutside: boolean;
   hides: boolean;
+  /** A rule that deletes mail or moves it to a known hiding folder (#2550). */
+  hidesHard: boolean;
 }
 
 function outcomeOf(rec: Row): ExchangeChange["outcome"] {
@@ -127,7 +143,8 @@ interface Common {
   session: string;
   mailbox: string;
   mailboxId: string;
-  ownerDomain: string;
+  ownerDomain: OwnerDomains;
+  actorIsSystem: boolean;
   logon: string;
   client: string;
 }
@@ -137,9 +154,16 @@ function common(rec: Row, index: number): Common {
   const actor = str(getCI(rec, "UserId")).trim();
   // ObjectId on a cmdlet record is `mailbox\Rule name` for a rule and the mailbox alone otherwise;
   // the mailbox may be an alias, a name or a DN, not only a UPN — it is the identity either way,
-  // and only a UPN yields a domain to class addresses against.
-  const objectId = str(getCI(rec, "ObjectId")).trim().split("\\")[0];
+  // and a UPN yields the domain to class addresses against. An alias falls back to the tenant
+  // domains the record proves (#2550): the Exchange path's organisation segment, the acting person's UPN.
+  const rawObjectId = str(getCI(rec, "ObjectId")).trim();
+  const objectId = rawObjectId.split("\\")[0];
   const mailbox = str(getCI(rec, "MailboxOwnerUPN")).trim() || objectId;
+  const actorIsApp = APP_USER_TYPES.has(userType);
+  const actorIsSystem = isSystemActor(actor, userType);
+  const identity = Array.isArray(getCI(rec, "Parameters"))
+    ? (pairs(getCI(rec, "Parameters")).map.get("identity") ?? "")
+    : "";
   return {
     rec,
     index,
@@ -151,13 +175,19 @@ function common(rec: Row, index: number): Common {
     tenant: str(getCI(rec, "OrganizationId")).trim(),
     recordId: str(getCI(rec, "Id")).trim(),
     actor,
-    actorIsApp: APP_USER_TYPES.has(userType),
+    actorIsApp,
+    actorIsSystem,
     appId: str(getCI(rec, "AppId")).trim() || str(getCI(rec, "ClientAppId")).trim(),
     ip: ipOf(str(getCI(rec, "ClientIPAddress")).trim() || str(getCI(rec, "ClientIP")).trim()),
     session: str(getCI(rec, "SessionId")).trim(),
     mailbox,
     mailboxId: str(getCI(rec, "MailboxGuid")).trim(),
-    ownerDomain: mailbox.includes("@") ? domainOf(mailbox) : "",
+    ownerDomain: ownerDomainsOf({
+      mailbox,
+      paths: [rawObjectId, identity],
+      actor,
+      actorIsPerson: !actorIsApp && !actorIsSystem,
+    }),
     logon: logonWord(str(getCI(rec, "LogonType")).trim()),
     client: clientOf(str(getCI(rec, "ClientInfoString"))),
   };
@@ -200,6 +230,7 @@ function finish(
     operations?: number | null;
     forwardsOutside?: boolean;
     hides?: boolean;
+    hidesHard?: boolean;
   },
 ): ExchangeChange {
   const posture = c.attempted
@@ -260,15 +291,11 @@ function finish(
     client: c.client,
     forwardsOutside: o.forwardsOutside ?? false,
     hides: o.hides ?? false,
+    hidesHard: o.hidesHard ?? false,
   };
 }
 
 // ───────────────────────────── rules ─────────────────────────────
-
-// `-WhatIf` and `-ValidateOnly` make no change: a successful record of either is a simulation.
-const isDryRun = (p: Map<string, string>): boolean =>
-  ["whatif", "validateonly"].some((k) => p.has(k) && (truthy(p.get(k) ?? "") || p.get(k) === ""));
-const DRY_RUN_NOTE = "dry run (WhatIf/ValidateOnly) — no change was made";
 
 function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
   const p = pp.map;
@@ -333,6 +360,7 @@ function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
     polarity: r.actions.length ? "adds" : "none",
     forwardsOutside: r.forwardsOutside,
     hides: r.hides,
+    hidesHard: r.hidesHard,
   });
 }
 
@@ -348,17 +376,7 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
   const infinitive = verb === "removes" ? "remove" : verb === "changes" ? "change" : "create";
   const rawActions = p.get("ruleactions") ?? "";
   const condition = p.get("rulecondition") ?? "";
-  const r: RuleReading = {
-    actions: [],
-    conditions: [],
-    undecoded: [],
-    forwardsOutside: false,
-    forwardsInside: false,
-    forwardsUnclassed: false,
-    hides: false,
-    any: false,
-    deltas: [],
-  };
+  const r = emptyReading();
   let unparsed = "";
   const forwardTargets: string[] = [];
   if (rawActions) {
@@ -389,12 +407,13 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
         }
       } else if (/delete/.test(type)) {
         r.hides = true;
+        r.hidesHard = true;
         r.actions.push("deletes the message");
       } else if (/movetofolder/.test(type)) {
         r.hides = true;
-        r.actions.push(
-          `moves to ${quote(str(getCI(a, "FolderName")) || str(getCI(a, "FolderId")), FOLDER_MAX)}`,
-        );
+        const folder = str(getCI(a, "FolderName"));
+        if (isHidingFolder(folder)) r.hidesHard = true;
+        r.actions.push(`moves to ${quote(folder || str(getCI(a, "FolderId")), FOLDER_MAX)}`);
       } else if (/markasread/.test(type)) {
         r.hides = true;
         r.actions.push("marks as read");
@@ -430,6 +449,7 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
     polarity: /^remove/.test(op) ? "removes" : /^(add|modify)/.test(op) && r.actions.length ? "adds" : "none",
     forwardsOutside: r.forwardsOutside,
     hides: r.hides,
+    hidesHard: r.hidesHard,
   });
 }
 
@@ -515,6 +535,15 @@ function forwardingCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
   });
 }
 
+/** `ORG/Hosted Organizations/tenant/Name` → `Name`; an address, an alias or `alias:\Folder` is unchanged. */
+const lastDnSegment = (v: string): string => {
+  const parts = v
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length >= 2 ? (parts[parts.length - 1] ?? v) : v;
+};
+
 function permissionCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
   const p = pp.map;
   const m = /^(add|remove)-(mailboxpermission|mailboxfolderpermission|recipientpermission)$/.exec(
@@ -539,9 +568,12 @@ function permissionCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
   // `-Deny` adds or removes a DENY entry: adding one restricts, removing one may widen access —
   // the opposite direction from an allow entry.
   const deny = p.has("deny") && (p.get("deny") === "" || truthy(p.get("deny") ?? ""));
-  const on = `${rights} on ${mailbox.slice(0, 60)}`;
-  const forWhom = trustee ? ` for ${withClass(trustee, c.ownerDomain)}` : "";
-  const to = trustee ? ` ${removal ? "from" : "to"} ${withClass(trustee, c.ownerDomain)}` : "";
+  // The row text names a DN by its last segment (#2553): a 60-character DN used to fill the posture
+  // slot and cut the grantee. The full values stay in `target` and the object slot.
+  const shownTrustee = lastDnSegment(trustee);
+  const on = `${rights} on ${lastDnSegment(mailbox).slice(0, 60)}`;
+  const forWhom = trustee ? ` for ${withClass(shownTrustee, c.ownerDomain)}` : "";
+  const to = trustee ? ` ${removal ? "from" : "to"} ${withClass(shownTrustee, c.ownerDomain)}` : "";
   const verb = deny
     ? `${removal ? "removes a Deny entry" : "adds a Deny entry"} for ${on}${forWhom}${removal ? " (effective access may widen)" : ""}`
     : `${removal ? "revokes" : "grants"} ${on}${to}`;
@@ -553,7 +585,14 @@ function permissionCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
     kind: "permission",
     verb,
     infinitive,
-    severity: widens ? "Medium" : "Low",
+    severity: permissionSeverity({
+      widens,
+      deny,
+      rights,
+      trustee,
+      mailbox,
+      byService: c.actorIsApp || c.actorIsSystem,
+    }),
     mitre: widens ? ["T1098.002"] : [],
     scope: `permission:${pp.digest}`,
     target: trustee,
@@ -718,7 +757,8 @@ function itemRecord(c: Common): ExchangeChange | null {
     verb,
     infinitive,
     words: subject ? `subject ${quote(subject, SUBJECT_MAX)}` : "",
-    severity: accessSeverity(c),
+    // A hard delete purges the item past Deleted Items: at least Low even for the owner, as the table grades it (#2550).
+    severity: op === "harddelete" && accessSeverity(c) === "Info" ? "Low" : accessSeverity(c),
     scope: `item:${op}:${sentAs}:${sentAsId}:${folder}:${destMailbox}:${destFolder}:${allRecipients.join(",")}:${recipientCount}:${ids.join(",")}`,
     // The TARGET of a send is where it went — the recipients (or their count); the identity it was
     // sent as is the subject. A move or copy targets its destination mailbox.
@@ -744,7 +784,8 @@ export function decodeExchangeRecord(rec: Row, index: number): ExchangeChange | 
     return (
       ruleCmdlet(c, p) ??
       (c.operation.toLowerCase() === "set-mailbox" ? forwardingCmdlet(c, p) : null) ??
-      permissionCmdlet(c, p)
+      permissionCmdlet(c, p) ??
+      auditConfigCmdlet(c, p, finish)
     );
   }
   if (c.recordType === 50 || (c.operation.toLowerCase() === "mailitemsaccessed" && c.recordType !== 19))

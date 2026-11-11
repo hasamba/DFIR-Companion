@@ -162,13 +162,18 @@ When a new account (EID 4720) or a group member (EID 4728/4732/4756) has a name 
 account, such as Administrator, krbtgt or Guest, the event is graded High. The description ends with
 `[look-alike of built-in account "<name>"]`. Localized built-in names, numbered copies such as
 `admin2`, and names shorter than five characters are not flagged. A member logged only by its SID is
-not checked.
+not checked. Two-letter shapes that read as one letter are also caught: `rn` as `m`, `vv` as `w` and
+`cl` as `d`, so `adrnin` is flagged as a look-alike of `admin`.
 
 An import also compares each new account and new group member with the accounts already in the case.
 A name one character away from an existing case account is graded High, with a note such as
-`[look-alike account: "svc-backupl" is one edit from case account "svc-backup"]`. Numbered accounts
-(`user1`/`user2`), names that differ only in the first letter (`asmith`/`bsmith`), machine accounts
-and names shorter than five characters are not flagged. The check looks back only: a real account
+`[look-alike account: "svc-backupl" is one edit from case account "svc-backup"]`. A name that is the
+same as a case account once `rn`, `vv` or `cl` is read as `m`, `w` or `d` is also graded High, with a
+note such as `[look-alike account: "jsrnith" looks like case account "jsmith"]`. Numbered accounts
+(`user1`/`user2`), names that differ only in the first letter (`asmith`/`bsmith`), names that differ
+only in a two-letter shape at the start (`rnjones`/`mjones`, an initial and a surname), machine
+accounts and names shorter than five characters are not flagged. Rarely, two real names read the same
+(`jclayton`/`jdayton`). The note names both accounts so you can dismiss it. The check looks back only: a real account
 that first appears in a later import does not re-check an earlier look-alike.
 
 ### Right-to-left override file names
@@ -1943,6 +1948,17 @@ Measured on the public SANS 504 S3 ransomware lab, where the noise used to bury 
   same principal from the same source follows within 10 minutes. Several failures keep T1110. The
   grade never changes, and no other log source does this.
 
+**EC2 instance-role credentials used away from the instance.** The importer recognises an instance
+credential from two facts CloudTrail records itself: the credential was handed out by the instance
+metadata service (IMDSv1 or IMDSv2), and the session is named after the instance id. A session
+name alone does not count, because whoever calls `AssumeRole` chooses it. One call from a public
+address gets a Medium note, not a finding: an instance behind a NAT gateway, or an instance with its
+own public IP address, calls from that address every time. The same instance credential used from
+**two or more different public addresses** raises its credential-lineage row to High (T1552.005,
+T1078.004), because one instance has only one egress address. Private addresses, calls with no
+address, and other sessions add nothing new. The check covers one upload: two addresses in separate
+uploads are not joined.
+
 ### CloudTrail identities as IOCs
 
 Besides the caller's IP address, a CloudTrail import adds the identities behind the attack to the
@@ -2198,8 +2214,10 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
 
 - **Inbox rules** — `creates inbox rule ".." forwards to drop@… (outside the mailbox's domain),
   deletes the message on every message`. The actions and conditions are the cmdlet's own
-  parameters. A rule that forwards or redirects outside the mailbox's domain is High; one that
-  forwards inside, or only hides (deletes, moves, marks read), is Medium; other actions Low.
+  parameters. A rule that forwards or redirects outside the mailbox's domain is High, and so is a
+  rule that deletes mail or moves it to a hiding folder (RSS Feeds, RSS Subscriptions,
+  Conversation History, Archive, Deleted Items, Junk, Notes). A rule that forwards inside, marks
+  read, or moves to an ordinary folder is Medium; other actions Low.
   `Set-InboxRule` carries only what changed: the row reports those deltas (`now forwards to …`,
   `renamed to …`, `now enabled`) and says `effective conditions and actions not in this record` —
   an absent parameter is unchanged, never absent, so a rename never reads as a harmless rule.
@@ -2209,15 +2227,30 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
 - **"Outside the mailbox's domain"** compares the address with the domain of the mailbox owner —
   the only tenant fact the record holds. The row never says "external to the tenant": the
   tenant's verified domains are not in the record. A recipient that is not an SMTP address gets
-  no class.
+  no class. When the record names the mailbox by alias (`alice\Rule`), the row compares against
+  the tenant domains the record itself proves instead: the organisation part of an Exchange path
+  (`…/Microsoft Exchange Hosted Organizations/<domain>/…`) and the domain of the acting user's UPN.
+  It then says `outside the tenant domains this record names`. With no such proof (an application
+  or the system acting on an alias) the address stays unclassed.
+- **BEC pairings across one export** — a hiding rule (delete, or move to a hiding folder) created
+  by the same actor on the same mailbox within 10 minutes of a rule that forwards outside is
+  **Critical**. The row adds `[hides mail; a forward-out rule by the same actor on this mailbox is
+  within 10 minutes]`. A privileged directory role granted at most 24 hours after an `Add user`
+  record for that user in the same export is **High** and says so; the `Add user` row stays
+  Medium. Pairing sees one parse at a time: a streamed import (gzip, or a large file) pairs only
+  records in the same 5,000-record batch, and two separate uploads never pair, so a pair split
+  across them keeps its unpaired grades (High / Medium).
 - **Mailbox forwarding** (`Set-Mailbox`) — `sets SMTP forwarding to x@… (outside the mailbox's
   domain)` (High); `sets forwarding to in-organization recipient …` (`ForwardingAddress` — an
   alias, name or DN, no domain class; Medium); `a copy stays` / `no copy stays` only when
   `DeliverToMailboxAndForward` is in the same record; `clears SMTP forwarding` (Low). When both
   addresses are set the row says `ForwardingAddress takes precedence`. Every partial change says
   `effective forwarding state not in this record`.
-- **Permissions** — `grants FullAccess on alice@… to helper@… (outside the mailbox's domain)`,
-  Medium; `Add-RecipientPermission` names its `Trustee`; removals Low. A `-Deny` entry reads in its
+- **Permissions** — `grants FullAccess on alice@… to helper@… (outside the mailbox's domain)`.
+  FullAccess or SendAs granted by a person to another account is High. The same grant by the
+  service itself (`NT AUTHORITY\SYSTEM`, a system `UserType`, or an application) is Low, which
+  covers Exchange provisioning its discovery mailboxes. A self-grant and every other right stay
+  Medium. `Add-RecipientPermission` names its `Trustee`; removals Low. A `-Deny` entry reads in its
   own direction: `adds a Deny entry …` restricts (Low), `removes a Deny entry … (effective access
   may widen)` is Medium. A `-WhatIf` or `-ValidateOnly` cmdlet reads `simulates …` — no change
   was made.
@@ -2235,7 +2268,9 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
   (outside the mailbox's domain)` (the identity the record's own `SendAsUserSmtp` names, the
   recipients it lists; a non-owner: Low, the subject bounded), `copies 2 items from "\Inbox" to
   mailbox drop@… to "\Archive"` (a cross-mailbox destination is named), `hard-deletes 3 items
-  from "\Inbox"` (the items the record lists; one `Item` on a single-item record).
+  from "\Inbox"` (the items the record lists; one `Item` on a single-item record). A hard delete
+  is at least Low, even by the owner. An owner's move to Deleted Items stays Info.
+  `AnonymousLinkCreated` (an anyone-with-the-link share) is Low.
 - **A failed or unknown result is an attempt** — `attempted to create inbox rule "r" — failed`,
   Medium, no technique. A `PartiallySucceeded` result reads `partly creates …` with `which
   actions completed is not in this record`.

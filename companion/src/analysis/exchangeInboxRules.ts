@@ -9,12 +9,29 @@ import {
   truthy,
   values,
   withClass,
+  type OwnerDomains,
 } from "./exchangeAuditValues.js";
+
+// Folders a BEC rule moves mail into so the owner never sees it (#2550): a move there is concealment,
+// not filing. Matched on the last path segment, case-insensitively.
+const HIDING_FOLDERS = new Set([
+  "rss feeds",
+  "rss subscriptions",
+  "conversation history",
+  "archive",
+  "deleted items",
+  "junk",
+  "junk email",
+  "notes",
+]);
+export const isHidingFolder = (v: string): boolean =>
+  HIDING_FOLDERS.has((v.split(/[\\/:]/).pop() ?? "").trim().toLowerCase());
 
 // Inbox-rule parameters read into words (#931 item 2): the actions a rule was given (forward,
 // redirect, delete, move, mark read), the conditions, and — for Set-InboxRule — only the DELTAS
 // supplied, since an absent parameter on a Set is unchanged, never absent. A forwarding address is
-// classed against the mailbox owner's domain; a value that is not an SMTP address gets no class.
+// classed against the mailbox owner's domain (or, for an alias mailbox, the tenant domains the record
+// proves — #2550); a value that is not an SMTP address gets no class.
 
 export interface RuleReading {
   actions: string[];
@@ -25,9 +42,24 @@ export interface RuleReading {
   forwardsInside: boolean;
   forwardsUnclassed: boolean;
   hides: boolean;
+  /** Deletes the message, or moves it to a known hiding folder — concealment, not filing (#2550). */
+  hidesHard: boolean;
   any: boolean;
   deltas: string[];
 }
+
+export const emptyReading = (): RuleReading => ({
+  actions: [],
+  conditions: [],
+  undecoded: [],
+  forwardsOutside: false,
+  forwardsInside: false,
+  forwardsUnclassed: false,
+  hides: false,
+  hidesHard: false,
+  any: false,
+  deltas: [],
+});
 
 export const ACTION_ADDRESS: Array<[string, string]> = [
   ["forwardto", "forwards to"],
@@ -96,18 +128,12 @@ const META_PARAMS = new Set([
   "redirectto",
 ]);
 
-export function readRuleParams(p: Map<string, string>, ownerDomain: string, isSet: boolean): RuleReading {
-  const r: RuleReading = {
-    actions: [],
-    conditions: [],
-    undecoded: [],
-    forwardsOutside: false,
-    forwardsInside: false,
-    forwardsUnclassed: false,
-    hides: false,
-    any: false,
-    deltas: [],
-  };
+export function readRuleParams(
+  p: Map<string, string>,
+  ownerDomain: string | OwnerDomains,
+  isSet: boolean,
+): RuleReading {
+  const r = emptyReading();
   const prefix = isSet ? "now " : "";
   for (const [param, verb] of ACTION_ADDRESS) {
     const raw = p.get(param);
@@ -130,6 +156,7 @@ export function readRuleParams(p: Map<string, string>, ownerDomain: string, isSe
       r.any = true;
       // Stopping later rules conceals nothing by itself; only delete / move / mark-read do.
       if (param !== "stopprocessingrules") r.hides = true;
+      if (param === "deletemessage" || param === "softdeletemessage") r.hidesHard = true;
       r.actions.push(`${prefix}${words}`);
     } else if (isSet && falsy(raw)) {
       // `-DeleteMessage $false` on a Set is a delta too: the action is switched off.
@@ -141,6 +168,7 @@ export function readRuleParams(p: Map<string, string>, ownerDomain: string, isSe
   if (move) {
     r.any = true;
     r.hides = true;
+    if (isHidingFolder(move)) r.hidesHard = true;
     r.actions.push(`${prefix}moves to ${quote(move, FOLDER_MAX)}`);
   }
   for (const other of ["applycategory", "copytofolder", "sendtextmessagenotificationto"]) {
@@ -184,7 +212,11 @@ export function readRuleParams(p: Map<string, string>, ownerDomain: string, isSe
 export function ruleGrade(r: RuleReading): { severity: Severity; mitre: string[] } {
   if (r.forwardsOutside)
     return { severity: "High", mitre: r.hides ? ["T1114.003", "T1564.008"] : ["T1114.003"] };
-  if (r.forwardsInside || r.forwardsUnclassed) return { severity: "Medium", mitre: ["T1114.003"] };
+  const forwards = r.forwardsInside || r.forwardsUnclassed;
+  // A rule that deletes mail or moves it to a hiding folder is High on its own (#2550); a mark-as-read
+  // or a move to an ordinary folder stays Medium below.
+  if (r.hidesHard) return { severity: "High", mitre: forwards ? ["T1114.003", "T1564.008"] : ["T1564.008"] };
+  if (forwards) return { severity: "Medium", mitre: ["T1114.003"] };
   if (r.hides) return { severity: "Medium", mitre: ["T1564.008"] };
   return { severity: "Low", mitre: [] };
 }

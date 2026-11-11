@@ -53,6 +53,10 @@ export interface EntraInitiator {
   ip: string;
   /** Every object id the record states for the initiator (UAL spreads one actor over several). */
   objectIds?: string[];
+  /** UAL only: the record's UserType (4 = System, Microsoft's own service actors). */
+  userType?: number;
+  /** UAL only: UserId is `Certificate`, Microsoft's internal certificate-authenticated actor (#2549). */
+  internalCertificate?: boolean;
 }
 
 export interface EntraAuditRecord {
@@ -363,6 +367,8 @@ function readUal(rec: Row): EntraAuditRecord {
     objectIds: [
       ...new Set([...actors.map((a) => a.id), PREFIXED_ID.exec(userId)?.[2] ?? ""].filter(Boolean)),
     ].map((x) => x.toLowerCase()),
+    ...(str(getCI(rec, "UserType")).trim() !== "" && Number.isFinite(userType) ? { userType } : {}),
+    ...(userId === "Certificate" ? { internalCertificate: true } : {}),
   };
   const props: EntraProp[] = [];
   const mp = getCI(rec, "ModifiedProperties");

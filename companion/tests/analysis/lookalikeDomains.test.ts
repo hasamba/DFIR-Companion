@@ -5,6 +5,7 @@ import {
   skeleton,
   lookalikeBrands,
   lookalikeAllowedHosts,
+  foldMultiChar,
 } from "../../src/analysis/lookalikeDomains.js";
 
 describe("registrable", () => {
@@ -157,5 +158,38 @@ describe("lookalikeBrands — env extension", () => {
     // And a typosquat of the org's own domain is then detected.
     const v = detectLookalike("acmecorp-hr.com");
     expect(v?.brand).toBe("acmecorp.com");
+  });
+});
+
+// #2568: two-letter shapes that read as one letter ("rn" as "m", "vv" as "w", "cl" as "d").
+describe("foldMultiChar", () => {
+  it("folds rn, vv and cl to the letter they imitate", () => {
+    expect(foldMultiChar("rnicrosoft")).toBe("microsoft");
+    expect(foldMultiChar("vvebex")).toBe("webex");
+    expect(foldMultiChar("clropbox")).toBe("dropbox");
+  });
+
+  it("leaves a string without those shapes unchanged", () => {
+    expect(foldMultiChar("google")).toBe("google");
+  });
+});
+
+describe("detectLookalike — two-letter swaps (#2568)", () => {
+  it("flags rn/vv/cl copies of short brands as homoglyphs", () => {
+    expect(detectLookalike("arnazon.com")?.kind).toBe("homoglyph");
+    expect(detectLookalike("arnazon.com")?.brand).toBe("amazon.com");
+    expect(detectLookalike("vvebex.com")?.kind).toBe("homoglyph");
+    expect(detectLookalike("clropbox.com")?.kind).toBe("homoglyph");
+  });
+
+  it("grades rnicrosoft.com as a homoglyph, not only a typosquat", () => {
+    expect(detectLookalike("rnicrosoft.com")?.kind).toBe("homoglyph");
+  });
+
+  it("does not flag real domains that contain the shapes", () => {
+    expect(detectLookalike("amazon.com")).toBeNull();
+    expect(detectLookalike("icloud.com")).toBeNull();
+    expect(detectLookalike("modern.com")).toBeNull();
+    expect(detectLookalike("learn.com")).toBeNull();
   });
 });

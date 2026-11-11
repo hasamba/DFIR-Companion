@@ -7,6 +7,10 @@
 // Replay safety: a page's coverage is written only after its import committed, and the collection
 // engine never imports a landed page again, so no page folds twice. Record counts are a page total:
 // a record fetched on two pages is counted on both (categories and first → last are unaffected).
+//
+// Disclosure (#2546): the row's sentences are the pages' disclosures SUMMED as numbers, then worded
+// once — never a union of per-page sentences, which showed the first few pages' counts beside the
+// whole-collection total and silently dropped a later page's cap.
 
 import {
   IMPORT_DISCLOSURE_MAX,
@@ -17,6 +21,11 @@ import {
   type CloudCoverageStore,
 } from "./cloudCoverage.js";
 import { mergeCoverageDrafts } from "./cloudCoverageMerge.js";
+import {
+  describeCloudStreamDisclosure,
+  sumCloudStreamDisclosure,
+  type CloudStreamDisclosure,
+} from "./cloudStreamDisclosure.js";
 
 /** The coverage group of a live collection — the same id form as its whole-export summaries. */
 export function collectionCoverageGroup(collectionId: string): string {
@@ -36,21 +45,37 @@ function toDraft(r: CloudCoverageDraft): CloudCoverageDraft {
   };
 }
 
-function unionDisclosure(
+/**
+ * The collection's running disclosure (#2546): the stored sum plus this page's, summed as numbers so
+ * the row's wording states collection totals and every cap any page reached. Every scope's draft of
+ * one page carries the SAME page disclosure, so it is taken once, never once per scope. A row stored
+ * before #2546 has strings but no sum: its next page replaces them with the post-upgrade sum.
+ */
+function sumDisclosure(
+  previous: readonly CloudCoverageRecord[],
+  drafts: readonly CloudCoverageDraft[],
+): CloudStreamDisclosure | undefined {
+  const before = previous.find((r) => r.streamDisclosure)?.streamDisclosure;
+  const page = drafts.find((d) => d.streamDisclosure)?.streamDisclosure;
+  return before && page ? sumCloudStreamDisclosure(before, page) : (page ?? before);
+}
+
+/** The wording of the sum; with no structured disclosure at all, the pages' own sentences, unioned. */
+function describeDisclosure(
+  sum: CloudStreamDisclosure | undefined,
   previous: readonly CloudCoverageRecord[],
   drafts: readonly CloudCoverageDraft[],
 ): string[] {
-  const all = [
-    ...previous.flatMap((r) => r.importDisclosure ?? []),
-    ...drafts.flatMap((d) => d.importDisclosure ?? []),
-  ];
+  const all = sum
+    ? describeCloudStreamDisclosure(sum)
+    : [...previous, ...drafts].flatMap((r) => r.importDisclosure ?? []);
   return [...new Set(all.map((s) => s.slice(0, IMPORT_DISCLOSURE_TEXT_MAX)))].slice(0, IMPORT_DISCLOSURE_MAX);
 }
 
 /**
  * One page's drafts folded into a collection group's existing records. Pure: neither input changes.
  * Every output record carries the group's earliest `uploadFirstSeenAt`, `importedAt = at`, the page
- * count so far and the union of the pages' disclosures.
+ * count so far and the pages' disclosures summed into one (#2546).
  */
 export function foldCollectionRecords(
   existing: readonly CloudCoverageRecord[],
@@ -63,7 +88,8 @@ export function foldCollectionRecords(
     existing[0]?.uploadFirstSeenAt ?? at,
   );
   const pages = existing.reduce((max, r) => Math.max(max, r.pages ?? 0), 0) + 1;
-  const importDisclosure = unionDisclosure(existing, drafts);
+  const streamDisclosure = sumDisclosure(existing, drafts);
+  const importDisclosure = describeDisclosure(streamDisclosure, existing, drafts);
   const merged = mergeCoverageDrafts(
     existing.map(toDraft),
     drafts.map((d) => ({ ...toDraft(d), uploadId: groupId })),
@@ -75,6 +101,7 @@ export function foldCollectionRecords(
     importedAt: at,
     pages,
     ...(importDisclosure.length ? { importDisclosure } : {}),
+    ...(streamDisclosure ? { streamDisclosure } : {}),
   }));
 }
 
@@ -108,5 +135,11 @@ export function persistImportCoverage(
 ): Promise<void> {
   return group
     ? persistCollectionCoverage(store, caseId, group, coverage)
-    : persistCloudCoverage(store, caseId, coverage);
+    : persistCloudCoverage(store, caseId, coverage.map(withoutSum));
+}
+
+/** A manual upload's row keeps its own sentences only: the running sum is a collection row's field (#2546). */
+function withoutSum(d: CloudCoverageDraft): CloudCoverageDraft {
+  const { streamDisclosure: _sum, ...rest } = d;
+  return rest;
 }

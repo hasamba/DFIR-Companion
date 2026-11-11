@@ -8,6 +8,8 @@ import {
   type CollectionInventory,
 } from "../collectionInventory.js";
 import type { AIProvider } from "../../providers/provider.js";
+import { isCloudOnlyCase } from "../cloudOnlyCase.js";
+import { withCloudSeedQuestions } from "../cloudKeyQuestions.js";
 import type { SynthesisFallback } from "./synthesisFallback.js";
 import type { Logger } from "../../logging/logger.js";
 import { recordSynthesisRun } from "../analysisRunRecorders.js";
@@ -624,12 +626,13 @@ async function synthesizeInScope(
   await yieldToEventLoop();
   const { state, sourceTrust, markers, scope, scopedEvents, synthHash } = run;
   if (!opts.force && !opts.dryRun && ctx.lastSynthHash.get(caseId) === synthHash) return loaded;
+  const cloudOnly = isCloudOnlyCase({ events: scopedEvents, hosts: run.inventory.hosts }); // #2555
 
   // The prompt, and the coverage audit that describes exactly what it showed the model. Kept whole
   // because the run record describes the prompt, so it wants nearly every field.
   const prompt = await buildSynthesisPrompt(ctx, {
     caseId,
-    state,
+    state: withCloudSeedQuestions(state, cloudOnly),
     scope,
     markers,
     inWindowEvents: run.inWindowEvents,
@@ -672,6 +675,7 @@ async function synthesizeInScope(
     scopedEvents,
     playbookTasks: run.playbookTasks,
     inventory: run.inventory,
+    cloudOnly,
     hostOf: (raw) => resolveHost(aliasIndex, raw),
     membersOf: prompt.membersOf,
     promptEventIds: new Set(prompt.promptEvents.map((e) => e.id)),

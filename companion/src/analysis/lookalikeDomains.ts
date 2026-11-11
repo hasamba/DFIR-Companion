@@ -206,6 +206,19 @@ export const CONFUSABLES: Record<string, string> = {
   "9": "g",
 };
 
+// Two-letter shapes that read as one letter (#2568): "rn" as "m", "vv" as "w", "cl" as "d". Each is
+// two edits, so an edit count alone misses them. Applied AFTER the one-letter CONFUSABLES fold, whose
+// output is ASCII, so a mixed-script "rn" is caught as well.
+const MULTI_CHAR_FOLDS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/rn/g, "m"],
+  [/vv/g, "w"],
+  [/cl/g, "d"],
+];
+
+export function foldMultiChar(s: string): string {
+  return MULTI_CHAR_FOLDS.reduce((acc, [re, to]) => acc.replace(re, to), s);
+}
+
 function stripWww(host: string): string {
   return host.replace(/^www\./, "");
 }
@@ -236,13 +249,13 @@ function toUnicode(host: string): string {
 }
 
 // A domain's canonical "skeleton": punycode-decoded, lowercased, confusables + homoglyphs folded to
-// ASCII, and all separators (dots / hyphens) removed. Two hosts with the same skeleton look identical
+// ASCII (two-letter shapes too: "rn" as "m"), and all separators (dots / hyphens) removed. Two hosts with the same skeleton look identical
 // to a human even when their bytes differ.
 export function skeleton(host: string): string {
   const uni = toUnicode(stripWww(host.toLowerCase().replace(/\.$/, "")));
   let out = "";
   for (const ch of uni) out += CONFUSABLES[ch] ?? ch;
-  return out.replace(/[.\-_]/g, "");
+  return foldMultiChar(out.replace(/[.\-_]/g, ""));
 }
 
 // Levenshtein edit distance, capped implicitly by string length (domains are short).
