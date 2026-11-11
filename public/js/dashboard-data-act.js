@@ -153,6 +153,13 @@
     iocPageNext: (el) => iocPageStep(1),
     iocSetPageSize: (el) => iocSetPageSize(+el.value),
     iocSetAttribution: (el) => setIocAttribution(el.dataset.value, el.value), // #2543 analyst label
+    trustedToggleHidden: () => toggleTrustedHidden(), // #2561 forensic timeline Hide trusted
+    // #2561 IOC panel Mark a source. A form submit, not a click: the menu sits in the IOC <h2>, whose
+    // data-stop-click wrapper stops clicks before they reach this document-level dispatcher.
+    trustedMarkSource: (el, e) => {
+      e.preventDefault();
+      void markTrustedSourceFromForm();
+    },
     // ATT&CK / kill chain / hosts
     huntForTechnique: (el) => huntForTechnique(el.dataset.id, el),
     kcSelect: (el) => {

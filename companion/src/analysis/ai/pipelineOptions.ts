@@ -1,4 +1,5 @@
 import type { VeloHuntStore } from "../veloHuntStore.js";
+import type { IocAttributionStore } from "../iocAttributionStore.js";
 import type { AIProvider, AnalyzeImage } from "../../providers/provider.js";
 import type { Logger } from "../../logging/logger.js";
 import type { AiControlStore } from "../aiControl.js";
@@ -172,6 +173,8 @@ export interface PipelineOptions {
   correlationProfileStore?: CorrelationProfileStore;
   // #2559: the analyst's per-case main-evidence-source override (hunts + coverage next steps).
   mainSourceStore?: CaseMainSourceStore;
+  // #2561: the analyst's IOC attribution labels; synthesis reads which rows are trusted-source.
+  iocAttributionStore?: IocAttributionStore;
   // When both notebookStore and aiControlStore are set, synthesis checks aiControl.includeNotebook
   // and — when true — appends the analyst's notebook entries to the synthesis prompt.
   notebookStore?: NotebookStore;

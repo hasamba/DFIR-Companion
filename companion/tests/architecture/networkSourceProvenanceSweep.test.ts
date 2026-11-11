@@ -156,6 +156,10 @@ const READERS: Record<string, { kind: ReaderKind; why: string }> = {
     kind: "gated",
     why: "IP -> workstation-name index (byIp) that both gated readers resolve against; the index side fail-closes on the stamp too since #1292 landed in #1342",
   },
+  "trustedSourceMarks.ts": {
+    kind: "gated",
+    why: "an analyst-marked friendly IP tags the row trusted-activity (hideable, marked to synthesis); a claimed or unstamped address must never confer trust (#2561)",
+  },
   "dnsCrossUploadConnJoin.ts": {
     kind: "agnostic",
     why: "src|dst address-pair join key against a sensor DNS row's own client|answer; a wrong value yields a spurious pair, never a host claim, and the header already says 'never a proven same-host'",

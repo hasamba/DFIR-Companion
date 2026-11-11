@@ -3,10 +3,12 @@
 // `IocRisk.role` (indicator / observation) is a derived score and keeps that name.
 //
 // The label is ANALYST data and lives in its own per-case side file (iocAttributionStore.ts), never
-// in the investigation state a model can write and never in a delta schema. In this version it
-// changes only what the analyst sees (the IOC panel, the report IOC tables) and the block-list
-// export (an `ours` or `responder` value is never shipped as a block entry). It never changes a
-// grade and the AI never reads it, so a wrong label cannot hide activity.
+// in the investigation state a model can write and never in a delta schema. It changes what the
+// analyst sees (the IOC panel, the report IOC tables), the block-list export (an `ours` or
+// `responder` value is never shipped as a block entry) and, since #2561, which routine forensic rows
+// carry a `trusted-activity` tag (trustedSourceMarks.ts) — which synthesis is told about with a
+// "not proven benign" marker. It never changes a grade, and a marked source's high-impact actions
+// are never tagged, so a wrong label cannot hide an attack.
 //
 // Keyed by the lower-cased IOC value, not the IOC id: ids are re-sequenced and merged, values are
 // what the analyst labelled. A value merged onto another IOC (`aliasValues`) still resolves.

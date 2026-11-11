@@ -1,7 +1,8 @@
 // The analyst's attribution label on an IOC (#2543): attacker / ours / responder / unknown. A chip
 // beside the value and a small selector in the row's actions. The labels live in the case's own
-// side file (GET/PUT /cases/:id/ioc-attribution), keyed by the lower-cased value; the AI never
-// reads them, and the IOC block-list export leaves an "ours" or "responder" value out.
+// side file (GET/PUT /cases/:id/ioc-attribution), keyed by the lower-cased value. The IOC block-list
+// export leaves an "ours" or "responder" value out, and such a mark on an IP, AWS key id or ARN tags
+// that source's routine timeline rows trusted-activity (#2561, js/dashboard-trusted-activity.js).
 (function () {
   const LABELS = ["attacker", "ours", "responder", "unknown"];
   const LABEL_TEXT = {
@@ -77,6 +78,7 @@
         labels = m && typeof m === "object" ? m : {};
         owner = caseId;
         repaint();
+        if (typeof loadTrustedActivity === "function") loadTrustedActivity(caseId); // #2561
       })
       .catch((err) => {
         if (typeof showToast === "function") showToast(`Could not save the IOC label: ${err.message}`, "error");

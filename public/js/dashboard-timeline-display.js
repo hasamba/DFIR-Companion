@@ -211,6 +211,9 @@
     const hidden = Math.max(0, (o.total || 0) - (o.totalFiltered || 0));
     const promoted = o.promotedKept > 0 ? o.promotedKept : 0;
     const manual = o.manualKept > 0 ? o.manualKept : 0;
+    // #2561: rows from a source the analyst marked ours / responder — shown, or hidden by the toggle.
+    const trustedShown = o.trustedShown > 0 ? o.trustedShown : 0;
+    const trustedHidden = o.trustedHidden > 0 ? o.trustedHidden : 0;
     let base;
     if (o.filtering) {
       base = partial
@@ -220,12 +223,14 @@
       if (hidden > 0 && viewFloor) base += ` (${viewFloor.name} view: ${viewFloor.min}+)`;
       if (promoted > 0) base += `, ${promoted} promoted kept`;
       if (manual > 0) base += `, ${manual} manual kept`;
+      if (trustedHidden > 0) base += `, ${trustedHidden} trusted hidden`;
       if (partial) base += `; case holds ${partial.total}`;
     } else if (partial) {
       base = `${partial.total} events, first ${partial.loaded} loaded`;
     } else {
       base = `${totalText} event${o.total !== 1 ? "s" : ""}`;
     }
+    if (trustedShown > 0) base += `, ${trustedShown} trusted`;
     const text = o.pageSize > 0 && o.totalFiltered > o.pageSize
       ? `(${base} — page ${o.page + 1} of ${o.totalPages})`
       : `(${base})`;
@@ -258,6 +263,12 @@
       title +=
         ` ${manual} row(s) are shown although your severity filter excludes them: an analyst entered ` +
         "them by hand, so they stay whatever their severity — the same rule the server applies.";
+    }
+    if (trustedShown > 0 || trustedHidden > 0) {
+      title +=
+        `${/[.!?]$/.test(title) ? "" : "."} Trusted: rows from a source you marked ours / responder (${trustedShown} shown, ${trustedHidden} ` +
+        "hidden). Their grade is unchanged and they stay in the record; a marked source's high-impact " +
+        "actions are never labelled trusted.";
     }
     return { text, title };
   }
@@ -307,7 +318,7 @@
     const merges = f.hostMerges && typeof f.hostMerges === "object" ? f.hostMerges : null;
     return JSON.stringify([
       String(f.caseId || ""), scope.start || null, scope.end || null, sorted(f.severities),
-      Array.isArray(f.eventIds) ? sorted(f.eventIds) : null, !!f.starredOnly, String(f.search || ""),
+      Array.isArray(f.eventIds) ? sorted(f.eventIds) : null, !!f.starredOnly, !!f.trustedHidden, String(f.search || ""),
       sorted(f.excludeTerms), f.from || null, f.to || null, sorted(f.hiddenSources), sorted(f.hiddenOrigins),
       sorted(f.hiddenHosts), merges ? Object.keys(merges).sort().map((k) => [k, merges[k]]) : null, Number(f.corroboration) || 0, f.minSeverity || null, String(f.sortKey || ""),
       String(f.sortDir || ""), Number(f.pageSize) || 0,

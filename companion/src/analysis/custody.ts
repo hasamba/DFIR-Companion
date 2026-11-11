@@ -103,7 +103,15 @@ export const CREDENTIAL_DELETED_EVENT = "credential-deleted";
  */
 export const CREDENTIAL_DETACHED_EVENT = "credential-detached";
 export type CredentialCustodyEvent = typeof CREDENTIAL_DELETED_EVENT | typeof CREDENTIAL_DETACHED_EVENT;
-export type CustodyEvent = (typeof CUSTODY_EVENTS)[number] | CredentialCustodyEvent;
+/**
+ * `trusted-source-marked` (#2561): the analyst set, changed or cleared an `ours`/`responder` mark on a
+ * source (an IP, an AWS access key id or principal ARN) whose routine rows are then tagged
+ * `trusted-activity`. Server-written only, like the credential events, on a virtual `trusted-source:`
+ * path that integrity re-hashing skips; the hash pins the entry's own description of the mark.
+ */
+export const TRUSTED_SOURCE_EVENT = "trusted-source-marked";
+export type CustodyEvent =
+  (typeof CUSTODY_EVENTS)[number] | CredentialCustodyEvent | typeof TRUSTED_SOURCE_EVENT;
 
 /** True for the events a client may record (POST /cases/:id/custody). */
 export function isCustodyEvent(value: unknown): value is CustodyEvent {
@@ -112,12 +120,22 @@ export function isCustodyEvent(value: unknown): value is CustodyEvent {
 
 /** True for every event the SERVER may write: the client ones plus the credential events (#2347). */
 function isRecordableCustodyEvent(value: unknown): value is CustodyEvent {
-  return isCustodyEvent(value) || value === CREDENTIAL_DELETED_EVENT || value === CREDENTIAL_DETACHED_EVENT;
+  return (
+    isCustodyEvent(value) ||
+    value === CREDENTIAL_DELETED_EVENT ||
+    value === CREDENTIAL_DETACHED_EVENT ||
+    value === TRUSTED_SOURCE_EVENT
+  );
 }
 
-/** True for an entry with no file behind it: a receipt (#2111) or a deleted/detached credential (#2347). */
+/** True for an entry with no file behind it: a receipt (#2111), a deleted/detached credential (#2347), a trusted-source mark (#2561). */
 export function isVirtualCustodyEvent(event: CustodyEvent | undefined): boolean {
-  return event === "received" || event === CREDENTIAL_DELETED_EVENT || event === CREDENTIAL_DETACHED_EVENT;
+  return (
+    event === "received" ||
+    event === CREDENTIAL_DELETED_EVENT ||
+    event === CREDENTIAL_DETACHED_EVENT ||
+    event === TRUSTED_SOURCE_EVENT
+  );
 }
 
 export interface CustodyRecord {
@@ -153,6 +171,16 @@ export interface CustodyRecord {
     reason: string;
     /** On `credential-detached` only (#2378): the release that recorded it, so a retry skips it. */
     releaseToken?: string;
+  };
+  /**
+   * On a `trusted-source-marked` entry only (#2561): the source value, its label before and after
+   * (null = unset), and how many forensic rows carried a `trusted-activity` tag after the recompute.
+   */
+  trustedSource?: {
+    value: string;
+    before: string | null;
+    after: string | null;
+    rowsTagged: number;
   };
   /** Position in this case's custody chain. Strictly increasing; gaps are legal (see nextCustodySeq). */
   seq: number;
@@ -257,8 +285,12 @@ function hashLine(line: string): string {
 export const RECEIVED_PATH_PREFIX = "received:";
 /** Prefix of the virtual path a `credential-deleted` or `credential-detached` entry carries (#2347). */
 export const CREDENTIAL_PATH_PREFIX = "cloud-credential:";
+/** Prefix of the virtual path a `trusted-source-marked` entry carries (#2561). */
+export const TRUSTED_SOURCE_PATH_PREFIX = "trusted-source:";
 export const isReceivedPath = (artifactPath: string): boolean =>
-  artifactPath.startsWith(RECEIVED_PATH_PREFIX) || artifactPath.startsWith(CREDENTIAL_PATH_PREFIX);
+  artifactPath.startsWith(RECEIVED_PATH_PREFIX) ||
+  artifactPath.startsWith(CREDENTIAL_PATH_PREFIX) ||
+  artifactPath.startsWith(TRUSTED_SOURCE_PATH_PREFIX);
 
 /**
  * artifactPath expressed relative to caseDir, or null when it lives outside. Shared by the store

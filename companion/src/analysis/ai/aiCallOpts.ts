@@ -87,6 +87,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get mainSourceStore() {
       return opts.mainSourceStore;
     },
+    get iocAttributionStore() {
+      return opts.iocAttributionStore;
+    },
     get sourceTrustStore() {
       return opts.sourceTrustStore;
     },

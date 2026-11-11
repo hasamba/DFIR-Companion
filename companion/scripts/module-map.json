@@ -349,6 +349,8 @@
     "clockSkewStore.ts": "analysis/timeline",
     "cloudActivityImport.ts": "analysis/ingest",
     "cloudCollectorFootprint.ts": "analysis/findings",
+    "trustedSourceMarks.ts": "analysis/findings",
+    "trustedActivitySync.ts": "analysis/findings",
     "cloudBulkRead.ts": "analysis/timeline",
     "objectLoggingWindow.ts": "analysis/timeline",
     "cloudPrecursorMerge.ts": "analysis/timeline",

@@ -328,7 +328,7 @@ export interface IOC {
   // "10.10.20.15 (DC01)", a descriptive suffix, an observed port. Split out at ingest by
   // iocValue.ts so `value` stays the bare indicator (strict consumers like MISP reject anything else) while the context survives: exports carry it in their comment/annotation field.
   note?: string;
-  attribution?: "attacker" | "ours" | "responder" | "unknown"; // #2543 report projection only (filteredState.ts) — never stored, never AI-read
+  attribution?: "attacker" | "ours" | "responder" | "unknown"; // #2543 report projection only (filteredState.ts) — never stored in state; the label itself reaches synthesis only as #2561's per-row trusted marker
 }
 
 // Deterministic corroboration rollup for a finding (investigation-guidance #6), computed post-synthesis
