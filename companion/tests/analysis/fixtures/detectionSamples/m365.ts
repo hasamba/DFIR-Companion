@@ -120,6 +120,16 @@ export const M365_SAMPLES: readonly DetectionSample[] = [
     ],
     Target: [{ ID: "ServicePrincipal_55555555-5555-4555-8555-555555555555", Type: 2 }],
   }),
+  // #2557: a user named like the admin account ("rn" for "m") — Add user is Medium by operation, the
+  // look-alike check raises it to High.
+  m("ual.AddUser.lookalike", "m365Lookalike (#2557)", {
+    ...aad("Add user."),
+    Target: [
+      { ID: "User_66666666-6666-4666-8666-666666666666", Type: 2 },
+      { ID: "User", Type: 2 },
+      { ID: "example-adrnin@example.com", Type: 5 },
+    ],
+  }),
   m("ual.New-InboundConnector", GAPS, exchange("New-InboundConnector", [["Name", "c1"]])),
   m("ual.Enable-InboxRule", GAPS, exchange("Enable-InboxRule", [["Identity", "r"]])),
   m(

@@ -663,6 +663,7 @@
     "lookalikeDomains.ts": "analysis/detect",
     "m365Import.ts": "analysis/ingest",
     "m365BecPairing.ts": "analysis/ingest",
+    "m365Lookalike.ts": "analysis/ingest",
     "m365Alert.ts": "analysis/ingest",
     "mailboxChain.ts": "analysis/ingest",
     "macBinaryDetect.ts": "analysis/ingest",

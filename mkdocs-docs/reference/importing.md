@@ -176,6 +176,17 @@ accounts and names shorter than five characters are not flagged. Rarely, two rea
 (`jclayton`/`jdayton`). The note names both accounts so you can dismiss it. The check looks back only: a real account
 that first appears in a later import does not re-check an earlier look-alike.
 
+Microsoft 365 and Entra ID imports check the names of the accounts and apps that are created or
+granted access: Add user, Add application, Add service principal, consent to an application, and a
+role or permission grant. A name that imitates a Microsoft brand (Microsoft, Office, Outlook, Azure,
+Exchange, SharePoint, OneDrive, Teams), the tenant's own name, or the admin account is graded High,
+with a note such as `[look-alike account: "rnicrosoft-support" looks like the Microsoft brand name
+"microsoft"]`. The tenant's name comes from the most common sign-in domain in the upload. Each word
+of the name is checked on its own. A short name is flagged only when a homoglyph or a two-letter
+shape makes it read exactly as the target, so names like Arnold, Stearns or Armin are not flagged.
+Exact brand words ("Microsoft Graph"), Microsoft first-party apps (matched by app id) and failed
+operations are not flagged.
+
 ### Right-to-left override file names
 
 A file name with a hidden bidirectional-text control character can show a different extension from
