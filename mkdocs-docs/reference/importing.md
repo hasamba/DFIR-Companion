@@ -3390,8 +3390,9 @@ What the batch shares:
   same files again imports them again. As with the Import button, Undo does not remove
   super-timeline rows, tags, Cloud Coverage or account weaknesses. Single files from the drop
   folder still get no Undo step.
-- **One analysis run per batch.** **Analysis Runs** shows one import run for the batch. It lists
-  every file with its SHA-256, the file count, and the first 20 file names.
+- **One analysis run per batch.** **Analysis Runs** shows one import run for the batch, with one
+  artifact per file. **View manifest** lists every file with its SHA-256, and its configuration
+  names the file count and the first 20 file names.
 - **One case-timeline note** for the files that added nothing, with their count and names (the
   first 20). A file that added rows keeps its own note.
 - One grading pass (super-timeline copy → tagger → demote) after the last file, and one tagger run.

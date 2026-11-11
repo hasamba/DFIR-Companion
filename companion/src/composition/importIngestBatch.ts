@@ -122,7 +122,12 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
     demoteForensic: deps.demoteForensic,
   };
   const tailDeps: BatchTailDeps = {
-    runCtx: { options, store, runStateExclusive: deps.runStateExclusive, importerRegistry: deps.importerRegistry },
+    runCtx: {
+      options,
+      store,
+      runStateExclusive: deps.runStateExclusive,
+      importerRegistry: deps.importerRegistry,
+    },
     settleDeps: deps.settleDeps,
     pushImportCheckpoint: deps.pushImportCheckpoint,
   };
@@ -152,7 +157,9 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
   }
 
   function fallback(batch: DropBatchRequest, reason: string): DiskBatchResult {
-    getServerLogger().info(`[drop] batch of ${batch.files.length} not started (${reason}) — importing one by one`);
+    getServerLogger().info(
+      `[drop] batch of ${batch.files.length} not started (${reason}) — importing one by one`,
+    );
     return { results: [], rest: batch.files, stop: "fallback" };
   }
 
@@ -215,7 +222,12 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
   }
 
   function status(caseId: string, detail: string): void {
-    options.onAiStatus?.(caseId, { status: "analyzing", phase: "extracting", at: new Date().toISOString(), detail });
+    options.onAiStatus?.(caseId, {
+      status: "analyzing",
+      phase: "extracting",
+      at: new Date().toISOString(),
+      detail,
+    });
   }
 
   /** One file: re-sniff, store, parse + merge. A mismatch hands the file back untouched. */
@@ -231,7 +243,10 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
     if (!handle) return { mismatch: true }; // the solo path names the refusal (link, gone, …)
     try {
       if (!(await stillFits(handle, batch.kind, basename(file.relpath), debug))) return { mismatch: true };
-      return { mismatch: false, result: await storeAndImport(caseId, batch, file, handle, collect, owe, debug) };
+      return {
+        mismatch: false,
+        result: await storeAndImport(caseId, batch, file, handle, collect, owe, debug),
+      };
     } finally {
       await handle.close().catch(() => undefined);
     }
@@ -241,7 +256,11 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
     try {
       const { size } = await handle.stat();
       const { sample, gzip } = await sniffImportFileHeadDetail(handle);
-      return gzip && size <= DROP_BATCH_FILE_MAX_BYTES && deps.resolveImportKind(name.replace(/\.gz$/i, ""), sample, debug) === kind;
+      return (
+        gzip &&
+        size <= DROP_BATCH_FILE_MAX_BYTES &&
+        deps.resolveImportKind(name.replace(/\.gz$/i, ""), sample, debug) === kind
+      );
     } catch {
       return false;
     }
@@ -265,10 +284,23 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
       const storedName = `${String(seq).padStart(4, "0")}_${safe}`;
       const importedAt = new Date().toISOString();
       const saved = await store.saveImportFromHandle(caseId, storedName, handle);
-      await store.appendImport(caseId, { caseId, sequenceNumber: seq, importedAt, filename: storedName, originalName: name, rows: 0, bytes: saved.bytes });
-      await marker.add(caseId, storedName).catch((e: unknown) =>
-        getServerLogger().warn(`[drop] ${caseId}: batch crash marker not written — ${(e as Error).message}`, { caseId }),
-      );
+      await store.appendImport(caseId, {
+        caseId,
+        sequenceNumber: seq,
+        importedAt,
+        filename: storedName,
+        originalName: name,
+        rows: 0,
+        bytes: saved.bytes,
+      });
+      await marker
+        .add(caseId, storedName)
+        .catch((e: unknown) =>
+          getServerLogger().warn(
+            `[drop] ${caseId}: batch crash marker not written — ${(e as Error).message}`,
+            { caseId },
+          ),
+        );
       const hooks = batchHooks(caseId, file, own, collect);
       await runDiskImport(diskCtx, batch.kind, caseId, saved.path, storedName, {
         label: storedName,
@@ -284,10 +316,20 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
       collect.folds.push(...own.folds);
       owe(sum(own.rows));
       const sentences = disclosure ? describeCloudStreamDisclosure(disclosure) : [];
-      return { relpath: file.relpath, ok: true, ...(sentences.length ? { warning: sentences.join(" ") } : {}) };
+      return {
+        relpath: file.relpath,
+        ok: true,
+        ...(sentences.length ? { warning: sentences.join(" ") } : {}),
+      };
     } catch (err) {
       owe(sum(own.rows)); // a merge that failed after committing still owes its rows (upper bound)
-      return { relpath: file.relpath, ok: false, reason: (err as Error)?.message ?? String(err), error: err, debug };
+      return {
+        relpath: file.relpath,
+        ok: false,
+        reason: (err as Error)?.message ?? String(err),
+        error: err,
+        debug,
+      };
     }
   }
 
@@ -360,7 +402,12 @@ function addWarnings(results: BatchFileResult[], text: string): void {
   for (const r of results) if (r.ok) r.warning = r.warning ? `${r.warning} ${text}` : text;
 }
 
-function logBatch(caseId: string, batch: DropBatchRequest, results: BatchFileResult[], startedAt: string): void {
+function logBatch(
+  caseId: string,
+  batch: DropBatchRequest,
+  results: BatchFileResult[],
+  startedAt: string,
+): void {
   const ok = results.filter((r) => r.ok).length;
   const ms = Date.now() - Date.parse(startedAt);
   getServerLogger().info(

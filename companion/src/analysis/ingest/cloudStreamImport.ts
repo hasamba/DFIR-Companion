@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { deltaSchema } from "../responseSchema.js";
 import type { CanonicalEventEnvelope } from "../canonicalEvent.js";
-import type { InvestigationState, Severity, ForensicEvent } from "../stateTypes.js";
+import { emptyState, type InvestigationState, type Severity, type ForensicEvent } from "../stateTypes.js";
 import type { CompiledRuleset } from "../taggerRules.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
@@ -116,8 +116,11 @@ export interface CloudBatchHooks {
 }
 
 export interface CloudStreamImportResult {
-  /** Null only for an empty file of a drop-folder batch, which merges nothing (#2540). */
-  state: InvestigationState | null;
+  /**
+   * The case after the import's merge. An empty file of a drop-folder batch merges nothing (#2540):
+   * its state is then a placeholder (`emptyState`) that no batch caller reads.
+   */
+  state: InvestigationState;
   coverage: CloudCoverageDraft[];
   /** CloudTrail only (#2560): the file's account-weakness draft, folded per case by the pipeline. */
   weaknesses?: WeaknessFile;
@@ -317,7 +320,7 @@ async function finish(
       opts.debug?.counts({ total: stats.records, kept: 0 });
       opts.debug?.observed("no_events");
       opts.batch.emptyNote({ records: stats.records, detail });
-      return { state: null, coverage, disclosure, weaknesses: acc.weaknesses };
+      return { state: emptyState(caseId), coverage, disclosure, weaknesses: acc.weaknesses };
     }
     const state = await noteEmptyImport(ctx, caseId, opts, provider.source, stats.records, detail);
     return { state, coverage, disclosure, weaknesses: acc.weaknesses };

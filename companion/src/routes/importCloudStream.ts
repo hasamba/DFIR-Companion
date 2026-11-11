@@ -87,7 +87,7 @@ async function importCloudFileLogged(
   storedPath: string,
   storedName: string,
   base: ImportBase,
-): Promise<InvestigationState | null> {
+): Promise<InvestigationState> {
   const { serverLogger: log, options } = ctx;
   if (!options.pipeline) throw new Error("pipeline is not configured");
   const bytes = await stat(storedPath)
@@ -136,7 +136,7 @@ export function runDiskImport(
   storedPath: string,
   storedName: string,
   base: ImportBase,
-): Promise<InvestigationState | null> {
+): Promise<InvestigationState> {
   return isStreamKind(kind)
     ? importCloudFileLogged(ctx, caseId, kind, storedPath, storedName, base)
     : importPlasoFileLogged(ctx, caseId, storedPath, storedName, base);
@@ -160,7 +160,7 @@ function runStored(
 function runStoredFile(
   ctx: RouteContext,
   a: { kind: string; caseId: string; storedName: string; base: ImportBase },
-): Promise<InvestigationState | null> {
+): Promise<InvestigationState> {
   const storedPath = join(ctx.store.importsDir(a.caseId), a.storedName);
   return runDiskImport(ctx, a.kind, a.caseId, storedPath, a.storedName, a.base);
 }

@@ -53,7 +53,12 @@ export interface DropSweepDeps {
   caseId: string;
   dropDir: string;
   processFile: (file: DropFileStat) => Promise<DropOutcome>;
-  moveDropFile: (dropDir: string, relpath: string, ok: boolean, processed?: ProcessedVersion) => Promise<void>;
+  moveDropFile: (
+    dropDir: string,
+    relpath: string,
+    ok: boolean,
+    processed?: ProcessedVersion,
+  ) => Promise<void>;
   /** The file left the watched area: forget its settle memory and its PENDING mark. */
   forget: (relpath: string) => void;
   /** One Jobs-row tick: files done / total. */
@@ -163,12 +168,18 @@ async function recordBatchResult(
   d: DropSweepDeps,
   tally: SweepTally,
 ): Promise<void> {
-  if (!res.ok && res.error !== undefined) d.recordImportFailure(file.relpath.split(/[\\/]/).pop() ?? file.relpath, res.error, res.debug);
+  if (!res.ok && res.error !== undefined)
+    d.recordImportFailure(file.relpath.split(/[\\/]/).pop() ?? file.relpath, res.error, res.debug);
   await recordOutcome(file, { ok: res.ok, reason: res.reason, warning: res.warning }, d, tally);
 }
 
 /** One file's move and its tally entry — the same for a single file and a batch member. */
-async function recordOutcome(file: DropFileStat, res: DropOutcome, d: DropSweepDeps, tally: SweepTally): Promise<void> {
+async function recordOutcome(
+  file: DropFileStat,
+  res: DropOutcome,
+  d: DropSweepDeps,
+  tally: SweepTally,
+): Promise<void> {
   if (res.pending) {
     // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
     // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
@@ -192,6 +203,10 @@ async function recordOutcome(file: DropFileStat, res: DropOutcome, d: DropSweepD
     tally.imported.push(file.relpath);
     tally.submitted.push({ relpath: file.relpath, reason: joinReasons(res.submitted, moveNote) });
   } else if (res.ok) tally.imported.push(file.relpath);
-  else tally.failed.push({ relpath: file.relpath, reason: joinReasons(res.reason ?? "import failed", moveNote) });
+  else
+    tally.failed.push({
+      relpath: file.relpath,
+      reason: joinReasons(res.reason ?? "import failed", moveNote),
+    });
   d.forget(file.relpath); // moved out of the watched area
 }

@@ -50,7 +50,10 @@ function labFiles(): { name: string; bytes: Buffer }[] {
   const files: { name: string; bytes: Buffer }[] = [];
   for (let i = 0; i < recs.length; i += 4) {
     const n = String(files.length).padStart(3, "0");
-    files.push({ name: `ct_${n}.json.gz`, bytes: gzipSync(JSON.stringify({ Records: recs.slice(i, i + 4) })) });
+    files.push({
+      name: `ct_${n}.json.gz`,
+      bytes: gzipSync(JSON.stringify({ Records: recs.slice(i, i + 4) })),
+    });
   }
   // A record a later file repeats (S3 delivers duplicates): the ledger must skip it the same way.
   files.push({ name: "ct_900_dup.json.gz", bytes: gzipSync(JSON.stringify({ Records: recs.slice(0, 2) })) });
@@ -71,7 +74,8 @@ async function harness(opts: { lock?: ImportLock } = {}) {
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   const stateStore = new StateStore(store);
   const lock = new StateLock();
-  const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> => lock.runExclusive(caseId, fn);
+  const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> =>
+    lock.runExclusive(caseId, fn);
   await writeFile(join(root, "rules.yaml"), RULES);
   const pipeline = buildRuntimePipeline({
     stateStore,
@@ -123,7 +127,19 @@ async function harness(opts: { lock?: ImportLock } = {}) {
     await writeFile(join(inbox, f.name), f.bytes);
     files.push({ relpath: f.name, fullPath: join(inbox, f.name) });
   }
-  return { root, store, stateStore, options, ingestDiskFile, batch, files, disk, pushImportCheckpoint, importLock, runStateExclusive };
+  return {
+    root,
+    store,
+    stateStore,
+    options,
+    ingestDiskFile,
+    batch,
+    files,
+    disk,
+    pushImportCheckpoint,
+    importLock,
+    runStateExclusive,
+  };
 }
 
 type Harness = Awaited<ReturnType<typeof harness>>;
@@ -165,7 +181,7 @@ async function snapshot(h: Harness) {
       e.description,
       e.sources,
       e.mitreTechniques,
-      e.host,
+      e.asset,
       e.sourceScreenshots,
     ]),
     iocs: state.iocs.map((i) => [i.type, i.value, [...(i.extractedFrom ?? [])].sort()]).sort(),
@@ -216,7 +232,9 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
     expect(batchNotes).toHaveLength(1);
     expect(batchNotes[0]).toContain(`${emptyOne.length} file(s)`);
     expect(b.notes.filter((n) => /no events from/.test(n))).toEqual([]);
-    expect(b.notes.filter((n) => !/drop batch/.test(n))).toEqual(a.notes.filter((n) => !/no events from/.test(n)));
+    expect(b.notes.filter((n) => !/drop batch/.test(n))).toEqual(
+      a.notes.filter((n) => !/no events from/.test(n)),
+    );
 
     // Evidence: one stored copy, custody record and imports.jsonl line per file, as one at a time.
     const lines = async (h: Harness, f: string) =>
@@ -232,7 +250,10 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
     const [, , label, , , ledgerLabels] = h.pushImportCheckpoint.mock.calls[0];
     expect(label).toBe(`AWS CloudTrail drop batch (${h.files.length - 1} files)`); // the corrupt one failed
     expect(ledgerLabels).toHaveLength(h.files.length - 1); // every imported file, not the corrupt one
-    const opts = h.options as unknown as { importUndoStore: ImportUndoStore; cloudRecordStore: CloudRecordStore };
+    const opts = h.options as unknown as {
+      importUndoStore: ImportUndoStore;
+      cloudRecordStore: CloudRecordStore;
+    };
     await runUndoStep(
       {
         undoStore: opts.importUndoStore,
@@ -253,15 +274,61 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
     expect((await h.stateStore.load("c1")).forensicTimeline.length).toBeGreaterThan(0);
   });
 
+  it("Undo of a batch on a non-empty case restores the rows and IOC links the batch changed", async () => {
+    const h = await harness();
+    const opts = h.options as unknown as {
+      importUndoStore: ImportUndoStore;
+      cloudRecordStore: CloudRecordStore;
+    };
+    const good = h.files.filter((f) => !f.relpath.includes("corrupt"));
+    const third = Math.floor(good.length / 3);
+    await h.batch.ingestDiskBatch(
+      "c1",
+      { kind: "aws", assetHost: "", files: good.slice(0, third), bytes: 1 },
+      () => {},
+    );
+    const before = await snapshot(h);
+    expect(before.forensic.length).toBeGreaterThan(0);
+    await h.batch.ingestDiskBatch(
+      "c1",
+      { kind: "aws", assetHost: "", files: good.slice(third), bytes: 1 },
+      () => {},
+    );
+    const during = await snapshot(h);
+    // The second batch changed what the case already held (rows added, IOC links extended).
+    expect(during.forensic.length).toBeGreaterThan(before.forensic.length);
+    await runUndoStep(
+      {
+        undoStore: opts.importUndoStore,
+        stateStore: h.stateStore,
+        importLock: h.importLock,
+        runStateExclusive: h.runStateExclusive,
+        cloudRecords: opts.cloudRecordStore,
+      },
+      "c1",
+      applyUndo,
+    );
+    const after = await snapshot(h);
+    expect(after.forensic).toEqual(before.forensic);
+    expect(after.iocs).toEqual(before.iocs);
+    expect(after.notes).toEqual(before.notes);
+    expect(after.principalNames).toEqual(before.principalNames);
+  });
+
   it("records one analysis run listing every imported file with its hash", async () => {
     const h = await harness();
     await h.batch.ingestDiskBatch("c1", { kind: "aws", assetHost: "", files: h.files, bytes: 1 }, () => {});
-    const runs = await (h.options as unknown as { analysisRunStore: AnalysisRunStore }).analysisRunStore.list("c1");
+    const runs = await (h.options as unknown as { analysisRunStore: AnalysisRunStore }).analysisRunStore.list(
+      "c1",
+    );
     const imports = runs.filter((r) => r.kind === "import");
     expect(imports).toHaveLength(1);
-    expect(imports[0].input.artifacts).toHaveLength(h.files.length - 1);
-    expect(imports[0].input.artifacts.every((x) => /^imports\/\d{4}_ct_/.test(x.path) && x.sha256.length === 64)).toBe(true);
-    expect(imports[0].configuration.parameters).toMatchObject({ dropBatchFiles: h.files.length - 1 });
+    const run = imports[0];
+    expect(run.input.artifacts).toHaveLength(h.files.length - 1);
+    expect(
+      run.input.artifacts.every((x) => /^imports\/\d{4}_ct_/.test(x.path) && x.sha256.length === 64),
+    ).toBe(true);
+    expect(run.configuration?.parameters ?? {}).toMatchObject({ dropBatchFiles: h.files.length - 1 });
     // The tagger ran once for the batch, not once per file.
     expect(runs.filter((r) => r.kind === "deterministic")).toHaveLength(1);
     // The crash marker is gone once the tail finished.
@@ -269,14 +336,22 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
   });
 
   it("hands every file back, untouched, when the batch cannot start", async () => {
-    const lock = new ImportLock(async () => {
-      throw new Error("import memory guard: not enough memory");
+    const lock = new ImportLock({
+      admit: async () => {
+        throw new Error("import memory guard: not enough memory");
+      },
     });
     const h = await harness({ lock });
-    const r = await h.batch.ingestDiskBatch("c1", { kind: "aws", assetHost: "", files: h.files, bytes: 1 }, () => {});
+    const r = await h.batch.ingestDiskBatch(
+      "c1",
+      { kind: "aws", assetHost: "", files: h.files, bytes: 1 },
+      () => {},
+    );
     expect(r).toMatchObject({ results: [], stop: "fallback" });
     expect(r.rest).toEqual(h.files);
-    await expect(readFile(join(h.store.caseDir("c1"), "metadata", "imports.jsonl"), "utf8")).rejects.toThrow();
+    await expect(
+      readFile(join(h.store.caseDir("c1"), "metadata", "imports.jsonl"), "utf8"),
+    ).rejects.toThrow();
   });
 
   it("stops batching when the super-timeline is within one import budget of its cap", async () => {
@@ -284,7 +359,11 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
     process.env.DFIR_SUPERTIMELINE_MAX = "49999"; // under one per-import budget (50,000): no room at all
     try {
       const h = await harness();
-      const r = await h.batch.ingestDiskBatch("c1", { kind: "aws", assetHost: "", files: h.files, bytes: 1 }, () => {});
+      const r = await h.batch.ingestDiskBatch(
+        "c1",
+        { kind: "aws", assetHost: "", files: h.files, bytes: 1 },
+        () => {},
+      );
       expect(r.stop).toBe("capacity");
       expect(r.results).toEqual([]);
       expect(r.rest).toEqual(h.files);
@@ -297,7 +376,11 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
   it("ends the batch at a file that no longer fits, handing it and the rest back in order", async () => {
     const h = await harness();
     await writeFile(h.files[2].fullPath, "not gzip any more");
-    const r = await h.batch.ingestDiskBatch("c1", { kind: "aws", assetHost: "", files: h.files, bytes: 1 }, () => {});
+    const r = await h.batch.ingestDiskBatch(
+      "c1",
+      { kind: "aws", assetHost: "", files: h.files, bytes: 1 },
+      () => {},
+    );
     expect(r.stop).toBe("mismatch");
     expect(r.results.map((x) => x.relpath)).toEqual(h.files.slice(0, 2).map((f) => f.relpath));
     expect(r.rest).toEqual(h.files.slice(2));
@@ -319,7 +402,8 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
       idPrefix: "1",
       importedAt: new Date().toISOString(),
     });
-    const superStore = (h.options as unknown as { superTimelineStore: SuperTimelineStore }).superTimelineStore;
+    const superStore = (h.options as unknown as { superTimelineStore: SuperTimelineStore })
+      .superTimelineStore;
     const superIds = async (): Promise<Set<string>> => {
       const ids = new Set<string>();
       for await (const rows of superStore.eventBatches("c1")) for (const e of rows) ids.add(e.id);

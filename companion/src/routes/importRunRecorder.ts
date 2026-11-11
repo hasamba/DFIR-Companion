@@ -32,7 +32,10 @@ export interface ImportRunRecord {
 }
 
 /** What recording an import run reads from the context — a drop-folder batch builds this too. */
-export type ImportRunContext = Pick<RouteContext, "options" | "store" | "runStateExclusive" | "importerRegistry">;
+export type ImportRunContext = Pick<
+  RouteContext,
+  "options" | "store" | "runStateExclusive" | "importerRegistry"
+>;
 
 export async function recordImportRun(ctx: ImportRunContext, input: ImportRunRecord): Promise<void> {
   const { options, store } = ctx;

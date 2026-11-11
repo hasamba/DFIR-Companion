@@ -74,11 +74,7 @@ import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
 import { admitIngest, CaseArchivingError } from "../analysis/caseIngestAdmission.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
-import {
-  createDropStuckTracker,
-  type DropFingerprint,
-  type ProcessedVersion,
-} from "./dropStuck.js";
+import { createDropStuckTracker, type DropFingerprint, type ProcessedVersion } from "./dropStuck.js";
 import { CaseKeyedMap, CaseKeyedSet, type PerCaseMap, type PerCaseSet } from "../storage/caseKeyedState.js";
 
 /** A case's drop inbox. Exported so the SO-CRATES hand-off can close its drop-log line (#416). */
@@ -614,7 +610,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       stuck.set(caseId, nextStuck);
       await stuckFiles.retry(dropDir, nextStuck, moveDropFile);
       // A batch a crash interrupted gets its settle before anything else imports (#2540).
-      await dropBatch?.recoverDropBatch(caseId).catch((e: unknown) => logLine(`[drop] batch recovery failed: ${(e as Error).message}`));
+      await dropBatch
+        ?.recoverDropBatch(caseId)
+        .catch((e: unknown) => logLine(`[drop] batch recovery failed: ${(e as Error).message}`));
       if (ready.length === 0) return;
 
       // One job per sweep, kind "import" (same panel row as the Import button). Non-cancellable: the

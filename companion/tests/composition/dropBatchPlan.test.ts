@@ -17,7 +17,9 @@ const file = (relpath: string, size = 2048): DropFileStat => ({ relpath, size, m
 const aws: DropSniff = { kind: "aws", gzip: true, assetHost: "" };
 
 const shape = (work: DropWorkItem[]): string[] =>
-  work.map((w) => (w.type === "batch" ? `batch:${w.files.map((f) => f.relpath).join(",")}` : `solo:${w.file.relpath}`));
+  work.map((w) =>
+    w.type === "batch" ? `batch:${w.files.map((f) => f.relpath).join(",")}` : `solo:${w.file.relpath}`,
+  );
 
 describe("drop batch plan (#2540)", () => {
   it("batches a contiguous run of small gzip CloudTrail files", () => {
@@ -55,7 +57,12 @@ describe("drop batch plan (#2540)", () => {
   });
 
   it("splits by declared host: files under different asset folders never share a batch", () => {
-    const files = [file("asset=H1/a.gz"), file("asset=H1/b.gz"), file("asset=H2/c.gz"), file("asset=H2/d.gz")];
+    const files = [
+      file("asset=H1/a.gz"),
+      file("asset=H1/b.gz"),
+      file("asset=H2/c.gz"),
+      file("asset=H2/d.gz"),
+    ];
     const sniffs = new Map<string, DropSniff>([
       ["asset=H1/a.gz", { ...aws, assetHost: "H1" }],
       ["asset=H1/b.gz", { ...aws, assetHost: "H1" }],
@@ -68,7 +75,9 @@ describe("drop batch plan (#2540)", () => {
   });
 
   it("bounds a batch by file count", () => {
-    const files = Array.from({ length: DROP_BATCH_MAX_FILES + 3 }, (_, i) => file(`f${String(i).padStart(4, "0")}.gz`));
+    const files = Array.from({ length: DROP_BATCH_MAX_FILES + 3 }, (_, i) =>
+      file(`f${String(i).padStart(4, "0")}.gz`),
+    );
     const sniffs = new Map(files.map((f) => [f.relpath, aws]));
     const work = planDropWork(files, sniffs);
     expect(work).toHaveLength(2);
@@ -91,6 +100,10 @@ describe("drop batch plan (#2540)", () => {
   });
 
   it("sorts the ready files by relpath, the one order a sweep imports in", () => {
-    expect(sortByRelpath([file("b"), file("a/z"), file("a")]).map((f) => f.relpath)).toEqual(["a", "a/z", "b"]);
+    expect(sortByRelpath([file("b"), file("a/z"), file("a")]).map((f) => f.relpath)).toEqual([
+      "a",
+      "a/z",
+      "b",
+    ]);
   });
 });

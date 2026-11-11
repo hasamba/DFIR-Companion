@@ -21,7 +21,7 @@ async function stores() {
 }
 
 const draft = (uploadId: string, category: string): CloudCoverageDraft => ({
-  provider: "aws",
+  provider: "aws-cloudtrail",
   scope: { kind: "account", value: "123456789012" },
   uploadId,
   recordCount: 1,
@@ -35,7 +35,10 @@ const at = (i: number): string => new Date(Date.UTC(2026, 10, 11, 0, 0, i)).toIS
 describe("CloudCoverageStore.recordMany ≡ one record() per upload (#2540)", () => {
   it("matches across the eviction cap, a re-imported upload and an evicted upload that comes back", async () => {
     const n = UPLOADS_TRACKED_PER_CASE_MAX + 5;
-    const uploads = Array.from({ length: n }, (_, i) => ({ drafts: [draft(`u${i}`, `Cat${i % 3}`)], at: at(i) }));
+    const uploads = Array.from({ length: n }, (_, i) => ({
+      drafts: [draft(`u${i}`, `Cat${i % 3}`)],
+      at: at(i),
+    }));
     uploads.push({ drafts: [draft("u7", "Cat9")], at: at(n) }); // re-imported, still tracked
     uploads.push({ drafts: [draft("u1", "Cat1")], at: at(n + 1) }); // evicted earlier, back as new
     const seq = await stores();

@@ -562,7 +562,7 @@ export class AnalysisPipeline {
   // A large or gzip cloud export, streamed from disk (#2303); its coverage carries the disclosure.
   async importCloudFile(
     ...args: ImporterArgs<typeof ingest.importCloudFile>
-  ): Promise<{ state: InvestigationState | null; disclosure: CloudStreamDisclosure }> {
+  ): Promise<{ state: InvestigationState; disclosure: CloudStreamDisclosure }> {
     const { state, coverage, disclosure, weaknesses } = await ingest.importCloudFile(this.importCtx, ...args);
     const importDisclosure = describeCloudStreamDisclosure(disclosure).map((d) => d.slice(0, 400));
     const drafts = coverage.map((c) => ({ ...c, importDisclosure, streamDisclosure: disclosure }));
