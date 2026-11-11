@@ -246,6 +246,13 @@ describe("content-bearing reads are not routine (Codex code review)", () => {
     ["LookupEvents", "cloudtrail"],
     ["TestInvokeMethod", "apigateway"],
     ["SearchResources", "resource-groups"],
+    ["DescribeInstanceAttribute", "ec2"],
+    ["DescribeLaunchTemplateVersions", "ec2"],
+    ["ListObjects", "s3"],
+    ["ListObjectsV2", "s3"],
+    ["GetMetricData", "monitoring"],
+    ["DescribeSomethingNew", "newservice"],
+    ["ListSecretVersionIds", "secretsmanager"],
   ])("%s by the marked source is not tagged", (name, src) => {
     const r = rowsOf([trustedRec(name, src, { readOnly: true })])[0];
     expect(trustedMarkFor(r, ipMark), name).toBeNull();
