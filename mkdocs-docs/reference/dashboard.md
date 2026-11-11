@@ -784,8 +784,9 @@ Type a plain-English description of what you want to hunt for. Select the output
 | **Sigma** | Cross-SIEM |
 | **YARA** | File/memory |
 | **Suricata** | Network IDS |
+| **CQL** | CrowdStrike Falcon LogScale / Next-Gen SIEM (Advanced Event Search) |
 
-The languages offered follow the **Hunt platforms** setting (`DFIR_HUNT_PLATFORMS`). Leave it blank to offer all seven; set it to a comma-separated list to offer only those.
+The languages offered follow the **Hunt platforms** setting (`DFIR_HUNT_PLATFORMS`). Leave it blank to offer all eight; set it to a comma-separated list to offer only those.
 
 ---
 

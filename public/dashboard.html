@@ -256,6 +256,7 @@
   <script src="/js/dashboard-settings-tools.js"></script>
   <!-- Sigma draft export (#89) + the hunt-query modal. initHuntModal() binds its controls. -->
   <script src="/js/dashboard-sigma-hunt.js"></script>
+  <script src="/js/dashboard-hunt-cql.js"></script>
   <!-- Sigma paste card → Dry-run on this case (#2211). No initializer: the card calls runSigmaDryRun(). -->
   <script src="/js/dashboard-sigma-dryrun.js"></script>
   <!-- Push ingest token (#84). initPushToken() binds its two buttons. -->
@@ -3795,7 +3796,7 @@
       <div id="askAnswer"></div>
     </section>
     <section id="sec-nlquery" data-safe-style="grid-column: 1 / -1">
-      <h2>Query Translator <span data-safe-style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">natural language → VQL / KQL / ES|QL / SPL / Sigma / YARA / Suricata</span></h2>
+      <h2>Query Translator <span data-safe-style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">natural language → VQL / KQL / ES|QL / SPL / Sigma / YARA / Suricata / CQL</span></h2>
       <div class="ask-row">
         <input id="nlqInput" placeholder="e.g. PowerShell downloading a file and then executing it · outbound RDP from this host · new local admin accounts" />
         <button id="nlqBtn">Translate</button>
@@ -4882,7 +4883,7 @@
     // Same story as veloEnabled directly above: a /health capability set a few hundred lines below
     // and read by two extracted modules (sigma-hunt, query-translator) by bare name. Moved out of
     // the "Bulk finding operations" banner, where it had nothing to do with bulk findings.
-    let enabledHuntPlatforms = new Set(["velociraptor", "defender", "elastic", "splunk", "sigma", "yara", "suricata"]);
+    let enabledHuntPlatforms = new Set(["velociraptor", "defender", "elastic", "splunk", "sigma", "yara", "suricata", "crowdstrike"]);
     // The investigation scope window moved to js/dashboard-scope.js (#415, tier 2) — it is
     // server-persisted state with three different refresh paths, so it owns them rather than
     // sharing a generic setter. Read it through DfirScope.
@@ -5221,9 +5222,9 @@
     // --- Hunt-pivot query generator -----------------------------------------------
     // From a forensic event or IOC, generate ready-to-adapt hunt/pivot queries for the tools
     // analysts already run: Velociraptor VQL, Microsoft Defender/Sentinel KQL, Elastic ES|QL,
-    // Splunk SPL, a Sigma skeleton, a YARA retro-hunt rule (hash-gated), and Suricata network rules
-    // (IP/domain/URL-gated). Deterministic templating from the entity's structured fields — no AI, no
-    // server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
+    // Splunk SPL, a Sigma skeleton, a YARA retro-hunt rule (hash-gated), Suricata network rules
+    // (IP/domain/URL-gated), and CrowdStrike Falcon CQL (js/dashboard-hunt-cql.js). Deterministic
+    // templating from the entity's structured fields — no AI, no server round-trip, no cost. The Companion stays a post-detection layer: these PIVOT off a
     // confirmed indicator, they don't author detections for it.
     // Starred events (per case, tag-backed) live in public/js/dashboard-starred.js.
 

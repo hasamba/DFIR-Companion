@@ -2188,6 +2188,7 @@ export const NON_FEATURES = new Set([
   "dashboard-sigma-rules.js", // Settings → Sigma rules (#2204): reads the DOM, calls /sigma routes, holds no state
   "dashboard-sigma-coverage.js", // Hunt Workbench → Sigma coverage (#2217): reads the DOM, calls one route, holds no state
   "dashboard-sigma-dryrun.js", // Sigma paste card → Dry-run on this case (#2211): called by the card, calls one route, holds no state
+  "dashboard-hunt-cql.js", // pure helper: the hunt modal's CrowdStrike CQL card (#2558), holds nothing
   "dashboard-facade.js",
   "dashboard-wizard-server-set.js", // the wizard's save into the default server set: calls routes, holds no state
 ]);

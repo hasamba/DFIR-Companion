@@ -139,7 +139,7 @@
   function huntChip(kind, id) {
     return (
       `<button class="hunt-add" data-hk="${escAttr(kind)}" data-hi="${escAttr(String(id))}" ` +
-      `title="Generate hunt / pivot queries (Velociraptor, Defender KQL, Elastic ES|QL, Splunk, Sigma, YARA, Suricata)">${ICON_HUNT}</button>`
+      `title="Generate hunt / pivot queries (Velociraptor, Defender KQL, Elastic ES|QL, Splunk, Sigma, YARA, Suricata, CrowdStrike CQL)">${ICON_HUNT}</button>`
     );
   }
   // Explain button for forensic events (#141): one AI call per click, no state change.

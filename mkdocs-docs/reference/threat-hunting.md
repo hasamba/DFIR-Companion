@@ -161,9 +161,11 @@ This prevents running the same hunt twice and helps you see what's been covered.
 
 ## Query Translator
 
-Write in plain English. Get VQL, KQL, SPL, ES|QL, Sigma, YARA, or Suricata. One-click deploy for VQL.
+Write in plain English. Get VQL, KQL, SPL, ES|QL, Sigma, YARA, Suricata, or CrowdStrike Falcon CQL. One-click deploy for VQL.
 
-Only the languages allowed by the **Hunt platforms** setting (`DFIR_HUNT_PLATFORMS`) appear; blank means all seven.
+Only the languages allowed by the **Hunt platforms** setting (`DFIR_HUNT_PLATFORMS`) appear; blank means all eight. The setting also accepts `falcon`, `cql`, `logscale` or `humio` for CrowdStrike.
+
+The 🔍 hunt button on an event or IOC also gives a **CrowdStrike Falcon (CQL)** card. It is made from the indicator without AI, with one query per indicator type, using Falcon event names: `ProcessRollup2` for process names, `NetworkConnectIP4` for IPs, `DnsRequest` for domains, `*Written` events for file names, and `SHA256HashData` / `MD5HashData` for hashes. Paste it into Falcon Advanced Event Search or Next-Gen SIEM. It is LogScale CQL, not the older FQL filter syntax. A value that contains `*` is matched as an exact regular expression, so the `*` cannot widen the search.
 
 See [Dashboard Panels → Query Translator](dashboard.md#query-translator) for details.
 

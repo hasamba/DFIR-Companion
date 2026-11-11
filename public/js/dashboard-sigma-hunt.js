@@ -401,6 +401,7 @@
       ["sigma", "Sigma rule skeleton (YAML)", huntSigma(c)],
       ["yara", "YARA rule (retro-hunt the sample)", huntYara(c)],
       ["suricata", "Suricata rules (network)", huntSuricata(c)],
+      ["crowdstrike", "CrowdStrike Falcon LogScale / NG-SIEM (CQL)", huntCql(c)],
     ].filter(([key, , q]) => q && q.trim() && enabledHuntPlatforms.has(key));
     const body = document.getElementById("huntBody");
     body.innerHTML = !hasAny(c)
