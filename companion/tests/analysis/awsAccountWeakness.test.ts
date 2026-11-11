@@ -1,7 +1,7 @@
 // #2560: AWS account weaknesses from the CloudTrail parse — the rules, the fold, and the SANS 504 lab.
 import { describe, expect, it } from "vitest";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
-import { ROOT_IDS_MAX, type WeaknessFile } from "../../src/analysis/awsAccountWeakness.js";
+import { ACCOUNTS_MAX, ROOT_IDS_MAX, type WeaknessFile } from "../../src/analysis/awsAccountWeakness.js";
 import { foldWeaknesses } from "../../src/analysis/awsAccountWeaknessFold.js";
 import { summarizeWeaknesses, type WeaknessItem } from "../../src/analysis/awsAccountWeaknessSummary.js";
 import { LAB_ACCOUNT, SELECTORS_AT, TARGET_BUCKET, sans504Records } from "./fixtures/sans504Lab.js";
@@ -216,5 +216,34 @@ describe("weakness rules (#2560)", () => {
     expect(use.detail).toMatch(
       new RegExp(`^at least ${ROOT_IDS_MAX.toLocaleString("en-US")} root management`),
     );
+  });
+
+  it("past the account cap the kept accounts depend on their ids alone, so an evicted account cannot claim a false gap", () => {
+    const acct = (id: string): Rec => ({
+      recipientAccountId: id,
+      userIdentity: { type: "IAMUser", accountId: id },
+    });
+    const object = rec("GetObject", "s3", {
+      ...acct("999999999999"),
+      eventTime: "2026-02-01T00:00:00Z",
+      eventCategory: "Data",
+      requestParameters: { bucketName: "b", key: "k.txt" },
+    });
+    const others = Array.from({ length: ACCOUNTS_MAX }, (_, i) =>
+      rec("ListBuckets", "s3", acct(String(100000000000 + i))),
+    );
+    const selector = rec("PutEventSelectors", "cloudtrail", {
+      ...acct("999999999999"),
+      readOnly: false,
+      requestParameters: {
+        trailName: "t",
+        eventSelectors: [{ dataResources: [{ type: "AWS::S3::Object", values: ["arn:aws:s3"] }] }],
+      },
+    });
+    const stepwise = foldWeaknesses(foldWeaknesses(draftOf([object]), draftOf(others)), draftOf([selector]));
+    const whole = draftOf([object, ...others, selector]);
+    expect(stepwise).toEqual(whole);
+    expect(whole.accountsOverflow).toBe(true);
+    expect(summarizeWeaknesses(stepwise).items.some((i) => i.kind === "object-logging-window")).toBe(false);
   });
 });

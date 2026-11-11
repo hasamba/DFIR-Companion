@@ -107,20 +107,19 @@ function mergeAccount(a: AccountWeakness, b: AccountWeakness): AccountWeakness {
   };
 }
 
-/** Whether an account holds anything beyond its first-record time — kept first at the account cap. */
-const hasFacts = (a: AccountWeakness): boolean =>
-  !!(a.rootNoMfaLogin || a.rootUse || a.objectLock || a.versioning || a.objectSelector);
-
-/** `acc` with `next` folded in. Pure; the result is bounded by the caps whatever the inputs. */
+/**
+ * `acc` with `next` folded in. Pure; the result is bounded by the caps whatever the inputs. Past the
+ * account cap the smallest account ids are kept, by id alone: an order that looked at an account's
+ * facts would change as records arrive, so an account dropped early (and its earlier object record
+ * with it) could come back on a later fact and claim a logging gap the evidence does not show.
+ */
 export function foldWeaknesses(acc: WeaknessFile, next: WeaknessFile): WeaknessFile {
   const byAccount = new Map(acc.accounts.map((a) => [a.account, a] as const));
   for (const a of next.accounts) {
     const prev = byAccount.get(a.account);
     byAccount.set(a.account, prev ? mergeAccount(prev, a) : a);
   }
-  const all = [...byAccount.values()].sort(
-    (x, y) => Number(hasFacts(y)) - Number(hasFacts(x)) || x.account.localeCompare(y.account),
-  );
+  const all = [...byAccount.values()].sort((x, y) => x.account.localeCompare(y.account));
   return {
     accounts: all.slice(0, ACCOUNTS_MAX),
     accountsOverflow: acc.accountsOverflow || next.accountsOverflow || all.length > ACCOUNTS_MAX,
