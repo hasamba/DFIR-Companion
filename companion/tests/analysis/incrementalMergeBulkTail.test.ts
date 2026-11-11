@@ -14,6 +14,7 @@ import { MERGE_FLAG_LOAD, mergeIndexEntry } from "../../src/analysis/mergeIndex.
 import {
   BULK_READ_MARKER,
   LOGGING_COVERAGE_ID,
+  summarizeBulkReads,
   TRUNCATION_COVERAGE_ID,
 } from "../../src/analysis/cloudBulkRead.js";
 import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
@@ -397,8 +398,12 @@ describe("transitions the full merge leaves a stored summary behind on (#2544, p
     const [before] = summaries(await expectSame());
     expect(await importBoth(delta([read("early", at(22, 13, 59, 40), 0), mgmt("m", at(21))]))).toBe(true);
     const s = await expectSame();
+    // The full merge replaces only ids it emits: the old summary stays and a second, new id joins it.
     expect(summaries(s).map((e) => e.id)).toContain(before.id);
-    expect(summaries(s).length).toBeGreaterThanOrEqual(1);
+    expect(summaries(s)).toHaveLength(2);
+    expect(
+      summaries(s).some((e) => e.id !== before.id && Date.parse(e.timestamp) < Date.parse(before.timestamp)),
+    ).toBe(true);
   });
 
   it("a third reading day makes the reader recurring: its verdict goes, the stored summary stays", async () => {
@@ -408,7 +413,10 @@ describe("transitions the full merge leaves a stored summary behind on (#2544, p
     expect(await importBoth(delta([read("d1", at(22, 3), 1)]))).toBe(true);
     await expectSame();
     expect(await importBoth(delta([read("d2", at(23, 3), 2), mgmt("m", at(21))]))).toBe(true);
-    expect(summaries(await expectSame())).toHaveLength(1);
+    const s = await expectSame();
+    expect(summaries(s)).toHaveLength(1);
+    // The verdict really went: the pass now emits nothing and leaves the timeline as it is.
+    expect(summarizeBulkReads(s.forensicTimeline)).toBe(s.forensicTimeline);
   });
 
   it("the metadata coverage row and a summary at the same instant keep the full merge's order", async () => {
@@ -439,16 +447,26 @@ describe("the dated note's start, held exactly (#2544, plan review)", () => {
     expect(note(s)?.timestamp).toBe("2026-10-19T05:00:00.000Z");
   });
 
-  it("the earliest AWS row re-sent with a later time, and a guessed-year row clamped forward", async () => {
-    const guessed: Ev = { ...mgmt("guess", "2025-10-18T05:00:00Z"), yearInferred: true };
-    expect(await importBoth(delta([mgmt("seed", at(20, 9)), ...file(6)]))).toBe(false);
-    expect(await importBoth(delta([selectorRow("sel", at(23, 12)), guessed]))).toBe(true);
+  it("the earliest AWS row re-sent with a later time, then a guessed-year row clamped forward", async () => {
+    const row = (s: InvestigationState, id: string) => s.forensicTimeline.find((e) => e.id === id);
+    expect(await importBoth(delta([mgmt("seed", at(20, 9)), ...file(14)]))).toBe(false);
+    expect(await importBoth(delta([selectorRow("sel", at(23, 12))]))).toBe(true);
     let s = await expectSame();
-    expect(await importBoth(delta([{ ...mgmt("seed", at(21, 9)) }]))).toBe(true);
+    expect(note(s)?.timestamp).toBe(at(20, 9));
+    // The case's earliest AWS row is re-sent later: the note follows it (held: the delta names it).
+    expect(await importBoth(delta([mgmt("seed", at(21, 9))]))).toBe(true);
     s = await expectSame();
+    expect(Date.parse(row(s, "seed")!.timestamp)).toBe(Date.parse(at(21, 9)));
+    expect(note(s)?.timestamp).toBe(row(s, "seed")!.timestamp);
+    // A row on a guessed year the clamp moves onto the case's year becomes the earliest.
+    const guessed: Ev = { ...mgmt("guess", "2025-10-18T05:00:00Z"), yearInferred: true };
+    expect(await importBoth(delta([guessed]))).toBe(true);
+    s = await expectSame();
+    expect(row(s, "guess")!.timestamp.startsWith("2026-10-18")).toBe(true);
+    expect(note(s)?.timestamp).toBe(row(s, "guess")!.timestamp);
     expect(await importBoth(delta([mgmt("z", at(24))]))).toBe(true);
     s = await expectSame();
-    expect(note(s)).toBeDefined();
+    expect(note(s)?.timestamp).toBe(row(s, "guess")!.timestamp);
   });
 
   function file(n: number): Ev[] {

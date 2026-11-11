@@ -162,6 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sigma "not graded" wording** — a Sigma match that did not set the severity reads `Sigma (medium, not graded)` instead of `tag only`, and the details and a hover on the row title say why (closes #2386).
 
 - **Faster large CloudTrail imports** — the streamed import no longer re-maps each object's summary window; same rows, counts, grades and disclosures; 400k-record set 693 s → 509 s under `npm run dev`, 500 s → 455 s built (closes #2362)
+- **CloudTrail imports stay incremental after a bulk-read summary or object-logging note** — later small files no longer reload and re-save the whole case; SANS 504 lab, 3,872 files one by one: 3,567 full merges → 1 (closes #2544)
 - **Default server set name** — a new install names its first server set "Default" instead of "Testing"; an existing set keeps its name
 
 ## [0.45.0] - 2026-11-05
