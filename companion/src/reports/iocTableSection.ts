@@ -14,6 +14,7 @@ import { iocValueLabel } from "../analysis/iocMentioned.js";
 import { iocSourcesLabel } from "../analysis/iocProvenanceLabel.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
+import { iocsLinkedToHighEvent } from "../analysis/iocHighLink.js";
 
 export function iocTableSection(state: InvestigationState, lines: string[]): void {
   lines.push("### 4.4 Indicators of compromise", "");
@@ -24,8 +25,12 @@ export function iocTableSection(state: InvestigationState, lines: string[]): voi
   const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline); // corroboration: tools that saw it
   const iocRisk = scoreIocsFromState(state); // composite risk (#63); role splits indicator vs observation
   // An IOC the analyst labelled (#2543) is listed whatever its score: the label is their call that
-  // the value matters (a cloud principal with no threat signal is otherwise an observation).
-  const indicators = state.iocs.filter((i) => iocRisk[i.id]?.role !== "observation" || i.attribution);
+  // the value matters (a cloud principal with no threat signal is otherwise an observation). So is
+  // one extracted from a High/Critical event — by its extractedFrom link, never a text match.
+  const highLinked = iocsLinkedToHighEvent(state.iocs, state.forensicTimeline);
+  const indicators = state.iocs.filter(
+    (i) => iocRisk[i.id]?.role !== "observation" || i.attribution || highLinked.has(i.id),
+  );
   lines.push(
     "| ID | Type | Value | First seen | Sources | Risk | Label | Context |",
     "| --- | --- | --- | --- | --- | --- | --- | --- |",

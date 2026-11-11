@@ -5445,7 +5445,7 @@
       const noiseResult = DfirIoc.applyIocNoiseFilters(visible, {
         hideFpNoIntel, showSignalIocsOnly, hideSystemPaths,
         isFalsePositive: i => fpVals.has(String(i.value).trim().toLowerCase()),
-        isFlagged: iocFlagged, corroboration: i => _iocCorrob(i.id), isSystemPath: isSystemPathIoc,
+        isFlagged: iocFlagged, corroboration: i => _iocCorrob(i.id), isSystemPath: isSystemPathIoc, isPinnedSignal: DfirIoc.iocPinnedSignal(DfirState.lastState(), typeof iocAttributionOf === "function" ? iocAttributionOf : null),   // #2543
       });
       visible = noiseResult.visible;
       const noiseFiltersActive = hideFpNoIntel || showSignalIocsOnly || hideSystemPaths;

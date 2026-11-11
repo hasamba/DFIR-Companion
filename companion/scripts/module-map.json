@@ -599,6 +599,7 @@
     "iocExclude.ts": "analysis/findings",
     "iocAttribution.ts": "analysis/findings",
     "iocAttributionStore.ts": "analysis/findings",
+    "iocHighLink.ts": "analysis/findings",
     "iocMerge.ts": "analysis/findings",
     "iocMentioned.ts": "shared",
     "iocMentionedHash.ts": "analysis/findings",

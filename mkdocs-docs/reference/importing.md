@@ -1943,10 +1943,13 @@ Nothing is added for a call by the account root or by an AWS service. These IOCs
 them in the IOC panel (attacker / ours / responder / unknown) — see the IOC panel in the dashboard
 reference.
 
-With no threat-intel verdict, these IOCs are hidden by the IOC panel's **Signal only** lens (on by
-default) once other IOCs in the case have been enriched. Turn the lens off to see them in the panel.
-In the report's IOC table, one with no threat signal is counted as an observation unless you label
-it.
+These IOCs never get a threat-intel verdict. One that was extracted from an event graded High or
+Critical, or one you labelled, still counts as signal: the IOC panel's **Signal only** lens (on by
+default) keeps it, and the report's IOC table lists it. One extracted only from a lower-graded event,
+with no label, is hidden by **Signal only** once other IOCs in the case have been enriched, and the
+report counts it as an observation. Turn the lens off, or label the IOC, to see it. An upload read by
+the streamed CloudTrail importer does not record which event an IOC came from, so for those IOCs
+only a label makes them signal.
 
 Records already in the case are not read again, so importing the same files into an existing case
 adds none of these IOCs. Import into a new case to get them for evidence imported before this
