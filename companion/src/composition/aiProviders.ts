@@ -40,6 +40,7 @@ import { AiAuthoredTextStore } from "../analysis/aiAuthoredText.js";
 import { SynthMetaStore } from "../analysis/synthMeta.js";
 import { AiCostStore } from "../analysis/aiCost.js";
 import { CorrelationProfileStore } from "../analysis/correlationProfile.js";
+import { CaseMainSourceStore } from "../analysis/caseMainSourceStore.js";
 import { NotebookStore } from "../analysis/notebookStore.js";
 import { HypothesisStore } from "../analysis/hypothesisStore.js";
 import { FindingTaskStore } from "../analysis/findingTaskStore.js";
@@ -374,6 +375,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     aiCostStore: new AiCostStore(params.store),
     safetyStopCapture: params.safetyStopCapture,
     correlationProfileStore: new CorrelationProfileStore(params.store),
+    mainSourceStore: new CaseMainSourceStore(params.store), // #2559
     notebookStore: new NotebookStore(params.store),
     hypothesisStore: new HypothesisStore(params.store), // #140 auto-generate hypotheses on synthesis
     findingTaskStore: new FindingTaskStore(params.store), // #1418 per-finding analyst tasks after synthesis

@@ -1398,6 +1398,19 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // The case's main evidence source line + override, and the copy-ready hunt cards in that
+    // source's query language (#2559). VQL cards stay in dashboard-hunts-jumps.js / -playbook.js.
+    file: "dashboard-main-source.js",
+    publish: [
+      "loadMainSource",
+      "renderLanguageHunts",
+      "setPlaybookLanguageHunts",
+      "playbookLanguageHuntsHtml",
+      "wirePlaybookLanguageHunts",
+    ],
+    private: ["msState", "fleetLangHunts", "pbLangHunts"],
+  },
+  {
     // Forensic timeline controls. All-initializer: every statement runs at load, so there is no
     // module body. My dispatch rule flagged this as core; the previous commit argues why that flag
     // is over-broad, and this is that argument acted on.

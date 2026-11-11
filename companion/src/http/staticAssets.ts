@@ -297,6 +297,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-render.js": "application/javascript; charset=utf-8",
   "/js/dashboard-facet-filters.js": "application/javascript; charset=utf-8",
   "/js/dashboard-hunts-jumps.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-main-source.js": "application/javascript; charset=utf-8", // #2559 main-source line + language hunt cards
   "/js/dashboard-timeline-controls.js": "application/javascript; charset=utf-8",
   "/js/dashboard-cockpit-story.js": "application/javascript; charset=utf-8",
   "/js/dashboard-cockpit.js": "application/javascript; charset=utf-8",

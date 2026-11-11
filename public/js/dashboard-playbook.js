@@ -110,6 +110,7 @@
                 (VHS_SEV_RANK[b.severity] ?? 9),
             )
           : [];
+        if (typeof setPlaybookLanguageHunts === "function") setPlaybookLanguageHunts(d.languageHuntSuggestions); // #2559
         renderPlaybook(d.stats);
         if (typeof containmentSyncPlaybook === "function") containmentSyncPlaybook(playbookTasks);
       })
@@ -201,12 +202,14 @@
           `</div>` +
           pbDepsPanel(t) +
           renderTaskHunts(t.id) +
+          (typeof playbookLanguageHuntsHtml === "function" ? playbookLanguageHuntsHtml(t.id) : "") + // #2559
           `</div>`
         );
       })
       .join("");
     if (canDrag) pbWireDrag(el);
     pbWireHuntSuggestions(el);
+    if (typeof wirePlaybookLanguageHunts === "function") wirePlaybookLanguageHunts(el, () => renderPlaybook());
   }
 
   // Drag-and-drop reorder (mirrors the section-reorder pattern). On drop, persist the new
@@ -370,6 +373,7 @@
   function resetPlaybookHuntSuggest() {
     pbHuntFlat = [];
     pbHuntCollapsed = {};
+    if (typeof setPlaybookLanguageHunts === "function") setPlaybookLanguageHunts([]);
     const msg = document.getElementById("pbHuntMsg");
     if (msg) msg.textContent = "";
   }
@@ -415,16 +419,21 @@
             (VHS_SEV_RANK[a.severity] ?? 9) - (VHS_SEV_RANK[b.severity] ?? 9),
         );
         pbHuntCollapsed = {};
+        const langN = (j.languageSuggestions || []).length; // #2559: main-source-language hunts
+        if (typeof setPlaybookLanguageHunts === "function") setPlaybookLanguageHunts(j.languageSuggestions);
         renderPlaybook(); // re-render the task list with the suggestions inlined under their tasks
         if (msg) {
           msg.style.color = "var(--text-muted)";
           const newN = typeof j.generated === "number" ? j.generated : null;
           const more = j.more ? " · press again for more" : "";
-          msg.textContent = pbHuntFlat.length
-            ? newN === 0
-              ? `${pbHuntFlat.length} suggestion(s) — nothing new to generate`
-              : `${newN != null ? newN + " new · " : ""}${pbHuntFlat.length} total — shown under their tasks${more}`
-            : "no endpoint-related tasks to hunt for (sync the playbook or add evidence)";
+          const total = pbHuntFlat.length + langN;
+          msg.textContent =
+            (total
+              ? newN === 0
+                ? `${total} suggestion(s) — nothing new to generate`
+                : `${newN != null ? newN + " new · " : ""}${total} total — shown under their tasks${more}`
+              : "no endpoint-related tasks to hunt for (sync the playbook or add evidence)") +
+            ((j.notes || []).length ? ` · ${j.notes.join(" ")}` : "");
         }
       })
       .catch((e) => {

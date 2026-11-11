@@ -9,6 +9,8 @@ import {
 } from "../collectionInventory.js";
 import type { AIProvider } from "../../providers/provider.js";
 import { isCloudOnlyCase } from "../cloudOnlyCase.js";
+import { computeMainSource, type MainSourceResult } from "../caseMainSource.js";
+import type { CaseMainSourceStore } from "../caseMainSourceStore.js";
 import { withCloudSeedQuestions } from "../cloudKeyQuestions.js";
 import type { SynthesisFallback } from "./synthesisFallback.js";
 import type { Logger } from "../../logging/logger.js";
@@ -108,6 +110,7 @@ export interface SynthesisContext
     SynthesisInputContext["opts"] & {
       provider?: AIProvider;
       correlationProfileStore?: CorrelationProfileStore;
+      mainSourceStore?: CaseMainSourceStore; // #2559
       sourceTrustStore?: SourceTrustStore;
       clockSkewStore?: ClockSkewStore;
       secondOpinionStore?: SecondOpinionStore;
@@ -199,6 +202,8 @@ interface PreparedRun {
   newPromotedIds: Set<string>;
   /** What the case holds, per source and host (#1588) — the prompt block and the backstop share it. */
   inventory: CollectionInventory;
+  /** The case's main evidence source (#2559) — which tool the coverage backstop's steps name. */
+  mainSource: MainSourceResult;
 }
 
 /**
@@ -233,7 +238,10 @@ async function prepareSynthesisRun(
   // In-window, BEFORE the false-positive filter: a row marked benign still proves its source was
   // collected (#1588).
   const inventory = buildCollectionInventory({ events: inWindowEvents, hunts, aliasIndex });
+  const override = (await ctx.opts.mainSourceStore?.load(caseId).catch(() => null)) ?? null;
+  const mainSource = computeMainSource(loaded.forensicTimeline, override); // #2559
   return {
+    mainSource,
     promotedSeen,
     inventory,
     newPromotedIds: newPromotedIds(scopedEvents, promotedSeen),
@@ -256,7 +264,8 @@ async function prepareSynthesisRun(
       promoted: promotedSignature(scopedEvents),
       // The inventory can change with no new row — a hunt came back empty, a host alias merged two
       // spellings, a row's provenance changed — so the whole rendered inventory is hashed (#1588).
-      inventory: `${renderCollectionInventory(inventory)}\n${inventorySignature(hunts)}`,
+      // The main source (#2559) changes the backstop's step text, so an override change re-runs too.
+      inventory: `${renderCollectionInventory(inventory)}\n${inventorySignature(hunts)}\nmain-source:${mainSource.effective}`,
     }),
   };
 }
@@ -676,6 +685,7 @@ async function synthesizeInScope(
     playbookTasks: run.playbookTasks,
     inventory: run.inventory,
     cloudOnly,
+    mainSource: run.mainSource,
     hostOf: (raw) => resolveHost(aliasIndex, raw),
     membersOf: prompt.membersOf,
     promptEventIds: new Set(prompt.promptEvents.map((e) => e.id)),

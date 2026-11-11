@@ -17,6 +17,7 @@ import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js"
 import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
+import type { CaseMainSourceStore } from "../caseMainSourceStore.js";
 import type { FalsePositiveStore } from "../falsePositive.js";
 import type { FindingsDiff } from "../findingsDiff.js";
 import type { HuntOutcomeStore } from "../huntOutcomeStore.js";
@@ -169,6 +170,8 @@ export interface PipelineOptions {
   // #2083: DFIR_AI_CAPTURE_SAFETY_STOPS, read at startup. Absent → a refused prompt is never saved.
   safetyStopCapture?: SafetyStopCapture;
   correlationProfileStore?: CorrelationProfileStore;
+  // #2559: the analyst's per-case main-evidence-source override (hunts + coverage next steps).
+  mainSourceStore?: CaseMainSourceStore;
   // When both notebookStore and aiControlStore are set, synthesis checks aiControl.includeNotebook
   // and — when true — appends the analyst's notebook entries to the synthesis prompt.
   notebookStore?: NotebookStore;

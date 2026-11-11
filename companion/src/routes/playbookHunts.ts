@@ -22,6 +22,13 @@ import { playbookTaskEvent, type NotificationEvent } from "../analysis/notificat
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { isFrozenCase } from "./importCaseGuard.js";
+import { PlaybookLanguageHuntStore } from "../analysis/playbookLanguageHunts.js";
+import {
+  freshLanguageHunts,
+  isCopyLanguage,
+  runLanguageHunts,
+  vqlTasksOf,
+} from "./playbookLanguageHuntRun.js";
 
 /**
  * Playbook + hunt-suggestion/outcome domain (issues #36, #70, #157). The per-case investigation
@@ -66,6 +73,8 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
+  // #2559: per-task hunts in the case's main-source language, persisted beside the VQL ones.
+  const languageHuntStore = options.playbookHuntStore ? new PlaybookLanguageHuntStore(ctx.store) : undefined;
 
   // Deep link a notification back to the case dashboard (when a public base URL is configured).
   // Module-private copy of createApp's caseLink (pure over options.dashboardBaseUrl).
@@ -159,11 +168,21 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       // so they survive a page refresh but a reworded/deleted task drops its stale hunt.
       const frozen = await isFrozenCase(ctx.store, req.params.id);
       const huntSuggestions = await loadFreshHunts(req.params.id, tasks, !frozen);
+      // #2559: a VQL card shows only while its task's hunt language is still VQL.
+      const plan = options.pipeline
+        ? await options.pipeline.caseHunts.planPlaybook(req.params.id, tasks).catch(() => null)
+        : null;
+      const vqlIds = plan ? new Set(vqlTasksOf(tasks, plan).map((t) => t.id)) : null;
+      const languageHuntSuggestions = plan
+        ? await freshLanguageHunts(languageHuntStore, req.params.id, tasks, plan.languages)
+        : [];
       return res.status(200).json({
         tasks: withBlockedState(tasks),
         stats: playbookStats(tasks),
         control: await loadPlaybookControl(req.params.id),
-        huntSuggestions,
+        huntSuggestions: vqlIds ? huntSuggestions.filter((h) => vqlIds.has(h.taskId)) : huntSuggestions,
+        ...(languageHuntSuggestions.length ? { languageHuntSuggestions } : {}),
+        ...(plan?.notes.length ? { huntLanguageNotes: plan.notes } : {}),
       });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -200,6 +219,9 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       return res.status(501).json({ error: "playbook not configured" });
     try {
       const tasks = await syncPlaybook(req.params.id);
+      // #2559: each task's hunt language; only VQL tasks take the Velociraptor path below.
+      const plan = await options.pipeline.caseHunts.planPlaybook(req.params.id, tasks);
+      const langDeps = { pipeline: options.pipeline, store: languageHuntStore, log: logLine };
       // The case's own Velociraptor server, if its server set has one (best-effort below when not).
       const caseServers = ctx.serverClients.forCase(req.params.id);
       const velo = caseServers.ok ? caseServers.servers.velociraptor : undefined;
@@ -212,6 +234,16 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       if (regenTaskId) {
         const task = tasks.find((t) => t.id === regenTaskId);
         if (!task) return res.status(404).json({ error: "task not found" });
+        if (isCopyLanguage(req.body?.language)) {
+          const exclude = typeof req.body?.excludeQuery === "string" ? req.body.excludeQuery : undefined;
+          const regen = { task, language: req.body.language, exclude };
+          const lr = await runLanguageHunts(langDeps, req.params.id, tasks, plan.languages, { regen });
+          const vqlIds = new Set(vqlTasksOf(tasks, plan).map((t) => t.id));
+          const kept = (await loadFreshHunts(req.params.id, tasks, false)).filter((h) =>
+            vqlIds.has(h.taskId),
+          );
+          return res.status(200).json({ suggestions: kept, more: false, ...lr });
+        }
         const excludeVql = typeof req.body?.excludeVql === "string" ? req.body.excludeVql.trim() : undefined;
         const [, artifactNames] = await Promise.all([
           refreshCaseFleet().catch((e) => {
@@ -263,7 +295,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       const persisted = options.playbookHuntStore
         ? await options.playbookHuntStore.load(req.params.id)
         : { ...EMPTY_PERSISTED_HUNTS };
-      const { fresh, pending } = planPlaybookHuntRun(persisted, tasks, force);
+      const { fresh, pending } = planPlaybookHuntRun(persisted, vqlTasksOf(tasks, plan), force);
       // Concurrently (best-effort, no-op when the API is off): refresh the client inventory so a host
       // enrolled MID-INVESTIGATION is resolvable at deploy time, AND fetch the server's REAL CLIENT
       // artifact names so the model only references artifacts that EXIST. Skip the artifact fetch when
@@ -310,9 +342,14 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
           logLine(`[velociraptor] could not persist playbook hunts: ${(e as Error).message}`);
         }
       }
-      return res
-        .status(200)
-        .json({ suggestions: merged.suggestions, generated: newSuggestions.length, more: truncated });
+      const lr = await runLanguageHunts(langDeps, req.params.id, tasks, plan.languages, { force });
+      return res.status(200).json({
+        suggestions: merged.suggestions,
+        generated: newSuggestions.length + lr.generated,
+        more: truncated,
+        ...(lr.languageSuggestions.length ? { languageSuggestions: lr.languageSuggestions } : {}),
+        ...(plan.notes.length ? { notes: plan.notes } : {}),
+      });
     } catch (err) {
       return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
     }

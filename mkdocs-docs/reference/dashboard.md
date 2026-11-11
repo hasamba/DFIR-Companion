@@ -844,11 +844,45 @@ Bundles themselves are shared across cases, so building and editing them stays u
 
 ## Suggested Fleet Hunts
 
-Turns the case's findings into proposed Velociraptor VQL hunts that sweep every enrolled endpoint
-for the same tradecraft. Press **✨ Suggest hunts** to generate them.
+Turns the case's findings into proposed hunts that sweep the estate for the same tradecraft, in the
+query language of the case's **main evidence source**. Press **✨ Suggest hunts** to generate them.
 
-!!! warning "Review the VQL before deploying"
-    These are AI-proposed queries. Read each one before running it against the fleet.
+**Main evidence source line.** The top of the panel names the tool most of the case's evidence came
+from, for example *Main evidence source: CrowdStrike Falcon (14 of 15 evidence files that reached
+the forensic timeline) — hunts are written in CrowdStrike Falcon CQL*.
+
+- **What counts.** Each evidence file that put rows into the forensic timeline counts once, for its
+  tool. One uploaded export is one file. Each artifact a Velociraptor hunt or offline collection
+  returned is one file. Files whose rows were all graded Info are not counted: they never reached
+  the forensic timeline.
+- **When a source wins.** A tool needs at least 70% of the files. With two or more tools present it
+  also needs at least 2 files. When every file is from one tool, one file is enough.
+- **Mixed.** When no tool wins, the line says *Mixed evidence*. Each finding's hunt then uses the
+  language of that finding's own evidence. Each playbook task uses the evidence of its finding.
+- **Change main source.** The dropdown sets the source for this case, or *Mixed*, or back to
+  *Automatic*. Changing it clears the shown hunts, so your next press writes them in the new
+  language.
+
+Languages by source:
+
+| Main source | Hunts are written in | Deploy from here |
+|---|---|---|
+| Velociraptor, or no evidence yet | Velociraptor VQL, exactly as before | Yes |
+| CrowdStrike Falcon | CQL (LogScale / Next-Gen SIEM) | No: copy it into Falcon |
+| Microsoft Defender / Sentinel | KQL on the `Device*` tables | No: copy |
+| Microsoft 365 / Entra ID | KQL on `SigninLogs`, `AuditLogs`, `OfficeActivity` | No: copy |
+| Elastic | ES\|QL | No: copy |
+| Splunk | SPL | No: copy |
+| Host tools with no query language (Hayabusa, THOR, KAPE …) | Velociraptor VQL, with a note | Yes |
+| Other cloud logs (AWS, GCP, Azure, Okta, Google Workspace) | No hunt card. A note points to the Query Translator | — |
+
+If `DFIR_HUNT_PLATFORMS` disables a language, the panel shows Velociraptor VQL instead, with a note.
+The playbook's per-task hunts follow the same rules and show under their tasks.
+
+!!! warning "Review every query before running it"
+    These are AI-written queries. A query in a language other than VQL is checked only for the
+    right shape (for example, a KQL query must start with a table that language has). It is never
+    deployed from the companion: read it, then copy it into that tool yourself.
 
 ---
 

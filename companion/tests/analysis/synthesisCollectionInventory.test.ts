@@ -7,6 +7,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { CaseMainSourceStore } from "../../src/analysis/caseMainSourceStore.js";
 
 // #1588 — the collection inventory reaches the synthesis prompt, and a hunt whose outcome changes the
 // inventory (no new timeline row) still triggers a fresh synthesis instead of a skip.
@@ -32,7 +33,7 @@ function ev(id: string, over: Partial<ForensicEvent> = {}): ForensicEvent {
   };
 }
 
-function pipeline(): AnalysisPipeline {
+function pipeline(extra: Record<string, unknown> = {}): AnalysisPipeline {
   const analyze = vi.fn(async (req: { userPrompt?: string }) => {
     prompts.push(req.userPrompt ?? "");
     return {
@@ -54,6 +55,7 @@ function pipeline(): AnalysisPipeline {
     synthesisProvider: { name: "fake", analyze } as never,
     retries: 0,
     imageLoader: async () => ({ data: Buffer.from(""), mediaType: "image/png" }) as never,
+    ...extra,
   });
 }
 
@@ -125,6 +127,43 @@ describe("the collection inventory in the synthesis prompt (#1588)", () => {
     const steps = saved.nextSteps.filter((n) => n.id.startsWith("ns-coverage-"));
     expect(steps).toHaveLength(1);
     expect(steps[0].collect?.host).toBe("ws01");
+  });
+
+  it("#2559: the coverage step names the main source's tool, read with the analyst's override", async () => {
+    reply = {
+      keyQuestions: [
+        {
+          id: "q_impact",
+          question: "What was the impact?",
+          status: "answered",
+          answer: "No confirmed data encryption or destruction was observed.",
+          pointer: "",
+        },
+      ],
+      nextSteps: [],
+    };
+    const mainSourceStore = new CaseMainSourceStore(cases);
+    await mainSourceStore.save("c1", "defender");
+    await pipeline({ mainSourceStore }).synthesize("c1", { force: true });
+    const saved = await stateStore.load("c1");
+    const steps = saved.nextSteps.filter((n) => n.id.startsWith("ns-coverage-"));
+    expect(steps).toHaveLength(1);
+    expect(steps[0].action).toMatch(
+      /^Search Microsoft Defender XDR advanced hunting for file-activity evidence \(DeviceFileEvents\)/,
+    );
+    expect(steps[0].collect).toBeUndefined();
+    expect(prompts[0]).not.toContain("DeviceFileEvents"); // the synthesis prompt itself is unchanged
+  });
+
+  it("#2559: changing the main-source override re-runs synthesis instead of skipping it", async () => {
+    const mainSourceStore = new CaseMainSourceStore(cases);
+    const pl = pipeline({ mainSourceStore });
+    await pl.synthesize("c1");
+    await pl.synthesize("c1");
+    expect(prompts).toHaveLength(1); // unchanged inputs → skipped
+    await mainSourceStore.save("c1", "splunk");
+    await pl.synthesize("c1");
+    expect(prompts).toHaveLength(2);
   });
 
   it("a malformed hunt file never stops synthesis; the bad jobs are dropped", async () => {

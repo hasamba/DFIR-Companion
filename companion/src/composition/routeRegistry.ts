@@ -42,6 +42,7 @@ import { registerSourceRecordRoutes } from "../routes/sourceRecords.js";
 import { registerAttackMatrixRoutes } from "../routes/attackMatrix.js";
 import { registerSessionSegmentationRoutes } from "../routes/sessionSegmentation.js";
 import { registerFindingsRoutes } from "../routes/findings.js";
+import { registerCaseMainSourceRoutes } from "../routes/caseMainSource.js";
 import { registerIocAttributionRoutes } from "../routes/iocAttribution.js";
 import { registerEntityAnnotationRoutes } from "../routes/entityAnnotations.js";
 import { registerFindingOutcomeRoutes } from "../routes/findingOutcome.js";
@@ -179,6 +180,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerSessionSegmentationRoutes(app, ctx);
   registerEntityAnnotationRoutes(app, ctx); // the comment + tag lists moved out of findings.ts (#1715)
   registerFindingsRoutes(app, ctx);
+  registerCaseMainSourceRoutes(app, ctx); // #2559 the case's main evidence source + override
   registerFindingOutcomeRoutes(app, ctx);
   registerIocAttributionRoutes(app, ctx); // #2543 analyst IOC labels
   registerFindingSeverityRestoreRoutes(app, ctx); // #1973

@@ -45,6 +45,7 @@ import { presidioPreviewText } from "./ai/aiPreviewCall.js";
 import type { KnownEntities } from "./anonymize.js";
 import type { AnonControl } from "./anonControl.js";
 import type { HuntContext } from "./ai/hunts.js";
+import { bindCaseHunts, type CaseHuntContext, type CaseHuntsApi } from "./ai/caseHunts.js";
 import * as synthesis from "./ai/synthesis.js";
 import type { SynthesisContext } from "./ai/synthesis.js";
 import * as deepPassRun from "./ai/deepPassRun.js";
@@ -87,6 +88,7 @@ export class AnalysisPipeline {
     AnalystQueryContext &
     ViewReportContext &
     HuntContext &
+    CaseHuntContext &
     PromptBlockContext &
     ExtractionContext &
     SynthesisContext &
@@ -640,6 +642,11 @@ export class AnalysisPipeline {
 
   suggestHunts(caseId: string, opts?: { excludeVql?: string }): Promise<HuntSuggestion[]> {
     return hunts.suggestHunts(this.aiCtx, caseId, opts);
+  }
+
+  /** #2559: hunts in the case's main-source language — ai/caseHunts.ts. */
+  get caseHunts(): CaseHuntsApi {
+    return bindCaseHunts(this.aiCtx);
   }
 
   suggestTechniqueHunts(
