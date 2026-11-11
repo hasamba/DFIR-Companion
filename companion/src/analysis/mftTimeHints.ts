@@ -28,7 +28,7 @@ import { getCI, getPath, str } from "./siemImport.js";
 import type { MappedEvent } from "./siemImport.js";
 import { worst } from "./siemImport.js";
 import { detectTimestomp, timestompThresholdMs } from "./timestompDetect.js";
-import { appendDerivedNote } from "./derivedNote.js";
+import { appendRowNote } from "./derivedNote.js";
 import { copiedFileTimes } from "./veloRowTime.js";
 
 type Row = Record<string, unknown>;
@@ -112,7 +112,9 @@ export function markSharedSourceMtime(events: readonly MappedEvent[]): MappedEve
     const n = k ? (counts.get(k) ?? 0) : 0;
     if (n < 2) return e;
     const note = `${n} copies of one source file, not timestomping`;
-    return { ...e, description: appendDerivedNote(e.description, SHARED_SOURCE_MTIME_MARKER, note) };
+    // Before the spread: appendRowNote neutralises and marks `e`, and the copy must carry the mark (#2574).
+    const description = appendRowNote(e, SHARED_SOURCE_MTIME_MARKER, note);
+    return { ...e, description };
   });
 }
 
@@ -134,5 +136,5 @@ export function noteInheritedFileTime(row: Row, m: MappedEvent): void {
   const note =
     `${copy.modified} predates this file's creation time ${copy.created}, usually a copy or an ` +
     `extraction that kept the source's modified time; the event is dated by the creation time`;
-  m.description = appendDerivedNote(m.description, INHERITED_MTIME_MARKER, note);
+  m.description = appendRowNote(m, INHERITED_MTIME_MARKER, note);
 }

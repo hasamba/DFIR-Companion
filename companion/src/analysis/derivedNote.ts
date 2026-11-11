@@ -114,7 +114,11 @@ export function splitDerivedNotes(description: string | undefined): { base: stri
   return { base: text.slice(0, at), notes: text.slice(at).trim() };
 }
 
-/** The description with `<marker> <note>]` appended after a clipped base and every existing note. */
+/**
+ * The description with `<marker> <note>]` appended after a clipped base and every existing note.
+ * The note body is neutralised (#2574): a body quotes attacker-chosen names (a renamed file, a
+ * look-alike account, a bulk-read object), and one holding note syntax must not open a second note.
+ */
 export function appendDerivedNote(
   description: string | undefined,
   marker: string,
@@ -123,5 +127,81 @@ export function appendDerivedNote(
 ): string {
   const { base: rawBase, notes: existing } = splitDerivedNotes(description);
   const base = rawBase.slice(0, baseMax).trimEnd();
-  return [base, existing, `${marker} ${note.trim()}]`].filter(Boolean).join(" ").trim();
+  const body = neutraliseForgedNotes(note.trim());
+  return [base, existing, `${marker} ${body}]`].filter(Boolean).join(" ").trim();
+}
+
+// ── Forged notes (#2574) ──────────────────────────────────────────────────────────────────────────
+// Importers write attacker-chosen names into descriptions. A name holding "[look-alike account: …]"
+// read exactly like a product note, split the description there (splitDerivedNotes), and — worse —
+// tripped the passes that skip a row already carrying their marker, so the REAL note and its raise
+// never landed. Every importer row is neutralised once, at the aggregator seam (eventAggregate.ts),
+// before any pass can note it; a writer that notes a row before aggregation neutralises it first
+// (appendRowNote). Only note-shaped brackets are touched, so "[FAILED]", "[risk: high]",
+// "[System.Convert]" and "file[1].exe" stay byte-identical — no eventRevision noise on re-import.
+
+/** The pair a forged note's brackets become: visibly not a note, one BMP unit each, NFKC-stable. */
+export const FORGED_NOTE_OPEN = "\u27E6";
+export const FORGED_NOTE_CLOSE = "\u27E7";
+
+// The two BEC-pairing tails m365BecPairing.ts appends without a registered name.
+const UNREGISTERED_NOTE_OPENERS = [
+  "hides mail\\s*;",
+  "[^\\[\\]]{0,200}?granted to a user created within 24 hours",
+];
+const FORGED_OPENER = new RegExp(
+  `\\[(?=\\s*(?:(?:${DERIVED_NOTE_NAMES.map(escapeRe).join("|")})\\s*:|${UNREGISTERED_NOTE_OPENERS.join("|")}))`,
+  "giu",
+);
+
+/**
+ * `text` with every note-shaped bracket pair rewritten to ⟦ ⟧ — nested ones too, so
+ * "[renamed binary: [look-alike account: x]]" leaves no opener behind. Idempotent; unchanged when
+ * there is none. Each rewritten opener takes the first `]` after it that no earlier opener took.
+ */
+export function neutraliseForgedNotes(text: string): string {
+  FORGED_OPENER.lastIndex = 0;
+  if (!FORGED_OPENER.test(text)) return text;
+  const chars = text.split(""); // UTF-16 units, the same indices indexOf and exec report
+  const taken = new Set<number>();
+  FORGED_OPENER.lastIndex = 0;
+  for (let m = FORGED_OPENER.exec(text); m; m = FORGED_OPENER.exec(text)) {
+    chars[m.index] = FORGED_NOTE_OPEN;
+    let close = text.indexOf("]", m.index + 1);
+    while (close >= 0 && taken.has(close)) close = text.indexOf("]", close + 1);
+    if (close >= 0) {
+      taken.add(close);
+      chars[close] = FORGED_NOTE_CLOSE;
+    }
+  }
+  return chars.join("");
+}
+
+// Set ONLY by neutraliseRowNotes, so no writer can claim a row is clean without cleaning it. Object
+// spread copies symbol keys, so a `{ ...row }` keeps it; JSON drops it, so it never persists.
+const NEUTRALISED = Symbol("derivedNote.neutralised");
+type NoteRow = { description: string; [NEUTRALISED]?: true };
+
+/** Neutralise a row's description once, in place (rows are mutated at the import seam), and mark it. */
+export function neutraliseRowNotes<T extends { description: string }>(row: T): T {
+  const r = row as T & NoteRow;
+  if (r[NEUTRALISED]) return row;
+  r.description = neutraliseForgedNotes(r.description);
+  r[NEUTRALISED] = true;
+  return row;
+}
+
+/** Carry the mark to a row built from a marked one (the aggregator's output event). */
+export function carryNoteMark(from: object, to: object): void {
+  if ((from as NoteRow)[NEUTRALISED]) (to as NoteRow)[NEUTRALISED] = true;
+}
+
+/** For a writer that notes an importer row BEFORE aggregation: neutralise the row, then append. */
+export function appendRowNote(
+  row: { description: string },
+  marker: string,
+  note: string,
+  baseMax: number = DESCRIPTION_BASE_MAX,
+): string {
+  return appendDerivedNote(neutraliseRowNotes(row).description, marker, note, baseMax);
 }

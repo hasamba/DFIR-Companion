@@ -27,6 +27,7 @@ import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import { applyBecPairing } from "./m365BecPairing.js";
 import { applyM365Lookalike } from "./m365Lookalike.js";
+import { neutraliseRowNotes } from "./derivedNote.js";
 import { alertDescription, alertMitre, alertSeverity, decodeM365Alert } from "./m365Alert.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
@@ -702,8 +703,10 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     }
   }
 
-  // Export-wide raises: the BEC pairings (#2550), then look-alike account and app names (#2557).
-  const paired = applyM365Lookalike(applyBecPairing(mapped, rowRecords, normalized), rowRecords, normalized);
+  // Export-wide raises: the BEC pairings (#2550), then look-alike account and app names (#2557) —
+  // after neutralising forged notes in the rows they note, so a name cannot forge one (#2574).
+  const clean = mapped.map(neutraliseRowNotes);
+  const paired = applyM365Lookalike(applyBecPairing(clean, rowRecords, normalized), rowRecords, normalized);
   if (sigmaRows) opts.debug?.observed("sigma_match", sigmaRows);
   if (opts.rowsOnly)
     return {
