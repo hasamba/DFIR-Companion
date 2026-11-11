@@ -103,7 +103,9 @@ test("host-scope: the dashboard panel renders the board, gap list and host table
   // "No hosts match this filter" empty state.
   await expect(panel.locator(".hs-table tbody tr").first()).toBeVisible();
   await expect(panel.locator(".hs-empty")).toHaveCount(0);
-  await expect(panel.locator("h4")).toContainText(["Scope gaps", "Hosts"]);
+  // Exactly two section headings, gaps first, at level 3 under the panel's h2 — the heading
+  // outline #2535 fixed (part of #2492), asserted by role so a level change is caught.
+  await expect(panel.getByRole("heading", { level: 3 })).toHaveText(["Scope gaps", "Hosts"]);
 });
 
 test("host-scope: clicking Clear… prompts for a reason and records the decision through the UI", async ({
