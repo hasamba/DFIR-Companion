@@ -27,7 +27,7 @@ import {
   type DropSniff,
   type DropWorkItem,
 } from "./dropBatchPlan.js";
-import type { BatchFileResult, DiskBatchIngest } from "./importIngestBatch.js";
+import type { BatchFileResult, DiskBatchIngest, DiskBatchResult } from "./importIngestBatch.js";
 
 /** Single files imported at once (imports still serialize on the case's import lock). */
 export const DROP_CONCURRENCY = 4;
@@ -90,16 +90,26 @@ export async function runDropSweep(ready: readonly DropFileStat[], d: DropSweepD
     work.shift();
     if (head.type !== "batch") continue;
     const stats = new Map(head.files.map((f) => [f.relpath, f]));
-    const r = await d.dropBatch.ingestDiskBatch(
-      d.caseId,
-      {
-        kind: head.kind,
-        assetHost: head.assetHost,
-        files: head.files.map((f) => ({ relpath: f.relpath, fullPath: join(d.dropDir, f.relpath) })),
-        bytes: head.files.reduce((n, f) => n + f.size, 0),
-      },
-      d.progress,
-    );
+    let r: DiskBatchResult;
+    try {
+      r = await d.dropBatch.ingestDiskBatch(
+        d.caseId,
+        {
+          kind: head.kind,
+          assetHost: head.assetHost,
+          files: head.files.map((f) => ({ relpath: f.relpath, fullPath: join(d.dropDir, f.relpath) })),
+          bytes: head.files.reduce((n, f) => n + f.size, 0),
+        },
+        d.progress,
+      );
+    } catch (e) {
+      // Failed after a file started: this batch's files stay in drop/ for the next sweep (the crash
+      // marker settles what it merged), and every file recorded so far still gets its line.
+      logLine(
+        `[drop] ${d.caseId}: batch failed — ${(e as Error).message}; the rest waits for the next sweep`,
+      );
+      break;
+    }
     for (const res of r.results) await recordBatchResult(stats.get(res.relpath)!, res, d, tally);
     const rest = r.rest.map((f) => stats.get(f.relpath)!);
     if (!rest.length) continue;

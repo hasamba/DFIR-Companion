@@ -173,7 +173,14 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
       return fallback(batch, err instanceof Error ? err.message : String(err));
     }
     const done = outcome as DiskBatchResult | null;
-    if (done?.results.some((r) => r.ok)) await deps.afterImport(caseId);
+    // Never thrown out of here: past this point every file has run, and a throw would reach the
+    // fallback below and import the whole batch a second time.
+    if (done?.results.some((r) => r.ok))
+      await deps.afterImport(caseId).catch((e: unknown) =>
+        getServerLogger().warn(`[drop] ${caseId}: post-import marks failed — ${(e as Error).message}`, {
+          caseId,
+        }),
+      );
     return done ?? fallback(batch, "the import section did not run");
   }
 
@@ -248,7 +255,11 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
     const superStore = options.superTimelineStore;
     if (!superStore) return true;
     const cap = Number(process.env.DFIR_SUPERTIMELINE_MAX) || DEFAULT_SUPER_MAX;
-    const { rows } = await superStore.meta(caseId);
+    // Unreadable room is no room: the batch ends here and the rest import one at a time.
+    const rows = await superStore.meta(caseId).then(
+      (m) => m.rows,
+      () => Infinity,
+    );
     return rows + reserve + SUPER_ROWS_PER_IMPORT_MAX <= cap;
   }
 
@@ -339,7 +350,7 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
         rows: 0,
         bytes: saved.bytes,
       });
-      const hooks = batchHooks(caseId, file, own, collect);
+      const hooks = batchHooks(caseId, storedName, own, collect);
       await runDiskImport(diskCtx, batch.kind, caseId, saved.path, storedName, {
         label: storedName,
         idPrefix: `${seq}`,
@@ -373,12 +384,12 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
 
   function batchHooks(
     caseId: string,
-    file: BatchFile,
+    storedName: string,
     own: FileHookOutput,
     collect: BatchCollect,
   ): CloudBatchHooks {
     return {
-      emptyNote: ({ records }) => own.empties.push({ relpath: file.relpath, records }),
+      emptyNote: ({ records }) => own.empties.push({ storedName, records }),
       deltaRows: (rows) => own.rows.push(rows),
       folds: (coverage, weaknesses, coverageStore) => {
         own.folds.push({ coverage, weaknesses, at: new Date().toISOString(), coverageStore });

@@ -172,6 +172,27 @@ describe("drop folder hands runs of small CloudTrail gzip files to a batch (#254
     expect(s.processed.sort()).toEqual(["a.json.gz", "b.json.gz"]);
   });
 
+  it("a batch that throws mid-sweep leaves its files for the next sweep; earlier files keep their lines", async () => {
+    let call = 0;
+    const s = await seed(
+      {
+        "a1.json.gz": ct(1),
+        "a2.json.gz": ct(2),
+        "b.log": "Oct 1 10:00:00 h sshd[1]: x\n",
+        "c1.json.gz": ct(3),
+        "c2.json.gz": ct(4),
+      },
+      (req) => {
+        if (++call === 2) throw new Error("case store unavailable");
+        return allOk(req);
+      },
+    );
+    expect(s.processed.sort()).toEqual(["a1.json.gz", "a2.json.gz", "b.log"]);
+    for (const f of ["a1.json.gz", "a2.json.gz", "b.log"]) expect(s.log).toContain(f);
+    expect(s.log).not.toContain("c1.json.gz");
+    expect(s.failed).toEqual([]);
+  });
+
   it("a file that no longer fits runs on its own in place, and the rest is batched again", async () => {
     let call = 0;
     const s = await seed(

@@ -38,7 +38,8 @@ export interface BatchCollect {
   /** Imported files: relpath, stored name, structured disclosure. */
   imported: { relpath: string; storedName: string; disclosure: CloudStreamDisclosure | null }[];
   /** Files that added nothing (their note was deferred). */
-  empties: { relpath: string; records: number }[];
+  /** By stored name — sanitized and the custody key; a dropped path is adversary-chosen text. */
+  empties: { storedName: string; records: number }[];
   /** Each file's coverage + weakness drafts, its moment, and the store they were bound for (the pipeline's). */
   folds: {
     coverage: CloudCoverageDraft[];
@@ -85,7 +86,7 @@ export function batchEmptyNote(source: string, empties: BatchCollect["empties"])
   const records = empties.reduce((n, e) => n + e.records, 0);
   return (
     `${source} drop batch: ${empties.length} file(s) added nothing to the case (${records} record(s)) — ` +
-    `${listNames(empties.map((e) => e.relpath))}; each file's own line is in drop-log.txt`
+    `${listNames(empties.map((e) => e.storedName))}; each file's own line is in drop-log.txt`
   );
 }
 
@@ -131,7 +132,7 @@ export async function runBatchTail(
     path: "deterministic",
     parameters: {
       dropBatchFiles: a.collect.imported.length,
-      dropBatchFileNames: listNames(a.collect.imported.map((f) => f.relpath)),
+      dropBatchFileNames: listNames(a.collect.imported.map((f) => f.storedName)),
     },
   }).catch((e: unknown) => warn(a.caseId, "analysis-run record", e));
   return { warnings, settleFailed };

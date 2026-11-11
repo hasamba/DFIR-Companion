@@ -33,8 +33,8 @@ import type { ImporterRegistry } from "../../src/analysis/importerStore.js";
 import { sans504Records } from "../analysis/fixtures/sans504Lab.js";
 
 // #2540 — a drop-folder batch of small CloudTrail files leaves the case as importing the same files
-// one at a time does: forensic timeline, IOCs, super-timeline rows and tags, the dedup ledger,
-// coverage and weaknesses. What it shares is the tail: one settle, one note for the files that added
+// one at a time does: forensic timeline, IOCs, super-timeline rows and tags, coverage and weaknesses
+// (the dedup ledger shows through a duplicate file and the Undo + re-import round trip). What it shares is the tail: one settle, one note for the files that added
 // nothing, one import-meta record, one undo step naming the file count, one run record.
 
 const RULES = `cloudtrail-iam-read:

@@ -3392,15 +3392,16 @@ What the batch shares:
   folder still get no Undo step.
 - **One analysis run per batch.** **Analysis Runs** shows one import run for the batch, with one
   artifact per file. **View manifest** lists every file with its SHA-256, and its configuration
-  names the file count and the first 20 file names.
-- **One case-timeline note** for the files that added nothing, with their count and names (the
-  first 20). A file that added rows keeps its own note.
+  names the file count and the first 20 stored file names.
+- **One case-timeline note** for the files that added nothing, with their count and stored names
+  (the first 20). A file that added rows keeps its own note.
 - One grading pass (super-timeline copy → tagger → demote) after the last file, and one tagger run.
 
 If the batch cannot start (for example, the import memory guard refuses its size), every file of
 the batch is imported one by one instead. If the batch's grading pass or its note fails, the files
-stay imported and their `drop-log.txt` lines say which step failed; a failed grading pass is run
-again by the next sweep, before any other batch. A failed Cloud Coverage or
+stay imported and their `drop-log.txt` lines say which step failed. After a failed grading pass,
+the next sweep first copies the batch's rows to the super-timeline, runs the tagger on them and
+demotes, before any other batch runs. That batch gets no Undo step and no import summary. A failed Cloud Coverage or
 weakness update is retried file by file. A failed Undo step, import summary or run record is written
 to the case log, as on the Import button. A file is never sent to `_failed/` because a shared step
 failed.
