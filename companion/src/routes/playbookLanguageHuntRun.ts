@@ -4,6 +4,7 @@ import { HUNT_LANGUAGES } from "../analysis/huntLanguage.js";
 import type { PlaybookLanguageHunt } from "../analysis/languageHuntSuggest.js";
 import type { AnalysisPipeline } from "../analysis/pipeline.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
+import { PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT } from "../analysis/playbookHunt.js";
 import {
   copyLanguagesIn,
   EMPTY_LANGUAGE_HUNTS,
@@ -27,6 +28,8 @@ export interface LanguageRunDeps {
 export interface LanguageRunResult {
   languageSuggestions: PlaybookLanguageHunt[];
   generated: number;
+  /** A language batch hit the per-generation cap: tasks it never reached wait for the next press. */
+  more: boolean;
 }
 
 /** Only VQL tasks go down the VQL path: a task whose evidence calls for another language — or none — does not. */
@@ -63,6 +66,8 @@ export async function runLanguageHunts(
   const stored = deps.store ? await deps.store.load(caseId) : EMPTY_LANGUAGE_HUNTS;
   let data = selectFreshLanguageHunts(opts.force ? EMPTY_LANGUAGE_HUNTS : stored, tasks, languages);
   let generated = 0;
+  let more = false;
+  const cap = Number(process.env.DFIR_PBHUNT_SUGGEST_MAX) || PLAYBOOK_HUNT_SUGGEST_MAX_DEFAULT;
   const batches: Array<{ language: CopyHuntLanguage; sent: PlaybookTask[]; exclude?: string }> = opts.regen
     ? [{ language: opts.regen.language, sent: [opts.regen.task], exclude: opts.regen.exclude }]
     : copyLanguagesIn(languages).map((language) => ({
@@ -74,12 +79,19 @@ export async function runLanguageHunts(
     const hunts = await deps.pipeline.caseHunts.suggestPlaybook(caseId, b.sent, b.language, {
       exclude: b.exclude,
     });
-    generated += hunts.length;
-    data = mergeLanguageHunts(data, b.sent, b.language, hunts);
+    const sentIds = new Set(b.sent.map((t) => t.id));
+    const answered = hunts.filter((h) => sentIds.has(h.taskId));
+    // A single-task regen is never "capped": there is nothing left behind for a next press.
+    const capped = !opts.regen && answered.length >= cap;
+    more ||= capped;
+    generated += answered.length;
+    data = mergeLanguageHunts(data, b.sent, b.language, answered, capped);
   }
   if (generated || batches.some((b) => b.sent.length)) await persist(deps, caseId, data);
-  deps.log(`[playbook] ${generated} main-source-language hunt(s) generated for ${caseId}`);
-  return { languageSuggestions: languageHuntView(data), generated };
+  deps.log(
+    `[playbook] ${generated} main-source-language hunt(s) generated for ${caseId}${more ? " [cap hit — press again for more]" : ""}`,
+  );
+  return { languageSuggestions: languageHuntView(data), generated, more };
 }
 
 /** The stored language hunts still valid for the current tasks (read path; never writes). */

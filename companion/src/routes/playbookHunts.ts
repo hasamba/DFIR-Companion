@@ -242,7 +242,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
           const kept = (await loadFreshHunts(req.params.id, tasks, false)).filter((h) =>
             vqlIds.has(h.taskId),
           );
-          return res.status(200).json({ suggestions: kept, more: false, ...lr });
+          return res.status(200).json({ suggestions: kept, ...lr, more: false });
         }
         const excludeVql = typeof req.body?.excludeVql === "string" ? req.body.excludeVql.trim() : undefined;
         const [, artifactNames] = await Promise.all([
@@ -346,7 +346,7 @@ export function registerPlaybookHuntsRoutes(app: Express, ctx: RouteContext): vo
       return res.status(200).json({
         suggestions: merged.suggestions,
         generated: newSuggestions.length + lr.generated,
-        more: truncated,
+        more: truncated || lr.more,
         ...(lr.languageSuggestions.length ? { languageSuggestions: lr.languageSuggestions } : {}),
         ...(plan.notes.length ? { notes: plan.notes } : {}),
       });

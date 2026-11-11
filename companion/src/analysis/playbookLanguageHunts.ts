@@ -98,17 +98,24 @@ export function copyLanguagesIn(
   return HUNT_LANGUAGES.filter((l): l is CopyHuntLanguage => isCopy(l) && present.has(l));
 }
 
-/** Fold new hunts for `sent` tasks into the fresh set, marking every sent task evaluated. Pure. */
+/**
+ * Fold new hunts for `sent` tasks into the fresh set. Pure. Every sent task is marked evaluated,
+ * unless the batch hit the per-generation cap (`capped`): then the model may never have reached the
+ * rest, so only the tasks it answered are marked and the others stay pending for the next press —
+ * the same rule as the VQL path in routes/playbookHunts.ts.
+ */
 export function mergeLanguageHunts(
   fresh: PersistedLanguageHunts,
   sent: readonly PlaybookTask[],
   language: CopyHuntLanguage,
   generated: readonly PlaybookLanguageHunt[],
+  capped = false,
 ): PersistedLanguageHunts {
   const sentIds = new Set(sent.map((t) => t.id));
   const byId = new Map(sent.map((t) => [t.id, t] as const));
+  const answered = new Set(generated.map((h) => h.taskId));
   const evaluated = { ...fresh.evaluated };
-  for (const t of sent) evaluated[t.id] = evalKey(t, language);
+  for (const t of sent) if (!capped || answered.has(t.id)) evaluated[t.id] = evalKey(t, language);
   const added = generated
     .filter((h) => byId.has(h.taskId))
     .map((h) => ({ ...h, taskHash: taskFingerprint(byId.get(h.taskId) as PlaybookTask) }));
