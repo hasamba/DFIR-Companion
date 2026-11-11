@@ -294,6 +294,10 @@ describe("streamed CloudTrail import parity (#2362)", () => {
 // Re-pinned for #2543 part 1a: the High+ rows' IAM-user ARNs and long-term keys are now `other` IOCs
 // with a context note (41 -> 65 IOCs; all 24 new ones carry a note). The timeline note states the
 // IOC count, so notes and db:timeline moved with it. No forensic row, grade or coverage changed.
+// Re-pinned for the #2543 review: a streamed IOC now carries `extractedFrom` (its producing forensic
+// rows), and a later import's sighting unions its links into the stored IOC, so the stored rows'
+// versions move too. Only iocs and db:iocs moved; with the link left out of the delta both reproduce
+// the previous hashes (313dfcbfb2c46ffb, 4f512b1f74235cce). No count or other section changed.
 const PINNED = {
   counts: {
     compute: 30,
@@ -317,12 +321,12 @@ const PINNED = {
     "db:cloudRecordBatch": "d7a32e76dfef0950",
     "db:cloudRecordMember": "2260533dd0f4bdd7",
     "db:forensicTimeline": "7eeeea4e62b61b44",
-    "db:iocs": "4f512b1f74235cce",
+    "db:iocs": "f56293453ff4d063",
     "db:superTimeline": "8beed3d432925a0d",
     "db:timeline": "92dddb73812ed1ad",
     disclosures: "9446777ef7052706",
     forensicTimeline: "f896c4c5af69ca2c",
-    iocs: "313dfcbfb2c46ffb",
+    iocs: "d48c8887ce9a17b5",
     notes: "0827783fdc6edf7b",
   },
 };

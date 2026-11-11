@@ -1967,9 +1967,10 @@ These IOCs never get a threat-intel verdict. One that was extracted from an even
 Critical, or one you labelled, still counts as signal: the IOC panel's **Signal only** lens (on by
 default) keeps it, and the report's IOC table lists it. One extracted only from a lower-graded event,
 with no label, is hidden by **Signal only** once other IOCs in the case have been enriched, and the
-report counts it as an observation. Turn the lens off, or label the IOC, to see it. An upload read by
-the streamed CloudTrail importer does not record which event an IOC came from, so for those IOCs
-only a label makes them signal.
+report counts it as an observation. Turn the lens off, or label the IOC, to see it. The streamed
+CloudTrail importer (every `.json.gz` upload and every large file) records the same link. It counts
+only an event that reached the forensic timeline as its own row. An event that went to the
+super-timeline or into a budget aggregate gives no link.
 
 Records already in the case are not read again, so importing the same files into an existing case
 adds none of these IOCs. Import into a new case to get them for evidence imported before this

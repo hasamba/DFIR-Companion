@@ -24,12 +24,14 @@ import type { Preliminary, StreamProvider } from "./cloudStreamProviders.js";
 import { STREAM_IOCS_MAX } from "../cloudStreamLimits.js";
 import { mergePrincipalNames, type PrincipalNameRecord } from "../principalNames.js";
 import { emptyPrecursorSeen, withPrecursorRows, type PrecursorSeen } from "./cloudPrecursorPromote.js";
+import { noteStreamIocs } from "./cloudStreamIocLinks.js";
 
 type Row = Record<string, unknown>;
 
 /** Everything a streamed import accumulates across batches — all of it bounded. */
 export interface StreamAccumulator {
   coverage: CloudCoverageDraft[];
+  /** Each IOC keeps its forensic producing rows' aggKeys, unioned across batches (#2543). */
   iocs: Map<string, SiemIoc>;
   iocsMax: number;
   /** Distinct IOCs past `iocsMax`, counted for the disclosure (never kept). */
@@ -177,32 +179,30 @@ function noteMapping(m: ReturnType<StreamProvider["map"]>, acc: StreamAccumulato
   acc.sigmaRows += m.sigmaRows;
   if (m.principalNames?.length)
     acc.principalNames = mergePrincipalNames(acc.principalNames, m.principalNames);
-  for (const ioc of m.iocs) {
-    const k = `${ioc.type}|${ioc.value}`;
-    if (acc.iocs.has(k)) continue;
-    // Over the cap, a distinct IOC is counted (a later batch may repeat it: counted once per batch).
-    if (acc.iocs.size < acc.iocsMax) acc.iocs.set(k, ioc);
-    else acc.iocsDropped++;
-  }
 }
 
-/** Route every row; returns the super-bound rows and which records reached the case. */
+/**
+ * Route every row; returns the super-bound rows, which records reached the case, and the aggKeys of
+ * the rows that reached the forensic timeline as their own event (the IOC links, #2543).
+ */
 function routeRows(
   rows: MappedEvent[],
   rowRecords: number[],
   records: Row[],
   deps: BatchDeps,
-): { superRows: MappedEvent[]; kept: Set<number> } {
+): { superRows: MappedEvent[]; kept: Set<number>; forensicKeys: Set<string> } {
   const superRows: MappedEvent[] = [];
   const kept = new Set<number>();
+  const forensicKeys = new Set<string>();
   rows.forEach((row, i) => {
     const at = rowRecords[i] ?? 0;
     const decision = deps.budget.route(row, deps.provider.facts(records[at] ?? {}));
     if (decision === "below-floor") return;
     kept.add(at);
+    if (decision === "forensic" && row.aggKey) forensicKeys.add(row.aggKey);
     if (decision === "super" || decision === "super+aggregate") superRows.push(row);
   });
-  return { superRows, kept };
+  return { superRows, kept, forensicKeys };
 }
 
 /** Process one batch of raw records starting at file index `base`. */
@@ -228,7 +228,8 @@ export async function processBatch(
   const graded = deps.grader.grade(mapping.mapped);
   acc.preGradeRaised += graded.raised;
   acc.precursors = withPrecursorRows(acc.precursors, graded.rows);
-  const { superRows, kept } = routeRows(graded.rows, mapping.rowRecords, records, deps);
+  const { superRows, kept, forensicKeys } = routeRows(graded.rows, mapping.rowRecords, records, deps);
+  noteStreamIocs(acc, mapping.iocs, forensicKeys);
   const mappedRecords = new Set(mapping.rowRecords);
   acc.unmapped += records.filter(
     (_, i) => !mappedRecords.has(i) && verdicts?.verdicts[i] !== "duplicate",

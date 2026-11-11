@@ -59,6 +59,7 @@ import { streamSprayRows } from "./cloudStreamSpray.js";
 import { precursorPromotionNote, promoteCrossUploadPrecursors } from "./cloudPrecursorPromote.js";
 import { mfaFatigueRows } from "./mfaFatigueRows.js";
 import { fatigueEventId } from "../mfaFatigue.js";
+import { resolveStreamIocLinks } from "./cloudStreamIocLinks.js";
 
 type Row = Record<string, unknown>;
 
@@ -290,22 +291,24 @@ async function finish(
     return { state, coverage, disclosure };
   }
   const format = [...acc.formats].join("+") || stats.format;
+  const forensicEvents = withArtifactHash(events, stats.textHash).map((e, i) => ({
+    ...e,
+    id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`, // stable fatigue id (#2306)
+    sources: e.sources?.length ? e.sources : [provider.source],
+  }));
+  // Each IOC links to the forensic rows that produced it, as the whole-file path does (#2543).
+  const iocs = resolveStreamIocLinks([...acc.iocs.values()], forensicEvents);
   const delta = deltaSchema.parse({
     findings: [],
-    iocs: [...acc.iocs.values()].map((c, i) => ({
+    iocs: iocs.map((c, i) => ({
       id: `${opts.idPrefix}i${i + 1}`,
       type: c.type,
       value: c.value,
       ...(c.note ? { note: c.note } : {}),
+      ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
     })),
     mitreTechniques: [],
-    forensicEvents: withArtifactHash(events, stats.textHash)
-      .map((e, i) => ({
-        ...e,
-        id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`, // stable fatigue id (#2306)
-        sources: e.sources?.length ? e.sources : [provider.source],
-      }))
-      .concat(promoted.events),
+    forensicEvents: [...forensicEvents, ...promoted.events],
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:

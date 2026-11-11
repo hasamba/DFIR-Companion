@@ -67,6 +67,12 @@ export const SUMMARY_RECORDS_MAX = 25_000;
 export const STREAM_IOCS_MAX = 5_000;
 
 /**
+ * Producing rows one streamed IOC keeps a link to (#2543). One High/Critical link is all the signal
+ * lens and the report need; the cap only bounds memory for a principal acting in thousands of rows.
+ */
+export const STREAM_IOC_LINKS_MAX = 100;
+
+/**
  * Decoded text a Sigma re-grade reads from one stored import file (#2353). The re-grade parses the
  * file again with the whole-file importer, which needs the text as one string, so this is that
  * path's ceiling — the same 256 MB as DFIR_MAX_BODY_MB's default — not the streamed import's
