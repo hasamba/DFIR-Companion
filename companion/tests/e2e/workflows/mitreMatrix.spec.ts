@@ -46,9 +46,18 @@ test("Matrix is the default; a hit cell's event link lands in the Forensic Timel
   await expect(page.locator("#mitreViewMatrix")).toHaveAttribute("aria-pressed", "true");
   const cell = page.locator('#mitre .mm-cell.mm-hit[data-tid="T1059.001"]').first();
   await expect(cell).toBeVisible({ timeout: 30_000 });
-  await expect(cell).toHaveAttribute(
-    "aria-label",
-    /^T1059\.001 PowerShell, (Critical|High), \d+ findings?, \d+ events?$/,
+  // Label in name (WCAG 2.5.3, #2535): the spoken name starts with exactly what the cell shows —
+  // name, count badge, severity letter — then the id, full severity and the split counts. The
+  // demo seed's worst T1059.001 hit is Critical (events e003/e040), so a downgrade fails here.
+  const label = (await cell.getAttribute("aria-label")) ?? "";
+  const m = /^PowerShell (\d+) C — T1059\.001, Critical, (\d+) findings?, (\d+) events?$/.exec(label);
+  expect(m, `unexpected matrix cell label: ${label}`).not.toBeNull();
+  const [shown, findings, events] = [Number(m![1]), Number(m![2]), Number(m![3])];
+  expect(findings + events).toBeGreaterThan(0);
+  expect(shown).toBe(findings + events);
+  const visible = (await cell.innerText()).replace(/\s+/g, " ").trim();
+  expect(label.startsWith(`${visible} — `), `label "${label}" does not start with visible "${visible}"`).toBe(
+    true,
   );
 
   await cell.click();
