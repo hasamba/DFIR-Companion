@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Imported names can no longer forge product notes** — note-shaped text in an account, app, rule or file name shows as ⟦ ⟧ and no longer hides a real note or blocks a grade raise (closes #2574)
+- **M365 BEC pairings join across batches and uploads** — delete-after-forward (Critical) and new-user-made-admin (High) are raised however the export was split into streamed batches or files (closes #2570)
 - **Hunt queries escape evidence values per language** — KQL, SPL, ES|QL, VQL, Sigma, YARA and Suricata quote backslashes and line breaks, so a crafted path or URL can no longer break or widen the query (closes #2572)
 - **M365 audit logs no longer show every record twice** — a Splunk export or overlapping Search-UnifiedAuditLog exports of the same record are one record, not a false "conflict" (closes #2548)
 - **Anonymizer cannot be tricked into restoring a real value** — text already shaped like a mask token is never reused as one, so an AI answer never gets a real hostname where the evidence had attacker text (closes #2569)

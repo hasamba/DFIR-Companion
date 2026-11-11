@@ -20,6 +20,7 @@ import { getCI, getPath, normalizeTime, str, type MappedEvent } from "./siemImpo
 import type { ForensicEvent } from "./stateTypes.js";
 import type { AwsPrecursorBlock } from "./canonicalAwsPrecursor.js";
 import { raisePrecursorCheck, type PrecursorChange } from "./cloudPrecursorMerge.js";
+import { neutraliseRowNotes } from "./derivedNote.js";
 
 type Row = Record<string, unknown>;
 
@@ -113,7 +114,8 @@ export function raiseRansomwarePrecursors(rows: readonly MappedEvent[], recs: re
     if (!block) return row;
     const marked = stamped(row, block);
     if (block.role !== "check" || !changes.size) return marked;
-    const raised = raisePrecursorCheck(asJoinRow(marked), changes, "upload");
+    // The note goes on before aggregation, so neutralise forged notes in the row first (#2574).
+    const raised = raisePrecursorCheck(asJoinRow(neutraliseRowNotes(marked)), changes, "upload");
     if (!raised) return marked;
     return {
       ...marked,

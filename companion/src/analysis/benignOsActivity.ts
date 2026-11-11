@@ -16,7 +16,7 @@
 
 import type { MappedEvent } from "./siemImport.js";
 import { descriptionField } from "./collectorDeployment.js";
-import { appendDerivedNote } from "./derivedNote.js";
+import { appendRowNote, neutraliseRowNotes } from "./derivedNote.js";
 
 export const OS_BEHAVIOUR_MARKER = "[normal OS behaviour:";
 export const DWM_THREAD_NOTE =
@@ -61,7 +61,8 @@ export function annotateBenignOsActivity(m: MappedEvent): void {
 
 export function gradeBenign(m: MappedEvent, note: string): void {
   m.severity = "Info";
+  neutraliseRowNotes(m); // before the check: may run ahead of the aggregator seam (#2574)
   if (!m.description.includes(`${OS_BEHAVIOUR_MARKER} ${note}]`))
-    m.description = appendDerivedNote(m.description, OS_BEHAVIOUR_MARKER, note);
+    m.description = appendRowNote(m, OS_BEHAVIOUR_MARKER, note);
   if (!m.aggKey.endsWith(BENIGN_OS_AGG_SUFFIX)) m.aggKey = `${m.aggKey}${BENIGN_OS_AGG_SUFFIX}`;
 }

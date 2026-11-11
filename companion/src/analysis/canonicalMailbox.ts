@@ -53,3 +53,28 @@ export const mailboxChainBlockSchema = z.object({
 
 export type MailboxChainBlock = z.infer<typeof mailboxChainBlockSchema>;
 export type MailboxChainStep = z.infer<typeof mailboxChainStepSchema>;
+
+// The block an M365 row carries when it can take part in a BEC pairing (#2550, #2570): an inbox rule
+// that forwards outside or hides mail, an `Add user`, or a privileged directory-role grant. Stamped
+// by the importer from the raw record (m365BecPairing.ts), so the case-wide join (m365BecMerge.ts)
+// never re-reads a description: rule names, display names and addresses in it are attacker-controlled.
+export const m365BecBlockSchema = z.object({
+  role: z.enum(["rule", "created", "grant"]),
+  /** When the record whose facts these are happened (ISO). A folded row keeps one member's block, so
+   * the join reads this time, never the folded row's span, which other members' times stretch. */
+  at: z.string().max(40),
+  /** Rule: `<actor>|<mailbox local name>`, lowercased — one mailbox as alias, Exchange path or UPN. */
+  rule: z.string().max(400).optional(),
+  /** Rule: the mailbox's own domain when the record names it as a UPN. Two different ones never join. */
+  mailboxDomain: z.string().max(253).optional(),
+  /** The record's tenant (OrganizationId / tenantId). Two different ones never join. */
+  tenant: z.string().max(100).optional(),
+  forwardsOut: z.boolean().optional(),
+  hidesHard: z.boolean().optional(),
+  /** Created / grant: the user's object id and UPN, lowercased. */
+  ids: z.array(z.string().max(320)).max(4).optional(),
+  /** Grant: the role as the note names it. */
+  roleName: z.string().max(160).optional(),
+});
+
+export type M365BecBlock = z.infer<typeof m365BecBlockSchema>;
