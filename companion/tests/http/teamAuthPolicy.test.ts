@@ -309,6 +309,8 @@ describe("team-auth configuration and policy", () => {
     }
     for (const p of [
       "/cases/c1/cloud-coverage",
+      "/cases/c1/cloud-weaknesses",
+      "/cases/c1/cloud-weaknesses.csv",
       "/cloud-accountsx",
       "/cases/c1/import-cloud-activity",
       "/",
@@ -321,6 +323,9 @@ describe("team-auth configuration and policy", () => {
       permission: "read",
       caseId: "c1",
     });
+    // So are the AWS account weaknesses (#2560), list and CSV alike.
+    for (const p of ["/cases/c1/cloud-weaknesses", "/cases/c1/cloud-weaknesses.csv"])
+      expect(resolveRequestPolicy("GET", p), p).toEqual({ kind: "case", permission: "read", caseId: "c1" });
   });
 
   it("treats a basemap tile as an authenticated asset, and only for GET", () => {

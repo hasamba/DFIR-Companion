@@ -244,7 +244,7 @@ cited record.
 | Root used for routine management | Root made management calls (sign-ins are not counted). The count is of distinct records; past 500 it reads "at least 500". |
 | Bucket has no Object Lock configuration | `GetBucketObjectLockConfiguration` answered `ObjectLockConfigurationNotFoundError` for that bucket. |
 | Bucket versioning suspended / MFA Delete disabled | Only when a record states it: a successful `GetBucketVersioning` whose response carries the setting, or a successful `PutBucketVersioning` that sets it. CloudTrail usually logs `GetBucketVersioning` with no response, and an empty response proves nothing. |
-| S3 data events off before the selector change | A selector change (`PutEventSelectors`, `CreateTrail`, `UpdateTrail`) configured S3 object logging, and no object-level record of that account is earlier. Object reads, overwrites and deletes before that time cannot be seen. Other trails' selectors are not in the evidence. This is per account; the forensic timeline's coverage note for the same gap is per case. |
+| S3 data events off before the selector change | A selector change (`PutEventSelectors`, `CreateTrail`, `UpdateTrail`) configured S3 object logging, and no object-level record of that account that this list has read is earlier. Object reads, overwrites and deletes before that time cannot be seen. Other trails' selectors are not in the evidence. This is per account; the forensic timeline's coverage note for the same gap is per case. |
 
 What the list is not:
 

@@ -97,7 +97,7 @@ function loggingItem(a: AccountWeakness): WeaknessItem[] {
       account: a.account,
       title: "S3 data events off before the selector change",
       detail:
-        `No S3 object-level (data) records were observed before ${t} in the CloudTrail imported into this case; at ${t} this selector change configured S3 object logging. ` +
+        `No S3 object-level (data) records were observed before ${t} among the CloudTrail records this list has read; at ${t} this selector change configured S3 object logging. ` +
         `Object reads, overwrites and deletes${from ? ` from ${from}` : ""} to ${t} cannot be seen in these records, so no object activity in that window is not evidence that none happened. Other trails' selectors are not in this evidence.`,
       cites: [{ ...sel, role: "selector change" }],
     },
