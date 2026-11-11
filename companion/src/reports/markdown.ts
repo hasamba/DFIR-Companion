@@ -14,6 +14,7 @@ import { campaignScopeSection } from "./campaignScopeSection.js";
 import { servedExposureSection } from "./servedExposureSection.js";
 import { kerberoastChainSection } from "./kerberoastChainSection.js";
 import { sensitiveAccessSection } from "./sensitiveAccessSection.js";
+import { cloudWeaknessSection } from "./cloudWeaknessSection.js";
 import { handoffBriefSection } from "./handoffSection.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
@@ -1430,6 +1431,7 @@ export function renderMarkdownReport(
     servedExposure: () => servedExposureSection(state, lines),
     kerberoastChain: () => kerberoastChainSection(state, lines),
     sensitiveAccess: () => sensitiveAccessSection(state, lines),
+    cloudWeaknesses: () => cloudWeaknessSection(state, lines),
     handoffBrief: () => handoffBriefSection(state, notebookEntries, hypotheses, lines),
   };
 

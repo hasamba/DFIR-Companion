@@ -26,6 +26,8 @@ import { UPLOAD_SCOPE, type SummaryScope } from "./summaryScope.js";
 import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
 import { awsCloudTrailCoverage } from "./cloudCoverageBuilders.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
+import type { WeaknessFile } from "./awsAccountWeakness.js";
+import { awsWeaknessDraft } from "./awsAccountWeaknessFold.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
 import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
 import { awsRecordExposure } from "./awsExposure.js";
@@ -80,6 +82,8 @@ export interface AwsParseResult {
   sigmaRowsMatched?: number;
   /** Per-upload coverage drafts (#1063) — never part of the timeline; consumed once by the caller and stored outside InvestigationState. */
   coverage: CloudCoverageDraft[];
+  /** Per-upload AWS account weaknesses (#2560) — never part of the timeline; folded per case by the caller. */
+  weaknesses?: WeaknessFile;
   /** What the tolerant reader repaired to read the file (#2302), disclosed in the import note. */
   repairs?: JsonRepairs;
   /** The mapped rows, unaggregated — only with `rowsOnly` (#2303). */
@@ -680,6 +684,10 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
     // No eventName or eventSource: the record is never mapped (#1736).
     else opts.debug?.skipped("missing_required_field");
   }
+  // Account weaknesses (#2560) read each row beside its OWN record, before the replica merge.
+  const weaknesses = awsWeaknessDraft(
+    candidates.map((c) => ({ event: c.event, record: records[c.recordIndex] })),
+  );
   // The two records of one cross-account action are one row (awsReplicas.ts), before and
   // independent of the optional aggregation. The Sigma matches of EVERY replica of a row are
   // applied after the merge, so a match on the replica the merge did not keep is not lost and the
@@ -703,7 +711,17 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
     opts.debug?.omitted("merged_replica", candidates.length - mapped.length);
   if (opts.rowsOnly) {
     const iocs = [...iocSink.values()].slice(0, maxIocs);
-    const base = { events: [], iocs, total, kept: 0, dropped: 0, groups: 0, summaries: 0, coverage };
+    const base = {
+      events: [],
+      iocs,
+      total,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      summaries: 0,
+      coverage,
+      weaknesses,
+    };
     const rowRecords = merged.map((g) => g.recordIndex);
     return { ...base, format: "cloudtrail", sigmaRowsMatched: sigmaRows, mapped, rowRecords };
   }
@@ -718,6 +736,7 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
       summaries: 0,
       format: "empty",
       coverage,
+      weaknesses,
     };
   }
 
@@ -747,6 +766,7 @@ function parseTrailRecords(records: Row[], text: string, opts: AwsImportOptions)
     summaries: summaries.length,
     format: "cloudtrail",
     coverage,
+    weaknesses,
     sigmaRowsMatched: sigmaRows,
   };
 }

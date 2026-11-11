@@ -15,6 +15,8 @@ import type { RecordVerdict, SourceRecordMember } from "../cloudRecordStore.js";
 import type { StoredAuthObservation } from "../authObservationStore.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
 import { mergeCoverageDrafts } from "../cloudCoverageMerge.js";
+import { EMPTY_WEAKNESSES, type WeaknessFile } from "../awsAccountWeakness.js";
+import { foldWeaknesses } from "../awsAccountWeaknessFold.js";
 import type { OutputBudget } from "../cloudOutputBudget.js";
 import type { PreGrader } from "../cloudStreamPreGrade.js";
 import type { SigmaGradingSnapshot } from "../sigmaImportGrade.js";
@@ -31,6 +33,8 @@ type Row = Record<string, unknown>;
 /** Everything a streamed import accumulates across batches — all of it bounded. */
 export interface StreamAccumulator {
   coverage: CloudCoverageDraft[];
+  /** CloudTrail only (#2560): every batch's account-weakness draft, folded (bounded by its caps). */
+  weaknesses?: WeaknessFile;
   /** Each IOC keeps its forensic producing rows' aggKeys, unioned across batches (#2543). */
   iocs: Map<string, SiemIoc>;
   iocsMax: number;
@@ -175,6 +179,7 @@ function noteWindow(
 
 function noteMapping(m: ReturnType<StreamProvider["map"]>, acc: StreamAccumulator): void {
   acc.coverage = mergeCoverageDrafts(acc.coverage, m.coverage);
+  if (m.weaknesses) acc.weaknesses = foldWeaknesses(acc.weaknesses ?? EMPTY_WEAKNESSES, m.weaknesses);
   if (m.format !== "empty") acc.formats.add(m.format);
   acc.sigmaRows += m.sigmaRows;
   if (m.principalNames?.length)

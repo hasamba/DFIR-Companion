@@ -24,6 +24,7 @@ import type { CompiledRuleset } from "../taggerRules.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
+import type { WeaknessFile } from "../awsAccountWeakness.js";
 import { openCloudRecordStream, type CloudStreamStats } from "../cloudStreamReader.js";
 import { createOutputBudget, defaultBudgets } from "../cloudOutputBudget.js";
 import { createPreGrader } from "../cloudStreamPreGrade.js";
@@ -95,6 +96,8 @@ export interface CloudStreamImportOptions {
 export interface CloudStreamImportResult {
   state: InvestigationState;
   coverage: CloudCoverageDraft[];
+  /** CloudTrail only (#2560): the file's account-weakness draft, folded per case by the pipeline. */
+  weaknesses?: WeaknessFile;
   disclosure: CloudStreamDisclosure;
 }
 
@@ -288,7 +291,7 @@ async function finish(
   if (!events.length && !promoted.events.length && !acc.iocs.size && !acc.principalNames.length) {
     const detail = [...clauses, undated.slice(2)].filter(Boolean).join("; ");
     const state = await noteEmptyImport(ctx, caseId, opts, provider.source, stats.records, detail);
-    return { state, coverage, disclosure };
+    return { state, coverage, disclosure, weaknesses: acc.weaknesses };
   }
   const format = [...acc.formats].join("+") || stats.format;
   const forensicEvents = withArtifactHash(events, stats.textHash).map((e, i) => ({
@@ -328,5 +331,5 @@ async function finish(
     onProgress: opts.onProgress,
     signal: opts.signal,
   });
-  return { state, coverage, disclosure };
+  return { state, coverage, disclosure, weaknesses: acc.weaknesses };
 }

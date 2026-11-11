@@ -14,7 +14,7 @@ function cell(value: string): string {
   const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
   return `"${csvNulPicture(guarded).replace(/"/g, '""')}"`;
 }
-function row(values: string[]): string {
+export function row(values: string[]): string {
   return values.map(cell).join(",");
 }
 // A number the export computed itself, not text from evidence. A finite number prints as digits, '.',

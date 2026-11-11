@@ -20,13 +20,13 @@ const S3_OBJECT_ACTION = /object|multipartupload|uploadpart/i;
 const SELECTOR_ACTIONS = new Set(["puteventselectors", "createtrail", "updatetrail"]);
 
 const msOf = (e: ForensicEvent): number => Date.parse(e.timestamp ?? "");
-export const isAws = (e: ForensicEvent): boolean => e.canonical?.cloud?.provider === "aws";
+export const isAws = (e: Pick<ForensicEvent, "canonical">): boolean => e.canonical?.cloud?.provider === "aws";
 
 /**
  * A successful CloudTrail selector change whose resulting selectors name S3 object activity. The
  * merge index marks these LOAD rows (mergeIndex.ts), so every merge sees the note's anchor (#2564).
  */
-export function selectsObjects(e: ForensicEvent): boolean {
+export function selectsObjects(e: Pick<ForensicEvent, "canonical">): boolean {
   const block = e.canonical?.loggingChange;
   if (!block || block.provider !== "aws" || block.failure || block.state === "requested") return false;
   if (!SELECTOR_ACTIONS.has((e.canonical?.event?.action ?? "").toLowerCase())) return false;
@@ -37,7 +37,7 @@ export function selectsObjects(e: ForensicEvent): boolean {
  * An object-level AWS record: an S3 object operation whose resource names a bucket AND an object
  * (`bucket/key`). The action is checked too — a role ARN (`arn:…:role/x`) also holds a slash.
  */
-export function isObjectRecord(e: ForensicEvent): boolean {
+export function isObjectRecord(e: Pick<ForensicEvent, "canonical">): boolean {
   const resource = e.canonical?.cloud?.resource ?? "";
   const action = e.canonical?.event?.action ?? "";
   return isAws(e) && S3_OBJECT_ACTION.test(action) && resource.indexOf("/") > 0;

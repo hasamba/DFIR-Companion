@@ -353,6 +353,8 @@
     "ROUTE GET /cases/:id/ioc-attribution",
     "ROUTE PUT /cases/:id/ioc-attribution",
     "ROUTE GET /cases/:id/trusted-activity",
+    "ROUTE GET /cases/:id/cloud-weaknesses",
+    "ROUTE GET /cases/:id/cloud-weaknesses.csv",
     "ROUTE POST /cases/:id/findings/:findingId/severity-restore",
     "ROUTE DELETE /cases/:id/findings/:findingId/severity-restore",
     "ROUTE GET /cases/:id/remediation",
