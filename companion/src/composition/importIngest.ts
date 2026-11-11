@@ -52,6 +52,7 @@ import { getServerLogger, logLine } from "../logging/serverLogger.js";
 import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
 import { parseMacLoginItemBtm } from "../analysis/macLoginItemImport.js";
 import { createDiskIngest, type IngestDiskFile } from "./importIngestDisk.js";
+import { createDiskBatchIngest, type DiskBatchDeps, type DiskBatchIngest } from "./importIngestBatch.js";
 
 export interface ImportIngestDeps {
   store: CaseStore;
@@ -71,6 +72,8 @@ export interface ImportIngestDeps {
     opts?: { reanalyzeStale?: boolean },
   ) => Promise<{ deobfuscated: number; newIocs: number; reanalyzed: number }>;
   resynthesizeInBackground: (caseId: string) => void;
+  /** The undo stack's push — a drop-folder batch pushes one step for the batch (#2540). */
+  pushImportCheckpoint: DiskBatchDeps["pushImportCheckpoint"];
 }
 
 // Declared in routes/context.ts (#1736) so RouteContext.ingestStreamed can name it without an upward
@@ -129,6 +132,8 @@ export interface ImportIngest {
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   /** A cloud export or Plaso file streamed from an open handle: the drop folder's large/gzip path (#2336). */
   ingestDiskFile: IngestDiskFile;
+  /** A drop-folder batch of small same-importer files, and its crash recovery (#2540). */
+  dropBatch: DiskBatchIngest;
   /** The byte-native twin of ingestStreamed, for macOS Background Task Management (#933 item 8). */
   ingestMacLoginItemStreamed(
     caseId: string,
@@ -706,7 +711,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   }
 
   // The drop folder's streamed import of a cloud export or Plaso file (#2336, importIngestDisk.ts).
-  const ingestDiskFile = createDiskIngest({
+  const diskDeps = {
     store,
     options,
     importLock,
@@ -714,6 +719,13 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     demoteForensic: demote.demoteForensic,
     settleDeps,
     afterImport: autoMarkAndResynthesize,
+  };
+  const ingestDiskFile = createDiskIngest(diskDeps);
+  const dropBatch = createDiskBatchIngest({
+    ...diskDeps,
+    resolveImportKind,
+    importerRegistry: () => registry,
+    pushImportCheckpoint: deps.pushImportCheckpoint,
   });
 
   return {
@@ -732,6 +744,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     ingestStreamed,
     ingestMacLoginItemStreamed,
     ingestDiskFile,
+    dropBatch,
   };
 }
 

@@ -3363,6 +3363,60 @@ guess, and the case log gets a WARN line. Velociraptor uploaded reports get the 
 
 Enabled by default. Configure via `DFIR_DROP_ENABLED`, `DFIR_DROP_POLL_S` (poll interval), `DFIR_DROP_MAX_BYTES` (size cap).
 
+### Many small CloudTrail files are imported in batches
+
+AWS delivers CloudTrail to S3 as thousands of small `.json.gz` files. When you drop a folder of
+them, the watcher imports them in batches of up to 100 files (32 MB in total; a file over 4 MB
+imports on its own). The watcher works through the files in name order. Only a continuous run of
+small gzip CloudTrail files from the same `asset=<HOST>` folder forms a batch. Any other file
+imports on its own, in its place in that order.
+
+What stays per file:
+
+- Each file is copied, hashed and recorded in the chain of custody as its own evidence file, with
+  its own import number. Its rows carry its own name as their source.
+- Files are read and added to the case one after another, in the same order as one at a time. The
+  forensic timeline, IOCs, super-timeline, tags, Cloud Coverage and AWS account weaknesses come out
+  the same as importing the files one by one.
+- `drop-log.txt` gets one `IMPORTED` or `FAILED` line per file. Each file moves to `_processed/` or
+  `_failed/` on its own. A file that cannot be read fails alone, and the rest of the batch goes on.
+- The **⚙ jobs** row counts files done out of the total.
+
+What the batch shares:
+
+- **One Undo step per batch.** Its label names the file count, for example *AWS CloudTrail drop
+  batch (100 files)*. **Undo import** takes back every file of the batch together: their forensic
+  rows, IOCs and timeline notes, and their records in the duplicate-record ledger, so dropping the
+  same files again imports them again. As with the Import button, Undo does not remove
+  super-timeline rows, tags, Cloud Coverage or account weaknesses. Single files from the drop
+  folder still get no Undo step.
+- **One analysis run per batch.** **Analysis Runs** shows one import run for the batch, with one
+  artifact per file. **View manifest** lists every file with its SHA-256, and its configuration
+  names the file count and the first 20 stored file names.
+- **One case-timeline note** for the files that added nothing, with their count and stored names
+  (the first 20). A file that added rows keeps its own note.
+- One grading pass (super-timeline copy → tagger → demote) after the last file, and one tagger run.
+
+If the batch cannot start (for example, the import memory guard refuses its size), every file of
+the batch is imported one by one instead. If the batch's grading pass or its note fails, the files
+stay imported and their `drop-log.txt` lines say which step failed. After a failed grading pass,
+the next sweep first copies the batch's rows to the super-timeline, runs the tagger on them and
+demotes, before any other batch runs. That batch gets no Undo step and no import summary. A failed Cloud Coverage or
+weakness update is retried file by file. A failed Undo step, import summary or run record is written
+to the case log, as on the Import button. A file is never sent to `_failed/` because a shared step
+failed.
+
+Batching stops when the case's super-timeline is within 50,000 rows of its cap
+(`DFIR_SUPERTIMELINE_MAX`, default 100,000). From then on the files import one at a time, so every
+file still gets its full share of the super-timeline.
+
+If the server stops in the middle of a batch, the files stay in `drop/`. The next sweep first
+grades the rows the interrupted batch had already added, then imports the files again. Their
+records are already in the ledger, so they add nothing a second time.
+
+Other cloud exports (Microsoft 365, GCP, Azure, GuardDuty) and plain `.json` CloudTrail files are
+still imported one file at a time.
+
 ## SO-CRATES (direct API)
 
 Set `DFIR_TOOL_SOCRATES_URL` (for example `http://localhost:8000`) in **Settings → Tools**. Importing

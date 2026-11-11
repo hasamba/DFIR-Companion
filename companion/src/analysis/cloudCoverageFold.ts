@@ -26,6 +26,9 @@ import {
   sumCloudStreamDisclosure,
   type CloudStreamDisclosure,
 } from "./cloudStreamDisclosure.js";
+import { persistWeaknesses } from "./cloudWeaknessStore.js";
+import type { WeaknessFile } from "./awsAccountWeakness.js";
+import type { CloudBatchHooks } from "./ingest/cloudStreamImport.js";
 
 /** The coverage group of a live collection — the same id form as its whole-export summaries. */
 export function collectionCoverageGroup(collectionId: string): string {
@@ -136,6 +139,23 @@ export function persistImportCoverage(
   return group
     ? persistCollectionCoverage(store, caseId, group, coverage)
     : persistCloudCoverage(store, caseId, coverage.map(withoutSum));
+}
+
+/**
+ * A streamed import's coverage and weakness drafts, persisted after its import committed. A
+ * drop-folder batch (#2540) takes them instead, exactly as `record()` would receive them, and
+ * folds the whole batch once (composition/importIngestBatch.ts).
+ */
+export async function persistCloudImportFolds(
+  store: CloudCoverageStore | undefined,
+  caseId: string,
+  coverage: readonly CloudCoverageDraft[],
+  weaknesses: WeaknessFile | undefined,
+  opts: { coverageGroup?: string; batch?: Pick<CloudBatchHooks, "folds"> },
+): Promise<void> {
+  if (opts.batch && !opts.coverageGroup) return opts.batch.folds(coverage.map(withoutSum), weaknesses, store);
+  await persistImportCoverage(store, caseId, coverage, opts.coverageGroup);
+  await persistWeaknesses(store?.weaknesses(), caseId, weaknesses);
 }
 
 /** A manual upload's row keeps its own sentences only: the running sum is a collection row's field (#2546). */

@@ -27,9 +27,17 @@ export interface ImportRunRecord {
    * produced, so a manifest that omits them does not describe a reproducible run.
    */
   parameters?: Record<string, ManifestValue>;
+  /** Every stored file the run read (#2540: a drop-folder batch); `storedName` alone otherwise. */
+  storedNames?: readonly string[];
 }
 
-export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord): Promise<void> {
+/** What recording an import run reads from the context — a drop-folder batch builds this too. */
+export type ImportRunContext = Pick<
+  RouteContext,
+  "options" | "store" | "runStateExclusive" | "importerRegistry"
+>;
+
+export async function recordImportRun(ctx: ImportRunContext, input: ImportRunRecord): Promise<void> {
   const { options, store } = ctx;
   if (!options.analysisRunStore || !options.stateStore) return;
   const stateStore = options.stateStore;
@@ -46,7 +54,7 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
       schema: "investigation-state/v1",
       ...(rules ? { rules } : {}),
     },
-    input: { artifacts: [await importedArtifact(store, input.caseId, input.storedName)], ...receipt.input },
+    input: { artifacts: await importedArtifacts(store, input), ...receipt.input },
     configuration: {
       ...(textProvider ?? {}),
       ...(prompt ? { promptHash: hashManifestValue(prompt) } : {}),
@@ -64,8 +72,19 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
   });
 }
 
+// One at a time: a batch's files are small, and a run record never holds 100 files in memory at once.
+async function importedArtifacts(
+  store: RouteContext["store"],
+  input: ImportRunRecord,
+): Promise<Awaited<ReturnType<typeof importedArtifact>>[]> {
+  const out = [];
+  for (const name of input.storedNames ?? [input.storedName])
+    out.push(await importedArtifact(store, input.caseId, name));
+  return out;
+}
+
 /** The hash of the tagger rules active now — what a settle that runs now applies. */
-export async function activeRulesHash(ctx: RouteContext): Promise<string | undefined> {
+export async function activeRulesHash(ctx: Pick<RouteContext, "options">): Promise<string | undefined> {
   const { taggerStore } = ctx.options;
   return taggerStore ? hashManifestValue((await taggerStore.readActive()).text) : undefined;
 }
@@ -78,7 +97,7 @@ export async function activeRulesHash(ctx: RouteContext): Promise<string | undef
  * replay (#1891) both record this shape.
  */
 export async function importReceiptOfCase(
-  ctx: RouteContext,
+  ctx: Pick<RouteContext, "runStateExclusive">,
   stateStore: Parameters<typeof investigationFingerprintOfCase>[0],
   caseId: string,
   baseline: ImportBaseline | InvestigationState | null,
