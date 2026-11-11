@@ -10,6 +10,7 @@
  * Re-exported from server.ts, because scripts/{reanalyze,synthesize,deep-pass,verify-ai}.ts and the
  * provider wiring tests import them from `src/server.js`.
  */
+import { IocAttributionStore } from "../analysis/iocAttributionStore.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
 import { StateStore as StateStoreImpl } from "../analysis/stateStore.js";
@@ -376,6 +377,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     safetyStopCapture: params.safetyStopCapture,
     correlationProfileStore: new CorrelationProfileStore(params.store),
     mainSourceStore: new CaseMainSourceStore(params.store), // #2559
+    iocAttributionStore: new IocAttributionStore(params.store), // #2561 trusted-source rows for synthesis
     notebookStore: new NotebookStore(params.store),
     hypothesisStore: new HypothesisStore(params.store), // #140 auto-generate hypotheses on synthesis
     findingTaskStore: new FindingTaskStore(params.store), // #1418 per-finding analyst tasks after synthesis

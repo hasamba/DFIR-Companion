@@ -160,10 +160,17 @@
   // The hover text of a tag pill. A collector-footprint tag (#2487) says what its author encodes —
   // the collection whose identity and run window the row matches — instead of the raw author string.
   const COLLECTOR_NOTE_PREFIX = "tagger:dfir-collector:";
+  const TRUSTED_NOTE_PREFIX = "tagger:trusted-activity:";
   function tagPillTitle(t) {
     const author = String((t && t.author) || "");
     if (author.startsWith(COLLECTOR_NOTE_PREFIX)) {
       return `Matches the identity and run window of DFIR Companion collection ${author.slice(COLLECTOR_NOTE_PREFIX.length)} — the collector's own API call (grade unchanged)`;
+    }
+    if (author.startsWith(TRUSTED_NOTE_PREFIX)) {
+      // #2561: tagger:trusted-activity:<label>:<value> — the value may hold colons (an ARN).
+      const rest = author.slice(TRUSTED_NOTE_PREFIX.length);
+      const at = rest.indexOf(":");
+      return `Analyst-marked trusted source (${rest.slice(0, at)}: ${rest.slice(at + 1)}) — routine activity, grade unchanged`;
     }
     return `tag by ${author}`;
   }

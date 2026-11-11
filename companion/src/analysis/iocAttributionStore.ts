@@ -27,7 +27,7 @@ export interface IocAttributionChange {
 }
 
 export class IocAttributionStore {
-  constructor(private readonly cases: CaseStore) {}
+  constructor(private readonly cases: Pick<CaseStore, "stateDir">) {}
 
   private path(caseId: string): string {
     return join(this.cases.stateDir(caseId), IOC_ATTRIBUTION_FILE);

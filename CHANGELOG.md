@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Trusted sources: ours / responder** — mark an IP, an AWS access key or principal ARN (root included) ours or responder; its routine AWS rows get a trusted-activity label with a Hide trusted toggle, a count, a custody entry and a synthesis marker; grades never change and high-impact actions are never labelled (closes #2561)
 - **Hunts and next steps in the case's own query language** — the case's main evidence source (counted per evidence file, override in the Hunts panel) picks the language: AI-written CQL, KQL, ES|QL or SPL hunts copy-ready, VQL unchanged, and "collect X" steps become "search <tool> for …" (closes #2559)
 - **CrowdStrike Falcon (CQL) hunt queries** — an eighth hunt language in the 🔍 hunt modal and the Query Translator, values escaped so `*` cannot widen a query (closes #2558)
 - **Look-alike M365 account and app names** — a new user or app named like a Microsoft brand, the tenant or the admin account (`rnicrosoft-support`) is High with a note (closes #2557)

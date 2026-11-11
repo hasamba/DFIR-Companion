@@ -59,6 +59,11 @@ function custodyRecords(records: CustodyRecord[], lines: string[]): void {
     if (last.event === "credential-deleted") lines.push("- Status: cloud credential — deleted, no file");
     if (last.event === "credential-detached")
       lines.push("- Status: cloud credential — detached from this case, no file");
+    // A trusted-source mark (#2561) has no file; its status is the mark as it stands now.
+    if (last.event === "trusted-source-marked")
+      lines.push(
+        `- Status: trusted-source mark — ${last.trustedSource?.after ? cellMd(last.trustedSource.after) : "cleared"}, no file`,
+      );
     lines.push("");
     lines.push("| # | Event | When (UTC) | By | Source | Trigger |", "| --- | --- | --- | --- | --- | --- |");
     for (const r of chain) {

@@ -786,6 +786,22 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Trusted-source activity (#2561): the honoured trusted rows, the timeline "Hide trusted" toggle and
+    // the IOC panel's "Mark a source" form. No initializer: its two buttons dispatch by data-act.
+    file: "dashboard-trusted-activity.js",
+    publish: [
+      "loadTrustedActivity",
+      "trustedRowInfo",
+      "isTrustedRow",
+      "trustedRowsHidden",
+      "trustedCountIn",
+      "trustedRowTotal",
+      "toggleTrustedHidden",
+      "markTrustedSourceFromForm",
+    ],
+    private: [],
+  },
+  {
     // Its one control passes saveCaseTemplate as a value.
     file: "dashboard-case-template-picker.js",
     initializer: "initCaseTemplatePicker",

@@ -536,10 +536,31 @@ organisation's own asset), *responder* or *unknown*. The label shows as a chip b
 (attacker in red), is a **Label** column in the Markdown, HTML and CSV reports, and is recorded in
 the case activity log with who changed it and from what. A labelled IOC is always listed in the
 report's IOC table. The **IOC block list** never contains a value labelled *ours* or *responder*;
-its summary counts them as "labelled ours or responder by the analyst". The label changes nothing
-else: no grade changes, and the AI does not read it. The report IOC table also has a **Context**
+its summary counts them as "labelled ours or responder by the analyst". A label never changes a
+grade. The report IOC table also has a **Context**
 column with the note an importer recorded beside the value (for example, which CloudTrail call used
 an access key).
+
+**Trusted sources (ours / responder)** — labelling an IP, an AWS access key id (`AKIA…`/`ASIA…`)
+or an AWS principal ARN *ours* or *responder* marks it as a trusted source. Use the row's **label…**
+selector, or **🛡 Mark source** in the panel's title bar for a value that is not an IOC, such as
+the account root (`arn:aws:iam::<account>:root`) or a role (`arn:aws:iam::<account>:role/<name>`).
+The source's **routine** AWS rows in the forensic timeline then carry a **trusted-activity** label:
+a fixed list of metadata reads (account, IAM, bucket, logging, key and inventory settings, such as a
+bucket's versioning or a trail's status; any other read is never labelled), successful console sign-ins, a trail or logging turned on, a log group or
+dashboard created, and credential-history rows whose every use came from a marked address. Grades
+never change and no row is removed. A marked source's high-impact actions are **never** labelled:
+anything Critical, any IAM policy, key, role or trust change, a bucket policy, event selectors, a
+trail reconfigured, stopped or deleted, remote execution, reads that return content (objects, code,
+log events, query results, secrets, tokens), and failed calls. If labelling the source cannot be
+written to the custody log, the label is still saved but the dashboard reports the error; save the
+same label again to write the custody entry. A value
+also labelled *attacker* (for example the key behind a shared company IP) cancels the mark for
+those rows. Each mark is written to the custody log with the number of rows labelled. The forensic
+timeline header then shows **Hide trusted (N)** to hide those rows, and the count beside the title
+says how many shown rows are trusted. Synthesis sees each trusted row marked *analyst-marked trusted
+source — not proven benign*; marking, clearing or relabelling a source re-runs synthesis. Only AWS
+rows are matched in this version.
 
 **IOC exclude list** — the panel's title bar has a control to permanently remove matching indicators
 from this case: exact-value, suffix, or regex rules, scopable to a specific IOC type (e.g. only

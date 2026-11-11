@@ -10,6 +10,8 @@ import { compileText, TaggerRulesConflictError } from "../analysis/taggerStore.j
 import { runAndApplyTagger, readTaggerSettings, TAGGER_AUTHOR_PREFIX } from "../analysis/taggerRun.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
+import { syncTrustedActivity } from "../analysis/trustedActivitySync.js";
+import { trustedSyncDeps } from "./trustedActivityDeps.js";
 import { hashManifestValue } from "../analysis/analysisRunHash.js";
 import { investigationOutput } from "../analysis/analysisRunSnapshot.js";
 
@@ -177,6 +179,7 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
         actor: "tagger",
         detail: `tagged ${summary.result.totalMatched} event(s), ${summary.tagsWritten} tag(s), ${summary.mutatedCount} severity/MITRE update(s)`,
       });
+      await retagTrusted(caseId); // a run can raise a trusted row out of eligibility (#2561)
       return res.status(200).json({
         scope,
         totalMatched: summary.result.totalMatched,
@@ -201,6 +204,9 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
     try {
       const removed = await options.tagsStore.removeByAuthorPrefix(caseId, TAGGER_AUTHOR_PREFIX);
       if (removed) options.onTags?.(caseId);
+      // The trusted-activity tags are `tagger:`-authored too, but they follow the analyst's marks,
+      // not the rule set: put back the ones the marks still decide (#2561).
+      await retagTrusted(caseId);
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "triage",
         action: "tagger-cleared",
@@ -318,4 +324,9 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
       return res.status(400).json({ error: (err as Error).message });
     }
   });
+
+  async function retagTrusted(caseId: string): Promise<void> {
+    const deps = trustedSyncDeps(options, ctx.store, (m) => ctx.serverLogger.info(m));
+    if (deps) await syncTrustedActivity(deps, caseId);
+  }
 }

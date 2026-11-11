@@ -1,4 +1,10 @@
 import { createHash } from "node:crypto";
+import {
+  loadTrustedRows,
+  trustedSignature,
+  type SynthesisTrustContext,
+  type TrustedRows,
+} from "./synthesisTrust.js";
 import type { AiControlStore } from "../aiControl.js";
 import type { FalsePositiveMarker } from "../falsePositive.js";
 import { huntSignalsFromOutcomes, renderPriorHuntsBlock } from "../huntOutcomes.js";
@@ -32,13 +38,14 @@ import { capDisclosure, newestHypothesesFirst } from "../synthCaps.js";
 
 /** The stores the input blocks come from. `SynthesisContext` extends this. */
 export interface SynthesisInputContext extends HuntContext {
-  readonly opts: HuntContext["opts"] & {
-    notebookStore?: NotebookStore;
-    aiControlStore?: AiControlStore;
-    hypothesisStore?: HypothesisStore;
-    playbookStore?: PlaybookStore;
-    incidentTypeStore?: IncidentTypeStore;
-  };
+  readonly opts: HuntContext["opts"] &
+    SynthesisTrustContext["opts"] & {
+      notebookStore?: NotebookStore;
+      aiControlStore?: AiControlStore;
+      hypothesisStore?: HypothesisStore;
+      playbookStore?: PlaybookStore;
+      incidentTypeStore?: IncidentTypeStore;
+    };
 }
 
 /** Prompt blocks synthesis reads but never rewrites. Every one of them feeds the skip-hash. */
@@ -55,6 +62,8 @@ export interface SynthesisInputs {
   blocks: SynthesisInputBlocks;
   /** Also needed by the delta fold, to demote next-steps that repeat a completed task. */
   playbookTasks: PlaybookTask[];
+  /** Rows from an analyst-marked trusted source (#2561): the prompt marker and the skip-hash. */
+  trusted: TrustedRows;
 }
 
 /** Bounded so a case with a long hypothesis list can't crowd out the timeline. */
@@ -63,6 +72,7 @@ const MAX_OPEN_HYPOTHESES = 15;
 export async function loadSynthesisInputs(
   ctx: SynthesisInputContext,
   caseId: string,
+  scopedEvents: readonly ForensicEvent[] = [],
 ): Promise<SynthesisInputs> {
   const notebookBlock = await buildNotebookBlock(ctx, caseId);
   const hypotheses = await buildHypothesisBlocks(ctx, caseId);
@@ -78,6 +88,7 @@ export async function loadSynthesisInputs(
 
   return {
     playbookTasks,
+    trusted: await loadTrustedRows(ctx, caseId, scopedEvents),
     blocks: {
       notebookBlock,
       analystHypothesesBlock: hypotheses.analyst,
@@ -170,6 +181,8 @@ export interface SynthHashInput {
   promoted?: string[];
   /** Hunt metadata the collection inventory reads (#1588) — stable across runs. */
   inventory?: string;
+  /** Rows marked trusted (#2561, synthesisTrust.ts) — hashed as stable `id:label:value` strings. */
+  trusted?: TrustedRows;
 }
 
 /**
@@ -226,6 +239,9 @@ export function computeSynthHash(i: SynthHashInput): string {
         // A hunt that returned no rows, failed, or went to the archive only changes the collection
         // inventory the model judges its negative answers against, with no new timeline row (#1588).
         hv: i.inventory ?? "",
+        // An analyst trusted-source mark changes the marker on its rows (#2561). Only present when a
+        // row is marked, so a case without marks keeps the hash it had before this field existed.
+        ...(i.trusted?.size ? { tr: trustedSignature(i.trusted) } : {}),
       }),
     )
     .digest("hex");
