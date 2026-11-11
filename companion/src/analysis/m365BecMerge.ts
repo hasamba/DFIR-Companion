@@ -12,9 +12,10 @@
 // first. Every side is graded above Info (forward-out rule High, hiding rule High, `Add user` Medium,
 // privileged grant Medium/High), so both halves are forensic rows — nothing reads the super-timeline.
 //
-// A folded row's known occurrence times are its first and last (the aggregator keeps both); a join
-// needs a known time of each side to fit the window, never a time inside a folded span, so folding
-// can lose a pair but never invents one. Rows without the block (imported before #2570) never join.
+// Times come from the block itself — when the record whose facts it holds happened. A folded row (the
+// importer's own aggregation, or a streamed import's budget aggregate of several users) keeps ONE
+// member's block while its span stretches over every member, so the span is never read: folding can
+// lose a pair but never borrows another member's time to invent one (#2570 review). Rows without the block (imported before #2570) never join.
 // Only raises. Idempotent by state: a row below its pairing grade is raised; the note goes on once.
 // Per-row: the incremental merge holds every row carrying the block (mergeIndex.ts).
 
@@ -30,10 +31,16 @@ export const NEW_USER_GRANT_WINDOW_MS = 24 * 60 * 60_000;
 /** Where the partner was seen, as the note says it. */
 export type BecScope = "export" | "case";
 
-/** One row as the join reads it: its block and its known occurrence times. */
+/** One row as the join reads it: its block and the time of the record the block describes. */
 export interface BecJoinRow {
   block: M365BecBlock;
-  times: readonly number[];
+  time: number;
+}
+
+/** The join row of a block, or null when it has no usable time. */
+export function becJoinRow(block: M365BecBlock | undefined): BecJoinRow | null {
+  const time = block ? Date.parse(block.at) : NaN;
+  return block && Number.isFinite(time) ? { block, time } : null;
 }
 
 export interface BecRaise {
@@ -50,10 +57,6 @@ function sameMailbox(a: M365BecBlock, b: M365BecBlock): boolean {
   );
 }
 
-/** Some known time of `x` and some known time of `y` satisfy `ok(x, y)`. */
-const anyPair = (xs: readonly number[], ys: readonly number[], ok: (x: number, y: number) => boolean) =>
-  xs.some((x) => ys.some((y) => ok(x, y)));
-
 function hideRaises(rows: readonly (BecJoinRow | null)[], scope: BecScope, out: Map<number, BecRaise>): void {
   const forwards = rows.flatMap((r, i) => (r?.block.role === "rule" && r.block.forwardsOut ? [i] : []));
   rows.forEach((hide, i) => {
@@ -61,9 +64,7 @@ function hideRaises(rows: readonly (BecJoinRow | null)[], scope: BecScope, out: 
     const paired = forwards.some((f) => {
       const fwd = rows[f]!;
       return (
-        f !== i &&
-        sameMailbox(hide.block, fwd.block) &&
-        anyPair(hide.times, fwd.times, (h, t) => Math.abs(h - t) <= HIDE_PAIR_WINDOW_MS)
+        f !== i && sameMailbox(hide.block, fwd.block) && Math.abs(hide.time - fwd.time) <= HIDE_PAIR_WINDOW_MS
       );
     });
     if (paired)
@@ -88,7 +89,8 @@ function grantRaises(
       (c) =>
         !differ(c.block.tenant, g.block.tenant) &&
         (c.block.ids ?? []).some((id) => ids.has(id)) &&
-        anyPair(c.times, g.times, (t, at) => at >= t && at - t <= NEW_USER_GRANT_WINDOW_MS),
+        g.time >= c.time &&
+        g.time - c.time <= NEW_USER_GRANT_WINDOW_MS,
     );
     if (hit)
       out.set(i, {
@@ -117,17 +119,9 @@ export function applyBecRaise<T extends { severity: Severity; description: strin
   };
 }
 
-/** A stored row's known occurrence times: its first and, when folded, its last. */
-function knownTimes(e: ForensicEvent): number[] {
-  return [e.timestamp, e.endTimestamp].map((t) => (t ? Date.parse(t) : NaN)).filter(Number.isFinite);
-}
-
 /** The merge-chain pass: raise every stored row a pairing over the whole case proves. */
 export function raiseCaseBecPairs(events: readonly ForensicEvent[]): ForensicEvent[] {
-  const rows = events.map((e): BecJoinRow | null => {
-    const block = e.canonical?.m365Bec;
-    return block ? { block, times: knownTimes(e) } : null;
-  });
+  const rows = events.map((e) => becJoinRow(e.canonical?.m365Bec));
   if (!rows.some(Boolean)) return [...events];
   const raise = becRaises(rows, "case");
   if (!raise.size) return [...events];

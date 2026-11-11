@@ -60,6 +60,9 @@ export type MailboxChainStep = z.infer<typeof mailboxChainStepSchema>;
 // never re-reads a description: rule names, display names and addresses in it are attacker-controlled.
 export const m365BecBlockSchema = z.object({
   role: z.enum(["rule", "created", "grant"]),
+  /** When the record whose facts these are happened (ISO). A folded row keeps one member's block, so
+   * the join reads this time, never the folded row's span, which other members' times stretch. */
+  at: z.string().max(40),
   /** Rule: `<actor>|<mailbox local name>`, lowercased — one mailbox as alias, Exchange path or UPN. */
   rule: z.string().max(400).optional(),
   /** Rule: the mailbox's own domain when the record names it as a UPN. Two different ones never join. */

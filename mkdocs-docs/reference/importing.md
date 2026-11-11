@@ -2253,7 +2253,8 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
   export`. Both halves are forensic-timeline rows (each is graded Medium or above), so nothing is
   read from the super-timeline. One mailbox written as an alias, an Exchange path or a UPN still
   joins; two UPN mailboxes with different domains (`finance@a…` and `finance@b…`) or two different
-  tenants never do. A counted (aggregated) row joins only on its first or last time. A pair cannot
+  tenants never do. A counted (aggregated) row joins only on the time of the record it shows, never
+  on its span, so a repeated rule stored as one counted row can miss a pair. A pair cannot
   join when one half is not kept as its own forensic row: a whole-file import over the event cap
   (`DFIR_MAX_EVENTS`), Medium rows a streamed import folded past its budget, a severity floor above
   Medium, or rows imported before this version.

@@ -17,7 +17,7 @@ import { decodeEntraAppChanges } from "./entraAppChange.js";
 import { readEntraAuditRecord } from "./entraAuditRecord.js";
 import { decodeExchangeRecord } from "./exchangeAudit.js";
 import { domainOf, localName } from "./exchangeAuditValues.js";
-import { applyBecRaise, becRaises, type BecJoinRow } from "./m365BecMerge.js";
+import { applyBecRaise, becJoinRow, becRaises } from "./m365BecMerge.js";
 import { getCI, str, type MappedEvent } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
@@ -31,7 +31,9 @@ const TENANT_MAX = 100;
 const ROLE_MAX = 160;
 
 const opOf = (rec: Row): string => str(getCI(rec, "Operation") ?? getCI(rec, "activityDisplayName")).trim();
-const tenantOf = (t: string): Partial<M365BecBlock> => {
+/** A block before its time is stamped from the row. */
+type Fact = Omit<M365BecBlock, "at">;
+const tenantOf = (t: string): Partial<Fact> => {
   const v = t.trim().toLowerCase().slice(0, TENANT_MAX);
   return v ? { tenant: v } : {};
 };
@@ -40,7 +42,7 @@ const identityKeys = (...v: string[]): string[] => [
 ];
 
 /** The block of an inbox rule that forwards outside or hides mail, or null. */
-function ruleBlock(rec: Row, record: number): M365BecBlock | null {
+function ruleBlock(rec: Row, record: number): Fact | null {
   const c = decodeExchangeRecord(rec, record);
   if (!c || c.kind !== "rule" || c.attempted || c.polarity !== "adds") return null;
   if (!c.forwardsOutside && !c.hidesHard) return null;
@@ -58,7 +60,7 @@ function ruleBlock(rec: Row, record: number): M365BecBlock | null {
 }
 
 /** The blocks of a directory record's rows: one for an `Add user`, one per privileged grant. */
-function entraBlocks(rec: Row): M365BecBlock[] {
+function entraBlocks(rec: Row): Fact[] {
   const r = readEntraAuditRecord(rec);
   if (!r || r.outcome !== "success") return [];
   if (ADD_USER_OP.test(r.operation)) {
@@ -66,7 +68,7 @@ function entraBlocks(rec: Row): M365BecBlock[] {
     const ids = identityKeys(user?.id ?? "", user?.upn ?? "");
     return ids.length ? [{ role: "created", ids, ...tenantOf(r.tenant) }] : [];
   }
-  return decodeEntraAppChanges(r).flatMap((c): M365BecBlock[] => {
+  return decodeEntraAppChanges(r).flatMap((c): Fact[] => {
     if (c.kind !== "role-assigned" || c.attempted || !c.role || c.role.tier === "other") return [];
     const member = r.targets.find((t) => t.id && t.id === c.role?.memberId);
     // A display name is no identity; a UPN-shaped one is (#2570 review).
@@ -84,8 +86,8 @@ function entraBlocks(rec: Row): M365BecBlock[] {
  * same decoded change), never to the record's other rows.
  */
 function blocksOf(rows: readonly MappedEvent[], rowRecords: readonly number[], records: readonly Row[]) {
-  const cache = new Map<number, M365BecBlock[]>();
-  return rows.map((row, i): M365BecBlock | null => {
+  const cache = new Map<number, Fact[]>();
+  return rows.map((row, i): Fact | null => {
     const record = rowRecords[i];
     const rec = record === undefined ? undefined : records[record];
     if (!rec) return null;
@@ -113,13 +115,11 @@ export function applyBecPairing(
   const blocks = blocksOf(rows, rowRecords, records);
   const stamped = rows.map((row, i): MappedEvent => {
     const block = blocks[i];
-    return block && row.canonical ? { ...row, canonical: { ...row.canonical, m365Bec: block } } : row;
+    return block && row.canonical && row.timestamp
+      ? { ...row, canonical: { ...row.canonical, m365Bec: { ...block, at: row.timestamp } } }
+      : row;
   });
-  const join = stamped.map((row): BecJoinRow | null => {
-    const block = row.canonical?.m365Bec;
-    const time = Date.parse(row.timestamp);
-    return block && Number.isFinite(time) ? { block, times: [time] } : null;
-  });
+  const join = stamped.map((row) => becJoinRow(row.canonical?.m365Bec));
   const raise = becRaises(join, "export");
   return raise.size
     ? stamped.map((row, i) => (raise.has(i) ? applyBecRaise(row, raise.get(i)!) : row))

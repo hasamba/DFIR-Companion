@@ -180,9 +180,29 @@ describe("folded rows join only on a known occurrence time", () => {
     expect(row(s, "forward").count).toBe(2);
     expect(row(s, "hide").severity).toBe("High");
   });
-  it("the same folded forward row pairs with a hide 5 minutes after its last occurrence", async () => {
-    const s = await splitVsWhole([[forwardOut(0), forwardOut(120)], [deleter(125)]], true);
+  it("a folded row joins on the time of the record it shows, never on its span", async () => {
+    // The stored folded row shows the record at 0; the one at 120 is only a count, so a hide uploaded
+    // later at 125 is not paired (a documented loss: the whole-file parse pairs before it folds).
+    await importBoth([forwardOut(0), forwardOut(120)], true);
+    expect(row(await importBoth([deleter(125)], true), "hide").severity).toBe("High");
+  });
+  it("the folded row still pairs on the time it shows", async () => {
+    const s = await splitVsWhole([[forwardOut(0), forwardOut(120)], [deleter(5)]], true);
     expect(row(s, "hide").severity).toBe("Critical");
+  });
+  it("a budget aggregate of two users' creations never lends one user's time to the other", () => {
+    // User A created at 10:00 and user B at 11:00, folded into one row that kept A's block; a grant to
+    // A the next day at 11:00 is 25 h after A's creation (#2570 review).
+    const [created, grant] = parseM365Audit(JSON.stringify([addUser(0), grantAdmin(25 * 60)]), {
+      aggregate: false,
+    }).events.map((e, i) => ({ ...e, id: `b${i}`, relatedFindingIds: [], sourceScreenshots: [] }));
+    const folded = {
+      ...created,
+      count: 2,
+      endTimestamp: new Date(Date.parse(created.timestamp) + 3_600_000).toISOString(),
+    };
+    const out = raiseCaseBecPairs([folded, grant]);
+    expect(out.find((e) => e.id === grant.id)?.severity).toBe("Medium");
   });
 });
 
