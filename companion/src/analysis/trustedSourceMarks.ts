@@ -149,7 +149,8 @@ function firstMatch(c: Canonical, list: readonly TrustedMark[]): TrustedMark | n
 /**
  * The reads a trusted source may have tagged: an EXPLICIT list of metadata reads — names, settings
  * and state, never content. Anything else (an unknown or new call, a version-suffixed variant, an
- * object listing, instance user data, metric values, log events, query results, code, objects,
+ * object listing, instance user data, metric values, Lambda function configuration (environment
+ * variables), CloudFormation stack outputs/parameters, log events, query results, code, objects,
  * secrets, tokens) stays untagged: unknown defaults to untrusted (Codex code and stop-time reviews,
  * #2561). Lower-case action names.
  */
@@ -255,9 +256,6 @@ const SAFE_READS = new Set([
   "describesnapshots",
   "describevolumes",
   "getebsencryptionbydefault",
-  "listfunctions",
-  "listfunctions20150331",
-  "describestacks",
   "describedbinstances",
   // billing
   "getcostandusage",

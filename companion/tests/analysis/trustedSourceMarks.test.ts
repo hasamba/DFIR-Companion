@@ -253,6 +253,9 @@ describe("content-bearing reads are not routine (Codex code review)", () => {
     ["GetMetricData", "monitoring"],
     ["DescribeSomethingNew", "newservice"],
     ["ListSecretVersionIds", "secretsmanager"],
+    ["ListFunctions20150331", "lambda"],
+    ["ListFunctions", "lambda"],
+    ["DescribeStacks", "cloudformation"],
   ])("%s by the marked source is not tagged", (name, src) => {
     const r = rowsOf([trustedRec(name, src, { readOnly: true })])[0];
     expect(trustedMarkFor(r, ipMark), name).toBeNull();
@@ -261,7 +264,6 @@ describe("content-bearing reads are not routine (Codex code review)", () => {
   it.each([
     ["GetBucketVersioning", "s3"],
     ["GetCallerIdentity", "sts"],
-    ["ListFunctions20150331", "lambda"],
     ["DescribeInstances", "ec2"],
   ])("the metadata read %s by the marked source is tagged", (name, src) => {
     const r = rowsOf([trustedRec(name, src, { readOnly: true })])[0];
