@@ -173,6 +173,13 @@
     // Playbook Match (#230): a matched step jumps to the event that evidences it; an unobserved
     // step sends the analyst to Evidence Gaps, which carries the collection directive for it.
     playbookJumpToEvent: (el) => jumpToEvent(el.dataset.id),
+    // AWS account weaknesses (#2560): the cited record's second (±1 s) in the super-timeline — a
+    // navigation aid, not an exact lookup (the record may sit on the forensic timeline instead).
+    superTimelineAt: (el) => {
+      if (Number.isNaN(Date.parse(el.dataset.time || "")) || typeof window.superScopeToWindow !== "function") return;
+      if (typeof revealSection === "function") revealSection("sec-super-timeline");
+      window.superScopeToWindow(el.dataset.time, 1000);
+    },
     // Narrative Timeline rail: a time in the story opens the event it was read from.
     narrativeJumpToEvent: (el) => jumpToEvent(el.dataset.id),
     // Attack Path: a step's time opens its event; the two tabs switch Steps / Hosts and the choice

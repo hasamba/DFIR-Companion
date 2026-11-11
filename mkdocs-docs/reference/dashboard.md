@@ -223,6 +223,45 @@ The same one-click collect directive also appears wherever a next step or key qu
 
 ---
 
+## Cloud Coverage
+
+What each imported CloudTrail, GCP, Azure, M365 or Google Workspace upload can and cannot answer:
+record counts, the first and last record, and the categories present, per account, project,
+subscription or tenant. A category the uploads never carry is stated under the table; it is never
+read as "nothing happened". No AI is involved.
+
+### Account weaknesses (AWS)
+
+Below the table, a list of what the CloudTrail records **prove** about each AWS account's hygiene.
+Each item names its account (and bucket), says what the record shows, and cites the record it rests
+on by eventID and time. **records at this second** opens the super-timeline at that record's
+second; the record may also sit on the forensic timeline. **CSV** downloads the list, one row per
+cited record.
+
+| Item | When it appears |
+|---|---|
+| Root signed in to the console without MFA | A successful root `ConsoleLogin` with `MFAUsed` "No". A failed sign-in proves nothing, because MFA is asked for after the password. |
+| Root used for routine management | Root made management calls (sign-ins are not counted). The count is of distinct records; past 500 it reads "at least 500". |
+| Bucket has no Object Lock configuration | `GetBucketObjectLockConfiguration` answered `ObjectLockConfigurationNotFoundError` for that bucket. |
+| Bucket versioning suspended / MFA Delete disabled | Only when a record states it: a successful `GetBucketVersioning` whose response carries the setting, or a successful `PutBucketVersioning` that sets it. CloudTrail usually logs `GetBucketVersioning` with no response, and an empty response proves nothing. |
+| S3 data events off before the selector change | A selector change (`PutEventSelectors`, `CreateTrail`, `UpdateTrail`) configured S3 object logging, and no object-level record of that account that this list has read is earlier. Object reads, overwrites and deletes before that time cannot be seen. Other trails' selectors are not in the evidence. This is per account; the forensic timeline's coverage note for the same gap is per case. |
+
+What the list is not:
+
+- It is not a timeline event, it is not graded and the AI does not read it.
+- It is built from the CloudTrail records each import parses, in the importer's own pass. Records
+  already in the case when you import a file again are not read again, so CloudTrail imported
+  before this list existed does not appear in it until you import a file it has not seen.
+- Undoing an import does not remove what that import added to the list, the same as the coverage
+  table.
+- It is case-wide: the investigation scope and clock alignment do not filter it.
+- Each item states what the cited record showed at its time. A later fix is not tracked.
+
+The same list is the **AWS account weaknesses** report section (see
+[Reports → What's in the Report](reports.md#whats-in-the-report)).
+
+---
+
 ## Cloud Collection
 
 Collect AWS, Microsoft or GCP logs live with a cloud account attached to the case. Open it with the

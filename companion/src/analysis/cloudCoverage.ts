@@ -5,6 +5,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import { cloudStreamDisclosureSchema } from "./cloudStreamDisclosure.js";
+import { CloudWeaknessStore } from "./cloudWeaknessStore.js";
 
 // Per-upload cloud coverage (#931 item 14, coverage half, part B — #1063): what one CloudTrail /
 // GCP / Azure / M365 / Google Workspace upload states about itself — record count, first → last,
@@ -93,6 +94,11 @@ export class CloudCoverageStore {
 
   private path(caseId: string): string {
     return join(this.cases.stateDir(caseId), "cloud-coverage.json");
+  }
+
+  /** The case's AWS account-weakness file beside this one (#2560), so the pipeline options need no new store. */
+  weaknesses(): CloudWeaknessStore {
+    return new CloudWeaknessStore(this.cases);
   }
 
   private everSeenPath(caseId: string): string {

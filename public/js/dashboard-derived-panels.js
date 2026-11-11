@@ -135,12 +135,41 @@
   // cannot answer — GET /cases/:id/cloud-coverage returns the SAME structured summary (items +
   // read-time absence caveats) the synthesis prompt's cloud-coverage block consumes.
   let cloudCoverageData = { items: [], caveats: [] };
+  // The AWS account weaknesses (#2560), GET /cases/:id/cloud-weaknesses: a block under the table.
+  let cloudWeaknessData = { read: false, items: [], limits: [] };
   let cloudCoverageTimer = null;
   function loadCloudCoverage(caseId) {
     fetch(`/cases/${caseId}/cloud-coverage`).then(r => r.json()).then(j => {
       cloudCoverageData = { items: (j && Array.isArray(j.items)) ? j.items : [], caveats: (j && Array.isArray(j.caveats)) ? j.caveats : [] };
       renderCloudCoverage();
     }).catch(() => {});
+    fetch(`/cases/${encodeURIComponent(caseId)}/cloud-weaknesses`).then(r => r.ok ? r.json() : null).then(j => {
+      cloudWeaknessData = {
+        read: !!(j && j.read),
+        items: (j && Array.isArray(j.items)) ? j.items : [],
+        limits: (j && Array.isArray(j.limits)) ? j.limits : [],
+        caseId,
+      };
+      renderCloudCoverage();
+    }).catch(() => {});
+  }
+  // Every value here is from the evidence (a bucket is named by whoever made it): esc / escAttr only.
+  function renderCloudWeaknesses() {
+    const w = cloudWeaknessData;
+    if (!w.read) return "";
+    const cite = (c) => `<span class="cw-cite">${esc(c.role)} <code>${esc(c.eventId)}</code> at ${esc(c.time)} ` +
+      `<a class="cw-st" data-act="superTimelineAt" data-time="${escAttr(c.time)}" title="Show the records at this second in the super-timeline">records at this second →</a></span>`;
+    const items = w.items.length
+      ? w.items.map(it => `<li class="cw-item"><strong>${esc(it.title)}</strong> — account <code>${esc(it.account || "not recorded")}</code>` +
+          `${it.bucket !== undefined ? `, bucket <code>${esc(it.bucket)}</code>` : ""}` +
+          `<div data-safe-style="font-size:11px">${esc(it.detail)}</div>` +
+          `<div data-safe-style="font-size:11px;color:var(--text-muted)">Record: ${(it.cites || []).map(cite).join("; ")}</div></li>`).join("")
+      : `<li>None of the checks matched the CloudTrail records read so far.</li>`;
+    const limits = w.limits.map(l => `<div>${esc(l)}</div>`).join("");
+    const csv = w.caseId ? ` <a href="/cases/${escAttr(encodeURIComponent(w.caseId))}/cloud-weaknesses.csv" download>CSV</a>` : "";
+    return `<div class="cc-weaknesses" data-safe-style="margin-top:12px"><h3 data-safe-style="font-size:13px;margin:0 0 4px">Account weaknesses (AWS)${csv}</h3>` +
+      `<ul data-safe-style="margin:0;padding-left:18px">${items}</ul>` +
+      `<div class="cc-weakness-limits" data-safe-style="margin-top:6px;font-size:11px;color:var(--text-muted)">${limits}</div></div>`;
   }
   function scheduleCloudCoverageReload() {
     const caseId = document.getElementById("caseId").value.trim();
@@ -153,7 +182,7 @@
     const el = document.getElementById("cloudCoverage");
     if (!el) return;
     const { items, caveats } = cloudCoverageData;
-    if (!items.length) { el.innerHTML = "<span data-safe-style='color:var(--text-muted)'>No cloud audit-log uploads (CloudTrail/GCP/Azure/M365/Workspace) in this case yet.</span>"; return; }
+    if (!items.length) { el.innerHTML = "<span data-safe-style='color:var(--text-muted)'>No cloud audit-log uploads (CloudTrail/GCP/Azure/M365/Workspace) in this case yet.</span>" + renderCloudWeaknesses(); return; }
     const rows = items.map(it => {
       const scope = it.scope && it.scope.value ? `${esc(it.scope.kind)} ${esc(it.scope.value)}` : "<span data-safe-style='color:var(--text-muted)'>scope not recorded</span>";
       const range = (it.first && it.last) ? `${esc(String(it.first).slice(0, 10))} → ${esc(String(it.last).slice(0, 10))}` : "";
@@ -175,7 +204,7 @@
     el.innerHTML =
       `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
       `<th>Provider</th><th>Scope</th><th>Records</th><th>Range</th><th>Categories</th>` +
-      `</tr></thead><tbody>${rows}</tbody></table></div>` + caveatsHtml;
+      `</tr></thead><tbody>${rows}</tbody></table></div>` + caveatsHtml + renderCloudWeaknesses();
   }
 
   // ── Playbook Match (#230) ──────────────────────────────────────────────────────────────────

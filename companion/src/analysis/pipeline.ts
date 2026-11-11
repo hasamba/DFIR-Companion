@@ -64,6 +64,7 @@ import { type SecondOpinion } from "./secondOpinion.js";
 import { type AggregateStats } from "./logAggregate.js";
 import { persistCloudCoverage, type CloudCoverageSummary } from "./cloudCoverage.js";
 import { persistImportCoverage } from "./cloudCoverageFold.js";
+import { persistWeaknesses } from "./cloudWeaknessStore.js";
 import { type KevCatalog } from "./kev.js";
 import { type HuntSuggestion } from "./huntSuggest.js";
 import { type PlaybookHuntSuggestion } from "./playbookHunt.js";
@@ -524,8 +525,9 @@ export class AnalysisPipeline {
   }
 
   async importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
-    const { state, coverage } = await ingest.importAws(this.importCtx, ...args);
+    const { state, coverage, weaknesses } = await ingest.importAws(this.importCtx, ...args);
     await persistCloudCoverage(this.opts.cloudCoverageStore, args[0], coverage);
+    await persistWeaknesses(this.opts.cloudCoverageStore?.weaknesses(), args[0], weaknesses); // #2560
     return state;
   }
 
@@ -561,11 +563,12 @@ export class AnalysisPipeline {
   async importCloudFile(
     ...args: ImporterArgs<typeof ingest.importCloudFile>
   ): Promise<{ state: InvestigationState; disclosure: CloudStreamDisclosure }> {
-    const { state, coverage, disclosure } = await ingest.importCloudFile(this.importCtx, ...args);
+    const { state, coverage, disclosure, weaknesses } = await ingest.importCloudFile(this.importCtx, ...args);
     const importDisclosure = describeCloudStreamDisclosure(disclosure).map((d) => d.slice(0, 400));
     const drafts = coverage.map((c) => ({ ...c, importDisclosure, streamDisclosure: disclosure }));
     // A live collection's page folds into its collection's one row (#2538); a manual upload is its own.
     await persistImportCoverage(this.opts.cloudCoverageStore, args[0], drafts, args[3].coverageGroup);
+    await persistWeaknesses(this.opts.cloudCoverageStore?.weaknesses(), args[0], weaknesses); // #2560: per case
     return { state, disclosure };
   }
 

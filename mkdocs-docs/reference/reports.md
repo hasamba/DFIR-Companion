@@ -100,6 +100,8 @@ Multiple templates can be saved (e.g. "Executive" with fewer sections vs. "Techn
 19. Compliance Impact — control failures and regulatory notification obligations for confirmed findings, with the same "not legal advice" disclaimer and framework editions as the dashboard panel (see [Dashboard → Compliance Impact](dashboard.md#compliance-impact))
 20. Handoff Brief — what the case holds, what is open, what to check next, and the outgoing analyst's Handoff notes from the notebook (see [Dashboard → Handoff Brief](dashboard.md#handoff-brief)); opt-in everywhere — the Technical Detail template switches it on, the Standard and Executive templates never carry it
 
+21. AWS account weaknesses — what the imported CloudTrail records prove about each account's hygiene (root sign-in without MFA, root used for routine management, buckets with no Object Lock, S3 data events off before the selector change), each item citing its record by eventID and time, with the limits stated beside it (see [Dashboard → Account weaknesses (AWS)](dashboard.md#account-weaknesses-aws)). Included in the Standard and Technical Detail templates, left out of the Executive Brief, and off in a template you saved before this section existed. A case with no CloudTrail import has no such section
+
 Sections are enabled/disabled per template — see **Report Customisation** above.
 
 ---

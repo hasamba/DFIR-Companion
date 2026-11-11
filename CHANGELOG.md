@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **AWS account weaknesses** — root sign-in without MFA, root used for routine management, buckets with no Object Lock, and S3 data events off before the selector change, each citing its CloudTrail record; in the Cloud Coverage panel, a CSV and a new report section (closes #2560)
 - **Trusted sources: ours / responder** — mark an IP, an AWS access key or principal ARN (root included) ours or responder; its routine AWS rows get a trusted-activity label with a Hide trusted toggle, a count, a custody entry and a synthesis marker; grades never change and high-impact actions are never labelled (closes #2561)
 - **Hunts and next steps in the case's own query language** — the case's main evidence source (counted per evidence file, override in the Hunts panel) picks the language: AI-written CQL, KQL, ES|QL or SPL hunts copy-ready, VQL unchanged, and "collect X" steps become "search <tool> for …" (closes #2559)
 - **CrowdStrike Falcon (CQL) hunt queries** — an eighth hunt language in the 🔍 hunt modal and the Query Translator, values escaped so `*` cannot widen a query (closes #2558)

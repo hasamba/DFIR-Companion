@@ -17,6 +17,8 @@ import { ServedLocationStore } from "../analysis/servedLocation.js";
 import { SensitiveLocationStore } from "../analysis/sensitiveLocation.js";
 import { IocAttributionStore } from "../analysis/iocAttributionStore.js";
 import { withIocAttribution } from "../analysis/iocAttribution.js";
+import { CloudWeaknessStore } from "../analysis/cloudWeaknessStore.js";
+import { summarizeWeaknesses } from "../analysis/awsAccountWeaknessSummary.js";
 
 // The one state projection every report artifact reads — markdown, HTML, docx, the CSV and
 // Timesketch exports, the evidence graph, the lateral-movement paths. It was a private method on
@@ -49,6 +51,7 @@ export const FILTERED_STATE_SIDE_FILES: readonly string[] = [
   "served-locations.json",
   "sensitive-locations.json",
   "ioc-attribution.json",
+  "cloud-weaknesses.json", // #2560 AWS account weaknesses (cloudWeaknessStore.ts)
 ];
 
 /**
@@ -96,6 +99,8 @@ export async function loadFilteredState(
   // The analyst's IOC labels (#2543) are a side file too: stamped onto the report's IOCs here, so
   // the report tables and the block-list read them; the saved state never carries them.
   const labels = await new IocAttributionStore(src.cases).load(caseId);
+  // The AWS account weaknesses (#2560): case-wide, from the CloudTrail parse; never saved with the state.
+  const weaknesses = await new CloudWeaknessStore(src.cases).load(caseId);
   const withOutcomes = withAnalystOutcomes(
     {
       ...scoped,
@@ -104,6 +109,7 @@ export async function loadFilteredState(
       ...(boundaries.length ? { remediationBoundaries } : {}),
       ...(servedLocations.length ? { servedLocations } : {}),
       ...(sensitiveLocations.length ? { sensitiveLocations } : {}),
+      ...(weaknesses ? { cloudWeaknesses: summarizeWeaknesses(weaknesses) } : {}),
     },
     outcomes,
   );

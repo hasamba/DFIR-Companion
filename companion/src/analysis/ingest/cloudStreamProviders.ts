@@ -11,6 +11,7 @@
 import type { MappedEvent, SiemEvent, SiemIoc } from "../siemImport.js";
 import { getCI, getPath, str } from "../siemFieldPick.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
+import type { WeaknessFile } from "../awsAccountWeakness.js";
 import type { CloudRecordIdentity } from "../cloudRecordIdentity.js";
 import { cloudActivityRecordProvider, cloudRecordIdentity } from "../cloudRecordIdentity.js";
 import type { RecordGate } from "../cloudRecordGate.js";
@@ -42,6 +43,8 @@ export interface BatchMapping {
   rowRecords: number[];
   iocs: SiemIoc[];
   coverage: CloudCoverageDraft[];
+  /** CloudTrail only (#2560): the batch's account-weakness draft. */
+  weaknesses?: WeaknessFile;
   format: string;
   sigmaRows: number;
   signInObservations: Array<Omit<StoredAuthObservation, "importBatch">>;
@@ -103,6 +106,7 @@ const asMapping = (r: {
   rowRecords?: number[];
   iocs: SiemIoc[];
   coverage: CloudCoverageDraft[];
+  weaknesses?: WeaknessFile;
   format: string;
   sigmaRowsMatched?: number;
 }): Omit<BatchMapping, "signInObservations"> => ({
@@ -110,6 +114,7 @@ const asMapping = (r: {
   rowRecords: r.rowRecords ?? [],
   iocs: r.iocs,
   coverage: r.coverage,
+  ...(r.weaknesses ? { weaknesses: r.weaknesses } : {}),
   format: r.format,
   sigmaRows: r.sigmaRowsMatched ?? 0,
 });

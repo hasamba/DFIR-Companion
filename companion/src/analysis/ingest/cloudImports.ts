@@ -29,6 +29,7 @@ import { recordParsedImport } from "./parsedDebug.js";
 import { sigmaImportNote } from "../sigmaImportGrade.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
+import type { WeaknessFile } from "../awsAccountWeakness.js";
 import { describeJsonRepairs, jsonRepairNote } from "../tolerantJson.js";
 import { undatedRowsNote } from "../m365ExportAdapters.js";
 import { mfaFatigueRows } from "./mfaFatigueRows.js";
@@ -39,6 +40,8 @@ import { fatigueEventId } from "../mfaFatigue.js";
 export interface ImportWithCoverage {
   state: InvestigationState;
   coverage: CloudCoverageDraft[];
+  /** CloudTrail only (#2560): this upload's account-weakness draft, folded per case by the pipeline. */
+  weaknesses?: WeaknessFile;
 }
 
 /**

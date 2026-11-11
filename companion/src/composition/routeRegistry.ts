@@ -44,6 +44,7 @@ import { registerSessionSegmentationRoutes } from "../routes/sessionSegmentation
 import { registerFindingsRoutes } from "../routes/findings.js";
 import { registerCaseMainSourceRoutes } from "../routes/caseMainSource.js";
 import { registerIocAttributionRoutes } from "../routes/iocAttribution.js";
+import { registerCloudWeaknessRoutes } from "../routes/cloudWeaknesses.js";
 import { registerEntityAnnotationRoutes } from "../routes/entityAnnotations.js";
 import { registerFindingOutcomeRoutes } from "../routes/findingOutcome.js";
 import { registerFindingSeverityRestoreRoutes } from "../routes/findingSeverityRestore.js";
@@ -183,6 +184,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerCaseMainSourceRoutes(app, ctx); // #2559 the case's main evidence source + override
   registerFindingOutcomeRoutes(app, ctx);
   registerIocAttributionRoutes(app, ctx); // #2543 analyst IOC labels
+  registerCloudWeaknessRoutes(app, ctx); // #2560 AWS account weaknesses
   registerFindingSeverityRestoreRoutes(app, ctx); // #1973
   registerRemediationRoutes(app, ctx);
   registerCampaignScopeRoutes(app, ctx);

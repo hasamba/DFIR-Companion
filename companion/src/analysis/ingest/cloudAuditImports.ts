@@ -79,6 +79,7 @@ export async function importAws(
         [dedupNote, describeJsonRepairs(parsed.repairs)].filter(Boolean).join("; ") || undefined,
       ),
       coverage: parsed.coverage,
+      weaknesses: parsed.weaknesses,
     };
 
   // An identity IOC (#2543) links to the row that produced it, through the row's aggKey.
@@ -132,7 +133,7 @@ export async function importAws(
     return s;
   });
   await settleCloudRecords(ctx, caseId, plan, opts, parsed.events, opts.debug);
-  return { state, coverage: parsed.coverage };
+  return { state, coverage: parsed.coverage, weaknesses: parsed.weaknesses };
 }
 
 // Import GCP Cloud Audit Logs + Azure Activity Log. Deterministic (no AI call): each record
