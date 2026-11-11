@@ -12,7 +12,7 @@
 // admin must not be able to hide behind it. A matched row is tagged only when it is, all of:
 //   - an AWS row (v1; other providers are a follow-up);
 //   - not Critical; High only for a successful console sign-in; never a failed call;
-//   - one of: a metadata read (List/Describe/… or a listed safe Get); a successful sign-in; a logging
+//   - one of: a listed metadata read (SAFE_READS); a successful sign-in; a logging
 //     change that turned logging on or created it; a short list of routine writes; or a
 //     credential-lineage summary with no shape (no enumeration, privileged change or remote
 //     execution), whose every source is a marked IP (or whose key is marked) and none beyond;
@@ -147,15 +147,14 @@ function firstMatch(c: Canonical, list: readonly TrustedMark[]): TrustedMark | n
 }
 
 /**
- * Metadata reads: the List, Describe and Head calls and a few check-style prefixes answer with names, settings
- * and state, never with content. `Get` calls are where content lives (code, log events, query
- * results, objects, secrets, tokens), so a Get is routine only when it is on SAFE_GETS — every other
- * Get, version-suffixed or not, stays untagged (Codex code review, #2561).
+ * The reads a trusted source may have tagged: an EXPLICIT list of metadata reads — names, settings
+ * and state, never content. Anything else (an unknown or new call, a version-suffixed variant, an
+ * object listing, instance user data, metric values, log events, query results, code, objects,
+ * secrets, tokens) stays untagged: unknown defaults to untrusted (Codex code and stop-time reviews,
+ * #2561). Lower-case action names.
  */
-const METADATA_READ_PREFIX = /^(list|describe|head|check|validate|simulate)/;
-/** Reads in METADATA_READ_PREFIX that still return content or a credential. */
-const UNSAFE_METADATA_READS = new Set(["listsecretversionids"]);
-const SAFE_GETS = new Set([
+const SAFE_READS = new Set([
+  // identity and IAM configuration
   "getcalleridentity",
   "getaccountsummary",
   "getaccountpasswordpolicy",
@@ -168,6 +167,29 @@ const SAFE_GETS = new Set([
   "getinstanceprofile",
   "getloginprofile",
   "getaccesskeylastused",
+  "listusers",
+  "listroles",
+  "listgroups",
+  "listpolicies",
+  "listpolicyversions",
+  "listattacheduserpolicies",
+  "listattachedrolepolicies",
+  "listattachedgrouppolicies",
+  "listuserpolicies",
+  "listrolepolicies",
+  "listgrouppolicies",
+  "listgroupsforuser",
+  "listaccesskeys",
+  "listmfadevices",
+  "listinstanceprofiles",
+  "listinstanceprofilesforrole",
+  "listaccountaliases",
+  "listentitiesforpolicy",
+  "simulateprincipalpolicy",
+  "simulatecustompolicy",
+  // S3 bucket configuration (never object listings or object reads)
+  "listbuckets",
+  "headbucket",
   "getbucketacl",
   "getbucketpolicy",
   "getbucketpolicystatus",
@@ -187,17 +209,57 @@ const SAFE_GETS = new Set([
   "getbucketownershipcontrols",
   "getbucketrequestpayment",
   "getpublicaccessblock",
+  // logging and monitoring configuration
+  "describetrails",
   "gettrail",
   "gettrailstatus",
   "geteventselectors",
   "getinsightselectors",
+  "listtrails",
+  "describeloggroups",
+  "describelogstreams",
+  "describemetricfilters",
+  "describesubscriptionfilters",
+  "listdashboards",
   "getdashboard",
-  "getmetricdata",
-  "getmetricstatistics",
+  "describealarms",
+  "listmetrics",
+  "listdetectors",
   "getdetector",
+  "describeconfigurationrecorders",
+  "describeconfigurationrecorderstatus",
+  "describedeliverychannels",
+  "describeconfigrules",
+  "describeflowlogs",
+  // KMS key configuration
+  "listkeys",
+  "listaliases",
+  "describekey",
   "getkeypolicy",
   "getkeyrotationstatus",
+  // EC2 / network / compute inventory (never instance attributes, console output or launch templates)
+  "describeregions",
+  "describeavailabilityzones",
+  "describeaccountattributes",
+  "describeinstances",
+  "describeinstancestatus",
+  "describesecuritygroups",
+  "describesecuritygrouprules",
+  "describevpcs",
+  "describesubnets",
+  "describenetworkinterfaces",
+  "describeroutetables",
+  "describeaddresses",
+  "describekeypairs",
+  "describeimages",
+  "describesnapshots",
+  "describevolumes",
   "getebsencryptionbydefault",
+  "listfunctions",
+  "listfunctions20150331",
+  "describestacks",
+  "describedbinstances",
+  // billing
   "getcostandusage",
 ]);
 /** Writes routine enough to tag for a trusted source: a log group/stream, a dashboard, a key alias. */
@@ -214,8 +276,7 @@ function routineCall(row: ForensicEvent, c: Canonical): boolean {
   const logging = c.loggingChange;
   if (logging) return !logging.failure && (logging.state === "enabled" || logging.state === "created");
   if (ROUTINE_WRITES.has(action)) return true;
-  if (SAFE_GETS.has(action)) return true;
-  return METADATA_READ_PREFIX.test(action) && !UNSAFE_METADATA_READS.has(action);
+  return SAFE_READS.has(action);
 }
 
 /** The friendly mark a lineage row qualifies under, or null. */
