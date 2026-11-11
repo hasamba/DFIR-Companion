@@ -2243,14 +2243,21 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
   (`…/Microsoft Exchange Hosted Organizations/<domain>/…`) and the domain of the acting user's UPN.
   It then says `outside the tenant domains this record names`. With no such proof (an application
   or the system acting on an alias) the address stays unclassed.
-- **BEC pairings across one export** — a hiding rule (delete, or move to a hiding folder) created
-  by the same actor on the same mailbox within 10 minutes of a rule that forwards outside is
-  **Critical**. The row adds `[hides mail; a forward-out rule by the same actor on this mailbox is
-  within 10 minutes]`. A privileged directory role granted at most 24 hours after an `Add user`
-  record for that user in the same export is **High** and says so; the `Add user` row stays
-  Medium. Pairing sees one parse at a time: a streamed import (gzip, or a large file) pairs only
-  records in the same 5,000-record batch, and two separate uploads never pair, so a pair split
-  across them keeps its unpaired grades (High / Medium).
+- **BEC pairings** — a hiding rule (delete, or move to a hiding folder) created by the same actor
+  on the same mailbox within 10 minutes of a rule that forwards outside is **Critical**, in either
+  order. The row adds `[BEC pairing: hides mail; a forward-out rule by the same actor on this mailbox
+  is within 10 minutes in this export]`. A privileged directory role granted at most 24 hours after
+  an `Add user` record for that user is **High** and says so; the `Add user` row stays Medium. The
+  pairs join across streamed batches and across separate uploads too: when the second half of a
+  pair arrives, the stored half is raised and the note says `in this case` instead of `in this
+  export`. Both halves are forensic-timeline rows (each is graded Medium or above), so nothing is
+  read from the super-timeline. One mailbox written as an alias, an Exchange path or a UPN still
+  joins; two UPN mailboxes with different domains (`finance@a…` and `finance@b…`) or two different
+  tenants never do. A counted (aggregated) row joins only on the time of the record it shows, never
+  on its span, so a repeated rule stored as one counted row can miss a pair. A pair cannot
+  join when one half is not kept as its own forensic row: a whole-file import over the event cap
+  (`DFIR_MAX_EVENTS`), Medium rows a streamed import folded past its budget, a severity floor above
+  Medium, or rows imported before this version.
 - **Mailbox forwarding** (`Set-Mailbox`) — `sets SMTP forwarding to x@… (outside the mailbox's
   domain)` (High); `sets forwarding to in-organization recipient …` (`ForwardingAddress` — an
   alias, name or DN, no domain class; Medium); `a copy stays` / `no copy stays` only when

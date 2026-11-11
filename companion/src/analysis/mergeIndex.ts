@@ -101,6 +101,7 @@ const INERT_NOTES = new Set([
   "timestomp corroboration", // timestompCorroborate: never stripped
   "ransomware precursors", // ransomwarePrecursor: never stripped; its rows are LOAD rows anyway
   "ransomware precursor", // cloudPrecursorMerge (#2563): never stripped; marked rows are skipped
+  "BEC pairing", // m365BecMerge (#2570): never stripped; its rows are LOAD rows anyway
   "cloud bulk read", // summaries: re-produced only from read records, which are LOAD rows (#2536)
   "renamed binary",
   "build-time",
@@ -192,6 +193,8 @@ export function mergeLoadAlways(e: ForensicEvent): boolean {
   // The cross-upload precursor join (#2563): every privileged change and every open check is held,
   // so the pass raises a stored check when the change arrives, and a new check over a stored change.
   if (isPrecursorChange(e) || isOpenPrecursorCheck(e)) return true;
+  // The M365 BEC pairings across batches and uploads (#2570): every side, partner and target alike.
+  if (e.canonical?.m365Bec) return true;
   if (!e.asset) return false;
   const mitre = e.mitreTechniques ?? [];
   if (mitre.includes("T1560.001") || mitre.includes("T1041")) return true;

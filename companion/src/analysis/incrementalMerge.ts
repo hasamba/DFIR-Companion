@@ -70,7 +70,9 @@ import {
 //    under 5 lack that bit, so a stored check would not be held when its key's change arrives.
 // 7: the object-logging coverage row is a LOAD row (#2564 part B). Rows indexed under 6 lack that
 //    bit, so a stored dated note would not be held when an earlier object record contradicts it.
-export const MERGE_INDEX_VERSION = 7;
+// 8: rows carrying an M365 BEC pairing block are LOAD rows (#2570). Rows indexed under 7 lack that
+//    bit, so a stored hiding rule or grant would not be held when its partner arrives.
+export const MERGE_INDEX_VERSION = 8;
 
 export type IncrementalResult =
   { ok: true; state: InvestigationState; read: number; written: number } | { ok: false; reason: string };

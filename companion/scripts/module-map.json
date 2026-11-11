@@ -352,6 +352,7 @@
     "cloudBulkRead.ts": "analysis/timeline",
     "objectLoggingWindow.ts": "analysis/timeline",
     "cloudPrecursorMerge.ts": "analysis/timeline",
+    "m365BecMerge.ts": "analysis/timeline",
     "cloudBulkReadSummaryId.ts": "analysis/timeline",
     "cloudCoverage.ts": "analysis/ingest",
     "cloudCoverageBuilders.ts": "analysis/ingest",
