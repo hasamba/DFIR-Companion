@@ -130,6 +130,36 @@ describe("trusted-source marks (#2561)", () => {
     expect((await custodyStore.verifyIntegrity("c1")).length).toBe(0);
   });
 
+  it("a failed custody write is reported and re-saving the same label repairs it", async () => {
+    const { app, custodyStore, ip } = await labApp();
+    const real = custodyStore.record.bind(custodyStore);
+    let fail = true;
+    custodyStore.record = async (...args: Parameters<typeof real>) => {
+      if (fail) throw new Error("disk full");
+      return real(...args);
+    };
+    const first = await request(app)
+      .put("/cases/c1/ioc-attribution")
+      .send({ value: ip, label: "ours", actor: "alice" });
+    expect(first.status).toBe(500);
+    expect(first.body.error).toMatch(/custody entry could not be written/);
+    expect(first.body.map[ip].label).toBe("ours");
+    expect((await custodyStore.load("c1")).some((r) => r.event === "trusted-source-marked")).toBe(false);
+    fail = false;
+    const retry = await request(app)
+      .put("/cases/c1/ioc-attribution")
+      .send({ value: ip, label: "ours", actor: "alice" });
+    expect(retry.status).toBe(200);
+    const entries = (await custodyStore.load("c1")).filter((r) => r.event === "trusted-source-marked");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].trustedSource).toMatchObject({ before: null, after: "ours" });
+    const again = await request(app).put("/cases/c1/ioc-attribution").send({ value: ip, label: "ours" });
+    expect(again.status).toBe(200);
+    expect((await custodyStore.load("c1")).filter((r) => r.event === "trusted-source-marked")).toHaveLength(
+      1,
+    );
+  });
+
   it("an attacker or unknown label writes no custody entry and tags nothing", async () => {
     const { app, custodyStore, ip } = await labApp();
     await request(app).put("/cases/c1/ioc-attribution").send({ value: ip, label: "unknown" });

@@ -546,11 +546,15 @@ or an AWS principal ARN *ours* or *responder* marks it as a trusted source. Use 
 selector, or **🛡 Mark source** in the panel's title bar for a value that is not an IOC, such as
 the account root (`arn:aws:iam::<account>:root`) or a role (`arn:aws:iam::<account>:role/<name>`).
 The source's **routine** AWS rows in the forensic timeline then carry a **trusted-activity** label:
-read-only calls, successful console sign-ins, a trail or logging turned on, a log group or
+metadata reads (List and Describe calls and a short list of configuration reads such as a bucket's
+versioning or a trail's status), successful console sign-ins, a trail or logging turned on, a log group or
 dashboard created, and credential-history rows whose every use came from a marked address. Grades
 never change and no row is removed. A marked source's high-impact actions are **never** labelled:
 anything Critical, any IAM policy, key, role or trust change, a bucket policy, event selectors, a
-trail reconfigured, stopped or deleted, remote execution, secret reads, and failed calls. A value
+trail reconfigured, stopped or deleted, remote execution, reads that return content (objects, code,
+log events, query results, secrets, tokens), and failed calls. If labelling the source cannot be
+written to the custody log, the label is still saved but the dashboard reports the error; save the
+same label again to write the custody entry. A value
 also labelled *attacker* (for example the key behind a shared company IP) cancels the mark for
 those rows. Each mark is written to the custody log with the number of rows labelled. The forensic
 timeline header then shows **Hide trusted (N)** to hide those rows, and the count beside the title

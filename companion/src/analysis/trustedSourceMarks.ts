@@ -12,7 +12,7 @@
 // admin must not be able to hide behind it. A matched row is tagged only when it is, all of:
 //   - an AWS row (v1; other providers are a follow-up);
 //   - not Critical; High only for a successful console sign-in; never a failed call;
-//   - one of: a read-only call outside the secret-bearing reads; a successful sign-in; a logging
+//   - one of: a metadata read (List/Describe/… or a listed safe Get); a successful sign-in; a logging
 //     change that turned logging on or created it; a short list of routine writes; or a
 //     credential-lineage summary with no shape (no enumeration, privileged change or remote
 //     execution), whose every source is a marked IP (or whose key is marked) and none beyond;
@@ -143,23 +143,60 @@ function firstMatch(c: Canonical, list: readonly TrustedMark[]): TrustedMark | n
   return null;
 }
 
-/** Reads whose answer is itself a secret, a credential or customer data: never routine. */
-const SECRET_READS = new Set([
-  "getsecretvalue",
-  "batchgetsecretvalue",
-  "getpassworddata",
-  "getparameter",
-  "getparameters",
-  "getparametersbypath",
-  "getsessiontoken",
-  "getfederationtoken",
-  "getauthorizationtoken",
-  "getobject",
-  "getconsolescreenshot",
-  "getrolecredentials",
-  "getaccesskeyinfo",
+/**
+ * Metadata reads: the List, Describe and Head calls and a few check-style prefixes answer with names, settings
+ * and state, never with content. `Get` calls are where content lives (code, log events, query
+ * results, objects, secrets, tokens), so a Get is routine only when it is on SAFE_GETS — every other
+ * Get, version-suffixed or not, stays untagged (Codex code review, #2561).
+ */
+const METADATA_READ_PREFIX = /^(list|describe|head|check|validate|simulate)/;
+/** Reads in METADATA_READ_PREFIX that still return content or a credential. */
+const UNSAFE_METADATA_READS = new Set(["listsecretversionids"]);
+const SAFE_GETS = new Set([
+  "getcalleridentity",
+  "getaccountsummary",
+  "getaccountpasswordpolicy",
+  "getaccountauthorizationdetails",
+  "getuser",
+  "getgroup",
+  "getrole",
+  "getpolicy",
+  "getpolicyversion",
+  "getinstanceprofile",
+  "getloginprofile",
+  "getaccesskeylastused",
+  "getbucketacl",
+  "getbucketpolicy",
+  "getbucketpolicystatus",
+  "getbucketlocation",
+  "getbucketlogging",
+  "getbucketversioning",
+  "getbucketencryption",
+  "getbucketobjectlockconfiguration",
+  "getbuckettagging",
+  "getbucketnotification",
+  "getbucketnotificationconfiguration",
+  "getbucketlifecycle",
+  "getbucketlifecycleconfiguration",
+  "getbucketreplication",
+  "getbucketwebsite",
+  "getbucketcors",
+  "getbucketownershipcontrols",
+  "getbucketrequestpayment",
+  "getpublicaccessblock",
+  "gettrail",
+  "gettrailstatus",
+  "geteventselectors",
+  "getinsightselectors",
+  "getdashboard",
+  "getmetricdata",
+  "getmetricstatistics",
+  "getdetector",
+  "getkeypolicy",
+  "getkeyrotationstatus",
+  "getebsencryptionbydefault",
+  "getcostandusage",
 ]);
-const READ_PREFIX = /^(get|list|describe|head|lookup|search|check|validate|estimate|preview|simulate|test)/;
 /** Writes routine enough to tag for a trusted source: a log group/stream, a dashboard, a key alias. */
 const ROUTINE_WRITES = new Set(["createloggroup", "createlogstream", "putdashboard", "createalias"]);
 const SINGLE_CALL_TYPES = new Set(["api", "api-call"]);
@@ -174,7 +211,8 @@ function routineCall(row: ForensicEvent, c: Canonical): boolean {
   const logging = c.loggingChange;
   if (logging) return !logging.failure && (logging.state === "enabled" || logging.state === "created");
   if (ROUTINE_WRITES.has(action)) return true;
-  return READ_PREFIX.test(action) && !SECRET_READS.has(action);
+  if (SAFE_GETS.has(action)) return true;
+  return METADATA_READ_PREFIX.test(action) && !UNSAFE_METADATA_READS.has(action);
 }
 
 /** The friendly mark a lineage row qualifies under, or null. */

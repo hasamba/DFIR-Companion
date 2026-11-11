@@ -236,6 +236,32 @@ describe("never-tag gate: a trusted source's high-impact actions stay untagged",
   });
 });
 
+describe("content-bearing reads are not routine (Codex code review)", () => {
+  it.each([
+    ["GetFunction20150331v2", "lambda"],
+    ["GetQueryResults", "logs"],
+    ["GetLogEvents", "logs"],
+    ["GetObject", "s3"],
+    ["GetRecords", "kinesis"],
+    ["LookupEvents", "cloudtrail"],
+    ["TestInvokeMethod", "apigateway"],
+    ["SearchResources", "resource-groups"],
+  ])("%s by the marked source is not tagged", (name, src) => {
+    const r = rowsOf([trustedRec(name, src, { readOnly: true })])[0];
+    expect(trustedMarkFor(r, ipMark), name).toBeNull();
+  });
+
+  it.each([
+    ["GetBucketVersioning", "s3"],
+    ["GetCallerIdentity", "sts"],
+    ["ListFunctions20150331", "lambda"],
+    ["DescribeInstances", "ec2"],
+  ])("the metadata read %s by the marked source is tagged", (name, src) => {
+    const r = rowsOf([trustedRec(name, src, { readOnly: true })])[0];
+    expect(trustedMarkFor(r, ipMark), name).not.toBeNull();
+  });
+});
+
 describe("matching by key and principal", () => {
   const read = rowsOf([trustedRec("ListBuckets", "s3", { readOnly: true })])[0];
 

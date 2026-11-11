@@ -55,14 +55,6 @@ export function registerIocAttributionRoutes(app: Express, ctx: RouteContext): v
     const actor = who && who.id !== "local" ? who.displayName : cleanActor(req.body?.actor);
     try {
       const { map, change } = await labels.set(req.params.id, value, raw, actor || "anonymous");
-      if (change.before !== change.after && (isFriendly(change.before) || isFriendly(change.after)))
-        await recordTrustedMark(
-          req.params.id,
-          value,
-          { before: change.before ?? null, after: change.after ?? null },
-          actor,
-          who?.id,
-        );
       if (change.before !== change.after) {
         void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
           category: "triage",
@@ -73,6 +65,25 @@ export function registerIocAttributionRoutes(app: Express, ctx: RouteContext): v
           targetId: value,
         });
       }
+      // A trusted-source transition owes a custody entry. An unchanged save re-checks the chain, so
+      // re-saving the same label repairs an entry a failed write left out (Codex code review).
+      const before = change.before ?? null;
+      const after = change.after ?? null;
+      const owed =
+        before !== after
+          ? isFriendly(before) || isFriendly(after)
+            ? before
+            : undefined
+          : await custodyOwed(req.params.id, value, after);
+      if (
+        owed !== undefined &&
+        !(await recordTrustedMark(req.params.id, value, { before: owed, after }, actor, who?.id))
+      )
+        return res.status(500).json({
+          error:
+            "The label was saved, but its custody entry could not be written. Save the same label again to retry.",
+          map,
+        });
       return res.status(200).json(map);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -98,17 +109,34 @@ export function registerIocAttributionRoutes(app: Express, ctx: RouteContext): v
     }
   });
 
-  /** Re-tag the case, then pin the mark in custody. A custody failure is logged, never thrown. */
+  /**
+   * For an unchanged save: the label custody last recorded for this value, when it differs from the
+   * current one (a write that failed earlier), or undefined when nothing is owed.
+   */
+  async function custodyOwed(
+    caseId: string,
+    value: string,
+    current: IocAttributionLabel | null,
+  ): Promise<IocAttributionLabel | null | undefined> {
+    if (!options.custodyStore) return undefined;
+    const path = `${TRUSTED_SOURCE_PATH_PREFIX}${value}`;
+    const last = (await options.custodyStore.load(caseId)).filter((r) => r.artifactPath === path).at(-1);
+    const recorded = (last?.trustedSource?.after ?? null) as IocAttributionLabel | null;
+    if (last ? recorded === current : !isFriendly(current)) return undefined;
+    return recorded;
+  }
+
+  /** Re-tag the case, then pin the mark in custody. False when the custody entry could not be written. */
   async function recordTrustedMark(
     caseId: string,
     value: string,
     change: { before: IocAttributionLabel | null; after: IocAttributionLabel | null },
     actor: string,
     actorId: string | undefined,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const deps = trustedSyncDeps(options, store, (m) => ctx.serverLogger.info(m));
     const { tagged } = deps ? await syncTrustedActivity(deps, caseId) : { tagged: 0 };
-    if (!options.custodyStore) return;
+    if (!options.custodyStore) return true;
     const readable = classifyMark(value, change.after ?? change.before ?? "ours");
     const trustedSource = { value, before: change.before, after: change.after, rowsTagged: tagged };
     const at = new Date().toISOString();
@@ -127,10 +155,12 @@ export function registerIocAttributionRoutes(app: Express, ctx: RouteContext): v
         trigger: `trusted-source mark ${change.before ?? "unset"} → ${change.after ?? "unset"}; ${tagged} forensic row(s) tagged trusted-activity`,
         trustedSource,
       });
+      return true;
     } catch (err) {
       ctx.serverLogger.error(
         `[ioc-attribution] case=${caseId} trusted mark on ${value} set, but its custody entry failed: ${(err as Error).message}`,
       );
+      return false;
     }
   }
 }
