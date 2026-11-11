@@ -35,7 +35,7 @@ import type { MappedEvent } from "./siemImport.js";
 import { getCI, str } from "./siemImport.js";
 import { eventData, eventId } from "./veloDetectionNoise.js";
 import { processGuid } from "./processAccess.js";
-import { appendRowNote } from "./derivedNote.js";
+import { appendRowNote, neutraliseRowNotes } from "./derivedNote.js";
 
 type Row = Record<string, unknown>;
 
@@ -136,7 +136,10 @@ export class ParentChildAccessLedger {
 
 function demote(m: MappedEvent): void {
   m.severity = "Info";
+  // Neutralise BEFORE the idempotence check: this runs ahead of the aggregator seam, so a forged
+  // marker in the row would otherwise read as "already noted" (#2574).
+  neutraliseRowNotes(m);
   if (!m.description.includes(OWN_CHILD_MARKER))
-    m.description = appendRowNote(m, OWN_CHILD_MARKER, OWN_CHILD_NOTE); // before aggregation (#2574)
+    m.description = appendRowNote(m, OWN_CHILD_MARKER, OWN_CHILD_NOTE);
   if (!m.aggKey.endsWith(OWN_CHILD_AGG_SUFFIX)) m.aggKey = `${m.aggKey}${OWN_CHILD_AGG_SUFFIX}`;
 }

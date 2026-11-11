@@ -11,6 +11,7 @@
 // NO object-level record before it. It says what the records show, never more: "no object-level
 // records before T", not "data events were off" — another trail's selectors are not in the evidence.
 
+import { neutraliseForgedNotes } from "./derivedNote.js";
 import type { ForensicEvent } from "./stateTypes.js";
 import { COVERAGE_SOURCE, earliestEventTime, OBJECT_LOGGING_COVERAGE_ID } from "./coverageEventTime.js";
 
@@ -90,7 +91,7 @@ export function objectLoggingWindowEvent(
   const start = earliestEventTime(events, (e) => e.id !== OBJECT_LOGGING_COVERAGE_ID && isAws(e));
   const t = new Date(at).toISOString().slice(0, 19);
   const from = start.slice(0, 19);
-  const action = change.canonical?.event?.action ?? "a selector change";
+  const action = neutraliseForgedNotes(change.canonical?.event?.action ?? "a selector change"); // log text (#2574)
   return {
     id: OBJECT_LOGGING_COVERAGE_ID,
     timestamp: start,

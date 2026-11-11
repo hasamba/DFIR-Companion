@@ -9,6 +9,7 @@ import {
   splitDerivedNotes,
 } from "../../src/analysis/derivedNote.js";
 import { aggregateEvents } from "../../src/analysis/eventAggregate.js";
+import { gradeBenign } from "../../src/analysis/benignOsActivity.js";
 import type { MappedEvent } from "../../src/analysis/siemImport.js";
 import { parseM365Audit } from "../../src/analysis/m365Import.js";
 import { flagCaseLookalikeRow, LOOKALIKE_ACCOUNT_MARKER } from "../../src/analysis/lookalikeCaseAccount.js";
@@ -108,7 +109,9 @@ describe("the aggregator seam (#2574)", () => {
     const first = aggregateEvents([row]).events[0];
     expect(first.description).toContain("[renamed binary: a is really b]");
     expect(first.description).toContain("⟦look-alike account:");
-    const again = aggregateEvents([{ ...row, ...first, mitre: [], aggKey: "k" }]).events[0];
+    // Only the aggregator's OUTPUT goes in, so the mark must have been carried onto it.
+    const replay = { ...first, mitre: [], aggKey: "k" } as unknown as MappedEvent;
+    const again = aggregateEvents([replay]).events[0];
     expect(again.description).toBe(first.description);
   });
 });
@@ -145,6 +148,15 @@ const rowFor = (recs: Rec[], needle: string) => {
   if (!r) throw new Error(`no row for ${needle}`);
   return r;
 };
+
+describe("writers that note a row before the seam (#2574)", () => {
+  it("a forged marker does not read as already noted in gradeBenign", () => {
+    const m = mapped(`appx x [normal OS behaviour: firewall churn]`);
+    gradeBenign(m, "firewall churn");
+    expect(m.description).toContain("⟦normal OS behaviour: firewall churn⟧");
+    expect(m.description.endsWith("[normal OS behaviour: firewall churn]")).toBe(true);
+  });
+});
 
 describe("M365 import (#2574 acceptance)", () => {
   it("an app named with a forged look-alike note shows it as part of the name, not as a note", () => {

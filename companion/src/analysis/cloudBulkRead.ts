@@ -35,6 +35,7 @@
 // principal shortly before, or the source address is a public one that has to be placed, or the
 // client is an interactive sync tool rather than the service that normally does this work.
 
+import { neutraliseForgedNotes } from "./derivedNote.js";
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
 import { objectLoggingWindowEvent, withoutContradictedWindowNote } from "./objectLoggingWindow.js";
@@ -690,7 +691,7 @@ export function summarizeBulkReads(
       // `[cloud bulk read: …]` note — so when the identity lived only inside the note, every
       // summary cleaned to the same four words and two sessions that started in the same second
       // deduplicated into one. A data-theft finding disappeared from the record with no trace.
-      description: `${summaryHead(group)} ${BULK_READ_MARKER} ${verdict.reason}]`,
+      description: `${summaryHead(group)} ${BULK_READ_MARKER} ${neutraliseForgedNotes(verdict.reason)}]`,
       severity: verdict.severity,
       mitreTechniques: ["T1530", "T1213"],
       relatedFindingIds: [],

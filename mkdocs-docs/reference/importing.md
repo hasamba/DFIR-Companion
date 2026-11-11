@@ -187,8 +187,9 @@ shape makes it read exactly as the target, so names like Arnold, Stearns or Armi
 Exact brand words ("Microsoft Graph"), Microsoft first-party apps (matched by app id) and failed
 operations are not flagged.
 
-Only DFIR Companion writes notes in square brackets. If an imported name (an account, app, inbox
-rule or file) contains text that looks like one of these notes, the brackets in the name are shown
+An imported name (an account, app, inbox rule or file) cannot pass itself off as a note from an
+analysis rule. If the name contains text shaped like a note that DFIR Companion adds after a rule
+fires (such as `[look-alike account: …]` or `[hides mail; …]`), the brackets in the name are shown
 as `⟦ ⟧`. For example, an app named `evil [look-alike account: "a" looks like "b"]` shows as
 `evil ⟦look-alike account: "a" looks like "b"⟧`. That text is part of the name. It is not a note,
 it does not change the grade, and it does not stop the real note from being added.
