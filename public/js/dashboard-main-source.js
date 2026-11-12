@@ -64,7 +64,46 @@
     );
   }
 
+  // #2594: the playbook button names the main source's language. VQL text is today's, unchanged.
+  const VQL_BUTTON = {
+    text: "✨ Suggest Velociraptor hunts",
+    title:
+      "Ask the AI to suggest a Velociraptor hunt for each endpoint-related task — a fleet hunt, or a single-endpoint collection when the task is tied to one host (review the VQL before deploying)",
+  };
+  const BUTTON_WORDS = { cql: "Falcon", "kql-device": "KQL", "kql-cloud": "KQL", esql: "ES|QL", spl: "SPL" };
+
+  function playbookHuntButton(ms) {
+    const lang = ms && ms.language && ms.language.language;
+    if (lang && BUTTON_WORDS[lang])
+      return {
+        text: `✨ Suggest ${BUTTON_WORDS[lang]} queries`,
+        title: `Ask the AI to write ${ms.language.label || LANGUAGE_LABELS[lang]} queries for the open playbook tasks they apply to — copy-ready; review each query before you run it`,
+      };
+    if (ms && ms.effective === "mixed")
+      return {
+        text: "✨ Suggest hunts",
+        title:
+          "Mixed evidence: each task uses the language of its finding's evidence; a task with no finding evidence falls back to Velociraptor VQL. Review each query before you run it.",
+      };
+    if (ms && ms.effective === "cloud-other")
+      return {
+        text: "✨ Suggest hunts",
+        title:
+          "Other cloud logs have no hunt query language yet, so this button writes no queries for them — use the Query Translator instead.",
+      };
+    return VQL_BUTTON;
+  }
+
+  function renderPlaybookHuntButton() {
+    const btn = document.getElementById("pbHuntBtn");
+    if (!btn) return;
+    const b = playbookHuntButton(msState);
+    btn.textContent = b.text;
+    btn.title = b.title;
+  }
+
   function renderMainSourceLine() {
+    renderPlaybookHuntButton();
     const el = document.getElementById("mainSourceLine");
     if (!el) return;
     if (!msState) {
@@ -257,6 +296,7 @@
   }
 
   window.loadMainSource = loadMainSource;
+  window.playbookHuntButton = playbookHuntButton;
   window.renderLanguageHunts = renderLanguageHunts;
   window.setPlaybookLanguageHunts = setPlaybookLanguageHunts;
   window.playbookLanguageHuntsHtml = playbookLanguageHuntsHtml;

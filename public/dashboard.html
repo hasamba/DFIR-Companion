@@ -1017,6 +1017,20 @@
       <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Velociraptor / IRIS / Timesketch servers (optional)
         <select id="ncServerSet" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;"></select></label>
       <div data-safe-style="color:var(--text-muted); font-size:11px; margin:-4px 0 8px;">Uses your default set. Choose a different saved set, or create a new one for this investigation.</div>
+      <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Main evidence source (optional)
+        <select id="ncMainSource" data-safe-style="width:100%; max-width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;">
+          <option value="">Automatic (from evidence)</option>
+          <option value="velociraptor">Velociraptor</option>
+          <option value="crowdstrike">CrowdStrike Falcon</option>
+          <option value="defender">Microsoft Defender / Sentinel</option>
+          <option value="m365">Microsoft 365 / Entra ID</option>
+          <option value="elastic">Elastic</option>
+          <option value="splunk">Splunk</option>
+          <option value="cloud-other">Other cloud logs (AWS, GCP, Azure, Okta, Google Workspace)</option>
+          <option value="host-other">Host tools with no query language</option>
+          <option value="mixed">Mixed (per finding)</option>
+        </select></label>
+      <div data-safe-style="color:var(--text-muted); font-size:11px; margin:-4px 0 8px;">Sets the query language for hunts before any evidence arrives. Change it later in Suggested Fleet Hunts.</div>
       <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Incident type (optional)
         <select id="ncTemplate" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;">
           <option value="">No incident type — blank case</option>

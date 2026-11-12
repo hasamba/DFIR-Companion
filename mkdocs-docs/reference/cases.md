@@ -4,6 +4,14 @@
 
 Toolbar → **+ New case**. Fill in Case ID, name, and investigator.
 
+**Main evidence source** (optional, under the servers picker) sets the query language for hunts
+before any evidence arrives. Leave it on **Automatic (from evidence)** and the companion picks the
+source from the imported files, as before. Pick a source (for example **Splunk**) or **Mixed (per
+finding)** and the case starts with that choice. The Suggested Fleet Hunts panel and the playbook
+hunt button then use its language at once. Change it later with the **Change main source**
+dropdown in the Suggested Fleet Hunts panel. See
+[Dashboard → Suggested Fleet Hunts](dashboard.md).
+
 Cases live in the `cases/` folder (location configured by `DFIR_CASES_ROOT`).
 
 ## Opening a Case

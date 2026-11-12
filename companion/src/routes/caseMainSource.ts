@@ -39,6 +39,35 @@ function view(result: MainSourceResult): MainSourceView {
   };
 }
 
+/**
+ * #2594: store the main source picked in the New case dialog. The body was validated before the case
+ * was created, so a bad value never gets here. Runs after the case exists — a failed save is
+ * returned as a message for the 201 answer instead of a 500, so the analyst is not told a case
+ * that exists failed to create.
+ */
+export async function saveCreationMainSource(
+  ctx: RouteContext,
+  caseId: string,
+  raw: unknown,
+): Promise<string | undefined> {
+  const parsed = parseMainSourceOverride(raw);
+  if (!parsed.ok || parsed.value === null) return undefined;
+  try {
+    await new CaseMainSourceStore(ctx.store).save(caseId, parsed.value);
+    void logActivity(ctx.options.activityLogStore, ctx.options.onActivity, caseId, {
+      category: "settings",
+      action: "main-source",
+      detail: `Main evidence source set to ${parsed.value} at case creation`,
+    });
+    return undefined;
+  } catch (err) {
+    ctx.serverLogger.warn(
+      `[main-source] case ${caseId}: could not save the picked main source — ${(err as Error).message}`,
+    );
+    return "the case was created, but its main evidence source was not saved — set it in Suggested Fleet Hunts";
+  }
+}
+
 export function registerCaseMainSourceRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
   const store = new CaseMainSourceStore(ctx.store);
