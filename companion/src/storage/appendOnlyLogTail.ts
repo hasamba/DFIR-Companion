@@ -16,7 +16,9 @@
  * bytes. It is used only while the file still carries exactly that fingerprint. The one change it
  * follows is this process's own append, made through append() under the same per-log lock: the bytes
  * are known, the file is re-checked right after the write (same inode, grown by exactly those bytes,
- * those bytes at its end), and only then is the snapshot moved forward. ANY other change — an append
+ * those bytes at its end, the old content's SHA-256 unchanged, no move while that was hashed), and
+ * only then is the snapshot moved forward. The prefix hash is the one O(log size) step left: a hash
+ * per own append, not a parse per read. ANY other change — an append
  * by another writer, a truncation, an in-place edit anywhere in the file (it moves mtime and ctime;
  * restoring mtime with utimes moves ctime), a replacement (new inode), a delete — leaves a file whose
  * fingerprint no snapshot holds, so the next read is the old full read, with its answer or its error
@@ -30,6 +32,7 @@
  * forges ctime, which needs the system clock moved. The periodic full read bounds that to
  * FULL_REREAD_MAX_AGE_MS; for custody, verifyChain detects such an edit independently.
  */
+import { createHash, type Hash } from "node:crypto";
 import { open, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { StateLock } from "../analysis/stateLock.js";
@@ -78,6 +81,8 @@ interface Snapshot extends Fingerprint {
   fold: LogFold<unknown>;
   /** The file's last ≤ TAIL_WINDOW_BYTES bytes at `size`. */
   tail: Buffer;
+  /** SHA-256 state over every byte of the file at `size`; an own append verifies the prefix with it. */
+  digest: Hash;
   /** Count of "\n" in the file — the raw index the next appended line starts at. */
   newlines: number;
   state: unknown;
@@ -123,7 +128,13 @@ export class AppendOnlyLogTail {
       if (!after || after.dev !== before!.dev || after.ino !== before!.ino) return;
       if (after.size !== before!.size + added.length) return;
       if (!(await bytesAt(path, after.size - added.length, added))) return;
-      for (const snap of current) {
+      // The prefix itself, not just its length: a same-length rewrite that landed while we wrote
+      // would otherwise be adopted under the new mtime/ctime. A second stat proves nothing moved
+      // while the prefix was hashed.
+      const prefix = await sha256Of(path, before!.size);
+      if (!sameFile(after, (await fingerprintAt(path)) ?? before!)) return;
+      const verified = current.filter((snap) => snap.digest.copy().digest("hex") === prefix);
+      for (const snap of verified) {
         const next = advance(snap, after, added);
         if (next) this.snapshots.set(keyOf(snap.fold.id, path), next);
       }
@@ -198,6 +209,7 @@ export class AppendOnlyLogTail {
         path,
         fold,
         tail: lastBytes(bytes),
+        digest: createHash("sha256").update(bytes),
         newlines: parts.length - 1,
         state,
         lineCount,
@@ -250,6 +262,7 @@ function advance(snap: Snapshot, after: Fingerprint, added: Buffer): Snapshot | 
     ...snap,
     ...after,
     tail: lastBytes(Buffer.concat([snap.tail, added])),
+    digest: snap.digest.copy().update(added),
     newlines: snap.newlines + parts.length - 1,
     state,
     lineCount,
@@ -279,6 +292,24 @@ async function tailStillThere(handle: FileHandle, snap: Snapshot): Promise<boole
   if (snap.tail.length === 0) return true;
   const now = await readRange(handle, snap.size - snap.tail.length, snap.tail.length);
   return now.equals(snap.tail);
+}
+
+/** SHA-256 of the file's first `length` bytes, read in chunks. */
+async function sha256Of(path: string, length: number): Promise<string> {
+  const hash = createHash("sha256");
+  const handle = await open(path, "r");
+  try {
+    const chunk = Buffer.alloc(1 << 20);
+    for (let position = 0; position < length;) {
+      const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, length - position), position);
+      if (bytesRead === 0) break;
+      hash.update(chunk.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+  } finally {
+    await handle.close();
+  }
+  return hash.digest("hex");
 }
 
 async function bytesAt(path: string, position: number, expected: Buffer): Promise<boolean> {

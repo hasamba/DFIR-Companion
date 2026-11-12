@@ -197,6 +197,30 @@ describe("AppendOnlyLogTail (#2584)", () => {
     expect(r.state.max).toBe(70);
   });
 
+  it("drops the snapshot when an early line is rewritten to the same length during an own append", async () => {
+    await writeFile(path, bigLog(40));
+    await readBoth();
+    await tail.append(path, line(41), async () => {
+      const text = await readFile(path, "utf8");
+      await writeFile(path, text.replace('{"seq":2,', '{"seq":900,').replace(',"pad":"pp', ',"pad":"'));
+      await appendFile(path, line(41));
+    });
+    const r = await readBoth();
+    expect(r.read).toBe("full");
+    expect(r.state.max).toBe(900);
+  });
+
+  it("keeps failing closed when an early line is corrupted during an own append", async () => {
+    await writeFile(path, bigLog(40));
+    await readBoth();
+    await tail.append(path, line(41), async () => {
+      const text = await readFile(path, "utf8");
+      await writeFile(path, text.replace('{"seq":2,', '{"seq"!2,'));
+      await appendFile(path, line(41));
+    });
+    await expect(tail.read(scope, path, MAX_SEQ)).rejects.toThrow(/bad line 2/);
+  });
+
   it("drops the snapshot when the file changed before an own append", async () => {
     await writeFile(path, line(1));
     await readBoth();
