@@ -71,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Cloud rows show the deciding value** — Set-Mailbox audit age limit and audit switch (zero or off is High), security-group ingress port and source on its own row (both request forms), and the RDS snapshot-share and Lambda permission principal, with three new graded rules (closes #2605)
+- **No dwell or log-tampering findings across separate cloud accounts or tenants** — a quiet interval between activity in different AWS accounts or M365 tenants is a Low boundary with no T1070, not a dwell finding (closes #2606)
+- **Between-wave cloud boundaries labelled as boundaries** — the gap panel, the report and the AI gap prompt call them separate accounts/tenants, not dwell or complete silence (closes #2610)
+- **Synthesis fallback notice** — the Findings card, the run record and the report footnote say when the fallback model wrote a synthesis after a safety-filter stop (closes #2603)
+- **T1552.005 on instance-credential use** — instance-role calls from the same address that sent the remote-access request carry T1552.005, without changing the grade (part of #2607)
+- **Offensive-tool sign-ins and MFA disable from UAL exports** — UAL sign-in rows show the user agent so AzureHound and similar tools grade Medium, and `Disable Strong Authentication` is High (T1556.006) (closes #2609)
+- **Snapshot and bucket shares to different recipients stay separate** — EBS snapshot and S3 policy/ACL changes to different accounts no longer fold into one row (closes #2611)
 - **Suggested Fleet Hunts fits a phone screen** — the "Change main source" dropdown no longer pushes the analyst and hunt-prep views sideways at 375px (closes #2595)
 - **Large drops keep a flat per-file import time** — numbering and the custody chain no longer re-read their whole logs per file (any outside change still forces a full re-read), and cloud-ledger lookups use an index; SANS 504 lab: drop folder 311 s → 179 s, Import-from-path 1,005 s → 860 s, last/first 10% 1.42× on both (closes #2584)
 - **Large drops no longer slow down file by file on the duplicate-host check** — the "Analysis on hold" check runs once a burst of imports goes quiet (at most every 60 s), not one whole super-timeline scan per file (part of #2584)
