@@ -22,6 +22,12 @@ import { isMentionedHash, mentionedHashNote } from "./iocMentionedHash.js";
 import { isMentionedIoc, mentionedNote } from "./iocMentioned.js";
 import { commandSeatCap, type CommandSeat } from "./ai/synthCommandSeats.js";
 import {
+  missingOperations,
+  operationKeys,
+  operationShare,
+  repeatedCloudAnchors,
+} from "./synthSelectOperation.js";
+import {
   capDisclosure,
   rankCompromisedAssets,
   rankVerdictLines,
@@ -223,8 +229,8 @@ export function selectSynthesisEventsAnnotated(
   const keepOneAnchor = anchorCount > 0 && !seatOptions.anchorShown ? 1 : 0;
   const reserveLimit = Math.min(seatOptions.cap ?? commandSeatCap(max), max - keepOneAnchor);
   // Every anchor is kept unless this overflows, so a seat an anchor shadows is not needed then.
-  const unshadowed = seats.filter((s) => !s.shadowedBy.some((id) => classOf.has(id)));
-  const reserve = Math.min(reserveLimit, unshadowed.length);
+  let unshadowed = seats.filter((s) => !s.shadowedBy.some((id) => classOf.has(id)));
+  let reserve = Math.min(reserveLimit, unshadowed.length);
 
   // Overflow: anchors alone exceed the budget, or leave no room for the command reserve. Keep the
   // severest anchors, but RESERVE part of the cap for the earliest events so the model always sees where the activity began. Within the same
@@ -241,16 +247,12 @@ export function selectSynthesisEventsAnnotated(
       keepOneAnchor,
       anchorEvents.length > max ? max - earliestReserve - reserve : max - reserve,
     );
-    const keptAnchors = [...anchorEvents]
-      .sort(
-        (a, b) =>
-          SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
-          (rarityOf ? rarityOf(b) - rarityOf(a) : 0) ||
-          byEventTime(a, b),
-      )
-      .slice(0, anchorBudget);
+    const keptAnchors = [...anchorEvents].sort(anchorRank(rarityOf)).slice(0, anchorBudget);
 
     const kept = new Map<string, SelectionClass>(keptAnchors.map((e) => [e.id, "anchor" as const]));
+    // #2585: a missing cloud operation takes the seat of a REPEATED cloud anchor (its operation keeps
+    // another seat), lowest-ranked first — before the command seats, which read `kept` for shadowing.
+    swapInOperations(events, keptAnchors, kept, max, seatOptions.shownOperations);
     // A trimmed anchor no longer shows its command, so a seat it shadowed is needed again; such a seat
     // takes an earliest-reserve slot, never an anchor's.
     let seated = 0;
@@ -273,10 +275,20 @@ export function selectSynthesisEventsAnnotated(
     return { events: trimmed, classOf: kept, counts, omitted: events.length - trimmed.length };
   }
 
+  // #2585: room for one row per distinct cloud operation the anchors do not show. Just under the
+  // overflow threshold that room comes out of REPEATED cloud anchors, as it does in overflow; a
+  // displaced anchor may have shadowed a command, so the command reserve is recomputed after.
+  const opRoom = reserveOperationRoom(events, classOf, max, reserve, rarityOf, seatOptions.shownOperations);
+  if (opRoom.displaced) {
+    unshadowed = seats.filter((s) => !s.shadowedBy.some((id) => classOf.has(id)));
+    reserve = Math.min(reserveLimit, unshadowed.length);
+  }
+  const opReserve = Math.min(opRoom.want, Math.max(0, max - classOf.size - reserve));
+
   // GUARANTEED 2: earliest events — initial-access context (guarded against the cap, and leaving
-  // the command reserve free).
+  // the command and cloud-operation reserves free).
   for (const e of byTime.slice(0, EARLIEST_KEEP)) {
-    if (capacityLeft() <= reserve) break;
+    if (capacityLeft() <= reserve + opReserve) break;
     claim(e.id, "earliest");
   }
 
@@ -288,6 +300,17 @@ export function selectSynthesisEventsAnnotated(
     if (classOf.has(s.event.id)) continue;
     classOf.set(s.event.id, "command");
     commandSeated++;
+  }
+
+  // RESERVED (#2585): one row per distinct cloud operation still unseen (an earliest or command row
+  // may already show one). Before the fractional fills, which then split what is left.
+  if (opRoom.want > 0) {
+    const shown = operationKeys(events.filter((e) => classOf.has(e.id)));
+    const skip = (key: string): boolean => shown.has(key) || !!seatOptions.shownOperations?.has(key);
+    for (const e of missingOperations(events, skip).slice(0, opRoom.want)) {
+      if (capacityLeft() <= 0) break;
+      claim(e.id, "operation");
+    }
   }
 
   const remaining = Math.max(0, max - classOf.size);
@@ -394,6 +417,56 @@ export interface CommandSeatOptions {
   cap?: number;
   /** The caller already shows a Critical/High row outside this selection (a pinned row). */
   anchorShown?: boolean;
+  /** Cloud operation keys the caller already shows outside this selection (pinned rows, #2585). */
+  shownOperations?: ReadonlySet<string>;
+}
+
+// Overflow rank of the anchors: severest, then rarest, then earliest. The tail is dropped first.
+function anchorRank(rarityOf?: (e: ForensicEvent) => number): (a: ForensicEvent, b: ForensicEvent) => number {
+  return (a, b) =>
+    SEV_RANK[a.severity] - SEV_RANK[b.severity] ||
+    (rarityOf ? rarityOf(b) - rarityOf(a) : 0) ||
+    byEventTime(a, b);
+}
+
+// Overflow (#2585): swap the lowest-ranked REPEATED cloud anchors for the cloud operations no kept
+// row shows, one for one, up to the operation share. Endpoint anchors are never repeats. The kept
+// size does not change, so the command seats and earliest reserve are filled exactly as before.
+function swapInOperations(
+  events: readonly ForensicEvent[],
+  keptAnchors: readonly ForensicEvent[],
+  kept: Map<string, SelectionClass>,
+  max: number,
+  shownOperations?: ReadonlySet<string>,
+): void {
+  const shown = operationKeys(keptAnchors);
+  const missing = missingOperations(events, (k) => shown.has(k) || !!shownOperations?.has(k));
+  const out = repeatedCloudAnchors(keptAnchors, operationShare(max, missing.length));
+  out.forEach((e, i) => {
+    kept.delete(e.id);
+    kept.set(missing[i].id, "operation");
+  });
+}
+
+// Normal path (#2585): how many operation seats to hold, and — when the anchors leave less free room
+// than that — un-claim that many REPEATED cloud anchors (lowest-ranked first). Mutates `classOf`.
+function reserveOperationRoom(
+  events: readonly ForensicEvent[],
+  classOf: Map<string, SelectionClass>,
+  max: number,
+  commandReserve: number,
+  rarityOf?: (e: ForensicEvent) => number,
+  shownOperations?: ReadonlySet<string>,
+): { want: number; displaced: boolean } {
+  const anchors = events.filter((e) => classOf.get(e.id) === "anchor");
+  const shown = operationKeys(anchors);
+  const missing = missingOperations(events, (k) => shown.has(k) || !!shownOperations?.has(k));
+  const want = operationShare(max, missing.length);
+  const free = max - classOf.size - commandReserve;
+  if (want <= free) return { want, displaced: false };
+  const out = repeatedCloudAnchors([...anchors].sort(anchorRank(rarityOf)), want - Math.max(0, free));
+  for (const e of out) classOf.delete(e.id);
+  return { want, displaced: out.length > 0 };
 }
 
 // The command seats that can still be reserved: rows of THIS selection's input, not already anchors,

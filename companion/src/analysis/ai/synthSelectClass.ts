@@ -1,7 +1,8 @@
 /**
  * Why an event earned a synthesis seat. "anchor" = Critical/High verdict; "earliest" = initial-access
  * context; "command" = a reserved seat for a quiet session command (#1622); "account" = a reserved seat
- * for an account logon (#2014), which the prompt builder relabels from "command" after selection; the
+ * for an account logon (#2014), which the prompt builder relabels from "command" after selection;
+ * "operation" = a reserved seat for a distinct cloud audit operation no other seat shows (#2585); the
  * rest are the behavioral fills. Exposed (via the annotated selection) so the dashboard can show the
  * analyst what CLASSES of evidence the model actually saw.
  */
@@ -10,6 +11,7 @@ export type SelectionClass =
   | "earliest"
   | "command"
   | "account"
+  | "operation"
   | "anchor_context"
   | "corroborated"
   | "technique"
@@ -22,6 +24,7 @@ export function emptyCounts(): Record<SelectionClass, number> {
     earliest: 0,
     command: 0,
     account: 0,
+    operation: 0,
     anchor_context: 0,
     corroborated: 0,
     technique: 0,

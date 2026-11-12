@@ -283,6 +283,31 @@ describe("coverageLabel", () => {
   });
 });
 
+describe("cloud operations not sent (#2585)", () => {
+  const base = {
+    totalEvents: 700,
+    inWindow: 700,
+    scoped: 700,
+    considered: 600,
+    omittedHighSeverity: 40,
+    promptTokensEstimate: 50_000,
+  };
+
+  it("names the distinct cloud operations the model was not shown", () => {
+    const c = buildSynthesisCoverage({ ...base, omittedCloudOperations: 4 });
+    expect(c.omittedCloudOperations).toBe(4);
+    expect(coverageLabel(c)).toContain("4 cloud operations not sent to the AI");
+    expect(coverageLabel(buildSynthesisCoverage({ ...base, omittedCloudOperations: 1 }))).toContain(
+      "1 cloud operation not sent to the AI",
+    );
+  });
+
+  it("says nothing when every operation was sent, or the caller predates the count", () => {
+    expect(coverageLabel(buildSynthesisCoverage(base))).not.toMatch(/cloud operation/);
+    expect(buildSynthesisCoverage(base).omittedCloudOperations).toBe(0);
+  });
+});
+
 describe("coverage with grouped detections", () => {
   it("counts grouped events as considered and names the grouping in the label", () => {
     const c = buildSynthesisCoverage({

@@ -42,6 +42,12 @@ describe("evidence mix labels (#1586)", () => {
     );
   });
 
+  it("names the reserved cloud-operation seats (#2585)", async () => {
+    expect(mix(await labels(), { anchor: 24, operation: 5, spread: 9 })).toBe(
+      "24 anchors · 5 cloud operations · 9 spread",
+    );
+  });
+
   it("names the reserved account-logon seats (#2014)", async () => {
     expect(mix(await labels(), { anchor: 24, command: 3, account: 8 })).toBe(
       "24 anchors · 3 session commands · 8 account logons",

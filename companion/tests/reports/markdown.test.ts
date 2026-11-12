@@ -1018,6 +1018,7 @@ describe("renderMarkdownReport", () => {
       omittedScope: 0,
       omittedHighSeverity: 8,
       omittedInfo: 0,
+      omittedCloudOperations: 3,
       groupEntries: 0,
       groupedEvents: 0,
       promptTokensEstimate: 61000,
@@ -1040,6 +1041,7 @@ describe("renderMarkdownReport", () => {
       expect(md).toContain("### 3.4 Synthesis coverage");
       expect(md).toContain("considered 287 of 412");
       expect(md).toContain("safety-net backfill");
+      expect(md).toContain("3 cloud operations not sent to the AI"); // #2585
     });
 
     it("omits the coverage section by default (no snapshot passed)", () => {
