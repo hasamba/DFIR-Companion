@@ -16,7 +16,7 @@
  * bytes. It is used only while the file still carries exactly that fingerprint. The one change it
  * follows is this process's own append, made through append() under the same per-log lock: the bytes
  * are known, the file is re-checked right after the write (same inode, grown by exactly those bytes,
- * those bytes at its end, the old content's SHA-256 unchanged, no move while that was hashed), and
+ * those bytes at its end, the old content's BLAKE2b digest unchanged, no move while that was hashed), and
  * only then is the snapshot moved forward. The prefix hash is the one O(log size) step left: a hash
  * per own append, not a parse per read. ANY other change — an append
  * by another writer, a truncation, an in-place edit anywhere in the file (it moves mtime and ctime;
@@ -39,6 +39,13 @@ import { StateLock } from "../analysis/stateLock.js";
 
 /** A snapshot older than this (since its full read) is not used; the next read is a full one. */
 export const FULL_REREAD_MAX_AGE_MS = 30_000;
+
+/**
+ * The digest an own append checks the log's old content against. BLAKE2b: collision-resistant like
+ * SHA-256 and about twice as fast here (no SHA extensions in OpenSSL's path on every CPU) — it runs
+ * over the whole log once per own append, the one step that still grows with the log.
+ */
+const PREFIX_DIGEST = "blake2b512";
 
 /** How many of the file's last bytes a snapshot keeps and re-checks before every use. */
 const TAIL_WINDOW_BYTES = 4096;
@@ -81,7 +88,7 @@ interface Snapshot extends Fingerprint {
   fold: LogFold<unknown>;
   /** The file's last ≤ TAIL_WINDOW_BYTES bytes at `size`. */
   tail: Buffer;
-  /** SHA-256 state over every byte of the file at `size`; an own append verifies the prefix with it. */
+  /** BLAKE2b state over every byte of the file at `size`; an own append verifies the prefix with it. */
   digest: Hash;
   /** Count of "\n" in the file — the raw index the next appended line starts at. */
   newlines: number;
@@ -131,7 +138,7 @@ export class AppendOnlyLogTail {
       // The prefix itself, not just its length: a same-length rewrite that landed while we wrote
       // would otherwise be adopted under the new mtime/ctime. A second stat proves nothing moved
       // while the prefix was hashed.
-      const prefix = await sha256Of(path, before!.size);
+      const prefix = await digestOf(path, before!.size);
       if (!sameFile(after, (await fingerprintAt(path)) ?? before!)) return;
       const verified = current.filter((snap) => snap.digest.copy().digest("hex") === prefix);
       for (const snap of verified) {
@@ -209,7 +216,7 @@ export class AppendOnlyLogTail {
         path,
         fold,
         tail: lastBytes(bytes),
-        digest: createHash("sha256").update(bytes),
+        digest: createHash(PREFIX_DIGEST).update(bytes),
         newlines: parts.length - 1,
         state,
         lineCount,
@@ -294,9 +301,9 @@ async function tailStillThere(handle: FileHandle, snap: Snapshot): Promise<boole
   return now.equals(snap.tail);
 }
 
-/** SHA-256 of the file's first `length` bytes, read in chunks. */
-async function sha256Of(path: string, length: number): Promise<string> {
-  const hash = createHash("sha256");
+/** The PREFIX_DIGEST of the file's first `length` bytes, read in chunks. */
+async function digestOf(path: string, length: number): Promise<string> {
+  const hash = createHash(PREFIX_DIGEST);
   const handle = await open(path, "r");
   try {
     const chunk = Buffer.alloc(1 << 20);
