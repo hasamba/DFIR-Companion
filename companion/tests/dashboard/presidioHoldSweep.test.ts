@@ -116,12 +116,14 @@ describe("a held AI call reads as a hold on screen (#1782)", () => {
   });
 
   it("fleet hunts: pressing again clears the old hold message while it thinks", async () => {
-    const { all, globals } = heldPage({
-      veloHuntSuggest: el(),
-      suggestHuntsMsg: el(),
-      suggestHuntsBtn: el(),
-    });
-    globals.fetch = () => new Promise(() => {}); // the second press is still waiting for the AI
+    const { all, globals } = heldPage(
+      {
+        veloHuntSuggest: el(),
+        suggestHuntsMsg: el(),
+        suggestHuntsBtn: el(),
+      },
+      { fetch: () => new Promise(() => {}) },
+    ); // the second press is still waiting for the AI
     all.veloHuntSuggest.innerHTML = `<div class="vhs-empty">Hunt suggestions held for Presidio approval — review in Anonymization</div>`;
     const api = loadDashboardModule<{ doSuggestHunts: () => void }>(
       "dashboard-hunts-jumps.js",
@@ -134,12 +136,14 @@ describe("a held AI call reads as a hold on screen (#1782)", () => {
   });
 
   it("fleet hunts: pressing again keeps hunts already on screen while it thinks", async () => {
-    const { all, globals } = heldPage({
-      veloHuntSuggest: el(),
-      suggestHuntsMsg: el(),
-      suggestHuntsBtn: el(),
-    });
-    globals.fetch = () => new Promise(() => {});
+    const { all, globals } = heldPage(
+      {
+        veloHuntSuggest: el(),
+        suggestHuntsMsg: el(),
+        suggestHuntsBtn: el(),
+      },
+      { fetch: () => new Promise(() => {}) },
+    );
     all.veloHuntSuggest.innerHTML = `<div class="vhs-card">a hunt</div>`;
     const api = loadDashboardModule<{ doSuggestHunts: () => void }>(
       "dashboard-hunts-jumps.js",
