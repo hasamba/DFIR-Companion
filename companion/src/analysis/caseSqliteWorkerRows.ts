@@ -18,7 +18,25 @@
 // every forensic row an UPDATE or DELETE touches while an import section holds it armed. That is
 // what the undo checkpoint and "which old rows did this import touch" are computed from, instead of
 // a full copy of the case held for the whole import.
-export const ROWS_WORKER_SOURCE = String.raw`
+// #2584: "+kind" and "+ordinal" keep SQLite off the UNIQUE(kind, ordinal) index. With it, the planner
+// walked every row of the kind in ordinal order to skip the sort, so looking up a few ids cost one
+// pass over the kind (the cloud-record ledger: ~24,000 rows by the end of a 3,872-file drop, read
+// twice per file). Now the row id or the (kind, entity_id) index finds the rows, and only those are
+// sorted. tests/analysis/entityRowsPlan.test.ts pins both plans.
+export const ENTITY_ROWS_SQL = {
+  byId:
+    "SELECT row_id, version, payload FROM entities WHERE kind=? " +
+    "AND entity_id IN (SELECT value FROM json_each(?)) ORDER BY +ordinal",
+  byRowId:
+    "SELECT row_id, version, payload FROM entities WHERE +kind=? " +
+    "AND row_id IN (SELECT value FROM json_each(?)) ORDER BY +ordinal",
+};
+
+export const ROWS_WORKER_SOURCE =
+  "const ENTITY_ROWS_SQL = " +
+  JSON.stringify(ENTITY_ROWS_SQL) +
+  ";\n" +
+  String.raw`
 // One multi-path json_extract returns the three fields as a JSON array, so each keeps its JSON type
 // (a string stays a string, an object an object) exactly as a full load would parse it. A missing
 // field and a JSON null both read as null. Without keys, only ids and row ids are read. Array rows
@@ -120,15 +138,9 @@ function entityRows(dbPath, kind, ids, rowIds) {
   const db = openDatabase(dbPath);
   try {
     if (Array.isArray(rowIds)) {
-      return db.prepare(
-        "SELECT row_id, version, payload FROM entities WHERE kind=? " +
-        "AND row_id IN (SELECT value FROM json_each(?)) ORDER BY ordinal"
-      ).all(kind, JSON.stringify(rowIds)).map(toRow);
+      return db.prepare(ENTITY_ROWS_SQL.byRowId).all(kind, JSON.stringify(rowIds)).map(toRow);
     }
-    return db.prepare(
-      "SELECT row_id, version, payload FROM entities WHERE kind=? " +
-      "AND entity_id IN (SELECT value FROM json_each(?)) ORDER BY ordinal"
-    ).all(kind, JSON.stringify(Array.isArray(ids) ? ids : [])).map(toRow);
+    return db.prepare(ENTITY_ROWS_SQL.byId).all(kind, JSON.stringify(Array.isArray(ids) ? ids : [])).map(toRow);
   } finally {
     db.close();
   }

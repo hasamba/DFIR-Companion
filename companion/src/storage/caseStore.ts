@@ -14,17 +14,24 @@ import type { FileHandle } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
 import { copyHandleHashed, CopyContentChangedError } from "./handleCopy.js";
-import { ARCHIVED_DIRNAME, newCaseGeneration, runWhileCaseClosed, withCaseWrite } from "./caseIncarnation.js";
+import {
+  ARCHIVED_DIRNAME,
+  currentGeneration,
+  newCaseGeneration,
+  runWhileCaseClosed,
+  withCaseWrite,
+} from "./caseIncarnation.js";
 import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
 import { forgetCaseKeyedState } from "./caseKeyedState.js";
 import { SequenceAllocator, type SequenceKind } from "./sequenceAllocator.js";
-import { AuditLogNeedsRepairError } from "./auditLogNeedsRepairError.js";
+import { AppendOnlyLogTail } from "./appendOnlyLogTail.js";
+import { readLogTail, readMaxSequence, type LogScope } from "./auditLogFolds.js";
 import {
   CaseAlreadyExistsError,
   CaseArchivedError,
@@ -82,6 +89,9 @@ export type ArtifactStoredListener = (artifact: StoredArtifact) => void | Promis
 export class CaseStore {
   // Evidence sequence numbers per case+kind (#214, #1119, #2253) — see SequenceAllocator.
   private readonly sequences: SequenceAllocator;
+  // What the audit logs held at their last read, so an append-only log is not re-read whole on
+  // every import (#2584) — see AppendOnlyLogTail for when it falls back to the full read.
+  private readonly logTails: AppendOnlyLogTail;
 
   // Serializes the OCR index read-modify-write per case (see putOcrEntry).
   private readonly ocrLock = new StateLock();
@@ -110,10 +120,11 @@ export class CaseStore {
 
   constructor(
     private readonly root: string,
-    opts: { writeQuiesceMs?: number } = {},
+    opts: { writeQuiesceMs?: number; now?: () => number } = {},
   ) {
     this.writeQuiesceMs = opts.writeQuiesceMs ?? WRITE_QUIESCE_MS;
     this.sequences = new SequenceAllocator(root);
+    this.logTails = new AppendOnlyLogTail(opts.now);
   }
 
   get casesRoot(): string {
@@ -226,6 +237,7 @@ export class CaseStore {
   // CaseKeyedMap/Set under this root, clearing their timers) never carries into a same-id successor.
   private forgetInMemory(caseId: string): void {
     this.sequences.forget(caseId);
+    this.logTails.forget(caseId);
     forgetCaseKeyedState(this.root, caseId);
   }
 
@@ -580,46 +592,31 @@ export class CaseStore {
     );
   }
 
-  /**
-   * The next-safe recovery number for an append-only .jsonl audit log; 0 when the log does not
-   * exist yet. `Math.max(nonEmptyLineCount, highest value of `field` seen)` (#1119, Codex H1/M1):
-   *   - a reservation burned by a failed append wrote no line, so a line count alone under-reports
-   *     after a restart forgets the in-memory high-water mark — the field's own max recovers past it;
-   *   - historical custody rows predate `seq` (#231) and would count as 0 toward the max — the line
-   *     count still gives the right floor, exactly the pre-#1119 behavior for a fully legacy log.
-   * A NON-EMPTY line that fails to parse is a truncated/corrupted write and THROWS (a burned
-   * reservation and a corrupted append are indistinguishable from a count, so this fails closed and
-   * asks for repair rather than risk reissuing that row's number). A parsed row lacking `field` is not
-   * an error: it counts toward the line floor only. Throws AuditLogNeedsRepairError (#2252).
-   */
-  private async maxSequenceInLog(
+  /** The next-safe number recorded in an audit log — see readMaxSequence (#1119, #2252, #2584). */
+  private maxSequenceInLog(
     caseId: string,
     kind: SequenceKind,
     path: string,
     field: "sequenceNumber" | "seq",
   ): Promise<number> {
-    let raw: string;
-    try {
-      raw = await readFile(path, "utf8");
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
-      throw err;
-    }
-    let count = 0;
-    let maxField = 0;
-    for (const [index, line] of raw.split("\n").entries()) {
-      if (!line.trim()) continue;
-      count += 1;
-      let row: Record<string, unknown>;
-      try {
-        row = JSON.parse(line) as Record<string, unknown>;
-      } catch (err) {
-        throw new AuditLogNeedsRepairError(caseId, kind, basename(path), index + 1, (err as Error).message);
-      }
-      const value = row[field];
-      if (typeof value === "number" && Number.isFinite(value) && value > maxField) maxField = value;
-    }
-    return Math.max(count, maxField);
+    return readMaxSequence(this.logTails, this.logScope(caseId), kind, path, field);
+  }
+
+  /** An audit log's line count and last line, verbatim — see readLogTail (#2584). */
+  auditLogTail(caseId: string, path: string): Promise<{ lineCount: number; lastLine: string | null }> {
+    return readLogTail(this.logTails, this.logScope(caseId), path);
+  }
+
+  /**
+   * Append whole lines to an audit log (imports, custody) so its read snapshot follows this append
+   * instead of re-reading the log (#2584). The caller holds the case write admission (withCaseWrite).
+   */
+  appendAuditLines(path: string, text: string): Promise<void> {
+    return this.logTails.append(path, text, () => appendFile(path, text, "utf8"));
+  }
+
+  private logScope(caseId: string): LogScope {
+    return { caseId, generation: currentGeneration(this.root, caseId) };
   }
 
   // Persist an uploaded CSV verbatim as evidence (mkdirs for cases created before
@@ -706,7 +703,7 @@ export class CaseStore {
   async appendImport(caseId: string, metadata: ImportMetadata): Promise<ImportMetadata> {
     await this.withCaseWrite(this.importsLogPath(caseId), async () => {
       await mkdir(this.metadataDir(caseId), { recursive: true });
-      await appendFile(this.importsLogPath(caseId), JSON.stringify(metadata) + "\n", "utf8");
+      await this.appendAuditLines(this.importsLogPath(caseId), JSON.stringify(metadata) + "\n");
     });
     return metadata;
   }

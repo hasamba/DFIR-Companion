@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Large drops keep a flat per-file import time** — numbering and the custody chain no longer re-read their whole logs per file (any outside change still forces a full re-read), and cloud-ledger lookups use an index; SANS 504 lab: drop folder 311 s → 179 s, Import-from-path 1,005 s → 860 s, last/first 10% 1.42× on both (closes #2584)
 - **Large drops no longer slow down file by file on the duplicate-host check** — the "Analysis on hold" check runs once a burst of imports goes quiet (at most every 60 s), not one whole super-timeline scan per file (part of #2584)
 - **Imported names can no longer forge product notes** — note-shaped text in an account, app, rule or file name shows as ⟦ ⟧ and no longer hides a real note or blocks a grade raise (closes #2574)
 - **M365 BEC pairings join across batches and uploads** — delete-after-forward (Critical) and new-user-made-admin (High) are raised however the export was split into streamed batches or files (closes #2570)

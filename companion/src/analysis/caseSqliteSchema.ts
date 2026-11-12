@@ -172,6 +172,11 @@ export const CASE_SQLITE_SCHEMA_SQL =
   "CREATE INDEX IF NOT EXISTS entities_merge_order_idx ON entities(kind, ordinal, version);" +
   // #1874: each host's first row, for the host-duplicate check every import runs (hostScopeLoad.ts).
   "CREATE INDEX IF NOT EXISTS entities_host_order_idx ON entities(kind, host, ordinal);" +
+  // #2584: the cloud-record batches an Undo forgot (caseSqliteWorkerCloud.ts cloudInactiveBatches),
+  // read before every cloud import's ledger lookup — from this index, not by parsing one batch row
+  // per file the case ever imported.
+  "CREATE INDEX IF NOT EXISTS entities_cloud_inactive_idx ON entities(json_extract(payload, '$.inactive')) " +
+  "WHERE kind='cloudRecordBatch';" +
   // #1874: per-row facts (analysis/rowFacts.ts computes them; caseSqliteWorkerFacts.ts stores them)
   // for the forensic and IOC rows: the row's own digest and id, and for a forensic row its timeline
   // diff key, whether the deobfuscation pass would decode it and its file hashes. Computed from the

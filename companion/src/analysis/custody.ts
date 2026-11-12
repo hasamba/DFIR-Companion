@@ -1,4 +1,4 @@
-import { readFile, appendFile, mkdir, open, type FileHandle } from "node:fs/promises";
+import { readFile, mkdir, open, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join, relative, isAbsolute, sep } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -412,11 +412,13 @@ export class CustodyStore {
     if (inputs.length === 0) return [];
     const authenticated = authenticatedActorFields();
     return this.appendLock.runExclusive(caseId, async () => {
-      const lines = await this.storedLines(caseId);
+      // #2584: the line count and last line, not the whole log — reused while the file is exactly as
+      // the last read or our own append left it, read in full after any other change.
+      const tail = await this.cases.auditLogTail(caseId, this.path(caseId));
       // The chain links STORED lines, not resolved ones: a case-relative path is what is actually on
       // disk, so archiving the case (which rewrites no lines) leaves every link intact. Chaining the
       // resolved absolute form would break the whole chain the moment the folder moved.
-      let prevHash = lines.length === 0 ? "" : hashLine(lines[lines.length - 1]);
+      let prevHash = tail.lastLine === null ? "" : hashLine(tail.lastLine);
       const records: CustodyRecord[] = [];
       const pending: string[] = [];
 
@@ -444,16 +446,16 @@ export class CustodyStore {
       // is append-only, the old pin keeps mismatching (line missing, or a different line in its
       // place), so verifyChain reports the regression on every later append too. No pin, a pin of
       // 0, or a log ahead of its pin (a crash between the two writes) is not a regression.
-      const regressed = headRegression(await this.pinnedHead(caseId), lines) !== null;
+      const regressed = await this.regressedFromPin(caseId, tail);
 
       await this.cases.withCaseWrite(this.path(caseId), async () => {
         await mkdir(this.cases.metadataDir(caseId), { recursive: true }); // refused for a deleted case (#1855)
-        await appendFile(this.path(caseId), pending.join("\n") + "\n", "utf8");
+        await this.cases.appendAuditLines(this.path(caseId), pending.join("\n") + "\n");
         if (regressed) return;
         // Log FIRST, pin second: a crash between them leaves the log ahead of its pin, which
         // verifyChain treats as benign. The reverse order would read as a truncation (#2150).
         const head: CustodyChainHead = {
-          records: lines.length + pending.length,
+          records: tail.lineCount + pending.length,
           headSeq: records[records.length - 1].seq,
           headHash: prevHash,
         };
@@ -462,6 +464,24 @@ export class CustodyStore {
       // Callers get back the absolute form — the relative one never leaves this class.
       return records;
     });
+  }
+
+  /**
+   * headRegression() against the pinned head, without reading the whole log in the usual case
+   * (#2584): a pin written by the last append names exactly the log's last line, so the tail
+   * answers it. Any other pin (a log ahead of it after a crash, or a regression) is checked against
+   * the full log, exactly as before.
+   */
+  private async regressedFromPin(
+    caseId: string,
+    tail: { lineCount: number; lastLine: string | null },
+  ): Promise<boolean> {
+    const pin = await this.pinnedHead(caseId);
+    if (isChainHead(pin) && pin.records > 0 && pin.records === tail.lineCount && tail.lastLine !== null) {
+      return hashLine(tail.lastLine) !== pin.headHash;
+    }
+    if (pin === undefined || (isChainHead(pin) && pin.records === 0)) return false;
+    return headRegression(pin, await this.storedLines(caseId)) !== null;
   }
 
   /**
