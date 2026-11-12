@@ -38,7 +38,7 @@ import {
   readRuleParams,
   ruleGrade,
 } from "./exchangeInboxRules.js";
-import { auditConfigCmdlet } from "./exchangeAuditConfig.js";
+import { adminCmdlet } from "./exchangeAdminCmdlets.js";
 import { setMailboxCmdlet } from "./exchangeMailboxAudit.js";
 import type { OwnerDomains, Pairs } from "./exchangeAuditValues.js";
 
@@ -786,7 +786,7 @@ export function decodeExchangeRecord(rec: Row, index: number): ExchangeChange | 
       ruleCmdlet(c, p) ??
       setMailboxCmdlet(c, p, finish, forwardingCmdlet) ??
       permissionCmdlet(c, p) ??
-      auditConfigCmdlet(c, p, finish)
+      adminCmdlet(c, p, finish)
     );
   }
   if (c.recordType === 50 || (c.operation.toLowerCase() === "mailitemsaccessed" && c.recordType !== 19))

@@ -377,4 +377,127 @@ export const M365_SAMPLES: readonly DetectionSample[] = [
       ],
     }),
   ),
+  // #2604: labelled cloud detections the importer now grades from the record's own parameters.
+  m(
+    "ual.Set-MailboxAuditBypassAssociation.on",
+    "exchangeAdminCmdlets (#2604)",
+    exchange("Set-MailboxAuditBypassAssociation", [
+      ["AuditBypassEnabled", "True"],
+      ["Identity", "alex@example.test"],
+    ]),
+  ),
+  m(
+    "ual.Set-CASMailbox.popImap",
+    "exchangeAdminCmdlets (#2604)",
+    exchange("Set-CASMailbox", [
+      ["Identity", "lee@example.test"],
+      ["ImapEnabled", "True"],
+      ["PopEnabled", "True"],
+      ["OWAEnabled", "True"],
+    ]),
+  ),
+  m(
+    "ual.New-RoleGroup.impersonation",
+    "exchangeAdminCmdlets (#2604)",
+    exchange("New-RoleGroup", [
+      ["Name", "ImpersonationGroup"],
+      ["Roles", "ApplicationImpersonation"],
+      ["Members", "22222222-3333-4444-8555-666666666666"],
+    ]),
+  ),
+  m("ual.Remove-DlpCompliancePolicy", "m365ComplianceCmdlet (#2604)", {
+    ...ual("SecurityComplianceCenter", "Remove-DlpCompliancePolicy", { RecordType: 18 }),
+    Parameters: '-Identity "Finance DLP"',
+  }),
+  m("ual.UpdateUser.mfaCleared", "entraSettingSignals (#2604)", {
+    ...aad("Update user."),
+    ModifiedProperties: [
+      {
+        Name: "StrongAuthenticationRequirement",
+        OldValue: '[{"RelyingParty":"*","State":1}]',
+        NewValue: "[]",
+      },
+      { Name: "Included Updated Properties", OldValue: "", NewValue: "StrongAuthenticationRequirement" },
+    ],
+    Target: [
+      { ID: "User_44444444-0000-4000-8000-000000000002", Type: 2 },
+      { ID: "dana@example.test", Type: 5 },
+    ],
+  }),
+  m("ual.UpdateAuthorizationPolicy.selfConsent", "entraSettingSignals (#2604)", {
+    ...aad("Update authorization policy."),
+    ModifiedProperties: [
+      {
+        Name: "PermissionGrantPolicyIdsAssignedToDefaultUserRole",
+        OldValue: "[]",
+        NewValue: '["ManagePermissionGrantsForSelf.microsoft-user-default-legacy"]',
+      },
+    ],
+  }),
+  m(
+    "audit.UpdateUser.mfaCleared",
+    "entraSettingSignals (#2604)",
+    auditBase({
+      targetResources: [
+        {
+          id: "44444444-0000-4000-8000-000000000002",
+          type: "User",
+          userPrincipalName: "dana@example.test",
+          modifiedProperties: [
+            {
+              displayName: "StrongAuthenticationRequirement",
+              oldValue: '[{"RelyingParty":"*","State":1}]',
+              newValue: "[]",
+            },
+          ],
+        },
+      ],
+    }),
+  ),
+  m(
+    "audit.UpdateUser.auditPlanDisabled",
+    "entraSettingSignals (#2604)",
+    auditBase({
+      targetResources: [
+        {
+          id: "44444444-0000-4000-8000-000000000002",
+          type: "User",
+          userPrincipalName: "dana@example.test",
+          modifiedProperties: [
+            {
+              displayName: "AssignedLicense",
+              oldValue: JSON.stringify([
+                "[SkuName=EXAMPLEPACK_E5, SkuId=55555555-0000-4000-8000-000000000004, DisabledPlans=[]]",
+              ]),
+              newValue: JSON.stringify([
+                "[SkuName=EXAMPLEPACK_E5, SkuId=55555555-0000-4000-8000-000000000004, DisabledPlans=[M365_ADVANCED_AUDITING]]",
+              ]),
+            },
+          ],
+        },
+      ],
+    }),
+  ),
+  m(
+    "audit.UpdateAuthorizationPolicy.selfConsent",
+    "entraSettingSignals (#2604)",
+    auditBase({
+      activityDisplayName: "Update authorization policy",
+      category: "Policy",
+      targetResources: [
+        {
+          id: "66666666-0000-4000-8000-000000000005",
+          type: "Policy",
+          displayName: "Authorization Policy",
+          modifiedProperties: [
+            {
+              displayName: "PermissionGrantPolicyIdsAssignedToDefaultUserRole",
+              oldValue: "[]",
+              newValue: '["ManagePermissionGrantsForSelf.microsoft-user-default-legacy"]',
+            },
+          ],
+        },
+      ],
+    }),
+  ),
 ];
