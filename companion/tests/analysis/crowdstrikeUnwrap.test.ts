@@ -126,6 +126,39 @@ describe("splitCrowdstrikeFile", () => {
     expect(inner).toEqual({ ok: "3" });
     expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
   });
+  it("wrapped GCP flow and app logs sharing top-level keys are each routed by their own content", () => {
+    const flow = {
+      logName: "projects/p/logs/compute.googleapis.com%2Fvpc_flows",
+      timestamp: "2024-11-12T08:00:00Z",
+      jsonPayload: {
+        connection: { src_ip: "10.0.0.1", dest_ip: "203.0.113.5", src_port: 1, dest_port: 443, protocol: 6 },
+        bytes_sent: "10",
+        start_time: "2024-11-12T08:00:00Z",
+        end_time: "2024-11-12T08:00:05Z",
+      },
+    };
+    const app = {
+      logName: "projects/p/logs/myapp",
+      timestamp: "2024-11-12T08:00:00Z",
+      jsonPayload: { message: "hello" },
+    };
+    const w = (r: unknown) => ({
+      "@timestamp": 1731398400000,
+      "#repo": "3pi_gcp",
+      "@rawstring": JSON.stringify(r),
+    });
+    const a = splitCrowdstrikeFile(nd(w(flow), w(app)));
+    const b = splitCrowdstrikeFile(nd(w(app), w(flow)));
+    const sizes = (s: ReturnType<typeof splitCrowdstrikeFile>) =>
+      [...s.groups.entries()].map(([k, v]) => `${k}:${v.length}`).sort();
+    expect(sizes(a)).toEqual(sizes(b));
+    expect(a.groups.size).toBe(2);
+  });
+  it("keeps each Falcon row's index in the original file", () => {
+    const sensorOnly = { "#event_simpleName": "DnsRequest", aid: "a", DomainName: "x.example.com" };
+    const s = splitCrowdstrikeFile(nd(wrapOkta(1), sensorOnly, wrapOkta(2), sensorOnly));
+    expect(s.falconIndexes).toEqual([1, 3]);
+  });
   it("a plain Falcon file reports no wrapped rows", () => {
     const sensorOnly = { "#event_simpleName": "DnsRequest", aid: "a", DomainName: "x.example.com" };
     expect(splitCrowdstrikeFile(nd(sensorOnly, sensorOnly)).wrapped).toBe(0);

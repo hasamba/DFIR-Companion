@@ -43,6 +43,8 @@ export interface CrowdstrikeImportOptions {
   // The uploaded file's text when `text` is a subset rebuilt from it (a split LogScale export, Part 3),
   // so every row keeps the hash of the artifact the analyst actually imported.
   sourceText?: string;
+  // With sourceText: each row's record index in that original file, so evidence locators point there.
+  recordIndexes?: readonly number[];
 }
 
 /** A Falcon sensor row: an event name AND the sensor's host identity (`aid` or `ComputerName`). */
@@ -114,7 +116,8 @@ export function parseCrowdstrikeExport(text: string, opts: CrowdstrikeImportOpti
   const skipped = createCodeTally();
   const noted = createCodeTally();
 
-  for (const [recordIndex, rec] of records.entries()) {
+  for (const [i, rec] of records.entries()) {
+    const recordIndex = opts.recordIndexes?.[i] ?? i;
     if (!rec || typeof rec !== "object") {
       skipped.add("not_an_object");
       continue;

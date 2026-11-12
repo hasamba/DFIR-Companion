@@ -411,11 +411,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       case "crowdstrike":
         return observe(
           dispatchCrowdstrike(text, base, {
-            importFalcon: (t, b, src) =>
-              pipeline.importCrowdstrike(caseId, t, {
-                ...b,
-                ...(src ? { crowdstrike: { sourceText: src } } : {}),
-              }),
+            importFalcon: (t, b, subset) =>
+              pipeline.importCrowdstrike(caseId, t, { ...b, ...(subset ? { crowdstrike: subset } : {}) }),
             dispatch: (k, t, b) => dispatchImport(k, caseId, t, b),
           }),
         );

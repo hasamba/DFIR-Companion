@@ -11,8 +11,13 @@ import { splitCrowdstrikeFile } from "../analysis/crowdstrikeUnwrap.js";
 import type { ImportBase } from "../routes/context.js";
 
 export interface CrowdstrikeDispatchDeps {
-  /** The Falcon importer; `sourceText` is the uploaded file when `text` is a subset rebuilt from it. */
-  importFalcon(text: string, base: ImportBase, sourceText?: string): Promise<unknown>;
+  /** The Falcon importer. For a subset rebuilt from the upload, `subset` names the uploaded text and
+   * each row's index in it, so hashes and evidence locators point at the artifact itself. */
+  importFalcon(
+    text: string,
+    base: ImportBase,
+    subset?: { sourceText: string; recordIndexes: readonly number[] },
+  ): Promise<unknown>;
   /** The unified dispatcher, for the third-party importers (never called with `crowdstrike`). */
   dispatch(kind: string, text: string, base: ImportBase): Promise<unknown>;
 }
@@ -27,7 +32,11 @@ export async function dispatchCrowdstrike(
   const split = splitCrowdstrikeFile(text);
   if (split.wrapped === 0) return deps.importFalcon(text, base);
   let last: unknown;
-  if (split.falcon.length > 0) last = await deps.importFalcon(ndjson(split.falcon), base, text);
+  if (split.falcon.length > 0)
+    last = await deps.importFalcon(ndjson(split.falcon), base, {
+      sourceText: text,
+      recordIndexes: split.falconIndexes,
+    });
   let n = 0;
   for (const [kind, rows] of split.groups) {
     n++;

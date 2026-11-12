@@ -7,7 +7,7 @@
 //   - parsed: Next-Gen SIEM's parsed copy of the vendor record under `Vendor` — a nested object in JSON,
 //     dotted `Vendor.protoPayload.methodName` / `Vendor.x[0].y` keys in a flattened or CSV export.
 // Each wrapped row is classified ON ITS OWN (a file can mix Falcon sensor rows and several vendors):
-// its inner record goes through detectImportKind, memoised per inner key shape. A vendor the companion
+// its inner record goes through detectImportKind (per row: detectors read values, not just keys). A vendor the companion
 // has an importer for goes there and keeps that vendor's label, so the case's main source is the real
 // tool. Anything else — plain text, a shape no importer claims — goes to the generic SIEM importer with
 // the LogScale metadata reduced to its time and `#repo`/`#type` provenance.
@@ -114,23 +114,27 @@ export function fallbackRecord(rec: Row, inner: Row | null): Row {
 export interface CrowdstrikeSplit {
   wrapped: number; // wrapped rows found; 0 = a plain Falcon file, import it unchanged
   falcon: Row[]; // Falcon sensor rows and alerts (plus any wrapped inner record that is Falcon itself)
+  falconIndexes: number[]; // each Falcon row's record index in the ORIGINAL file (evidence locators)
   groups: Map<ImportKind, Row[]>; // routed third-party records, by the importer that reads them
 }
 
 /** Split a Falcon export row by row. Never routes the file by its first row. */
 export function splitCrowdstrikeFile(text: string): CrowdstrikeSplit {
   const { records } = readCrowdstrikeRecords(text);
-  const split: CrowdstrikeSplit = { wrapped: 0, falcon: [], groups: new Map() };
-  const kindByShape = new Map<string, ImportKind>();
+  const split: CrowdstrikeSplit = { wrapped: 0, falcon: [], falconIndexes: [], groups: new Map() };
   const push = (kind: ImportKind, row: Row): void => {
     const list = split.groups.get(kind);
     if (list) list.push(row);
     else split.groups.set(kind, [row]);
   };
-  for (const rec of records) {
+  const pushFalcon = (row: Row, index: number): void => {
+    split.falcon.push(row);
+    split.falconIndexes.push(index);
+  };
+  for (const [index, rec] of records.entries()) {
     if (!isObj(rec)) continue;
     if (!isCrowdstrikeWrapper(rec)) {
-      split.falcon.push(rec);
+      pushFalcon(rec, index);
       continue;
     }
     split.wrapped++;
@@ -139,13 +143,9 @@ export function splitCrowdstrikeFile(text: string): CrowdstrikeSplit {
       push("siem", fallbackRecord(rec, null));
       continue;
     }
-    const shape = Object.keys(inner).sort().join("\u0000");
-    let kind = kindByShape.get(shape);
-    if (kind === undefined) {
-      kind = detectImportKind("inner.json", JSON.stringify(inner));
-      kindByShape.set(shape, kind);
-    }
-    if (kind === "crowdstrike") split.falcon.push(inner);
+    // Every row on its own: detectors read values and nested fields, so no shape cache is safe.
+    const kind = detectImportKind("inner.json", JSON.stringify(inner));
+    if (kind === "crowdstrike") pushFalcon(inner, index);
     else if (GENERIC.has(kind)) push("siem", fallbackRecord(rec, inner));
     else push(kind, inner);
   }

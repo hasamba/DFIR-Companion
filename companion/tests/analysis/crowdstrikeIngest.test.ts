@@ -92,8 +92,8 @@ describe("a mixed Falcon + wrapped Okta export through the real importers (AC21)
     const opts = { label: "mixed.ndjson", idPrefix: "m", importedAt: "2024-11-12T09:00:00.000Z" };
     const kinds: string[] = [];
     const state = (await dispatchCrowdstrike(file, opts, {
-      importFalcon: (t, b, src) =>
-        pipeline.importCrowdstrike("cs2", t, { ...b, ...(src ? { crowdstrike: { sourceText: src } } : {}) }),
+      importFalcon: (t, b, subset) =>
+        pipeline.importCrowdstrike("cs2", t, { ...b, ...(subset ? { crowdstrike: subset } : {}) }),
       dispatch: (k, t, b) => {
         kinds.push(k);
         return pipeline.importOkta("cs2", t, b);
