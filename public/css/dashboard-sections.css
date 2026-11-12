@@ -407,6 +407,7 @@
   #sec-compliance .cmp-editions{color:var(--text-muted);font-size:10px;margin-top:8px;font-style:italic}
 
 
+  #sec-velohunts #mainSourceSelect{max-width:100%}
   #sec-velohunts .vhs-empty{color:var(--text-muted);font-size:12px}
   #sec-velohunts .vhs-caveat{color:var(--badge-warning-text);font-size:12px;margin-bottom:8px}
   #sec-velohunts .vhs-list{display:flex;flex-direction:column;gap:10px}
