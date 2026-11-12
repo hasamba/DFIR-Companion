@@ -178,10 +178,15 @@ function logAiUsage(
   );
 }
 
-/** Scan already-masked text with Presidio; fail closed on a scan error or unapproved value. */
+/**
+ * Scan already-masked text with Presidio; fail closed on a scan error or unapproved value.
+ * `feature` is the held call's label: the pending list records it, so clearing the gate can tell a
+ * held synthesis from a held on-demand feature (see SYNTHESIS_HOLD_FEATURES).
+ */
 export async function presidioGate(
   ctx: ProviderCallContext,
   caseId: string,
+  feature: string,
   maskedText: string,
   known: KnownEntities,
   control: AnonControl | null,
@@ -192,9 +197,12 @@ export async function presidioGate(
   ctx.log.warn(`[presidio] ${fresh.length} new PII value(s) need approval before this case can call the AI`, {
     caseId,
   });
-  await ctx.opts.presidioPendingStore?.save(caseId, fresh);
+  await ctx.opts.presidioPendingStore?.hold(caseId, fresh, feature);
   throw new PresidioApprovalRequired(fresh);
 }
+
+/** The feature an import pre-scan hold records — a member of SYNTHESIS_HOLD_FEATURES. */
+export const IMPORT_PRESCAN_FEATURE = "import-prescan";
 
 /** Scan one complete masked import up front so batched CSV/log analysis needs one approval round. */
 export async function presidioPreScan(
@@ -210,7 +218,7 @@ export async function presidioPreScan(
   ctx.log.warn(`[presidio] import pre-scan found ${fresh.length} new PII value(s) needing approval`, {
     caseId,
   });
-  await ctx.opts.presidioPendingStore?.save(caseId, fresh);
+  await ctx.opts.presidioPendingStore?.hold(caseId, fresh, IMPORT_PRESCAN_FEATURE);
   throw new PresidioApprovalRequired(fresh);
 }
 
@@ -445,6 +453,7 @@ async function prepareCall(
     await presidioGate(
       ctx,
       caseId,
+      label,
       m.maskedPrompt,
       m.known,
       m.control,

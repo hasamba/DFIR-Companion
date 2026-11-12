@@ -32,9 +32,12 @@ export interface ConclusionsOutOfDateDeps {
 /** Mark a case's conclusions out of date. Never throws: the change it follows has already landed. */
 export type MarkConclusionsOutOfDate = (caseId: string, reason: string) => Promise<void>;
 
-export function createConclusionsOutOfDate(deps: ConclusionsOutOfDateDeps): MarkConclusionsOutOfDate {
-  const { store, options } = deps;
-  const meta = options.synthMetaStore ?? new SynthMetaStore(store);
+/** Re-read the header pill with no marker written — the same idle refresh, skipped while busy. */
+export type RefreshAiStatus = (caseId: string) => void;
+
+/** Builds the idle refresh both the marker and a marker-less change (a cleared Presidio gate) use. */
+export function createAiStatusRefresh(deps: Omit<ConclusionsOutOfDateDeps, "store">): RefreshAiStatus {
+  const { options } = deps;
 
   /** Is anything already working on this case? Its own terminal status will refresh the pill. */
   function busy(caseId: string): boolean {
@@ -42,6 +45,19 @@ export function createConclusionsOutOfDate(deps: ConclusionsOutOfDateDeps): Mark
     const jobs = options.jobManager?.list(caseId) ?? [];
     return jobs.some((job) => !isTerminal(job.status));
   }
+
+  // The dashboard answers a terminal "idle" by re-reading GET /ai-state and by clearing any
+  // "…re-synthesizing" status line. Skipped while work is running, so it cannot paint "idle" over a
+  // live run.
+  return function refreshAiStatus(caseId: string): void {
+    if (!busy(caseId)) options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+  };
+}
+
+export function createConclusionsOutOfDate(deps: ConclusionsOutOfDateDeps): MarkConclusionsOutOfDate {
+  const { store, options } = deps;
+  const meta = options.synthMetaStore ?? new SynthMetaStore(store);
+  const refresh = createAiStatusRefresh(deps);
 
   return async function markConclusionsOutOfDate(caseId: string, reason: string): Promise<void> {
     try {
@@ -52,9 +68,6 @@ export function createConclusionsOutOfDate(deps: ConclusionsOutOfDateDeps): Mark
       warnLine(`[synthesis] ${caseId}: could not mark conclusions out of date: ${(err as Error).message}`);
       return;
     }
-    // The dashboard answers a terminal "idle" by re-reading GET /ai-state, which now reports the
-    // marker, and by clearing any "…re-synthesizing" status line. Skipped while work is running, so
-    // it cannot paint "idle" over a live run.
-    if (!busy(caseId)) options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+    refresh(caseId); // GET /ai-state now reports the marker
   };
 }

@@ -210,7 +210,8 @@ export class AnalysisPipeline {
 
   /** The Presidio gate over text a route masked itself, e.g. a Jev payload (#1952). Fails closed. */
   presidioGateMasked(caseId: string, maskedText: string, known: KnownEntities, control: AnonControl | null) {
-    return presidioGate(this.aiCtx, caseId, maskedText, known, control);
+    // "jev": an on-demand review, not a synthesis — clearing its hold leaves the conclusions alone.
+    return presidioGate(this.aiCtx, caseId, "jev", maskedText, known, control);
   }
 
   /** What that gate would do, with nothing saved or held — the AI preview's Jev answer (#2515). */
