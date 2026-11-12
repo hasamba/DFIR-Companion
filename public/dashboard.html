@@ -1975,6 +1975,29 @@
           <div class="sfield"><label for="env-DFIR_AI_VELO_KEY">Override key (optional)<span class="sfield-hint">DFIR_AI_VELO_KEY — blank = provider key</span></label><input id="env-DFIR_AI_VELO_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
           <div class="sfield"><label for="env-DFIR_AI_VELO_BASE_URL">Override base URL (optional)<span class="sfield-hint">DFIR_AI_VELO_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_VELO_BASE_URL" /></div>
         </div>
+        <div class="settings-group-head">Light-task model (optional — a cheaper model for small, well-scoped calls)</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Used for hunts in CrowdStrike CQL, KQL, ES|QL and SPL, and for <strong>query translation</strong>. VQL hunts use the Velociraptor hunt model first, then this one. Synthesis, deep passes and reports always use the synthesis model. Leave the model blank and these calls use the synthesis model, as before. A small model can write weaker queries — review every query before you run it. Blank provider and key reuse the main AI settings. Restart after you change it.</p>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label for="env-DFIR_AI_LIGHT_PROVIDER">Light-task provider<span class="sfield-hint">DFIR_AI_LIGHT_PROVIDER</span></label>
+            <select id="env-DFIR_AI_LIGHT_PROVIDER">
+              <option value="">— same as main —</option>
+              <option value="openai">openai</option>
+              <option value="openrouter">openrouter</option>
+              <option value="ollama">ollama</option>
+              <option value="litellm">litellm</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+              <option value="claude-code">claude code (subscription, no key)</option>
+              <option value="codex">codex (text-only, no key)</option>
+            </select>
+          </div>
+          <div class="sfield"><label>Light-task model<span class="sfield-hint">DFIR_AI_LIGHT_MODEL — blank = synthesis model</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-light" aria-label="Available light-task models" aria-describedby="ai-model-status-light" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_LIGHT_MODEL" aria-label="Manually entered light-task model ID" aria-describedby="ai-model-status-light" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. anthropic/claude-haiku-4.5" /><button type="button" id="load-ai-models-light" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-light" class="sfield-hint" role="status"></span></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_LIGHT_KEY">Override key (optional)<span class="sfield-hint">DFIR_AI_LIGHT_KEY — blank = provider key</span></label><input id="env-DFIR_AI_LIGHT_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_LIGHT_BASE_URL">Override base URL (optional)<span class="sfield-hint">DFIR_AI_LIGHT_BASE_URL — blank = provider base URL</span></label><input id="env-DFIR_AI_LIGHT_BASE_URL" /></div>
+        </div>
         <div class="settings-group-head" data-essential>Second opinion model (optional — a DIFFERENT model for the on-demand QA cross-check)</div>
         <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Powers the <strong>2nd opinion</strong> button: a second model independently re-synthesizes the case and you review where it disagrees with the primary synthesis. <strong>The feature is OFF until a model is set here</strong> (the button stays hidden otherwise). For a genuinely independent opinion, pick a <strong>different provider</strong> than your synthesis model — same-provider models share blind spots. Leave the key blank to reuse the main AI key. Model B does not judge its own findings: a separate referee (model A by default — set below) annotates each disagreement.</p>
         <div class="sfield-row" data-essential>

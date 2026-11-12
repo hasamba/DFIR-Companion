@@ -166,6 +166,8 @@ export function effectiveRoleSetting(
   if (!slotProvider(env, role)) return undefined;
   // #1734: a fallback with no model is off and sends nothing.
   if (role === "synthesis-fallback" && !env.DFIR_AI_SYNTH_FALLBACK_MODEL?.trim()) return undefined;
+  // #2593: the light-task model is off without a model too.
+  if (role === "light" && !env.DFIR_AI_LIGHT_MODEL?.trim()) return undefined;
   return resolveAiRoleSetting(env, role, setting)?.trim() || undefined;
 }
 

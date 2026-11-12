@@ -24,14 +24,15 @@ import { callAiJson, loadScopedEvents } from "./aiContext.js";
 import type { HuntContext } from "./hunts.js";
 import { LANGUAGE_HUNT_PROMPT, PLAYBOOK_LANGUAGE_HUNT_PROMPT } from "./prompts/languageHunt.js";
 import { promptDescription } from "./promptDescription.js";
+import { smallTaskProvider } from "./smallTaskModel.js";
 
 /**
  * AI-written behaviour hunts in a non-VQL language (#2559): the sibling of suggestHunts /
  * suggestPlaybookHunts in hunts.ts, which stay the VQL path, untouched.
  *
  * Deliberately different from the VQL calls:
- * - the broad synthesis model, as translateQuery uses — the VQL-tuned velociraptorProvider is the
- *   wrong model for KQL/SPL/ES|QL/CQL;
+ * - the analyst's light-task model when set (#2593), else the broad synthesis model, as
+ *   translateQuery uses — the VQL-tuned velociraptorProvider is the wrong model for KQL/SPL/ES|QL/CQL;
  * - no PRIOR HUNTS ledger blocks, no deployed-VQL exclusion, no artifact list, no targetHost/mode:
  *   all of that describes Velociraptor deploys, and these hunts are copy-ready only;
  * - the timeline is the case's FORENSIC timeline in scope (loadScopedEvents) — never the
@@ -40,7 +41,7 @@ import { promptDescription } from "./promptDescription.js";
  */
 
 const providerOf = (ctx: HuntContext, label: string): AIProvider =>
-  ctx.opts.synthesisProvider ?? ctx.requireProvider(label);
+  smallTaskProvider(ctx.opts, "language-hunt") ?? ctx.requireProvider(label);
 
 const HUNT_OVERHEAD_SLACK_TOKENS = 300;
 

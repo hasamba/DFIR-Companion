@@ -18,7 +18,7 @@ import { AnalysisPipeline as AnalysisPipelineImpl } from "../analysis/pipeline.j
 import { makeImageLoader } from "../analysis/imageLoader.js";
 import { ProviderRegistry } from "../providers/provider.js";
 import type { AIProvider as AnalyzeProvider } from "../providers/provider.js";
-import { AI_ROLE_SOURCES, resolveAiRoleSetting, visionEnv } from "../config/aiEnv.js";
+import { AI_ROLE_SOURCES, DEFAULT_VELO_MODEL, resolveAiRoleSetting, visionEnv } from "../config/aiEnv.js";
 import { OpenAIProvider } from "../providers/openai.js";
 import { OpenRouterProvider } from "../providers/openrouter.js";
 import { OllamaCloudProvider } from "../providers/ollama.js";
@@ -268,8 +268,7 @@ export function resolveRefereeModel(
 // anthropic/claude-haiku-latest regardless of the main/synth provider; the key falls back to the main
 // AI key (so it works out of the box when the main provider is openrouter). The pipeline uses this
 // over the synthesis/main provider for hunt generation only.
-export { DEFAULT_VELO_PROVIDER } from "../config/aiEnv.js";
-export const DEFAULT_VELO_MODEL = "anthropic/claude-haiku-4.5"; // latest Haiku; a VALID OpenRouter id (claude-haiku-latest 400s there)
+export { DEFAULT_VELO_PROVIDER, DEFAULT_VELO_MODEL } from "../config/aiEnv.js";
 export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
   return buildProviderFrom({
     provider: AI_ROLE_SOURCES.velociraptor.provider(process.env),
@@ -279,11 +278,28 @@ export function buildVelociraptorProvider(): AnalyzeProvider | undefined {
   });
 }
 
+// Light-task model (#2593): an OPTIONAL cheaper model for small, well-scoped calls — language hunts
+// (CQL/KQL/ES|QL/SPL) and query translation, and the middle step for VQL hunts (velo → light →
+// synthesis). Returns undefined UNLESS DFIR_AI_LIGHT_MODEL is set; blank means those calls stay on
+// the synthesis model. Provider/key/base URL fall back to the main AI config like second opinion.
+export function buildLightProvider(): AnalyzeProvider | undefined {
+  const model = process.env.DFIR_AI_LIGHT_MODEL?.trim();
+  if (!model) return undefined;
+  return buildProviderFrom({
+    provider: AI_ROLE_SOURCES.light.provider(process.env),
+    model,
+    apiKey: resolveAiRoleSetting(process.env, "light", "KEY"),
+    baseUrl: resolveAiRoleSetting(process.env, "light", "BASE_URL"),
+  });
+}
+
 export interface RuntimePipelineParams {
   provider?: AnalyzeProvider;
   synthesisProvider?: AnalyzeProvider;
   // Dedicated model for Velociraptor VQL hunt generation (#70); falls back to synthesis/main.
   velociraptorProvider?: AnalyzeProvider;
+  // Optional light-task model for small calls (#2593); undefined → those calls use synthesis.
+  lightProvider?: AnalyzeProvider;
   stateStore: StateStoreImpl;
   store: CaseStore;
   // The batched Velociraptor driver's stores (#1439); undefined in scripts and most tests.
@@ -342,6 +358,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     provider: params.provider,
     synthesisProvider: params.synthesisProvider,
     velociraptorProvider: params.velociraptorProvider,
+    lightProvider: params.lightProvider,
     secondOpinionProvider: params.secondOpinionProvider,
     secondOpinionStore: params.secondOpinionStore,
     synthesisModelLabel: params.synthesisModelLabel,

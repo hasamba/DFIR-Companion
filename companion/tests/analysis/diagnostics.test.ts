@@ -211,6 +211,11 @@ function sampleReport(): DiagnosticsReport {
       secondOpinionModel: null,
       refereeModel: null,
       velociraptorModel: null,
+      smallTaskModels: {
+        "vql-hunt": "anthropic/claude-haiku-4.5 (Velociraptor hunt model)",
+        "language-hunt": "claude-x (synthesis model)",
+        "query-translation": "claude-x (synthesis model)",
+      },
       baseUrl: null,
       imageDetail: "high",
       timeoutMs: 180000,
@@ -332,6 +337,8 @@ describe("buildDiagnosticsText", () => {
     expect(text).toContain("3 total (2 open, 1 closed)");
     expect(text).toContain("provider: anthropic (external)");
     expect(text).toContain("recent AI errors: billing=1");
+    expect(text).toContain("language hunts:    claude-x (synthesis model)"); // #2593
+    expect(text).toContain("VQL hunts:         anthropic/claude-haiku-4.5 (Velociraptor hunt model)");
     expect(text).toContain("attempts: 2 (24h) · 9 (7d) · 12 total");
     expect(text).toContain("case-1 siem alerts.json: bad JSON");
   });

@@ -94,15 +94,17 @@ export function resolveRoleSetting(
   return providerEnv(env, provider, setting) ?? roleValue ?? visionEnv(env, setting);
 }
 
-// Where each of the five AI roles reads its provider and its own key / base URL. aiProviders.ts
+// Where each of the AI roles reads its provider and its own key / base URL. aiProviders.ts
 // builds the running roles from this table, the model picker reads saved credentials through it,
 // and the per-provider key migration checks every role against it — one reader, so the three
 // cannot drift apart.
 export type AiRoleId =
-  "vision" | "synthesis" | "synthesis-fallback" | "velociraptor" | "second-opinion" | "reconcile";
+  "vision" | "synthesis" | "synthesis-fallback" | "velociraptor" | "light" | "second-opinion" | "reconcile";
 
 /** The Velociraptor role's provider when DFIR_AI_VELO_PROVIDER is unset or blank. */
 export const DEFAULT_VELO_PROVIDER = "openrouter";
+/** The Velociraptor role's model when DFIR_AI_VELO_MODEL is unset — a VALID OpenRouter id (claude-haiku-latest 400s there). */
+export const DEFAULT_VELO_MODEL = "anthropic/claude-haiku-4.5";
 
 export interface AiRoleSource {
   readonly role: AiRoleId;
@@ -134,6 +136,13 @@ export const AI_ROLE_SOURCES: Readonly<Record<AiRoleId, AiRoleSource>> = {
     role: "velociraptor",
     provider: (env) => env.DFIR_AI_VELO_PROVIDER?.trim() || DEFAULT_VELO_PROVIDER,
     ownNames: (s) => [`DFIR_AI_VELO_${s}`],
+  },
+  // #2593: the light-task model for small, well-scoped calls (language hunts, query translation).
+  // Off until DFIR_AI_LIGHT_MODEL is set; provider/key/base URL fall back like second-opinion.
+  light: {
+    role: "light",
+    provider: (env) => env.DFIR_AI_LIGHT_PROVIDER?.trim() || visionEnv(env, "PROVIDER"),
+    ownNames: (s) => [`DFIR_AI_LIGHT_${s}`],
   },
   "second-opinion": {
     role: "second-opinion",

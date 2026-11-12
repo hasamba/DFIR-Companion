@@ -10,6 +10,7 @@ import type { DiskStats, DiskWarningLevel, DiskWarnThresholds } from "./diskWarn
 import type { ImporterLoadError } from "./importerStore.js";
 import type { EvidenceIntegrityStatus } from "./custodyIntegrity.js";
 import type { OperationalDiagnostics } from "./operationalDiagnostics.js";
+import { smallTaskModels, type SmallTask } from "../config/smallTaskModels.js";
 
 /** Human-readable byte size (binary units, 1 decimal place under 100). */
 export function formatBytes(bytes: number): string {
@@ -49,6 +50,8 @@ export interface AiDiagnostics {
   secondOpinionModel: string | null;
   refereeModel: string | null; // who judges the 2nd-opinion deltas (#1466); null when 2nd opinion is off
   velociraptorModel: string | null;
+  // The model each small task runs on (#2593) — light-task model, synthesis, or the VQL hunt model.
+  smallTaskModels: Record<SmallTask, string>;
   baseUrl: string | null;
   imageDetail: string;
   timeoutMs: number;
@@ -107,6 +110,7 @@ export function buildAiDiagnostics(env: EnvLike): AiDiagnostics {
     secondOpinionModel: orNull(env.DFIR_AI_SECOND_OPINION_MODEL),
     refereeModel: refereeModelLabel(env, orNull(env.DFIR_AI_SYNTH_MODEL) ?? model),
     velociraptorModel: orNull(env.DFIR_AI_VELO_MODEL),
+    smallTaskModels: smallTaskModels(env),
     baseUrl,
     imageDetail: orNull(visionEnv(env, "IMAGE_DETAIL")) ?? "high",
     timeoutMs: num(env.DFIR_AI_TIMEOUT_MS, 900_000),
@@ -359,6 +363,9 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
     if (r.ai.synthModel && r.ai.synthModel !== r.ai.model) lines.push(`  synth:    ${r.ai.synthModel}`);
     if (r.ai.secondOpinionModel) lines.push(`  2nd-op:   ${r.ai.secondOpinionModel}`);
     if (r.ai.refereeModel) lines.push(`  referee:  ${r.ai.refereeModel}`);
+    lines.push(`  VQL hunts:         ${r.ai.smallTaskModels["vql-hunt"]}`);
+    lines.push(`  language hunts:    ${r.ai.smallTaskModels["language-hunt"]}`);
+    lines.push(`  query translation: ${r.ai.smallTaskModels["query-translation"]}`);
     if (r.ai.baseUrl) lines.push(`  base URL: ${r.ai.baseUrl}`);
     lines.push(
       `  timeout:  ${r.ai.timeoutMs}ms · max tokens: ${r.ai.maxTokens} · context: ${r.ai.contextTokens}`,

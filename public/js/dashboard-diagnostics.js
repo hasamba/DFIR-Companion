@@ -82,6 +82,12 @@
         ai.secondOpinionModel
           ? diagRow("2nd-opinion model", esc(ai.secondOpinionModel))
           : "",
+        // #2593: the model each small task runs on (light-task model, synthesis, or the VQL hunt model).
+        ai.smallTaskModels
+          ? diagRow("VQL hunts", esc(ai.smallTaskModels["vql-hunt"])) +
+            diagRow("Language hunts", esc(ai.smallTaskModels["language-hunt"])) +
+            diagRow("Query translation", esc(ai.smallTaskModels["query-translation"]))
+          : "",
         ai.baseUrl
           ? diagRow("Base URL", `<code>${esc(ai.baseUrl)}</code>`)
           : "",
