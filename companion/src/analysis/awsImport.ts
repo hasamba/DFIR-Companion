@@ -30,6 +30,7 @@ import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import type { WeaknessFile } from "./awsAccountWeakness.js";
 import { awsWeaknessDraft } from "./awsAccountWeaknessFold.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
+import { clientHint, shownUserAgent } from "./awsClientHint.js";
 import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
 import { awsRecordExposure } from "./awsExposure.js";
 import { failedCallIsProbe, genericFloor } from "./awsServiceGrade.js";
@@ -324,6 +325,8 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   // threshold could be reached by two twenty-five-object sessions that had nothing to do with each
   // other. Trimmed hard: a full user agent is long and this is a marker, not the raw field.
   const client = str(getCI(rec, "userAgent")).trim();
+  // The RAW field decides the Terraform note (#2607); the echo has its brackets swapped so it cannot forge it.
+  const [hint, shown] = [clientHint(getCI(rec, "userAgent")), shownUserAgent(oneLine(client), 80)];
   const from = ip || (rawIp && rawIp !== "AWS Internal" ? rawIp : "");
   // Every AWS row is composed with reserved slots (awsDescription.ts): the head, the caller's
   // identity words, the posture (an STS issuance here), the tail — and the identity yields to the
@@ -343,7 +346,8 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
         who: oneLine(who),
         from: ip || (rawIp && rawIp !== "AWS Internal" ? rawIp : ""),
         region,
-        client: oneLine(client),
+        client: shown,
+        hint,
         root: isRoot,
         errorCode,
         identity: who2.words,
@@ -356,7 +360,8 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
         `${head}${notice ? ` ${notice}` : ""}`,
         who2.words,
         logging,
-        `${client ? `[ua: ${oneLine(client).slice(0, 30)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode.slice(0, 30)}]` : ""}`,
+        `${client ? `[ua: ${shown.slice(0, 30)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode.slice(0, 30)}]` : ""}`,
+        hint,
       );
     // An IAM row likewise: reserved budgets, the outcome next to the posture, the qualifiers last
     // but never clipped away (awsDescription.ts).
@@ -368,9 +373,10 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
         outcome: iam.outcome,
         object: iam.object,
         optional: [iam.reading || iam.note, iam.trust, iam.bindingsText],
-        tail: `${client ? `[ua: ${oneLine(client).slice(0, 30)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode.slice(0, 30)}]` : ""}`,
+        tail: `${client ? `[ua: ${shown.slice(0, 30)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode.slice(0, 30)}]` : ""}`,
         qualifiers: iam.qualifiers,
         notice,
+        hint,
       });
     return renderAwsDescription({
       head,
@@ -379,9 +385,10 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
       outcome: issuance?.outcome ?? "",
       object: issuance?.detail ?? (exposureObject || auth?.object || ""),
       optional: [],
-      tail: `${client ? `[ua: ${oneLine(client).slice(0, 80)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode}]` : ""}`,
+      tail: `${client ? `[ua: ${shown}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode}]` : ""}`,
       qualifiers: [],
       notice,
+      hint,
     });
   };
   const description = render().slice(0, 600);
