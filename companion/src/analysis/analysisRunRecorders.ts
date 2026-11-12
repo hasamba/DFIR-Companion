@@ -6,7 +6,7 @@ import type { AnalysisRunStore } from "./analysisRunStore.js";
 import type { AnalysisRunOutput } from "./analysisRunTypes.js";
 import type { ScopeWindow } from "./scope.js";
 import type { InvestigationState, Severity } from "./stateTypes.js";
-import type { SynthesisCoverage } from "./synthMeta.js";
+import type { SynthFallback, SynthesisCoverage } from "./synthMeta.js";
 
 export function uniqueProviderModels(
   providers: Array<AIProvider | undefined>,
@@ -153,6 +153,16 @@ interface SynthesisRecord {
   coverage: SynthesisCoverage;
   /** #1754: findings that cite no event, and whether the citation retry ran — already worded. */
   citationWarnings?: string[];
+  /** #2603: the fallback model answered after the synthesis model's safety filter stopped it. */
+  synthFallback?: SynthFallback;
+}
+
+// #2603: same wording family as deepPassWarnings. configuration.model already names the fallback
+// that answered; this line says it was a fallback and which model was stopped.
+function synthesisFallbackWarning(f: SynthFallback | undefined): string[] {
+  if (!f) return [];
+  const times = `${f.safetyStops} ${f.safetyStops === 1 ? "time" : "times"}`;
+  return [`answered by the fallback model ${f.to} after ${f.from}'s safety filter stopped it ${times}`];
 }
 
 export async function recordSynthesisRun(
@@ -203,6 +213,7 @@ export async function recordSynthesisRun(
     execution: {
       retries: input.parseRetries,
       warnings: [
+        ...synthesisFallbackWarning(input.synthFallback),
         ...(input.coverage.omittedBudget > 0
           ? [`${input.coverage.omittedBudget} event(s) omitted by the prompt budget`]
           : []),

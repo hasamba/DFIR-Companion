@@ -196,6 +196,16 @@ const simulationOverrideSchema = z.object({
   by: z.string().catch(""),
 });
 
+// #2603: the synthesis model's safety filter stopped the answer and the fallback model (#1734)
+// wrote this run's findings. Strict inside, so a malformed record drops the whole notice rather
+// than showing one with a blank model name.
+const synthFallbackSchema = z.object({
+  from: z.string(), // the synthesis model whose safety filter stopped
+  to: z.string(), // the fallback model that answered
+  safetyStops: z.number().int().nonnegative(),
+});
+export type SynthFallback = z.infer<typeof synthFallbackSchema>;
+
 export const synthMetaSchema = z.object({
   lastSynthesizedAt: z.string().catch(""),
   lastDiff: z
@@ -225,6 +235,9 @@ export const synthMetaSchema = z.object({
   // swallowed these before). Lets DFIR_AI_MODEL / DFIR_AI_SYNTH_MODEL be compared empirically across runs.
   // Optional/lenient; absent on old files.
   synthModel: z.string().optional().catch(undefined),
+  // #2603: set only when the fallback wrote this run. record() does not carry it over, so the next
+  // run on the synthesis model clears it.
+  synthFallback: synthFallbackSchema.optional().catch(undefined),
   findingsCount: z.number().optional().catch(undefined),
   highSeverityBackfillCount: z.number().optional().catch(undefined),
   parseRetries: z.number().optional().catch(undefined),
@@ -255,6 +268,7 @@ export interface SynthPerfMetrics {
   selectionCounts?: Record<string, number>; // #4: per-class counts of the events the model saw
   coverage?: SynthesisCoverage; // #62: included/omitted coverage audit for this run
   synthModel?: string; // #74: "<provider>/<model>" that ran this synthesis
+  synthFallback?: SynthFallback; // #2603: the fallback model wrote this run after a safety stop
   findingsCount?: number; // #74: total findings after this run
   highSeverityBackfillCount?: number; // #74: of those, how many the deterministic safety net added
   parseRetries?: number; // #74: retries the synthesis JSON parse needed
@@ -267,8 +281,31 @@ export interface SynthPerfMetrics {
 
 export type ModelPerfSnapshot = Pick<
   SynthMeta,
-  "synthModel" | "findingsCount" | "highSeverityBackfillCount" | "parseRetries" | "secondOpinionPerf"
+  | "synthModel"
+  | "synthFallback"
+  | "findingsCount"
+  | "highSeverityBackfillCount"
+  | "parseRetries"
+  | "secondOpinionPerf"
 >;
+
+// The report footnote's slice of synth-meta. Built here, beside the type, so a new per-model field
+// cannot be added to the snapshot and silently left out of the report (#2603 nearly did that).
+export function modelPerfSnapshot(meta: SynthMeta): ModelPerfSnapshot {
+  return {
+    synthModel: meta.synthModel,
+    synthFallback: meta.synthFallback, // #2603: say the fallback wrote it, and why
+    findingsCount: meta.findingsCount,
+    highSeverityBackfillCount: meta.highSeverityBackfillCount,
+    parseRetries: meta.parseRetries,
+    secondOpinionPerf: meta.secondOpinionPerf,
+  };
+}
+
+// #2603: "after opus's safety filter stopped the answer 2 times" — shared by the report footnote.
+function fallbackClause(f: SynthFallback): string {
+  return ` — the fallback model, after ${f.from}'s safety filter stopped the answer ${f.safetyStops} ${f.safetyStops === 1 ? "time" : "times"}`;
+}
 
 // One-line human summary of the per-model quality fields, for the report footnote. Returns null when
 // there's nothing to say (no synth model recorded and no second-opinion run). Each clause is omitted
@@ -277,6 +314,7 @@ export function modelPerfLabel(m: ModelPerfSnapshot): string | null {
   const parts: string[] = [];
   if (m.synthModel) {
     let s = `Synthesis ran on **${m.synthModel}**`;
+    if (m.synthFallback) s += fallbackClause(m.synthFallback);
     if (m.findingsCount !== undefined)
       s += ` — ${m.findingsCount} finding${m.findingsCount === 1 ? "" : "s"}`;
     if (m.highSeverityBackfillCount) {

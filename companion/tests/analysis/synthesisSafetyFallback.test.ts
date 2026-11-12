@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
+import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { safetyRetriesFromEnv } from "../../src/analysis/ai/synthesisFallback.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -36,6 +37,7 @@ const GOOD = JSON.stringify({
 let cases: CaseStore;
 let stateStore: StateStore;
 let synthMetaStore: SynthMetaStore;
+let analysisRunStore: AnalysisRunStore;
 let warns: string[];
 
 function ev(id: string): ForensicEvent {
@@ -77,6 +79,7 @@ function pipeline(primary: AIProvider, fallback?: AIProvider, safetyRetries?: nu
     operationalMetrics: { record: async (m: Record<string, unknown>) => void metrics.push(m) } as never,
     stateStore,
     synthMetaStore,
+    analysisRunStore,
     synthesisProvider: primary,
     synthesisModelLabel: "opus",
     ...(fallback ? { synthesisFallback: { provider: fallback, label: "gpt-6-sol" } } : {}),
@@ -94,6 +97,7 @@ beforeEach(async () => {
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   stateStore = new StateStore(cases);
   synthMetaStore = new SynthMetaStore(cases);
+  analysisRunStore = new AnalysisRunStore(cases, { appVersion: "test" });
   warns = [];
   metrics = [];
   const s = emptyState("c1");
@@ -124,6 +128,15 @@ describe("synthesis fallback on a safety-filter stop (#1734)", () => {
 
     const meta = await synthMetaStore.load("c1");
     expect(meta.synthModel).toBe("gpt-6-sol");
+    // #2603: the Findings card and the report footnote need the fallback facts, not just the label.
+    expect(meta.synthFallback).toEqual({ from: "opus", to: "gpt-6-sol", safetyStops: 2 });
+
+    const runs = (await analysisRunStore.list("c1")).filter((r) => r.kind === "synthesis");
+    expect(runs).toHaveLength(1);
+    expect(runs[0].configuration?.model).toBe("gpt-6-sol");
+    expect(runs[0].execution.warnings).toContain(
+      "answered by the fallback model gpt-6-sol after opus's safety filter stopped it 2 times",
+    );
   });
 
   it("fails once with the safety_stop error when no fallback is set", async () => {
@@ -139,6 +152,14 @@ describe("synthesis fallback on a safety-filter stop (#1734)", () => {
     expect(primary.analyze).toHaveBeenCalledTimes(2);
     expect(fallback.analyze).not.toHaveBeenCalled();
     expect((await synthMetaStore.load("c1")).synthModel).toBe("opus");
+  });
+
+  it("clears a prior run's fallback when the next synthesis answers on the synthesis model (#2603)", async () => {
+    const stopped = provider("claude-code", "opus", [safetyStopError("Claude Code (opus)")]);
+    await pipeline(stopped, provider("codex", "gpt-6-sol", [GOOD])).synthesize("c1");
+    expect((await synthMetaStore.load("c1")).synthFallback).toBeDefined();
+    await pipeline(provider("claude-code", "opus", [GOOD])).synthesize("c1", { force: true });
+    expect((await synthMetaStore.load("c1")).synthFallback).toBeUndefined();
   });
 
   it("never starts the fallback for a run cancelled while the primary was stopping", async () => {
@@ -177,8 +198,14 @@ describe("one safety retry on the same model before the fallback (#1740)", () =>
     expect(fallback.analyze).not.toHaveBeenCalled();
     const log = state.timeline[state.timeline.length - 1].description;
     expect(log).toContain("opus's safety filter stopped the answer 1 time; it passed on retry");
-    expect((await synthMetaStore.load("c1")).synthModel).toBe("opus");
+    const meta = await synthMetaStore.load("c1");
+    expect(meta.synthModel).toBe("opus");
     expect(metrics.some((m) => m.type === "ai_retry" && m.errorKind === "safety_stop")).toBe(true);
+    // #2603: no fallback, so no notice on the card and no fallback warning on the run record.
+    expect(meta.synthFallback).toBeUndefined();
+    const runs = (await analysisRunStore.list("c1")).filter((r) => r.kind === "synthesis");
+    expect(runs).toHaveLength(1);
+    expect(runs[0].execution.warnings.some((w) => w.includes("fallback"))).toBe(false);
   });
 
   it("falls back at once when the setting is 0", async () => {

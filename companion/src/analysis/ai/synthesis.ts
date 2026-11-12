@@ -69,6 +69,7 @@ import { carryUnshownFindings } from "./synthesisUnshownCarry.js";
 import { echoedFindings } from "./synthesisPromptBlocks.js";
 import { persistSynthesis } from "./synthesisPersist.js";
 import { callSynthesisModel, throwIfSuperseded, type SynthesisCall } from "./synthesisCall.js";
+import { logNoteFor, synthFallbackFacts } from "./synthesisSafetyNote.js";
 import { citationRunWarnings } from "./findingCitations.js";
 import { skipEmptyTimeline, type SynthesisSkipReason } from "./synthesisSkip.js";
 import { reconcileSimulationVerdict } from "../simulationVerdict.js";
@@ -458,6 +459,7 @@ async function recordSynthesisOutcome(
     ),
     coverage: o.prompt.coverage, // #62: included/omitted coverage audit
     synthModel: o.call.answeredByLabel, // #74; the fallback's label after a #1734 safety stop
+    ...synthFallbackFacts(o.call), // #2603: and that it WAS the fallback — card + report footnote
     findingsCount: o.next.findings.length, // #74
     highSeverityBackfillCount: o.highSeverityBackfillCount, // #74
     parseRetries: o.call.parseRetries, // #74
@@ -495,6 +497,7 @@ async function recordSynthesisOutcome(
     parseRetries: o.call.parseRetries + o.call.citationRetries,
     coverage: o.prompt.coverage,
     citationWarnings: o.citationWarnings,
+    ...synthFallbackFacts(o.call), // #2603: the run record's fallback warning
   });
 }
 
@@ -580,24 +583,6 @@ async function resolveHostsOrThrow(
  * happens AFTER grading and BEFORE the run record. A reader who needs to know what synthesis does,
  * in order, should need exactly one screen and no jumps. That is what this is.
  */
-// #1734/#1740: the Investigation-Log note for a synthesis the safety filter stopped at least once.
-function safetyLogNote(call: SynthesisCall): string {
-  const times = `${call.safetyStops} ${call.safetyStops === 1 ? "time" : "times"}`;
-  if (call.fallbackFrom)
-    return `written by the fallback model ${call.answeredByLabel} after ${call.fallbackFrom}'s safety filter stopped the answer ${times}`;
-  return `${call.primaryLabel}'s safety filter stopped the answer ${times}; it passed on retry`;
-}
-
-// #2006: the log-line note — the safety-filter note and/or how many unshown findings were carried.
-function logNoteFor(call: SynthesisCall, carried: number): { logNote?: string } {
-  const notes = [
-    ...(call.safetyStops > 0 ? [safetyLogNote(call)] : []),
-    ...(carried > 0
-      ? [`carried ${carried} prior finding${carried === 1 ? "" : "s"} the model was not shown`]
-      : []),
-  ];
-  return notes.length ? { logNote: notes.join(" · ") } : {};
-}
 
 /**
  * Synthesize the case. The whole run builds its prompt inside withAiSpans, so the summary and the

@@ -58,6 +58,8 @@ These rewrite your evidence, your findings or your tasks. Read the limitation on
 !!! warning "Know this"
     The model sees a sample, not your case. On a big case most rows never reach it. A deterministic backfill is what stops a Critical row vanishing entirely. Toggling anonymisation on or off forces a fresh run. A finding's ATT&CK techniques are checked against the events it cites: a parent technique becomes the sub-technique those events carry, and a technique none of them supports is dropped.
 
+**If the fallback model wrote it.** When the synthesis model's safety filter stops the answer and the fallback model runs the synthesis, the run record names the fallback as its model and carries a warning that names the stopped model and the number of stops. The Findings card shows the same fact in amber. Two runs on different models are not a like-for-like comparison.
+
 ### Deep pass
 
 **Where.** Deep pass — you press it.

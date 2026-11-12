@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
 import { analysisRunManifestSchema } from "../../src/analysis/analysisRunTypes.js";
+import { recordSynthesisRun } from "../../src/analysis/analysisRunRecorders.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
+import { NO_SCOPE } from "../../src/analysis/scope.js";
 
 // #1887: an import receipt lists what the import added and removed plus counts. Manifests written
 // before carry full id lists and no counts; both shapes must parse and verify in one chain.
@@ -77,5 +80,61 @@ describe("analysis run receipt shapes (#1887)", () => {
     expect(analysisRunManifestSchema.safeParse({ ...base, input: input(2) }).success).toBe(true);
     expect(analysisRunManifestSchema.safeParse({ ...base, input: input(-1) }).success).toBe(false);
     expect(analysisRunManifestSchema.safeParse({ ...base, input: input(1.5) }).success).toBe(false);
+  });
+});
+
+// #2603: a synthesis the fallback model answered says so on its run record, the way a deep pass
+// does (#2076). configuration.model is the model that answered; the warning names the one stopped.
+describe("synthesis run record — safety-filter fallback (#2603)", () => {
+  let cases: CaseStore;
+  let store: AnalysisRunStore;
+
+  beforeEach(async () => {
+    cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-synth-fallback-run-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    store = new AnalysisRunStore(cases, { appVersion: "0.33.0" });
+  });
+
+  const synthesisRun = (extra: object = {}) =>
+    recordSynthesisRun(store, "c1", {
+      startedAt: "2026-11-12T10:00:00.000Z",
+      provider: "codex",
+      model: "gpt-6-sol",
+      eventIds: [],
+      inputState: emptyState("c1"),
+      outputState: emptyState("c1"),
+      prompt: "p",
+      maxEvents: 10,
+      thinkingTokens: 0,
+      thinkingSource: "off",
+      correlationWindowSeconds: 60,
+      anonymizationPolicy: {
+        enabled: false,
+        categories: {},
+        redactSecrets: false,
+        maskPublicIps: false,
+      } as never,
+      scope: NO_SCOPE,
+      falsePositiveMarkers: 0,
+      infoEventsExcluded: false,
+      observationsIncluded: false,
+      parseRetries: 0,
+      coverage: { omittedBudget: 0, omittedHighSeverity: 0, omittedCloudOperations: 0 } as never,
+      ...extra,
+    });
+
+  it("warns when the fallback model answered", async () => {
+    await synthesisRun({ synthFallback: { from: "opus", to: "gpt-6-sol", safetyStops: 1 } });
+    const [run] = await store.list("c1");
+    expect(run.configuration?.model).toBe("gpt-6-sol");
+    expect(run.execution.warnings).toEqual([
+      "answered by the fallback model gpt-6-sol after opus's safety filter stopped it 1 time",
+    ]);
+  });
+
+  it("adds no warning to a run the synthesis model answered", async () => {
+    await synthesisRun();
+    const [run] = await store.list("c1");
+    expect(run.execution.warnings).toEqual([]);
   });
 });
