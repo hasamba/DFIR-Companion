@@ -14,6 +14,7 @@ import type { AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { projectScope } from "../../src/analysis/scopeProject.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
+import { ualRowCanonical } from "../../src/analysis/cloudRowCanonical.js";
 
 /**
  * Characterisation tests for synthesize (#418).
@@ -167,6 +168,51 @@ describe("synthesize — scope selection", () => {
     expect(coverage.omittedBudget).toBe(0); // … and is NOT blamed on the size limit
     expect(coverage.considered).toBe(1);
     expect(coverage.inWindow).toBe(3);
+  });
+
+  it("counts the distinct cloud operations the model was not shown (#2585)", async () => {
+    vi.stubEnv("DFIR_AI_SYNTH_MAX_EVENTS", "20");
+    const ual = (id: string, i: number, op: string, severity: ForensicEvent["severity"], who: string) => {
+      const ts = new Date(Date.parse("2026-03-01T00:00:00.000Z") + i * 600_000).toISOString();
+      return event(id, ts, `M365 AzureActiveDirectory: ${op} by ${who}@contoso.test`, severity, {
+        canonical: ualRowCanonical({
+          operation: op,
+          user: `${who}@contoso.test`,
+          ip: "",
+          observed: ts,
+          normalized: ts,
+          failed: false,
+          tenant: "",
+          recordId: id,
+          index: i,
+        }),
+      });
+    };
+    const letters = (i: number): string => String.fromCharCode(97 + (i % 26), 97 + Math.floor(i / 26));
+    const seeded = emptyState("c1");
+    // 40 repeated High consents (the flood), ten distinct Medium operations, one Info-only operation.
+    for (let i = 0; i < 40; i++)
+      seeded.forensicTimeline.push(ual(`c${i}`, i, "Consent to application", "High", letters(i)));
+    for (let i = 0; i < 10; i++)
+      seeded.forensicTimeline.push(ual(`op${i}`, 50 + i, `Operation-${letters(i)}`, "Medium", "attacker"));
+    seeded.forensicTimeline.push(ual("info", 70, "MailItemsAccessed", "Info", "attacker"));
+    await stateStore.save(seeded);
+    const synthMetaStore = new SynthMetaStore(caseStore);
+    const { provider } = spyProvider(delta());
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      synthMetaStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1");
+
+    const meta = await synthMetaStore.load("c1");
+    // The share at a cap of 20 is two seats (max(1, floor(20 × 12%))): two operations are seated,
+    // eight are disclosed. The Info-only operation never had a candidate row, so it is not counted.
+    expect(meta.selectionCounts?.operation).toBe(2);
+    expect(meta.coverage!.omittedCloudOperations).toBe(8);
   });
 
   it("keeps Info events in the case even though they never reach the prompt", async () => {

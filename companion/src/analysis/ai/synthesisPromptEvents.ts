@@ -19,6 +19,7 @@ import {
   type SelectionClass,
 } from "../synthSelect.js";
 import { promptDescription } from "./promptDescription.js";
+import { operationKeys } from "../synthSelectOperation.js";
 import { byEventTime } from "../forensicSort.js";
 import { pinCap, promotedTag, rankPins } from "./promotedEvidence.js";
 import {
@@ -145,6 +146,8 @@ export function createTimelineSelection(
       {
         cap: commandSeatCap(count) + accounts.length + sessions.length,
         anchorShown: pins.some((e) => e.severity === "Critical" || e.severity === "High"),
+        // A cloud operation a pinned row already shows takes no operation seat (#2585).
+        shownOperations: operationKeys(pins),
       },
     );
     return {

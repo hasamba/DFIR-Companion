@@ -104,6 +104,7 @@ const synthesisCoverageSchema = z.object({
   groupEntries: z.number().catch(0), // prompt rows that represent a collapsed detection burst
   groupedEvents: z.number().catch(0), // events covered by those rows (≥ groupEntries when > 0)
   omittedInfo: z.number().catch(0), // Info-severity events deliberately not sent (DFIR_SYNTH_INCLUDE_INFO)
+  omittedCloudOperations: z.number().catch(0), // distinct cloud audit operations with no row sent (#2585)
   promptTokensEstimate: z.number().catch(0), // ~size of the assembled synthesis prompt, in tokens
 });
 
@@ -129,6 +130,9 @@ export function buildSynthesisCoverage(input: {
   // Info-severity events deliberately excluded from the prompt. Attributed to their own bucket so the
   // card doesn't blame the size limit for a choice the operator made.
   omittedInfo?: number;
+  // Distinct cloud audit operations (#2585) none of whose rows the model was shown. Optional: a
+  // case with no cloud audit rows, and any caller that predates it, reports zero.
+  omittedCloudOperations?: number;
 }): SynthesisCoverage {
   const nn = (n: number): number => (n > 0 ? n : 0);
   const omittedInfo = nn(input.omittedInfo ?? 0);
@@ -142,6 +146,7 @@ export function buildSynthesisCoverage(input: {
     groupEntries: nn(input.groupEntries ?? 0),
     groupedEvents: nn(input.groupedEvents ?? 0),
     omittedInfo,
+    omittedCloudOperations: nn(input.omittedCloudOperations ?? 0),
     promptTokensEstimate: nn(input.promptTokensEstimate),
   };
 }
@@ -165,9 +170,15 @@ export function coverageLabel(c: SynthesisCoverage): string {
     s += ` · ${c.groupedEvents} shown as ${c.groupEntries} grouped entr${c.groupEntries === 1 ? "y" : "ies"}`;
   }
   if (c.omittedHighSeverity > 0) s += ` · ${c.omittedHighSeverity} high-severity recovered by the safety net`;
+  if (c.omittedCloudOperations > 0) s += ` · ${cloudOperationsNotSent(c.omittedCloudOperations)}`;
   if (c.omittedScope > 0) s += ` · ${c.omittedScope} outside scope window`;
   if (c.promptTokensEstimate > 0) s += ` · ~${Math.round(c.promptTokensEstimate / 1000)}k prompt tokens`;
   return s;
+}
+
+/** "3 cloud operations not sent to the AI" (#2585), for the coverage label. */
+export function cloudOperationsNotSent(n: number): string {
+  return `${n} cloud operation${n === 1 ? "" : "s"} not sent to the AI`;
 }
 
 // #1599: why the stored conclusions no longer match the case, and which mark said so.

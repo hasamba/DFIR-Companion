@@ -49,7 +49,7 @@ These rewrite your evidence, your findings or your tasks. Read the limitation on
 
 **Where.** AI Re-synthesize — automatic + button.
 
-**Sees.** A stratified *sample* of the forensic timeline — all Critical and High, the earliest events, an even time spread, a rarity bias. Info rows get no seat unless you ask for them.
+**Sees.** A stratified *sample* of the forensic timeline — all Critical and High, the earliest events, an even time spread, a rarity bias. On a cloud audit timeline (Microsoft 365 / Entra / Exchange, AWS CloudTrail, GCP audit), up to 12% of the cap goes to one row for each distinct operation no other seat shows, such as the one `Set-Mailbox` or `New-InboxRule` among hundreds of consent rows. When Critical and High rows alone overflow the cap, those seats come only from repeats of one operation, never from the earliest rows. Operations that still got no row are listed as "N cloud operations not sent to the AI" in the coverage line. Info rows get no seat unless you ask for them.
 
 **Caps.** 600 events (`DFIR_AI_SYNTH_MAX_EVENTS`), burst grouping on, skip-if-unchanged
 
