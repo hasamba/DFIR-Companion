@@ -20,10 +20,17 @@ import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
 import { copyHandleHashed, CopyContentChangedError } from "./handleCopy.js";
-import { ARCHIVED_DIRNAME, newCaseGeneration, runWhileCaseClosed, withCaseWrite } from "./caseIncarnation.js";
+import {
+  ARCHIVED_DIRNAME,
+  currentGeneration,
+  newCaseGeneration,
+  runWhileCaseClosed,
+  withCaseWrite,
+} from "./caseIncarnation.js";
 import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
 import { forgetCaseKeyedState } from "./caseKeyedState.js";
 import { SequenceAllocator, type SequenceKind } from "./sequenceAllocator.js";
+import { AppendOnlyLogTail, type LogFold } from "./appendOnlyLogTail.js";
 import { AuditLogNeedsRepairError } from "./auditLogNeedsRepairError.js";
 import {
   CaseAlreadyExistsError,
@@ -37,6 +44,8 @@ import {
 // How long a delete, archive or reseed waits for writes already admitted to the case folder (#1855).
 const WRITE_QUIESCE_MS = 30_000;
 const RETIRED_IDS_FILENAME = ".dfir-companion-retired-cases.json";
+// A fold that keeps nothing but the line count and last line AppendOnlyLogTail tracks anyway.
+const LINES_ONLY: LogFold<null> = { id: "lines", initial: null, step: () => null };
 
 export interface CreateCaseInput {
   caseId: string;
@@ -82,6 +91,9 @@ export type ArtifactStoredListener = (artifact: StoredArtifact) => void | Promis
 export class CaseStore {
   // Evidence sequence numbers per case+kind (#214, #1119, #2253) — see SequenceAllocator.
   private readonly sequences: SequenceAllocator;
+  // What the audit logs held at their last read, so an append-only log is not re-read whole on
+  // every import (#2584) — see AppendOnlyLogTail for when it falls back to the full read.
+  private readonly logTails: AppendOnlyLogTail;
 
   // Serializes the OCR index read-modify-write per case (see putOcrEntry).
   private readonly ocrLock = new StateLock();
@@ -110,10 +122,11 @@ export class CaseStore {
 
   constructor(
     private readonly root: string,
-    opts: { writeQuiesceMs?: number } = {},
+    opts: { writeQuiesceMs?: number; now?: () => number } = {},
   ) {
     this.writeQuiesceMs = opts.writeQuiesceMs ?? WRITE_QUIESCE_MS;
     this.sequences = new SequenceAllocator(root);
+    this.logTails = new AppendOnlyLogTail(opts.now);
   }
 
   get casesRoot(): string {
@@ -226,6 +239,7 @@ export class CaseStore {
   // CaseKeyedMap/Set under this root, clearing their timers) never carries into a same-id successor.
   private forgetInMemory(caseId: string): void {
     this.sequences.forget(caseId);
+    this.logTails.forget(caseId);
     forgetCaseKeyedState(this.root, caseId);
   }
 
@@ -591,6 +605,9 @@ export class CaseStore {
    * reservation and a corrupted append are indistinguishable from a count, so this fails closed and
    * asks for repair rather than risk reissuing that row's number). A parsed row lacking `field` is not
    * an error: it counts toward the line floor only. Throws AuditLogNeedsRepairError (#2252).
+   * Still checked against the log on every call for imports and custody; since #2584 the last read's
+   * answer is reused while the file is exactly as that read, or this process's own appendAuditLines,
+   * left it. Any other change — another writer's append included — re-reads the whole file.
    */
   private async maxSequenceInLog(
     caseId: string,
@@ -598,28 +615,46 @@ export class CaseStore {
     path: string,
     field: "sequenceNumber" | "seq",
   ): Promise<number> {
-    let raw: string;
-    try {
-      raw = await readFile(path, "utf8");
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
-      throw err;
-    }
-    let count = 0;
-    let maxField = 0;
-    for (const [index, line] of raw.split("\n").entries()) {
-      if (!line.trim()) continue;
-      count += 1;
-      let row: Record<string, unknown>;
-      try {
-        row = JSON.parse(line) as Record<string, unknown>;
-      } catch (err) {
-        throw new AuditLogNeedsRepairError(caseId, kind, basename(path), index + 1, (err as Error).message);
-      }
-      const value = row[field];
-      if (typeof value === "number" && Number.isFinite(value) && value > maxField) maxField = value;
-    }
-    return Math.max(count, maxField);
+    const fold: LogFold<{ count: number; maxField: number }> = {
+      id: `max-${field}`,
+      initial: { count: 0, maxField: 0 },
+      step: (acc, line, index) => {
+        let row: Record<string, unknown>;
+        try {
+          row = JSON.parse(line) as Record<string, unknown>;
+        } catch (err) {
+          throw new AuditLogNeedsRepairError(caseId, kind, basename(path), index + 1, (err as Error).message);
+        }
+        const value = row[field];
+        const higher = typeof value === "number" && Number.isFinite(value) && value > acc.maxField;
+        return { count: acc.count + 1, maxField: higher ? value : acc.maxField };
+      },
+    };
+    const { state } = await this.logTails.read(this.logScope(caseId), path, fold);
+    return Math.max(state.count, state.maxField);
+  }
+
+  /**
+   * How many non-blank lines an audit log under this case holds, and its last one verbatim (#2584:
+   * the custody chain links to the last stored line). Served from the last read while the file is
+   * exactly as that read (or this process's own appendAuditLines) left it; any other change is read
+   * in full — see AppendOnlyLogTail.
+   */
+  async auditLogTail(caseId: string, path: string): Promise<{ lineCount: number; lastLine: string | null }> {
+    const { lineCount, lastLine } = await this.logTails.read(this.logScope(caseId), path, LINES_ONLY);
+    return { lineCount, lastLine };
+  }
+
+  /**
+   * Append whole lines to an audit log (imports, custody) so its read snapshot follows this append
+   * instead of re-reading the log (#2584). The caller holds the case write admission (withCaseWrite).
+   */
+  appendAuditLines(path: string, text: string): Promise<void> {
+    return this.logTails.append(path, text, () => appendFile(path, text, "utf8"));
+  }
+
+  private logScope(caseId: string): { caseId: string; generation: string } {
+    return { caseId, generation: currentGeneration(this.root, caseId) };
   }
 
   // Persist an uploaded CSV verbatim as evidence (mkdirs for cases created before
@@ -706,7 +741,7 @@ export class CaseStore {
   async appendImport(caseId: string, metadata: ImportMetadata): Promise<ImportMetadata> {
     await this.withCaseWrite(this.importsLogPath(caseId), async () => {
       await mkdir(this.metadataDir(caseId), { recursive: true });
-      await appendFile(this.importsLogPath(caseId), JSON.stringify(metadata) + "\n", "utf8");
+      await this.appendAuditLines(this.importsLogPath(caseId), JSON.stringify(metadata) + "\n");
     });
     return metadata;
   }

@@ -11,7 +11,16 @@
 //    (timestamp_ms, row_id) keyset so no fixed cap can silently hide a row.
 //  - pruneEntitiesBeforeNewest: retention measured against the kind's NEWEST stored evidence time,
 //    not the wall clock, so an export of last year's activity is not pruned on arrival.
-export const CLOUD_WORKER_SOURCE = String.raw`
+// #2584: answered from entities_cloud_inactive_idx (caseSqliteSchema.ts) — one probe, not a parse of
+// the batch row every file the case ever imported left. tests/analysis/entityRowsPlan.test.ts pins it.
+export const CLOUD_INACTIVE_BATCHES_SQL =
+  "SELECT entity_id FROM entities WHERE kind='cloudRecordBatch' AND json_extract(payload, '$.inactive')=1";
+
+export const CLOUD_WORKER_SOURCE =
+  "const CLOUD_INACTIVE_BATCHES_SQL = " +
+  JSON.stringify(CLOUD_INACTIVE_BATCHES_SQL) +
+  ";\n" +
+  String.raw`
 const CLOUD_PAGE_MAX = 5000;
 
 function cloudPageLimit(limit) {
@@ -189,9 +198,7 @@ function cloudInactiveBatches(dbPath) {
   if (!existsSync(dbPath)) return [];
   const db = openDatabase(dbPath);
   try {
-    return db.prepare(
-      "SELECT entity_id FROM entities WHERE kind='cloudRecordBatch' AND json_extract(payload, '$.inactive')=1"
-    ).all().map((row) => row.entity_id);
+    return db.prepare(CLOUD_INACTIVE_BATCHES_SQL).all().map((row) => row.entity_id);
   } finally {
     db.close();
   }
