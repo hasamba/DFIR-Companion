@@ -209,6 +209,9 @@ export async function recordSynthesisRun(
         ...(input.coverage.omittedHighSeverity > 0
           ? [`${input.coverage.omittedHighSeverity} high-severity event(s) used deterministic backfill`]
           : []),
+        ...(input.coverage.omittedCloudOperations > 0
+          ? [`${input.coverage.omittedCloudOperations} cloud operation(s) not sent to the AI`]
+          : []),
         ...(input.citationWarnings ?? []),
       ],
     },

@@ -944,6 +944,7 @@
     "synthGroupMembers.ts": "analysis/ai",
     "synthMeta.ts": "analysis/ai",
     "synthSelect.ts": "analysis/ai",
+    "synthSelectOperation.ts": "analysis/ai",
     "synthThinking.ts": "analysis/ai",
     "sysdigImport.ts": "analysis/ingest",
     "syslogImport.ts": "analysis/ingest",

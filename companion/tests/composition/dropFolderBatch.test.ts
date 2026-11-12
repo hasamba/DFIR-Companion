@@ -168,7 +168,8 @@ describe("drop folder hands runs of small CloudTrail gzip files to a batch (#254
       rest: req.files,
       stop: "fallback",
     }));
-    expect(s.order).toEqual(["solo:a.json.gz", "solo:b.json.gz"]);
+    // Solo files run DROP_CONCURRENCY at a time, so their start order is not fixed (Windows CI saw b before a).
+    expect([...s.order].sort()).toEqual(["solo:a.json.gz", "solo:b.json.gz"]);
     expect(s.processed.sort()).toEqual(["a.json.gz", "b.json.gz"]);
   });
 

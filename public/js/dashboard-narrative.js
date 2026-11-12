@@ -176,6 +176,7 @@
         earliest: "earliest",
         command: "session commands",
         account: "account logons",
+        operation: "cloud operations",
         anchor_context: "context",
         corroborated: "corroborated",
         technique: "technique",
@@ -206,6 +207,9 @@
       }
       if (cv.omittedHighSeverity > 0)
         txt += ` · ${cv.omittedHighSeverity} high-severity recovered by the safety net`;
+      // #2585: distinct cloud audit operations none of whose rows reached the model.
+      if (cv.omittedCloudOperations > 0)
+        txt += ` · ${cv.omittedCloudOperations.toLocaleString()} cloud operation${cv.omittedCloudOperations === 1 ? "" : "s"} not sent to the AI`;
       if (cv.promptTokensEstimate > 0)
         txt += ` · ~${Math.round(cv.promptTokensEstimate / 1000)}k tokens`;
       const warn = cv.omittedBudget > 0;

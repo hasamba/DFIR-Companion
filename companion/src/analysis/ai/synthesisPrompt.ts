@@ -5,7 +5,8 @@ import { estimateTokens, remainingBudget, fitItemsToBudget } from "../promptBudg
 import type { ScopeWindow } from "../scope.js";
 import type { CollectionInventory } from "../collectionInventory.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
-import type { CollapsedPrompt } from "../synthGroup.js";
+import { promptCandidates, type CollapsedPrompt } from "../synthGroup.js";
+import { unsentOperationCount } from "../synthSelectOperation.js";
 import { buildSynthesisCoverage, type SynthesisCoverage } from "../synthMeta.js";
 import type { selectSynthesisEventsAnnotated } from "../synthSelect.js";
 import { getSynthesisPrompt } from "./prompts/index.js";
@@ -246,6 +247,13 @@ function auditCoverage(i: CoverageInput): CoverageAudit {
     (e) => !shownIds.has(e.id) && (e.severity === "Critical" || e.severity === "High"),
   ).length;
   const omitted = i.scopedEvents.length - shownIds.size;
+  // #2585: distinct cloud operations with no row shown, counted over the rows that could have had a
+  // seat (Info rows are not candidates unless DFIR_SYNTH_INCLUDE_INFO, or when pinned and shown).
+  const candidates = new Set(promptCandidates(i.scopedEvents).map((e) => e.id));
+  const omittedCloudOperations = unsentOperationCount(
+    i.scopedEvents.filter((e) => candidates.has(e.id) || shownIds.has(e.id)),
+    shownIds,
+  );
   return {
     shownIds,
     representedEvents: i.scopedEvents.filter((e) => shownIds.has(e.id)),
@@ -258,6 +266,7 @@ function auditCoverage(i: CoverageInput): CoverageAudit {
       groupedEvents,
       omittedInfo: i.omittedInfo,
       omittedHighSeverity,
+      omittedCloudOperations,
       promptTokensEstimate: i.promptTokensEstimate,
     }),
     truncatedNote:
