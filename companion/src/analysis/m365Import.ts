@@ -25,6 +25,7 @@ import { isEntraUalRecord } from "./entraAuditRecord.js";
 import { FIRST_PARTY_UPKEEP, isInternalCertificateSpChange } from "./microsoftFirstPartyApps.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
+import { gradeComplianceCmdlet } from "./m365ComplianceCmdlet.js";
 import { applyBecPairing } from "./m365BecPairing.js";
 import { applyM365Lookalike } from "./m365Lookalike.js";
 import { neutraliseRowNotes } from "./derivedNote.js";
@@ -638,7 +639,9 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       // replaces the plain row; any other Exchange operation keeps it.
       const exchange = isExchangeRecord(rec) ? mapExchangeRow(rec, iocSink, at) : null;
       if (exchange) opts.debug?.fallback("exchange_decoder");
-      mapped.push(...gradeUal([exchange ?? mapUal(rec, iocSink, at, opts.debug)], rec));
+      mapped.push(
+        ...gradeUal([exchange ?? gradeComplianceCmdlet(rec, mapUal(rec, iocSink, at, opts.debug))], rec),
+      );
       sawUal = true;
     } else if (kind === "signin") {
       const row = mapSignIn(rec, iocSink, at, opts.debug);

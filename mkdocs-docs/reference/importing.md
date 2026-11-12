@@ -1959,6 +1959,16 @@ Measured on the public SANS 504 S3 ransomware lab, where the noise used to bury 
     they are not joined. Import them again to join them.
   - If you set a minimum severity on the import, Info checks are not kept anywhere, so they cannot
     be joined later. Import CloudTrail without a minimum severity to keep this join.
+- **A console sign-in without MFA is Medium** (#2604). A successful `ConsoleLogin` by an IAM user
+  whose `additionalEventData.MFAUsed` is `No` reads `console sign-in without MFA (by IAMUser)` and is
+  Medium (T1078.004). A root sign-in stays High. An assumed-role or federated (SSO) session is not
+  graded: it signs in through its identity provider.
+- **SSM parameters read with decryption are Medium** (#2604). A successful `GetParameter`,
+  `GetParameters` or `GetParametersByPath` with `withDecryption` true, by an IAM user or an
+  assumed-role session, reads `reads parameters with decryption (by IAMUser)` with the parameter
+  names, and is Medium (T1552). It is not graded when an AWS service made the call (`invokedBy`, an
+  AWS service caller, a service-linked role) or for workload credentials (an EC2 instance role, a
+  Lambda or ECS task, a delegate provider). A read without decryption keeps its grade.
 - **A key made by `CreateAccessKey` gets a credential-lineage row**, even with one use: issued when
   and by whom, its first use and source, and the key that created it. The creation and the use must
   be in the same upload (or the same streamed window).
@@ -2183,6 +2193,23 @@ Unified Audit Log's AzureActiveDirectory record) now read the same way, one row 
   are two rows. A Unified Audit Log sign-in record (`UserLoggedIn`, `UserLoginFailed`) is never
   read as a directory change — its `ResultStatus` says the request completed, not that the login
   succeeded.
+- **Setting changes graded by what changed** (#2604). `Update user` is the most common change in
+  any tenant, so the operation name grades nothing. The row is graded only when the record holds a
+  readable old value AND a readable new value, compared as lists, never as text:
+  - `clears the per-user MFA requirement (StrongAuthenticationRequirement → [])` — a non-empty
+    requirement emptied — **High** (T1556.006), the same grade as `Disable Strong Authentication`.
+  - `disables the advanced auditing plan in a licence` — a licence's `DisabledPlans` gains a plan
+    named `…ADVANCED_AUDITING` for a licence the old value also lists — **Medium** (T1562.008). The
+    Graph export holds this in the `AssignedLicense` property. The Unified Audit Log puts it in
+    `additionalDetails`, often split over several records; the first record holds the licence
+    change and is read. A licence with no old value proves no change and is not graded.
+  - `lets every user consent to apps for themselves` — `Update authorization policy` adds a
+    `ManagePermissionGrantsForSelf.*` policy to the default user role — **Medium** (T1528).
+    Removing that policy is not graded.
+
+  Each user in a record is read against its own properties, and each graded change is its own row,
+  so it never merges with a routine `Update user`. A failed or unknown result reads `attempted to …`
+  and is Medium with no technique. Other `Update user` records keep their plain Info row.
 
 Every grant and role row ends `assigned, not yet observed in use`: the row says what was given,
 never that it was used. A sign-in after a credential was added is a separate row, not a link — the
@@ -2301,6 +2328,23 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
   stay two rows, so "lowered to 1 day, then to zero" is visible as two steps. A record that also
   sets forwarding stays a forwarding row and carries the audit words. A mailbox audit change is never
   a persistence stage of the mailbox chain.
+- **Admin cmdlets graded by the parameter that decides them** (#2604). The bundled Suzaku rules for
+  these cmdlets only label them, and some match every use of the cmdlet:
+  - `turns the mailbox audit bypass on (AuditBypassEnabled True)` (`Set-MailboxAuditBypassAssociation`)
+    — the account's mailbox actions are no longer audited — **High** (T1562.008). `requests the
+    mailbox audit bypass off` is Low.
+  - `enables POP and IMAP on the mailbox` (`Set-CASMailbox` with `PopEnabled` or `ImapEnabled` True)
+    — **Medium** (T1114.002). The row says the protocol was enabled, not that mail was collected.
+    `OWAEnabled` alone, or a protocol turned off, keeps the plain Info row.
+  - `creates role group "…" with the ApplicationImpersonation role` (`New-RoleGroup`) and `assigns
+    the ApplicationImpersonation role to "…"` (`New-ManagementRoleAssignment`) — whoever holds it
+    can act as any mailbox — **High** (T1098.002). Any other role keeps the plain row.
+  - `Remove-DlpCompliancePolicy` (a Security & Compliance record, `[policy "…"]` on the row) —
+    **Medium** (T1562.001).
+
+  A failed or unknown result reads `attempted to …` (or `[FAILED]`) and is Medium with no technique.
+  A `-WhatIf` or `-ValidateOnly` run is Low and says `dry run`. A graded record never merges with a
+  routine use of the same cmdlet.
 - **Permissions** — `grants FullAccess on alice@… to helper@… (outside the mailbox's domain)`.
   FullAccess or SendAs granted by a person to another account is High. The same grant by the
   service itself (`NT AUTHORITY\SYSTEM`, a system `UserType`, or an application) is Low, which

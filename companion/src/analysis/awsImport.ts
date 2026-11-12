@@ -17,6 +17,7 @@ import { boundedAggKey } from "./aggKey.js";
 import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
 import { decodeIamChange, renderAwsDescription } from "./iamChange.js";
 import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
+import { readAwsAuthSignal } from "./awsAuthSignals.js";
 import { mergeReplicaGroups, type ReplicaCandidate } from "./awsReplicas.js";
 import { sigmaMatchesFor, unionSigmaMatches, type SigmaGradingSnapshot } from "./sigmaImportGrade.js";
 import type { SigmaRuleRef } from "./sigmaRuleSet.js";
@@ -302,6 +303,10 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     }
     if (isRoot) severity = worst(severity, "High");
   }
+  // A console sign-in without MFA, an SSM read with decryption: graded by the parameter (#2604).
+  const auth = readAwsAuthSignal(source, name, rec, who2, failed);
+  if (auth) severity = worst(severity, auth.severity);
+  for (const t of auth?.mitre ?? []) if (!mitre.includes(t)) mitre.push(t);
   // A denied/failed mutating call is a probe / privilege test — but a logging row already owns
   // its OWN severity from `logging.severity` above (Low for a positively-identified not-found,
   // #1081), and this blanket bump would otherwise silently re-elevate it back to Medium, since a
@@ -376,9 +381,9 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     return renderAwsDescription({
       head,
       identity: who2.words,
-      posture: issuance?.posture ?? exposure,
+      posture: issuance?.posture ?? (exposure || auth?.posture || ""),
       outcome: issuance?.outcome ?? "",
-      object: issuance?.detail ?? exposureObject,
+      object: issuance?.detail ?? (exposureObject || auth?.object || ""),
       optional: [],
       tail: `${client ? `[ua: ${shown}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode}]` : ""}`,
       qualifiers: [],
@@ -562,7 +567,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     aggKey: boundedAggKey(
       who2.replicaId
         ? `aws|shared:${who2.replicaId}`.toLowerCase()
-        : `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}${logging?.keySegment ?? ""}${who2.keySegment}${issuance?.keySegment ?? ""}${exposureKey}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
+        : `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}${logging?.keySegment ?? ""}${who2.keySegment}${issuance?.keySegment ?? ""}${exposureKey}${auth?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
     ),
     sources: ["AWS CloudTrail"],
   };

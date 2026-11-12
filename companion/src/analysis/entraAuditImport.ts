@@ -15,7 +15,8 @@ import type { Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
 import { createCanonicalEvent, type CanonicalEventEnvelope } from "./canonicalEvent.js";
 import { renderAwsDescription } from "./awsDescription.js";
-import { decodeEntraAppChanges, type Resolver } from "./entraAppChange.js";
+import { decodeEntraAppChanges, type EntraAppChange, type Resolver } from "./entraAppChange.js";
+import { decodeEntraSettingSignals, type EntraSettingSignal } from "./entraSettingSignals.js";
 export type { Resolver };
 import {
   isGuid,
@@ -339,7 +340,11 @@ export function mapEntraAuditRows(
   const timestamp = normalizeTime(r.time);
   const outcome = r.outcome;
   const tail = r.outcome === "success" ? "" : `[${r.outcome}]`;
-  const changes = decodeEntraAppChanges(r, resolve);
+  // An app change the decoder narrates, else a setting change graded by its delta (#2604).
+  const decoded = decodeEntraAppChanges(r, resolve);
+  const changes: ReadonlyArray<EntraAppChange | EntraSettingSignal> = decoded.length
+    ? decoded
+    : decodeEntraSettingSignals(r, rec);
   const details = auditDetails(r);
   if (!changes.length) {
     // The plain row, as before: the first target's label and "+n more", the table's grade.
@@ -416,17 +421,19 @@ export function mapEntraAuditRows(
     message: details,
     canonical: envelope(r, index, outcome, {
       object: { id: c.subject.id, name: c.subject.name },
-      ...(c.role
-        ? {
-            target: {
-              kind: /serviceprincipal|application/i.test(c.role.memberType) ? "cloud_principal" : "account",
-              id: c.role.memberId,
-              name: c.role.memberName,
-            },
-          }
-        : c.resource.id || c.resource.name
-          ? { target: { kind: "other", id: c.resource.id, name: c.resource.api || c.resource.name } }
-          : {}),
+      ...("target" in c
+        ? { target: c.target }
+        : c.role
+          ? {
+              target: {
+                kind: /serviceprincipal|application/i.test(c.role.memberType) ? "cloud_principal" : "account",
+                id: c.role.memberId,
+                name: c.role.memberName,
+              },
+            }
+          : c.resource.id || c.resource.name
+            ? { target: { kind: "other", id: c.resource.id, name: c.resource.api || c.resource.name } }
+            : {}),
       resource: c.resource.id || c.subject.id,
     }),
   }));

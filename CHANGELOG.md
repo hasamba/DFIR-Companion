@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Labelled cloud detections graded from the record's own parameters** — audit bypass on, POP/IMAP enabled, ApplicationImpersonation granted, DLP policy removed, per-user MFA cleared, user consent opened, advanced auditing plan disabled, console sign-in without MFA and SSM reads with decryption now reach the forensic timeline; dry runs, failures and AWS-service callers are not graded as the change (closes #2604)
 - **Terraform note on CloudTrail rows** — a row whose full user agent claims Terraform ends with `[user agent claims Terraform]`, also on bulk-read summaries; tag-only rule `cloud_aws_client_terraform`, grades unchanged (closes #2607)
 - **Main evidence source in Settings and in AI next steps** — Settings → Server sets shows and changes the case's main source (same value as Suggested Fleet Hunts); synthesis tells the AI to name that tool and its table or field instead of a Velociraptor artifact; the Hunts panel title names the language (closes #2594)
 - **Main evidence source in the New case dialog** — pick Automatic, a source or Mixed when the case is created; the playbook hunt button now names the language (Falcon, KQL, ES|QL, SPL or Velociraptor) (part of #2594)

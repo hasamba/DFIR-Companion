@@ -294,4 +294,13 @@ export const AWS_SAMPLES: readonly DetectionSample[] = [
       policyDocument: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}',
     },
   }),
+  // #2604: graded from the record's own parameters.
+  ct("aws.ConsoleLogin.noMfa", "awsAuthSignals (#2604)", "signin.amazonaws.com", "ConsoleLogin", {
+    responseElements: { ConsoleLogin: "Success" },
+    additionalEventData: { MFAUsed: "No" },
+  }),
+  ct("aws.GetParameters.withDecryption", "awsAuthSignals (#2604)", "ssm.amazonaws.com", "GetParameters", {
+    readOnly: true,
+    requestParameters: { names: ["/credentials/db-password"], withDecryption: true },
+  }),
 ];
