@@ -14,7 +14,7 @@ import type { FileHandle } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
@@ -30,8 +30,8 @@ import {
 import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
 import { forgetCaseKeyedState } from "./caseKeyedState.js";
 import { SequenceAllocator, type SequenceKind } from "./sequenceAllocator.js";
-import { AppendOnlyLogTail, type LogFold } from "./appendOnlyLogTail.js";
-import { AuditLogNeedsRepairError } from "./auditLogNeedsRepairError.js";
+import { AppendOnlyLogTail } from "./appendOnlyLogTail.js";
+import { readLogTail, readMaxSequence, type LogScope } from "./auditLogFolds.js";
 import {
   CaseAlreadyExistsError,
   CaseArchivedError,
@@ -44,8 +44,6 @@ import {
 // How long a delete, archive or reseed waits for writes already admitted to the case folder (#1855).
 const WRITE_QUIESCE_MS = 30_000;
 const RETIRED_IDS_FILENAME = ".dfir-companion-retired-cases.json";
-// A fold that keeps nothing but the line count and last line AppendOnlyLogTail tracks anyway.
-const LINES_ONLY: LogFold<null> = { id: "lines", initial: null, step: () => null };
 
 export interface CreateCaseInput {
   caseId: string;
@@ -594,55 +592,19 @@ export class CaseStore {
     );
   }
 
-  /**
-   * The next-safe recovery number for an append-only .jsonl audit log; 0 when the log does not
-   * exist yet. `Math.max(nonEmptyLineCount, highest value of `field` seen)` (#1119, Codex H1/M1):
-   *   - a reservation burned by a failed append wrote no line, so a line count alone under-reports
-   *     after a restart forgets the in-memory high-water mark — the field's own max recovers past it;
-   *   - historical custody rows predate `seq` (#231) and would count as 0 toward the max — the line
-   *     count still gives the right floor, exactly the pre-#1119 behavior for a fully legacy log.
-   * A NON-EMPTY line that fails to parse is a truncated/corrupted write and THROWS (a burned
-   * reservation and a corrupted append are indistinguishable from a count, so this fails closed and
-   * asks for repair rather than risk reissuing that row's number). A parsed row lacking `field` is not
-   * an error: it counts toward the line floor only. Throws AuditLogNeedsRepairError (#2252).
-   * Still checked against the log on every call for imports and custody; since #2584 the last read's
-   * answer is reused while the file is exactly as that read, or this process's own appendAuditLines,
-   * left it. Any other change — another writer's append included — re-reads the whole file.
-   */
-  private async maxSequenceInLog(
+  /** The next-safe number recorded in an audit log — see readMaxSequence (#1119, #2252, #2584). */
+  private maxSequenceInLog(
     caseId: string,
     kind: SequenceKind,
     path: string,
     field: "sequenceNumber" | "seq",
   ): Promise<number> {
-    const fold: LogFold<{ count: number; maxField: number }> = {
-      id: `max-${field}`,
-      initial: { count: 0, maxField: 0 },
-      step: (acc, line, index) => {
-        let row: Record<string, unknown>;
-        try {
-          row = JSON.parse(line) as Record<string, unknown>;
-        } catch (err) {
-          throw new AuditLogNeedsRepairError(caseId, kind, basename(path), index + 1, (err as Error).message);
-        }
-        const value = row[field];
-        const higher = typeof value === "number" && Number.isFinite(value) && value > acc.maxField;
-        return { count: acc.count + 1, maxField: higher ? value : acc.maxField };
-      },
-    };
-    const { state } = await this.logTails.read(this.logScope(caseId), path, fold);
-    return Math.max(state.count, state.maxField);
+    return readMaxSequence(this.logTails, this.logScope(caseId), kind, path, field);
   }
 
-  /**
-   * How many non-blank lines an audit log under this case holds, and its last one verbatim (#2584:
-   * the custody chain links to the last stored line). Served from the last read while the file is
-   * exactly as that read (or this process's own appendAuditLines) left it; any other change is read
-   * in full — see AppendOnlyLogTail.
-   */
-  async auditLogTail(caseId: string, path: string): Promise<{ lineCount: number; lastLine: string | null }> {
-    const { lineCount, lastLine } = await this.logTails.read(this.logScope(caseId), path, LINES_ONLY);
-    return { lineCount, lastLine };
+  /** An audit log's line count and last line, verbatim — see readLogTail (#2584). */
+  auditLogTail(caseId: string, path: string): Promise<{ lineCount: number; lastLine: string | null }> {
+    return readLogTail(this.logTails, this.logScope(caseId), path);
   }
 
   /**
@@ -653,7 +615,7 @@ export class CaseStore {
     return this.logTails.append(path, text, () => appendFile(path, text, "utf8"));
   }
 
-  private logScope(caseId: string): { caseId: string; generation: string } {
+  private logScope(caseId: string): LogScope {
     return { caseId, generation: currentGeneration(this.root, caseId) };
   }
 
