@@ -184,6 +184,27 @@ describe("distinct cloud operations get a seat over the budget (#2585)", () => {
     expect(sel.classOf.get("cmd")).toBe("command");
   });
 
+  it("near the threshold, commands re-opened by a displacement do not eat the operation seats", () => {
+    // Codex review repro: 60 repeated cloud anchors at max 60, five Medium operations, and five
+    // commands each shadowed by one of the anchors displaced first.
+    const max = 60;
+    const events: ForensicEvent[] = [];
+    for (let i = 0; i < 60; i++) events.push(cloud(`c${i}`, i * 7, "High", "Consent to application"));
+    ATTACK_OPS.forEach(([op, sev, type], i) =>
+      events.push(cloud(`atk${i}`, 600 + i * 11, sev, op, { type })),
+    );
+    const seats = Array.from({ length: 5 }, (_, i) => ({
+      event: endpoint(`cmd${i}`, 700 + i, "Low"),
+      shadowedBy: [`c${59 - i}`],
+    }));
+    events.push(...seats.map((s) => s.event));
+    const sel = selectSynthesisEventsAnnotated(events, max, undefined, seats);
+    expect(sel.events).toHaveLength(max);
+    expect(sel.counts.operation).toBe(ATTACK_OPS.length);
+    expect(sel.counts.command).toBe(5);
+    expect(sel.events.some((e) => cloudOperationKey(e) === "m365|consent to application")).toBe(true);
+  });
+
   it("just under the overflow threshold the share is still real", () => {
     const consents = 55;
     const events = consentFlood(consents, 40);

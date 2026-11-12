@@ -278,12 +278,16 @@ export function selectSynthesisEventsAnnotated(
   // #2585: room for one row per distinct cloud operation the anchors do not show. Just under the
   // overflow threshold that room comes out of REPEATED cloud anchors, as it does in overflow; a
   // displaced anchor may have shadowed a command, so the command reserve is recomputed after.
-  const opRoom = reserveOperationRoom(events, classOf, max, reserve, rarityOf, seatOptions.shownOperations);
-  if (opRoom.displaced) {
+  // Repeated until stable: each displacement can re-open commands, which grows the command reserve.
+  const opWant = operationWant(events, classOf, max, seatOptions.shownOperations);
+  for (;;) {
+    const free = max - classOf.size - reserve;
+    if (opWant <= free || !displaceRepeatedAnchors(events, classOf, opWant - Math.max(0, free), rarityOf))
+      break;
     unshadowed = seats.filter((s) => !s.shadowedBy.some((id) => classOf.has(id)));
     reserve = Math.min(reserveLimit, unshadowed.length);
   }
-  const opReserve = Math.min(opRoom.want, Math.max(0, max - classOf.size - reserve));
+  const opReserve = Math.min(opWant, Math.max(0, max - classOf.size - reserve));
 
   // GUARANTEED 2: earliest events — initial-access context (guarded against the cap, and leaving
   // the command and cloud-operation reserves free).
@@ -304,10 +308,10 @@ export function selectSynthesisEventsAnnotated(
 
   // RESERVED (#2585): one row per distinct cloud operation still unseen (an earliest or command row
   // may already show one). Before the fractional fills, which then split what is left.
-  if (opRoom.want > 0) {
+  if (opWant > 0) {
     const shown = operationKeys(events.filter((e) => classOf.has(e.id)));
     const skip = (key: string): boolean => shown.has(key) || !!seatOptions.shownOperations?.has(key);
-    for (const e of missingOperations(events, skip).slice(0, opRoom.want)) {
+    for (const e of missingOperations(events, skip).slice(0, opWant)) {
       if (capacityLeft() <= 0) break;
       claim(e.id, "operation");
     }
@@ -448,25 +452,33 @@ function swapInOperations(
   });
 }
 
-// Normal path (#2585): how many operation seats to hold, and — when the anchors leave less free room
-// than that — un-claim that many REPEATED cloud anchors (lowest-ranked first). Mutates `classOf`.
-function reserveOperationRoom(
+// Normal path (#2585): how many operation seats to hold — one per cloud operation no anchor (and no
+// pinned row) shows, up to the share.
+function operationWant(
+  events: readonly ForensicEvent[],
+  classOf: ReadonlyMap<string, SelectionClass>,
+  max: number,
+  shownOperations?: ReadonlySet<string>,
+): number {
+  const shown = operationKeys(events.filter((e) => classOf.get(e.id) === "anchor"));
+  return operationShare(
+    max,
+    missingOperations(events, (k) => shown.has(k) || !!shownOperations?.has(k)).length,
+  );
+}
+
+// Normal path (#2585): un-claim up to `n` REPEATED cloud anchors, lowest-ranked first, when the anchors
+// leave less free room than the operation seats need. Mutates `classOf`; false when none could go.
+function displaceRepeatedAnchors(
   events: readonly ForensicEvent[],
   classOf: Map<string, SelectionClass>,
-  max: number,
-  commandReserve: number,
+  n: number,
   rarityOf?: (e: ForensicEvent) => number,
-  shownOperations?: ReadonlySet<string>,
-): { want: number; displaced: boolean } {
-  const anchors = events.filter((e) => classOf.get(e.id) === "anchor");
-  const shown = operationKeys(anchors);
-  const missing = missingOperations(events, (k) => shown.has(k) || !!shownOperations?.has(k));
-  const want = operationShare(max, missing.length);
-  const free = max - classOf.size - commandReserve;
-  if (want <= free) return { want, displaced: false };
-  const out = repeatedCloudAnchors([...anchors].sort(anchorRank(rarityOf)), want - Math.max(0, free));
+): boolean {
+  const anchors = events.filter((e) => classOf.get(e.id) === "anchor").sort(anchorRank(rarityOf));
+  const out = repeatedCloudAnchors(anchors, n);
   for (const e of out) classOf.delete(e.id);
-  return { want, displaced: out.length > 0 };
+  return out.length > 0;
 }
 
 // The command seats that can still be reserved: rows of THIS selection's input, not already anchors,
