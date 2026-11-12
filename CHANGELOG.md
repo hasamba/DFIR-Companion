@@ -72,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Suggest hunts clears a stale Presidio hold** — pressing Suggest hunts again after resolving Presidio no longer leaves the old "held for Presidio approval" line on screen while it thinks
+- **Playbook query cards are styled** — CQL / KQL / ES|QL / SPL query cards under playbook tasks now look like the Suggested Fleet Hunts cards (bordered card, full-width query box) instead of bare text
 - **Suggested Fleet Hunts fits a phone screen** — the "Change main source" dropdown no longer pushes the analyst and hunt-prep views sideways at 375px (closes #2595)
 - **Large drops keep a flat per-file import time** — numbering and the custody chain no longer re-read their whole logs per file (any outside change still forces a full re-read), and cloud-ledger lookups use an index; SANS 504 lab: drop folder 311 s → 179 s, Import-from-path 1,005 s → 860 s, last/first 10% 1.42× on both (closes #2584)
 - **Large drops no longer slow down file by file on the duplicate-host check** — the "Analysis on hold" check runs once a burst of imports goes quiet (at most every 60 s), not one whole super-timeline scan per file (part of #2584)

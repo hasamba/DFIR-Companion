@@ -409,25 +409,25 @@
 
   #sec-velohunts #mainSourceSelect{max-width:100%}
   #sec-velohunts .vhs-empty{color:var(--text-muted);font-size:12px}
-  #sec-velohunts .vhs-caveat{color:var(--badge-warning-text);font-size:12px;margin-bottom:8px}
-  #sec-velohunts .vhs-list{display:flex;flex-direction:column;gap:10px}
-  #sec-velohunts .vhs-card{background:var(--bg-secondary);border:1px solid var(--border-subtle);border-left:3px solid var(--success);border-radius:6px;padding:8px 10px}
-  #sec-velohunts .vhs-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-  #sec-velohunts .vhs-title{color:var(--text-bright);font-weight:bold}
-  #sec-velohunts .vhs-sev{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
-  #sec-velohunts .vhs-rationale{color:var(--text-primary);font-size:12px;margin:6px 0}
-  #sec-velohunts .vhs-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
-  #sec-velohunts .vhs-tech{background:var(--bg-secondary);color:var(--accent);border:1px solid var(--border-subtle);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
-  #sec-velohunts .vhs-tech:hover{text-decoration:underline}
-  #sec-velohunts textarea.vhs-vql{width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:var(--font-code);font-size:11px;padding:8px;margin-top:4px}
-  #sec-velohunts .vhs-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
-  #sec-velohunts .vhs-copy{background:var(--accent-solid);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
-  #sec-velohunts .vhs-copy.copied{background:var(--success)}
-  #sec-velohunts .vhs-deploy{background:var(--success);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
-  #sec-velohunts .vhs-deploy:disabled{opacity:.6;cursor:default}
-  #sec-velohunts .vhs-regen{background:var(--border-color);border:1px solid var(--border-strong);color:var(--text-primary);border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
-  #sec-velohunts .vhs-regen:disabled{opacity:.6;cursor:default}
-  #sec-velohunts .vhs-res{margin-top:6px}
+  #sec-velohunts .vhs-caveat,#sec-playbook .vhs-caveat{color:var(--badge-warning-text);font-size:12px;margin-bottom:8px}
+  #sec-velohunts .vhs-list,#sec-playbook .vhs-list{display:flex;flex-direction:column;gap:10px}
+  #sec-velohunts .vhs-card,#sec-playbook .vhs-card{background:var(--bg-secondary);border:1px solid var(--border-subtle);border-left:3px solid var(--success);border-radius:6px;padding:8px 10px}
+  #sec-velohunts .vhs-head,#sec-playbook .vhs-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  #sec-velohunts .vhs-title,#sec-playbook .vhs-title{color:var(--text-bright);font-weight:bold}
+  #sec-velohunts .vhs-sev,#sec-playbook .vhs-sev{border-radius:4px;padding:0 6px;font-size:11px;font-weight:bold;white-space:nowrap}
+  #sec-velohunts .vhs-rationale,#sec-playbook .vhs-rationale{color:var(--text-primary);font-size:12px;margin:6px 0}
+  #sec-velohunts .vhs-techs,#sec-playbook .vhs-techs{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+  #sec-velohunts .vhs-tech,#sec-playbook .vhs-tech{background:var(--bg-secondary);color:var(--accent);border:1px solid var(--border-subtle);border-radius:3px;padding:0 5px;font-size:11px;text-decoration:none}
+  #sec-velohunts .vhs-tech:hover,#sec-playbook .vhs-tech:hover{text-decoration:underline}
+  #sec-velohunts textarea.vhs-vql,#sec-playbook textarea.vhs-vql{width:100%;box-sizing:border-box;min-height:90px;resize:vertical;background:var(--bg-primary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:5px;font-family:var(--font-code);font-size:11px;padding:8px;margin-top:4px}
+  #sec-velohunts .vhs-actions,#sec-playbook .vhs-actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+  #sec-velohunts .vhs-copy,#sec-playbook .vhs-copy{background:var(--accent-solid);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+  #sec-velohunts .vhs-copy.copied,#sec-playbook .vhs-copy.copied{background:var(--success)}
+  #sec-velohunts .vhs-deploy,#sec-playbook .vhs-deploy{background:var(--success);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+  #sec-velohunts .vhs-deploy:disabled,#sec-playbook .vhs-deploy:disabled{opacity:.6;cursor:default}
+  #sec-velohunts .vhs-regen,#sec-playbook .vhs-regen{background:var(--border-color);border:1px solid var(--border-strong);color:var(--text-primary);border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+  #sec-velohunts .vhs-regen:disabled,#sec-playbook .vhs-regen:disabled{opacity:.6;cursor:default}
+  #sec-velohunts .vhs-res,#sec-playbook .vhs-res{margin-top:6px}
   #sec-huntprofile .hp-empty{color:var(--text-muted);font-size:12px}
   #sec-huntprofile .hp-tally{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:var(--text-primary)}
   #sec-huntprofile .hp-tally b{color:var(--text-bright)}
