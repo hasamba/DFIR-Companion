@@ -407,6 +407,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importBashHistory(caseId, text, base));
       case "ecar":
         return observe(pipeline.importEcar(caseId, text, base));
+      case "crowdstrike":
+        return observe(pipeline.importCrowdstrike(caseId, text, base));
       case "snort":
         return observe(pipeline.importSnort(caseId, text, base));
       case "yara":

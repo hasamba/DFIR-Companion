@@ -41,6 +41,7 @@ export const EDGE_OBSERVED_IMPORTERS: ReadonlySet<string> = new Set([
   "exporter-flow", // exporterFlowImport.ts
   "auditd", // auditdImport.ts
   "ecar", // ecarImport.ts (and passwordSprayFanout.ts rows built from it)
+  "crowdstrike", // crowdstrikeCanonical.ts — Falcon sensor-observed address, same basis as ECAR (#2592)
   "vmconnection", // sentinelLinuxImport.ts — Azure Monitor VMConnection SourceIp (#2098)
 ]);
 

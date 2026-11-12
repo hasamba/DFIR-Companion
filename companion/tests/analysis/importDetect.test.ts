@@ -1281,3 +1281,34 @@ describe("detectImportKind — a whole-upload binary plist is not a launchd plis
     ).toBe("macospersist");
   });
 });
+
+// #2592 — CrowdStrike Falcon sensor exports (synthetic rows).
+describe("crowdstrike: Falcon sensor exports", () => {
+  const ls = {
+    "#event_simpleName": "ProcessRollup2",
+    aid: "abc",
+    ComputerName: "WS-01",
+    CommandLine: "cmd.exe",
+  };
+  const fdr = { event_simpleName: "NetworkConnectIP4", aid: "abc", RemoteAddressIP4: "203.0.113.10" };
+  it("detects a JSON array, NDJSON and an FDR NDJSON file", () => {
+    expect(detectImportKind("export.json", JSON.stringify([ls, ls]))).toBe("crowdstrike");
+    expect(detectImportKind("export.ndjson", `${JSON.stringify(ls)}\n${JSON.stringify(ls)}`)).toBe(
+      "crowdstrike",
+    );
+    expect(detectImportKind("fdr.jsonl", `${JSON.stringify(fdr)}\n${JSON.stringify(fdr)}`)).toBe(
+      "crowdstrike",
+    );
+  });
+  it("detects a CSV export with #event_simpleName or event_simpleName headers", () => {
+    const csv = "#event_simpleName,aid,ComputerName,CommandLine\nProcessRollup2,abc,WS-01,cmd.exe\n";
+    expect(detectImportKind("export.csv", csv)).toBe("crowdstrike");
+    const fdrCsv = "event_simpleName,aid,RemoteAddressIP4\nNetworkConnectIP4,abc,203.0.113.10\n";
+    expect(detectImportKind("fdr.csv", fdrCsv)).toBe("crowdstrike");
+  });
+  it("does not claim a row with neither aid nor ComputerName", () => {
+    const row = { "#event_simpleName": "ProcessRollup2", timestamp: "1731400000000", CommandLine: "cmd.exe" };
+    expect(detectImportKind("export.json", JSON.stringify([row]))).not.toBe("crowdstrike");
+    expect(detectImportKind("x.csv", "event_simpleName,timestamp\nDnsRequest,1\n")).not.toBe("crowdstrike");
+  });
+});
