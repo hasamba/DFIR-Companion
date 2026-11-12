@@ -26,6 +26,7 @@ import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { ImportBase } from "../routes/context.js";
+import { dispatchCrowdstrike } from "./crowdstrikeDispatch.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { ImporterRunStat } from "../analysis/diagnostics.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "../analysis/importerStore.js";
@@ -408,7 +409,16 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       case "ecar":
         return observe(pipeline.importEcar(caseId, text, base));
       case "crowdstrike":
-        return observe(pipeline.importCrowdstrike(caseId, text, base));
+        return observe(
+          dispatchCrowdstrike(text, base, {
+            importFalcon: (t, b, src) =>
+              pipeline.importCrowdstrike(caseId, t, {
+                ...b,
+                ...(src ? { crowdstrike: { sourceText: src } } : {}),
+              }),
+            dispatch: (k, t, b) => dispatchImport(k, caseId, t, b),
+          }),
+        );
       case "snort":
         return observe(pipeline.importSnort(caseId, text, base));
       case "yara":

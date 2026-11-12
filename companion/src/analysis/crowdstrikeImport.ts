@@ -23,6 +23,9 @@ import {
 import { parseCsv } from "./csvImport.js";
 import { CROWDSTRIKE_SOURCE, eventName, field } from "./crowdstrikeFields.js";
 import { mapCrowdstrikeRecord } from "./crowdstrikeMap.js";
+import { alertRecords, isCrowdstrikeAlert, mapCrowdstrikeAlert } from "./crowdstrikeAlert.js";
+import { crowdstrikeTime } from "./crowdstrikeTime.js";
+export { crowdstrikeTime };
 import type { Severity } from "./stateTypes.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
 import { createCodeTally, createFieldTally, recordAggregation } from "./parseDebugTally.js";
@@ -37,6 +40,9 @@ export interface CrowdstrikeImportOptions {
   maxEvents?: number; // safety cap on emitted events (most severe first). Default DFIR_MAX_EVENTS.
   maxIocs?: number; // safety cap on emitted IOCs. Default 5000.
   debug?: ImportDebugRecorder;
+  // The uploaded file's text when `text` is a subset rebuilt from it (a split LogScale export, Part 3),
+  // so every row keeps the hash of the artifact the analyst actually imported.
+  sourceText?: string;
 }
 
 /** A Falcon sensor row: an event name AND the sensor's host identity (`aid` or `ComputerName`). */
@@ -46,15 +52,47 @@ export function isCrowdstrikeRecord(rec: unknown): boolean {
   return eventName(r) !== "" && (field(r, "aid") !== "" || field(r, "ComputerName") !== "");
 }
 
-/** The same signature on a lowercased CSV header set. */
+const isMetaKey = (k: string): boolean => k[0] === "@" || k[0] === "#";
+
+/**
+ * A LogScale / Next-Gen SIEM row wrapping third-party data (Part 3): no Falcon event name, and either
+ * the raw log in `@rawstring` with `#repo`/`#type`, or the parsed vendor record under `Vendor` (an
+ * object, or dotted `Vendor.…` keys) next to at least one LogScale `@`/`#` metadata key.
+ */
+export function isCrowdstrikeWrapper(rec: unknown): boolean {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) return false;
+  const r = rec as Row;
+  if (eventName(r) !== "") return false;
+  if (field(r, "@rawstring") !== "" && (field(r, "#repo") !== "" || field(r, "#type") !== "")) return true;
+  const keys = Object.keys(r);
+  const vendor =
+    (r["Vendor"] !== null && typeof r["Vendor"] === "object" && !Array.isArray(r["Vendor"])) ||
+    keys.some((k) => k.startsWith("Vendor."));
+  return vendor && keys.some(isMetaKey);
+}
+
+/** The sensor or wrapper signature on a lowercased CSV header set. */
 export function crowdstrikeCsvSig(h: Set<string>): boolean {
-  return (h.has("#event_simplename") || h.has("event_simplename")) && (h.has("aid") || h.has("computername"));
+  if ((h.has("#event_simplename") || h.has("event_simplename")) && (h.has("aid") || h.has("computername")))
+    return true;
+  if (h.has("@rawstring") && (h.has("#repo") || h.has("#type"))) return true;
+  const keys = [...h];
+  return keys.some((k) => k.startsWith("vendor.")) && keys.some(isMetaKey);
 }
 
 // ───────────────────────────── reading ─────────────────────────────
 
-function readRecords(text: string): { records: Row[]; format: string } {
+export function readCrowdstrikeRecords(text: string): { records: Row[]; format: string } {
   const t = text.replace(/^\uFEFF/, "").trim();
+  if (t[0] === "{" && t.includes('"resources"')) {
+    // The Falcon API envelope `{ meta, resources: [...], errors }` (alerts / detects, Part 2).
+    try {
+      const alerts = alertRecords(JSON.parse(t));
+      if (alerts) return { records: alerts, format: "falcon-api" };
+    } catch {
+      /* not one JSON document — fall through to NDJSON */
+    }
+  }
   if (t[0] === "{" || t[0] === "[") return extractRecords(t);
   const { headers, rows } = parseCsv(t);
   if (!headers.length) return { records: [], format: "csv" };
@@ -65,47 +103,10 @@ function readRecords(text: string): { records: Row[]; format: string } {
   };
 }
 
-// ───────────────────────────── time ─────────────────────────────
-
-const MIN_MS = Date.UTC(1990, 0, 1);
-const MAX_MS = Date.UTC(2100, 0, 1);
-
-// One time field to epoch ms, or undefined when blank, zero, malformed or out of range. `unit` is the
-// field's documented unit; a "seconds" value already in milliseconds (>= 1e11) is read as ms.
-function toMs(raw: string, unit: "s" | "ms"): number | undefined {
-  if (!raw) return undefined;
-  const n = Number(raw);
-  let ms: number;
-  if (Number.isFinite(n)) {
-    if (n <= 0) return undefined;
-    ms = unit === "s" && n < 1e11 ? Math.round(n * 1000) : Math.round(n);
-  } else {
-    ms = Date.parse(raw);
-    if (Number.isNaN(ms)) return undefined;
-  }
-  return ms >= MIN_MS && ms < MAX_MS ? ms : undefined;
-}
-
-// Event time, by validity: ContextTimeStamp (the event itself) → ProcessStartTime → timestamp (the
-// sensor's send time) → @timestamp (LogScale ingest).
-const TIME_FIELDS: [string, "s" | "ms"][] = [
-  ["ContextTimeStamp", "s"],
-  ["ProcessStartTime", "s"],
-  ["timestamp", "ms"],
-  ["@timestamp", "ms"],
-];
-export function crowdstrikeTime(rec: Row): { iso: string; from: string } | null {
-  for (const [key, unit] of TIME_FIELDS) {
-    const ms = toMs(field(rec, key), unit);
-    if (ms !== undefined) return { iso: new Date(ms).toISOString(), from: key };
-  }
-  return null;
-}
-
 // ───────────────────────────── parse ─────────────────────────────
 
 export function parseCrowdstrikeExport(text: string, opts: CrowdstrikeImportOptions = {}): SiemParseResult {
-  const { records, format } = readRecords(text);
+  const { records, format } = readCrowdstrikeRecords(text);
   const sink = new Map<string, SiemIoc>();
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
@@ -116,6 +117,14 @@ export function parseCrowdstrikeExport(text: string, opts: CrowdstrikeImportOpti
   for (const [recordIndex, rec] of records.entries()) {
     if (!rec || typeof rec !== "object") {
       skipped.add("not_an_object");
+      continue;
+    }
+    if (isCrowdstrikeAlert(rec)) {
+      for (const a of mapCrowdstrikeAlert(rec, recordIndex, sink)) {
+        mapped.push(a);
+        if (a.asset) hostTally.set(a.asset, (hostTally.get(a.asset) ?? 0) + 1);
+      }
+      fields.add("timestamp", "alert");
       continue;
     }
     const time = crowdstrikeTime(rec);
@@ -144,7 +153,7 @@ export function parseCrowdstrikeExport(text: string, opts: CrowdstrikeImportOpti
   recordAggregation(opts.debug, mapped.length, groups, events.length);
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
-    events: stampSourceArtifactHash(events, text),
+    events: stampSourceArtifactHash(events, opts.sourceText ?? text),
     iocs: [...sink.values()].slice(0, opts.maxIocs ?? 5000),
     total: records.length,
     kept: events.length,
