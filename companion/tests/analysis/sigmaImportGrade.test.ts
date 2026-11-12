@@ -57,6 +57,18 @@ describe("applySigmaMatches", () => {
     expect(ev.description).toBe("AWS cloudtrail StopLogging by alice");
   });
 
+  it("a Sigma title on a full-length CloudTrail row clips the body, never the trailing Terraform note (#2607)", () => {
+    const hint = "[user agent claims Terraform]";
+    const description = `${"AWS GetUser (iam) by bob ".padEnd(570, "x")} ${hint}`;
+    const out = applySigmaMatches({ ...base(), description }, [ref("a", "high")], SNAP);
+    expect(out.description.length).toBe(600);
+    expect(out.description.startsWith("Sigma: Rule a - AWS GetUser")).toBe(true);
+    expect(out.description.endsWith(` ${hint}`)).toBe(true);
+    // Without the note the clip is the plain head-first clip it always was.
+    const plain = applySigmaMatches({ ...base(), description: "y".repeat(600) }, [ref("a", "high")], SNAP);
+    expect(plain.description).toBe(`Sigma: Rule a - ${"y".repeat(600)}`.slice(0, 600));
+  });
+
   it("never lowers a hand-graded severity", () => {
     const out = applySigmaMatches({ ...base(), severity: "Critical" }, [ref("a", "high")], SNAP);
     expect(out.severity).toBe("Critical");

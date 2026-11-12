@@ -8,6 +8,8 @@
 // summing to under 600 in the worst case, the optional, attacker-shaped ones sharing whatever is
 // left, in order, each clipped to its share. Nothing mandatory is ever clipped by something optional.
 
+import { hintRoom, withClientHint } from "./awsClientHint.js";
+
 const TOTAL_MAX = 600;
 const HEAD_MAX = 120; // `AWS <name> (<src>) by <who ≤ 50> from <ip> in <region>` — the caller bounds who
 const POSTURE_MAX = 90; // posture + outcome, adjacent to the head
@@ -29,6 +31,9 @@ const IDENTITY_MIN = 12; // below this the identity is dropped, not clipped
 const NOTICE_MAX = 33;
 const OPTIONAL_MAX = [140, 100, 100]; // reading, trust, bindings — attacker-shaped, clipped first
 const OPTIONAL_DEFAULT_MAX = 100;
+// The client note (#2607, awsClientHint.ts) is the LAST element, so the prompt shortener's 40-char
+// tail keeps it. Its room comes out of the object slot, and only when the other mandatory slots
+// actually fill the budget — never out of the outcome, the tail markers, the qualifiers or the notice.
 
 export interface AwsDescriptionParts {
   head: string;
@@ -43,32 +48,33 @@ export interface AwsDescriptionParts {
   optional: string[];
   tail: string;
   qualifiers: string[];
+  /** The fixed client note (awsClientHint.ts) — rendered last, never clipped. */
+  hint?: string;
 }
 
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
+const sep = (s: string, n: number): number => (s ? s.length + n : 0);
 
 export function renderAwsDescription(parts: AwsDescriptionParts): string {
+  const hint = (parts.hint ?? "").trim();
+  const total = TOTAL_MAX - hintRoom(hint);
   const head = clip(parts.head.trim(), HEAD_MAX);
   const notice = clip((parts.notice ?? "").trim(), NOTICE_MAX);
   // The outcome is reserved INSIDE the posture slot: a posture that carries record data (a version
   // id) is clipped to what the outcome leaves, so "denied (…)" is never the part that falls off.
   const outcome = parts.outcome.trim() ? ` — ${clip(parts.outcome.trim(), OUTCOME_MAX)}` : "";
   const posture = `${clip(parts.posture.trim(), POSTURE_MAX - outcome.length)}${outcome}`.trim();
-  const object = clip(parts.object.trim(), OBJECT_MAX);
   const tail = clip(parts.tail.trim(), TAIL_MAX);
   const qualifiers = clip(parts.qualifiers.filter(Boolean).join("; "), QUALIFIERS_MAX);
+  const others = sep(head, 0) + sep(notice, 1) + sep(posture, 1) + sep(tail, 1) + sep(qualifiers, 3);
+  const object = clip(parts.object.trim(), Math.max(0, Math.min(OBJECT_MAX, total - others - 1)));
   const fixed = [head, notice, posture, object].filter(Boolean);
-  const fixedLen =
-    fixed.join(" ").length + (tail ? tail.length + 1 : 0) + (qualifiers ? qualifiers.length + 3 : 0);
+  const fixedLen = fixed.join(" ").length + sep(tail, 1) + sep(qualifiers, 3);
   const identityRaw = (parts.identity ?? "").trim();
-  const identityRoom = Math.min(IDENTITY_MAX, TOTAL_MAX - fixedLen - 1);
+  const identityRoom = Math.min(IDENTITY_MAX, total - fixedLen - 1);
   const identity = identityRaw && identityRoom >= IDENTITY_MIN ? clip(identityRaw, identityRoom) : "";
   const mandatory = [head, notice, identity, posture, object].filter(Boolean);
-  let remaining =
-    TOTAL_MAX -
-    mandatory.join(" ").length -
-    (tail ? tail.length + 1 : 0) -
-    (qualifiers ? qualifiers.length + 3 : 0);
+  let remaining = total - mandatory.join(" ").length - sep(tail, 1) - sep(qualifiers, 3);
   const optional: string[] = [];
   parts.optional.forEach((text, i) => {
     const t = text.trim();
@@ -80,5 +86,5 @@ export function renderAwsDescription(parts: AwsDescriptionParts): string {
     remaining -= shown.length + 1;
   });
   const body = [...mandatory, ...optional, tail].filter(Boolean).join(" ");
-  return `${body}${qualifiers ? ` — ${qualifiers}` : ""}`.slice(0, TOTAL_MAX);
+  return withClientHint(`${body}${qualifiers ? ` — ${qualifiers}` : ""}`.slice(0, total), hint);
 }

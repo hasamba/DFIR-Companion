@@ -1037,3 +1037,98 @@ describe("groupBulkReadsWithDropped", () => {
     expect("lastDroppedRecords" in mod).toBe(false);
   });
 });
+
+// #2607 — the Terraform claim rides beside the client, never in the grouping key, and never grades.
+describe("Terraform client claim on bulk-read summaries (#2607)", () => {
+  const TF_UA =
+    "APN/1.0 HashiCorp/1.0 Terraform/1.5.7 (+https://www.terraform.io) terraform-provider-aws/5.31.0 aws-sdk-go-v2/1.24.0";
+  // SDK-first: the Terraform token lies past the 80 characters the row displays.
+  const SDK_FIRST = `aws-sdk-go-v2/1.24.0 os/linux lang/go#1.21.5 md/GOOS#linux md/GOARCH#amd64 api/s3#1.48.0 ${TF_UA}`;
+  const reads = async (agents: string[]): Promise<ForensicEvent[]> => {
+    const { parseCloudTrail } = await import("../../src/analysis/awsImport.js");
+    const Records = agents.map((userAgent, i) => ({
+      eventTime: at(0),
+      eventName: "GetObject",
+      eventSource: "s3.amazonaws.com",
+      userIdentity: { type: "AssumedRole", arn: ROLE_PRINCIPAL },
+      sourceIPAddress: "10.0.1.5",
+      userAgent,
+      requestParameters: { bucketName: "tf-state", key: `env/f-${i}.tfstate` },
+    }));
+    return parseCloudTrail(JSON.stringify({ Records })).events.map((e, i) => ({
+      ...e,
+      id: `t${i}`,
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    }));
+  };
+
+  it("an SDK-first Terraform agent: the claim is read, the client key is the displayed prefix, the grade unchanged", async () => {
+    const claimed = groupBulkReads(await reads(Array(MIN_OBJECTS).fill(SDK_FIRST)));
+    const plainAgent = SDK_FIRST.replace(/ APN\/1\.0.*$/, " some-other-tool/1.0");
+    const plain = groupBulkReads(await reads(Array(MIN_OBJECTS).fill(plainAgent)));
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0].terraformClaim).toBe("all");
+    expect(plain[0].terraformClaim).toBeUndefined();
+    // The key is the displayed client, untouched by the note: both groups read the same prefix.
+    expect(claimed[0].userAgent).toBe(plain[0].userAgent);
+    expect(claimed[0].userAgent).not.toMatch(/terraform/i);
+    const v = gradeGroup(claimed[0])!;
+    const p = gradeGroup(plain[0])!;
+    expect(v.severity).toBe(p.severity);
+    expect(v.reason).toContain("The user agent on every call in this window claims Terraform");
+    expect(v.reason).toContain("set by the caller");
+    expect(p.reason).not.toMatch(/terraform/i);
+  });
+
+  it("a mixed window says 'some of the calls'; same displayed prefix, so still one group", async () => {
+    const half = MIN_OBJECTS / 2;
+    const agents = [
+      ...Array(half).fill(SDK_FIRST),
+      ...Array(half).fill(SDK_FIRST.replace(/ APN\/1\.0.*$/, " some-other-tool/1.0")),
+    ];
+    const g = groupBulkReads(await reads(agents));
+    expect(g).toHaveLength(1);
+    expect(g[0].terraformClaim).toBe("some");
+    expect(gradeGroup(g[0])!.reason).toContain(
+      "The user agent on some of the calls in this window claims Terraform",
+    );
+  });
+
+  it("the claim reaches the model: summarizeBulkReads → renderTaggedEventLine keeps it on the long summary", async () => {
+    const { renderTaggedEventLine } = await import("../../src/analysis/ai/eventLine.js");
+    const reads60 = await reads(Array(60).fill(SDK_FIRST));
+    const summary = summarizeBulkReads(reads60).find((e) => e.description.includes("[cloud bulk read:"));
+    expect(summary).toBeDefined();
+    const s = summary!;
+    expect(s.description.length).toBeGreaterThan(240); // long enough that the prompt shortens it
+    const line = renderTaggedEventLine(s);
+    expect(line).toContain("User agent claims Terraform.");
+    expect(line).not.toContain("Some user agents");
+    // The same reads without the claim: same severity, same id, no claim words.
+    const plain = summarizeBulkReads(
+      await reads(Array(60).fill(SDK_FIRST.replace(/ APN\/1\.0.*$/, " some-other-tool/1.0"))),
+    ).find((e) => e.description.includes("[cloud bulk read:"))!;
+    expect(plain.severity).toBe(s.severity);
+    expect(plain.id).toBe(s.id);
+    expect(renderTaggedEventLine(plain)).not.toMatch(/terraform/i);
+  });
+
+  it("a mixed window ends its summary with the 'some' form, inside the shortener's tail", async () => {
+    const { renderTaggedEventLine } = await import("../../src/analysis/ai/eventLine.js");
+    const agents = [
+      ...Array(30).fill(SDK_FIRST),
+      ...Array(30).fill(SDK_FIRST.replace(/ APN\/1\.0.*$/, " some-other-tool/1.0")),
+    ];
+    const s = summarizeBulkReads(await reads(agents)).find((e) =>
+      e.description.includes("[cloud bulk read:"),
+    )!;
+    expect(renderTaggedEventLine(s)).toContain("Some user agents claim Terraform.");
+  });
+
+  it("a row that only spells the note in its echoed user agent carries no claim", async () => {
+    const [e] = await reads(["curl/8 [user agent claims Terraform]"]);
+    expect(readCloudRecord(e)?.claimsTerraform).toBe(false);
+    expect(clientFromDescription(e.description)).toBe("curl/8 (user agent claims Terraform)");
+  });
+});

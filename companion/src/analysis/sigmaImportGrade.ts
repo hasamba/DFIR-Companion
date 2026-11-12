@@ -20,6 +20,7 @@ import {
   type SigmaRuleSet,
 } from "./sigmaRuleSet.js";
 import type { MappedEvent } from "./siemImport.js";
+import { clipKeepingClientHint } from "./awsClientHint.js";
 
 type Row = Record<string, unknown>;
 
@@ -196,7 +197,7 @@ export function applySigmaMatches(
     ...stamped,
     severity,
     mitre,
-    description: head ? `${head}${stamped.description}`.slice(0, 600) : stamped.description,
+    description: head ? clipKeepingClientHint(`${head}${stamped.description}`, 600) : stamped.description,
     message: [stamped.message, ...lines].filter(Boolean).join("\n"),
     aggKey: `${stamped.aggKey}|sigma:${matches
       .map((r) => r.id)
