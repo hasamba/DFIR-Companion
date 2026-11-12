@@ -48,6 +48,10 @@ import {
 import { legacySummaryId, summaryHead, summaryId } from "./cloudBulkReadSummaryId.js";
 
 export { legacySummaryId, summaryHead, summaryId } from "./cloudBulkReadSummaryId.js";
+// The client and its Terraform claim (#2607): beside the grouping key, never in it.
+import * as client from "./cloudBulkReadClient.js";
+export { clientFromDescription } from "./cloudBulkReadClient.js";
+const { INTERACTIVE_CLIENT_RE, clientFromDescription } = client;
 
 /** The marker this pass puts on its summary events. Stripped by correlate.ts before dedup keying. */
 export const BULK_READ_MARKER = "[cloud bulk read:";
@@ -87,10 +91,6 @@ const READ_ACTION_RE =
 /** Actions that ENUMERATE only. Present without object reads, they are the "data events are off" shape. */
 const LIST_ONLY_RE = /^(?:listobjects(?:v2)?|listbucket|listbuckets|storage\.objects\.list|list blobs)$/i;
 
-/** Clients a person drives, as opposed to the services that normally move data on a schedule. */
-const INTERACTIVE_CLIENT_RE =
-  /\b(?:rclone|cyberduck|s3browser|winscp|filezilla|transmit|mountainduck|s5cmd|aws-cli|boto3|botocore|s3cmd|curl|wget|python-requests|megasync|megacmd|rsync)\b/i;
-
 export interface ReadRecord {
   id: string;
   time: number;
@@ -103,6 +103,8 @@ export interface ReadRecord {
   account: string;
   sourceIp: string;
   userAgent: string;
+  /** The row carries the importer's Terraform note (#2607) — read beside userAgent, never keyed on. */
+  claimsTerraform?: boolean;
   action: string;
   /** The container — bucket, site, drive. */
   container: string;
@@ -150,6 +152,7 @@ export function readCloudRecord(e: ForensicEvent): ReadRecord | null {
     account: (c?.cloud?.accountId ?? c?.cloud?.tenant ?? "").trim(),
     sourceIp: (c?.network?.source?.address ?? e.srcIp ?? sourceFromDescription(e.description ?? "")).trim(),
     userAgent: clientFromDescription(e.description ?? ""),
+    claimsTerraform: client.claimsTerraform(e.description),
     action: action.trim(),
     container,
     object,
@@ -214,14 +217,6 @@ function principalFromDescription(d: string): string {
   return /\bby\s+([^\s][^\n]*?)(?:\s+from\s|\s+in\s|\s+on\s|\s+→\s|\s*\[|$)/.exec(d ?? "")?.[1]?.trim() ?? "";
 }
 
-/** The client that made the call. NO IMPORTER RETAINS CloudTrail's `userAgent` FIELD TODAY, so this reads what IS there (an explicit `[ua: …]` annotation, or a client name the description happens to carry) and returns "" otherwise — gradeGroup then SAYS the client was not recorded rather than grouping every caller together and implying they were one client. */
-export function clientFromDescription(d: string): string {
-  const tagged = /\[ua:\s*([^\]]{1,120})\]/i.exec(d ?? "")?.[1];
-  if (tagged) return tagged.trim();
-  const known = INTERACTIVE_CLIENT_RE.exec(d ?? "");
-  return known ? known[0] : "";
-}
-
 export interface BulkGroup {
   principal: string;
   /** The one credential the group's rows carry; "" when they carry none. */
@@ -230,6 +225,8 @@ export interface BulkGroup {
   account: string;
   sourceIp: string;
   userAgent: string;
+  /** Whether the window's user agents claim Terraform (#2607): context only, never a grading input. */
+  terraformClaim?: client.TerraformClaim;
   objectCount: number;
   containerCount: number;
   containers: string[];
@@ -397,6 +394,7 @@ export function groupBulkReadsWithDropped(
       account: head.account,
       sourceIp: head.sourceIp,
       userAgent: head.userAgent,
+      terraformClaim: client.terraformClaimOf(window),
       objectCount: bestCounts.objects,
       containerCount: bestCounts.containers,
       containers,
@@ -591,7 +589,7 @@ export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict
     `${group.principal} read ${what} in ${minutes} minute(s)` +
     (group.sourceIp ? ` from ${group.sourceIp}` : "") +
     (group.userAgent ? ` using ${group.userAgent.slice(0, 80)}` : "") +
-    ".";
+    `.${client.terraformClaimSentence(group.terraformClaim)}`;
 
   const why = corroboration.length
     ? ` What makes this more than volume: ${corroboration.join("; ")}.` +

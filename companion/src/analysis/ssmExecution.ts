@@ -4,6 +4,7 @@ import { tradecraftSignal } from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { reconTechniques } from "./reconTechniques.js";
 import { escapeControlChars } from "./webRequestDecode.js";
+import { hintRoom, withClientHint } from "./awsClientHint.js";
 
 // AWS Systems Manager remote execution (#931 item 7). SendCommand runs a document on managed
 // instances; StartSession opens an interactive shell or a tunnel to one. Both arrive in CloudTrail
@@ -221,6 +222,8 @@ export function renderSsmDescription(
     identity?: string;
     /** The replica notice (#931 item 5): reserved right after the head, never spliced in later. */
     notice?: string;
+    /** The fixed client note (#2607): rendered after the note, inside its own reserved room. */
+    hint?: string;
   },
 ): string {
   const head = `AWS ${parts.name} (${parts.source})${parts.who ? ` by ${parts.who.slice(0, 60)}` : ""}${parts.from ? ` from ${parts.from}` : ""}${parts.region ? ` in ${parts.region}` : ""}`;
@@ -233,7 +236,9 @@ export function renderSsmDescription(
   const note = ` — ${ssm.note}`;
   const noticeRaw = (parts.notice ?? "").trim();
   const notice = noticeRaw ? ` ${noticeRaw.slice(0, NOTICE_MAX)}` : "";
-  const room = 600 - head.length - notice.length - tail.length - note.length;
+  const hint = parts.hint ?? "";
+  const total = 600 - hintRoom(hint);
+  const room = total - head.length - notice.length - tail.length - note.length;
   const summaryBudget = Math.max(80, Math.min(260, room - 1));
   const summaryText = ssm.summary.slice(0, summaryBudget);
   const summary = ` ${summaryText}`;
@@ -247,7 +252,7 @@ export function renderSsmDescription(
       ? ` ${identityRaw.length > budget ? `${identityRaw.slice(0, budget - 1)}…` : identityRaw}`
       : "";
   const fixed = `${head}${notice}${identity}${summary}${payload}${tail}`;
-  return `${fixed}${note.slice(0, Math.max(0, 600 - fixed.length))}`.slice(0, 600);
+  return withClientHint(`${fixed}${note.slice(0, Math.max(0, total - fixed.length))}`.slice(0, total), hint);
 }
 
 /**

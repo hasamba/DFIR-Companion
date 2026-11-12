@@ -1975,6 +1975,17 @@ Measured on the public SANS 504 S3 ransomware lab, where the noise used to bury 
   for AWS services or this account only; and T1110 on one failed console sign-in that a success by the
   same principal from the same source follows within 10 minutes. Several failures keep T1110. The
   grade never changes, and no other log source does this.
+- **Rows say when the user agent claims Terraform.** A CloudTrail row shows the caller's user agent
+  in a shortened `[ua: …]` (30 characters on IAM and logging rows, 40 on Systems Manager rows, 80 on
+  the others), which often cuts off the word `Terraform`. When the full user agent contains
+  `Terraform/` or `terraform-provider-`, the row ends with `[user agent claims Terraform]`. The note
+  is always last, so the AI sees it on long rows too, and it is never shortened. A bulk-read summary
+  says when every call, or some calls, in its window made the claim. The user agent is set by the
+  caller, so the note is not proof: an attacker can set it or run real Terraform. Severity, ATT&CK
+  techniques and row grouping never change because of it. Brackets in the shown user agent are
+  turned into parentheses, so a user agent cannot fake the note. The tag-only rule
+  `cloud_aws_client_terraform` (tags `iac`, `iac_terraform`) finds these rows in the super-timeline.
+  Cases imported before this change keep their old rows until the file is imported again.
 
 **EC2 instance-role credentials used away from the instance.** The importer recognises an instance
 credential from two facts CloudTrail records itself: the credential was handed out by the instance

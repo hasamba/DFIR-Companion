@@ -1158,6 +1158,18 @@ cloud_aws_lambda_cross_account_permission:
   severity: Medium
   view: 'AWS data exposure'
 
+# ── Infrastructure-as-code client (#2607): awsImport.ts ends a CloudTrail row with the fixed note
+# "[user agent claims Terraform]" when the RAW user agent carries a Terraform token — the displayed
+# "[ua: …]" is clipped and often cuts the word off. The user agent is caller-chosen: this tags the
+# claim for super-timeline search and never grades. The importer scrubs the note out of every echoed
+# field, so only its own note matches.
+cloud_aws_client_terraform:
+  description: CloudTrail call whose user agent claims Terraform (caller-chosen; tag only, never a grade)
+  any:
+    - { field: description, regex: '^(?:Sigma: [^\n]*? - )?AWS [^\n]*\[user agent claims Terraform\]' }
+  tags: ['iac', 'iac_terraform']
+  view: 'AWS clients'
+
 cloud_gcp_owner_granted:
   description: GCP IAM policy binding added for roles/owner
   all:

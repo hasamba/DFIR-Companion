@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import type { Severity } from "./stateTypes.js";
 import type { LoggingChangeBlock, LoggingFailureKind, LoggingState } from "./canonicalLogging.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
+import { hintRoom, withClientHint } from "./awsClientHint.js";
 import { getCI, isObject, str } from "./siemImport.js";
 import { FORMAT_CHARS } from "./bidiControl.js";
 
@@ -726,10 +727,12 @@ export function renderLoggingDescription(
   identity: string,
   r: LoggingReading,
   tail = "",
+  hint = "", // the fixed client note (#2607): last, inside its own reserved room
 ): string {
   const qualifiers = clip(show(r.qualifiers.filter(Boolean).join("; "), QUALIFIERS_MAX), QUALIFIERS_MAX);
   const t = clip(show(tail, 80), 80);
-  let room = TOTAL_MAX - (qualifiers ? qualifiers.length + 3 : 0) - (t ? t.length + 1 : 0);
+  const total = TOTAL_MAX - hintRoom(hint);
+  let room = total - (qualifiers ? qualifiers.length + 3 : 0) - (t ? t.length + 1 : 0);
   const h = clip(show(head, HEAD_MAX), Math.max(0, Math.min(HEAD_MAX, room)));
   room -= h.length;
   const posture = clip(show(r.posture, POSTURE_MAX), Math.max(0, Math.min(POSTURE_MAX, room - 3)));
@@ -742,5 +745,6 @@ export function renderLoggingDescription(
     ? clip(show(identity, IDENTITY_MAX), Math.max(0, Math.min(IDENTITY_MAX, room - 3)))
     : "";
   const parts = [h, posture, detail.length > 8 ? detail : "", who.length > 8 ? who : ""].filter(Boolean);
-  return `${parts.join(" — ")}${t ? ` ${t}` : ""}${qualifiers ? ` [${qualifiers}]` : ""}`.slice(0, TOTAL_MAX);
+  const body = `${parts.join(" — ")}${t ? ` ${t}` : ""}${qualifiers ? ` [${qualifiers}]` : ""}`;
+  return withClientHint(body.slice(0, total), hint);
 }

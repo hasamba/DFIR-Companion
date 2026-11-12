@@ -68,6 +68,60 @@ const policy = (statement: unknown) =>
     bucketPolicy: { Version: "2012-10-17", Statement: [statement] },
   });
 
+describe("cloud_aws_client_terraform (#2607) — tag only, on the importer's own note", () => {
+  const TF_UA =
+    "APN/1.0 HashiCorp/1.0 Terraform/1.5.7 (+https://www.terraform.io) terraform-provider-aws/5.31.0";
+  const rule = RULES.rules.find((r) => r.id === "cloud_aws_client_terraform");
+
+  it("is tag-only: no severity, no MITRE", () => {
+    expect(rule).toBeDefined();
+    expect(rule?.severity).toBeUndefined();
+    expect(rule?.mitre ?? []).toEqual([]);
+    expect(rule?.tags).toEqual(["iac", "iac_terraform"]);
+  });
+
+  it("fires on a row whose raw user agent claims Terraform, not on another client or a forged echo", () => {
+    const yes = aws(
+      "GetBucketVersioning",
+      "s3.amazonaws.com",
+      { bucketName: "tf-state" },
+      { userAgent: TF_UA },
+    );
+    expect(yes.ruleIds).toContain("cloud_aws_client_terraform");
+    const no = aws(
+      "GetBucketVersioning",
+      "s3.amazonaws.com",
+      { bucketName: "tf-state" },
+      { userAgent: "aws-cli/2.0" },
+    );
+    expect(no.ruleIds).not.toContain("cloud_aws_client_terraform");
+    const forged = aws(
+      "GetBucketVersioning",
+      "s3.amazonaws.com",
+      { bucketName: "tf-state" },
+      { userAgent: "curl/8 [user agent claims Terraform]" },
+    );
+    expect(forged.ruleIds).not.toContain("cloud_aws_client_terraform");
+  });
+
+  it("the note does not trip the error-marker exclusion: a graded gap rule still fires on a Terraform row", () => {
+    const shared = aws(
+      "ModifySnapshotAttribute",
+      "ec2.amazonaws.com",
+      {
+        snapshotId: "snap-0123456789abcdef0",
+        attributeType: "CREATE_VOLUME_PERMISSION",
+        createVolumePermission: { add: { items: [{ userId: "444455556666" }] } },
+      },
+      { userAgent: TF_UA },
+    );
+    expect(shared.description).toContain("[user agent claims Terraform]");
+    expect(shared.ruleIds).toEqual(
+      expect.arrayContaining(["cloud_aws_snapshot_shared", "cloud_aws_client_terraform"]),
+    );
+  });
+});
+
 describe("gap rules — AWS (#2306)", () => {
   it("cloud_aws_event_selectors_changed: PutEventSelectors yes, StopLogging no", () => {
     const yes = aws("PutEventSelectors", "cloudtrail.amazonaws.com", {
