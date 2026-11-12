@@ -166,6 +166,38 @@ describe("the collection inventory in the synthesis prompt (#1588)", () => {
     expect(prompts).toHaveLength(2);
   });
 
+  it("#2594: a Splunk main source puts a note naming Splunk SPL before the timeline", async () => {
+    const mainSourceStore = new CaseMainSourceStore(cases);
+    await mainSourceStore.save("c1", "splunk");
+    await pipeline({ mainSourceStore }).synthesize("c1", { force: true });
+    const p = prompts[0];
+    expect(p).toContain("MAIN EVIDENCE SOURCE: Splunk — searches are written in Splunk SPL");
+    expect(p.indexOf("MAIN EVIDENCE SOURCE")).toBeLessThan(p.indexOf("COLLECTION INVENTORY"));
+  });
+
+  it("#2594: a host-tool case gets no main-source note (the prompt is unchanged)", async () => {
+    await pipeline({ mainSourceStore: new CaseMainSourceStore(cases) }).synthesize("c1", { force: true });
+    expect(prompts[0]).not.toContain("MAIN EVIDENCE SOURCE");
+    expect(prompts[0]).not.toContain("MIXED EVIDENCE");
+  });
+
+  it("#2594: disabling the source's platform drops the note and re-runs synthesis", async () => {
+    const mainSourceStore = new CaseMainSourceStore(cases);
+    await mainSourceStore.save("c1", "splunk");
+    const pl = pipeline({ mainSourceStore });
+    const saved = process.env.DFIR_HUNT_PLATFORMS;
+    try {
+      await pl.synthesize("c1");
+      process.env.DFIR_HUNT_PLATFORMS = "velociraptor,defender,elastic";
+      await pl.synthesize("c1");
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).not.toContain("MAIN EVIDENCE SOURCE");
+    } finally {
+      if (saved === undefined) delete process.env.DFIR_HUNT_PLATFORMS;
+      else process.env.DFIR_HUNT_PLATFORMS = saved;
+    }
+  });
+
   it("a malformed hunt file never stops synthesis; the bad jobs are dropped", async () => {
     const bad = [
       null,

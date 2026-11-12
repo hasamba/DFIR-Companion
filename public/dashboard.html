@@ -2368,6 +2368,11 @@
             <span id="caseServersCurrent" role="status"></span>
             <button id="caseServersChangeBtn" type="button" aria-label="Change this case's server set" hidden>Change…</button>
           </div>
+          <div id="caseMainSourceRow" class="case-servers-row" hidden>
+            <span id="caseMainSourceCurrent" role="status"></span>
+            <label>Change <select id="caseMainSourceSelect" aria-label="Change the case's main evidence source"></select></label>
+            <span id="caseMainSourceMsg" class="case-servers-error" role="alert"></span>
+          </div>
           <div id="serverSetsList" role="list"></div>
           <div data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
             <button id="serverSetAddBtn" type="button">+ Add server set</button>

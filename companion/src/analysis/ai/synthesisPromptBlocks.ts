@@ -54,6 +54,7 @@ export interface SynthesisPromptContext extends PromptBlockContext {
 /** Every block, in the order they are concatenated. Field order here IS the prompt order. */
 export interface SynthesisBlocks {
   incidentTypeBlock: string;
+  mainSourceBlock?: string; // #2594 — right after the incident type
   scopeNote: string;
   contextBlock: string;
   graphBlock: string;
@@ -94,6 +95,7 @@ export interface PreloadedBlocks {
   priorHuntsBlock: string;
   playbookProgressBlock: string;
   incidentTypeBlock: string;
+  mainSourceBlock?: string; // #2594
 }
 
 export interface BlockInput {
@@ -367,6 +369,7 @@ function buildReanswerBlock(
 function leadingBlocks(b: SynthesisBlocks): string {
   return (
     b.incidentTypeBlock +
+    (b.mainSourceBlock ?? "") +
     b.scopeNote +
     b.contextBlock +
     b.graphBlock +
