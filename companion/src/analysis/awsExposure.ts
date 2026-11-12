@@ -21,6 +21,8 @@ import { createHash } from "node:crypto";
 
 type Row = Record<string, unknown>;
 const LIST_MAX = 5;
+/** The pre-#2605 exposure calls whose request decides who is granted access (#2306, #2611). */
+const SHARE_CALLS = new Set(["modifysnapshotattribute", "putbucketacl", "putbucketpolicy"]);
 
 const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
 const at = (o: unknown, ...keys: string[]): unknown => {
@@ -203,11 +205,14 @@ export function awsRecordExposure(
   const reading = awsExposurePosture(eventName, request, str(getCI(rec, "errorCode")), recipient, source);
   // A #2605 reading names a port list or a principal and its resource: it goes in the row's wider
   // object slot, so the deciding value is not clipped off the narrow posture slot.
+  // The EBS snapshot share and S3 ACL/policy calls key on the request too (#2611): a share with a
+  // second account, or a different grant, is its own row — even when no reading is stated.
+  const keyed = own || (isObject(request) && SHARE_CALLS.has(eventName.toLowerCase()));
   return {
     posture: own ? "" : reading,
     object: own ? reading : "",
     grade: awsExposureGrade(eventName, request, recipient),
-    keySegment: own
+    keySegment: keyed
       ? `|exposure|${createHash("sha256").update(JSON.stringify(request)).digest("hex").slice(0, 16)}`
       : "",
   };

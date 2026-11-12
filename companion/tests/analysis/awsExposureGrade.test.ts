@@ -179,3 +179,69 @@ describe("PutBucketPolicy grading by content (#2542)", () => {
     );
   });
 });
+
+// #2611 — the EBS snapshot share and S3 bucket exposure readings join the CloudTrail row key the way
+// the #2605 readings do: different recipients or grants by the same caller stay on separate rows,
+// while repeated identical calls still fold into one counted row.
+describe("EBS snapshot and S3 exposure rows do not fold different recipients (#2611)", () => {
+  const ACCT_A = "111111111111";
+  const ACCT_B = "222222222222";
+  const parse = (records: Record<string, unknown>[]) =>
+    parseCloudTrail(JSON.stringify({ Records: records.map((r) => ({ ...base, ...r })) })).events;
+  const share = (acct: string, minute: number) => ({
+    eventTime: `2026-01-01T00:0${minute}:00Z`,
+    requestParameters: snapReq({ add: { items: [{ userId: acct }] } }),
+  });
+
+  it("keeps two snapshot shares to different accounts on two rows, each naming its recipient", () => {
+    const events = parse([share(ACCT_A, 0), share(ACCT_B, 1)]);
+    expect(events).toHaveLength(2);
+    expect(events.some((e) => e.description.includes(ACCT_A))).toBe(true);
+    expect(events.some((e) => e.description.includes(ACCT_B))).toBe(true);
+  });
+
+  it("still folds a repeated identical snapshot share into one counted row", () => {
+    const events = parse([share(ACCT_A, 0), share(ACCT_A, 1)]);
+    expect(events).toHaveLength(1);
+    expect(events[0].count).toBe(2);
+  });
+
+  const s3 = { eventSource: "s3.amazonaws.com" };
+  const policyTo = (principal: unknown, minute: number) => ({
+    ...s3,
+    eventName: "PutBucketPolicy",
+    eventTime: `2026-01-01T00:0${minute}:00Z`,
+    requestParameters: {
+      bucketName: "loot",
+      bucketPolicy: { Statement: [{ Effect: "Allow", Principal: principal, Action: "s3:GetObject" }] },
+    },
+  });
+  const aclGrant = (header: string, minute: number) => ({
+    ...s3,
+    eventName: "PutBucketAcl",
+    eventTime: `2026-01-01T00:0${minute}:00Z`,
+    requestParameters: {
+      bucketName: "loot",
+      [header]: 'uri="http://acs.amazonaws.com/groups/global/AllUsers"',
+    },
+  });
+
+  it("keeps two bucket policies granting different principals on separate rows", () => {
+    const events = parse([
+      policyTo({ AWS: `arn:aws:iam::${ACCT_A}:root` }, 0),
+      policyTo({ AWS: `arn:aws:iam::${ACCT_B}:root` }, 1),
+    ]);
+    expect(events).toHaveLength(2);
+  });
+
+  it("keeps two bucket ACLs with different grants on separate rows", () => {
+    const events = parse([aclGrant("x-amz-grant-read", 0), aclGrant("x-amz-grant-full-control", 1)]);
+    expect(events).toHaveLength(2);
+  });
+
+  it("still folds a repeated identical bucket policy into one counted row", () => {
+    const events = parse([policyTo("*", 0), policyTo("*", 1)]);
+    expect(events).toHaveLength(1);
+    expect(events[0].count).toBe(2);
+  });
+});
