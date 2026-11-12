@@ -72,17 +72,20 @@ describe("playbookHuntButton (#2594)", () => {
   it("updates the button when the main source loads, and resets it when the load fails", async () => {
     const btn = { textContent: VQL_TEXT, title: "" };
     const line = { innerHTML: "" };
+    const panelTitle = { textContent: "Suggested Fleet Hunts" };
     await load(
-      { pbHuntBtn: btn, mainSourceLine: line, caseId: { value: "c1" } },
+      { pbHuntBtn: btn, mainSourceLine: line, veloHuntsTitle: panelTitle, caseId: { value: "c1" } },
       ms("splunk", "spl", "Splunk SPL"),
     ).loadMainSource();
     expect(btn.textContent).toBe("✨ Suggest SPL queries");
+    expect(panelTitle.textContent).toBe("Suggested SPL hunts"); // #2594 part two
     await load(
-      { pbHuntBtn: btn, mainSourceLine: line, caseId: { value: "c1" } },
+      { pbHuntBtn: btn, mainSourceLine: line, veloHuntsTitle: panelTitle, caseId: { value: "c1" } },
       null,
       false,
     ).loadMainSource();
     expect(btn.textContent).toBe(VQL_TEXT);
+    expect(panelTitle.textContent).toBe("Suggested Fleet Hunts");
   });
 });
 

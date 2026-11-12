@@ -948,6 +948,10 @@ collection from an endpoint, because VQL collects from hosts. For CQL, KQL, ES|Q
 step is considered, and the AI leaves out a step that no search can serve (for example *notify
 legal*). So not every step gets a query, and one press can stop at the suggestion cap.
 
+The panel title names the language too: **Suggested Falcon hunts**, **Suggested KQL hunts**,
+**Suggested ES|QL hunts**, **Suggested SPL hunts**, or **Suggested Fleet Hunts** for Velociraptor,
+Mixed and other cloud logs.
+
 **Settings → Server sets** shows the same main source for the open case, with a **Change** list.
 The Settings list and the Suggested Fleet Hunts dropdown write the same value: a change in one shows
 in the other. A closed or archived case refuses the change and shows why.

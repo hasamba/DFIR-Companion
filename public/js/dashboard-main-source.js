@@ -94,7 +94,15 @@
     return VQL_BUTTON;
   }
 
+  // #2594: the Hunts panel title names the source: "Suggested Falcon hunts", "Suggested SPL hunts" …
+  function huntsPanelTitle(ms) {
+    const lang = ms && ms.language && ms.language.language;
+    return lang && BUTTON_WORDS[lang] ? `Suggested ${BUTTON_WORDS[lang]} hunts` : "Suggested Fleet Hunts";
+  }
+
   function renderPlaybookHuntButton() {
+    const title = document.getElementById("veloHuntsTitle");
+    if (title) title.textContent = huntsPanelTitle(msState);
     const btn = document.getElementById("pbHuntBtn");
     if (!btn) return;
     const b = playbookHuntButton(msState);
