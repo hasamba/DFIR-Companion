@@ -1095,6 +1095,37 @@ describe("Terraform client claim on bulk-read summaries (#2607)", () => {
     );
   });
 
+  it("the claim reaches the model: summarizeBulkReads → renderTaggedEventLine keeps it on the long summary", async () => {
+    const { renderTaggedEventLine } = await import("../../src/analysis/ai/eventLine.js");
+    const reads60 = await reads(Array(60).fill(SDK_FIRST));
+    const summary = summarizeBulkReads(reads60).find((e) => e.description.includes("[cloud bulk read:"));
+    expect(summary).toBeDefined();
+    const s = summary!;
+    expect(s.description.length).toBeGreaterThan(240); // long enough that the prompt shortens it
+    const line = renderTaggedEventLine(s);
+    expect(line).toContain("User agent claims Terraform.");
+    expect(line).not.toContain("Some user agents");
+    // The same reads without the claim: same severity, same id, no claim words.
+    const plain = summarizeBulkReads(
+      await reads(Array(60).fill(SDK_FIRST.replace(/ APN\/1\.0.*$/, " some-other-tool/1.0"))),
+    ).find((e) => e.description.includes("[cloud bulk read:"))!;
+    expect(plain.severity).toBe(s.severity);
+    expect(plain.id).toBe(s.id);
+    expect(renderTaggedEventLine(plain)).not.toMatch(/terraform/i);
+  });
+
+  it("a mixed window ends its summary with the 'some' form, inside the shortener's tail", async () => {
+    const { renderTaggedEventLine } = await import("../../src/analysis/ai/eventLine.js");
+    const agents = [
+      ...Array(30).fill(SDK_FIRST),
+      ...Array(30).fill(SDK_FIRST.replace(/ APN\/1\.0.*$/, " some-other-tool/1.0")),
+    ];
+    const s = summarizeBulkReads(await reads(agents)).find((e) =>
+      e.description.includes("[cloud bulk read:"),
+    )!;
+    expect(renderTaggedEventLine(s)).toContain("Some user agents claim Terraform.");
+  });
+
   it("a row that only spells the note in its echoed user agent carries no claim", async () => {
     const [e] = await reads(["curl/8 [user agent claims Terraform]"]);
     expect(readCloudRecord(e)?.claimsTerraform).toBe(false);

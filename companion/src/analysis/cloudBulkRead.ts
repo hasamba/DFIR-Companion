@@ -626,8 +626,8 @@ export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict
       : "";
 
   const evidence = group.eventIds.length ? ` Contributing events: ${group.eventIds.join(", ")}.` : "";
-
-  return { severity, reason: `${head}${why}${limits}${sample}${evidence}` };
+  const claim = client.terraformClaimTail(group.terraformClaim); // LAST: the prompt keeps a note's tail
+  return { severity, reason: `${head}${why}${limits}${sample}${evidence}${claim}` };
 }
 
 // ─────────────────────────── the timeline pass ───────────────────────────

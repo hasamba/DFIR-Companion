@@ -43,3 +43,14 @@ export function terraformClaimSentence(claim: TerraformClaim): string {
   const which = claim === "all" ? "every call in this window" : "some of the calls in this window";
   return ` The user agent on ${which} claims Terraform: infrastructure-as-code set-up and state refresh read buckets like this, but the field is set by the caller, so confirm the run against the expected deployment pipeline.`;
 }
+
+/**
+ * The compact claim that ENDS the summary (" User agent claims Terraform." / " Some user agents claim
+ * Terraform."). The prompt shortener keeps a long bulk-read note's head and its last 40 characters
+ * (promptDescription.ts), so the full sentence after the head is cut before the model reads it; this
+ * short form is the final element and survives. "" when there is no claim.
+ */
+export function terraformClaimTail(claim: TerraformClaim): string {
+  if (!claim) return "";
+  return claim === "all" ? " User agent claims Terraform." : " Some user agents claim Terraform.";
+}
