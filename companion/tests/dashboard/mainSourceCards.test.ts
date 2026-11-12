@@ -101,3 +101,13 @@ describe("main-source line (#2559)", () => {
     expect(String(line.innerHTML)).toContain('<option value="mixed" selected>');
   });
 });
+
+describe("playbook language cards are styled like the Hunts panel's", () => {
+  it("every hunt-card rule also applies inside the playbook section", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync(new URL("../../../public/css/dashboard-sections.css", import.meta.url), "utf8");
+    for (const cls of ["vhs-card", "vhs-head", "vhs-title", "vhs-rationale", "vhs-techs", "vhs-actions"])
+      expect(css).toContain(`#sec-playbook .${cls}`);
+    expect(css).toContain("#sec-playbook textarea.vhs-vql");
+  });
+});
