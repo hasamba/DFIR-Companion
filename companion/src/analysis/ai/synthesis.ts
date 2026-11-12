@@ -9,7 +9,7 @@ import {
 } from "../collectionInventory.js";
 import type { AIProvider } from "../../providers/provider.js";
 import { isCloudOnlyCase } from "../cloudOnlyCase.js";
-import { computeMainSource, type MainSourceResult } from "../caseMainSource.js";
+import { computeMainSource, renderMainSourceBlock, type MainSourceResult } from "../mainSourcePromptBlock.js";
 import type { CaseMainSourceStore } from "../caseMainSourceStore.js";
 import { withCloudSeedQuestions } from "../cloudKeyQuestions.js";
 import type { SynthesisFallback } from "./synthesisFallback.js";
@@ -242,6 +242,7 @@ async function prepareSynthesisRun(
   const inventory = buildCollectionInventory({ events: inWindowEvents, hunts, aliasIndex });
   const override = (await ctx.opts.mainSourceStore?.load(caseId).catch(() => null)) ?? null;
   const mainSource = computeMainSource(loaded.forensicTimeline, override); // #2559
+  const sourcedBlocks = { ...blocks, mainSourceBlock: renderMainSourceBlock(mainSource.effective) }; // #2594
   return {
     mainSource,
     trusted,
@@ -255,14 +256,14 @@ async function prepareSynthesisRun(
     scope,
     inWindowEvents,
     scopedEvents,
-    blocks,
+    blocks: sourcedBlocks,
     playbookTasks,
     synthHash: computeSynthHash({
       scopedEvents,
       iocs: state.iocs,
       scope,
       markers,
-      blocks,
+      blocks: sourcedBlocks,
       observationsBlock,
       promoted: promotedSignature(scopedEvents),
       // The inventory can change with no new row — a hunt came back empty, a host alias merged two

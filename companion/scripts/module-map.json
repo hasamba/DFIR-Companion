@@ -338,6 +338,7 @@
     "caseSqliteWorkerRunGuard.ts": "storage",
     "caseStats.ts": "analysis/case",
     "caseMainSource.ts": "analysis/case",
+    "mainSourcePromptBlock.ts": "analysis/ai",
     "caseMainSourceStore.ts": "analysis/case",
     "caseTransientPaths.ts": "storage",
     "capaResultImport.ts": "analysis/ingest",

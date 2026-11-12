@@ -94,7 +94,15 @@
     return VQL_BUTTON;
   }
 
+  // #2594: the Hunts panel title names the source: "Suggested Falcon hunts", "Suggested SPL hunts" …
+  function huntsPanelTitle(ms) {
+    const lang = ms && ms.language && ms.language.language;
+    return lang && BUTTON_WORDS[lang] ? `Suggested ${BUTTON_WORDS[lang]} hunts` : "Suggested Fleet Hunts";
+  }
+
   function renderPlaybookHuntButton() {
+    const title = document.getElementById("veloHuntsTitle");
+    if (title) title.textContent = huntsPanelTitle(msState);
     const btn = document.getElementById("pbHuntBtn");
     if (!btn) return;
     const b = playbookHuntButton(msState);
@@ -102,7 +110,45 @@
     btn.title = b.title;
   }
 
-  function renderMainSourceLine() {
+  // #2594: the same value is edited in two places — the Hunts panel line and the Settings row. Both
+  // render from the last CONFIRMED server answer (msState). A request generation drops any answer
+  // that arrives after a newer request or a case switch; one write at a time, both selects disabled.
+  let msCaseId = ""; // the case msState belongs to
+  let msGen = 0; // bumped by every GET/PUT and case switch
+  let msWriting = false;
+
+  function optionsHtml(ms) {
+    const sel = ms.override || "";
+    const opt = (v, label) => `<option value="${escAttr(v)}"${v === sel ? " selected" : ""}>${esc(label)}</option>`;
+    return [opt("", "Automatic"), ...(ms.families || []).map((f) => opt(f.family, f.label)), opt("mixed", "Mixed (per finding)")].join("");
+  }
+
+  function settingsText(ms) {
+    const mine = ms.override ? " (set by you)" : "";
+    if (!ms.effective) return "Main evidence source: Automatic — no evidence yet (Velociraptor VQL)";
+    if (ms.effective === "mixed") return `Main evidence source: Mixed${mine} — each hunt uses its own evidence's language`;
+    const lang = ms.language && ms.language.language ? ` — ${ms.language.label}` : "";
+    return `Main evidence source: ${labelOf(ms, ms.effective)}${mine}${lang}`;
+  }
+
+  function renderSettingsMainSource(error) {
+    const row = document.getElementById("caseMainSourceRow");
+    if (!row) return;
+    row.hidden = !msState;
+    const text = document.getElementById("caseMainSourceCurrent");
+    const sel = document.getElementById("caseMainSourceSelect");
+    const msg = document.getElementById("caseMainSourceMsg");
+    if (msg) msg.textContent = error || "";
+    if (!msState) return;
+    if (text) text.textContent = settingsText(msState);
+    if (sel) {
+      sel.innerHTML = optionsHtml(msState);
+      sel.disabled = msWriting;
+      sel.onchange = () => setMainSource(sel.value, "settings");
+    }
+  }
+
+  function renderMainSourceLine(error) {
     renderPlaybookHuntButton();
     const el = document.getElementById("mainSourceLine");
     if (!el) return;
@@ -111,47 +157,71 @@
       return;
     }
     el.innerHTML = lineHtml(msState);
+    if (error) el.insertAdjacentHTML("beforeend", `<div data-safe-style="color:var(--sev-high)">${esc(error)}</div>`);
     const sel = document.getElementById("mainSourceSelect");
-    if (sel) sel.onchange = () => setMainSource(sel.value);
+    if (sel) {
+      sel.disabled = msWriting;
+      sel.onchange = () => setMainSource(sel.value, "hunts");
+    }
+  }
+
+  /** Both editors from the confirmed state; `origin` gets the error, if any. */
+  function renderBoth(error, origin) {
+    renderMainSourceLine(origin === "hunts" ? error : "");
+    renderSettingsMainSource(origin === "settings" ? error : "");
   }
 
   function loadMainSource() {
     const caseId = caseIdOf();
+    if (caseId !== msCaseId) {
+      // A case switch: never show the old case's value while the new one loads.
+      msState = null;
+      msCaseId = caseId;
+      msWriting = false;
+      renderBoth();
+    }
     if (!caseId) return Promise.resolve();
+    // A write in flight owns the answer: a refresh now could read the pre-save value and win.
+    if (msWriting) return Promise.resolve();
+    const gen = ++msGen;
     return fetch(`/cases/${encodeURIComponent(caseId)}/main-source`)
       .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null)
       .then((j) => {
+        if (gen !== msGen || caseIdOf() !== caseId) return; // a newer request or another case
         msState = j;
-        renderMainSourceLine();
-      })
-      .catch(() => {
-        msState = null;
-        renderMainSourceLine();
+        renderBoth();
       });
   }
 
-  function setMainSource(value) {
+  function setMainSource(value, origin) {
     const caseId = caseIdOf();
-    if (!caseId) return;
+    if (!caseId || msWriting) return;
+    msWriting = true;
+    ++msGen; // drops a GET that started before this write
+    renderBoth();
     fetch(`/cases/${encodeURIComponent(caseId)}/main-source`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ override: value || null }),
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .catch(() => ({ ok: false, j: {} }))
       .then(({ ok, j }) => {
-        if (!ok) throw new Error(j.error || "could not change the main source");
-        msState = j;
-        renderMainSourceLine();
+        if (caseIdOf() !== caseId) return; // the analyst moved on; loadMainSource reset the state
+        msWriting = false;
+        if (!ok) {
+          // A frozen case, a lost connection: show the saved value again, and the reason.
+          renderBoth((j && j.error) || "could not change the main source", origin);
+          return;
+        }
+        msState = j; // no GET can start during a write, so this answer is the newest
+        renderBoth();
         // The shown hunts were written for the old language: clear them so the next press uses the new one.
         fleetLangHunts = [];
         fleetNotes = [];
         if (typeof resetVeloHuntSuggest === "function") resetVeloHuntSuggest();
         if (typeof loadPlaybook === "function") loadPlaybook(caseId);
-      })
-      .catch((e) => {
-        const el = document.getElementById("mainSourceLine");
-        if (el) el.insertAdjacentHTML("beforeend", `<div data-safe-style="color:var(--sev-high)">${esc(e.message)}</div>`);
       });
   }
 

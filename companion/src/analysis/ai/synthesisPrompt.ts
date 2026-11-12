@@ -61,6 +61,7 @@ export interface SynthesisPromptInput {
   priorHuntsBlock: string;
   playbookProgressBlock: string;
   incidentTypeBlock: string;
+  mainSourceBlock?: string; // #2594
   /** Canonical host identity for this run (#host-near-duplicate-merge-gate) — resolved once by the
    *  caller and threaded through every render/ranking site so a merged host shows as one machine. */
   aliasIndex?: HostAliasIndex;

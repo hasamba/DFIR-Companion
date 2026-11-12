@@ -56,6 +56,8 @@ export interface SynthesisInputBlocks {
   priorHuntsBlock: string;
   playbookProgressBlock: string;
   incidentTypeBlock: string;
+  /** #2594: names the main evidence source for next steps; absent/"" when it is Velociraptor anyway. */
+  mainSourceBlock?: string;
 }
 
 export interface SynthesisInputs {
@@ -230,6 +232,9 @@ export function computeSynthHash(i: SynthHashInput): string {
         // Re-picking the incident type reframes what the model should prioritize — an otherwise
         // identical timeline must re-synthesize rather than skip.
         it: b.incidentTypeBlock,
+        // #2594: the main-source note steers next steps. Only present when non-empty, so a case whose
+        // prompt did not change keeps the hash it had before this field existed.
+        ...(b.mainSourceBlock ? { ms: b.mainSourceBlock } : {}),
         // Deep-pass observations are a pure INPUT synthesis never rewrites, but they change what the
         // model can see — so a run carrying fresh ones must never be skipped as "inputs unchanged".
         ob: i.observationsBlock,

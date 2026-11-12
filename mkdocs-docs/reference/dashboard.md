@@ -943,6 +943,26 @@ queries**, **✨ Suggest ES|QL queries**, **✨ Suggest SPL queries**, or **✨ 
 hunts**. On a Mixed case, or on other cloud logs, it reads **✨ Suggest hunts** and its tooltip says
 what it does. The main source can also be set when the case is created, in the New case dialog.
 
+Which playbook steps get a query: a Velociraptor VQL hunt is offered only for a step that needs
+collection from an endpoint, because VQL collects from hosts. For CQL, KQL, ES|QL or SPL, every open
+step is considered, and the AI leaves out a step that no search can serve (for example *notify
+legal*). So not every step gets a query, and one press can stop at the suggestion cap.
+
+The panel title names the language too: **Suggested Falcon hunts**, **Suggested KQL hunts**,
+**Suggested ES|QL hunts**, **Suggested SPL hunts**, or **Suggested Fleet Hunts** for Velociraptor,
+Mixed and other cloud logs.
+
+**Settings → Server sets** shows the same main source for the open case, with a **Change** list.
+The Settings list and the Suggested Fleet Hunts dropdown write the same value: a change in one shows
+in the other. A closed or archived case refuses the change and shows why.
+
+AI next steps follow the main source too. When the main source is CrowdStrike Falcon, Microsoft
+Defender / Sentinel, Microsoft 365 / Entra ID, Elastic or Splunk, synthesis tells the AI to name that
+tool and the table, index or field to search, not a Velociraptor artifact — except for a step that
+needs collection from an endpoint. On a Mixed case it names the tool that holds each step's evidence.
+On other cloud logs it names the cloud log (for example CloudTrail). A Velociraptor or host-tool case
+is unchanged. A change of main source makes the next synthesis run again instead of being skipped.
+
 !!! warning "Review every query before running it"
     These are AI-written queries. A query in a language other than VQL is checked only for the
     right shape (for example, a KQL query must start with a table that language has). It is never
