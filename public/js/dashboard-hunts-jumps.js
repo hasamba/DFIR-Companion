@@ -19,6 +19,9 @@
     const el = document.getElementById("veloHuntSuggest");
     if (btn) btn.disabled = true;
     if (msg) msg.textContent = "thinking… (one AI call over the findings)";
+    // A leftover hold / error / "none proposed" message is stale the moment the analyst asks again
+    // (e.g. after resolving Presidio); hunt cards already on screen stay until the new answer lands.
+    if (el && !el.innerHTML.includes('class="vhs-card')) el.innerHTML = "";
     vhsSource = "fleet"; // #157 findings-driven hunts
     fetch(`/cases/${caseId}/velociraptor/suggest-hunts`, {
       method: "POST",

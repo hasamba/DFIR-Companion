@@ -115,6 +115,41 @@ describe("a held AI call reads as a hold on screen (#1782)", () => {
     expect(all.presidioPendingBadge.textContent).toBe("⚠ Presidio: 1");
   });
 
+  it("fleet hunts: pressing again clears the old hold message while it thinks", async () => {
+    const { all, globals } = heldPage({
+      veloHuntSuggest: el(),
+      suggestHuntsMsg: el(),
+      suggestHuntsBtn: el(),
+    });
+    globals.fetch = () => new Promise(() => {}); // the second press is still waiting for the AI
+    all.veloHuntSuggest.innerHTML = `<div class="vhs-empty">Hunt suggestions held for Presidio approval — review in Anonymization</div>`;
+    const api = loadDashboardModule<{ doSuggestHunts: () => void }>(
+      "dashboard-hunts-jumps.js",
+      ["dashboard-escape.js", "dashboard-presidio.js"],
+      { ...globals, vhsSource: "", resetVeloHuntSuggest: () => {} },
+    );
+    api.doSuggestHunts();
+    expect(all.suggestHuntsMsg.textContent).toContain("thinking");
+    expect(all.veloHuntSuggest.innerHTML).toBe("");
+  });
+
+  it("fleet hunts: pressing again keeps hunts already on screen while it thinks", async () => {
+    const { all, globals } = heldPage({
+      veloHuntSuggest: el(),
+      suggestHuntsMsg: el(),
+      suggestHuntsBtn: el(),
+    });
+    globals.fetch = () => new Promise(() => {});
+    all.veloHuntSuggest.innerHTML = `<div class="vhs-card">a hunt</div>`;
+    const api = loadDashboardModule<{ doSuggestHunts: () => void }>(
+      "dashboard-hunts-jumps.js",
+      ["dashboard-escape.js", "dashboard-presidio.js"],
+      { ...globals, vhsSource: "", resetVeloHuntSuggest: () => {} },
+    );
+    api.doSuggestHunts();
+    expect(all.veloHuntSuggest.innerHTML).toContain("vhs-card");
+  });
+
   it("query translator: neutral hold text instead of an error", async () => {
     const { all, globals } = heldPage({
       nlqInput: el("find lateral movement"),
