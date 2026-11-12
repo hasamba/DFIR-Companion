@@ -27,6 +27,7 @@ import { looksLikeSysdig } from "./sysdigImport.js";
 import { looksLikeWinEventXml } from "./evtxXmlImport.js";
 import { looksLikeBashHistory } from "./bashHistoryImport.js";
 import { isEcarRecord } from "./ecarImport.js";
+import { isCrowdstrikeRecord, crowdstrikeCsvSig } from "./crowdstrikeImport.js";
 import { looksLikeSnort } from "./snortImport.js";
 import { looksLikeYara } from "./yaraImport.js";
 import { looksLikeCombinedLog } from "./combinedLogImport.js";
@@ -411,6 +412,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isMobsfReport(root)) return "mobsfpermission";
   if (isMobsfIosReport(root)) return "mobsfpermission"; // #1136: same kind, ingest dispatches internally
   if (isNfdumpFlowRecord(sample)) return "exporterflow";
+  if (isCrowdstrikeRecord(sample)) return "crowdstrike"; // Falcon sensor rows (#2592): event name + aid/ComputerName
   if (isSandbox(sample)) return "sandbox";
   const cloud = detectCloudJson(root, sample); // cloudJsonDetect.ts: flow logs first, then activity/audit/storage
   if (cloud) return cloud;
@@ -535,6 +537,7 @@ function detectCsv(text: string, filename: string): ImportKind {
   const { headers, rows } = parseCsv(text);
   if (headers.length === 0) return "unknown";
   const h = new Set(headers.map((x) => x.trim().toLowerCase()));
+  if (crowdstrikeCsvSig(h)) return "crowdstrike"; // #2592 — ahead of the generic AI CSV importer
   if (macosQuarantineCsvSig(h)) return "macos";
   if (sqliteRowStateCsvSig(h)) return "sqliterowstate";
   if (spotlightStoreCsvSig(h)) return "macspotlightusage";

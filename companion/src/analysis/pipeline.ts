@@ -250,13 +250,6 @@ export class AnalysisPipeline {
 
   /** Scan one complete masked import up front so batched CSV/log analysis needs one approval round. */
 
-  /**
-   * Build the same (known entities, anonymizer) pair analyzeRestored derives per call, so an
-   * import's pre-scan sees exactly the masked text the chunk loop would later produce. Returns
-   * null when anonymization is off case-wide (mirrors analyzeRestored's own early return for
-   * `!policy.enabled`) — with anonymization off there is no masked text for Presidio to see.
-   */
-
   // Hash of the last successfully-synthesized inputs per case, to skip the (expensive) AI call when nothing changed since the last run. In-memory: a fresh process (or `force`) always synthesizes.
   private readonly lastSynthHash = new CaseKeyedMap<string>(() => this.opts.stateStore?.casesRoot); // #1866
   // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog when the distinct-template cap dropped patterns the AI never saw; consumed once to stamp a cap-hit warning onto import-meta — a side channel since import methods return only the state.
@@ -355,6 +348,10 @@ export class AnalysisPipeline {
 
   importEcar(...args: ImporterArgs<typeof ingest.importEcar>): Promise<InvestigationState> {
     return ingest.importEcar(this.importCtx, ...args);
+  }
+
+  importCrowdstrike(...args: ImporterArgs<typeof ingest.importCrowdstrike>): Promise<InvestigationState> {
+    return ingest.importCrowdstrike(this.importCtx, ...args);
   }
 
   importCombinedLog(...args: ImporterArgs<typeof ingest.importCombinedLog>): Promise<InvestigationState> {

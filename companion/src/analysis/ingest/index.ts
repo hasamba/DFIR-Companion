@@ -10,6 +10,7 @@ export * from "./cloudStreamImport.js";
 export * from "./cloudCollectionSummary.js";
 export * from "./cloudFlowImports.js";
 export * from "./cloudSnapshotImports.js";
+export * from "./crowdstrikeImports.js";
 export * from "./ecarImports.js";
 export * from "./guardDutyImports.js";
 export * from "./endpointImports.js";

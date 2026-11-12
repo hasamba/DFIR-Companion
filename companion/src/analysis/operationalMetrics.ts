@@ -36,6 +36,7 @@ export const IMPORTER_LABELS = [
   "wazuh",
   "bashhistory",
   "ecar",
+  "crowdstrike",
   "snort",
   "yara",
   "combinedlog",

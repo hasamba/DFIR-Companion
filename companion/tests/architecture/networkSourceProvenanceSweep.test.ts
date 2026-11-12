@@ -82,6 +82,7 @@ const SITES: Record<string, number> = {
   "tlsSession.ts": 1, // Zeek ssl.log id.orig_h (id.resp_h when flipped) / Suricata src_ip
   "auditdImport.ts": 1, // Linux auditd SOCKADDR saddr= — decoded from the kernel audit record
   "cloudRowCanonical.ts": 2, // #2485 — plain UAL ClientIP and Azure Activity callerIpAddress, the same #1184 basis as m365Import.ts / cloudActivityImport.ts
+  "crowdstrikeCanonical.ts": 1, // Falcon sensor RemoteAddressIP4 (logon) / LocalAddressIP4 (connect) — endpoint-sensor-observed, same basis as ECAR (#2592)
   "ecarImport.ts": 1, // ECAR EDR src_ip — endpoint-sensor-observed (already trusted by #1267 as passwordSprayFanout input)
   // Not a writer of addresses — the read-time re-stamp (#1352): copies an existing address from an
   // envelope whose producer.importer is one of the files above (pinned below), and stamps it on their

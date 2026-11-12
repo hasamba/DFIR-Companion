@@ -18,6 +18,7 @@ export const IMPORT_KINDS = [
   "chainsaw",
   "hayabusa",
   "ecar",
+  "crowdstrike",
   "velociraptor",
   "securityonion",
   "socrates",

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **CrowdStrike Falcon importer** — Event Search / LogScale / FDR / Next-Gen SIEM sensor exports (JSON, NDJSON, CSV) dated by event time, with host, user, remote IPs, domains and hashes as IOCs, logons in the login graph and source `CrowdStrike Falcon`; detection rows keep Falcon's severity (part of #2592)
 - **One synthesis seat per distinct cloud operation** — on an over-budget Microsoft 365 / Entra / Exchange, CloudTrail or GCP audit timeline, each operation the AI would not otherwise see gets a row before more repeats of one operation, same cap; the rest are disclosed as "N cloud operations not sent to the AI" (closes #2585)
 - **Drop folder imports many small CloudTrail files in batches** — up to 100 `.json.gz` files share one grading pass, one Undo step and one analysis run; each keeps its own evidence copy, custody record, rows, drop-log line and move; SANS 504 lab (3,872 files) 883 s → 314 s, same forensic timeline (closes #2540)
 - **AWS account weaknesses** — root sign-in without MFA, root used for routine management, buckets with no Object Lock, and S3 data events off before the selector change, each citing its CloudTrail record; in the Cloud Coverage panel, a CSV and a new report section (closes #2560)
