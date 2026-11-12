@@ -72,7 +72,9 @@ export interface TimelineGap {
   rebootEdge?: boolean;
   //   • `scopeBoundary` / `scopeBoundaryLabel` (#2606) — on a complete, non-wave gap: the two edge
   //     rows sit in separate cloud accounts/tenants (gapScope.ts), so the silence is a boundary
-  //     between independent log sources, not a hole in one. Always Low, never T1070. The label
+  //     between independent log sources, not a hole in one. Also on a betweenWaves gap whose
+  //     interval is crossScope (#2610): the two waves' severe rows sit in separate accounts/tenants,
+  //     and the label is wave-level. Always Low, never T1070. The label
   //     ("AWS account A → AWS account B") is charset-restricted but still escaped on every surface.
   scopeBoundary?: boolean;
   scopeBoundaryLabel?: string;
@@ -137,9 +139,15 @@ export const GAP_BANNER =
 
 // The report's one-phrase gap kind. A wave boundary is dwell time; a reboot at the edge is named.
 export function gapKindLabel(g: TimelineGap): string {
+  // The boundary is checked first (#2610): a quiet stretch between waves in separate
+  // accounts/tenants is not a dwell interval, and no dwell finding is raised for it.
+  if (g.scopeBoundary) {
+    return g.betweenWaves
+      ? "wave boundary, separate accounts/tenants"
+      : "complete silence, separate accounts/tenants";
+  }
   if (g.betweenWaves) return "dwell interval";
   if (!g.complete) return "partial";
-  if (g.scopeBoundary) return "complete silence, separate accounts/tenants";
   return g.rebootEdge ? "complete silence, reboot at edge" : "complete silence";
 }
 

@@ -5,7 +5,11 @@ import {
   provisioningReason,
   severeAssetsOf,
 } from "../../src/analysis/gapEdgeClass.js";
-import { detectTimelineGaps, backfillSilenceGapFindings } from "../../src/analysis/gapDetect.js";
+import {
+  detectTimelineGaps,
+  backfillSilenceGapFindings,
+  gapKindLabel,
+} from "../../src/analysis/gapDetect.js";
 import {
   backfillActivityWaveFinding,
   detectActivityWaves,
@@ -400,7 +404,9 @@ describe("complete-gap grade (#1942)", () => {
     expect(findingFor(events)).toEqual(findingFor(events));
   });
 
-  it("leaves partial gaps and dwell intervals at their existing grades", () => {
+  // A cross-scope boundary between waves (#2610) is the one dwell-shaped gap that is regraded; it
+  // needs a wave pattern, so pattern = null here leaves both grades alone.
+  it("leaves partial gaps and dwell intervals at their existing grades, except a cross-scope boundary", () => {
     const events = idleCase();
     const raw = detectTimelineGaps(events, { activeHours: null, densityFactor: 4 });
     const partial = { ...raw[0], id: "gap-x", complete: false, severity: "Medium" as const };
@@ -574,6 +580,62 @@ describe("cloud scope (#2606)", () => {
     expect(gap.scopeBoundary).toBeUndefined();
     expect(gap.severity).toBe("High");
     expect(finding.mitreTechniques).toEqual(["T1070"]);
+  });
+
+  // #2610: the gap between two waves in separate accounts/tenants is labelled as a boundary on
+  // every surface (panel, report, AI gap prompt), matching the finding #2606 already withholds.
+  function betweenWaveGap(first: Partial<ForensicEvent>, second: Partial<ForensicEvent>) {
+    const events = [
+      ...burst("w1-", "2026-08-07T14:30:00Z", 6, first),
+      ...burst("w2-", "2026-08-25T17:30:00Z", 6, second),
+    ];
+    const { gaps, pattern, state } = findings(events);
+    const between = gaps.filter((g) => g.betweenWaves);
+    expect(between).toHaveLength(1);
+    return { gap: between[0], pattern, state };
+  }
+
+  it("labels a between-wave gap across two AWS accounts as a Low boundary, not a dwell interval", () => {
+    const { gap, pattern, state } = betweenWaveGap(aws("111111111111", HIGH), aws("222222222222", HIGH));
+    expect(pattern!.intervals[0].crossScopeLabel).toBe("AWS account 111111111111 → AWS account 222222222222");
+    expect(gap.scopeBoundary).toBe(true);
+    expect(gap.scopeBoundaryLabel).toBe("AWS account 111111111111 → AWS account 222222222222");
+    expect(gap.severity).toBe("Low");
+    expect(gap.attackerEdges).toBe(false);
+    expect(gapKindLabel(gap)).toBe("wave boundary, separate accounts/tenants");
+    expect(state.findings).toHaveLength(0);
+  });
+
+  it("labels a between-wave gap across two M365 tenants as a boundary", () => {
+    const { gap } = betweenWaveGap(m365(TENANT_1, HIGH), m365(TENANT_2, HIGH));
+    expect(gap.scopeBoundary).toBe(true);
+    expect(gap.scopeBoundaryLabel).toBe(`tenant ${TENANT_1} → tenant ${TENANT_2}`);
+    expect(gap.severity).toBe("Low");
+  });
+
+  it("leaves a between-wave gap inside one account or tenant a High dwell interval", () => {
+    for (const scope of [aws("111111111111", HIGH), m365(TENANT_1, HIGH)]) {
+      const { gap, pattern } = betweenWaveGap(scope, scope);
+      expect(pattern!.intervals[0].crossScopeLabel).toBeUndefined();
+      expect(gap.scopeBoundary).toBeUndefined();
+      expect(gap.scopeBoundaryLabel).toBeUndefined();
+      expect(gap.severity).toBe("High");
+      expect(gap.attackerEdges).toBe(true);
+      expect(gapKindLabel(gap)).toBe("dwell interval");
+    }
+  });
+
+  it("leaves a mixed endpoint + cloud between-wave gap unflagged", () => {
+    const { gap } = betweenWaveGap({ asset: "HOST-A", severity: "High" }, aws("222222222222", HIGH));
+    expect(gap.scopeBoundary).toBeUndefined();
+    expect(gap.severity).toBe("High");
+    expect(gapKindLabel(gap)).toBe("dwell interval");
+  });
+
+  it("does not flag a between-wave gap when one side has no severe row (#2606 rule unchanged)", () => {
+    const { gap } = betweenWaveGap(aws("111111111111", HIGH), aws("222222222222"));
+    expect(gap.scopeBoundary).toBeUndefined();
+    expect(gapKindLabel(gap)).toBe("dwell interval");
   });
 
   it("strips unsafe characters from an account id before it reaches a label", () => {

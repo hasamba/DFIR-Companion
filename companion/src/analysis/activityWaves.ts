@@ -11,7 +11,7 @@ import {
 } from "./gapDetect.js";
 import { attackerGradedInterval, classifyGapEdges, severeAssetsOf } from "./gapEdgeClass.js";
 import { hostHistoryIds } from "./gapHostHistory.js";
-import { crossScopeInterval, severeCloudScopesOf } from "./gapScope.js";
+import { crossScopeInterval, scopeSetBoundaryLabel, severeCloudScopesOf } from "./gapScope.js";
 
 // The options builder that belongs with the entry point below: every consumer that holds the state
 // passes gapOptionsFor(state), so the host-history cut is the same on every surface (#1503).
@@ -64,6 +64,9 @@ export interface WaveInterval {
   // none (#2606, gapScope.ts). Such an interval is never attackerGraded: two separate accounts are
   // two environments, not two visits to one.
   crossScope: boolean;
+  // The "A → B" scope label of a crossScope interval (#2610), so the gap it marks is labelled as a
+  // boundary between separate accounts/tenants. Absent when crossScope is false.
+  crossScopeLabel?: string;
 }
 
 export interface WavePattern {
@@ -191,7 +194,9 @@ export function detectActivityWaves(
       0,
       Math.round((Date.parse(waves[i].startTimestamp) - Date.parse(waves[i - 1].endTimestamp)) / 1000),
     );
-    const crossScope = crossScopeInterval(cloudScopes[i - 1], cloudScopes[i]);
+    const scopesBefore = cloudScopes[i - 1];
+    const scopesAfter = cloudScopes[i];
+    const crossScope = crossScopeInterval(scopesBefore, scopesAfter);
     intervals.push({
       fromWave: waves[i - 1].index,
       toWave: waves[i].index,
@@ -199,6 +204,9 @@ export function detectActivityWaves(
       durationLabel: formatDuration(durationSeconds),
       attackerGraded: !crossScope && attackerGradedInterval(severe[i - 1], severe[i]),
       crossScope,
+      ...(crossScope && scopesBefore && scopesAfter
+        ? { crossScopeLabel: scopeSetBoundaryLabel(scopesBefore, scopesAfter) }
+        : {}),
     });
   }
 

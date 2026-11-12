@@ -88,7 +88,14 @@
         const sev = h.severity || g.severity || "Medium";
         const sevColor = GH_SEV_COLOR[sev] || "#9aa4b2";
         const sevBadge = `<span class="gh-sev" data-safe-style="background:${sevColor}22;color:${sevColor};border:1px solid ${sevColor}55">${esc(sev)}</span>`;
-        const kind = g.complete ? "complete silence" : "partial gap";
+        // #2610: a gap between separate cloud accounts/tenants is a boundary, not a hole in one log.
+        const kind = g.scopeBoundary
+          ? g.betweenWaves
+            ? "quiet interval (separate accounts/tenants)"
+            : "complete silence (separate accounts/tenants)"
+          : g.complete
+            ? "complete silence"
+            : "partial gap";
         const conf =
           typeof h.confidence === "number" && h.confidence > 0
             ? `<span class="gh-conf">confidence ${esc(h.confidence)}%</span>`

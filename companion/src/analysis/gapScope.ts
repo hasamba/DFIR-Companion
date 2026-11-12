@@ -101,3 +101,9 @@ export function scopeBoundaryLabel(
   if (a.length === 0 || b.length === 0 || !disjoint(new Set(a), new Set(b))) return null;
   return `${a.map(scopeLabel).join(" / ")} → ${b.map(scopeLabel).join(" / ")}`;
 }
+
+// The same "A → B" label for two waves' scope sets (#2610). Wave-level, because crossScopeInterval
+// decides on every severe row of each wave, not on the two edge rows (which may be unscoped/Info).
+export function scopeSetBoundaryLabel(before: ReadonlySet<string>, after: ReadonlySet<string>): string {
+  return `${[...before].map(scopeLabel).join(" / ")} → ${[...after].map(scopeLabel).join(" / ")}`;
+}

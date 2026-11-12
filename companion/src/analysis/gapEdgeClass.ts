@@ -154,7 +154,10 @@ function gradeCompleteGap(
 //     Two High waves around two idle edge rows are still two visits: attackerEdges wins, so the
 //     dwell finding and the waves finding never disagree about the same window.
 //   • `severity` / `corroborated` / `rebootEdge` / `scopeBoundary` — on a complete, non-wave gap
-//     only (#1942, #2606); see gradeCompleteGap. Partial gaps and dwell intervals keep their grade.
+//     (#1942, #2606); see gradeCompleteGap. Partial gaps and dwell intervals keep their grade,
+//     except a `betweenWaves` gap whose interval activityWaves.ts marks crossScope (#2610): it gets
+//     `scopeBoundary` + label and Low, the same as a boundary gap outside a wave, so the panel, the
+//     report and the AI gap prompt label it the way the (withheld) finding reads it. Never T1070.
 export function classifyGapEdges(
   gaps: readonly TimelineGap[],
   events: readonly ForensicEvent[],
@@ -164,9 +167,12 @@ export function classifyGapEdges(
   const byId = new Map(events.map((e) => [e.id, e]));
   // A between-waves gap resumes at wave k's first event; the interval before it is intervals[k-1].
   const gradedByResume = new Map<string, boolean>();
+  const crossScopeByResume = new Map<string, string>();
   if (pattern) {
     pattern.waves.slice(1).forEach((w, i) => {
-      gradedByResume.set(w.firstEventId, pattern.intervals[i]?.attackerGraded === true);
+      const iv = pattern.intervals[i];
+      gradedByResume.set(w.firstEventId, iv?.attackerGraded === true);
+      if (iv?.crossScope) crossScopeByResume.set(w.firstEventId, iv.crossScopeLabel ?? "different scopes");
     });
   }
   const antiForensic = gaps.some((g) => g.complete) && events.some(isAntiForensicRow);
@@ -179,6 +185,15 @@ export function classifyGapEdges(
     if (g.complete && !g.betweenWaves) Object.assign(next, gradeCompleteGap(before, after, antiForensic));
     if (historyIds.has(g.beforeEventId)) next.hostHistory = true;
     if (g.betweenWaves) next.attackerEdges = gradedByResume.get(g.afterEventId) === true;
+    const crossLabel = g.betweenWaves ? crossScopeByResume.get(g.afterEventId) : undefined;
+    if (crossLabel !== undefined) {
+      const boundary: Pick<TimelineGap, "severity" | "scopeBoundary" | "scopeBoundaryLabel"> = {
+        severity: "Low",
+        scopeBoundary: true,
+        scopeBoundaryLabel: crossLabel,
+      };
+      Object.assign(next, boundary);
+    }
     if (reasonBefore && reasonAfter && !next.attackerEdges) {
       next.provisioningEdges = true;
       next.provisioningReason =

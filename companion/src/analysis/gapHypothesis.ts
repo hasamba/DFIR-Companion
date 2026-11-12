@@ -106,9 +106,19 @@ export function renderGapForPrompt(
   const active = gap.activeSources.length ? gap.activeSources.join(", ") : "—";
   const beforeText = before.length ? before.map(renderEventLine).join("\n") : "(no events recorded before)";
   const afterText = after.length ? after.map(renderEventLine).join("\n") : "(no events recorded after)";
+  // #2610: a gap between separate cloud accounts/tenants (wave or not) is two independent log
+  // sources, not a hole in one. Said in the user part, so it holds whichever system prompt is live.
+  const boundary = gap.scopeBoundary
+    ? [
+        `Boundary: separate accounts/tenants (${gap.scopeBoundaryLabel ?? "different scopes"}) — activity ` +
+          `before and after sits in two independent log sources, not a hole in one; not evidence of ` +
+          `cleared logs or attacker dwell.`,
+      ]
+    : [];
   return [
     `### ${gap.id} [${gap.severity}] ${kind} — ${gap.durationLabel} of silence`,
     `Window: ${gap.startTimestamp} → ${gap.endTimestamp}`,
+    ...boundary,
     `Silent sources: ${silent} | Still active during the gap: ${active}`,
     `EVENTS BEFORE THE SILENCE:`,
     beforeText,

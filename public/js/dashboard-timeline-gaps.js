@@ -54,7 +54,10 @@
     const rows = timelineGapsData
       .map((g) => {
         const sevColor = KC_SEV_COLOR[g.severity] || "var(--border-color)";
-        const kind = g.complete
+        // A quiet stretch between waves in separate accounts/tenants is a boundary, not dwell (#2610).
+        const kind = g.betweenWaves && g.scopeBoundary
+          ? `<span title="${escAttr("Quiet interval between two waves of activity in different cloud accounts or tenants — two log sources, not dwell time: " + (g.scopeBoundaryLabel || ""))}" data-safe-style='color:var(--text-muted);font-weight:bold'>quiet interval (separate accounts/tenants)</span>`
+          : g.complete
           ? g.scopeBoundary
             ? `<span title="${escAttr("Activity on each side sits in a different cloud account or tenant: " + (g.scopeBoundaryLabel || ""))}" data-safe-style='color:var(--text-muted);font-weight:bold'>complete silence (separate accounts/tenants)</span>`
             : g.rebootEdge

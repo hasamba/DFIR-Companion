@@ -210,6 +210,8 @@ A **complete** gap (every source silent) is graded **High** only when it is corr
 
 A quiet stretch between two waves of activity is reported as a **dwell interval** only when both waves hold High or Critical activity on a common footing: the same host, or the same cloud account or tenant. Waves in two separate accounts or tenants are two environments, not two visits, so they produce no dwell interval and do not count toward the waves finding. When the waves finding is raised for other intervals, it says how many intervals it left out for this reason.
 
+The Timeline Gaps panel, the report and the hypothesis cards show such a quiet stretch as a **Low** boundary ("quiet interval (separate accounts/tenants)"), not as a dwell interval, with no T1070 mapping. Hover the label to see the two accounts or tenants. **✨ Hypothesize gaps** is also told that each such gap, inside or outside a wave, is a boundary between two independent log sources and not evidence of cleared logs. This applies only when every High or Critical event in both waves belongs to a cloud account or tenant. Two waves with no High or Critical activity in different accounts are still labelled as a dwell interval, but they produce no finding.
+
 **✨ Hypothesize gaps** — one AI call over the detected gaps. For each silent window it hypothesizes what the attacker likely did (inferred from the surrounding events) and pairs it with shadow-artifact collections that could reconstruct the missing window. Each suggested artifact carries a **▶ Deploy collection** button — enabled only when Velociraptor is configured — that launches the collection to recover the missing evidence.
 
 ---
