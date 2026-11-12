@@ -306,6 +306,29 @@ describe("awsComputeLifecycles — recorded configuration changes", () => {
     expect(row.description).not.toContain("→  ");
   });
 
+  it("the legacy top-level ingress form joins the lifecycle, and any /0 source is any address (#2605)", () => {
+    const [open] = rows([
+      launch(),
+      rec({
+        eventName: "AuthorizeSecurityGroupIngress",
+        eventTime: at(70),
+        requestParameters: {
+          cidrIp: "203.0.113.254/0",
+          fromPort: 22,
+          groupId: SG,
+          ipPermissions: {},
+          ipProtocol: "tcp",
+          toPort: 22,
+        },
+        responseElements: { _return: true },
+      }),
+    ]);
+    expect(open.severity).toBe("Medium");
+    expect(open.description).toContain(
+      `AuthorizeSecurityGroupIngress recorded on ${SG}: tcp 22 from 203.0.113.254/0 (any address)`,
+    );
+  });
+
   it("an any-address ingress rule recorded on a group the instance holds is Medium and says 'recorded', never 'allows'; a group source or another group is not", () => {
     const [open] = rows([launch(), ingress(SG, "0.0.0.0/0", { eventTime: at(70) })]);
     expect(open.severity).toBe("Medium");

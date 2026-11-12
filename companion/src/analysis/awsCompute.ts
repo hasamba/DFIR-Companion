@@ -32,9 +32,9 @@ import {
   type ShapeHit,
 } from "./awsLineage.js";
 import { cleanIp, getCI, isObject, normalizeTime, str, type MappedEvent } from "./siemImport.js";
+import { ingressPermissions } from "./awsSecurityGroupRule.js";
 import {
   ADDRESSES_MAX,
-  ANY_SOURCE,
   ATTRIBUTES,
   AWS_COMPUTE_MAX,
   EdgeBuffer,
@@ -419,43 +419,6 @@ function recordRemote(t: Tracked, s: Scanned): void {
 
 // ───────────────────────────── pass 3: rules on the groups, disassociations, the instance's own session ─────────────────────────────
 
-interface Permission {
-  protocol: string;
-  ports: string;
-  source: string;
-  anySource: boolean;
-}
-/** Every (permission, source) pair of an ingress request, as recorded: the first few retained for the words, ALL read for the any-source fact. */
-function permissions(request: Row): { retained: Permission[]; anySource: boolean; total: number } {
-  const retained: Permission[] = [];
-  let anySource = false;
-  let total = 0;
-  for (const p of items(getCI(request, "ipPermissions"))) {
-    const proto = field(p, "ipProtocol");
-    const protocol = proto === "-1" ? "all protocols" : proto || "protocol not recorded";
-    const from = field(p, "fromPort");
-    const to = field(p, "toPort");
-    const ports = from && to && from !== to ? `${from}-${to}` : from || to;
-    const push = (source: string, any: boolean): void => {
-      if (!source) return;
-      total += 1;
-      anySource = anySource || any;
-      if (retained.length < RULE_SOURCES_PER_RECORD_MAX)
-        retained.push({ protocol, ports, source, anySource: any });
-    };
-    for (const r of items(getCI(p, "ipRanges"))) push(field(r, "cidrIp"), ANY_SOURCE.has(field(r, "cidrIp")));
-    for (const r of items(getCI(p, "ipv6Ranges")))
-      push(field(r, "cidrIpv6"), ANY_SOURCE.has(field(r, "cidrIpv6")));
-    for (const g of items(getCI(p, "groups")))
-      push(
-        `group ${field(g, "groupId") || field(g, "groupName")}${field(g, "userId") ? ` (owner ${field(g, "userId")})` : ""}`,
-        false,
-      );
-    for (const l of items(getCI(p, "prefixListIds"))) push(`prefix list ${field(l, "prefixListId")}`, false);
-  }
-  return { retained, anySource, total };
-}
-
 function recordRule(byGroup: Map<string, Inst[]>, s: Scanned): void {
   const action = (
     { authorizesecuritygroupingress: "authorize", revokesecuritygroupingress: "revoke" } as const
@@ -465,7 +428,7 @@ function recordRule(byGroup: Map<string, Inst[]>, s: Scanned): void {
   const groupId = field(s.request, "groupId");
   if (!groupId || !s.account || !s.region) return;
   const holders = byGroup.get(`${lower(s.account)}|${lower(s.region)}|${lower(groupId)}`) ?? [];
-  const perms = permissions(s.request);
+  const perms = ingressPermissions(s.request, RULE_SOURCES_PER_RECORD_MAX);
   for (const inst of holders) {
     // Joined only against the membership statement in force at the rule's time.
     if (!groupsAt(inst, s.time, s.locator)?.includes(lower(groupId))) continue;

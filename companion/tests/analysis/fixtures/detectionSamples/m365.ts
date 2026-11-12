@@ -103,6 +103,23 @@ export const M365_SAMPLES: readonly DetectionSample[] = [
     "exchangeAuditConfig (#2549)",
     exchange("Set-AdminAuditLogConfig", [["AdminAuditLogEnabled", "False"]]),
   ),
+  // #2605: the importer grades Set-Mailbox audit settings — a zero AuditLogAgeLimit is High.
+  m(
+    "ual.Set-Mailbox.auditAgeZero",
+    "exchangeMailboxAudit (#2605)",
+    exchange("Set-Mailbox", [
+      ["Identity", "victim@example.test"],
+      ["AuditLogAgeLimit", "00:00:00"],
+    ]),
+  ),
+  m(
+    "ual.Set-Mailbox.auditAgeOneDay",
+    "exchangeMailboxAudit (#2605)",
+    exchange("Set-Mailbox", [
+      ["Identity", "victim@example.test"],
+      ["AuditLogAgeLimit", "1.00:00:00"],
+    ]),
+  ),
   m("ual.Set-AdminAuditLogConfig.systemOn", "exchangeAuditConfig (#2549)", {
     ...exchange("Set-AdminAuditLogConfig", [["AdminAuditLogEnabled", "True"]]),
     UserId: "NT AUTHORITY\\SYSTEM (Microsoft.Exchange.ServiceHost)",

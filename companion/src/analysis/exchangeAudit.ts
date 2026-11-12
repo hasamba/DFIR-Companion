@@ -39,6 +39,7 @@ import {
   ruleGrade,
 } from "./exchangeInboxRules.js";
 import { auditConfigCmdlet } from "./exchangeAuditConfig.js";
+import { setMailboxCmdlet } from "./exchangeMailboxAudit.js";
 import type { OwnerDomains, Pairs } from "./exchangeAuditValues.js";
 
 const TRUNCATED_NOTE = "parameters truncated — the complete values are in the raw record";
@@ -783,7 +784,7 @@ export function decodeExchangeRecord(rec: Row, index: number): ExchangeChange | 
     const p = pairs(getCI(rec, "Parameters"));
     return (
       ruleCmdlet(c, p) ??
-      (c.operation.toLowerCase() === "set-mailbox" ? forwardingCmdlet(c, p) : null) ??
+      setMailboxCmdlet(c, p, finish, forwardingCmdlet) ??
       permissionCmdlet(c, p) ??
       auditConfigCmdlet(c, p, finish)
     );
