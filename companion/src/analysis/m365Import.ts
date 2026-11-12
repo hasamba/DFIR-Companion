@@ -37,7 +37,9 @@ import {
   entraSignInCategory,
   isEntraSignIn,
   readEntraSignIn,
+  shownUserAgent,
   ualFailureDetail,
+  ualLogonUserAgent,
 } from "./ualLogon.js";
 import { ENTRA_RISK_HIDDEN_MARKER } from "./cloudRowWording.js";
 import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
@@ -191,6 +193,7 @@ const M365_OPS: Record<string, OpDef> = {
   softdelete: { severity: "Low", mitre: ["T1070.008"] },
   "disable-antiphishrule": { severity: "High", mitre: ["T1562"] },
   "remove mfa": { severity: "High", mitre: ["T1556.006"] },
+  "disable strong authentication": { severity: "High", mitre: ["T1556.006"] }, // per-user MFA off (#2609)
 };
 
 /** Does this operation read a FILE, as opposed to changing a setting? See the aggKey note. */
@@ -304,6 +307,7 @@ function mapUal(
   const failed = /fail/i.test(result);
   // A failed sign-in names its error, and a different error is a different row (#2553).
   const failure = failed ? ualFailureDetail(rec) : "";
+  const ua = ualLogonUserAgent(rec); // a logon's client, rendered and keyed like an Entra sign-in's (#2609)
 
   // Microsoft's internal Certificate actor provisioning a service principal is upkeep (#2549).
   const def = alert
@@ -322,6 +326,7 @@ function mapUal(
   // description once aggKey is gone), so each clip keeps a digest of what it removed (#940).
   if (target && target !== user) description += ` → ${boundedTextTo(oneLine(target), 120)}`;
   if (failed) description += failure ? ` [FAILED ${failure}]` : " [FAILED]";
+  if (ua) description += ` [ua: ${ua}]`;
   description = boundedTextTo(description, 600);
 
   const observed = pickStr(rec, ["CreationTime", "CreationDate", "TimeGenerated"], (k) =>
@@ -342,7 +347,7 @@ function mapUal(
     // reads carry it: a hundred management calls by one principal genuinely are one thing, and
     // adding the resource everywhere would undo the aggregation this importer exists to do.
     aggKey: boundedAggKey(
-      `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}${failure ? `|${failure}` : ""}${alert ? `|${alert.alertId}|${alert.name}` : ""}`.toLowerCase(),
+      `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}${failure ? `|${failure}` : ""}${ua ? `|${ua}` : ""}${alert ? `|${alert.alertId}|${alert.name}` : ""}`.toLowerCase(),
     ),
     sources: ["Microsoft 365"],
     // The row cites its own record (#2485) instead of the legacy upgrade's `event:<id>`.
@@ -408,9 +413,6 @@ function signInOutcome(raw: unknown, failureReason: string): { outcome: SignInOu
   return { outcome: credential ? "credential-failure" : "other-failure", code };
 }
 
-// Long enough to keep a distinctive token past a browser prefix (TeamFiltration's Teams/1.3 build).
-const USER_AGENT_SHOWN_MAX = 160;
-
 function mapSignIn(
   rec: Row,
   sink: Map<string, SiemIoc>,
@@ -443,10 +445,7 @@ function mapSignIn(
   // never of the tool used. Rendered so the tagger's user-agent rules can read it, and part of the
   // aggregation key, so two clients never merge under one shown user agent.
   // Brackets are swapped for parentheses: a user agent must never forge a "[risk: …]"-style marker.
-  const userAgent = oneLine(pickStr(rec, ["userAgent", "UserAgent"]))
-    .replace(/\[/g, "(")
-    .replace(/\]/g, ")")
-    .slice(0, USER_AGENT_SHOWN_MAX);
+  const userAgent = shownUserAgent(pickStr(rec, ["userAgent", "UserAgent"]));
 
   let severity: Severity;
   const mitre = ["T1078.004"];

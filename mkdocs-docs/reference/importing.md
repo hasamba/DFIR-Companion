@@ -2959,12 +2959,17 @@ techniques that had no rule of their own:
   `Posta indesiderata`, …), grades **Medium** (T1564.008); a grant of one of the suite's high-risk
   OAuth scopes grades **High** as an application permission and **Medium** as a delegated one
   (T1528). Search queries, sync-client full downloads, inbox-rule enable/disable and mailbox
-  delegation changes are tagged only. Entra sign-in rows now show the client's user agent (`[ua: …]`),
-  and a sign-in from an HTTP library the suite links to AiTM kits or password spraying (`axios`,
-  `Go-http-client`, `okhttp`, `node-fetch`, …) or from an offensive tool (AADInternals, AzureHound,
-  TeamFiltration, …) grades **Medium**; PowerShell, Azure CLI, Python and Postman clients are tagged
-  for review only. A user agent is what the client *claimed*, not proof of the tool used. The
-  suite's country, ASN and application lists are not included.
+  delegation changes are tagged only. Entra sign-in rows and Unified Audit Log sign-in records
+  (`UserLoggedIn`, `UserLoginFailed`) now show the client's user agent (`[ua: …]`). A sign-in from an
+  offensive tool (AADInternals, AzureHound, TeamFiltration, …) grades **Medium** from either export;
+  a sign-in from an HTTP library the suite links to AiTM kits or password spraying (`axios`,
+  `Go-http-client`, `okhttp`, `node-fetch`, …) grades **Medium** from an Entra sign-in export only,
+  because only that export says whether the sign-in was interactive. PowerShell, Azure CLI, Python
+  and Postman clients are tagged for review only. A user agent is what the client *claimed*, not
+  proof of the tool used. The suite's country, ASN and application lists are not included. Per-user
+  MFA being turned off (`Disable Strong Authentication`) grades **High** (T1556.006), from a UAL
+  export or an Entra audit export. Cases imported before this change keep their old rows until the
+  data is imported into a new case.
 - **TrailDiscover (AWS operations seen in the wild)** — the AWS CloudTrail operations that
   [TrailDiscover](https://github.com/adanalvarez/TrailDiscover) by Adan Alvarez (CC BY 4.0) marks as
   used in real attacks are the `td_aws_*` rules. Of its 305 in-the-wild operations, 61 are left out

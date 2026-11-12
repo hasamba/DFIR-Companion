@@ -191,6 +191,24 @@ export const M365_SAMPLES: readonly DetectionSample[] = [
   m("ual.ResetUserPassword", TS, aad("Reset user password.")),
   m("ual.UserLoggedIn", TS, aad("UserLoggedIn")),
   m("ual.UserLoginFailed", TS, aad("UserLoginFailed")),
+  // #2609: a UAL sign-in carries its user agent in ExtendedProperties; MFA disable by its real name.
+  m(
+    "ual.UserLoggedIn.azureHound",
+    GAPS,
+    ual("AzureActiveDirectory", "UserLoggedIn", {
+      RecordType: 15,
+      ExtendedProperties: [{ Name: "UserAgent", Value: "azurehound/v2.0.4" }],
+    }),
+  ),
+  m(
+    "ual.UserLoggedIn.powershell",
+    GAPS,
+    ual("AzureActiveDirectory", "UserLoggedIn", {
+      RecordType: 15,
+      ExtendedProperties: [{ Name: "UserAgent", Value: "PowerShell/7.4" }],
+    }),
+  ),
+  m("ual.DisableStrongAuthentication", "m365Import (#2609)", aad("Disable Strong Authentication.")),
   // #2550 BEC grades: an alias mailbox classed by the actor's domain, a delete rule, a person's and
   // the service's FullAccess grant, anonymous sharing and an owner's hard delete.
   m("ual.New-InboxRule.aliasForwardOut", BEC, {
@@ -300,6 +318,11 @@ export const M365_SAMPLES: readonly DetectionSample[] = [
       category: "ApplicationManagement",
       targetResources: [{ id: "t1", displayName: "app1", type: "ServicePrincipal" }],
     }),
+  ),
+  m(
+    "audit.DisableStrongAuthentication",
+    "m365Import (#2609)",
+    auditBase({ activityDisplayName: "Disable Strong Authentication", category: "UserManagement" }),
   ),
   m(
     "audit.SetDeviceRegistrationPolicies",

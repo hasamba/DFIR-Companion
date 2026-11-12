@@ -2288,7 +2288,7 @@ mas_oauth_risky_delegated_permission:
   severity: Medium
   view: 'Analyzer-Suite OAuth permissions'
 
-# ── Sign-in user agents (m365Import.ts renders "[ua: …]" on Entra sign-in rows) ──
+# ── Sign-in user agents (m365Import.ts renders "[ua: …]" on Entra and UAL sign-in rows) ──
 # A user agent is client-supplied: it shows the client CLAIMED, never proves the tool used.
 mas_user_agent_aitm_or_spray:
   description: Sign-in from an HTTP library the suite associates with AiTM phishing kits or password spraying
@@ -2312,10 +2312,13 @@ mas_user_agent_http_library_noninteractive:
   tags: ['analyzer_suite', 'suspicious_user_agent', 'http_library_noninteractive']
   view: 'Analyzer-Suite user agents'
 
+# Local widening (#2609), not a re-port: the offensive-tool and unusual rules also read UAL sign-in rows
+# (UserLoggedIn / UserLoginFailed). The HTTP-library pair above stays Entra-only: its narrowing needs the
+# [non-interactive] marker, which UAL rows never carry.
 mas_user_agent_offensive_tool:
   description: Sign-in from a client the suite associates with an offensive tool (AADInternals, AzureHound, BloodHound, SharpHound, TeamFiltration, curl) or traitorware (eM Client)
   any:
-    - { field: description, regex: '^Entra sign-in:[^\n]*\[ua: [^\]]*(?:AADInternals|azurehound|bloodhound/|sharphound/|curl/|eMClient/|Teams/1\.3\.00\.30866 Chrome/80\.0\.3987\.165 Electron/8\.5\.1)', flags: 'i' }
+    - { field: description, regex: '^(?:Entra sign-in:|M365 AzureActiveDirectory: UserLog(?:gedIn|inFailed)\b)[^\n]*\[ua: [^\]]*(?:AADInternals|azurehound|bloodhound/|sharphound/|curl/|eMClient/|Teams/1\.3\.00\.30866 Chrome/80\.0\.3987\.165 Electron/8\.5\.1)', flags: 'i' }
   tags: ['analyzer_suite', 'suspicious_user_agent', 'offensive_tool']
   severity: Medium
   view: 'Analyzer-Suite user agents'
@@ -2323,7 +2326,7 @@ mas_user_agent_offensive_tool:
 mas_user_agent_unusual:
   description: Sign-in from a scripting / admin client the suite marks for review (PowerShell, Azure CLI, Python, Postman, device registration)
   any:
-    - { field: description, regex: '^Entra sign-in:[^\n]*\[ua: [^\]]*(?:AZURECLI/|AzurePowershell/|DeviceRegistrationClient|Dsreg/|Microsoft\.OData\.Client/|PostmanRuntime/|PowerShell/5\.1|PowerShell/7|python-requests|python/)', flags: 'i' }
+    - { field: description, regex: '^(?:Entra sign-in:|M365 AzureActiveDirectory: UserLog(?:gedIn|inFailed)\b)[^\n]*\[ua: [^\]]*(?:AZURECLI/|AzurePowershell/|DeviceRegistrationClient|Dsreg/|Microsoft\.OData\.Client/|PostmanRuntime/|PowerShell/5\.1|PowerShell/7|python-requests|python/)', flags: 'i' }
   tags: ['analyzer_suite', 'unusual_user_agent']
   view: 'Analyzer-Suite user agents'
 
