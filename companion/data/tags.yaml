@@ -1107,6 +1107,9 @@ cloud_aws_bucket_public:
 # principal and this account's own principal never match. Both calls are otherwise only tagged
 # (td_aws_exfiltration / td_aws_persistence). Standard exclusions: a call made by an AWS service on the
 # account's behalf, and a failed call (the importer grades a failed mutating call Medium as a probe).
+# A failed call is excluded twice: by its bracketed error marker, and by the reading's own
+# "requested: … — failed" wording, which leads the reading and survives a long user agent that
+# truncates the marker (Codex review of #2605).
 cloud_aws_rds_snapshot_shared:
   description: RDS DB (cluster) snapshot shared with another account or publicly (ModifyDBSnapshotAttribute restore add)
   # High, T1537: the same exposure as an EBS snapshot share (cloud_aws_snapshot_shared) — another
@@ -1117,6 +1120,7 @@ cloud_aws_rds_snapshot_shared:
   none:
     - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
     - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+    - { field: description, contains: ['requested: '] }
   tags: ['exposure', 'snapshot_shared']
   mitre: ['T1537']
   severity: High
@@ -1132,6 +1136,7 @@ cloud_aws_lambda_public_permission:
   none:
     - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
     - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+    - { field: description, contains: ['requested: '] }
   tags: ['exposure', 'lambda_permission', 'persistence']
   mitre: ['T1098']
   severity: High
@@ -1147,6 +1152,7 @@ cloud_aws_lambda_cross_account_permission:
   none:
     - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
     - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+    - { field: description, contains: ['requested: '] }
   tags: ['exposure', 'lambda_permission', 'persistence']
   mitre: ['T1098']
   severity: Medium

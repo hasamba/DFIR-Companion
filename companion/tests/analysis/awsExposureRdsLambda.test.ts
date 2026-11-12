@@ -110,6 +110,18 @@ describe("RDS snapshot share (#2605)", () => {
     );
     expect(r.ruleIds).not.toContain("cloud_aws_rds_snapshot_shared");
   });
+
+  it("a denied share stays out of every exposure rule even when a long user agent drops the error marker", () => {
+    const ua = { userAgent: `aws-sdk-go-v2/1.30.3 os/linux lang/go#1.22.5 md/GOOS#linux ${"x".repeat(40)}` };
+    const denied = { errorCode: "AccessDenied", ...ua };
+    const r = row(rds({ valuesToAdd: [OUTSIDE] }, undefined, denied));
+    expect(r.description).toContain("requested: shares DB snapshot");
+    expect(r.ruleIds).not.toContain("cloud_aws_rds_snapshot_shared");
+    const pub = row(lambda({ principal: "*" }, undefined, denied));
+    expect(pub.ruleIds).not.toContain("cloud_aws_lambda_public_permission");
+    const cross = row(lambda({ principal: OUTSIDE }, undefined, denied));
+    expect(cross.ruleIds).not.toContain("cloud_aws_lambda_cross_account_permission");
+  });
 });
 
 describe("Lambda AddPermission (#2605)", () => {
