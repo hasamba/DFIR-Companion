@@ -524,6 +524,7 @@
     "gapEdgeClass.ts": "analysis/detect",
     "gapHostHistory.ts": "analysis/detect",
     "gapHypothesis.ts": "analysis/ai",
+    "gapScope.ts": "analysis/detect",
     "geoMap.ts": "analysis/intel",
     "googleWorkspaceImport.ts": "analysis/ingest",
     "gcpCompute.ts": "analysis/ingest",

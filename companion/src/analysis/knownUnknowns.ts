@@ -377,7 +377,12 @@ export function buildKnownUnknownItems(
   for (const g of orderedGaps) {
     const who = g.complete ? "ALL sources silent" : `silent: ${g.silentSources.join(", ") || "some sources"}`;
     // A reboot at the edge explains the silence (#1942); asking "cleared logs?" would steer the reader.
-    const ask = g.rebootEdge ? "a reboot or shutdown bounds it" : "collection gap or cleared logs?";
+    // Likewise a gap between two separate cloud accounts/tenants (#2606): two log sources, not one hole.
+    const ask = g.rebootEdge
+      ? "a reboot or shutdown bounds it"
+      : g.scopeBoundary
+        ? "the edges sit in separate accounts/tenants"
+        : "collection gap or cleared logs?";
     items.push({
       kind: "silence_gap",
       label: `No telemetry from ${g.startTimestamp} to ${g.endTimestamp} (${g.durationLabel}; ${who}) — ${ask}`,

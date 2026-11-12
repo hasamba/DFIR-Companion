@@ -55,11 +55,13 @@
       .map((g) => {
         const sevColor = KC_SEV_COLOR[g.severity] || "var(--border-color)";
         const kind = g.complete
-          ? g.rebootEdge
-            ? "<span title='Every source went silent, and a reboot or shutdown event bounds the gap — the likely cause' data-safe-style='color:var(--text-muted);font-weight:bold'>complete silence (reboot)</span>"
-            : g.severity === "High"
-              ? "<span title='Every source went silent next to attack activity or a log-clear / audit-policy event' data-safe-style='color:var(--sev-critical);font-weight:bold'>complete silence</span>"
-              : "<span title='Every source went silent, with no attack activity at either edge and no log-clear event — a lead' data-safe-style='color:var(--text-muted);font-weight:bold'>complete silence</span>"
+          ? g.scopeBoundary
+            ? `<span title="${escAttr("Activity on each side sits in a different cloud account or tenant: " + (g.scopeBoundaryLabel || ""))}" data-safe-style='color:var(--text-muted);font-weight:bold'>complete silence (separate accounts/tenants)</span>`
+            : g.rebootEdge
+              ? "<span title='Every source went silent, and a reboot or shutdown event bounds the gap — the likely cause' data-safe-style='color:var(--text-muted);font-weight:bold'>complete silence (reboot)</span>"
+              : g.severity === "High"
+                ? "<span title='Every source went silent next to attack activity or a log-clear / audit-policy event' data-safe-style='color:var(--sev-critical);font-weight:bold'>complete silence</span>"
+                : "<span title='Every source went silent, with no attack activity at either edge and no log-clear event — a lead' data-safe-style='color:var(--text-muted);font-weight:bold'>complete silence</span>"
           : "<span title='One tool went quiet while others kept logging — a coverage blindspot' data-safe-style='color:var(--text-muted)'>partial</span>";
         const silent =
           g.silentSources && g.silentSources.length
