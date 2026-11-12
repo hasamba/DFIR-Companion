@@ -19,20 +19,98 @@ type Row = Record<string, unknown>;
 const OP = "remove-dlpcompliancepolicy";
 const POLICY_SHOWN = 80;
 const DESCRIPTION_MAX = 600;
-// `-WhatIf`, `-WhatIf:$true`, `-ValidateOnly` — never `-WhatIf:$false`.
-const DRY_SWITCH = /(?:^|\s)-(?:whatif|validateonly)(?::\s*\$?(true|false))?(?=\s|$)/gi;
-// `-Identity "Finance DLP"` / `-Identity Finance` — the policy the command named.
-const IDENTITY = /(?:^|\s)-Identity(?::|\s+)(?:"([^"]*)"|'([^']*)'|(\S+))/i;
+const DRY_SWITCHES = new Set(["whatif", "validateonly"]);
+// A parameter NAME token: `-WhatIf`, `-WhatIf:$false`, `-Identity:x` — only ever an unquoted token.
+const PARAM = /^-([A-Za-z][A-Za-z0-9]*)(?::(.*))?$/s;
+
+interface Token {
+  text: string;
+  /** True when any part of the token came from a quoted span or an escape: a value, never a name. */
+  quoted: boolean;
+}
+
+/**
+ * Split a PowerShell-style command line into tokens, honouring single quotes (literal), double
+ * quotes and the backtick escape, so a quoted value such as `"Finance -WhatIf Policy"` stays one
+ * value token and is never read as a switch (#2604 review: the policy name is attacker-chosen).
+ */
+export function tokenizeParameters(text: string): Token[] {
+  const out: Token[] = [];
+  let cur = "";
+  let quoted = false;
+  let open = false;
+  let quote: '"' | "'" | "" = "";
+  const flush = (): void => {
+    if (open) out.push({ text: cur, quoted });
+    cur = "";
+    quoted = false;
+    open = false;
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote === "'") {
+      if (ch === "'" && text[i + 1] === "'") {
+        cur += "'";
+        i++;
+      } else if (ch === "'") quote = "";
+      else cur += ch;
+    } else if (ch === "`" && i + 1 < text.length) {
+      cur += text[++i];
+      quoted = true;
+      open = true;
+    } else if (quote === '"') {
+      if (ch === '"') quote = "";
+      else cur += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      quoted = true;
+      open = true;
+    } else if (/\s/.test(ch)) flush();
+    else {
+      cur += ch;
+      open = true;
+    }
+  }
+  flush();
+  return out;
+}
+
+const truthyArg = (v: string): boolean => /^\$?true$/i.test(v.trim());
+
+function readStringParameters(text: string): { dryRun: boolean; policy: string } {
+  const tokens = tokenizeParameters(text);
+  let dryRun = false;
+  let policy = "";
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    const m = t.quoted ? null : PARAM.exec(t.text);
+    if (!m) continue;
+    const name = m[1].toLowerCase();
+    // `-Name:value`, `-Name: value` (the value is the next token), or a bare `-Name`.
+    const inline = m[2];
+    const valueToken = inline === "" ? tokens[i + 1] : undefined;
+    if (DRY_SWITCHES.has(name)) {
+      const arg = inline === undefined ? "true" : inline === "" ? (valueToken?.text ?? "true") : inline;
+      if (truthyArg(arg)) dryRun = true;
+      if (valueToken) i++;
+    } else if (name === "identity" && !policy) {
+      const next = inline ? undefined : (valueToken ?? tokens[i + 1]);
+      if (inline) policy = inline;
+      else if (next && (next.quoted || !PARAM.test(next.text))) {
+        policy = next.text;
+        i++;
+      }
+    }
+  }
+  return { dryRun, policy: policy.trim() };
+}
 
 function readParameters(v: unknown): { dryRun: boolean; policy: string } {
   if (Array.isArray(v)) {
     const p = pairs(v);
     return { dryRun: isDryRun(p.map), policy: p.map.get("identity") ?? "" };
   }
-  const text = str(v);
-  const dryRun = [...text.matchAll(DRY_SWITCH)].some((m) => (m[1] ?? "true").toLowerCase() === "true");
-  const id = IDENTITY.exec(text);
-  return { dryRun, policy: (id?.[1] ?? id?.[2] ?? id?.[3] ?? "").trim() };
+  return readStringParameters(str(v));
 }
 
 function outcomeOf(rec: Row): "success" | "failure" | "unknown" {

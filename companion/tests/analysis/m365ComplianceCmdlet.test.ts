@@ -61,6 +61,34 @@ describe("Remove-DlpCompliancePolicy (#2604 item 2)", () => {
     }
   });
 
+  it("a switch name inside a quoted policy name is a value, never a dry run (#2604 review)", () => {
+    for (const p of [
+      '-Identity "Finance -WhatIf Policy"',
+      '-Identity "Finance -ValidateOnly Policy"',
+      "-Identity 'Finance -WhatIf:$true Policy'",
+      '-Identity "Finance `" -WhatIf Policy"',
+      "-Identity Finance` -WhatIf",
+    ]) {
+      const [e] = rows([rec(p)]);
+      expect(e.severity).toBe("Medium");
+      expect(e.mitreTechniques).toEqual(["T1562.001"]);
+      expect(e.description).not.toMatch(/dry run/);
+    }
+    const [named] = rows([rec('-Identity "Finance -WhatIf Policy"')]);
+    expect(named.description).toContain('policy "Finance -WhatIf Policy"');
+  });
+
+  it("a real -WhatIf next to a quoted policy name is still a dry run", () => {
+    for (const p of [
+      '-Identity "Finance -WhatIf Policy" -WhatIf',
+      '-WhatIf: $true -Identity "Finance DLP"',
+    ]) {
+      const [e] = rows([rec(p)]);
+      expect(e.severity).toBe("Low");
+      expect(e.description).toMatch(/dry run/);
+    }
+  });
+
   it("-WhatIf:$false is a real removal", () => {
     const [e] = rows([rec('-Identity "Finance DLP" -WhatIf:$false')]);
     expect(e.severity).toBe("Medium");
