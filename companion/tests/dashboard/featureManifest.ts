@@ -1419,6 +1419,7 @@ export const FEATURES: Feature[] = [
     file: "dashboard-main-source.js",
     publish: [
       "loadMainSource",
+      "playbookHuntButton", // #2594 the playbook button's label for the main source
       "renderLanguageHunts",
       "setPlaybookLanguageHunts",
       "playbookLanguageHuntsHtml",

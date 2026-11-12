@@ -602,6 +602,7 @@
       scheduleIocProvenanceChainReload();
       loadSynthMeta(caseId);
       loadPlaybook(caseId);
+      if (typeof loadMainSource === "function") loadMainSource(); // #2594 the playbook button follows new evidence
       loadHypotheses(caseId);
       once("superTimeline", () => loadSuperTimeline(caseId));
       scheduleSecondOpinionReload(caseId); // #1590 — refresh the "no longer applies" list

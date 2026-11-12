@@ -3,6 +3,7 @@ import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
 import { isValidCaseId, CaseAlreadyExistsError, CaseLifecycleError } from "../storage/caseStore.js";
+import { saveCreationMainSource } from "./caseMainSource.js";
 import { validateCaseCreateBody } from "./caseCreateBody.js";
 import { linkNewCase } from "./serverSets.js";
 import { createCaseListServerSets } from "./caseListServerSets.js";
@@ -132,10 +133,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // Optional `templateId` seeds key questions; `incidentTypeId` (#236) also applies its auto-playbook.
   app.post("/cases", async (req: Request, res: Response) => {
     try {
-      const { caseId, name, investigator, aiProvider, templateId, incidentTypeId, serverSetId } =
+      const { caseId, name, investigator, aiProvider, templateId, incidentTypeId, serverSetId, mainSource } =
         req.body ?? {};
       const invalid = validateCaseCreateBody(
-        { caseId, name, investigator, aiProvider, serverSetId },
+        { caseId, name, investigator, aiProvider, serverSetId, mainSource },
         (id) => !!options.serverSetStore?.has(id),
       );
       if (invalid) return res.status(400).json({ error: invalid });
@@ -154,6 +155,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       });
       options.teamAuth?.grantCreator(req, caseId);
       linkNewCase(ctx, caseId, { setId: serverSetId ?? undefined }); // no serverSetId → the default set
+      const mainSourceError = await saveCreationMainSource(ctx, caseId, mainSource); // #2594 New case picker
       if (templateId && options.templateStore && options.stateStore) {
         const template = await options.templateStore.get(String(templateId));
         if (template && (template.initialKeyQuestions.length || template.initialNextSteps?.length)) {
@@ -192,7 +194,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       await ensureDropFolders(caseId).catch(() => {
         /* the watcher re-ensures on its next poll */
       });
-      return res.status(201).json(sanitizeCaseMeta(meta));
+      return res
+        .status(201)
+        .json({ ...sanitizeCaseMeta(meta), ...(mainSourceError ? { mainSourceError } : {}) });
     } catch (err) {
       if (err instanceof CaseAlreadyExistsError) return res.status(409).json({ error: err.message });
       return res.status(500).json({ error: (err as Error).message });

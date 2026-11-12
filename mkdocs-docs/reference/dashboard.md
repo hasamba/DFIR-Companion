@@ -938,6 +938,10 @@ Languages by source:
 
 If `DFIR_HUNT_PLATFORMS` disables a language, the panel shows Velociraptor VQL instead, with a note.
 The playbook's per-task hunts follow the same rules and show under their tasks.
+The playbook's hunt button names the language: **✨ Suggest Falcon queries**, **✨ Suggest KQL
+queries**, **✨ Suggest ES|QL queries**, **✨ Suggest SPL queries**, or **✨ Suggest Velociraptor
+hunts**. On a Mixed case, or on other cloud logs, it reads **✨ Suggest hunts** and its tooltip says
+what it does. The main source can also be set when the case is created, in the New case dialog.
 
 !!! warning "Review every query before running it"
     These are AI-written queries. A query in a language other than VQL is checked only for the

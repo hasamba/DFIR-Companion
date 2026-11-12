@@ -20,6 +20,8 @@
     ).trim();
     document.getElementById("ncMsg").textContent = "";
     document.getElementById("ncTemplateDesc").style.display = "none";
+    const mainSourcePick = document.getElementById("ncMainSource");
+    if (mainSourcePick) mainSourcePick.value = ""; // #2594 — Automatic by default
     populateTemplateSelect(); // async, fills while user edits fields
     populateServerSetSelect(); // async too; preselects the default server set
     document.getElementById("newCaseOverlay").classList.add("open");
@@ -97,6 +99,8 @@
     const serverSet = document.getElementById("ncServerSet");
     const serverSetId =
       serverSet && serverSet.value && serverSet.value !== NEW_SET ? serverSet.value : undefined;
+    const mainSourceEl = document.getElementById("ncMainSource");
+    const mainSource = mainSourceEl ? mainSourceEl.value : "";
     const msg = document.getElementById("ncMsg");
     if (!caseId || !name) {
       msg.textContent = "case id and name are required";
@@ -115,9 +119,14 @@
           templateId: picked.kind === "tpl" ? picked.id : undefined,
           incidentTypeId: picked.kind === "type" ? picked.id : undefined,
           serverSetId, // undefined → the server links the default set
+          mainSource: mainSource || undefined, // #2594 — blank = Automatic (from evidence)
         }),
       });
       if (res.status === 201) {
+        const created = await res.json().catch(() => ({}));
+        // #2594: the case exists even when its picked main source could not be saved — say so.
+        if (created.mainSourceError)
+          alert(created.mainSourceError.charAt(0).toUpperCase() + created.mainSourceError.slice(1) + ".");
         closeNewCase();
         // A pick; connect() below loads it and only then does #caseId change (#2399).
         if (typeof setCasePick === "function") setCasePick(caseId);

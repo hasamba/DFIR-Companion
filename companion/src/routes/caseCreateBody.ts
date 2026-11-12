@@ -10,6 +10,7 @@
  * at its current length by the file-size ledger (#384).
  */
 import { isValidCaseId } from "../storage/caseStore.js";
+import { parseMainSourceOverride, SOURCE_FAMILIES } from "../analysis/caseMainSource.js";
 
 export interface CaseCreateBody {
   caseId?: unknown;
@@ -17,6 +18,8 @@ export interface CaseCreateBody {
   investigator?: unknown;
   aiProvider?: unknown;
   serverSetId?: unknown;
+  /** #2594: the main evidence source picked in the New case dialog — blank/null = Automatic. */
+  mainSource?: unknown;
 }
 
 /** The rejection message, or null when the body is well-formed. The caller stores `name` trimmed. */
@@ -25,7 +28,7 @@ export function validateCaseCreateBody(
   body: CaseCreateBody,
   setExists: (id: string) => boolean = () => false,
 ): string | null {
-  const { caseId, name, investigator, aiProvider, serverSetId } = body;
+  const { caseId, name, investigator, aiProvider, serverSetId, mainSource } = body;
   // A whitespace-only name is as missing as an absent one: it saves a case the list shows blank.
   if (!caseId || !name || (typeof name === "string" && !name.trim())) return "caseId and name are required";
   if (typeof caseId !== "string" || !isValidCaseId(caseId)) {
@@ -38,5 +41,7 @@ export function validateCaseCreateBody(
     if (typeof serverSetId !== "string") return "serverSetId must be a string";
     if (!setExists(serverSetId)) return "unknown server set";
   }
+  if (!parseMainSourceOverride(mainSource).ok)
+    return `mainSource must be one of ${SOURCE_FAMILIES.join(", ")}, "mixed" or blank`;
   return null;
 }

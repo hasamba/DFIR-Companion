@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Main evidence source in the New case dialog** — pick Automatic, a source or Mixed when the case is created; the playbook hunt button now names the language (Falcon, KQL, ES|QL, SPL or Velociraptor) (part of #2594)
 - **Light-task AI model** — an optional cheaper model in Settings → AI for hunts in CQL, KQL, ES|QL and SPL and for query translation; VQL hunts try the Velociraptor hunt model, then it; blank keeps the synthesis model; Diagnostics names the model each task uses (closes #2593)
 - **CrowdStrike Falcon alerts and Next-Gen SIEM data** — Falcon API alerts / detects keep Falcon's severity, technique and action; third-party logs stored in Falcon (raw `@rawstring` or parsed `Vendor.…`) go to the importer for their real tool, row by row (closes #2592)
 - **CrowdStrike Falcon importer** — Event Search / LogScale / FDR / Next-Gen SIEM sensor exports (JSON, NDJSON, CSV) dated by event time, with host, user, remote IPs, domains and hashes as IOCs, logons in the login graph and source `CrowdStrike Falcon`; detection rows keep Falcon's severity (part of #2592)
