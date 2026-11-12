@@ -5,7 +5,11 @@ import {
   provisioningReason,
   severeAssetsOf,
 } from "../../src/analysis/gapEdgeClass.js";
-import { detectTimelineGaps, backfillSilenceGapFindings } from "../../src/analysis/gapDetect.js";
+import {
+  detectTimelineGaps,
+  backfillSilenceGapFindings,
+  gapKindLabel,
+} from "../../src/analysis/gapDetect.js";
 import {
   backfillActivityWaveFinding,
   detectActivityWaves,
@@ -400,7 +404,9 @@ describe("complete-gap grade (#1942)", () => {
     expect(findingFor(events)).toEqual(findingFor(events));
   });
 
-  it("leaves partial gaps and dwell intervals at their existing grades", () => {
+  // A cross-scope boundary between waves (#2610) is the one dwell-shaped gap that is regraded; it
+  // needs a wave pattern, so pattern = null here leaves both grades alone.
+  it("leaves partial gaps and dwell intervals at their existing grades, except a cross-scope boundary", () => {
     const events = idleCase();
     const raw = detectTimelineGaps(events, { activeHours: null, densityFactor: 4 });
     const partial = { ...raw[0], id: "gap-x", complete: false, severity: "Medium" as const };
@@ -408,5 +414,237 @@ describe("complete-gap grade (#1942)", () => {
     const out = classifyGapEdges([partial, dwell], events, null);
     expect(out[0].severity).toBe("Medium");
     expect(out[1].severity).toBe("High");
+  });
+});
+
+// #2606: a High on one AWS account (or M365 tenant) and a High on another do not make a dwell
+// interval, the same way a High on host A and a High on host B do not. Cloud rows name no asset,
+// so before this fix they fell into the "environment-wide" wildcard and matched every other row.
+// All ids below are invented.
+describe("cloud scope (#2606)", () => {
+  const NOW = "2026-08-26T20:00:00Z";
+  type Cloud = { provider?: string; accountId?: string; recipientAccountId?: string; tenant?: string };
+  const cloud = (c: Cloud, extra: Partial<ForensicEvent> = {}): Partial<ForensicEvent> =>
+    ({
+      ...extra,
+      canonical: { event: { category: "cloud", type: "api-call" }, cloud: c },
+    }) as unknown as Partial<ForensicEvent>;
+  const aws = (acct: string, extra: Partial<ForensicEvent> = {}) =>
+    cloud({ provider: "aws", accountId: acct, recipientAccountId: acct }, extra);
+  const m365 = (tenant: string, extra: Partial<ForensicEvent> = {}) =>
+    cloud({ provider: "m365", tenant }, extra);
+  const HIGH = { severity: "High" as const };
+  const TENANT_1 = "00000000-aaaa-4aaa-8aaa-000000000001";
+  const TENANT_2 = "00000000-bbbb-4bbb-8bbb-000000000002";
+
+  function findings(events: ForensicEvent[]) {
+    const { gaps, pattern } = detectGapsWithWaves(events);
+    const base = { ...emptyState("INC-TEST"), forensicTimeline: events };
+    const withWaves = backfillActivityWaveFinding(base, pattern, NOW);
+    return { gaps, pattern, state: backfillSilenceGapFindings(withWaves, gaps, NOW) };
+  }
+
+  it("gives no dwell finding and no waves finding between High waves in two AWS accounts", () => {
+    const events = [
+      ...burst("w1-", "2026-08-07T14:30:00Z", 6, aws("111111111111", HIGH)),
+      ...burst("w2-", "2026-08-25T17:30:00Z", 6, aws("222222222222", HIGH)),
+    ];
+    const { pattern, state } = findings(events);
+    expect(pattern!.intervals[0].crossScope).toBe(true);
+    expect(pattern!.intervals[0].attackerGraded).toBe(false);
+    expect(state.findings).toHaveLength(0);
+  });
+
+  it("gives no dwell finding and no waves finding between High waves in two M365 tenants", () => {
+    const events = [
+      ...burst("w1-", "2026-08-07T14:30:00Z", 6, m365(TENANT_1, HIGH)),
+      ...burst("w2-", "2026-08-25T17:30:00Z", 6, m365(TENANT_2.toUpperCase(), HIGH)),
+    ];
+    const { pattern, state } = findings(events);
+    expect(pattern!.intervals[0].crossScope).toBe(true);
+    expect(state.findings).toHaveLength(0);
+  });
+
+  it("keeps the dwell and waves findings inside one account or one tenant", () => {
+    for (const scope of [aws("111111111111", HIGH), m365(TENANT_1, HIGH)]) {
+      const events = [
+        ...burst("w1-", "2026-08-07T14:30:00Z", 6, scope),
+        ...burst("w2-", "2026-08-25T17:30:00Z", 6, scope),
+      ];
+      const { pattern, state } = findings(events);
+      expect(pattern!.intervals[0].crossScope).toBe(false);
+      expect(state.findings.map((f) => f.id)).toContain("f-waves");
+      const dwell = state.findings.find((f) => f.id.startsWith("f-gap-"))!;
+      expect(dwell.severity).toBe("Medium");
+    }
+  });
+
+  it("still links a cross-account AssumeRole from account A into B with a wave in account A", () => {
+    const assumeRole = cloud(
+      { provider: "aws", accountId: "111111111111", recipientAccountId: "222222222222" },
+      HIGH,
+    );
+    const events = [
+      ...burst("w1-", "2026-08-07T14:30:00Z", 6, aws("111111111111", HIGH)),
+      ...burst("w2-", "2026-08-25T17:30:00Z", 6, assumeRole),
+    ];
+    const { pattern, state } = findings(events);
+    expect(pattern!.intervals[0].crossScope).toBe(false);
+    expect(pattern!.intervals[0].attackerGraded).toBe(true);
+    expect(state.findings.map((f) => f.id)).toContain("f-waves");
+  });
+
+  it("leaves a mixed endpoint + cloud interval as it is today", () => {
+    const events = [
+      ...burst("w1-", "2026-08-07T14:30:00Z", 6, { asset: "HOST-A", severity: "High" }),
+      ...burst("w2-", "2026-08-25T17:30:00Z", 6, aws("222222222222", HIGH)),
+    ];
+    const { pattern, state } = findings(events);
+    expect(pattern!.intervals[0].crossScope).toBe(false);
+    expect(pattern!.intervals[0].attackerGraded).toBe(true);
+    expect(state.findings.map((f) => f.id)).toContain("f-waves");
+  });
+
+  it("does not count an interval with no severe row on one side as cross-scope", () => {
+    const events = [
+      ...burst("w1-", "2026-08-07T14:30:00Z", 6, aws("111111111111", HIGH)),
+      ...burst("w2-", "2026-08-25T17:30:00Z", 6, aws("222222222222")),
+    ];
+    const { pattern } = findings(events);
+    expect(pattern!.intervals[0].crossScope).toBe(false);
+    expect(pattern!.intervals[0].attackerGraded).toBe(false);
+  });
+
+  it("notes the cross-scope intervals on a waves finding that has a graded one", () => {
+    const events = [
+      ...burst("a1-", "2026-08-01T10:00:00Z", 6, aws("111111111111", HIGH)),
+      ...burst("a2-", "2026-08-07T14:30:00Z", 6, aws("111111111111", HIGH)),
+      ...burst("b1-", "2026-08-25T17:30:00Z", 6, aws("222222222222", HIGH)),
+    ];
+    const { pattern, state } = findings(events);
+    expect(pattern!.intervals.map((iv) => iv.crossScope)).toEqual([false, true]);
+    const f = state.findings.find((x) => x.id === "f-waves")!;
+    expect(f.title).toContain("2 separate waves");
+    expect(f.description).toContain(
+      "1 further quiet interval separates activity in different cloud accounts or tenants",
+    );
+  });
+
+  // A complete, non-wave gap: two short bursts 5h 50m apart, under the 6h wave threshold.
+  function boundaryGap(
+    beforeEdge: Partial<ForensicEvent>,
+    afterEdge: Partial<ForensicEvent>,
+    extra: ForensicEvent[] = [],
+  ) {
+    const events = [
+      ...burst("b", "2025-12-05T09:56:00Z", 4, beforeEdge),
+      ...burst("a", "2025-12-05T15:50:00Z", 4, afterEdge),
+      ...extra,
+    ];
+    const { gaps } = detectGapsWithWaves(
+      events,
+      { activeHours: null, densityFactor: 4 },
+      { minWaveEvents: 3, minWaveIntervalHours: 6 },
+    );
+    const complete = gaps.filter((g) => g.complete && !g.betweenWaves);
+    expect(complete).toHaveLength(1);
+    const s = backfillSilenceGapFindings({ ...emptyState("c"), forensicTimeline: events }, gaps, NOW);
+    return { gap: complete[0], finding: s.findings[0] };
+  }
+
+  it("grades a complete gap between two accounts Low with its own wording and no T1070", () => {
+    const clear = ev("x", "2025-12-05T09:57:30Z", { description: "Security audit log cleared (EID 1102)" });
+    for (const extra of [[], [clear]]) {
+      const { gap, finding } = boundaryGap(
+        aws("111111111111", { severity: "Medium" }),
+        aws("222222222222", { severity: "Medium" }),
+        extra,
+      );
+      expect(gap.scopeBoundary).toBe(true);
+      expect(gap.severity).toBe("Low");
+      expect(gap.corroborated).toBe(false);
+      expect(gap.scopeBoundaryLabel).toBe("AWS account 111111111111 → AWS account 222222222222");
+      expect(finding.severity).toBe("Low");
+      expect(finding.title).toContain("separate accounts/tenants");
+      expect(finding.description).toContain("AWS account 111111111111");
+      expect(finding.description).not.toMatch(/classic (?:signature|indicator)/);
+      expect(finding.mitreTechniques).toEqual([]);
+    }
+  });
+
+  it("keeps a complete gap inside one account High with T1070, as today", () => {
+    const { gap, finding } = boundaryGap(
+      aws("111111111111", { severity: "Medium" }),
+      aws("111111111111", { severity: "Medium" }),
+    );
+    expect(gap.scopeBoundary).toBeUndefined();
+    expect(gap.severity).toBe("High");
+    expect(finding.mitreTechniques).toEqual(["T1070"]);
+  });
+
+  // #2610: the gap between two waves in separate accounts/tenants is labelled as a boundary on
+  // every surface (panel, report, AI gap prompt), matching the finding #2606 already withholds.
+  function betweenWaveGap(first: Partial<ForensicEvent>, second: Partial<ForensicEvent>) {
+    const events = [
+      ...burst("w1-", "2026-08-07T14:30:00Z", 6, first),
+      ...burst("w2-", "2026-08-25T17:30:00Z", 6, second),
+    ];
+    const { gaps, pattern, state } = findings(events);
+    const between = gaps.filter((g) => g.betweenWaves);
+    expect(between).toHaveLength(1);
+    return { gap: between[0], pattern, state };
+  }
+
+  it("labels a between-wave gap across two AWS accounts as a Low boundary, not a dwell interval", () => {
+    const { gap, pattern, state } = betweenWaveGap(aws("111111111111", HIGH), aws("222222222222", HIGH));
+    expect(pattern!.intervals[0].crossScopeLabel).toBe("AWS account 111111111111 → AWS account 222222222222");
+    expect(gap.scopeBoundary).toBe(true);
+    expect(gap.scopeBoundaryLabel).toBe("AWS account 111111111111 → AWS account 222222222222");
+    expect(gap.severity).toBe("Low");
+    expect(gap.attackerEdges).toBe(false);
+    expect(gapKindLabel(gap)).toBe("wave boundary, separate accounts/tenants");
+    expect(state.findings).toHaveLength(0);
+  });
+
+  it("labels a between-wave gap across two M365 tenants as a boundary", () => {
+    const { gap } = betweenWaveGap(m365(TENANT_1, HIGH), m365(TENANT_2, HIGH));
+    expect(gap.scopeBoundary).toBe(true);
+    expect(gap.scopeBoundaryLabel).toBe(`tenant ${TENANT_1} → tenant ${TENANT_2}`);
+    expect(gap.severity).toBe("Low");
+  });
+
+  it("leaves a between-wave gap inside one account or tenant a High dwell interval", () => {
+    for (const scope of [aws("111111111111", HIGH), m365(TENANT_1, HIGH)]) {
+      const { gap, pattern } = betweenWaveGap(scope, scope);
+      expect(pattern!.intervals[0].crossScopeLabel).toBeUndefined();
+      expect(gap.scopeBoundary).toBeUndefined();
+      expect(gap.scopeBoundaryLabel).toBeUndefined();
+      expect(gap.severity).toBe("High");
+      expect(gap.attackerEdges).toBe(true);
+      expect(gapKindLabel(gap)).toBe("dwell interval");
+    }
+  });
+
+  it("leaves a mixed endpoint + cloud between-wave gap unflagged", () => {
+    const { gap } = betweenWaveGap({ asset: "HOST-A", severity: "High" }, aws("222222222222", HIGH));
+    expect(gap.scopeBoundary).toBeUndefined();
+    expect(gap.severity).toBe("High");
+    expect(gapKindLabel(gap)).toBe("dwell interval");
+  });
+
+  it("does not flag a between-wave gap when one side has no severe row (#2606 rule unchanged)", () => {
+    const { gap } = betweenWaveGap(aws("111111111111", HIGH), aws("222222222222"));
+    expect(gap.scopeBoundary).toBeUndefined();
+    expect(gapKindLabel(gap)).toBe("dwell interval");
+  });
+
+  it("strips unsafe characters from an account id before it reaches a label", () => {
+    const { gap } = boundaryGap(
+      m365("<img src=x>", { severity: "Medium" }),
+      m365(TENANT_2, { severity: "Medium" }),
+    );
+    expect(gap.scopeBoundary).toBe(true);
+    expect(gap.scopeBoundaryLabel).not.toContain("<");
+    expect(gap.scopeBoundaryLabel).not.toContain("=");
   });
 });

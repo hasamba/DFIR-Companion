@@ -115,6 +115,27 @@ describe("renderGapForPrompt / renderGapsForPrompt", () => {
     expect(text).toContain("[b0]");
   });
 
+  // #2610: a gap between separate cloud accounts/tenants is two log sources, not a hole in one;
+  // the user part of the prompt says so, so the AI does not hypothesise cleared logs for it.
+  it("states the boundary when a gap sits between separate accounts/tenants", () => {
+    const label = "AWS account 111111111111 → AWS account 222222222222";
+    const text = renderGapForPrompt(gap({ scopeBoundary: true, scopeBoundaryLabel: label }), [], []);
+    const line = text.split("\n").find((l) => l.startsWith("Boundary:")) ?? "";
+    expect(line).toContain("separate accounts/tenants");
+    expect(line).toContain(label);
+    expect(line).toMatch(/not evidence of cleared logs/);
+  });
+
+  it("states the boundary for a between-wave boundary gap too", () => {
+    const g = gap({ betweenWaves: true, scopeBoundary: true, scopeBoundaryLabel: "tenant a → tenant b" });
+    expect(renderGapForPrompt(g, [], [])).toContain("Boundary: separate accounts/tenants");
+  });
+
+  it("adds no boundary line to a gap inside one scope", () => {
+    expect(renderGapForPrompt(gap(), [], [])).not.toContain("Boundary:");
+    expect(renderGapForPrompt(gap({ betweenWaves: true }), [], [])).not.toContain("Boundary:");
+  });
+
   it("renders a placeholder for no gaps", () => {
     expect(renderGapsForPrompt([], new Map())).toBe("(no gaps)");
   });

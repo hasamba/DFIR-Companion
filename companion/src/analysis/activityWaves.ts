@@ -11,6 +11,7 @@ import {
 } from "./gapDetect.js";
 import { attackerGradedInterval, classifyGapEdges, severeAssetsOf } from "./gapEdgeClass.js";
 import { hostHistoryIds } from "./gapHostHistory.js";
+import { crossScopeInterval, scopeSetBoundaryLabel, severeCloudScopesOf } from "./gapScope.js";
 
 // The options builder that belongs with the entry point below: every consumer that holds the state
 // passes gapOptionsFor(state), so the host-history cut is the same on every surface (#1503).
@@ -59,6 +60,13 @@ export interface WaveInterval {
   // interval is a dwell interval between two visits; a quiet stretch between two benign bursts
   // (a lab box's build history, admin sessions months apart) is not a finding of any kind.
   attackerGraded: boolean;
+  // Every High/Critical row on both sides sits in a cloud account/tenant and the two sides share
+  // none (#2606, gapScope.ts). Such an interval is never attackerGraded: two separate accounts are
+  // two environments, not two visits to one.
+  crossScope: boolean;
+  // The "A → B" scope label of a crossScope interval (#2610), so the gap it marks is labelled as a
+  // boundary between separate accounts/tenants. Absent when crossScope is false.
+  crossScopeLabel?: string;
 }
 
 export interface WavePattern {
@@ -179,18 +187,26 @@ export function detectActivityWaves(
   });
 
   const severe = segments.map(severeAssetsOf);
+  const cloudScopes = segments.map(severeCloudScopesOf);
   const intervals: WaveInterval[] = [];
   for (let i = 1; i < waves.length; i++) {
     const durationSeconds = Math.max(
       0,
       Math.round((Date.parse(waves[i].startTimestamp) - Date.parse(waves[i - 1].endTimestamp)) / 1000),
     );
+    const scopesBefore = cloudScopes[i - 1];
+    const scopesAfter = cloudScopes[i];
+    const crossScope = crossScopeInterval(scopesBefore, scopesAfter);
     intervals.push({
       fromWave: waves[i - 1].index,
       toWave: waves[i].index,
       durationSeconds,
       durationLabel: formatDuration(durationSeconds),
-      attackerGraded: attackerGradedInterval(severe[i - 1], severe[i]),
+      attackerGraded: !crossScope && attackerGradedInterval(severe[i - 1], severe[i]),
+      crossScope,
+      ...(crossScope && scopesBefore && scopesAfter
+        ? { crossScopeLabel: scopeSetBoundaryLabel(scopesBefore, scopesAfter) }
+        : {}),
     });
   }
 
@@ -318,6 +334,13 @@ export function backfillActivityWaveFinding(
   const intervalList = pattern.intervals
     .map((iv) => `${iv.durationLabel} between wave ${iv.fromWave} and wave ${iv.toWave}`)
     .join(", ");
+  // #2606: intervals between waves in separate cloud accounts/tenants are left out above; say so.
+  const crossCount = fullPattern?.intervals.filter((iv) => iv.crossScope).length ?? 0;
+  const crossNote =
+    crossCount === 0
+      ? ""
+      : ` ${crossCount} further quiet interval${crossCount === 1 ? " separates" : "s separate"} activity in ` +
+        `different cloud accounts or tenants and ${crossCount === 1 ? "is" : "are"} not counted as dwell time.`;
 
   const finding: Finding = {
     id,
@@ -331,7 +354,7 @@ export function backfillActivityWaveFinding(
       `data: total elapsed time from the first activity to the last is ${pattern.totalSpanLabel}, of which ` +
       `${pattern.longestIntervalLabel} is a single quiet interval. Establish whether the later wave reuses ` +
       `access, accounts, or an unpatched entry point established by the earlier one — a returning operator ` +
-      `is a different containment problem from a single-session intrusion. ${WAVE_CAVEAT}`,
+      `is a different containment problem from a single-session intrusion.${crossNote} ${WAVE_CAVEAT}`,
     relatedIocs: [],
     mitreTechniques: [],
     sourceScreenshots: [],

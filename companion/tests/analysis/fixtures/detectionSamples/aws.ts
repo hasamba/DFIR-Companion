@@ -42,7 +42,58 @@ const snapshotPerm = (perm: unknown) => ({
 const recorder = { requestParameters: { configurationRecorderName: "default" } };
 const channel = { requestParameters: { deliveryChannelName: "default" } };
 
+const RDS_2605 = "awsExposureRdsLambda (#2605)";
+const rdsShare = (extra: Record<string, unknown>) => ({
+  requestParameters: { attributeName: "restore", dBSnapshotIdentifier: "snap-db-1", ...extra },
+});
+const lambdaGrant = (extra: Record<string, unknown>) => ({
+  requestParameters: { action: "lambda:InvokeFunction", functionName: "f1", statementId: "s1", ...extra },
+});
+
 export const AWS_SAMPLES: readonly DetectionSample[] = [
+  // #2605: RDS snapshot share, Lambda AddPermission and a security-group ingress rule, read for the
+  // principal / port they state.
+  ct("aws.ModifyDBSnapshotAttribute.public", RDS_2605, "rds.amazonaws.com", "ModifyDBSnapshotAttribute", {
+    ...rdsShare({ valuesToAdd: ["all"] }),
+  }),
+  ct("aws.ModifyDBSnapshotAttribute.account", RDS_2605, "rds.amazonaws.com", "ModifyDBSnapshotAttribute", {
+    ...rdsShare({ valuesToAdd: ["444455556666"] }),
+  }),
+  ct("aws.ModifyDBSnapshotAttribute.unshare", RDS_2605, "rds.amazonaws.com", "ModifyDBSnapshotAttribute", {
+    ...rdsShare({ valuesToRemove: ["444455556666"] }),
+  }),
+  ct("aws.AddPermission.public", RDS_2605, "lambda.amazonaws.com", "AddPermission20150331v2", {
+    ...lambdaGrant({ principal: "*" }),
+  }),
+  ct("aws.AddPermission.account", RDS_2605, "lambda.amazonaws.com", "AddPermission20150331v2", {
+    ...lambdaGrant({ principal: "444455556666" }),
+  }),
+  ct("aws.AddPermission.service", RDS_2605, "lambda.amazonaws.com", "AddPermission20150331v2", {
+    ...lambdaGrant({ principal: "s3.amazonaws.com", sourceArn: "arn:aws:s3:::b1" }),
+  }),
+  ct("aws.AddPermission.sns", RDS_2605, "sns.amazonaws.com", "AddPermission", {
+    requestParameters: {
+      topicArn: "arn:aws:sns:us-east-1:111111111111:t1",
+      label: "l1",
+      aWSAccountId: ["*"],
+    },
+  }),
+  ct(
+    "aws.AuthorizeSecurityGroupIngress.legacyAnyAddress",
+    RDS_2605,
+    "ec2.amazonaws.com",
+    "AuthorizeSecurityGroupIngress",
+    {
+      requestParameters: {
+        cidrIp: "203.0.113.254/0",
+        fromPort: 22,
+        groupId: "sg-0aaa111bbb222ccc3",
+        ipPermissions: {},
+        ipProtocol: "tcp",
+        toPort: 22,
+      },
+    },
+  ),
   ct("aws.PutEventSelectors", GAPS, "cloudtrail.amazonaws.com", "PutEventSelectors", {
     requestParameters: {
       trailName: "main",

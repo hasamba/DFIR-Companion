@@ -71,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Cloud rows show the deciding value** — Set-Mailbox audit age limit and audit switch (zero or off is High), security-group ingress port and source on its own row (both request forms), and the RDS snapshot-share and Lambda permission principal, with three new graded rules (closes #2605)
+- **No dwell or log-tampering findings across separate cloud accounts or tenants** — a quiet interval between activity in different AWS accounts or M365 tenants is a Low boundary with no T1070, not a dwell finding (closes #2606)
+- **Between-wave cloud boundaries labelled as boundaries** — the gap panel, the report and the AI gap prompt call them separate accounts/tenants, not dwell or complete silence (closes #2610)
+- **Synthesis fallback notice** — the Findings card, the run record and the report footnote say when the fallback model wrote a synthesis after a safety-filter stop (closes #2603)
+- **T1552.005 on instance-credential use** — instance-role calls from the same address that sent the remote-access request carry T1552.005, without changing the grade (part of #2607)
+- **Offensive-tool sign-ins and MFA disable from UAL exports** — UAL sign-in rows show the user agent so AzureHound and similar tools grade Medium, and `Disable Strong Authentication` is High (T1556.006) (closes #2609)
+- **Snapshot and bucket shares to different recipients stay separate** — EBS snapshot and S3 policy/ACL changes to different accounts no longer fold into one row (closes #2611)
 - **Suggest hunts clears a stale Presidio hold** — pressing Suggest hunts again after resolving Presidio no longer leaves the old "held for Presidio approval" line on screen while it thinks
 - **Playbook query cards are styled** — CQL / KQL / ES|QL / SPL query cards under playbook tasks now look like the Suggested Fleet Hunts cards (bordered card, full-width query box) instead of bare text
 - **Suggested Fleet Hunts fits a phone screen** — the "Change main source" dropdown no longer pushes the analyst and hunt-prep views sideways at 375px (closes #2595)

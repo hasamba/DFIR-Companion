@@ -1667,7 +1667,12 @@ upload here too.
   transition; `RebootInstances requested` has none. An ingress rule is `AuthorizeSecurityGroupIngress
   recorded on sg-…: tcp 22 from 0.0.0.0/0 (any address)` — never the group's state — and is on
   the row only for a group the instance's own records name (the launch, or a successful
-  `ModifyInstanceAttribute` group set); a group-name-only request is not joined. `Replace…` and
+  `ModifyInstanceAttribute` group set); a group-name-only request is not joined. Both request forms
+  are read: the `ipPermissions` list and the older top-level form (`ipProtocol`, `fromPort`,
+  `toPort`, `cidrIp`). Any source with a prefix length of 0 (`x.x.x.x/0`, `…/0` in IPv6) is marked
+  `(any address)`. The rule is also on its own `AWS AuthorizeSecurityGroupIngress` row, whether or
+  not an instance in the upload holds the group: `opens sg-… to tcp 22 from 203.0.113.254/0 (any
+  address)`. `Replace…` and
   `Disassociate…IamInstanceProfile` name the instance only in a successful response and the row
   keeps the returned state (`association entered associating`). `AssociateAddress` is on the row
   only when its request names the instance, with the allocation id and the address as separate
@@ -1677,6 +1682,11 @@ upload here too.
   `Targets[InstanceIds]`, `StartSession` by its target, `SendSSHPublicKey` by `instanceId` — a tag
   selector never names one. They read `requested; whether anything ran is not in CloudTrail`. An
   authorization error reads `denied`, any other error `failed`; neither joins.
+- **Instance-role credentials from the caller's address (T1552.005).** When a call made with the
+  instance's own role credentials comes from the same IP address as a successful remote-access
+  request to that instance, the row names it and adds T1552.005 — the credential was used off the
+  instance; confirm against the instance's egress address. This is address equality within the
+  upload, not time order, and it is context only: it never raises the grade.
 - **The grade counts distinct recorded-fact kinds.** A startup configuration replaced after the
   launch, an instance profile associated or replaced after the launch, an any-address ingress rule
   on a group the instance holds, a privileged change / remote execution / enumeration by the
@@ -2271,6 +2281,15 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
   `DeliverToMailboxAndForward` is in the same record; `clears SMTP forwarding` (Low). When both
   addresses are set the row says `ForwardingAddress takes precedence`. Every partial change says
   `effective forwarding state not in this record`.
+- **Mailbox audit settings** (`Set-Mailbox`) — `sets AuditLogAgeLimit to 00:00:00 (zero: the mailbox
+  keeps no audit records)` and `turns mailbox auditing off (AuditEnabled False)` grade **High**
+  (T1562.008), whoever runs them. Any other age limit, or a change of the audited actions
+  (`AuditOwner`, `AuditDelegate`, `AuditAdmin`, `DefaultAuditSet`), is **Medium** for a person (Low
+  for Exchange's own service host) and says `the prior value is not in this record`.
+  `turns mailbox auditing on` is Low (Info for the service host). Two records with different values
+  stay two rows, so "lowered to 1 day, then to zero" is visible as two steps. A record that also
+  sets forwarding stays a forwarding row and carries the audit words. A mailbox audit change is never
+  a persistence stage of the mailbox chain.
 - **Permissions** — `grants FullAccess on alice@… to helper@… (outside the mailbox's domain)`.
   FullAccess or SendAs granted by a person to another account is High. The same grant by the
   service itself (`NT AUTHORITY\SYSTEM`, a system `UserType`, or an application) is Low, which
@@ -2913,6 +2932,17 @@ techniques that had no rule of their own:
   public-read)` — so a removal, an account-scoped policy or a conditional `"*"` never matches. It is
   the *requested* posture: S3 Block Public Access can still override it, and that is not in the
   record.
+- **AWS RDS and Lambda sharing** — `ModifyDBSnapshotAttribute` / `ModifyDBClusterSnapshotAttribute`
+  now say what the request shared: `shares DB snapshot … publicly (restore attribute "all")` or
+  `shares DB snapshot … with account …` grades **High** (T1537); `removes sharing of DB snapshot …` is
+  not graded by the rule. Lambda `AddPermission` says who it granted: `grants lambda:InvokeFunction to
+  any principal ("*") on function …` with no condition grades **High** (T1098); `to account …
+  (another account)` grades **Medium**. A conditional `"*"` (`under a condition (sourceArn set; not
+  evaluated)`), a service principal (`to service s3.amazonaws.com`) and the account's own principal
+  (`(this account)`) are not graded. `function URL with no authentication` is stated when the request
+  sets `FunctionUrlAuthType NONE`. SNS and SQS calls of the same name are not read. A failed call,
+  or one an AWS service made, is left to the importer's own grade. Rows imported before this version
+  keep their old text until the file is imported again.
 - **GCP** — a `SetIamPolicy` binding added for `roles/owner` grades **High**; one added for a public
   member, or for a member whose domain differs from the caller's own (marked `(outside the caller's
   domain)` on the row), grades **Medium** (T1098.003). The record never names the organisation's
@@ -2929,12 +2959,17 @@ techniques that had no rule of their own:
   `Posta indesiderata`, …), grades **Medium** (T1564.008); a grant of one of the suite's high-risk
   OAuth scopes grades **High** as an application permission and **Medium** as a delegated one
   (T1528). Search queries, sync-client full downloads, inbox-rule enable/disable and mailbox
-  delegation changes are tagged only. Entra sign-in rows now show the client's user agent (`[ua: …]`),
-  and a sign-in from an HTTP library the suite links to AiTM kits or password spraying (`axios`,
-  `Go-http-client`, `okhttp`, `node-fetch`, …) or from an offensive tool (AADInternals, AzureHound,
-  TeamFiltration, …) grades **Medium**; PowerShell, Azure CLI, Python and Postman clients are tagged
-  for review only. A user agent is what the client *claimed*, not proof of the tool used. The
-  suite's country, ASN and application lists are not included.
+  delegation changes are tagged only. Entra sign-in rows and Unified Audit Log sign-in records
+  (`UserLoggedIn`, `UserLoginFailed`) now show the client's user agent (`[ua: …]`). A sign-in from an
+  offensive tool (AADInternals, AzureHound, TeamFiltration, …) grades **Medium** from either export;
+  a sign-in from an HTTP library the suite links to AiTM kits or password spraying (`axios`,
+  `Go-http-client`, `okhttp`, `node-fetch`, …) grades **Medium** from an Entra sign-in export only,
+  because only that export says whether the sign-in was interactive. PowerShell, Azure CLI, Python
+  and Postman clients are tagged for review only. A user agent is what the client *claimed*, not
+  proof of the tool used. The suite's country, ASN and application lists are not included. Per-user
+  MFA being turned off (`Disable Strong Authentication`) grades **High** (T1556.006), from a UAL
+  export or an Entra audit export. Cases imported before this change keep their old rows until the
+  data is imported into a new case.
 - **TrailDiscover (AWS operations seen in the wild)** — the AWS CloudTrail operations that
   [TrailDiscover](https://github.com/adanalvarez/TrailDiscover) by Adan Alvarez (CC BY 4.0) marks as
   used in real attacks are the `td_aws_*` rules. Of its 305 in-the-wild operations, 61 are left out

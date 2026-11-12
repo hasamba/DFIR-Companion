@@ -70,6 +70,14 @@ export interface TimelineGap {
   //     High, else Low); rebootEdge when a reboot or shutdown row bounds it (always Low).
   corroborated?: boolean;
   rebootEdge?: boolean;
+  //   • `scopeBoundary` / `scopeBoundaryLabel` (#2606) — on a complete, non-wave gap: the two edge
+  //     rows sit in separate cloud accounts/tenants (gapScope.ts), so the silence is a boundary
+  //     between independent log sources, not a hole in one. Also on a betweenWaves gap whose
+  //     interval is crossScope (#2610): the two waves' severe rows sit in separate accounts/tenants,
+  //     and the label is wave-level. Always Low, never T1070. The label
+  //     ("AWS account A → AWS account B") is charset-restricted but still escaped on every surface.
+  scopeBoundary?: boolean;
+  scopeBoundaryLabel?: string;
   silentSources: string[]; // sources that produced no events during the window (sorted)
   activeSources: string[]; // sources that DID keep logging during the window (sorted; empty when complete)
   beforeEventId: string; // forensic-event id bounding the start of the gap (last activity before)
@@ -131,6 +139,13 @@ export const GAP_BANNER =
 
 // The report's one-phrase gap kind. A wave boundary is dwell time; a reboot at the edge is named.
 export function gapKindLabel(g: TimelineGap): string {
+  // The boundary is checked first (#2610): a quiet stretch between waves in separate
+  // accounts/tenants is not a dwell interval, and no dwell finding is raised for it.
+  if (g.scopeBoundary) {
+    return g.betweenWaves
+      ? "wave boundary, separate accounts/tenants"
+      : "complete silence, separate accounts/tenants";
+  }
   if (g.betweenWaves) return "dwell interval";
   if (!g.complete) return "partial";
   return g.rebootEdge ? "complete silence, reboot at edge" : "complete silence";
@@ -488,7 +503,9 @@ export function backfillSilenceGapFindings(
     // about the intrusion under a data-quality complaint. See activityWaves.ts.
     const title = gap.betweenWaves
       ? `Dwell interval: ${gap.durationLabel} between two waves of activity from ${gap.startTimestamp}`
-      : `Timeline coverage gap: ${gap.durationLabel} of complete silence from ${gap.startTimestamp}`;
+      : gap.scopeBoundary
+        ? `Timeline coverage gap: ${gap.durationLabel} between activity in separate accounts/tenants from ${gap.startTimestamp}`
+        : `Timeline coverage gap: ${gap.durationLabel} of complete silence from ${gap.startTimestamp}`;
     // A complete gap takes the grade classifyGapEdges gave it (#1942): High only when corroborated by
     // a Medium+ edge row or a log-clear / audit-policy event, else Low with the lead-only wording.
     const tampering = !gap.betweenWaves && gap.severity === "High";
@@ -505,10 +522,15 @@ export function backfillSilenceGapFindings(
         ? `${silence}A complete coverage gap is a ` +
           `classic indicator of log tampering (cleared Windows Event Logs, a stopped collector/auditd, or ` +
           `deleted log files) or a collection blindspot. ${GAP_CAVEAT}`
-        : gap.rebootEdge
-          ? `${silence}A reboot or shutdown event bounds the gap, which likely explains the silence. ${GAP_CAVEAT_LEAD}`
-          : `${silence}No attack activity sits at either edge and the case records no log clear or ` +
-            `audit-policy change, so this is most likely idle time or a collection blindspot. ${GAP_CAVEAT_LEAD}`;
+        : gap.scopeBoundary
+          ? `${silence}The activity before the gap and the activity after it sit in separate cloud ` +
+            `accounts or tenants (${gap.scopeBoundaryLabel ?? "different scopes"}). Each logs on its own, so ` +
+            `this is a boundary between two log sources, not a hole in one — not evidence of cleared logs ` +
+            `or a stopped collector. ${GAP_CAVEAT_LEAD}`
+          : gap.rebootEdge
+            ? `${silence}A reboot or shutdown event bounds the gap, which likely explains the silence. ${GAP_CAVEAT_LEAD}`
+            : `${silence}No attack activity sits at either edge and the case records no log clear or ` +
+              `audit-policy change, so this is most likely idle time or a collection blindspot. ${GAP_CAVEAT_LEAD}`;
     newFindings.push({
       id,
       severity: gap.betweenWaves ? "Medium" : gap.severity,

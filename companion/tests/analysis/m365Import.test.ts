@@ -1182,3 +1182,107 @@ describe("parseM365Audit — unparsed Certificate service-principal rows (#2549)
     expect(one(row("Add service principal.", "admin@example.test")).severity).toBe("High");
   });
 });
+
+describe("parseM365Audit — UAL sign-in user agent and MFA disable (#2609)", () => {
+  const logon = (userAgent: string | null, over: Record<string, unknown> = {}) => ({
+    CreationTime: "2026-11-01T10:00:00",
+    Id: `l-${userAgent ?? "none"}`,
+    Operation: "UserLoggedIn",
+    Workload: "AzureActiveDirectory",
+    RecordType: 15,
+    OrganizationId: "00000000-0000-4000-8000-0000000000aa",
+    UserId: "alice@example.test",
+    ClientIP: "203.0.113.30",
+    ResultStatus: "Success",
+    ExtendedProperties: userAgent === null ? [] : [{ Name: "UserAgent", Value: userAgent }],
+    ...over,
+  });
+
+  it("a UAL UserLoggedIn row shows the user agent in the Entra sign-in bracket form", () => {
+    const e = parseM365Audit(JSON.stringify([logon("azurehound/v2.0.4")])).events[0];
+    expect(e.description).toMatch(/^M365 AzureActiveDirectory: UserLoggedIn by alice@example\.test/);
+    expect(e.description).toMatch(/ \[ua: azurehound\/v2\.0\.4\]$/);
+  });
+
+  it("a logon with no user agent keeps its old row text", () => {
+    const e = parseM365Audit(JSON.stringify([logon(null)])).events[0];
+    expect(e.description).toBe(
+      "M365 AzureActiveDirectory: UserLoggedIn by alice@example.test from 203.0.113.30",
+    );
+  });
+
+  it("the user agent follows the [FAILED …] bracket on a failed logon", () => {
+    const rec = logon("curl/8.4.0", {
+      Operation: "UserLoginFailed",
+      ResultStatus: "Failed",
+      LogonError: "InvalidPassword",
+    });
+    const e = parseM365Audit(JSON.stringify([rec])).events[0];
+    expect(e.description).toMatch(/\[FAILED InvalidPassword\] \[ua: curl\/8\.4\.0\]$/);
+  });
+
+  it("two logons by one user from one IP with different user agents stay two rows", () => {
+    const r = parseM365Audit(JSON.stringify([logon("azurehound/v2.0.4"), logon("Mozilla/5.0")]));
+    expect(r.events).toHaveLength(2);
+    const same = parseM365Audit(
+      JSON.stringify([logon("Mozilla/5.0"), { ...logon("Mozilla/5.0"), Id: "l-2" }]),
+    );
+    expect(same.events).toHaveLength(1);
+  });
+
+  it("a user agent cannot forge a bracketed marker", () => {
+    const e = parseM365Audit(JSON.stringify([logon("x] [FAILED] [risk: high")])).events[0];
+    expect(e.description).toContain("[ua: x) (FAILED) (risk: high]");
+    expect(e.description).not.toContain("[FAILED]");
+  });
+
+  it("a non-logon UAL record carrying a UserAgent keeps its row text and aggregation", () => {
+    const file = (id: string, ua: string) => ({
+      CreationTime: "2026-11-01T10:00:00",
+      Id: id,
+      Operation: "FileDeleted",
+      Workload: "SharePoint",
+      RecordType: 6,
+      UserId: "alice@example.test",
+      ClientIP: "203.0.113.31",
+      ObjectId: "https://example.test/sites/x/a.docx",
+      UserAgent: ua,
+      ExtendedProperties: [{ Name: "UserAgent", Value: ua }],
+    });
+    const r = parseM365Audit(JSON.stringify([file("f-1", "azurehound/v2.0.4"), file("f-2", "Mozilla/5.0")]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].description).not.toContain("[ua:");
+  });
+
+  it("Disable Strong Authentication grades High with T1556.006, as a UAL record and in the Graph shape", () => {
+    const ual = {
+      CreationTime: "2026-11-01T10:05:00",
+      Id: "d-1",
+      Operation: "Disable Strong Authentication.",
+      Workload: "AzureActiveDirectory",
+      RecordType: 8,
+      UserId: "admin@example.test",
+      ClientIP: "203.0.113.32",
+      ResultStatus: "Success",
+      ObjectId: "bob@example.test",
+    };
+    const graph = {
+      id: "aaaaaaaa-0000-4000-8000-000000002609",
+      activityDateTime: "2026-11-01T10:05:00Z",
+      activityDisplayName: "Disable Strong Authentication",
+      category: "UserManagement",
+      result: "success",
+      loggedByService: "Core Directory",
+      initiatedBy: { user: { userPrincipalName: "admin@example.test", ipAddress: "203.0.113.32" } },
+      targetResources: [{ id: "t1", displayName: "bob", type: "User" }],
+    };
+    for (const rec of [ual, graph]) {
+      const events = parseM365Audit(JSON.stringify([rec])).events;
+      expect(events.length).toBeGreaterThan(0);
+      for (const e of events) {
+        expect(e.severity).toBe("High");
+        expect(e.mitreTechniques).toContain("T1556.006");
+      }
+    }
+  });
+});

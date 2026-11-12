@@ -73,7 +73,12 @@ import { CustomerExposureStore, type CustomerExposureSummary } from "../analysis
 import type { NotebookStore, NotebookEntry } from "../analysis/notebookStore.js";
 import type { HypothesisStore } from "../analysis/hypothesisStore.js";
 import type { Hypothesis } from "../analysis/hypothesis.js";
-import type { SynthMetaStore, SynthesisCoverage, ModelPerfSnapshot } from "../analysis/synthMeta.js";
+import {
+  modelPerfSnapshot,
+  type SynthMetaStore,
+  type SynthesisCoverage,
+  type ModelPerfSnapshot,
+} from "../analysis/synthMeta.js";
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import { AssetOverridesStore, applyAssetOverrides, emptyOverrides } from "../analysis/assetOverrides.js";
@@ -238,14 +243,7 @@ export class ReportWriter {
     const flag = (process.env.DFIR_REPORT_MODEL_PERF ?? "").trim().toLowerCase();
     if (!this.synthMeta || flag === "" || flag === "0" || flag === "false" || flag === "off") return null;
     try {
-      const meta = await this.synthMeta.load(caseId);
-      return {
-        synthModel: meta.synthModel,
-        findingsCount: meta.findingsCount,
-        highSeverityBackfillCount: meta.highSeverityBackfillCount,
-        parseRetries: meta.parseRetries,
-        secondOpinionPerf: meta.secondOpinionPerf,
-      };
+      return modelPerfSnapshot(await this.synthMeta.load(caseId));
     } catch {
       return null;
     }

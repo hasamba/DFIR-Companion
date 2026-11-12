@@ -274,7 +274,12 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   // A snapshot share / public bucket ACL or policy, as the request states it (#2306). A snapshot
   // un-share (#2338) or a bucket policy for AWS services / this account only (#2542) lowers the
   // table's base grade — before the failed-call/root floors below.
-  const { posture: exposure, grade: exposureGrade } = awsRecordExposure(name, rec, who2.accounts.recipient);
+  const {
+    posture: exposure,
+    grade: exposureGrade,
+    object: exposureObject,
+    keySegment: exposureKey,
+  } = awsRecordExposure(name, rec, who2.accounts.recipient);
   if (exposureGrade) severity = issuance?.severity ? worst(exposureGrade, issuance.severity) : exposureGrade;
   const identity = awsPrincipal(getCI(rec, "userIdentity"));
   const { name: who, isRoot } = identity;
@@ -367,7 +372,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
       identity: who2.words,
       posture: issuance?.posture ?? exposure,
       outcome: issuance?.outcome ?? "",
-      object: issuance?.detail ?? "",
+      object: issuance?.detail ?? exposureObject,
       optional: [],
       tail: `${client ? `[ua: ${oneLine(client).slice(0, 80)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode}]` : ""}`,
       qualifiers: [],
@@ -550,7 +555,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     aggKey: boundedAggKey(
       who2.replicaId
         ? `aws|shared:${who2.replicaId}`.toLowerCase()
-        : `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}${logging?.keySegment ?? ""}${who2.keySegment}${issuance?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
+        : `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}${logging?.keySegment ?? ""}${who2.keySegment}${issuance?.keySegment ?? ""}${exposureKey}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
     ),
     sources: ["AWS CloudTrail"],
   };

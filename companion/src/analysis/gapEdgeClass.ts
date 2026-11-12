@@ -2,6 +2,7 @@ import { GAP_FINDING_ID_PREFIX, WAVES_FINDING_ID } from "./responseSchema.js";
 import { SEVERITY_RANK, type ForensicEvent } from "./stateTypes.js";
 import type { TimelineGap } from "./gapDetect.js";
 import type { WavePattern } from "./activityWaves.js";
+import { scopeBoundaryLabel } from "./gapScope.js";
 
 // What sits on either side of a silence (#1503).
 //
@@ -123,15 +124,25 @@ const atLeastMedium = (e: ForensicEvent | undefined): boolean =>
   e !== undefined && SEVERITY_RANK[e.severity] <= SEVERITY_RANK.Medium;
 
 // Grade one complete, non-wave gap. A reboot at either edge explains the silence, so it stays Low
-// whatever else the case holds — the clear or the attack row is a finding of its own.
+// whatever else the case holds — the clear or the attack row is a finding of its own. So does a gap
+// whose two edges sit in separate cloud accounts/tenants (#2606): a hole between two independent
+// log sources cannot be cleared logs or a stopped collector, and a log clear in one account says
+// nothing about it, so the case-wide anti-forensic flag does not lift it either.
 function gradeCompleteGap(
   before: ForensicEvent | undefined,
   after: ForensicEvent | undefined,
   antiForensic: boolean,
-): Pick<TimelineGap, "severity" | "corroborated" | "rebootEdge"> {
+): Pick<TimelineGap, "severity" | "corroborated" | "rebootEdge" | "scopeBoundary" | "scopeBoundaryLabel"> {
   const reboot = (before !== undefined && isRebootRow(before)) || (after !== undefined && isRebootRow(after));
-  const corroborated = !reboot && (antiForensic || atLeastMedium(before) || atLeastMedium(after));
-  return { severity: corroborated ? "High" : "Low", corroborated, ...(reboot ? { rebootEdge: true } : {}) };
+  const boundary = reboot ? null : scopeBoundaryLabel(before, after);
+  const corroborated =
+    !reboot && boundary === null && (antiForensic || atLeastMedium(before) || atLeastMedium(after));
+  return {
+    severity: corroborated ? "High" : "Low",
+    corroborated,
+    ...(reboot ? { rebootEdge: true } : {}),
+    ...(boundary !== null ? { scopeBoundary: true, scopeBoundaryLabel: boundary } : {}),
+  };
 }
 
 // Classify every gap's edges. Pure: returns new gap objects.
@@ -142,8 +153,11 @@ function gradeCompleteGap(
 //   • `provisioningEdges` / `provisioningReason` — both bounding rows are servicing artifacts.
 //     Two High waves around two idle edge rows are still two visits: attackerEdges wins, so the
 //     dwell finding and the waves finding never disagree about the same window.
-//   • `severity` / `corroborated` / `rebootEdge` — on a complete, non-wave gap only (#1942); see
-//     gradeCompleteGap. Partial gaps and dwell intervals keep their grade.
+//   • `severity` / `corroborated` / `rebootEdge` / `scopeBoundary` — on a complete, non-wave gap
+//     (#1942, #2606); see gradeCompleteGap. Partial gaps and dwell intervals keep their grade,
+//     except a `betweenWaves` gap whose interval activityWaves.ts marks crossScope (#2610): it gets
+//     `scopeBoundary` + label and Low, the same as a boundary gap outside a wave, so the panel, the
+//     report and the AI gap prompt label it the way the (withheld) finding reads it. Never T1070.
 export function classifyGapEdges(
   gaps: readonly TimelineGap[],
   events: readonly ForensicEvent[],
@@ -153,9 +167,12 @@ export function classifyGapEdges(
   const byId = new Map(events.map((e) => [e.id, e]));
   // A between-waves gap resumes at wave k's first event; the interval before it is intervals[k-1].
   const gradedByResume = new Map<string, boolean>();
+  const crossScopeByResume = new Map<string, string>();
   if (pattern) {
     pattern.waves.slice(1).forEach((w, i) => {
-      gradedByResume.set(w.firstEventId, pattern.intervals[i]?.attackerGraded === true);
+      const iv = pattern.intervals[i];
+      gradedByResume.set(w.firstEventId, iv?.attackerGraded === true);
+      if (iv?.crossScope) crossScopeByResume.set(w.firstEventId, iv.crossScopeLabel ?? "different scopes");
     });
   }
   const antiForensic = gaps.some((g) => g.complete) && events.some(isAntiForensicRow);
@@ -168,6 +185,15 @@ export function classifyGapEdges(
     if (g.complete && !g.betweenWaves) Object.assign(next, gradeCompleteGap(before, after, antiForensic));
     if (historyIds.has(g.beforeEventId)) next.hostHistory = true;
     if (g.betweenWaves) next.attackerEdges = gradedByResume.get(g.afterEventId) === true;
+    const crossLabel = g.betweenWaves ? crossScopeByResume.get(g.afterEventId) : undefined;
+    if (crossLabel !== undefined) {
+      const boundary: Pick<TimelineGap, "severity" | "scopeBoundary" | "scopeBoundaryLabel"> = {
+        severity: "Low",
+        scopeBoundary: true,
+        scopeBoundaryLabel: crossLabel,
+      };
+      Object.assign(next, boundary);
+    }
     if (reasonBefore && reasonAfter && !next.attackerEdges) {
       next.provisioningEdges = true;
       next.provisioningReason =

@@ -15,9 +15,14 @@ import { getCI, isObject, str } from "./siemImport.js";
 import { show } from "./loggingChange.js";
 import type { Severity } from "./stateTypes.js";
 import { policyDoc, trustedOnlyGrant } from "./awsPolicyPrincipals.js";
+import { securityGroupRuleReading } from "./awsSecurityGroupRule.js";
+import { resourceSharingReading } from "./awsResourceSharing.js";
+import { createHash } from "node:crypto";
 
 type Row = Record<string, unknown>;
 const LIST_MAX = 5;
+/** The pre-#2605 exposure calls whose request decides who is granted access (#2306, #2611). */
+const SHARE_CALLS = new Set(["modifysnapshotattribute", "putbucketacl", "putbucketpolicy"]);
 
 const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
 const at = (o: unknown, ...keys: string[]): unknown => {
@@ -109,12 +114,24 @@ function policyReading(request: Row, recipient: string): string {
   return trusted ? `bucket ${bucket} ${trusted}` : "";
 }
 
-/** The exposure posture a ModifySnapshotAttribute / PutBucketAcl / PutBucketPolicy request states, or "". */
+/**
+ * The readings added by #2605 — a security-group ingress rule, an RDS snapshot share, a Lambda
+ * resource-policy grant — each gated on the service that recorded the call. "" for any other call.
+ */
+function requestReading(eventName: string, eventSource: string, request: Row, recipient: string): string {
+  return (
+    securityGroupRuleReading(eventName, eventSource, request) ||
+    resourceSharingReading(eventName, eventSource, request, recipient)
+  );
+}
+
+/** The exposure posture a request states (#2306, #2605), or "". */
 export function awsExposurePosture(
   eventName: string,
   request: unknown,
   errorCode: string,
   recipient = "",
+  eventSource = "",
 ): string {
   if (!isObject(request)) return "";
   const n = eventName.toLowerCase();
@@ -125,7 +142,7 @@ export function awsExposurePosture(
         ? aclReading(request)
         : n === "putbucketpolicy"
           ? policyReading(request, recipient)
-          : "";
+          : requestReading(eventName, eventSource, request, recipient);
   return reading && errorCode ? `requested: ${reading} — failed (${show(errorCode, 30)})` : reading;
 }
 
@@ -171,15 +188,32 @@ export function awsExposureGrade(eventName: string, request: unknown, recipient 
   return snapshotRemovesOnly(request) ? "Low" : undefined;
 }
 
-/** Both readings of one raw CloudTrail record, for the importer's single call site. */
+/**
+ * Both readings of one raw CloudTrail record, for the importer's single call site, plus the
+ * aggregation-key segment of a #2605 reading (rendered in the object slot): two ingress rules on different ports, or two grants to
+ * different principals, by the same caller never fold into one counted row. The digest is over the
+ * whole request (the reading is bounded, the request is not); "" when there is no such reading.
+ */
 export function awsRecordExposure(
   eventName: string,
   rec: Row,
   recipient: string,
-): { posture: string; grade: Severity | undefined } {
+): { posture: string; object: string; grade: Severity | undefined; keySegment: string } {
   const request = getCI(rec, "requestParameters");
+  const source = str(getCI(rec, "eventSource"));
+  const own = isObject(request) ? requestReading(eventName, source, request, recipient) : "";
+  const reading = awsExposurePosture(eventName, request, str(getCI(rec, "errorCode")), recipient, source);
+  // A #2605 reading names a port list or a principal and its resource: it goes in the row's wider
+  // object slot, so the deciding value is not clipped off the narrow posture slot.
+  // The EBS snapshot share and S3 ACL/policy calls key on the request too (#2611): a share with a
+  // second account, or a different grant, is its own row — even when no reading is stated.
+  const keyed = own || (isObject(request) && SHARE_CALLS.has(eventName.toLowerCase()));
   return {
-    posture: awsExposurePosture(eventName, request, str(getCI(rec, "errorCode")), recipient),
+    posture: own ? "" : reading,
+    object: own ? reading : "",
     grade: awsExposureGrade(eventName, request, recipient),
+    keySegment: keyed
+      ? `|exposure|${createHash("sha256").update(JSON.stringify(request)).digest("hex").slice(0, 16)}`
+      : "",
   };
 }

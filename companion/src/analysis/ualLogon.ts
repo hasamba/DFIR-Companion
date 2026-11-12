@@ -3,7 +3,7 @@
 // interactive sign-in (`signIns`). Neither is a mailbox record; the chain joins them to one only by
 // the identifiers the records carry, and says which.
 
-import { cleanIp, getCI, isObject, str } from "./siemImport.js";
+import { cleanIp, getCI, isObject, oneLine, str } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
 
@@ -100,6 +100,26 @@ export function ualFailureDetail(rec: Row): string {
   return [bracketSafe(logonError, LOGON_ERROR_MAX), bracketSafe(errorNumber, ERROR_NUMBER_MAX)]
     .filter(Boolean)
     .join(" ");
+}
+
+// Long enough to keep a distinctive token past a browser prefix (TeamFiltration's Teams/1.3 build).
+export const USER_AGENT_SHOWN_MAX = 160;
+
+/**
+ * A sign-in's user agent as a row shows it inside "[ua: …]" (#2306): one line, bounded, brackets
+ * swapped for parentheses so a client-supplied string can never forge a "[FAILED …]"-style marker.
+ */
+export function shownUserAgent(raw: string): string {
+  return oneLine(raw).replace(/\[/g, "(").replace(/\]/g, ")").slice(0, USER_AGENT_SHOWN_MAX);
+}
+
+/**
+ * The user agent a UAL logon row shows (#2609) — the same sign-in the Entra rows render with
+ * "[ua: …]", exported another way. "" for any record that is not a UAL logon, so no other UAL
+ * row's text or aggregation key changes.
+ */
+export function ualLogonUserAgent(rec: Row): string {
+  return isUalLogon(rec) ? shownUserAgent(readUalLogon(rec).userAgent) : "";
 }
 
 export interface EntraSignIn {

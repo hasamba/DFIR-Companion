@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -8,6 +8,7 @@ import {
   buildSynthesisCoverage,
   coverageLabel,
   modelPerfLabel,
+  modelPerfSnapshot,
 } from "../../src/analysis/synthMeta.js";
 import type { FindingsDiff } from "../../src/analysis/findingsDiff.js";
 
@@ -19,9 +20,10 @@ const DIFF: FindingsDiff = {
 
 describe("SynthMetaStore", () => {
   let store: SynthMetaStore;
+  let cases: CaseStore;
   beforeEach(async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-synthmeta-"));
-    const cases = new CaseStore(root);
+    cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     store = new SynthMetaStore(cases);
   });
@@ -164,11 +166,59 @@ describe("SynthMetaStore", () => {
     const meta = await store.load("c1");
     expect(meta.secondOpinionPerf).toBeUndefined();
   });
+
+  it("stores a synthesis fallback, and the next run without one clears it (#2603)", async () => {
+    const perf = { durationMs: 1, eventCount: 1, iocCount: 0 };
+    const synthFallback = { from: "opus", to: "gpt-6-sol", safetyStops: 2 };
+    await store.record("c1", DIFF, "2026-11-12T10:00:00.000Z", { ...perf, synthFallback });
+    expect((await store.load("c1")).synthFallback).toEqual(synthFallback);
+    await store.record("c1", DIFF, "2026-11-12T11:00:00.000Z", perf);
+    expect((await store.load("c1")).synthFallback).toBeUndefined();
+  });
+
+  it("drops a malformed synthFallback rather than failing the load (#2603)", async () => {
+    await writeFile(
+      join(cases.stateDir("c1"), "synth-meta.json"),
+      JSON.stringify({ lastSynthesizedAt: "x", lastDiff: null, synthFallback: { from: 3 } }),
+    );
+    const meta = await store.load("c1");
+    expect(meta.lastSynthesizedAt).toBe("x");
+    expect(meta.synthFallback).toBeUndefined();
+  });
 });
 
 describe("modelPerfLabel", () => {
   it("returns null when nothing was recorded", () => {
     expect(modelPerfLabel({})).toBeNull();
+  });
+
+  it("says the synthesis model was the fallback, and why (#2603)", () => {
+    const label = modelPerfLabel({
+      synthModel: "gpt-6-sol",
+      findingsCount: 4,
+      synthFallback: { from: "opus", to: "gpt-6-sol", safetyStops: 1 },
+    });
+    expect(label).toContain(
+      "Synthesis ran on **gpt-6-sol** — the fallback model, after opus's safety filter stopped the answer 1 time — 4 findings.",
+    );
+  });
+
+  it("reaches the report: the snapshot the report writer builds carries the fallback (#2603)", () => {
+    const synthFallback = { from: "opus", to: "gpt-6-sol", safetyStops: 2 };
+    const snap = modelPerfSnapshot({
+      lastSynthesizedAt: "x",
+      lastDiff: null,
+      synthModel: "gpt-6-sol",
+      synthFallback,
+    });
+    expect(snap.synthFallback).toEqual(synthFallback);
+    expect(modelPerfLabel(snap)).toContain(
+      "the fallback model, after opus's safety filter stopped the answer 2 times",
+    );
+  });
+
+  it("adds no fallback clause to a run on the synthesis model (#2603)", () => {
+    expect(modelPerfLabel({ synthModel: "opus", findingsCount: 4 })).not.toMatch(/fallback/);
   });
 
   it("describes the synthesis model, findings, and backfill/retry counts", () => {

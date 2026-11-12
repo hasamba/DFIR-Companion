@@ -306,6 +306,29 @@ describe("awsComputeLifecycles — recorded configuration changes", () => {
     expect(row.description).not.toContain("→  ");
   });
 
+  it("the legacy top-level ingress form joins the lifecycle, and any /0 source is any address (#2605)", () => {
+    const [open] = rows([
+      launch(),
+      rec({
+        eventName: "AuthorizeSecurityGroupIngress",
+        eventTime: at(70),
+        requestParameters: {
+          cidrIp: "203.0.113.254/0",
+          fromPort: 22,
+          groupId: SG,
+          ipPermissions: {},
+          ipProtocol: "tcp",
+          toPort: 22,
+        },
+        responseElements: { _return: true },
+      }),
+    ]);
+    expect(open.severity).toBe("Medium");
+    expect(open.description).toContain(
+      `AuthorizeSecurityGroupIngress recorded on ${SG}: tcp 22 from 203.0.113.254/0 (any address)`,
+    );
+  });
+
   it("an any-address ingress rule recorded on a group the instance holds is Medium and says 'recorded', never 'allows'; a group source or another group is not", () => {
     const [open] = rows([launch(), ingress(SG, "0.0.0.0/0", { eventTime: at(70) })]);
     expect(open.severity).toBe("Medium");
@@ -944,6 +967,111 @@ describe("awsComputeLifecycles — remote-access requests to the instance", () =
     expect(row.severity).toBe("Low");
     expect(row.description).not.toContain("remote-access requests");
     expect(row.description).toContain("attempts: 1 denied, 1 failed — not joined");
+  });
+});
+
+describe("awsComputeLifecycles — instance-role credentials from the remote-access caller's address (#2607)", () => {
+  const FROM_CALLER =
+    "instance-role credentials used from the same address as a remote-access request to the instance";
+  const startSession = (over: Record<string, unknown> = {}) =>
+    rec({
+      eventSource: "ssm.amazonaws.com",
+      eventName: "StartSession",
+      eventTime: at(1800),
+      requestParameters: { target: INST },
+      responseElements: { sessionId: "alice-0123" },
+      ...over,
+    });
+
+  it("a session call from the address that sent SendCommand is the T1552.005 fact; the grade is the one the same records get with the session elsewhere", () => {
+    const [hit] = rows([
+      launch(),
+      sendCommand({ instanceIds: [INST] }),
+      sessionCall({ sourceIPAddress: IP, eventTime: at(1830) }),
+    ]);
+    const [away] = rows([
+      launch(),
+      sendCommand({ instanceIds: [INST] }),
+      sessionCall({ eventTime: at(1830) }),
+    ]);
+    expect(hit.description).toContain(FROM_CALLER);
+    expect(hit.description).toContain("confirm against the instance's egress address");
+    expect(hit.description).toContain("(record:2)");
+    expect(hit.mitre).toContain("T1552.005");
+    expect(hit.mitre).toContain("T1651");
+    expect(hit.severity).toBe("Medium");
+    expect(hit.severity).toBe(away.severity);
+    expect(away.description).not.toContain(FROM_CALLER);
+    expect(away.mitre).not.toContain("T1552.005");
+    expect(envelopeOf(hit).awsCompute?.facts).toContain("session-from-remote-requester-address");
+  });
+
+  it("the grade stays flat with a second graded fact as well", () => {
+    const records = (addr: string) => [
+      launch(),
+      modifyUserData({ eventTime: at(60) }),
+      sendCommand({ instanceIds: [INST] }),
+      sessionCall({ sourceIPAddress: addr, eventTime: at(1830) }),
+    ];
+    const [hit] = rows(records(IP));
+    const [away] = rows(records(IP_INST));
+    expect(hit.mitre).toContain("T1552.005");
+    expect(hit.severity).toBe(away.severity);
+    expect(hit.severity).toBe("High");
+  });
+
+  it("time order is not required: a session call recorded before the request from the same address still counts", () => {
+    const [row] = rows([
+      launch(),
+      sessionCall({ sourceIPAddress: IP, eventTime: at(1795) }),
+      sendCommand({ instanceIds: [INST] }),
+    ]);
+    expect(row.mitre).toContain("T1552.005");
+  });
+
+  it("a private address works, and StartSession is a remote-access request as well", () => {
+    const LAN = "172.16.5.20";
+    const [row] = rows([
+      launch(),
+      startSession({ sourceIPAddress: LAN }),
+      sessionCall({ sourceIPAddress: LAN, eventTime: at(1810), userAgent: "aws-sdk-go-v2/1.30" }),
+    ]);
+    expect(row.description).toContain(FROM_CALLER);
+    expect(row.mitre).toContain("T1552.005");
+  });
+
+  it("a denied or failed SendCommand gives nothing, even from the same address", () => {
+    const [row] = rows([
+      launch(),
+      sendCommand({ instanceIds: [INST] }, { errorCode: "AccessDeniedException", responseElements: null }),
+      sendCommand(
+        { instanceIds: [INST] },
+        { eventTime: at(1900), errorCode: "InvalidInstanceId", responseElements: null },
+      ),
+      sessionCall({ sourceIPAddress: IP, eventTime: at(1930) }),
+    ]);
+    expect(row.description).not.toContain(FROM_CALLER);
+    expect(row.mitre).not.toContain("T1552.005");
+  });
+
+  it("a service name or other non-address source on both sides never matches", () => {
+    const [row] = rows([
+      launch(),
+      sendCommand({ instanceIds: [INST] }, { sourceIPAddress: "AWS Internal" }),
+      sessionCall({ sourceIPAddress: "AWS Internal", eventTime: at(1830) }),
+    ]);
+    expect(row.description).not.toContain(FROM_CALLER);
+    expect(row.mitre).not.toContain("T1552.005");
+  });
+
+  it("a command the instance's own credentials sent to itself proves nothing left the host", () => {
+    const [row] = rows([
+      launch(),
+      sendCommand({ instanceIds: [INST] }, { sourceIPAddress: IP_INST, userIdentity: instanceSession(INST) }),
+      sessionCall({ eventTime: at(1830) }),
+    ]);
+    expect(row.description).not.toContain(FROM_CALLER);
+    expect(row.mitre).not.toContain("T1552.005");
   });
 });
 

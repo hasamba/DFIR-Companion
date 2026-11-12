@@ -233,6 +233,14 @@
         );
       modelPerf = `<div class="sm-perf" data-safe-style="margin-top:4px" title="The synthesis model this run, and quality signals to compare DFIR_AI_MODEL / DFIR_AI_SYNTH_MODEL choices empirically (#74)">${bits.join(" · ")}</div>`;
     }
+    // #2603: the synthesis model's safety filter stopped the answer and the fallback model wrote
+    // these findings. Amber, because a different model wrote what the analyst is reading. Absent
+    // on a run the synthesis model answered, including one whose retry passed.
+    const fb = m.synthFallback;
+    if (fb && typeof fb === "object" && fb.to) {
+      const n = Number(fb.safetyStops) || 0;
+      modelPerf += `<div class="sm-perf synth-fallback" data-safe-style="margin-top:4px;color:var(--sev-medium)" title="The configured synthesis model refused, so the fallback model (DFIR_AI_SYNTH_FALLBACK_MODEL) ran this synthesis. Findings from different models are not directly comparable.">⚠ ${esc(fb.from)}'s safety filter stopped this synthesis ${n} time${n === 1 ? "" : "s"}; the fallback model <strong>${esc(fb.to)}</strong> wrote these findings.</div>`;
+    }
     const so = m.secondOpinionPerf;
     if (so && (so.modelA || so.modelB)) {
       const pct = Math.round((so.agreementRate || 0) * 100);

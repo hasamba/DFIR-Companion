@@ -940,14 +940,16 @@ ts_entra_risky_user_action:
 #   m365_high_priv_app_role_assigned / m365_oauth_consent_high_scope (ReadWrite.All / FullControl) —
 #     the granted scope is decoded by entraAppChange.ts into posture/object, but those rows come from
 #     the Entra audit path, not UAL AuditData.
-#   m365_hidden_mailbox_rule (HiddenFromUI) / m365_mailbox_audit_enabled (AuditEnabled) /
-#     m365_user_upn_changed / m365_user_displayname_changed — the modified property name is in
-#     AuditData / ModifiedProperties, not the rendered description.
+#   m365_hidden_mailbox_rule (HiddenFromUI) / m365_user_upn_changed / m365_user_displayname_changed —
+#     the modified property name is in AuditData / ModifiedProperties, not the rendered description.
+#   m365_mailbox_audit_enabled (AuditEnabled) — the Set-Mailbox audit settings ARE rendered now
+#     (#2605, exchangeMailboxAudit.ts) and that decoder grades them (AuditEnabled false or a zero
+#     AuditLogAgeLimit is High, T1562.008), as #2549 does for Set-AdminAuditLogConfig; no rule here.
 #   m365_signin_anomalous_location (Location) / m365_signin_impossible_travel / m365_signin_via_tor
 #     (client_ip) / m365_mfa_bypass / m365_signin_legacy_auth(detail) — m365Import's Entra sign-in
 #     path renders `[risk: <level>]` and `[legacy-auth ROPC ...]` (both ported above) but not the raw
 #     location / impossible-travel / Tor fields.
-#   m365_mailbox_export_started / m365_mailbox_moved / m365_mailbox_audit_enabled — operation names
+#   m365_mailbox_export_started / m365_mailbox_moved — operation names
 #     exist (`Start-ComplianceSearchAction`, `New-MoveRequest`) but their export/move qualifier is in
 #     AuditData; the UAL `description` carries the operation alone.
 #   entra_conditional_access_disabled / entra_mfa_policy_disabled — the `*disable*` detail lives in
@@ -1099,6 +1101,63 @@ cloud_aws_bucket_public:
   severity: High
   view: 'AWS data exposure'
 
+# #2605: awsResourceSharing.ts renders an RDS snapshot share ("shares DB snapshot … publicly" / "with
+# account …") and a Lambda resource-policy grant ("grants <action> on function <name> to any
+# principal ("*")" / "to account … (another account)"). A removal, a conditional "*", a service
+# principal and this account's own principal never match. Both calls are otherwise only tagged
+# (td_aws_exfiltration / td_aws_persistence). Standard exclusions: a call made by an AWS service on the
+# account's behalf, and a failed call (the importer grades a failed mutating call Medium as a probe).
+# A failed call is excluded twice: by its bracketed error marker, and by the reading's own
+# "requested: … — failed" wording, which leads the reading and survives a long user agent that
+# truncates the marker (Codex review of #2605).
+cloud_aws_rds_snapshot_shared:
+  description: RDS DB (cluster) snapshot shared with another account or publicly (ModifyDBSnapshotAttribute restore add)
+  # High, T1537: the same exposure as an EBS snapshot share (cloud_aws_snapshot_shared) — another
+  # account can restore the whole database from it.
+  all:
+    - { field: description, regex: '^AWS ModifyDB(?:Cluster)?SnapshotAttribute \(rds\)', flags: 'i' }
+    - { field: description, regex: ' shares DB (?:cluster )?snapshot \S+ (?:publicly|with account )', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+    - { field: description, contains: ['requested: '] }
+  tags: ['exposure', 'snapshot_shared']
+  mitre: ['T1537']
+  severity: High
+  view: 'AWS data exposure'
+
+cloud_aws_lambda_public_permission:
+  description: Lambda function resource policy grants any principal ("*") with no condition (AddPermission)
+  # High: anyone can call the function — a backdoor or a public entry point (Stratus
+  # lambda-backdoor-function). T1098 as the bundled Suzaku AddPermission rule tags it.
+  all:
+    - { field: description, regex: '^AWS AddPermission(?:\d{8}(?:v\d+)?)? \(lambda\)', flags: 'i' }
+    - { field: description, regex: ' to any principal \("\*"\)(?! under a condition)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+    - { field: description, contains: ['requested: '] }
+  tags: ['exposure', 'lambda_permission', 'persistence']
+  mitre: ['T1098']
+  severity: High
+  view: 'AWS data exposure'
+
+cloud_aws_lambda_cross_account_permission:
+  description: Lambda function resource policy grants another AWS account (AddPermission)
+  # Medium: cross-account invocation is sometimes legitimate (a central account's automation), so it
+  # stays below the public grant.
+  all:
+    - { field: description, regex: '^AWS AddPermission(?:\d{8}(?:v\d+)?)? \(lambda\)', flags: 'i' }
+    - { field: description, regex: ' to account \S+ \(another account\)', flags: 'i' }
+  none:
+    - { field: description, contains: ['request made by AWS service', 'AWSService (not a credential in use)'] }
+    - { field: description, regex: '\[(?!root\])[A-Za-z][\w.]*\]' }
+    - { field: description, contains: ['requested: '] }
+  tags: ['exposure', 'lambda_permission', 'persistence']
+  mitre: ['T1098']
+  severity: Medium
+  view: 'AWS data exposure'
+
 cloud_gcp_owner_granted:
   description: GCP IAM policy binding added for roles/owner
   all:
@@ -1154,10 +1213,11 @@ cloud_gcp_external_member_added:
 #
 # WHAT A RULE CAN READ: the rendered CloudTrail row, `AWS <EventName> (<source>) by <who> …` (awsImport.ts
 # head, pinned by tests/analysis/tagsYamlTrailDiscover.test.ts). Request parameters are NOT rendered for
-# these calls, so a condition that needs them (Panther's RDS snapshot shared with "all", Lambda
-# AddPermission to principal "*", RDS DeleteDBInstance with skipFinalSnapshot) cannot be expressed:
-# RDS ModifyDBSnapshotAttribute and Lambda AddPermission stay tag-only until a reader renders them,
-# as awsExposure.ts does for EBS snapshots and S3 buckets. Every graded rule leaves out:
+# most of these calls, so a condition that needs them (RDS DeleteDBInstance with skipFinalSnapshot)
+# cannot be expressed. RDS ModifyDBSnapshotAttribute and Lambda AddPermission ARE read now (#2605,
+# awsResourceSharing.ts): the shared-with principal is graded by cloud_aws_rds_snapshot_shared and
+# cloud_aws_lambda_*_permission above; the td_aws_* entries for them stay tag-only. Every graded rule
+# leaves out:
 # - a call made by an AWS service on the account's behalf ("request made by AWS service …",
 #   "AWSService (not a credential in use)") — e.g. an Aurora auto-scaling replica removal;
 # - a failed call (the rendered `[ErrorCode]`): the importer already grades a failed mutating call
@@ -2234,7 +2294,7 @@ mas_oauth_risky_delegated_permission:
   severity: Medium
   view: 'Analyzer-Suite OAuth permissions'
 
-# ── Sign-in user agents (m365Import.ts renders "[ua: …]" on Entra sign-in rows) ──
+# ── Sign-in user agents (m365Import.ts renders "[ua: …]" on Entra and UAL sign-in rows) ──
 # A user agent is client-supplied: it shows the client CLAIMED, never proves the tool used.
 mas_user_agent_aitm_or_spray:
   description: Sign-in from an HTTP library the suite associates with AiTM phishing kits or password spraying
@@ -2258,10 +2318,13 @@ mas_user_agent_http_library_noninteractive:
   tags: ['analyzer_suite', 'suspicious_user_agent', 'http_library_noninteractive']
   view: 'Analyzer-Suite user agents'
 
+# Local widening (#2609), not a re-port: the offensive-tool and unusual rules also read UAL sign-in rows
+# (UserLoggedIn / UserLoginFailed). The HTTP-library pair above stays Entra-only: its narrowing needs the
+# [non-interactive] marker, which UAL rows never carry.
 mas_user_agent_offensive_tool:
   description: Sign-in from a client the suite associates with an offensive tool (AADInternals, AzureHound, BloodHound, SharpHound, TeamFiltration, curl) or traitorware (eM Client)
   any:
-    - { field: description, regex: '^Entra sign-in:[^\n]*\[ua: [^\]]*(?:AADInternals|azurehound|bloodhound/|sharphound/|curl/|eMClient/|Teams/1\.3\.00\.30866 Chrome/80\.0\.3987\.165 Electron/8\.5\.1)', flags: 'i' }
+    - { field: description, regex: '^(?:Entra sign-in:|M365 AzureActiveDirectory: UserLog(?:gedIn|inFailed)\b)[^\n]*\[ua: [^\]]*(?:AADInternals|azurehound|bloodhound/|sharphound/|curl/|eMClient/|Teams/1\.3\.00\.30866 Chrome/80\.0\.3987\.165 Electron/8\.5\.1)', flags: 'i' }
   tags: ['analyzer_suite', 'suspicious_user_agent', 'offensive_tool']
   severity: Medium
   view: 'Analyzer-Suite user agents'
@@ -2269,7 +2332,7 @@ mas_user_agent_offensive_tool:
 mas_user_agent_unusual:
   description: Sign-in from a scripting / admin client the suite marks for review (PowerShell, Azure CLI, Python, Postman, device registration)
   any:
-    - { field: description, regex: '^Entra sign-in:[^\n]*\[ua: [^\]]*(?:AZURECLI/|AzurePowershell/|DeviceRegistrationClient|Dsreg/|Microsoft\.OData\.Client/|PostmanRuntime/|PowerShell/5\.1|PowerShell/7|python-requests|python/)', flags: 'i' }
+    - { field: description, regex: '^(?:Entra sign-in:|M365 AzureActiveDirectory: UserLog(?:gedIn|inFailed)\b)[^\n]*\[ua: [^\]]*(?:AZURECLI/|AzurePowershell/|DeviceRegistrationClient|Dsreg/|Microsoft\.OData\.Client/|PostmanRuntime/|PowerShell/5\.1|PowerShell/7|python-requests|python/)', flags: 'i' }
   tags: ['analyzer_suite', 'unusual_user_agent']
   view: 'Analyzer-Suite user agents'
 

@@ -432,6 +432,35 @@ describe("Analyzer-Suite user agents (#2306)", () => {
     expect(viaApp.ruleIds).toContain("mas_user_agent_aitm_or_spray");
     expect(viaApp.ruleIds).not.toContain("mas_user_agent_http_library_noninteractive");
   });
+
+  // #2609 — the same sign-in exported through the Unified Audit Log (UserAgent in ExtendedProperties).
+  const ualLogon = (userAgent: string, op = "UserLoggedIn") =>
+    m1(
+      ual("AzureActiveDirectory", op, {
+        RecordType: 15,
+        ResultStatus: op === "UserLoggedIn" ? "Success" : "Failed",
+        ExtendedProperties: [{ Name: "UserAgent", Value: userAgent }],
+      }),
+    );
+
+  it("UAL sign-ins: an offensive tool grades Medium; PowerShell is tagged only; a browser neither", () => {
+    const hound = ualLogon("azurehound/v2.0.4");
+    expect(hound.description).toContain("[ua: azurehound/v2.0.4]");
+    expect(hound.ruleIds).toContain("mas_user_agent_offensive_tool");
+    expect(ualLogon("AADInternals", "UserLoginFailed").ruleIds).toContain("mas_user_agent_offensive_tool");
+    const ps = ualLogon("Mozilla/5.0 (Windows NT; Windows NT 10.0) WindowsPowerShell/5.1 PowerShell/5.1");
+    expect(ps.ruleIds).toContain("mas_user_agent_unusual");
+    expect(ps.ruleIds).not.toContain("mas_user_agent_offensive_tool");
+    const b = ualLogon(browser);
+    expect(b.ruleIds).not.toContain("mas_user_agent_offensive_tool");
+    expect(b.ruleIds).not.toContain("mas_user_agent_unusual");
+  });
+
+  it("UAL sign-ins: the HTTP-library rules stay Entra-only (no non-interactive marker on UAL rows)", () => {
+    const r = ualLogon("axios/1.6.8");
+    expect(r.ruleIds).not.toContain("mas_user_agent_aitm_or_spray");
+    expect(r.ruleIds).not.toContain("mas_user_agent_http_library_noninteractive");
+  });
 });
 
 describe("Entra sign-in risk the tenant cannot see (#2486)", () => {
