@@ -213,6 +213,13 @@ describe("distinct cloud operations get a seat over the budget (#2585)", () => {
     expect(sel.events).toHaveLength(max);
     for (let i = 0; i < ATTACK_OPS.length; i++) expect(sel.classOf.has(`atk${i}`)).toBe(true);
     expect(seatedOps(sel).has("m365|userloggedin")).toBe(true);
+    // The room came out of repeated consent anchors, not the earliest rows.
+    const plain = selectSynthesisEventsAnnotated(
+      events.map((e) => ({ ...e, canonical: undefined })),
+      max,
+    );
+    expect(sel.counts.earliest).toBe(plain.counts.earliest);
+    expect(plain.counts.earliest).toBeGreaterThan(0);
   });
 
   it("normal path: the share is bounded and chosen highest-severity first, then earliest", () => {

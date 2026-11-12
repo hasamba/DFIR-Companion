@@ -276,18 +276,21 @@ export function selectSynthesisEventsAnnotated(
   }
 
   // #2585: room for one row per distinct cloud operation the anchors do not show. Just under the
-  // overflow threshold that room comes out of REPEATED cloud anchors, as it does in overflow; a
-  // displaced anchor may have shadowed a command, so the command reserve is recomputed after.
-  // Repeated until stable: each displacement can re-open commands, which grows the command reserve.
+  // overflow threshold that room comes out of REPEATED cloud anchors, as it does in overflow — never
+  // out of the earliest rows, which keep the seats they had (`earliestNeed`). A displaced anchor may
+  // have shadowed a command, so the command reserve is recomputed and the room re-checked until stable.
   const opWant = operationWant(events, classOf, max, seatOptions.shownOperations);
+  const earliestNeed = Math.min(
+    byTime.slice(0, EARLIEST_KEEP).filter((e) => !classOf.has(e.id)).length,
+    Math.max(0, max - classOf.size - reserve),
+  );
   for (;;) {
-    const free = max - classOf.size - reserve;
-    if (opWant <= free || !displaceRepeatedAnchors(events, classOf, opWant - Math.max(0, free), rarityOf))
-      break;
+    const short = opWant + earliestNeed - (max - classOf.size - reserve);
+    if (short <= 0 || !displaceRepeatedAnchors(events, classOf, short, rarityOf)) break;
     unshadowed = seats.filter((s) => !s.shadowedBy.some((id) => classOf.has(id)));
     reserve = Math.min(reserveLimit, unshadowed.length);
   }
-  const opReserve = Math.min(opWant, Math.max(0, max - classOf.size - reserve));
+  const opReserve = Math.min(opWant, Math.max(0, max - classOf.size - reserve - earliestNeed));
 
   // GUARANTEED 2: earliest events — initial-access context (guarded against the cap, and leaving
   // the command and cloud-operation reserves free).
