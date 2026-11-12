@@ -1682,6 +1682,11 @@ upload here too.
   `Targets[InstanceIds]`, `StartSession` by its target, `SendSSHPublicKey` by `instanceId` — a tag
   selector never names one. They read `requested; whether anything ran is not in CloudTrail`. An
   authorization error reads `denied`, any other error `failed`; neither joins.
+- **Instance-role credentials from the caller's address (T1552.005).** When a call made with the
+  instance's own role credentials comes from the same IP address as a successful remote-access
+  request to that instance, the row names it and adds T1552.005 — the credential was used off the
+  instance; confirm against the instance's egress address. This is address equality within the
+  upload, not time order, and it is context only: it never raises the grade.
 - **The grade counts distinct recorded-fact kinds.** A startup configuration replaced after the
   launch, an instance profile associated or replaced after the launch, an any-address ingress rule
   on a group the instance holds, a privileged change / remote execution / enumeration by the

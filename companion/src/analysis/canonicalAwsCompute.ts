@@ -121,7 +121,13 @@ export const awsComputeFactKinds = [
   "session-remote-execution",
   "session-enumeration",
   "remote-access-request",
+  // Context, never graded (#2607): it only ever stands beside remote-access-request.
+  "session-from-remote-requester-address",
 ] as const;
+/** Fact kinds the row names and tags but the grade does not count. */
+export const AWS_COMPUTE_UNGRADED_FACTS: ReadonlySet<(typeof awsComputeFactKinds)[number]> = new Set([
+  "session-from-remote-requester-address",
+]);
 
 export const awsComputeBlockSchema = z.object({
   instanceId: z.string(),
@@ -148,7 +154,7 @@ export const awsComputeBlockSchema = z.object({
   remote: z.array(awsComputeRemoteSchema),
   remoteBeyond: z.number().int().nonnegative(),
   attempts: z.object({ denied: z.number().int().nonnegative(), failed: z.number().int().nonnegative() }),
-  /** The distinct recorded-fact kinds the grade counts: two or more → High, one → Medium, none → Low. */
+  /** The distinct recorded-fact kinds; the grade counts all but AWS_COMPUTE_UNGRADED_FACTS: two or more → High, one → Medium, none → Low. */
   facts: z.array(z.enum(awsComputeFactKinds)),
   terminated: z.boolean(),
   /** How many contributing records are not individually cited in evidence.rawRecords. */

@@ -8,11 +8,12 @@ import { createHash } from "node:crypto";
 import type { Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import type {
-  AwsComputeBlock,
-  AwsComputeFact,
-  AwsComputeLaunch,
-  AwsComputeLifecycle,
+import {
+  AWS_COMPUTE_UNGRADED_FACTS,
+  type AwsComputeBlock,
+  type AwsComputeFact,
+  type AwsComputeLaunch,
+  type AwsComputeLifecycle,
 } from "./canonicalAwsCompute.js";
 import { enumerationWindow, type ShapeHit } from "./awsLineage.js";
 import { normalizeTime, type MappedEvent } from "./siemImport.js";
@@ -217,14 +218,18 @@ export function summaryRow(
   ];
   // Each fact is named with the record it rests on — the earliest of its kind — so the decisive
   // evidence lives in the tail, which is never clipped.
-  const factWords = facts.length
-    ? `recorded facts: ${facts
-        .map((f) => {
-          const c = inst.facts.get(f);
-          return `${FACT_WORDS[f]}${c ? ` (${c.locator})` : ""}`;
-        })
-        .join(", ")} (${plural(facts.length, "kind")})`
-    : "recorded facts: none";
+  const named = (f: AwsComputeFact): string => {
+    const c = inst.facts.get(f);
+    return `${FACT_WORDS[f]}${c ? ` (${c.locator})` : ""}`;
+  };
+  const graded = facts.filter((f) => !AWS_COMPUTE_UNGRADED_FACTS.has(f));
+  const context = facts.filter((f) => AWS_COMPUTE_UNGRADED_FACTS.has(f));
+  const factWords = [
+    graded.length
+      ? `recorded facts: ${graded.map(named).join(", ")} (${plural(graded.length, "kind")})`
+      : "recorded facts: none",
+    ...(context.length ? [`context, not counted in the grade: ${context.map(named).join(", ")}`] : []),
+  ].join("; ");
   // One deduplicated evidence list: the launch, the session's bounds and every fact's record
   // reserved first, then the other contributing records up to the cap; `notCited` is what the
   // count of every citation leaves out.

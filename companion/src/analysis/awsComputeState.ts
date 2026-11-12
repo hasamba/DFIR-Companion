@@ -32,6 +32,8 @@ export const RULES_LATE_MAX = 16;
 export const RULE_SOURCES_PER_RECORD_MAX = 8;
 export const ADDRESSES_MAX = 8;
 export const REMOTE_MAX = 8;
+/** Distinct source addresses of successful remote-access requests kept per instance (#2607). */
+export const REQUESTER_ADDRESSES_MAX = 64;
 /** Configuration changes named in the words; the envelope carries every retained one. */
 export const CHANGES_NAMED_MAX = 8;
 export const RAW_RECORDS_MAX = 256;
@@ -76,6 +78,8 @@ export const FACT_WORDS: Record<AwsComputeFact, string> = {
   "session-remote-execution": "remote execution by the instance-role credentials",
   "session-enumeration": "enumeration by the instance-role credentials",
   "remote-access-request": "remote-access request to the instance",
+  "session-from-remote-requester-address":
+    "instance-role credentials used from the same address as a remote-access request to the instance, so the credential was used off the instance (confirm against the instance's egress address)",
 };
 export const FACT_MITRE: Record<AwsComputeFact, string> = {
   "startup-config-replaced": "T1578.005",
@@ -85,6 +89,7 @@ export const FACT_MITRE: Record<AwsComputeFact, string> = {
   "session-remote-execution": "T1651",
   "session-enumeration": "T1580",
   "remote-access-request": "T1651",
+  "session-from-remote-requester-address": "T1552.005",
 };
 
 export const show = (v: string, max = NAME_MAX): string => {
@@ -218,6 +223,8 @@ export interface Inst {
   addressesBeyond: number;
   remote: Remote[];
   remoteBeyond: number;
+  /** Source addresses (cleaned IPs, lower-cased) of every successful remote-access request — read on the whole upload, not the retained `remote`. */
+  requesterAddresses: Set<string>;
   attempts: { denied: number; failed: number };
   /** Every fact kind seen while scanning — set on the whole upload, never from a retained buffer — with its earliest record. */
   facts: Map<AwsComputeFact, Cited>;
@@ -268,6 +275,7 @@ export function instFor(t: Tracked, account: string, region: string, id: string)
     addressesBeyond: 0,
     remote: [],
     remoteBeyond: 0,
+    requesterAddresses: new Set(),
     attempts: { denied: 0, failed: 0 },
     facts: new Map(),
     session: {

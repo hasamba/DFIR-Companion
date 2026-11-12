@@ -17,11 +17,17 @@
 //   - a startup configuration is "supplied", "removed by CloudTrail" or "not in this record" —
 //     never "none", and its content never reaches the row, the key or the envelope;
 //   - the grade counts distinct recorded-fact kinds: two or more → High, one → Medium, none → Low;
-//     no single CloudTrail record makes a High; a denied or failed call joins nothing;
+//     no single CloudTrail record makes a High; a denied or failed call joins nothing; the
+//     instance's credentials seen from a remote-access caller's address (T1552.005) is context
+//     the row names and tags, never a graded kind (#2607);
 //   - what ran on the instance and its network egress are not in CloudTrail, and the row says so.
 
 import type { Severity } from "./stateTypes.js";
-import type { AwsComputeFact, AwsComputeLaunch } from "./canonicalAwsCompute.js";
+import {
+  AWS_COMPUTE_UNGRADED_FACTS,
+  type AwsComputeFact,
+  type AwsComputeLaunch,
+} from "./canonicalAwsCompute.js";
 import { readAwsIdentity, type AwsIdentity } from "./awsIdentity.js";
 import {
   enumerationWindow,
@@ -43,6 +49,7 @@ import {
   OVERFLOW_SOURCES_MAX,
   RANK,
   REMOTE_MAX,
+  REQUESTER_ADDRESSES_MAX,
   RULES_EARLY_MAX,
   RULES_LATE_MAX,
   RULE_SOURCES_PER_RECORD_MAX,
@@ -413,6 +420,11 @@ function recordRemote(t: Tracked, s: Scanned): void {
     };
     if (!keepEarliest(inst.remote, entry, REMOTE_MAX)) inst.remoteBeyond += 1;
     noteFact(inst, "remote-access-request", s.time, s.locator);
+    // The caller's address (#2607) — never when the instance's own credentials sent it to itself.
+    const from = lower(cleanIp(str(getCI(s.rec, "sourceIPAddress"))));
+    const self = lower(ownSessionInstance(s.who)) === lower(id);
+    if (from && !self && inst.requesterAddresses.size < REQUESTER_ADDRESSES_MAX)
+      inst.requesterAddresses.add(from);
     cite(inst, s.locators);
   }
 }
@@ -504,6 +516,12 @@ function recordSession(byAccountId: Map<string, Inst[]>, s: Scanned): void {
     const agent = str(getCI(s.rec, "userAgent")).trim();
     trackSource(sess, `${address}|${agent}`, address, agent, s.time, s.locator);
     cite(inst, s.locators);
+    // One instance presents one egress address: its credentials used from the address that sent
+    // it a remote-access request means they were used off the instance (#2607, T1552.005). Address
+    // equality within the upload, never time order — a real IP on both sides, never a service name.
+    const ip = lower(cleanIp(str(getCI(s.rec, "sourceIPAddress"))));
+    if (ip && inst.requesterAddresses.has(ip))
+      noteFact(inst, "session-from-remote-requester-address", s.time, s.locator);
     const kind = shapeOf(str(getCI(s.rec, "eventSource")), s.name);
     if (!kind) continue;
     if (s.outcome !== "success") {
@@ -602,6 +620,8 @@ export function awsComputeLifecycles(
   return rows;
 }
 
-/** Two or more distinct recorded-fact kinds → High; one → Medium; none → Low. */
-const gradeOf = (facts: readonly AwsComputeFact[]): Severity =>
-  facts.length >= 2 ? "High" : facts.length === 1 ? "Medium" : "Low";
+/** Two or more distinct graded fact kinds → High; one → Medium; none → Low. Context facts never count. */
+const gradeOf = (facts: readonly AwsComputeFact[]): Severity => {
+  const graded = facts.filter((f) => !AWS_COMPUTE_UNGRADED_FACTS.has(f)).length;
+  return graded >= 2 ? "High" : graded === 1 ? "Medium" : "Low";
+};
