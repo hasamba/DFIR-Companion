@@ -67,7 +67,7 @@ import { createOcrIndexer } from "./composition/ocrIndexer.js";
 import { createAiControlCache } from "./composition/aiControlCache.js";
 import { jobModelResolver } from "./composition/jobModel.js";
 import { servedModels } from "./analysis/servedModels.js";
-import { createConclusionsOutOfDate } from "./composition/conclusionsOutOfDate.js";
+import { createAiStatusRefresh, createConclusionsOutOfDate } from "./composition/conclusionsOutOfDate.js";
 
 // Re-exported so the five push scripts (scripts/push-*.ts, scripts/import-iris.ts) and the wiring
 // tests keep importing them from `src/server.js` — the extraction moved the definitions, not the
@@ -249,6 +249,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     options,
     synthInFlight: () => analysis.synthInFlight,
   });
+  const refreshAiStatus = createAiStatusRefresh({ options, synthInFlight: () => analysis.synthInFlight });
   const hunts = createVeloHunts({
     store,
     options,
@@ -340,6 +341,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     demoteForensic: imports.demoteForensic,
     resynthesizeInBackground: analysis.resynthesizeInBackground,
     markConclusionsOutOfDate,
+    refreshAiStatus,
     pushImportCheckpoint: appliers.pushImportCheckpoint,
     applyWhitelistToCase: appliers.applyWhitelistToCase,
     applyNsrlToCase: appliers.applyNsrlToCase,

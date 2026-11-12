@@ -76,6 +76,34 @@ export interface AiStateOutOfDate {
 export const PRESIDIO_CLEARED_REASON = "presidio-cleared";
 
 /**
+ * AI-call labels whose hold means the case's conclusions never got their run: a synthesis, the deep
+ * pass (which ends in one), the per-finding task pass inside a synthesis, and the evidence-arrival
+ * extraction (screenshot windows, CSV/log imports and their up-front pre-scan) that leads into one.
+ * Every other label is an on-demand feature the analyst re-runs from its own button — clearing its
+ * hold leaves the conclusions as they were.
+ */
+export const SYNTHESIS_HOLD_FEATURES: ReadonlySet<string> = new Set([
+  "synthesis",
+  "deep-pass-observe",
+  "finding-tasks",
+  "extract",
+  "csv",
+  "log",
+  "import-prescan",
+  "ai", // analyzeRestored's default label: unknown, so take the safe side
+]);
+
+/**
+ * Did the gate that just cleared hold a synthesis? `null` (a pending file written before features
+ * were recorded) and an empty record both answer yes — the old behaviour, so an unknown hold never
+ * leaves the pill reading "up to date" over a run that never happened.
+ */
+export function presidioHeldSynthesis(features: readonly string[] | null): boolean {
+  if (!features || features.length === 0) return true;
+  return features.some((f) => SYNTHESIS_HOLD_FEATURES.has(f));
+}
+
+/**
  * The marker as the analyst should see it. A case that has never finished a synthesis has no
  * conclusions, so no change can make them out of date — the marker is dropped until the first run
  * (which clears it anyway). The Presidio-cleared marker is the exception: it says the held run is

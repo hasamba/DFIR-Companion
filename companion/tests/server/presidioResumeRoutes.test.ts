@@ -26,20 +26,25 @@ import { PRESIDIO_CLEARED_REASON } from "../../src/analysis/aiState.js";
 let app: express.Express;
 let kick: ReturnType<typeof vi.fn>;
 let mark: ReturnType<typeof vi.fn>;
+let refresh: ReturnType<typeof vi.fn>;
 let pendingStore: PresidioPendingStore;
 
-/** Seed `values` as pending Presidio findings and wire the routes with a spy on the kick. */
-async function seed(values: string[]) {
+/**
+ * Seed `values` as pending Presidio findings and wire the routes with a spy on the kick. With
+ * `heldBy`, the values arrive the way the gate writes them, naming the held feature; without it,
+ * the list has no record — the shape a file written before features were recorded has.
+ */
+async function seed(values: string[], heldBy?: string) {
   const root = await mkdtemp(join(tmpdir(), "dfir-presidio-resume-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   pendingStore = new PresidioPendingStore(cases);
-  await pendingStore.save(
-    "c1",
-    values.map((value) => ({ value, category: "PERSON" as const })),
-  );
+  const entities = values.map((value) => ({ value, category: "PERSON" as const }));
+  if (heldBy) await pendingStore.hold("c1", entities, heldBy);
+  else await pendingStore.save("c1", entities);
   kick = vi.fn();
   mark = vi.fn(async () => {});
+  refresh = vi.fn();
   app = express();
   app.use(express.json());
   // The route builds its own stores from ctx.store, so only the case store is wired here. It also
@@ -51,6 +56,7 @@ async function seed(values: string[]) {
     serverLogger: { info: () => {}, warn: () => {}, error: () => {} },
     resynthesizeInBackground: kick,
     markConclusionsOutOfDate: mark,
+    refreshAiStatus: refresh,
   } as unknown as RouteContext);
 }
 
@@ -109,5 +115,59 @@ describe("a malformed resolve", () => {
     expect(res.status).toBe(400);
     expect(mark).not.toHaveBeenCalled();
     expect(await pendingStore.load("c1")).toHaveLength(1);
+  });
+});
+
+// REPORTED: "i pressed suggest hunts, presidio held the run, i answered presidio findings, the ai
+// button says re-synthesize which is not true and it stays even after i re-pressed the suggest
+// hunts and it finished." The gate holds any AI call; only a held synthesis leaves the case ready.
+describe("clearing a gate that held an on-demand feature", () => {
+  beforeEach(async () => {
+    await seed(["Jane Doe"], "suggest-language-hunts");
+  });
+
+  it("does not mark the conclusions, but still refreshes the pill off 'on hold'", async () => {
+    const res = await approve("Jane Doe");
+    expect(res.status).toBe(200);
+    expect(mark).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith("c1");
+    expect(kick).not.toHaveBeenCalled();
+  });
+
+  it("behaves the same when the last value is suppressed", async () => {
+    await suppress("Jane Doe");
+    expect(mark).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledWith("c1");
+  });
+});
+
+describe("clearing a gate that held a synthesis", () => {
+  it("marks the case ready", async () => {
+    await seed(["Jane Doe"], "synthesis");
+    await approve("Jane Doe");
+    expect(mark).toHaveBeenCalledWith("c1", PRESIDIO_CLEARED_REASON);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("marks it ready when a hunt and a synthesis were both held in the round", async () => {
+    await seed(["Jane Doe"], "synthesis");
+    await pendingStore.hold(
+      "c1",
+      [
+        { value: "Jane Doe", category: "PERSON" },
+        { value: "John Smith", category: "PERSON" },
+      ],
+      "suggest-language-hunts",
+    );
+    await approve("Jane Doe");
+    expect(mark).not.toHaveBeenCalled(); // John Smith is still pending
+    await suppress("John Smith");
+    expect(mark).toHaveBeenCalledWith("c1", PRESIDIO_CLEARED_REASON);
+  });
+
+  it("marks it ready for a pending list with no record (written before features existed)", async () => {
+    await seed(["Jane Doe"]);
+    await approve("Jane Doe");
+    expect(mark).toHaveBeenCalledWith("c1", PRESIDIO_CLEARED_REASON);
   });
 });

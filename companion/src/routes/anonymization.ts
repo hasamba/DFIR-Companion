@@ -15,7 +15,7 @@ import { isValidCaseId } from "../storage/caseStore.js";
 import { resolveTranslatePlatforms } from "./aiActionArgs.js";
 import { visionEnv } from "../config/aiEnv.js";
 import { sendPipelineError } from "./presidioApproval.js";
-import { PRESIDIO_CLEARED_REASON } from "../analysis/aiState.js";
+import { PRESIDIO_CLEARED_REASON, presidioHeldSynthesis } from "../analysis/aiState.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -76,9 +76,17 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
    * of the four synthesis triggers. The pill now reads "ready — press Re-synthesize" instead of
    * "on hold", and the analyst starts the run. ONLY ON THE LAST ONE: an earlier approval leaves the
    * gate holding, and the pill must keep saying so.
+   *
+   * ONLY WHEN A SYNTHESIS WAS HELD. The gate holds any AI call. A held hunt suggestion is re-run
+   * from its own button, and the conclusions it never touched are not out of date — marking them
+   * left "ready — press Re-synthesize" on the pill until a synthesis nobody needed. That clear
+   * still refreshes the pill, so it leaves "on hold" without gaining a marker.
    */
   async function readyIfClear(caseId: string, remaining: readonly unknown[]): Promise<void> {
-    if (remaining.length === 0) await ctx.markConclusionsOutOfDate(caseId, PRESIDIO_CLEARED_REASON);
+    if (remaining.length > 0) return;
+    if (presidioHeldSynthesis(await presidioPending.heldFeatures(caseId)))
+      await ctx.markConclusionsOutOfDate(caseId, PRESIDIO_CLEARED_REASON);
+    else ctx.refreshAiStatus?.(caseId);
   }
 
   /** Did the analyst change anything the model would see? Field by field — key order is not a change. */

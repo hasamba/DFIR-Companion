@@ -236,6 +236,11 @@ export interface RouteContext {
   /** `analyst`: a person asked for this run now, so it supersedes a running one (#1608). */
   resynthesizeInBackground(caseId: string, opts?: { analyst?: boolean }): void;
   markConclusionsOutOfDate(caseId: string, reason: string): Promise<void>;
+  /**
+   * Re-read the header pill without writing a marker (skipped while work runs). A cleared Presidio
+   * gate that held no synthesis uses it. Optional: contexts built by tests may omit it.
+   */
+  refreshAiStatus?(caseId: string): void;
   pushImportCheckpoint(
     caseId: string,
     beforeState: InvestigationState | ImportBaseline,

@@ -170,6 +170,14 @@ describe("analyzeRestored + Presidio", () => {
     await expect(pipeline.analyzeWindow("c1", [capture()])).rejects.toBeInstanceOf(PresidioApprovalRequired);
   });
 
+  it("records the held call's feature with the pending findings", async () => {
+    const { pipeline, presidioPendingStore } = await makePipeline(
+      stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }]),
+    );
+    await expect(pipeline.analyzeWindow("c1", [capture()])).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect(await presidioPendingStore.heldFeatures("c1")).toEqual(["extract"]);
+  });
+
   it("persists the pending findings so the dashboard can render them", async () => {
     const { pipeline, presidioPendingStore } = await makePipeline(
       stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }]),
@@ -614,6 +622,16 @@ describe("presidio import pre-scan", () => {
       PresidioApprovalRequired,
     );
     expect(await presidioPendingStore.load("c1")).toEqual([{ value: "Jane Doe", category: "PERSON" }]);
+  });
+
+  it("records the import pre-scan as the held feature", async () => {
+    const { pipeline, presidioPendingStore } = await makePipeline(
+      stubClient([{ entityType: "PERSON", value: "Jane Doe", score: 0.9 }]),
+    );
+    await expect(pipeline.analyzeCsv("c1", THREE_ROW_CSV, csvOpts())).rejects.toBeInstanceOf(
+      PresidioApprovalRequired,
+    );
+    expect(await presidioPendingStore.heldFeatures("c1")).toEqual(["import-prescan"]);
   });
 
   it("splits a payload larger than the chunk size into multiple requests", async () => {
