@@ -173,6 +173,8 @@
       renderBoth();
     }
     if (!caseId) return Promise.resolve();
+    // A write in flight owns the answer: a refresh now could read the pre-save value and win.
+    if (msWriting) return Promise.resolve();
     const gen = ++msGen;
     return fetch(`/cases/${encodeURIComponent(caseId)}/main-source`)
       .then((r) => (r.ok ? r.json() : null))
@@ -188,7 +190,7 @@
     const caseId = caseIdOf();
     if (!caseId || msWriting) return;
     msWriting = true;
-    const gen = ++msGen;
+    ++msGen; // drops a GET that started before this write
     renderBoth();
     fetch(`/cases/${encodeURIComponent(caseId)}/main-source`, {
       method: "PUT",
@@ -205,7 +207,7 @@
           renderBoth((j && j.error) || "could not change the main source", origin);
           return;
         }
-        if (gen === msGen) msState = j;
+        msState = j; // no GET can start during a write, so this answer is the newest
         renderBoth();
         // The shown hunts were written for the old language: clear them so the next press uses the new one.
         fleetLangHunts = [];

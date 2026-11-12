@@ -181,6 +181,22 @@ describe("the Settings main-source row and the Hunts line edit one value (#2594 
     expect(els.caseMainSourceSelect.disabled).toBe(false);
   });
 
+  it("a refresh during a save does not bring back the old value", async () => {
+    const { api, els, calls } = setup([
+      { ok: true, body: state(null, null) },
+      { ok: true, body: state("splunk", "splunk") },
+      { ok: true, body: state(null, null) }, // a stale answer, if a refresh were sent
+    ]);
+    await api.loadMainSource();
+    (els.caseMainSourceSelect.onchange as () => void)(); // the save starts
+    await api.loadMainSource(); // a state update arrives mid-save
+    await tick();
+    await tick();
+    expect(calls.filter((c) => c.method === "GET")).toHaveLength(1);
+    expect(els.caseMainSourceCurrent.textContent).toContain("Splunk (set by you)");
+    expect(els.caseMainSourceSelect.disabled).toBe(false);
+  });
+
   it("an answer for the previous case is dropped after a case switch", async () => {
     const { api, els } = setup([{ ok: true, body: state("splunk", "splunk") }]);
     const pending = api.loadMainSource();
