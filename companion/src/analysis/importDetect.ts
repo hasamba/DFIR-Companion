@@ -27,7 +27,8 @@ import { looksLikeSysdig } from "./sysdigImport.js";
 import { looksLikeWinEventXml } from "./evtxXmlImport.js";
 import { looksLikeBashHistory } from "./bashHistoryImport.js";
 import { isEcarRecord } from "./ecarImport.js";
-import { isCrowdstrikeRecord, crowdstrikeCsvSig } from "./crowdstrikeImport.js";
+import { isCrowdstrikeRecord, isCrowdstrikeWrapper, crowdstrikeCsvSig } from "./crowdstrikeImport.js";
+import { isCrowdstrikeAlertFile } from "./crowdstrikeAlert.js";
 import { looksLikeSnort } from "./snortImport.js";
 import { looksLikeYara } from "./yaraImport.js";
 import { looksLikeCombinedLog } from "./combinedLogImport.js";
@@ -412,7 +413,9 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isMobsfReport(root)) return "mobsfpermission";
   if (isMobsfIosReport(root)) return "mobsfpermission"; // #1136: same kind, ingest dispatches internally
   if (isNfdumpFlowRecord(sample)) return "exporterflow";
-  if (isCrowdstrikeRecord(sample)) return "crowdstrike"; // Falcon sensor rows (#2592): event name + aid/ComputerName
+  // Falcon (#2592): sensor rows, API alerts/detects, and LogScale rows wrapping third-party data.
+  if (isCrowdstrikeRecord(sample) || isCrowdstrikeAlertFile(root, sample) || isCrowdstrikeWrapper(sample))
+    return "crowdstrike";
   if (isSandbox(sample)) return "sandbox";
   const cloud = detectCloudJson(root, sample); // cloudJsonDetect.ts: flow logs first, then activity/audit/storage
   if (cloud) return cloud;

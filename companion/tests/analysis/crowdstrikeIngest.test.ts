@@ -62,3 +62,49 @@ describe("importCrowdstrike through the pipeline", () => {
     expect(renderHtmlReport(state)).not.toContain("<script>alert(1)</script>");
   });
 });
+
+describe("a mixed Falcon + wrapped Okta export through the real importers (AC21)", () => {
+  it("lands 2 CrowdStrike Falcon rows and 2 Okta rows, none of the Okta rows labelled Falcon", async () => {
+    const { dispatchCrowdstrike } = await import("../../src/composition/crowdstrikeDispatch.js");
+    const pipeline = await makePipeline("cs2");
+    const okta = (n: number) => ({
+      uuid: `u${n}`,
+      published: `2024-11-12T08:0${n}:00.000Z`,
+      eventType: "user.session.start",
+      actor: { alternateId: `user${n}@example.com`, type: "User" },
+      outcome: { result: "SUCCESS" },
+      client: { ipAddress: "198.51.100.20" },
+    });
+    const wrapped = (n: number) => ({
+      "@timestamp": 1731398400000,
+      "@rawstring": JSON.stringify(okta(n)),
+      "#repo": "3pi_okta",
+    });
+    const sensorRow = (d: string) => ({
+      ...base,
+      "#event_simpleName": "DnsRequest",
+      DomainName: d,
+      "#repo": "base_sensor",
+    });
+    const file = [sensorRow("a.example.com"), wrapped(1), sensorRow("b.example.com"), wrapped(2)]
+      .map((r) => JSON.stringify(r))
+      .join("\n");
+    const opts = { label: "mixed.ndjson", idPrefix: "m", importedAt: "2024-11-12T09:00:00.000Z" };
+    const kinds: string[] = [];
+    const state = (await dispatchCrowdstrike(file, opts, {
+      importFalcon: (t, b, subset) =>
+        pipeline.importCrowdstrike("cs2", t, { ...b, ...(subset ? { crowdstrike: subset } : {}) }),
+      dispatch: (k, t, b) => {
+        kinds.push(k);
+        return pipeline.importOkta("cs2", t, b);
+      },
+    })) as Awaited<ReturnType<typeof pipeline.importOkta>>;
+    expect(kinds).toEqual(["okta"]);
+    const falcon = state.forensicTimeline.filter((e) => e.sources?.includes("CrowdStrike Falcon"));
+    const rest = state.forensicTimeline.filter((e) => !e.sources?.includes("CrowdStrike Falcon"));
+    expect(falcon).toHaveLength(2);
+    const oktaRows = rest.filter((e) => e.sources?.includes("Okta"));
+    expect(oktaRows).toHaveLength(2);
+    expect(oktaRows.every((e) => e.sourceScreenshots.includes("mixed.ndjson"))).toBe(true);
+  });
+});

@@ -12,10 +12,9 @@
 //     mapped 1:1. Turning a vendor High into Info would hide it from the forensic timeline.
 // Everything else is left to the deterministic tagger at the route seam (merge → tagger → demote).
 
-import type { Severity } from "./stateTypes.js";
 import { addIoc, type SiemIoc } from "./iocSink.js";
 import { cleanIp, isSuspiciousCmd, baseName, type MappedEvent } from "./siemImport.js";
-import { CROWDSTRIKE_SOURCE, field, eventName, portNum } from "./crowdstrikeFields.js";
+import { CROWDSTRIKE_SOURCE, field, eventName, portNum, falconSeverity } from "./crowdstrikeFields.js";
 import { isInternalIpv4 } from "./internalIp.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { reconTechniques } from "./reconTechniques.js";
@@ -62,23 +61,6 @@ function publicIp(raw: string): string {
 function pidNum(raw: string): number | undefined {
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : undefined;
-}
-
-// Falcon severity → ours, 1:1. Name first, numeric second; unknown → Info (no invented verdict).
-const SEVERITY_BY_NAME: Record<string, Severity> = {
-  informational: "Info",
-  info: "Info",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  critical: "Critical",
-};
-const SEVERITY_BY_NUMBER: Severity[] = ["Info", "Info", "Low", "Medium", "High", "Critical"];
-function falconSeverity(rec: Row): Severity {
-  const name = SEVERITY_BY_NAME[field(rec, "SeverityName").toLowerCase()];
-  if (name) return name;
-  const n = Number(field(rec, "Severity"));
-  return Number.isInteger(n) && n >= 1 && n <= 5 ? SEVERITY_BY_NUMBER[n] : "Info";
 }
 
 export interface CsCtx {
@@ -228,7 +210,7 @@ function mapDetection(c: CsCtx): CsMapped {
     (file || cmd ? ` — ${[file, cmd].filter(Boolean).join(" ")}` : "") +
     (action ? ` — ${action}` : "");
   return {
-    severity: falconSeverity(c.rec),
+    severity: falconSeverity(field(c.rec, "SeverityName"), field(c.rec, "Severity")),
     mitre: /^T\d{4}(?:\.\d{3})?$/.test(techniqueId) ? [techniqueId] : [],
     description: head(c, body),
     aggKey: key(c, field(c.rec, "DetectId") || field(c.rec, "CompositeId"), detect, file, cmd),
