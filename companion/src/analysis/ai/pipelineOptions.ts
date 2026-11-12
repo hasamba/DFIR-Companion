@@ -84,6 +84,9 @@ export interface PipelineOptions {
   // so the analyst can pin a known-good one just for suggestHunts/suggestPlaybookHunts. Falls back
   // to synthesisProvider, then the main provider.
   velociraptorProvider?: AIProvider;
+  // Optional light-task model (#2593) for small, well-scoped calls: language hunts, query translation,
+  // and the middle step of VQL hunts. Absent → those calls use synthesisProvider. See smallTaskModel.ts.
+  lightProvider?: AIProvider;
   // Per-case hunt outcomes (#157) — the hunting feedback loop. When set, suggestHunts /
   // suggestTechniqueHunts / suggestPlaybookHunts read prior-hunt outcomes to (a) drop a suggestion
   // whose VQL already ran and (b) feed a "PRIOR HUNTS" context block so the model pivots on what hit.

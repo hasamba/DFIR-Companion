@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Light-task AI model** — an optional cheaper model in Settings → AI for hunts in CQL, KQL, ES|QL and SPL and for query translation; VQL hunts try the Velociraptor hunt model, then it; blank keeps the synthesis model; Diagnostics names the model each task uses (closes #2593)
 - **CrowdStrike Falcon alerts and Next-Gen SIEM data** — Falcon API alerts / detects keep Falcon's severity, technique and action; third-party logs stored in Falcon (raw `@rawstring` or parsed `Vendor.…`) go to the importer for their real tool, row by row (closes #2592)
 - **CrowdStrike Falcon importer** — Event Search / LogScale / FDR / Next-Gen SIEM sensor exports (JSON, NDJSON, CSV) dated by event time, with host, user, remote IPs, domains and hashes as IOCs, logons in the login graph and source `CrowdStrike Falcon`; detection rows keep Falcon's severity (part of #2592)
 - **One synthesis seat per distinct cloud operation** — on an over-budget Microsoft 365 / Entra / Exchange, CloudTrail or GCP audit timeline, each operation the AI would not otherwise see gets a row before more repeats of one operation, same cap; the rest are disclosed as "N cloud operations not sent to the AI" (closes #2585)

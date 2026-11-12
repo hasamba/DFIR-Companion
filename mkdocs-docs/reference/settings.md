@@ -150,6 +150,7 @@ identities, emergency access, and the one-writer deployment model.
 - Provider, model, API key, base URL (extraction)
 - **Text model — synthesis and imports** (optional separate model for synthesis, Deep Pass and CSV/log imports; blank uses the screenshot model) — also configurable directly in the first-run **setup wizard**'s AI step, not just here. The **Screenshot model (vision)** above it is used for screenshots only. The two are labelled so one is not read as the other.
 - VQL-generation model (optional dedicated model — many general models struggle with VQL syntax)
+- Light-task model (optional cheaper model for language hunts and query translation; blank uses the synthesis model)
 - Second-opinion model (optional rival model for the **2nd opinion** button) and the **referee** that judges each A-vs-B disagreement (blank = model A)
 - Timeout, max tokens, context window size
 - Chain-of-Thought (synthesis thinking tokens)
@@ -162,6 +163,8 @@ identities, emergency access, and the one-writer deployment model.
 **Provider keys and base URLs** — `DFIR_AI_KEY_<PROVIDER>` and `DFIR_AI_BASE_URL_<PROVIDER>` (for `OPENAI`, `OPENROUTER`, `GEMINI`, `ANTHROPIC`, `OLLAMA`, `LITELLM`) save one key and one base URL per provider. Every model uses the settings of the provider it is set to, so you can switch a model to another provider without typing them again. Order for each model: its own `_KEY` / `_BASE_URL` field, then the provider setting, then `DFIR_VISION_KEY` / `DFIR_VISION_BASE_URL`. Leave a model's own fields blank to use the provider settings. The per-model key and base-URL fields are optional overrides and show only in the full (All) view. When saved per-model values can move into the provider fields without changing what any model uses, Settings → AI shows a notice with a **Move them** button. Values that differ between models on the same provider stay as overrides.
 
 **Screenshot/vision provider** — `DFIR_VISION_PROVIDER`/`_MODEL`/`_KEY`/`_BASE_URL`/`_IMAGE_DETAIL` configure the screenshot-OCR-only model, renamed from `DFIR_AI_*` (legacy names still work as a fallback). Text-only AI features run off the synthesis provider and never need a vision provider configured.
+
+**Light-task model** — `DFIR_AI_LIGHT_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` choose a cheaper model for small, well-scoped calls: hunts in CrowdStrike CQL, KQL, ES|QL and SPL, and **query translation**. VQL hunts use the Velociraptor hunt model first, then the light-task model, then the synthesis model. Synthesis, deep passes, reports and imports always use the synthesis model. Leave `_MODEL` blank and these calls use the synthesis model, as before. The other three fall back to the vision provider settings when blank. A small model can write weaker queries in some languages, so review each query before you run it. The **Diagnostics** view names the model each of these tasks uses. Restart after you change these values.
 
 **Second opinion** — `DFIR_AI_SECOND_OPINION_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` configure model B, the rival model behind the **2nd opinion** button. Setting `_MODEL` turns the feature on; the other three fall back to the vision provider settings when blank.
 

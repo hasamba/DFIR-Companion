@@ -10,6 +10,11 @@
   const CUSTOM_MODEL_VALUE = "__custom__";
   const MANUAL_MODEL_LABEL = "Enter model ID manually…";
   const modelRequestVersions = new Map();
+  // The four element ids of a role whose fields are named env-DFIR_AI_<PREFIX>_PROVIDER/_MODEL/_KEY/_BASE_URL.
+  function rolePicker(role, prefix) {
+    const id = (field) => `env-DFIR_AI_${prefix}_${field}`;
+    return { role, providerId: id("PROVIDER"), modelId: id("MODEL"), keyId: id("KEY"), baseUrlId: id("BASE_URL") };
+  }
   const AI_MODEL_PICKERS = [
     {
       role: "vision",
@@ -40,27 +45,11 @@
       fallbackKeyId: "env-DFIR_AI_SYNTH_KEY",
       fallbackBaseUrlId: "env-DFIR_AI_SYNTH_BASE_URL",
     },
-    {
-      role: "velociraptor",
-      providerId: "env-DFIR_AI_VELO_PROVIDER",
-      modelId: "env-DFIR_AI_VELO_MODEL",
-      keyId: "env-DFIR_AI_VELO_KEY",
-      baseUrlId: "env-DFIR_AI_VELO_BASE_URL",
-    },
-    {
-      role: "second-opinion",
-      providerId: "env-DFIR_AI_SECOND_OPINION_PROVIDER",
-      modelId: "env-DFIR_AI_SECOND_OPINION_MODEL",
-      keyId: "env-DFIR_AI_SECOND_OPINION_KEY",
-      baseUrlId: "env-DFIR_AI_SECOND_OPINION_BASE_URL",
-    },
-    {
-      role: "reconcile",
-      providerId: "env-DFIR_AI_RECONCILE_PROVIDER",
-      modelId: "env-DFIR_AI_RECONCILE_MODEL",
-      keyId: "env-DFIR_AI_RECONCILE_KEY",
-      baseUrlId: "env-DFIR_AI_RECONCILE_BASE_URL",
-    },
+    // Roles whose blank provider / key / base URL use the main (vision) settings — the default fallback.
+    rolePicker("velociraptor", "VELO"),
+    rolePicker("light", "LIGHT"), // #2593 light-task model
+    rolePicker("second-opinion", "SECOND_OPINION"),
+    rolePicker("reconcile", "RECONCILE"),
   ];
 
   function fieldValue(id) {

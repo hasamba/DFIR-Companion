@@ -45,6 +45,7 @@ import {
   buildSynthesisProvider,
   buildSynthesisFallbackProvider,
   buildVelociraptorProvider,
+  buildLightProvider,
   buildSecondOpinionProvider,
   buildRuntimePipeline,
   resolveReconcileReferee,
@@ -95,6 +96,11 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
   const synthesisProvider = buildSynthesisProvider();
   const synthesisFallback = buildSynthesisFallbackProvider(); // #1734: used when a safety filter stops synthesis
   const velociraptorProvider = buildVelociraptorProvider(); // dedicated VQL-hunt model (#70)
+  const lightProvider = buildLightProvider(); // optional light-task model for small calls (#2593)
+  if (lightProvider)
+    logLine(
+      `[light-task] enabled — model "${process.env.DFIR_AI_LIGHT_MODEL?.trim()}" (${lightProvider.name})`,
+    );
   const secondOpinionProvider = buildSecondOpinionProvider(); // dedicated second-opinion model (#116)
   // Model labels for the second-opinion comparison header (fall back to provider name in the pipeline).
   const synthesisModelLabel = process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL") ?? undefined;
@@ -159,6 +165,7 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
     // #1740: read once, like the fallback model, so Settings' "restart required" stays true.
     synthesisSafetyRetries: safetyRetriesFromEnv(process.env.DFIR_AI_SYNTH_SAFETY_RETRIES),
     velociraptorProvider,
+    lightProvider,
     stateStore,
     store,
     stateLock,

@@ -30,6 +30,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get velociraptorProvider() {
       return opts.velociraptorProvider;
     },
+    get lightProvider() {
+      return opts.lightProvider;
+    },
     get huntOutcomeStore() {
       return opts.huntOutcomeStore;
     },

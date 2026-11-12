@@ -33,6 +33,7 @@ const ROLES = new Set<ModelRole>([
   "synthesis",
   "synthesis-fallback",
   "velociraptor",
+  "light",
   "second-opinion",
   "reconcile",
 ]);

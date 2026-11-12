@@ -1,4 +1,5 @@
 import { withEventTechniques } from "../eventTechniques.js";
+import { smallTaskProvider } from "./smallTaskModel.js";
 import type { AIProvider } from "../../providers/provider.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
 import { buildGraphContext, DEFAULT_MAX_GRAPH_EDGES } from "../graphContext.js";
@@ -70,6 +71,7 @@ import { promptDescription } from "./promptDescription.js";
 export interface HuntContext extends PromptBlockContext {
   readonly opts: PromptBlockContext["opts"] & {
     velociraptorProvider?: AIProvider;
+    lightProvider?: AIProvider; // #2593 light-task model — see smallTaskModel.ts
     huntOutcomeStore?: HuntOutcomeStore;
     assetOverridesStore?: AssetOverridesStore;
     velociraptorClientStore?: CaseFleetInventory;
@@ -106,12 +108,12 @@ const excludeNote = (excludeVql?: string): string =>
     : "";
 
 /**
- * The VQL generators prefer the narrow velociraptorProvider when one is configured, falling back to
- * the strong synthesis model. (translateQuery deliberately does NOT use this — it spans many query
- * languages, so the VQL-tuned model is the wrong choice there.)
+ * The VQL generators prefer the narrow velociraptorProvider when one is configured, then the
+ * analyst's light-task model (#2593), then the strong synthesis model — smallTaskModel.ts owns the
+ * order. (translateQuery deliberately skips the VQL-tuned model — it spans many query languages.)
  */
 const huntProvider = (ctx: HuntContext, label: string): AIProvider =>
-  ctx.opts.velociraptorProvider ?? ctx.opts.synthesisProvider ?? ctx.requireProvider(label);
+  smallTaskProvider(ctx.opts, "vql-hunt") ?? ctx.requireProvider(label);
 
 /** Slack for the JSON scaffolding around the blocks each hunt prompt's overhead estimate counts. */
 const HUNT_OVERHEAD_SLACK_TOKENS = 300;
@@ -423,8 +425,8 @@ export async function suggestPlaybookHunts(
 // English ("PowerShell downloading a file and executing it") and the model maps that intent onto
 // each requested platform's real schema. EPHEMERAL like ask()/suggestHunts() — no state change.
 // Works on an empty case (the analyst may translate before any evidence is imported); the case's
-// known data sources + pivotable IOCs are passed only as light grounding. Uses the strong
-// synthesisProvider like ask()/executiveSummary() — this spans MANY query languages (KQL/SPL/ES|QL/
+// known data sources + pivotable IOCs are passed only as light grounding. Uses the analyst's
+// light-task model when set (#2593), else the strong synthesisProvider — this spans MANY query languages (KQL/SPL/ES|QL/
 // Sigma/…) in one call, so the broad general model follows the multi-platform instruction far better
 // than the narrow VQL-tuned velociraptorProvider (which biases toward VQL and ignores the rest).
 export async function translateQuery(
@@ -433,7 +435,8 @@ export async function translateQuery(
   request: string,
   platforms?: readonly HuntPlatform[],
 ): Promise<QueryTranslationResult> {
-  const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("query translation");
+  const provider =
+    smallTaskProvider(ctx.opts, "query-translation") ?? ctx.requireProvider("query translation");
   const loaded = await ctx.opts.stateStore.load(caseId);
 
   // The caller's requested subset, intersected with the canonical platform set; empty → all.
