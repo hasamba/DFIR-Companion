@@ -18,6 +18,7 @@ import { CROWDSTRIKE_SOURCE, field, eventName, portNum, falconSeverity } from ".
 import { isInternalIpv4 } from "./internalIp.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { reconTechniques } from "./reconTechniques.js";
+import { isWellFormedIocValue } from "./iocValue.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { crowdstrikeCanonical } from "./crowdstrikeCanonical.js";
@@ -255,7 +256,7 @@ function mapByName(c: CsCtx): CsMapped {
       return mapNetwork(c, true);
     case "DnsRequest": {
       const domain = f("DomainName").replace(/\.$/, "");
-      if (domain) addIoc(c.sink, "domain", domain);
+      if (domain && isWellFormedIocValue("domain", domain)) addIoc(c.sink, "domain", domain);
       const type = f("RequestType");
       return plain(c, `DNS request ${domain || "?"}${type ? ` (type ${type})` : ""}`, domain, type);
     }

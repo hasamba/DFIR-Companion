@@ -178,6 +178,24 @@ describe("dns, file, registry, task, service, unknown", () => {
     expect(r.events[0].description).toContain("c2.example.com");
     expect(iocValues(r, "domain")).toContain("c2.example.com");
   });
+  it("DnsRequest with a malformed DomainName keeps the row but withholds the IOC (#2620)", () => {
+    for (const bad of [
+      "not a domain at all",
+      "a b.com",
+      "http://x.com/p",
+      "evil.com;rm -rf",
+      "=cmd|' /C calc'!A0",
+    ]) {
+      const r = parse(ev("DnsRequest", { DomainName: bad }));
+      expect(r.events).toHaveLength(1);
+      expect(r.events[0].description).toContain(bad);
+      expect(iocValues(r, "domain")).toEqual([]);
+    }
+  });
+  it("DnsRequest strips a trailing dot from a well-formed domain (#2620)", () => {
+    const r = parse(ev("DnsRequest", { DomainName: "c2.example.com." }));
+    expect(iocValues(r, "domain")).toEqual(["c2.example.com"]);
+  });
   it("*Written carries the target file and its hash", () => {
     const r = parse(
       ev("NewExecutableWritten", {
