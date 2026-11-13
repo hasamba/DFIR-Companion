@@ -270,13 +270,14 @@ describe("dashboard.html", () => {
     expect(mod).toContain('const show = p.style.display === "none";');
   });
 
-  it("wires the Ask-the-AI panel (ask + add-to-open-questions)", async () => {
+  it("has no Ask-the-LLM panel: Watson takes free-form case questions", async () => {
     const html = dashboardClientSource();
-    expect(html).toContain('id="askInput"');
-    expect(html).toContain('id="askBtn"');
-    expect(html).toContain('id="askAnswer"');
-    expect(html).toContain("/ask");
-    expect(html).toContain("/questions");
+    expect(html).not.toContain('id="sec-ask"');
+    expect(html).not.toContain('id="askInput"');
+    expect(html).not.toContain('id="askBtn"');
+    expect(html).not.toContain("/ask`");
+    expect(html).toContain('id="sec-watson"');
+    expect(html).toContain('"/message"');
   });
 
   it("renders numbered, clickable citation footnotes for a finding's supporting events (#222)", async () => {
@@ -308,16 +309,14 @@ describe("dashboard.html", () => {
     expect(html).toContain("comments_changed"); // live-sync over the WS
   });
 
-  it("makes sections drag-reorderable (grip + persisted order) with Ask first by default", async () => {
+  it("makes sections drag-reorderable (grip + persisted order), inserting a missing section at its canonical slot", async () => {
     const html = dashboardClientSource();
     expect(html).toContain("setupReorder");
     expect(html).toContain("drag-grip");
     expect(html).toContain('"dfir.sectionsOrder"'); // unified section-order store (#6 — drag + Settings agree)
-    // Ask section comes before Executive Summary in the default markup.
-    expect(html.indexOf("Ask the LLM about this case")).toBeLessThan(html.indexOf("Executive Summary"));
     // A section missing from a saved order is inserted at its CANONICAL slot (right after its nearest
-    // already-placed sibling) rather than dumped at the end — so the default-first Ask panel still
-    // shows first even against an older saved order that predates a section.
+    // already-placed sibling) rather than dumped at the end — so a panel keeps its place even against
+    // an older saved order that predates it.
     expect(html).toContain("getEffectiveOrder");
     expect(html).not.toContain("new/unknown sections go to the end");
   });
@@ -605,9 +604,9 @@ describe("dashboard.html", () => {
     expect(html).toMatch(/caption\.hidden = false/);
   });
 
-  it("renders Ask-the-case and Explain-Event citations as clickable jump-to-event footnotes, not plain text (#222)", async () => {
+  it("renders Watson-answer and Explain-Event citations as clickable jump-to-event footnotes, not plain text (#222)", async () => {
     const html = dashboardClientSource();
-    expect(html).toMatch(/const events = citeEvents\(a\.relatedEventIds\)/);
+    expect(html).toMatch(/const cited = typeof citeEvents === "function" \? citeEvents\(ids\)/);
     expect(html).toMatch(/const cited = citeEvents\(result\.relatedEventIds\)/);
     // The old plain esc-and-join rendering must be gone, not just supplemented.
     expect(html).not.toContain('(a.relatedEventIds || []).map(esc).join(", ")');

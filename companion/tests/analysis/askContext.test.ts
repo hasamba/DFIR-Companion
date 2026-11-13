@@ -9,7 +9,6 @@ import {
   renderDwellWindowsBlock,
   renderAnalystMarksBlock,
   renderAskNotebookBlock,
-  renderAskHistoryBlock,
 } from "../../src/analysis/ai/askContext.js";
 import type { Hypothesis } from "../../src/analysis/hypothesis.js";
 import type { HostScopeDecision } from "../../src/analysis/hostScopeStore.js";
@@ -243,22 +242,5 @@ describe("renderAskNotebookBlock", () => {
     expect(lines.length).toBe(ASK_NOTEBOOK_MAX);
     expect(lines[0]).toBe(`[NOTE] note ${ASK_NOTEBOOK_MAX + 1}`);
     expect(out).toContain("ANALYST NOTEBOOK");
-  });
-});
-
-describe("renderAskHistoryBlock", () => {
-  it("returns '' with no turns", () => {
-    expect(renderAskHistoryBlock([])).toBe("");
-  });
-
-  it("renders Q/A pairs in order", () => {
-    const out = renderAskHistoryBlock([
-      { question: "Was data exfiltrated?", answer: "Partial — a 2 GB archive left WS01." },
-      { question: "To where?", answer: "1.2.3.4:443." },
-    ]);
-    expect(out).toContain("PRIOR Q&A IN THIS SESSION");
-    expect(out).toContain("Q: Was data exfiltrated?\nA: Partial — a 2 GB archive left WS01.");
-    expect(out).toContain("Q: To where?\nA: 1.2.3.4:443.");
-    expect(out).toMatch(/follow-up/i);
   });
 });

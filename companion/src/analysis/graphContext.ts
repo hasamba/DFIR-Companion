@@ -1,7 +1,7 @@
 import { SEVERITY_RANK, type InvestigationState } from "./stateTypes.js";
 import { buildEvidenceGraph, type EvidenceEdge, type EvidenceEdgeType } from "./evidenceGraph.js";
 
-// GraphRAG context for the "Ask the case" feature (issue #98). Serializes the deterministic
+// GraphRAG context for Watson's case context (issue #98; written for the retired "Ask the case"). Serializes the deterministic
 // EVIDENCE CHAIN graph (the CAUSAL view — process spawns, file lineage, lateral movement, network
 // flows, host anchors) into a compact text block so the AI can trace MULTI-HOP attack paths
 // ("show me the path from the phishing email to the Domain Controller") by following the graph's

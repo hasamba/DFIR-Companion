@@ -4,10 +4,10 @@
 // IIFE-WRAPPED AS A MATTER OF COURSE: no top-level binding today, but this is a CLASSIC script and
 // anything added at this level later would join the shared global lexical environment.
 //
-// ITS BANNER ALSO COVERS doAsk, WHICH STAYED. That is the AI "Ask" box — a wholly different
-// feature that happens to sit under this heading, wired from the Settings block along with the ask
-// input. The cohesion check reported this block as a single component and was wrong about it;
-// reading the block is what caught it.
+// ITS BANNER ALSO COVERED THE AI "Ask" BOX, which stayed behind — a wholly different feature that
+// happened to sit under this heading (since retired: Watson answers case questions). The cohesion
+// check reported this block as a single component and was wrong about it; reading the block is what
+// caught it.
 //
 // ITS WIRING IS AN INITIALIZER, and it came from somewhere else. The two toolbar buttons were bound
 // beside the Narrative Timeline's controls, hundreds of lines away, purely by proximity — the

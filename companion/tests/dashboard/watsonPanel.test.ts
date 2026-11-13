@@ -256,10 +256,16 @@ describe("rail button, failed sends and paste limits", () => {
     expect(log.innerHTML).toContain("50 MB");
   });
 
-  it("Analyst view includes sec-watson after sec-ask", async () => {
-    const { BUILT_IN_DASHBOARD_VIEWS } = await import("../../src/analysis/dashboardViews.js");
+  it("Analyst view has sec-watson where Ask used to be, and no sec-ask anywhere", async () => {
+    const { BUILT_IN_DASHBOARD_VIEWS, DASHBOARD_SECTION_IDS, normalizeDashboardView } =
+      await import("../../src/analysis/dashboardViews.js");
     const a = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === "analyst")!;
-    expect(a.sections.indexOf("sec-watson")).toBe(a.sections.indexOf("sec-ask") + 1);
+    expect(a.sections.slice(0, 2)).toEqual(["sec-now", "sec-watson"]);
+    expect(BUILT_IN_DASHBOARD_VIEWS.some((v) => v.sections.includes("sec-ask"))).toBe(false);
+    expect(DASHBOARD_SECTION_IDS).not.toContain("sec-ask");
+    // A view saved while Ask existed still loads; the retired section is dropped, not rejected.
+    const saved = normalizeDashboardView({ id: "mine", name: "Mine", sections: ["sec-ask", "sec-watson"] });
+    expect(saved.sections).toEqual(["sec-watson"]);
   });
 });
 

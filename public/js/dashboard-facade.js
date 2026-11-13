@@ -557,7 +557,6 @@
     "askRunToolsOnImport",
     "propagateFalsePositive",
     "paintIocImportMeta",
-    "doAsk",
     "isNewEvent",
     "isNewIoc",
     // Presidio approval panel. `initPresidio` is the sentinel.

@@ -3,7 +3,9 @@ import type { CaseStore } from "../../../storage/caseStore.js";
 import type { AiCallContext } from "../aiContext.js";
 import type { PipelineOptions } from "../pipelineOptions.js";
 import type { WatsonChatStore } from "./chatStore.js";
-import { runWatsonRound, type WatsonRoundInput } from "./round.js";
+import { previewWatsonRound } from "./preview.js";
+import type { WatsonReply } from "./replySchema.js";
+import { runWatsonRound, type WatsonRoundContext, type WatsonRoundInput } from "./round.js";
 import type { WatsonChat } from "./types.js";
 
 export type { WatsonRoundInput } from "./round.js";
@@ -22,33 +24,49 @@ export interface WatsonRoundDeps {
 /** The arguments of AnalysisPipeline.watsonRound. */
 export type WatsonRoundArgs = [caseId: string, input: WatsonRoundInput, deps: WatsonRoundDeps];
 
+/** The arguments of AnalysisPipeline.watsonPreview. */
+export type WatsonPreviewArgs = [caseId: string, draft: string, deps: WatsonRoundDeps];
+
 /**
- * Run one Watson round on the pipeline's own seams: its AI-call context (anonymizer, Presidio,
+ * A Watson round's context on the pipeline's own seams: its AI-call context (anonymizer, Presidio,
  * retry, cost), its state store, and — so the standard-question seed serializes with synthesis — its
  * own state lock instance.
  */
-export function runPipelineWatsonRound(
+function pipelineWatsonContext(aiCtx: AiCallContext, opts: PipelineOptions, deps: WatsonRoundDeps) {
+  if (!opts.stateLock || !opts.aiCostStore) {
+    throw new Error("Watson needs the pipeline's state lock and AI cost store");
+  }
+  const ctx: WatsonRoundContext = {
+    ...aiCtx,
+    ...deps,
+    stateStore: opts.stateStore,
+    stateLock: opts.stateLock,
+    costStore: opts.aiCostStore,
+    mainSourceStore: opts.mainSourceStore,
+    assetOverridesStore: opts.assetOverridesStore,
+    velociraptorClientStore: opts.velociraptorClientStore,
+  };
+  return ctx;
+}
+
+/** Run one Watson round on the pipeline's seams. */
+export async function runPipelineWatsonRound(
   aiCtx: AiCallContext,
   opts: PipelineOptions,
   caseId: string,
   input: WatsonRoundInput,
   deps: WatsonRoundDeps,
 ): Promise<WatsonChat> {
-  if (!opts.stateLock || !opts.aiCostStore) {
-    return Promise.reject(new Error("Watson needs the pipeline's state lock and AI cost store"));
-  }
-  return runWatsonRound(
-    {
-      ...aiCtx,
-      ...deps,
-      stateStore: opts.stateStore,
-      stateLock: opts.stateLock,
-      costStore: opts.aiCostStore,
-      mainSourceStore: opts.mainSourceStore,
-      assetOverridesStore: opts.assetOverridesStore,
-      velociraptorClientStore: opts.velociraptorClientStore,
-    },
-    caseId,
-    input,
-  );
+  return runWatsonRound(pipelineWatsonContext(aiCtx, opts, deps), caseId, input);
+}
+
+/** The first request a round would send for `draft`, for the AI preview (preview.ts); saves nothing. */
+export async function previewPipelineWatsonRound(
+  aiCtx: AiCallContext,
+  opts: PipelineOptions,
+  caseId: string,
+  draft: string,
+  deps: WatsonRoundDeps,
+): Promise<WatsonReply> {
+  return previewWatsonRound(pipelineWatsonContext(aiCtx, opts, deps), caseId, draft);
 }

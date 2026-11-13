@@ -34,6 +34,35 @@ Each time you send a message, Watson answers with three parts:
 
 Watson asks for one request at a time so that you always know the next step.
 
+## Asking Watson a question
+
+Watson replaced the **Ask the LLM** panel. Type any question about the case in the chat, for example "Was data exfiltrated?" or "When did the attacker first reach the domain controller?". Watson answers it as part of the round, with:
+
+- a status: answered, partial or unknown;
+- the answer, with clickable citations to the forensic events it is based on;
+- a pointer: where to look or what to collect next when the case cannot settle it yet.
+
+Choose **Add to open questions** to put the question on the Key Questions board. Your click is the approval: the question is added at once, and you can choose **Undo** like any applied proposal. Choose **New thread** to start a fresh conversation; Watson's memory of the case stays.
+
+On a case with no forensic-timeline events and no findings, the chat says so: an answer would have nothing to read until you import evidence.
+
+Watson reads the case, not only the chat. Besides the forensic timeline, the evidence-chain graph, the attacker path and the findings, it reads your own decisions, so its answer respects them:
+
+| Your work | What Watson is told |
+|-----------|---------------------|
+| **Hypotheses** | Every hypothesis and its status. A refuted or exhausted theory must not be re-asserted. |
+| **Host scope** | The latest signed decision per host. A cleared or out-of-scope host must not be named as compromised. |
+| **Dwell windows** | Your attacker-presence windows, for "when did they get in / leave" questions. |
+| **Prior hunts** | What was hunted and whether it found anything, so Watson does not ask for an empty hunt again. |
+| **Stars, tags, comments** | What you marked or annotated. |
+| **Notebook** | Only when **Include notebook in AI synthesis and Watson context** (Notebook panel) is on. |
+
+When the case is too large for the model, Watson reads a prioritised part of it, and its answer says from how many of the in-scope events it was built. The super-timeline is never read.
+
+To see exactly what Watson would send for a message, use **Preview what the AI will see** and choose **Watson message**. The preview builds the same request a real message sends, masked the same way, and saves nothing.
+
+From Slack, Teams or Telegram, `/dfir ask <question>` sends the question to Watson in the same shared chat. See [War-Room Bot](war-room-bot.md).
+
 ## Giving Watson evidence
 
 You can paste text into the chat or attach a text file. Watson stores it as evidence in the case.

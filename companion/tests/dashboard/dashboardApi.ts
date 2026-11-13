@@ -355,7 +355,6 @@ export interface FragmentsApi {
   mentionHtml(text: string): string;
   ticketPushChips(id: string): string;
   renderVqlRows(j: { rows?: unknown[]; total?: number; truncated?: boolean }): string;
-  askStatusBadge(s: string | undefined): string;
   jobRowHtml(view: JobView): string;
   qaSpan(type: string, val: string, ctx?: { evid?: unknown; iocid?: unknown }): string;
   citeFindings(ids: Array<string | null> | null): string;

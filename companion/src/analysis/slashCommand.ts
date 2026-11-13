@@ -8,7 +8,7 @@ import type { Finding, InvestigationState, Severity } from "./stateTypes.js";
 // and unit-tested with no I/O.
 //
 // Slash commands supported (the issue's full set):
-//   /dfir ask [caseId] <question>          → async (AI call) — the route handles this
+//   /dfir ask [caseId] <question>          → async (a Watson round) — the route handles this
 //   /dfir findings [caseId]                → top 5 findings (severity + confidence + MITRE)
 //   /dfir finding [caseId] <id>            → a single finding card
 //   /dfir iocs [caseId] [flagged|malicious]→ top IOCs with verdicts
@@ -270,7 +270,7 @@ export function formatHelpCommand(): SlashCommandResponse {
       "/dfir findings [caseId] — top 5 findings",
       "/dfir finding [caseId] <id> — a single finding card",
       "/dfir iocs [caseId] [flagged|malicious] — top IOCs",
-      "/dfir ask [caseId] <question> — ask the AI (async)",
+      "/dfir ask [caseId] <question> — ask Watson (async; shows in the case's Watson chat)",
       "/dfir hunt [caseId] <technique> — note a technique to hunt; deploy it from the dashboard",
       "/dfir synthesize [caseId] — trigger re-synthesis (async)",
       "/dfir bind <caseId> — bind this channel to a default case",

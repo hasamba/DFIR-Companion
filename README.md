@@ -8,7 +8,7 @@
 
 > **AI-assisted DFIR triage — on your machine.** Turns investigation screenshots and imported
 > artifacts into a forensic timeline, findings, IOCs, an asset↔IoC graph, and shareable reports;
-> ask the case questions in plain English and collaborate with other investigators.
+> ask Watson, the per-case AI chat, questions in plain English and collaborate with other investigators.
 
 A localhost digital-forensics / incident-response companion. A browser extension
 captures screenshots of your investigation (Velociraptor, EDR/SIEM dashboards, Security Onion, Splunk4DFIR, VolWeb, VirusTotal, etc.) as
@@ -372,9 +372,9 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Reproducible analysis-run ledger** — imports, tagging, enrichment, synthesis and reports leave immutable hash-chained manifests pinning their evidence; runs can be inspected, replayed and compared
 - **Controlled report review & immutable release** — draft → peer review → approval, evidence and integrity release gates, identity-bound sign-off, explicit supersession, version diffs, and frozen executive/technical/legal/IOC packs
 - **Optional authenticated team mode** — OIDC or an audited local account, per-case roles, service identities and analyst attribution; loopback single-user stays the default ([setup guide](mkdocs-docs/reference/team-authentication.md))
-- **Cited AI answers** — findings, Ask-the-case, Explain Event, and AI-suggested hunts (playbook + fleet) show numbered, clickable citations to the supporting forensic events/findings, in both the dashboard and the exported report
+- **Cited AI answers** — findings, Watson answers, Explain Event, and AI-suggested hunts (playbook + fleet) show numbered, clickable citations to the supporting forensic events/findings, in both the dashboard and the exported report
 - **Explain This Event** — 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay
-- **Ask the case (GraphRAG)** — free-form Q&A grounded in timeline + deterministic evidence-chain graph; multi-hop questions answered via real relationships
+- **Watson case chat (GraphRAG)** — free-form questions answered from the timeline + deterministic evidence-chain graph and your own decisions, with a status, a collection pointer and cited events; replaces "Ask the LLM"
 - **Hypothesis-driven mode** — status-tracked hypotheses with evidence links and ACH-style ranking; open ones steer synthesis, and they survive synthesis and archives
 - **On-demand hypothesis falsification review** — a "Review" button runs a focused for/against pass over open hypotheses without re-running full synthesis
 - **Distinguishing evidence** — every observation says whether it separates a hypothesis from its alternatives or fits them all; a frozen judgment whose footing changes is flagged for review
@@ -490,7 +490,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **ClickUp export** — Response Playbook as tasks; re-push updates in place
 - **Notifications** — Slack/MS Teams/Mattermost/Discord/Telegram/SMTP for findings/playbook/milestones; per-channel threshold + toggles
 - **Audit-log export to a SIEM** — forward each case's activity log (who did what, when, and whether it worked) to Splunk HEC, Elasticsearch or RFC 5424 syslog for SOC 2 / ISO 27001 evidence; opt-in per destination, remembers how far it got per case, and re-sends rather than skips after an outage
-- **War-room slash-command bot** — two-way Slack/Teams/Telegram: `/dfir findings`, `/dfir iocs malicious`, `/dfir ask …` from the incident channel; bind a channel to a case, allowlist who can spend AI budget (#235)
+- **War-room slash-command bot** — two-way Slack/Teams/Telegram: `/dfir findings`, `/dfir iocs malicious`, `/dfir ask …` (asks Watson in the shared case chat) from the incident channel; bind a channel to a case, allowlist who can spend AI budget (#235)
 - **Report templates** — global branded layouts (accent, header/footer, section order); pick per case. A section disabled here skips its AI generation (executive summary, narrative) to save tokens (#168)
 - **Mobile companion** — read-only PWA (`/mobile`) for findings/timeline/IOCs with verdicts; offline app-shell
 - **Presentation / timeline-replay mode** — read-only, step-through slide deck (`/cases/:id/present`) for handoff briefings & executive walkthroughs: big cards, keyboard nav, auto-advance, severity filter, report-template branding; export a self-contained offline HTML deck (#177)
@@ -1290,7 +1290,7 @@ of switching to the dashboard for every question:
 /dfir findings                  top 5 by severity
 /dfir finding f3                one finding card
 /dfir iocs malicious            IOCs filtered by verdict (flagged | malicious)
-/dfir ask what was the initial access vector?     grounded AI answer (posted when ready)
+/dfir ask what was the initial access vector?     ask Watson (answer posted when ready)
 /dfir synthesize                trigger a re-synthesis
 /dfir hunt T1059.001            note a technique to hunt (deploy it from the dashboard)
 /dfir unbind                    clear the binding

@@ -1,18 +1,14 @@
 import { PresidioApprovalRequired } from "../../presidio.js";
 import type { InvestigationState } from "../../stateTypes.js";
-import { callAiJson, retryPolicy } from "../aiContext.js";
+import { retryPolicy } from "../aiContext.js";
 import { isRetryableError } from "../retry.js";
-import { getWatsonPrompt } from "../prompts/index.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
-import { promptEntities } from "./pasteEntities.js";
-import { pasteHead, searchPaste } from "./pasteSearch.js";
-import { buildWatsonUserPrompt, WATSON_CASE_EVENTS_MAX, type WatsonPromptInput } from "./promptBuilder.js";
-import { sanitizeWatsonReply, watsonReplySchema, type WatsonReply } from "./replySchema.js";
+import { searchPaste } from "./pasteSearch.js";
+import { WATSON_CASE_EVENTS_MAX, type WatsonPromptInput } from "./promptBuilder.js";
+import { sanitizeWatsonReply, type WatsonReply } from "./replySchema.js";
+import { callWatson, choosePaste, headExcerpt, watsonBaseInput } from "./requestBuild.js";
 import {
-  buildWatsonCaseContext,
-  coverageOf,
   limitReached,
-  mainLanguages,
   NO_SPEND,
   readPasteText,
   seedStandardQuestions,
@@ -42,7 +38,6 @@ export interface WatsonRoundInput {
   pasteId?: string;
 }
 
-const LABEL = "watson";
 const searchSkipped = (why: string): string =>
   `(Watson wanted to search the pasted text, but ${why}, so it did not.)`;
 const searchFailed = (err: unknown): string =>
@@ -80,9 +75,9 @@ async function runRound(
   const reached = limitReached(ctx, chatSpend(start));
   if (reached) throw new WatsonCostLimitReached(reached);
 
-  // The paste this message carries, else the newest one no successful round has read yet.
-  const pasteId = input.pasteId ?? start.unreadPasteIds.at(-1);
-  const paste = pasteId ? start.pastes.find((p) => p.id === pasteId) : undefined;
+  // The paste this message carries, else the newest one no successful round has read yet. An unread
+  // paste is attached on its own at most once, so a head that always fails cannot block Watson.
+  const { paste, newPaste, auto } = choosePaste(start, input.pasteId);
   const analystTurn: WatsonTurn = {
     id: newWatsonId("wt"),
     at: new Date().toISOString(),
@@ -91,10 +86,6 @@ async function runRound(
     ...(input.actor ? { actor: input.actor } : {}),
     ...(paste && input.pasteId ? { pasteId: paste.id } : {}),
   };
-  const unread = paste && start.unreadPasteIds.includes(paste.id);
-  const newPaste = paste && (unread || !pasteAnswered(start.turns, paste.id)) ? paste : undefined;
-  // An unread paste is attached on its own at most once, so a head that always fails cannot block Watson.
-  const auto = !input.pasteId && !!newPaste;
   // Saved BEFORE the model call: the analyst's words survive any failure below.
   const chat = await ctx.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, analystTurn] }));
 
@@ -145,40 +136,21 @@ async function converse(
     if (await seedStandardQuestions(ctx, caseId)) ctx.onStateChanged?.(caseId);
     const state = await ctx.stateStore.load(caseId);
     questions = state.keyQuestions;
-    const cc = await buildWatsonCaseContext(ctx, caseId, state);
-    cover = coverageOf(cc);
-    base = {
-      state,
-      // The analyst's message is the ANALYST block; it is not repeated as recent chat.
-      chat: { ...chat, turns: chat.turns.filter((t) => t.id !== analystTurn.id) },
-      analystText: analystTurn.text,
-      caseContext: cc.text,
-      mainLanguages: await mainLanguages(ctx, caseId, state),
-    };
+    // The analyst's message is the ANALYST block; it is not repeated as recent chat.
+    const others = { ...chat, turns: chat.turns.filter((t) => t.id !== analystTurn.id) };
+    ({ base, cover } = await watsonBaseInput(ctx, caseId, state, others, analystTurn.text));
     const known = {
       questions: new Set(state.keyQuestions.map((q) => q.id)),
       pastes: new Set(chat.pastes.map((p) => p.id)),
       events: new Set(state.forensicTimeline.map((e) => e.id)),
     };
     ask = async (input) => {
-      const prompt = buildWatsonUserPrompt(input);
       const raw = await guardedCall(
         ctx,
         caseId,
         counter,
         () => spentNow(ctx, caseId, chat, before),
-        (one) =>
-          callAiJson(
-            one,
-            caseId,
-            state,
-            ctx.provider,
-            LABEL,
-            getWatsonPrompt,
-            prompt,
-            (r) => watsonReplySchema.parse(r),
-            { promptEntities: promptEntities(prompt) },
-          ),
+        (one) => callWatson(one, caseId, state, ctx.provider, input),
       );
       return sanitizeWatsonReply(raw, known.questions, known.pastes, known.events);
     };
@@ -276,20 +248,4 @@ async function guardedCall<T>(
       await new Promise((r) => setTimeout(r, backoffMs * 2 ** attempt));
     }
   }
-}
-
-async function headExcerpt(
-  ctx: WatsonRoundContext,
-  caseId: string,
-  paste: WatsonPaste,
-): Promise<NonNullable<WatsonPromptInput["pasteExcerpt"]>> {
-  const text = await readPasteText(ctx.cases, caseId, paste);
-  const head = pasteHead(text);
-  const shownLines = head ? head.split("\n").length : 0;
-  return { pasteId: paste.id, filename: paste.filename, text: head, truncated: shownLines < paste.lines };
-}
-
-/** A paste counts as shown only once a Watson turn answered the turn that carried it. */
-function pasteAnswered(turns: readonly WatsonTurn[], pasteId: string): boolean {
-  return turns.some((t, i) => t.pasteId === pasteId && turns[i + 1]?.role === "watson");
 }

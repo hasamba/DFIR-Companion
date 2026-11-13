@@ -54,7 +54,6 @@ export const AI_LIMIT_PATHS = new Set([
   "/second-look", // promotes, then re-synthesizes by default (#1554)
   "/second-opinion", // 2nd LLM opinion
   "/second-opinion/referee", // referee-only re-run (#1587)
-  "/ask", // Ask-the-case GraphRAG
   "/executive-summary",
   "/starred-report",
   "/view-summary",

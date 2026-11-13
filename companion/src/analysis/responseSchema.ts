@@ -7,7 +7,7 @@ export const questionStatusSchema = z
   .enum(["answered", "partial", "unknown", "unanswerable"])
   .catch("unknown");
 
-// The status synthesis and Ask may set. "unanswerable" is Watson's, set only through an analyst's
+// The status synthesis may set. "unanswerable" is Watson's, set only through an analyst's
 // approval, so from these models it reads as "unknown" like any other value they may not use.
 export const modelQuestionStatusSchema = z.enum(["answered", "partial", "unknown"]).catch("unknown");
 
@@ -644,17 +644,6 @@ export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
     ),
   };
 }
-
-// Answer to an analyst's free-form question about the case ("was data exfiltrated?").
-// Lenient (.catch) like the delta so a slightly-off model response still parses.
-export const askSchema = z.object({
-  answer: z.string().catch(""),
-  status: modelQuestionStatusSchema,
-  pointer: z.string().catch(""), // where/which artifact to look for or collect next
-  relatedEventIds: z.array(z.string()).catch([]),
-});
-
-export type AskAnswer = z.infer<typeof askSchema>;
 
 // Management-facing executive summary of the whole case (plain-language, no T-codes/hashes).
 // Lenient like the others so a slightly-off model response still parses.

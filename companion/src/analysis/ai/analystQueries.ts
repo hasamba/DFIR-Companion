@@ -1,49 +1,33 @@
 import type { AssetOverridesStore } from "../assetOverrides.js";
-import { buildGraphContext } from "../graphContext.js";
-import {
-  askSchema,
-  explainEventSchema,
-  fpSimilaritySchema,
-  type AskAnswer,
-  type ExplainEventResult,
-} from "../responseSchema.js";
+import { explainEventSchema, fpSimilaritySchema, type ExplainEventResult } from "../responseSchema.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import { buildSynthesisContext } from "../synthSelect.js";
 import type { CaseFleetInventory } from "../velociraptorClientStore.js";
-import { getAskPrompt, getExplainEventPrompt, getFpSimilarityPrompt } from "./prompts/index.js";
+import { getExplainEventPrompt, getFpSimilarityPrompt } from "./prompts/index.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
-import {
-  callAiJson,
-  fitTimelineEvents,
-  loadCtxAliasIndex,
-  loadScopedEvents,
-  promptOverhead,
-  type AiCallContext,
-} from "./aiContext.js";
+import { callAiJson, loadCtxAliasIndex, type AiCallContext } from "./aiContext.js";
 import { promptDescription, PROMPT_DESCRIPTION_WIDE_MAX } from "./promptDescription.js";
 import type { AiControlStore } from "../aiControl.js";
 import type { HuntOutcomeStore } from "../huntOutcomeStore.js";
 import type { HypothesisStore } from "../hypothesisStore.js";
-import { stateEventResolver } from "../eventAliasLookup.js";
 import type { NotebookStore } from "../notebookStore.js";
-import type { AskTurn } from "../askHistory.js";
-import { analystDecisionBlocks, graphMaxEdges, type AnalystDecisionStores } from "./analystContext.js";
+import type { AnalystDecisionStores } from "./analystContext.js";
 
 /**
- * The three "answer this specific question" AI calls (#418).
+ * The "answer this specific question" AI calls (#418).
  *
  * Moved from AnalysisPipeline (see ai/caseReports.ts for the pattern). Unlike the case reports,
  * which write a document about the whole case, each of these is pointed at something the analyst
- * just clicked: a question they typed, an event they want explained, an item they just rejected.
- * All three are single-shot, and only explainEvent can change the case — by promoting the one raw
- * event it was asked about.
+ * just clicked: an event they want explained, an item they just rejected. Both are single-shot, and
+ * only explainEvent can change the case — by promoting the one raw event it was asked about. A
+ * free-form question about the case is Watson's job (ai/watson/), which retired "Ask the LLM".
  */
 
 /**
  * What explainEvent needs on top of the shared AI-call seam, to reach the raw record — plus the two
- * stores ask()/explainEvent() resolve canonical host identity from (see `loadCtxAliasIndex` in
- * aiContext.ts), so a question or an event explanation reads a merged near-duplicate as one machine.
+ * stores explainEvent() resolves canonical host identity from (see `loadCtxAliasIndex` in
+ * aiContext.ts), so an event explanation reads a merged near-duplicate as one machine.
  */
 export interface AnalystQueryContext extends AiCallContext {
   readonly opts: AiCallContext["opts"] &
@@ -61,85 +45,6 @@ export interface AnalystQueryContext extends AiCallContext {
     events: ForensicEvent[],
     opts: { importedAt: string; intent: PromotionIntent; tagById?: Record<string, string[]>; note?: string },
   ): Promise<InvestigationState>;
-}
-
-export interface AskOptions {
-  /** The panel's last few Q&A pairs, already bounded by parseAskHistory. */
-  history?: AskTurn[];
-}
-
-/** The model's answer plus what it was answered FROM, so the panel can disclose a trimmed timeline. */
-export type AskResult = AskAnswer & {
-  usedEvents: number; // in-scope events the prompt actually carried
-  eventCount: number; // in-scope events the case has (scope window + false-positive markers applied)
-};
-
-// Answer a free-form analyst question from the case's own evidence. Text-only, EPHEMERAL — the
-// answer is returned for the analyst to act on, never written into the case.
-export async function ask(
-  ctx: AnalystQueryContext,
-  caseId: string,
-  question: string,
-  options: AskOptions = {},
-): Promise<AskResult> {
-  const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("case questions");
-  const loaded = await ctx.opts.stateStore.load(caseId);
-  const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
-  const decisionBlocks = await analystDecisionBlocks(
-    ctx,
-    caseId,
-    options.history ?? [],
-    stateEventResolver(loaded),
-  );
-
-  const renderEvent = (e: ForensicEvent): string =>
-    `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${promptDescription(e.description)}`;
-  const findingsText =
-    loaded.findings
-      .slice(0, 150)
-      .map((f) => `[${f.id}] [${f.severity}] ${f.title}`)
-      .join("\n") || "(none)";
-  const questionsText =
-    loaded.keyQuestions.map((q) => `- ${q.question}${q.answer ? ` → ${q.answer}` : " (open)"}`).join("\n") ||
-    "(none)";
-  const aliasIndex = await loadCtxAliasIndex(ctx.opts, caseId);
-  const contextBlock = buildSynthesisContext(loaded, scoped, await ctx.getKevCatalog(), aliasIndex);
-  // GraphRAG (#98): serialize the deterministic evidence-chain graph (causal edges) so the model
-  // can trace multi-hop attack paths via the graph's relationships, not just the flat timeline.
-  const maxEdges = graphMaxEdges();
-  const graphBlock = buildGraphContext({ ...loaded, forensicTimeline: scoped }, { maxEdges });
-
-  // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
-  const shown = fitTimelineEvents(
-    scoped,
-    renderEvent,
-    promptOverhead(
-      getAskPrompt(),
-      contextBlock,
-      graphBlock,
-      loaded.attackerPath || "",
-      findingsText,
-      questionsText,
-      decisionBlocks,
-      question,
-    ),
-  );
-  const timelineText = shown.map(renderEvent).join("\n") || "(no events yet)";
-
-  const userPrompt =
-    contextBlock +
-    graphBlock +
-    `ATTACKER PATH: ${loaded.attackerPath || "(not reconstructed)"}\n\n` +
-    `FINDINGS:\n${findingsText}\n\n` +
-    `FORENSIC TIMELINE (${scoped.length} in-scope events):\n${timelineText}\n\n` +
-    `CURRENT QUESTIONS:\n${questionsText}\n\n` +
-    decisionBlocks +
-    `ANALYST QUESTION: ${question.trim()}\n\nAnswer it as JSON.`;
-
-  const answer = await callAiJson(ctx, caseId, loaded, provider, "ask", getAskPrompt, userPrompt, (raw) =>
-    askSchema.parse(raw),
-  );
-  return { ...answer, usedEvents: shown.length, eventCount: scoped.length };
 }
 
 /**

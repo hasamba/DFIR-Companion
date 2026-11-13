@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Watson case agent** — per-case investigation chat with a Key Questions board
 
+### Removed
+
+- **"Ask the LLM" retired** — Watson answers free-form case questions; `/dfir ask` and the AI preview now go to Watson
+
 ## [0.46.0] - 2026-11-13
 
 ### Added

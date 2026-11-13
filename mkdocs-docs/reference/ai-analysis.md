@@ -297,4 +297,4 @@ All AI prompts can be overridden without code changes:
 3. Set `DFIR_AI_SYSTEM_PROMPT_FILE=./prompts/system.txt` (etc.) in `.env`.
 4. Changes are picked up on the next AI call — no restart needed.
 
-Available prompts: `SYSTEM` (extraction), `CSV`, `LOG`, `SYNTH` (synthesis), `ASK`, `EXEC` (executive summary), `NARRATIVE`, `HUNTS`, `PBHUNTS`, `GAPHYP`, `MEMNEXT`, `QUERYXLATE`, `RECONCILE`, `REMEDIATION`.
+Available prompts: `SYSTEM` (extraction), `CSV`, `LOG`, `SYNTH` (synthesis), `EXEC` (executive summary), `NARRATIVE`, `HUNTS`, `PBHUNTS`, `GAPHYP`, `MEMNEXT`, `QUERYXLATE`, `RECONCILE`, `REMEDIATION`.

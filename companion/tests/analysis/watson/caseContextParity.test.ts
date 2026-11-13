@@ -86,7 +86,7 @@ async function make(timeline: ForensicEvent[]) {
     provider,
     isAiEnabled: async () => true,
   };
-  return { ctx, provider, stores };
+  return { ctx, provider, stores, stateStore };
 }
 
 describe("Watson reads the case context Ask did", () => {
@@ -175,6 +175,56 @@ describe("Watson reads the case context Ask did", () => {
     const small = await make([ev("e1")]);
     const chat2 = await runWatsonRound(small.ctx, CASE, { text: "Summarise" });
     expect(chat2.turns.find((t) => t.role === "watson")?.coverage).toBeUndefined();
+  });
+});
+
+// Ported from Ask's own tests (askAnalystDecisions, askGraphRag) when Watson retired Ask: the shared
+// renderers are exercised through Watson's prompt now.
+describe("Watson's case context, as Ask's tests pinned it", () => {
+  const DECISION_HEADERS = [
+    "ANALYST HYPOTHESES",
+    "ANALYST HOST-SCOPE DECISIONS",
+    "ANALYST DWELL WINDOWS",
+    "PRIOR HUNTS",
+    "ANALYST MARKS",
+    "ANALYST NOTEBOOK",
+  ];
+
+  it("emits no decision block and no ATTACK GRAPH on a fresh case with no causal edges", async () => {
+    const { ctx, provider } = await make([ev("e1", { description: "a lone observation", severity: "Low" })]);
+    await runWatsonRound(ctx, CASE, { text: "Anything?" });
+    const prompt = provider.sent[0].userPrompt;
+    for (const h of DECISION_HEADERS) expect(prompt).not.toContain(h);
+    expect(prompt).not.toContain("ATTACK GRAPH");
+  });
+
+  it("serializes the evidence-chain graph with its relationship headings and citable event ids (#98)", async () => {
+    const { ctx, provider } = await make([
+      ev("e1", { asset: "WEB01", parentName: "excel.exe", processName: "powershell.exe" }),
+      ev("e2", { asset: "WEB01", dstIp: "203.0.113.4", port: 443 }),
+    ]);
+    await runWatsonRound(ctx, CASE, { text: "Trace the path from the document to the C2 server" });
+    const prompt = provider.sent[0].userPrompt;
+    expect(prompt).toContain("Process spawns (parent → child):");
+    expect(prompt).toContain("excel.exe → powershell.exe on WEB01");
+    expect(prompt).toContain("[e1]");
+    expect(prompt).toContain("Network connections (source → destination):");
+    expect(prompt).toContain("203.0.113.4:443");
+  });
+
+  it("names the surviving event for a mark made on a folded-away one (#1715)", async () => {
+    const { ctx, provider, stores, stateStore } = await make([ev("e9")]);
+    await stateStore.save({ ...(await stateStore.load(CASE)), eventAliases: { e1: "e9" } });
+    await stores.tagsStore.add(CASE, {
+      targetType: "event",
+      targetId: "e1",
+      label: "starred",
+      author: "bob",
+    });
+    await runWatsonRound(ctx, CASE, { text: "Anything?" });
+    const prompt = provider.sent[0].userPrompt;
+    expect(prompt).toContain("- [event e9] tags: starred");
+    expect(prompt).not.toContain("[event e1]");
   });
 });
 

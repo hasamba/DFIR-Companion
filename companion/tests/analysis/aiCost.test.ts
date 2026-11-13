@@ -20,7 +20,7 @@ describe("bucketForLabel", () => {
     expect(bucketForLabel("watson")).toBe("watson");
   });
   it("maps everything else to other", () => {
-    expect(bucketForLabel("ask")).toBe("other");
+    expect(bucketForLabel("explain-event")).toBe("other");
     expect(bucketForLabel("csv")).toBe("other");
     expect(bucketForLabel("narrative")).toBe("other");
   });

@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { openCollectTargets } from "../../../src/analysis/collectSatisfaction.js";
-import { askSchema, deltaSchema, questionStatusSchema } from "../../../src/analysis/responseSchema.js";
+import {
+  deltaSchema,
+  modelQuestionStatusSchema,
+  questionStatusSchema,
+} from "../../../src/analysis/responseSchema.js";
 import { keepWatsonAnswers } from "../../../src/analysis/timeline/watsonQuestions.js";
 import { renderMarkdownReport } from "../../../src/reports/markdown.js";
 import { emptyState, type InvestigationQuestion } from "../../../src/analysis/stateTypes.js";
@@ -23,7 +27,7 @@ describe("key question status: unanswerable", () => {
   });
 });
 
-describe("only Watson sets unanswerable (synthesis and Ask read it as unknown)", () => {
+describe("only Watson sets unanswerable (synthesis and other model answers read it as unknown)", () => {
   it("a synthesis delta saying unanswerable parses as unknown", () => {
     const delta = deltaSchema.parse({
       findings: [],
@@ -41,10 +45,8 @@ describe("only Watson sets unanswerable (synthesis and Ask read it as unknown)",
     expect(delta.keyQuestions?.[0]?.status).toBe("unknown");
   });
 
-  it("an Ask answer saying unanswerable parses as unknown", () => {
-    expect(
-      askSchema.parse({ answer: "a", status: "unanswerable", pointer: "", relatedEventIds: [] }).status,
-    ).toBe("unknown");
+  it("a model answer saying unanswerable parses as unknown", () => {
+    expect(modelQuestionStatusSchema.parse("unanswerable")).toBe("unknown");
   });
 
   it("Watson's applied unanswerable is kept, and synthesis's unknown raises no disagreement", () => {

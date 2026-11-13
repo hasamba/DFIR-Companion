@@ -433,7 +433,6 @@
     "ROUTE POST /cases/:id/second-opinion/reopened",
     "ROUTE POST /cases/:id/second-opinion/apply-all",
     "ROUTE POST /cases/:id/second-opinion/referee",
-    "ROUTE POST /cases/:id/ask",
     "ROUTE POST /cases/:id/events/:eid/explain",
     "ROUTE POST /cases/:id/executive-summary",
     "ROUTE POST /cases/:id/starred-report",

@@ -155,4 +155,4 @@ Findings panel → the **SNow** chip on a finding row, or **🎫 Push to Service
 
 ## War-Room Slash-Command Bot
 
-Two-way Slack / Teams / Telegram: run `/dfir findings`, `/dfir iocs malicious` or `/dfir ask <question>` from the incident channel. Needs an inbound URL (a tunnel) rather than just outbound access — see [War-Room Slash-Command Bot](war-room-bot.md).
+Two-way Slack / Teams / Telegram: run `/dfir findings`, `/dfir iocs malicious` or `/dfir ask <question>` (asks Watson) from the incident channel. Needs an inbound URL (a tunnel) rather than just outbound access — see [War-Room Slash-Command Bot](war-room-bot.md).

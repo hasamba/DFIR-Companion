@@ -410,7 +410,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     cloudCoverageStore: new CloudCoverageStore(params.store), // #1063 per-upload cloud coverage for synthesis + the panel
     aiControlStore: new AiControlStore(params.store),
     huntOutcomeStore: new HuntOutcomeStore(params.store), // #157 hunting feedback loop
-    // #1411 ask() reads the analyst's marks, host-scope decisions and dwell windows. Read-only
+    // #1411 Watson reads the analyst's marks, host-scope decisions and dwell windows. Read-only
     // instances: TagsStore gets no protection sink because nothing here writes a tag.
     tagsStore: new TagsStore(params.store),
     commentsStore: new CommentsStore(params.store),

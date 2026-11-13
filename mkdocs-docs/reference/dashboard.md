@@ -162,7 +162,7 @@ hidden from the list below, and each is a per-case choice remembered like the co
 Whenever a filter — either of these included — is actually hiding something, the panel header switches
 from a plain count to **(N of M findings)**, so a hidden finding is never silently absent.
 
-**Cited AI answers** — supporting events/findings referenced by a finding, Ask-the-case, Explain Event,
+**Cited AI answers** — supporting events/findings referenced by a finding, a Watson answer, Explain Event,
 or an AI-suggested hunt appear as numbered, clickable citations — click a citation number to jump
 straight to the event or finding it's grounded in. Citations carry through to the exported report.
 
@@ -808,36 +808,11 @@ Each step names the exact host, account and log. Steps include the scoping work 
 
 ---
 
-## Ask the Case
+## Ask the Case (retired)
 
-A free-text question box. Type any question in natural language:
-
-- "When did the attacker first access the domain controller?"
-- "What credentials were likely stolen?"
-- "List all C2 IP addresses and their first-seen times."
-
-The AI answers using the forensic timeline plus the **evidence-chain graph** — so it can trace multi-hop paths.
-
-On a case with no forensic-timeline events and no findings, the panel says so under the question box: an answer would have nothing to read until you import evidence.
-
-It also reads your own decisions on the case, so the answer respects them instead of contradicting them:
-
-| Your work | What the model is told |
-|-----------|------------------------|
-| **Hypotheses** | Every hypothesis and its status. A refuted or exhausted theory must not be re-asserted. |
-| **Host scope** | The latest signed decision per host. A cleared or out-of-scope host must not be named as compromised; a contradiction is flagged, not overridden. |
-| **Dwell windows** | Your attacker-presence windows, for "when did they get in / leave" questions. |
-| **Prior hunts** | What was hunted and whether it found anything, so the collection pointer never re-proposes an empty hunt. |
-| **Stars, tags, comments** | What you marked or annotated, starred items first. |
-| **Notebook** | Only when **Include notebook in AI synthesis and Ask context** (Notebook panel) is on (the same opt-in synthesis uses). |
-
-The box keeps a short thread: the last three questions and answers ride along with the next one, so a
-follow-up like "and on which host?" works. The thread resets when you switch case or press **↺ New
-thread**. Nothing in the thread is saved.
-
-When the timeline is too large for the model, the answer is built from a prioritised subset. The panel
-then shows **answered from N of M in-scope events** so you know the model did not see the whole record.
-The super-timeline is never read.
+The **Ask the LLM** panel is gone. Ask Watson instead: type the question in the Watson chat. Watson
+reads the same case context Ask read, answers with a status, a pointer to what to collect next and the
+events it cites, and offers **Add to open questions**. See [Watson Case Chat](watson.md).
 
 ---
 
@@ -1061,7 +1036,7 @@ A durable log of every synthesis run — what the AI concluded each time and wha
 
 A chronological, filterable record of every security-relevant action taken on the case — broader than
 the Investigation Log above, which only tracks synthesis runs. Covers imports, mark/unmark
-false-positive, AI runs (synthesis / 2nd opinion / Ask-the-case / …), enrichment and anonymization
+false-positive, AI runs (synthesis / 2nd opinion / Watson / …), enrichment and anonymization
 toggles, settings changes, playbook edits, comments/tags, hunt runs, and exports, each with a
 timestamp and the analyst who did it (where applicable).
 

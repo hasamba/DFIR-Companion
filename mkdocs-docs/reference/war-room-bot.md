@@ -14,7 +14,7 @@ This is the inbound counterpart to [Notifications](../reference/settings.md): no
 /dfir findings               top 5 by severity (dismissed excluded)
 /dfir finding f002           one finding card, by id
 /dfir iocs malicious         IOCs by verdict — flagged | malicious
-/dfir ask <question>         grounded AI answer, posted when ready
+/dfir ask <question>         ask Watson; the answer is posted when ready
 /dfir synthesize             trigger a re-synthesis
 /dfir hunt T1059.001         note a technique to hunt
 /dfir unbind                 clear the binding
@@ -24,6 +24,8 @@ This is the inbound counterpart to [Notifications](../reference/settings.md): no
 Once a channel is bound, every command can omit the case id. Name a case explicitly at any time (`/dfir findings OTHER-CASE`) to override the binding for that one command.
 
 `status`, `findings`, `finding` and `iocs` answer immediately. `ask`, `synthesize` and `hunt` reply "working…" first and post the result when it's ready — chat platforms only wait about three seconds, and an AI answer takes longer.
+
+`ask` sends your question to [Watson](watson.md), in the case's shared chat: the team sees the question and the answer in the Watson panel, it counts toward Watson's cost and token limits, and it waits behind a Watson round already running on the case. The reply is Watson's message plus a **Next:** line with what to collect when Watson gave one. On a closed or archived case, with AI off for the case, at a Watson limit or while Presidio holds a value for approval, the reply says so instead.
 
 `hunt` records the technique against the case and points you at the dashboard; it does **not** launch the hunt. Deploying one needs per-client targeting and artifact selection, which is more than a chat line can carry — see [Threat Hunting](threat-hunting.md).
 
@@ -340,7 +342,8 @@ Once the request is reaching the bot, the rest are ordinary replies:
 | *"No such case: X"* | Case id typo, or the case doesn't exist on this instance |
 | *"…is password-protected and is not available over chat"* | Working as intended — use the dashboard |
 | *"may only use this channel's bound case"* | An allowlist is set and you aren't on it; you can only read the bound case |
-| *"Working on /dfir ask…"* then nothing | No AI provider configured, or the result couldn't be delivered — check the server log |
+| *"Working on /dfir ask…"* then nothing | The result couldn't be delivered — check the server log |
+| *"AI provider not configured for Watson."* | The server has no AI provider for Watson — configure one under **Settings → AI** |
 | Rate-limited after ~20 commands a minute | Per-channel cap; wait a minute |
 
 Telegram also keeps its own record of what it saw, which is the fastest way to tell whether delivery is even being attempted:

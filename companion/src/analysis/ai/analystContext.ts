@@ -1,5 +1,4 @@
 import type { AiControlStore } from "../aiControl.js";
-import type { AskTurn } from "../askHistory.js";
 import type { CommentsStore } from "../comments.js";
 import type { DwellWindowStore } from "../dwellWindowStore.js";
 import { withResolvedTargets, type EventResolver } from "../eventAliasLookup.js";
@@ -13,7 +12,6 @@ import type { NotebookStore } from "../notebookStore.js";
 import type { TagsStore } from "../tags.js";
 import {
   renderAnalystMarksBlock,
-  renderAskHistoryBlock,
   renderAskHypothesesBlock,
   renderAskNotebookBlock,
   renderDwellWindowsBlock,
@@ -21,8 +19,8 @@ import {
 } from "./askContext.js";
 
 /**
- * The analyst's own work on the case, as prompt blocks, shared by every chat-shaped AI call (Ask,
- * Watson). Reads side files only — never the super-timeline.
+ * The analyst's own work on the case, as prompt blocks, for Watson's case context (they were Ask's
+ * until Watson retired it). Reads side files only — never the super-timeline.
  */
 
 /**
@@ -73,7 +71,6 @@ export interface AnalystContextHost {
 export async function analystDecisionBlocks(
   ctx: AnalystContextHost,
   caseId: string,
-  history: readonly AskTurn[],
   resolve: EventResolver,
 ): Promise<string> {
   const o = ctx.opts;
@@ -95,8 +92,7 @@ export async function analystDecisionBlocks(
     renderDwellWindowsBlock(windows) +
     renderPriorHuntsBlock(outcomes) +
     renderAnalystMarksBlock(onLiveEvent(tags), onLiveEvent(comments)) +
-    renderAskNotebookBlock(notebook) +
-    renderAskHistoryBlock(history)
+    renderAskNotebookBlock(notebook)
   );
 }
 

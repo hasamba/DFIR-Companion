@@ -574,7 +574,7 @@ export const FEATURES: Feature[] = [
   {
     // Import undo / redo (#76). Its two toolbar buttons were bound beside the Narrative Timeline's
     // controls purely by proximity; that extraction left them behind and this one collects them.
-    // doAsk sits under the same banner and is the AI Ask box — it stayed.
+    // The AI Ask box sat under the same banner and stayed behind (since retired for Watson).
     file: "dashboard-import-undo.js",
     initializer: "initImportUndoRedo",
     publish: ["initImportUndoRedo", "loadUndoStack", "doImportUndoRedo"],
@@ -1918,13 +1918,10 @@ export const FEATURES: Feature[] = [
       "askRunToolsOnImport",
       "propagateFalsePositive",
       "paintIocImportMeta",
-      "doAsk",
-      "askHistoryFor",
       "isNewEvent",
       "isNewIoc",
     ],
-    // askHistory / askHistoryCase: the Ask box's per-session thread (#1411) — state, so it stays in.
-    private: ["newEventKeys", "newIocKeys", "evKey", "evNorm", "askHistory", "askHistoryCase"],
+    private: ["newEventKeys", "newIocKeys", "evKey", "evNorm"],
   },
   {
     // Presidio approval panel. Its escape was written from three places outside the section, each

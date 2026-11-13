@@ -18,6 +18,7 @@ import { WatsonAiOff, WatsonCostLimitReached } from "../analysis/ai/watson/round
 import type { WatsonChat, WatsonPaste } from "../analysis/ai/watson/types.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
+import { watsonRoundDeps } from "./watsonDeps.js";
 
 /**
  * Watson, the per-case AI investigation chat (all under /cases/:id/watson). Team policy needs no code
@@ -40,13 +41,6 @@ const DEFAULT_PASTE_NAME = "pasted-text.txt";
 const FILENAME_MAX = 200;
 /** Set on a paste response once the text is saved as evidence, so a failed round can say so. */
 export const PASTE_STORED_HEADER = "X-Watson-Paste-Stored";
-
-/** A positive finite number from a setting, else undefined: blank, junk, zero and negatives mean "no limit". */
-export function positiveLimit(raw: string | undefined): number | undefined {
-  const text = raw?.trim();
-  const n = Number(text);
-  return text && Number.isFinite(n) && n > 0 ? n : undefined;
-}
 
 /** Newline-separated lines, counting a final line with no newline; no array of lines is built. */
 export function countLines(text: string): number {
@@ -75,19 +69,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     (await store.getCaseMeta(caseId).catch(() => null)) === null;
 
   /** The model Watson uses and the limits, read per request so a Settings change applies at once. */
-  function roundDeps(): WatsonRoundDeps | undefined {
-    const provider = options.watsonProvider?.();
-    if (!options.watsonChatStore || !provider) return undefined;
-    return {
-      chatStore: options.watsonChatStore,
-      cases: store,
-      provider,
-      isAiEnabled: async (id) => (await ctx.getControl(id)).enabled,
-      costLimitUSD: positiveLimit(process.env.DFIR_AI_WATSON_COST_LIMIT_USD),
-      tokenLimit: positiveLimit(process.env.DFIR_AI_WATSON_TOKEN_LIMIT),
-      onStateChanged: options.onStateChanged,
-    };
-  }
+  const roundDeps = (): WatsonRoundDeps | undefined => watsonRoundDeps(ctx);
 
   /** What applying a proposal (or adding an answer as a question) needs; undefined when not wired. */
   function proposalDeps(): WatsonProposalDeps | undefined {

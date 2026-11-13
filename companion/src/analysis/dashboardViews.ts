@@ -55,7 +55,6 @@ export interface DashboardView {
 export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-now",
   "sec-mem-nextsteps",
-  "sec-ask",
   "sec-watson",
   "sec-nlquery",
   "sec-exec",
@@ -146,7 +145,6 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "Dense, deep-investigation layout with the Now cockpit and every core workspace. No severity filter.",
     sections: [
       "sec-now",
-      "sec-ask",
       "sec-watson",
       "sec-nlquery",
       "sec-exec",

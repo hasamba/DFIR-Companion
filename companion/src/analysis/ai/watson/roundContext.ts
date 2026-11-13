@@ -103,7 +103,8 @@ export function spendDelta(before: WatsonSpend, after: WatsonSpend): WatsonSpend
   return { usd: Math.max(0, after.usd - before.usd), tokens: Math.max(0, after.tokens - before.tokens) };
 }
 
-const hasStandard = (s: InvestigationState): boolean =>
+/** True when the case already has at least one of the six standard questions. */
+export const hasStandardQuestions = (s: Pick<InvestigationState, "keyQuestions">): boolean =>
   s.keyQuestions.some((q) => q.id.startsWith("wq-std-"));
 
 /**
@@ -112,10 +113,10 @@ const hasStandard = (s: InvestigationState): boolean =>
  * when this call saved them.
  */
 export async function seedStandardQuestions(ctx: WatsonRoundContext, caseId: string): Promise<boolean> {
-  if (hasStandard(await ctx.stateStore.loadOverview(caseId))) return false;
+  if (hasStandardQuestions(await ctx.stateStore.loadOverview(caseId))) return false;
   return ctx.stateLock.runExclusive(caseId, async () => {
     const state = await ctx.stateStore.loadOverview(caseId);
-    if (hasStandard(state)) return false;
+    if (hasStandardQuestions(state)) return false;
     await ctx.stateStore.saveOverview({
       ...state,
       keyQuestions: ensureStandardQuestions(state.keyQuestions),
@@ -203,7 +204,7 @@ export async function buildWatsonCaseContext(
     }\n\n`;
   const max = WATSON_CASE_CONTEXT_PROMPT_MAX;
   const decisions = clipTo(
-    await analystDecisionBlocks(ctx, caseId, [], stateEventResolver(state)),
+    await analystDecisionBlocks(ctx, caseId, stateEventResolver(state)),
     Math.floor(max * WATSON_DECISION_SHARE),
     "analyst decisions",
   );

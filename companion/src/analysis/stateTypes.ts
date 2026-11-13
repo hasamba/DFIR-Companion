@@ -672,7 +672,7 @@ export interface InvestigationQuestion {
   status: QuestionStatus;
   answer: string; // current best answer, or "" if unknown
   pointer: string; // where to look: finding ids / event times / screenshots, or what to collect next
-  pinned?: boolean; // analyst-added (via Ask) — preserved across synthesis, which may answer it later
+  pinned?: boolean; // analyst- or Watson-added — preserved across synthesis, which may answer it later
   author?: "watson"; // Watson added or edited this question
   synthesisDisagrees?: { status: QuestionStatus; answer: string }; // a later synthesis disagreed with this pinned answer
   answeredBy?: "synthesis"; // a Watson question synthesis answered: not protected until Watson applies an answer

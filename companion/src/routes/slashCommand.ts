@@ -30,6 +30,7 @@ import { TelegramPoller, sendTelegramMessage, type TelegramUpdate } from "../ana
 import { SlackSocketMode, type SlackCommandPayload } from "../analysis/slackSocketMode.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
+import { runWatsonSlash } from "./watsonSlash.js";
 
 /** /dfir synthesize is an analyst's "run now" (#1608) — see resynthesizeInBackground. */
 const RUN_NOW = { analyst: true } as const;
@@ -40,7 +41,7 @@ const RUN_NOW = { analyst: true } as const;
  *   - read-only commands (findings, finding, iocs, status, help, unbind) respond synchronously.
  *   - async commands (ask, hunt, synthesize) ACK immediately with "working…" and deliver the
  *     result out of band when ready (chat platforms want a response within ~3s; AI calls take
- *     longer). `hunt` records the technique and points at the dashboard — the Velociraptor
+ *     longer). `ask` is a Watson round in the case's shared chat (routes/watsonSlash.ts). `hunt` records the technique and points at the dashboard — the Velociraptor
  *     hunt-deploy surface (per-client targeting, artifact selection) is too rich for a slash
  *     command.
  *
@@ -612,33 +613,15 @@ async function runActionCommand(cmd: ResolvedSlashCommand, input: DispatchInput)
 
   if (cmd.name === "ask") {
     if (!cmd.arg.trim()) return void (await send({ title: "Usage: /dfir ask <question>", lines: [] }));
-    if (!options.pipeline) return void (await send({ title: "AI pipeline not configured.", lines: [] }));
-    try {
-      const answer = await options.pipeline.ask(cmd.caseId, cmd.arg);
-      await send(
-        {
-          title: `Q: ${cmd.arg}`,
-          lines: [answer.answer || "(no answer)", ...(answer.pointer ? [`Next: ${answer.pointer}`] : [])],
-        },
-        false,
-      );
-      audit({
-        category: "ai",
-        action: "slash-command-ask",
-        detail: `/dfir ask "${cmd.arg.slice(0, 120)}" → ${answer.status}`,
-      });
-    } catch (err) {
-      await send({
-        title: `AI ask failed: ${redactPaths((err as Error).message, [ctx.store.casesRoot])}`,
-        lines: [],
-      });
-      audit({
-        category: "ai",
-        action: "slash-command-ask",
-        detail: `/dfir ask "${cmd.arg.slice(0, 120)}" failed: ${(err as Error).message}`,
-        outcome: "error",
-      });
-    }
+    // A Watson round in the case's shared chat (D2), so the team sees it in the Watson panel.
+    const result = await runWatsonSlash(ctx, cmd.caseId, cmd.arg.trim(), `${userId} via ${platform}`);
+    await send(result.reply, !result.ok);
+    audit({
+      category: "ai",
+      action: "slash-command-ask",
+      detail: `/dfir ask "${cmd.arg.slice(0, 120)}" → ${result.ok ? "Watson answered" : result.reply.title.slice(0, 200)}`,
+      ...(result.ok ? {} : { outcome: "error" as const }),
+    });
     return;
   }
 

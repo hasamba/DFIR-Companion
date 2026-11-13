@@ -382,19 +382,6 @@ describe("renderVqlRows", () => {
   });
 });
 
-describe("askStatusBadge", () => {
-  it.each([
-    ["answered", "#6bcB77"],
-    ["partial", "#ffd93b"],
-    ["unknown", "#9aa4b2"],
-  ])("colours %s", (status, fg) => expect(f.askStatusBadge(status)).toContain(fg));
-
-  it("falls back to unknown, and labels it", () => {
-    expect(f.askStatusBadge(undefined)).toContain("unknown");
-    expect(f.askStatusBadge("something-else")).toContain("#9aa4b2");
-  });
-});
-
 describe("jobRowHtml", () => {
   const view = {
     job: { id: "j1", kind: "import", label: "evtx", status: "running" },

@@ -9,9 +9,9 @@ import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 // Mirrors tests/analysis/caseReportHostMerge.test.ts, which proves the same thing for the four
-// report-writing call sites in src/analysis/ai/caseReports.ts. This file proves it for the two
-// analyst-facing call sites in src/analysis/ai/analystQueries.ts: a question the analyst types or
-// an event they ask to have explained must read a merged near-duplicate host as one machine too —
+// report-writing call sites in src/analysis/ai/caseReports.ts. This file proves it for the
+// analyst-facing explainEvent in src/analysis/ai/analystQueries.ts: an event the analyst asks to
+// have explained must read a merged near-duplicate host as one machine too —
 // and, unlike synthesis, must never refuse to answer while a merge decision is pending.
 
 let cases: CaseStore;
@@ -43,14 +43,8 @@ beforeEach(async () => {
   prompts = [];
   analyze = vi.fn(async (req: { userPrompt?: string }) => {
     prompts.push(req.userPrompt ?? "");
-    // One lenient payload covers both askSchema and explainEventSchema at once (each z.object()
-    // ignores fields it does not declare), so the same mock serves ask()/explainEvent() without
-    // branching on which call is under test.
     return {
       rawText: JSON.stringify({
-        answer: "",
-        status: "unknown",
-        pointer: "",
         relatedEventIds: [],
         summary: "",
         whyItMatters: "",
@@ -78,14 +72,6 @@ function buildPipeline(): AnalysisPipeline {
 }
 
 describe("a merged host reaches every analyst-query generator as one machine", () => {
-  it("ask renders only the canonical spelling", async () => {
-    await assetOverridesStore.mergeAsset("c1", "host:win11", "host:win11.windomain.local");
-    await buildPipeline().ask("c1", "What happened on the affected endpoint?");
-    expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain("- win11.windomain.local (host)");
-    expect(prompts[0]).not.toContain("- WIN11 (host)");
-  });
-
   it("explainEvent renders only the canonical spelling", async () => {
     await assetOverridesStore.mergeAsset("c1", "host:win11", "host:win11.windomain.local");
     await buildPipeline().explainEvent("c1", "a");
@@ -106,7 +92,7 @@ describe("a merged host reaches every analyst-query generator as one machine", (
       synthesisProvider: { name: "fake", analyze } as never,
       imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
     });
-    await expect(pipeline.ask("c1", "What happened on the affected endpoint?")).resolves.toBeDefined();
+    await expect(pipeline.explainEvent("c1", "a")).resolves.toBeDefined();
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toContain("- win11 (host)");
     expect(prompts[0]).toContain("- win11.windomain.local (host)");
@@ -114,12 +100,12 @@ describe("a merged host reaches every analyst-query generator as one machine", (
 
   // The safety property the brief calls out explicitly: unlike synthesis's resolveHostsOrThrow,
   // neither analyst-query call site may ever throw HostMergeDecisionRequired — an analyst asking a
-  // question about a case with an unresolved near-duplicate must still get an answer. Wiring
+  // explanation on a case with an unresolved near-duplicate must still get an answer. Wiring
   // hostDuplicateDismissalStore (the field that enables synthesis's gate) must not change that,
   // because these call sites never read it.
-  it("ask still answers with an UNRESOLVED near-duplicate pair and no merge decision", async () => {
+  it("explainEvent still answers with an UNRESOLVED near-duplicate pair and no merge decision", async () => {
     // Two distinct spellings, no mergeAsset call — a pending near-duplicate synthesis would gate on.
-    await expect(buildPipeline().ask("c1", "What happened here?")).resolves.toBeDefined();
+    await expect(buildPipeline().explainEvent("c1", "a")).resolves.toBeDefined();
     expect(prompts).toHaveLength(1);
   });
 });
