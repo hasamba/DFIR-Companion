@@ -75,9 +75,26 @@
   // reads: they are debounced, one read is in flight at a time, and notices that arrive during it
   // are folded into ONE more read afterwards.
   const STATE_NOTICE_DEBOUNCE_MS = 250;
+  // A read that has not answered by now counts as failed, so one stalled request cannot block the
+  // notices behind it. A failed read is retried with backoff (the notice stays owed until a read
+  // lands); after this many failures in a row the analyst is told, and the next notice tries again.
+  const STATE_READ_TIMEOUT_MS = 20000;
+  const STATE_READ_MAX_ATTEMPTS = 5;
   let noticeTimer = null;
-  let stateReadInFlight = false;
-  let stateReadPending = false;
+  // Refresh bookkeeping belongs to ONE socket session: closing or replacing the socket retires it
+  // (retireRefresh), so a request left over from an old session can never block or alter the next.
+  function newRefresh() {
+    return {
+      dead: false,
+      inFlight: false,
+      pending: false,
+      attempts: 0,
+      abort: null,
+      timeoutTimer: null,
+      retryTimer: null,
+    };
+  }
+  let refresh = newRefresh();
   let noticeSeen = 0; // highest notice version heard on this socket
   let noticeApplied = 0; // highest notice version a state read has already covered
 
@@ -100,7 +117,7 @@
     reconnectTimer = stableTimer = connectTimer = catchUpTimer = null;
     clearTimeout(noticeTimer);
     noticeTimer = null;
-    stateReadPending = false;
+    retireRefresh();
     // A drop, a wake, a case switch and a cancel all come through here. A catch-up already running
     // is abandoned too: its queued requests would otherwise reach the wire after a case switch and
     // paint the old case into panels that do not check which case is on screen, and the next
@@ -161,8 +178,8 @@
 
   // The one place the page reads the case state for the live socket: catch-up and every state-changed
   // notice go through it. Null when the read failed or the server answered with an error.
-  function fetchCaseState(caseId) {
-    return fetch(`/cases/${encodeURIComponent(caseId)}/state`)
+  function fetchCaseState(caseId, signal) {
+    return fetch(`/cases/${encodeURIComponent(caseId)}/state`, signal ? { signal } : undefined)
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null);
   }
@@ -175,6 +192,7 @@
   // read) are ignored; the rest wait out the debounce and then share one read.
   function onStateNotice(sock, caseId, msg) {
     if (msg.caseId !== undefined && msg.caseId !== caseId) return;
+    const r = refresh;
     const version = noticeVersionOf(msg);
     if (version !== null) {
       if (version <= noticeApplied) return;
@@ -183,38 +201,81 @@
     if (noticeTimer) return;
     noticeTimer = setTimeout(() => {
       noticeTimer = null;
-      readStateForNotice(sock, caseId);
+      readStateForNotice(sock, caseId, r);
     }, STATE_NOTICE_DEBOUNCE_MS);
   }
 
-  function readStateForNotice(sock, caseId) {
-    if (!stillCurrent(sock, caseId)) return;
-    if (stateReadInFlight) {
-      stateReadPending = true; // one more read once this one ends, however many notices arrive
+  function retireRefresh() {
+    const r = refresh;
+    r.dead = true;
+    clearTimeout(r.timeoutTimer);
+    clearTimeout(r.retryTimer);
+    if (r.abort) {
+      try {
+        r.abort.abort();
+      } catch {}
+    }
+    refresh = newRefresh();
+  }
+
+  function readStateForNotice(sock, caseId, r) {
+    if (r.dead || !stillCurrent(sock, caseId)) return;
+    clearTimeout(r.retryTimer); // a fresh notice supersedes a waiting retry
+    r.retryTimer = null;
+    if (r.inFlight) {
+      r.pending = true; // one more read once this one ends, however many notices arrive
       return;
     }
-    stateReadInFlight = true;
+    r.inFlight = true;
     const covers = noticeSeen;
     const pushesAtStart = statePushes;
-    fetchCaseState(caseId)
-      .then((state) => {
-        if (!state || !stillCurrent(sock, caseId)) return;
-        if (state.caseId !== undefined && state.caseId !== caseId) return; // another case's reply
-        if (pushesAtStart !== statePushes) return; // a newer full push landed while this was read
+    const ctl = typeof AbortController === "function" ? new AbortController() : null;
+    r.abort = ctl;
+    let settled = false;
+    const settle = (state, failed) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(r.timeoutTimer);
+      r.timeoutTimer = null;
+      r.abort = null;
+      if (r.dead) return; // the session this read belonged to is gone; it changes nothing now
+      r.inFlight = false;
+      if (failed) return onStateReadFailed(sock, caseId, r);
+      r.attempts = 0;
+      if (state && stillCurrent(sock, caseId) && !(state.caseId !== undefined && state.caseId !== caseId) &&
+          pushesAtStart === statePushes) {
         if (covers > noticeApplied) noticeApplied = covers;
         statePushes++;
         liveOnMessage({ type: "state", state });
-      })
-      .catch(() => {})
-      .then(() => {
-        stateReadInFlight = false;
-        if (stateReadPending) {
-          stateReadPending = false;
-          // The socket and case now live, not the ones this read started with (a switch may have
-          // happened); a pending read for a retired socket is dropped by stillCurrent.
-          readStateForNotice(ws, liveCaseId);
-        }
-      });
+      }
+      if (r.pending) {
+        r.pending = false;
+        readStateForNotice(ws, liveCaseId, r);
+      }
+    };
+    r.timeoutTimer = setTimeout(() => {
+      if (ctl) ctl.abort();
+      settle(null, true);
+    }, STATE_READ_TIMEOUT_MS);
+    fetchCaseState(caseId, ctl ? ctl.signal : undefined)
+      .then((state) => settle(state, state === null))
+      .catch(() => settle(null, true));
+  }
+
+  // The notice stays owed until a read covers it: retry with backoff while this session lasts.
+  function onStateReadFailed(sock, caseId, r) {
+    r.attempts++;
+    if (r.attempts >= STATE_READ_MAX_ATTEMPTS) {
+      setConnStatus("live updates unavailable — the case state could not be refreshed");
+      r.pending = false;
+      return; // the next notice (or a reconnect's catch-up) tries again
+    }
+    const delay = Math.min(RECONNECT_BASE_MS * 2 ** (r.attempts - 1), RECONNECT_MAX_MS);
+    r.retryTimer = setTimeout(() => {
+      r.retryTimer = null;
+      r.pending = false;
+      readStateForNotice(sock, caseId, r);
+    }, delay);
   }
 
   // What the page missed while the socket was down. AI state and jobs are cheap reads; the case
@@ -354,7 +415,7 @@
     ws = sock;
     // Notice numbers count per server process, so a new socket (maybe a restarted server) starts over.
     noticeSeen = noticeApplied = 0;
-    stateReadPending = false;
+    retireRefresh();
     connectTimer = setTimeout(() => {
       if (sock !== ws || sock.readyState !== WebSocket.CONNECTING) return;
       detach(sock);

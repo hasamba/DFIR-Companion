@@ -37,6 +37,7 @@ interface LiveApi {
 interface Pending {
   url: string;
   resolve: (body: unknown) => void;
+  fail: (status: number) => void;
 }
 
 const DEBOUNCE_MS = 250;
@@ -58,6 +59,7 @@ function harness() {
         requests.push({
           url,
           resolve: (body) => res({ ok: true, json: () => Promise.resolve(body) }),
+          fail: (status) => res({ ok: false, status, json: () => Promise.reject(new Error("no")) }),
         });
       }),
     setTimeout: (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms),
@@ -163,5 +165,72 @@ describe("a state-changed notice (#2615)", () => {
     h.sock.push({ type: "state", state: { caseId: "INC-1", v: "legacy" } });
     expect(h.messages).toEqual([{ type: "state", state: { caseId: "INC-1", v: "legacy" } }]);
     expect(h.requests).toHaveLength(0);
+  });
+
+  it("retries a failed read with backoff until the notice is covered", async () => {
+    const h = harness();
+    h.sock.push(notice(1));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    h.requests[0].fail(500);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.messages).toEqual([]);
+    expect(stateReads(h.requests)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1000); // first backoff step
+    expect(stateReads(h.requests)).toHaveLength(2);
+    h.requests[1].resolve({ caseId: "INC-1", v: "recovered" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.messages.map((m) => m.state?.v)).toEqual(["recovered"]);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(stateReads(h.requests)).toHaveLength(2); // covered: no more retries
+  });
+
+  it("gives up after bounded retries but a later notice still reads", async () => {
+    const h = harness();
+    h.sock.push(notice(1));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    for (let i = 0; i < 5; i++) {
+      h.requests[i].fail(500);
+      await vi.advanceTimersByTimeAsync(40000);
+    }
+    expect(stateReads(h.requests)).toHaveLength(5);
+    h.sock.push(notice(2));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(stateReads(h.requests)).toHaveLength(6);
+  });
+
+  it("a read left pending across a socket replacement does not block the new session", async () => {
+    const h = harness();
+    h.sock.push(notice(1));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(stateReads(h.requests)).toHaveLength(1);
+    h.api.openCaseSocket("INC-1", (m) => h.messages.push(m));
+    const sock2 = FakeSocket.made[1];
+    sock2.open();
+    sock2.push(notice(1));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(stateReads(h.requests)).toHaveLength(2);
+    h.requests[1].resolve({ caseId: "INC-1", v: "new" });
+    await vi.advanceTimersByTimeAsync(0);
+    h.requests[0].resolve({ caseId: "INC-1", v: "old" }); // the retired read finishing late
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.messages.map((m) => m.state?.v)).toEqual(["new"]);
+    sock2.push(notice(2)); // the old completion must not have left in-flight state behind
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(stateReads(h.requests)).toHaveLength(3);
+  });
+
+  it("times out a read that never settles and a later notice still refreshes", async () => {
+    const h = harness();
+    h.sock.push(notice(1));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(20000); // timeout: counted as a failure, retry follows
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(stateReads(h.requests)).toHaveLength(2);
+    h.requests[1].resolve({ caseId: "INC-1", v: "after-timeout" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.messages.map((m) => m.state?.v)).toEqual(["after-timeout"]);
+    h.requests[0].resolve({ caseId: "INC-1", v: "very-late" }); // the timed-out read answering
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.messages).toHaveLength(1);
   });
 });
