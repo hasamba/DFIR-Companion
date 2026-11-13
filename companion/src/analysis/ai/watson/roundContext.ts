@@ -25,7 +25,7 @@ import type { WatsonChatStore } from "./chatStore.js";
 import { WATSON_PASTE_MAX_BYTES } from "./pasteSearch.js";
 import { WATSON_CASE_CONTEXT_PROMPT_MAX } from "./promptBuilder.js";
 import { ensureStandardQuestions } from "./standardQuestions.js";
-import type { WatsonPaste } from "./types.js";
+import type { WatsonCoverage, WatsonPaste } from "./types.js";
 
 // What a Watson round needs besides the AI-call seam, and the read-only helpers that build its
 // prompt inputs. Watson reads the forensic timeline only — never the super-timeline (spec, §7).
@@ -142,17 +142,47 @@ export async function mainLanguages(
 
 const MAX_FINDINGS = 150;
 
-/** The case block of Watson's prompt, and how much of the in-scope timeline it carries. */
+/** The case block of Watson's prompt, and how much of it was carried whole. */
 export interface WatsonCaseContext {
   text: string;
   usedEvents: number;
   eventCount: number;
+  /** The analyst-decision section was cut to its share of the budget. */
+  decisionsTrimmed: boolean;
+  /** The synthesis/graph/findings head was cut so the timeline keeps room. */
+  headTrimmed: boolean;
+}
+
+/** The decision section may take at most this share of the case-context budget. */
+export const WATSON_DECISION_SHARE = 0.4;
+/** Characters always left for the timeline rows after the head. */
+const TIMELINE_RESERVE = 4000;
+const trimNote = (what: string): string => `\n(${what} trimmed to fit the prompt)\n\n`;
+
+// Cut at a line boundary so no half-line survives, and say so in the text the model reads.
+function clipTo(text: string, max: number, what: string): { text: string; trimmed: boolean } {
+  if (text.length <= max) return { text, trimmed: false };
+  const note = trimNote(what);
+  const cut = text.slice(0, Math.max(0, max - note.length));
+  return { text: cut.slice(0, Math.max(cut.lastIndexOf("\n"), 0)) + note, trimmed: true };
+}
+
+/** What the turn stores so the panel can disclose a trim: null when nothing was trimmed. */
+export function coverageOf(cc: WatsonCaseContext): WatsonCoverage | undefined {
+  if (cc.usedEvents >= cc.eventCount && !cc.decisionsTrimmed && !cc.headTrimmed) return undefined;
+  return {
+    usedEvents: cc.usedEvents,
+    eventCount: cc.eventCount,
+    ...(cc.decisionsTrimmed ? { decisionsTrimmed: true } : {}),
+    ...(cc.headTrimmed ? { headTrimmed: true } : {}),
+  };
 }
 
 /**
  * The case block of Watson's prompt — what Ask carried: synthesis context, the evidence-chain graph,
  * path, findings and the analyst's own decisions — then forensic-timeline rows to fit the budget.
- * The chat is Watson's own, so no Q&A history block.
+ * The chat is Watson's own, so no Q&A history block. The whole block never exceeds
+ * WATSON_CASE_CONTEXT_PROMPT_MAX, so the prompt builder's own clip never cuts anything.
  */
 export async function buildWatsonCaseContext(
   ctx: WatsonRoundContext,
@@ -161,7 +191,7 @@ export async function buildWatsonCaseContext(
 ): Promise<WatsonCaseContext> {
   const { scoped } = await loadScopedEvents(ctx, caseId, state);
   const aliasIndex = await loadCtxAliasIndex(ctx, caseId);
-  const head =
+  const rawHead =
     buildSynthesisContext(state, scoped, await ctx.getKevCatalog(), aliasIndex) +
     buildGraphContext({ ...state, forensicTimeline: scoped }, { maxEdges: graphMaxEdges() }) +
     `ATTACKER PATH: ${state.attackerPath || "(not reconstructed)"}\n\n` +
@@ -170,10 +200,23 @@ export async function buildWatsonCaseContext(
         .slice(0, MAX_FINDINGS)
         .map((f) => `[${f.id}] [${f.severity}] ${f.title}`)
         .join("\n") || "(none)"
-    }\n\n` +
-    (await analystDecisionBlocks(ctx, caseId, [], stateEventResolver(state)));
-  const timeline = timelineBlock(scoped, WATSON_CASE_CONTEXT_PROMPT_MAX - head.length);
-  return { text: head + timeline.text, usedEvents: timeline.used, eventCount: scoped.length };
+    }\n\n`;
+  const max = WATSON_CASE_CONTEXT_PROMPT_MAX;
+  const decisions = clipTo(
+    await analystDecisionBlocks(ctx, caseId, [], stateEventResolver(state)),
+    Math.floor(max * WATSON_DECISION_SHARE),
+    "analyst decisions",
+  );
+  const head = clipTo(rawHead, max - decisions.text.length - TIMELINE_RESERVE, "case context");
+  const lead = head.text + decisions.text;
+  const timeline = timelineBlock(scoped, max - lead.length);
+  return {
+    text: lead + timeline.text,
+    usedEvents: timeline.used,
+    eventCount: scoped.length,
+    decisionsTrimmed: decisions.trimmed,
+    headTrimmed: head.trimmed,
+  };
 }
 
 function timelineBlock(scoped: ForensicEvent[], budget: number): { text: string; used: number } {

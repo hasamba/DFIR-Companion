@@ -16,6 +16,7 @@ import { emptyState, type ForensicEvent } from "../../../src/analysis/stateTypes
 import { TagsStore } from "../../../src/analysis/tags.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
 import { graphMaxEdges } from "../../../src/analysis/ai/analystContext.js";
+import { WATSON_CASE_CONTEXT_PROMPT_MAX } from "../../../src/analysis/ai/watson/promptBuilder.js";
 import { runWatsonRound, type WatsonRoundContext } from "../../../src/analysis/ai/watson/round.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../../src/providers/provider.js";
 import { CaseStore } from "../../../src/storage/caseStore.js";
@@ -174,6 +175,31 @@ describe("Watson reads the case context Ask did", () => {
     const small = await make([ev("e1")]);
     const chat2 = await runWatsonRound(small.ctx, CASE, { text: "Summarise" });
     expect(chat2.turns.find((t) => t.role === "watson")?.coverage).toBeUndefined();
+  });
+});
+
+describe("Watson bounds the analyst-decision context", () => {
+  it("keeps the case context inside its cap, keeps timeline rows, and discloses the trim on the turn", async () => {
+    const { ctx, provider, stores } = await make([ev("e1"), ev("e2"), ev("e3")]);
+    await stores.aiControlStore.save(CASE, { enabled: true, lastAnalyzedSeq: 0, includeNotebook: true });
+    for (let i = 0; i < 400; i++) {
+      await stores.notebookStore.add(CASE, { text: `note ${i} ${"lorem ipsum ".repeat(60)}`, type: "note" });
+      await stores.commentsStore.add(CASE, {
+        targetType: "event",
+        targetId: "e1",
+        author: "bob",
+        text: `comment ${i} ${"dolor sit ".repeat(60)}`,
+      });
+    }
+    const chat = await runWatsonRound(ctx, CASE, { text: "Summarise" });
+    const prompt = provider.sent[0].userPrompt;
+    const body = prompt.slice(prompt.indexOf("<<<CONTEXT>>>") + 13, prompt.indexOf("<<<END CONTEXT>>>"));
+    expect(body.length).toBeLessThanOrEqual(WATSON_CASE_CONTEXT_PROMPT_MAX + 2);
+    expect(body).toContain("analyst decisions trimmed to fit the prompt");
+    expect(body).toContain("[e1]");
+    expect(body).toContain("FORENSIC TIMELINE");
+    const turn = chat.turns.find((t) => t.role === "watson");
+    expect(turn?.coverage).toMatchObject({ decisionsTrimmed: true, usedEvents: 3, eventCount: 3 });
   });
 });
 

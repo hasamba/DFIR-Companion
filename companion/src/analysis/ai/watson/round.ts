@@ -12,6 +12,7 @@ import { buildWatsonUserPrompt, WATSON_CASE_EVENTS_MAX, type WatsonPromptInput }
 import { sanitizeWatsonReply, watsonReplySchema, type WatsonReply } from "./replySchema.js";
 import {
   buildWatsonCaseContext,
+  coverageOf,
   limitReached,
   mainLanguages,
   NO_SPEND,
@@ -163,7 +164,7 @@ async function converse(
     const state = await ctx.stateStore.load(caseId);
     questions = state.keyQuestions;
     const cc = await buildWatsonCaseContext(ctx, caseId, state);
-    if (cc.usedEvents < cc.eventCount) cover = { usedEvents: cc.usedEvents, eventCount: cc.eventCount };
+    cover = coverageOf(cc);
     base = {
       state,
       // The analyst's message is the ANALYST block; it is not repeated as recent chat.

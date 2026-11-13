@@ -12,6 +12,10 @@ export type WatsonRequest =
 export interface WatsonCoverage {
   usedEvents: number;
   eventCount: number;
+  /** The analyst's decisions (hypotheses, host scope, marks, notebook) were cut to fit. */
+  decisionsTrimmed?: boolean;
+  /** The synthesis context, graph and findings were cut to fit. */
+  headTrimmed?: boolean;
 }
 
 export interface WatsonTurn {

@@ -31,7 +31,14 @@ const turnSchema = z.object({
   pasteId: z.string().optional(),
   error: z.boolean().optional(),
   costUSD: z.number().optional(),
-  coverage: z.object({ usedEvents: z.number(), eventCount: z.number() }).optional(),
+  coverage: z
+    .object({
+      usedEvents: z.number(),
+      eventCount: z.number(),
+      decisionsTrimmed: z.boolean().optional(),
+      headTrimmed: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 const question = z.custom<InvestigationQuestion>(
