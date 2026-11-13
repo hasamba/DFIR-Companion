@@ -8,7 +8,7 @@ When many clients load whole cases at the same time, the server serves a few of 
 
 ## Watson
 
-The Watson side panel and section hold the per-case investigation chat and the Key Questions board. See [Watson Case Chat](watson.md).
+Watson is not a section. It is a panel pinned to the right of every section and view, with three states: rail, open and full screen. It holds the per-case investigation chat and, in full screen, the Key Questions board. See [Watson Case Chat](watson.md).
 
 ---
 

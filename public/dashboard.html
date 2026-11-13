@@ -572,7 +572,7 @@
     </span>
     <span class="tb-sep" aria-hidden="true"></span>
     <span class="tb-group" data-tb-group="AI">
-    <button id="watsonToggle" type="button" aria-label="Watson" data-act="toggleWatsonPanel" data-tip="Watson: show or hide the investigation chat panel. Watson answers questions about this case, proposes edits to the Key Questions and asks for the queries or files it needs.">Watson</button>
+    <button id="watsonToggle" type="button" aria-label="Watson" data-act="toggleWatsonPanel" data-tip="Watson: open the investigation chat panel, or collapse it to the rail. Watson answers questions about this case, proposes edits to the Key Questions and asks for the queries or files it needs.">Watson</button>
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
     <!-- Missed evidence review (#1540) — OPENS the panel, never starts a review: the press that
          spends money stays inside the panel, next to the row counts and the cost estimate. The
@@ -4184,7 +4184,6 @@
         </div>
         <div id="customerExposure">—</div>
       </div></section>
-    <section id="sec-watson" data-safe-style="grid-column: 1 / -1"><h2>Watson<span class="ev-sub">the case investigation chat, with the Key Questions it tracks</span></h2><div id="watsonSection"></div></section>
     <section id="sec-questions" data-safe-style="grid-column: 1 / -1"><h2>Key Investigative Questions<span class="ev-sub">open questions the AI is tracking — answered automatically once the evidence supports them</span></h2><div id="keyQuestions">—</div></section>
     <section id="sec-uncertainties" data-safe-style="grid-column: 1 / -1"><h2>Uncertainty Ledger<span class="ev-sub">what the analysis KNOWS vs INFERRED vs SPECULATED — treat anything below Confirmed as provisional, not fact</span></h2><div id="uncertainties">—</div></section>
     <section id="sec-huntprofile" data-safe-style="grid-column: 1 / -1"><h2>Hunting Profile<span class="ev-sub">What has been hunted in this case and whether it found anything</span></h2><div id="huntProfile">—</div></section>
@@ -4884,7 +4883,7 @@
       { id: "sec-geomap",       label: "GeoIP Map" },
       { id: "sec-iocs",         label: "IOCs" }, { id: "sec-related-cases", label: "Related Cases", defaultHidden: true },
       { id: "sec-exposure",     label: "Customer Exposure" },
-      { id: "sec-watson", label: "Watson" }, { id: "sec-questions",    label: "Key Investigative Questions" },
+      { id: "sec-questions",    label: "Key Investigative Questions" },
       { id: "sec-uncertainties", label: "Uncertainty Ledger" },
       { id: "sec-huntprofile",  label: "Hunting Profile" },
       { id: "sec-threads",      label: "Investigation Threads" },

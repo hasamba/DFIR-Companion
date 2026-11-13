@@ -8,9 +8,13 @@ Watson follows the case's AI switch. With AI off for the case, Watson does not a
 
 ## Where Watson lives
 
-A side panel sits on the right of every dashboard section. It starts as a thin rail. Click the rail to open the panel, and click **Collapse** to make it a rail again. The dashboard remembers your choice.
+Watson is always pinned to the right of the dashboard, on every section and every view. It is not a dashboard section, so no view hides it. It has three states:
 
-The open panel has an **Expand** button. **Expand** scrolls to the **Watson** section of the dashboard. That section holds the same chat beside a **Key Questions** board.
+- **Rail** — a thin strip with the Watson icon, a dot when Watson has written since you last looked, and the number of proposals waiting for you. Click it, or press Enter or Space on it, to open the panel. The rail is the default.
+- **Open** — a 360 px panel with the chat. The dashboard narrows to the space that is left. **Collapse** makes it a rail again.
+- **Full screen** — choose **Full screen** in the open panel. Watson covers the whole dashboard below the top toolbar, with the **Key Questions** board on the left and the chat on the right. The page behind does not scroll. Press **Esc** or choose **Exit full screen** to go back to the open panel.
+
+The **Watson** button in the toolbar switches between open and rail. The dashboard remembers the state in this browser.
 
 When the server has no AI provider for Watson, the panel does not appear.
 

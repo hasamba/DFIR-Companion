@@ -280,8 +280,8 @@ describe("every moved function still resolves at its call sites", () => {
   // highSeverityEventIds, iocLinkedToHighEvent and iocPinnedSignal, "Signal only" keeping an IOC extracted from a
   // High/Critical event (#2543).
   // The number is a vacuity guard, not a budget.
-  it("moved 146 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(146);
+  it("moved 145 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(145);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

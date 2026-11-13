@@ -8,7 +8,8 @@ import { DASHBOARD_SECTION_IDS } from "../../src/analysis/dashboardViews.js";
 interface Api {
   initWatson(): void;
   renderWatson(chat: unknown): void;
-  toggleWatsonCollapse(): void;
+  setWatsonPanelState(state: string): void;
+  toggleWatsonPanel(): void;
   loadWatson(caseId: string): Promise<void>;
   watsonAct(el: unknown): unknown;
 }
@@ -17,6 +18,7 @@ type StateListener = (st: unknown) => void;
 
 class FakeEl {
   innerHTML = "";
+  style = { top: "" };
   scrollTop = 0;
   scrollHeight = 0;
   private cls = new Set<string>();
@@ -31,6 +33,8 @@ class FakeEl {
   };
   setAttribute() {}
 }
+
+const KEY = "dfir.watson.panel";
 
 function setup(opts: { throwingStorage?: boolean; fetch?: unknown; stored?: Record<string, string> } = {}) {
   const log = new FakeEl();
@@ -48,12 +52,16 @@ function setup(opts: { throwingStorage?: boolean; fetch?: unknown; stored?: Reco
     dot: [dot],
   };
   const caseInput = { value: "c1" };
+  const keyListeners: ((e: { key: string; target?: unknown }) => void)[] = [];
+  const written: Record<string, string> = { ...opts.stored };
   const document = {
     body,
     readyState: "complete",
     getElementById: (id: string) => (id === "watsonPanel" ? panel : id === "caseId" ? caseInput : null),
     querySelectorAll: (sel: string) => byW[/data-w="(\w+)"/.exec(sel)?.[1] ?? ""] ?? [],
-    addEventListener: () => {},
+    addEventListener: (t: string, cb: (e: { key: string }) => void) => {
+      if (t === "keydown") keyListeners.push(cb);
+    },
   };
   const storage = opts.throwingStorage
     ? {
@@ -65,8 +73,10 @@ function setup(opts: { throwingStorage?: boolean; fetch?: unknown; stored?: Reco
         },
       }
     : {
-        getItem: (k: string) => opts.stored?.[k] ?? null,
-        setItem: () => {},
+        getItem: (k: string) => written[k] ?? null,
+        setItem: (k: string, v: string) => {
+          written[k] = v;
+        },
       };
   const stateListeners: StateListener[] = [];
   const api = loadDashboardModule<Api>(
@@ -82,7 +92,8 @@ function setup(opts: { throwingStorage?: boolean; fetch?: unknown; stored?: Reco
     },
   );
   const fireState = (st: unknown) => stateListeners.forEach((cb) => cb(st));
-  return { api, log, board, foot, count, dot, panel, body, caseInput, fireState };
+  const press = (key: string) => keyListeners.forEach((cb) => cb({ key, target: {} }));
+  return { api, log, board, foot, count, dot, panel, body, caseInput, fireState, press, written };
 }
 
 const chatWith = (turns: unknown[], extra: Record<string, unknown> = {}) => ({
@@ -137,7 +148,7 @@ describe("renderWatson escaping", () => {
   });
 });
 
-describe("collapse to a rail", () => {
+describe("rail, open and full", () => {
   const proposal = (id: string, status: string) => ({
     id,
     turnId: "t1",
@@ -146,49 +157,138 @@ describe("collapse to a rail", () => {
     status,
     after: { id: "q1", question: "Q?", status: "unknown", answer: "", pointer: "" },
   });
+  const states = (p: FakeEl, b: FakeEl) => ({
+    rail: p.classList.contains("watson-collapsed"),
+    full: p.classList.contains("watson-fullscreen"),
+    bodyRail: b.classList.contains("watson-rail-open"),
+    bodyOpen: b.classList.contains("watson-panel-open"),
+    bodyFull: b.classList.contains("watson-full-open"),
+  });
 
-  it("switches between full and rail and shows the pending count", () => {
-    const { api, panel, body, count } = setup();
+  it("moves between the three states and persists each", () => {
+    const { api, panel, body, written } = setup();
+    api.initWatson();
+    expect(states(panel, body)).toMatchObject({ rail: true, full: false, bodyRail: true });
+    api.setWatsonPanelState("open");
+    expect(states(panel, body)).toMatchObject({ rail: false, full: false, bodyOpen: true, bodyRail: false });
+    expect(written[KEY]).toBe("open");
+    api.setWatsonPanelState("full");
+    expect(states(panel, body)).toMatchObject({ rail: false, full: true, bodyFull: true, bodyOpen: false });
+    expect(written[KEY]).toBe("full");
+    api.setWatsonPanelState("rail");
+    expect(states(panel, body)).toMatchObject({ rail: true, full: false, bodyRail: true, bodyFull: false });
+    expect(written[KEY]).toBe("rail");
+    api.setWatsonPanelState("bogus");
+    expect(written[KEY]).toBe("rail");
+  });
+
+  it("restores the stored state, and falls back to the rail for an unknown value", () => {
+    const full = setup({ stored: { [KEY]: "full" } });
+    full.api.initWatson();
+    expect(full.panel.classList.contains("watson-fullscreen")).toBe(true);
+    const odd = setup({ stored: { [KEY]: "sideways" } });
+    odd.api.initWatson();
+    expect(odd.panel.classList.contains("watson-collapsed")).toBe(true);
+  });
+
+  it("toggleWatsonPanel flips open and rail, and shows the pending count", () => {
+    const { api, panel, count } = setup();
+    api.initWatson();
     api.renderWatson(
       chatWith([], {
         proposals: [proposal("p1", "pending"), proposal("p2", "applied"), proposal("p3", "pending")],
       }),
     );
+    api.toggleWatsonPanel();
     expect(panel.classList.contains("watson-collapsed")).toBe(false);
-    api.toggleWatsonCollapse();
+    api.toggleWatsonPanel();
     expect(panel.classList.contains("watson-collapsed")).toBe(true);
-    expect(body.classList.contains("watson-rail-open")).toBe(true);
     expect(count.innerHTML).toBe("2");
-    api.toggleWatsonCollapse();
-    expect(panel.classList.contains("watson-collapsed")).toBe(false);
-    expect(body.classList.contains("watson-panel-open")).toBe(true);
   });
 
-  it("lights the unread dot only while collapsed", () => {
+  it("Esc leaves full for open, and does nothing in the other states", () => {
+    const { api, panel, press } = setup();
+    api.initWatson();
+    press("Escape");
+    expect(panel.classList.contains("watson-collapsed")).toBe(true);
+    api.setWatsonPanelState("open");
+    press("Escape");
+    expect(panel.classList.contains("watson-collapsed")).toBe(false);
+    api.setWatsonPanelState("full");
+    press("Escape");
+    expect(panel.classList.contains("watson-fullscreen")).toBe(false);
+    expect(panel.classList.contains("watson-collapsed")).toBe(false);
+  });
+
+  it("the header and rail verbs drive the states", () => {
+    const { api, panel } = setup();
+    api.initWatson();
+    const verb = (wVerb: string) => api.watsonAct({ dataset: { wVerb } });
+    verb("open");
+    expect(panel.classList.contains("watson-collapsed")).toBe(false);
+    verb("fullScreen");
+    expect(panel.classList.contains("watson-fullscreen")).toBe(true);
+    verb("exitFullScreen");
+    expect(panel.classList.contains("watson-fullscreen")).toBe(false);
+    verb("collapse");
+    expect(panel.classList.contains("watson-collapsed")).toBe(true);
+  });
+
+  it("lights the unread dot only while on the rail", () => {
     const { api, dot } = setup();
+    api.initWatson();
     api.renderWatson(chatWith([]));
-    api.toggleWatsonCollapse();
     api.renderWatson(chatWith([{ id: "t1", at: "x", role: "watson", text: "hi" }]));
     expect(dot.classList.contains("watson-on")).toBe(true);
-    api.toggleWatsonCollapse();
+    api.setWatsonPanelState("full");
     expect(dot.classList.contains("watson-on")).toBe(false);
   });
 
-  it("a throwing localStorage still lets the toolbar button hide and show the panel", () => {
+  it("a throwing localStorage still switches states, and the default is the rail", () => {
     const { api, panel } = setup({ throwingStorage: true });
-    const w = api as unknown as { toggleWatsonPanel(): void };
     api.initWatson();
-    w.toggleWatsonPanel();
-    expect(panel.classList.contains("watson-hidden")).toBe(true);
-    w.toggleWatsonPanel();
-    expect(panel.classList.contains("watson-hidden")).toBe(false);
+    expect(panel.classList.contains("watson-collapsed")).toBe(true);
+    expect(() => api.setWatsonPanelState("full")).not.toThrow();
+    expect(panel.classList.contains("watson-fullscreen")).toBe(true);
+    api.toggleWatsonPanel();
+    expect(panel.classList.contains("watson-fullscreen")).toBe(false);
   });
 
-  it("a throwing localStorage does not break the toggle", () => {
-    const { api, panel } = setup({ throwingStorage: true });
-    api.renderWatson(chatWith([]));
-    expect(() => api.toggleWatsonCollapse()).not.toThrow();
-    expect(panel.classList.contains("watson-collapsed")).toBe(true);
+  it("every state is hidden when the server has no provider", async () => {
+    const { api, panel, body } = setup({
+      fetch: async () => response(200, { ...chatWith([]), providerConfigured: false }),
+    });
+    api.initWatson();
+    await api.loadWatson("c1");
+    for (const st of ["rail", "open", "full"]) {
+      api.setWatsonPanelState(st);
+      expect(panel.classList.contains("watson-hidden")).toBe(true);
+      expect(body.classList.contains("watson-full-open")).toBe(false);
+      expect(body.classList.contains("watson-panel-open")).toBe(false);
+      expect(body.classList.contains("watson-rail-open")).toBe(false);
+    }
+  });
+
+  it("full state shows the board (escaped) beside the chat", () => {
+    const { api, board, fireState } = setup();
+    api.initWatson();
+    api.setWatsonPanelState("full");
+    fireState({
+      keyQuestions: [
+        {
+          id: "q1",
+          question: "<img src=x onerror=1>",
+          status: "partial",
+          answer: "<b>a</b>",
+          pointer: "",
+          synthesisDisagrees: { status: "answered", answer: "<i>x</i>" },
+        },
+      ],
+    });
+    expect(board.innerHTML).toContain("&lt;img src=x onerror=1&gt;");
+    expect(board.innerHTML).not.toContain("<img");
+    expect(board.innerHTML).toContain("Synthesis disagrees");
+    expect(board.innerHTML).toContain("q-status-partial");
   });
 });
 
@@ -215,16 +315,17 @@ describe("rail button, failed sends and paste limits", () => {
   const html = ["dashboard-watson.js", "dashboard-watson-view.js"]
     .map((f) => readFileSync(new URL(`../../../public/js/${f}`, import.meta.url), "utf8"))
     .join("\n");
-  it("the rail is a real button that restores the panel, and aria-expanded is off the aside", () => {
-    expect(html).toMatch(/<button type="button" class="watson-rail"[^>]*data-w-verb="collapse"/);
+  it("the rail is a real button that opens the panel; the header buttons are labelled", () => {
+    expect(html).toMatch(
+      /<button type="button" class="watson-rail"[^>]*data-w-verb="open" aria-expanded="false"/,
+    );
     expect(html).not.toMatch(/role="button"/);
     expect(html).not.toContain('panel.setAttribute("aria-expanded"');
-    expect(html).toMatch(/data-w-verb="collapse" aria-expanded="true"/);
-    const { api, panel } = setup();
-    api.renderWatson(chatWith([]));
-    api.toggleWatsonCollapse();
-    api.watsonAct({ dataset: { wVerb: "collapse" } });
-    expect(panel.classList.contains("watson-collapsed")).toBe(false);
+    expect(html).toMatch(/data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson"/);
+    expect(html).toMatch(/data-w-verb="fullScreen" aria-expanded="false" aria-label="Full screen"/);
+    expect(html).toMatch(/data-w-verb="exitFullScreen" aria-expanded="true" aria-label="Exit full screen"/);
+    expect(html).toContain('data-w="board"');
+    expect(html).toContain('data-w="log"');
   });
 
   it("puts one statement on a line in the log builder", () => {
@@ -256,16 +357,19 @@ describe("rail button, failed sends and paste limits", () => {
     expect(log.innerHTML).toContain("50 MB");
   });
 
-  it("Analyst view has sec-watson where Ask used to be, and no sec-ask anywhere", async () => {
+  it("no built-in view lists sec-watson or sec-ask, and a saved view that lists them loses them", async () => {
     const { BUILT_IN_DASHBOARD_VIEWS, DASHBOARD_SECTION_IDS, normalizeDashboardView } =
       await import("../../src/analysis/dashboardViews.js");
-    const a = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === "analyst")!;
-    expect(a.sections.slice(0, 2)).toEqual(["sec-now", "sec-watson"]);
+    expect(BUILT_IN_DASHBOARD_VIEWS.some((v) => v.sections.includes("sec-watson"))).toBe(false);
     expect(BUILT_IN_DASHBOARD_VIEWS.some((v) => v.sections.includes("sec-ask"))).toBe(false);
     expect(DASHBOARD_SECTION_IDS).not.toContain("sec-ask");
-    // A view saved while Ask existed still loads; the retired section is dropped, not rejected.
-    const saved = normalizeDashboardView({ id: "mine", name: "Mine", sections: ["sec-ask", "sec-watson"] });
-    expect(saved.sections).toEqual(["sec-watson"]);
+    expect(DASHBOARD_SECTION_IDS).not.toContain("sec-watson");
+    const saved = normalizeDashboardView({
+      id: "mine",
+      name: "Mine",
+      sections: ["sec-ask", "sec-watson", "sec-now"],
+    });
+    expect(saved.sections).toEqual(["sec-now"]);
   });
 });
 
@@ -293,7 +397,7 @@ describe("panel default and no provider", () => {
   });
 
   it("remembers an analyst who opened the panel", () => {
-    const { api, panel } = setup({ stored: { "dfir.watsonCollapsed": "0" } });
+    const { api, panel } = setup({ stored: { [KEY]: "open" } });
     api.initWatson();
     expect(panel.classList.contains("watson-collapsed")).toBe(false);
   });
@@ -431,10 +535,11 @@ describe("paste failures say whether the text was stored", () => {
 
 describe("wiring", () => {
   const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-  it("sec-watson is in SECTION_DEFS and DASHBOARD_SECTION_IDS", () => {
-    expect(html).toContain('{ id: "sec-watson", label: "Watson" }');
-    expect(html).toContain('<section id="sec-watson"');
-    expect(DASHBOARD_SECTION_IDS).toContain("sec-watson");
+  it("sec-watson is gone from the markup, SECTION_DEFS and DASHBOARD_SECTION_IDS", () => {
+    expect(html).not.toContain('id="sec-watson"');
+    expect(html).not.toContain("sec-watson");
+    expect(html).not.toContain('id="watsonSection"');
+    expect(DASHBOARD_SECTION_IDS).not.toContain("sec-watson");
   });
   it("loads the view module before the panel module", () => {
     const view = html.indexOf('<script src="/js/dashboard-watson-view.js"></script>');

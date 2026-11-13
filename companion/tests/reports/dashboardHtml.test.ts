@@ -276,7 +276,7 @@ describe("dashboard.html", () => {
     expect(html).not.toContain('id="askInput"');
     expect(html).not.toContain('id="askBtn"');
     expect(html).not.toContain("/ask`");
-    expect(html).toContain('id="sec-watson"');
+    expect(html).not.toContain('id="sec-watson"');
     expect(html).toContain('"/message"');
   });
 

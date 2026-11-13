@@ -1876,21 +1876,19 @@ export const FEATURES: Feature[] = [
       "watsonBoardHtml",
       "watsonEarlierButtonHtml",
       "watsonPanelHtml",
-      "watsonSectionHtml",
       "watsonCaseIsEmpty",
     ],
     private: ["QSTATUS", "btn"],
   },
   {
-    // Watson chat panel and section. initWatson() is called from initDataAct (the inline script has no
+    // Watson chat panel (rail, open, full). initWatson() is called from initDataAct (the inline script has no
     // spare line), so the manifest names no initializer. watsonAct is the one data-act entry.
     file: "dashboard-watson.js",
     publish: [
       "initWatson",
       "renderWatson",
       "toggleWatsonPanel",
-      "toggleWatsonCollapse",
-      "expandWatson",
+      "setWatsonPanelState",
       "loadWatson",
       "watsonAct",
     ],
@@ -1905,7 +1903,7 @@ export const FEATURES: Feature[] = [
       "wNotice",
       "wEmpty",
       "wNoAi",
-      "wHidden",
+      "wState",
       "wBusy",
     ],
   },

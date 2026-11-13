@@ -1,14 +1,15 @@
-// Watson: the per-case investigation chat agent. A side panel on every section (360px, collapsible
-// to a thin rail) plus a full section (sec-watson) with the Key Questions board beside the chat.
+// Watson: the per-case investigation chat agent. One panel pinned to the right of every section and
+// view, in three states: rail (a thin strip), open (360px) and full (the whole content area, with the
+// Key Questions board beside the chat). It is not a dashboard section: no view profile hides it.
 //
 // This file owns the state and the server calls; the markup is built by dashboard-watson-view.js
-// (watsonTurnHtml, watsonBoardHtml, watsonPanelHtml, watsonSectionHtml), which escapes every model, analyst and evidence string. Actions ride on
-// data-act="watsonAct" + data-w-verb; the CSP bans inline handlers. dashboard.html carries only two
-// empty containers. Every request is sent to the case it was started on, and its answer is dropped
+// (watsonTurnHtml, watsonBoardHtml, watsonPanelHtml), which escapes every model, analyst and evidence string. Actions ride on
+// data-act="watsonAct" + data-w-verb; the CSP bans inline handlers. dashboard.html carries one
+// empty container. Every request is sent to the case it was started on, and its answer is dropped
 // when the analyst has since opened another case.
 (function () {
-  const COLLAPSE_KEY = "dfir.watsonCollapsed";
-  const HIDDEN_KEY = "dfir.watsonHidden";
+  const PANEL_KEY = "dfir.watson.panel";
+  const STATES = ["rail", "open", "full"];
   const PASTE_LIMIT_BYTES = 50 * 1024 * 1024;
   const TEXT_EXTS = [".csv", ".log", ".txt", ".json", ".xml", ".tsv"];
   const TEXT_TYPES = ["application/json", "application/xml"];
@@ -24,22 +25,9 @@
   let wNotice = null; // { text } — a warning shown under the log
   let wEmpty = false; // the case has no forensic events and no findings (#2468)
   let wNoAi = false; // the server has no Watson provider: the panel is hidden
-  let wHidden = null; // the analyst's show/hide choice, seeded from storage (a blocked store still toggles)
+  let wState = null; // "rail" | "open" | "full", seeded from storage on first use (a blocked store still switches)
   const wBusy = new Set(); // case ids with a request in flight
   const CHAT_CAP = 400; // the server keeps this many turns in the chat file (WATSON_MAX_TURNS)
-
-  // A stored flag, or null when the analyst never chose (a blocked store reads as never chosen).
-  function readFlag(key) {
-    try {
-      const v = localStorage.getItem(key);
-      return v === "1" ? true : v === "0" ? false : null;
-    } catch {
-      return null;
-    }
-  }
-  function writeFlag(key, on) {
-    try { localStorage.setItem(key, on ? "1" : "0"); } catch { /* a blocked store must not break the toggle */ }
-  }
 
   const currentCase = () => String((document.getElementById("caseId") || {}).value || "").trim();
   const all = (sel) => Array.from(document.querySelectorAll(sel));
@@ -87,7 +75,7 @@
     setHtml('[data-w="foot"]', footHtml());
     const n = pendingCount();
     setHtml('[data-w="count"]', n ? esc(String(n)) : "");
-    const collapsed = isCollapsed();
+    const collapsed = panelState() === "rail";
     if (wChat && !collapsed) wSeen = wChat.turns.length;
     const unread = wChat && collapsed && wChat.turns.length > wSeen;
     all('[data-w="dot"]').forEach((el) => el.classList.toggle("watson-on", !!unread));
@@ -95,47 +83,48 @@
   }
 
   // ── Panel state ────────────────────────────────────────────────────────────────────────
-  function isCollapsed() {
-    const p = document.getElementById("watsonPanel");
-    return !!p && p.classList.contains("watson-collapsed");
+  // Never chosen (or a blocked store): the rail. No provider: hidden, whatever the analyst chose.
+  function panelState() {
+    if (wState === null) {
+      let v = null;
+      try { v = localStorage.getItem(PANEL_KEY); } catch { /* blocked store: the default */ }
+      wState = STATES.includes(v) ? v : "rail";
+    }
+    return wState;
   }
-  // Never chosen: the rail, not the open panel. No provider: hidden, whatever the analyst chose.
-  const chosenCollapsed = () => readFlag(COLLAPSE_KEY) !== false;
-  const chosenHidden = () => {
-    if (wHidden === null) wHidden = readFlag(HIDDEN_KEY) === true;
-    return wHidden;
-  };
-  function applyPanel(hidden, collapsed) {
+  // The full panel covers the content below the top toolbar, wherever that ends today.
+  function fullTop() {
+    const h = typeof document.querySelector === "function" ? document.querySelector("header") : null;
+    return h && h.getBoundingClientRect ? Math.max(0, Math.round(h.getBoundingClientRect().bottom)) + "px" : "";
+  }
+  function applyPanel() {
     const panel = document.getElementById("watsonPanel");
     if (!panel) return;
-    const off = hidden || wNoAi;
-    panel.classList.toggle("watson-collapsed", collapsed);
-    panel.classList.toggle("watson-hidden", off);
+    const s = panelState();
+    panel.classList.toggle("watson-collapsed", s === "rail");
+    panel.classList.toggle("watson-fullscreen", s === "full");
+    panel.classList.toggle("watson-hidden", wNoAi);
+    if (panel.style) panel.style.top = s === "full" ? fullTop() : "";
     const b = document.body.classList;
-    b.toggle("watson-rail-open", !off && collapsed);
-    b.toggle("watson-panel-open", !off && !collapsed);
+    b.toggle("watson-rail-open", !wNoAi && s === "rail");
+    b.toggle("watson-panel-open", !wNoAi && s === "open");
+    b.toggle("watson-full-open", !wNoAi && s === "full");
   }
-  function toggleWatsonCollapse() {
-    const collapsed = !isCollapsed();
-    writeFlag(COLLAPSE_KEY, collapsed);
-    applyPanel(chosenHidden(), collapsed);
+  function setWatsonPanelState(next) {
+    if (!STATES.includes(next)) return;
+    wState = next;
+    try { localStorage.setItem(PANEL_KEY, next); } catch { /* a blocked store must not break the switch */ }
+    applyPanel();
     renderWatson();
+    const panel = document.getElementById("watsonPanel");
+    const to = panel && panel.querySelector ? panel.querySelector(next === "rail" ? ".watson-rail" : ".watson-input") : null;
+    if (to && to.focus) to.focus();
   }
-  function toggleWatsonPanel() {
-    const hidden = !chosenHidden();
-    wHidden = hidden;
-    writeFlag(HIDDEN_KEY, hidden);
-    applyPanel(hidden, isCollapsed());
-  }
-  function expandWatson() {
-    const sec = document.getElementById("sec-watson");
-    if (typeof revealSection === "function") revealSection("sec-watson");
-    if (sec && typeof sec.scrollIntoView === "function") sec.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
+  const toggleWatsonPanel = () => setWatsonPanelState(panelState() === "rail" ? "open" : "rail");
   function setNoAi(on) {
     if (wNoAi === on) return;
     wNoAi = on;
-    applyPanel(chosenHidden(), isCollapsed());
+    applyPanel();
   }
 
   // ── Server calls ───────────────────────────────────────────────────────────────────────
@@ -325,8 +314,10 @@
   const VERBS = {
     send,
     copy: copyQuery,
-    collapse: toggleWatsonCollapse,
-    expand: expandWatson,
+    collapse: () => setWatsonPanelState("rail"),
+    open: () => setWatsonPanelState("open"),
+    fullScreen: () => setWatsonPanelState("full"),
+    exitFullScreen: () => setWatsonPanelState("open"),
     pasteToggle: (el) => el.closest(".watson-root").querySelector(".watson-paste-box").classList.toggle("watson-on"),
     pasteSend: sendPaste,
     attachPick: (el) => el.closest(".watson-root").querySelector(".watson-file").click(),
@@ -348,9 +339,7 @@
   function initWatson() {
     const panel = document.getElementById("watsonPanel");
     if (panel) panel.innerHTML = watsonPanelHtml();
-    const sec = document.getElementById("watsonSection");
-    if (sec) sec.innerHTML = watsonSectionHtml();
-    applyPanel(chosenHidden(), chosenCollapsed());
+    applyPanel();
     if (typeof DfirState !== "undefined" && DfirState.onLastStateChange) {
       DfirState.onLastStateChange((st) => {
         wQuestions = st && Array.isArray(st.keyQuestions) ? st.keyQuestions : [];
@@ -359,6 +348,7 @@
       });
     }
     document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && wState === "full") setWatsonPanelState("open");
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.target.classList && e.target.classList.contains("watson-input")) {
         e.preventDefault();
         send(e.target);
@@ -370,8 +360,7 @@
   window.initWatson = initWatson;
   window.renderWatson = renderWatson;
   window.toggleWatsonPanel = toggleWatsonPanel;
-  window.toggleWatsonCollapse = toggleWatsonCollapse;
-  window.expandWatson = expandWatson;
+  window.setWatsonPanelState = setWatsonPanelState;
   window.loadWatson = loadWatson;
   window.watsonAct = watsonAct;
 })();

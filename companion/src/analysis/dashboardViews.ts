@@ -55,7 +55,6 @@ export interface DashboardView {
 export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-now",
   "sec-mem-nextsteps",
-  "sec-watson",
   "sec-nlquery",
   "sec-exec",
   "sec-playbook",
@@ -145,7 +144,6 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "Dense, deep-investigation layout with the Now cockpit and every core workspace. No severity filter.",
     sections: [
       "sec-now",
-      "sec-watson",
       "sec-nlquery",
       "sec-exec",
       "sec-narrative",
@@ -271,7 +269,6 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     name: "Triage",
     description: "Initial response — timeline + findings, kill chain and phases. Sorted by severity.",
     sections: [
-      "sec-watson",
       "sec-findings",
       "sec-hostranking",
       "sec-timeline",
@@ -325,7 +322,6 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     description:
       "Hypothesis testing — timeline + evidence chain large, full detail, comments/tags/threads enabled.",
     sections: [
-      "sec-watson",
       "sec-deep-pass",
       "sec-sessions",
       "sec-timeline",
@@ -384,7 +380,6 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     description:
       "Planning collections — playbook, next steps, ATT&CK, adversary hints and D3FEND countermeasures to drive hunts.",
     sections: [
-      "sec-watson",
       "sec-hunt-workbench",
       "sec-huntprofile",
       "sec-fleet-collection",

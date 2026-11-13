@@ -1,9 +1,11 @@
-/* Watson: right-side panel (360px, 36px rail when collapsed) and the full section. */
+/* Watson: the panel pinned right: 36px rail, 360px open, or full (the content area below the toolbar). */
 .watson-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 360px; z-index: 40; display: flex; flex-direction: column;
   background: var(--bg-elevated); border-left: 1px solid var(--border-color); box-sizing: border-box; }
 .watson-panel.watson-hidden { display: none; }
 .watson-panel.watson-collapsed { width: 36px; }
-.watson-panel.watson-collapsed .watson-full { display: none; }
+.watson-panel.watson-collapsed .watson-body { display: none; }
+.watson-panel.watson-fullscreen { left: 0; width: auto; border-left: 0; }
+body.watson-full-open { overflow: hidden; }
 .watson-rail { display: none; border: 0; background: none; color: inherit; width: 100%; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; cursor: pointer; height: 100%; }
 .watson-panel.watson-collapsed .watson-rail { display: flex; }
 .watson-rail-icon { width: 24px; height: 24px; border-radius: 50%; background: var(--brand-teal-deep, #0f766e); color: #fff;
@@ -13,6 +15,7 @@
 .watson-count { min-width: 18px; text-align: center; font-size: 11px; font-weight: 700; color: var(--sev-medium); }
 body.watson-panel-open { padding-right: 360px; }
 body.watson-rail-open { padding-right: 36px; }
+body.watson-full-open { padding-right: 0; }
 @media (max-width: 900px) { body.watson-panel-open, body.watson-rail-open { padding-right: 0; } .watson-panel { max-width: 100vw; } }
 
 .watson-root { display: flex; flex-direction: column; min-height: 0; flex: 1; font-size: 13px; }
@@ -38,10 +41,13 @@ body.watson-rail-open { padding-right: 36px; }
 .watson-file { display: none; }
 .watson-foot { padding: 4px 10px 8px; font-size: 11px; color: var(--text-muted); }
 .watson-q { padding: 6px 0; border-bottom: 1px solid var(--border-color); }
-.watson-wide { flex-direction: row; gap: 16px; align-items: stretch; }
-.watson-wide .watson-board { flex: 1; min-width: 0; }
-.watson-wide .watson-chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.watson-wide .watson-log { max-height: 520px; }
+.watson-main { display: flex; flex: 1; min-height: 0; }
+.watson-chat { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.watson-board { display: none; }
+.watson-fullscreen .watson-board { display: block; flex: 0 0 40%; max-width: 560px; overflow-y: auto; padding: 8px 12px; border-right: 1px solid var(--border-color); }
+.watson-only-full { display: none; }
+.watson-fullscreen .watson-only-full { display: inline-block; }
+.watson-fullscreen .watson-only-open { display: none; }
 /* The toolbar button: the icon plus a short label that survives the .icons-only collapse. */
 #watsonToggle::before { content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
   margin-right: 6px; background: no-repeat center / contain; }

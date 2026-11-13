@@ -1,6 +1,6 @@
 // Watson's markup: pure HTML builders for the chat turns, the proposals, the Key Questions board and
-// the two shells (side panel, full section). No state lives here; dashboard-watson.js owns it and
-// calls the five published builders by name. Split out so each file stays under 400 lines.
+// the panel shell. No state lives here; dashboard-watson.js owns it and
+// calls the published builders by name. Split out so each file stays under 400 lines.
 //
 // Every model, analyst and evidence string goes through esc()/escAttr() (dashboard-escape.js).
 // Actions ride on data-act="watsonAct" + data-w-verb; the CSP bans inline handlers.
@@ -165,25 +165,19 @@
     );
   }
 
+  // One shell for all three states; the panel's classes decide what shows (see dashboard-watson.css).
   function panelHtml() {
     return (
-      `<button type="button" class="watson-rail" data-act="watsonAct" data-w-verb="collapse" aria-expanded="false" aria-label="Open Watson">` +
+      `<button type="button" class="watson-rail" data-act="watsonAct" data-w-verb="open" aria-expanded="false" aria-label="Open Watson">` +
       `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span></button>` +
-      `<div class="watson-root watson-full"><div class="watson-head"><strong>Watson</strong>` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="expand">Expand</button>` +
+      `<div class="watson-root watson-body"><div class="watson-head"><strong>Watson</strong>` +
+      `<button type="button" class="watson-mini watson-only-open" data-act="watsonAct" data-w-verb="fullScreen" aria-expanded="false" aria-label="Full screen">Full screen</button>` +
+      `<button type="button" class="watson-mini watson-only-full" data-act="watsonAct" data-w-verb="exitFullScreen" aria-expanded="true" aria-label="Exit full screen">Exit full screen</button>` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson">Collapse</button></div>` +
-      `<div class="watson-log" data-w="log"></div>` +
-      composerHtml() +
-      `<div class="watson-foot" data-w="foot"></div></div>`
-    );
-  }
-
-  function sectionHtml() {
-    return (
-      `<div class="watson-root watson-wide"><div class="watson-board" data-w="board"></div>` +
+      `<div class="watson-main"><div class="watson-board" data-w="board"></div>` +
       `<div class="watson-chat"><div class="watson-log" data-w="log"></div>` +
       composerHtml() +
-      `<div class="watson-foot" data-w="foot"></div></div></div>`
+      `<div class="watson-foot" data-w="foot"></div></div></div></div>`
     );
   }
 
@@ -192,5 +186,4 @@
   window.watsonEarlierButtonHtml = earlierButtonHtml;
   window.watsonCaseIsEmpty = caseIsEmpty;
   window.watsonPanelHtml = panelHtml;
-  window.watsonSectionHtml = sectionHtml;
 })();
