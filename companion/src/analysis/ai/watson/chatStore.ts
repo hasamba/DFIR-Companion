@@ -11,6 +11,7 @@ import {
   type WatsonCaseEvent,
   type WatsonChat,
   type WatsonProposal,
+  type WatsonReactionsPaused,
   type WatsonTurn,
 } from "./types.js";
 
@@ -62,20 +63,41 @@ function lenientList<T>(raw: unknown, schema: z.ZodType<T, z.ZodTypeDef, unknown
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((e): e is string => typeof e === "string") : [];
 
+const PAUSES: readonly string[] = ["presidio", "limit", "errors"];
+
+/**
+ * The reaction bookkeeping of a stored chat. A chat written before `analystEngaged` existed counts as
+ * engaged when it still holds an analyst turn (the flag is then saved with it, so it survives the cap).
+ */
+function reactionFields(
+  o: Record<string, unknown>,
+  turns: readonly WatsonTurn[],
+): Pick<WatsonChat, "reactionsPaused" | "reactionFailures" | "analystEngaged"> {
+  const failures = o.reactionFailures;
+  return {
+    ...(typeof o.reactionsPaused === "string" && PAUSES.includes(o.reactionsPaused)
+      ? { reactionsPaused: o.reactionsPaused as WatsonReactionsPaused }
+      : {}),
+    ...(typeof failures === "number" && Number.isInteger(failures) && failures > 0
+      ? { reactionFailures: failures }
+      : {}),
+    ...(o.analystEngaged === true || turns.some((t) => t.role === "analyst") ? { analystEngaged: true } : {}),
+  };
+}
+
 function parseChat(raw: unknown): WatsonChat {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return emptyWatsonChat();
   const o = raw as Record<string, unknown>;
   const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const turns = lenientList<WatsonTurn>(o.turns, turnSchema);
   return {
-    turns: lenientList<WatsonTurn>(o.turns, turnSchema),
+    turns,
     proposals: lenientList<WatsonProposal>(o.proposals, proposalSchema),
     pastes: lenientList(o.pastes, pasteSchema),
     unreadPasteIds: strings(o.unreadPasteIds),
     memory: typeof o.memory === "string" ? o.memory : "",
     pendingCaseEvents: lenientList<WatsonCaseEvent>(o.pendingCaseEvents, caseEventItem),
-    ...(o.reactionsPaused === "presidio" || o.reactionsPaused === "limit"
-      ? { reactionsPaused: o.reactionsPaused }
-      : {}),
+    ...reactionFields(o, turns),
     costUSD: num(o.costUSD),
     tokens: num(o.tokens),
     calls: num(o.calls),

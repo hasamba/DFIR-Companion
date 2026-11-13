@@ -329,9 +329,9 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     secondOpinionThinking: Boolean(secondOpinionProvider?.supportsThinking),
     onSecondOpinion: (caseId) => hub.broadcastTo(caseId, { type: "second_opinion_changed" }),
     importMetaStore,
-    onImportMeta: (caseId) => {
+    onImportMeta: (caseId, change) => {
       hub.broadcastTo(caseId, { type: "import_meta_changed" });
-      watsonEvents.note(caseId, { kind: "import", text: "An import finished" });
+      watsonEvents.importChanged(caseId, change?.step);
     },
     dropStatusStore,
     onDropStatus: (caseId) => hub.broadcastTo(caseId, { type: "drop_status_changed" }),

@@ -2,8 +2,8 @@ import { PresidioApprovalRequired } from "../../presidio.js";
 import { withCaseEvent, type WatsonCaseEventNote } from "./caseEvents.js";
 import type { WatsonChatStore } from "./chatStore.js";
 import { WatsonCostLimitReached, type WatsonRoundInput } from "./round.js";
-import { newWatsonId } from "./roundProposals.js";
-import type { WatsonChat, WatsonReactionsPaused, WatsonTurn } from "./types.js";
+import { pausedReactions } from "./reactionState.js";
+import type { WatsonChat, WatsonReactionsPaused } from "./types.js";
 
 // Automatic reaction rounds (spec §4.6). Every case event is noted on the chat and (re)starts a
 // per-case quiet window; when it ends with no new event, Watson runs ONE round on everything that
@@ -100,7 +100,7 @@ export class WatsonReactor {
   private async decide(caseId: string, chat: WatsonChat, rearms: number): Promise<Decision> {
     if (this.stopped || this.deps.delayMs() <= 0) return "skip";
     // Watson unused on this case, paused, or nothing left (an analyst message already read it).
-    if (!chat.turns.some((t) => t.role === "analyst")) return "skip";
+    if (!chat.analystEngaged) return "skip";
     if (chat.reactionsPaused || chat.pendingCaseEvents.length === 0) return "skip";
     if (!(await this.deps.isAiEnabled(caseId)) || (await this.deps.isFrozen(caseId))) return "skip";
     // An import with AI on starts a synthesis: react to its result, not before it.
@@ -129,17 +129,8 @@ export class WatsonReactor {
   }
 
   private async pause(caseId: string, why: WatsonReactionsPaused, reason: string): Promise<void> {
-    const turn: WatsonTurn = {
-      id: newWatsonId("wt"),
-      at: new Date(this.deps.now?.() ?? Date.now()).toISOString(),
-      role: "system",
-      text: `Watson paused automatic reactions: ${reason}. Send a message to resume.`,
-    };
-    await this.deps.chatStore.update(caseId, (c) => ({
-      ...c,
-      reactionsPaused: why,
-      turns: [...c.turns, turn],
-    }));
+    const text = `Watson paused automatic reactions: ${reason}. Send a message to resume.`;
+    await this.deps.chatStore.update(caseId, (c) => pausedReactions(c, why, text));
   }
 
   private warn(caseId: string, what: string, err: unknown): void {

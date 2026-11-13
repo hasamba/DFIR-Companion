@@ -9,6 +9,13 @@ import { WatsonCostLimitReached } from "../../../src/analysis/ai/watson/round.js
 import { emptyWatsonChat, type WatsonChat } from "../../../src/analysis/ai/watson/types.js";
 import { PresidioApprovalRequired } from "../../../src/analysis/presidio.js";
 import type { Tag } from "../../../src/analysis/tags.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { WATSON_MAX_TURNS, WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
+import type { WatsonReply } from "../../../src/analysis/ai/watson/replySchema.js";
+import { mergeOutcome } from "../../../src/analysis/ai/watson/roundOutcome.js";
+import type { CaseStore } from "../../../src/storage/caseStore.js";
 import { createWatsonCaseEvents } from "../../../src/composition/watsonCaseEvents.js";
 import { watsonReactDelayMs } from "../../../src/composition/watsonReactorWiring.js";
 
@@ -40,6 +47,17 @@ class MemoryChats {
   }
 }
 
+const okReply = {
+  message: "Noted.",
+  workingOn: "",
+  learned: "",
+  questionUpdates: [],
+  newQuestions: [],
+  request: null,
+  search: null,
+  memory: "",
+} as unknown as WatsonReply;
+
 const analystTurn = { id: "wt-1", at: "2026-11-01T00:00:00Z", role: "analyst" as const, text: "hello" };
 
 interface Setup {
@@ -52,7 +70,7 @@ interface Setup {
 
 function setup(over: Partial<WatsonReactorDeps> = {}, opts: { analyst?: boolean } = {}): Setup {
   const chats = new MemoryChats();
-  if (opts.analyst !== false) chats.chat = { ...chats.chat, turns: [analystTurn] };
+  if (opts.analyst !== false) chats.chat = { ...chats.chat, turns: [analystTurn], analystEngaged: true };
   const rounds: WatsonRoundInput[] = [];
   const busy = { value: false };
   const deps: WatsonReactorDeps = {
@@ -135,6 +153,56 @@ describe("WatsonReactor", () => {
     await advance(s, DELAY);
     expect(s.rounds).toHaveLength(0);
     expect(s.chats.chat.turns).toHaveLength(0);
+  });
+
+  it("a case whose analyst turns rolled off past the turn cap still reacts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-watson-react-cap-"));
+    const real = new WatsonChatStore({ stateDir: () => root } as unknown as CaseStore);
+    await real.update(CASE, (c) => ({ ...c, turns: [analystTurn] }));
+    const watsonTurns = Array.from({ length: WATSON_MAX_TURNS + 5 }, (_, i) => ({
+      ...analystTurn,
+      id: `w${i}`,
+      role: "watson" as const,
+    }));
+    await real.update(CASE, (c) => ({ ...c, turns: [...c.turns, ...watsonTurns] }));
+    const stored = await real.load(CASE);
+    expect(stored.turns.some((t) => t.role === "analyst")).toBe(false);
+    expect(stored.analystEngaged).toBe(true);
+
+    const s = setup({}, { analyst: false });
+    s.chats.chat = stored;
+    s.reactor.note(CASE, { kind: "notebook", text: "Analyst edited the notebook" });
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(1);
+  });
+
+  it("a repeat of the shown event noted mid-round is kept for the next reaction", async () => {
+    const s = setup();
+    let release: () => void = () => undefined;
+    const rounds: WatsonRoundInput[] = [];
+    const reactor = new WatsonReactor({
+      ...s.deps,
+      now: () => Date.now() + rounds.length * 5000,
+      // The real merge: remove each shown event once, by value.
+      runRound: async (_c, input) => {
+        const shown = [...(await s.chats.load()).pendingCaseEvents];
+        rounds.push(input);
+        if (rounds.length === 1) await new Promise<void>((r) => (release = r));
+        return s.chats.update(CASE, (c) =>
+          mergeOutcome(c, { reply: okReply, shownEvents: shown, questions: [] }, { usd: 0, tokens: 0 }, 1),
+        );
+      },
+    });
+    reactor.note(CASE, { kind: "import", text: "An import finished" });
+    await vi.advanceTimersByTimeAsync(DELAY);
+    reactor.note(CASE, { kind: "import", text: "An import finished" }); // import B lands mid-round
+    await s.chats.drain();
+    release();
+    await reactor.settled();
+    expect((await s.chats.drain()).pendingCaseEvents).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(DELAY);
+    await reactor.settled();
+    expect(rounds, "Watson reacts to import B too").toHaveLength(2);
   });
 
   it("AI off, a frozen case, or no pending events → no round", async () => {
@@ -284,6 +352,23 @@ describe("star detection (createWatsonCaseEvents)", () => {
     events.tagsChanged(CASE);
     await advance(s, DELAY);
     expect(s.rounds).toEqual([{ text: "", reaction: true, allowWrites: true }]);
+  });
+
+  it("an import wakes Watson; an import undo or redo is only noted and never wakes it", async () => {
+    const s = setup();
+    const events = createWatsonCaseEvents(s.chats);
+    events.attach(s.reactor);
+    events.importChanged(CASE, "undo");
+    events.importChanged(CASE, "redo");
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(0);
+    expect(s.chats.chat.pendingCaseEvents).toMatchObject([
+      { kind: "other", text: "An import was undone" },
+      { kind: "other", text: "An import undo was redone" },
+    ]);
+    events.importChanged(CASE);
+    await advance(s, DELAY);
+    expect(s.rounds).toEqual([{ text: "", reaction: true, allowWrites: false }]);
   });
 
   it("without a reactor, events are only noted (phase 1)", async () => {

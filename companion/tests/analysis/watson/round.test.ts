@@ -744,6 +744,32 @@ describe("reaction rounds (spec §4.6)", () => {
     );
   });
 
+  it("two failed reactions in a row pause reactions; a success resets the count; a message clears it", async () => {
+    const h = await harness(["not json {{", reply(), "not json {{", "not json {{", reply()]);
+    await h.chatStore.update(CASE, (c) => ({ ...c, pendingCaseEvents: [caseEvent("notebook edited")] }));
+    const one = await runWatsonRound(h.ctx, CASE, { text: "", reaction: true });
+    expect(one.reactionFailures).toBe(1);
+    expect(one.reactionsPaused).toBeUndefined();
+    const ok = await runWatsonRound(h.ctx, CASE, { text: "", reaction: true });
+    expect(ok.reactionFailures).toBeUndefined();
+
+    await h.chatStore.update(CASE, (c) => ({
+      ...c,
+      pendingCaseEvents: [caseEvent("notebook edited again")],
+    }));
+    await runWatsonRound(h.ctx, CASE, { text: "", reaction: true });
+    const two = await runWatsonRound(h.ctx, CASE, { text: "", reaction: true });
+    expect(two.reactionsPaused).toBe("errors");
+    expect(two.turns.at(-1)).toMatchObject({
+      role: "system",
+      text: "Watson paused automatic reactions after repeated errors. Send a message to resume.",
+    });
+    const message = await runWatsonRound(h.ctx, CASE, { text: "carry on" });
+    expect(message.reactionsPaused).toBeUndefined();
+    expect(message.reactionFailures).toBeUndefined();
+    expect(message.analystEngaged).toBe(true);
+  });
+
   it("an analyst message clears a reactions pause; a reaction does not", async () => {
     const h = await harness([reply(), reply()]);
     await h.chatStore.update(CASE, (c) => ({

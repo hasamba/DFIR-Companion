@@ -165,7 +165,7 @@ export interface WatsonCaseEvent {
 }
 
 /** Why automatic reactions stopped; the next analyst message clears it. */
-export type WatsonReactionsPaused = "presidio" | "limit";
+export type WatsonReactionsPaused = "presidio" | "limit" | "errors";
 
 export interface WatsonChat {
   turns: WatsonTurn[];
@@ -177,6 +177,10 @@ export interface WatsonChat {
   pendingCaseEvents: WatsonCaseEvent[];
   /** Set when an automatic reaction hit a Presidio hold or a cost/token limit. */
   reactionsPaused?: WatsonReactionsPaused;
+  /** Reaction rounds that failed in a row (reset by a success or an analyst message). */
+  reactionFailures?: number;
+  /** An analyst has messaged Watson on this case; survives the turn cap (reactions need it). */
+  analystEngaged?: boolean;
   costUSD: number;
   /** Input + output tokens Watson used on this case: the limit for providers that report no cost. */
   tokens: number;

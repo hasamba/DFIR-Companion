@@ -64,8 +64,18 @@ describe("WatsonChatStore", () => {
       { kind: "other", text: "odd", at: "" },
     ]);
     expect(chat.reactionsPaused).toBe("presidio");
-    await writeFile(path, JSON.stringify({ reactionsPaused: "whenever" }));
-    expect((await store.load("c1")).reactionsPaused).toBeUndefined();
+    expect(chat.analystEngaged).toBeUndefined();
+    await writeFile(path, JSON.stringify({ reactionsPaused: "whenever", reactionFailures: -1 }));
+    const junk = await store.load("c1");
+    expect(junk.reactionsPaused).toBeUndefined();
+    expect(junk.reactionFailures).toBeUndefined();
+    // A chat written before the flag counts as engaged when it holds an analyst turn.
+    await writeFile(
+      path,
+      JSON.stringify({ turns: makeTurns(1), reactionsPaused: "errors", reactionFailures: 2 }),
+    );
+    const legacy = await store.load("c1");
+    expect(legacy).toMatchObject({ analystEngaged: true, reactionsPaused: "errors", reactionFailures: 2 });
   });
 
   it("round-trips and caps turns at WATSON_MAX_TURNS", async () => {

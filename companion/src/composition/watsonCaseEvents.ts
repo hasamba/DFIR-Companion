@@ -41,6 +41,11 @@ export interface WatsonCaseEventSink {
 export interface WatsonCaseEvents {
   /** Note an event; with a reactor attached it also (re)starts the quiet window for a reaction. */
   note(caseId: string, event: WatsonCaseEventNote): void;
+  /**
+   * The import banner changed (onImportMeta). A new import wakes Watson; an undo or redo is only
+   * noted, so it never wakes it.
+   */
+  importChanged(caseId: string, step?: "undo" | "redo"): void;
   /** The case's tags changed (onTags): a newly starred event wakes Watson, any other change does not. */
   tagsChanged(caseId: string): void;
   /** Called once by createApp with the shared reactor. */
@@ -104,8 +109,15 @@ export function createWatsonCaseEvents(
     });
   }
 
+  function importChanged(caseId: string, step?: "undo" | "redo"): void {
+    if (!step) return note(caseId, { kind: "import", text: "An import finished" });
+    const text = step === "undo" ? "An import was undone" : "An import undo was redone";
+    noteWatsonCaseEvent(chatStore, caseId, { kind: "other", text });
+  }
+
   return {
     note,
+    importChanged,
     tagsChanged,
     attach: (next) => {
       sink = next;

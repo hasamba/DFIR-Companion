@@ -412,7 +412,8 @@ export interface AppOptions {
   // ago - +N new events" indicator and what-was-added view above the timeline. The unified /import
   // route writes it after the importer completes; onImportMeta pings dashboard clients to re-fetch.
   importMetaStore?: ImportMetaStore;
-  onImportMeta?: (caseId: string) => void;
+  // `step` is set when an import undo/redo cleared the banner (not a new import).
+  onImportMeta?: (caseId: string, change?: { step?: "undo" | "redo" }) => void;
   // Evidence drop folder (auto-import inbox): the last-sweep summary read by GET /cases/:id/drop-status
   // and the live "📥 Drop: N imported, M failed" banner. Presence of dropStatusStore also ARMS the
   // background watcher (so createApp-only unit tests that omit it never start a filesystem poller).

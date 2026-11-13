@@ -18,12 +18,20 @@ import {
   type WatsonRoundContext,
   type WatsonSpend,
 } from "./roundContext.js";
+import {
+  engaged,
+  reactionFailed,
+  reactionTurn,
+  WATSON_REACTION_PROMPT,
+  withReactionResult,
+} from "./reactionState.js";
 import { mergeOutcome, type Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
 export { WatsonAiOff, WatsonCostLimitReached, type WatsonRoundContext } from "./roundContext.js";
+export { WATSON_REACTION_PROMPT } from "./reactionState.js";
 
 // One Watson round: the analyst's message in, Watson's turn and pending proposals out.
 //
@@ -44,28 +52,6 @@ export interface WatsonRoundInput {
    * cost/token limit is thrown like a Presidio hold so the reactor can pause.
    */
   reaction?: boolean;
-}
-
-/** The ANALYST block of a reaction round: the events themselves are in CASE CHANGES. */
-export const WATSON_REACTION_PROMPT =
-  "(No analyst message. The case changed: see CASE CHANGES SINCE LAST ROUND. Say briefly what the change means for the investigation.)";
-
-/** The turn that stands in for the analyst's message on a reaction round. */
-function reactionTurn(chat: WatsonChat): WatsonTurn {
-  const texts = [...new Set(chat.pendingCaseEvents.slice(0, WATSON_CASE_EVENTS_MAX).map((e) => e.text))];
-  return {
-    id: newWatsonId("wt"),
-    at: new Date().toISOString(),
-    role: "system",
-    text: `Watson reacted to: ${texts.join("; ")}`.slice(0, WATSON_TURN_TEXT_MAX),
-  };
-}
-
-/** The chat without a reactions pause: any message from the analyst resumes reactions. */
-function resumed(chat: WatsonChat): WatsonChat {
-  if (!chat.reactionsPaused) return chat;
-  const { reactionsPaused: _cleared, ...rest } = chat;
-  return rest;
 }
 
 const searchSkipped = (why: string): string =>
@@ -123,7 +109,7 @@ async function runRound(
   const promptTurn = { id: analystTurn.id, text: input.reaction ? WATSON_REACTION_PROMPT : analystTurn.text };
   // Saved BEFORE the model call: the analyst's words survive any failure below.
   const chat = await ctx.chatStore.update(caseId, (c) => {
-    const base = input.reaction ? c : resumed(c);
+    const base = input.reaction ? c : engaged(c);
     return { ...base, turns: [...base.turns, analystTurn] };
   });
 
@@ -143,7 +129,11 @@ async function runRound(
     // Every exit charges the round, and every exit leaves a turn: a reply or an error.
     const after = await watsonSpend(ctx, caseId).catch(() => null);
     const spent = before && after ? spendDelta(before, after) : NO_SPEND;
-    saved = await ctx.chatStore.update(caseId, (fresh) => mergeOutcome(fresh, outcome, spent, counter.calls));
+    const failed = input.reaction === true && reactionFailed(outcome.reply, outcome.error);
+    saved = await ctx.chatStore.update(caseId, (fresh) => {
+      const merged = mergeOutcome(fresh, outcome, spent, counter.calls);
+      return input.reaction ? withReactionResult(merged, failed) : merged;
+    });
   }
   const failure = outcome.error ?? outcome.rethrow;
   if (failure) {
