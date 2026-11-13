@@ -256,6 +256,7 @@ function qualityOutput(state: InvestigationState, evidenceEventIds: readonly str
       rationale: step.rationale,
       pointer: step.pointer,
     })),
+    keyQuestions: state.keyQuestions.map((q) => ({ id: q.id, status: q.status, answer: q.answer })),
   };
 }
 
@@ -270,6 +271,8 @@ export async function runCorpusCase(fixture: CorpusCase, provider: AIProvider): 
       sourceScreenshots: [...event.sourceScreenshots],
       ...(event.sources ? { sources: [...event.sources] } : {}),
     })),
+    // What an earlier synthesis answered; this run reads it in its CURRENT KEY QUESTIONS block.
+    keyQuestions: fixture.seedKeyQuestions.map((q) => ({ ...q })),
   };
   await stateStore.save(seeded);
   const state = await pipeline.synthesize(caseId, { force: true });

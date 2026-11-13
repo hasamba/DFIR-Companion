@@ -26,6 +26,11 @@ movement, Linux, cloud identity, email, memory, network, and clean activity. Acr
 also includes incomplete evidence, contradictory sources, and an instruction embedded in untrusted
 evidence. The clean maintenance case requires zero findings: producing one fails the suite.
 
+Version 1.4.0 adds two cases with `prior-answers`: each seeds a key question an earlier synthesis
+answered (`seedKeyQuestions`), and `golden.keyQuestions` says how the run must end. In
+`prior-answer-stable` the seeded answer is correct and must survive unrelated new evidence. In
+`prior-answer-stale` the new events contradict the seeded answer; keeping it (anchoring) fails.
+
 ## Versioning
 
 - Patch: wording or metadata correction that does not change a golden expectation.

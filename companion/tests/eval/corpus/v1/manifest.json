@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.3.0",
+  "version": "1.4.0",
   "license": "AGPL-3.0-only",
   "provenance": {
     "origin": "synthetic",
@@ -22,6 +22,8 @@
     { "id": "web-impact-from-filenames", "file": "web-impact-from-filenames.json" },
     { "id": "host-spike-staging", "file": "host-spike-staging.json" },
     { "id": "rmm-anydesk-persistence", "file": "rmm-anydesk-persistence.json" },
-    { "id": "webshell-iis-write", "file": "webshell-iis-write.json" }
+    { "id": "webshell-iis-write", "file": "webshell-iis-write.json" },
+    { "id": "prior-answer-stable", "file": "prior-answer-stable.json" },
+    { "id": "prior-answer-stale", "file": "prior-answer-stale.json" }
   ]
 }

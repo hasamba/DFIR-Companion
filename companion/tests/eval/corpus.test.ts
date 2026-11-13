@@ -25,7 +25,7 @@ describe("versioned production golden corpus (#378)", () => {
   it("documents safe provenance and covers the required investigative scenarios", async () => {
     const corpus = await loadGoldenCorpus();
     expect(corpus.schemaVersion).toBe(1);
-    expect(corpus.version).toBe("1.3.0");
+    expect(corpus.version).toBe("1.4.0");
     expect(new Set(corpus.cases.map((fixture) => fixture.scenario))).toEqual(new Set(REQUIRED_SCENARIOS));
     expect(corpus.cases.every((fixture) => fixture.provenance.origin === "synthetic")).toBe(true);
     expect(corpus.cases.every((fixture) => fixture.provenance.containsClientData === false)).toBe(true);
@@ -44,8 +44,55 @@ describe("versioned production golden corpus (#378)", () => {
   it("gives every forbidden conclusion a claim sentence for the semantic judge (#1704)", async () => {
     const corpus = await loadGoldenCorpus();
     const forbidden = corpus.cases.flatMap((fixture) => fixture.golden.forbiddenConclusions);
-    expect(forbidden).toHaveLength(12);
+    expect(forbidden).toHaveLength(13);
     expect(forbidden.every((item) => (item.claim ?? "").trim().length > 10)).toBe(true);
+  });
+
+  describe("seeded prior key questions (stability and anchoring)", () => {
+    it("loads both cases with their seeded questions and golden answers", async () => {
+      const corpus = await loadGoldenCorpus();
+      const seeded = corpus.cases.filter((fixture) => fixture.seedKeyQuestions.length > 0);
+      expect(seeded.map((fixture) => fixture.id).sort()).toEqual([
+        "prior-answer-stable",
+        "prior-answer-stale",
+      ]);
+      expect(seeded.every((fixture) => fixture.traits.includes("prior-answers"))).toBe(true);
+      expect(seeded.every((fixture) => (fixture.golden.keyQuestions ?? []).length > 0)).toBe(true);
+    });
+
+    for (const id of ["prior-answer-stable", "prior-answer-stale"]) {
+      it(`${id}: canned output passes, and the seeded question reached the synthesis prompt`, async () => {
+        const corpus = await loadGoldenCorpus();
+        const fixture = corpus.cases.find((candidate) => candidate.id === id);
+        if (!fixture) throw new Error(`missing ${id}`);
+        const sent: string[] = [];
+        const provider: AIProvider = {
+          name: "mock",
+          model: "mock-model",
+          analyze: async (req: AnalyzeRequest): Promise<AnalyzeResult> => {
+            sent.push(req.userPrompt);
+            return { rawText: fixture.canned };
+          },
+        };
+        const output = await runCorpusCase(fixture, provider);
+        const score = scoreCaseQuality(fixture.golden, output);
+        expect(score.keyQuestions?.missed).toEqual([]);
+        expect(passesCaseQuality(score)).toBe(true);
+        expect(sent.join("\n")).toContain(fixture.seedKeyQuestions[0].answer);
+      });
+    }
+
+    it("fails the stale case when the run keeps the stale answer (anchoring)", async () => {
+      const corpus = await loadGoldenCorpus();
+      const fixture = corpus.cases.find((candidate) => candidate.id === "prior-answer-stale");
+      if (!fixture) throw new Error("missing prior-answer-stale");
+      const anchored = JSON.parse(fixture.canned) as { keyQuestions: Array<{ answer: string }> };
+      anchored.keyQuestions[0].answer = fixture.seedKeyQuestions[0].answer;
+      const output = await runCorpusCase(fixture, mockProvider(JSON.stringify(anchored)));
+      const score = scoreCaseQuality(fixture.golden, output);
+      expect(score.keyQuestions?.missed).toEqual(["kq-access"]);
+      expect(passesCaseQuality(score)).toBe(false);
+    });
   });
 
   for (const scenario of REQUIRED_SCENARIOS) {

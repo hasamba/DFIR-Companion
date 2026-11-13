@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { hashManifestValue } from "../../src/analysis/analysisRunHash.js";
-import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import type { ForensicEvent, InvestigationQuestion } from "../../src/analysis/stateTypes.js";
 import type { CaseGolden } from "./qualityScorer.js";
 
 export const CORPUS_SCENARIOS = [
@@ -25,11 +25,25 @@ export const CORPUS_TRAITS = [
   "incomplete-evidence",
   "contradictory-sources",
   "prompt-injection",
+  "prior-answers",
 ] as const;
 
 const severitySchema = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
 const iocTypeSchema = z.enum(["ip", "domain", "hash", "file", "process", "url", "sid", "other"]);
 const uncertaintyStatusSchema = z.enum(["confirmed", "inferred", "speculated", "unknown"]);
+const questionStatusSchema = z.enum(["answered", "partial", "unknown", "unanswerable"]);
+
+// A key question the case already holds before the run: what an earlier synthesis answered. Lets a
+// case test stability (a correct answer survives) and anchoring (a stale one is revised).
+const seedKeyQuestionSchema = z
+  .object({
+    id: z.string().min(1),
+    question: z.string().min(1),
+    status: questionStatusSchema,
+    answer: z.string(),
+    pointer: z.string(),
+  })
+  .strict();
 
 const eventSchema = z
   .object({
@@ -90,6 +104,20 @@ const goldenSchema = z
         .strict(),
     ),
     expectAbstention: z.boolean(),
+    // The answer each seeded question must end with: a status, words it must state, and words it must
+    // not assert as fact (the stale answer). Optional: cases without seeded questions omit it.
+    keyQuestions: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1),
+            allowedStatuses: z.array(questionStatusSchema).min(1),
+            requiredTerms: z.array(z.string().min(1)),
+            forbiddenTerms: z.array(z.string().min(1)),
+          })
+          .strict(),
+      )
+      .default([]),
   })
   .strict();
 
@@ -111,6 +139,7 @@ const caseSchema = z
     traits: z.array(z.enum(CORPUS_TRAITS)).min(1),
     provenance: provenanceSchema,
     seedEvents: z.array(eventSchema).min(1),
+    seedKeyQuestions: z.array(seedKeyQuestionSchema).default([]),
     cannedOutput: z.record(z.string(), z.unknown()),
     golden: goldenSchema,
   })
@@ -141,6 +170,7 @@ export interface CorpusCase {
   traits: Array<(typeof CORPUS_TRAITS)[number]>;
   provenance: z.infer<typeof provenanceSchema>;
   seedEvents: ForensicEvent[];
+  seedKeyQuestions: InvestigationQuestion[];
   canned: string;
   golden: CaseGolden;
 }
@@ -178,6 +208,10 @@ function forensicEvent(event: z.infer<typeof eventSchema>): ForensicEvent {
 function assertSafeSyntheticCase(parsed: z.infer<typeof caseSchema>, raw: string): void {
   if (SECRET_VALUE.test(raw)) throw new Error(`${parsed.id}: corpus case contains a credential-like value`);
   const eventIds = new Set(parsed.seedEvents.map((event) => event.id));
+  const seededIds = new Set(parsed.seedKeyQuestions.map((q) => q.id));
+  for (const kq of parsed.golden.keyQuestions) {
+    if (!seededIds.has(kq.id)) throw new Error(`${parsed.id}: golden key question ${kq.id} is not seeded`);
+  }
   for (const claim of parsed.golden.claims) {
     const missing = claim.evidenceEventIds.filter((id) => !eventIds.has(id));
     if (missing.length) {
@@ -199,6 +233,7 @@ async function loadCase(file: string, expectedId: string): Promise<CorpusCase> {
     traits: [...parsed.traits],
     provenance: { ...parsed.provenance },
     seedEvents: parsed.seedEvents.map(forensicEvent),
+    seedKeyQuestions: parsed.seedKeyQuestions.map((q) => ({ ...q })),
     canned: JSON.stringify(parsed.cannedOutput),
     golden: {
       claims: parsed.golden.claims.map((claim) => ({
@@ -221,6 +256,12 @@ async function loadCase(file: string, expectedId: string): Promise<CorpusCase> {
         requiredTerms: [...item.requiredTerms],
       })),
       expectAbstention: parsed.golden.expectAbstention,
+      keyQuestions: parsed.golden.keyQuestions.map((item) => ({
+        ...item,
+        allowedStatuses: [...item.allowedStatuses],
+        requiredTerms: [...item.requiredTerms],
+        forbiddenTerms: [...item.forbiddenTerms],
+      })),
     },
   };
 }

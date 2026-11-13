@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "id": "prior-answer-stale",
+  "title": "Synthetic stale key-question answer contradicted by new evidence",
+  "scenario": "remote-access",
+  "traits": ["contradictory-sources", "prior-answers"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional mail-gateway, VPN and logon events, with a wrong initial-access answer seeded from an earlier synthesis that the new events contradict.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-11-13"
+  },
+  "seedEvents": [
+    {
+      "id": "psa-e1",
+      "timestamp": "2026-05-12T07:40:00.000Z",
+      "description": "Mail gateway quarantined attachment invoice.docm addressed to user-c; the message was not delivered",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "MAIL-GW",
+      "sources": ["Mail Gateway"]
+    },
+    {
+      "id": "psa-e2",
+      "timestamp": "2026-05-12T07:55:00.000Z",
+      "description": "VPN gateway logged 240 failed logins for user-c from 203.0.113.50 within 10 minutes",
+      "severity": "Medium",
+      "mitreTechniques": ["T1110.003"],
+      "asset": "VPN-01",
+      "srcIp": "203.0.113.50",
+      "sources": ["VPN"]
+    },
+    {
+      "id": "psa-e3",
+      "timestamp": "2026-05-12T08:05:00.000Z",
+      "description": "VPN gateway accepted a login for user-c from 203.0.113.50",
+      "severity": "High",
+      "mitreTechniques": ["T1078"],
+      "asset": "VPN-01",
+      "srcIp": "203.0.113.50",
+      "sources": ["VPN"]
+    },
+    {
+      "id": "psa-e4",
+      "timestamp": "2026-05-12T08:12:00.000Z",
+      "description": "Interactive logon by user-c on WS-11 from the VPN address pool",
+      "severity": "Medium",
+      "mitreTechniques": ["T1078"],
+      "asset": "WS-11",
+      "sources": ["Windows Security"]
+    }
+  ],
+  "seedKeyQuestions": [
+    {
+      "id": "kq-access",
+      "question": "What was the initial access vector?",
+      "status": "answered",
+      "answer": "Phishing email with a macro attachment that user-c opened.",
+      "pointer": "mail logs"
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "psa-f1",
+        "severity": "High",
+        "confidence": 85,
+        "confidenceReason": "Hundreds of failed VPN logins from one address end in an accepted login and a logon on WS-11.",
+        "title": "VPN password spraying against user-c",
+        "description": "203.0.113.50 sprayed passwords at the VPN for user-c, then logged in and reached WS-11.",
+        "relatedIocs": ["203.0.113.50"],
+        "mitreTechniques": ["T1110.003", "T1078"],
+        "status": "open",
+        "relatedEventIds": ["psa-e2", "psa-e3", "psa-e4"]
+      }
+    ],
+    "iocs": [
+      {
+        "id": "psa-i1",
+        "type": "ip",
+        "value": "203.0.113.50"
+      }
+    ],
+    "mitreTechniques": [],
+    "attackerPath": "203.0.113.50 sprayed VPN passwords for user-c, logged in, and reached WS-11.",
+    "narrativeTimeline": "",
+    "summary": "The new VPN records revise the earlier initial-access answer: the attacker sprayed VPN passwords.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [
+      {
+        "id": "kq-access",
+        "question": "What was the initial access vector?",
+        "status": "answered",
+        "answer": "VPN password spraying: 240 failed logins for user-c from 203.0.113.50, then an accepted VPN login and a logon on WS-11. The macro attachment was quarantined and never delivered.",
+        "pointer": "psa-e2, psa-e3, psa-e4",
+        "relatedFindingIds": ["psa-f1"]
+      }
+    ],
+    "nextSteps": [
+      {
+        "id": "psa-n1",
+        "priority": "critical",
+        "action": "Reset user-c credentials and review every VPN login from 203.0.113.50",
+        "rationale": "The VPN account is the confirmed entry point.",
+        "pointer": "VPN-01 authentication log",
+        "relatedFindingIds": ["psa-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "vpn-spray",
+        "requiredTerms": ["VPN", "user-c"],
+        "evidenceEventIds": ["psa-e2", "psa-e3"],
+        "confidence": {
+          "min": 60,
+          "max": 100
+        }
+      }
+    ],
+    "iocs": [
+      {
+        "type": "ip",
+        "value": "203.0.113.50"
+      }
+    ],
+    "forbiddenConclusions": [
+      {
+        "id": "phishing-entry",
+        "terms": ["phishing"],
+        "claim": "Initial access was a phishing email that user-c opened."
+      }
+    ],
+    "uncertainties": [],
+    "nextSteps": [
+      {
+        "id": "reset-user-c",
+        "requiredTerms": ["user-c", "VPN"]
+      }
+    ],
+    "expectAbstention": false,
+    "keyQuestions": [
+      {
+        "id": "kq-access",
+        "allowedStatuses": ["answered", "partial"],
+        "requiredTerms": ["VPN"],
+        "forbiddenTerms": ["phishing"]
+      }
+    ]
+  }
+}
