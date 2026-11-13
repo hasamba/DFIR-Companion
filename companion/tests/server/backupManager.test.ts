@@ -781,7 +781,7 @@ describe("BackupManager and the Watson history file", () => {
       JSON.stringify({ turns: [], memory: "m" }),
     );
 
-    const info = await mgr.createBackup(caseId, "manual");
+    const info = await mgr.createBackup(caseId, "scheduled");
     const bundle = JSON.parse(await readFile(join(mgr.backupDir(caseId), info.filename), "utf8"));
     expect(Object.keys(bundle.files)).toEqual(
       expect.arrayContaining(["investigation.json", "watson-chat.json"]),
