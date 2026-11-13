@@ -14,6 +14,7 @@ import {
 import { aiSpan, splitAiSpans, stripAiSpans, withAiSpans } from "../../src/analysis/ai/aiSpan.js";
 import { AiAuthoredTextStore, AUTHORED_MAX_STRINGS } from "../../src/analysis/aiAuthoredText.js";
 import { buildReconcilePrompt } from "../../src/analysis/secondOpinion.js";
+import { buildCurrentKeyQuestionsBlock } from "../../src/analysis/ai/currentKeyQuestionsBlock.js";
 import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
@@ -252,6 +253,38 @@ describe("authoredStrings", () => {
 
   it("drops strings too short to carry context", () => {
     expect(authoredStrings({ summary: "", findings: [{ title: "RDP", description: "x" }] })).toEqual([]);
+  });
+});
+
+// #1799 on the CURRENT KEY QUESTIONS block: synthesis reads back the answers it wrote last run.
+describe("the current key questions block", () => {
+  const answer = "Initial access was RDP; the operator then ran Rubeus Kerberoast against the domain.";
+  const state = (a: string) => ({
+    keyQuestions: [
+      { id: "q1", question: "How did they get in?", status: "answered" as const, answer: a, pointer: "" },
+    ],
+  });
+  const corpus = authoredStrings({ keyQuestions: [{ id: "q1", answer }] });
+
+  it("records key-question answers as model text", () => {
+    expect(corpus).toContain(answer);
+  });
+
+  it("skips a tool name tagged PERSON in an answer synthesis wrote, so re-synthesis does not stop again", () => {
+    expect(gated(() => buildCurrentKeyQuestionsBlock(state(answer)), corpus)("Rubeus")).toBe(true);
+  });
+
+  it("matches a clipped answer against the start of the recorded one", () => {
+    const long = `${answer} ${"More detail follows. ".repeat(30)}`;
+    const check = gated(
+      () => buildCurrentKeyQuestionsBlock(state(long)),
+      authoredStrings({ keyQuestions: [{ answer: long }] }),
+    );
+    expect(check("Rubeus")).toBe(true);
+  });
+
+  it("still holds a value in an answer no synthesis recorded (a Watson or analyst answer)", () => {
+    expect(gated(() => buildCurrentKeyQuestionsBlock(state(answer)), [])("Rubeus")).toBe(false);
   });
 });
 

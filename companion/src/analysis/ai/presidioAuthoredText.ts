@@ -43,15 +43,27 @@ export function normalizeAuthored(text: string): string {
 }
 
 /**
- * The synthesis-answer fields the model wrote. Nothing else: an extraction answer becomes events.
+ * The synthesis-answer fields the model wrote, key-question answers included (the CURRENT KEY
+ * QUESTIONS block reprints them). Nothing else: an extraction answer becomes events.
  * Takes the answer as parsed, before validation — it is read, never trusted.
  */
 export function authoredStrings(answer: unknown): string[] {
-  const a = (answer ?? {}) as { summary?: unknown; attackerPath?: unknown; findings?: unknown };
+  const a = (answer ?? {}) as {
+    summary?: unknown;
+    attackerPath?: unknown;
+    findings?: unknown;
+    keyQuestions?: unknown;
+  };
   const findings = Array.isArray(a.findings)
     ? (a.findings as { title?: unknown; description?: unknown }[])
     : [];
-  const raw = [a.summary, a.attackerPath, ...findings.flatMap((f) => [f?.title, f?.description])];
+  const questions = Array.isArray(a.keyQuestions) ? (a.keyQuestions as { answer?: unknown }[]) : [];
+  const raw = [
+    a.summary,
+    a.attackerPath,
+    ...findings.flatMap((f) => [f?.title, f?.description]),
+    ...questions.map((q) => q?.answer),
+  ];
   const out = new Set<string>();
   for (const s of raw) {
     if (typeof s !== "string") continue;
