@@ -170,6 +170,7 @@
     "confidence_control_changed",
     "report_template_changed",
     "case_lifecycle_changed",
+    "watson_changed",
   ];
 
   function stillCurrent(sock, caseId) {

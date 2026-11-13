@@ -1,0 +1,49 @@
+/* Watson: right-side panel (360px, 36px rail when collapsed) and the full section. */
+.watson-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 360px; z-index: 40; display: flex; flex-direction: column;
+  background: var(--bg-elevated); border-left: 1px solid var(--border-color); box-sizing: border-box; }
+.watson-panel.watson-hidden { display: none; }
+.watson-panel.watson-collapsed { width: 36px; }
+.watson-panel.watson-collapsed .watson-full { display: none; }
+.watson-rail { display: none; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; cursor: pointer; height: 100%; }
+.watson-panel.watson-collapsed .watson-rail { display: flex; }
+.watson-rail-icon { width: 24px; height: 24px; border-radius: 50%; background: var(--brand-teal-deep, #0f766e); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
+.watson-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--sev-high); visibility: hidden; }
+.watson-dot.watson-on { visibility: visible; }
+.watson-count { min-width: 18px; text-align: center; font-size: 11px; font-weight: 700; color: var(--sev-medium); }
+body.watson-panel-open { padding-right: 360px; }
+body.watson-rail-open { padding-right: 36px; }
+@media (max-width: 900px) { body.watson-panel-open, body.watson-rail-open { padding-right: 0; } .watson-panel { max-width: 100vw; } }
+
+.watson-root { display: flex; flex-direction: column; min-height: 0; flex: 1; font-size: 13px; }
+.watson-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border-color); }
+.watson-head strong { flex: 1; }
+.watson-log { flex: 1; overflow-y: auto; padding: 8px 10px; min-height: 120px; }
+.watson-turn { border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; }
+.watson-analyst { background: var(--bg-hover); }
+.watson-warn { border-color: var(--sev-medium); color: var(--badge-warning-text, var(--sev-medium)); }
+.watson-who { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.watson-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.watson-meta, .watson-why, .watson-lbl, .watson-empty { font-size: 12px; color: var(--text-muted); }
+.watson-pre { margin: 4px 0; padding: 6px; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  background: var(--bg-primary); border-radius: 4px; }
+.watson-prop { margin-top: 6px; padding: 6px; border: 1px dashed var(--border-color); border-radius: 4px; }
+.watson-mini { font-size: 11px; padding: 2px 8px; }
+.watson-composer { padding: 8px 10px; border-top: 1px solid var(--border-color); }
+.watson-input, .watson-paste-text { width: 100%; box-sizing: border-box; resize: vertical; }
+.watson-paste-box { display: none; margin-top: 6px; }
+.watson-paste-box.watson-on { display: block; }
+.watson-actions { margin-top: 6px; }
+.watson-file { display: none; }
+.watson-foot { padding: 4px 10px 8px; font-size: 11px; color: var(--text-muted); }
+.watson-q { padding: 6px 0; border-bottom: 1px solid var(--border-color); }
+.watson-wide { flex-direction: row; gap: 16px; align-items: stretch; }
+.watson-wide .watson-board { flex: 1; min-width: 0; }
+.watson-wide .watson-chat { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.watson-wide .watson-log { max-height: 520px; }
+/* The toolbar button: the icon plus a short label that survives the .icons-only collapse. */
+#watsonToggle::before { content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
+  margin-right: 6px; background: no-repeat center / contain; }
+#watsonToggle::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z'/></svg>"); }
+.toolbar-main.icons-only #watsonToggle { font-size: 12px; padding-left: 9px; padding-right: 9px; }
+.toolbar-main.icons-only #watsonToggle::before { margin-right: 6px; }

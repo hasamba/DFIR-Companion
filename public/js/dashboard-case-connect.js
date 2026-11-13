@@ -605,10 +605,12 @@
       if (typeof loadMainSource === "function") loadMainSource(); // #2594 the playbook button follows new evidence
       loadHypotheses(caseId);
       once("superTimeline", () => loadSuperTimeline(caseId));
+      if (typeof loadWatson === "function") loadWatson(caseId, true); // Watson chat for a newly opened case
       scheduleSecondOpinionReload(caseId); // #1590 — refresh the "no longer applies" list
       if (typeof scheduleSecondLookReload === "function") scheduleSecondLookReload(caseId); // #2622 re-measure the Second Look card
     } else if (msg.type === "second_opinion_changed")
       loadSecondOpinion(caseId);
+    else if (msg.type === "watson_changed") loadWatson(caseId);
     else if (msg.type === "ai_status") applyAiStatus(msg);
     else if (msg.type === "job_changed") scheduleJobUiRefresh(caseId, msg.jobs);
     else if (msg.type === "capture_ingest") {

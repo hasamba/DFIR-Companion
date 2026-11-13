@@ -1868,6 +1868,21 @@ export const FEATURES: Feature[] = [
     ],
   },
   {
+    // Watson chat panel and section. initWatson() is called from initDataAct (the inline script has no
+    // spare line), so the manifest names no initializer. watsonAct is the one data-act entry.
+    file: "dashboard-watson.js",
+    publish: [
+      "initWatson",
+      "renderWatson",
+      "toggleWatsonPanel",
+      "toggleWatsonCollapse",
+      "expandWatson",
+      "loadWatson",
+      "watsonAct",
+    ],
+    private: ["wChat", "wQuestions", "wCase", "wSeq", "wSeen", "wNotice", "wBusy"],
+  },
+  {
     // Last-import change tracking. All three escapes were READS from the page's two renderers, so
     // what crosses the boundary is a question — isNewEvent / isNewIoc — not the key sets. No
     // initializer: nothing here runs at load, and loadImportMeta() is already in the refresh fan-out.
