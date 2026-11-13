@@ -86,6 +86,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       activity: options.activityLogStore,
       cases: store,
       markConclusionsOutOfDate: ctx.markConclusionsOutOfDate,
+      reportText: options.reportMetaStore,
     };
   }
 

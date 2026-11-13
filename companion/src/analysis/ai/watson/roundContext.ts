@@ -26,6 +26,7 @@ import { WATSON_PASTE_MAX_BYTES } from "./pasteSearch.js";
 import { WATSON_CASE_CONTEXT_PROMPT_MAX } from "./promptBuilder.js";
 import { ensureStandardQuestions } from "./standardQuestions.js";
 import type { WatsonCoverage, WatsonPaste } from "./types.js";
+import type { WatsonReportText } from "./writers/writerTypes.js";
 
 // What a Watson round needs besides the AI-call seam, and the read-only helpers that build its
 // prompt inputs. Watson reads the forensic timeline only — never the super-timeline (spec, §7).
@@ -53,6 +54,8 @@ export type WatsonRoundContext = AiCallContext & {
   /** Host-identity sources, so Watson names hosts the way synthesis does. */
   assetOverridesStore?: AssetOverridesStore;
   velociraptorClientStore?: CaseFleetInventory;
+  /** The report details, for the text a report-text proposal would replace. Absent: none proposed. */
+  reportText?: WatsonReportText;
   /** Tells the dashboard the case state changed (the standard questions were seeded). */
   onStateChanged?(caseId: string): void;
 };

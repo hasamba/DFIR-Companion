@@ -9,6 +9,10 @@
   // the rest of report-meta (the server re-validates: raster-only, length-capped).
   let rmLogo = ""; // current company-logo data URI, or ""
   const LOGO_MAX_LEN = 1000000; // mirror reportMeta.ts LOGO_MAX_LEN (~1 MB text)
+  // The version of the report details this form shows ("" = never saved). Sent with every save so
+  // the server refuses one that would overwrite a newer version (e.g. Watson's approved text).
+  let rmBaseUpdatedAt = "";
+  const STALE_TEXT = "Report details changed since you opened them — reload";
   function renderLogoPreview() {
     const wrap = document.getElementById("rm-logoPreviewWrap");
     const img = document.getElementById("rm-logoPreview");
@@ -22,6 +26,7 @@
   }
 
   function fillReportMeta(m) {
+    rmBaseUpdatedAt = m.updatedAt || "";
     const v = (id, val) => (document.getElementById(id).value = val || "");
     v("rm-companyName", m.companyName);
     rmLogo = m.companyLogo || "";
@@ -94,6 +99,7 @@
       ]),
       distribution: parseRows(g("rm-distribution"), ["name", "role", "method"]),
       glossary: parseRows(g("rm-glossary"), ["term", "explanation"]),
+      baseUpdatedAt: rmBaseUpdatedAt,
     };
     const st = document.getElementById("rmStatus");
     st.textContent = "saving…";
@@ -103,6 +109,7 @@
       body: JSON.stringify(body),
     })
       .then((r) => {
+        if (r.status === 409) throw new Error(STALE_TEXT);
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
@@ -111,13 +118,14 @@
         st.textContent = "saved ✓";
         setTimeout(() => (st.textContent = ""), 2500);
       })
-      .catch(
-        (e) =>
-          (st.textContent =
-            "save failed: " +
-            e.message +
-            " — restart the companion server if this 404s"),
-      );
+      .catch((e) => {
+        st.textContent =
+          e.message === STALE_TEXT
+            ? STALE_TEXT
+            : "save failed: " +
+              e.message +
+              " — restart the companion server if this 404s";
+      });
   }
 
   // THE PAGE OWNS THE FILE PICKER, THIS OWNS THE LOGO. The upload handler used to assign rmLogo

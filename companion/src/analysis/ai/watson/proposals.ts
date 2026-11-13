@@ -7,7 +7,9 @@ import {
 } from "./proposalErrors.js";
 import { proposalTargetId, type WatsonChat, type WatsonProposal, type WatsonProposalKind } from "./types.js";
 import { findingWriter } from "./writers/findingWriter.js";
+import { nextStepWriter } from "./writers/nextStepWriter.js";
 import { questionWriter } from "./writers/questionWriter.js";
+import { reportTextWriter } from "./writers/reportTextWriter.js";
 import type { WatsonTargetType, WatsonWriter, WriterDeps, WriterResult } from "./writers/writerTypes.js";
 
 export {
@@ -18,7 +20,7 @@ export {
   type WatsonProposalDeps,
 } from "./proposalErrors.js";
 export { nextQuestions } from "./writers/questionWriter.js";
-export type { WriterDeps } from "./writers/writerTypes.js";
+export type { WatsonReportText, WriterDeps } from "./writers/writerTypes.js";
 
 // The analyst's decision on one Watson proposal: apply it, reject it, or undo an applied one. The
 // proposal status and the case write change together: the status check runs inside
@@ -43,6 +45,8 @@ const WRITERS: Partial<Record<WatsonProposalKind, WatsonWriter<WatsonProposal>>>
   question_new: questionWriter,
   finding_new: findingWriter,
   finding_update: findingWriter,
+  next_step_new: nextStepWriter,
+  report_text: reportTextWriter,
 };
 
 const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {

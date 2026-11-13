@@ -4,6 +4,7 @@ import { writeFile, mkdir } from "node:fs/promises";
 import { CaseFileRefusedError, readCaseFile } from "../storage/caseFileRead.js";
 import { join } from "node:path";
 import { injectPrintTrigger } from "../reports/html.js";
+import { ReportMetaStale } from "../reports/reportMeta.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { logEvidenceSafety } from "./evidenceSafetyLog.js";
 import { milestoneEvent } from "../analysis/notifications.js";
@@ -202,10 +203,10 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   app.put("/cases/:id/report-meta", async (req: Request, res: Response) => {
     if (!options.reportMetaStore) return res.status(501).json({ error: "report metadata not configured" });
     try {
-      const saved = await options.reportMetaStore.save(req.params.id, req.body);
-      return res.status(200).json(saved);
+      const base = typeof req.body?.baseUpdatedAt === "string" ? req.body.baseUpdatedAt : undefined;
+      return res.status(200).json(await options.reportMetaStore.save(req.params.id, req.body, base));
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return res.status(err instanceof ReportMetaStale ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 

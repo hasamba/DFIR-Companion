@@ -9,7 +9,32 @@ import type { WatsonProposal } from "../types.js";
 // (StateLock is not re-entrant). A writer re-reads the stored item, throws WatsonProposalConflict
 // when it no longer matches, and checks everything before its first write.
 
+export type WatsonReportField = "conclusions" | "investigationLimitations";
+
+/** The report details as Watson sees them: the two fields it may write and its marks. */
+export interface WatsonReportFields {
+  conclusions: string;
+  investigationLimitations: string;
+  updatedAt?: string;
+  watsonFields?: Partial<Record<WatsonReportField, { proposalId: string; at: string }>>;
+}
+
+/**
+ * The report-details store, structurally (analysis/ai may not import reports/): the route injects
+ * ReportMetaStore. `update` is its one serialized write path; `fn` must spread its argument so the
+ * fields Watson does not know are kept.
+ */
+export interface WatsonReportText {
+  load(caseId: string): Promise<WatsonReportFields>;
+  update(
+    caseId: string,
+    fn: (current: WatsonReportFields) => WatsonReportFields | Promise<WatsonReportFields>,
+  ): Promise<WatsonReportFields>;
+}
+
 export interface WriterDeps extends WatsonProposalDeps {
+  /** The report details. Without it, a report-text proposal cannot be applied. */
+  reportText?: WatsonReportText;
   /** Reads stored pastes. Without it, a cited paste line counts as unreadable. */
   cases?: CaseStore;
   /** #1599: a Watson write marks the conclusions out of date and never starts a synthesis. */

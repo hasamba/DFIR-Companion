@@ -20,6 +20,7 @@ import {
 } from "./roundContext.js";
 import { mergeOutcome, type Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
+import { citationSets, withWriteInputs } from "./roundWrites.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
 export { WatsonAiOff, WatsonCostLimitReached, type WatsonRoundContext } from "./roundContext.js";
@@ -35,6 +36,8 @@ export interface WatsonRoundInput {
   text: string;
   actor?: string;
   pasteId?: string;
+  /** Spec §4.4 door rule: false drops the reply's writes (question proposals stay). Default true. */
+  allowWrites?: boolean;
 }
 
 const searchSkipped = (why: string): string =>
@@ -95,6 +98,7 @@ async function runRound(
   try {
     before = await watsonSpend(ctx, caseId);
     outcome = await converse(ctx, caseId, chat, analystTurn, { paste: newPaste, auto }, counter, before);
+    outcome = await withWriteInputs(ctx, caseId, outcome, input.allowWrites !== false);
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
   } finally {
@@ -142,6 +146,7 @@ async function converse(
       questions: new Set(state.keyQuestions.map((q) => q.id)),
       pastes: new Set(chat.pastes.map((p) => p.id)),
       events: new Set(state.forensicTimeline.map((e) => e.id)),
+      citations: citationSets(chat.pastes, state.findings),
     };
     ask = async (input) => {
       const raw = await guardedCall(
@@ -151,7 +156,7 @@ async function converse(
         () => spentNow(ctx, caseId, chat, before),
         (one) => callWatson(one, caseId, state, ctx.provider, input),
       );
-      return sanitizeWatsonReply(raw, known.questions, known.pastes, known.events);
+      return sanitizeWatsonReply(raw, known.questions, known.pastes, known.events, known.citations);
     };
     // A stored file that is gone or unreadable never fails the round: Watson answers without it.
     const excerpt = newPaste

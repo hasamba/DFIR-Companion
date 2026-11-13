@@ -4,6 +4,7 @@ import { AiReplyUnreadableError } from "../aiReplyUnreadable.js";
 import { AiAnswerParseError } from "../providerCall.js";
 import type { WatsonReply } from "./replySchema.js";
 import type { WatsonSpend } from "./roundContext.js";
+import type { WatsonWriteInputs } from "./roundWrites.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
@@ -26,6 +27,8 @@ export interface Outcome {
   questions: InvestigationState["keyQuestions"];
   /** Set only when the forensic timeline was trimmed to fit the prompt (#452). */
   coverage?: WatsonCoverage;
+  /** What the reply's writes need from disk (roundWrites.ts); without it no write is proposed. */
+  writeInputs?: WatsonWriteInputs;
 }
 
 /** Remove each shown event once, so an event added during the round stays for the next one. */
@@ -76,7 +79,7 @@ export function mergeOutcome(
     return withUnreadable({ ...charged, turns: [...charged.turns, turn] }, outcome, at);
   }
   const turnId = newWatsonId("wt");
-  const proposals = buildProposals(reply, outcome.questions, turnId);
+  const proposals = buildProposals(reply, outcome.questions, turnId, outcome.writeInputs);
   const text = outcome.note ? `${reply.message}\n\n${outcome.note}`.trim() : reply.message;
   const turn: WatsonTurn = {
     id: turnId,

@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
 import type { InvestigationQuestion } from "../../stateTypes.js";
 import type { WatsonReply } from "./replySchema.js";
+import type { WatsonWriteInputs } from "./roundWrites.js";
 import type { WatsonProposal } from "./types.js";
+import { buildWriteProposals } from "./writeProposals.js";
 
-// Turn a sanitized Watson reply into PENDING proposals. Nothing here touches case state: the analyst
+// Turn a sanitized Watson reply into PENDING proposals (its writes through writeProposals.ts). Nothing here touches case state: the analyst
 // applies or rejects each proposal later. Every question Watson writes is pinned and authored
 // "watson", and its id is fixed now so applying the proposal later keeps it stable.
 
@@ -17,6 +19,7 @@ export function buildProposals(
   reply: WatsonReply,
   questions: readonly InvestigationQuestion[],
   turnId: string,
+  writeInputs?: WatsonWriteInputs,
 ): WatsonProposal[] {
   const byId = new Map(questions.map((q) => [q.id, q] as const));
   const updates = reply.questionUpdates.flatMap((u): WatsonProposal[] => {
@@ -62,5 +65,5 @@ export function buildProposals(
       status: "pending",
     };
   });
-  return [...updates, ...created];
+  return [...updates, ...created, ...buildWriteProposals(reply.writes, writeInputs, turnId, newWatsonId)];
 }

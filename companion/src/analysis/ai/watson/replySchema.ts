@@ -5,6 +5,20 @@ import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_HISTORY_ID } from "./historyStore.js";
 import { ANSWER_MAX, POINTER_MAX, QUESTION_MAX } from "./roundProposals.js";
 import type { WatsonAnswer, WatsonRequest } from "./types.js";
+import {
+  lenientArray,
+  sanitizeWrites,
+  writesSchema,
+  type WatsonCitationSets,
+  type WatsonWrites,
+} from "./writesSchema.js";
+
+export type {
+  WatsonCitationSets,
+  WatsonFindingDraft,
+  WatsonStepDraft,
+  WatsonWrites,
+} from "./writesSchema.js";
 
 // Boundary for the model's JSON reply. The reply is untrusted: every field is lenient (.catch),
 // and sanitizeWatsonReply clamps lengths and drops references to ids that do not exist.
@@ -18,19 +32,6 @@ const MAX_ANSWER_EVENTS = 20;
 const LANGUAGES = ["vql", "kql", "spl", "cql", "esql", "sql", "other"];
 
 const str = z.string().catch("");
-
-// Parse an array element by element: a bad element is dropped, the valid ones stay.
-function lenientArray<T extends z.ZodTypeAny>(element: T) {
-  return z
-    .array(z.unknown())
-    .catch([])
-    .transform((items) =>
-      items.flatMap((item) => {
-        const parsed = element.safeParse(item);
-        return parsed.success ? [parsed.data as z.infer<T>] : [];
-      }),
-    );
-}
 
 const requestSchema = z
   .union([
@@ -66,6 +67,7 @@ export const watsonReplySchema = z.object({
     .catch(null),
   memory: str,
   answer: answerSchema,
+  writes: writesSchema,
 });
 
 export interface WatsonReply {
@@ -79,6 +81,8 @@ export interface WatsonReply {
   memory: string;
   /** Set only when the analyst asked a question about the case. */
   answer: WatsonAnswer | null;
+  /** Findings, next steps and report text Watson proposes; each becomes a pending proposal. */
+  writes: WatsonWrites;
 }
 
 function sanitizeRequest(req: WatsonRequest | null): WatsonRequest | null {
@@ -119,6 +123,7 @@ export function sanitizeWatsonReply(
   knownQuestionIds: ReadonlySet<string>,
   knownPasteIds: ReadonlySet<string>,
   knownEventIds: ReadonlySet<string>,
+  citations?: WatsonCitationSets,
 ): WatsonReply {
   const search =
     reply.search && (reply.search.pasteId === WATSON_HISTORY_ID || knownPasteIds.has(reply.search.pasteId))
@@ -139,5 +144,6 @@ export function sanitizeWatsonReply(
     request: sanitizeRequest(reply.request),
     search,
     answer: sanitizeAnswer(reply.answer, knownEventIds),
+    writes: sanitizeWrites(reply.writes, knownEventIds, citations),
   };
 }

@@ -18,6 +18,7 @@ describe("watsonReplySchema", () => {
       search: null,
       memory: "",
       answer: null,
+      writes: { findings: [], nextSteps: [], report: [] },
     });
   });
   it("falls back per field on junk", () => {

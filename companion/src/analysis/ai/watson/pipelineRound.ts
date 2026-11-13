@@ -5,6 +5,7 @@ import type { PipelineOptions } from "../pipelineOptions.js";
 import type { WatsonChatStore } from "./chatStore.js";
 import { previewWatsonRound } from "./preview.js";
 import type { WatsonReply } from "./replySchema.js";
+import type { WatsonReportText } from "./writers/writerTypes.js";
 import { runWatsonRound, type WatsonRoundContext, type WatsonRoundInput } from "./round.js";
 import type { WatsonChat } from "./types.js";
 
@@ -18,6 +19,8 @@ export interface WatsonRoundDeps {
   isAiEnabled(caseId: string): Promise<boolean>;
   costLimitUSD?: number;
   tokenLimit?: number;
+  /** The report details (ReportMetaStore), for report-text proposals. */
+  reportText?: WatsonReportText;
   onStateChanged?(caseId: string): void;
 }
 

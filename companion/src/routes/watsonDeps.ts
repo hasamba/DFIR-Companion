@@ -25,6 +25,7 @@ export function watsonRoundDeps(ctx: RouteContext): WatsonRoundDeps | undefined 
     isAiEnabled: async (id) => (await ctx.getControl(id)).enabled,
     costLimitUSD: positiveLimit(process.env.DFIR_AI_WATSON_COST_LIMIT_USD),
     tokenLimit: positiveLimit(process.env.DFIR_AI_WATSON_TOKEN_LIMIT),
+    reportText: options.reportMetaStore,
     onStateChanged: options.onStateChanged,
   };
 }
