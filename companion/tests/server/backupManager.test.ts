@@ -765,3 +765,33 @@ describe("POST /cases/:id/restore-backup activity log", () => {
     expect(await restoreEntries(activityLogStore, caseId)).toHaveLength(0);
   });
 });
+
+describe("BackupManager and the Watson history file", () => {
+  const historyOf = (store: CaseStore, caseId: string): string =>
+    join(store.stateDir(caseId), "watson-history.jsonl");
+
+  it("backs up a case whose history has several lines, without the history, and restore leaves it byte-identical", async () => {
+    const { mgr, store } = await makeManager();
+    const caseId = await makeCase(store);
+    const line = (n: number) =>
+      `${JSON.stringify({ id: `t${n}`, at: "2026-01-01T00:00:00Z", role: "analyst", text: `m${n}` })}\n`;
+    await writeFile(historyOf(store, caseId), line(1) + line(2) + line(3));
+    await writeFile(
+      join(store.stateDir(caseId), "watson-chat.json"),
+      JSON.stringify({ turns: [], memory: "m" }),
+    );
+
+    const info = await mgr.createBackup(caseId, "manual");
+    const bundle = JSON.parse(await readFile(join(mgr.backupDir(caseId), info.filename), "utf8"));
+    expect(Object.keys(bundle.files)).toEqual(
+      expect.arrayContaining(["investigation.json", "watson-chat.json"]),
+    );
+    expect(Object.keys(bundle.files)).not.toContain("watson-history.jsonl");
+
+    // A turn added after the backup must survive the restore.
+    await writeFile(historyOf(store, caseId), line(1) + line(2) + line(3) + line(4));
+    const before = await readFile(historyOf(store, caseId));
+    await mgr.restoreBackup(caseId, info.filename);
+    expect((await readFile(historyOf(store, caseId))).equals(before)).toBe(true);
+  });
+});

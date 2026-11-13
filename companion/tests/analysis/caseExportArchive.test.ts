@@ -229,6 +229,19 @@ describe("exportEncryptedCase — symlink/hardlink rejection (#247)", () => {
     expect(restored).toBe("evidence");
   });
 
+  it("carries Watson's history file with the case: the export walks the whole case folder", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-WATSON");
+    const history =
+      `${JSON.stringify({ id: "t1", at: "2026-01-01T00:00:00Z", role: "analyst", text: "m1" })}\n`.repeat(2);
+    await writeFile(join(store.stateDir("INC-WATSON"), "watson-history.jsonl"), history);
+    const archive = await exportEncryptedCase(store, "INC-WATSON", PASSWORD);
+    await importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-WATSON-2" });
+    expect(await readFile(join(store.stateDir("INC-WATSON-2"), "watson-history.jsonl"), "utf8")).toBe(
+      history,
+    );
+  });
+
   it("still exports a normal case with no symlinks/hardlinks (no regression)", async () => {
     const store = await harness();
     await seedCase(store, "INC-CLEAN");
