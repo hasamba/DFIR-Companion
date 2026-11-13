@@ -57,3 +57,15 @@ body.watson-full-open { padding-right: 0; }
 
 .watson-ans { margin: 6px 0; padding: 6px 8px; border-left: 2px solid var(--accent); }
 .watson-cov { font-size: 12px; margin-top: 4px; color: var(--tag-orange-text); }
+
+/* Marks on items Watson wrote, the "Wrote:" line and proposal cards. */
+.watson-mark { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 10.5px; font-weight: 700;
+  background: var(--brand-teal-deep, #0f766e); color: #fff; vertical-align: middle; }
+.watson-undo { margin-left: 4px; }
+.watson-note { display: block; font-size: 11px; color: var(--tag-orange-text); }
+.watson-wrote { margin-top: 6px; font-size: 12px; }
+.watson-link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
+.watson-err { color: var(--sev-high); }
+.watson-reacted { border-style: dashed; }
+.watson-flash { animation: watson-flash 1.8s ease-out; }
+@keyframes watson-flash { from { background: var(--tag-orange-bg, rgba(245, 158, 11, .35)); } to { background: transparent; } }

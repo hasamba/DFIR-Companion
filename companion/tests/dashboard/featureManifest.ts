@@ -1559,7 +1559,13 @@ export const FEATURES: Feature[] = [
     // setReportLogo is the operation the page's file picker calls; rmLogo and its size cap never
     // leave the closure, which is what stopped the upload handler owning half this feature.
     file: "dashboard-report-meta.js",
-    publish: ["fillReportMeta", "loadReportMeta", "saveReportMeta", "setReportLogo"],
+    publish: [
+      "fillReportMeta",
+      "loadReportMeta",
+      "reloadReportMetaIfClean",
+      "saveReportMeta",
+      "setReportLogo",
+    ],
     private: ["rmLogo", "LOGO_MAX_LEN"],
   },
   {
@@ -1868,6 +1874,29 @@ export const FEATURES: Feature[] = [
     ],
   },
   {
+    // The "Watson" badge, Undo and synthesis notes on items Watson wrote, and the "Wrote:" link jump.
+    // dashboard-watson.js hands it the applied proposals (watsonMarksSet); the findings, next-steps,
+    // timeline-row and report-details renderers each call watsonMarkHtml / watsonMarkReportSlots once.
+    file: "dashboard-watson-marks.js",
+    publish: ["watsonMarksSet", "watsonMarkHtml", "watsonUndoTarget", "watsonMarkReportSlots", "watsonJump"],
+    private: [
+      "SECTION",
+      "KIND_OF",
+      "WATSON_MARKER",
+      "REPORT_FIELDS",
+      "applied",
+      "signature",
+      "lastReportMeta",
+      "FLASH_MS",
+    ],
+  },
+  {
+    // Watson's proposal cards, the "Wrote:" line and the paused-reactions banner. Pure builders.
+    file: "dashboard-watson-cards.js",
+    publish: ["watsonCardHtml", "watsonWroteHtml", "watsonPausedHtml"],
+    private: ["HELD_SHOWN", "FIELD_LABEL", "PAUSED", "TITLE", "BODY", "btn"],
+  },
+  {
     // Watson's markup builders, split from dashboard-watson.js to keep both under 400 lines. Pure:
     // no state, no initializer; dashboard-watson.js calls the builders (and watsonCaseIsEmpty) by name.
     file: "dashboard-watson-view.js",
@@ -1901,6 +1930,7 @@ export const FEATURES: Feature[] = [
       "wSeq",
       "wSeen",
       "wNotice",
+      "wCardErr",
       "wEmpty",
       "wNoAi",
       "wState",

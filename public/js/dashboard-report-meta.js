@@ -16,6 +16,12 @@
   // The case whose stored details the form holds ("" = never loaded). A save from a form that was
   // never loaded for this case loads them first, so it neither 409s nor wipes the other fields.
   let rmFilledFor = "";
+  // The form as last filled from the server: a different reading now means unsaved edits.
+  let rmClean = "";
+  const formKey = () =>
+    Array.from(document.querySelectorAll('#sec-case-details input[id^="rm-"], #sec-case-details textarea[id^="rm-"]'))
+      .map((el) => (el.type === "checkbox" ? el.checked : el.value))
+      .join("\u0001") + rmLogo;
   function renderLogoPreview() {
     const wrap = document.getElementById("rm-logoPreviewWrap");
     const img = document.getElementById("rm-logoPreview");
@@ -63,6 +69,8 @@
       "term",
       "explanation",
     ]);
+    rmClean = formKey();
+    if (typeof watsonMarkReportSlots === "function") watsonMarkReportSlots(m); // "Watson" badge on the fields it wrote
   }
 
   function fetchReportMeta(caseId) {
@@ -75,6 +83,13 @@
         fillReportMeta(m);
         rmFilledFor = caseId;
       });
+  }
+
+  // Watson wrote report text: show it, unless the analyst has unsaved edits in the form (a save would
+  // refuse on the newer version anyway, and typing must not be wiped).
+  function reloadReportMetaIfClean(caseId) {
+    if (rmFilledFor === caseId && formKey() !== rmClean) return Promise.resolve();
+    return fetchReportMeta(caseId).catch(() => {});
   }
 
   function loadReportMeta(caseId) {
@@ -171,6 +186,7 @@
   // included — stays inside the closure, which is the point of moving it.
   window.fillReportMeta = fillReportMeta;
   window.loadReportMeta = loadReportMeta;
+  window.reloadReportMetaIfClean = reloadReportMetaIfClean;
   window.saveReportMeta = saveReportMeta;
   window.setReportLogo = setReportLogo;
 })();

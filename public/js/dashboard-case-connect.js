@@ -610,7 +610,7 @@
       if (typeof scheduleSecondLookReload === "function") scheduleSecondLookReload(caseId); // #2622 re-measure the Second Look card
     } else if (msg.type === "second_opinion_changed")
       loadSecondOpinion(caseId);
-    else if (msg.type === "watson_changed") loadWatson(caseId);
+    else if (msg.type === "watson_changed") { loadWatson(caseId); if (typeof reloadReportMetaIfClean === "function") reloadReportMetaIfClean(caseId); }
     else if (msg.type === "ai_status") applyAiStatus(msg);
     else if (msg.type === "job_changed") scheduleJobUiRefresh(caseId, msg.jobs);
     else if (msg.type === "capture_ingest") {

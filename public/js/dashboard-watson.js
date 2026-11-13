@@ -23,6 +23,7 @@
   let wSeq = 0;
   let wSeen = 0;
   let wNotice = null; // { text } — a warning shown under the log
+  const wCardErr = new Map(); // proposal id -> the server's message when its action was refused (shown on the card)
   let wEmpty = false; // the case has no forensic events and no findings (#2468)
   let wNoAi = false; // the server has no Watson provider: the panel is hidden
   let wState = null; // "rail" | "open" | "full", seeded from storage on first use (a blocked store still switches)
@@ -44,7 +45,8 @@
     if (!wChat) return `<div class="watson-empty">Open a case to talk to Watson.</div>`;
     const older = wEarlier.map((t) => watsonTurnHtml(t, [], true)).join("");
     const more = wMore === true || (wMore === null && wChat.turns.length >= CHAT_CAP);
-    const turns = (more ? watsonEarlierButtonHtml() : "") + older + wChat.turns.map((t) => watsonTurnHtml(t, wChat.proposals)).join("");
+    const props = wCardErr.size ? wChat.proposals.map((p) => (wCardErr.has(p.id) ? { ...p, uiError: wCardErr.get(p.id) } : p)) : wChat.proposals;
+    const turns = (more ? watsonEarlierButtonHtml() : "") + older + wChat.turns.map((t) => watsonTurnHtml(t, props)).join("");
     const hint = wChat.turns.length
       ? ""
       : wEmpty
@@ -52,7 +54,7 @@
         : `<div class="watson-empty">Ask Watson about this case, or paste evidence.</div>`;
     const warn = wNotice ? `<div class="watson-turn watson-warn"><div class="watson-text">${esc(wNotice.text)}</div></div>` : "";
     const thinking = wBusy.has(currentCase()) ? `<div class="watson-empty">Watson is thinking…</div>` : "";
-    return hint + turns + warn + thinking;
+    return hint + turns + watsonPausedHtml(wChat.reactionsPaused) + warn + thinking;
   }
 
   function footHtml() {
@@ -69,6 +71,7 @@
 
   function renderWatson(next) {
     if (next) wChat = next;
+    watsonMarksSet(wChat ? wChat.proposals : []); // the sections' "Watson" badges follow the applied proposals
     const grew = wChat && wChat.turns.length > wSeen;
     setHtml('[data-w="log"]', logHtml());
     setHtml('[data-w="board"]', watsonBoardHtml(wQuestions));
@@ -149,6 +152,7 @@
       wMore = null;
       wSeen = 0;
       wNotice = null;
+      wCardErr.clear();
     }
     const seq = ++wSeq;
     return fetch(api(id, ""))
@@ -269,7 +273,7 @@
   }
 
   // A write that answers { chat, state?: { keyQuestions } } (a proposal decision, an added answer).
-  async function decide(path) {
+  async function decide(path, pid) {
     const caseId = currentCase();
     wNotice = null;
     try {
@@ -278,9 +282,11 @@
       if (!r.ok) {
         const text = await failure(r, "proposal", false);
         if (!live(caseId)) return;
-        wNotice = { text };
+        if (pid) wCardErr.set(pid, text);
+        else wNotice = { text };
         return renderWatson();
       }
+      if (pid) wCardErr.delete(pid);
       const body = await r.json();
       if (!live(caseId)) return;
       if (body.state && Array.isArray(body.state.keyQuestions)) wQuestions = body.state.keyQuestions;
@@ -292,7 +298,7 @@
     }
   }
 
-  const proposal = (el, verb) => decide(`/proposals/${encodeURIComponent(el.dataset.pid)}/${verb}`);
+  const proposal = (el, verb) => decide(`/proposals/${encodeURIComponent(el.dataset.pid)}/${verb}`, el.dataset.pid);
   const addQuestion = (el) => decide(`/turns/${encodeURIComponent(el.dataset.tid)}/add-question`);
   // Older turns from the full history file, above the oldest one shown. Read-only.
   async function loadEarlier() {
@@ -335,6 +341,11 @@
     apply: (el) => proposal(el, "apply"),
     reject: (el) => proposal(el, "reject"),
     undo: (el) => proposal(el, "undo"),
+    // A "Wrote:" link: leave the full view first (it covers the sections), then scroll and flash.
+    jump: (el) => {
+      if (panelState() === "full") setWatsonPanelState("open");
+      watsonJump(el);
+    },
     addQuestion,
     loadEarlier,
     newThread,

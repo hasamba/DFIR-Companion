@@ -95,7 +95,12 @@ function setup(
   const stateListeners: StateListener[] = [];
   const api = loadDashboardModule<Api>(
     "dashboard-watson.js",
-    ["dashboard-escape.js", "dashboard-watson-view.js"],
+    [
+      "dashboard-escape.js",
+      "dashboard-watson-marks.js",
+      "dashboard-watson-cards.js",
+      "dashboard-watson-view.js",
+    ],
     {
       document,
       DfirState: { onLastStateChange: (cb: StateListener) => stateListeners.push(cb) },

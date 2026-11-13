@@ -458,6 +458,8 @@
   <script src="/js/dashboard-ocr-search.js"></script>
   <script src="/js/dashboard-evidence-graph.js"></script>
   <script src="/js/dashboard-import-changes.js"></script>
+  <script src="/js/dashboard-watson-marks.js"></script>
+  <script src="/js/dashboard-watson-cards.js"></script>
   <script src="/js/dashboard-watson-view.js"></script>
   <script src="/js/dashboard-watson.js"></script>
   <script src="/js/dashboard-presidio.js"></script>
@@ -4769,9 +4771,9 @@
         <label>Intended audience (1.4)<textarea id="rm-intendedAudience" rows="2" placeholder="Blank = default technical-audience text"></textarea></label>
         <label>Executive summary (2) — overrides the AI summary<textarea id="rm-executiveSummary" rows="3"></textarea></label>
         <label>Business Impact Analysis (2.1)<textarea id="rm-businessImpact" rows="3"></textarea></label>
-        <label>Investigation limitations (2.2)<textarea id="rm-investigationLimitations" rows="3"></textarea></label>
+        <label>Investigation limitations (2.2) <span data-watson-slot="investigationLimitations"></span><textarea id="rm-investigationLimitations" rows="3"></textarea></label>
         <label>Investigation goals / research questions (2.3) — blank = derive from key questions<textarea id="rm-investigationGoals" rows="3"></textarea></label>
-        <label>Conclusions (5) — overrides the derived conclusion<textarea id="rm-conclusions" rows="3"></textarea></label>
+        <label>Conclusions (5) — overrides the derived conclusion <span data-watson-slot="conclusions"></span><textarea id="rm-conclusions" rows="3"></textarea></label>
         <label>Recommendations (5) — one per line<textarea id="rm-recommendations" rows="3" placeholder="Deploy EDR to all endpoints"></textarea></label>
         <label>Report revisions (1.1) — one per line: <code>version | date | author | comments</code><textarea id="rm-revisions" rows="2" placeholder="1.0 | 2026-06-04 | Jane Doe | Release version"></textarea></label>
         <label>Distribution list (1.2, optional — omitted if blank) — one per line: <code>name | role | method</code><textarea id="rm-distribution" rows="2" placeholder="Ellie Example | CISO | email"></textarea></label>
@@ -5796,7 +5798,7 @@
           + `</div>`
           + `<div class="ev-col-sev sev-${esc(e.severity)}" title="Severity: ${escAttr(e.severity || "unrated")}"><span class="ev-sq"></span>${esc(e.severity || "")}</div>`
           + `<div class="ev-col-time">${span}</div>`
-          + `<div class="ev-col-content">${promotedBadge(e) || ""}`   // #1554: outside the badges toggle and outside [details] — provenance, not decoration; `|| ""` covers the facade stub
+          + `<div class="ev-col-content">${promotedBadge(e) || ""}${watsonMarkHtml("event", e.id, e) || ""}`   // #1554: outside the badges toggle and outside [details] — provenance, not decoration; `|| ""` covers the facade stub
           + (tlShow("tags", tld) ? tagPills("event", e.id) : "")
           + (tlShow("badges", tld) ? `${newBadge}${badge}${corro}${chain}` : "")
           + (showHost ? host : "")

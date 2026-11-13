@@ -31,7 +31,9 @@
   const btn = (pid, verb, label) =>
     `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="${verb}" data-pid="${escAttr(pid)}">${label}</button> `;
 
+  // Question proposals keep their phase 1 card here; every other kind is drawn by dashboard-watson-cards.js.
   function proposalHtml(p) {
+    if (p.kind !== "question_new" && p.kind !== "question_update") return watsonCardHtml(p);
     const a = p.after || {};
     const verbs =
       p.status === "pending"
@@ -105,13 +107,11 @@
 
   // readOnly: an older turn paged back from the history file. It shows no proposal or add button.
   function turnHtml(t, proposals, readOnly) {
-    const cls = "watson-turn watson-" + (t.error ? "warn" : t.role);
+    const reacted = t.role === "system" && String(t.text).startsWith("Watson reacted to");
+    const cls = "watson-turn watson-" + (t.error ? "warn" : t.role) + (reacted ? " watson-reacted" : "");
     const who = t.role === "analyst" ? esc(t.actor || "You") : t.role === "system" ? "System" : "Watson";
-    const props = readOnly ? "" : (t.proposalIds || [])
-      .map((id) => proposals.find((p) => p.id === id))
-      .filter(Boolean)
-      .map(proposalHtml)
-      .join("");
+    const mine = readOnly ? [] : (t.proposalIds || []).map((id) => proposals.find((p) => p.id === id)).filter(Boolean);
+    const props = mine.map(proposalHtml).join("") + watsonWroteHtml(mine);
     return (
       `<div class="${cls}"><div class="watson-who">${who}</div>` +
       (t.workingOn ? `<div class="watson-meta"><b>Working on:</b> ${esc(t.workingOn)}</div>` : "") +
