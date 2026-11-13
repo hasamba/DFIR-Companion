@@ -180,7 +180,7 @@
               (q.pointer
                 ? `<span class="q-pointer">→ ${esc(q.pointer)}</span>`
                 : "") +
-              (q.status !== "answered" ? collectDirectiveHtml(q.collect) : "") +
+              (q.status !== "answered" && q.status !== "unanswerable" ? collectDirectiveHtml(q.collect) : "") +
               `</div>`
             );
           })

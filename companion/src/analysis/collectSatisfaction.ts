@@ -75,7 +75,7 @@ export function openCollectTargets(
     });
   }
   for (const q of state.keyQuestions ?? []) {
-    if (q.status === "answered") continue;
+    if (q.status === "answered" || q.status === "unanswerable") continue; // nothing left to collect
     if (!isActionableCollect(q.collect)) continue;
     add({
       key: collectTargetKey(q.collect),

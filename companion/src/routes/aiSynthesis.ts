@@ -524,8 +524,7 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
     if (!question) return res.status(400).json({ error: "question is required" });
     const statusIn = String(req.body?.status ?? "unknown");
-    const status: QuestionStatus =
-      statusIn === "answered" || statusIn === "partial" || statusIn === "unanswerable" ? statusIn : "unknown";
+    const status: QuestionStatus = statusIn === "answered" || statusIn === "partial" ? statusIn : "unknown";
     try {
       const stateStore = options.stateStore;
       const result = await ctx.runStateExclusive(req.params.id, async () => {

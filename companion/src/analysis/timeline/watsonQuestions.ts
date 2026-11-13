@@ -44,8 +44,9 @@ export function protectWatsonQuestion(
 ): InvestigationQuestion {
   const { synthesisDisagrees: _old, contradicted: _c, staleReSynth: _s, collect: ownCollect, ...own } = w;
   if (!run) return w;
-  const disagrees =
-    run.status !== w.status ? { status: run.status, answer: run.answer } : run.synthesisDisagrees;
+  // Synthesis cannot say "unanswerable" (only Watson can), so its "unknown" agrees with that answer.
+  const differs = run.status !== w.status && !(w.status === "unanswerable" && run.status === "unknown");
+  const disagrees = differs ? { status: run.status, answer: run.answer } : run.synthesisDisagrees;
   // A copy already protected (author kept) holds Watson's collect plus anything the passes after the
   // pinned merge added or stamped (the coverage backstop, the import high-water stamp). A fresh model
   // copy's collect belongs to the model's answer, so Watson's own stays.
