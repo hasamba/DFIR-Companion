@@ -1,15 +1,16 @@
 import { INTERNAL_TLDS } from "../../anonymize.js";
 import { collectUsernames, shortHostLabels } from "../../anonUsernames.js";
 import { extractAccounts } from "../../assetGraph.js";
-import { escapeRegExp } from "../../regexEscape.js";
 import { extractDomains } from "../../textDomains.js";
 import type { PromptEntities } from "../maskRequest.js";
 
-// Hostnames and usernames in a Watson prompt that the case has never seen (spec §8). The case
-// anonymizer only knows entities derived from state, so a hostname that arrives in an analyst paste
-// (or that Watson repeats from one later) would otherwise reach the model in clear. These go to the
-// masking step for ONE call; they are never saved. IPs and emails need nothing here: the anonymizer
-// finds those by pattern already.
+// Every hostname and username in a Watson prompt (spec §8). The case anonymizer only knows entities
+// derived from state, so a hostname that arrives in an analyst paste, that Watson repeats from one, or
+// that sits only inside an event description would otherwise reach the model in clear. ALL of them go
+// to the masking step for ONE call (it de-duplicates against what it knows); they are never saved.
+// The cost: a public domain in the case context (adversary infrastructure the case anonymizer keeps
+// readable) is a token for Watson. IPs and emails need nothing here: the anonymizer finds those by
+// pattern already.
 
 // extractDomains drops the internal suffixes on purpose (they are not IOCs), but for masking they
 // are the names that matter most. Built from the anonymizer's own INTERNAL_TLDS set, longest first,
@@ -31,20 +32,13 @@ function shortLabels(hosts: readonly string[]): string[] {
   return shortHostLabels(candidates, []);
 }
 
-function wholeWord(value: string): RegExp {
-  return new RegExp(`(?<![\\p{L}\\p{N}_.-])${escapeRegExp(value)}(?![\\p{L}\\p{N}_-])`, "iu");
-}
-
-/** Entities in `text` that do not appear in `seen` (the case context the state already governs). */
-export function unseenPromptEntities(text: string, seen: string): PromptEntities {
+/** The hostnames and usernames in `text`, for the masking step of one call. */
+export function promptEntities(text: string): PromptEntities {
   const fqdns = new Set(extractDomains(text));
   for (const m of text.matchAll(INTERNAL_HOST_RE)) fqdns.add(m[0].toLowerCase());
-  const hosts = new Set([...fqdns, ...shortLabels([...fqdns])]);
-  const usernames = collectUsernames({ texts: [text], accountsOf: extractAccounts, internalDomains: [] });
-  const unseen = (v: string): boolean => !wholeWord(v).test(seen);
   return {
     // No cap: a cap would fail open on a dense paste, and the prompt itself is already bounded.
-    hosts: [...hosts].filter(unseen),
-    usernames: usernames.filter(unseen),
+    hosts: [...new Set([...fqdns, ...shortLabels([...fqdns])])],
+    usernames: collectUsernames({ texts: [text], accountsOf: extractAccounts, internalDomains: [] }),
   };
 }

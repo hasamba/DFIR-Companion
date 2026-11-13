@@ -375,6 +375,21 @@ describe("runWatsonRound", () => {
   // Internal-suffix fixtures are assembled at runtime so the CI secret scan never sees them literally.
   const dotted = (...labels: string[]): string => labels.join(".");
 
+  it("masks an internal host found only in an event description, and still masks the known host", async () => {
+    const corpHost = dotted("ws-pay-07", "corp");
+    const h = await harness([reply()], { anonymize: true });
+    await h.stateStore.save({
+      ...emptyState(CASE),
+      forensicTimeline: [ev("e1"), { ...ev("e2"), description: `SMB session from ${corpHost} to HOST-A` }],
+    });
+    await runWatsonRound(h.ctx, CASE, { text: "what happened?" });
+    const sent = h.provider.sent[0].userPrompt;
+    expect(sent).toContain("SMB session from");
+    expect(sent.toLowerCase()).not.toContain(corpHost);
+    expect(sent).not.toContain("HOST-A");
+    expect(new Set(sent.match(/ANON_HOST_\d+/g) ?? []).size).toBeGreaterThanOrEqual(2);
+  });
+
   it("masks internal-suffix hosts, short host names and machine accounts from a paste", async () => {
     const intranet = dotted("srv1", "intranet");
     const priv = dotted("nas", "private");

@@ -5,7 +5,7 @@ import { AiReplyUnreadableError } from "../aiReplyUnreadable.js";
 import { AiAnswerParseError } from "../providerCall.js";
 import { getWatsonPrompt } from "../prompts/index.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
-import { unseenPromptEntities } from "./pasteEntities.js";
+import { promptEntities } from "./pasteEntities.js";
 import { pasteHead, searchPaste } from "./pasteSearch.js";
 import { buildWatsonUserPrompt, WATSON_CASE_EVENTS_MAX, type WatsonPromptInput } from "./promptBuilder.js";
 import { sanitizeWatsonReply, watsonReplySchema, type WatsonReply } from "./replySchema.js";
@@ -171,7 +171,7 @@ async function converse(
         getWatsonPrompt,
         prompt,
         (r) => watsonReplySchema.parse(r),
-        { promptEntities: unseenPromptEntities(prompt, caseContext) },
+        { promptEntities: promptEntities(prompt) },
       );
       return sanitizeWatsonReply(raw, known.questions, known.pastes);
     };
