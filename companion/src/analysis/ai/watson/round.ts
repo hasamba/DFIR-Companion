@@ -87,7 +87,7 @@ async function runRound(
     ...(input.actor ? { actor: input.actor } : {}),
     ...(paste ? { pasteId: paste.id } : {}),
   };
-  const newPaste = paste && !start.turns.some((t) => t.pasteId === paste.id) ? paste : undefined;
+  const newPaste = paste && !pasteAnswered(start.turns, paste.id) ? paste : undefined;
   // Saved BEFORE the model call: the analyst's words survive any failure below.
   const chat = await ctx.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, analystTurn] }));
 
@@ -189,6 +189,11 @@ async function headExcerpt(
   const head = pasteHead(text);
   const shownLines = head ? head.split("\n").length : 0;
   return { pasteId: paste.id, filename: paste.filename, text: head, truncated: shownLines < paste.lines };
+}
+
+/** A paste counts as shown only once a Watson turn answered the turn that carried it. */
+function pasteAnswered(turns: readonly WatsonTurn[], pasteId: string): boolean {
+  return turns.some((t, i) => t.pasteId === pasteId && turns[i + 1]?.role === "watson");
 }
 
 /** Remove each shown event once, so an event added during the round stays for the next one. */

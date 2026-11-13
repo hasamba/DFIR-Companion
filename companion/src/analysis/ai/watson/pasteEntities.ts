@@ -15,8 +15,6 @@ import type { PromptEntities } from "../maskRequest.js";
 const INTERNAL_HOST_RE =
   /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,127}(?:local|localdomain|internal|lan|home|corp)\b/gi;
 
-const MAX_ENTITIES = 500;
-
 function wholeWord(value: string): RegExp {
   return new RegExp(`(?<![\\p{L}\\p{N}_.-])${escapeRegExp(value)}(?![\\p{L}\\p{N}_-])`, "iu");
 }
@@ -28,7 +26,8 @@ export function unseenPromptEntities(text: string, seen: string): PromptEntities
   const usernames = collectUsernames({ texts: [text], accountsOf: extractAccounts, internalDomains: [] });
   const unseen = (v: string): boolean => !wholeWord(v).test(seen);
   return {
-    hosts: [...hosts].filter(unseen).slice(0, MAX_ENTITIES),
-    usernames: usernames.filter(unseen).slice(0, MAX_ENTITIES),
+    // No cap: a cap would fail open on a dense paste, and the prompt itself is already bounded.
+    hosts: [...hosts].filter(unseen),
+    usernames: usernames.filter(unseen),
   };
 }

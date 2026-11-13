@@ -329,11 +329,16 @@ describe("runWatsonRound", () => {
       [reply({ search: { pasteId: "p1", terms: ["ws-pay"] } }), reply({ message: `Seen ${UNSEEN_HOST}` })],
       { anonymize: true },
     );
-    await addPaste(h, "p1", `TCP 10.1.2.3:445 ${UNSEEN_HOST} ESTABLISHED\nother line`);
+    await addPaste(
+      h,
+      "p1",
+      `TCP 10.1.2.3:445 ${UNSEEN_HOST} ESTABLISHED\nSMB ${UNSEEN_HOST.toUpperCase()}\nmail jane.roe@${UNSEEN_HOST}\nother line`,
+    );
     const chat = await runWatsonRound(h.ctx, CASE, { text: "what is in the paste?", pasteId: "p1" });
     expect(h.provider.sent).toHaveLength(2);
     for (const req of h.provider.sent) {
-      expect(req.userPrompt).not.toContain(UNSEEN_HOST);
+      expect(req.userPrompt.toLowerCase()).not.toContain(UNSEEN_HOST);
+      expect(req.userPrompt).not.toContain("jane.roe");
       expect(req.userPrompt).not.toContain("10.1.2.3");
       expect(req.userPrompt).toMatch(/ANON_HOST_\d+/);
       expect(req).not.toHaveProperty("promptEntities");
@@ -350,6 +355,14 @@ describe("runWatsonRound", () => {
     await runWatsonRound(h.ctx, CASE, { text: "look", pasteId: "p1" });
     await runWatsonRound(h.ctx, CASE, { text: "and now?" });
     expect(h.provider.sent[1].userPrompt).not.toContain(UNSEEN_HOST);
+  });
+
+  it("attaches a new paste's head again when the round that carried it failed", async () => {
+    const h = await harness(["not json {{", reply()]);
+    await addPaste(h, "p1", "first paste line\nsecond");
+    await runWatsonRound(h.ctx, CASE, { text: "look", pasteId: "p1" });
+    await runWatsonRound(h.ctx, CASE, { text: "look again", pasteId: "p1" });
+    expect(h.provider.sent[1].userPrompt).toContain("first paste line");
   });
 
   it("refuses a stored paste name that is not a bare file name", async () => {

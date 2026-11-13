@@ -90,8 +90,9 @@ export async function mainLanguages(
   const families: SourceFamily[] =
     main.effective === "mixed" ? main.counts.map((c) => c.family) : main.effective ? [main.effective] : [];
   const enabled = enabledHuntPlatforms();
-  const languages = families.map((f) => huntLanguageFor(f, enabled).language);
-  return [...new Set(languages.filter((l): l is NonNullable<typeof l> => l !== null))];
+  // Watson's reply schema speaks one "kql"; the hunt planner splits it by platform.
+  const languages = families.map((f) => huntLanguageFor(f, enabled).language?.replace(/^kql-.*/, "kql"));
+  return [...new Set(languages.filter((l): l is string => typeof l === "string"))];
 }
 
 const MAX_FINDINGS = 150;
