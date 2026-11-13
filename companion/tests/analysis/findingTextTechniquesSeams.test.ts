@@ -69,11 +69,15 @@ describe("every read seam shows the finding-text techniques (#1873)", () => {
   });
 
   it("the live state push", () => {
+    // #2615: the push is a small notice; the dashboard re-reads GET /cases/:id/state,
+    // which applies the finding-text techniques (the seam tested above).
     const hub = new LiveHub();
     const sent: string[] = [];
     hub.subscribe("c1", { readyState: 1, OPEN: 1, send: (m: string) => void sent.push(m) });
     hub.broadcast(caseState());
-    expect(ids(JSON.parse(sent[0]).state)).toEqual(["T1070.001", "T1074.001", "T1490"]);
+    const frame = JSON.parse(sent[0]);
+    expect(frame).toMatchObject({ type: "state_changed", caseId: "c1" });
+    expect(frame).not.toHaveProperty("state");
   });
 
   it("an accepted referee removal still hides the technique", async () => {

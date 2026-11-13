@@ -211,14 +211,17 @@ describe("every read seam hides a rejected technique (#1742)", () => {
   });
 
   it("the live state push", () => {
+    // #2615: the push is a small notice; the dashboard re-reads GET /cases/:id/state
+    // (the seam tested above), so the frame itself must carry no techniques at all.
     const hub = new LiveHub();
     const sent: string[] = [];
     hub.subscribe("c1", { readyState: 1, OPEN: 1, send: (m: string) => void sent.push(m) });
     const stored = { ...caseState(), rejectedTechniques: ["T1105"] };
     hub.broadcast(stored);
-    const pushed = JSON.parse(sent[0]).state as InvestigationState;
-    expect(ids(pushed)).toEqual(["T1059"]);
-    expect(pushed.forensicTimeline[0].mitreTechniques).toEqual(["T1059"]);
+    const frame = JSON.parse(sent[0]);
+    expect(frame.type).toBe("state_changed");
+    expect(frame).not.toHaveProperty("state");
+    expect(sent[0]).not.toContain("T1105");
     expect(stored.forensicTimeline[0].mitreTechniques).toEqual(["T1105", "T1059"]);
   });
 });
