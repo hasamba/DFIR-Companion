@@ -6,6 +6,8 @@ export const WATSON_PASTE_MAX_BYTES = 50 * 1024 * 1024;
 const DEFAULT_MAX_LINES = 200;
 const DEFAULT_CONTEXT = 1;
 const EXCERPT_MAX_CHARS = 24000;
+const LINE_MAX_CHARS = 2000;
+const CLIP_MARK = " …[clipped]";
 
 export interface PasteSearchResult {
   excerpt: string;
@@ -24,7 +26,7 @@ export function searchPaste(
   terms: readonly string[],
   opts: { maxLines?: number; context?: number } = {},
 ): PasteSearchResult {
-  const needles = terms.map((t) => t.toLowerCase()).filter((t) => t.length > 0);
+  const needles = terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0);
   if (needles.length === 0 || text.length === 0) {
     return { excerpt: "", matchedLines: 0, truncated: false };
   }
@@ -44,7 +46,12 @@ export function searchPaste(
       truncated = true;
       return;
     }
-    const row = `${s.n}: ${text.slice(s.start, s.end)}`;
+    let body = text.slice(s.start, s.end);
+    if (body.length > LINE_MAX_CHARS) {
+      body = body.slice(0, LINE_MAX_CHARS) + CLIP_MARK;
+      truncated = true;
+    }
+    const row = `${s.n}: ${body}`;
     if (out.length >= maxLines || chars + row.length + 1 > EXCERPT_MAX_CHARS) {
       closed = true;
       truncated = true;
@@ -56,12 +63,13 @@ export function searchPaste(
 
   let pos = 0;
   let n = 0;
-  while (pos <= text.length) {
+  while (pos < text.length) {
     let end = text.indexOf("\n", pos);
     if (end === -1) end = text.length;
     n++;
-    const span: Span = { n, start: pos, end };
-    const lower = text.slice(pos, end).toLowerCase();
+    const contentEnd = end > pos && text[end - 1] === "\r" ? end - 1 : end;
+    const span: Span = { n, start: pos, end: contentEnd };
+    const lower = text.slice(pos, contentEnd).toLowerCase();
     if (needles.some((t) => lower.includes(t))) {
       matchedLines++;
       if (!closed) {
@@ -85,9 +93,24 @@ export function searchPaste(
 }
 
 export function pasteHead(text: string, maxChars = 6000): string {
-  if (text.length <= maxChars) return text;
-  const cut = text.lastIndexOf("\n", maxChars);
-  // Whole lines when possible; a single over-long first line is cut hard.
-  if (cut > 0 && text[maxChars] === "\n") return text.slice(0, maxChars);
-  return cut > 0 ? text.slice(0, cut) : text.slice(0, maxChars);
+  const out: string[] = [];
+  let used = 0;
+  let pos = 0;
+  let n = 0;
+  while (pos < text.length) {
+    let end = text.indexOf("\n", pos);
+    if (end === -1) end = text.length;
+    n++;
+    const contentEnd = end > pos && text[end - 1] === "\r" ? end - 1 : end;
+    const row = `${n}: ${text.slice(pos, Math.min(contentEnd, pos + maxChars))}`;
+    const cost = row.length + (out.length > 0 ? 1 : 0);
+    if (used + cost > maxChars) {
+      if (out.length === 0) out.push(row.slice(0, maxChars)); // one over-long first line
+      break;
+    }
+    out.push(row);
+    used += cost;
+    pos = end + 1;
+  }
+  return out.join("\n");
 }

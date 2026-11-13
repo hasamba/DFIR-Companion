@@ -40,15 +40,44 @@ describe("searchPaste", () => {
     expect(r.truncated).toBe(true);
     expect(r.matchedLines).toBe(100);
   });
+  it("clips an over-long matching line and still returns later matches", () => {
+    const text = `hit ${"x".repeat(30000)}\nhit one\nhit two`;
+    const r = searchPaste(text, ["hit"], { context: 0 });
+    const lines = r.excerpt.split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[0]!.endsWith(" …[clipped]")).toBe(true);
+    expect(lines[0]!.length).toBeLessThan(2100);
+    expect(lines[1]).toBe("2: hit one");
+    expect(lines[2]).toBe("3: hit two");
+    expect(r.truncated).toBe(true);
+  });
+  it("strips carriage returns", () => {
+    const r = searchPaste("x\r\nHIT\r\ny\r\n", ["hit"]);
+    expect(r.excerpt).toBe("1: x\n2: HIT\n3: y");
+  });
+  it("adds no phantom line after a trailing newline", () => {
+    expect(searchPaste("a\nhit\n", ["hit"]).excerpt).toBe("1: a\n2: hit");
+  });
+  it("matches nothing for a whitespace-only term and trims terms", () => {
+    expect(searchPaste("a b\nc", ["  "]).matchedLines).toBe(0);
+    expect(searchPaste("a b\nc", [" c "]).matchedLines).toBe(1);
+  });
+  it("supports context = 2", () => {
+    const r = searchPaste("1\n2\n3\nhit\n5\n6\n7", ["hit"], { context: 2 });
+    expect(r.excerpt).toBe("2: 2\n3: 3\n4: hit\n5: 5\n6: 6");
+  });
 });
 
 describe("pasteHead", () => {
-  it("returns whole lines within maxChars", () => {
-    expect(pasteHead("aaa\nbbb\nccc", 8)).toBe("aaa\nbbb");
-    expect(pasteHead("short")).toBe("short");
+  it("returns numbered whole lines within maxChars", () => {
+    expect(pasteHead("aaa\nbbb\nccc", 14)).toBe("1: aaa\n2: bbb");
+    expect(pasteHead("short")).toBe("1: short");
+  });
+  it("strips CR and adds no phantom line", () => {
+    expect(pasteHead("a\r\nb\r\n")).toBe("1: a\n2: b");
   });
   it("cuts a single over-long line", () => {
-    expect(pasteHead("x".repeat(100), 10)).toBe("x".repeat(10));
+    expect(pasteHead("x".repeat(100), 10)).toBe(`1: ${"x".repeat(7)}`);
   });
   it("exports the 50 MB cap", () => {
     expect(WATSON_PASTE_MAX_BYTES).toBe(52_428_800);
