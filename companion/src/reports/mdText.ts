@@ -1,6 +1,7 @@
 import type { Finding, ForensicEvent } from "../analysis/stateTypes.js";
 import { revisionSuffix } from "../analysis/eventRevision.js";
 import { mdControlPictures } from "./controlChars.js";
+import { TYPE_SEED_PREFIX } from "../analysis/incidentTypes.js";
 
 // One home for "untrusted text → safe Markdown fragment".
 //
@@ -161,4 +162,15 @@ export function findingIocsMd(f: Finding): string[] {
       `- Indicators removed by the IOC exclude list: ${refs.map((r) => codeSpanMd(r.value)).join(", ")}`,
     );
   return out;
+}
+
+/**
+ * A key question as a reader should see it. The "[type-seed]" prefix is internal bookkeeping on the
+ * STORED question (merge-mode dedup matches the exact stored text), so reports, hand-offs and
+ * exports strip it for display only (#2621). Only a leading marker is removed, once.
+ */
+export function displayQuestionText(question: string): string {
+  return question.startsWith(TYPE_SEED_PREFIX)
+    ? question.slice(TYPE_SEED_PREFIX.length).trimStart()
+    : question;
 }

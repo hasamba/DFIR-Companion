@@ -19,7 +19,15 @@ import { handoffBriefSection } from "./handoffSection.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
-import { blockMd, cellMd, eventCellMd, findingIocsMd, oneLineMd, sessionCommandsMd } from "./mdText.js";
+import {
+  blockMd,
+  cellMd,
+  displayQuestionText,
+  eventCellMd,
+  findingIocsMd,
+  oneLineMd,
+  sessionCommandsMd,
+} from "./mdText.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
@@ -236,7 +244,7 @@ function investigationGoals(state: InvestigationState, meta: ReportMeta, lines: 
   }
   if (state.keyQuestions.length > 0) {
     lines.push("Derived from the investigation's key questions:", "");
-    for (const q of state.keyQuestions) lines.push(`- ${q.question}`);
+    for (const q of state.keyQuestions) lines.push(`- ${displayQuestionText(q.question)}`);
     lines.push("");
     return;
   }
@@ -843,7 +851,9 @@ function investigation(
       // Prefer the structured collect directive (investigation-guidance #8) as the "where to find it"
       // for an open question — it names the exact host + log source to collect to answer it.
       const where = collectSummary(q.collect) || q.pointer || "—";
-      lines.push(`| ${mark(q.status)} | ${cellMd(q.question)} | ${cellMd(answerCell)} | ${cellMd(where)} |`);
+      lines.push(
+        `| ${mark(q.status)} | ${cellMd(displayQuestionText(q.question))} | ${cellMd(answerCell)} | ${cellMd(where)} |`,
+      );
     }
     lines.push("");
   }

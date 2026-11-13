@@ -4,7 +4,7 @@
 
 import type { Finding, Severity } from "../analysis/stateTypes.js";
 import type { HandoffBrief } from "../analysis/handoffBrief.js";
-import { blockMd, cellMd, oneLineMd } from "./mdText.js";
+import { blockMd, cellMd, displayQuestionText, oneLineMd } from "./mdText.js";
 
 const when = (iso: string): string => (iso ? iso.slice(0, 16).replace("T", " ") + " UTC" : "unknown");
 const more = (n: number, what: string): string[] => (n > 0 ? [`- _… and ${n} more ${what}_`] : []);
@@ -61,7 +61,9 @@ export function renderHandoffMarkdown(b: HandoffBrief, opts: { neutralizeHtml?: 
   out.push("**Key questions not answered:**", "");
   if (!b.questions.length) out.push("- _none_");
   for (const q of b.questions)
-    out.push(`- (${q.status}) ${line(q.question)}${q.pointer ? ` — ${line(q.pointer)}` : ""}`);
+    out.push(
+      `- (${q.status}) ${line(displayQuestionText(q.question))}${q.pointer ? ` — ${line(q.pointer)}` : ""}`,
+    );
   out.push(...more(b.questionsNotShown, "questions"), "");
   out.push("**Hypotheses still open:**", "");
   if (!b.hypotheses.length) out.push("- _none_");
