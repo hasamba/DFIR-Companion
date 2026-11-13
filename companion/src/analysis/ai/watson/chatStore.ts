@@ -79,6 +79,7 @@ function parseChat(raw: unknown): WatsonChat {
       ? o.pendingCaseEvents.filter((e): e is string => typeof e === "string")
       : [],
     costUSD: num(o.costUSD),
+    tokens: num(o.tokens),
     calls: num(o.calls),
   };
 }

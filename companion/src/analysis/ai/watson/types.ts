@@ -49,9 +49,20 @@ export interface WatsonChat {
   memory: string;
   pendingCaseEvents: string[];
   costUSD: number;
+  /** Input + output tokens Watson used on this case: the limit for providers that report no cost. */
+  tokens: number;
   calls: number;
 }
 
 export function emptyWatsonChat(): WatsonChat {
-  return { turns: [], proposals: [], pastes: [], memory: "", pendingCaseEvents: [], costUSD: 0, calls: 0 };
+  return {
+    turns: [],
+    proposals: [],
+    pastes: [],
+    memory: "",
+    pendingCaseEvents: [],
+    costUSD: 0,
+    tokens: 0,
+    calls: 0,
+  };
 }

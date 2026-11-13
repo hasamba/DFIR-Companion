@@ -31,6 +31,8 @@ export type WatsonRoundContext = AiCallContext & {
   costStore: AiCostStore;
   provider: AIProvider;
   costLimitUSD?: number;
+  /** Input + output tokens; the limit that still works when the provider reports no dollar cost. */
+  tokenLimit?: number;
   /** The case's AI on/off switch (the route passes getControl(caseId).enabled). */
   isAiEnabled(caseId: string): Promise<boolean>;
   mainSourceStore?: CaseMainSourceStore;
@@ -47,31 +49,56 @@ export class WatsonAiOff extends Error {
   }
 }
 
-/** Thrown before anything is saved when Watson's spend reached the case limit. The route answers 409. */
+/** Thrown before anything is saved when Watson's spend reached a case limit. The route answers 409. */
 export class WatsonCostLimitReached extends Error {
-  constructor(spentUSD: number, limitUSD: number) {
-    super(
-      `Watson reached this case's cost limit ($${spentUSD.toFixed(2)} of $${limitUSD.toFixed(2)}). ` +
-        `Raise DFIR_AI_WATSON_COST_LIMIT_USD to continue.`,
-    );
+  constructor(reason: string) {
+    super(`Watson reached this case's ${reason}. Raise the limit in Settings to continue.`);
     this.name = "WatsonCostLimitReached";
   }
 }
 
-export function costLimitReached(ctx: WatsonRoundContext, spentUSD: number): boolean {
-  return ctx.costLimitUSD !== undefined && spentUSD >= ctx.costLimitUSD;
+/** What Watson has used on a case: dollars, and tokens for providers that report no dollar cost. */
+export interface WatsonSpend {
+  usd: number;
+  tokens: number;
+}
+
+export const NO_SPEND: WatsonSpend = { usd: 0, tokens: 0 };
+
+/** Which limit `spent` reached, in words, or null when Watson may still call the model. */
+export function limitReached(ctx: WatsonRoundContext, spent: WatsonSpend): string | null {
+  if (ctx.costLimitUSD !== undefined && spent.usd >= ctx.costLimitUSD) {
+    return `cost limit ($${spent.usd.toFixed(2)} of $${ctx.costLimitUSD.toFixed(2)})`;
+  }
+  if (ctx.tokenLimit !== undefined && spent.tokens >= ctx.tokenLimit) {
+    return `token limit (${spent.tokens.toLocaleString("en-US")} of ${ctx.tokenLimit.toLocaleString("en-US")} tokens)`;
+  }
+  return null;
 }
 
 /** The case's running Watson spend in the cost store (the `watson` bucket). */
-export async function watsonSpend(ctx: WatsonRoundContext, caseId: string): Promise<number> {
-  return (await ctx.costStore.load(caseId)).watson.totalCostUSD;
+export async function watsonSpend(ctx: WatsonRoundContext, caseId: string): Promise<WatsonSpend> {
+  const b = (await ctx.costStore.load(caseId)).watson;
+  return { usd: b.totalCostUSD, tokens: b.totalInputTokens + b.totalOutputTokens };
 }
 
-/** Add the six standard questions when the case has none of them. A deleted one stays deleted. */
+/** What a round used: `after` minus `before`, never negative. */
+export function spendDelta(before: WatsonSpend, after: WatsonSpend): WatsonSpend {
+  return { usd: Math.max(0, after.usd - before.usd), tokens: Math.max(0, after.tokens - before.tokens) };
+}
+
+const hasStandard = (s: InvestigationState): boolean =>
+  s.keyQuestions.some((q) => q.id.startsWith("wq-std-"));
+
+/**
+ * Add the six standard questions when the case has none of them. A deleted one stays deleted. The
+ * cheap check runs first, so the state lock is taken only on the round that actually seeds.
+ */
 export async function seedStandardQuestions(ctx: WatsonRoundContext, caseId: string): Promise<void> {
+  if (hasStandard(await ctx.stateStore.loadOverview(caseId))) return;
   await ctx.stateLock.runExclusive(caseId, async () => {
     const state = await ctx.stateStore.loadOverview(caseId);
-    if (state.keyQuestions.some((q) => q.id.startsWith("wq-std-"))) return;
+    if (hasStandard(state)) return;
     await ctx.stateStore.saveOverview({
       ...state,
       keyQuestions: ensureStandardQuestions(state.keyQuestions),

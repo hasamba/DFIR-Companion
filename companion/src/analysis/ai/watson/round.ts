@@ -11,14 +11,17 @@ import { buildWatsonUserPrompt, WATSON_CASE_EVENTS_MAX, type WatsonPromptInput }
 import { sanitizeWatsonReply, watsonReplySchema, type WatsonReply } from "./replySchema.js";
 import {
   buildWatsonCaseContext,
-  costLimitReached,
+  limitReached,
   mainLanguages,
+  NO_SPEND,
   readPasteText,
   seedStandardQuestions,
+  spendDelta,
   WatsonAiOff,
   WatsonCostLimitReached,
   watsonSpend,
   type WatsonRoundContext,
+  type WatsonSpend,
 } from "./roundContext.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
 import type { WatsonChat, WatsonPaste, WatsonTurn } from "./types.js";
@@ -39,8 +42,13 @@ export interface WatsonRoundInput {
 }
 
 const LABEL = "watson";
-const SEARCH_SKIPPED_NOTE =
-  "(Watson wanted to search the pasted text, but this case reached its Watson cost limit, so it did not.)";
+const searchSkipped = (why: string): string =>
+  `(Watson wanted to search the pasted text, but ${why}, so it did not.)`;
+const searchFailed = (err: unknown): string =>
+  `(Watson's search of the pasted text failed: ${err instanceof Error ? err.message : String(err)})`.slice(
+    0,
+    600,
+  );
 
 const chains = new Map<string, Promise<unknown>>();
 
@@ -64,9 +72,13 @@ interface Outcome {
   reply: WatsonReply | null;
   note?: string;
   error?: unknown;
+  /** Thrown to the route after the save (a Presidio hold), even when a first reply was kept. */
+  rethrow?: unknown;
   shownEvents: string[];
   questions: InvestigationState["keyQuestions"];
 }
+
+const chatSpend = (c: WatsonChat): WatsonSpend => ({ usd: c.costUSD, tokens: c.tokens });
 
 async function runRound(
   ctx: WatsonRoundContext,
@@ -75,8 +87,8 @@ async function runRound(
 ): Promise<WatsonChat> {
   if (!(await ctx.isAiEnabled(caseId))) throw new WatsonAiOff();
   const start = await ctx.chatStore.load(caseId);
-  if (costLimitReached(ctx, start.costUSD))
-    throw new WatsonCostLimitReached(start.costUSD, ctx.costLimitUSD ?? 0);
+  const reached = limitReached(ctx, chatSpend(start));
+  if (reached) throw new WatsonCostLimitReached(reached);
 
   const paste = input.pasteId ? start.pastes.find((p) => p.id === input.pasteId) : undefined;
   const analystTurn: WatsonTurn = {
@@ -91,20 +103,28 @@ async function runRound(
   // Saved BEFORE the model call: the analyst's words survive any failure below.
   const chat = await ctx.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, analystTurn] }));
 
-  const spentBefore = await watsonSpend(ctx, caseId);
   const counter = { calls: 0 };
-  const outcome = await converse(ctx, caseId, chat, analystTurn, newPaste, counter, spentBefore);
-  const spent = Math.max(0, (await watsonSpend(ctx, caseId).catch(() => spentBefore)) - spentBefore);
-
-  const saved = await ctx.chatStore.update(caseId, (fresh) =>
-    mergeOutcome(fresh, outcome, spent, counter.calls),
-  );
-  if (outcome.error) {
-    ctx.log?.warn(`Watson round failed: ${(outcome.error as Error)?.message ?? String(outcome.error)}`, {
+  let outcome: Outcome = { reply: null, shownEvents: [], questions: [] };
+  let before: WatsonSpend | null = null;
+  let saved: WatsonChat | undefined;
+  try {
+    before = await watsonSpend(ctx, caseId);
+    outcome = await converse(ctx, caseId, chat, analystTurn, newPaste, counter, before);
+  } catch (error) {
+    outcome = { ...outcome, reply: null, error };
+  } finally {
+    // Every exit charges the round, and every exit leaves a turn: a reply or an error.
+    const after = await watsonSpend(ctx, caseId).catch(() => null);
+    const spent = before && after ? spendDelta(before, after) : NO_SPEND;
+    saved = await ctx.chatStore.update(caseId, (fresh) => mergeOutcome(fresh, outcome, spent, counter.calls));
+  }
+  const failure = outcome.error ?? outcome.rethrow;
+  if (failure) {
+    ctx.log?.warn(`Watson round failed: ${failure instanceof Error ? failure.message : String(failure)}`, {
       caseId,
     });
   }
-  if (outcome.error instanceof PresidioApprovalRequired) throw outcome.error;
+  if (failure instanceof PresidioApprovalRequired) throw failure;
   return saved;
 }
 
@@ -115,16 +135,19 @@ async function converse(
   analystTurn: WatsonTurn,
   newPaste: WatsonPaste | undefined,
   counter: { calls: number },
-  spentBefore: number,
+  before: WatsonSpend,
 ): Promise<Outcome> {
   const shownEvents = chat.pendingCaseEvents.slice(0, WATSON_CASE_EVENTS_MAX);
   let questions: InvestigationState["keyQuestions"] = [];
+  let first: WatsonReply;
+  let ask: (input: WatsonPromptInput) => Promise<WatsonReply>;
+  let base: WatsonPromptInput;
   try {
     await seedStandardQuestions(ctx, caseId);
     const state = await ctx.stateStore.load(caseId);
     questions = state.keyQuestions;
     const caseContext = await buildWatsonCaseContext(ctx, caseId, state);
-    const base: WatsonPromptInput = {
+    base = {
       state,
       // The analyst's message is the ANALYST block; it is not repeated as recent chat.
       chat: { ...chat, turns: chat.turns.filter((t) => t.id !== analystTurn.id) },
@@ -136,7 +159,7 @@ async function converse(
       questions: new Set(state.keyQuestions.map((q) => q.id)),
       pastes: new Set(chat.pastes.map((p) => p.id)),
     };
-    const ask = async (input: WatsonPromptInput): Promise<WatsonReply> => {
+    ask = async (input) => {
       const prompt = buildWatsonUserPrompt(input);
       counter.calls++;
       const raw = await callAiJson(
@@ -152,18 +175,23 @@ async function converse(
       );
       return sanitizeWatsonReply(raw, known.questions, known.pastes);
     };
-
-    const first = await ask(
-      newPaste ? { ...base, pasteExcerpt: await headExcerpt(ctx, caseId, newPaste) } : base,
-    );
-    if (!first.search) return { reply: first, shownEvents, questions };
-    // At most one search hop per round, and only while the case is under its cost limit.
-    const spentSoFar = Math.max(0, (await watsonSpend(ctx, caseId)) - spentBefore);
-    if (costLimitReached(ctx, chat.costUSD + spentSoFar)) {
-      return { reply: { ...first, search: null }, note: SEARCH_SKIPPED_NOTE, shownEvents, questions };
-    }
+    first = await ask(newPaste ? { ...base, pasteExcerpt: await headExcerpt(ctx, caseId, newPaste) } : base);
+  } catch (error) {
+    return { reply: null, error, shownEvents, questions };
+  }
+  if (!first.search) return { reply: first, shownEvents, questions };
+  const kept = { reply: { ...first, search: null }, shownEvents, questions };
+  // At most one search hop per round. From here on a failure never loses the first reply.
+  try {
+    const now = await watsonSpend(ctx, caseId).catch(() => null);
+    if (!now) return { ...kept, note: searchSkipped("its cost could not be checked") };
+    const reached = limitReached(ctx, {
+      usd: chat.costUSD + spendDelta(before, now).usd,
+      tokens: chat.tokens + spendDelta(before, now).tokens,
+    });
+    if (reached) return { ...kept, note: searchSkipped(`this case reached its Watson ${reached}`) };
     const target = chat.pastes.find((p) => p.id === first.search?.pasteId);
-    if (!target) return { reply: { ...first, search: null }, shownEvents, questions };
+    if (!target) return kept;
     const found = searchPaste(await readPasteText(ctx.cases, caseId, target), first.search.terms);
     const second = await ask({
       ...base,
@@ -176,7 +204,7 @@ async function converse(
     });
     return { reply: { ...second, search: null }, shownEvents, questions };
   } catch (error) {
-    return { reply: null, error: error ?? new Error("unknown error"), shownEvents, questions };
+    return { ...kept, note: searchFailed(error), rethrow: error };
   }
 }
 
@@ -218,9 +246,14 @@ function errorText(err: unknown): string {
   return `Watson could not answer: ${msg}`.slice(0, 600);
 }
 
-function mergeOutcome(fresh: WatsonChat, outcome: Outcome, spent: number, calls: number): WatsonChat {
+function mergeOutcome(fresh: WatsonChat, outcome: Outcome, spent: WatsonSpend, calls: number): WatsonChat {
   const at = new Date().toISOString();
-  const charged = { ...fresh, costUSD: fresh.costUSD + spent, calls: fresh.calls + calls };
+  const charged = {
+    ...fresh,
+    costUSD: fresh.costUSD + spent.usd,
+    tokens: fresh.tokens + spent.tokens,
+    calls: fresh.calls + calls,
+  };
   const { reply } = outcome;
   if (!reply) {
     const turn: WatsonTurn = {
@@ -229,7 +262,7 @@ function mergeOutcome(fresh: WatsonChat, outcome: Outcome, spent: number, calls:
       role: "system",
       text: errorText(outcome.error),
       error: true,
-      costUSD: spent,
+      costUSD: spent.usd,
     };
     return { ...charged, turns: [...charged.turns, turn] };
   }
@@ -245,7 +278,7 @@ function mergeOutcome(fresh: WatsonChat, outcome: Outcome, spent: number, calls:
     ...(reply.learned ? { learned: reply.learned } : {}),
     ...(reply.request ? { request: reply.request } : {}),
     ...(proposals.length ? { proposalIds: proposals.map((p) => p.id) } : {}),
-    costUSD: spent,
+    costUSD: spent.usd,
   };
   return {
     ...charged,

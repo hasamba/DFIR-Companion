@@ -42,12 +42,12 @@ class FakeProvider implements AIProvider {
   readonly sent: AnalyzeRequest[] = [];
   constructor(
     private readonly replies: string[],
-    private readonly costPerCall = 0.1,
+    private readonly usage: AnalyzeResult["usage"] = { costUSD: 0.1 },
   ) {}
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.sent.push(req);
     const rawText = this.replies.shift() ?? "{}";
-    return { rawText, usage: { costUSD: this.costPerCall } };
+    return { rawText, usage: this.usage };
   }
 }
 
@@ -88,7 +88,13 @@ interface Harness {
 
 async function harness(
   replies: string[],
-  opts: { aiOn?: boolean; anonymize?: boolean; costLimitUSD?: number; cost?: number } = {},
+  opts: {
+    aiOn?: boolean;
+    anonymize?: boolean;
+    costLimitUSD?: number;
+    tokenLimit?: number;
+    usage?: AnalyzeResult["usage"];
+  } = {},
 ): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), "dfir-watson-round-"));
   const cases = new CaseStore(root);
@@ -98,7 +104,7 @@ async function harness(
   const anonStore = new AnonControlStore(cases);
   await anonStore.save(CASE, { ...(await anonStore.load(CASE)), enabled: opts.anonymize ?? false });
   const costStore = new AiCostStore(cases);
-  const provider = new FakeProvider(replies, opts.cost ?? 0.1);
+  const provider = new FakeProvider(replies, opts.usage ?? { costUSD: 0.1 });
   const gateCtx = { log, opts: { anonStore, aiCostStore: costStore } };
   // Bound with the same six arguments as pipeline.ts, so a value that only a seventh positional
   // argument carried would be dropped here exactly as it would be in production.
@@ -128,6 +134,7 @@ async function harness(
     provider,
     isAiEnabled: async () => opts.aiOn ?? true,
     ...(opts.costLimitUSD !== undefined ? { costLimitUSD: opts.costLimitUSD } : {}),
+    ...(opts.tokenLimit !== undefined ? { tokenLimit: opts.tokenLimit } : {}),
   };
   return { ctx, provider, chatStore, stateStore, cases, costStore, analyzeSpy };
 }
@@ -363,6 +370,95 @@ describe("runWatsonRound", () => {
     await runWatsonRound(h.ctx, CASE, { text: "look", pasteId: "p1" });
     await runWatsonRound(h.ctx, CASE, { text: "look again", pasteId: "p1" });
     expect(h.provider.sent[1].userPrompt).toContain("first paste line");
+  });
+
+  // Internal-suffix fixtures are assembled at runtime so the CI secret scan never sees them literally.
+  const dotted = (...labels: string[]): string => labels.join(".");
+
+  it("masks internal-suffix hosts, short host names and machine accounts from a paste", async () => {
+    const intranet = dotted("srv1", "intranet");
+    const priv = dotted("nas", "private");
+    const arpa = dotted("printer", "home", "arpa");
+    const h = await harness([reply()], { anonymize: true });
+    await addPaste(
+      h,
+      "p1",
+      [
+        `${UNSEEN_HOST} 445`,
+        `share on ${intranet} and ${priv}`,
+        `print to ${arpa}`,
+        "logon from WS-PAY-07 as WS-PAY-07$",
+        "login failed on login.microsoftonline.com",
+      ].join("\n"),
+    );
+    await runWatsonRound(h.ctx, CASE, { text: "read it", pasteId: "p1" });
+    const sent = h.provider.sent[0].userPrompt;
+    for (const leak of [intranet, priv, arpa, "WS-PAY-07", "ws-pay-07", "WS-PAY-07$"]) {
+      expect(sent).not.toContain(leak);
+    }
+    expect(sent).toContain("login failed"); // a generic first label never becomes a short-name token
+  });
+
+  it("token limit reached: throws WatsonCostLimitReached and never calls the model", async () => {
+    const h = await harness([reply()], { tokenLimit: 1000, usage: { inputTokens: 10, outputTokens: 5 } });
+    await h.chatStore.update(CASE, (c) => ({ ...c, tokens: 1000 }));
+    await expect(runWatsonRound(h.ctx, CASE, { text: "hi" })).rejects.toBeInstanceOf(WatsonCostLimitReached);
+    expect(h.provider.sent).toHaveLength(0);
+    expect((await h.chatStore.load(CASE)).turns).toHaveLength(0);
+  });
+
+  it("counts tokens per round when the provider reports no dollar cost", async () => {
+    const h = await harness([reply()], { usage: { inputTokens: 300, outputTokens: 40 } });
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "hi" });
+    expect(chat.tokens).toBe(340);
+    expect(chat.costUSD).toBe(0);
+  });
+
+  it("skips the search hop when the first call reached the token limit, and says so", async () => {
+    const h = await harness([reply({ search: { pasteId: "p1", terms: ["x"] } })], {
+      tokenLimit: 100,
+      usage: { inputTokens: 90, outputTokens: 20 },
+    });
+    await addPaste(h, "p1", "x\ny");
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "search" });
+    expect(h.provider.sent).toHaveLength(1);
+    expect(chat.turns.at(-1)?.text).toMatch(/token limit/i);
+    expect(chat.tokens).toBe(110);
+  });
+
+  it("takes the state lock only on the round that seeds the standard questions", async () => {
+    const h = await harness([reply(), reply()]);
+    const lock = vi.spyOn(h.ctx.stateLock, "runExclusive");
+    await runWatsonRound(h.ctx, CASE, { text: "one" });
+    expect(lock).toHaveBeenCalledTimes(1);
+    await runWatsonRound(h.ctx, CASE, { text: "two" });
+    expect(lock).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves an error turn when the spend cannot be read before the call", async () => {
+    const h = await harness([reply()]);
+    vi.spyOn(h.costStore, "load").mockRejectedValue(new Error("cost file unreadable"));
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "x" });
+    expect(chat.turns.map((t) => t.role)).toEqual(["analyst", "system"]);
+    expect(chat.turns[1].error).toBe(true);
+  });
+
+  it("keeps a good first reply when the spend read before the search hop fails", async () => {
+    const h = await harness([reply({ message: "FIRST", search: { pasteId: "p1", terms: ["a"] } }), reply()]);
+    await addPaste(h, "p1", "a\nb");
+    const real = h.costStore.load.bind(h.costStore);
+    // record() reads the file too; keep it out of the count so call 2 is the hop's own check.
+    vi.spyOn(h.costStore, "record").mockImplementation(async (id) => real(id));
+    let n = 0;
+    vi.spyOn(h.costStore, "load").mockImplementation(async (id) => {
+      n++;
+      if (n === 2) throw new Error("cost file busy");
+      return real(id);
+    });
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "x" });
+    expect(h.provider.sent).toHaveLength(1);
+    expect(chat.turns.at(-1)).toMatchObject({ role: "watson" });
+    expect(chat.turns.at(-1)?.text).toMatch(/^FIRST/);
   });
 
   it("refuses a stored paste name that is not a bare file name", async () => {

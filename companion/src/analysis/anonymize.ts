@@ -694,7 +694,7 @@ export { NON_VICTIM_DOMAINS, isNoiseDomain, isNoiseAccount } from "./anonUsernam
 // Special-use / private-namespace TLDs (RFC 6761/6762 plus the conventional enterprise ones).
 // A host under one of these is never routable adversary infrastructure, so a domain/url IOC on
 // one is victim internal naming — the only IOC shape deriveKnownEntities can safely tokenize.
-const INTERNAL_TLDS = new Set([
+export const INTERNAL_TLDS: ReadonlySet<string> = new Set([
   "local",
   "localdomain",
   "internal",
