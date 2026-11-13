@@ -96,6 +96,8 @@ export const AI_LIMIT_PATTERNS = [
   /^\/sessions\/[^/]+\/summary$/,
   // Per-finding Jev containment check (#1925). The `$` leaves its .../playbook add route unmetered.
   /^\/findings\/[^/]+\/containment-check$/,
+  // Watson (per-case AI chat): message and paste each run a round, so they share the case budget.
+  /^\/watson\/(message|paste)$/,
 ];
 
 export function mountAiRateLimit(app: Express): void {

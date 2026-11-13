@@ -74,6 +74,7 @@ import { type QueryTranslationResult } from "./queryTranslate.js";
 import { type HuntPlatform } from "./huntPlatforms.js";
 import type { PlaybookTask } from "./playbook.js";
 import { analysisProviderModels, findAnalysisProvider } from "./ai/providerRoster.js";
+import { runPipelineWatsonRound, type WatsonRoundArgs } from "./ai/watson/pipelineRound.js";
 import { type HypothesisReviewItem } from "./hypothesis.js";
 
 export class AnalysisPipeline {
@@ -628,6 +629,8 @@ export class AnalysisPipeline {
   ): Promise<analystQueries.AskResult> {
     return analystQueries.ask(this.aiCtx, caseId, question, options);
   }
+
+  readonly watsonRound = (...a: WatsonRoundArgs) => runPipelineWatsonRound(this.aiCtx, this.opts, ...a);
 
   explainEvent(caseId: string, eventId: string): Promise<ExplainEventResult> {
     return analystQueries.explainEvent(this.aiCtx, caseId, eventId);

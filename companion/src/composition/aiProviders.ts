@@ -146,15 +146,18 @@ export function buildProvider(): AnalyzeProvider | undefined {
 }
 
 // Synthesis model: dedicated DFIR_AI_SYNTH_* vars, falling back to the main model.
-export function buildSynthesisProvider(): AnalyzeProvider | undefined {
+export function buildSynthesisProvider(
+  env: NodeJS.ProcessEnv = process.env,
+  modelOverride?: string,
+): AnalyzeProvider | undefined {
   // Text model — DFIR_AI_SYNTH_*, falling back to the vision model's config (DFIR_VISION_*, legacy
   // DFIR_AI_* via visionEnv) when a dedicated synth var is unset.
   return buildProviderFrom({
-    provider: AI_ROLE_SOURCES.synthesis.provider(process.env),
-    model: process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL"),
-    apiKey: resolveAiRoleSetting(process.env, "synthesis", "KEY"),
-    baseUrl: resolveAiRoleSetting(process.env, "synthesis", "BASE_URL"),
-    imageDetail: visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
+    provider: AI_ROLE_SOURCES.synthesis.provider(env),
+    model: modelOverride ?? env.DFIR_AI_SYNTH_MODEL ?? visionEnv(env, "MODEL"),
+    apiKey: resolveAiRoleSetting(env, "synthesis", "KEY"),
+    baseUrl: resolveAiRoleSetting(env, "synthesis", "BASE_URL"),
+    imageDetail: visionEnv(env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
   });
 }
 

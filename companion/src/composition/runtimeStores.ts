@@ -103,6 +103,7 @@ import { RemediationStore } from "../analysis/remediationBoundary.js";
 import { ServedLocationStore } from "../analysis/servedLocation.js";
 import { SensitiveLocationStore } from "../analysis/sensitiveLocation.js";
 import { NotebookStore } from "../analysis/notebookStore.js";
+import { WatsonChatStore } from "../analysis/ai/watson/chatStore.js";
 import { HypothesisStore } from "../analysis/hypothesisStore.js";
 import { LearnedPatternStore } from "../analysis/learnedPatternStore.js";
 import { SourceTrustStore } from "../analysis/sourceTrustStore.js";
@@ -429,6 +430,8 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
   const servedLocationStore = new ServedLocationStore(store);
   const sensitiveLocationStore = new SensitiveLocationStore(store);
   const notebookStore = new NotebookStore(store);
+  // ONE Watson chat store for the whole server: rounds, proposals and case-event notes all write through it.
+  const watsonChatStore = new WatsonChatStore(store);
   const hypothesisStore = new HypothesisStore(store);
   const learnedPatternStore = new LearnedPatternStore(store);
   const sourceTrustStore = new SourceTrustStore(store);
@@ -592,6 +595,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     servedLocationStore,
     sensitiveLocationStore,
     notebookStore,
+    watsonChatStore,
     hypothesisStore,
     learnedPatternStore,
     sourceTrustStore,

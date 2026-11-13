@@ -52,6 +52,8 @@ import {
 } from "./integrationClients.js";
 import { createServerClients } from "./serverSetClients.js";
 import { buildProvider } from "./aiProviders.js";
+import { buildWatsonProvider } from "./watsonProvider.js";
+import { noteWatsonCaseEvent } from "./watsonCaseEvents.js";
 import { spawnToolRunner } from "../integrations/tools/toolRunner.js";
 import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "../http/originGuard.js";
 import { resolveHuntPlatforms } from "../analysis/huntPlatforms.js";
@@ -120,6 +122,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     servedLocationStore,
     sensitiveLocationStore,
     notebookStore,
+    watsonChatStore,
     hypothesisStore,
     learnedPatternStore,
     sourceTrustStore,
@@ -256,7 +259,10 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,
-    onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
+    onTags: (caseId) => {
+      hub.broadcastTo(caseId, { type: "tags_changed" });
+      noteWatsonCaseEvent(watsonChatStore, caseId, "Analyst changed event tags or stars");
+    },
     pinnedFindingsStore,
     onPins: (caseId) => hub.broadcastTo(caseId, { type: "pins_changed" }),
     findingWorkflowStore,
@@ -268,7 +274,13 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     servedLocationStore,
     sensitiveLocationStore,
     notebookStore,
-    onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
+    onNotebook: (caseId) => {
+      hub.broadcastTo(caseId, { type: "notebook_changed" });
+      noteWatsonCaseEvent(watsonChatStore, caseId, "Analyst edited the notebook");
+    },
+    watsonChatStore,
+    watsonProvider: () => buildWatsonProvider(process.env),
+    onWatson: (caseId) => hub.broadcastTo(caseId, { type: "watson_changed" }),
     hypothesisStore,
     onHypotheses: (caseId) => hub.broadcastTo(caseId, { type: "hypotheses_changed" }),
     learnedPatternStore,
@@ -314,7 +326,10 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     secondOpinionThinking: Boolean(secondOpinionProvider?.supportsThinking),
     onSecondOpinion: (caseId) => hub.broadcastTo(caseId, { type: "second_opinion_changed" }),
     importMetaStore,
-    onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
+    onImportMeta: (caseId) => {
+      hub.broadcastTo(caseId, { type: "import_meta_changed" });
+      noteWatsonCaseEvent(watsonChatStore, caseId, "An import finished");
+    },
     dropStatusStore,
     onDropStatus: (caseId) => hub.broadcastTo(caseId, { type: "drop_status_changed" }),
     // External forensic tools (#211): the real spawn runner (tests inject a stub). Config is read live
