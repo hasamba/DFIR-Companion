@@ -464,6 +464,29 @@ describe("runWatsonRound", () => {
     expect(new Set(sent.match(/ANON_HOST_\d+/g) ?? []).size).toBeGreaterThanOrEqual(2);
   });
 
+  it("masking the whole prompt keeps one token per known host, file and registry names readable", async () => {
+    const fqdn = "WS-PAY-08.CORP.EXAMPLE.COM";
+    const h = await harness([reply({ message: `${fqdn} is the host` })], { anonymize: true });
+    await h.stateStore.save({
+      ...emptyState(CASE),
+      forensicTimeline: [
+        { ...ev("e1"), asset: fqdn, description: `logon on ${fqdn}` },
+        {
+          ...ev("e2"),
+          description: "reg add HKLM\\Software\\Run ran update.sh and install.ps1; beacon to c2.example.net",
+        },
+      ],
+    });
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "what happened?" });
+    const sent = h.provider.sent[0].userPrompt;
+    expect(sent.toLowerCase()).not.toContain(fqdn.toLowerCase());
+    const hostToken = /logon on (ANON_HOST_\d+)/.exec(sent)?.[1];
+    expect(hostToken).toBeDefined();
+    expect(sent).toContain("HKLM\\Software\\Run ran update.sh and install.ps1");
+    expect(sent).not.toContain("c2.example.net"); // the accepted cost: an adversary domain is a token too
+    expect(chat.turns.at(-1)?.text).toBe(`${fqdn} is the host`); // restored in the case's spelling
+  });
+
   it("masks internal-suffix hosts, short host names and machine accounts from a paste", async () => {
     const intranet = dotted("srv1", "intranet");
     const priv = dotted("nas", "private");

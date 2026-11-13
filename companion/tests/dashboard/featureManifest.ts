@@ -1887,7 +1887,7 @@ export const FEATURES: Feature[] = [
       "loadWatson",
       "watsonAct",
     ],
-    private: ["wChat", "wQuestions", "wCase", "wSeq", "wSeen", "wNotice", "wNoAi", "wBusy"],
+    private: ["wChat", "wQuestions", "wCase", "wSeq", "wSeen", "wNotice", "wNoAi", "wHidden", "wBusy"],
   },
   {
     // Last-import change tracking. All three escapes were READS from the page's two renderers, so

@@ -167,6 +167,16 @@ describe("collapse to a rail", () => {
     expect(dot.classList.contains("watson-on")).toBe(false);
   });
 
+  it("a throwing localStorage still lets the toolbar button hide and show the panel", () => {
+    const { api, panel } = setup({ throwingStorage: true });
+    const w = api as unknown as { toggleWatsonPanel(): void };
+    api.initWatson();
+    w.toggleWatsonPanel();
+    expect(panel.classList.contains("watson-hidden")).toBe(true);
+    w.toggleWatsonPanel();
+    expect(panel.classList.contains("watson-hidden")).toBe(false);
+  });
+
   it("a throwing localStorage does not break the toggle", () => {
     const { api, panel } = setup({ throwingStorage: true });
     api.renderWatson(chatWith([]));

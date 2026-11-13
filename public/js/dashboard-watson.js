@@ -21,6 +21,7 @@
   let wSeen = 0;
   let wNotice = null; // { text } — a warning shown under the log
   let wNoAi = false; // the server has no Watson provider: the panel is hidden
+  let wHidden = null; // the analyst's show/hide choice, seeded from storage (a blocked store still toggles)
   const wBusy = new Set(); // case ids with a request in flight
 
   // A stored flag, or null when the analyst never chose (a blocked store reads as never chosen).
@@ -90,7 +91,10 @@
   }
   // Never chosen: the rail, not the open panel. No provider: hidden, whatever the analyst chose.
   const chosenCollapsed = () => readFlag(COLLAPSE_KEY) !== false;
-  const chosenHidden = () => readFlag(HIDDEN_KEY) === true;
+  const chosenHidden = () => {
+    if (wHidden === null) wHidden = readFlag(HIDDEN_KEY) === true;
+    return wHidden;
+  };
   function applyPanel(hidden, collapsed) {
     const panel = document.getElementById("watsonPanel");
     if (!panel) return;
@@ -109,6 +113,7 @@
   }
   function toggleWatsonPanel() {
     const hidden = !chosenHidden();
+    wHidden = hidden;
     writeFlag(HIDDEN_KEY, hidden);
     applyPanel(hidden, isCollapsed());
   }
