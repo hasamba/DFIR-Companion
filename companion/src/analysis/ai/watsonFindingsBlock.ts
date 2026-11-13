@@ -1,3 +1,4 @@
+import { applyFalsePositive, type FalsePositiveMarker } from "../falsePositive.js";
 import type { Finding, InvestigationState } from "../stateTypes.js";
 import { isWatsonItem } from "../timeline/watsonItems.js";
 import { aiSpan } from "./aiSpan.js";
@@ -29,8 +30,15 @@ function line(f: Finding): string {
   return `[${oneLine(f.id, 80)}] (${f.severity}) ${aiSpan(oneLine(f.title, TITLE_CHARS))}${body}${events}`;
 }
 
-export function buildWatsonFindingsBlock(state: Pick<InvestigationState, "findings">): string {
-  const all = state.findings.filter(isWatsonItem);
+/** A Watson finding the analyst marked false positive is not listed: it is not a live finding. */
+export function buildWatsonFindingsBlock(
+  state: InvestigationState,
+  markers: FalsePositiveMarker[] = [],
+): string {
+  const all = applyFalsePositive(
+    { ...state, findings: state.findings.filter(isWatsonItem) },
+    markers,
+  ).findings;
   if (!all.length) return "";
   const shown = all.slice(0, WATSON_FINDINGS_MAX);
   const cut = all.length - shown.length;

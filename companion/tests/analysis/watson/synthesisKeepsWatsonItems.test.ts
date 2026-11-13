@@ -327,6 +327,63 @@ describe("Watson items across the fold's edges", () => {
   });
 });
 
+describe("a Watson finding the analyst marked false positive", () => {
+  const fpMarker: FalsePositiveMarker = {
+    id: `finding:${watsonFinding.title}`,
+    kind: "finding",
+    ref: watsonFinding.title,
+    reason: "known-good-tool",
+    note: "sanctioned",
+    markedAt: TS,
+    markedBy: "analyst",
+  };
+  const highE1 = base({
+    forensicTimeline: [ev("e1", { severity: "High", relatedFindingIds: [watsonFinding.id] }), ev("e2")],
+    keyQuestions: [
+      {
+        id: "q-1",
+        question: "How did the loader arrive?",
+        status: "answered",
+        answer: `By mail, see ${watsonFinding.id}`,
+        pointer: watsonFinding.id,
+        relatedFindingIds: [watsonFinding.id],
+      },
+    ],
+  });
+
+  it("stays in the saved state, but is not live: no back-link, and its High event gets a backfill", async () => {
+    const out = await foldAndPersist(highE1, delta([synthFinding("f-1")]), highE1, [fpMarker]);
+    expect(findingById(out, watsonFinding.id)).toEqual(watsonFinding);
+    const e1Links = eventById(out, "e1")?.relatedFindingIds ?? [];
+    expect(e1Links).not.toContain(watsonFinding.id);
+    expect(e1Links.some((id) => id.startsWith("f-auto-"))).toBe(true);
+    expect(out.findings.some((f) => f.id.startsWith("f-auto-"))).toBe(true);
+  });
+
+  it("resets a key question resting on it", async () => {
+    const { next } = await fold(highE1, delta([synthFinding("f-1")], { keyQuestions: highE1.keyQuestions }), {
+      markers: [fpMarker],
+    });
+    expect(next.keyQuestions.find((q) => q.id === "q-1")?.status).toBe("unknown");
+  });
+
+  it("is left out of the WATSON FINDINGS block", () => {
+    expect(buildWatsonFindingsBlock(base(), [fpMarker])).toBe("");
+    expect(buildWatsonFindingsBlock(base({ findings: [watsonFinding, pasteOnly] }), [fpMarker])).toContain(
+      pasteOnly.id,
+    );
+  });
+});
+
+describe("the FP cascade's stale badge on a Watson next step", () => {
+  it("is cleared by the synthesis run, which is the re-synthesis it asks for", async () => {
+    const stale = { ...watsonStep, staleReSynth: true };
+    const state = base({ nextSteps: [stale] });
+    const out = await foldAndPersist(state, delta([synthFinding("f-1")], { nextSteps: [] }), state);
+    expect(out.nextSteps).toEqual([watsonStep]);
+  });
+});
+
 describe("paths outside synthesis never drop a Watson item", () => {
   it("an import delta re-issuing a Watson id and replacing next steps keeps both Watson items", () => {
     const out = mergeDelta(

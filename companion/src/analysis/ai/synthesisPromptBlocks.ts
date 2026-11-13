@@ -163,7 +163,9 @@ export async function buildSynthesisBlocks(
     satisfiedBlock: satisfied.block,
     // Watson's findings are listed once, there, and left out of the EXISTING FINDINGS echo below.
     pinnedBlock:
-      buildWatsonFindingsBlock(state) + buildCurrentKeyQuestionsBlock(state) + buildPinnedBlock(state),
+      buildWatsonFindingsBlock(state, markers) +
+      buildCurrentKeyQuestionsBlock(state) +
+      buildPinnedBlock(state),
     reanswerBlock: buildReanswerBlock(state, markers, satisfied.questionIds),
     existingFindings: buildFindingsEcho(state),
     openThreads: buildOpenThreads(state),

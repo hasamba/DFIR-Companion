@@ -43,6 +43,7 @@ import { mergeDelta, type WindowContext } from "../stateMerge.js";
 import { guardWatsonQuestion, keepWatsonAnswers } from "../timeline/watsonQuestions.js";
 import {
   annotateWatsonFindings,
+  clearWatsonStepBadges,
   dropUndoneWatsonLinks,
   keepWatsonItems,
   splitWatsonReissues,
@@ -248,7 +249,11 @@ export async function foldSynthesisDelta(
   // Safety net: drop anything confirmed false-positive even if the model re-introduced it. Then the
   // analyst's Watson findings go back in, so back-links, the backfills' coverage and the key-question
   // reset all count them as surviving findings.
-  const filtered = withWatsonFindings(applyFalsePositive(merged, markers), state.findings);
+  const filtered = withWatsonFindings(
+    applyFalsePositive(merged, markers),
+    state.findings,
+    rejectedWatsonIds(state, markers),
+  );
   const surviving = new Set(filtered.findings.map((f) => f.id));
   const benign = falsePositiveEventIds(markers);
   const linked = dropAutoCoveredByDismissal(
@@ -298,7 +303,7 @@ export async function foldSynthesisDelta(
   next = { ...next, keyQuestions: keepWatsonAnswers(next.keyQuestions, latestQuestions, state.keyQuestions) };
   // Watson findings and next steps as stored now (applies and undos during the call), annotated.
   next = annotateWatsonFindings(keepWatsonItems(next, latest), disagreements, benign);
-  next = dropUndoneWatsonLinks(next, state.findings);
+  next = dropUndoneWatsonLinks(clearWatsonStepBadges(next), state.findings);
 
   return {
     next,
@@ -341,6 +346,13 @@ function replaceConclusions(
     // was shown; the merge must not widen that to the whole timeline.
     knownEventIds: shownIds,
   });
+}
+
+/** Watson findings the analyst marked false positive — matched exactly as `applyFalsePositive` does. */
+function rejectedWatsonIds(state: InvestigationState, markers: FalsePositiveMarker[]): Set<string> {
+  const watson = state.findings.filter((f) => f.author === "watson");
+  const live = new Set(applyFalsePositive({ ...state, findings: watson }, markers).findings.map((f) => f.id));
+  return new Set(watson.filter((f) => !live.has(f.id)).map((f) => f.id));
 }
 
 /**

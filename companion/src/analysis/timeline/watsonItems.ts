@@ -138,6 +138,19 @@ export function watsonFindingDisagreement(
   return same ? undefined : { severity: delta.severity, title: delta.title, description: delta.description };
 }
 
+/** A synthesis run is the re-synthesis the FP cascade's stale badge asks for: it clears the badge. */
+export function clearWatsonStepBadges(next: InvestigationState): InvestigationState {
+  if (!next.nextSteps.some((s) => isWatsonItem(s) && s.staleReSynth)) return next;
+  return {
+    ...next,
+    nextSteps: next.nextSteps.map((s) => {
+      if (!isWatsonItem(s) || !s.staleReSynth) return s;
+      const { staleReSynth: _stale, ...rest } = s;
+      return rest;
+    }),
+  };
+}
+
 /** A next-step list with the Watson steps of `stored` kept (for callers that replace a list). */
 export function keepWatsonSteps(steps: readonly NextStep[], stored: readonly NextStep[]): NextStep[] {
   return reconcile(steps, stored, keepStep);
@@ -168,10 +181,18 @@ export function splitWatsonReissues<F extends Pick<Finding, "id" | "severity" | 
   return { findings: kept, disagreements };
 }
 
-/** The snapshot's Watson findings put back into a finding list the fold rebuilt from scratch. */
-export function withWatsonFindings(next: InvestigationState, prior: readonly Finding[]): InvestigationState {
+/**
+ * The snapshot's Watson findings put back into a finding list the fold rebuilt from scratch — except
+ * the ones the analyst marked false positive (`rejected`). Those stay persisted (the fold's last
+ * step restores them; undo is their removal path) but are not live: not surviving, not citing.
+ */
+export function withWatsonFindings(
+  next: InvestigationState,
+  prior: readonly Finding[],
+  rejected: ReadonlySet<string> = new Set(),
+): InvestigationState {
   const present = new Set(next.findings.map((f) => f.id));
-  const add = prior.filter((f) => isWatsonItem(f) && !present.has(f.id));
+  const add = prior.filter((f) => isWatsonItem(f) && !present.has(f.id) && !rejected.has(f.id));
   return add.length ? { ...next, findings: [...next.findings, ...add] } : next;
 }
 
