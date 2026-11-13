@@ -2,6 +2,7 @@ import { z } from "zod";
 import { questionStatusSchema } from "../../responseSchema.js";
 import type { QuestionStatus } from "../../stateTypes.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
+import { WATSON_HISTORY_ID } from "./historyStore.js";
 import { ANSWER_MAX, POINTER_MAX, QUESTION_MAX } from "./roundProposals.js";
 import type { WatsonAnswer, WatsonRequest } from "./types.js";
 
@@ -120,7 +121,7 @@ export function sanitizeWatsonReply(
   knownEventIds: ReadonlySet<string>,
 ): WatsonReply {
   const search =
-    reply.search && knownPasteIds.has(reply.search.pasteId)
+    reply.search && (reply.search.pasteId === WATSON_HISTORY_ID || knownPasteIds.has(reply.search.pasteId))
       ? {
           pasteId: reply.search.pasteId,
           terms: reply.search.terms

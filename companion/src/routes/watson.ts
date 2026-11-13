@@ -26,6 +26,7 @@ import { watsonRoundDeps } from "./watsonDeps.js";
  * (composition/caseWriteAllowlist.ts), and this file adds nothing to that allowlist.
  *
  *   GET  /watson                         the chat
+ *   GET  /watson/history?before=&limit= older turns from the full history file, oldest first: { turns, more }
  *   POST /watson/message                 one analyst message → one round (a model call)
  *   POST /watson/paste                   store pasted text or a text file as case evidence, then a round
  *   POST /watson/proposals/:pid/:action  apply | reject | undo one question proposal (no model call)
@@ -37,6 +38,8 @@ import { watsonRoundDeps } from "./watsonDeps.js";
  */
 
 const PROPOSAL_ACTIONS: readonly string[] = ["apply", "reject", "undo"];
+const HISTORY_PAGE_DEFAULT = 100;
+const HISTORY_PAGE_MAX = 200;
 const DEFAULT_PASTE_NAME = "pasted-text.txt";
 const FILENAME_MAX = 200;
 /** Set on a paste response once the text is saved as evidence, so a failed round can say so. */
@@ -123,6 +126,25 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       // providerConfigured: false tells the dashboard to hide the panel; the chat stays readable.
       const chat = await options.watsonChatStore.load(req.params.id);
       return res.status(200).json({ ...chat, providerConfigured: !!roundDeps() && !!options.pipeline });
+    } catch (err) {
+      return sendPipelineError(res, err);
+    }
+  });
+
+  app.get("/cases/:id/watson/history", async (req: Request, res: Response) => {
+    if (!options.watsonChatStore) return res.status(501).json({ error: "Watson is not configured" });
+    if (await caseMissing(req.params.id)) return res.status(404).json({ error: "case not found" });
+    const before = stringOrEmpty(req.query.before);
+    const asked = Number.parseInt(stringOrEmpty(req.query.limit), 10);
+    const limit = Number.isFinite(asked)
+      ? Math.min(HISTORY_PAGE_MAX, Math.max(1, asked))
+      : HISTORY_PAGE_DEFAULT;
+    try {
+      const page = await options.watsonChatStore.history.page(req.params.id, {
+        ...(before ? { before } : {}),
+        limit,
+      });
+      return res.status(200).json(page);
     } catch (err) {
       return sendPipelineError(res, err);
     }

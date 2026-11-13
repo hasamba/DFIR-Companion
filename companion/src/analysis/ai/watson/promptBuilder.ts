@@ -1,6 +1,7 @@
 import type { InvestigationState } from "../../stateTypes.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
-import type { WatsonChat } from "./types.js";
+import { WATSON_HISTORY_ID, WATSON_HISTORY_NAME } from "./historyStore.js";
+import type { WatsonChat, WatsonTurn } from "./types.js";
 
 // Pure builder for Watson's per-round user prompt. Every block is bounded. Every untrusted body
 // (case context, memory, chat, paste, analyst text) sits inside a fence the text cannot forge, and
@@ -19,6 +20,7 @@ export const WATSON_QUESTIONS_MAX = 60;
 export const WATSON_QUESTION_CHARS = 500;
 export const WATSON_ANSWER_CHARS = 1500;
 export const WATSON_PASTES_LISTED = 20;
+export const WATSON_REQUEST_CHARS = 300;
 const FILENAME_CHARS = 200;
 // Ids print as they are (flattened, markers defanged), never stripped: Watson's reply is checked
 // against the raw ids, so a stripped `Q1.2` shown as `Q12` would drop its update.
@@ -30,11 +32,14 @@ export interface WatsonPromptInput {
   analystText: string;
   caseContext: string;
   mainLanguages: string[];
+  /** Turns in the full history file; the STORED PASTES block lists the history as searchable when above 0. */
+  historyTurns?: number;
+  /** A paste excerpt, or (pasteId "history") the lines a history search found. */
   pasteExcerpt?: { pasteId: string; filename: string; text: string; truncated: boolean };
 }
 
 /** Every fence label. One list feeds both the fences and the defang, so no label is left forgeable. */
-const FENCE_LABELS = ["CONTEXT", "MEMORY", "CHAT", "PASTE", "ANALYST"] as const;
+const FENCE_LABELS = ["CONTEXT", "MEMORY", "CHAT", "PASTE", "HISTORY", "ANALYST"] as const;
 type FenceLabel = (typeof FENCE_LABELS)[number];
 const MARKER_RE = new RegExp(`<<<\\s*(END\\s+)?(${FENCE_LABELS.join("|")})`, "gi");
 
@@ -54,18 +59,45 @@ function fence(label: FenceLabel, body: string, attrs = ""): string {
 
 const safeId = (id: string): string => id.replace(/[^\w-]/g, "");
 
-function pastesBlock(chat: WatsonChat): string {
+/** One turn of RECENT CHAT: its text, and for Watson its answer and what it asked for. */
+function recentTurn(t: WatsonTurn): string {
+  const rows = [`${t.role}: ${clip(t.text, WATSON_TURN_PROMPT_MAX)}`];
+  if (t.role !== "watson") return rows[0];
+  if (t.answer) {
+    const a = t.answer;
+    const cited = a.relatedEventIds.length ? ` [cited: ${a.relatedEventIds.join(", ")}]` : "";
+    rows.push(line(`answer: ${a.status} ${a.answer} → ${a.pointer}${cited}`, WATSON_TURN_PROMPT_MAX));
+  }
+  const r = t.request;
+  if (r?.kind === "query") {
+    rows.push(
+      line(`asked for: ${r.language} query: ${clip(r.query, WATSON_REQUEST_CHARS)}`, WATSON_TURN_PROMPT_MAX),
+    );
+  } else if (r) {
+    rows.push(line(`asked for: import: ${clip(r.what, WATSON_REQUEST_CHARS)}`, WATSON_TURN_PROMPT_MAX));
+  }
+  return rows.join("\n");
+}
+
+function pastesBlock(chat: WatsonChat, historyTurns: number): string {
   const unread = new Set(chat.unreadPasteIds);
   const listed = chat.pastes.slice(-WATSON_PASTES_LISTED).map((p) => {
     const note = unread.has(p.id) ? ", not read yet" : "";
     return `- [${line(p.id, ID_CHARS)}] ${line(p.filename, FILENAME_CHARS)} (${Number(p.lines) || 0} lines${note})`;
   });
   const cut = chat.pastes.length - listed.length;
-  return `${listed.join("\n") || "(none)"}${cut > 0 ? `\n(${cut} older pastes not listed)` : ""}`;
+  const history =
+    historyTurns > 0
+      ? [
+          `- [${WATSON_HISTORY_ID}] ${WATSON_HISTORY_NAME} (${historyTurns} turns) — search it for anything older than RECENT CHAT`,
+        ]
+      : [];
+  const pastes = `${listed.join("\n") || "(none)"}${cut > 0 ? `\n(${cut} older pastes not listed)` : ""}`;
+  return [pastes, ...history].join("\n");
 }
 
 export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
-  const { state, chat, analystText, caseContext, mainLanguages, pasteExcerpt } = input;
+  const { state, chat, analystText, caseContext, mainLanguages, pasteExcerpt, historyTurns } = input;
   const questions = (state.keyQuestions ?? [])
     .slice(0, WATSON_QUESTIONS_MAX)
     .map(
@@ -76,7 +108,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
   const start = chat.threadStartAt;
   const recent = (start ? chat.turns.filter((t) => t.at >= start) : chat.turns)
     .slice(-WATSON_RECENT_TURNS)
-    .map((t) => `${t.role}: ${clip(t.text, WATSON_TURN_PROMPT_MAX)}`);
+    .map(recentTurn);
   const changes = chat.pendingCaseEvents
     .slice(0, WATSON_CASE_EVENTS_MAX)
     .map((e) => `- ${line(e, WATSON_CASE_EVENT_CHARS)}`);
@@ -87,7 +119,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     `KEY QUESTIONS\n${questions.join("\n") || "(none)"}`,
     `WATSON MEMORY\n${fence("MEMORY", clip(chat.memory, WATSON_MEMORY_PROMPT_MAX) || "(empty)")}`,
     `CASE CHANGES SINCE LAST ROUND\n${changes.join("\n") || "(none)"}`,
-    `STORED PASTES (ask for a 'search' by id to read one)\n${pastesBlock(chat)}`,
+    `STORED PASTES (ask for a 'search' by id to read one)\n${pastesBlock(chat, historyTurns ?? 0)}`,
     `RECENT CHAT\n${fence("CHAT", recent.join("\n") || "(none)")}`,
   ];
   if (pasteExcerpt) {
@@ -97,7 +129,8 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
         ? " (truncated: ask for a search)"
         : "";
     const name = line(pasteExcerpt.filename, FILENAME_CHARS);
-    blocks.push(`PASTE (${name})${note}\n${fence("PASTE", text, ` id=${safeId(pasteExcerpt.pasteId)}`)}`);
+    const label = pasteExcerpt.pasteId === WATSON_HISTORY_ID ? "HISTORY" : "PASTE";
+    blocks.push(`${label} (${name})${note}\n${fence(label, text, ` id=${safeId(pasteExcerpt.pasteId)}`)}`);
   }
   blocks.push(`ANALYST\n${fence("ANALYST", clip(analystText, WATSON_ANALYST_PROMPT_MAX))}`);
   return blocks.join("\n\n");

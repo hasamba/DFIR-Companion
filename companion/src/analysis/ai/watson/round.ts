@@ -3,14 +3,13 @@ import type { InvestigationState } from "../../stateTypes.js";
 import { retryPolicy } from "../aiContext.js";
 import { isRetryableError } from "../retry.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
-import { searchPaste } from "./pasteSearch.js";
+import { WATSON_HISTORY_ID } from "./historyStore.js";
 import { WATSON_CASE_EVENTS_MAX, type WatsonPromptInput } from "./promptBuilder.js";
 import { sanitizeWatsonReply, type WatsonReply } from "./replySchema.js";
-import { callWatson, choosePaste, headExcerpt, watsonBaseInput } from "./requestBuild.js";
+import { callWatson, choosePaste, headExcerpt, searchExcerpt, watsonBaseInput } from "./requestBuild.js";
 import {
   limitReached,
   NO_SPEND,
-  readPasteText,
   seedStandardQuestions,
   spendDelta,
   WatsonAiOff,
@@ -138,7 +137,7 @@ async function converse(
     questions = state.keyQuestions;
     // The analyst's message is the ANALYST block; it is not repeated as recent chat.
     const others = { ...chat, turns: chat.turns.filter((t) => t.id !== analystTurn.id) };
-    ({ base, cover } = await watsonBaseInput(ctx, caseId, state, others, analystTurn.text));
+    ({ base, cover } = await watsonBaseInput(ctx, caseId, state, others, analystTurn.text, true));
     const known = {
       questions: new Set(state.keyQuestions.map((q) => q.id)),
       pastes: new Set(chat.pastes.map((p) => p.id)),
@@ -187,23 +186,15 @@ async function converse(
     if (!now) return { ...kept, note: searchSkipped("its cost could not be checked") };
     const reached = limitReached(ctx, now);
     if (reached) return { ...kept, note: searchSkipped(`this case reached its Watson ${reached}`) };
-    const target = chat.pastes.find((p) => p.id === first.search?.pasteId);
-    if (!target) return kept;
-    const found = searchPaste(await readPasteText(ctx.cases, caseId, target), first.search.terms);
-    const second = await ask({
-      ...base,
-      pasteExcerpt: {
-        pasteId: target.id,
-        filename: target.filename,
-        text: found.excerpt || `(no line matched: ${first.search.terms.join(", ")})`,
-        truncated: found.truncated,
-      },
-    });
-    // A paste read through a search counts as read.
+    const excerpt = await searchExcerpt(ctx, caseId, chat, first.search);
+    if (!excerpt) return kept;
+    const second = await ask({ ...base, pasteExcerpt: excerpt });
+    // A paste read through a search counts as read; the history is not a paste.
+    const readId = excerpt.pasteId === WATSON_HISTORY_ID ? [] : [excerpt.pasteId];
     return {
       ...kept,
       reply: { ...second, search: null },
-      readPasteIds: [...(kept.readPasteIds ?? []), target.id],
+      readPasteIds: [...(kept.readPasteIds ?? []), ...readId],
     };
   } catch (error) {
     return { ...kept, note: searchFailed(error), rethrow: error };

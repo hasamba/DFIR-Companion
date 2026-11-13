@@ -457,6 +457,7 @@
     "ROUTE GET /cases/:id/present/export",
     "ROUTE GET /cases/:id/present",
     "ROUTE GET /cases/:id/watson",
+    "ROUTE GET /cases/:id/watson/history",
     "ROUTE POST /cases/:id/watson/message",
     "ROUTE POST /cases/:id/watson/paste",
     "ROUTE POST /cases/:id/watson/proposals/:pid/:action",

@@ -16,6 +16,8 @@
 
   let wChat = null;
   let wQuestions = [];
+  let wEarlier = []; // older turns paged back from the history file, oldest first, read-only
+  let wMore = null; // true/false once a history page said whether older turns remain; null = not asked yet
   let wCase = null;
   let wSeq = 0;
   let wSeen = 0;
@@ -24,6 +26,7 @@
   let wNoAi = false; // the server has no Watson provider: the panel is hidden
   let wHidden = null; // the analyst's show/hide choice, seeded from storage (a blocked store still toggles)
   const wBusy = new Set(); // case ids with a request in flight
+  const CHAT_CAP = 400; // the server keeps this many turns in the chat file (WATSON_MAX_TURNS)
 
   // A stored flag, or null when the analyst never chose (a blocked store reads as never chosen).
   function readFlag(key) {
@@ -51,7 +54,9 @@
 
   function logHtml() {
     if (!wChat) return `<div class="watson-empty">Open a case to talk to Watson.</div>`;
-    const turns = wChat.turns.map((t) => watsonTurnHtml(t, wChat.proposals)).join("");
+    const older = wEarlier.map((t) => watsonTurnHtml(t, [], true)).join("");
+    const more = wMore === true || (wMore === null && wChat.turns.length >= CHAT_CAP);
+    const turns = (more ? watsonEarlierButtonHtml() : "") + older + wChat.turns.map((t) => watsonTurnHtml(t, wChat.proposals)).join("");
     const hint = wChat.turns.length
       ? ""
       : wEmpty
@@ -141,6 +146,8 @@
     if (wCase !== id) {
       wCase = id;
       wChat = null;
+      wEarlier = [];
+      wMore = null;
       wSeen = 0;
       wNotice = null;
     }
@@ -288,6 +295,26 @@
 
   const proposal = (el, verb) => decide(`/proposals/${encodeURIComponent(el.dataset.pid)}/${verb}`);
   const addQuestion = (el) => decide(`/turns/${encodeURIComponent(el.dataset.tid)}/add-question`);
+  // Older turns from the full history file, above the oldest one shown. Read-only.
+  async function loadEarlier() {
+    const caseId = currentCase();
+    const oldest = wEarlier[0] || (wChat && wChat.turns[0]);
+    if (!caseId || !oldest || wBusy.has(caseId)) return;
+    wBusy.add(caseId);
+    try {
+      const r = await fetch(api(caseId, `/history?before=${encodeURIComponent(oldest.id)}&limit=100`));
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const page = await r.json();
+      if (!live(caseId)) return;
+      wEarlier = [...(Array.isArray(page.turns) ? page.turns : []), ...wEarlier];
+      wMore = page.more === true;
+    } catch (e) {
+      if (live(caseId)) wNotice = { text: "Could not load earlier messages: " + (e && e.message ? e.message : "network error") };
+    } finally {
+      wBusy.delete(caseId);
+      if (live(caseId)) renderWatson();
+    }
+  }
   const newThread = () => post(currentCase(), "/new-thread", {}, "thread");
 
   function copyQuery(el) {
@@ -308,6 +335,7 @@
     reject: (el) => proposal(el, "reject"),
     undo: (el) => proposal(el, "undo"),
     addQuestion,
+    loadEarlier,
     newThread,
   };
   // data-act="watsonAct": a fixed table, never a lookup of a DOM-supplied name on window.

@@ -52,7 +52,7 @@
 
   // The answer to a free-form question: badge, answer, where to look, cited events, the add button.
   // citeEvents (dashboard-ioc-provenance.js) escapes the ids and links them to the timeline.
-  function answerHtml(t) {
+  function answerHtml(t, readOnly) {
     const a = t.answer;
     if (!a) return "";
     const ids = Array.isArray(a.relatedEventIds) ? a.relatedEventIds : [];
@@ -63,9 +63,12 @@
       `<div>${esc(a.answer || "(no answer)")}</div>` +
       (a.pointer ? `<div class="watson-why">→ where to look: ${esc(a.pointer)}</div>` : "") +
       (cited ? `<div class="watson-why">cited events: ${cited}</div>` : "") +
-      `<div><button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="addQuestion" data-tid="${escAttr(t.id)}"` +
-      ` title="Add this to the case's open Key Investigative Questions, with the pointer"${used ? " disabled" : ""}>` +
-      `${used ? "Added to open questions" : "Add to open questions"}</button></div></div>`
+      (readOnly
+        ? ""
+        : `<div><button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="addQuestion" data-tid="${escAttr(t.id)}"` +
+          ` title="Add this to the case's open Key Investigative Questions, with the pointer"${used ? " disabled" : ""}>` +
+          `${used ? "Added to open questions" : "Add to open questions"}</button></div>`) +
+      `</div>`
     );
   }
 
@@ -100,10 +103,11 @@
     return events === 0 && findings === 0;
   }
 
-  function turnHtml(t, proposals) {
+  // readOnly: an older turn paged back from the history file. It shows no proposal or add button.
+  function turnHtml(t, proposals, readOnly) {
     const cls = "watson-turn watson-" + (t.error ? "warn" : t.role);
     const who = t.role === "analyst" ? esc(t.actor || "You") : t.role === "system" ? "System" : "Watson";
-    const props = (t.proposalIds || [])
+    const props = readOnly ? "" : (t.proposalIds || [])
       .map((id) => proposals.find((p) => p.id === id))
       .filter(Boolean)
       .map(proposalHtml)
@@ -112,13 +116,17 @@
       `<div class="${cls}"><div class="watson-who">${who}</div>` +
       (t.workingOn ? `<div class="watson-meta"><b>Working on:</b> ${esc(t.workingOn)}</div>` : "") +
       `<div class="watson-text">${esc(t.text)}</div>` +
-      answerHtml(t) +
+      answerHtml(t, readOnly) +
       coverageHtml(t.coverage) +
       (t.learned ? `<div class="watson-meta"><b>Learned:</b> ${esc(t.learned)}</div>` : "") +
       requestHtml(t.request) +
       props +
       `</div>`
     );
+  }
+
+  function earlierButtonHtml() {
+    return `<div class="watson-earlier"><button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="loadEarlier">Load earlier messages</button></div>`;
   }
 
   function boardHtml(questions) {
@@ -181,6 +189,7 @@
 
   window.watsonTurnHtml = turnHtml;
   window.watsonBoardHtml = boardHtml;
+  window.watsonEarlierButtonHtml = earlierButtonHtml;
   window.watsonCaseIsEmpty = caseIsEmpty;
   window.watsonPanelHtml = panelHtml;
   window.watsonSectionHtml = sectionHtml;

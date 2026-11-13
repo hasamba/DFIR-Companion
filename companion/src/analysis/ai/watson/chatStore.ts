@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
-import { questionStatusSchema } from "../../responseSchema.js";
 import type { InvestigationQuestion } from "../../stateTypes.js";
+import { WatsonHistoryStore } from "./historyStore.js";
+import { turnSchema } from "./turnSchema.js";
 import { emptyWatsonChat, type WatsonChat, type WatsonProposal, type WatsonTurn } from "./types.js";
 
 // Per-case persistence for the Watson chat (state/watson-chat.json). A side file like
@@ -13,44 +14,6 @@ import { emptyWatsonChat, type WatsonChat, type WatsonProposal, type WatsonTurn 
 
 export const WATSON_MAX_TURNS = 400;
 export const WATSON_TURN_TEXT_MAX = 8000;
-
-const requestSchema = z.union([
-  z.object({ kind: z.literal("query"), language: z.string(), query: z.string(), why: z.string() }),
-  z.object({ kind: z.literal("import"), what: z.string(), why: z.string() }),
-]);
-
-const answerSchema = z.object({
-  question: z.string(),
-  status: questionStatusSchema,
-  answer: z.string(),
-  pointer: z.string(),
-  relatedEventIds: z.array(z.string()).catch([]),
-});
-
-const turnSchema = z.object({
-  id: z.string(),
-  at: z.string(),
-  role: z.enum(["analyst", "watson", "system"]),
-  text: z.string(),
-  actor: z.string().optional(),
-  workingOn: z.string().optional(),
-  learned: z.string().optional(),
-  request: requestSchema.optional(),
-  proposalIds: z.array(z.string()).optional(),
-  pasteId: z.string().optional(),
-  error: z.boolean().optional(),
-  costUSD: z.number().optional(),
-  coverage: z
-    .object({
-      usedEvents: z.number(),
-      eventCount: z.number(),
-      decisionsTrimmed: z.boolean().optional(),
-      headTrimmed: z.boolean().optional(),
-    })
-    .optional(),
-  answer: answerSchema.optional().catch(undefined),
-  answerProposalId: z.string().optional(),
-});
 
 const question = z.custom<InvestigationQuestion>(
   (v) => typeof v === "object" && v !== null && typeof (v as { id?: unknown }).id === "string",
@@ -119,7 +82,12 @@ function normalize(chat: WatsonChat): WatsonChat {
 export class WatsonChatStore {
   private readonly chains = new Map<string, Promise<unknown>>();
 
-  constructor(private readonly cases: CaseStore) {}
+  /** Every turn ever, append-only; update() is its only writer. */
+  readonly history: WatsonHistoryStore;
+
+  constructor(private readonly cases: CaseStore) {
+    this.history = new WatsonHistoryStore(cases);
+  }
 
   private path(caseId: string): string {
     return join(this.cases.stateDir(caseId), "watson-chat.json");
@@ -154,13 +122,25 @@ export class WatsonChatStore {
     await atomicWrite(this.path(caseId), JSON.stringify(normalize(chat), null, 2));
   }
 
+  // Every turn the update added goes to the history file first, so a failed append fails the update
+  // and the chat file never holds a turn the history lacks. A chat that has no history file yet
+  // (it predates the history) seeds it with the turns it already holds.
+  private async keepHistory(caseId: string, before: WatsonChat, after: WatsonChat): Promise<void> {
+    const known = new Set(before.turns.map((t) => t.id));
+    const added = after.turns.filter((t) => !known.has(t.id));
+    const seed = (await this.history.exists(caseId)) ? [] : before.turns;
+    await this.history.append(caseId, [...seed, ...added]);
+  }
+
   // Load, apply fn, save, return the saved chat. Calls for one case run one at a time, so
   // concurrent writers never lose each other's writes. A throwing fn rejects only its own call.
   update(caseId: string, fn: (chat: WatsonChat) => WatsonChat | Promise<WatsonChat>): Promise<WatsonChat> {
     const prev = this.chains.get(caseId) ?? Promise.resolve();
     const run = prev.then(async () => {
       const { chat, corrupt } = await this.read(caseId);
-      const next = normalize(await fn(chat));
+      const changed = await fn(chat);
+      await this.keepHistory(caseId, chat, changed);
+      const next = normalize(changed);
       if (corrupt) await this.backUpCorrupt(caseId);
       await this.save(caseId, next);
       return next;

@@ -102,6 +102,25 @@ async function harness(
 }
 
 describe("Watson routes", () => {
+  it("GET /watson/history pages older turns, clamps the limit, and 404s an unknown case", async () => {
+    const { app, chatStore } = await harness();
+    const turns = Array.from({ length: 5 }, (_, i) => ({
+      id: `t${i + 1}`,
+      at: `2026-01-01T00:00:0${i}Z`,
+      role: "analyst" as const,
+      text: `m${i + 1}`,
+    }));
+    await chatStore.update(CASE, (c) => ({ ...c, turns }));
+    const page = await request(app).get(`/cases/${CASE}/watson/history?before=t4&limit=2`);
+    expect(page.status).toBe(200);
+    expect(page.body.turns.map((t: { id: string }) => t.id)).toEqual(["t2", "t3"]);
+    expect(page.body.more).toBe(true);
+    const all = await request(app).get(`/cases/${CASE}/watson/history?before=t4&limit=999`);
+    expect(all.body.turns.map((t: { id: string }) => t.id)).toEqual(["t1", "t2", "t3"]);
+    expect(all.body.more).toBe(false);
+    expect((await request(app).get("/cases/nope/watson/history")).status).toBe(404);
+  });
+
   it("GET returns an empty chat for a new case", async () => {
     const { app } = await harness();
     const res = await request(app).get(`/cases/${CASE}/watson`);

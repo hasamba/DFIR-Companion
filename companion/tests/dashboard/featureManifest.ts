@@ -1874,6 +1874,7 @@ export const FEATURES: Feature[] = [
     publish: [
       "watsonTurnHtml",
       "watsonBoardHtml",
+      "watsonEarlierButtonHtml",
       "watsonPanelHtml",
       "watsonSectionHtml",
       "watsonCaseIsEmpty",
@@ -1896,6 +1897,8 @@ export const FEATURES: Feature[] = [
     private: [
       "wChat",
       "wQuestions",
+      "wEarlier",
+      "wMore",
       "wCase",
       "wSeq",
       "wSeen",

@@ -2,8 +2,9 @@ import type { AIProvider } from "../../../providers/provider.js";
 import type { InvestigationState } from "../../stateTypes.js";
 import { callAiJson } from "../aiContext.js";
 import { getWatsonPrompt } from "../prompts/index.js";
+import { WATSON_HISTORY_ID, WATSON_HISTORY_NAME } from "./historyStore.js";
 import { promptEntities } from "./pasteEntities.js";
-import { pasteHead } from "./pasteSearch.js";
+import { pasteHead, searchPaste } from "./pasteSearch.js";
 import { buildWatsonUserPrompt, type WatsonPromptInput } from "./promptBuilder.js";
 import { watsonReplySchema, type WatsonReply } from "./replySchema.js";
 import {
@@ -66,6 +67,54 @@ export async function headExcerpt(
 }
 
 /**
+ * What a search hop shows: the lines of a stored paste, or (pasteId "history") of the full chat
+ * history, that match the terms. Undefined for a paste id the chat does not hold.
+ */
+export async function searchExcerpt(
+  ctx: WatsonRoundContext,
+  caseId: string,
+  chat: WatsonChat,
+  search: { pasteId: string; terms: readonly string[] },
+): Promise<NonNullable<WatsonPromptInput["pasteExcerpt"]> | undefined> {
+  const none = `(no line matched: ${search.terms.join(", ")})`;
+  if (search.pasteId === WATSON_HISTORY_ID) {
+    const history = await ctx.chatStore.history.text(caseId);
+    const found = searchPaste(history.text, search.terms);
+    return {
+      pasteId: WATSON_HISTORY_ID,
+      filename: WATSON_HISTORY_NAME,
+      text: found.excerpt || none,
+      truncated: found.truncated || history.truncated,
+    };
+  }
+  const target = chat.pastes.find((p) => p.id === search.pasteId);
+  if (!target) return undefined;
+  const found = searchPaste(await readPasteText(ctx.cases, caseId, target), search.terms);
+  return {
+    pasteId: target.id,
+    filename: target.filename,
+    text: found.excerpt || none,
+    truncated: found.truncated,
+  };
+}
+
+/**
+ * The turns the history search can reach, not counting the message being answered (that is the
+ * ANALYST block). A chat that predates the history file counts its own turns: a round seeds the
+ * file from them, so the preview, which writes nothing, shows the same number.
+ */
+async function historyTurnCount(
+  ctx: WatsonRoundContext,
+  caseId: string,
+  chat: WatsonChat,
+  analystSaved: boolean,
+): Promise<number> {
+  const store = ctx.chatStore.history;
+  if (!(await store.exists(caseId))) return chat.turns.length;
+  return Math.max(0, (await store.count(caseId)) - (analystSaved ? 1 : 0));
+}
+
+/**
  * The prompt inputs every request of a round shares. `chat` is the chat WITHOUT the message being
  * answered: that message is the ANALYST block and is not repeated as recent chat.
  */
@@ -75,6 +124,7 @@ export async function watsonBaseInput(
   state: InvestigationState,
   chat: WatsonChat,
   analystText: string,
+  analystSaved = false,
 ): Promise<{ base: WatsonPromptInput; cover: WatsonCoverage | undefined }> {
   const cc = await buildWatsonCaseContext(ctx, caseId, state);
   return {
@@ -84,6 +134,7 @@ export async function watsonBaseInput(
       analystText,
       caseContext: cc.text,
       mainLanguages: await mainLanguages(ctx, caseId, state),
+      historyTurns: await historyTurnCount(ctx, caseId, chat, analystSaved),
     },
     cover: coverageOf(cc),
   };

@@ -588,3 +588,48 @@ describe("the empty-case hint in the Watson log", () => {
     expect(log.innerHTML).not.toContain("No forensic-timeline events or findings yet");
   });
 });
+
+describe("Load earlier messages", () => {
+  const t = (id: string, text: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    at: "x",
+    role: "watson",
+    text,
+    ...extra,
+  });
+
+  it("shows the button only when the chat is at its cap or the server said more remain", () => {
+    const { api, log } = setup();
+    api.renderWatson(chatWith([t("t1", "hi")]));
+    expect(log.innerHTML).not.toContain("Load earlier messages");
+    api.renderWatson(chatWith(Array.from({ length: 400 }, (_, i) => t(`t${i}`, "m"))));
+    expect(log.innerHTML).toContain("Load earlier messages");
+    expect(log.innerHTML).toContain('data-w-verb="loadEarlier"');
+  });
+
+  it("asks for the page before the oldest turn and renders it read-only, escaped, with no buttons", async () => {
+    const calls: string[] = [];
+    const page = {
+      turns: [
+        t("o1", "<b>old</b>", {
+          answer: { question: "q", status: "answered", answer: "a", pointer: "", relatedEventIds: [] },
+          proposalIds: ["p1"],
+        }),
+      ],
+      more: false,
+    };
+    const { api, log } = setup({
+      fetch: async (url: string) => {
+        calls.push(url);
+        return response(200, page);
+      },
+    });
+    api.renderWatson(chatWith(Array.from({ length: 400 }, (_, i) => t(`t${i}`, "m"))));
+    await (api.watsonAct({ dataset: { wVerb: "loadEarlier" } }) as Promise<void>);
+    expect(calls).toEqual(["/cases/c1/watson/history?before=t0&limit=100"]);
+    expect(log.innerHTML).toContain("&lt;b&gt;old&lt;/b&gt;");
+    expect(log.innerHTML).not.toContain("<b>old</b>");
+    expect(log.innerHTML).not.toContain("Add to open questions");
+    expect(log.innerHTML).not.toContain("Load earlier messages"); // more: false
+  });
+});
