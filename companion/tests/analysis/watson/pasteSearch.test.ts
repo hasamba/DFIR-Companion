@@ -45,10 +45,19 @@ describe("searchPaste", () => {
     const r = searchPaste(text, ["hit"], { context: 0 });
     const lines = r.excerpt.split("\n");
     expect(lines).toHaveLength(3);
-    expect(lines[0]!.endsWith(" …[clipped]")).toBe(true);
-    expect(lines[0]!.length).toBeLessThan(2100);
+    expect(lines[0]?.endsWith(" …[clipped]")).toBe(true);
+    expect(lines[0]?.length).toBeLessThan(2100);
     expect(lines[1]).toBe("2: hit one");
     expect(lines[2]).toBe("3: hit two");
+    expect(r.truncated).toBe(true);
+  });
+  it("centres the clip on the first match, so a match deep in a long line is visible", () => {
+    const line = `${"a".repeat(5000)}NEEDLE${"b".repeat(5000)}`;
+    const r = searchPaste(line, ["needle"], { context: 0 });
+    expect(r.excerpt).toContain("NEEDLE");
+    expect(r.excerpt.startsWith("1: …[clipped] ")).toBe(true);
+    expect(r.excerpt.endsWith(" …[clipped]")).toBe(true);
+    expect(r.excerpt.length).toBeLessThan(2100);
     expect(r.truncated).toBe(true);
   });
   it("strips carriage returns", () => {

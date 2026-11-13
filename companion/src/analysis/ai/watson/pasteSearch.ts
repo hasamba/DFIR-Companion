@@ -8,6 +8,7 @@ const DEFAULT_CONTEXT = 1;
 const EXCERPT_MAX_CHARS = 24000;
 const LINE_MAX_CHARS = 2000;
 const CLIP_MARK = " …[clipped]";
+const CLIP_LEAD = "…[clipped] ";
 
 export interface PasteSearchResult {
   excerpt: string;
@@ -48,7 +49,7 @@ export function searchPaste(
     }
     let body = text.slice(s.start, s.end);
     if (body.length > LINE_MAX_CHARS) {
-      body = body.slice(0, LINE_MAX_CHARS) + CLIP_MARK;
+      body = clipAround(body, needles);
       truncated = true;
     }
     const row = `${s.n}: ${body}`;
@@ -90,6 +91,16 @@ export function searchPaste(
     pos = end + 1;
   }
   return { excerpt: out.join("\n"), matchedLines, truncated };
+}
+
+/** A LINE_MAX_CHARS window centred on the line's first match, marked on each side it cuts. */
+function clipAround(body: string, needles: readonly string[]): string {
+  const lower = body.toLowerCase();
+  const hits = needles.map((t) => lower.indexOf(t)).filter((i) => i >= 0);
+  const at = hits.length ? Math.min(...hits) : 0;
+  const start = Math.max(0, Math.min(at - Math.floor(LINE_MAX_CHARS / 2), body.length - LINE_MAX_CHARS));
+  const end = start + LINE_MAX_CHARS;
+  return `${start > 0 ? CLIP_LEAD : ""}${body.slice(start, end)}${end < body.length ? CLIP_MARK : ""}`;
 }
 
 export function pasteHead(text: string, maxChars = 6000): string {
