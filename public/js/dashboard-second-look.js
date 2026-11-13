@@ -293,7 +293,7 @@
   }
 
   /** Measure, never spend. Called on case connect, and again after a run so the panel re-costs. */
-  function loadSecondLookPreview(caseId) {
+  function loadSecondLookPreview(caseId, opts) {
     // A CASE SWITCH IS AN EXIT PATH for a run started under the previous case: the flag goes off
     // and the generation moves on, so that run's `finally` cannot touch either again.
     //
@@ -308,10 +308,15 @@
       slResult = null;
       slRunError = "";
     }
-    slPreview = null;
-    slPreviewError = "";
-    slPreviewState = "loading";
-    renderSecondLook();
+    // #2622: a quiet re-measure of the same case (synthesis landed) keeps the old numbers on screen
+    // until the new ones arrive, so the card does not flash a spinner on every state push.
+    const quiet = !!(opts && opts.keep) && !switched && slPreviewState === "ready";
+    if (!quiet) {
+      slPreview = null;
+      slPreviewError = "";
+      slPreviewState = "loading";
+      renderSecondLook();
+    }
     const gen = ++slLoadGen;
     return fetch(`/cases/${encodeURIComponent(caseId)}/second-look/preview`)
       .then((r) => r.json().then((body) => ({ ok: r.ok, code: r.status, body })))
@@ -329,16 +334,38 @@
           throw new Error(`HTTP ${r.code}`);
         }
         slPreview = r.body && typeof r.body === "object" ? r.body : { configured: false };
+        slPreviewError = "";
         slPreviewState = "ready";
       })
       .catch((err) => {
         if (slCaseId !== caseId || slLoadGen !== gen) return;
+        if (quiet) return; // a failed quiet refresh leaves the last good measure showing
         slPreviewError = String((err && err.message) || err);
         slPreviewState = "error";
       })
       .finally(() => {
         if (slCaseId === caseId && slLoadGen === gen) renderSecondLook();
       });
+  }
+
+  /**
+   * #2622: re-measure what a second look would find, after the record changed under the card.
+   * Never while a run is in flight (loadSecondLookPreview resets the busy flag and the run
+   * generation, which would orphan that run). The old preview stays on screen until the new one
+   * lands, and a failed run's message is left alone.
+   */
+  function remeasureSecondLook() {
+    if (!slCaseId || slBusy || slPreviewState === "loading") return;
+    loadSecondLookPreview(slCaseId, { keep: true });
+  }
+
+  // The live `state` push calls this on every change. The preview route is behind the heavy-read
+  // gate, so the re-measure is debounced well clear of an import's burst of pushes.
+  let slReloadTimer = null;
+  function scheduleSecondLookReload(caseId) {
+    if (!caseId || caseId !== slCaseId) return;
+    clearTimeout(slReloadTimer);
+    slReloadTimer = setTimeout(remeasureSecondLook, 800);
   }
 
   /**
@@ -355,6 +382,7 @@
     if (typeof markSectionRevealed === "function") markSectionRevealed("sec-second-look");
     sec.classList.remove("collapsed");
     sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    remeasureSecondLook(); // #2622: the counts on the card may predate the synthesis that just ran
   }
 
   function initSecondLook() {
@@ -375,6 +403,7 @@
   // runSecondLook, which the panel's own suite drives the way the button does. The render and every
   // piece of state stay inside the closure.
   window.loadSecondLookPreview = loadSecondLookPreview;
+  window.scheduleSecondLookReload = scheduleSecondLookReload;
   window.runSecondLook = runSecondLook;
   window.initSecondLook = initSecondLook;
 })();

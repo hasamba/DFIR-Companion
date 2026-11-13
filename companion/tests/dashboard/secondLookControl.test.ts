@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 // The second-look control (#1554), driven the way the browser drives it.
@@ -19,6 +19,7 @@ interface Api {
   loadSecondLookPreview(caseId: string): Promise<void>;
   runSecondLook(): Promise<void> | undefined;
   initSecondLook(): void;
+  scheduleSecondLookReload(caseId: string): void;
 }
 
 interface Deferred {
@@ -42,6 +43,8 @@ interface FakeEl {
   addEventListener(type: string, fn: (e: unknown) => void): void;
   click(): void;
   focus(): void;
+  classList: { remove(c: string): void };
+  scrollIntoView(o?: unknown): void;
 }
 
 function harness() {
@@ -66,6 +69,8 @@ function harness() {
         },
         click: () => (handlers.click || []).forEach((f) => f({ stopPropagation: () => {} })),
         focus: () => {},
+        classList: { remove: () => {} },
+        scrollIntoView: () => {},
       };
       els.set(id, cur);
     }
@@ -93,6 +98,9 @@ function harness() {
       synthMetaCalls.push(caseId);
     },
     markSectionRevealed: () => {},
+    // Late-bound so vi.useFakeTimers() installed after the harness is built still applies.
+    setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
+    clearTimeout: (t: ReturnType<typeof setTimeout>) => clearTimeout(t),
   };
   const api = loadDashboardModule<Api>("dashboard-second-look.js", ["dashboard-escape.js"], globals);
   return { api, pending, el, synthMetaCalls };
@@ -497,5 +505,95 @@ describe("where the panel lives", () => {
       "utf8",
     );
     expect(connect).toContain('["secondLook", () => loadSecondLookPreview(caseId)]');
+  });
+});
+
+// #2622 — the card measured the case once, on connect, and never again. A case connected before
+// synthesis kept "Nothing to look for yet" while the server held questions and hypotheses.
+describe("the preview after the record changes (#2622)", () => {
+  const EMPTY = { ...FULL_PREVIEW, questions: 0, hypotheses: 0, iocs: 0, modelRequests: 0, requests: 0 };
+
+  it("re-measures when the toolbar button reveals the panel", async () => {
+    const h = await withPreview(EMPTY);
+    expect(h.el("secondLookPreview").innerHTML).toContain("Nothing to look for yet");
+    h.el("secondLookBtn").click();
+    expect(h.pending).toHaveLength(1);
+    expect(h.pending[0].url).toBe("/cases/case-1/second-look/preview");
+    // The old numbers stay up until the new ones land: no spinner flash.
+    expect(h.el("secondLookPreview").innerHTML).toContain("Nothing to look for yet");
+    h.pending.shift()!.resolve(FULL_PREVIEW);
+    await settle();
+    const html = h.el("secondLookPreview").innerHTML;
+    expect(html).toContain("7 open questions");
+    expect(html).not.toContain("Nothing to look for yet");
+  });
+
+  it("does not re-measure on reveal while a run is in flight, and keeps a failed run's message", async () => {
+    const h = await withPreview();
+    const run = h.api.runSecondLook();
+    h.pending.shift()!.reject(new Error("socket hang up"));
+    await run;
+    await settle();
+    const msg = h.el("secondLookStatus").textContent;
+    expect(msg).toContain("socket hang up");
+    h.el("secondLookBtn").click();
+    h.pending.shift()!.resolve(FULL_PREVIEW);
+    await settle();
+    expect(h.el("secondLookStatus").textContent, "the re-measure keeps the message").toBe(msg);
+
+    void h.api.runSecondLook();
+    expect(h.pending).toHaveLength(1);
+    h.el("secondLookBtn").click();
+    expect(h.pending, "no extra fetch while a run is in flight").toHaveLength(1);
+  });
+
+  it("debounces the re-measure on a state push to one fetch after 800 ms", async () => {
+    const h = await withPreview(EMPTY);
+    vi.useFakeTimers();
+    try {
+      h.api.scheduleSecondLookReload("case-1");
+      h.api.scheduleSecondLookReload("case-1");
+      vi.advanceTimersByTime(799);
+      expect(h.pending).toHaveLength(0);
+      vi.advanceTimersByTime(1);
+      expect(h.pending).toHaveLength(1);
+      expect(h.el("secondLookPreview").innerHTML, "old preview stays while pending").toContain(
+        "Nothing to look for yet",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+    h.pending.shift()!.resolve(FULL_PREVIEW);
+    await settle();
+    expect(h.el("secondLookPreview").innerHTML).toContain("7 open questions");
+  });
+
+  it("skips the state-push re-measure while a run is in flight or for another case", async () => {
+    const h = await withPreview();
+    vi.useFakeTimers();
+    try {
+      h.api.scheduleSecondLookReload("case-2");
+      vi.advanceTimersByTime(1000);
+      expect(h.pending).toHaveLength(0);
+      void h.api.runSecondLook();
+      expect(h.pending).toHaveLength(1);
+      h.api.scheduleSecondLookReload("case-1");
+      vi.advanceTimersByTime(1000);
+      expect(h.pending, "only the run itself is in flight").toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is wired to the live state push in the case-connect handler", async () => {
+    const connect = await readFile(
+      new URL("../../../public/js/dashboard-case-connect.js", import.meta.url),
+      "utf8",
+    );
+    const state = connect.slice(
+      connect.indexOf('msg.type === "state"'),
+      connect.indexOf("second_opinion_changed"),
+    );
+    expect(state).toContain("scheduleSecondLookReload(caseId)");
   });
 });
