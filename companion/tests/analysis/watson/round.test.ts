@@ -20,7 +20,12 @@ import { withRetry } from "../../../src/analysis/ai/retry.js";
 import { StateLock } from "../../../src/analysis/stateLock.js";
 import { StateStore } from "../../../src/analysis/stateStore.js";
 import { emptyState, type ForensicEvent } from "../../../src/analysis/stateTypes.js";
-import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../../src/providers/provider.js";
+import {
+  ProviderError,
+  type AIProvider,
+  type AnalyzeRequest,
+  type AnalyzeResult,
+} from "../../../src/providers/provider.js";
 import { CaseStore } from "../../../src/storage/caseStore.js";
 
 const CASE = "c1";
@@ -580,7 +585,88 @@ describe("runWatsonRound", () => {
       pastes: [{ id: "p9", storedName: "../../etc/passwd", filename: "x", bytes: 1, lines: 1, at: "t" }],
     }));
     const chat = await runWatsonRound(h.ctx, CASE, { text: "x", pasteId: "p9" });
-    expect(h.provider.sent).toHaveLength(0);
-    expect(chat.turns.at(-1)).toMatchObject({ role: "system", error: true });
+    // The file is never read; Watson answers without it and says so once.
+    expect(h.provider.sent).toHaveLength(1);
+    expect(h.provider.sent[0].userPrompt).not.toContain("<<<PASTE");
+    expect(chat.turns.map((t) => t.role)).toEqual(["analyst", "watson", "system"]);
+    expect(chat.turns.at(-1)?.text).toBe(
+      "Watson could not read x. It stays stored as evidence — ask Watson to search it.",
+    );
+  });
+
+  it("a missing stored paste file does not fail the round: Watson answers with the note", async () => {
+    const h = await harness([reply({ message: "answered anyway" })]);
+    await h.chatStore.update(CASE, (c) => ({
+      ...c,
+      pastes: [{ id: "p8", storedName: "0001_gone.txt", filename: "gone.txt", bytes: 1, lines: 1, at: "t" }],
+      unreadPasteIds: ["p8"],
+    }));
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "go on" });
+    expect(chat.turns.map((t) => t.text)).toEqual([
+      "go on",
+      "answered anyway",
+      "Watson could not read gone.txt. It stays stored as evidence — ask Watson to search it.",
+    ]);
+    expect(chat.unreadPasteIds).toEqual([]);
+    expect(h.provider.sent[0].userPrompt).toContain("[p8] gone.txt (1 lines");
+  });
+
+  it("an auto-attached head that fails (safety stop) is tried once; the next message runs without it", async () => {
+    const h = await harness([reply({ message: "second message works" })]);
+    await addPaste(h, "p1", "Invoke-Mimikatz script text\nmore", true);
+    const inner = h.ctx.analyzeRestored;
+    let failNext = true;
+    h.ctx = {
+      ...h.ctx,
+      analyzeRestored: async (...args) => {
+        if (failNext) {
+          failNext = false;
+          throw new ProviderError("the model's safety filter stopped the answer", "safety_stop");
+        }
+        return inner(...args);
+      },
+    };
+    const failed = await runWatsonRound(h.ctx, CASE, { text: "look" });
+    expect(failed.unreadPasteIds).toEqual([]);
+    expect(failed.turns.at(-1)?.text).toBe(
+      "Watson could not read netstat.txt. It stays stored as evidence — ask Watson to search it.",
+    );
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "next" });
+    expect(h.provider.sent).toHaveLength(1);
+    expect(h.provider.sent[0].userPrompt).not.toContain("Invoke-Mimikatz");
+    expect(h.provider.sent[0].userPrompt).toContain("[p1] netstat.txt (2 lines)");
+    expect(chat.turns.at(-1)?.text).toBe("second message works");
+  });
+
+  it("a paste read through a successful search counts as read", async () => {
+    const h = await harness([
+      reply({ search: { pasteId: "p2", terms: ["needle"] } }),
+      reply({ message: "found" }),
+    ]);
+    await addPaste(h, "p1", "head of the newer paste", true);
+    await addPaste(h, "p2", "a\nneedle here", true);
+    await h.chatStore.update(CASE, (c) => ({ ...c, unreadPasteIds: ["p2", "p1"] }));
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "search the older one" });
+    expect(chat.turns.at(-1)?.text).toBe("found");
+    expect(chat.unreadPasteIds).toEqual([]);
+  });
+
+  it("prints a key question id as it is, so an update to Q1.2 is kept", async () => {
+    const h = await harness([
+      reply({
+        questionUpdates: [{ questionId: "Q1.2", status: "partial", answer: "RDP from VPN", pointer: "e1" }],
+      }),
+    ]);
+    await h.stateStore.save({
+      ...emptyState(CASE),
+      forensicTimeline: [ev("e1")],
+      keyQuestions: [
+        { id: "wq-std-what", question: "What happened?", status: "unknown", answer: "", pointer: "" },
+        { id: "Q1.2", question: "How did they get in?", status: "unknown", answer: "", pointer: "" },
+      ],
+    });
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "go" });
+    expect(h.provider.sent[0].userPrompt).toContain("- [Q1.2] (unknown) How did they get in?");
+    expect(chat.proposals.map((p) => p.questionId)).toEqual(["Q1.2"]);
   });
 });

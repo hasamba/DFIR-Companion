@@ -20,6 +20,9 @@ export const WATSON_QUESTION_CHARS = 500;
 export const WATSON_ANSWER_CHARS = 1500;
 export const WATSON_PASTES_LISTED = 20;
 const FILENAME_CHARS = 200;
+// Ids print as they are (flattened, markers defanged), never stripped: Watson's reply is checked
+// against the raw ids, so a stripped `Q1.2` shown as `Q12` would drop its update.
+const ID_CHARS = 120;
 
 export interface WatsonPromptInput {
   state: InvestigationState;
@@ -55,7 +58,7 @@ function pastesBlock(chat: WatsonChat): string {
   const unread = new Set(chat.unreadPasteIds);
   const listed = chat.pastes.slice(-WATSON_PASTES_LISTED).map((p) => {
     const note = unread.has(p.id) ? ", not read yet" : "";
-    return `- [${safeId(p.id)}] ${line(p.filename, FILENAME_CHARS)} (${Number(p.lines) || 0} lines${note})`;
+    return `- [${line(p.id, ID_CHARS)}] ${line(p.filename, FILENAME_CHARS)} (${Number(p.lines) || 0} lines${note})`;
   });
   const cut = chat.pastes.length - listed.length;
   return `${listed.join("\n") || "(none)"}${cut > 0 ? `\n(${cut} older pastes not listed)` : ""}`;
@@ -67,7 +70,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     .slice(0, WATSON_QUESTIONS_MAX)
     .map(
       (q) =>
-        `- [${safeId(q.id)}] (${q.status}) ${line(q.question, WATSON_QUESTION_CHARS)}${q.answer ? ` — answer: ${line(q.answer, WATSON_ANSWER_CHARS)}` : ""}`,
+        `- [${line(q.id, ID_CHARS)}] (${q.status}) ${line(q.question, WATSON_QUESTION_CHARS)}${q.answer ? ` — answer: ${line(q.answer, WATSON_ANSWER_CHARS)}` : ""}`,
     );
   const recent = chat.turns
     .slice(-WATSON_RECENT_TURNS)

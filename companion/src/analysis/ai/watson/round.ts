@@ -75,8 +75,10 @@ interface Outcome {
   error?: unknown;
   /** Thrown to the route after the save (a Presidio hold), even when a first reply was kept. */
   rethrow?: unknown;
-  /** The paste whose head was in a call that returned a reply: no longer unread. */
-  readPasteId?: string;
+  /** Pastes no longer unread: read by a reply, by a search hop, or given up on (see `unreadable`). */
+  readPasteIds?: string[];
+  /** A paste Watson could not read (its head failed, or its file is gone): told once, then dropped. */
+  unreadable?: WatsonPaste;
   shownEvents: string[];
   questions: InvestigationState["keyQuestions"];
 }
@@ -106,6 +108,8 @@ async function runRound(
   };
   const unread = paste && start.unreadPasteIds.includes(paste.id);
   const newPaste = paste && (unread || !pasteAnswered(start.turns, paste.id)) ? paste : undefined;
+  // An unread paste is attached on its own at most once, so a head that always fails cannot block Watson.
+  const auto = !input.pasteId && !!newPaste;
   // Saved BEFORE the model call: the analyst's words survive any failure below.
   const chat = await ctx.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, analystTurn] }));
 
@@ -115,7 +119,7 @@ async function runRound(
   let saved: WatsonChat | undefined;
   try {
     before = await watsonSpend(ctx, caseId);
-    outcome = await converse(ctx, caseId, chat, analystTurn, newPaste, counter, before);
+    outcome = await converse(ctx, caseId, chat, analystTurn, { paste: newPaste, auto }, counter, before);
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
   } finally {
@@ -139,10 +143,12 @@ async function converse(
   caseId: string,
   chat: WatsonChat,
   analystTurn: WatsonTurn,
-  newPaste: WatsonPaste | undefined,
+  attach: { paste: WatsonPaste | undefined; auto: boolean },
   counter: { calls: number },
   before: WatsonSpend,
 ): Promise<Outcome> {
+  const newPaste = attach.paste;
+  let headFailed = false;
   const shownEvents = chat.pendingCaseEvents.slice(0, WATSON_CASE_EVENTS_MAX);
   let questions: InvestigationState["keyQuestions"] = [];
   let first: WatsonReply;
@@ -188,13 +194,30 @@ async function converse(
       );
       return sanitizeWatsonReply(raw, known.questions, known.pastes);
     };
-    first = await ask(newPaste ? { ...base, pasteExcerpt: await headExcerpt(ctx, caseId, newPaste) } : base);
+    // A stored file that is gone or unreadable never fails the round: Watson answers without it.
+    const excerpt = newPaste
+      ? await headExcerpt(ctx, caseId, newPaste).catch(() => {
+          headFailed = true;
+          return undefined;
+        })
+      : undefined;
+    first = await ask(excerpt ? { ...base, pasteExcerpt: excerpt } : base);
   } catch (error) {
-    return { reply: null, error, shownEvents, questions };
+    // An auto-attached head is not tried again; the paste stays stored and searchable.
+    const giveUp = newPaste && (attach.auto || headFailed) ? newPaste : undefined;
+    return {
+      reply: null,
+      error,
+      shownEvents,
+      questions,
+      ...(giveUp ? { readPasteIds: [giveUp.id], unreadable: giveUp } : {}),
+    };
   }
-  const read = newPaste ? { readPasteId: newPaste.id } : {};
+  const read = newPaste
+    ? { readPasteIds: [newPaste.id], ...(headFailed ? { unreadable: newPaste } : {}) }
+    : {};
   if (!first.search) return { reply: first, shownEvents, questions, ...read };
-  const kept = { reply: { ...first, search: null }, shownEvents, questions, ...read };
+  const kept: Outcome = { reply: { ...first, search: null }, shownEvents, questions, ...read };
   // At most one search hop per round. From here on a failure never loses the first reply.
   try {
     const now = await spentNow(ctx, caseId, chat, before).catch(() => null);
@@ -213,7 +236,12 @@ async function converse(
         truncated: found.truncated,
       },
     });
-    return { ...kept, reply: { ...second, search: null } };
+    // A paste read through a search counts as read.
+    return {
+      ...kept,
+      reply: { ...second, search: null },
+      readPasteIds: [...(kept.readPasteIds ?? []), target.id],
+    };
   } catch (error) {
     return { ...kept, note: searchFailed(error), rethrow: error };
   }
@@ -315,7 +343,7 @@ function mergeOutcome(fresh: WatsonChat, outcome: Outcome, spent: WatsonSpend, c
       error: true,
       costUSD: spent.usd,
     };
-    return { ...charged, turns: [...charged.turns, turn] };
+    return withUnreadable({ ...charged, turns: [...charged.turns, turn] }, outcome, at);
   }
   const turnId = newWatsonId("wt");
   const proposals = buildProposals(reply, outcome.questions, turnId);
@@ -331,13 +359,31 @@ function mergeOutcome(fresh: WatsonChat, outcome: Outcome, spent: WatsonSpend, c
     ...(proposals.length ? { proposalIds: proposals.map((p) => p.id) } : {}),
     costUSD: spent.usd,
   };
-  return {
-    ...charged,
-    turns: [...charged.turns, turn],
-    proposals: [...charged.proposals, ...proposals],
-    // An empty memory is a lost field, not a decision to forget: keep the old one.
-    memory: reply.memory.trim() ? reply.memory : charged.memory,
-    unreadPasteIds: charged.unreadPasteIds.filter((id) => id !== outcome.readPasteId),
-    pendingCaseEvents: withoutShown(charged.pendingCaseEvents, outcome.shownEvents),
+  return withUnreadable(
+    {
+      ...charged,
+      turns: [...charged.turns, turn],
+      proposals: [...charged.proposals, ...proposals],
+      // An empty memory is a lost field, not a decision to forget: keep the old one.
+      memory: reply.memory.trim() ? reply.memory : charged.memory,
+      pendingCaseEvents: withoutShown(charged.pendingCaseEvents, outcome.shownEvents),
+    },
+    outcome,
+    at,
+  );
+}
+
+/** Drop the pastes this round read or gave up on from the unread list, and say which one it gave up on. */
+function withUnreadable(chat: WatsonChat, outcome: Outcome, at: string): WatsonChat {
+  const done = new Set(outcome.readPasteIds ?? []);
+  const unreadPasteIds = chat.unreadPasteIds.filter((id) => !done.has(id));
+  const p = outcome.unreadable;
+  if (!p) return { ...chat, unreadPasteIds };
+  const note: WatsonTurn = {
+    id: newWatsonId("wt"),
+    at,
+    role: "system",
+    text: `Watson could not read ${p.filename}. It stays stored as evidence — ask Watson to search it.`,
   };
+  return { ...chat, unreadPasteIds, turns: [...chat.turns, note] };
 }
