@@ -19,6 +19,8 @@ import type { WatsonChat, WatsonPaste } from "../analysis/ai/watson/types.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { watsonRoundDeps } from "./watsonDeps.js";
+import { ingestWatsonPaste } from "./watsonPasteIngest.js";
+import { ingestRows, withPasteIngest } from "../analysis/ai/watson/pasteIngestChat.js";
 
 /**
  * Watson, the per-case AI investigation chat (all under /cases/:id/watson). Team policy needs no code
@@ -33,7 +35,8 @@ import { watsonRoundDeps } from "./watsonDeps.js";
  *   POST /watson/turns/:tid/add-question add a turn's free-form answer to the open questions (no model call)
  *   POST /watson/new-thread              start a fresh chat thread; Watson's memory stays (no model call)
  *
- * A paste is stored and attached only. Nothing parses it into rows (phase 2), and it never starts a
+ * A paste is stored as evidence and, in a format a built-in importer reads, parsed into rows whose
+ * tagger promotions wait as Watson proposals (routes/watsonPasteIngest.ts). It never starts a
  * synthesis: the case's conclusions are marked out of date instead (#1599).
  */
 
@@ -58,6 +61,12 @@ interface WatsonRun {
   pipeline: NonNullable<RouteContext["options"]["pipeline"]>;
   deps: WatsonRoundDeps;
 }
+
+type Pipeline = NonNullable<RouteContext["options"]["pipeline"]>;
+const promoteVia =
+  (pipeline: Pipeline): NonNullable<WriterDeps["promoteEvents"]> =>
+  (caseId, events, opts) =>
+    pipeline.promoteSuperTimelineWithOutcome(caseId, events, opts);
 
 const stringOrEmpty = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -87,6 +96,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       cases: store,
       markConclusionsOutOfDate: ctx.markConclusionsOutOfDate,
       reportText: options.reportMetaStore,
+      ...(options.pipeline ? { promoteEvents: promoteVia(options.pipeline) } : {}),
     };
   }
 
@@ -212,7 +222,11 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  /** Save the text as case evidence (imports/ + the import log + custody), then record it on the chat. */
+  /**
+   * Save the text as case evidence (imports/ + custody), parse it into rows when a built-in importer
+   * reads its format (routes/watsonPasteIngest.ts), log the import with the parsed row count, then
+   * record the paste on the chat with what parsing did: one update, before the round runs.
+   */
   async function storePaste(
     caseId: string,
     filename: string,
@@ -229,15 +243,6 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       trigger: "watson-paste",
       collectedBy: actor,
     });
-    await store.appendImport(caseId, {
-      caseId,
-      sequenceNumber: seq,
-      importedAt: at,
-      filename: storedName,
-      originalName: filename,
-      rows: 0, // stored, not parsed (phase 2)
-      bytes,
-    });
     const paste: WatsonPaste = {
       id: newWatsonId("wf"),
       storedName,
@@ -246,11 +251,17 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       lines: countLines(text),
       at,
     };
-    await options.watsonChatStore!.update(caseId, (chat: WatsonChat) => ({
-      ...chat,
-      pastes: [...chat.pastes, paste],
-      unreadPasteIds: [...chat.unreadPasteIds, paste.id],
-    }));
+    const ingest = await ingestWatsonPaste(ctx, caseId, paste, text);
+    await store.appendImport(caseId, {
+      caseId,
+      sequenceNumber: seq,
+      importedAt: at,
+      filename: storedName,
+      originalName: filename,
+      rows: ingestRows(ingest),
+      bytes,
+    });
+    await options.watsonChatStore!.update(caseId, (chat: WatsonChat) => withPasteIngest(chat, paste, ingest));
     return paste;
   }
 

@@ -22,6 +22,13 @@ const pasteSchema = z.object({
   bytes: z.number(),
   lines: z.number(),
   at: z.string(),
+  parsed: z
+    .union([
+      z.object({ kind: z.literal("text"), reason: z.string() }),
+      z.object({ kind: z.string(), rows: z.number(), held: z.number() }),
+    ])
+    .optional()
+    .catch(undefined),
 });
 
 function lenientList<T>(raw: unknown, schema: z.ZodType<T, z.ZodTypeDef, unknown>): T[] {

@@ -109,11 +109,22 @@ export interface WatsonReportTextProposal extends WatsonProposalCommon {
   after: string;
 }
 
+/** A promoted row as it landed (lab normalisation or a name carry may change it): undo compares these. */
+export interface WatsonLandedRow {
+  id: string;
+  severity: ForensicEvent["severity"];
+  description: string;
+}
+
+/** Rows of a parsed paste the content tagger graded above Info, held for the analyst (spec §14). */
 export interface WatsonEventPromoteProposal extends WatsonProposalCommon, WatsonCreatedRows {
   kind: "event_promote";
   targetId: string;
+  /** The raised copies, kept after undo so a re-apply needs nothing else. */
   events: ForensicEvent[];
   pasteId: string;
+  /** Set on apply: the rows this proposal added, as they landed. */
+  landedRows?: WatsonLandedRow[];
 }
 
 export type WatsonProposal =
@@ -132,6 +143,10 @@ export const isQuestionProposal = (p: WatsonProposal): p is WatsonQuestionPropos
 export const proposalTargetId = (p: WatsonProposal): string =>
   isQuestionProposal(p) ? (p.targetId ?? p.questionId) : p.targetId;
 
+/** What parsing a paste did: rows from a known format, or why it stayed searchable text. */
+export type WatsonPasteParsed =
+  { kind: string; rows: number; held: number } | { kind: "text"; reason: string };
+
 export interface WatsonPaste {
   id: string;
   storedName: string;
@@ -139,6 +154,7 @@ export interface WatsonPaste {
   bytes: number;
   lines: number;
   at: string;
+  parsed?: WatsonPasteParsed;
 }
 
 export interface WatsonChat {

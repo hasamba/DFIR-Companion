@@ -1,4 +1,6 @@
-import type { InvestigationState } from "../../../stateTypes.js";
+import type { ForensicEvent, InvestigationState } from "../../../stateTypes.js";
+import type { PromotionOptions } from "../../../ingest/timelineImports.js";
+import type { PromotionOutcome } from "../../../ingest/promotionOutcome.js";
 import type { CaseStore } from "../../../../storage/caseStore.js";
 import type { WatsonProposalDeps } from "../proposalErrors.js";
 import type { WatsonProposal } from "../types.js";
@@ -39,6 +41,12 @@ export interface WriterDeps extends WatsonProposalDeps {
   cases?: CaseStore;
   /** #1599: a Watson write marks the conclusions out of date and never starts a synthesis. */
   markConclusionsOutOfDate(caseId: string, why: string): Promise<void>;
+  /** The pipeline's promotion seam (it takes the state lock). Without it, rows cannot be promoted. */
+  promoteEvents?(
+    caseId: string,
+    events: ForensicEvent[],
+    opts: PromotionOptions,
+  ): Promise<{ state: InvestigationState; outcome: PromotionOutcome }>;
 }
 
 /**

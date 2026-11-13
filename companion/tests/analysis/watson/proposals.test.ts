@@ -371,7 +371,7 @@ describe("applyWatsonProposal", () => {
     expect(mem.state.keyQuestions).toEqual([original]);
   });
 
-  it("a kind with no writer yet is refused and stays pending", async () => {
+  it("a proposal its writer cannot write (no promotion seam, no rows) is refused and stays pending", async () => {
     await chatStore.save(CASE, {
       ...emptyWatsonChat(),
       proposals: [

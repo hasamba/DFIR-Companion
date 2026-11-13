@@ -6,6 +6,7 @@ import {
   type WatsonProposalAction,
 } from "./proposalErrors.js";
 import { proposalTargetId, type WatsonChat, type WatsonProposal, type WatsonProposalKind } from "./types.js";
+import { eventPromoteWriter } from "./writers/eventPromoteWriter.js";
 import { findingWriter } from "./writers/findingWriter.js";
 import { nextStepWriter } from "./writers/nextStepWriter.js";
 import { questionWriter } from "./writers/questionWriter.js";
@@ -47,7 +48,13 @@ const WRITERS: Partial<Record<WatsonProposalKind, WatsonWriter<WatsonProposal>>>
   finding_update: findingWriter,
   next_step_new: nextStepWriter,
   report_text: reportTextWriter,
+  event_promote: eventPromoteWriter,
 };
+
+// The pasted file stays the evidence, so held rows an analyst undid may be applied again.
+const REAPPLIABLE: ReadonlySet<WatsonProposalKind> = new Set<WatsonProposalKind>(["event_promote"]);
+const allowed = (p: WatsonProposal, action: WatsonProposalAction): boolean =>
+  p.status === FROM[action] || (action === "apply" && p.status === "undone" && REAPPLIABLE.has(p.kind));
 
 const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {
   question_update: "question",
@@ -74,7 +81,7 @@ function describe(p: WatsonProposal): string {
     case "report_text":
       return `report text (${p.field})`;
     case "event_promote":
-      return `promotion of ${p.events.length} pasted line(s)`;
+      return `promotion of ${p.events.length} pasted row(s)`;
   }
 }
 
@@ -118,7 +125,7 @@ export async function applyWatsonProposal(
   const chat = await deps.chatStore.update(caseId, async (c) => {
     const p = c.proposals.find((x) => x.id === proposalId);
     if (!p) throw new WatsonProposalNotFoundError(proposalId);
-    if (p.status !== FROM[action]) throw new WatsonProposalStateError(action, p.status);
+    if (!allowed(p, action)) throw new WatsonProposalStateError(action, p.status);
     const result = action === "reject" ? {} : await runWriter(deps, caseId, p, action);
     state = result.state;
     const next = decided(p, action, result.proposal, actor);

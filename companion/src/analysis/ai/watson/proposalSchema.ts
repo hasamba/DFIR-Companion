@@ -69,6 +69,16 @@ const eventPromoteProposal = z.object({
   targetId: z.string(),
   events: z.array(event),
   pasteId: z.string(),
+  landedRows: z
+    .array(
+      z.object({
+        id: z.string(),
+        severity: z.enum(["Critical", "High", "Medium", "Low", "Info"]),
+        description: z.string(),
+      }),
+    )
+    .optional()
+    .catch(undefined),
 });
 
 export const proposalSchema: z.ZodType<WatsonProposal, z.ZodTypeDef, unknown> = z.union([

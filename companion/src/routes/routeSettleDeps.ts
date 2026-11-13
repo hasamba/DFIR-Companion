@@ -39,23 +39,30 @@ export interface ImportTaggerDeps {
  * a cloud collection's own API calls; tag only, never a grade; not TAGGER_AUTO-gated), then the
  * trusted-activity recompute when the case has an `ours`/`responder` mark (#2561; tag only).
  */
-export function importTagger(d: ImportTaggerDeps): (caseId: string, added: ForensicEvent[]) => Promise<void> {
+type ContentTagger = (caseId: string, added: ForensicEvent[]) => Promise<void>;
+
+/** `contentTagger` replaces the content-tagger step only (a Watson paste holds its promotions). */
+export function importTagger(d: ImportTaggerDeps, contentTagger?: ContentTagger): ContentTagger {
   const { options } = d;
+  const content: ContentTagger =
+    contentTagger ??
+    ((caseId, added) =>
+      autoTagNewEvents(
+        {
+          taggerStore: options.taggerStore,
+          tagsStore: options.tagsStore,
+          stateStore: options.stateStore,
+          analysisRunStore: options.analysisRunStore,
+          operationalMetrics: options.operationalMetrics,
+          onTags: options.onTags,
+          runStateExclusive: d.runStateExclusive,
+          logLine: d.logLine,
+        },
+        caseId,
+        added,
+      ));
   return async (caseId, added) => {
-    await autoTagNewEvents(
-      {
-        taggerStore: options.taggerStore,
-        tagsStore: options.tagsStore,
-        stateStore: options.stateStore,
-        analysisRunStore: options.analysisRunStore,
-        operationalMetrics: options.operationalMetrics,
-        onTags: options.onTags,
-        runStateExclusive: d.runStateExclusive,
-        logLine: d.logLine,
-      },
-      caseId,
-      added,
-    );
+    await content(caseId, added);
     const tags = options.tagsStore;
     if (!tags) return;
     await tagCollectorFootprint(

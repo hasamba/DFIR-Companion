@@ -121,8 +121,16 @@ export async function importPlasoFile(
 //                 behaviour is exactly the write that refusal exists to stop.
 // `remediation-check` (#969): a super-timeline row attached as evidence to a remediation boundary
 // enters the case by promotion like any analyst promotion, and is marked like a manual one.
+// `watson`: the analyst approved a Watson proposal holding rows the content tagger graded above Info
+// during a chat paste ingest. The caller marks them `[watson]` through `tagById`.
 export type PromotionIntent =
-  "manual" | "explain" | "starred-report" | "second-look" | "remediation-check" | "missed-evidence";
+  | "manual"
+  | "explain"
+  | "starred-report"
+  | "second-look"
+  | "remediation-check"
+  | "missed-evidence"
+  | "watson";
 
 /** The intents for which a sandbox-produced row is DROPPED rather than normalised. See above. */
 const LAB_REFUSING_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionIntent>([
