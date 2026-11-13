@@ -43,6 +43,7 @@ import { mergeDelta, type WindowContext } from "../stateMerge.js";
 import { guardWatsonQuestion, keepWatsonAnswers } from "../timeline/watsonQuestions.js";
 import {
   annotateWatsonFindings,
+  dropUndoneWatsonLinks,
   keepWatsonItems,
   splitWatsonReissues,
   watsonCitationSources,
@@ -253,7 +254,7 @@ export async function foldSynthesisDelta(
   const linked = dropAutoCoveredByDismissal(
     linkEventsToFindings(
       filtered,
-      [...delta.findings, ...watsonCitationSources(filtered.findings, benign)],
+      [...delta.findings, ...watsonCitationSources(filtered, benign)],
       surviving,
       membersOf,
     ),
@@ -297,6 +298,7 @@ export async function foldSynthesisDelta(
   next = { ...next, keyQuestions: keepWatsonAnswers(next.keyQuestions, latestQuestions, state.keyQuestions) };
   // Watson findings and next steps as stored now (applies and undos during the call), annotated.
   next = annotateWatsonFindings(keepWatsonItems(next, latest), disagreements, benign);
+  next = dropUndoneWatsonLinks(next, state.findings);
 
   return {
     next,

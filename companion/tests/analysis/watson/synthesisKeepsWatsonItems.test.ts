@@ -293,6 +293,40 @@ describe("the synthesis fold and persist keep Watson findings and next steps", (
   });
 });
 
+describe("Watson items across the fold's edges", () => {
+  it("keeps the import stamp the run put on a Watson step's collection request", async () => {
+    const asked = { ...watsonStep, collect: { host: "WS01", artifact: "Windows.EventLogs.Evtx" } };
+    const stamped = { ...asked, collect: { ...asked.collect, issuedAfterImportSeq: 3 } };
+    const loaded = base({ nextSteps: [asked] });
+    const out = await persistSynthesis(
+      { opts: { stateStore: memoryStore(loaded), stateLock: new StateLock() } },
+      "c1",
+      {
+        loaded,
+        next: { ...loaded, nextSteps: [stamped] },
+        findingsDiff: { added: [], removed: [], severityChanged: [] },
+      },
+    );
+    expect(out.nextSteps).toEqual([stamped]);
+  });
+
+  it("leaves no back-link to a Watson finding undone while the model call ran", async () => {
+    const latest = { ...base(), findings: [] };
+    const out = await foldAndPersist(base(), delta([synthFinding("f-1")]), latest);
+    expect(eventById(out, "e1")?.relatedFindingIds).not.toContain(watsonFinding.id);
+  });
+
+  it("back-links a citation correlation folded into another row to that row", async () => {
+    const state = base({
+      forensicTimeline: [ev("e2")],
+      eventAliases: { e1: "e2" },
+    });
+    const { next } = await fold(state, delta([]));
+    expect(eventById(next, "e2")?.relatedFindingIds).toEqual([watsonFinding.id]);
+    expect(findingById(next, watsonFinding.id)?.citationsChanged).toBeUndefined();
+  });
+});
+
 describe("paths outside synthesis never drop a Watson item", () => {
   it("an import delta re-issuing a Watson id and replacing next steps keeps both Watson items", () => {
     const out = mergeDelta(

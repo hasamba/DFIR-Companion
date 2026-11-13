@@ -27,6 +27,21 @@ const FINDING_ANNOTATIONS = ["synthesisDisagrees", "similarSynthesisId", "citati
 /** The FP cascade's stale badge is the one field a run may set on a kept Watson next step. */
 const STEP_ANNOTATIONS = ["staleReSynth"] as const;
 
+const keepFinding = (stored: Finding, run: Finding | undefined): Finding =>
+  overlay(stored, run, FINDING_ANNOTATIONS);
+
+/**
+ * A kept Watson step also keeps the import high-water stamp the run put on its collection request
+ * (stampCollectDirectives), as a kept Watson question does: the request is Watson's, the stamp is
+ * what stops the request's own evidence being handed back as its result.
+ */
+function keepStep(stored: NextStep, run: NextStep | undefined): NextStep {
+  const out = overlay(stored, run, STEP_ANNOTATIONS);
+  const seq = run?.collect?.issuedAfterImportSeq;
+  if (!out.collect || out.collect.issuedAfterImportSeq !== undefined || seq === undefined) return out;
+  return { ...out, collect: { ...out.collect, issuedAfterImportSeq: seq } };
+}
+
 /** What `keepWatsonItems` reads from the store. `forensicTimeline` present → events reconcile too. */
 export type WatsonItemsSource = Pick<InvestigationState, "findings" | "nextSteps"> & {
   forensicTimeline?: readonly ForensicEvent[];
@@ -56,7 +71,7 @@ function overlay<T extends object>(stored: T, run: T | undefined, keys: readonly
 function reconcile<T extends { id: string; author?: "watson" }>(
   run: readonly T[],
   latest: readonly T[],
-  keys: readonly (keyof T)[],
+  keep: (stored: T, run: T | undefined) => T,
 ): T[] {
   const stored = new Map(latest.filter(isWatsonItem).map((x) => [x.id, x] as const));
   const out: T[] = [];
@@ -64,7 +79,7 @@ function reconcile<T extends { id: string; author?: "watson" }>(
   for (const x of run) {
     const kept = stored.get(x.id);
     if (kept) {
-      if (!placed.has(x.id)) out.push(overlay(kept, isWatsonItem(x) ? x : undefined, keys));
+      if (!placed.has(x.id)) out.push(keep(kept, isWatsonItem(x) ? x : undefined));
       placed.add(x.id);
     } else if (!isWatsonItem(x)) out.push(x);
   }
@@ -94,7 +109,7 @@ function reconcileEvents(next: InvestigationState, latest: readonly ForensicEven
  * Restore every Watson finding and next step from `latest` into `next` (see `reconcile`), and the
  * Watson-marked forensic events when `latest` carries a timeline. Pure and idempotent. A run may
  * only set the annotations: `synthesisDisagrees`, `similarSynthesisId`, `citationsChanged` on a
- * finding and `staleReSynth` on a next step. `relatedFindingIds` on events are never touched.
+ * finding, and `staleReSynth` plus the collection request's import stamp on a next step. `relatedFindingIds` on events are never touched.
  */
 export function keepWatsonItems(next: InvestigationState, latest: WatsonItemsSource): InvestigationState {
   const anyWatson =
@@ -107,8 +122,8 @@ export function keepWatsonItems(next: InvestigationState, latest: WatsonItemsSou
   if (!anyWatson && !anyEvent) return next;
   return {
     ...next,
-    findings: reconcile(next.findings, latest.findings, FINDING_ANNOTATIONS),
-    nextSteps: reconcile(next.nextSteps, latest.nextSteps, STEP_ANNOTATIONS),
+    findings: reconcile(next.findings, latest.findings, keepFinding),
+    nextSteps: reconcile(next.nextSteps, latest.nextSteps, keepStep),
     ...(events && anyEvent ? { forensicTimeline: reconcileEvents(next, events) } : {}),
   };
 }
@@ -125,7 +140,7 @@ export function watsonFindingDisagreement(
 
 /** A next-step list with the Watson steps of `stored` kept (for callers that replace a list). */
 export function keepWatsonSteps(steps: readonly NextStep[], stored: readonly NextStep[]): NextStep[] {
-  return reconcile(steps, stored, STEP_ANNOTATIONS);
+  return reconcile(steps, stored, keepStep);
 }
 
 // ── The synthesis fold ────────────────────────────────────────────────────────────────────────────
@@ -160,16 +175,46 @@ export function withWatsonFindings(next: InvestigationState, prior: readonly Fin
   return add.length ? { ...next, findings: [...next.findings, ...add] } : next;
 }
 
-/** Watson findings as back-link sources: their cited events, without any the analyst rejected. */
+/**
+ * Watson findings as back-link sources: their cited events, each followed through correlation folds
+ * to the row that holds it now, without any the analyst rejected.
+ */
 export function watsonCitationSources(
-  findings: readonly Finding[],
+  state: Pick<InvestigationState, "findings" | "eventAliases">,
   benign: ReadonlySet<string>,
 ): Pick<Finding, "id" | "status" | "relatedEventIds">[] {
-  return findings.filter(isWatsonItem).map((f) => ({
+  const aliases = state.eventAliases ?? {};
+  const rejected = (id: string): boolean => benign.has(id.trim().toLowerCase());
+  return state.findings.filter(isWatsonItem).map((f) => ({
     id: f.id,
     status: f.status,
-    relatedEventIds: (f.relatedEventIds ?? []).filter((id) => !benign.has(id.trim().toLowerCase())),
+    relatedEventIds: [
+      ...new Set(
+        (f.relatedEventIds ?? []).filter((id) => !rejected(id)).map((id) => resolveAlias(id, aliases)),
+      ),
+    ].filter((id) => !rejected(id)),
   }));
+}
+
+/**
+ * Back-links to a Watson finding of the snapshot that is gone from `next` (undone while the run
+ * worked) are removed, so no event points at a finding the case no longer holds.
+ */
+export function dropUndoneWatsonLinks(
+  next: InvestigationState,
+  prior: readonly Finding[],
+): InvestigationState {
+  const present = new Set(next.findings.map((f) => f.id));
+  const gone = new Set(prior.filter((f) => isWatsonItem(f) && !present.has(f.id)).map((f) => f.id));
+  if (gone.size === 0) return next;
+  return {
+    ...next,
+    forensicTimeline: next.forensicTimeline.map((e) =>
+      e.relatedFindingIds.some((id) => gone.has(id))
+        ? { ...e, relatedFindingIds: e.relatedFindingIds.filter((id) => !gone.has(id)) }
+        : e,
+    ),
+  };
 }
 
 const keyOf = (f: Finding): string => deriveSemanticKey(f);
