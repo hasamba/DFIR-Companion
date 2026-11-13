@@ -152,6 +152,25 @@ describe("applyWatsonProposal", () => {
     expect(entries[0].detail.length).toBeGreaterThan(0);
   });
 
+  it("apply protects a question synthesis had answered: the synthesis mark is cleared", async () => {
+    const bySynth = {
+      ...original,
+      status: "partial" as const,
+      answer: "synthesis view",
+      author: "watson" as const,
+      pinned: true,
+      answeredBy: "synthesis" as const,
+    };
+    mem.state = { ...mem.state, keyQuestions: [bySynth] };
+    await chatStore.save(CASE, {
+      ...emptyWatsonChat(),
+      proposals: [{ ...updateProposal, before: bySynth, after: { ...updated, answeredBy: "synthesis" } }],
+    });
+    await applyWatsonProposal(deps, CASE, "wp-u", "apply");
+    expect(mem.state.keyQuestions[0].answeredBy).toBeUndefined();
+    expect(mem.state.keyQuestions[0]).toMatchObject({ status: "answered", author: "watson", pinned: true });
+  });
+
   it("apply of a new question appends it; undo removes it again", async () => {
     await applyWatsonProposal(deps, CASE, "wp-n", "apply");
     expect(mem.state.keyQuestions.map((q) => q.id)).toEqual(["q1", "wq-1"]);

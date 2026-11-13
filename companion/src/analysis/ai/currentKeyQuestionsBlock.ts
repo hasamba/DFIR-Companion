@@ -1,4 +1,5 @@
 import type { InvestigationQuestion, InvestigationState } from "../stateTypes.js";
+import { isProtectedWatson } from "../timeline/watsonQuestions.js";
 
 /**
  * The key questions the case holds NOW, with their answers, for the synthesis prompt. The pinned
@@ -19,7 +20,7 @@ const oneLine = (s: string, max: number): string => {
 
 function line(q: InvestigationQuestion): string {
   // Only an answer the analyst applied is labelled; a question Watson asked but nobody answered is not.
-  const who = q.author === "watson" && q.answer ? " [Watson answer, applied by the analyst]" : "";
+  const who = isProtectedWatson(q) ? " [Watson answer, applied by the analyst]" : "";
   const answer = q.answer ? ` → ${oneLine(q.answer, ANSWER_CHARS)}` : " (no answer yet)";
   return `[${q.id}] (${q.status})${who} ${oneLine(q.question, QUESTION_CHARS)}${answer}`;
 }

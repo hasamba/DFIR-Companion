@@ -40,7 +40,7 @@ import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
 import { mergeDelta, type WindowContext } from "../stateMerge.js";
-import { keepWatsonAnswers, protectWatsonQuestion } from "./watson/keepWatsonAnswers.js";
+import { guardWatsonQuestion, keepWatsonAnswers } from "../timeline/watsonQuestions.js";
 import { yieldToEventLoop } from "../yieldToEventLoop.js";
 
 /**
@@ -109,7 +109,7 @@ function mergePinnedQuestions(
   const byId = new Map(current.map((q) => [q.id, q]));
   for (const p of pinned) {
     const cur = byId.get(p.id);
-    if (p.author === "watson") byId.set(p.id, protectWatsonQuestion(p, cur));
+    if (p.author === "watson") byId.set(p.id, guardWatsonQuestion(p, cur));
     else byId.set(p.id, cur ? { ...cur, pinned: true } : p);
   }
   return [...byId.values()];

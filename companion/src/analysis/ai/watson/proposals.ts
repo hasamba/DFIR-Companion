@@ -3,7 +3,7 @@ import type { StateLock } from "../../stateLock.js";
 import type { StateStore } from "../../stateStore.js";
 import type { InvestigationQuestion, InvestigationState } from "../../stateTypes.js";
 import type { WatsonChatStore } from "./chatStore.js";
-import { sameAnswer } from "./keepWatsonAnswers.js";
+import { sameAnswer } from "../../timeline/watsonQuestions.js";
 import type { WatsonChat, WatsonProposal } from "./types.js";
 
 // The analyst's decision on one Watson proposal: apply it to the case's key questions, reject it,
@@ -57,7 +57,7 @@ const TO: Record<WatsonProposalAction, WatsonProposal["status"]> = {
 
 /** The question Watson writes: its answer, pinned, authored, with no stale disagreement. */
 function applied(after: InvestigationQuestion): InvestigationQuestion {
-  const { synthesisDisagrees: _d, ...rest } = after;
+  const { synthesisDisagrees: _d, answeredBy: _a, ...rest } = after;
   return { ...rest, pinned: true, author: "watson" };
 }
 

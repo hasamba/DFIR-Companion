@@ -11,7 +11,7 @@ import { nameCallers } from "../principalNameCarry.js";
 import { recordEventAliases } from "../eventAliases.js";
 import { remapAbsorbedEventIds } from "../absorbedCitations.js";
 import { concurrentRejections } from "../rejectedTechniques.js";
-import { keepWatsonAnswers } from "./watson/keepWatsonAnswers.js";
+import { keepWatsonAnswers } from "../timeline/watsonQuestions.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -72,7 +72,11 @@ export async function persistSynthesis(
     // over this run's copy of that question (the fold protected the rest).
     const merged = {
       ...reconciled,
-      keyQuestions: keepWatsonAnswers(reconciled.keyQuestions, latest.keyQuestions, input.next.keyQuestions),
+      keyQuestions: keepWatsonAnswers(
+        reconciled.keyQuestions,
+        latest.keyQuestions,
+        input.loaded.keyQuestions,
+      ),
     };
     // Record THIS synthesis run as a durable, cross-session Investigation-Log line (#165) — imports
     // already log via timelineNote; synthesis didn't. Final merged counts; one entry per real run.

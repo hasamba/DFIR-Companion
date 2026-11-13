@@ -7,6 +7,8 @@ import { AnalysisPipeline } from "../../../src/analysis/pipeline.js";
 import { StateStore as CaseStateStore } from "../../../src/analysis/stateStore.js";
 import type { AnalyzeRequest, AnalyzeResult } from "../../../src/providers/provider.js";
 import { CaseStore } from "../../../src/storage/caseStore.js";
+import { ensureStandardQuestions } from "../../../src/analysis/ai/watson/standardQuestions.js";
+import { reconsiderKeyQuestions } from "../../../src/analysis/fpCascade.js";
 import { buildCurrentKeyQuestionsBlock } from "../../../src/analysis/ai/currentKeyQuestionsBlock.js";
 import { foldSynthesisDelta, type DeltaFoldContext } from "../../../src/analysis/ai/synthesisMerge.js";
 import { persistSynthesis } from "../../../src/analysis/ai/synthesisPersist.js";
@@ -200,17 +202,59 @@ describe("the synthesis fold keeps Watson answers", () => {
     expect(q?.collect?.host).toBe("WS01"); // the backstop's collection request is kept
   });
 
-  it("CURRENT RULE, a decision for the caller: an applied but unanswered Watson question stays unknown", async () => {
-    // A question_new (and each of the six standard seeds) is stored "unknown" with no answer and
-    // author "watson". The binding rule restores every Watson question, so synthesis's answer lands
-    // in synthesisDisagrees instead of on the question. See the task-7 report, concern 1.
+  it("lets synthesis answer an unanswered Watson question, and keep updating it", async () => {
+    // A fresh question_new (or a standard seed) is "unknown" with no answer: nothing to protect.
     const asked: InvestigationQuestion = { ...watsonQ, status: "unknown", answer: "", pointer: "" };
-    const next = await fold(withQs(asked), [
+    const once = await fold(withQs(asked), [
       { id: "q-access", question: "Initial access?", status: "answered", answer: "Phishing" },
     ]);
-    const q = byId(next, "q-access");
-    expect(q).toMatchObject({ status: "unknown", answer: "" });
-    expect(q?.synthesisDisagrees).toEqual({ status: "answered", answer: "Phishing" });
+    const q1 = byId(once, "q-access");
+    expect(q1).toMatchObject({
+      status: "answered",
+      answer: "Phishing",
+      question: watsonQ.question,
+      pinned: true,
+      author: "watson",
+      answeredBy: "synthesis",
+    });
+    expect(q1?.synthesisDisagrees).toBeUndefined();
+    // The next run may change synthesis's own answer: it is not protected.
+    const twice = await fold(once, [
+      { id: "q-access", question: "Initial access?", status: "partial", answer: "Phishing or VPN" },
+    ]);
+    expect(byId(twice, "q-access")).toMatchObject({
+      status: "partial",
+      answer: "Phishing or VPN",
+      answeredBy: "synthesis",
+    });
+    expect(byId(twice, "q-access")?.synthesisDisagrees).toBeUndefined();
+  });
+
+  it("answers the six standard seed questions in a synthesis run, keeping them pinned", async () => {
+    const seeds = ensureStandardQuestions([]);
+    const reply = seeds.map((q) => ({
+      id: q.id,
+      question: q.question,
+      status: "partial",
+      answer: `a ${q.id}`,
+    }));
+    const next = await fold(withQs(...seeds), reply);
+    for (const seed of seeds) {
+      expect(byId(next, seed.id)).toMatchObject({
+        status: "partial",
+        answer: `a ${seed.id}`,
+        question: seed.question,
+        pinned: true,
+        author: "watson",
+        answeredBy: "synthesis",
+      });
+    }
+  });
+
+  it("keeps an unanswered seed synthesis did not return", async () => {
+    const seeds = ensureStandardQuestions([]);
+    const next = await fold(withQs(...seeds), []);
+    expect(next.keyQuestions.map((q) => q.id)).toEqual(seeds.map((q) => q.id));
   });
 
   it("does not bring back a Watson question undone after the snapshot", async () => {
@@ -326,10 +370,12 @@ describe("the synthesis prompt shows the current key questions with their answer
     expect(block).not.toMatch(/\[q-pinned\][^\n]*Watson/);
   });
 
-  it("does not call an unanswered Watson question an applied answer", () => {
-    const asked = { ...watsonQ, status: "unknown" as const, answer: "" };
-    const block = buildCurrentKeyQuestionsBlock(withQs(asked));
-    expect(block).toContain("[q-access] (unknown)");
+  it("does not call an unanswered or synthesis-answered Watson question an applied answer", () => {
+    const asked = { ...watsonQ, id: "q-a", status: "unknown" as const, answer: "" };
+    const bySynth = { ...watsonQ, id: "q-b", answeredBy: "synthesis" as const };
+    const block = buildCurrentKeyQuestionsBlock(withQs(asked, bySynth));
+    expect(block).toContain("[q-a] (unknown)");
+    expect(block).toContain("[q-b] (answered)");
     expect(block).not.toContain("applied by the analyst");
   });
 
@@ -426,5 +472,61 @@ describe("synthesize end to end", () => {
       });
     });
     expect(byId(saved, "q-access")).toEqual(revised);
+  });
+});
+
+// Import and agent deltas go through the same merge (assembleMerge); the FP-mark cascade resets
+// answers outside synthesis. Neither may overwrite or drop an answer the analyst applied from Watson.
+describe("merges and the false-positive cascade outside synthesis", () => {
+  const mergeCtx = { windowSequence: 1, timestamp: "2026-06-01T00:00:00.000Z", sourceScreenshots: [] };
+  const importDelta = delta;
+
+  it("an import delta that carries key questions keeps a protected Watson answer, with the disagreement", () => {
+    const merged = mergeDelta(
+      withQs(watsonQ, analystPinned),
+      importDelta([
+        { id: "q-access", question: "Initial access?", status: "unknown", answer: "" },
+        { id: "q-other", question: "Other?", status: "partial", answer: "imported" },
+      ]),
+      mergeCtx,
+    );
+    const q = byId(merged, "q-access");
+    expect(q).toMatchObject({ status: "answered", answer: watsonQ.answer, author: "watson", pinned: true });
+    expect(q?.synthesisDisagrees).toEqual({ status: "unknown", answer: "" });
+    // Non-Watson questions keep today's wholesale replace: the analyst-pinned one is not carried here.
+    expect(byId(merged, "q-pinned")).toBeUndefined();
+    expect(byId(merged, "q-other")?.answer).toBe("imported");
+  });
+
+  it("an import delta that omits a Watson question does not drop it", () => {
+    const asked = { ...watsonQ, id: "wq-std-what", status: "unknown" as const, answer: "", pointer: "" };
+    const merged = mergeDelta(withQs(watsonQ, asked), importDelta([]), mergeCtx);
+    expect(merged.keyQuestions.map((q) => q.id)).toEqual(["q-access", "wq-std-what"]);
+    expect(byId(merged, "q-access")).toEqual(watsonQ);
+  });
+
+  it("a delta without key questions leaves the stored set untouched", () => {
+    const state = withQs(watsonQ, analystPinned);
+    const merged = mergeDelta(state, { ...delta([]), keyQuestions: undefined }, mergeCtx);
+    expect(merged.keyQuestions).toEqual(state.keyQuestions);
+  });
+
+  it("the FP cascade records a reset beside a protected Watson answer instead of erasing it", () => {
+    const resting = { ...watsonQ, relatedFindingIds: ["f-gone"] };
+    const plain = {
+      ...analystPinned,
+      status: "answered" as const,
+      answer: "x",
+      relatedFindingIds: ["f-gone"],
+    };
+    const out = reconsiderKeyQuestions([resting, plain], {
+      survivingFindingIds: new Set(),
+      priorFindingIds: ["f-gone"],
+      staleReSynth: true,
+    });
+    expect(out.changed).toBe(true);
+    expect(out.questions[0]).toMatchObject({ status: "answered", answer: watsonQ.answer, author: "watson" });
+    expect(out.questions[0].synthesisDisagrees).toEqual({ status: "unknown", answer: "" });
+    expect(out.questions[1]).toMatchObject({ status: "unknown", answer: "", staleReSynth: true });
   });
 });

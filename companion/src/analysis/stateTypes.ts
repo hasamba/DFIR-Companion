@@ -675,9 +675,9 @@ export interface InvestigationQuestion {
   pinned?: boolean; // analyst-added (via Ask) — preserved across synthesis, which may answer it later
   author?: "watson"; // Watson added or edited this question
   synthesisDisagrees?: { status: QuestionStatus; answer: string }; // a later synthesis disagreed with this pinned answer
-  // Finding ids this answer relies on (set by synthesis). Lets a later re-synthesis detect when a
-  // supporting finding was marked false-positive and force the question back to "unknown" instead
-  // of silently keeping a stale answer — see applyFalsePositive/reconsiderKeyQuestions in pipeline.ts.
+  answeredBy?: "synthesis"; // a Watson question synthesis answered: not protected until Watson applies an answer
+  // Finding ids this answer relies on (set by synthesis): a supporting finding later marked false-positive
+  // forces the question back to "unknown", not a stale answer (applyFalsePositive/reconsiderKeyQuestions).
   relatedFindingIds?: string[];
   // Deterministic contradiction flag (investigation-guidance #3): set when the answer asserts an
   // ABSENCE ("no data exfiltration confirmed") but in-scope events carry the matching ATT&CK

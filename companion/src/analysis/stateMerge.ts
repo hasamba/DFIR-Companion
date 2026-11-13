@@ -17,6 +17,7 @@ import type {
 import { isAnalystWorkLog } from "./workLogFilter.js";
 import { remapAbsorbedEventIds } from "./absorbedCitations.js";
 import { toUtcIso } from "./timeUtc.js";
+import { mergeKeyQuestions } from "./timeline/watsonQuestions.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import {
   firstMatchIndex,
@@ -717,19 +718,10 @@ export function assembleMerge(
   // What IS collected here is what a model asserted at the delta's top level — a conclusion about
   // the case rather than a restatement of an event tag. That is a claim the case should keep.
 
-  // Key questions are a holistic reassessment — replace wholesale when synthesis
-  // provides them; otherwise keep the existing set (per-window deltas omit them).
+  // Replaced wholesale when a delta provides them (per-window deltas omit them), Watson's kept.
   const keyQuestions =
     delta.keyQuestions !== undefined
-      ? delta.keyQuestions.map((q) => ({
-          id: q.id,
-          question: q.question,
-          status: q.status,
-          answer: q.answer,
-          pointer: q.pointer,
-          ...(q.relatedFindingIds?.length ? { relatedFindingIds: q.relatedFindingIds } : {}),
-          ...(cleanCollect(q.collect) ? { collect: cleanCollect(q.collect) } : {}),
-        }))
+      ? mergeKeyQuestions(state.keyQuestions, delta.keyQuestions, cleanCollect)
       : state.keyQuestions;
 
   // Next steps are likewise a holistic recommendation — replaced wholesale by
