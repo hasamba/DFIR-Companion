@@ -8,6 +8,7 @@
 // for IPv4 or IPv6 — `x.x.x.x/0` covers every address whatever the host bits say. What the reading
 // never says: whether the rule was already present, or what the group allowed before. Pure.
 
+import { isIP } from "node:net";
 import { getCI, isObject, str } from "./siemImport.js";
 import { show } from "./loggingChange.js";
 
@@ -28,10 +29,15 @@ const items = (v: unknown): Row[] => {
   return Array.isArray(list) ? list.filter(isObject) : [];
 };
 
-/** True for a CIDR whose prefix length is 0 (IPv4 or IPv6): it covers every address. */
+/**
+ * True for a CIDR whose prefix length is 0 (IPv4 or IPv6): it covers every address. The address side
+ * must be a real IP (#2625) — a malformed, truncated or tampered source with a `/0` suffix is read as
+ * its literal text, never as "any address". Whether the family matches its field (an IPv6 address in
+ * `cidrIp`) is not checked: this proves the source is an address, not that the request was valid.
+ */
 export function isAnyAddress(cidr: string): boolean {
   const m = /^([0-9a-f:.]+)\/(\d+)$/i.exec(cidr.trim());
-  return m !== null && Number(m[2]) === 0;
+  return m !== null && Number(m[2]) === 0 && isIP(m[1]) !== 0;
 }
 
 function protocolOf(p: Row): { protocol: string; ports: string } {
