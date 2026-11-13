@@ -236,6 +236,14 @@ describe("Watson paste ingest", () => {
     const held = (await h.chatStore.load(CASE)).proposals.filter((p) => p.kind === "event_promote");
     expect(held).toHaveLength(1);
     expect(held[0].events[0].severity).toBe("Medium");
+    // The lab-cap record survives apply, so a later lift can restore the tagger's grade.
+    await request(h.app).post(`/cases/${CASE}/watson/proposals/${held[0].id}/apply`);
+    const row = mentions(
+      (await h.stateStore.load(CASE)).forensicTimeline,
+      "CommandLineEventConsumer",
+    )[0] as ForensicEvent & { labSetup?: { cappedFrom?: string } };
+    expect(row.severity).toBe("Medium");
+    expect(row.labSetup?.cappedFrom).toBe("High");
   });
 
   it("leaves a generic CSV as searchable text and never calls the AI to extract it", async () => {

@@ -166,6 +166,12 @@ export interface PromotionOptions {
    * an empty answer writes no note.
    */
   note?: string | ((outcome: PromotionOutcome) => string);
+  /**
+   * Grading records the delta schema strips (a cap's record, the engine start-up anchor), re-applied
+   * by id to the rows this promotion merged, from a copy the caller trusts (the Watson held rows,
+   * graded by the settle's own corrections). Never model output.
+   */
+  records?: Record<string, Readonly<Record<string, unknown>>>;
 }
 
 export async function promoteSuperTimeline(
@@ -218,7 +224,11 @@ export async function promoteSuperTimelineWithOutcome(
       timestamp: opts.importedAt,
       sourceScreenshots: [],
     });
-    const stamped = stampPromoted(merged, toMerge, marked, opts.importedAt);
+    const stamped = withRecords(
+      stampPromoted(merged, toMerge, marked, opts.importedAt),
+      toMerge,
+      opts.records,
+    );
     const outcome = promotionOutcome(before, stamped, requestedIds);
     const state = withOutcomeNote(stamped, opts, outcome);
     await ctx.opts.stateStore.save(state);
@@ -227,6 +237,21 @@ export async function promoteSuperTimelineWithOutcome(
     if (!isReadOnlyScope()) ctx.opts.onState?.(state);
     return { state, outcome };
   });
+}
+
+/** The caller's trusted records laid back onto the merged rows, by id (see PromotionOptions.records). */
+function withRecords(
+  state: InvestigationState,
+  merged: readonly ForensicEvent[],
+  records: PromotionOptions["records"],
+): InvestigationState {
+  if (!records) return state;
+  const ids = new Set(merged.map((e) => e.id).filter((id) => records[id]));
+  if (!ids.size) return state;
+  return {
+    ...state,
+    forensicTimeline: state.forensicTimeline.map((e) => (ids.has(e.id) ? { ...e, ...records[e.id] } : e)),
+  };
 }
 
 function stampPromoted(

@@ -201,4 +201,44 @@ describe("Watson event-promote writer", () => {
       /Cannot apply a proposal that is undone/,
     );
   });
+
+  it("the applied row keeps the held copy's cap and engine start-up records", async () => {
+    const recorded = {
+      ...raised,
+      severity: "Low",
+      buildTime: {
+        marker: "sysprep",
+        window: "2026-03-01T08:00:00.000Z/2026-03-01T09:00:00.000Z",
+        cappedFrom: "High",
+      },
+      labSetup: { tag: "lab-setup", folder: "\\labdrop\\", cappedFrom: "High" },
+      defenderEngineBoot: { bootAt: "2026-03-01T08:04:00.000Z" },
+    } as ForensicEvent;
+    await chatStore.save(CASE, {
+      ...emptyWatsonChat(),
+      pastes: [paste],
+      proposals: [proposalOf([recorded])],
+    });
+    await applyWatsonProposal(deps, CASE, "wp-e", "apply", "Ana");
+    const ev = (await row(raised.id)) as ForensicEvent & Record<string, unknown>;
+    expect(ev.severity).toBe("Low");
+    expect(ev.buildTime).toEqual(recorded.buildTime);
+    expect(ev.labSetup).toEqual({ tag: "lab-setup", folder: "\\labdrop\\", cappedFrom: "High" });
+    expect(ev.defenderEngineBoot).toEqual({ bootAt: "2026-03-01T08:04:00.000Z" });
+    // Undo still recognises the row as it landed.
+    await applyWatsonProposal(deps, CASE, "wp-e", "undo", "Ana");
+    expect(await row(raised.id)).toBeUndefined();
+  });
+
+  it("undo refuses while any finding cites the row, not only a Watson one", async () => {
+    await applyWatsonProposal(deps, CASE, "wp-e", "apply", "Ana");
+    const { author: _a, ...analyst } = watsonFinding(raised.id);
+    const overview = await stateStore.loadOverview(CASE);
+    await stateStore.saveOverview({ ...overview, findings: [{ ...analyst, id: "f-1" }] });
+    const undo = applyWatsonProposal(deps, CASE, "wp-e", "undo", "Ana");
+    await expect(undo).rejects.toBeInstanceOf(WatsonProposalConflict);
+    await expect(undo).rejects.toThrow(/cited by finding f-1/);
+    expect(await row(raised.id)).toBeDefined();
+    expect((await stored()).status).toBe("applied");
+  });
 });
