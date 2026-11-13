@@ -270,14 +270,16 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Cyber Triage** | JSONL / JSON / CSV timeline | Cyber Triage item score |
 | **Defender XDR** | Advanced-hunting exports (hosts + accounts) | Tradecraft table — replication from a non-DC and AD FS DKM LDAP reads → High |
 | **Microsoft Sentinel / Log Analytics** | SecurityEvent, OfficeActivity, Syslog-wrapped auditd/AUOMS, Sysmon for Linux, VMConnection flows (dated from `TimeGenerated`) | Per-source tables; full Linux command lines graded |
-| **M365 / Entra ID** | UAL, Entra sign-in + audit logs | BEC tradecraft table / Entra riskLevel; SigmaHQ Entra rules |
+| **M365 / Entra ID** | UAL (classic and Graph), Entra sign-in + audit logs, Log Analytics / diagnostic exports; MES mailbox rules, OAuth grants and MFA state as observed state | BEC tradecraft table / Entra riskLevel; SigmaHQ Entra + Suzaku M365 rules |
+| **CrowdStrike Falcon** | Event Search / LogScale / FDR / Next-Gen SIEM exports (JSON, NDJSON, CSV) and Falcon API alerts; third-party logs stored in Falcon go to their own importer | Falcon's own detection severity; sensor events Info + tradecraft rules |
 | **Okta** | System Log export | IdP tradecraft table (MFA disabled, admin grant, API token minted, session impersonated) — not the vendor's operational grade |
-| **Google Workspace** | Admin + login audit | IdP tradecraft table (2SV disabled, role granted, OAuth consented, mail monitor added) |
+| **Google Workspace** | Admin + login audit | IdP tradecraft table (2SV disabled, role granted, OAuth consented, mail monitor added); SigmaHQ + Suzaku Workspace rules |
 | **Hindsight (browser)** | Chrome/Edge/Brave history, downloads, interpretations (JSON or CSV) | — (Info events: browser artifacts are evidence, not verdicts) |
 | **macOS** | Unified log (`log show --style json`), LSQuarantine download events, `com.apple.quarantine` attributes, launchd plists, login items (classic plist, `.sfl2`, BTM) | Quarantine record ↔ file attribute ↔ browser visit ↔ process start joined by identifier; a plist reads as configuration, never as a run |
 | **iLEAPP / ALEAPP** | iOS + Android extraction artifacts from LEAPP TSV exports | — (Info events; generic parser keyed on the timestamp column) |
-| **AWS CloudTrail** | Records JSON, NDJSON, Athena | API action table (IAM/logging/S3/secrets); SigmaHQ CloudTrail rules |
-| **GCP / Azure** | Cloud Audit Logs, Azure Activity Log | Action table (IAM/logging/secrets) |
+| **AWS CloudTrail** | Records JSON, NDJSON, Athena, console CSV; millions of rows streamed from disk | API action table (IAM/logging/S3/secrets); SigmaHQ + Suzaku CloudTrail rules; TrailDiscover-ported rules |
+| **AWS GuardDuty** | Exported findings, or collected live per region | GuardDuty's own severity (archived → Info); MITRE from the finding type |
+| **GCP / Azure** | Cloud Audit Logs, Azure Activity Log | Action table (IAM/logging/secrets); SigmaHQ GCP + Azure Activity rules, Suzaku Azure rules |
 | **Kubernetes audit** | API-server audit log (`audit.k8s.io` JSON-lines / EventList) | (verb, resource) table — pod exec/attach T1609, secret access T1552.007, RBAC change T1098, privileged-pod T1610/T1611, anonymous access T1078 |
 | **osquery** | scheduled-query result log (differential `columns` + `snapshot`) | Info telemetry; conservative tradecraft bump on a command-line column |
 | **Plaso** | `psort` CSV (dynamic + l2tcsv) | — (Info events) |
@@ -316,7 +318,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Mobile origin tags** — every iLEAPP / ALEAPP row says whether its content was recorded on this device, synced or received, from a registry pinned to upstream
 - **Masquerade and look-alike detection** (T1036.002) — a file name hiding a right-to-left override is High and shows as `<RLO>` in every view and export; a new account named one edit from a built-in or case account is High
 - **Remote access, webshells and web scanners** — AnyDesk/ScreenConnect/TeamViewer/Atera in Prefetch or Amcache → Medium (T1219); an IIS worker writing a page into a web root → High (T1505.003); sqlmap, dirsearch and similar scanners → Medium, exploit modes High
-- **SigmaHQ rules at import** — bundled rules grade CloudTrail, Entra and Apache/nginx/Squid logs (high/critical raise, lower levels tag); check, install and roll back releases, exclude benign values, re-grade an imported case, dry-run a pasted rule, and see per-source coverage in the Hunt Workbench
+- **SigmaHQ and Suzaku rules at import** — bundled rules grade CloudTrail, Entra, Microsoft 365, Azure Activity, GCP, Google Workspace and Apache/nginx/Squid logs (high/critical raise, lower levels tag); check, install and roll back releases, exclude benign values, re-grade an imported case, dry-run a pasted rule, and see per-source coverage in the Hunt Workbench
 - **Log4Shell shape** (T1190 / T1203) — a JVM LDAP/RMI lookup followed by the JVM spawning a shell → High
 - **Persistence executed** (T1547.001) — a process that runs a Run/RunOnce value already in the case is raised (High for script and proxy hosts)
 - **Quiet tradecraft** — alternate-data-stream execution → High; anti-VM WMI checks, AV-product and installed-software discovery → Medium
@@ -345,7 +347,19 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Restore a capped finding** — a finding a grading check lowered shows the cap and a Restore button that lifts it on that one finding, logged and kept through re-synthesis
 - **Other commands in this session** — each finding lists the attack session's command lines that no finding names
 - **AI-assisted content-tagger rules** — describe a rule in plain English; AI drafts, previews, and adds it
+- **Detection rule pack** — the curated tagger rules publish as their own `rules-*` release; check, install and roll back a newer pack without an app update, keeping your own edits
+- **Light-task AI model** — an optional cheaper model for CQL/KQL/ES|QL/SPL hunts and query translation (`DFIR_AI_LIGHT_*`); blank keeps the synthesis model
+- **Preview what the AI will see** — see the exact first request any AI action would send, clear and masked side by side as a diff; nothing is sent or spent
 - **AI-input anonymization** — reversibly tokenizes IPs, users, hosts, domains, emails, paths, card/phone/national-ID numbers, encoded commands and SIDs; one-way-redacts secrets (vendor API keys, tokens, CLI password flags, secret-named fields). Optional **[Presidio](mkdocs-docs/reference/presidio.md)** catches names, with an approval gate and a Docker Compose profile
+
+### Live cloud collection
+- **Cloud account vault** (Settings → Cloud Accounts) — add AWS accounts, Microsoft tenants and GCP projects; secrets are sealed with a separate key file (`DFIR_CLOUD_VAULT_KEY_FILE`) and never appear in responses, logs or exports; credentials end with the case
+- **Collect from the provider** — CloudTrail (S3 trails or 90-day history, every enabled region), GuardDuty, the Microsoft 365 unified audit log, Entra sign-ins and audits, Azure Activity and GCP audit logs, imported through the matching reader
+- **Evidence-grade jobs** — resumable collections; every page saved with a SHA-256 in an append-only manifest; quotas, window splitting and an honest complete / partial / failed result
+- **Check access and minimum policies** — one test read per source, never claiming read-only; the minimum AWS, Microsoft and GCP read policies are shown when you add an account
+- **Cloud Coverage and AWS account weaknesses** — what each upload or collection can answer, plus root use without MFA, missing Object Lock and data-event gaps, each citing its record
+- **Trusted sources and collector footprint** — mark an IP, key or principal as ours or responder, and the collector's own API calls are tagged so you can hide them; grades never change
+- **Proxy and custom CA** — cloud SDK traffic follows `DFIR_CLOUD_CA`, `DFIR_CLOUD_INSECURE` and `DFIR_CLOUD_PROXY_URL`
 
 ### Correlation & deduplication
 - **Cross-source correlation** — the same artifact seen by different tools collapses into one corroborated event (shared hash / same path in a time window / exact duplicate), tagged with the real tool names. Idempotent — re-importing never doubles the timeline.
@@ -402,7 +416,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **IOC list noise-reduction controls** — three composable display-only filters, default on: hide false-positive/no-intel IOCs, hide OS system-path files, and a "🎯 Signal only" narrow-to-flagged/corroborated/enriched view
 - **IOC list pagination** — pages client-side like the timelines, default 100/page
 - **Exclude filter** — chip-list control (beside the toolbar search) hides timeline events / IOCs / findings matching any of several exclude terms; per-browser
-- **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
+- **Hunt-pivot generator** — one-click emits Velociraptor VQL, CrowdStrike CQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries, with evidence values escaped per language
+- **Hunts in the case's own query language** — the case's main evidence source (set when the case is created or in Settings) picks the language for AI-written hunts and next steps: CQL, KQL, ES|QL, SPL or VQL
 - **Sigma → VQL hunts** — paste a Sigma rule, compile it deterministically (one fixed template per logsource category, every unsupported line refused by name), launch it as a recorded fleet hunt; `process_creation` rules also hunt Sysmon / 4688 history
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
 - **Internal Hunt Workbench** — typed field queries with Boolean logic, ranges, regex, grouping, saved hunts and entity pivots over the forensic or super-timeline; each saved hunt lists its past runs; raw hits stay out of AI until promoted
@@ -1026,6 +1041,17 @@ A dedicated model used **only** to generate Velociraptor VQL hunts (the *Suggest
 | `DFIR_AI_VELO_MODEL` | `anthropic/claude-haiku-4.5` | Model id for VQL-hunt generation |
 | `DFIR_AI_VELO_KEY` | = `DFIR_VISION_KEY` | API key (reuses the main key when blank) |
 | `DFIR_AI_VELO_BASE_URL` | = `DFIR_VISION_BASE_URL` | Base URL override |
+
+### AI — light-task model (optional)
+
+A cheaper model for hunts in CQL, KQL, ES|QL and SPL and for the Query Translator. VQL hunts try the Velociraptor hunt model, then this one, then synthesis. A blank model keeps those calls on the synthesis model. Also editable in **Settings → AI**; Diagnostics names the model each task uses.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DFIR_AI_LIGHT_PROVIDER` | = `DFIR_VISION_PROVIDER` | Provider for light tasks |
+| `DFIR_AI_LIGHT_MODEL` | _(blank = off)_ | Model id for light tasks, e.g. `anthropic/claude-haiku-4.5` |
+| `DFIR_AI_LIGHT_KEY` | = `DFIR_VISION_KEY` | API key (reuses the main key when blank) |
+| `DFIR_AI_LIGHT_BASE_URL` | = `DFIR_VISION_BASE_URL` | Base URL override |
 
 ### AI — custom prompts (optional)
 
