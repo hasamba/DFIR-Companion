@@ -52,20 +52,11 @@ jobs:
         working-directory: companion
         run: npm run build
 
-      # The suite runs, and its result is visible, but it does NOT gate the EXE.
-      #
-      # This workflow is tag-only, so before ci.yml grew a windows-test job this was the sole place
-      # the suite ever ran on Windows. It rotted across the 423 commits between v0.34.0 and v0.35.0
-      # and then failed at the one moment it could do most damage: v0.35.0 and the first v0.35.1
-      # both published with NO downloads, because `release` needs this job and the AppImage and
-      # extension zips were discarded with it.
-      #
-      # Producing binaries and policing Windows test health are different jobs. Regressions are
-      # caught per-PR by ci.yml's windows-test job, where they can be fixed before a tag exists.
-      - name: Tests (non-blocking — see ci.yml windows-test)
-        working-directory: companion
-        run: npm test
-        continue-on-error: true
+      # No test step here. The companion suite runs per-PR in ci.yml, sharded, on Linux
+      # AND Windows, and a tag is only ever cut from a master commit that passed it. Running it
+      # again here, unsharded, gated nothing (it was continue-on-error) and only spent this job's
+      # timeout: on v0.46.0 the suite outgrew the 30-minute limit and the EXE was cancelled before
+      # it was packaged. Producing binaries and policing test health are different jobs.
 
       - name: Package SEA EXE
         working-directory: companion
@@ -111,11 +102,11 @@ jobs:
         working-directory: companion
         run: npm ci
 
-      - name: Type-check + tests
+      # Build only — the suite is ci.yml's job (sharded, per-PR, both platforms); see windows-exe.
+      # Running it unsharded here cancelled the v0.46.0 AppImage at the 20-minute timeout.
+      - name: Type-check (tsc)
         working-directory: companion
-        run: |
-          npm run build
-          npm test
+        run: npm run build
 
       - name: Build Linux SEA binary
         working-directory: companion
