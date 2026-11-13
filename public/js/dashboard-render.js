@@ -149,6 +149,7 @@
       answered: "Answered",
       partial: "Partial",
       unknown: "Unknown",
+      unanswerable: "Not answerable with available data",
     };
     const kq = state.keyQuestions || [];
     document.getElementById("keyQuestions").innerHTML = kq.length

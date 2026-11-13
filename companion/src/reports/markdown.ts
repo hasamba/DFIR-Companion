@@ -839,7 +839,14 @@ function investigation(
   if (state.keyQuestions.length === 0) {
     lines.push("_Not assessed yet — run synthesis._", "");
   } else {
-    const mark = (s: string) => (s === "answered" ? "✅" : s === "partial" ? "🟡" : "❓");
+    const mark = (s: string) =>
+      s === "answered"
+        ? "✅"
+        : s === "partial"
+          ? "🟡"
+          : s === "unanswerable"
+            ? "⛔ Not answerable with available data"
+            : "❓";
     lines.push("| | Question | Answer | Where to find it |", "| --- | --- | --- | --- |");
     for (const q of state.keyQuestions) {
       // A ⚠️ contradiction badge (investigation-guidance #3): the negative answer conflicts with

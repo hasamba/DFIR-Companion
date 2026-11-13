@@ -461,6 +461,12 @@
 .q-status-answered { color: var(--sev-low); }
 .q-status-partial { color: var(--help-icon-color); }
 .q-status-unknown { color: var(--text-muted); }
+.q-status-unanswerable {
+  color: var(--text-muted);
+  border: 1px solid var(--border, currentColor);
+  border-radius: 4px;
+  padding: 0 4px;
+}
 .icon-pinned { color: var(--sev-medium); display: inline-flex; }
 .icon-pinned svg { width: 11px; height: 11px; vertical-align: -1px; }
 /* Investigation Threads — small status dot instead of a bare "•"/"✓" text prefix. */

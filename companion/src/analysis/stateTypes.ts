@@ -663,10 +663,9 @@ export interface CollectDirective {
   issuedAfterImportSeq?: number;
 }
 
-export type QuestionStatus = "answered" | "partial" | "unknown";
+export type QuestionStatus = "answered" | "partial" | "unknown" | "unanswerable";
 
-// A standard DFIR question the AI tracks across the case, with its current answer
-// and a pointer to where the investigator can find/confirm it (or what to collect).
+// A DFIR question tracked across the case: current answer plus where to confirm it (or what to collect).
 export interface InvestigationQuestion {
   id: string;
   question: string; // "What was the initial access vector?"
@@ -674,6 +673,8 @@ export interface InvestigationQuestion {
   answer: string; // current best answer, or "" if unknown
   pointer: string; // where to look: finding ids / event times / screenshots, or what to collect next
   pinned?: boolean; // analyst-added (via Ask) — preserved across synthesis, which may answer it later
+  author?: "watson"; // Watson added or edited this question
+  synthesisDisagrees?: { status: QuestionStatus; answer: string }; // a later synthesis disagreed with this pinned answer
   // Finding ids this answer relies on (set by synthesis). Lets a later re-synthesis detect when a
   // supporting finding was marked false-positive and force the question back to "unknown" instead
   // of silently keeping a stale answer — see applyFalsePositive/reconsiderKeyQuestions in pipeline.ts.
@@ -687,8 +688,7 @@ export interface InvestigationQuestion {
     eventIds: string[]; // the events that carry them (a few, for the pointer/badge)
   };
   // Structured collection directive for an 'unknown'/'partial' question (investigation-guidance #8):
-  // where/what to collect to answer it, so the UI can offer a one-click Deploy and a later import can be
-  // matched back to it. Complements the free-text `pointer`.
+  // where/what to collect to answer it: one-click Deploy in the UI, and a later import matches back to it.
   collect?: CollectDirective;
   // Immediate FP cascade (investigation-guidance #12): set by reconsiderKeyQuestions when the FP-mark
   // route synchronously reset this question because a supporting finding was just rejected — the answer

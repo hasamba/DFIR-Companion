@@ -2,6 +2,11 @@ import { z } from "zod";
 import { canonicalEventEnvelopeSchema } from "./canonicalEvent.js";
 import { tagNaiveAsUtc } from "./naiveTimestamp.js";
 
+// Shared parser for a key-question status; junk falls back to "unknown".
+export const questionStatusSchema = z
+  .enum(["answered", "partial", "unknown", "unanswerable"])
+  .catch("unknown");
+
 // Enums use .catch(fallback) so ONE unexpected value (e.g. an IOC type of "malware")
 // maps to the fallback instead of rejecting the ENTIRE synthesis response.
 const severity = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
@@ -281,7 +286,7 @@ export const deltaSchema = z.object({
       z.object({
         id: z.string().min(1),
         question: z.string().min(1),
-        status: z.enum(["answered", "partial", "unknown"]).default("unknown").catch("unknown"),
+        status: questionStatusSchema.default("unknown"),
         answer: z.string().default(""),
         pointer: z.string().default(""),
         // Finding ids this answer is based on — lets a later false-positive mark force a re-answer.
@@ -640,7 +645,7 @@ export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
 // Lenient (.catch) like the delta so a slightly-off model response still parses.
 export const askSchema = z.object({
   answer: z.string().catch(""),
-  status: z.enum(["answered", "partial", "unknown"]).catch("unknown"),
+  status: questionStatusSchema,
   pointer: z.string().catch(""), // where/which artifact to look for or collect next
   relatedEventIds: z.array(z.string()).catch([]),
 });
