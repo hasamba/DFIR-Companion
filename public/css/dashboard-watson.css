@@ -4,7 +4,7 @@
 .watson-panel.watson-hidden { display: none; }
 .watson-panel.watson-collapsed { width: 36px; }
 .watson-panel.watson-collapsed .watson-body { display: none; }
-.watson-panel.watson-fullscreen { left: 0; width: auto; border-left: 0; }
+.watson-panel.watson-fullscreen { top: var(--watson-top, 0); left: 0; width: auto; border-left: 0; }
 body.watson-full-open { overflow: hidden; }
 .watson-rail { display: none; border: 0; background: none; color: inherit; width: 100%; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; cursor: pointer; height: 100%; }
 .watson-panel.watson-collapsed .watson-rail { display: flex; }

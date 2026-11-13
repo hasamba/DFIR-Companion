@@ -36,7 +36,19 @@ class FakeEl {
 
 const KEY = "dfir.watson.panel";
 
-function setup(opts: { throwingStorage?: boolean; fetch?: unknown; stored?: Record<string, string> } = {}) {
+const headerBox = { bottom: 80 };
+const rootVars: Record<string, string> = {};
+const observers: (() => void)[] = [];
+const resizeFns: (() => void)[] = [];
+
+function setup(
+  opts: {
+    throwingStorage?: boolean;
+    noResizeObserver?: boolean;
+    fetch?: unknown;
+    stored?: Record<string, string>;
+  } = {},
+) {
   const log = new FakeEl();
   const board = new FakeEl();
   const foot = new FakeEl();
@@ -56,6 +68,8 @@ function setup(opts: { throwingStorage?: boolean; fetch?: unknown; stored?: Reco
   const written: Record<string, string> = { ...opts.stored };
   const document = {
     body,
+    documentElement: { style: { setProperty: (k: string, v: string) => (rootVars[k] = v) } },
+    querySelector: (sel: string) => (sel === "header" ? { getBoundingClientRect: () => headerBox } : null),
     readyState: "complete",
     getElementById: (id: string) => (id === "watsonPanel" ? panel : id === "caseId" ? caseInput : null),
     querySelectorAll: (sel: string) => byW[/data-w="(\w+)"/.exec(sel)?.[1] ?? ""] ?? [],
@@ -88,11 +102,23 @@ function setup(opts: { throwingStorage?: boolean; fetch?: unknown; stored?: Reco
       // the real one links to the timeline; here a marker per id shows which ids reached it
       citeEvents: (ids: string[]) => (ids || []).map((id) => `[cited ${id}]`).join(" "),
       localStorage: storage,
+      ...(opts.noResizeObserver
+        ? {}
+        : {
+            ResizeObserver: class {
+              constructor(cb: () => void) {
+                observers.push(cb);
+              }
+              observe() {}
+            },
+          }),
+      addEventListener: (_t: string, cb: () => void) => resizeFns.push(cb),
       fetch: opts.fetch ?? (async () => ({ ok: false, status: 500, json: async () => ({}) })),
     },
   );
   const fireState = (st: unknown) => stateListeners.forEach((cb) => cb(st));
-  const press = (key: string) => keyListeners.forEach((cb) => cb({ key, target: {} }));
+  const press = (key: string, defaultPrevented = false) =>
+    keyListeners.forEach((cb) => cb({ key, target: {}, defaultPrevented } as never));
   return { api, log, board, foot, count, dot, panel, body, caseInput, fireState, press, written };
 }
 
@@ -218,6 +244,41 @@ describe("rail, open and full", () => {
     press("Escape");
     expect(panel.classList.contains("watson-fullscreen")).toBe(false);
     expect(panel.classList.contains("watson-collapsed")).toBe(false);
+  });
+
+  it("Esc is ignored when another dialog already handled it, and while the panel is hidden", async () => {
+    const a = setup();
+    a.api.initWatson();
+    a.api.setWatsonPanelState("full");
+    a.press("Escape", true);
+    expect(a.panel.classList.contains("watson-fullscreen")).toBe(true);
+    const b = setup({ fetch: async () => response(200, { ...chatWith([]), providerConfigured: false }) });
+    b.api.initWatson();
+    b.api.setWatsonPanelState("full");
+    await b.api.loadWatson("c1");
+    b.press("Escape");
+    expect(b.panel.classList.contains("watson-fullscreen")).toBe(true);
+  });
+
+  it("the full-screen offset follows the header height (ResizeObserver)", () => {
+    const { api } = setup();
+    headerBox.bottom = 80;
+    api.initWatson();
+    api.setWatsonPanelState("full");
+    expect(rootVars["--watson-top"]).toBe("80px");
+    headerBox.bottom = 132.4;
+    observers.forEach((cb) => cb());
+    expect(rootVars["--watson-top"]).toBe("132px");
+  });
+
+  it("falls back to the window resize event without ResizeObserver", () => {
+    const { api } = setup({ noResizeObserver: true });
+    headerBox.bottom = 60;
+    api.initWatson();
+    expect(rootVars["--watson-top"]).toBe("60px");
+    headerBox.bottom = 90;
+    resizeFns.forEach((cb) => cb());
+    expect(rootVars["--watson-top"]).toBe("90px");
   });
 
   it("the header and rail verbs drive the states", () => {

@@ -92,10 +92,20 @@
     }
     return wState;
   }
-  // The full panel covers the content below the top toolbar, wherever that ends today.
-  function fullTop() {
+  // The full panel covers the content below the top toolbar. The header wraps and collapses, so its
+  // bottom edge is written to --watson-top whenever it changes (a ResizeObserver, or resize as the fallback).
+  function syncTop() {
     const h = typeof document.querySelector === "function" ? document.querySelector("header") : null;
-    return h && h.getBoundingClientRect ? Math.max(0, Math.round(h.getBoundingClientRect().bottom)) + "px" : "";
+    const root = document.documentElement;
+    if (!h || !h.getBoundingClientRect || !root || !root.style || !root.style.setProperty) return;
+    root.style.setProperty("--watson-top", Math.max(0, Math.round(h.getBoundingClientRect().bottom)) + "px");
+  }
+  function watchHeader() {
+    const h = typeof document.querySelector === "function" ? document.querySelector("header") : null;
+    if (!h) return;
+    if (typeof ResizeObserver === "function") new ResizeObserver(syncTop).observe(h);
+    else window.addEventListener("resize", syncTop);
+    syncTop();
   }
   function applyPanel() {
     const panel = document.getElementById("watsonPanel");
@@ -104,7 +114,7 @@
     panel.classList.toggle("watson-collapsed", s === "rail");
     panel.classList.toggle("watson-fullscreen", s === "full");
     panel.classList.toggle("watson-hidden", wNoAi);
-    if (panel.style) panel.style.top = s === "full" ? fullTop() : "";
+    if (s === "full") syncTop();
     const b = document.body.classList;
     b.toggle("watson-rail-open", !wNoAi && s === "rail");
     b.toggle("watson-panel-open", !wNoAi && s === "open");
@@ -340,6 +350,7 @@
     const panel = document.getElementById("watsonPanel");
     if (panel) panel.innerHTML = watsonPanelHtml();
     applyPanel();
+    watchHeader();
     if (typeof DfirState !== "undefined" && DfirState.onLastStateChange) {
       DfirState.onLastStateChange((st) => {
         wQuestions = st && Array.isArray(st.keyQuestions) ? st.keyQuestions : [];
@@ -348,7 +359,7 @@
       });
     }
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && wState === "full") setWatsonPanelState("open");
+      if (e.key === "Escape" && !e.defaultPrevented && !wNoAi && wState === "full") setWatsonPanelState("open");
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.target.classList && e.target.classList.contains("watson-input")) {
         e.preventDefault();
         send(e.target);
