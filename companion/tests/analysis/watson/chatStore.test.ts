@@ -1,0 +1,88 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtemp, writeFile, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { CaseStore } from "../../../src/storage/caseStore.js";
+import { WatsonChatStore, WATSON_MAX_TURNS } from "../../../src/analysis/ai/watson/chatStore.js";
+import { emptyWatsonChat, type WatsonTurn } from "../../../src/analysis/ai/watson/types.js";
+import { SNAPSHOT_STATE_FILES } from "../../../src/analysis/investigationStateFiles.js";
+
+const makeTurns = (n: number): WatsonTurn[] =>
+  Array.from({ length: n }, (_, i) => ({
+    id: `t${i}`,
+    at: "2026-11-13T10:00:00.000Z",
+    role: "analyst" as const,
+    text: `turn ${i}`,
+  }));
+
+describe("WatsonChatStore", () => {
+  let dir: string;
+  let store: WatsonChatStore;
+  let path: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "watson-chat-"));
+    store = new WatsonChatStore({ stateDir: () => dir } as unknown as CaseStore);
+    path = join(dir, "watson-chat.json");
+  });
+
+  it("returns an empty chat when the file is missing or malformed", async () => {
+    expect(await store.load("c1")).toEqual(emptyWatsonChat());
+    await writeFile(path, "{not json");
+    expect(await store.load("c1")).toEqual(emptyWatsonChat());
+  });
+
+  it("round-trips and caps turns at WATSON_MAX_TURNS", async () => {
+    const chat = { ...emptyWatsonChat(), turns: makeTurns(WATSON_MAX_TURNS + 5), memory: "kept" };
+    await store.save("c1", chat);
+    const back = await store.load("c1");
+    expect(back.turns).toHaveLength(WATSON_MAX_TURNS);
+    expect(back.turns[0].id).toBe("t5");
+    expect(back.memory).toBe("kept");
+    expect(chat.turns).toHaveLength(WATSON_MAX_TURNS + 5);
+  });
+
+  it("drops turns whose shape is invalid instead of rejecting the file", async () => {
+    const good = makeTurns(2);
+    const raw = { ...emptyWatsonChat(), turns: [good[0], { id: 5, role: "bogus" }, good[1]], memory: "m" };
+    await writeFile(path, JSON.stringify(raw));
+    const back = await store.load("c1");
+    expect(back.turns.map((t) => t.id)).toEqual(["t0", "t1"]);
+    expect(back.memory).toBe("m");
+  });
+
+  it("truncates over-long turn text on save", async () => {
+    const long = { ...makeTurns(1)[0], text: "x".repeat(9000) };
+    await store.save("c1", { ...emptyWatsonChat(), turns: [long] });
+    const back = await store.load("c1");
+    expect(back.turns[0].text.length).toBeLessThanOrEqual(8000);
+    expect(JSON.parse(await readFile(path, "utf8")).turns).toHaveLength(1);
+  });
+
+  it("serializes concurrent update() calls so no write is lost", async () => {
+    const [a, b] = await Promise.all([
+      store.update("c1", async (c) => ({ ...c, turns: [...c.turns, makeTurns(1)[0]] })),
+      store.update("c1", async (c) => ({ ...c, turns: [...c.turns, { ...makeTurns(1)[0], id: "other" }] })),
+    ]);
+    expect(a.turns).toHaveLength(1);
+    expect(b.turns).toHaveLength(2);
+    const back = await store.load("c1");
+    expect(back.turns.map((t) => t.id).sort()).toEqual(["other", "t0"]);
+  });
+
+  it("rejects only the call whose fn throws and keeps the chain alive", async () => {
+    const bad = store.update("c1", () => {
+      throw new Error("boom");
+    });
+    const good = store.update("c1", (c) => ({ ...c, memory: "after" }));
+    await expect(bad).rejects.toThrow("boom");
+    expect((await good).memory).toBe("after");
+    expect((await store.load("c1")).memory).toBe("after");
+  });
+});
+
+describe("snapshot allowlist", () => {
+  it("includes watson-chat.json so the chat travels with the case", () => {
+    expect(SNAPSHOT_STATE_FILES).toContain("watson-chat.json");
+  });
+});
