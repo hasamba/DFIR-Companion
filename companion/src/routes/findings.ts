@@ -11,6 +11,7 @@ import {
 import { reconsiderKeyQuestions, reconsiderNextSteps } from "../analysis/fpCascade.js";
 import { patternKey } from "../analysis/prevalence.js";
 import type { LearnedPatternInput } from "../analysis/learnedPatterns.js";
+import type { InvestigationState } from "../analysis/stateTypes.js";
 import { DEFAULT_SOURCE_TRUST } from "../analysis/sourceTrust.js";
 import { parseSimilarKind, similarCandidates, similarLabel } from "./aiActionArgs.js";
 import { ScopeStore, type ScopeWindow } from "../analysis/scope.js";
@@ -127,9 +128,16 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
       const stateStore = options.stateStore;
       if (stateStore) {
         let markers: FalsePositiveMarker[] = [];
+        // #2616: one overview read (no forensic rows) serves the cascade AND the hypothesis IOC map, and
+        // the save writes everything but the timeline. The cascade touches only findings, IOCs, key
+        // questions and next steps, never a forensic row, so a 70k-event case is neither read nor rewritten.
+        // (loadOverview/saveOverview skip the AI-preview overlay; this route never runs inside a preview,
+        // whose read-only scope refuses the marker write itself.)
+        let iocs: InvestigationState["iocs"] = [];
         await ctx.runStateExclusive(caseId, async () => {
           markers = await falsePositives.load(caseId);
-          const state = await stateStore.load(caseId);
+          const state = await stateStore.loadOverview(caseId);
+          iocs = state.iocs;
           const survivingFindingIds = new Set(applyFalsePositive(state, markers).findings.map((f) => f.id));
           const priorFindingIds = state.findings.map((f) => f.id);
           const removedFindingIds = new Set(priorFindingIds.filter((id) => !survivingFindingIds.has(id)));
@@ -140,14 +148,13 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
           });
           const s = reconsiderNextSteps(state.nextSteps, { removedFindingIds, staleReSynth: true });
           if (q.changed || s.changed) {
-            await stateStore.save({ ...state, keyQuestions: q.questions, nextSteps: s.steps });
+            await stateStore.saveOverview({ ...state, keyQuestions: q.questions, nextSteps: s.steps });
           }
         });
         // Hypotheses (a side store, not InvestigationState): flag/neutralize any whose evidence was
         // just rejected. Map IOC-value markers back to their IOC ids for the intersection test.
         if (options.hypothesisStore) {
-          const state = await stateStore.load(caseId);
-          const iocIdByValue = new Map(state.iocs.map((i) => [i.value.trim().toLowerCase(), i.id] as const));
+          const iocIdByValue = new Map(iocs.map((i) => [i.value.trim().toLowerCase(), i.id] as const));
           const fpIocIds = new Set(
             markers
               .filter((m) => m.kind === "ioc")
@@ -167,13 +174,17 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
 
   // Proactive FP-pattern propagation (#15b): stamp the anchor event's normalized prevalence pattern key
   // onto each EVENT marker, so a later import can recognize the same pattern re-arriving and suggest a
-  // bulk-mark. One state load for the whole batch; best-effort (a lookup miss just leaves it unset).
+  // bulk-mark. One targeted row lookup for the whole batch; best-effort (a lookup miss just leaves it unset).
   const stampPatternFingerprints = async (caseId: string, markers: FalsePositiveMarker[]): Promise<void> => {
     const needing = markers.filter((m) => m.kind === "event" && !m.patternFingerprint);
     if (!needing.length || !options.stateStore) return;
     try {
-      const state = await options.stateStore.load(caseId);
-      const byId = new Map(state.forensicTimeline.map((e) => [e.id, e] as const));
+      // #2616: a targeted lookup of just the marked rows, not a whole-case load.
+      const rows = await options.stateStore.forensicRowsById(
+        caseId,
+        needing.map((m) => m.ref),
+      );
+      const byId = new Map(rows.map((r) => [r.event.id, r.event] as const));
       for (const m of needing) {
         const ev = byId.get(m.ref);
         if (!ev) continue;
@@ -231,7 +242,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         marker,
       ]);
       if (marker.kind === "ioc" && req.body?.addToWhitelist && options.iocWhitelistStore) {
-        const state = options.stateStore ? await options.stateStore.load(req.params.id) : null;
+        const state = options.stateStore ? await options.stateStore.loadOverview(req.params.id) : null;
         const iocType = state?.iocs.find((i) => i.value.toLowerCase() === marker.ref.toLowerCase())?.type;
         const note = marker.note?.trim()
           ? `promoted from false-positive marking (${marker.reason}): ${marker.note}`

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { TYPE_SEED_PREFIX } from "../../src/analysis/incidentTypes.js";
 
 describe("renderMarkdownReport uncertainty ledger (#73)", () => {
   it("renders the uncertainty ledger, weakest status first, with basis and gap", () => {
@@ -1345,5 +1346,31 @@ describe("renderMarkdownReport — changed after first recorded (#2141)", () => 
     expect(revised).toContain("a\\|b");
     expect(revised).not.toContain("\n");
     expect(cells(revised)).toBe(cells(plain));
+  });
+});
+
+describe("renderMarkdownReport type-seed marker (#2621)", () => {
+  const seeded = () => {
+    const state = emptyState("c1");
+    state.keyQuestions.push({
+      id: "q1",
+      question: `${TYPE_SEED_PREFIX} Confirm or deny: Ransomware note present`,
+      status: "unknown",
+      answer: "",
+      pointer: "",
+    });
+    return state;
+  };
+
+  it("keeps the internal marker out of the goals bullets and the key-questions table", () => {
+    const state = seeded();
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("- Confirm or deny: Ransomware note present");
+    expect(md).toContain("| Confirm or deny: Ransomware note present |");
+    expect(md).not.toContain("[type-seed]");
+    // The stored record keeps the marker: merge-mode dedup matches the exact stored text.
+    expect(state.keyQuestions[0].question).toBe(
+      `${TYPE_SEED_PREFIX} Confirm or deny: Ransomware note present`,
+    );
   });
 });

@@ -20,6 +20,7 @@ import type {
   Thread,
 } from "../../analysis/stateTypes.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
+import { displayQuestionText } from "../../reports/mdText.js";
 import { executiveSummaryMarkdown } from "../iris/irisMap.js";
 import { attackTechniqueUrl } from "../../analysis/attack.js";
 import { iocProvenanceSuffix } from "../../analysis/iocProvenanceLabel.js";
@@ -279,7 +280,7 @@ function questionsBlocks(qs: readonly InvestigationQuestion[]): NotionBlock[] {
   if (!qs.length) return [];
   const out: NotionBlock[] = [heading2("Key Investigative Questions")];
   for (const q of qs) {
-    out.push(heading3(q.question));
+    out.push(heading3(displayQuestionText(q.question)));
     out.push(bulleted(`Status: ${q.status}`));
     out.push(bulleted(`Answer: ${q.answer || "—"}`));
     out.push(bulleted(`Pointer: ${q.pointer || "—"}`));

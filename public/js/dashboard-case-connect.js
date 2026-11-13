@@ -606,6 +606,7 @@
       loadHypotheses(caseId);
       once("superTimeline", () => loadSuperTimeline(caseId));
       scheduleSecondOpinionReload(caseId); // #1590 — refresh the "no longer applies" list
+      if (typeof scheduleSecondLookReload === "function") scheduleSecondLookReload(caseId); // #2622 re-measure the Second Look card
     } else if (msg.type === "second_opinion_changed")
       loadSecondOpinion(caseId);
     else if (msg.type === "ai_status") applyAiStatus(msg);

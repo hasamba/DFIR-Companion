@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
@@ -709,6 +710,12 @@ function hasInternalTld(host: string): boolean {
   return INTERNAL_TLDS.has(tld);
 }
 
+// An IP literal (IPv4, IPv6, bracketed, IPv4-mapped) has no parent domain: "203.0.113.10" must not
+// yield "0.113.10" as an internal domain (#2624). The IP itself still stays in hosts.
+function isIpLiteralHost(h: string): boolean {
+  return isIP(h.replace(/^\[|\]$/g, "")) !== 0;
+}
+
 // Derive the victim entities to tokenize from the case state: hosts (event.asset), accounts
 // (DOMAIN\user / UPN in event text) and the internal domains those imply (NETBIOS name, UPN
 // domain, and the parent domain of any FQDN host). Pure + deterministic. Noise accounts/domains
@@ -729,7 +736,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
   }
   for (const h of hosts) {
     const i = h.indexOf(".");
-    if (i > 0) internalDomains.add(h.slice(i + 1)); // FQDN → parent domain is internal
+    if (i > 0 && !isIpLiteralHost(h)) internalDomains.add(h.slice(i + 1)); // FQDN → parent domain is internal
   }
   // Also scan IOCs for victim FQDNs. The redacted-export anonymizer is built from this set; a
   // victim internal AD domain that appears ONLY as an IOC value (e.g. dc01.globaltech.local as
@@ -755,7 +762,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
       }
     }
     if (!host || !host.includes(".")) continue;
-    if (isNoiseDomain(host)) continue;
+    if (isNoiseDomain(host) || isIpLiteralHost(host)) continue;
     const parent = host.slice(host.indexOf(".") + 1);
     const victimSide =
       hasInternalTld(host) || [...internalDomains].some((d) => host === d || host.endsWith("." + d));
@@ -766,6 +773,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
   const byLenDesc = (a: string, b: string) => b.length - a.length || a.localeCompare(b);
   const domains = [...internalDomains]
     .map((d) => d.toLowerCase())
+    .filter((d) => !/^[\d.]+$/.test(d)) // an all-numeric dotted "domain" is an IP fragment (#2624)
     .filter((d) => !isNoiseDomain(d)) // belt-and-suspenders: also drops noisy FQDN-parent labels (dc.local → "local")
     .sort(byLenDesc);
   // #1780: every victim username the case names in a qualified shape, from the timeline AND the

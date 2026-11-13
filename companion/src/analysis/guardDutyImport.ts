@@ -27,6 +27,7 @@ import {
   type SiemIoc,
 } from "./siemImport.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
+import { isWellFormedIocValue } from "./iocValue.js";
 import { gateRows, isDuplicateRecord, type CloudRecordParseOptions } from "./cloudRecordGate.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import type { JsonRepairs } from "./tolerantJson.js";
@@ -156,7 +157,7 @@ export function mapGuardDutyFinding(rec: Row, sink: Map<string, SiemIoc>): Mappe
   const ip = guardDutyRemoteIp(rec);
   const domain = clean(getPath(rec, "Service.Action.DnsRequestAction.Domain"), 253);
   if (ip) addIoc(sink, "ip", ip);
-  if (domain) addIoc(sink, "domain", domain);
+  if (domain && isWellFormedIocValue("domain", domain)) addIoc(sink, "domain", domain);
   const time = normalizeTime(at(rec, "Service.EventFirstSeen") || at(rec, "CreatedAt"));
   const key = ["guardduty", at(rec, "AccountId"), at(rec, "Region"), at(rec, "Id"), guardDutyVersion(rec)];
   const resource = guardDutyResource(rec);

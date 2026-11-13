@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { emptyState, type Finding } from "../../src/analysis/stateTypes.js";
+import { TYPE_SEED_PREFIX } from "../../src/analysis/incidentTypes.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import {
   normalizeReportTemplate,
@@ -74,5 +75,24 @@ describe("handoff brief report section", () => {
     expect(md).toContain("Finding owners and the last import are on the dashboard");
     const off = renderMarkdownReport(state, emptyReportMeta(), undefined, undefined, notes);
     expect(off).not.toContain("## Handoff Brief");
+  });
+
+  it("keeps the internal type-seed marker out of the open questions (#2621)", () => {
+    const state = { ...emptyState("c1"), findings: [finding] };
+    state.keyQuestions.push({
+      id: "q1",
+      question: `${TYPE_SEED_PREFIX} Confirm or deny: Ransomware note present`,
+      status: "unknown",
+      answer: "",
+      pointer: "",
+    });
+    const on = normalizeReportTemplate({
+      id: "t",
+      name: "t",
+      sections: REPORT_SECTION_DEFS.map((d) => ({ key: d.key, enabled: d.key === "handoffBrief" })),
+    });
+    const md = renderMarkdownReport(state, emptyReportMeta(), undefined, undefined, notes, undefined, on);
+    expect(md).toContain("- (unknown) Confirm or deny: Ransomware note present");
+    expect(md).not.toContain("[type-seed]");
   });
 });

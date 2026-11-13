@@ -527,8 +527,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     dashboardBaseUrl,
     onState: (s) => hub.broadcast(s),
     onStateChanged: createStateBroadcaster({
-      load: (caseId) => stateStore.load(caseId),
-      broadcast: (s) => hub.broadcast(s),
+      notify: (caseId) => hub.notifyStateChanged(caseId),
       hasSubscribers: (caseId) => hub.hasSubscribers(caseId),
     }),
   });

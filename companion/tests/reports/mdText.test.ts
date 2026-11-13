@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Marked } from "marked";
-import { blockMd, cellMd, codeSpanMd, oneLineMd } from "../../src/reports/mdText.js";
+import { blockMd, cellMd, codeSpanMd, displayQuestionText, oneLineMd } from "../../src/reports/mdText.js";
+import { TYPE_SEED_PREFIX } from "../../src/analysis/incidentTypes.js";
 
 describe("codeSpanMd (#2052)", () => {
   it("wraps plain text in a single-backtick span", () => {
@@ -222,5 +223,20 @@ describe("blockMd treats a lone CR as a line break, as marked does (#9)", () => 
 
   it("escapes a thematic break forged after a lone CR", () => {
     expect(blockMd("above\r---\rbelow")).toBe("above\n\\---\nbelow");
+  });
+});
+
+describe("displayQuestionText (#2621)", () => {
+  it("strips a leading type-seed marker and the space after it", () => {
+    expect(displayQuestionText(`${TYPE_SEED_PREFIX} Confirm or deny: X`)).toBe("Confirm or deny: X");
+  });
+
+  it("leaves other text, and a marker that is not at the start, alone", () => {
+    expect(displayQuestionText("Was there lateral movement?")).toBe("Was there lateral movement?");
+    expect(displayQuestionText(`Note ${TYPE_SEED_PREFIX} x`)).toBe(`Note ${TYPE_SEED_PREFIX} x`);
+  });
+
+  it("strips the marker once only", () => {
+    expect(displayQuestionText(`${TYPE_SEED_PREFIX} ${TYPE_SEED_PREFIX} x`)).toBe(`${TYPE_SEED_PREFIX} x`);
   });
 });

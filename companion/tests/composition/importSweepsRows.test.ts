@@ -126,24 +126,25 @@ describe("investigationOutputOfCase (#1874)", () => {
   });
 });
 
-describe("createStateBroadcaster (#1874)", () => {
-  it("loads the case only when a dashboard watches it, and coalesces a burst into one more load", async () => {
+describe("createStateBroadcaster (#1874, #2615)", () => {
+  it("announces only while a dashboard watches the case, and never loads the case", () => {
     let watching = false;
-    let release: () => void = () => {};
-    const load = vi.fn(() => new Promise<InvestigationState>((r) => (release = () => r(emptyState("c1")))));
-    const broadcast = vi.fn();
-    const announce = createStateBroadcaster({ load, broadcast, hasSubscribers: () => watching });
+    const notify = vi.fn();
+    const announce = createStateBroadcaster({ notify, hasSubscribers: () => watching });
     announce("c1");
-    await Promise.resolve();
-    expect(load).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
     watching = true;
     announce("c1");
-    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1));
-    announce("c1");
-    announce("c1");
-    release();
-    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
-    release();
-    await vi.waitFor(() => expect(broadcast).toHaveBeenCalledTimes(2));
+    expect(notify).toHaveBeenCalledWith("c1");
+  });
+
+  it("contains a notify that throws", () => {
+    const announce = createStateBroadcaster({
+      notify: () => {
+        throw new Error("socket gone");
+      },
+      hasSubscribers: () => true,
+    });
+    expect(() => announce("c1")).not.toThrow();
   });
 });

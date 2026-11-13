@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { ReportMeta } from "./reportMeta.js";
+import { oneLineMd } from "./mdText.js";
 
 // A "report template" lets a DFIR team turn the fixed-format incident report into a
 // client-facing deliverable WITHOUT hand-formatting: it controls report **branding** (accent
@@ -348,18 +349,18 @@ export function defaultReportTemplate(): ReportTemplate {
 // The placeholder values available to a branding string. Derived from the human-authored report
 // metadata + the case state. All values are plain strings (joined where multi-valued).
 export function buildBrandingContext(state: InvestigationState, meta: ReportMeta): Record<string, string> {
-  const investigators = meta.investigators.map((s) => s.trim()).filter(Boolean);
+  const investigators = meta.investigators.map(oneLineMd).filter(Boolean);
   // Treat the epoch default (a case with no recorded activity) as "no date".
   const date =
     state.updatedAt && !state.updatedAt.startsWith("1970-01-01") ? state.updatedAt.slice(0, 10) : "";
   return {
-    organization: meta.organization.trim(),
-    companyName: meta.companyName.trim(),
-    incidentId: meta.incidentId.trim(),
-    restrictions: meta.restrictions.trim(),
-    tlp: meta.restrictions.trim(),
-    reviewer: meta.reviewer.trim(),
-    incidentManager: meta.incidentManager.trim(),
+    organization: oneLineMd(meta.organization),
+    companyName: oneLineMd(meta.companyName),
+    incidentId: oneLineMd(meta.incidentId),
+    restrictions: oneLineMd(meta.restrictions),
+    tlp: oneLineMd(meta.restrictions),
+    reviewer: oneLineMd(meta.reviewer),
+    incidentManager: oneLineMd(meta.incidentManager),
     investigators: investigators.join(", "),
     caseId: state.caseId,
     date,

@@ -73,6 +73,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **Report Case Details stay on one line** — a newline in organization, incident ID, investigators, reviewer, manager, restrictions or company name no longer forges a heading or table in the Markdown, HTML and DOCX reports (closes #2618)
+- **No `[type-seed]` marker in reports** — seeded incident-type questions read cleanly in the report, hand-off, Notion and IRIS outputs; the stored question is unchanged (closes #2621)
+- **CrowdStrike DNS domains checked before they become IOCs** — a DnsRequest DomainName that is not a domain stays on the row but is no longer a domain IOC (closes #2620)
+- **GuardDuty DNS domains checked before they become IOCs** — same rule for GuardDuty DNS findings (closes #2626)
+- **No IP fragments in auto-detected internal domains** — an IP-literal asset (IPv4, IPv6, IPv4-mapped) no longer yields a bogus parent domain in Anonymization (closes #2624)
+- **Narrative edit cannot overwrite a fresh generation** — Edit is unavailable while a narrative generates, and Generate asks you to Save or Cancel an open edit first (closes #2623)
+- **Second Look card refreshes after synthesis** — the card re-measures when you open it and after state changes, instead of saying nothing is recorded until a reload (closes #2622)
+- **Folder browser explains unreadable folders** — permission denied answers 403 and a bad path 400, with a clear message, instead of a 500 (closes #2617)
+- **Faster Mark False Positive on big cases** — the marker no longer reloads and rewrites the whole forensic timeline; same cascade to key questions, next steps and hypotheses (closes #2616)
+- **Live dashboard updates no longer send the whole case** — the server pushes a small "state changed" notice and each dashboard fetches the same paged view a reload shows; server memory no longer grows with events × open dashboards (closes #2615)
 - **Cloud rows show the deciding value** — Set-Mailbox audit age limit and audit switch (zero or off is High), security-group ingress port and source on its own row (both request forms), and the RDS snapshot-share and Lambda permission principal, with three new graded rules (closes #2605)
 - **No dwell or log-tampering findings across separate cloud accounts or tenants** — a quiet interval between activity in different AWS accounts or M365 tenants is a Low boundary with no T1070, not a dwell finding (closes #2606)
 - **Between-wave cloud boundaries labelled as boundaries** — the gap panel, the report and the AI gap prompt call them separate accounts/tenants, not dwell or complete silence (closes #2610)

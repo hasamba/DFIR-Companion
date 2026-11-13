@@ -545,6 +545,48 @@ describe("deriveKnownEntities", () => {
     expect(k.internalDomains).toContain("adatumlab.local"); // from the FQDN host
   });
 
+  describe("IP-literal hosts never yield an internal domain (#2624)", () => {
+    const ev = (id: string, asset: string) => ({
+      id,
+      timestamp: "",
+      description: "x",
+      severity: "High" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset,
+    });
+
+    it("keeps the IPv4 asset as a host but derives no parent domain", () => {
+      const s = emptyState("c1");
+      s.forensicTimeline = [ev("e1", "203.0.113.10")];
+      const k = deriveKnownEntities(s);
+      expect(k.hosts).toContain("203.0.113.10");
+      expect(k.internalDomains).toEqual([]);
+    });
+
+    it("derives nothing from an IPv4-mapped IPv6 asset or a bracketed IPv6", () => {
+      const s = emptyState("c1");
+      s.forensicTimeline = [ev("e1", "::ffff:10.1.2.3"), ev("e2", "[fe80::1]")];
+      const k = deriveKnownEntities(s);
+      expect(k.hosts).toContain("::ffff:10.1.2.3");
+      expect(k.internalDomains).toEqual([]);
+    });
+
+    it("still derives the real parent domain next to an IP host", () => {
+      const s = emptyState("c1");
+      s.forensicTimeline = [ev("e1", "203.0.113.10"), ev("e2", "dc01.corp.local")];
+      expect(deriveKnownEntities(s).internalDomains).toEqual(["corp.local"]);
+    });
+
+    it("derives no domain from an IP-valued IOC or a UPN on an IP", () => {
+      const s = emptyState("c1");
+      s.forensicTimeline = [{ ...ev("e1", ""), description: "logon user@10.0.0.1" }];
+      s.iocs = [{ id: "i1", type: "domain", value: "198.51.100.7" } as never];
+      expect(deriveKnownEntities(s).internalDomains).toEqual([]);
+    });
+  });
+
   it("derives internal domains from IOC values too (redacted-export PII leak #17)", () => {
     // A victim internal AD domain that appears ONLY as an IOC (not as any event.asset) must
     // still contribute its parent to internalDomains so the redacted-export anonymizer

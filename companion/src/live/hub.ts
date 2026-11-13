@@ -1,9 +1,5 @@
 import { CaseForgetter } from "../storage/caseKeyedState.js";
-import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
-import { withoutRejectedTechniques } from "../analysis/rejectedTechniques.js";
-import { withFindingTextTechniques } from "../analysis/findingTextTechniques.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
-import { withoutEventAliases } from "../analysis/eventAliases.js";
 
 export interface SocketLike {
   readyState: number;
@@ -49,6 +45,10 @@ export class LiveHub {
   // it moved, so a socket authorized against the case as it was before a drop (a password change,
   // a delete) can never subscribe after it. Kept for the process's life: the compare needs the old value.
   private readonly epochs = new Map<string, number>();
+
+  // #2615: the last notice number sent per case. A counter per process, not a clock: it only has to
+  // order notices on one socket, and a restart drops every socket (the dashboard resets on reconnect).
+  private readonly stateVersions = new Map<string, number>();
 
   /** The case's authorization epoch: changes whenever its sockets are dropped (#2441). */
   authEpoch(caseId: string): number {
@@ -150,25 +150,25 @@ export class LiveHub {
     return count;
   }
 
-  // A state push carries the same ATT&CK name map GET /cases/:id/state attaches
-  // (routes/caseState.ts). The dashboard's MITRE derivation reads that map off whichever state
-  // object it was last handed, and a push REPLACES the fetched one wholesale — so a push without
-  // it sent every event-only technique back to its bare id on the first import, synthesis or edit
-  // after the page loaded, until the next reload. Built here rather than at the onState call
-  // sites because every one of them funnels into this method; there is nowhere else to miss.
+  // "This case's state changed" (#2615). The push used to carry the whole InvestigationState — every
+  // forensic-timeline row — and `ws` copies a string frame into a fresh Buffer per socket, so a 20k-row
+  // case cost hundreds of MB per client per change. Now it is a notice: the dashboard answers it with
+  // GET /cases/:id/state, which pages the timeline and attaches the ATT&CK name map, the rejected-
+  // technique filter and the rest of the wire view (routes/caseState.ts). The hub only names the case
+  // and numbers the notice so a dashboard can tell a duplicate or reordered one.
   //
-  // `?? []` because this is transport, not the route: a caller may hand over a partial state (the
-  // socket-gate tests do), and a throw here would surface inside a route that has already saved.
+  // Kept under its old name because ~120 `onState` call sites funnel into it; it only reads `caseId`,
+  // so a partial state (the socket-gate tests hand over one) cannot throw inside a route that saved.
   broadcast(saved: InvestigationState): void {
-    // The analyst's technique removals (#1742) are hidden here, as GET /cases/:id/state hides them —
-    // after the finding-text techniques (#1873) are added, the same order as that route.
-    const state = withoutRejectedTechniques(withFindingTextTechniques(saved));
-    const techniqueNames = techniqueNamesFor(state.mitreTechniques ?? [], state.forensicTimeline ?? []);
-    // The correlation lineage (#1715) is server bookkeeping; the dashboard gets resolved records instead.
-    this.broadcastTo(state.caseId, {
-      type: "state",
-      state: { ...withoutEventAliases(state), techniqueNames },
-    });
+    this.notifyStateChanged(saved.caseId);
+  }
+
+  /** Announce a change for a case the writer holds no state for (the import settle, #1874). */
+  notifyStateChanged(caseId: string): void {
+    if (!this.subs.has(caseId)) return;
+    const version = (this.stateVersions.get(caseId) ?? 0) + 1;
+    this.stateVersions.set(caseId, version);
+    this.broadcastTo(caseId, { type: "state_changed", caseId, version });
   }
 
   // The jobs push carries the case's job list (#1453). It used to be a bare nudge that sent the
