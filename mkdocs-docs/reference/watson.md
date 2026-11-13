@@ -4,7 +4,9 @@ Watson is an AI assistant that works one case with you. You talk to it in a chat
 
 Watson follows the case's AI switch. With AI off for the case, Watson does not answer.
 
-Watson can read the case, answer questions, and draft changes to it. **Every change waits for your Apply.** Watson never writes to the case by itself.
+Watson can read the case, answer questions, and draft changes to it. Watson never changes your findings, next steps, report text or Key Questions without your **Apply**.
+
+Two things happen without Apply. Text you paste into the chat is stored as evidence in the case at once, and it is parsed into rows when its format is known. Watson also notes what you do in the dashboard. Only the content tagger's promotions of pasted rows wait for your Apply (see [Pasted files in a known format](#pasted-files-in-a-known-format)).
 
 ---
 
@@ -21,6 +23,10 @@ The **Watson** button in the toolbar switches between open and rail. The dashboa
 When the server has no AI provider for Watson, the panel does not appear.
 
 Each case has one chat. The chat is saved with the case. You can close the dashboard, come back later, and continue where you stopped.
+
+Watson keeps the whole chat in the case. Nothing is ever dropped. When you mention something older than the recent chat, Watson searches the full history. The panel shows the latest 400 turns, and **Load earlier messages** scrolls back past them.
+
+On a closed or archived case Watson stays off: you can read the chat, but you cannot send messages.
 
 ## The key questions
 
@@ -48,9 +54,12 @@ Watson does not change the super-timeline, and it never reads it.
 
 Everything you apply from Watson carries a **Watson** badge. The badge shows on the finding, the next step and the report text, with the name of the analyst who approved it. The report says that the item was proposed by Watson and approved by that analyst.
 
-Each applied item has its own **Undo**, in the chat and next to the badge. Undo puts back what was there before. For a finding, a step or report text, a later edit by you is kept: Watson does not overwrite it.
+Each applied item has its own **Undo**, in the chat and next to the badge. Undo puts back what was there before. Undo is refused, and nothing changes, in two cases. The card says why:
 
-Undo is refused while a finding still cites the item. This protects the finding from pointing at an event that no longer exists. Undo the finding that cites it first. A new synthesis keeps Watson's findings and their badge: it does not remove them.
+- the item was changed after you applied it (for example you edited the finding), because Undo would destroy your edit;
+- a finding still cites the item. Undo the finding that cites it first.
+
+If you mark a Watson finding as a false positive, it stays in the case (Undo removes it), but synthesis no longer treats it as live.
 
 An undo does not wake Watson.
 
@@ -120,7 +129,7 @@ See [Importing Data](importing.md#chat-pastes-watson) for the import side.
 
 ## Watson and synthesis
 
-A synthesis run keeps the answers Watson gave. If a new synthesis reaches a different conclusion, the board shows **Synthesis disagrees** next to the question. Synthesis does not overwrite Watson's answer. You decide which one to keep.
+A synthesis run keeps the answers Watson gave, and it keeps Watson's findings and next steps with their badge. If a new synthesis reaches a different conclusion, the board shows **Synthesis disagrees** next to the question. Synthesis does not overwrite Watson's work. You decide which one to keep.
 
 ## What happens while you work
 
