@@ -234,6 +234,33 @@ describe("deriveCockpit — investigator usability scenarios", () => {
   });
 });
 
+describe("deriveCockpit — unanswerable questions are closed", () => {
+  it("raises no gap card and no collect action for an unanswerable question", () => {
+    const result = deriveCockpit({
+      state: state({
+        keyQuestions: [
+          {
+            id: "q1",
+            question: "Which proxy served the request?",
+            status: "unanswerable",
+            answer: "No proxy logs exist",
+            pointer: "",
+            collect: {
+              host: "proxy-01",
+              logSource: "proxy access logs",
+              expectedOutcome: "Find the request.",
+            },
+          },
+        ],
+      }),
+      investigator: "Alice",
+      now: NOW,
+    });
+    expect(result.sections.gaps.some((card) => card.id === "gap:question:q1")).toBe(false);
+    expect(JSON.stringify(result.sections)).not.toContain("proxy access logs");
+  });
+});
+
 describe("deriveCockpit — review and card decisions", () => {
   it("keeps a running job card stable while its detailed progress changes", () => {
     const investigation = state();

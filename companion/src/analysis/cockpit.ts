@@ -363,7 +363,7 @@ function gapCards(state: InvestigationState): CockpitCard[] {
     ];
   }
   const questions = state.keyQuestions
-    .filter((question) => question.status !== "answered")
+    .filter((question) => question.status !== "answered" && question.status !== "unanswerable")
     .map((question) => ({
       id: `gap:question:${question.id}`,
       kind: "gap" as const,
@@ -594,7 +594,8 @@ function blockerCards(
     });
   }
   const unanswered = state.keyQuestions.filter(
-    (question) => question.status !== "answered" || question.contradicted,
+    (question) =>
+      (question.status !== "answered" && question.status !== "unanswerable") || question.contradicted,
   );
   if (unanswered.length > 0) {
     cards.push({

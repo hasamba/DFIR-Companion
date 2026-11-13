@@ -45,7 +45,9 @@ export function recommendNextActions(
   // the app agrees on that spelling (playbook.ts, collectSatisfaction.ts, secondLook.ts all treat
   // anything other than "answered" as outstanding). Sniffing q.answer instead both undercounts the
   // card and lets rule 8 call a case well-triaged while a key question is still half-answered.
-  const unansweredQuestions = state.keyQuestions.filter((q) => q.status !== "answered");
+  const unansweredQuestions = state.keyQuestions.filter(
+    (q) => q.status !== "answered" && q.status !== "unanswerable",
+  );
   const openNextSteps = openNextStepCount(state, inputs.playbookTasks);
   const hasEvents = state.forensicTimeline.length > 0 || state.timeline.length > 0;
 
