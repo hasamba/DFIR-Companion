@@ -8,7 +8,11 @@ Watson follows the case's AI switch. With AI off for the case, Watson does not a
 
 ## Where Watson lives
 
-A side panel sits on the right of every dashboard section. It collapses to a thin rail. Click the rail to expand it. The expanded panel opens the **Watson** section, which holds the chat and a **Key Questions** board.
+A side panel sits on the right of every dashboard section. It starts as a thin rail. Click the rail to open the panel, and click **Collapse** to make it a rail again. The dashboard remembers your choice.
+
+The open panel has an **Expand** button. **Expand** scrolls to the **Watson** section of the dashboard. That section holds the same chat beside a **Key Questions** board.
+
+When the server has no AI provider for Watson, the panel does not appear.
 
 Each case has one chat. The chat is saved with the case. You can close the dashboard, come back later, and continue where you stopped.
 
@@ -40,6 +44,8 @@ You can paste text into the chat or attach a text file. Watson stores it as evid
 
 A paste can be up to 50 MB.
 
+If Watson cannot read a stored paste at once, the paste stays in the case. Watson reads it on your next message. This happens when the anonymizer holds the message for your approval, and when the round fails or reaches the cost limit. The chat tells you that the paste was stored, so do not paste it again.
+
 ## Watson and synthesis
 
 A synthesis run keeps the answers Watson gave. If a new synthesis reaches a different conclusion, the board shows **Synthesis disagrees** next to the question. Synthesis does not overwrite Watson's answer. You decide which one to keep.
@@ -49,19 +55,21 @@ A synthesis run keeps the answers Watson gave. If a new synthesis reaches a diff
 While you use the rest of the dashboard, Watson does not react at once. These actions are queued:
 
 - notebook edits
-- findings and events you star
-- normal imports
+- tags and stars on events
+- imports, and an import undo
 
 Watson reads the queue at the start of your next message to it.
 
 ## Privacy
 
-Every Watson call goes through the same anonymizer as the other AI features. With the anonymizer on, Watson also masks hostnames it has not seen before in text you paste.
+Every Watson call goes through the same anonymizer as the other AI features. With the anonymizer on, Watson also masks every hostname and username in its message to the model, including ones in text you paste.
+
+When Presidio finds a new value in Watson's message, it holds the message until you approve the value under **Anonymization**. Watson does nothing on the case while the message is held. After you approve, send a message to continue. A paste that was held is read then.
 
 Known limits:
 
 - A short hostname or username that appears alone, without its full name, may not be masked.
-- With the anonymizer on, all domains in a paste are masked. This includes attacker domains.
+- With the anonymizer on, Watson masks all domains in its message. This includes attacker domains, which the other AI features leave readable.
 
 ## Settings and cost
 
