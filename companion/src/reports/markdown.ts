@@ -108,7 +108,7 @@ function titlePage(
   // template can hide either (showLogo / showCompanyName) for a layout that supplies its own
   // branding. companyLogo is a validated raster data URI (see reportMeta.ts); the alt text strips
   // brackets so an analyst-supplied company name can't break the Markdown image syntax.
-  const company = meta.companyName.trim();
+  const company = oneLineMd(meta.companyName);
   if (template.showLogo && meta.companyLogo.trim().length > 0) {
     const alt = (company.length > 0 ? `${company} logo` : "Company logo").replace(/[[\]]/g, "");
     lines.push(`![${alt}](${meta.companyLogo.trim()})`, "");
@@ -121,19 +121,19 @@ function titlePage(
   lines.push(`# ${title}`, "");
   const subtitle = renderTemplateString(template.coverSubtitle, ctx).trim();
   if (subtitle.length > 0) lines.push(`_${subtitle}_`, "");
-  lines.push(`**Organization:** ${humanOr(meta.organization, "_(organization not set)_")}`, "");
+  lines.push(`**Organization:** ${humanOr(oneLineMd(meta.organization), "_(organization not set)_")}`, "");
   // Incident ID is optional — omit the line entirely when blank.
-  if (meta.incidentId.trim().length > 0) lines.push(`**Incident ID:** ${meta.incidentId.trim()}`, "");
-  const investigators = trimmedList(meta.investigators);
+  if (meta.incidentId.trim().length > 0) lines.push(`**Incident ID:** ${oneLineMd(meta.incidentId)}`, "");
+  const investigators = trimmedList(meta.investigators).map(oneLineMd);
   const label = investigators.length > 1 ? "Investigators" : "Investigator";
   lines.push(
     `**${label}:** ${investigators.length > 0 ? investigators.join(", ") : "_(investigator not set)_"}`,
     "",
   );
-  if (meta.reviewer.trim().length > 0) lines.push(`**Reviewer:** ${meta.reviewer.trim()}`, "");
+  if (meta.reviewer.trim().length > 0) lines.push(`**Reviewer:** ${oneLineMd(meta.reviewer)}`, "");
   if (meta.incidentManager.trim().length > 0)
-    lines.push(`**Incident manager:** ${meta.incidentManager.trim()}`, "");
-  lines.push(`**Restrictions:** ${humanOr(meta.restrictions, "CONFIDENTIAL / TLP:AMBER")}`, "");
+    lines.push(`**Incident manager:** ${oneLineMd(meta.incidentManager)}`, "");
+  lines.push(`**Restrictions:** ${humanOr(oneLineMd(meta.restrictions), "CONFIDENTIAL / TLP:AMBER")}`, "");
 }
 
 // 1.1 — human revisions when provided; otherwise auto-seed a single "1.0" row dated from the

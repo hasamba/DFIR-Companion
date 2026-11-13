@@ -3,6 +3,8 @@ import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { hypothesisSchema, type Hypothesis } from "../../src/analysis/hypothesis.js";
 import type { NotebookEntry } from "../../src/analysis/notebookStore.js";
+import { emptyReportMeta, type ReportMeta } from "../../src/reports/reportMeta.js";
+import { normalizeReportTemplate, type ReportTemplate } from "../../src/reports/reportTemplate.js";
 
 // Report-structure integrity. Finding titles, finding descriptions and hypothesis titles are
 // written by the AI from evidence the attacker chose — filenames, command lines, registry values.
@@ -137,5 +139,57 @@ describe("report structure cannot be forged through finding text", () => {
 
     expect(md).not.toMatch(forgedHeading);
     expect(md).toContain("99 Attacker Appendix");
+  });
+});
+
+describe("report structure cannot be forged through Case Details title-page fields (#2618)", () => {
+  const FORGED_H = "# Forged heading";
+  const forgedHead = /^ {0,3}#{1,6}\s+Forged heading/m;
+
+  function renderWithMeta(fields: Partial<ReportMeta>, template?: ReportTemplate): string {
+    const meta = { ...emptyReportMeta(), ...fields };
+    return renderMarkdownReport(emptyState("c1"), meta, undefined, undefined, undefined, undefined, template);
+  }
+
+  it("flattens a newline-bearing organization onto its own line", () => {
+    const md = renderWithMeta({ organization: `A\n\n${FORGED_H}\n\nB` });
+    expect(md).not.toMatch(forgedHead);
+    const line = md.split("\n").find((l) => l.startsWith("**Organization:**"));
+    expect(line).toContain("Forged heading");
+    expect(line).toContain("B");
+  });
+
+  it("does not let an incident id open a table", () => {
+    const md = renderWithMeta({ incidentId: "X\n\n| a | b |\n| - | - |" });
+    expect(md.split("\n").some((l) => l.startsWith("| a | b |"))).toBe(false);
+    expect(md.split("\n").find((l) => l.startsWith("**Incident ID:**"))).toContain("| a | b |");
+  });
+
+  it("does not turn the investigator line into a setext heading", () => {
+    const md = renderWithMeta({ investigators: ["alice\n-"] });
+    const lines = md.split("\n");
+    const i = lines.findIndex((l) => l.startsWith("**Investigator:**"));
+    expect(lines[i]).toContain("alice");
+    expect(lines[i + 1]).toBe("");
+  });
+
+  it("flattens reviewer, manager, restrictions and company name", () => {
+    const md = renderWithMeta({
+      reviewer: `R\n\n${FORGED_H}`,
+      incidentManager: `M\n\n${FORGED_H}`,
+      restrictions: `T\n\n${FORGED_H}`,
+      companyName: `C\n\n${FORGED_H}`,
+    });
+    expect(md).not.toMatch(forgedHead);
+    for (const label of ["**Reviewer:**", "**Incident manager:**", "**Restrictions:**"]) {
+      expect(md.split("\n").find((l) => l.startsWith(label))).toContain("Forged heading");
+    }
+  });
+
+  it("flattens the cover title built from a template placeholder", () => {
+    const template = normalizeReportTemplate({ coverTitle: "{{organization}}" });
+    const md = renderWithMeta({ organization: `A\n\n${FORGED_H}` }, template);
+    expect(md).not.toMatch(forgedHead);
+    expect(md.split("\n").find((l) => l.startsWith("# A"))).toContain("Forged heading");
   });
 });
