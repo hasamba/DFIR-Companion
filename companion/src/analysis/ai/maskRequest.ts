@@ -35,13 +35,42 @@ export interface MaskedRequest {
   readonly anon: Anonymizer | null;
 }
 
+/**
+ * Entities found in THIS request's own text that the case state does not know yet (Watson pastes).
+ * They are masked for this call only: never saved, never added to auto-discovery. They join the
+ * state-derived hosts and usernames, not `custom`, so an analyst's "leave visible" still wins.
+ */
+export interface PromptEntities {
+  readonly hosts: readonly string[];
+  readonly usernames: readonly string[];
+}
+
+/**
+ * An AnalyzeRequest as the AI-call gate accepts it. `promptEntities` rides on the request (not a new
+ * positional argument) so every binding of `analyzeRestored` forwards it unchanged; prepareCall
+ * strips it before the provider sees the request.
+ */
+export type GatedAnalyzeRequest = AnalyzeRequest & { promptEntities?: PromptEntities };
+
+const byLenDesc = (a: string, b: string): number => b.length - a.length || a.localeCompare(b);
+
+function withPromptEntities(known: KnownEntities, extra: PromptEntities | undefined): KnownEntities {
+  if (!extra || (extra.hosts.length === 0 && extra.usernames.length === 0)) return known;
+  return {
+    ...known,
+    hosts: [...new Set([...known.hosts, ...extra.hosts])].sort(byLenDesc),
+    usernames: [...new Set([...(known.usernames ?? []), ...extra.usernames])].sort(byLenDesc),
+  };
+}
+
 /** The case's known entities: derived from the state, plus custom and auto-discovered ones. */
 export async function knownEntitiesFor(
   ctx: ProviderCallContext,
   caseId: string,
   state: InvestigationState,
+  extra?: PromptEntities,
 ): Promise<KnownEntities> {
-  const known = deriveKnownEntities(state);
+  const known = withPromptEntities(deriveKnownEntities(state), extra);
   const custom = ctx.opts.customEntitiesStore ? await ctx.opts.customEntitiesStore.load(caseId) : [];
   // Auto-discovered screenshot entities are tokenized too; suppressed ones are never tokenized.
   const disc = ctx.opts.discoveredStore
@@ -71,12 +100,13 @@ export async function caseMasker(
   ctx: ProviderCallContext,
   caseId: string,
   state: InvestigationState,
+  extra?: PromptEntities,
 ): Promise<CaseMasker> {
   const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
   const policy = toAnonPolicy(control);
   // Off: no entity list is read at all, and Presidio (which needs `known`) does not run either.
   if (!policy.enabled) return { control, policy, known: null, anon: null, mask: (t) => t };
-  const known = await knownEntitiesFor(ctx, caseId, state);
+  const known = await knownEntitiesFor(ctx, caseId, state, extra);
   const anon = createAnonymizer(policy, known);
   return { control, policy, known, anon, mask: (t) => anon.apply(t) };
 }
@@ -86,9 +116,9 @@ export async function maskRequest(
   ctx: ProviderCallContext,
   caseId: string,
   state: InvestigationState,
-  req: Pick<AnalyzeRequest, "userPrompt">,
+  req: Pick<GatedAnalyzeRequest, "userPrompt" | "promptEntities">,
 ): Promise<MaskedRequest> {
-  const { control, policy, known, anon, mask } = await caseMasker(ctx, caseId, state);
+  const { control, policy, known, anon, mask } = await caseMasker(ctx, caseId, state, req.promptEntities);
   // The AI-field markers (aiSpan.ts) come out first, whatever happens next: nothing is sent with them.
   const segments = splitAiSpans(req.userPrompt);
   const plainPrompt = segments.map((sg) => sg.text).join("");

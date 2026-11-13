@@ -1,4 +1,4 @@
-import type { AIProvider, AnalyzeRequest } from "../../providers/provider.js";
+import type { AIProvider } from "../../providers/provider.js";
 import type { Logger } from "../../logging/logger.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
 import type { FalsePositiveMarker, FalsePositiveStore } from "../falsePositive.js";
@@ -14,6 +14,7 @@ import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { CaseFleetInventory } from "../velociraptorClientStore.js";
 import type { KevCatalog } from "../kev.js";
 import type { PresidioCoverage } from "./providerCall.js";
+import type { GatedAnalyzeRequest, PromptEntities } from "./maskRequest.js";
 import { SynthesisModelChoice, type SynthesisFallback } from "./synthesisFallback.js";
 import { toReadableAiError } from "./aiReplyUnreadable.js";
 
@@ -83,7 +84,7 @@ export interface AiCallContext {
     caseId: string,
     state: InvestigationState,
     provider: AIProvider,
-    req: AnalyzeRequest,
+    req: GatedAnalyzeRequest,
     label?: string,
     skipPresidioGate?: PresidioCoverage,
   ): Promise<unknown>;
@@ -136,6 +137,7 @@ export async function callAiJson<T>(
         userPrompt,
         images: [],
         ...(options.signal ? { signal: options.signal } : {}),
+        ...(options.promptEntities ? { promptEntities: options.promptEntities } : {}),
       },
       kind,
     );
@@ -170,6 +172,8 @@ export interface AiCallOptions {
   safetyFallback?: AiCallSafetyFallback;
   /** Checked before a safety retry or the switch, so a cancelled call starts no further call. */
   signal?: AbortSignal;
+  /** Entities in this prompt the case state does not know yet; masked for this call only. */
+  promptEntities?: PromptEntities;
 }
 
 /** One SynthesisModelChoice per call, or undefined when the call keeps today's behaviour. */

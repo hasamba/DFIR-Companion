@@ -1,8 +1,8 @@
-import type { AIProvider, AnalyzeRequest } from "../../providers/provider.js";
+import type { AIProvider } from "../../providers/provider.js";
 import { PresidioScanError } from "../presidio.js";
 import { AnonymizationChangedError, anonRevision } from "../anonRevision.js";
 import type { InvestigationState } from "../stateTypes.js";
-import { maskRequest, type MaskedRequest } from "./maskRequest.js";
+import { maskRequest, type GatedAnalyzeRequest, type MaskedRequest } from "./maskRequest.js";
 import type { KnownEntities } from "../anonymize.js";
 import type { AnonControl } from "../anonControl.js";
 import { authoredFor, type AuthoredText } from "./presidioAuthoredText.js";
@@ -36,7 +36,7 @@ export async function previewCall(
   caseId: string,
   state: InvestigationState,
   provider: AIProvider,
-  req: AnalyzeRequest,
+  req: GatedAnalyzeRequest,
   label: string,
   presidioCovered: (revision: number) => boolean,
 ): Promise<never> {
@@ -58,7 +58,7 @@ async function captureOnce(
   caseId: string,
   state: InvestigationState,
   provider: AIProvider,
-  req: AnalyzeRequest,
+  req: GatedAnalyzeRequest,
   label: string,
   presidioCovered: (revision: number) => boolean,
 ): Promise<AiPreviewCapture> {

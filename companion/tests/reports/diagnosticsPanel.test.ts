@@ -157,6 +157,12 @@ describe("renderAiCostCard", () => {
     expect(html).toContain("9 call(s)"); // 3 buckets x 3 calls
   });
 
+  it("adds Watson spend to the total and shows its own row", () => {
+    const html = renderAiCostCard({ ...cost(), watson: bucket() });
+    expect(html).toContain("Watson");
+    expect(html).toContain("12 call(s)"); // 4 buckets x 3 calls
+  });
+
   it("renders nothing at all when there is no cost report", () => {
     expect(renderAiCostCard(null)).toBe("");
   });

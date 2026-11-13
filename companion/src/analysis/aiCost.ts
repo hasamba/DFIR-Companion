@@ -11,18 +11,20 @@ import type { ProviderUsage } from "../providers/provider.js";
 // the call total; usage/cost are simply absent for it). Never resets — accumulates
 // for the case's lifetime, same posture as findings/IOCs.
 
-export type AiCostBucketName = "vision" | "synthesis" | "other";
+export type AiCostBucketName = "vision" | "synthesis" | "watson" | "other";
 
-// analyzeRestored's `label` param (pipeline.ts) sorts into one of three buckets:
+// analyzeRestored's `label` param (pipeline.ts) sorts into one of four buckets:
 // "extract" (per-screenshot vision) is its own bucket; the main synthesis call (labeled
 // "synthesis") and the second-opinion reconcile pass ("second-opinion-reconcile") are
 // "synthesis"; every other labeled call (ask, csv, log, narrative, exec-summary, ...) is
-// "other". analyzeRestored's own `label` parameter defaults to "ai", but every current
+// "other" — except Watson ("watson"), which has its own bucket so a round can read its own spend.
+// analyzeRestored's own `label` parameter defaults to "ai", but every current
 // call site in pipeline.ts passes an explicit label — that default is never actually
 // reached. "ai" is still matched here defensively in case a future call site omits it.
 export function bucketForLabel(label: string): AiCostBucketName {
   if (label === "extract") return "vision";
   if (label === "synthesis" || label === "ai" || label === "second-opinion-reconcile") return "synthesis";
+  if (label === "watson") return "watson";
   return "other";
 }
 
@@ -50,6 +52,7 @@ export type AiCostBucket = z.infer<typeof bucketSchema>;
 export const aiCostStateSchema = z.object({
   vision: bucketSchema.catch(() => emptyBucket()),
   synthesis: bucketSchema.catch(() => emptyBucket()),
+  watson: bucketSchema.catch(() => emptyBucket()),
   other: bucketSchema.catch(() => emptyBucket()),
 });
 export type AiCostState = z.infer<typeof aiCostStateSchema>;
@@ -67,7 +70,7 @@ function emptyBucket(): AiCostBucket {
 }
 
 function emptyState(): AiCostState {
-  return { vision: emptyBucket(), synthesis: emptyBucket(), other: emptyBucket() };
+  return { vision: emptyBucket(), synthesis: emptyBucket(), watson: emptyBucket(), other: emptyBucket() };
 }
 
 function emptyModel(): AiCostModel {
