@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaseStore } from "../../../src/storage/caseStore.js";
@@ -30,6 +30,22 @@ describe("WatsonChatStore", () => {
     expect(await store.load("c1")).toEqual(emptyWatsonChat());
     await writeFile(path, "{not json");
     expect(await store.load("c1")).toEqual(emptyWatsonChat());
+  });
+
+  it.each([
+    ["bad JSON", "{not json"],
+    ["valid JSON of the wrong shape", "[1, 2]"],
+  ])("keeps a corrupt file (%s) as a backup before the first write replaces it", async (_why, body) => {
+    await writeFile(path, body);
+    await store.update("c1", (c) => ({ ...c, memory: "new" }));
+    const backups = (await readdir(dir)).filter((f) => f.startsWith("watson-chat.json.corrupt-"));
+    expect(backups).toHaveLength(1);
+    expect(backups[0]).not.toContain(":");
+    expect(await readFile(join(dir, backups[0]), "utf8")).toBe(body);
+    expect((await store.load("c1")).memory).toBe("new");
+    // A healthy file is not backed up again.
+    await store.update("c1", (c) => ({ ...c, memory: "newer" }));
+    expect((await readdir(dir)).filter((f) => f.includes(".corrupt-"))).toHaveLength(1);
   });
 
   it("round-trips and caps turns at WATSON_MAX_TURNS", async () => {

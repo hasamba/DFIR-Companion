@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { copyFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../../storage/caseStore.js";
@@ -105,13 +105,27 @@ export class WatsonChatStore {
 
   // Empty chat when the file is absent or malformed, so a corrupt side file never sinks a request.
   async load(caseId: string): Promise<WatsonChat> {
+    return (await this.read(caseId)).chat;
+  }
+
+  /** The chat, and whether a file exists that is not a chat at all (bad JSON or the wrong shape). */
+  private async read(caseId: string): Promise<{ chat: WatsonChat; corrupt: boolean }> {
+    let raw: unknown;
     try {
-      return parseChat(JSON.parse(await readFile(this.path(caseId), "utf8")) as unknown);
+      raw = JSON.parse(await readFile(this.path(caseId), "utf8")) as unknown;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptyWatsonChat();
-      if (err instanceof SyntaxError) return emptyWatsonChat();
+      if ((err as NodeJS.ErrnoException).code === "ENOENT")
+        return { chat: emptyWatsonChat(), corrupt: false };
+      if (err instanceof SyntaxError) return { chat: emptyWatsonChat(), corrupt: true };
       throw err;
     }
+    return { chat: parseChat(raw), corrupt: typeof raw !== "object" || raw === null || Array.isArray(raw) };
+  }
+
+  /** Keep a corrupt chat file beside the new one before the first write replaces it. No colons: Windows. */
+  private async backUpCorrupt(caseId: string): Promise<void> {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    await copyFile(this.path(caseId), `${this.path(caseId)}.corrupt-${stamp}`);
   }
 
   async save(caseId: string, chat: WatsonChat): Promise<void> {
@@ -123,7 +137,9 @@ export class WatsonChatStore {
   update(caseId: string, fn: (chat: WatsonChat) => WatsonChat | Promise<WatsonChat>): Promise<WatsonChat> {
     const prev = this.chains.get(caseId) ?? Promise.resolve();
     const run = prev.then(async () => {
-      const next = normalize(await fn(await this.load(caseId)));
+      const { chat, corrupt } = await this.read(caseId);
+      const next = normalize(await fn(chat));
+      if (corrupt) await this.backUpCorrupt(caseId);
       await this.save(caseId, next);
       return next;
     });
