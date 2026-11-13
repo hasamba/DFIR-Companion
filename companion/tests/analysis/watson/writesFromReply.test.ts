@@ -14,6 +14,8 @@ import {
 } from "../../../src/analysis/ai/watson/proposals.js";
 import { sanitizeWatsonReply, watsonReplySchema } from "../../../src/analysis/ai/watson/replySchema.js";
 import { runWatsonRound, type WatsonRoundContext } from "../../../src/analysis/ai/watson/round.js";
+import { buildWriteProposals } from "../../../src/analysis/ai/watson/writeProposals.js";
+import type { WatsonFindingDraft } from "../../../src/analysis/ai/watson/writesSchema.js";
 import type {
   WatsonFindingProposal,
   WatsonNextStepProposal,
@@ -262,6 +264,7 @@ describe("Watson writes from the reply", () => {
         findings: [
           findingDraft({ updateId: "f-watson-0a1b2c3d", title: "Refined title" }),
           findingDraft({ updateId: "f-model-1", title: "Not Watson's" }),
+          findingDraft({ updateId: "f-watson-ffffffff", title: "Does not exist" }),
         ],
         nextSteps: [],
         report: [],
@@ -274,10 +277,29 @@ describe("Watson writes from the reply", () => {
     expect(upd[0].after.id).toBe("f-watson-0a1b2c3d");
     expect(upd[0].before).toMatchObject({ id: "f-watson-0a1b2c3d", title: "Phishing mail" });
     expect(upd[0].after.title).toBe("Refined title");
-    const created = ofKind(chat, "finding_new") as WatsonFindingProposal[];
-    expect(created).toHaveLength(1);
-    expect(created[0].targetId).toMatch(/^f-watson-[0-9a-f]{8}$/);
-    expect(created[0].after.title).toBe("Not Watson's");
+    // Never a near-duplicate new finding under a fresh id.
+    expect(ofKind(chat, "finding_new")).toEqual([]);
+  });
+
+  it("an update whose Watson finding is gone by the time proposals are built is dropped", () => {
+    const draft: WatsonFindingDraft = {
+      updateId: "f-watson-0a1b2c3d",
+      severity: "High",
+      title: "Refined title",
+      description: "d",
+      mitreTechniques: [],
+      eventIds: ["e1"],
+      pasteLines: [],
+    };
+    const inputs = { findings: new Map(), pastes: new Map(), lines: new Map() };
+    let n = 0;
+    const out = buildWriteProposals(
+      { findings: [draft], nextSteps: [], report: [] },
+      inputs,
+      "t1",
+      (prefix) => `${prefix}-0000000${n++}`,
+    );
+    expect(out).toEqual([]);
   });
 
   it("next steps and report text become pending proposals; the executive summary is never written", async () => {
@@ -381,9 +403,14 @@ describe("sanitizeWatsonReply writes", () => {
     expect(out.findings[0].pasteLines).toEqual([{ pasteId: "wf-1", line: 3 }]);
   });
 
-  it("keeps updateId only for a Watson-authored finding", () => {
+  it("keeps an update only for a Watson-authored finding; any other update draft is dropped", () => {
     const out = sanitize({
-      findings: [findingDraft({ updateId: "f-watson-0a1b2c3d" }), findingDraft({ updateId: "f-model-1" })],
+      findings: [
+        findingDraft({ updateId: "f-watson-0a1b2c3d" }),
+        findingDraft({ updateId: "f-model-1" }),
+        findingDraft({ updateId: "f-watson-ffffffff" }),
+        findingDraft(),
+      ],
       nextSteps: [],
       report: [],
     });

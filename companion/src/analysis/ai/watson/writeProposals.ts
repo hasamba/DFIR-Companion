@@ -19,6 +19,8 @@ function findingProposal(
   now: string,
 ): WatsonFindingProposal | null {
   const before = d.updateId ? inputs.findings.get(d.updateId) : undefined;
+  // The Watson finding the update names is gone by now: drop the draft, never mint a new finding.
+  if (d.updateId && !before) return null;
   const id = before?.id ?? newId("f-watson");
   const pasteEvents: ForensicEvent[] = [];
   const citedPasteLines = d.pasteLines.filter(({ pasteId, line }) => {

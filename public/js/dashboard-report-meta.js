@@ -13,6 +13,9 @@
   // the server refuses one that would overwrite a newer version (e.g. Watson's approved text).
   let rmBaseUpdatedAt = "";
   const STALE_TEXT = "Report details changed since you opened them — reload";
+  // The case whose stored details the form holds ("" = never loaded). A save from a form that was
+  // never loaded for this case loads them first, so it neither 409s nor wipes the other fields.
+  let rmFilledFor = "";
   function renderLogoPreview() {
     const wrap = document.getElementById("rm-logoPreviewWrap");
     const img = document.getElementById("rm-logoPreview");
@@ -62,16 +65,40 @@
     ]);
   }
 
-  function loadReportMeta(caseId) {
-    fetch(`/cases/${caseId}/report-meta`)
-      .then((r) => r.json())
-      .then(fillReportMeta)
-      .catch(() => {});
+  function fetchReportMeta(caseId) {
+    return fetch(`/cases/${caseId}/report-meta`)
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then((m) => {
+        fillReportMeta(m);
+        rmFilledFor = caseId;
+      });
   }
 
-  function saveReportMeta() {
+  function loadReportMeta(caseId) {
+    return fetchReportMeta(caseId).catch(() => {});
+  }
+
+  // `edits` ({ "rm-<field>": value }) are applied to the form after it holds this case's details:
+  // how another panel (the Executive Summary "Save") changes one field without touching the rest.
+  function saveReportMeta(edits) {
     const caseId = document.getElementById("caseId").value.trim();
-    if (!caseId) return;
+    if (!caseId) return Promise.resolve();
+    if (rmFilledFor === caseId) return putReportMeta(caseId, edits);
+    const st = document.getElementById("rmStatus");
+    st.textContent = "loading case details…";
+    return fetchReportMeta(caseId)
+      .then(() => putReportMeta(caseId, edits))
+      .catch((e) => (st.textContent = "save failed: " + e.message));
+  }
+
+  function putReportMeta(caseId, edits) {
+    for (const [id, value] of Object.entries(edits || {})) {
+      const el = document.getElementById(id);
+      if (el) el.value = value;
+    }
     const g = (id) => document.getElementById(id).value;
     const body = {
       companyName: g("rm-companyName"),
@@ -103,7 +130,7 @@
     };
     const st = document.getElementById("rmStatus");
     st.textContent = "saving…";
-    fetch(`/cases/${caseId}/report-meta`, {
+    return fetch(`/cases/${caseId}/report-meta`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -115,6 +142,7 @@
       })
       .then((m) => {
         fillReportMeta(m);
+        rmFilledFor = caseId;
         st.textContent = "saved ✓";
         setTimeout(() => (st.textContent = ""), 2500);
       })

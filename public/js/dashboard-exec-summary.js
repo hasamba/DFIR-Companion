@@ -57,9 +57,9 @@
           `<button id="execSaveBtn">Save to report's Executive Summary</button>` +
           `<span id="execSaveMsg" data-safe-style="color:var(--text-muted);font-size:12px"></span></div></div>`;
         document.getElementById("execSaveBtn").onclick = () => {
-          const ta = document.getElementById("rm-executiveSummary");
-          if (ta) ta.value = text;
-          saveReportMeta(); // persists rm-executiveSummary alongside the rest of the report meta
+          // Persists the summary alongside the rest of the report meta; loads that first if the
+          // Case Details form was never opened for this case.
+          saveReportMeta({ "rm-executiveSummary": text });
           document.getElementById("execSaveMsg").textContent =
             "saved ✓ — overrides the auto summary in the report";
           document.getElementById("execSaveBtn").disabled = true;

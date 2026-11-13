@@ -102,6 +102,9 @@ function sanitizeFinding(
   sets: WatsonCitationSets,
 ): WatsonFindingDraft | null {
   if (d.title.trim() === "") return null;
+  // An update to a finding Watson did not write (or that does not exist) is dropped, never turned
+  // into a new finding: that would be a near-duplicate of the synthesis finding it named.
+  if (d.updateId && !sets.watsonFindingIds.has(d.updateId)) return null;
   const eventIds = [...new Set(d.eventIds.filter((id) => knownEventIds.has(id)))].slice(0, MAX_CITED);
   const seen = new Set<string>();
   const pasteLines = d.pasteLines
@@ -119,7 +122,7 @@ function sanitizeFinding(
   const { updateId, ...rest } = d;
   return {
     ...rest,
-    ...(updateId && sets.watsonFindingIds.has(updateId) ? { updateId } : {}),
+    ...(updateId ? { updateId } : {}),
     title: d.title.slice(0, TITLE_MAX),
     description: d.description.slice(0, DESCRIPTION_MAX),
     mitreTechniques: [
@@ -132,8 +135,8 @@ function sanitizeFinding(
 
 /**
  * Caps and citation checks. `eventIds` are kept only when in the forensic timeline, `pasteLines` only
- * for a stored paste and a line it has, `updateId` only for a Watson-authored finding. Without the
- * citation sets no paste line and no update survives. One report item per field.
+ * for a stored paste and a line it has; a draft whose `updateId` is not a Watson-authored finding is
+ * dropped. Without the citation sets no paste line and no update survives. One report item per field.
  */
 export function sanitizeWrites(
   w: WatsonWrites,
