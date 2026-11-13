@@ -28,6 +28,7 @@ import {
   oneLineMd,
   sessionCommandsMd,
 } from "./mdText.js";
+import { watsonApprovalLine } from "./watsonFindingMd.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
@@ -792,6 +793,7 @@ function investigation(
       const caution = findingCautionLine(f);
       if (caution) lines.push(caution);
       lines.push(blockMd(f.description) || "_no description_", ...sessionCommandsMd(f, eventById));
+      if (f.author === "watson") lines.push(watsonApprovalLine(f));
       lines.push(...findingIocsMd(f));
       if (f.mitreTechniques.length)
         lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);

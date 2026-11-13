@@ -33,12 +33,14 @@ function written(
   p: WatsonFindingProposal,
   eventIds: string[],
   pasteLines: Finding["citedPasteLines"],
+  actor?: string,
 ): Finding {
   const { citedPasteLines: _c, ...draft } = p.after;
   return {
     ...draft,
     id: p.targetId,
     author: "watson",
+    ...(actor ? { approvedBy: actor } : {}),
     status: p.kind === "finding_new" ? "open" : p.after.status,
     relatedEventIds: [...new Set(eventIds)],
     ...(pasteLines?.length ? { citedPasteLines: pasteLines } : {}),
@@ -52,7 +54,7 @@ const withFinding = (state: InvestigationState, f: Finding): InvestigationState 
     : [...state.findings, f],
 });
 
-async function apply(deps: WriterDeps, caseId: string, p: WatsonFindingProposal) {
+async function apply(deps: WriterDeps, caseId: string, p: WatsonFindingProposal, actor?: string) {
   const overview = await deps.stateStore.loadOverview(caseId);
   checkApplyTarget(
     p,
@@ -69,7 +71,12 @@ async function apply(deps: WriterDeps, caseId: string, p: WatsonFindingProposal)
   );
   const created = live.pasteEvents.filter((e) => !existing.has(e.id));
   const createdIds = new Set(created.map((e) => e.id));
-  const finding = written(p, [...live.eventIds, ...live.pasteEvents.map((e) => e.id)], live.pasteLines);
+  const finding = written(
+    p,
+    [...live.eventIds, ...live.pasteEvents.map((e) => e.id)],
+    live.pasteLines,
+    actor,
+  );
   const now = new Set(finding.relatedEventIds);
   // Writes: the new rows, the links on rows that already existed, then the finding.
   await deps.stateStore.appendForensicEvents(caseId, created);

@@ -62,7 +62,7 @@ export interface WriterResult<P extends WatsonProposal> {
 export interface WatsonWriter<P extends WatsonProposal> {
   /** True: apply/undo are called without the state lock held and take it themselves. */
   selfLocking?: boolean;
-  apply(deps: WriterDeps, caseId: string, p: P): Promise<WriterResult<P>>;
+  apply(deps: WriterDeps, caseId: string, p: P, actor?: string): Promise<WriterResult<P>>;
   undo(deps: WriterDeps, caseId: string, p: P): Promise<WriterResult<P>>;
 }
 

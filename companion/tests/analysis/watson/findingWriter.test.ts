@@ -140,7 +140,7 @@ describe("Watson finding writer", () => {
   it("apply writes a marked finding citing the event and the paste line, and links both rows", async () => {
     const out = await applyWatsonProposal(deps, CASE, "wp-f", "apply", "alice");
     const [f] = await findings();
-    expect(f).toMatchObject({ id: FID, author: "watson", status: "open" });
+    expect(f).toMatchObject({ id: FID, author: "watson", status: "open", approvedBy: "alice" });
     expect(f.relatedEventIds).toEqual(["e1", PASTE_EV]);
     expect(f.citedPasteLines).toEqual([{ pasteId: "wf-1", line: 2 }]);
     const ev = await row(PASTE_EV);

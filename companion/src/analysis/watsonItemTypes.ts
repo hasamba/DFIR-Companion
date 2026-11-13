@@ -18,6 +18,8 @@ export interface WatsonFindingDisagreement {
 
 /** The optional fields a Finding carries for Watson. */
 export interface WatsonFindingMarks extends WatsonItemMark {
+  // The analyst who applied it from Watson (the Markdown report says "approved by <name>").
+  approvedBy?: string;
   // Lines of a stored paste the finding cites, beside (or instead of) forensic-event citations.
   citedPasteLines?: { pasteId: string; line: number }[];
   // Synthesis re-issued this Watson finding's id with a different severity, title or description.

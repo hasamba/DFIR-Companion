@@ -95,10 +95,12 @@ async function runWriter(
   caseId: string,
   p: WatsonProposal,
   action: "apply" | "undo",
+  actor?: string,
 ): Promise<WriterResult<WatsonProposal>> {
   const writer = WRITERS[p.kind];
   if (!writer) throw new WatsonProposalConflict(`Watson cannot ${action} a ${p.kind} proposal yet`);
-  const run = () => writer[action](deps, caseId, p);
+  const run = () =>
+    action === "apply" ? writer.apply(deps, caseId, p, actor) : writer.undo(deps, caseId, p);
   return writer.selfLocking ? run() : deps.stateLock.runExclusive(caseId, run);
 }
 
@@ -126,7 +128,7 @@ export async function applyWatsonProposal(
     const p = c.proposals.find((x) => x.id === proposalId);
     if (!p) throw new WatsonProposalNotFoundError(proposalId);
     if (!allowed(p, action)) throw new WatsonProposalStateError(action, p.status);
-    const result = action === "reject" ? {} : await runWriter(deps, caseId, p, action);
+    const result = action === "reject" ? {} : await runWriter(deps, caseId, p, action, actor);
     state = result.state;
     const next = decided(p, action, result.proposal, actor);
     done = next;
