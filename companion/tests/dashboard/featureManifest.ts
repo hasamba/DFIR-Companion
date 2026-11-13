@@ -525,7 +525,7 @@ export const FEATURES: Feature[] = [
     // another module can leave on.
     file: "dashboard-second-look.js",
     initializer: "initSecondLook",
-    publish: ["initSecondLook", "loadSecondLookPreview", "runSecondLook"],
+    publish: ["initSecondLook", "loadSecondLookPreview", "runSecondLook", "scheduleSecondLookReload"],
     private: [
       "slCaseId",
       "slPreview",
