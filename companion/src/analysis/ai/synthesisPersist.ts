@@ -11,6 +11,7 @@ import { nameCallers } from "../principalNameCarry.js";
 import { recordEventAliases } from "../eventAliases.js";
 import { remapAbsorbedEventIds } from "../absorbedCitations.js";
 import { concurrentRejections } from "../rejectedTechniques.js";
+import { keepWatsonAnswers } from "./watson/keepWatsonAnswers.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -66,7 +67,13 @@ export async function persistSynthesis(
   const write = async (): Promise<void> => {
     const latest = await ctx.opts.stateStore.load(caseId);
     const concurrent = mergeConcurrentAdditions(input.loaded, input.next, latest);
-    const merged = input.reconcile ? await input.reconcile(concurrent) : concurrent;
+    const reconciled = input.reconcile ? await input.reconcile(concurrent) : concurrent;
+    // LAST before the save: a Watson apply or undo that landed while the model was thinking wins
+    // over this run's copy of that question (the fold protected the rest).
+    const merged = {
+      ...reconciled,
+      keyQuestions: keepWatsonAnswers(reconciled.keyQuestions, latest.keyQuestions, input.next.keyQuestions),
+    };
     // Record THIS synthesis run as a durable, cross-session Investigation-Log line (#165) — imports
     // already log via timelineNote; synthesis didn't. Final merged counts; one entry per real run.
     persisted = {

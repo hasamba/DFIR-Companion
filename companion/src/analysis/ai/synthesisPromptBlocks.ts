@@ -21,6 +21,7 @@ import { hasScope, type ScopeWindow } from "../scope.js";
 import { SEVERITY_RANK, type Finding, type ForensicEvent, type InvestigationState } from "../stateTypes.js";
 import { buildBeaconDigest, buildAttackPhaseDigest } from "../synthEvidence.js";
 import { buildSynthesisContext } from "../synthSelect.js";
+import { buildCurrentKeyQuestionsBlock } from "./currentKeyQuestionsBlock.js";
 import { capDisclosure } from "../synthCaps.js";
 import { promptDescription } from "./promptDescription.js";
 import { aiSpan } from "./aiSpan.js";
@@ -158,7 +159,7 @@ export async function buildSynthesisBlocks(
     cloudCoverageBlock: await cloudCoverageBlock(ctx, caseId),
     adversaryBlock: adversaryHintBlock(state),
     satisfiedBlock: satisfied.block,
-    pinnedBlock: buildPinnedBlock(state),
+    pinnedBlock: buildCurrentKeyQuestionsBlock(state) + buildPinnedBlock(state),
     reanswerBlock: buildReanswerBlock(state, markers, satisfied.questionIds),
     existingFindings: buildFindingsEcho(state),
     openThreads: buildOpenThreads(state),

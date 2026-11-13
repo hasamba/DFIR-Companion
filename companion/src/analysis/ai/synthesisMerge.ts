@@ -40,6 +40,7 @@ import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
 import { mergeDelta, type WindowContext } from "../stateMerge.js";
+import { keepWatsonAnswers, protectWatsonQuestion } from "./watson/keepWatsonAnswers.js";
 import { yieldToEventLoop } from "../yieldToEventLoop.js";
 
 /**
@@ -95,7 +96,11 @@ function preserveAcceptedTechniques(
   return { ...next, mitreTechniques: [...kept, ...accepted.filter((t) => !present.has(t.id))] };
 }
 
-/** Keep analyst-pinned questions across a synthesis (it replaces keyQuestions wholesale). */
+/**
+ * Keep analyst-pinned questions across a synthesis (it replaces keyQuestions wholesale). A pinned
+ * question synthesis answered takes the model's answer — except one Watson wrote: the analyst
+ * applied that answer, so it stays, and a different model status is kept as `synthesisDisagrees`.
+ */
 function mergePinnedQuestions(
   pinned: InvestigationQuestion[],
   current: InvestigationQuestion[],
@@ -104,7 +109,8 @@ function mergePinnedQuestions(
   const byId = new Map(current.map((q) => [q.id, q]));
   for (const p of pinned) {
     const cur = byId.get(p.id);
-    byId.set(p.id, cur ? { ...cur, pinned: true } : p);
+    if (p.author === "watson") byId.set(p.id, protectWatsonQuestion(p, cur));
+    else byId.set(p.id, cur ? { ...cur, pinned: true } : p);
   }
   return [...byId.values()];
 }
@@ -233,7 +239,7 @@ export async function foldSynthesisDelta(
   const eligibleIds = new Set(scopedEvents.map((e) => e.id));
   const netted = applyBackfills(linked, scopedEvents, eligibleIds, ts, state);
   await yieldToEventLoop();
-  const pinnedQs = await preservePinnedQuestions(ctx, caseId, netted.state);
+  const { state: pinnedQs, latestQuestions } = await preservePinnedQuestions(ctx, caseId, netted.state);
   const pinned = preserveAcceptedTechniques(state, withCloudSeedQuestions(pinnedQs, !!input.cloudOnly));
   let next = correctKeyQuestions(pinned, state, scopedEvents);
   // The techniques the timeline CARRIES are deliberately not folded in here (#893). This used to
@@ -257,6 +263,9 @@ export async function foldSynthesisDelta(
       ...(hostOf ? { hostOf } : {}),
       ...(input.mainSource ? { mainSource: input.mainSource } : {}),
     });
+  // LAST: nothing after this changes a key question. Every pass above may have rewritten a Watson
+  // answer the analyst applied; restore each one, keeping synthesis's view as a disagreement.
+  next = { ...next, keyQuestions: keepWatsonAnswers(next.keyQuestions, latestQuestions, state.keyQuestions) };
 
   return {
     next,
@@ -512,10 +521,15 @@ async function preservePinnedQuestions(
   ctx: DeltaFoldContext,
   caseId: string,
   gapFilled: InvestigationState,
-): Promise<InvestigationState> {
-  const pinnedNow = (await ctx.opts.stateStore.load(caseId)).keyQuestions.filter((q) => q.pinned);
-  if (!pinnedNow.length) return gapFilled;
-  return { ...gapFilled, keyQuestions: mergePinnedQuestions(pinnedNow, gapFilled.keyQuestions) };
+): Promise<{ state: InvestigationState; latestQuestions: InvestigationQuestion[] }> {
+  // The same read also hands the fold's last step the key questions as stored now (Watson).
+  const latestQuestions = (await ctx.opts.stateStore.load(caseId)).keyQuestions;
+  const pinnedNow = latestQuestions.filter((q) => q.pinned);
+  if (!pinnedNow.length) return { state: gapFilled, latestQuestions };
+  return {
+    state: { ...gapFilled, keyQuestions: mergePinnedQuestions(pinnedNow, gapFilled.keyQuestions) },
+    latestQuestions,
+  };
 }
 
 /**
