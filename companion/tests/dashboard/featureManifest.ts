@@ -1869,9 +1869,15 @@ export const FEATURES: Feature[] = [
   },
   {
     // Watson's markup builders, split from dashboard-watson.js to keep both under 400 lines. Pure:
-    // no state, no initializer; dashboard-watson.js calls the four builders by name.
+    // no state, no initializer; dashboard-watson.js calls the builders (and watsonCaseIsEmpty) by name.
     file: "dashboard-watson-view.js",
-    publish: ["watsonTurnHtml", "watsonBoardHtml", "watsonPanelHtml", "watsonSectionHtml"],
+    publish: [
+      "watsonTurnHtml",
+      "watsonBoardHtml",
+      "watsonPanelHtml",
+      "watsonSectionHtml",
+      "watsonCaseIsEmpty",
+    ],
     private: ["QSTATUS", "btn"],
   },
   {
@@ -1887,7 +1893,18 @@ export const FEATURES: Feature[] = [
       "loadWatson",
       "watsonAct",
     ],
-    private: ["wChat", "wQuestions", "wCase", "wSeq", "wSeen", "wNotice", "wNoAi", "wHidden", "wBusy"],
+    private: [
+      "wChat",
+      "wQuestions",
+      "wCase",
+      "wSeq",
+      "wSeen",
+      "wNotice",
+      "wEmpty",
+      "wNoAi",
+      "wHidden",
+      "wBusy",
+    ],
   },
   {
     // Last-import change tracking. All three escapes were READS from the page's two renderers, so

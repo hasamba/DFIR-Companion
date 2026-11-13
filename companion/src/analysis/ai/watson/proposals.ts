@@ -30,8 +30,12 @@ export class WatsonProposalNotFoundError extends Error {
 
 /** The action is not allowed from the proposal's status (route → 409). */
 export class WatsonProposalStateError extends Error {
-  constructor(action: WatsonProposalAction, status: WatsonProposal["status"]) {
-    super(`Cannot ${action} a proposal that is ${status}`);
+  constructor(action: WatsonProposalAction | "add", status: WatsonProposal["status"]) {
+    super(
+      action === "add"
+        ? `This answer was already added to the open questions (${status})`
+        : `Cannot ${action} a proposal that is ${status}`,
+    );
     this.name = "WatsonProposalStateError";
   }
 }

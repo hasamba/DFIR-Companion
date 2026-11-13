@@ -2,7 +2,8 @@ import { z } from "zod";
 import { questionStatusSchema } from "../../responseSchema.js";
 import type { QuestionStatus } from "../../stateTypes.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
-import type { WatsonRequest } from "./types.js";
+import { ANSWER_MAX, POINTER_MAX, QUESTION_MAX } from "./roundProposals.js";
+import type { WatsonAnswer, WatsonRequest } from "./types.js";
 
 // Boundary for the model's JSON reply. The reply is untrusted: every field is lenient (.catch),
 // and sanitizeWatsonReply clamps lengths and drops references to ids that do not exist.
@@ -12,6 +13,7 @@ const MAX_SEARCH_TERMS = 8;
 const MAX_TERM_CHARS = 200;
 const MAX_MEMORY_CHARS = 4000;
 const MAX_QUERY_CHARS = 20000;
+const MAX_ANSWER_EVENTS = 20;
 const LANGUAGES = ["vql", "kql", "spl", "cql", "esql", "sql", "other"];
 
 const str = z.string().catch("");
@@ -37,6 +39,17 @@ const requestSchema = z
   .nullable()
   .catch(null);
 
+const answerSchema = z
+  .object({
+    question: str,
+    status: questionStatusSchema,
+    answer: str,
+    pointer: str,
+    relatedEventIds: lenientArray(z.string()),
+  })
+  .nullable()
+  .catch(null);
+
 export const watsonReplySchema = z.object({
   message: str,
   workingOn: str,
@@ -51,6 +64,7 @@ export const watsonReplySchema = z.object({
     .nullable()
     .catch(null),
   memory: str,
+  answer: answerSchema,
 });
 
 export interface WatsonReply {
@@ -62,6 +76,8 @@ export interface WatsonReply {
   request: WatsonRequest | null;
   search: { pasteId: string; terms: string[] } | null;
   memory: string;
+  /** Set only when the analyst asked a question about the case. */
+  answer: WatsonAnswer | null;
 }
 
 function sanitizeRequest(req: WatsonRequest | null): WatsonRequest | null {
@@ -75,10 +91,33 @@ function sanitizeRequest(req: WatsonRequest | null): WatsonRequest | null {
   };
 }
 
+/**
+ * The free-form answer: cited ids kept only when they are in the case's forensic timeline, texts
+ * capped, and `unanswerable` turned into `unknown` (only an approved Watson proposal may set it).
+ * An answer with no question is no answer.
+ */
+export function sanitizeAnswer(
+  answer: WatsonAnswer | null,
+  knownEventIds: ReadonlySet<string>,
+): WatsonAnswer | null {
+  if (!answer || answer.question.trim() === "") return null;
+  return {
+    question: answer.question.slice(0, QUESTION_MAX),
+    status: answer.status === "unanswerable" ? "unknown" : answer.status,
+    answer: answer.answer.slice(0, ANSWER_MAX),
+    pointer: answer.pointer.slice(0, POINTER_MAX),
+    relatedEventIds: [...new Set(answer.relatedEventIds.filter((id) => knownEventIds.has(id)))].slice(
+      0,
+      MAX_ANSWER_EVENTS,
+    ),
+  };
+}
+
 export function sanitizeWatsonReply(
   reply: WatsonReply,
   knownQuestionIds: ReadonlySet<string>,
   knownPasteIds: ReadonlySet<string>,
+  knownEventIds: ReadonlySet<string>,
 ): WatsonReply {
   const search =
     reply.search && knownPasteIds.has(reply.search.pasteId)
@@ -98,5 +137,6 @@ export function sanitizeWatsonReply(
     newQuestions: reply.newQuestions.filter((q) => q.question.trim() !== "").slice(0, MAX_NEW_QUESTIONS),
     request: sanitizeRequest(reply.request),
     search,
+    answer: sanitizeAnswer(reply.answer, knownEventIds),
   };
 }

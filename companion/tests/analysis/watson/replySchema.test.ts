@@ -17,6 +17,7 @@ describe("watsonReplySchema", () => {
       request: null,
       search: null,
       memory: "",
+      answer: null,
     });
   });
   it("falls back per field on junk", () => {
@@ -57,13 +58,17 @@ describe("sanitizeWatsonReply", () => {
       ],
       search: { pasteId: "p1", terms: ["", "  ", "t"] },
     });
-    const out = sanitizeWatsonReply(r, qs, ps);
+    const out = sanitizeWatsonReply(r, qs, ps, new Set());
     expect(out.newQuestions.map((q) => q.question)).toEqual(["a", "b", "c"]);
     expect(out.search?.terms).toEqual(["t"]);
   });
   it("passes an import request through", () => {
     const r = parse({ request: { kind: "import", what: "event logs", why: "w" } });
-    expect(sanitizeWatsonReply(r, qs, ps).request).toEqual({ kind: "import", what: "event logs", why: "w" });
+    expect(sanitizeWatsonReply(r, qs, ps, new Set()).request).toEqual({
+      kind: "import",
+      what: "event logs",
+      why: "w",
+    });
   });
   it("drops updates with unknown questionId", () => {
     const r = parse({
@@ -72,15 +77,17 @@ describe("sanitizeWatsonReply", () => {
         { questionId: "zz", status: "answered", answer: "a", pointer: "" },
       ],
     });
-    const out = sanitizeWatsonReply(r, qs, ps);
+    const out = sanitizeWatsonReply(r, qs, ps, new Set());
     expect(out.questionUpdates.map((u) => u.questionId)).toEqual(["q1"]);
   });
   it("drops search with unknown pasteId and caps terms", () => {
     const terms = Array.from({ length: 12 }, () => "x".repeat(300));
-    const ok = sanitizeWatsonReply(parse({ search: { pasteId: "p1", terms } }), qs, ps);
+    const ok = sanitizeWatsonReply(parse({ search: { pasteId: "p1", terms } }), qs, ps, new Set());
     expect(ok.search?.terms).toHaveLength(8);
     expect(ok.search?.terms[0]).toHaveLength(200);
-    expect(sanitizeWatsonReply(parse({ search: { pasteId: "nope", terms } }), qs, ps).search).toBeNull();
+    expect(
+      sanitizeWatsonReply(parse({ search: { pasteId: "nope", terms } }), qs, ps, new Set()).search,
+    ).toBeNull();
   });
   it("caps newQuestions, message, memory, query", () => {
     const r = parse({
@@ -89,7 +96,7 @@ describe("sanitizeWatsonReply", () => {
       newQuestions: Array.from({ length: 5 }, (_, i) => ({ question: `q${i}`, why: "w" })),
       request: { kind: "query", language: "vql", query: "q".repeat(30000), why: "w" },
     });
-    const out = sanitizeWatsonReply(r, qs, ps);
+    const out = sanitizeWatsonReply(r, qs, ps, new Set());
     expect(out.message).toHaveLength(WATSON_TURN_TEXT_MAX);
     expect(out.memory).toHaveLength(4000);
     expect(out.newQuestions).toHaveLength(3);
@@ -97,15 +104,19 @@ describe("sanitizeWatsonReply", () => {
   });
   it("normalizes request language", () => {
     const mk = (language: string) =>
-      sanitizeWatsonReply(parse({ request: { kind: "query", language, query: "q", why: "w" } }), qs, ps)
-        .request;
+      sanitizeWatsonReply(
+        parse({ request: { kind: "query", language, query: "q", why: "w" } }),
+        qs,
+        ps,
+        new Set(),
+      ).request;
     expect(mk(" KQL ")).toMatchObject({ language: "kql" });
     expect(mk("Esql")).toMatchObject({ language: "esql" });
     expect(mk("powershell")).toMatchObject({ language: "other" });
   });
   it("does not mutate its input", () => {
     const r = parse({ questionUpdates: [{ questionId: "zz" }] });
-    sanitizeWatsonReply(r, qs, ps);
+    sanitizeWatsonReply(r, qs, ps, new Set());
     expect(r.questionUpdates).toHaveLength(1);
   });
 });

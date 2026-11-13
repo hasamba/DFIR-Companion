@@ -2,12 +2,15 @@ import type { Express, Request, Response } from "express";
 import { requestAuthentication } from "../auth/types.js";
 import { WATSON_TURN_TEXT_MAX } from "../analysis/ai/watson/chatStore.js";
 import { WATSON_PASTE_MAX_BYTES } from "../analysis/ai/watson/pasteSearch.js";
+import { addAnswerAsQuestion } from "../analysis/ai/watson/addQuestion.js";
+import { startNewThread } from "../analysis/ai/watson/thread.js";
 import {
   applyWatsonProposal,
   WatsonProposalConflict,
   WatsonProposalNotFoundError,
   WatsonProposalStateError,
   type WatsonProposalAction,
+  type WatsonProposalDeps,
 } from "../analysis/ai/watson/proposals.js";
 import type { WatsonRoundDeps } from "../analysis/ai/watson/pipelineRound.js";
 import { newWatsonId } from "../analysis/ai/watson/roundProposals.js";
@@ -25,6 +28,8 @@ import type { RouteContext } from "./context.js";
  *   POST /watson/message                 one analyst message → one round (a model call)
  *   POST /watson/paste                   store pasted text or a text file as case evidence, then a round
  *   POST /watson/proposals/:pid/:action  apply | reject | undo one question proposal (no model call)
+ *   POST /watson/turns/:tid/add-question add a turn's free-form answer to the open questions (no model call)
+ *   POST /watson/new-thread              start a fresh chat thread; Watson's memory stays (no model call)
  *
  * A paste is stored and attached only. Nothing parses it into rows (phase 2), and it never starts a
  * synthesis: the case's conclusions are marked out of date instead (#1599).
@@ -81,6 +86,19 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       costLimitUSD: positiveLimit(process.env.DFIR_AI_WATSON_COST_LIMIT_USD),
       tokenLimit: positiveLimit(process.env.DFIR_AI_WATSON_TOKEN_LIMIT),
       onStateChanged: options.onStateChanged,
+    };
+  }
+
+  /** What applying a proposal (or adding an answer as a question) needs; undefined when not wired. */
+  function proposalDeps(): WatsonProposalDeps | undefined {
+    if (!options.watsonChatStore || !options.stateStore || !options.stateLock || !options.activityLogStore) {
+      return undefined;
+    }
+    return {
+      stateStore: options.stateStore,
+      stateLock: options.stateLock,
+      chatStore: options.watsonChatStore,
+      activity: options.activityLogStore,
     };
   }
 
@@ -235,18 +253,12 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     if (!PROPOSAL_ACTIONS.includes(action)) {
       return res.status(400).json({ error: "action must be apply, reject or undo" });
     }
-    if (!options.watsonChatStore || !options.stateStore || !options.stateLock || !options.activityLogStore) {
-      return res.status(501).json({ error: "Watson is not configured" });
-    }
+    const deps = proposalDeps();
+    if (!deps) return res.status(501).json({ error: "Watson is not configured" });
     if (await caseMissing(caseId)) return res.status(404).json({ error: "case not found" });
     try {
       const result = await applyWatsonProposal(
-        {
-          stateStore: options.stateStore,
-          stateLock: options.stateLock,
-          chatStore: options.watsonChatStore,
-          activity: options.activityLogStore,
-        },
+        deps,
         caseId,
         req.params.pid,
         action as WatsonProposalAction,
@@ -258,6 +270,35 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
         chat: result.chat,
         ...(result.state ? { state: { keyQuestions: result.state.keyQuestions } } : {}),
       });
+    } catch (err) {
+      return sendWatsonError(res, err);
+    } finally {
+      options.onWatson?.(caseId);
+    }
+  });
+
+  app.post("/cases/:id/watson/turns/:tid/add-question", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    const deps = proposalDeps();
+    if (!deps) return res.status(501).json({ error: "Watson is not configured" });
+    if (await caseMissing(caseId)) return res.status(404).json({ error: "case not found" });
+    try {
+      const result = await addAnswerAsQuestion(deps, caseId, req.params.tid, actorName(req));
+      options.onStateChanged?.(caseId);
+      return res.status(200).json({ chat: result.chat, state: { keyQuestions: result.state.keyQuestions } });
+    } catch (err) {
+      return sendWatsonError(res, err);
+    } finally {
+      options.onWatson?.(caseId);
+    }
+  });
+
+  app.post("/cases/:id/watson/new-thread", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    if (!options.watsonChatStore) return res.status(501).json({ error: "Watson is not configured" });
+    if (await caseMissing(caseId)) return res.status(404).json({ error: "case not found" });
+    try {
+      return res.status(200).json(await startNewThread(options.watsonChatStore, caseId));
     } catch (err) {
       return sendWatsonError(res, err);
     } finally {

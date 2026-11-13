@@ -50,6 +50,56 @@
     );
   }
 
+  // The answer to a free-form question: badge, answer, where to look, cited events, the add button.
+  // citeEvents (dashboard-ioc-provenance.js) escapes the ids and links them to the timeline.
+  function answerHtml(t) {
+    const a = t.answer;
+    if (!a) return "";
+    const ids = Array.isArray(a.relatedEventIds) ? a.relatedEventIds : [];
+    const cited = typeof citeEvents === "function" ? citeEvents(ids) : "";
+    const used = !!t.answerProposalId;
+    return (
+      `<div class="watson-ans"><div>${statusBadge(a.status)} <strong>${esc(a.question)}</strong></div>` +
+      `<div>${esc(a.answer || "(no answer)")}</div>` +
+      (a.pointer ? `<div class="watson-why">→ where to look: ${esc(a.pointer)}</div>` : "") +
+      (cited ? `<div class="watson-why">cited events: ${cited}</div>` : "") +
+      `<div><button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="addQuestion" data-tid="${escAttr(t.id)}"` +
+      ` title="Add this to the case's open Key Investigative Questions, with the pointer"${used ? " disabled" : ""}>` +
+      `${used ? "Added to open questions" : "Add to open questions"}</button></div></div>`
+    );
+  }
+
+  // What the round could not carry whole. Shown to the analyst, not only told to the model (#452).
+  function coverageHtml(c) {
+    if (!c) return "";
+    const used = Number(c.usedEvents);
+    const total = Number(c.eventCount);
+    const line = (text) => `<div class="watson-cov">⚠ ${text}</div>`;
+    return (
+      (Number.isFinite(used) && Number.isFinite(total) && used < total
+        ? line(`answered from ${esc(String(used))} of ${esc(String(total))} in-scope events — the timeline was trimmed to fit the model`)
+        : "") +
+      (c.decisionsTrimmed
+        ? line("some of your case decisions — hypotheses, scope, marks, notebook — were trimmed to fit the model")
+        : "") +
+      (c.headTrimmed ? line("part of the case summary was trimmed to fit the model") : "")
+    );
+  }
+
+  // #2468: no forensic-timeline events and no findings yet, so an answer would have nothing to read.
+  // A count that is only a lower bound is not "zero".
+  function caseIsEmpty(st) {
+    if (!st || st.forensicTimelineTotalIsLowerBound) return false;
+    const events =
+      typeof st.forensicTimelineTotal === "number"
+        ? st.forensicTimelineTotal
+        : Array.isArray(st.forensicTimeline)
+          ? st.forensicTimeline.length
+          : -1;
+    const findings = Array.isArray(st.findings) ? st.findings.length : -1;
+    return events === 0 && findings === 0;
+  }
+
   function turnHtml(t, proposals) {
     const cls = "watson-turn watson-" + (t.error ? "warn" : t.role);
     const who = t.role === "analyst" ? esc(t.actor || "You") : t.role === "system" ? "System" : "Watson";
@@ -62,6 +112,8 @@
       `<div class="${cls}"><div class="watson-who">${who}</div>` +
       (t.workingOn ? `<div class="watson-meta"><b>Working on:</b> ${esc(t.workingOn)}</div>` : "") +
       `<div class="watson-text">${esc(t.text)}</div>` +
+      answerHtml(t) +
+      coverageHtml(t.coverage) +
       (t.learned ? `<div class="watson-meta"><b>Learned:</b> ${esc(t.learned)}</div>` : "") +
       requestHtml(t.request) +
       props +
@@ -98,7 +150,8 @@
       `<div class="watson-actions">` +
       `<button type="button" data-act="watsonAct" data-w-verb="send">Send</button> ` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="pasteToggle">Paste evidence</button> ` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="attachPick">Attach file</button>` +
+      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="attachPick">Attach file</button> ` +
+      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="newThread" title="Start a fresh thread: Watson keeps its case memory, the earlier chat stays in the history">↺ New thread</button>` +
       `<input type="file" class="watson-file" data-act="watsonAct" data-act-on="change" data-w-verb="file" accept=".txt,.log,.csv,.tsv,.json,.xml,text/*,application/json,application/xml" />` +
       `</div></div>`
     );
@@ -128,6 +181,7 @@
 
   window.watsonTurnHtml = turnHtml;
   window.watsonBoardHtml = boardHtml;
+  window.watsonCaseIsEmpty = caseIsEmpty;
   window.watsonPanelHtml = panelHtml;
   window.watsonSectionHtml = sectionHtml;
 })();

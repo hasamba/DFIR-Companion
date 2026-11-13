@@ -72,7 +72,9 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
       (q) =>
         `- [${line(q.id, ID_CHARS)}] (${q.status}) ${line(q.question, WATSON_QUESTION_CHARS)}${q.answer ? ` — answer: ${line(q.answer, WATSON_ANSWER_CHARS)}` : ""}`,
     );
-  const recent = chat.turns
+  // "New thread": only turns at or after the boundary are chat. Memory and the case context stay.
+  const start = chat.threadStartAt;
+  const recent = (start ? chat.turns.filter((t) => t.at >= start) : chat.turns)
     .slice(-WATSON_RECENT_TURNS)
     .map((t) => `${t.role}: ${clip(t.text, WATSON_TURN_PROMPT_MAX)}`);
   const changes = chat.pendingCaseEvents

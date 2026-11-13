@@ -7,9 +7,9 @@ import type { WatsonProposal } from "./types.js";
 // applies or rejects each proposal later. Every question Watson writes is pinned and authored
 // "watson", and its id is fixed now so applying the proposal later keeps it stable.
 
-const QUESTION_MAX = 500;
-const ANSWER_MAX = 1500;
-const POINTER_MAX = 500;
+export const QUESTION_MAX = 500;
+export const ANSWER_MAX = 1500;
+export const POINTER_MAX = 500;
 
 export const newWatsonId = (prefix: string): string => `${prefix}-${randomBytes(4).toString("hex")}`;
 

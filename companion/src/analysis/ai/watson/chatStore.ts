@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
+import { questionStatusSchema } from "../../responseSchema.js";
 import type { InvestigationQuestion } from "../../stateTypes.js";
 import { emptyWatsonChat, type WatsonChat, type WatsonProposal, type WatsonTurn } from "./types.js";
 
@@ -17,6 +18,14 @@ const requestSchema = z.union([
   z.object({ kind: z.literal("query"), language: z.string(), query: z.string(), why: z.string() }),
   z.object({ kind: z.literal("import"), what: z.string(), why: z.string() }),
 ]);
+
+const answerSchema = z.object({
+  question: z.string(),
+  status: questionStatusSchema,
+  answer: z.string(),
+  pointer: z.string(),
+  relatedEventIds: z.array(z.string()).catch([]),
+});
 
 const turnSchema = z.object({
   id: z.string(),
@@ -39,6 +48,8 @@ const turnSchema = z.object({
       headTrimmed: z.boolean().optional(),
     })
     .optional(),
+  answer: answerSchema.optional().catch(undefined),
+  answerProposalId: z.string().optional(),
 });
 
 const question = z.custom<InvestigationQuestion>(
@@ -91,6 +102,7 @@ function parseChat(raw: unknown): WatsonChat {
     costUSD: num(o.costUSD),
     tokens: num(o.tokens),
     calls: num(o.calls),
+    ...(typeof o.threadStartAt === "string" && o.threadStartAt ? { threadStartAt: o.threadStartAt } : {}),
   };
 }
 

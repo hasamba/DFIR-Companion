@@ -461,6 +461,8 @@
     "ROUTE POST /cases/:id/watson/message",
     "ROUTE POST /cases/:id/watson/paste",
     "ROUTE POST /cases/:id/watson/proposals/:pid/:action",
+    "ROUTE POST /cases/:id/watson/turns/:tid/add-question",
+    "ROUTE POST /cases/:id/watson/new-thread",
     "ROUTE POST /cases/:id/ai-preview",
     "ROUTE GET /cases/:id/hypotheses",
     "ROUTE POST /cases/:id/hypotheses/:hid/exclusions",

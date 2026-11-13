@@ -13,6 +13,8 @@ interface Api {
   watsonAct(el: unknown): unknown;
 }
 
+type StateListener = (st: unknown) => void;
+
 class FakeEl {
   innerHTML = "";
   scrollTop = 0;
@@ -66,16 +68,21 @@ function setup(opts: { throwingStorage?: boolean; fetch?: unknown; stored?: Reco
         getItem: (k: string) => opts.stored?.[k] ?? null,
         setItem: () => {},
       };
+  const stateListeners: StateListener[] = [];
   const api = loadDashboardModule<Api>(
     "dashboard-watson.js",
     ["dashboard-escape.js", "dashboard-watson-view.js"],
     {
       document,
+      DfirState: { onLastStateChange: (cb: StateListener) => stateListeners.push(cb) },
+      // the real one links to the timeline; here a marker per id shows which ids reached it
+      citeEvents: (ids: string[]) => (ids || []).map((id) => `[cited ${id}]`).join(" "),
       localStorage: storage,
       fetch: opts.fetch ?? (async () => ({ ok: false, status: 500, json: async () => ({}) })),
     },
   );
-  return { api, log, board, foot, count, dot, panel, body, caseInput };
+  const fireState = (st: unknown) => stateListeners.forEach((cb) => cb(st));
+  return { api, log, board, foot, count, dot, panel, body, caseInput, fireState };
 }
 
 const chatWith = (turns: unknown[], extra: Record<string, unknown> = {}) => ({
@@ -431,5 +438,147 @@ describe("wiring", () => {
   it("the toolbar button and panel exist, and the button has a short label", () => {
     expect(html).toMatch(/<button id="watsonToggle"[^>]*>Watson<\/button>/);
     expect(html).toContain('id="watsonPanel"');
+  });
+});
+
+describe("a free-form answer in the Watson log", () => {
+  const answerTurn = (extra: Record<string, unknown> = {}) => ({
+    id: "wt-9",
+    at: "x",
+    role: "watson",
+    text: "Here is what the case shows.",
+    answer: {
+      question: "Which <b>host</b>?",
+      status: "partial",
+      answer: "<img src=x onerror=1> HOST-A",
+      pointer: "<script>1</script> the PowerShell log",
+      relatedEventIds: ["e1", "e2"],
+    },
+    ...extra,
+  });
+
+  it("shows the badge, the answer, the pointer and the cited events, all escaped", () => {
+    const { api, log } = setup();
+    api.renderWatson(chatWith([answerTurn()]));
+    expect(log.innerHTML).toContain("q-status-partial");
+    expect(log.innerHTML).toContain("&lt;img src=x onerror=1&gt; HOST-A");
+    expect(log.innerHTML).toContain("where to look: &lt;script&gt;1&lt;/script&gt; the PowerShell log");
+    expect(log.innerHTML).toContain("Which &lt;b&gt;host&lt;/b&gt;?");
+    expect(log.innerHTML).not.toContain("<img");
+    expect(log.innerHTML).not.toContain("<script>");
+    expect(log.innerHTML).toContain("[cited e1] [cited e2]");
+    expect(log.innerHTML).toContain('data-w-verb="addQuestion"');
+    expect(log.innerHTML).toContain('data-tid="wt-9"');
+    expect(log.innerHTML).not.toContain(" disabled");
+  });
+
+  it("disables Add to open questions once the answer was added", () => {
+    const { api, log } = setup();
+    api.renderWatson(chatWith([answerTurn({ answerProposalId: "wp-1" })]));
+    expect(log.innerHTML).toMatch(/data-w-verb="addQuestion"[^>]* disabled/);
+  });
+
+  it("shows no answer card on a turn without an answer", () => {
+    const { api, log } = setup();
+    api.renderWatson(chatWith([{ id: "t", at: "x", role: "watson", text: "hi" }]));
+    expect(log.innerHTML).not.toContain("addQuestion");
+  });
+
+  it("shows the coverage line only when the timeline was trimmed", () => {
+    const { api, log } = setup();
+    api.renderWatson(chatWith([answerTurn({ coverage: { usedEvents: 120, eventCount: 5000 } })]));
+    expect(log.innerHTML).toContain(
+      "answered from 120 of 5000 in-scope events — the timeline was trimmed to fit the model",
+    );
+    api.renderWatson(chatWith([answerTurn()]));
+    expect(log.innerHTML).not.toContain("in-scope events");
+    api.renderWatson(
+      chatWith([answerTurn({ coverage: { usedEvents: 50, eventCount: 50, headTrimmed: true } })]),
+    );
+    expect(log.innerHTML).not.toContain("in-scope events");
+  });
+
+  it("discloses trimmed case decisions and a trimmed case summary on their own lines", () => {
+    const { api, log } = setup();
+    api.renderWatson(
+      chatWith([answerTurn({ coverage: { usedEvents: 9, eventCount: 9, decisionsTrimmed: true } })]),
+    );
+    expect(log.innerHTML).toContain(
+      "some of your case decisions — hypotheses, scope, marks, notebook — were trimmed to fit the model",
+    );
+    expect(log.innerHTML).not.toContain("case summary was trimmed");
+    api.renderWatson(
+      chatWith([answerTurn({ coverage: { usedEvents: 9, eventCount: 9, headTrimmed: true } })]),
+    );
+    expect(log.innerHTML).toContain("part of the case summary was trimmed to fit the model");
+    expect(log.innerHTML).not.toContain("case decisions");
+  });
+
+  it("Add to open questions posts to the turn, then refreshes the chat and the board", async () => {
+    const calls: string[] = [];
+    const q = { id: "wq-1", question: "ADDED QUESTION", status: "partial", answer: "", pointer: "" };
+    const fetch = async (url: string, init?: { method?: string }) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      return response(200, {
+        chat: chatWith([answerTurn({ answerProposalId: "wp-1" })]),
+        state: { keyQuestions: [q] },
+      });
+    };
+    const { api, log, board } = setup({ fetch });
+    api.renderWatson(chatWith([answerTurn()]));
+    await api.watsonAct({ dataset: { wVerb: "addQuestion", tid: "wt-9" } });
+    expect(calls).toEqual(["POST /cases/c1/watson/turns/wt-9/add-question"]);
+    expect(board.innerHTML).toContain("ADDED QUESTION");
+    expect(log.innerHTML).toMatch(/data-w-verb="addQuestion"[^>]* disabled/);
+  });
+
+  it("New thread posts and shows the system turn", async () => {
+    const calls: string[] = [];
+    const fetch = async (url: string, init?: { method?: string }) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      return response(
+        200,
+        chatWith([
+          { id: "s", at: "x", role: "system", text: "New thread — Watson starts from its case memory" },
+        ]),
+      );
+    };
+    const { api, log } = setup({ fetch });
+    api.renderWatson(chatWith([]));
+    await api.watsonAct({ dataset: { wVerb: "newThread" } });
+    expect(calls).toEqual(["POST /cases/c1/watson/new-thread"]);
+    expect(log.innerHTML).toContain("New thread — Watson starts");
+  });
+
+  it("has a New thread button in the composer", () => {
+    const html = readFileSync(
+      new URL("../../../public/js/dashboard-watson-view.js", import.meta.url),
+      "utf8",
+    );
+    expect(html).toContain('data-w-verb="newThread"');
+  });
+});
+
+describe("the empty-case hint in the Watson log", () => {
+  it("shows when the log is empty and the case has no forensic events and no findings", () => {
+    const { api, log, fireState } = setup();
+    api.initWatson();
+    api.renderWatson(chatWith([]));
+    fireState({ forensicTimelineTotal: 0, findings: [] });
+    expect(log.innerHTML).toContain("No forensic-timeline events or findings yet");
+    fireState({ forensicTimelineTotal: 12, findings: [] });
+    expect(log.innerHTML).not.toContain("No forensic-timeline events or findings yet");
+    fireState({ forensicTimeline: [], findings: [{ id: "f1" }] });
+    expect(log.innerHTML).not.toContain("No forensic-timeline events or findings yet");
+    fireState({ forensicTimelineTotalIsLowerBound: true, forensicTimelineTotal: 0, findings: [] });
+    expect(log.innerHTML).not.toContain("No forensic-timeline events or findings yet");
+  });
+
+  it("is not shown once the log has turns", () => {
+    const { api, log, fireState } = setup();
+    api.initWatson();
+    api.renderWatson(chatWith([{ id: "t", at: "x", role: "watson", text: "hi" }]));
+    fireState({ forensicTimelineTotal: 0, findings: [] });
+    expect(log.innerHTML).not.toContain("No forensic-timeline events or findings yet");
   });
 });

@@ -287,6 +287,42 @@ describe("Watson routes", () => {
     expect(res.status).toBe(423);
   });
 
+  it("adds a free-form answer to the open questions, once, and starts a new thread", async () => {
+    const answer = {
+      question: "Which host ran it?",
+      status: "answered" as const,
+      answer: "HOST-A",
+      pointer: "the PowerShell log",
+      relatedEventIds: [],
+    };
+    const { app, chatStore, stateStore } = await harness();
+    await chatStore.update(CASE, (c) => ({
+      ...c,
+      turns: [{ id: "wt-1", at: "2026-01-01T00:00:00Z", role: "watson", text: "HOST-A.", answer }],
+    }));
+    const res = await request(app).post(`/cases/${CASE}/watson/turns/wt-1/add-question`);
+    expect(res.status).toBe(200);
+    expect(
+      res.body.state.keyQuestions.some((q: { question: string }) => q.question === answer.question),
+    ).toBe(true);
+    expect(res.body.chat.proposals[0].status).toBe("applied");
+    expect((await stateStore.loadOverview(CASE)).keyQuestions.some((q) => q.author === "watson")).toBe(true);
+    expect((await request(app).post(`/cases/${CASE}/watson/turns/wt-1/add-question`)).status).toBe(409);
+    expect((await request(app).post(`/cases/${CASE}/watson/turns/nope/add-question`)).status).toBe(404);
+    const thread = await request(app).post(`/cases/${CASE}/watson/new-thread`);
+    expect(thread.status).toBe(200);
+    expect(typeof thread.body.threadStartAt).toBe("string");
+    expect(thread.body.turns.at(-1).role).toBe("system");
+    expect((await request(app).post("/cases/nope/watson/new-thread")).status).toBe(404);
+  });
+
+  it("refuses add-question and new-thread on a closed case", async () => {
+    const { app, store } = await harness();
+    await store.updateCaseMeta(CASE, { status: "closed" });
+    expect((await request(app).post(`/cases/${CASE}/watson/turns/t/add-question`)).status).toBe(423);
+    expect((await request(app).post(`/cases/${CASE}/watson/new-thread`)).status).toBe(423);
+  });
+
   it("gives Watson POSTs the case write policy and GET the read policy", () => {
     expect(resolveRequestPolicy("POST", `/cases/${CASE}/watson/message`)).toMatchObject({
       permission: "write",
@@ -295,6 +331,12 @@ describe("Watson routes", () => {
       permission: "write",
     });
     expect(resolveRequestPolicy("POST", `/cases/${CASE}/watson/proposals/p/apply`)).toMatchObject({
+      permission: "write",
+    });
+    expect(resolveRequestPolicy("POST", `/cases/${CASE}/watson/new-thread`)).toMatchObject({
+      permission: "write",
+    });
+    expect(resolveRequestPolicy("POST", `/cases/${CASE}/watson/turns/t/add-question`)).toMatchObject({
       permission: "write",
     });
     expect(resolveRequestPolicy("GET", `/cases/${CASE}/watson`)).toMatchObject({ permission: "read" });

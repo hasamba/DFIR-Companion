@@ -20,6 +20,7 @@
   let wSeq = 0;
   let wSeen = 0;
   let wNotice = null; // { text } — a warning shown under the log
+  let wEmpty = false; // the case has no forensic events and no findings (#2468)
   let wNoAi = false; // the server has no Watson provider: the panel is hidden
   let wHidden = null; // the analyst's show/hide choice, seeded from storage (a blocked store still toggles)
   const wBusy = new Set(); // case ids with a request in flight
@@ -51,7 +52,11 @@
   function logHtml() {
     if (!wChat) return `<div class="watson-empty">Open a case to talk to Watson.</div>`;
     const turns = wChat.turns.map((t) => watsonTurnHtml(t, wChat.proposals)).join("");
-    const hint = wChat.turns.length ? "" : `<div class="watson-empty">Ask Watson about this case, or paste evidence.</div>`;
+    const hint = wChat.turns.length
+      ? ""
+      : wEmpty
+        ? `<div class="watson-empty">No forensic-timeline events or findings yet — import evidence first; until then an answer has nothing to read.</div>`
+        : `<div class="watson-empty">Ask Watson about this case, or paste evidence.</div>`;
     const warn = wNotice ? `<div class="watson-turn watson-warn"><div class="watson-text">${esc(wNotice.text)}</div></div>` : "";
     const thinking = wBusy.has(currentCase()) ? `<div class="watson-empty">Watson is thinking…</div>` : "";
     return hint + turns + warn + thinking;
@@ -257,12 +262,12 @@
     return post(caseId, "/paste", { text, filename: f.name }, "paste");
   }
 
-  async function proposal(el, verb) {
-    const pid = el.dataset.pid;
+  // A write that answers { chat, state?: { keyQuestions } } (a proposal decision, an added answer).
+  async function decide(path) {
     const caseId = currentCase();
     wNotice = null;
     try {
-      const r = await fetch(api(caseId, `/proposals/${encodeURIComponent(pid)}/${verb}`), { method: "POST" });
+      const r = await fetch(api(caseId, path), { method: "POST" });
       if (!live(caseId)) return;
       if (!r.ok) {
         const text = await failure(r, "proposal", false);
@@ -281,6 +286,10 @@
     }
   }
 
+  const proposal = (el, verb) => decide(`/proposals/${encodeURIComponent(el.dataset.pid)}/${verb}`);
+  const addQuestion = (el) => decide(`/turns/${encodeURIComponent(el.dataset.tid)}/add-question`);
+  const newThread = () => post(currentCase(), "/new-thread", {}, "thread");
+
   function copyQuery(el) {
     const pre = el.parentElement && el.parentElement.querySelector("pre");
     if (pre && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(pre.textContent).catch(() => {});
@@ -298,6 +307,8 @@
     apply: (el) => proposal(el, "apply"),
     reject: (el) => proposal(el, "reject"),
     undo: (el) => proposal(el, "undo"),
+    addQuestion,
+    newThread,
   };
   // data-act="watsonAct": a fixed table, never a lookup of a DOM-supplied name on window.
   function watsonAct(el) {
@@ -315,6 +326,7 @@
     if (typeof DfirState !== "undefined" && DfirState.onLastStateChange) {
       DfirState.onLastStateChange((st) => {
         wQuestions = st && Array.isArray(st.keyQuestions) ? st.keyQuestions : [];
+        wEmpty = watsonCaseIsEmpty(st);
         renderWatson();
       });
     }

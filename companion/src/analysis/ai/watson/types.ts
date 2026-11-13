@@ -1,4 +1,4 @@
-import type { InvestigationQuestion } from "../../stateTypes.js";
+import type { InvestigationQuestion, QuestionStatus } from "../../stateTypes.js";
 
 // Watson: the per-case AI investigation chat agent. These types describe the persisted chat
 // (state/watson-chat.json). Chat text and pasted content may carry adversary-controlled strings,
@@ -18,6 +18,16 @@ export interface WatsonCoverage {
   headTrimmed?: boolean;
 }
 
+/** Watson's answer to a free-form question from the analyst (what Ask used to return). */
+export interface WatsonAnswer {
+  question: string;
+  status: QuestionStatus;
+  answer: string;
+  pointer: string;
+  /** Forensic-timeline event ids the answer cites, already checked against the case. */
+  relatedEventIds: string[];
+}
+
 export interface WatsonTurn {
   id: string;
   at: string;
@@ -32,6 +42,9 @@ export interface WatsonTurn {
   error?: boolean;
   costUSD?: number;
   coverage?: WatsonCoverage;
+  answer?: WatsonAnswer;
+  /** The proposal made when the analyst added this turn's answer to the open questions. */
+  answerProposalId?: string;
 }
 
 export interface WatsonProposal {
@@ -65,6 +78,8 @@ export interface WatsonChat {
   /** Input + output tokens Watson used on this case: the limit for providers that report no cost. */
   tokens: number;
   calls: number;
+  /** ISO time of the last "New thread": RECENT CHAT in the prompt starts here. Memory is kept. */
+  threadStartAt?: string;
 }
 
 export function emptyWatsonChat(): WatsonChat {
