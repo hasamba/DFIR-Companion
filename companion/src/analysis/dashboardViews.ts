@@ -147,6 +147,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     sections: [
       "sec-now",
       "sec-ask",
+      "sec-watson",
       "sec-nlquery",
       "sec-exec",
       "sec-narrative",

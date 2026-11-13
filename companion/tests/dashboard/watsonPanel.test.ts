@@ -185,6 +185,52 @@ describe("409 handling", () => {
   });
 });
 
+describe("fix round 1", () => {
+  const html = readFileSync(new URL("../../../public/js/dashboard-watson.js", import.meta.url), "utf8");
+  it("the rail is a real button that restores the panel, and aria-expanded is off the aside", () => {
+    expect(html).toMatch(/<button type="button" class="watson-rail"[^>]*data-w-verb="collapse"/);
+    expect(html).not.toMatch(/role="button"/);
+    expect(html).not.toContain('panel.setAttribute("aria-expanded"');
+    expect(html).toMatch(/data-w-verb="collapse" aria-expanded="true"/);
+    const { api, panel } = setup();
+    api.renderWatson(chatWith([]));
+    api.toggleWatsonCollapse();
+    api.watsonAct({ dataset: { wVerb: "collapse" } });
+    expect(panel.classList.contains("watson-collapsed")).toBe(false);
+  });
+
+  it("a failed send keeps the analyst's text", async () => {
+    const fetch = async () => ({ ok: false, status: 500, json: async () => ({ error: "boom" }) });
+    const { api } = setup({ fetch });
+    api.renderWatson(chatWith([]));
+    const input = { value: "keep me" };
+    await api.watsonAct({ dataset: { wVerb: "send" }, closest: () => ({ querySelector: () => input }) });
+    expect(input.value).toBe("keep me");
+  });
+
+  it("refuses a paste over 50 MB without posting", async () => {
+    let posted = false;
+    const fetch = async () => {
+      posted = true;
+      return { ok: true, status: 200, json: async () => chatWith([]) };
+    };
+    const { api, log } = setup({ fetch });
+    api.renderWatson(chatWith([]));
+    const area = { value: "x".repeat(50 * 1024 * 1024 + 1) };
+    const box = { classList: { remove() {} } };
+    const root = { querySelector: (s: string) => (s.includes("text") ? area : box) };
+    await api.watsonAct({ dataset: { wVerb: "pasteSend" }, closest: () => root });
+    expect(posted).toBe(false);
+    expect(log.innerHTML).toContain("50 MB");
+  });
+
+  it("Analyst view includes sec-watson after sec-ask", async () => {
+    const { BUILT_IN_DASHBOARD_VIEWS } = await import("../../src/analysis/dashboardViews.js");
+    const a = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === "analyst")!;
+    expect(a.sections.indexOf("sec-watson")).toBe(a.sections.indexOf("sec-ask") + 1);
+  });
+});
+
 describe("wiring", () => {
   const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
   it("sec-watson is in SECTION_DEFS and DASHBOARD_SECTION_IDS", () => {

@@ -92,6 +92,7 @@ describe("dashboardViews — seed integrity", () => {
     expect(analyst!.sections).toEqual([
       "sec-now",
       "sec-ask",
+      "sec-watson",
       "sec-nlquery",
       "sec-exec",
       "sec-narrative",

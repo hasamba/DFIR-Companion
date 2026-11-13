@@ -27,10 +27,7 @@
     try { localStorage.setItem(key, on ? "1" : "0"); } catch { /* a blocked store must not break the toggle */ }
   }
 
-  function currentCase() {
-    const el = document.getElementById("caseId");
-    return el && el.value ? String(el.value).trim() : "";
-  }
+  const currentCase = () => String((document.getElementById("caseId") || {}).value || "").trim();
   const all = (sel) => Array.from(document.querySelectorAll(sel));
   const api = (path) => `/cases/${encodeURIComponent(currentCase())}/watson${path}`;
 
@@ -103,8 +100,7 @@
     if (!wChat) return `<div class="watson-empty">Open a case to talk to Watson.</div>`;
     const turns = wChat.turns.map((t) => turnHtml(t, wChat.proposals)).join("");
     const hint = wChat.turns.length ? "" : `<div class="watson-empty">Ask Watson about this case, or paste evidence.</div>`;
-    const warn = wNotice ? `<div class="watson-turn watson-warn"><div class="watson-text">${esc(wNotice.text)}</div></div>` : "";
-    return hint + turns + warn + (wBusy ? `<div class="watson-empty">Watson is thinking…</div>` : "");
+    const warn = wNotice ? `<div class="watson-turn watson-warn"><div class="watson-text">${esc(wNotice.text)}</div></div>` : "";    return hint + turns + warn + (wBusy ? `<div class="watson-empty">Watson is thinking…</div>` : "");
   }
 
   function boardHtml() {
@@ -167,13 +163,11 @@
     const b = document.body.classList;
     b.toggle("watson-rail-open", !hidden && collapsed);
     b.toggle("watson-panel-open", !hidden && !collapsed);
-    panel.setAttribute("aria-expanded", String(!collapsed));
   }
   function toggleWatsonCollapse() {
     const collapsed = !isCollapsed();
-    const hidden = readFlag(HIDDEN_KEY);
     writeFlag(COLLAPSE_KEY, collapsed);
-    applyPanel(hidden, collapsed);
+    applyPanel(readFlag(HIDDEN_KEY), collapsed);
     renderWatson();
   }
   function toggleWatsonPanel() {
@@ -235,7 +229,8 @@
       });
       if (r.ok) {
         wNotice = null;
-        return renderWatson(await r.json());
+        renderWatson(await r.json());
+        return true;
       }
       wNotice = { text: await failure(r, action) };
     } catch (e) {
@@ -246,43 +241,49 @@
     }
     // a stored paste or a held round still changed the chat
     if (action) loadWatson(currentCase());
+    return false;
   }
 
-  function composerText(el) {
-    const root = el.closest(".watson-root");
-    return root ? root.querySelector(".watson-input") : null;
-  }
+  const composerText = (el) => (el.closest(".watson-root") || document).querySelector(".watson-input");
   function send(el) {
     const input = composerText(el);
     const text = input ? input.value.trim() : "";
     if (!text || wBusy) return;
     input.value = "";
-    return post("/message", { text }, "message");
+    return post("/message", { text }, "message").then((ok) => {
+      if (ok === false && !input.value) input.value = text; // a failed send keeps what the analyst typed
+    });
   }
   function sendPaste(el) {
     const area = el.closest(".watson-root").querySelector(".watson-paste-text");
     const text = area ? area.value : "";
     if (!text.trim() || wBusy) return;
+    const box = el.closest(".watson-root").querySelector(".watson-paste-box");
+    const bytes = typeof TextEncoder === "function" ? new TextEncoder().encode(text).length : text.length;
+    if (bytes > PASTE_LIMIT_BYTES) {
+      wNotice = { text: "That text is larger than 50 MB. Watson takes smaller pastes." };
+      return renderWatson();
+    }
     area.value = "";
-    el.closest(".watson-root").querySelector(".watson-paste-box").classList.remove("watson-on");
-    return post("/paste", { text }, "paste");
+    box.classList.remove("watson-on");
+    return post("/paste", { text }, "paste").then((ok) => {
+      if (ok === false && !area.value) area.value = text;
+    });
   }
 
   function isTextFile(f) {
-    const name = String(f.name || "").toLowerCase();
-    const type = String(f.type || "");
+    const name = String(f.name || "").toLowerCase(), type = String(f.type || "");
     return type.startsWith("text/") || TEXT_TYPES.includes(type) || TEXT_EXTS.some((x) => name.endsWith(x));
   }
   async function attach(el) {
     const f = el.files && el.files[0];
     el.value = "";
     if (!f) return;
-    if (!isTextFile(f)) {
-      wNotice = { text: "Watson reads text files only (text, JSON, XML, CSV, TSV or log). Choose another file." };
-      return renderWatson();
-    }
-    if (f.size > PASTE_LIMIT_BYTES) {
-      wNotice = { text: "That file is larger than 50 MB. Watson takes smaller files." };
+    const refuse = !isTextFile(f)
+      ? "Watson reads text files only (text, JSON, XML, CSV, TSV or log). Choose another file."
+      : f.size > PASTE_LIMIT_BYTES ? "That file is larger than 50 MB. Watson takes smaller files." : "";
+    if (refuse) {
+      wNotice = { text: refuse };
       return renderWatson();
     }
     const text = await f.text();
@@ -309,8 +310,7 @@
 
   function copyQuery(el) {
     const pre = el.parentElement && el.parentElement.querySelector("pre");
-    const text = pre ? pre.textContent : "";
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(() => {});
+    if (pre && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(pre.textContent).catch(() => {});
   }
 
   const VERBS = {
@@ -349,11 +349,11 @@
   }
   function panelHtml() {
     return (
-      `<div class="watson-rail" data-act="watsonAct" data-w-verb="collapse" role="button" tabindex="0" aria-label="Open Watson">` +
-      `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span></div>` +
+      `<button type="button" class="watson-rail" data-act="watsonAct" data-w-verb="collapse" aria-expanded="false" aria-label="Open Watson">` +
+      `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span></button>` +
       `<div class="watson-root watson-full"><div class="watson-head"><strong>Watson</strong>` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="expand">Expand</button>` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="collapse" aria-label="Collapse Watson">Collapse</button></div>` +
+      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson">Collapse</button></div>` +
       `<div class="watson-log" data-w="log"></div>` +
       composerHtml() +
       `<div class="watson-foot" data-w="foot"></div></div>`
