@@ -638,6 +638,28 @@ describe("runWatsonRound", () => {
     expect(chat.turns.at(-1)?.text).toBe("second message works");
   });
 
+  it("a Presidio hold on the auto-attached round keeps the paste unread, with no note", async () => {
+    const h = await harness([reply({ message: "read it" })]);
+    await addPaste(h, "p1", "held paste head line\nmore", true);
+    const inner = h.ctx.analyzeRestored;
+    h.ctx = {
+      ...h.ctx,
+      analyzeRestored: async () => {
+        throw new PresidioApprovalRequired([{ value: "Jane Roe", category: "PERSON" }]);
+      },
+    };
+    await expect(runWatsonRound(h.ctx, CASE, { text: "look" })).rejects.toBeInstanceOf(
+      PresidioApprovalRequired,
+    );
+    const held = await h.chatStore.load(CASE);
+    expect(held.unreadPasteIds).toEqual(["p1"]);
+    expect(held.turns.some((t) => t.text.startsWith("Watson could not read"))).toBe(false);
+    h.ctx = { ...h.ctx, analyzeRestored: inner };
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "approved" });
+    expect(h.provider.sent[0].userPrompt).toContain("1: held paste head line");
+    expect(chat.unreadPasteIds).toEqual([]);
+  });
+
   it("a paste read through a successful search counts as read", async () => {
     const h = await harness([
       reply({ search: { pasteId: "p2", terms: ["needle"] } }),

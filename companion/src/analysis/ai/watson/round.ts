@@ -204,7 +204,9 @@ async function converse(
     first = await ask(excerpt ? { ...base, pasteExcerpt: excerpt } : base);
   } catch (error) {
     // An auto-attached head is not tried again; the paste stays stored and searchable.
-    const giveUp = newPaste && (attach.auto || headFailed) ? newPaste : undefined;
+    // A Presidio hold is not a failure to read: the paste stays unread for the approved retry.
+    const held = error instanceof PresidioApprovalRequired;
+    const giveUp = newPaste && (headFailed || (attach.auto && !held)) ? newPaste : undefined;
     return {
       reply: null,
       error,
