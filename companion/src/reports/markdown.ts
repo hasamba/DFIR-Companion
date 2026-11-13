@@ -244,7 +244,7 @@ function investigationGoals(state: InvestigationState, meta: ReportMeta, lines: 
   }
   if (state.keyQuestions.length > 0) {
     lines.push("Derived from the investigation's key questions:", "");
-    for (const q of state.keyQuestions) lines.push(`- ${displayQuestionText(q.question)}`);
+    for (const q of state.keyQuestions) lines.push(`- ${oneLineMd(displayQuestionText(q.question))}`);
     lines.push("");
     return;
   }

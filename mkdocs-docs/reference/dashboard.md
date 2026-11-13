@@ -6,6 +6,12 @@ When many clients load whole cases at the same time, the server serves a few of 
 
 ---
 
+## Watson
+
+The Watson side panel and section hold the per-case investigation chat and the Key Questions board. See [Watson Case Chat](watson.md).
+
+---
+
 ## Now — Decision Cockpit
 
 **Now** is the default dashboard view for a case that has no saved view preference. It answers the

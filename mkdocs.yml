@@ -64,6 +64,7 @@ nav:
     - Canonical Event Data: reference/canonical-events.md
     - AI Analysis: reference/ai-analysis.md
     - What Each AI Run Sees: reference/ai-runs.md
+    - Watson Case Chat: reference/watson.md
     - MCP Analysis: reference/mcp-analysis.md
     - Presidio & PII Masking: reference/presidio.md
     - Dashboard Panels: reference/dashboard.md
