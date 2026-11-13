@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Watson case agent** — per-case AI investigation chat with a Key Questions board, approve-only proposals, evidence pastes and cost limits (phase 1)
+- **Watson case agent** — per-case investigation chat with a Key Questions board
 
 ## [0.46.0] - 2026-11-13
 

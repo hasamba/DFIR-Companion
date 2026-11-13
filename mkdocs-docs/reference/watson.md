@@ -14,7 +14,7 @@ Each case has one chat. The chat is saved with the case. You can close the dashb
 
 ## The key questions
 
-The first time you open Watson on a case, it adds six standard incident questions to the board. Each question has a status. A question Watson cannot answer from the data you can collect gets the status **Not answerable**. The report shows that status, and it does not read as "no".
+The six standard incident questions appear after your first message to Watson on a case. Each question has a status. A question Watson cannot answer from the data you can collect gets the status **Not answerable**. The report shows that status, and it does not read as "no".
 
 Watson may want to add a question, change one, or change a status. It does not do this by itself. Each change appears as a **proposal**. You choose **Apply** or **Reject**. After you apply a proposal, you can choose **Undo**. In this version Watson changes nothing on the board without your approval.
 
@@ -38,7 +38,7 @@ You can paste text into the chat or attach a text file. Watson stores it as evid
 - The text is not split into timeline rows in this version.
 - A paste does not start a synthesis.
 
-Large pastes, up to several megabytes, are accepted.
+A paste can be up to 50 MB.
 
 ## Watson and synthesis
 
@@ -48,7 +48,7 @@ A synthesis run keeps the answers Watson gave. If a new synthesis reaches a diff
 
 While you use the rest of the dashboard, Watson does not react at once. These actions are queued:
 
-- notes you add
+- notebook edits
 - findings and events you star
 - normal imports
 

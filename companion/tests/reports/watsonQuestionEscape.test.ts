@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { emptyReportMeta } from "../../src/reports/reportMeta.js";
+import { buildNotes } from "../../src/integrations/iris/irisMap.js";
 
 const HOSTILE = "Was it staged?\n## Forged section\n| a | b |\n=cmd|' /C calc'!A0";
 
@@ -14,7 +16,7 @@ describe("Watson-authored key questions in the Markdown report", () => {
     pointer: HOSTILE,
     pinned: true,
     author: "watson",
-  } as never);
+  });
   const md = renderMarkdownReport(state);
 
   it("adds no heading line from question, answer or pointer text", () => {
@@ -29,6 +31,10 @@ describe("Watson-authored key questions in the Markdown report", () => {
     for (let i = start + 2; i < lines.length && lines[i].startsWith("|"); i++) rows.push(lines[i]);
     expect(rows).toHaveLength(1);
     expect(lines[start + 2 + 1] ?? "").not.toMatch(/^\|\s*a\s*\|/);
+    // The pipes inside the cells are escaped, and the formula text sits mid-cell on one line.
+    expect(rows[0]).toContain("\\| a \\| b \\|");
+    expect(rows[0]).toContain("=cmd\\|' /C calc'!A0");
+    expect(rows[0].split(/(?<!\\)\|/)).toHaveLength(6);
   });
 
   it("flattens the goals list entry onto one line", () => {
@@ -37,5 +43,23 @@ describe("Watson-authored key questions in the Markdown report", () => {
     expect(goals).not.toMatch(/^## Forged/m);
     expect(goals).not.toMatch(/^=cmd/m);
     expect(goals).not.toMatch(/^\| a \| b \|/m);
+  });
+});
+
+describe("Watson-authored key questions in the IRIS notes", () => {
+  it("adds no heading or bullet line from hostile question text", () => {
+    const state = emptyState("c1");
+    state.keyQuestions.push({
+      id: "q1",
+      question: HOSTILE,
+      status: "answered",
+      answer: HOSTILE,
+      pointer: HOSTILE,
+    });
+    const note = buildNotes(state, emptyReportMeta()).find((n) => n.title === "Key Investigative Questions");
+    expect(note).toBeDefined();
+    const lines = note!.content.split("\n");
+    expect(lines.filter((l) => l.startsWith("#"))).toHaveLength(1);
+    expect(lines.some((l) => /^(=cmd|\| a)/.test(l))).toBe(false);
   });
 });
