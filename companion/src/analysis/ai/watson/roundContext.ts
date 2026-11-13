@@ -14,6 +14,13 @@ import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { buildSynthesisContext, selectSynthesisEvents } from "../../synthSelect.js";
 import { loadCtxAliasIndex, loadScopedEvents, type AiCallContext } from "../aiContext.js";
 import { promptDescription } from "../promptDescription.js";
+import { analystDecisionBlocks, graphMaxEdges, type AnalystDecisionStores } from "../analystContext.js";
+import { stateEventResolver } from "../../eventAliasLookup.js";
+import { buildGraphContext } from "../../graphContext.js";
+import type { HuntOutcomeStore } from "../../huntOutcomeStore.js";
+import type { HypothesisStore } from "../../hypothesisStore.js";
+import type { NotebookStore } from "../../notebookStore.js";
+import type { AiControlStore } from "../../aiControl.js";
 import type { WatsonChatStore } from "./chatStore.js";
 import { WATSON_PASTE_MAX_BYTES } from "./pasteSearch.js";
 import { WATSON_CASE_CONTEXT_PROMPT_MAX } from "./promptBuilder.js";
@@ -24,6 +31,13 @@ import type { WatsonPaste } from "./types.js";
 // prompt inputs. Watson reads the forensic timeline only — never the super-timeline (spec, §7).
 
 export type WatsonRoundContext = AiCallContext & {
+  /** The analyst's own decisions Watson reads, as Ask did (carried by the pipeline's AI context). */
+  opts: AnalystDecisionStores & {
+    hypothesisStore?: HypothesisStore;
+    huntOutcomeStore?: HuntOutcomeStore;
+    notebookStore?: NotebookStore;
+    aiControlStore?: AiControlStore;
+  };
   chatStore: WatsonChatStore;
   stateStore: StateStore;
   stateLock: StateLock;
@@ -128,27 +142,41 @@ export async function mainLanguages(
 
 const MAX_FINDINGS = 150;
 
-/** The case block of Watson's prompt: synthesis context, path, findings, then timeline rows to fit. */
+/** The case block of Watson's prompt, and how much of the in-scope timeline it carries. */
+export interface WatsonCaseContext {
+  text: string;
+  usedEvents: number;
+  eventCount: number;
+}
+
+/**
+ * The case block of Watson's prompt — what Ask carried: synthesis context, the evidence-chain graph,
+ * path, findings and the analyst's own decisions — then forensic-timeline rows to fit the budget.
+ * The chat is Watson's own, so no Q&A history block.
+ */
 export async function buildWatsonCaseContext(
   ctx: WatsonRoundContext,
   caseId: string,
   state: InvestigationState,
-): Promise<string> {
+): Promise<WatsonCaseContext> {
   const { scoped } = await loadScopedEvents(ctx, caseId, state);
   const aliasIndex = await loadCtxAliasIndex(ctx, caseId);
   const head =
     buildSynthesisContext(state, scoped, await ctx.getKevCatalog(), aliasIndex) +
+    buildGraphContext({ ...state, forensicTimeline: scoped }, { maxEdges: graphMaxEdges() }) +
     `ATTACKER PATH: ${state.attackerPath || "(not reconstructed)"}\n\n` +
     `FINDINGS:\n${
       state.findings
         .slice(0, MAX_FINDINGS)
         .map((f) => `[${f.id}] [${f.severity}] ${f.title}`)
         .join("\n") || "(none)"
-    }\n\n`;
-  return head + timelineBlock(scoped, WATSON_CASE_CONTEXT_PROMPT_MAX - head.length);
+    }\n\n` +
+    (await analystDecisionBlocks(ctx, caseId, [], stateEventResolver(state)));
+  const timeline = timelineBlock(scoped, WATSON_CASE_CONTEXT_PROMPT_MAX - head.length);
+  return { text: head + timeline.text, usedEvents: timeline.used, eventCount: scoped.length };
 }
 
-function timelineBlock(scoped: ForensicEvent[], budget: number): string {
+function timelineBlock(scoped: ForensicEvent[], budget: number): { text: string; used: number } {
   const title = `FORENSIC TIMELINE (${scoped.length} in-scope events, most significant first):\n`;
   const rows: string[] = [];
   let used = title.length;
@@ -158,7 +186,7 @@ function timelineBlock(scoped: ForensicEvent[], budget: number): string {
     rows.push(row);
     used += row.length + 1;
   }
-  return title + (rows.join("\n") || "(no events shown)");
+  return { text: title + (rows.join("\n") || "(no events shown)"), used: rows.length };
 }
 
 /**

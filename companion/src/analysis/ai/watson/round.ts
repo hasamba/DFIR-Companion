@@ -25,7 +25,7 @@ import {
   type WatsonSpend,
 } from "./roundContext.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
-import type { WatsonChat, WatsonPaste, WatsonTurn } from "./types.js";
+import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
 export { WatsonAiOff, WatsonCostLimitReached, type WatsonRoundContext } from "./roundContext.js";
 
@@ -81,6 +81,8 @@ interface Outcome {
   unreadable?: WatsonPaste;
   shownEvents: string[];
   questions: InvestigationState["keyQuestions"];
+  /** Set only when the forensic timeline was trimmed to fit the prompt (#452). */
+  coverage?: WatsonCoverage;
 }
 
 const chatSpend = (c: WatsonChat): WatsonSpend => ({ usd: c.costUSD, tokens: c.tokens });
@@ -151,6 +153,7 @@ async function converse(
   let headFailed = false;
   const shownEvents = chat.pendingCaseEvents.slice(0, WATSON_CASE_EVENTS_MAX);
   let questions: InvestigationState["keyQuestions"] = [];
+  let cover: WatsonCoverage | undefined;
   let first: WatsonReply;
   let ask: (input: WatsonPromptInput) => Promise<WatsonReply>;
   let base: WatsonPromptInput;
@@ -159,13 +162,14 @@ async function converse(
     if (await seedStandardQuestions(ctx, caseId)) ctx.onStateChanged?.(caseId);
     const state = await ctx.stateStore.load(caseId);
     questions = state.keyQuestions;
-    const caseContext = await buildWatsonCaseContext(ctx, caseId, state);
+    const cc = await buildWatsonCaseContext(ctx, caseId, state);
+    if (cc.usedEvents < cc.eventCount) cover = { usedEvents: cc.usedEvents, eventCount: cc.eventCount };
     base = {
       state,
       // The analyst's message is the ANALYST block; it is not repeated as recent chat.
       chat: { ...chat, turns: chat.turns.filter((t) => t.id !== analystTurn.id) },
       analystText: analystTurn.text,
-      caseContext,
+      caseContext: cc.text,
       mainLanguages: await mainLanguages(ctx, caseId, state),
     };
     const known = {
@@ -215,9 +219,10 @@ async function converse(
       ...(giveUp ? { readPasteIds: [giveUp.id], unreadable: giveUp } : {}),
     };
   }
-  const read = newPaste
-    ? { readPasteIds: [newPaste.id], ...(headFailed ? { unreadable: newPaste } : {}) }
-    : {};
+  const read = {
+    ...(newPaste ? { readPasteIds: [newPaste.id], ...(headFailed ? { unreadable: newPaste } : {}) } : {}),
+    ...(cover ? { coverage: cover } : {}),
+  };
   if (!first.search) return { reply: first, shownEvents, questions, ...read };
   const kept: Outcome = { reply: { ...first, search: null }, shownEvents, questions, ...read };
   // At most one search hop per round. From here on a failure never loses the first reply.
@@ -358,6 +363,7 @@ function mergeOutcome(fresh: WatsonChat, outcome: Outcome, spent: WatsonSpend, c
     ...(reply.workingOn ? { workingOn: reply.workingOn } : {}),
     ...(reply.learned ? { learned: reply.learned } : {}),
     ...(reply.request ? { request: reply.request } : {}),
+    ...(outcome.coverage ? { coverage: outcome.coverage } : {}),
     ...(proposals.length ? { proposalIds: proposals.map((p) => p.id) } : {}),
     costUSD: spent.usd,
   };

@@ -8,6 +8,12 @@ export type WatsonRequest =
   | { kind: "query"; language: string; query: string; why: string }
   | { kind: "import"; what: string; why: string };
 
+/** How much of the in-scope forensic timeline a round carried; stored only when it was trimmed. */
+export interface WatsonCoverage {
+  usedEvents: number;
+  eventCount: number;
+}
+
 export interface WatsonTurn {
   id: string;
   at: string;
@@ -21,6 +27,7 @@ export interface WatsonTurn {
   pasteId?: string;
   error?: boolean;
   costUSD?: number;
+  coverage?: WatsonCoverage;
 }
 
 export interface WatsonProposal {

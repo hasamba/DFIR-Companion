@@ -192,7 +192,7 @@ describe("fences and bounds", () => {
       state: stateWith([]),
       chat: { ...emptyWatsonChat(), memory: "M".repeat(9000) },
       analystText: "A".repeat(20000),
-      caseContext: "C".repeat(50000),
+      caseContext: "C".repeat(70000),
       mainLanguages: [],
     });
     expect(out).toContain("M".repeat(B.WATSON_MEMORY_PROMPT_MAX));
