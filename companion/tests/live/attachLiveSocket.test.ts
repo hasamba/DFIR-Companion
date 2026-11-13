@@ -9,7 +9,6 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { LiveHub } from "../../src/live/hub.js";
 import { attachLiveSocket } from "../../src/live/wsGate.js";
 import { hashCasePassword, signUnlockToken, unlockCookieName } from "../../src/analysis/casePassword.js";
-import type { InvestigationState } from "../../src/analysis/stateTypes.js";
 
 let store: CaseStore;
 let hub: LiveHub;
@@ -45,10 +44,7 @@ async function sawStateBroadcast(query: string, headers: Record<string, string> 
     socket.on("error", () => resolve("closed"));
   });
   if (settled === "open") {
-    hub.broadcast({
-      caseId: "locked",
-      findings: [{ secret: "exfiltrated" }],
-    } as unknown as InvestigationState);
+    hub.broadcastTo("locked", { type: "probe", secret: "exfiltrated" });
     await new Promise((r) => setTimeout(r, 50)); // let any message land
   }
   socket.close();
@@ -225,10 +221,7 @@ describe("an upgrade authorized across a password change is refused (#2441)", ()
       releaseRead();
 
       const outcome = await settled;
-      pausedHub.broadcast({
-        caseId: "locked",
-        findings: [{ secret: "exfiltrated" }],
-      } as unknown as InvestigationState);
+      pausedHub.broadcastTo("locked", { type: "probe", secret: "exfiltrated" });
       await new Promise((r) => setTimeout(r, 50));
       socket.terminate();
       expect(outcome).toBe("closed");

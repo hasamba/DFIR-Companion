@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { LiveHub, type SocketLike } from "../../src/live/hub.js";
-import { techniqueNamesFor } from "../../src/analysis/attackTechniqueNames.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
 function fakeSocket(): SocketLike & { sent: string[] } {
@@ -9,7 +8,7 @@ function fakeSocket(): SocketLike & { sent: string[] } {
 }
 
 describe("LiveHub", () => {
-  it("broadcasts state only to subscribers of that case", () => {
+  it("announces a state change only to subscribers of that case", () => {
     const hub = new LiveHub();
     const a = fakeSocket();
     const b = fakeSocket();
@@ -19,40 +18,46 @@ describe("LiveHub", () => {
     hub.broadcast(emptyState("c1"));
     expect(a.sent).toHaveLength(1);
     expect(b.sent).toHaveLength(0);
-    expect(JSON.parse(a.sent[0]).type).toBe("state");
+    expect(JSON.parse(a.sent[0])).toMatchObject({ type: "state_changed", caseId: "c1" });
   });
 
-  // THE LIVE HALF OF THE MITRE NAME FIX. GET /cases/:id/state attaches an id -> name map so the
-  // dashboard can name a technique row it appends from an event; the dashboard reads that map off
-  // whichever state it was last handed, and a live push replaces the fetched state wholesale. So
-  // the push has to carry the same map, built by the same function, or the first import after
-  // page load sends "Inhibit System Recovery" back to "T1490" until a reload.
-  it("carries the ATT&CK name map the state route sends, built by the same function", () => {
+  // #2615: a push used to carry the whole case. With 20,000 events and a few dashboards open that
+  // was hundreds of MB per broadcast; now it is a notice and the dashboard reads the paged state.
+  it("sends a small notice, not the case, however many events it holds (#2615)", () => {
+    const hub = new LiveHub();
+    const sockets = [fakeSocket(), fakeSocket(), fakeSocket()];
+    for (const s of sockets) hub.subscribe("c1", s);
+    const state = emptyState("c1");
+    state.forensicTimeline = Array.from({ length: 20_000 }, (_, i) => ({
+      id: `e${i}`,
+      timestamp: "2026-05-18T02:10:00Z",
+      description: `event ${i} with a reasonably long description to give the row some weight`,
+      severity: "High" as const,
+      mitreTechniques: ["T1490"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    }));
+    hub.broadcast(state);
+    for (const s of sockets) {
+      expect(s.sent).toHaveLength(1);
+      expect(s.sent[0].length).toBeLessThan(1024);
+      const msg = JSON.parse(s.sent[0]);
+      expect(msg.type).toBe("state_changed");
+      expect(msg.caseId).toBe("c1");
+      expect(s.sent[0]).not.toContain("forensicTimeline");
+    }
+  });
+
+  it("numbers notices per case so a dashboard can drop an older one", () => {
     const hub = new LiveHub();
     const s = fakeSocket();
     hub.subscribe("c1", s);
-    const state = emptyState("c1");
-    state.forensicTimeline = [
-      {
-        id: "e1",
-        timestamp: "2026-05-18T02:10:00Z",
-        description: "vssadmin delete shadows",
-        severity: "High",
-        mitreTechniques: ["T1490", "T9999"],
-        relatedFindingIds: [],
-        sourceScreenshots: [],
-      },
-    ];
-    hub.broadcast(state);
-    const msg = JSON.parse(s.sent[0]);
-    // The literal, so a map that silently went empty on both paths cannot agree its way past.
-    expect(msg.state.techniqueNames).toEqual({ T1490: "Inhibit System Recovery" });
-    // And the route's own builder over the same inputs, so the two paths cannot drift apart.
-    expect(msg.state.techniqueNames).toEqual(
-      techniqueNamesFor(state.mitreTechniques, state.forensicTimeline),
-    );
-    // The stored state is untouched: the map is a view on the wire, never written back.
-    expect(state).not.toHaveProperty("techniqueNames");
+    hub.notifyStateChanged("c1");
+    hub.notifyStateChanged("c1");
+    hub.broadcast({ caseId: "c1" } as InvestigationState);
+    const versions = s.sent.map((d) => JSON.parse(d).version as number);
+    expect(versions[1]).toBeGreaterThan(versions[0]);
+    expect(versions[2]).toBeGreaterThan(versions[1]);
   });
 
   // The hub is transport, and its callers include tests that hand it a partial state. A throw
@@ -62,7 +67,7 @@ describe("LiveHub", () => {
     const s = fakeSocket();
     hub.subscribe("c1", s);
     expect(() => hub.broadcast({ caseId: "c1" } as InvestigationState)).not.toThrow();
-    expect(JSON.parse(s.sent[0]).state.techniqueNames).toEqual({});
+    expect(JSON.parse(s.sent[0]).type).toBe("state_changed");
   });
 
   it("drops closed sockets", () => {

@@ -354,8 +354,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     onImport: (caseId) => hub.broadcastAll({ type: "import_ingest", caseId }),
     onState: (s) => hub.broadcast(s),
     onStateChanged: createStateBroadcaster({
-      load: (caseId) => stateStore.load(caseId),
-      broadcast: (s) => hub.broadcast(s),
+      notify: (caseId) => hub.notifyStateChanged(caseId),
       hasSubscribers: (caseId) => hub.hasSubscribers(caseId),
     }),
     enrichmentProviders: buildEnrichmentProviders(),

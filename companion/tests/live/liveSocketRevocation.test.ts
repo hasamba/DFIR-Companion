@@ -11,7 +11,6 @@ import { attachLiveSocket } from "../../src/live/wsGate.js";
 import { AuthStore } from "../../src/auth/authStore.js";
 import { TeamAuth } from "../../src/auth/teamAuth.js";
 import type { AuthIdentity } from "../../src/auth/types.js";
-import type { InvestigationState } from "../../src/analysis/stateTypes.js";
 
 // #2449: in team mode a live dashboard socket was authorized only when it opened. Disabling the
 // user, signing them out, removing their case role or demoting them left the socket streaming the
@@ -121,7 +120,7 @@ async function closesSoon(client: Client): Promise<boolean> {
 
 async function receivesBroadcast(client: Client): Promise<boolean> {
   const marker = `marker-${randomBytes(4).toString("hex")}`;
-  hub.broadcast({ caseId: "c1", findings: [{ secret: marker }] } as unknown as InvestigationState);
+  hub.broadcastTo("c1", { type: "probe", secret: marker });
   await new Promise((r) => setTimeout(r, 100));
   return client.received.some((m) => m.includes(marker));
 }
