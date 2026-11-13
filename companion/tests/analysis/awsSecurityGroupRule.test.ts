@@ -44,6 +44,45 @@ describe("isAnyAddress (#2605)", () => {
   });
 });
 
+describe("isAnyAddress validates the address (#2625)", () => {
+  it("garbage before /0 is not any address", () => {
+    for (const v of [
+      "abcde/0",
+      ":::/0",
+      "....../0",
+      "1.2.3/0",
+      "256.1.1.1/0",
+      "1.2.3.4.5/0",
+      "01.2.3.4/0",
+      "fe80::1%eth0/0",
+    ])
+      expect(isAnyAddress(v), v).toBe(false);
+  });
+  it("a real address with /0 still is, host bits and IPv4-mapped included; a non-decimal prefix never is", () => {
+    for (const v of ["::ffff:192.0.2.1/0", "1.2.3.4/0", "2001:db8::1/0"])
+      expect(isAnyAddress(v), v).toBe(true);
+    expect(isAnyAddress("0.0.0.0/0e0")).toBe(false);
+  });
+  it("garbage alone never sets anySource, on any form; a valid /0 beyond the retained list still does", () => {
+    const g = ingressPermissions(legacy("abcde/0"), 8);
+    expect(g.anySource).toBe(false);
+    expect(g.retained[0].source).toBe("abcde/0");
+    expect(ingressPermissions(itemsForm(["abcde/0"], [":::/0"]), 8).anySource).toBe(false);
+    const mixed = ingressPermissions(itemsForm(["abcde/0", "....../0"], ["::/0"]), 2);
+    expect(mixed.retained).toHaveLength(2);
+    expect(mixed.anySource).toBe(true);
+  });
+  it("the row keeps the literal source and makes no any-address claim", () => {
+    const text = securityGroupRuleReading(
+      "AuthorizeSecurityGroupIngress",
+      "ec2.amazonaws.com",
+      legacy("abcde/0"),
+    );
+    expect(text).toContain("from abcde/0");
+    expect(text).not.toContain("(any address)");
+  });
+});
+
 describe("ingressPermissions (#2605)", () => {
   it("reads the legacy top-level form", () => {
     const p = ingressPermissions(legacy(), 8);

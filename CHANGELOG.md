@@ -73,6 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cloud tool compatibility matrix** — manual page listing which MES, DFIR-O365RC, Log Analytics, Azure, AWS and GCP export lands where, plus a large-export benchmark (closes #2300)
 
 ### Fixed
+- **"Any address" only for a real address** — a security-group source with a `/0` suffix but a malformed address (for example `abcde/0`) is shown as written, with no "(any address)" claim and no any-address fact; a real `x.x.x.x/0` or `::/0` is unchanged (closes #2625)
 - **Report Case Details stay on one line** — a newline in organization, incident ID, investigators, reviewer, manager, restrictions or company name no longer forges a heading or table in the Markdown, HTML and DOCX reports (closes #2618)
 - **No `[type-seed]` marker in reports** — seeded incident-type questions read cleanly in the report, hand-off, Notion and IRIS outputs; the stored question is unchanged (closes #2621)
 - **CrowdStrike DNS domains checked before they become IOCs** — a DnsRequest DomainName that is not a domain stays on the row but is no longer a domain IOC (closes #2620)

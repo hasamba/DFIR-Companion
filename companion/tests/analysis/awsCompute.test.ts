@@ -329,6 +329,13 @@ describe("awsComputeLifecycles — recorded configuration changes", () => {
     );
   });
 
+  it("a malformed /0 source on a group the instance holds is no any-address fact (#2625)", () => {
+    const [open] = rows([launch(), ingress(SG, "abcde/0", { eventTime: at(70) })]);
+    expect(open.severity).toBe("Low");
+    expect(open.description).not.toContain("(any address)");
+    expect(open.description).not.toContain("any-address ingress rule");
+  });
+
   it("an any-address ingress rule recorded on a group the instance holds is Medium and says 'recorded', never 'allows'; a group source or another group is not", () => {
     const [open] = rows([launch(), ingress(SG, "0.0.0.0/0", { eventTime: at(70) })]);
     expect(open.severity).toBe("Medium");
