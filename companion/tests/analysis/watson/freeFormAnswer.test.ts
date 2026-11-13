@@ -16,7 +16,11 @@ import {
 } from "../../../src/analysis/ai/watson/proposals.js";
 import { runWatsonRound, type WatsonRoundContext } from "../../../src/analysis/ai/watson/round.js";
 import { startNewThread } from "../../../src/analysis/ai/watson/thread.js";
-import { emptyWatsonChat, type WatsonTurn } from "../../../src/analysis/ai/watson/types.js";
+import {
+  emptyWatsonChat,
+  type WatsonQuestionProposal,
+  type WatsonTurn,
+} from "../../../src/analysis/ai/watson/types.js";
 import { StateLock } from "../../../src/analysis/stateLock.js";
 import { StateStore } from "../../../src/analysis/stateStore.js";
 import { emptyState, type ForensicEvent } from "../../../src/analysis/stateTypes.js";
@@ -102,7 +106,13 @@ async function harness(replies: string[]) {
     isAiEnabled: async () => true,
   };
   const activity = new ActivityLogStore(cases);
-  return { ctx, provider, chatStore, stateStore, deps: { stateStore, stateLock, chatStore, activity } };
+  return {
+    ctx,
+    provider,
+    chatStore,
+    stateStore,
+    deps: { stateStore, stateLock, chatStore, activity, markConclusionsOutOfDate: async () => {} },
+  };
 }
 
 const answerReply = (over: Record<string, unknown> = {}) =>
@@ -156,7 +166,7 @@ describe("addAnswerAsQuestion", () => {
   it("adds one applied proposal and one pinned Watson question; a second call is refused; undo removes it", async () => {
     const { h, turnId } = await withAnswer();
     const out = await addAnswerAsQuestion(h.deps, CASE, turnId, "ana");
-    const added = out.chat.proposals.filter((p) => p.turnId === turnId);
+    const added = out.chat.proposals.filter((p) => p.turnId === turnId) as WatsonQuestionProposal[];
     expect(added).toHaveLength(1);
     expect(added[0]).toMatchObject({ kind: "question_new", status: "applied" });
     expect(added[0].questionId).toMatch(/^wq-[0-9a-f]{8}$/);

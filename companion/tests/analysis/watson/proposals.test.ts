@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ActivityLogStore, NewActivityEntry } from "../../../src/analysis/activityLog.js";
+import { addAnswerAsQuestion } from "../../../src/analysis/ai/watson/addQuestion.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
 import {
   applyWatsonProposal,
@@ -118,7 +119,13 @@ describe("applyWatsonProposal", () => {
         return e;
       },
     } as unknown as ActivityLogStore;
-    deps = { stateStore: mem.store, stateLock: new StateLock(), chatStore, activity };
+    deps = {
+      stateStore: mem.store,
+      stateLock: new StateLock(),
+      chatStore,
+      activity,
+      markConclusionsOutOfDate: async () => {},
+    };
   });
 
   afterEach(async () => {
@@ -324,5 +331,66 @@ describe("applyWatsonProposal", () => {
     release();
     await Promise.all([held, run]);
     expect(order).toEqual(["other start", "other end", "apply done"]);
+  });
+  it("a phase 1 chat file with question proposals loads unchanged and undoes as before", async () => {
+    const phase1 = { ...emptyWatsonChat(), proposals: [{ ...updateProposal, status: "applied" }] };
+    await writeFile(join(dir, "watson-chat.json"), JSON.stringify(phase1));
+    expect((await chatStore.load(CASE)).proposals).toEqual(phase1.proposals);
+    mem.state = { ...mem.state, keyQuestions: [{ ...updated }] };
+    await applyWatsonProposal(deps, CASE, "wp-u", "undo", "bob");
+    expect(mem.state.keyQuestions).toEqual([original]);
+    expect(entries).toEqual([
+      expect.objectContaining({ action: "watson.undo", targetType: "question", targetId: "q1" }),
+    ]);
+  });
+
+  it("apply stamps appliedBy and appliedAt on the proposal", async () => {
+    await applyWatsonProposal(deps, CASE, "wp-n", "apply", "alice");
+    const p = (await chatStore.load(CASE)).proposals.find((x) => x.id === "wp-n");
+    expect(p).toMatchObject({ status: "applied", appliedBy: "alice" });
+    expect(p?.appliedAt).toBeTruthy();
+  });
+
+  it("addAnswerAsQuestion applies and undoes through the writer dispatch", async () => {
+    const answer = {
+      question: "Who sent the mail?",
+      status: "answered" as const,
+      answer: "mailer.example.com",
+      pointer: "mail log",
+      relatedEventIds: [],
+    };
+    await chatStore.save(CASE, {
+      ...emptyWatsonChat(),
+      turns: [{ id: "t9", at: "2026-01-01T00:00:00Z", role: "watson", text: "x", answer }],
+    });
+    const out = await addAnswerAsQuestion(deps, CASE, "t9", "alice");
+    const added = out.chat.proposals[0];
+    expect(added).toMatchObject({ kind: "question_new", status: "applied", appliedBy: "alice" });
+    expect(mem.state.keyQuestions.map((q) => q.question)).toContain("Who sent the mail?");
+    await applyWatsonProposal(deps, CASE, added.id, "undo");
+    expect(mem.state.keyQuestions).toEqual([original]);
+  });
+
+  it("a kind with no writer yet is refused and stays pending", async () => {
+    await chatStore.save(CASE, {
+      ...emptyWatsonChat(),
+      proposals: [
+        {
+          id: "wp-r",
+          turnId: "t1",
+          kind: "report_text",
+          targetId: "conclusions",
+          field: "conclusions",
+          before: "",
+          after: "x",
+          status: "pending",
+        },
+      ],
+    });
+    await expect(applyWatsonProposal(deps, CASE, "wp-r", "apply")).rejects.toBeInstanceOf(
+      WatsonProposalConflict,
+    );
+    expect(await statusOf("wp-r")).toBe("pending");
+    expect(entries).toEqual([]);
   });
 });

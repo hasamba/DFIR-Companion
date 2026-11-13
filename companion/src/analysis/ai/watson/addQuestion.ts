@@ -3,15 +3,15 @@ import {
   applyWatsonProposal,
   WatsonProposalNotFoundError,
   WatsonProposalStateError,
-  type WatsonProposalDeps,
+  type WriterDeps,
 } from "./proposals.js";
 import { ANSWER_MAX, newWatsonId, POINTER_MAX, QUESTION_MAX } from "./roundProposals.js";
-import type { WatsonAnswer, WatsonChat, WatsonProposal } from "./types.js";
+import type { WatsonAnswer, WatsonChat, WatsonQuestionProposal } from "./types.js";
 
 // "Add to open questions" on a Watson answer: the analyst's click is the approval, so the question
 // is proposed and applied in one call. The proposal stays on the chat, so Undo works as for any other.
 
-function proposalFor(answer: WatsonAnswer, turnId: string): WatsonProposal {
+function proposalFor(answer: WatsonAnswer, turnId: string): WatsonQuestionProposal {
   const id = newWatsonId("wq");
   return {
     id: newWatsonId("wp"),
@@ -33,12 +33,12 @@ function proposalFor(answer: WatsonAnswer, turnId: string): WatsonProposal {
 }
 
 export async function addAnswerAsQuestion(
-  deps: WatsonProposalDeps,
+  deps: WriterDeps,
   caseId: string,
   turnId: string,
   actor?: string,
 ): Promise<{ chat: WatsonChat; state: InvestigationState }> {
-  let proposal: WatsonProposal | undefined;
+  let proposal: WatsonQuestionProposal | undefined;
   // The status check and the append are one chat update, so two clicks cannot both add.
   await deps.chatStore.update(caseId, (c) => {
     const turn = c.turns.find((t) => t.id === turnId);
@@ -59,6 +59,12 @@ export async function addAnswerAsQuestion(
       ),
     };
   });
-  const out = await applyWatsonProposal(deps, caseId, (proposal as WatsonProposal).id, "apply", actor);
+  const out = await applyWatsonProposal(
+    deps,
+    caseId,
+    (proposal as WatsonQuestionProposal).id,
+    "apply",
+    actor,
+  );
   return { chat: out.chat, state: out.state as InvestigationState };
 }

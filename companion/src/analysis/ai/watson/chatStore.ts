@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
-import type { InvestigationQuestion } from "../../stateTypes.js";
 import { WatsonHistoryStore } from "./historyStore.js";
+import { proposalSchema } from "./proposalSchema.js";
 import { turnSchema } from "./turnSchema.js";
 import { emptyWatsonChat, type WatsonChat, type WatsonProposal, type WatsonTurn } from "./types.js";
 
@@ -14,20 +14,6 @@ import { emptyWatsonChat, type WatsonChat, type WatsonProposal, type WatsonTurn 
 
 export const WATSON_MAX_TURNS = 400;
 export const WATSON_TURN_TEXT_MAX = 8000;
-
-const question = z.custom<InvestigationQuestion>(
-  (v) => typeof v === "object" && v !== null && typeof (v as { id?: unknown }).id === "string",
-);
-
-const proposalSchema = z.object({
-  id: z.string(),
-  turnId: z.string(),
-  kind: z.enum(["question_update", "question_new"]),
-  questionId: z.string(),
-  before: question.optional(),
-  after: question,
-  status: z.enum(["pending", "applied", "rejected", "undone"]),
-});
 
 const pasteSchema = z.object({
   id: z.string(),

@@ -1,52 +1,30 @@
-import type { ActivityLogStore } from "../../activityLog.js";
-import type { StateLock } from "../../stateLock.js";
-import type { StateStore } from "../../stateStore.js";
-import type { InvestigationQuestion, InvestigationState } from "../../stateTypes.js";
-import type { WatsonChatStore } from "./chatStore.js";
-import { sameAnswer } from "../../timeline/watsonQuestions.js";
-import type { WatsonChat, WatsonProposal } from "./types.js";
+import type { InvestigationState } from "../../stateTypes.js";
+import {
+  WatsonProposalConflict,
+  WatsonProposalNotFoundError,
+  WatsonProposalStateError,
+  type WatsonProposalAction,
+} from "./proposalErrors.js";
+import { proposalTargetId, type WatsonChat, type WatsonProposal, type WatsonProposalKind } from "./types.js";
+import { findingWriter } from "./writers/findingWriter.js";
+import { questionWriter } from "./writers/questionWriter.js";
+import type { WatsonTargetType, WatsonWriter, WriterDeps, WriterResult } from "./writers/writerTypes.js";
 
-// The analyst's decision on one Watson proposal: apply it to the case's key questions, reject it,
-// or undo an applied one. The proposal status and the case write change together: the status check
-// runs inside chatStore.update() (so two clicks cannot both apply), the case write under the state
-// lock (so it cannot race a synthesis save). Nesting order is always chat first, then state lock.
+export {
+  WatsonProposalConflict,
+  WatsonProposalNotFoundError,
+  WatsonProposalStateError,
+  type WatsonProposalAction,
+  type WatsonProposalDeps,
+} from "./proposalErrors.js";
+export { nextQuestions } from "./writers/questionWriter.js";
+export type { WriterDeps } from "./writers/writerTypes.js";
 
-export type WatsonProposalAction = "apply" | "reject" | "undo";
-
-export interface WatsonProposalDeps {
-  stateStore: StateStore;
-  stateLock: StateLock;
-  chatStore: WatsonChatStore;
-  activity: ActivityLogStore;
-}
-
-/** No proposal with that id on this case (route → 404). */
-export class WatsonProposalNotFoundError extends Error {
-  constructor(proposalId: string) {
-    super(`No Watson proposal ${proposalId}`);
-    this.name = "WatsonProposalNotFoundError";
-  }
-}
-
-/** The action is not allowed from the proposal's status (route → 409). */
-export class WatsonProposalStateError extends Error {
-  constructor(action: WatsonProposalAction | "add", status: WatsonProposal["status"]) {
-    super(
-      action === "add"
-        ? `This answer was already added to the open questions (${status})`
-        : `Cannot ${action} a proposal that is ${status}`,
-    );
-    this.name = "WatsonProposalStateError";
-  }
-}
-
-/** The question changed since the proposal was made or applied (route → 409). */
-export class WatsonProposalConflict extends Error {
-  constructor(questionId: string) {
-    super(`Key question ${questionId} changed since this proposal; nothing was written`);
-    this.name = "WatsonProposalConflict";
-  }
-}
+// The analyst's decision on one Watson proposal: apply it, reject it, or undo an applied one. The
+// proposal status and the case write change together: the status check runs inside
+// chatStore.update() (so two clicks cannot both apply), the case write in the kind's writer under
+// the state lock (so it cannot race a synthesis save). Nesting order is always chat first, then
+// state lock. A self-locking writer takes the lock itself.
 
 const FROM: Record<WatsonProposalAction, WatsonProposal["status"]> = {
   apply: "pending",
@@ -59,86 +37,98 @@ const TO: Record<WatsonProposalAction, WatsonProposal["status"]> = {
   undo: "undone",
 };
 
-/**
- * The question Watson writes: its answer, pinned, authored. Every annotation that belonged to the
- * OLD answer goes (disagreement, contradiction, stale flag, the findings it relied on, its collect
- * directive), also from a proposal saved before this rule, so none is shown against Watson's answer.
- */
-function applied(after: InvestigationQuestion): InvestigationQuestion {
-  const {
-    synthesisDisagrees: _d,
-    answeredBy: _a,
-    contradicted: _c,
-    staleReSynth: _s,
-    relatedFindingIds: _r,
-    collect: _k,
-    ...rest
-  } = after;
-  return { ...rest, pinned: true, author: "watson" };
-}
+// One writer per kind. A kind with no writer yet is refused, never silently marked applied.
+const WRITERS: Partial<Record<WatsonProposalKind, WatsonWriter<WatsonProposal>>> = {
+  question_update: questionWriter,
+  question_new: questionWriter,
+  finding_new: findingWriter,
+  finding_update: findingWriter,
+};
 
-/** Pure: the new key-question list, or a conflict when the stored question moved on. */
-export function nextQuestions(
-  questions: readonly InvestigationQuestion[],
-  p: WatsonProposal,
-  action: "apply" | "undo",
-): InvestigationQuestion[] {
-  const current = questions.find((q) => q.id === p.questionId);
-  const expected = action === "apply" ? p.before : applied(p.after);
-  const matches = expected ? !!current && sameAnswer(current, expected) : !current;
-  if (!matches) throw new WatsonProposalConflict(p.questionId);
-  if (action === "apply") {
-    const q = applied(p.after);
-    return current ? questions.map((x) => (x.id === q.id ? q : x)) : [...questions, q];
+const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {
+  question_update: "question",
+  question_new: "question",
+  finding_new: "finding",
+  finding_update: "finding",
+  next_step_new: "next_step",
+  report_text: "report",
+  event_promote: "event",
+};
+
+function describe(p: WatsonProposal): string {
+  switch (p.kind) {
+    case "question_new":
+      return `new key question: ${p.after.question}`;
+    case "question_update":
+      return `key question answer: ${p.after.question}`;
+    case "finding_new":
+      return `new finding: ${p.after.title}`;
+    case "finding_update":
+      return `finding update: ${p.after.title}`;
+    case "next_step_new":
+      return `next step: ${p.after.action}`;
+    case "report_text":
+      return `report text (${p.field})`;
+    case "event_promote":
+      return `promotion of ${p.events.length} pasted line(s)`;
   }
-  // Undo: restore the question as it was when Watson proposed, or remove a question Watson added.
-  return p.before
-    ? questions.map((x) => (x.id === p.questionId ? (p.before as InvestigationQuestion) : x))
-    : questions.filter((x) => x.id !== p.questionId);
 }
 
 function detailFor(action: WatsonProposalAction, p: WatsonProposal): string {
-  const what = p.kind === "question_new" ? "new key question" : "key question answer";
   const verb = { apply: "Applied", reject: "Rejected", undo: "Undid" }[action];
-  return `${verb} Watson's ${what}: ${p.after.question.slice(0, 200)}`;
+  return `${verb} Watson's ${describe(p)}`.slice(0, 240);
+}
+
+async function runWriter(
+  deps: WriterDeps,
+  caseId: string,
+  p: WatsonProposal,
+  action: "apply" | "undo",
+): Promise<WriterResult<WatsonProposal>> {
+  const writer = WRITERS[p.kind];
+  if (!writer) throw new WatsonProposalConflict(`Watson cannot ${action} a ${p.kind} proposal yet`);
+  const run = () => writer[action](deps, caseId, p);
+  return writer.selfLocking ? run() : deps.stateLock.runExclusive(caseId, run);
+}
+
+function decided(
+  p: WatsonProposal,
+  action: WatsonProposalAction,
+  recorded: WatsonProposal | undefined,
+  actor: string | undefined,
+): WatsonProposal {
+  const base = { ...(recorded ?? p), status: TO[action] };
+  if (action !== "apply") return base;
+  return { ...base, appliedAt: new Date().toISOString(), ...(actor ? { appliedBy: actor } : {}) };
 }
 
 export async function applyWatsonProposal(
-  deps: WatsonProposalDeps,
+  deps: WriterDeps,
   caseId: string,
   proposalId: string,
   action: WatsonProposalAction,
   actor?: string,
 ): Promise<{ chat: WatsonChat; state?: InvestigationState }> {
   let state: InvestigationState | undefined;
-  let decided: WatsonProposal | undefined;
+  let done: WatsonProposal | undefined;
   const chat = await deps.chatStore.update(caseId, async (c) => {
     const p = c.proposals.find((x) => x.id === proposalId);
     if (!p) throw new WatsonProposalNotFoundError(proposalId);
     if (p.status !== FROM[action]) throw new WatsonProposalStateError(action, p.status);
-    if (action !== "reject") {
-      await deps.stateLock.runExclusive(caseId, async () => {
-        const loaded = await deps.stateStore.loadOverview(caseId);
-        const saved = { ...loaded, keyQuestions: nextQuestions(loaded.keyQuestions, p, action) };
-        // Overview only: a key-question edit never rewrites the forensic timeline.
-        await deps.stateStore.saveOverview(saved);
-        state = saved;
-      });
-    }
-    decided = p;
-    return {
-      ...c,
-      proposals: c.proposals.map((x) => (x.id === proposalId ? { ...x, status: TO[action] } : x)),
-    };
+    const result = action === "reject" ? {} : await runWriter(deps, caseId, p, action);
+    state = result.state;
+    const next = decided(p, action, result.proposal, actor);
+    done = next;
+    return { ...c, proposals: c.proposals.map((x) => (x.id === proposalId ? next : x)) };
   });
-  if (decided) {
+  if (done) {
     await deps.activity.add(caseId, {
       ...(actor ? { actor } : {}),
       category: "ai",
       action: `watson.${action}`,
-      detail: detailFor(action, decided),
-      targetType: "question",
-      targetId: decided.questionId,
+      detail: detailFor(action, done),
+      targetType: TARGET_TYPE[done.kind],
+      targetId: proposalTargetId(done),
     });
   }
   return state ? { chat, state } : { chat };

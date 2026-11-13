@@ -1,4 +1,10 @@
-import type { InvestigationQuestion, QuestionStatus } from "../../stateTypes.js";
+import type {
+  Finding,
+  ForensicEvent,
+  InvestigationQuestion,
+  NextStep,
+  QuestionStatus,
+} from "../../stateTypes.js";
 
 // Watson: the per-case AI investigation chat agent. These types describe the persisted chat
 // (state/watson-chat.json). Chat text and pasted content may carry adversary-controlled strings,
@@ -47,15 +53,84 @@ export interface WatsonTurn {
   answerProposalId?: string;
 }
 
-export interface WatsonProposal {
+export type WatsonProposalStatus = "pending" | "applied" | "rejected" | "undone";
+
+/** Fields every proposal kind carries. `appliedBy`/`appliedAt` are stamped when an analyst applies it. */
+interface WatsonProposalCommon {
   id: string;
   turnId: string;
+  status: WatsonProposalStatus;
+  appliedBy?: string;
+  appliedAt?: string;
+}
+
+/** What an applied proposal wrote into the forensic timeline: undo removes exactly these rows. */
+export interface WatsonCreatedRows {
+  /** Rows the apply appended (they did not exist before). A row that existed is never in here. */
+  createdEventIds?: string[];
+  /** The `promotedAt` stamp the apply put on those rows; undo refuses a row that lost it. */
+  promotedAt?: string;
+}
+
+/**
+ * Phase 1 shape, unchanged so an old chat file loads as it was: the target is `questionId`.
+ * `targetId` is optional here only; read the target through proposalTargetId().
+ */
+export interface WatsonQuestionProposal extends WatsonProposalCommon {
   kind: "question_update" | "question_new";
   questionId: string;
+  targetId?: string;
   before?: InvestigationQuestion;
   after: InvestigationQuestion;
-  status: "pending" | "applied" | "rejected" | "undone";
 }
+
+/** A finding Watson drafted. On apply, `after` becomes the finding as written (live citations only). */
+export interface WatsonFindingProposal extends WatsonProposalCommon, WatsonCreatedRows {
+  kind: "finding_new" | "finding_update";
+  targetId: string;
+  /** finding_update only: the Watson-authored finding as it was when Watson proposed the change. */
+  before?: Finding;
+  after: Finding;
+  /** One event per cited paste line, built when proposed; appended on apply if not already there. */
+  pasteLineEvents: ForensicEvent[];
+}
+
+export interface WatsonNextStepProposal extends WatsonProposalCommon {
+  kind: "next_step_new";
+  targetId: string;
+  after: NextStep;
+}
+
+export interface WatsonReportTextProposal extends WatsonProposalCommon {
+  kind: "report_text";
+  targetId: string;
+  field: "conclusions" | "investigationLimitations";
+  before: string;
+  after: string;
+}
+
+export interface WatsonEventPromoteProposal extends WatsonProposalCommon, WatsonCreatedRows {
+  kind: "event_promote";
+  targetId: string;
+  events: ForensicEvent[];
+  pasteId: string;
+}
+
+export type WatsonProposal =
+  | WatsonQuestionProposal
+  | WatsonFindingProposal
+  | WatsonNextStepProposal
+  | WatsonReportTextProposal
+  | WatsonEventPromoteProposal;
+
+export type WatsonProposalKind = WatsonProposal["kind"];
+
+export const isQuestionProposal = (p: WatsonProposal): p is WatsonQuestionProposal =>
+  p.kind === "question_new" || p.kind === "question_update";
+
+/** The item a proposal targets: question id, finding id, step id, report field or first event id. */
+export const proposalTargetId = (p: WatsonProposal): string =>
+  isQuestionProposal(p) ? (p.targetId ?? p.questionId) : p.targetId;
 
 export interface WatsonPaste {
   id: string;

@@ -10,7 +10,7 @@ import {
   WatsonProposalNotFoundError,
   WatsonProposalStateError,
   type WatsonProposalAction,
-  type WatsonProposalDeps,
+  type WriterDeps,
 } from "../analysis/ai/watson/proposals.js";
 import type { WatsonRoundDeps } from "../analysis/ai/watson/pipelineRound.js";
 import { newWatsonId } from "../analysis/ai/watson/roundProposals.js";
@@ -75,7 +75,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
   const roundDeps = (): WatsonRoundDeps | undefined => watsonRoundDeps(ctx);
 
   /** What applying a proposal (or adding an answer as a question) needs; undefined when not wired. */
-  function proposalDeps(): WatsonProposalDeps | undefined {
+  function proposalDeps(): WriterDeps | undefined {
     if (!options.watsonChatStore || !options.stateStore || !options.stateLock || !options.activityLogStore) {
       return undefined;
     }
@@ -84,6 +84,8 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       stateLock: options.stateLock,
       chatStore: options.watsonChatStore,
       activity: options.activityLogStore,
+      cases: store,
+      markConclusionsOutOfDate: ctx.markConclusionsOutOfDate,
     };
   }
 

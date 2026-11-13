@@ -14,7 +14,7 @@ import {
   WatsonCostLimitReached,
   type WatsonRoundContext,
 } from "../../../src/analysis/ai/watson/round.js";
-import type { WatsonPaste } from "../../../src/analysis/ai/watson/types.js";
+import type { WatsonPaste, WatsonQuestionProposal } from "../../../src/analysis/ai/watson/types.js";
 import { PresidioApprovalRequired } from "../../../src/analysis/presidio.js";
 import { withRetry } from "../../../src/analysis/ai/retry.js";
 import { StateLock } from "../../../src/analysis/stateLock.js";
@@ -188,7 +188,7 @@ describe("runWatsonRound", () => {
     expect(chat.turns[0]).toMatchObject({ text: "What do we know?", actor: "ana" });
     expect(chat.turns[1]).toMatchObject({ text: "I looked at the case.", workingOn: "initial access" });
     expect(chat.proposals).toHaveLength(1);
-    const p = chat.proposals[0];
+    const p = chat.proposals[0] as WatsonQuestionProposal;
     expect(p).toMatchObject({ kind: "question_update", questionId: "wq-std-what", status: "pending" });
     expect(p.before).toMatchObject({ id: "wq-std-what", status: "unknown" });
     expect(p.after).toMatchObject({
@@ -213,7 +213,7 @@ describe("runWatsonRound", () => {
     const state = await h.stateStore.loadOverview(CASE);
     expect(state.keyQuestions.filter((q) => q.id.startsWith("wq-std-"))).toHaveLength(6);
     expect(h.provider.sent[0].userPrompt).toContain("wq-std-what");
-    const p = chat.proposals[0];
+    const p = chat.proposals[0] as WatsonQuestionProposal;
     expect(p.kind).toBe("question_new");
     expect(p.questionId).toMatch(/^wq-[0-9a-f]{8}$/);
     expect(p.before).toBeUndefined();
@@ -689,6 +689,6 @@ describe("runWatsonRound", () => {
     });
     const chat = await runWatsonRound(h.ctx, CASE, { text: "go" });
     expect(h.provider.sent[0].userPrompt).toContain("- [Q1.2] (unknown) How did they get in?");
-    expect(chat.proposals.map((p) => p.questionId)).toEqual(["Q1.2"]);
+    expect(chat.proposals.map((p) => (p as WatsonQuestionProposal).questionId)).toEqual(["Q1.2"]);
   });
 });
