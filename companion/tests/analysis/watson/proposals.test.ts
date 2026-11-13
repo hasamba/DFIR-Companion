@@ -171,6 +171,29 @@ describe("applyWatsonProposal", () => {
     expect(mem.state.keyQuestions[0]).toMatchObject({ status: "answered", author: "watson", pinned: true });
   });
 
+  it("apply drops the old answer's annotations, even from a proposal saved with them", async () => {
+    const annotated: InvestigationQuestion = {
+      ...original,
+      contradicted: { techniques: ["T1048"], eventIds: ["e1"] },
+      staleReSynth: true,
+      collect: { host: "HOST-A", artifact: "mail logs" },
+    };
+    mem.state = { ...mem.state, keyQuestions: [annotated] };
+    await chatStore.save(CASE, {
+      ...emptyWatsonChat(),
+      proposals: [{ ...updateProposal, before: annotated, after: { ...annotated, ...updated } }],
+    });
+    await applyWatsonProposal(deps, CASE, "wp-u", "apply");
+    const q = mem.state.keyQuestions[0];
+    expect(q).toMatchObject({ status: "answered", answer: updated.answer, author: "watson" });
+    expect(q.contradicted).toBeUndefined();
+    expect(q.staleReSynth).toBeUndefined();
+    expect(q.relatedFindingIds).toBeUndefined();
+    expect(q.collect).toBeUndefined();
+    await applyWatsonProposal(deps, CASE, "wp-u", "undo");
+    expect(mem.state.keyQuestions[0]).toEqual(annotated);
+  });
+
   it("apply of a new question appends it; undo removes it again", async () => {
     await applyWatsonProposal(deps, CASE, "wp-n", "apply");
     expect(mem.state.keyQuestions.map((q) => q.id)).toEqual(["q1", "wq-1"]);

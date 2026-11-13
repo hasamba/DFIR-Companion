@@ -55,9 +55,21 @@ const TO: Record<WatsonProposalAction, WatsonProposal["status"]> = {
   undo: "undone",
 };
 
-/** The question Watson writes: its answer, pinned, authored, with no stale disagreement. */
+/**
+ * The question Watson writes: its answer, pinned, authored. Every annotation that belonged to the
+ * OLD answer goes (disagreement, contradiction, stale flag, the findings it relied on, its collect
+ * directive), also from a proposal saved before this rule, so none is shown against Watson's answer.
+ */
 function applied(after: InvestigationQuestion): InvestigationQuestion {
-  const { synthesisDisagrees: _d, answeredBy: _a, ...rest } = after;
+  const {
+    synthesisDisagrees: _d,
+    answeredBy: _a,
+    contradicted: _c,
+    staleReSynth: _s,
+    relatedFindingIds: _r,
+    collect: _k,
+    ...rest
+  } = after;
   return { ...rest, pinned: true, author: "watson" };
 }
 

@@ -46,6 +46,23 @@ describe("Watson-authored key questions in the Markdown report", () => {
   });
 });
 
+describe("a key question that starts with a block marker", () => {
+  it("renders as list text in the goals list, not a heading inside the list item", () => {
+    const state = emptyState("c1");
+    state.keyQuestions.push({
+      id: "q1",
+      question: "## Forged heading",
+      status: "unknown",
+      answer: "",
+      pointer: "",
+    });
+    const md = renderMarkdownReport(state);
+    const goals = md.slice(md.indexOf("## 2.3"), md.indexOf("## 2.4"));
+    expect(goals).toContain("- \\## Forged heading");
+    expect(goals).not.toMatch(/^- #{1,6}\s/m);
+  });
+});
+
 describe("Watson-authored key questions in the IRIS notes", () => {
   it("adds no heading or bullet line from hostile question text", () => {
     const state = emptyState("c1");
