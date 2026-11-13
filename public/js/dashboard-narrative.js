@@ -39,7 +39,17 @@
     if (!isSectionVisible("sec-narrative", loadSectionsVis())) return;
     const btn = document.getElementById("genNarrativeBtn");
     const msg = document.getElementById("genNarrativeMsg");
+    const editBtn = document.getElementById("editNarrativeBtn");
+    // The editor swaps the view out (Edit hides it, Save/Cancel show it again). Generating under an
+    // open editor would leave the textarea holding the pre-generate text, and Save would PUT it over
+    // the fresh narrative (#2623). Refuse before the fetch: no analyst edit is lost, no tokens spent.
+    if (document.getElementById("narrativeView").style.display === "none") {
+      msg.textContent = "close the editor (Save or Cancel) before generating";
+      return;
+    }
     btn.disabled = true;
+    // The other order: Edit opened mid-generation would seed the textarea from the OLD text.
+    editBtn.disabled = true;
     msg.textContent = "generating… (one AI call)";
     fetch(`/cases/${caseId}/narrative`, {
       method: "POST",
@@ -86,6 +96,7 @@
       })
       .finally(() => {
         btn.disabled = false;
+        editBtn.disabled = false;
       });
   }
 
