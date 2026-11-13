@@ -660,6 +660,8 @@
     "ROUTE GET /js/hunt-catalog.js",
     "ROUTE GET /js/diagnostics-panel.js",
     "ROUTE GET /js/dashboard-state.js",
+    "ROUTE GET /js/dashboard-watson-view.js",
+    "ROUTE GET /js/dashboard-watson.js",
     "ROUTE GET /js/dashboard-escape.js",
     "ROUTE GET /js/dashboard-time.js",
     "ROUTE GET /js/dashboard-text.js",
@@ -864,6 +866,7 @@
     "ROUTE GET /css/dashboard-timeline.css",
     "ROUTE GET /css/dashboard-toolbar.css",
     "ROUTE GET /css/dashboard-sections.css",
+    "ROUTE GET /css/dashboard-watson.css",
     "ROUTE GET /css/mitre-matrix.css",
     "USE /^\\/?(?=\\/|$)/i terminalErrorHandler/4"
   ]
