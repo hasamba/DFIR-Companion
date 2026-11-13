@@ -524,8 +524,8 @@ const NODES = [
     pts:["Always started by you","View summary: ephemeral, ≤ 500 rows, truncation shown to you"],
     tech:["src/analysis/ai/viewReports.ts","POST /cases/:id/events/:eid/explain","tests/analysis/forensicBoundary.test.ts"] },
   { id:"askhunt", col:5, kind:"ai", label:"Watson · hunts · AI reports", sub:"case chat · VQL/CQL/KQL/ES|QL/SPL · write-ups",
-    plain:"Ask Watson, the per-case chat, a question about the case, get suggested hunts in the case's main evidence source's language (Velociraptor VQL, CrowdStrike CQL, KQL, ES|QL or SPL), and AI-written report pieces: executive summary, narrative, remediation plan and hypothesis review.",
-    pts:["Watson's question changes are proposals you apply; pastes are stored as evidence","Hunts and query translation can run on an optional cheaper light-task model"],
+    plain:"Ask Watson, the per-case chat, a question about the case (it replaced Ask the LLM), get suggested hunts in the case's main evidence source's language (Velociraptor VQL, CrowdStrike CQL, KQL, ES|QL or SPL), and AI-written report pieces: executive summary, narrative, remediation plan and hypothesis review.",
+    pts:["Watson's writes (key questions, findings, next steps, Conclusions and Limitations text) are proposals you apply; each has Undo and a Watson badge","A paste in a known format is parsed into rows and graded like an import; the tagger's promotions wait for your approval; generic CSV and log stay searchable text","After a quiet window Watson reacts once to imports, notes and new stars","Hunts and query translation can run on an optional cheaper light-task model"],
     tech:["src/routes/watson.ts","src/analysis/ai/hunts.ts","src/analysis/ai/caseReports.ts"] },
   { id:"jev", col:5, kind:"ai", label:"Decision model review", sub:"grades left-behind Info rows",
     plain:"A second chance for rows the gate left out. The decision model reads them straight from the super-timeline — 2,000 by default, or every row if you choose to read all — grades them and suggests which might matter. It tells you how many rows it did not read. Nothing moves until you promote it, and a promotion can only raise severity.",
@@ -693,7 +693,7 @@ const PANEL_GROUPS = [
     ["Memory Next Steps","Appears only when memory evidence exists: AI reads the Volatility/Rekall rows and proposes the next command to run.",["askhunt","forensic"]],
   ]},
   { name:"Ask & query", panels:[
-    ["Watson","The per-case AI chat: ask a question about the case and get an answer from the forensic timeline, findings, IOCs and your decisions. Changes are proposals you apply.",["askhunt"]],
+    ["Watson","The per-case AI chat: ask a question about the case and get an answer from the forensic timeline, findings, IOCs and your decisions. Findings, next steps, report text and key-question changes are proposals you apply, with a Watson badge and Undo. A paste in a known format becomes rows.",["askhunt"]],
     ["Query Translator","Describe what to hunt in plain English and get VQL, KQL, ES|QL, SPL, Sigma, YARA or Suricata.",["askhunt"]],
     ["MCP Analysis","Describe the investigation and your MCP app picks the tools; results import into the case.",["mcp"]],
   ]},
@@ -774,7 +774,7 @@ const PANEL_GROUPS = [
 const PANEL_COUNT = PANEL_GROUPS.reduce((n, g) => n + g.panels.length, 0);
 
 const RULES = [
-  { red:true, t:"The AI never reads the super-timeline", d:"Synthesis, Deep pass, Ask and hunts read only the forensic timeline: the raw record is too big, its noise pushes real detections out of the prompt, and every finding must point to reviewed evidence. The striped tape on the map marks the line. Two documented exceptions, both started by you and both promoting nothing: View summary (not saved, ≤ 500 rows, tells you if it was truncated) and Decision model review (grades left-behind Info rows — 2,000 by default, or every row if you choose to read all — and reports how many it did not read). Explain and Starred report promote first, so they do not break the rule.", n:["super","ai-gate","forensic","pressed","jev"], e:[["super","ai-gate"]] },
+  { red:true, t:"The AI never reads the super-timeline", d:"Synthesis, Deep pass, Watson and hunts read only the forensic timeline: the raw record is too big, its noise pushes real detections out of the prompt, and every finding must point to reviewed evidence. The striped tape on the map marks the line. Two documented exceptions, both started by you and both promoting nothing: View summary (not saved, ≤ 500 rows, tells you if it was truncated) and Decision model review (grades left-behind Info rows — 2,000 by default, or every row if you choose to read all — and reports how many it did not read). Explain and Starred report promote first, so they do not break the rule.", n:["super","ai-gate","forensic","pressed","jev"], e:[["super","ai-gate"]] },
   { t:"Info never reaches the forensic timeline", d:"Info rows are cut at the severity gate, so the AI can only see one if the tagger raised it or you promoted it.", n:["tagger","demote","forensic","super"] },
   { t:"Order at the seam is fixed", d:"Merge everything → lower first-party traffic → copy to super-timeline → tagger raises → caps → cut. Filtering Info earlier was tried and reverted: it hid exactly what the tagger would have raised.", n:["merge","egress","dualwrite","tagger","caps","demote"] },
   { t:"Three buttons may touch raw rows", d:"Explain and Starred report promote first. View summary reads directly — started by you, not saved, ≤ 500 rows, truncation shown to you.", n:["pressed","super","forensic"] },

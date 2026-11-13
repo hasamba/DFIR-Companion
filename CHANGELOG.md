@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Watson case agent** — per-case investigation chat with a Key Questions board
+- **Watson answers free-form questions** — cited answers with Add to open questions and New thread; its full chat history is kept and searchable
+- **Watson writes findings, next steps and report text** — Conclusions and Investigation limitations wait for Apply, carry a Watson badge and the approver's name, and each has Undo
+- **Watson reads pasted files in known formats** — rows are graded like an import, the tagger's promotions wait for your approval; generic CSV and log stay searchable text
+- **Watson reacts to your work** — after a quiet window it reviews imports, notebook edits and new stars (`DFIR_AI_WATSON_REACT_DELAY_SEC`, 0 = off) and pauses after a Presidio hold, a cost limit or two errors
+- **Watson pinned to the right of the dashboard** — rail, open or full screen on every view
 
 ### Removed
 

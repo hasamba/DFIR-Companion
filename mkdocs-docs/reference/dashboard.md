@@ -8,7 +8,7 @@ When many clients load whole cases at the same time, the server serves a few of 
 
 ## Watson
 
-Watson is not a section. It is a panel pinned to the right of every section and view, with three states: rail, open and full screen. It holds the per-case investigation chat and, in full screen, the Key Questions board. See [Watson Case Chat](watson.md).
+Watson is not a section. It is a panel pinned to the right of every section and view, with three states: rail, open and full screen. It holds the per-case investigation chat and, in full screen, the Key Questions board. Watson answers questions about the case (it replaced **Ask the LLM**), and it can propose findings, next steps and the report's Conclusions and Investigation limitations text. Each proposal waits for **Apply**. Items you apply carry a **Watson** badge in the Findings, Next Steps and Report views, each with its own **Undo**. Watson also reacts by itself to imports, notebook edits and new stars after a quiet time. See [Watson Case Chat](watson.md).
 
 ---
 
