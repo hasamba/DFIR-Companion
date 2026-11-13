@@ -47,7 +47,7 @@ export function carryUnshownFindings(
   const keys = new Set(next.findings.map(semanticOf).filter(Boolean));
 
   const candidates = prior.findings.filter((f) => {
-    if (echoedIds.has(f.id) || ids.has(f.id)) return false;
+    if (echoedIds.has(f.id) || ids.has(f.id) || f.author === "watson") return false; // Watson: watsonItems.ts
     if (titles.has(titleKey(f))) return false;
     const key = semanticOf(f);
     return !(key && keys.has(key));

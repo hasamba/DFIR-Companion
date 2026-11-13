@@ -9,6 +9,7 @@ import { linkNewCase } from "./serverSets.js";
 import { createCaseListServerSets } from "./caseListServerSets.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
+import { keepWatsonSteps } from "../analysis/timeline/watsonItems.js";
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { registerSeedDemoRoutes } from "./seedDemo.js";
@@ -161,7 +162,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         if (template && (template.initialKeyQuestions.length || template.initialNextSteps?.length)) {
           const state = await options.stateStore.load(caseId);
           if (template.initialKeyQuestions.length) state.keyQuestions = buildInitialQuestions(template);
-          if (template.initialNextSteps?.length) state.nextSteps = buildInitialNextSteps(template);
+          const seeded = template.initialNextSteps?.length ? buildInitialNextSteps(template) : null;
+          if (seeded) state.nextSteps = keepWatsonSteps(seeded, state.nextSteps); // Watson's are kept
           state.updatedAt = new Date().toISOString();
           await options.stateStore.save(state);
         }

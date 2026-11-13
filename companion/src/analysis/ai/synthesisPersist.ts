@@ -12,6 +12,7 @@ import { recordEventAliases } from "../eventAliases.js";
 import { remapAbsorbedEventIds } from "../absorbedCitations.js";
 import { concurrentRejections } from "../rejectedTechniques.js";
 import { keepWatsonAnswers } from "../timeline/watsonQuestions.js";
+import { keepWatsonItems } from "../timeline/watsonItems.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -70,8 +71,9 @@ export async function persistSynthesis(
     const reconciled = input.reconcile ? await input.reconcile(concurrent) : concurrent;
     // LAST before the save: a Watson apply or undo that landed while the model was thinking wins
     // over this run's copy of that question (the fold protected the rest).
+    // The same for Watson findings, next steps and Watson-marked events: the store's copy wins.
     const merged = {
-      ...reconciled,
+      ...keepWatsonItems(reconciled, latest),
       keyQuestions: keepWatsonAnswers(
         reconciled.keyQuestions,
         latest.keyQuestions,
@@ -95,7 +97,8 @@ export async function persistSynthesis(
 const timelineKey = (t: TimelineEntry): string => `${t.timestamp}|${t.windowSequence}|${t.description}`;
 
 /**
- * Carry forward every event, IOC, thread and log line that appeared BETWEEN the snapshot and now.
+ * Carry forward every event, IOC, thread and log line that appeared BETWEEN the snapshot and now,
+ * and every Watson finding and next step as stored now (`keepWatsonItems`).
  *
  * Pure. `next` keeps its own conclusions and its correlation/legitimate work on the snapshot
  * timeline; `latest` contributes only what neither the snapshot nor this run already has. An IOC
@@ -189,8 +192,12 @@ export function mergeConcurrentAdditions(
     }),
   ).state;
   const merged = nameCallers(renamed).state;
-  // A technique removal the analyst accepted or reversed while synthesis ran is kept (#1742).
-  return concurrentRejections(loaded, withoutFoldedSnapshotEvents(merged, loaded, latest), latest);
+  // A technique removal the analyst accepted or reversed while synthesis ran is kept (#1742). Watson
+  // findings, next steps and Watson-marked events applied or undone meanwhile: the store's copy wins.
+  return keepWatsonItems(
+    concurrentRejections(loaded, withoutFoldedSnapshotEvents(merged, loaded, latest), latest),
+    latest,
+  );
 }
 
 /**

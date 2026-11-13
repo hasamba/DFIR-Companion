@@ -2,6 +2,7 @@ import type { ExcludedIocRef, IocExcludeRule } from "./iocExclude.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 import type { EventRevisionFields } from "./eventRevisionTypes.js";
+import type { WatsonFindingMarks, WatsonItemMark } from "./watsonItemTypes.js";
 
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 
@@ -347,7 +348,7 @@ export interface FindingCorroboration {
   kevLinked?: boolean; // a CISA-KEV (actively-exploited) CVE appears in the finding, its events, or its IOCs
 }
 
-export interface Finding {
+export interface Finding extends WatsonFindingMarks {
   id: string;
   severity: Severity;
   confidence?: number; // 0–100: AI certainty this finding is real (absent = unknown)
@@ -696,12 +697,11 @@ export interface InvestigationQuestion {
   // recomputes the authoritative answer (which clears the flag). Absent = current.
   staleReSynth?: boolean;
 }
-
 export type StepPriority = "critical" | "high" | "medium" | "low";
 
 // A concrete, prioritized recommendation for what to do NEXT — the most valuable
 // thing to validate or find out given everything currently known about the case.
-export interface NextStep {
+export interface NextStep extends WatsonItemMark {
   id: string;
   priority: StepPriority;
   action: string; // what to do, e.g. "Pull Security.evtx 4624/4672 on ALClient07"

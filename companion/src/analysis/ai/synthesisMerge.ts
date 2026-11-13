@@ -41,6 +41,15 @@ import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
 import { mergeDelta, type WindowContext } from "../stateMerge.js";
 import { guardWatsonQuestion, keepWatsonAnswers } from "../timeline/watsonQuestions.js";
+import {
+  annotateWatsonFindings,
+  keepWatsonItems,
+  splitWatsonReissues,
+  watsonCitationSources,
+  watsonItemsOf,
+  withWatsonFindings,
+  type WatsonItemsSource,
+} from "../timeline/watsonItems.js";
 import { yieldToEventLoop } from "../yieldToEventLoop.js";
 
 /**
@@ -200,8 +209,16 @@ export async function foldSynthesisDelta(
   // `~[cld-e1]`) resolves here, once, against the events this run was shown — never onto one outside
   // the window or one the analyst rejected.
   const shownIds = new Set(scopedEvents.map((e) => e.id));
+  // A re-issued Watson finding is dropped before the rename; what synthesis said is the disagreement.
+  const { findings: modelFindings, disagreements } = splitWatsonReissues(
+    input.delta.findings,
+    state.findings,
+  );
   const resolved = resolveCitedEventIds(
-    renameForgedFindingIds(input.delta, new Set(state.findings.map((f) => f.id))),
+    renameForgedFindingIds(
+      { ...input.delta, findings: modelFindings },
+      new Set(state.findings.map((f) => f.id)),
+    ),
     shownIds,
   );
   // A finding that still cites nothing gets the ids its own text names (#1754) — before the merge, so
@@ -227,11 +244,19 @@ export async function foldSynthesisDelta(
   const ts = state.forensicTimeline[state.forensicTimeline.length - 1]?.timestamp || state.updatedAt;
   const merged = await replaceConclusions(ctx, state, delta, ts, shownIds);
   await yieldToEventLoop(); // #2058: the merge and the backfills each take seconds on a large case
-  // Safety net: drop anything confirmed false-positive even if the model re-introduced it.
-  const filtered = applyFalsePositive(merged, markers);
+  // Safety net: drop anything confirmed false-positive even if the model re-introduced it. Then the
+  // analyst's Watson findings go back in, so back-links, the backfills' coverage and the key-question
+  // reset all count them as surviving findings.
+  const filtered = withWatsonFindings(applyFalsePositive(merged, markers), state.findings);
   const surviving = new Set(filtered.findings.map((f) => f.id));
+  const benign = falsePositiveEventIds(markers);
   const linked = dropAutoCoveredByDismissal(
-    linkEventsToFindings(filtered, delta, surviving, membersOf),
+    linkEventsToFindings(
+      filtered,
+      [...delta.findings, ...watsonCitationSources(filtered.findings, benign)],
+      surviving,
+      membersOf,
+    ),
     autoFindingSupport(state),
   );
 
@@ -239,7 +264,11 @@ export async function foldSynthesisDelta(
   const eligibleIds = new Set(scopedEvents.map((e) => e.id));
   const netted = applyBackfills(linked, scopedEvents, eligibleIds, ts, state);
   await yieldToEventLoop();
-  const { state: pinnedQs, latestQuestions } = await preservePinnedQuestions(ctx, caseId, netted.state);
+  const {
+    state: pinnedQs,
+    latestQuestions,
+    latest,
+  } = await preservePinnedQuestions(ctx, caseId, netted.state);
   const pinned = preserveAcceptedTechniques(state, withCloudSeedQuestions(pinnedQs, !!input.cloudOnly));
   let next = correctKeyQuestions(pinned, state, scopedEvents);
   // The techniques the timeline CARRIES are deliberately not folded in here (#893). This used to
@@ -266,6 +295,8 @@ export async function foldSynthesisDelta(
   // LAST: nothing after this changes a key question. Every pass above may have rewritten a Watson
   // answer the analyst applied; restore each one, keeping synthesis's view as a disagreement.
   next = { ...next, keyQuestions: keepWatsonAnswers(next.keyQuestions, latestQuestions, state.keyQuestions) };
+  // Watson findings and next steps as stored now (applies and undos during the call), annotated.
+  next = annotateWatsonFindings(keepWatsonItems(next, latest), disagreements, benign);
 
   return {
     next,
@@ -316,13 +347,13 @@ function replaceConclusions(
  */
 function linkEventsToFindings(
   filtered: InvestigationState,
-  delta: DeltaFoldInput["delta"],
+  citing: readonly Pick<DeltaFoldInput["delta"]["findings"][number], "id" | "status" | "relatedEventIds">[],
   surviving: Set<string>,
   membersOf?: ReadonlyMap<string, readonly string[]>,
 ): InvestigationState {
   const eventToFindings = new Map<string, string[]>();
   const eventById = new Map(filtered.forensicTimeline.map((e) => [e.id, e] as const));
-  for (const f of delta.findings) {
+  for (const f of citing) {
     if (!surviving.has(f.id)) continue;
     // A cited grouped row stands for its burst (#1702): a live finding covers every member, a
     // dismissed one only the members that are the same act (groupedCitation.ts).
@@ -521,14 +552,21 @@ async function preservePinnedQuestions(
   ctx: DeltaFoldContext,
   caseId: string,
   gapFilled: InvestigationState,
-): Promise<{ state: InvestigationState; latestQuestions: InvestigationQuestion[] }> {
-  // The same read also hands the fold's last step the key questions as stored now (Watson).
-  const latestQuestions = (await ctx.opts.stateStore.load(caseId)).keyQuestions;
+): Promise<{
+  state: InvestigationState;
+  latestQuestions: InvestigationQuestion[];
+  latest: WatsonItemsSource;
+}> {
+  // The same read also hands the fold's last step the key questions, findings and steps stored now.
+  const stored = await ctx.opts.stateStore.load(caseId);
+  const latestQuestions = stored.keyQuestions;
+  const latest = watsonItemsOf(stored);
   const pinnedNow = latestQuestions.filter((q) => q.pinned);
-  if (!pinnedNow.length) return { state: gapFilled, latestQuestions };
+  if (!pinnedNow.length) return { state: gapFilled, latestQuestions, latest };
   return {
     state: { ...gapFilled, keyQuestions: mergePinnedQuestions(pinnedNow, gapFilled.keyQuestions) },
     latestQuestions,
+    latest,
   };
 }
 
@@ -632,7 +670,8 @@ export function gradeFindings(input: FindingGradeInput): InvestigationState {
       aiRelevanceById: aiRelevanceOf(delta, surviving),
     }),
   };
-  return addCorroborationSteps(scored, inScope, hostNames);
+  // Watson findings are the analyst's, not graded: their fields are restored before the steps pass.
+  return addCorroborationSteps(keepWatsonItems(scored, watsonItemsOf(next)), inScope, hostNames);
 }
 
 /**

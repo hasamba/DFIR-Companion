@@ -22,6 +22,8 @@ import { SEVERITY_RANK, type Finding, type ForensicEvent, type InvestigationStat
 import { buildBeaconDigest, buildAttackPhaseDigest } from "../synthEvidence.js";
 import { buildSynthesisContext } from "../synthSelect.js";
 import { buildCurrentKeyQuestionsBlock } from "./currentKeyQuestionsBlock.js";
+import { buildWatsonFindingsBlock } from "./watsonFindingsBlock.js";
+import { isWatsonItem } from "../timeline/watsonItems.js";
 import { capDisclosure } from "../synthCaps.js";
 import { promptDescription } from "./promptDescription.js";
 import { aiSpan } from "./aiSpan.js";
@@ -159,7 +161,9 @@ export async function buildSynthesisBlocks(
     cloudCoverageBlock: await cloudCoverageBlock(ctx, caseId),
     adversaryBlock: adversaryHintBlock(state),
     satisfiedBlock: satisfied.block,
-    pinnedBlock: buildCurrentKeyQuestionsBlock(state) + buildPinnedBlock(state),
+    // Watson's findings are listed once, there, and left out of the EXISTING FINDINGS echo below.
+    pinnedBlock:
+      buildWatsonFindingsBlock(state) + buildCurrentKeyQuestionsBlock(state) + buildPinnedBlock(state),
     reanswerBlock: buildReanswerBlock(state, markers, satisfied.questionIds),
     existingFindings: buildFindingsEcho(state),
     openThreads: buildOpenThreads(state),
@@ -193,7 +197,8 @@ function buildScopeNote(scope: ScopeWindow): string {
 export function buildFindingsEcho(state: InvestigationState): string {
   const echoed = echoedFindings(state);
   const detailed = detailedFindingIds(echoed);
-  const cut = capDisclosure(echoed.length, state.findings.length, "findings, severest first");
+  const echoable = state.findings.filter((f) => !isWatsonItem(f)).length;
+  const cut = capDisclosure(echoed.length, echoable, "findings, severest first");
   const lines =
     echoed
       .map((f) => {
@@ -214,7 +219,10 @@ const FINDINGS_ECHO_CAP = 150;
 export function echoedFindings(state: InvestigationState): InvestigationState["findings"] {
   // #1994: rank before the cut so detection backfill cannot push the model's own findings out by
   // store order. Array.sort is stable, so equal severities keep insertion order.
-  const ranked = [...state.findings].sort((a, b) => SEVERITY_RANK[echoRank(a)] - SEVERITY_RANK[echoRank(b)]);
+  // Watson's findings are not echoed: the WATSON FINDINGS block lists them as not to be re-issued.
+  const ranked = state.findings
+    .filter((f) => !isWatsonItem(f))
+    .sort((a, b) => SEVERITY_RANK[echoRank(a)] - SEVERITY_RANK[echoRank(b)]);
   return ranked.slice(0, FINDINGS_ECHO_CAP);
 }
 

@@ -434,6 +434,7 @@
     "derivedNote.ts": "analysis/timeline",
     "eventRevision.ts": "analysis/timeline",
     "eventRevisionTypes.ts": "shared",
+    "watsonItemTypes.ts": "shared",
     "destinationFacts.ts": "analysis/timeline",
     "detectionStackPaths.ts": "analysis/detect",
     "diagnostics.ts": "analysis/case",

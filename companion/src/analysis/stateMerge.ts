@@ -18,6 +18,7 @@ import { isAnalystWorkLog } from "./workLogFilter.js";
 import { remapAbsorbedEventIds } from "./absorbedCitations.js";
 import { toUtcIso } from "./timeUtc.js";
 import { mergeKeyQuestions } from "./timeline/watsonQuestions.js";
+import { keepWatsonItems, watsonItemsOf } from "./timeline/watsonItems.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import {
   firstMatchIndex,
@@ -780,8 +781,8 @@ export function assembleMerge(
     ...(state.rejectedTechniques?.length ? { rejectedTechniques: state.rejectedTechniques } : {}),
     updatedAt: ctx.timestamp,
   };
-  // Every citation of an event correlation folded away follows it to the survivor (#1714).
-  return remapAbsorbedEventIds(merged, absorbedInto);
+  // Every citation of an event correlation folded away follows it to the survivor (#1714); Watson's kept.
+  return remapAbsorbedEventIds(keepWatsonItems(merged, watsonItemsOf(state)), absorbedInto);
 }
 
 function uniqCaseless(names: readonly string[]): string[] {

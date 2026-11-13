@@ -37,6 +37,7 @@ import {
   AUTO_FINDING_ID_PREFIX,
   GAP_FINDING_ID_PREFIX,
   MODEL_FINDING_ID_PREFIX,
+  WATSON_FINDING_ID_PREFIX,
   isDeterministicFindingId,
 } from "../../src/analysis/responseSchema.js";
 import { BACKFILLS } from "../helpers/deterministicBackfills.js";
@@ -59,7 +60,9 @@ const FINDING_ID_SHAPE = /^f-[a-z0-9]/i;
  * `f-model-` is the one finding-id namespace that is deliberately NOT deterministic: it is what a
  * model's invented claim is renamed to, so a literal in it asserts the opposite of the claim this
  * guard polices. The whole namespace is exempt, named by the register's own constant rather than
- * spelled out here, so nothing else can slip through by resembling it.
+ * spelled out here, so nothing else can slip through by resembling it. `f-watson-` is exempt for
+ * the same reason: findings the analyst applied from Watson, identified by `author`, never minted
+ * by a backfill.
  */
 export function unregisteredFindingIdLiterals(source: string): number[] {
   const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -75,6 +78,7 @@ export function unregisteredFindingIdLiterals(source: string): number[] {
       text !== null &&
       FINDING_ID_SHAPE.test(text) &&
       !text.startsWith(MODEL_FINDING_ID_PREFIX) &&
+      !text.startsWith(WATSON_FINDING_ID_PREFIX) &&
       !isDeterministicFindingId(text)
     ) {
       found.push(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);

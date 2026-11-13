@@ -69,9 +69,12 @@ export function isDeterministicFindingId(id: string): boolean {
 // one: the rename is a downgrade of a provenance claim, not a redaction, and an analyst comparing a
 // report against a raw model response should still be able to find the row.
 export const MODEL_FINDING_ID_PREFIX = "f-model-";
+// Findings the analyst applied from Watson (`f-watson-<8 hex>`). Reserved so a model cannot mint one,
+// but NOT deterministic: a Watson finding is identified by `author: "watson"`, never by its prefix.
+export const WATSON_FINDING_ID_PREFIX = "f-watson-";
 
 /**
- * Ids the model may not MINT — the backfills' three, plus the rename target namespace.
+ * Ids the model may not MINT — the backfills' three, the rename target namespace, and Watson's.
  *
  * That last one is not tidiness. `renameForgedFindingIds` REUSES a canonical name the case already
  * holds, on the strength of it only ever coming from renaming that exact id — which is what stops a
@@ -84,7 +87,11 @@ export const MODEL_FINDING_ID_PREFIX = "f-model-";
  * which `carryOutOfWindowFindings` acts on, and a renamed model finding must never qualify.
  */
 function isReservedFindingId(id: string): boolean {
-  return isDeterministicFindingId(id) || id.startsWith(MODEL_FINDING_ID_PREFIX);
+  return (
+    isDeterministicFindingId(id) ||
+    id.startsWith(MODEL_FINDING_ID_PREFIX) ||
+    id.startsWith(WATSON_FINDING_ID_PREFIX)
+  );
 }
 
 const MAX_CONFIDENCE_REASON = 500;
