@@ -53,7 +53,7 @@ import {
 import { createServerClients } from "./serverSetClients.js";
 import { buildProvider } from "./aiProviders.js";
 import { buildWatsonProvider } from "./watsonProvider.js";
-import { noteWatsonCaseEvent } from "./watsonCaseEvents.js";
+import { createWatsonCaseEvents } from "./watsonCaseEvents.js";
 import { spawnToolRunner } from "../integrations/tools/toolRunner.js";
 import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "../http/originGuard.js";
 import { resolveHuntPlatforms } from "../analysis/huntPlatforms.js";
@@ -197,6 +197,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     cloudQueryUsage,
     cloudQueryBudget,
   } = rt;
+  // Case events Watson hears about; createApp attaches the shared reaction scheduler (spec §4.6).
+  const watsonEvents = createWatsonCaseEvents(watsonChatStore, tagsStore);
   const {
     teamAuth,
     pipeline,
@@ -261,7 +263,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     tagsStore,
     onTags: (caseId) => {
       hub.broadcastTo(caseId, { type: "tags_changed" });
-      noteWatsonCaseEvent(watsonChatStore, caseId, "Analyst changed event tags or stars");
+      watsonEvents.tagsChanged(caseId);
     },
     pinnedFindingsStore,
     onPins: (caseId) => hub.broadcastTo(caseId, { type: "pins_changed" }),
@@ -276,9 +278,10 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     notebookStore,
     onNotebook: (caseId) => {
       hub.broadcastTo(caseId, { type: "notebook_changed" });
-      noteWatsonCaseEvent(watsonChatStore, caseId, "Analyst edited the notebook");
+      watsonEvents.note(caseId, { kind: "notebook", text: "Analyst edited the notebook" });
     },
     watsonChatStore,
+    onWatsonReactorReady: watsonEvents.attach,
     watsonProvider: () => buildWatsonProvider(process.env),
     onWatson: (caseId) => hub.broadcastTo(caseId, { type: "watson_changed" }),
     hypothesisStore,
@@ -328,7 +331,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     importMetaStore,
     onImportMeta: (caseId) => {
       hub.broadcastTo(caseId, { type: "import_meta_changed" });
-      noteWatsonCaseEvent(watsonChatStore, caseId, "An import finished");
+      watsonEvents.note(caseId, { kind: "import", text: "An import finished" });
     },
     dropStatusStore,
     onDropStatus: (caseId) => hub.broadcastTo(caseId, { type: "drop_status_changed" }),

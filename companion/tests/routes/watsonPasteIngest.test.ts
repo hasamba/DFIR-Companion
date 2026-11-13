@@ -23,6 +23,7 @@ import { TaggerStore } from "../../src/analysis/taggerStore.js";
 import { TagsStore } from "../../src/analysis/tags.js";
 import { WATSON_MARKER } from "../../src/analysis/timeline/watsonItems.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import { createWatsonCaseEvents } from "../../src/composition/watsonCaseEvents.js";
 import { createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 
@@ -102,6 +103,10 @@ async function harness() {
   const superTimelineStore = new SuperTimelineStore(store);
   const chatStore = new WatsonChatStore(store);
   const onImportMeta = vi.fn();
+  // The real case-event wiring (composition/appWiring.ts), with the app's own reaction scheduler.
+  const tagsStore = new TagsStore(store);
+  const events = createWatsonCaseEvents(chatStore, tagsStore);
+  const reactions: { note?: ReturnType<typeof vi.fn> } = {};
   const synthesize = vi.spyOn(pipeline, "synthesize");
   const analyzeCsv = vi.spyOn(pipeline, "analyzeCsv");
   const appendImport = vi.spyOn(store, "appendImport");
@@ -113,13 +118,22 @@ async function harness() {
     aiCostStore,
     synthMetaStore: new SynthMetaStore(store),
     superTimelineStore,
-    tagsStore: new TagsStore(store),
+    tagsStore,
     taggerStore: new TaggerStore(join(root, "user-tags.yaml")),
     forensicGateControlStore: new ForensicGateControlStore(store),
     activityLogStore: new ActivityLogStore(store),
     watsonChatStore: chatStore,
     watsonProvider: () => fake,
-    onImportMeta,
+    onImportMeta: (caseId) => {
+      onImportMeta(caseId);
+      events.note(caseId, { kind: "import", text: "An import finished" });
+    },
+    onTags: (caseId) => events.tagsChanged(caseId),
+    onNotebook: (caseId) => events.note(caseId, { kind: "notebook", text: "Analyst edited the notebook" }),
+    onWatsonReactorReady: (reactor) => {
+      reactions.note = vi.spyOn(reactor, "note") as unknown as ReturnType<typeof vi.fn>;
+      events.attach(reactor);
+    },
   });
   return {
     app,
@@ -131,6 +145,7 @@ async function harness() {
     analyzeCsv,
     superTimelineStore,
     loggedRows: () => appendImport.mock.calls.at(-1)?.[1].rows,
+    reactions,
   };
 }
 
@@ -194,6 +209,18 @@ describe("Watson paste ingest", () => {
     const undone = await request(h.app).post(`/cases/${CASE}/watson/proposals/${held[0].id}/undo`);
     expect(undone.status).toBe(200);
     expect(mentions((await h.stateStore.load(CASE)).forensicTimeline, "ntdsutil")).toHaveLength(0);
+  });
+
+  it("a paste ingest and a proposal apply schedule no Watson reaction (spec §4.6)", async () => {
+    const h = await harness();
+    expect(h.reactions.note, "createApp built and attached the shared reactor").toBeDefined();
+    await paste(h.app as never, SIEM, "events.json");
+    const pid = (await h.chatStore.load(CASE)).proposals.find((p) => p.kind === "event_promote")!.id;
+    expect((await request(h.app).post(`/cases/${CASE}/watson/proposals/${pid}/apply`)).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.reactions.note).not.toHaveBeenCalled();
+    expect((await h.chatStore.load(CASE)).pendingCaseEvents).toEqual([]);
+    expect(h.synthesize).not.toHaveBeenCalled();
   });
 
   it("undo answers 409 while a Watson finding cites the promoted row", async () => {

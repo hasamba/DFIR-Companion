@@ -48,6 +48,26 @@ describe("WatsonChatStore", () => {
     expect((await readdir(dir)).filter((f) => f.includes(".corrupt-"))).toHaveLength(1);
   });
 
+  it("loads a phase-1 chat's string case events as kind other, and keeps typed ones and the pause", async () => {
+    const typed = { kind: "import", text: "An import finished", at: "2026-11-13T10:00:00.000Z" };
+    await writeFile(
+      path,
+      JSON.stringify({
+        pendingCaseEvents: ["Analyst edited the notebook", typed, { kind: "bogus", text: "odd" }, 7],
+        reactionsPaused: "presidio",
+      }),
+    );
+    const chat = await store.load("c1");
+    expect(chat.pendingCaseEvents).toEqual([
+      { kind: "other", text: "Analyst edited the notebook", at: "" },
+      typed,
+      { kind: "other", text: "odd", at: "" },
+    ]);
+    expect(chat.reactionsPaused).toBe("presidio");
+    await writeFile(path, JSON.stringify({ reactionsPaused: "whenever" }));
+    expect((await store.load("c1")).reactionsPaused).toBeUndefined();
+  });
+
   it("round-trips and caps turns at WATSON_MAX_TURNS", async () => {
     const chat = { ...emptyWatsonChat(), turns: makeTurns(WATSON_MAX_TURNS + 5), memory: "kept" };
     await store.save("c1", chat);

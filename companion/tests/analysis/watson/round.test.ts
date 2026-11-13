@@ -10,11 +10,16 @@ import type { AiCallContext } from "../../../src/analysis/ai/aiContext.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
 import {
   runWatsonRound,
+  WATSON_REACTION_PROMPT,
   WatsonAiOff,
   WatsonCostLimitReached,
   type WatsonRoundContext,
 } from "../../../src/analysis/ai/watson/round.js";
-import type { WatsonPaste, WatsonQuestionProposal } from "../../../src/analysis/ai/watson/types.js";
+import type {
+  WatsonCaseEvent,
+  WatsonPaste,
+  WatsonQuestionProposal,
+} from "../../../src/analysis/ai/watson/types.js";
 import { PresidioApprovalRequired } from "../../../src/analysis/presidio.js";
 import { withRetry } from "../../../src/analysis/ai/retry.js";
 import { StateLock } from "../../../src/analysis/stateLock.js";
@@ -80,6 +85,12 @@ const ev = (id: string): ForensicEvent => ({
   mitreTechniques: ["T1059.001"],
   relatedFindingIds: [],
   sourceScreenshots: [],
+});
+
+const caseEvent = (text: string, kind: WatsonCaseEvent["kind"] = "other"): WatsonCaseEvent => ({
+  kind,
+  text,
+  at: "2026-11-01T00:00:00Z",
 });
 
 interface Harness {
@@ -369,21 +380,24 @@ describe("runWatsonRound", () => {
 
   it("removes only the pending case events its prompt showed", async () => {
     const h = await harness([reply()]);
-    await h.chatStore.update(CASE, (c) => ({ ...c, pendingCaseEvents: ["import finished: evtx"] }));
+    await h.chatStore.update(CASE, (c) => ({
+      ...c,
+      pendingCaseEvents: [caseEvent("import finished: evtx")],
+    }));
     const inner = h.ctx.analyzeRestored;
     h.ctx = {
       ...h.ctx,
       analyzeRestored: async (...args) => {
         await h.chatStore.update(CASE, (c) => ({
           ...c,
-          pendingCaseEvents: [...c.pendingCaseEvents, "late event"],
+          pendingCaseEvents: [...c.pendingCaseEvents, caseEvent("late event")],
         }));
         return inner(...args);
       },
     };
     const chat = await runWatsonRound(h.ctx, CASE, { text: "x" });
     expect(h.provider.sent[0].userPrompt).toContain("import finished: evtx");
-    expect(chat.pendingCaseEvents).toEqual(["late event"]);
+    expect(chat.pendingCaseEvents).toEqual([caseEvent("late event")]);
   });
 
   it("reaches the provider only through ctx.analyzeRestored", async () => {
@@ -690,5 +704,56 @@ describe("runWatsonRound", () => {
     const chat = await runWatsonRound(h.ctx, CASE, { text: "go" });
     expect(h.provider.sent[0].userPrompt).toContain("- [Q1.2] (unknown) How did they get in?");
     expect(chat.proposals.map((p) => (p as WatsonQuestionProposal).questionId)).toEqual(["Q1.2"]);
+  });
+});
+
+describe("reaction rounds (spec §4.6)", () => {
+  it("records a system turn naming the events, prompts that the case changed, and clears them", async () => {
+    const h = await harness([reply({ message: "The new evtx shows a logon." })]);
+    await h.chatStore.update(CASE, (c) => ({
+      ...c,
+      pendingCaseEvents: [
+        caseEvent("An import finished", "import"),
+        caseEvent("Analyst starred 1 event: e1"),
+      ],
+    }));
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "", reaction: true });
+    expect(chat.turns.map((t) => [t.role, t.text])).toEqual([
+      ["system", "Watson reacted to: An import finished; Analyst starred 1 event: e1"],
+      ["watson", "The new evtx shows a logon."],
+    ]);
+    expect(chat.turns.some((t) => t.role === "analyst")).toBe(false);
+    const prompt = h.provider.sent[0].userPrompt;
+    expect(prompt).toContain(`<<<ANALYST>>>\n${WATSON_REACTION_PROMPT}\n<<<END ANALYST>>>`);
+    expect(prompt).toContain("- An import finished");
+    expect(chat.pendingCaseEvents).toEqual([]);
+  });
+
+  it("no pending event left → no turn and no model call", async () => {
+    const h = await harness([reply()]);
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "", reaction: true });
+    expect(h.provider.sent).toHaveLength(0);
+    expect(chat.turns).toEqual([]);
+  });
+
+  it("a cost limit reached mid-round is thrown for a reaction (the reactor pauses)", async () => {
+    const h = await harness(["not json {{", reply()], { costLimitUSD: 0.1, retries: 3 });
+    await h.chatStore.update(CASE, (c) => ({ ...c, pendingCaseEvents: [caseEvent("notebook edited")] }));
+    await expect(runWatsonRound(h.ctx, CASE, { text: "", reaction: true })).rejects.toBeInstanceOf(
+      WatsonCostLimitReached,
+    );
+  });
+
+  it("an analyst message clears a reactions pause; a reaction does not", async () => {
+    const h = await harness([reply(), reply()]);
+    await h.chatStore.update(CASE, (c) => ({
+      ...c,
+      reactionsPaused: "presidio",
+      pendingCaseEvents: [caseEvent("notebook edited")],
+    }));
+    const afterReaction = await runWatsonRound(h.ctx, CASE, { text: "", reaction: true });
+    expect(afterReaction.reactionsPaused).toBe("presidio");
+    const afterMessage = await runWatsonRound(h.ctx, CASE, { text: "carry on" });
+    expect(afterMessage.reactionsPaused).toBeUndefined();
   });
 });

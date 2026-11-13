@@ -157,6 +157,16 @@ export interface WatsonPaste {
   parsed?: WatsonPasteParsed;
 }
 
+/** Something that changed in the case since Watson's last round (spec §4.6). */
+export interface WatsonCaseEvent {
+  kind: "import" | "notebook" | "star" | "other";
+  text: string;
+  at: string;
+}
+
+/** Why automatic reactions stopped; the next analyst message clears it. */
+export type WatsonReactionsPaused = "presidio" | "limit";
+
 export interface WatsonChat {
   turns: WatsonTurn[];
   proposals: WatsonProposal[];
@@ -164,7 +174,9 @@ export interface WatsonChat {
   /** Pastes no successful round has read yet, oldest first. The next round attaches the newest. */
   unreadPasteIds: string[];
   memory: string;
-  pendingCaseEvents: string[];
+  pendingCaseEvents: WatsonCaseEvent[];
+  /** Set when an automatic reaction hit a Presidio hold or a cost/token limit. */
+  reactionsPaused?: WatsonReactionsPaused;
   costUSD: number;
   /** Input + output tokens Watson used on this case: the limit for providers that report no cost. */
   tokens: number;

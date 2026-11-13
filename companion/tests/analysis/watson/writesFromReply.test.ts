@@ -258,6 +258,34 @@ describe("Watson writes from the reply", () => {
     expect(chat.proposals.map((p) => p.kind)).toEqual(["question_new"]);
   });
 
+  it("a reaction with an import among its events → only question proposals (spec §4.4)", async () => {
+    const draft = () =>
+      reply(
+        {
+          findings: [findingDraft()],
+          nextSteps: [{ priority: "high", action: "Pull the mail log", rationale: "r", pointer: "p" }],
+          report: [],
+        },
+        { newQuestions: [{ question: "Who opened the mail?", why: "e1" }] },
+      );
+    const at = "2026-11-01T00:00:00Z";
+    const h = await harness([draft()]);
+    await h.chatStore.update(CASE, (c) => ({
+      ...c,
+      pendingCaseEvents: [{ kind: "import", text: "An import finished", at }],
+    }));
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "", reaction: true });
+    expect(chat.proposals.map((p) => p.kind)).toEqual(["question_new"]);
+
+    const star = await harness([draft()]);
+    await star.chatStore.update(CASE, (c) => ({
+      ...c,
+      pendingCaseEvents: [{ kind: "star", text: "Analyst starred 1 event: e1", at }],
+    }));
+    const starred = await runWatsonRound(star.ctx, CASE, { text: "", reaction: true });
+    expect(starred.proposals.map((p) => p.kind)).toContain("next_step_new");
+  });
+
   it("an updateId naming a Watson finding → finding_update; one naming a synthesis finding is dropped", async () => {
     const h = await harness([
       reply({

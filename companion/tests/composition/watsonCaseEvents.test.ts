@@ -19,21 +19,26 @@ const settle = (chats: WatsonChatStore) => chats.update("c1", (c) => c);
 describe("noteWatsonCaseEvent", () => {
   it("appends through the shared store, skips a repeat of the last line, and caps at 50", async () => {
     const chats = await chatStore();
-    noteWatsonCaseEvent(chats, "c1", "Analyst edited the notebook");
-    noteWatsonCaseEvent(chats, "c1", "Analyst edited the notebook");
+    const notebook = { kind: "notebook" as const, text: "Analyst edited the notebook" };
+    noteWatsonCaseEvent(chats, "c1", notebook);
+    noteWatsonCaseEvent(chats, "c1", notebook);
     await settle(chats);
-    expect((await chats.load("c1")).pendingCaseEvents).toEqual(["Analyst edited the notebook"]);
+    const once = (await chats.load("c1")).pendingCaseEvents;
+    expect(once).toMatchObject([notebook]);
+    expect(Number.isNaN(Date.parse(once[0].at))).toBe(false);
 
-    for (let i = 0; i < WATSON_PENDING_EVENTS_MAX + 10; i++) noteWatsonCaseEvent(chats, "c1", `event ${i}`);
+    for (let i = 0; i < WATSON_PENDING_EVENTS_MAX + 10; i++) {
+      noteWatsonCaseEvent(chats, "c1", { kind: "import", text: `event ${i}` });
+    }
     await settle(chats);
     const events = (await chats.load("c1")).pendingCaseEvents;
     expect(events).toHaveLength(WATSON_PENDING_EVENTS_MAX);
-    expect(events.at(-1)).toBe(`event ${WATSON_PENDING_EVENTS_MAX + 9}`);
+    expect(events.at(-1)?.text).toBe(`event ${WATSON_PENDING_EVENTS_MAX + 9}`);
   });
 
   it("makes no model call and leaves the turns alone", async () => {
     const chats = await chatStore();
-    noteWatsonCaseEvent(chats, "c1", "An import finished");
+    noteWatsonCaseEvent(chats, "c1", { kind: "import", text: "An import finished" });
     await settle(chats);
     const chat = await chats.load("c1");
     expect(chat.turns).toEqual([]);

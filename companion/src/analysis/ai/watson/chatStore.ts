@@ -6,7 +6,13 @@ import { atomicWrite } from "../../../storage/atomicWrite.js";
 import { WatsonHistoryStore } from "./historyStore.js";
 import { proposalSchema } from "./proposalSchema.js";
 import { turnSchema } from "./turnSchema.js";
-import { emptyWatsonChat, type WatsonChat, type WatsonProposal, type WatsonTurn } from "./types.js";
+import {
+  emptyWatsonChat,
+  type WatsonCaseEvent,
+  type WatsonChat,
+  type WatsonProposal,
+  type WatsonTurn,
+} from "./types.js";
 
 // Per-case persistence for the Watson chat (state/watson-chat.json). A side file like
 // hunt-outcomes.json: not part of InvestigationState, in SNAPSHOT_STATE_FILES so the chat travels
@@ -31,6 +37,18 @@ const pasteSchema = z.object({
     .catch(undefined),
 });
 
+const caseEventSchema = z.object({
+  kind: z.enum(["import", "notebook", "star", "other"]).catch("other"),
+  text: z.string(),
+  at: z.string().catch(""),
+});
+
+/** A phase-1 chat stored each case event as a bare line: it loads as kind "other", time unknown. */
+const caseEventItem = z.union([
+  z.string().transform((text): WatsonCaseEvent => ({ kind: "other", text, at: "" })),
+  caseEventSchema,
+]);
+
 function lenientList<T>(raw: unknown, schema: z.ZodType<T, z.ZodTypeDef, unknown>): T[] {
   if (!Array.isArray(raw)) return [];
   const out: T[] = [];
@@ -54,7 +72,10 @@ function parseChat(raw: unknown): WatsonChat {
     pastes: lenientList(o.pastes, pasteSchema),
     unreadPasteIds: strings(o.unreadPasteIds),
     memory: typeof o.memory === "string" ? o.memory : "",
-    pendingCaseEvents: strings(o.pendingCaseEvents),
+    pendingCaseEvents: lenientList<WatsonCaseEvent>(o.pendingCaseEvents, caseEventItem),
+    ...(o.reactionsPaused === "presidio" || o.reactionsPaused === "limit"
+      ? { reactionsPaused: o.reactionsPaused }
+      : {}),
     costUSD: num(o.costUSD),
     tokens: num(o.tokens),
     calls: num(o.calls),

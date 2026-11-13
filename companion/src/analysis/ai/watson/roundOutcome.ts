@@ -6,7 +6,7 @@ import type { WatsonReply } from "./replySchema.js";
 import type { WatsonSpend } from "./roundContext.js";
 import type { WatsonWriteInputs } from "./roundWrites.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
-import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
+import type { WatsonCaseEvent, WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
 // How a round's result is folded into the saved chat: the Outcome the model calls produced, the turn
 // built from it, and the unread-paste bookkeeping. Pure functions over the FRESH chat, so a paste or
@@ -23,7 +23,7 @@ export interface Outcome {
   readPasteIds?: string[];
   /** A paste Watson could not read (its head failed, or its file is gone): told once, then dropped. */
   unreadable?: WatsonPaste;
-  shownEvents: string[];
+  shownEvents: WatsonCaseEvent[];
   questions: InvestigationState["keyQuestions"];
   /** Set only when the forensic timeline was trimmed to fit the prompt (#452). */
   coverage?: WatsonCoverage;
@@ -31,11 +31,20 @@ export interface Outcome {
   writeInputs?: WatsonWriteInputs;
 }
 
-/** Remove each shown event once, so an event added during the round stays for the next one. */
-function withoutShown(pending: readonly string[], shown: readonly string[]): string[] {
+const sameEvent = (a: WatsonCaseEvent, b: WatsonCaseEvent): boolean =>
+  a.kind === b.kind && a.text === b.text && a.at === b.at;
+
+/**
+ * Remove each shown event once, so an event added during the round stays for the next one. Compared
+ * by value: the fresh chat is read back from disk, so no object is the one the round showed.
+ */
+function withoutShown(
+  pending: readonly WatsonCaseEvent[],
+  shown: readonly WatsonCaseEvent[],
+): WatsonCaseEvent[] {
   const left = [...shown];
   return pending.filter((e) => {
-    const i = left.indexOf(e);
+    const i = left.findIndex((s) => sameEvent(s, e));
     if (i === -1) return true;
     left.splice(i, 1);
     return false;

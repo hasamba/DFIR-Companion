@@ -55,6 +55,7 @@ import { createDiagnosticsRings } from "./composition/diagnosticsRings.js";
 import { createCaseAppliers } from "./composition/caseAppliers.js";
 import { createEnrichmentEngine } from "./composition/enrichment.js";
 import { createCaptureAnalysis } from "./composition/captureAnalysis.js";
+import { createAppWatsonReactor } from "./composition/watsonReactorWiring.js";
 import { createImportIngest } from "./composition/importIngest.js";
 import { createExternalTools } from "./composition/externalTools.js";
 import { createDropFolder } from "./composition/dropFolder.js";
@@ -394,6 +395,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   if (transports.telegramPoller) app.locals.telegramPoller = transports.telegramPoller;
   if (transports.slackSocketMode) app.locals.slackSocketMode = transports.slackSocketMode;
   app.locals.captureAnalysis = analysis; // shutdown cancels its pending host-duplicate checks (#2584)
+  app.locals.watsonReactor = createAppWatsonReactor(ctx, analysis.synthesisBusy); // spec §4.6, one per app
+  if (app.locals.watsonReactor) options.onWatsonReactorReady?.(app.locals.watsonReactor);
 
   // Re-arm any persisted live Velociraptor monitors so streaming survives a restart (#84). Fire-and-
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
@@ -706,6 +709,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     server,
     stopTransports: async () => {
       app.locals.captureAnalysis?.dispose();
+      app.locals.watsonReactor?.stop();
       await app.locals.telegramPoller?.stop();
       await app.locals.slackSocketMode?.stop();
     },

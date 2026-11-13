@@ -38,6 +38,34 @@ export interface WatsonRoundInput {
   pasteId?: string;
   /** Spec §4.4 door rule: false drops the reply's writes (question proposals stay). Default true. */
   allowWrites?: boolean;
+  /**
+   * An automatic reaction to case events (reactor.ts): a system turn instead of an analyst turn, no
+   * round at all when no event is pending, no writes when an import is among the events shown, and a
+   * cost/token limit is thrown like a Presidio hold so the reactor can pause.
+   */
+  reaction?: boolean;
+}
+
+/** The ANALYST block of a reaction round: the events themselves are in CASE CHANGES. */
+export const WATSON_REACTION_PROMPT =
+  "(No analyst message. The case changed: see CASE CHANGES SINCE LAST ROUND. Say briefly what the change means for the investigation.)";
+
+/** The turn that stands in for the analyst's message on a reaction round. */
+function reactionTurn(chat: WatsonChat): WatsonTurn {
+  const texts = [...new Set(chat.pendingCaseEvents.slice(0, WATSON_CASE_EVENTS_MAX).map((e) => e.text))];
+  return {
+    id: newWatsonId("wt"),
+    at: new Date().toISOString(),
+    role: "system",
+    text: `Watson reacted to: ${texts.join("; ")}`.slice(0, WATSON_TURN_TEXT_MAX),
+  };
+}
+
+/** The chat without a reactions pause: any message from the analyst resumes reactions. */
+function resumed(chat: WatsonChat): WatsonChat {
+  if (!chat.reactionsPaused) return chat;
+  const { reactionsPaused: _cleared, ...rest } = chat;
+  return rest;
 }
 
 const searchSkipped = (why: string): string =>
@@ -74,22 +102,30 @@ async function runRound(
 ): Promise<WatsonChat> {
   if (!(await ctx.isAiEnabled(caseId))) throw new WatsonAiOff();
   const start = await ctx.chatStore.load(caseId);
+  // An analyst message that ran first read every event: nothing is left to react to.
+  if (input.reaction && start.pendingCaseEvents.length === 0) return start;
   const reached = limitReached(ctx, chatSpend(start));
   if (reached) throw new WatsonCostLimitReached(reached);
 
   // The paste this message carries, else the newest one no successful round has read yet. An unread
   // paste is attached on its own at most once, so a head that always fails cannot block Watson.
   const { paste, newPaste, auto } = choosePaste(start, input.pasteId);
-  const analystTurn: WatsonTurn = {
-    id: newWatsonId("wt"),
-    at: new Date().toISOString(),
-    role: "analyst",
-    text: input.text.slice(0, WATSON_TURN_TEXT_MAX),
-    ...(input.actor ? { actor: input.actor } : {}),
-    ...(paste && input.pasteId ? { pasteId: paste.id } : {}),
-  };
+  const analystTurn: WatsonTurn = input.reaction
+    ? reactionTurn(start)
+    : {
+        id: newWatsonId("wt"),
+        at: new Date().toISOString(),
+        role: "analyst",
+        text: input.text.slice(0, WATSON_TURN_TEXT_MAX),
+        ...(input.actor ? { actor: input.actor } : {}),
+        ...(paste && input.pasteId ? { pasteId: paste.id } : {}),
+      };
+  const promptTurn = { id: analystTurn.id, text: input.reaction ? WATSON_REACTION_PROMPT : analystTurn.text };
   // Saved BEFORE the model call: the analyst's words survive any failure below.
-  const chat = await ctx.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, analystTurn] }));
+  const chat = await ctx.chatStore.update(caseId, (c) => {
+    const base = input.reaction ? c : resumed(c);
+    return { ...base, turns: [...base.turns, analystTurn] };
+  });
 
   const counter = { calls: 0 };
   let outcome: Outcome = { reply: null, shownEvents: [], questions: [] };
@@ -97,8 +133,10 @@ async function runRound(
   let saved: WatsonChat | undefined;
   try {
     before = await watsonSpend(ctx, caseId);
-    outcome = await converse(ctx, caseId, chat, analystTurn, { paste: newPaste, auto }, counter, before);
-    outcome = await withWriteInputs(ctx, caseId, outcome, input.allowWrites !== false);
+    outcome = await converse(ctx, caseId, chat, promptTurn, { paste: newPaste, auto }, counter, before);
+    // Spec §4.4: a reaction to an import writes nothing, judged on the events the prompt showed.
+    const importShown = input.reaction === true && outcome.shownEvents.some((e) => e.kind === "import");
+    outcome = await withWriteInputs(ctx, caseId, outcome, input.allowWrites !== false && !importShown);
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
   } finally {
@@ -114,6 +152,7 @@ async function runRound(
     });
   }
   if (failure instanceof PresidioApprovalRequired) throw failure;
+  if (input.reaction && failure instanceof WatsonCostLimitReached) throw failure;
   return saved;
 }
 
@@ -121,7 +160,7 @@ async function converse(
   ctx: WatsonRoundContext,
   caseId: string,
   chat: WatsonChat,
-  analystTurn: WatsonTurn,
+  analystTurn: Pick<WatsonTurn, "id" | "text">,
   attach: { paste: WatsonPaste | undefined; auto: boolean },
   counter: { calls: number },
   before: WatsonSpend,

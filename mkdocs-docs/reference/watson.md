@@ -85,13 +85,21 @@ A synthesis run keeps the answers Watson gave. If a new synthesis reaches a diff
 
 ## What happens while you work
 
-While you use the rest of the dashboard, Watson does not react at once. These actions are queued:
+Watson notes these actions while you use the rest of the dashboard:
 
 - notebook edits
-- tags and stars on events
+- new stars on events (other tag changes are noted, but do not wake Watson)
 - imports, and an import undo
 
-Watson reads the queue at the start of your next message to it.
+When nothing new happens for 60 seconds, Watson reacts once to everything it noted. One reaction covers a whole batch of files. A reaction shows in the chat as **Watson reacted to: …**, followed by Watson's answer. A reaction never starts a synthesis, and a reaction never starts another reaction.
+
+- Watson reacts only on a case where you already sent it a message.
+- Watson does not react while AI is off for the case, or on a closed or archived case.
+- When an import starts a synthesis, Watson waits for the synthesis to finish and then reacts to its result.
+- After an import, Watson can answer and update the key questions, but it does not propose findings, next steps or report text. After notes and stars, it can propose them for your approval.
+- When a reaction is held by Presidio or reaches the Watson cost or token limit, Watson stops reacting on the case and says so in the chat. Send a message to start again.
+
+Set the quiet time with `DFIR_AI_WATSON_REACT_DELAY_SEC` (default 60). Set 0 to stop the reactions: Watson then reads what it noted at the start of your next message.
 
 ## Privacy
 
@@ -113,6 +121,7 @@ Set these under **Settings → AI**. See the [Settings Reference](settings.md) f
 | `DFIR_AI_WATSON_MODEL` | The model Watson uses. Blank means the synthesis model. |
 | `DFIR_AI_WATSON_COST_LIMIT_USD` | A dollar limit per case. It applies only when the provider reports a price. |
 | `DFIR_AI_WATSON_TOKEN_LIMIT` | A token limit per case. It always applies. |
+| `DFIR_AI_WATSON_REACT_DELAY_SEC` | Seconds of quiet before Watson reacts to case changes. Default 60. 0 = no reactions. |
 
 The footer of the Watson panel shows how many calls Watson made on the case, and the cost in dollars or the tokens used, depending on what the provider reports.
 
@@ -124,5 +133,4 @@ Watson does not yet:
 - run Velociraptor actions
 - write findings or report text
 - search the super-timeline
-- react to notes, stars or imports as they happen
 - split pasted text into timeline rows
