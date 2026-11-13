@@ -32,7 +32,39 @@ describe("watsonReplySchema", () => {
   });
 });
 
+describe("per-element leniency", () => {
+  it("keeps valid elements next to junk", () => {
+    const r = parse({
+      questionUpdates: ["x", null, 3, { questionId: "q1", status: "answered" }],
+      newQuestions: [null, { question: "real?", why: "w" }, "s"],
+      search: { pasteId: "p1", terms: ["a", 5, null, "b"] },
+    });
+    expect(r.questionUpdates.map((u) => u.questionId)).toEqual(["q1"]);
+    expect(r.newQuestions.map((q) => q.question)).toEqual(["real?"]);
+    expect(r.search?.terms).toEqual(["a", "b"]);
+  });
+});
+
 describe("sanitizeWatsonReply", () => {
+  it("drops blank questions and terms before capping", () => {
+    const r = parse({
+      newQuestions: [
+        { question: "  ", why: "" },
+        { question: "", why: "" },
+        { question: "a", why: "" },
+        { question: "b", why: "" },
+        { question: "c", why: "" },
+      ],
+      search: { pasteId: "p1", terms: ["", "  ", "t"] },
+    });
+    const out = sanitizeWatsonReply(r, qs, ps);
+    expect(out.newQuestions.map((q) => q.question)).toEqual(["a", "b", "c"]);
+    expect(out.search?.terms).toEqual(["t"]);
+  });
+  it("passes an import request through", () => {
+    const r = parse({ request: { kind: "import", what: "event logs", why: "w" } });
+    expect(sanitizeWatsonReply(r, qs, ps).request).toEqual({ kind: "import", what: "event logs", why: "w" });
+  });
   it("drops updates with unknown questionId", () => {
     const r = parse({
       questionUpdates: [

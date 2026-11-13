@@ -16,6 +16,19 @@ const LANGUAGES = ["vql", "kql", "spl", "cql", "esql", "sql", "other"];
 
 const str = z.string().catch("");
 
+// Parse an array element by element: a bad element is dropped, the valid ones stay.
+function lenientArray<T extends z.ZodTypeAny>(element: T) {
+  return z
+    .array(z.unknown())
+    .catch([])
+    .transform((items) =>
+      items.flatMap((item) => {
+        const parsed = element.safeParse(item);
+        return parsed.success ? [parsed.data as z.infer<T>] : [];
+      }),
+    );
+}
+
 const requestSchema = z
   .union([
     z.object({ kind: z.literal("query"), language: str, query: str, why: str }),
@@ -28,13 +41,13 @@ export const watsonReplySchema = z.object({
   message: str,
   workingOn: str,
   learned: str,
-  questionUpdates: z
-    .array(z.object({ questionId: str, status: questionStatusSchema, answer: str, pointer: str }))
-    .catch([]),
-  newQuestions: z.array(z.object({ question: str, why: str })).catch([]),
+  questionUpdates: lenientArray(
+    z.object({ questionId: str, status: questionStatusSchema, answer: str, pointer: str }),
+  ),
+  newQuestions: lenientArray(z.object({ question: str, why: str })),
   request: requestSchema,
   search: z
-    .object({ pasteId: str, terms: z.array(z.string()).catch([]) })
+    .object({ pasteId: str, terms: lenientArray(z.string()) })
     .nullable()
     .catch(null),
   memory: str,
@@ -71,7 +84,10 @@ export function sanitizeWatsonReply(
     reply.search && knownPasteIds.has(reply.search.pasteId)
       ? {
           pasteId: reply.search.pasteId,
-          terms: reply.search.terms.slice(0, MAX_SEARCH_TERMS).map((t) => t.slice(0, MAX_TERM_CHARS)),
+          terms: reply.search.terms
+            .filter((t) => t.trim() !== "")
+            .slice(0, MAX_SEARCH_TERMS)
+            .map((t) => t.slice(0, MAX_TERM_CHARS)),
         }
       : null;
   return {
@@ -79,7 +95,7 @@ export function sanitizeWatsonReply(
     message: reply.message.slice(0, WATSON_TURN_TEXT_MAX),
     memory: reply.memory.slice(0, MAX_MEMORY_CHARS),
     questionUpdates: reply.questionUpdates.filter((u) => knownQuestionIds.has(u.questionId)),
-    newQuestions: reply.newQuestions.slice(0, MAX_NEW_QUESTIONS),
+    newQuestions: reply.newQuestions.filter((q) => q.question.trim() !== "").slice(0, MAX_NEW_QUESTIONS),
     request: sanitizeRequest(reply.request),
     search,
   };
