@@ -6,6 +6,23 @@ import { downloadLatestVelociraptor } from "../analysis/velociraptorDownload.js"
 import type { RouteContext } from "./context.js";
 import { fetchOutbound, OutboundUrlBlockedError } from "./outboundFetchGuard.js";
 
+/** Client-side problems with the requested folder map to 4xx; anything else is a real 500 (#2617). */
+function browseFsErrorResponse(code: string | undefined): { status: number; error: string } | null {
+  switch (code) {
+    case "EACCES":
+    case "EPERM":
+      return { status: 403, error: "Cannot read this folder: permission denied" };
+    case "ENOTDIR":
+      return { status: 400, error: "Cannot read this folder: the path is not a folder" };
+    case "ELOOP":
+      return { status: 400, error: "Cannot read this folder: too many symbolic links" };
+    case "ENAMETOOLONG":
+      return { status: 400, error: "Cannot read this folder: the path is too long" };
+    default:
+      return null;
+  }
+}
+
 /**
  * Two settings-page routes for the Velociraptor binary/API-config path fields:
  *   - GET /settings/browse-fs — lists a directory for the dashboard's in-page file picker.
@@ -44,7 +61,11 @@ export function registerVelociraptorSettingsRoutes(app: Express, ctx: RouteConte
       const parent = dirname(dir);
       return res.json({ dir, parent: parent === dir ? null : parent, entries });
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      const mapped = browseFsErrorResponse((err as NodeJS.ErrnoException).code);
+      if (mapped) return res.status(mapped.status).json({ error: mapped.error });
+      // Unknown failure: keep the detail server-side, never echo the raw errno/path to the client.
+      errLine(`GET /settings/browse-fs failed: ${(err as Error).message}`);
+      return res.status(500).json({ error: "Could not list this folder" });
     }
   });
 
