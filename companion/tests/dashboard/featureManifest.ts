@@ -1868,6 +1868,13 @@ export const FEATURES: Feature[] = [
     ],
   },
   {
+    // Watson's markup builders, split from dashboard-watson.js to keep both under 400 lines. Pure:
+    // no state, no initializer; dashboard-watson.js calls the four builders by name.
+    file: "dashboard-watson-view.js",
+    publish: ["watsonTurnHtml", "watsonBoardHtml", "watsonPanelHtml", "watsonSectionHtml"],
+    private: ["QSTATUS", "btn"],
+  },
+  {
     // Watson chat panel and section. initWatson() is called from initDataAct (the inline script has no
     // spare line), so the manifest names no initializer. watsonAct is the one data-act entry.
     file: "dashboard-watson.js",
@@ -1880,7 +1887,7 @@ export const FEATURES: Feature[] = [
       "loadWatson",
       "watsonAct",
     ],
-    private: ["wChat", "wQuestions", "wCase", "wSeq", "wSeen", "wNotice", "wBusy"],
+    private: ["wChat", "wQuestions", "wCase", "wSeq", "wSeen", "wNotice", "wNoAi", "wBusy"],
   },
   {
     // Last-import change tracking. All three escapes were READS from the page's two renderers, so
