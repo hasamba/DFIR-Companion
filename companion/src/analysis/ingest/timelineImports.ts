@@ -149,7 +149,12 @@ const LAB_REFUSING_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionInte
  * The route checks both, but against the state it read before its grade and archive lookups. This
  * runs under the state lock, on the state the merge will use, so an import in between changes nothing.
  */
-const NEW_ROWS_ONLY_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionIntent>(["missed-evidence"]);
+// `watson` too: its held rows carry a grade the tagger chose at paste time, and a row the case has
+// gained since (an analyst promotion, a later import) must not be re-graded or marked by the apply.
+const NEW_ROWS_ONLY_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionIntent>([
+  "missed-evidence",
+  "watson",
+]);
 
 export interface PromotionOptions {
   importedAt: string;

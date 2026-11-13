@@ -171,9 +171,12 @@ describe("Watson event-promote writer", () => {
   });
 
   it("does not delete a row that was already in the forensic timeline before apply", async () => {
-    await stateStore.appendForensicEvents(CASE, [{ ...raised, provenance: [] }]);
+    await stateStore.appendForensicEvents(CASE, [{ ...raised, severity: "Low", provenance: [] }]);
     await applyWatsonProposal(deps, CASE, "wp-e", "apply", "Ana");
     expect((await stored()).createdEventIds).toEqual([]);
+    // Not re-graded and not marked: the row the case gained meanwhile is left as it was.
+    expect((await row(raised.id))?.severity).toBe("Low");
+    expect((await row(raised.id))?.provenance ?? []).not.toContain(WATSON_MARKER);
     await applyWatsonProposal(deps, CASE, "wp-e", "undo", "Ana");
     expect(await row(raised.id)).toBeDefined();
   });

@@ -172,6 +172,8 @@ describe("Watson paste ingest", () => {
     // The system turn comes before the round's analyst turn.
     const roles = chat.turns.map((t) => t.role);
     expect(roles.indexOf("system")).toBeLessThan(roles.indexOf("analyst"));
+    // The round's prompt carries the system turn.
+    expect(JSON.stringify(h.fake.sent[0])).toContain("Parsed 2 rows from events.json (siem)");
 
     // The import log records the parsed row count, not 0.
     expect(h.loggedRows()).toBe(2);

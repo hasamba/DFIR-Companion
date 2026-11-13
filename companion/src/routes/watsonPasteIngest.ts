@@ -54,12 +54,23 @@ export async function ingestWatsonPaste(
   if (AI_ONLY_KINDS.has(kind)) {
     return { kind: "text", reason: "no built-in importer reads this format; it stays searchable text" };
   }
+  let imported = false;
   try {
-    const parsed = await parseInSection(ctx, caseId, paste, text, kind);
+    const parsed = await parseInSection(ctx, caseId, paste, text, kind, () => {
+      imported = true;
+    });
     if (!("reason" in parsed)) await ctx.markConclusionsOutOfDate(caseId, "Watson paste parsed");
     return parsed;
   } catch (err) {
     ctx.serverLogger.warn(`[watson] ${caseId}: paste ${paste.storedName} was not parsed — ${message(err)}`);
+    if (imported) {
+      // The importer merged its rows; a later step failed. Say so rather than calling it unparsed.
+      await ctx.markConclusionsOutOfDate(caseId, "Watson paste parsed").catch(() => undefined);
+      return {
+        kind: "text",
+        reason: `the ${kind} rows were imported, but grading them failed: ${message(err)}`,
+      };
+    }
     return { kind: "text", reason: `the ${kind} importer could not parse it: ${message(err)}` };
   }
 }
@@ -70,6 +81,7 @@ async function parseInSection(
   paste: WatsonPaste,
   text: string,
   kind: string,
+  onImported: () => void,
 ): Promise<WatsonPasteIngest> {
   const { options } = ctx;
   const settleDeps = routeSettleDeps(ctx);
@@ -99,6 +111,7 @@ async function parseInSection(
       idPrefix: `watson-${paste.id}`,
       importedAt: new Date().toISOString(),
     });
+    onImported();
     const settled = await settleForensicImport(deps, caseId, section.baseline, paste.storedName);
     const offered = held.offered();
     const candidates = held.held();
