@@ -39,6 +39,8 @@ export type WatsonRoundContext = AiCallContext & {
   /** Host-identity sources, so Watson names hosts the way synthesis does. */
   assetOverridesStore?: AssetOverridesStore;
   velociraptorClientStore?: CaseFleetInventory;
+  /** Tells the dashboard the case state changed (the standard questions were seeded). */
+  onStateChanged?(caseId: string): void;
 };
 
 /** Thrown before anything is saved when the case's AI switch is off. The route answers 409. */
@@ -92,17 +94,19 @@ const hasStandard = (s: InvestigationState): boolean =>
 
 /**
  * Add the six standard questions when the case has none of them. A deleted one stays deleted. The
- * cheap check runs first, so the state lock is taken only on the round that actually seeds.
+ * cheap check runs first, so the state lock is taken only on the round that actually seeds. True
+ * when this call saved them.
  */
-export async function seedStandardQuestions(ctx: WatsonRoundContext, caseId: string): Promise<void> {
-  if (hasStandard(await ctx.stateStore.loadOverview(caseId))) return;
-  await ctx.stateLock.runExclusive(caseId, async () => {
+export async function seedStandardQuestions(ctx: WatsonRoundContext, caseId: string): Promise<boolean> {
+  if (hasStandard(await ctx.stateStore.loadOverview(caseId))) return false;
+  return ctx.stateLock.runExclusive(caseId, async () => {
     const state = await ctx.stateStore.loadOverview(caseId);
-    if (hasStandard(state)) return;
+    if (hasStandard(state)) return false;
     await ctx.stateStore.saveOverview({
       ...state,
       keyQuestions: ensureStandardQuestions(state.keyQuestions),
     });
+    return true;
   });
 }
 

@@ -33,6 +33,8 @@ import type { RouteContext } from "./context.js";
 const PROPOSAL_ACTIONS: readonly string[] = ["apply", "reject", "undo"];
 const DEFAULT_PASTE_NAME = "pasted-text.txt";
 const FILENAME_MAX = 200;
+/** Set on a paste response once the text is saved as evidence, so a failed round can say so. */
+export const PASTE_STORED_HEADER = "X-Watson-Paste-Stored";
 
 /** A positive finite number from a setting, else undefined: blank, junk, zero and negatives mean "no limit". */
 export function positiveLimit(raw: string | undefined): number | undefined {
@@ -78,6 +80,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       isAiEnabled: async (id) => (await ctx.getControl(id)).enabled,
       costLimitUSD: positiveLimit(process.env.DFIR_AI_WATSON_COST_LIMIT_USD),
       tokenLimit: positiveLimit(process.env.DFIR_AI_WATSON_TOKEN_LIMIT),
+      onStateChanged: options.onStateChanged,
     };
   }
 
@@ -117,7 +120,9 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     if (!options.watsonChatStore) return res.status(501).json({ error: "Watson is not configured" });
     if (await caseMissing(req.params.id)) return res.status(404).json({ error: "case not found" });
     try {
-      return res.status(200).json(await options.watsonChatStore.load(req.params.id));
+      // providerConfigured: false tells the dashboard to hide the panel; the chat stays readable.
+      const chat = await options.watsonChatStore.load(req.params.id);
+      return res.status(200).json({ ...chat, providerConfigured: !!roundDeps() && !!options.pipeline });
     } catch (err) {
       return sendPipelineError(res, err);
     }
@@ -154,13 +159,19 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     }
     const run = await refuseBeforeWork(res, caseId);
     if (!run) return res;
-    const filename = stringOrEmpty(req.body?.filename).trim().slice(0, FILENAME_MAX) || DEFAULT_PASTE_NAME;
+    // One line: the name is printed in Watson's prompt and in the chat.
+    const filename =
+      stringOrEmpty(req.body?.filename)
+        .replace(/[\r\n]+/g, " ")
+        .trim()
+        .slice(0, FILENAME_MAX) || DEFAULT_PASTE_NAME;
     const note = stringOrEmpty(req.body?.message)
       .trim()
       .slice(0, WATSON_TURN_TEXT_MAX - 200);
     const actor = actorName(req);
     try {
       const paste = await storePaste(caseId, filename, text, bytes, actor);
+      res.setHeader(PASTE_STORED_HEADER, "1");
       await ctx.markConclusionsOutOfDate(caseId, "Watson paste stored");
       const lead = `Pasted ${paste.filename} (${paste.lines} lines, ${paste.bytes} bytes).`;
       const chat = await run.pipeline.watsonRound(
@@ -213,6 +224,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     await options.watsonChatStore!.update(caseId, (chat: WatsonChat) => ({
       ...chat,
       pastes: [...chat.pastes, paste],
+      unreadPasteIds: [...chat.unreadPasteIds, paste.id],
     }));
     return paste;
   }

@@ -46,6 +46,8 @@ export interface WatsonChat {
   turns: WatsonTurn[];
   proposals: WatsonProposal[];
   pastes: WatsonPaste[];
+  /** Pastes no successful round has read yet, oldest first. The next round attaches the newest. */
+  unreadPasteIds: string[];
   memory: string;
   pendingCaseEvents: string[];
   costUSD: number;
@@ -59,6 +61,7 @@ export function emptyWatsonChat(): WatsonChat {
     turns: [],
     proposals: [],
     pastes: [],
+    unreadPasteIds: [],
     memory: "",
     pendingCaseEvents: [],
     costUSD: 0,

@@ -1,8 +1,9 @@
 import { PresidioApprovalRequired } from "../../presidio.js";
 import type { InvestigationState } from "../../stateTypes.js";
-import { callAiJson } from "../aiContext.js";
+import { callAiJson, retryPolicy } from "../aiContext.js";
 import { AiReplyUnreadableError } from "../aiReplyUnreadable.js";
 import { AiAnswerParseError } from "../providerCall.js";
+import { isRetryableError } from "../retry.js";
 import { getWatsonPrompt } from "../prompts/index.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { promptEntities } from "./pasteEntities.js";
@@ -74,6 +75,8 @@ interface Outcome {
   error?: unknown;
   /** Thrown to the route after the save (a Presidio hold), even when a first reply was kept. */
   rethrow?: unknown;
+  /** The paste whose head was in a call that returned a reply: no longer unread. */
+  readPasteId?: string;
   shownEvents: string[];
   questions: InvestigationState["keyQuestions"];
 }
@@ -90,16 +93,19 @@ async function runRound(
   const reached = limitReached(ctx, chatSpend(start));
   if (reached) throw new WatsonCostLimitReached(reached);
 
-  const paste = input.pasteId ? start.pastes.find((p) => p.id === input.pasteId) : undefined;
+  // The paste this message carries, else the newest one no successful round has read yet.
+  const pasteId = input.pasteId ?? start.unreadPasteIds.at(-1);
+  const paste = pasteId ? start.pastes.find((p) => p.id === pasteId) : undefined;
   const analystTurn: WatsonTurn = {
     id: newWatsonId("wt"),
     at: new Date().toISOString(),
     role: "analyst",
     text: input.text.slice(0, WATSON_TURN_TEXT_MAX),
     ...(input.actor ? { actor: input.actor } : {}),
-    ...(paste ? { pasteId: paste.id } : {}),
+    ...(paste && input.pasteId ? { pasteId: paste.id } : {}),
   };
-  const newPaste = paste && !pasteAnswered(start.turns, paste.id) ? paste : undefined;
+  const unread = paste && start.unreadPasteIds.includes(paste.id);
+  const newPaste = paste && (unread || !pasteAnswered(start.turns, paste.id)) ? paste : undefined;
   // Saved BEFORE the model call: the analyst's words survive any failure below.
   const chat = await ctx.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, analystTurn] }));
 
@@ -143,7 +149,8 @@ async function converse(
   let ask: (input: WatsonPromptInput) => Promise<WatsonReply>;
   let base: WatsonPromptInput;
   try {
-    await seedStandardQuestions(ctx, caseId);
+    // The board and the Key Questions section show the seeded questions now, whatever the round does.
+    if (await seedStandardQuestions(ctx, caseId)) ctx.onStateChanged?.(caseId);
     const state = await ctx.stateStore.load(caseId);
     questions = state.keyQuestions;
     const caseContext = await buildWatsonCaseContext(ctx, caseId, state);
@@ -161,17 +168,23 @@ async function converse(
     };
     ask = async (input) => {
       const prompt = buildWatsonUserPrompt(input);
-      counter.calls++;
-      const raw = await callAiJson(
+      const raw = await guardedCall(
         ctx,
         caseId,
-        state,
-        ctx.provider,
-        LABEL,
-        getWatsonPrompt,
-        prompt,
-        (r) => watsonReplySchema.parse(r),
-        { promptEntities: promptEntities(prompt) },
+        counter,
+        () => spentNow(ctx, caseId, chat, before),
+        (one) =>
+          callAiJson(
+            one,
+            caseId,
+            state,
+            ctx.provider,
+            LABEL,
+            getWatsonPrompt,
+            prompt,
+            (r) => watsonReplySchema.parse(r),
+            { promptEntities: promptEntities(prompt) },
+          ),
       );
       return sanitizeWatsonReply(raw, known.questions, known.pastes);
     };
@@ -179,16 +192,14 @@ async function converse(
   } catch (error) {
     return { reply: null, error, shownEvents, questions };
   }
-  if (!first.search) return { reply: first, shownEvents, questions };
-  const kept = { reply: { ...first, search: null }, shownEvents, questions };
+  const read = newPaste ? { readPasteId: newPaste.id } : {};
+  if (!first.search) return { reply: first, shownEvents, questions, ...read };
+  const kept = { reply: { ...first, search: null }, shownEvents, questions, ...read };
   // At most one search hop per round. From here on a failure never loses the first reply.
   try {
-    const now = await watsonSpend(ctx, caseId).catch(() => null);
+    const now = await spentNow(ctx, caseId, chat, before).catch(() => null);
     if (!now) return { ...kept, note: searchSkipped("its cost could not be checked") };
-    const reached = limitReached(ctx, {
-      usd: chat.costUSD + spendDelta(before, now).usd,
-      tokens: chat.tokens + spendDelta(before, now).tokens,
-    });
+    const reached = limitReached(ctx, now);
     if (reached) return { ...kept, note: searchSkipped(`this case reached its Watson ${reached}`) };
     const target = chat.pastes.find((p) => p.id === first.search?.pasteId);
     if (!target) return kept;
@@ -202,9 +213,49 @@ async function converse(
         truncated: found.truncated,
       },
     });
-    return { reply: { ...second, search: null }, shownEvents, questions };
+    return { ...kept, reply: { ...second, search: null } };
   } catch (error) {
     return { ...kept, note: searchFailed(error), rethrow: error };
+  }
+}
+
+/** Watson's spend on the case now: the chat's total before this round plus what the round used. */
+async function spentNow(
+  ctx: WatsonRoundContext,
+  caseId: string,
+  chat: WatsonChat,
+  before: WatsonSpend,
+): Promise<WatsonSpend> {
+  const d = spendDelta(before, await watsonSpend(ctx, caseId));
+  return { usd: chat.costUSD + d.usd, tokens: chat.tokens + d.tokens };
+}
+
+/**
+ * One model call with Watson's own retry loop, so the cost and token limits are checked before EVERY
+ * provider attempt (a retry on a malformed reply included), and `counter` counts attempts, not calls.
+ * callAiJson runs with retries off; the same policy and the same retry rules apply out here.
+ */
+async function guardedCall<T>(
+  ctx: WatsonRoundContext,
+  caseId: string,
+  counter: { calls: number },
+  spent: () => Promise<WatsonSpend>,
+  call: (one: WatsonRoundContext) => Promise<T>,
+): Promise<T> {
+  const { retries, backoffMs } = retryPolicy(ctx);
+  const one: WatsonRoundContext = { ...ctx, opts: { ...ctx.opts, retries: 0 } };
+  const limited = ctx.costLimitUSD !== undefined || ctx.tokenLimit !== undefined;
+  for (let attempt = 0; ; attempt++) {
+    const reached = limited ? limitReached(ctx, await spent()) : null;
+    if (reached) throw new WatsonCostLimitReached(reached);
+    counter.calls++;
+    try {
+      return await call(one);
+    } catch (err) {
+      if (attempt >= retries || !isRetryableError(err)) throw err;
+      ctx.log?.warn(`Watson call attempt ${attempt + 1} failed; retrying`, { caseId });
+      await new Promise((r) => setTimeout(r, backoffMs * 2 ** attempt));
+    }
   }
 }
 
@@ -286,6 +337,7 @@ function mergeOutcome(fresh: WatsonChat, outcome: Outcome, spent: WatsonSpend, c
     proposals: [...charged.proposals, ...proposals],
     // An empty memory is a lost field, not a decision to forget: keep the old one.
     memory: reply.memory.trim() ? reply.memory : charged.memory,
+    unreadPasteIds: charged.unreadPasteIds.filter((id) => id !== outcome.readPasteId),
     pendingCaseEvents: withoutShown(charged.pendingCaseEvents, outcome.shownEvents),
   };
 }

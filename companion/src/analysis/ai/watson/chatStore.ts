@@ -66,6 +66,9 @@ function lenientList<T>(raw: unknown, schema: z.ZodType<T, z.ZodTypeDef, unknown
   return out;
 }
 
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((e): e is string => typeof e === "string") : [];
+
 function parseChat(raw: unknown): WatsonChat {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return emptyWatsonChat();
   const o = raw as Record<string, unknown>;
@@ -74,10 +77,9 @@ function parseChat(raw: unknown): WatsonChat {
     turns: lenientList<WatsonTurn>(o.turns, turnSchema),
     proposals: lenientList<WatsonProposal>(o.proposals, proposalSchema),
     pastes: lenientList(o.pastes, pasteSchema),
+    unreadPasteIds: strings(o.unreadPasteIds),
     memory: typeof o.memory === "string" ? o.memory : "",
-    pendingCaseEvents: Array.isArray(o.pendingCaseEvents)
-      ? o.pendingCaseEvents.filter((e): e is string => typeof e === "string")
-      : [],
+    pendingCaseEvents: strings(o.pendingCaseEvents),
     costUSD: num(o.costUSD),
     tokens: num(o.tokens),
     calls: num(o.calls),

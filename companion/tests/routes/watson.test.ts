@@ -58,7 +58,9 @@ afterEach(() => {
   process.env = { ...savedEnv };
 });
 
-async function harness(opts: { aiOn?: boolean; provider?: AIProvider | null; broadcasts?: string[] } = {}) {
+async function harness(
+  opts: { aiOn?: boolean; provider?: AIProvider | null; broadcasts?: string[]; stateChanges?: string[] } = {},
+) {
   CASE = `c${++caseCounter}`;
   const root = await mkdtemp(join(tmpdir(), "dfir-watson-route-"));
   const store = new CaseStore(root);
@@ -94,6 +96,7 @@ async function harness(opts: { aiOn?: boolean; provider?: AIProvider | null; bro
     watsonChatStore: chatStore,
     watsonProvider: () => provider,
     onWatson: (id: string) => broadcasts.push(id),
+    onStateChanged: (id: string) => opts.stateChanges?.push(id),
   });
   return { app, store, fake, pipeline, chatStore, synthMetaStore, broadcasts, stateStore };
 }
@@ -185,6 +188,45 @@ describe("Watson routes", () => {
     expect(fake.sent.length).toBeGreaterThan(0); // Watson's own round ran
   });
 
+  it("GET says whether a Watson provider is configured, and still returns the chat without one", async () => {
+    const on = await harness();
+    expect((await request(on.app).get(`/cases/${CASE}/watson`)).body.providerConfigured).toBe(true);
+    const off = await harness({ provider: null });
+    const res = await request(off.app).get(`/cases/${CASE}/watson`);
+    expect(res.status).toBe(200);
+    expect(res.body.providerConfigured).toBe(false);
+    expect(res.body.turns).toEqual([]);
+  });
+
+  it("the first round's question seed refreshes the board (state changed)", async () => {
+    const stateChanges: string[] = [];
+    const { app } = await harness({ stateChanges });
+    await request(app).post(`/cases/${CASE}/watson/message`).send({ text: "hi" });
+    expect(stateChanges).toContain(CASE);
+  });
+
+  it("a stored paste is marked on the response, and read once a round answers", async () => {
+    const { app } = await harness();
+    const res = await request(app)
+      .post(`/cases/${CASE}/watson/paste`)
+      .send({ text: "abc", filename: "two\r\nlines.txt" });
+    expect(res.status).toBe(200);
+    expect(res.headers["x-watson-paste-stored"]).toBe("1");
+    expect(res.body.pastes[0].filename).toBe("two lines.txt");
+    expect(res.body.unreadPasteIds).toEqual([]);
+  });
+
+  it("a paste stored before a refused round stays unread and says it was stored", async () => {
+    process.env.DFIR_AI_WATSON_COST_LIMIT_USD = "0.05";
+    const { app, chatStore } = await harness();
+    await request(app).post(`/cases/${CASE}/watson/message`).send({ text: "spend" });
+    const res = await request(app).post(`/cases/${CASE}/watson/paste`).send({ text: "abc" });
+    expect(res.status).toBe(409);
+    expect(res.headers["x-watson-paste-stored"]).toBe("1");
+    const chat = await chatStore.load(CASE);
+    expect(chat.unreadPasteIds).toEqual([chat.pastes[0].id]);
+  });
+
   it("refuses a paste above WATSON_PASTE_MAX_BYTES with 413", async () => {
     const { app } = await harness();
     const res = await request(app)
@@ -204,6 +246,7 @@ describe("Watson routes", () => {
     const { app, chatStore } = await harness({ aiOn: false });
     const res = await request(app).post(`/cases/${CASE}/watson/paste`).send({ text: "abc" });
     expect(res.status).toBe(409);
+    expect(res.headers["x-watson-paste-stored"]).toBeUndefined();
     expect((await chatStore.load(CASE)).pastes).toEqual([]);
   });
 

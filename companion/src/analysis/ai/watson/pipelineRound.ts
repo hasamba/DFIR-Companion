@@ -16,6 +16,7 @@ export interface WatsonRoundDeps {
   isAiEnabled(caseId: string): Promise<boolean>;
   costLimitUSD?: number;
   tokenLimit?: number;
+  onStateChanged?(caseId: string): void;
 }
 
 /** The arguments of AnalysisPipeline.watsonRound. */

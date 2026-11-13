@@ -29,7 +29,7 @@ const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>([
   "model", // the configured model is unavailable: retrying re-sends to the same refusal (#2042)
 ]);
 
-function isRetryableError(err: unknown): boolean {
+export function isRetryableError(err: unknown): boolean {
   // A cancelled or superseded run (#1608). Retrying it only calls the provider again for a result
   // nobody will keep.
   if (err instanceof Error && err.name === "AbortError") return false;

@@ -16,6 +16,7 @@ import {
 } from "../../../src/analysis/ai/watson/round.js";
 import type { WatsonPaste } from "../../../src/analysis/ai/watson/types.js";
 import { PresidioApprovalRequired } from "../../../src/analysis/presidio.js";
+import { withRetry } from "../../../src/analysis/ai/retry.js";
 import { StateLock } from "../../../src/analysis/stateLock.js";
 import { StateStore } from "../../../src/analysis/stateStore.js";
 import { emptyState, type ForensicEvent } from "../../../src/analysis/stateTypes.js";
@@ -94,6 +95,8 @@ async function harness(
     costLimitUSD?: number;
     tokenLimit?: number;
     usage?: AnalyzeResult["usage"];
+    /** The real retry loop with this many retries (the default harness never retries). */
+    retries?: number;
   } = {},
 ): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), "dfir-watson-round-"));
@@ -120,11 +123,14 @@ async function harness(
   );
   const chatStore = new WatsonChatStore(cases);
   const ctx: WatsonRoundContext = {
-    opts: { stateStore, retries: 0, backoffMs: 0 },
+    opts: { stateStore, retries: opts.retries ?? 0, backoffMs: 0 },
     log,
     requireProvider: () => provider,
     getKevCatalog: async () => undefined,
-    withRetry: (_c, _l, fn) => fn(),
+    withRetry:
+      opts.retries === undefined
+        ? (_c, _l, fn) => fn()
+        : (_c, _l, fn, retries, backoff) => withRetry(fn, retries, backoff),
     analyzeRestored: analyzeSpy,
     chatStore,
     stateStore,
@@ -139,7 +145,7 @@ async function harness(
   return { ctx, provider, chatStore, stateStore, cases, costStore, analyzeSpy };
 }
 
-async function addPaste(h: Harness, id: string, text: string): Promise<WatsonPaste> {
+async function addPaste(h: Harness, id: string, text: string, unread = false): Promise<WatsonPaste> {
   const storedName = `watson-paste-${id}.txt`;
   await writeFile(join(h.cases.importsDir(CASE), storedName), text, { flag: "w" }).catch(async () => {
     const { mkdir } = await import("node:fs/promises");
@@ -154,7 +160,11 @@ async function addPaste(h: Harness, id: string, text: string): Promise<WatsonPas
     lines: text.split("\n").length,
     at: "2026-01-01T00:00:00Z",
   };
-  await h.chatStore.update(CASE, (c) => ({ ...c, pastes: [...c.pastes, paste] }));
+  await h.chatStore.update(CASE, (c) => ({
+    ...c,
+    pastes: [...c.pastes, paste],
+    unreadPasteIds: unread ? [...c.unreadPasteIds, id] : c.unreadPasteIds,
+  }));
   return paste;
 }
 
@@ -269,6 +279,70 @@ describe("runWatsonRound", () => {
     const chat = await runWatsonRound(h.ctx, CASE, { text: "search" });
     expect(h.provider.sent).toHaveLength(1);
     expect(chat.turns.at(-1)?.text).toMatch(/cost limit/i);
+  });
+
+  it("cost limit: a malformed first reply that reaches the limit gets no retry", async () => {
+    const h = await harness(["not json {{", reply()], { costLimitUSD: 0.1, retries: 3 });
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "hi" });
+    expect(h.provider.sent).toHaveLength(1);
+    expect(chat.calls).toBe(1);
+    expect(chat.turns.at(-1)).toMatchObject({ role: "system", error: true });
+    expect(chat.turns.at(-1)?.text).toMatch(/cost limit/i);
+  });
+
+  it("counts provider attempts, not rounds: a retried malformed reply is two calls", async () => {
+    const h = await harness(["not json {{", reply({ message: "second try" })], { retries: 3 });
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "hi" });
+    expect(h.provider.sent).toHaveLength(2);
+    expect(chat.calls).toBe(2);
+    expect(chat.turns.at(-1)?.text).toBe("second try");
+  });
+
+  it("does not retry a Presidio hold", async () => {
+    const h = await harness([reply()], { retries: 3 });
+    let attempts = 0;
+    h.ctx = {
+      ...h.ctx,
+      analyzeRestored: async () => {
+        attempts++;
+        throw new PresidioApprovalRequired([{ value: "Jane Roe", category: "PERSON" }]);
+      },
+    };
+    await expect(runWatsonRound(h.ctx, CASE, { text: "x" })).rejects.toBeInstanceOf(PresidioApprovalRequired);
+    expect(attempts).toBe(1);
+  });
+
+  it("tells the dashboard the state changed when it seeds the questions, even if the call then fails", async () => {
+    const h = await harness(["not json {{"]);
+    const changed: string[] = [];
+    h.ctx = { ...h.ctx, onStateChanged: (id) => changed.push(id) };
+    await runWatsonRound(h.ctx, CASE, { text: "go" });
+    expect(changed).toEqual([CASE]);
+    await runWatsonRound(h.ctx, CASE, { text: "again" });
+    expect(changed).toEqual([CASE]); // seeded once, announced once
+  });
+
+  it("re-attaches an unread paste on the next message after a held round, and clears it once read", async () => {
+    const h = await harness([reply(), reply()]);
+    await addPaste(h, "p1", "first paste line\nsecond", true);
+    const inner = h.ctx.analyzeRestored;
+    h.ctx = {
+      ...h.ctx,
+      analyzeRestored: async () => {
+        throw new PresidioApprovalRequired([{ value: "Jane Roe", category: "PERSON" }]);
+      },
+    };
+    await expect(runWatsonRound(h.ctx, CASE, { text: "Pasted", pasteId: "p1" })).rejects.toBeInstanceOf(
+      PresidioApprovalRequired,
+    );
+    expect((await h.chatStore.load(CASE)).unreadPasteIds).toEqual(["p1"]);
+    h.ctx = { ...h.ctx, analyzeRestored: inner };
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "approved, go on" });
+    expect(h.provider.sent[0].userPrompt).toContain("first paste line");
+    expect(chat.unreadPasteIds).toEqual([]);
+    await runWatsonRound(h.ctx, CASE, { text: "next" });
+    expect(h.provider.sent[1].userPrompt).not.toContain("1: first paste line");
+    expect(h.provider.sent[1].userPrompt).toContain("[p1] netstat.txt (2 lines)");
   });
 
   it("AI off: throws WatsonAiOff and never calls the model", async () => {
