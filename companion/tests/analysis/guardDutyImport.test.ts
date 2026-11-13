@@ -114,6 +114,34 @@ describe("one row per finding (#2361)", () => {
     );
   });
 
+  it.each(["not a domain at all", "http://x.com/p"])(
+    "does not extract a malformed DNS domain %j as an IOC (#2626)",
+    (domain) => {
+      const r = parse([
+        gdFinding(
+          1,
+          { Type: "Trojan:EC2/DNSDataExfiltration" },
+          { Action: { ActionType: "DNS_REQUEST", DnsRequestAction: { Domain: domain } } },
+        ),
+      ]);
+      expect(r.events).toHaveLength(1);
+      expect(r.iocs.filter((i) => i.type === "domain")).toEqual([]);
+    },
+  );
+
+  it("still extracts a well-formed DNS domain as an IOC (#2626)", () => {
+    const r = parse([
+      gdFinding(
+        1,
+        { Type: "Trojan:EC2/DNSDataExfiltration" },
+        { Action: { ActionType: "DNS_REQUEST", DnsRequestAction: { Domain: "c2.example.com" } } },
+      ),
+    ]);
+    expect(r.iocs).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "domain", value: "c2.example.com" })]),
+    );
+  });
+
   it("keeps adversary-controlled text on one bounded line", () => {
     const title = `evil\r\ntitle ${"x".repeat(1000)}`;
     const [e] = parse([gdFinding(1, { Title: title })]).events;
