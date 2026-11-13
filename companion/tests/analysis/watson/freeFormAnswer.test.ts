@@ -6,7 +6,6 @@ import { ActivityLogStore } from "../../../src/analysis/activityLog.js";
 import { AiCostStore } from "../../../src/analysis/aiCost.js";
 import { AnonControlStore } from "../../../src/analysis/anonControl.js";
 import { analyzeRestored } from "../../../src/analysis/ai/providerCall.js";
-import type { AiCallContext } from "../../../src/analysis/ai/aiContext.js";
 import { addAnswerAsQuestion } from "../../../src/analysis/ai/watson/addQuestion.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
 import { buildWatsonUserPrompt } from "../../../src/analysis/ai/watson/promptBuilder.js";
@@ -93,15 +92,7 @@ async function harness(replies: string[]) {
     getKevCatalog: async () => undefined,
     withRetry: (_c, _l, fn) => fn(),
     analyzeRestored: (caseId, state, p, req, label, skip) =>
-      analyzeRestored(
-        gateCtx,
-        caseId,
-        state,
-        p,
-        req as Parameters<AiCallContext["analyzeRestored"]>[3],
-        label,
-        skip,
-      ),
+      analyzeRestored(gateCtx, caseId, state, p, req, label, skip),
     chatStore,
     stateStore,
     stateLock,
