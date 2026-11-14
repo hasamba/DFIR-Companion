@@ -184,8 +184,9 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
   }
   if (lookupExcerpt) {
     const what = line(lookupExcerpt.what, WATSON_REQUEST_CHARS);
+    const rows = fence("LOOKUP", clip(lookupExcerpt.text, WATSON_PASTE_PROMPT_MAX));
     blocks.push(
-      `TIMELINE LOOKUP (${what})\n${fence("LOOKUP", clip(lookupExcerpt.text, WATSON_PASTE_PROMPT_MAX))}`,
+      `TIMELINE LOOKUP (${what}) — this round's one lookup; no further lookup or search runs\n${rows}`,
     );
   }
   blocks.push(`ANALYST\n${fence("ANALYST", clip(analystText, WATSON_ANALYST_PROMPT_MAX))}`);

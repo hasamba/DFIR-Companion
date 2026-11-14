@@ -187,6 +187,28 @@ describe("selectLookupEvents", () => {
     ]);
   });
 
+  it("text matches the event's account name; host follows the case's host aliases", () => {
+    const acct = ev("a1", { canonical: { account: { name: "svc_backup" } } as ForensicEvent["canonical"] });
+    expect(selectLookupEvents([acct], stateOf([acct]), { text: "SVC_BACKUP" }).map((e) => e.id)).toEqual([
+      "a1",
+    ]);
+    const merged = ev("m1", { asset: "10.0.0.5" });
+    const aliases = {
+      canonicalOf: new Map([["10.0.0.5", "ws-01.corp.local"]]),
+      aliasesOf: new Map([["ws-01.corp.local", new Set(["10.0.0.5"])]]),
+    };
+    expect(
+      selectLookupEvents([merged], stateOf([merged]), { host: "ws-01.corp.local" }, aliases),
+    ).toHaveLength(1);
+    expect(selectLookupEvents([merged], stateOf([merged]), { host: "ws-01.corp.local" })).toHaveLength(0);
+  });
+
+  it("two FQDNs never match on their first label alone", () => {
+    const prod = ev("p1", { asset: "web.prod.example" });
+    expect(selectLookupEvents([prod], stateOf([prod]), { host: "web.dev.example" })).toHaveLength(0);
+    expect(selectLookupEvents([prod], stateOf([prod]), { host: "WEB" })).toHaveLength(1);
+  });
+
   it("an id that is not in the events it was given is never returned", () => {
     const scoped = events.filter((e) => e.id !== "e2");
     const state = stateOf(events);

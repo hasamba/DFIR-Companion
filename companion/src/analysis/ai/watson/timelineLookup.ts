@@ -1,6 +1,7 @@
 import { stateEventResolver } from "../../eventAliasLookup.js";
+import { canonicalHostName, resolveHost, type HostAliasIndex } from "../../hostAlias.js";
 import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
-import { loadScopedEvents, type AiCallContext } from "../aiContext.js";
+import { loadCtxAliasIndex, loadScopedEvents, type AiCallContext } from "../aiContext.js";
 import { promptDescription } from "../promptDescription.js";
 import { describeLookup } from "./lookupSchema.js";
 import type { WatsonLookedUp, WatsonLookup } from "./types.js";
@@ -20,10 +21,21 @@ export function timelineRow(e: ForensicEvent): string {
 }
 
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
-const shortHost = (h: string): string => {
-  const low = h.trim().toLowerCase();
-  return IPV4.test(low) ? low : low.split(".")[0];
-};
+const bare = (h: string): boolean => !h.includes(".") || IPV4.test(h);
+const firstLabel = (h: string): string => h.split(".")[0];
+
+/**
+ * One host spelling against another: the same host once both go through the case's host-alias index
+ * (the merges and fleet names synthesis uses), or a bare short name against an FQDN with that first
+ * label. Two FQDNs never match on their first label alone (web.prod.x is not web.dev.x).
+ */
+function sameHost(a: string, b: string, aliases: HostAliasIndex | undefined): boolean {
+  const x = aliases ? resolveHost(aliases, a) : canonicalHostName(a);
+  const y = aliases ? resolveHost(aliases, b) : canonicalHostName(b);
+  if (x === y) return true;
+  const [ca, cb] = [canonicalHostName(a), canonicalHostName(b)];
+  return (bare(ca) || bare(cb)) && !IPV4.test(ca) && !IPV4.test(cb) && firstLabel(ca) === firstLabel(cb);
+}
 
 /** The ids the lookup names: its event ids plus every event its findings cite, aliases followed. */
 function namedIds(
@@ -45,13 +57,14 @@ function inWindow(e: ForensicEvent, q: WatsonLookup): boolean {
   return Number.isFinite(t) && t >= Date.parse(q.from) && t <= Date.parse(q.to);
 }
 
-const onHost = (e: ForensicEvent, host: string | undefined): boolean =>
-  !host || [e.asset, e.assetRecord].some((a) => !!a && shortHost(a) === shortHost(host));
+const onHost = (e: ForensicEvent, host: string | undefined, aliases: HostAliasIndex | undefined): boolean =>
+  !host || [e.asset, e.assetRecord].some((a) => !!a && sameHost(a, host, aliases));
 
 function hasText(e: ForensicEvent, text: string | undefined): boolean {
   if (!text) return true;
   const needle = text.toLowerCase();
-  return [e.description, e.asset, e.path, e.callerName].some((f) => !!f && f.toLowerCase().includes(needle));
+  const fields = [e.description, e.asset, e.path, e.callerName, e.canonical?.account?.name];
+  return fields.some((f) => !!f && f.toLowerCase().includes(needle));
 }
 
 const timeKey = (e: ForensicEvent): number => {
@@ -67,11 +80,12 @@ export function selectLookupEvents(
   scoped: readonly ForensicEvent[],
   state: Pick<InvestigationState, "findings" | "eventAliases" | "forensicTimeline">,
   q: WatsonLookup,
+  aliases?: HostAliasIndex,
 ): ForensicEvent[] {
   const ids = namedIds(state, q);
-  return scoped
-    .filter((e) => (!ids || ids.has(e.id)) && inWindow(e, q) && onHost(e, q.host) && hasText(e, q.text))
-    .sort((a, b) => timeKey(a) - timeKey(b) || a.id.localeCompare(b.id));
+  const hit = (e: ForensicEvent): boolean =>
+    (!ids || ids.has(e.id)) && inWindow(e, q) && onHost(e, q.host, aliases) && hasText(e, q.text);
+  return scoped.filter(hit).sort((a, b) => timeKey(a) - timeKey(b) || a.id.localeCompare(b.id));
 }
 
 /** The lookup's rows: at most 200 and 20,000 characters, and a line saying when more matched. */
@@ -103,13 +117,14 @@ export interface WatsonLookupExcerpt {
 
 /** Run one lookup over the case's in-scope forensic timeline: the prompt block and the disclosure. */
 export async function lookupTimeline(
-  ctx: AiCallContext,
+  ctx: AiCallContext & Parameters<typeof loadCtxAliasIndex>[0],
   caseId: string,
   state: InvestigationState,
   q: WatsonLookup,
 ): Promise<{ excerpt: WatsonLookupExcerpt; lookedUp: WatsonLookedUp }> {
   const { scoped } = await loadScopedEvents(ctx, caseId, state);
-  const out = renderLookup(selectLookupEvents(scoped, state, q));
+  const aliases = q.host ? await loadCtxAliasIndex(ctx, caseId) : undefined;
+  const out = renderLookup(selectLookupEvents(scoped, state, q, aliases));
   const what = describeLookup(q);
   return { excerpt: { what, text: out.text }, lookedUp: { shown: out.shown, matched: out.matched, what } };
 }

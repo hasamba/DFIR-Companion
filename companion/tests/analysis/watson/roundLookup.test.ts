@@ -147,6 +147,35 @@ describe("Watson's timeline lookup hop", () => {
     expect((await h.chatStore.load(CASE)).turns.at(-1)?.lookedUp).toEqual(turn.lookedUp);
   });
 
+  it("fetches an event the trimmed packet did not carry, and Watson may cite it", async () => {
+    const filler = Array.from({ length: 2000 }, (_, i) =>
+      ev(`f${i}`, i % 60, { severity: "High", description: `noisy high event ${i} `.repeat(6) }),
+    );
+    const late = ev("late1", 59, { description: "robocopy staging to share" });
+    const h = await harness(
+      [
+        reply({ lookup: { text: "robocopy" } }),
+        reply({
+          answer: {
+            question: "q?",
+            status: "answered",
+            answer: "a",
+            pointer: "p",
+            relatedEventIds: ["late1"],
+          },
+        }),
+      ],
+      { events: [...filler, late] },
+    );
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "q?" });
+    expect(h.provider.sent[0].userPrompt).not.toContain("[late1]");
+    expect(h.provider.sent[0].userPrompt).toContain("ask for a 'lookup' to read others");
+    expect(h.provider.sent[1].userPrompt).toContain("[late1]");
+    expect(chat.turns.at(-1)?.answer?.relatedEventIds).toEqual(["late1"]);
+    expect(chat.turns.at(-1)?.coverage?.eventCount).toBe(2001);
+    expect(chat.turns.at(-1)?.lookedUp).toMatchObject({ shown: 1, matched: 1 });
+  });
+
   it("a looked-up event may be cited in the answer and in a finding", async () => {
     const h = await harness(
       [
