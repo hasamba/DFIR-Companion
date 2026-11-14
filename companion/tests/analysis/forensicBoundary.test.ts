@@ -960,12 +960,12 @@ describe("Watson's super-timeline search is targeted, bounded and promotes only 
           meta: (id: string) => rs.reader.meta(id),
           query: (id: string, q: { limit?: number; countCeiling?: number }) => {
             calls.push(q);
-            return rs.reader.query(id, q as never);
+            return rs.reader.query(id, q);
           },
         },
       },
     };
-    await runWatsonRound(ctx as never, f.CASE, { text: "any rclone?", source: "dashboard" });
+    await runWatsonRound(ctx, f.CASE, { text: "any rclone?", source: "dashboard" });
     expect(calls.length).toBeGreaterThan(0);
     for (const q of calls) expect([q.limit, q.countCeiling]).toEqual([5000, 5000]);
   });
@@ -986,7 +986,7 @@ describe("Watson's super-timeline search is targeted, bounded and promotes only 
         },
       },
     };
-    await runWatsonRound(ctx as never, f.CASE, { text: "", reaction: true });
+    await runWatsonRound(ctx, f.CASE, { text: "", reaction: true });
     expect(touched).toEqual([]);
     expect(await h.row("raw1")).toBeUndefined();
   });
