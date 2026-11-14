@@ -82,13 +82,15 @@ const literalValues = (v: readonly VqlToken[]): string[] =>
   v.filter((t) => t.kind === "string").map((t) => t.value ?? "");
 
 /**
- * A path literal that could reach another machine anywhere in it: `//`, a doubled backslash, or a
+ * A path literal that could reach another machine anywhere in it: two separators in a row of either
+ * kind (`//`, `\\\\`, `/\\`, `\\/` — Windows reads `/` and `\\` alike), or a
  * `{a,b}` glob alternation holding a path separator (which can hide a UNC root).
  */
 function pathLiteralProblem(v: readonly VqlToken[], name: string): string | null {
   for (const s of literalValues(v)) {
-    if (s.includes("//") || s.includes("\\\\"))
-      return `${name} holds // or a doubled backslash (a possible network path)`;
+    if (/[\\/]{2}/.test(s)) return `${name} holds two path separators in a row (a possible network path)`;
+    if (/^[\\/]+$/.test(s)) return `${name} is a bare separator (it could join into a network path)`;
+    if (/\[[^\]]*[\\/][^\]]*\]/.test(s)) return `${name} has a [...] class holding a path separator`;
     if (/\{[^}]*[\\/][^}]*\}/.test(s)) return `${name} has a {…} alternation holding a path separator`;
   }
   return null;
@@ -153,6 +155,16 @@ function argProblem(callee: string, arg: Arg, lets: ReadonlyMap<string, LetDef>)
   return null;
 }
 
+/** glob(root='/', globs='/host/s') joins to `//host/s`. */
+function rootJoinProblem(args: readonly Arg[]): boolean {
+  const values = (n: string): string[] =>
+    args.filter((a) => a.name && lc(a.name.text) === n).flatMap((a) => literalValues(a.value));
+  const roots = values("root");
+  if (roots.length === 0) return false;
+  const rootEnds = roots.some((r) => r === "" || /[\\/]$/.test(r));
+  return rootEnds && values("globs").some((g) => /^[\\/]/.test(g));
+}
+
 /** Checks the arguments of every call. `defSites` are LET definition names (their `(` is a parameter list). */
 export function checkCallArgs(
   toks: readonly VqlToken[],
@@ -181,13 +193,18 @@ export function checkCallArgs(
       const problem = argProblem(callee, arg, lets);
       if (problem) reasons.add(problem);
     }
+    if (lc(callee) === "glob" && rootJoinProblem(args)) {
+      reasons.add(
+        "glob root ending in a separator joined to globs starting with one (a possible network path)",
+      );
+    }
     if (lc(callee) === "wmi" && !args.some((a) => a.name && lc(a.name.text) === "query")) {
       reasons.add("wmi needs one quoted WQL SELECT from a reviewed read-only class");
     }
   }
 }
 
-const NETWORK_START = /^(?:\\\\|\/\/|(?:file|smb|https?|ftp):)/i;
+const NETWORK_START = /^(?:[\\/]{2}|(?:file|smb|https?|ftp):)/i;
 const UNC_INFIX = /\\\\[?.]\\unc/i;
 
 function stringProblem(t: VqlToken): string | null {

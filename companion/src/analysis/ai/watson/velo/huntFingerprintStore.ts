@@ -16,6 +16,12 @@ import { atomicWrite } from "../../../../storage/atomicWrite.js";
 
 const FILE = "hunt-fingerprints.json";
 
+/** What reserve() claimed: `added` is exactly what release() may later remove. */
+export interface ReserveResult {
+  ok: boolean;
+  added: string[];
+}
+
 // Appends are read-modify-write; serialise them per file across every store instance so two
 // concurrent deploys never lose an entry.
 const queues = new Map<string, Promise<void>>();
@@ -83,24 +89,35 @@ export class HuntFingerprintStore {
   }
 
   /**
-   * Atomic add-if-absent, for a launch to claim its fingerprint(s) BEFORE it deploys. True when none
-   * was present and all are now recorded; false when any already ran (nothing is written) or when
-   * nothing was given. Throws on a corrupt index — the caller must refuse the launch.
+   * Atomic add-if-absent, for a launch to claim its fingerprint(s) BEFORE it deploys. All or
+   * nothing: `{ ok: true, added }` when none was present (all are now recorded and `added` lists
+   * them); `{ ok: false, added: [] }` when any already ran or nothing was given — nothing written.
+   * Throws on a corrupt index: the caller must refuse the launch.
+   *
+   * Task 4's call shape:
+   *   const r = await store.reserve(caseId, check.fingerprints);
+   *   if (!r.ok) refuse;                           // already ran (or racing launch won)
+   *   try { deploy } catch { await store.release(caseId, r.added); throw; }  // only if it surely did not run
+   * release() must be given exactly `r.added`, never other keys, so a key that existed before the
+   * reservation is never removed.
    */
-  reserve(caseId: string, fingerprint: string | readonly string[]): Promise<boolean> {
-    const list = (typeof fingerprint === "string" ? [fingerprint] : [...fingerprint]).filter(
+  reserve(caseId: string, fingerprint: string | readonly string[]): Promise<ReserveResult> {
+    const list = [...new Set(typeof fingerprint === "string" ? [fingerprint] : fingerprint)].filter(
       (f) => typeof f === "string" && f.length > 0,
     );
-    if (list.length === 0) return Promise.resolve(false);
-    return this.serialise(caseId, async () => {
+    if (list.length === 0) return Promise.resolve({ ok: false, added: [] });
+    return this.serialise(caseId, async (): Promise<ReserveResult> => {
       const cur = await this.load(caseId);
-      if (list.some((f) => cur.has(f))) return false;
+      if (list.some((f) => cur.has(f))) return { ok: false, added: [] };
       await this.write(caseId, cur, list);
-      return true;
+      return { ok: true, added: list };
     });
   }
 
-  /** Drop fingerprints a reserved launch never used (the deploy definitely did not run). Serialised like reserve. */
+  /**
+   * Drop the keys a reservation added, when its deploy definitely did not run. Pass exactly
+   * `reserve(...).added`. Serialised like reserve.
+   */
   release(caseId: string, fingerprints: readonly string[]): Promise<void> {
     const drop = new Set(fingerprints.filter((f) => typeof f === "string" && f.length > 0));
     if (drop.size === 0) return Promise.resolve();

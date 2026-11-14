@@ -68,19 +68,21 @@ describe("HuntFingerprintStore", () => {
 describe("HuntFingerprintStore.reserve", () => {
   it("reserves a fingerprint exactly once under 20 concurrent callers", async () => {
     const results = await Promise.all(Array.from({ length: 20 }, () => index.reserve("c1", "fpsame")));
-    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.find((r) => r.ok)?.added).toEqual(["fpsame"]);
+    expect(results.filter((r) => !r.ok).every((r) => r.added.length === 0)).toBe(true);
     expect((await index.load("c1")).has("fpsame")).toBe(true);
   });
 
   it("refuses a reservation when any of several fingerprints is already there", async () => {
     await index.add("c1", ["b"]);
-    expect(await index.reserve("c1", ["a", "b"])).toBe(false);
+    expect(await index.reserve("c1", ["a", "b"])).toEqual({ ok: false, added: [] });
     expect((await index.load("c1")).has("a")).toBe(false);
-    expect(await index.reserve("c1", ["a", "c"])).toBe(true);
+    expect(await index.reserve("c1", ["a", "c"])).toEqual({ ok: true, added: ["a", "c"] });
   });
 
   it("refuses an empty reservation", async () => {
-    expect(await index.reserve("c1", "")).toBe(false);
+    expect(await index.reserve("c1", "")).toEqual({ ok: false, added: [] });
   });
 
   it("fails closed on a corrupt index", async () => {
@@ -90,7 +92,7 @@ describe("HuntFingerprintStore.reserve", () => {
 
   it("lets the post-deploy write stay idempotent after a reservation", async () => {
     const vql = deployInput(4).vql!;
-    expect(await index.reserve("c1", vql)).toBe(true);
+    expect((await index.reserve("c1", vql)).ok).toBe(true);
     const record = withFingerprintIndex(innerRecord, index, () => {});
     await record("c1", deployInput(4));
     expect((await index.load("c1")).size).toBeGreaterThan(0);
@@ -99,10 +101,19 @@ describe("HuntFingerprintStore.reserve", () => {
 
 describe("HuntFingerprintStore.release", () => {
   it("frees a reservation so the same launch can be reserved again", async () => {
-    expect(await index.reserve("c1", ["k1", "k2"])).toBe(true);
-    expect(await index.reserve("c1", "k1")).toBe(false);
-    await index.release("c1", ["k1", "k2"]);
-    expect(await index.reserve("c1", ["k1", "k2"])).toBe(true);
+    const first = await index.reserve("c1", ["k1", "k2"]);
+    expect(first.ok).toBe(true);
+    expect((await index.reserve("c1", "k1")).ok).toBe(false);
+    await index.release("c1", first.added);
+    expect((await index.reserve("c1", ["k1", "k2"])).ok).toBe(true);
+  });
+
+  it("never removes a key that existed before the reservation", async () => {
+    await index.add("c1", ["pre"]);
+    const r = await index.reserve("c1", ["pre", "new"]);
+    expect(r).toEqual({ ok: false, added: [] });
+    await index.release("c1", r.added);
+    expect([...(await index.load("c1"))]).toEqual(["pre"]);
   });
 
   it("leaves other fingerprints alone", async () => {

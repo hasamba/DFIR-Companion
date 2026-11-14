@@ -88,3 +88,26 @@ describe("probe 2 cases that must stay blocked", () => {
     "SELECT * FROM glob(globs='HTTPS://h/x')",
   ])("%s", (vql) => blocked(vql));
 });
+
+describe("round 3 — mixed separator pairs", () => {
+  it.each([
+    `SELECT * FROM glob(globs='/${B}${B}host/s')`,
+    `SELECT * FROM glob(globs='${B}${B}/host')`,
+    `SELECT * FROM glob(globs='/${B}${B}?/UNC/h/s')`,
+    `SELECT * FROM glob(globs='C:/x/${B}${B}/host')`,
+    `SELECT * FROM pslist() WHERE Name = '/${B}${B}host/s'`,
+    `SELECT * FROM Artifact.Windows.Search.FileFinder(SearchFilesGlob='C:/x${B}${B}/h')`,
+    "SELECT * FROM glob(globs='C:/x/[/]host')",
+    "SELECT * FROM glob(globs='[/][/]host/s/*')",
+    "SELECT * FROM glob(root='/', globs='/host/s/*')",
+    "SELECT * FROM Artifact.Windows.Search.FileFinder(SearchFilesGlob=['/', '/host/share/*'])",
+    "SELECT * FROM glob(root='C:/', globs=['a/*', '/host/s'])",
+  ])("%s", (vql) => blocked(vql));
+
+  it("still allows ordinary paths", () => {
+    allowed("SELECT * FROM glob(globs='C:/Windows/System32/*')");
+    allowed("SELECT * FROM glob(root='C:/Windows', globs='/System32/*.dll')");
+    allowed("SELECT * FROM glob(globs='C:/Windows/[Ss]ystem32/*')");
+    allowed("SELECT * FROM glob(globs='C:/Users/*/{NTUSER,UsrClass}.DAT')");
+  });
+});
