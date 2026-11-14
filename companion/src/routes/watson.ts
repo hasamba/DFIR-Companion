@@ -20,6 +20,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { caseVeloConnected, watsonRoundDeps } from "./watsonDeps.js";
 import { ingestWatsonPaste } from "./watsonPasteIngest.js";
+import { registerWatsonVeloLaunchRoutes, watsonVeloLaunchDeps } from "./watsonVeloLaunch.js";
 import { logActivity } from "../analysis/activityLog.js";
 import {
   isWatsonRunMode,
@@ -90,6 +91,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
 
   /** The model Watson uses and the limits, read per request so a Settings change applies at once. */
   const roundDeps = (): WatsonRoundDeps | undefined => watsonRoundDeps(ctx);
+  registerWatsonVeloLaunchRoutes(app, ctx, sendWatsonError); // before /proposals/:pid/:action
 
   /** What applying a proposal (or adding an answer as a question) needs; undefined when not wired. */
   function proposalDeps(): WriterDeps | undefined {
@@ -105,6 +107,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       markConclusionsOutOfDate: ctx.markConclusionsOutOfDate,
       reportText: options.reportMetaStore,
       ...(options.pipeline ? { promoteEvents: promoteVia(options.pipeline) } : {}),
+      veloLaunch: watsonVeloLaunchDeps(ctx),
     };
   }
 

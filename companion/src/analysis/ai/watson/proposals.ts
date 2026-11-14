@@ -11,6 +11,7 @@ import { findingWriter } from "./writers/findingWriter.js";
 import { nextStepWriter } from "./writers/nextStepWriter.js";
 import { questionWriter } from "./writers/questionWriter.js";
 import { reportTextWriter } from "./writers/reportTextWriter.js";
+import { applyVeloLaunch, veloLaunchWriter } from "./writers/veloLaunchWriter.js";
 import type { WatsonTargetType, WatsonWriter, WriterDeps, WriterResult } from "./writers/writerTypes.js";
 
 export {
@@ -49,6 +50,7 @@ const WRITERS: Partial<Record<WatsonProposalKind, WatsonWriter<WatsonProposal>>>
   next_step_new: nextStepWriter,
   report_text: reportTextWriter,
   event_promote: eventPromoteWriter,
+  velo_launch: veloLaunchWriter,
 };
 
 // The pasted file stays the evidence, so held rows an analyst undid may be applied again.
@@ -127,6 +129,12 @@ export async function applyWatsonProposal(
   action: WatsonProposalAction,
   actor?: string,
 ): Promise<{ chat: WatsonChat; state?: InvestigationState }> {
+  // A launch saves twice around its external call (writers/veloLaunchWriter.ts); a proposal's kind
+  // never changes, so reading it before the update is safe.
+  if (action === "apply") {
+    const found = (await deps.chatStore.load(caseId)).proposals.find((x) => x.id === proposalId);
+    if (found?.kind === "velo_launch") return applyVeloLaunch(deps, caseId, proposalId, actor);
+  }
   let state: InvestigationState | undefined;
   let done: WatsonProposal | undefined;
   const chat = await deps.chatStore.update(caseId, async (c) => {

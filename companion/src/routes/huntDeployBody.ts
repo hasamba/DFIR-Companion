@@ -16,7 +16,8 @@ export interface DeployHuntBody {
   coverage?: HuntCoverage;
 }
 
-const ALLOWED_SOURCES: readonly HuntOutcomeSource[] = ["fleet", "playbook", "technique"]; // "bundle" is server-set, not client-supplied
+// "bundle" is server-set, not client-supplied. "watson" marks a launch from an approved Watson proposal.
+const ALLOWED_SOURCES: readonly HuntOutcomeSource[] = ["fleet", "playbook", "technique", "watson"];
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 

@@ -27,11 +27,12 @@ export class WatsonProposalNotFoundError extends Error {
 
 /** The action is not allowed from the proposal's status (route → 409). */
 export class WatsonProposalStateError extends Error {
-  constructor(action: WatsonProposalAction | "add", status: WatsonProposal["status"]) {
+  constructor(action: WatsonProposalAction | "add", status: WatsonProposal["status"], message?: string) {
     super(
-      action === "add"
-        ? `This answer was already added to the open questions (${status})`
-        : `Cannot ${action} a proposal that is ${status}`,
+      message ??
+        (action === "add"
+          ? `This answer was already added to the open questions (${status})`
+          : `Cannot ${action} a proposal that is ${status}`),
     );
     this.name = "WatsonProposalStateError";
   }
@@ -42,5 +43,13 @@ export class WatsonProposalConflict extends Error {
   constructor(message: string) {
     super(message);
     this.name = "WatsonProposalConflict";
+  }
+}
+
+/** A Velociraptor launch whose outcome is unknown: the proposal is now `uncertain` (route → 409). */
+export class WatsonLaunchUncertain extends WatsonProposalConflict {
+  constructor(message: string) {
+    super(message);
+    this.name = "WatsonLaunchUncertain";
   }
 }

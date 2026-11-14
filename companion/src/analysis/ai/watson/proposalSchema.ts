@@ -17,7 +17,7 @@ const step = withId<NextStep>();
 const common = {
   id: z.string(),
   turnId: z.string(),
-  status: z.enum(["pending", "applied", "rejected", "undone"]),
+  status: z.enum(["pending", "applied", "rejected", "undone", "launching", "uncertain"]),
   appliedBy: z.string().optional(),
   appliedAt: z.string().optional(),
 };
@@ -99,6 +99,16 @@ const veloLaunchProposal = z.object({
       flowId: z.string().optional(),
       at: z.string(),
       by: z.string(),
+    })
+    .optional()
+    .catch(undefined),
+  launching: z
+    .object({
+      at: z.string(),
+      by: z.string(),
+      fingerprint: z.string(),
+      reserved: z.array(z.string()).catch([]),
+      error: z.string().optional(),
     })
     .optional()
     .catch(undefined),

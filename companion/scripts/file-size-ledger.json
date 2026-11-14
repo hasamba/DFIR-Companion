@@ -14,5 +14,5 @@
   "routes/import.ts": 2711,
   "routes/mcp.ts": 896,
   "routes/threatIntel.ts": 857,
-  "routes/velociraptor.ts": 1027
+  "routes/velociraptor.ts": 899
 }

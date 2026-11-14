@@ -62,7 +62,12 @@ export interface WatsonTurn {
   answerProposalId?: string;
 }
 
-export type WatsonProposalStatus = "pending" | "applied" | "rejected" | "undone";
+/**
+ * `launching` / `uncertain` are velo_launch only: the launch intent is saved before the Velociraptor
+ * call (launching); a launch whose outcome is unknown (the call failed after it may have reached the
+ * server, or the server stopped mid-launch) is `uncertain` and waits for the analyst — never retried.
+ */
+export type WatsonProposalStatus = "pending" | "applied" | "rejected" | "undone" | "launching" | "uncertain";
 
 /** Fields every proposal kind carries. `appliedBy`/`appliedAt` are stamped when an analyst applies it. */
 interface WatsonProposalCommon {
@@ -154,6 +159,17 @@ export interface WatsonVeloLaunchProposal extends WatsonProposalCommon {
   fingerprint: string;
   fingerprints: string[];
   launched?: { huntId?: string; clientId?: string; flowId?: string; at: string; by: string };
+  /** The launch intent, saved before the call: `reserved` is exactly what a retry may release. */
+  launching?: WatsonLaunchIntent;
+}
+
+export interface WatsonLaunchIntent {
+  at: string;
+  by: string;
+  fingerprint: string;
+  reserved: string[];
+  /** Why the launch became uncertain. */
+  error?: string;
 }
 
 export type WatsonProposal =

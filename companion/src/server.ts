@@ -34,6 +34,7 @@ import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
 import { withFingerprintIndex, fingerprintStoreFor } from "./analysis/ai/watson/velo/fingerprintIndex.js";
+import { recoverWatsonLaunches } from "./composition/watsonVeloRecovery.js";
 import { setCaseWriteRefusalReporter } from "./storage/caseIncarnation.js";
 import { installUnhandledRejectionNet } from "./logging/unhandledRejectionNet.js";
 import { installUncaughtExceptionNet } from "./logging/uncaughtExceptionNet.js";
@@ -404,6 +405,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // tests and embeddings that don't use monitoring.
   void monitors.resumeVeloMonitors();
   void hunts.resumeVeloHuntStatusPolls({ startup: true }); // #2403: + interrupted collects (startup only)
+  void recoverWatsonLaunches(store, options.watsonChatStore, logLine); // Watson launches cut off mid-launch
 
   // Arm the evidence drop-folder watcher (auto-import inbox). Gated on the status store being wired
   // (startServer), so createApp-only unit tests never start a filesystem poller.
