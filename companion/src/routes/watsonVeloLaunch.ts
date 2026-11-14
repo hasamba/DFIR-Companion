@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { z } from "zod";
 import type { HuntDeployInput } from "../analysis/huntOutcomes.js";
 import { requestAuthentication } from "../auth/types.js";
 import { fingerprintStoreFor } from "../analysis/ai/watson/velo/fingerprintIndex.js";
@@ -60,6 +61,16 @@ export function watsonVeloLaunchDeps(ctx: RouteContext): VeloLaunchDeps {
     isFrozen: (caseId) => isFrozenCase(store, caseId),
     log: (line) => ctx.serverLogger.info(line),
   };
+}
+
+// The apply body (Task 9): `acceptRisk: true` is the analyst's explicit acceptance of a risky launch.
+// Anything but a boolean is refused, so a stray value can never read as consent.
+const applyBodySchema = z.object({ acceptRisk: z.boolean().optional() }).passthrough();
+
+/** The apply route's body, or null when it is malformed (route → 400). */
+export function parseApplyBody(body: unknown): { acceptRisk: boolean } | null {
+  const r = applyBodySchema.safeParse(body ?? {});
+  return r.success ? { acceptRisk: r.data.acceptRisk === true } : null;
 }
 
 type SendError = (res: Response, err: unknown) => Response;

@@ -3,7 +3,8 @@ import { ALLOWED_ARTIFACTS, ALLOWED_CALLS, ALLOWED_ACCESSORS, WMI_CLASSES } from
 
 // The VELOCIRAPTOR block's fixed text (the host list is added by promptBuilder.ts, which defangs it).
 // Generated from the allowlist constants so the prompt can never name a call the check refuses, and
-// teaches the practical rules of the check (vqlAllowed.ts): without them most VQL is blocked.
+// teaches the practical rules of the check (vqlAllowed.ts): without them most VQL is marked risky or
+// refused. A riskier query may be proposed and waits for the analyst (Task 9).
 
 /** Hostnames listed in the prompt; the block also states how many the case has. */
 export const WATSON_VELO_HOSTS_MAX = 50;
@@ -16,8 +17,10 @@ export function veloRulesText(): string {
     "case is in Auto mode and the analyst sent this message from the Watson panel. Rules:",
     '- Prefer a single-host collection (mode "collection", one hostname from the list below) when one host matters.',
     '  Use a fleet hunt (mode "hunt", no hostname) only when the question spans hosts. Never repeat a hunt that already ran.',
-    "- Read-only only: never use anything that changes an endpoint, runs a program, or sends data out. A request that",
-    "  breaks the rules below is blocked, not proposed. The VQL is at most " + MAX_VQL_BYTES + " bytes.",
+    "- Prefer read-only VQL that passes every rule below. If a riskier query is truly needed (a call or artifact not",
+    "  listed below), you may propose it with a clear 'why': it is marked risky and waits for the analyst to read and",
+    "  approve it; Auto mode never launches it. The VQL is at most " + MAX_VQL_BYTES + " bytes.",
+    "- Comments, triple-quoted strings and hidden or control characters are always refused, with nothing to approve.",
     "- Every argument is name=value (no positional arguments).",
     "- No comments of any kind (no --, //, /* */), no triple-quoted strings (three single quotes in a row), no carriage",
     "  returns, and no string literal that holds a blank line or a line starting with --. Separate statements with one blank line.",

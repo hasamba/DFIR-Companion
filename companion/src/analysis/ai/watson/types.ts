@@ -166,7 +166,11 @@ export interface WatsonVeloLaunchProposal extends WatsonProposalCommon {
     serverSetId?: string;
     at: string;
     by: string;
+    /** The analyst launched it despite Watson's risk warning (Task 9). */
+    riskAccepted?: WatsonRiskAccepted;
   };
+  /** The query failed only RISKY rules (vqlRiskClass.ts): it waits for an analyst, never Auto (Task 9). */
+  risk?: WatsonLaunchRisk;
   /** The launch intent, saved before the call: `reserved` is exactly what a retry may release. */
   launching?: WatsonLaunchIntent;
   /** The analyst who confirmed an uncertain launch ran ("Mark as launched"); `launched.by` stays the launcher (G10). */
@@ -198,6 +202,19 @@ export interface WatsonLaunchWatch {
   error?: string;
 }
 
+/** `reasons` is plain English for the warning; `checks` the raw reasons a recheck must stay within. */
+export interface WatsonLaunchRisk {
+  reasons: string[];
+  checks: string[];
+}
+
+/** Who launched a risky query despite the warning, and the reasons they saw. */
+export interface WatsonRiskAccepted {
+  by: string;
+  at: string;
+  reasons: string[];
+}
+
 export interface WatsonLaunchIntent {
   at: string;
   by: string;
@@ -207,6 +224,8 @@ export interface WatsonLaunchIntent {
   reserved: string[];
   /** Why the launch became uncertain. */
   error?: string;
+  /** Set when an analyst approved a risky query with acceptRisk (Task 9). */
+  riskAccepted?: WatsonRiskAccepted;
 }
 
 export type WatsonProposal =

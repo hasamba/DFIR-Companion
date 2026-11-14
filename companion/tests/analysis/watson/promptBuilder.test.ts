@@ -293,3 +293,51 @@ describe("ensureStandardQuestions", () => {
     expect(out.filter((q) => q.id === "wq-std-who")).toHaveLength(1);
   });
 });
+
+describe("VELOCIRAPTOR block (Task 9)", () => {
+  const launch = (id: string, status: string, title: string) => ({
+    id,
+    turnId: "t1",
+    kind: "velo_launch" as const,
+    status: status as "applied",
+    targetId: id,
+    mode: "collection" as const,
+    hostname: "WKS-SECRET-NAME",
+    title,
+    vql: "SELECT * FROM pslist()",
+    fingerprint: id,
+    fingerprints: [id],
+  });
+  const withVelo = (proposals: ReturnType<typeof launch>[]) =>
+    buildWatsonUserPrompt({
+      state: stateWith([]),
+      chat: { ...emptyWatsonChat(), proposals },
+      analystText: "x",
+      caseContext: "",
+      mainLanguages: ["vql"],
+      velo: { hosts: [], hostCount: 0 },
+    });
+
+  it("lists Watson's launches that already ran, never pending or rejected ones, and no host name", () => {
+    const out = withVelo([
+      launch("a", "applied", "Process list on alpha"),
+      launch("b", "uncertain", "Autoruns maybe"),
+      launch("c", "pending", "Not yet"),
+      launch("d", "rejected", "Said no"),
+    ]);
+    expect(out).toContain("Already launched on this case");
+    expect(out).toContain("Process list on alpha");
+    expect(out).toContain("Autoruns maybe");
+    expect(out).not.toContain("Not yet");
+    expect(out).not.toContain("Said no");
+    expect(out).not.toContain("WKS-SECRET-NAME");
+  });
+
+  it("teaches that a riskier query may be proposed and waits for the analyst, and what is always refused", () => {
+    const out = withVelo([]);
+    expect(out).toContain("marked risky");
+    expect(out).toContain("Auto mode never launches it");
+    expect(out).toContain("always refused");
+    expect(out).not.toContain("blocked, not proposed");
+  });
+});

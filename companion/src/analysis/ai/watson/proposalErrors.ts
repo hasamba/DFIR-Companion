@@ -53,3 +53,13 @@ export class WatsonLaunchUncertain extends WatsonProposalConflict {
     this.name = "WatsonLaunchUncertain";
   }
 }
+
+/** A risky launch applied without the analyst's explicit acceptRisk (Task 9, route → 409 with reasons). */
+export class WatsonRiskNotAccepted extends WatsonProposalConflict {
+  constructor(readonly reasons: readonly string[]) {
+    super(
+      `This is a risky query (${reasons.join("; ")}). Read it, then confirm you accept the risk to launch it.`,
+    );
+    this.name = "WatsonRiskNotAccepted";
+  }
+}

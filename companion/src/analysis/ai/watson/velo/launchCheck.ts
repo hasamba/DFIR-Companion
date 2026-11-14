@@ -1,5 +1,6 @@
 import { vqlSizeProblem } from "../../../vqlInput.js";
 import { vqlAllowed } from "./vqlAllowed.js";
+import { splitReasons } from "./vqlRiskClass.js";
 import { launchFingerprints } from "./launchFingerprint.js";
 import { sanitizeVqlDurations, splitVqlStatements, unsafeVqlCharProblem } from "../../../vqlStatements.js";
 
@@ -31,6 +32,11 @@ export interface LaunchContext {
    * (injected: analysis/ai may not import integrations at runtime).
    */
   matchClient: (records: readonly LaunchClient[], host: string) => LaunchClient | undefined;
+  /**
+   * Let a launch whose only refusals are RISKY (vqlRiskClass.ts) pass, naming them in `risky`.
+   * Off by default: a caller that does not opt in gets today's strict check (Task 9).
+   */
+  allowRisky?: boolean;
 }
 
 export type LaunchCheck =
@@ -42,6 +48,8 @@ export type LaunchCheck =
       fingerprint: string;
       /** Every key the launch must reserve before it deploys (HuntFingerprintStore.reserve). */
       fingerprints: string[];
+      /** The raw RISKY reasons, only with `allowRisky` and only when there are any. */
+      risky?: string[];
     }
   | { ok: false; reason: string; reasons?: string[] };
 
@@ -86,10 +94,11 @@ export function sentTextAllowed(vql: string): { ok: true } | { ok: false; reason
   const unsafe = unsafeVqlCharProblem(vql); // anywhere, strings included (I-1)
   if (unsafe) return { ok: false, reasons: [unsafe] };
   const raw = vqlAllowed(vql);
-  if (!raw.ok) return raw;
+  // A HARD raw refusal ends here; a RISKY-only one still checks every sent statement (Task 9).
+  if (!raw.ok && splitReasons(raw.reasons).hard.length > 0) return raw;
   const statements = splitVqlStatements(sanitizeVqlDurations(vql));
   if (statements.length === 0) return { ok: false, reasons: ["no runnable VQL"] };
-  const reasons = new Set<string>();
+  const reasons = new Set<string>(raw.ok ? [] : raw.reasons);
   for (const s of statements) {
     const r = vqlAllowed(s);
     if (!r.ok) r.reasons.forEach((x) => reasons.add(x));
@@ -105,18 +114,27 @@ export function checkLaunch(input: LaunchInput, ctx: LaunchContext): LaunchCheck
   const size = vqlSizeProblem(vql);
   if (size) return refuse(size);
   const allowed = sentTextAllowed(vql);
-  if (!allowed.ok)
+  const split = allowed.ok ? { hard: [], risky: [] } : splitReasons(allowed.reasons);
+  if (!allowed.ok && (!ctx.allowRisky || split.hard.length > 0))
     return { ok: false, reason: `blocked: ${allowed.reasons.join("; ")}`, reasons: allowed.reasons };
+  const extra = split.risky.length ? { risky: split.risky } : {};
   const fleetKeys = launchFingerprints(vql);
   // A collection of VQL that already ran fleet-wide is a re-run on that host too.
   if (fleetKeys.some((f) => ctx.deployed.has(f))) return refuse(ALREADY_RAN);
   if (mode === "hunt") {
     if (typeof hostname === "string" && hostname.trim()) return refuse("a fleet hunt does not take a host");
-    return { ok: true, mode, fingerprint: fleetKeys[0], fingerprints: fleetKeys };
+    return { ok: true, mode, fingerprint: fleetKeys[0], fingerprints: fleetKeys, ...extra };
   }
   const rec = resolveHost(hostname, ctx);
   if ("ok" in rec) return rec;
   const hostKeys = launchFingerprints(vql, rec.hostname);
   if (hostKeys.some((f) => ctx.deployed.has(f))) return refuse(ALREADY_RAN);
-  return { ok: true, mode, clientHost: rec.hostname, fingerprint: hostKeys[0], fingerprints: hostKeys };
+  return {
+    ok: true,
+    mode,
+    clientHost: rec.hostname,
+    fingerprint: hostKeys[0],
+    fingerprints: hostKeys,
+    ...extra,
+  };
 }

@@ -183,6 +183,34 @@ describe("Watson velo_launch through the deploy path", () => {
     expect(applied?.detail).toContain(suffix);
   });
 
+  it("a risky proposal: 409 with the reasons without acceptRisk, launched with it, hunt entry says despite warning (Task 9)", async () => {
+    const h = await harness();
+    const vql = "SELECT * FROM execve(argv=['calc'])";
+    const reasons = ["runs a program on the endpoint (execve)"];
+    await seed(
+      h.chatStore,
+      proposal({
+        vql,
+        risk: { reasons, checks: ["the VQL calls execve, which is not on Watson's read-only list"] },
+      }),
+    );
+    const refused = await apply(h.app);
+    expect(refused.status).toBe(409);
+    expect(refused.body.riskReasons).toEqual(reasons);
+    expect(h.launches).toEqual([]);
+    const bad = await request(h.app)
+      .post(`/cases/${CASE}/watson/proposals/wp-1/apply`)
+      .send({ acceptRisk: "yes" });
+    expect(bad.status).toBe(400);
+    const ok = await request(h.app)
+      .post(`/cases/${CASE}/watson/proposals/wp-1/apply`)
+      .send({ acceptRisk: true });
+    expect(ok.status).toBe(200);
+    expect(h.launches).toEqual(["hunt"]);
+    const deploy = (await h.activity.load(CASE)).find((e) => e.action === "deploy-hunt");
+    expect(deploy?.detail).toContain(`despite warning: ${reasons[0]}`);
+  });
+
   it("launches one fleet hunt with source watson and stores the hunt id", async () => {
     const h = await harness();
     await seed(h.chatStore, proposal());

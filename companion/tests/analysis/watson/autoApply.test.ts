@@ -265,6 +265,30 @@ describe("autoApply", () => {
     expect(lastTurn(chat).text).toMatch(/fleet-wide hunts always wait for an analyst/);
   });
 
+  it("a risky collection is held for the analyst in Auto, even from a dashboard round (Task 9)", async () => {
+    const vql = "SELECT * FROM execve(argv=['calc'])";
+    const risky = {
+      ...launch("wp-r", TURN, "collection", vql, HOST_A),
+      risk: {
+        reasons: ["runs a program on the endpoint (execve)"],
+        checks: ["the VQL calls execve, which is not on Watson's read-only list"],
+      },
+    };
+    await seed([risky, findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish")]);
+    const chat = await autoApply(
+      deps(),
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      AUTO_ON,
+    );
+    expect(await status("wp-r")).toBe("pending");
+    expect(await status("wp-f")).toBe("applied");
+    expect(launches).toHaveLength(0);
+    expect(lastTurn(chat).text).toContain(
+      "held for your approval: risky query (runs a program on the endpoint (execve))",
+    );
+  });
+
   it("a reaction round (the one reading its own result) launches nothing but still applies its writes", async () => {
     await seed([
       findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish"),

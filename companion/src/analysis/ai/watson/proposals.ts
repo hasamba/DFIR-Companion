@@ -65,6 +65,8 @@ export interface WatsonApplyOptions {
   detailSuffix?: string;
   /** Apply only a `pending` proposal: never redo a held promotion an analyst undid. */
   pendingOnly?: boolean;
+  /** The analyst read a risky launch and accepts its risk (Task 9). Auto never sets it. */
+  acceptRisk?: boolean;
 }
 
 const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {
@@ -144,7 +146,10 @@ export async function applyWatsonProposal(
   if (action === "apply") {
     const found = (await deps.chatStore.load(caseId)).proposals.find((x) => x.id === proposalId);
     if (found?.kind === "velo_launch")
-      return applyVeloLaunch(deps, caseId, proposalId, actor, opts.detailSuffix);
+      return applyVeloLaunch(deps, caseId, proposalId, actor, {
+        ...(opts.detailSuffix ? { auditSuffix: opts.detailSuffix } : {}),
+        acceptRisk: opts.acceptRisk === true,
+      });
   }
   let state: InvestigationState | undefined;
   let done: WatsonProposal | undefined;

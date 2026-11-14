@@ -112,8 +112,22 @@ function pastesBlock(chat: WatsonChat, historyTurns: number): string {
   return [pastes, ...history].join("\n");
 }
 
+const RAN_STATUSES: ReadonlySet<string> = new Set(["applied", "launching", "uncertain"]);
+const RAN_LISTED = 20;
+
+/**
+ * Watson's own launches that ran or may have run, by mode and title only (no host name: a host
+ * outside the listed 50 would escape the masking list), so it does not ask for one again (Task 9).
+ */
+function ranLines(chat: WatsonChat): string[] {
+  return chat.proposals
+    .flatMap((p) => (p.kind === "velo_launch" && RAN_STATUSES.has(p.status) ? [p] : []))
+    .slice(-RAN_LISTED)
+    .map((p) => `- ${p.mode === "hunt" ? "fleet hunt" : "collection"}: ${line(p.title, ID_CHARS)}`);
+}
+
 /** The VELOCIRAPTOR block: the rules, and up to 50 enrolled hosts one per line (names are untrusted). */
-function veloBlock(velo: NonNullable<WatsonPromptInput["velo"]>): string {
+function veloBlock(velo: NonNullable<WatsonPromptInput["velo"]>, chat: WatsonChat): string {
   const hosts = shownVeloHosts(velo.hosts).map((h) => {
     const fq =
       h.fqdn && h.fqdn.toLowerCase() !== h.hostname.toLowerCase() ? ` (${line(h.fqdn, ID_CHARS)})` : "";
@@ -121,7 +135,11 @@ function veloBlock(velo: NonNullable<WatsonPromptInput["velo"]>): string {
   });
   const cut = velo.hostCount - hosts.length;
   const count = `The case's Velociraptor has ${Number(velo.hostCount) || 0} enrolled hosts${cut > 0 ? ` (${cut} more not listed)` : ""}:`;
-  return `VELOCIRAPTOR\n${veloRulesText()}\n${count}\n${hosts.join("\n") || "(none)"}`;
+  const ran = ranLines(chat);
+  const ranText = ran.length
+    ? `\nAlready launched on this case (never ask for these again; there is nothing to approve):\n${ran.join("\n")}`
+    : "";
+  return `VELOCIRAPTOR\n${veloRulesText()}\n${count}\n${hosts.join("\n") || "(none)"}${ranText}`;
 }
 
 export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
@@ -150,7 +168,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     `STORED PASTES (ask for a 'search' by id to read one)\n${pastesBlock(chat, historyTurns ?? 0)}`,
     `RECENT CHAT\n${fence("CHAT", recent.join("\n") || "(none)")}`,
   ];
-  if (velo) blocks.push(veloBlock(velo));
+  if (velo) blocks.push(veloBlock(velo, chat));
   if (pasteExcerpt) {
     const text = clip(pasteExcerpt.text, WATSON_PASTE_PROMPT_MAX);
     const note =

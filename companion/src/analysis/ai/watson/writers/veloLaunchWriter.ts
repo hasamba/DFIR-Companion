@@ -3,6 +3,7 @@ import {
   WatsonProposalConflict,
   WatsonProposalNotFoundError,
   WatsonProposalStateError,
+  WatsonRiskNotAccepted,
 } from "../proposalErrors.js";
 import type { WatsonChat, WatsonProposal, WatsonVeloLaunchProposal } from "../types.js";
 import { ALREADY_RAN, checkLaunch } from "../velo/launchCheck.js";
@@ -11,6 +12,7 @@ import { clearInFlight, markInFlight } from "../velo/launchInFlight.js";
 import type { VeloLaunchDeps, VeloLaunchOutcome, VeloLaunchRequest } from "../velo/launchTypes.js";
 import { initialWatch } from "../velo/launchWatch.js";
 import { loadVeloFleet } from "../velo/veloFleet.js";
+import { plainRisk, riskAcceptedText } from "../velo/vqlRiskClass.js";
 import type { WatsonWriter, WriterDeps } from "./writerTypes.js";
 
 // Applying a velo_launch proposal launches a Velociraptor hunt or collection through the existing
@@ -19,6 +21,11 @@ import type { WatsonWriter, WriterDeps } from "./writerTypes.js";
 // chat is not locked, so the launch never holds up the panel. A failure known to come before the
 // call returns the proposal to pending and releases its keys; anything else is `uncertain` and waits
 // for the analyst (launchResolve.ts) — it is never retried automatically.
+//
+// A risky proposal (Task 9) launches only with the analyst's explicit acceptRisk, checked inside the
+// first save before anything is marked or reserved, and only when the recheck finds no RISKY reason
+// beyond the ones stored on the proposal. HARD reasons refuse always. The acceptance is saved on the
+// launch intent (so every return to pending clears it) and copied onto `launched`.
 
 export const UNDO_REFUSED = "a launched hunt cannot be undone";
 
@@ -58,14 +65,32 @@ const replace = (chat: WatsonChat, next: WatsonProposal): WatsonChat => ({
   proposals: chat.proposals.map((x) => (x.id === next.id ? next : x)),
 });
 
+/** RISKY reasons the recheck found that the proposal did not store (compared raw, never plain). */
+function newRisks(p: WatsonVeloLaunchProposal, found: readonly string[] | undefined): string[] {
+  const stored = new Set(p.risk?.checks ?? []);
+  return (found ?? []).filter((r) => !stored.has(r));
+}
+
 /** Re-run every launch check against the current fleet and index; throws a conflict when one fails. */
-async function recheck(v: VeloLaunchDeps, caseId: string, p: WatsonVeloLaunchProposal): Promise<string[]> {
+async function recheck(
+  v: VeloLaunchDeps,
+  caseId: string,
+  p: WatsonVeloLaunchProposal,
+  acceptRisk: boolean,
+): Promise<string[]> {
   const fleet = await loadVeloFleet(v.fleet, caseId);
   if (!fleet) throw new WatsonProposalConflict("this case has no Velociraptor server");
   const deployed = await v.fingerprints.load(caseId);
   const input = { vql: p.vql, mode: p.mode, ...(p.hostname ? { hostname: p.hostname } : {}) };
-  const check = checkLaunch(input, { inventory: fleet.records, deployed, matchClient: v.matchClient });
+  const allowRisky = !!p.risk && acceptRisk;
+  const ctx = { inventory: fleet.records, deployed, matchClient: v.matchClient, allowRisky };
+  const check = checkLaunch(input, ctx);
   if (!check.ok) throw new WatsonProposalConflict(`Watson will not launch this: ${check.reason}`);
+  const added = newRisks(p, check.risky);
+  if (added.length) {
+    const what = added.map(plainRisk).join("; ");
+    throw new WatsonProposalConflict(`Watson will not launch this: a risk you did not approve: ${what}`);
+  }
   if (check.fingerprint !== p.fingerprint || (check.clientHost ?? "") !== (p.hostname ?? "")) {
     throw new WatsonProposalConflict("the launch no longer matches what Watson proposed");
   }
@@ -91,25 +116,29 @@ async function backToPending(deps: WriterDeps, v: VeloLaunchDeps, caseId: string
  * the caller that passed the status check marks the launch in flight (a losing double-click must
  * never clear the winner's mark, or its running launch would look stranded).
  */
-async function saveLaunching(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, id: string, by: string) {
+async function saveLaunching(
+  deps: WriterDeps,
+  v: VeloLaunchDeps,
+  caseId: string,
+  id: string,
+  by: string,
+  acceptRisk: boolean,
+) {
   let saved: WatsonVeloLaunchProposal | undefined;
   let marked = false;
   try {
     await deps.chatStore.update(caseId, async (c) => {
       const p = findLaunch(c, id);
       if (p.status !== "pending") throw new WatsonProposalStateError("apply", p.status);
+      if (p.risk && !acceptRisk) throw new WatsonRiskNotAccepted(p.risk.reasons);
       if (sameLaunchLive(c, p))
         throw new WatsonProposalConflict("an identical launch already ran or is running");
-      const planned = await recheck(v, caseId, p);
+      const planned = await recheck(v, caseId, p, acceptRisk);
       markInFlight(caseId, id);
       marked = true;
-      const launching = {
-        at: new Date().toISOString(),
-        by,
-        fingerprint: p.fingerprint,
-        planned,
-        reserved: [],
-      };
+      const at = new Date().toISOString();
+      const accepted = p.risk ? { riskAccepted: { by, at, reasons: p.risk.reasons } } : {};
+      const launching = { at, by, fingerprint: p.fingerprint, planned, reserved: [], ...accepted };
       saved = { ...p, status: "launching", launching };
       return replace(c, saved);
     });
@@ -128,8 +157,14 @@ async function saveLaunching(deps: WriterDeps, v: VeloLaunchDeps, caseId: string
  * boot sweep makes uncertain; with nothing recorded as reserved, a retry releases nothing (it never
  * removes a key it cannot prove it added).
  */
-async function saveIntent(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, id: string, by: string) {
-  const launching = await saveLaunching(deps, v, caseId, id, by);
+async function saveIntent(
+  deps: WriterDeps,
+  v: VeloLaunchDeps,
+  caseId: string,
+  id: string,
+  who: { by: string; acceptRisk: boolean },
+) {
+  const launching = await saveLaunching(deps, v, caseId, id, who.by, who.acceptRisk);
   const planned = launching.launching?.planned ?? [];
   let added: string[] = [];
   try {
@@ -247,17 +282,25 @@ async function refuseIfFrozen(
   throw new WatsonProposalConflict("the case is closed or archived; Watson launched nothing");
 }
 
+/** The audit words for a risky launch an analyst accepted; "" otherwise. */
+function riskAcceptedNote(p: WatsonVeloLaunchProposal): string {
+  const r = p.launching?.riskAccepted ?? p.launched?.riskAccepted;
+  return r ? riskAcceptedText(r) : "";
+}
+
 /** Apply one velo_launch proposal: launch once, record the ids, or leave it uncertain. */
 export async function applyVeloLaunch(
   deps: WriterDeps,
   caseId: string,
   proposalId: string,
   actor = "analyst",
-  auditSuffix = "",
+  opts: { auditSuffix?: string; acceptRisk?: boolean } = {},
 ): Promise<{ chat: WatsonChat }> {
   const v = deps.veloLaunch;
   if (!v) throw new WatsonProposalConflict("Velociraptor launches are not configured");
-  const { added, proposal: p } = await saveIntent(deps, v, caseId, proposalId, actor); // marks it in flight
+  const who = { by: actor, acceptRisk: opts.acceptRisk === true };
+  const { added, proposal: p } = await saveIntent(deps, v, caseId, proposalId, who); // marks it in flight
+  const auditSuffix = (opts.auditSuffix ?? "") + riskAcceptedNote(p);
   try {
     await refuseIfFrozen(deps, v, caseId, p, added);
     const outcome = await runLaunch(v, caseId, p, actor, auditSuffix);
@@ -278,7 +321,8 @@ async function settle(
   const { added, actor, auditSuffix } = by;
   const at = new Date().toISOString();
   if (outcome.launched) {
-    const launched = { ...outcome.launched, at, by: actor };
+    const accepted = p.launching?.riskAccepted;
+    const launched = { ...outcome.launched, at, by: actor, ...(accepted ? { riskAccepted: accepted } : {}) };
     const watch = initialWatch(p, launched, at); // saved WITH the ids: no applied collection goes unwatched
     const chat = await saveOutcome(deps, caseId, p.id, (s) => ({
       ...s,

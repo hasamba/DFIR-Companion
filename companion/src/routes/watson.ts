@@ -13,6 +13,7 @@ import {
   type WatsonProposalAction,
   type WriterDeps,
 } from "../analysis/ai/watson/proposals.js";
+import { WatsonRiskNotAccepted } from "../analysis/ai/watson/proposalErrors.js";
 import type { WatsonRoundDeps } from "../analysis/ai/watson/pipelineRound.js";
 import { newWatsonId } from "../analysis/ai/watson/roundProposals.js";
 import { WatsonAiOff, WatsonCostLimitReached } from "../analysis/ai/watson/round.js";
@@ -21,7 +22,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { caseVeloConnected, watsonProposalDeps, watsonRoundDeps } from "./watsonDeps.js";
 import { ingestWatsonPaste } from "./watsonPasteIngest.js";
-import { registerWatsonVeloLaunchRoutes } from "./watsonVeloLaunch.js";
+import { parseApplyBody, registerWatsonVeloLaunchRoutes } from "./watsonVeloLaunch.js";
 import { logActivity, logActivityWithWarning } from "../analysis/activityLog.js";
 import {
   isWatsonRunMode,
@@ -40,7 +41,7 @@ import { ingestRows, withPasteIngest } from "../analysis/ai/watson/pasteIngestCh
  *   GET  /watson/history?before=&limit= older turns from the full history file, oldest first: { turns, more }
  *   POST /watson/message                 one analyst message → one round (a model call)
  *   POST /watson/paste                   store pasted text or a text file as case evidence, then a round
- *   POST /watson/proposals/:pid/:action  apply | reject | undo one question proposal (no model call)
+ *   POST /watson/proposals/:pid/:action  apply | reject | undo one proposal; {acceptRisk} for a risky launch
  *   POST /watson/turns/:tid/add-question add a turn's free-form answer to the open questions (no model call)
  *   POST /watson/new-thread              start a fresh chat thread; Watson's memory stays (no model call)
  *   POST /watson/mode {mode}             switch the case's run mode, approve | auto → { mode } (no model call)
@@ -92,6 +93,8 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
   const proposalDeps = (): WriterDeps | undefined => watsonProposalDeps(ctx);
 
   function sendWatsonError(res: Response, err: unknown): Response {
+    if (err instanceof WatsonRiskNotAccepted)
+      return res.status(409).json({ error: err.message, riskReasons: err.reasons });
     if (
       err instanceof WatsonAiOff ||
       err instanceof WatsonCostLimitReached ||
@@ -280,6 +283,8 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     if (!PROPOSAL_ACTIONS.includes(action)) {
       return res.status(400).json({ error: "action must be apply, reject or undo" });
     }
+    const body = parseApplyBody(req.body); // acceptRisk: a risky launch's explicit acceptance (Task 9)
+    if (!body) return res.status(400).json({ error: "acceptRisk must be true or false" });
     const deps = proposalDeps();
     if (!deps) return res.status(501).json({ error: "Watson is not configured" });
     if (await caseMissing(caseId)) return res.status(404).json({ error: "case not found" });
@@ -290,6 +295,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
         req.params.pid,
         action as WatsonProposalAction,
         actorName(req),
+        { acceptRisk: body.acceptRisk },
       );
       // The overview state has no forensic timeline, so only the key questions go out.
       if (result.state) options.onStateChanged?.(caseId);

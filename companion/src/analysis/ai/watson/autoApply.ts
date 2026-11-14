@@ -15,7 +15,7 @@ import type { WriterDeps } from "./writers/writerTypes.js";
 //   - Case writes apply from every round, reaction rounds included (P3).
 //   - A single-host collection launches only from a round an analyst started (P1, no cap). A
 //     reaction round — Watson's own, including the one reading its own result — never launches.
-//   - A fleet-wide hunt always waits for an analyst.
+//   - A fleet-wide hunt always waits for an analyst, and so does a risky query (Task 9).
 //
 // The eligible set is the round's Watson-turn proposals, plus held promotions the round carried
 // (its shown result events, its paste). Nothing else, ever: no sweep of older pending proposals.
@@ -76,6 +76,8 @@ export function eligibleProposals(chat: WatsonChat, round: WatsonAutoRound): Wat
 /** Why Auto leaves a proposal for an analyst; null when Auto applies it. */
 function waitReason(p: WatsonProposal, round: WatsonAutoRound): string | null {
   if (p.kind !== "velo_launch") return null;
+  // Task 9: a risky query waits for an analyst in every mode and from every round source.
+  if (p.risk) return `held for your approval: risky query (${p.risk.reasons.join("; ")})`;
   if (p.mode !== "collection") return "fleet-wide hunts always wait for an analyst";
   if (round.reaction) return "Watson does not launch from a round it started itself";
   if (round.source === "slash")

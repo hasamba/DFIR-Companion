@@ -82,6 +82,12 @@ const eventPromoteProposal = z.object({
     .catch(undefined),
 });
 
+// A malformed risk drops to undefined: the writer's recheck is then strict and refuses (fail closed).
+const riskAccepted = z
+  .object({ by: z.string(), at: z.string(), reasons: z.array(z.string()) })
+  .optional()
+  .catch(undefined);
+
 const veloLaunchProposal = z.object({
   ...common,
   kind: z.literal("velo_launch"),
@@ -100,7 +106,12 @@ const veloLaunchProposal = z.object({
       serverSetId: z.string().optional(),
       at: z.string(),
       by: z.string(),
+      riskAccepted,
     })
+    .optional()
+    .catch(undefined),
+  risk: z
+    .object({ reasons: z.array(z.string()), checks: z.array(z.string()) })
     .optional()
     .catch(undefined),
   resolvedBy: z.string().optional().catch(undefined),
@@ -112,6 +123,7 @@ const veloLaunchProposal = z.object({
       planned: z.array(z.string()).optional().catch(undefined),
       reserved: z.array(z.string()).catch([]),
       error: z.string().optional(),
+      riskAccepted,
     })
     .optional()
     .catch(undefined),

@@ -9,6 +9,7 @@ import {
 import type { WatsonChat, WatsonProposal, WatsonVeloLaunchProposal } from "../types.js";
 import type { HuntFingerprintStore } from "./huntFingerprintStore.js";
 import { isInFlight } from "./launchInFlight.js";
+import { riskAcceptedText } from "./vqlRiskClass.js";
 
 // The analyst's answer to an uncertain launch (phase 3): "launched" — they checked Velociraptor and it
 // ran, so the proposal is applied (no ids: Watson never learned them); "retry" — it did not run, so
@@ -37,6 +38,12 @@ export function confirmedLaunchOutcome(p: WatsonVeloLaunchProposal): HuntDeployI
   };
 }
 
+/** A confirmed risky launch keeps its "despite warning" record in the audit (Task 9). */
+function riskNote(p: WatsonVeloLaunchProposal): string {
+  const r = p.status === "applied" ? p.launched?.riskAccepted : undefined;
+  return r ? riskAcceptedText(r) : "";
+}
+
 export const STRANDED = "the server stopped before the launch was confirmed";
 
 const stranded = (caseId: string, p: WatsonProposal): p is WatsonVeloLaunchProposal =>
@@ -60,7 +67,11 @@ function resolved(
   return {
     ...p,
     status: "applied",
-    launched: { at: launchedAt, by },
+    launched: {
+      at: launchedAt,
+      by,
+      ...(p.launching?.riskAccepted ? { riskAccepted: p.launching.riskAccepted } : {}),
+    },
     appliedAt: launchedAt,
     appliedBy: by,
     resolvedBy: actor,
@@ -106,7 +117,7 @@ export async function resolveVeloLaunch(
       actor,
       category: "hunt",
       action: "watson.resolve",
-      detail: `Watson's Velociraptor ${done.mode} ${what}: ${done.title}`.slice(0, 200),
+      detail: `Watson's Velociraptor ${done.mode} ${what}: ${done.title}`.slice(0, 200) + riskNote(done),
       targetType: "hunt",
       targetId: done.targetId,
     });

@@ -150,13 +150,39 @@ describe("Watson velo_launch proposals", () => {
     expect(p.hostname).toBeUndefined();
   });
 
-  it("blocks risky VQL: no proposal, and the turn names the blocked call", async () => {
-    const h = await harness([reply({ request: veloReq({ vql: "SELECT * FROM execve(argv=['calc'])" }) })]);
+  it("a risky query becomes a pending proposal carrying its plain-English risk (Task 9)", async () => {
+    const vql = "SELECT * FROM execve(argv=['calc'])";
+    const h = await harness([reply({ request: veloReq({ vql }) })]);
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "run calc" });
+    expect(chat.proposals).toHaveLength(1);
+    const p = chat.proposals[0] as WatsonVeloLaunchProposal;
+    expect(p).toMatchObject({ kind: "velo_launch", status: "pending", vql });
+    expect(p.risk).toEqual({
+      reasons: ["runs a program on the endpoint (execve)"],
+      checks: ["the VQL calls execve, which is not on Watson's read-only list"],
+    });
+    const text = chat.turns.at(-1)?.text ?? "";
+    expect(text).toContain("Risky query");
+    expect(text).toContain("runs a program on the endpoint (execve)");
+    expect(proposalSchema.parse(p)).toEqual(p);
+  });
+
+  it("a safe query carries no risk", async () => {
+    const h = await harness([reply({ request: veloReq() })]);
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "x" });
+    expect((chat.proposals[0] as WatsonVeloLaunchProposal).risk).toBeUndefined();
+  });
+
+  it("a HARD refusal makes no proposal and says there is nothing to approve", async () => {
+    const vql = "SELECT * FROM execve(argv=['calc']) -- hidden";
+    const h = await harness([
+      reply({ message: "Approve it in the request panel.", request: veloReq({ vql }) }),
+    ]);
     const chat = await runWatsonRound(h.ctx, CASE, { text: "run calc" });
     expect(chat.proposals).toHaveLength(0);
     const text = chat.turns.at(-1)?.text ?? "";
-    expect(text).toContain("Watson wanted to run a collection but");
-    expect(text).toContain("execve");
+    expect(text).toContain("Nothing to approve");
+    expect(text).toContain("comments are not allowed");
   });
 
   it("makes no proposal for VQL that already ran, and says so", async () => {
@@ -164,7 +190,14 @@ describe("Watson velo_launch proposals", () => {
     await fingerprintStoreFor(h.cases).add(CASE, launchFingerprints(PSLIST, "WKS-ALPHA"));
     const chat = await runWatsonRound(h.ctx, CASE, { text: "again" });
     expect(chat.proposals).toHaveLength(0);
-    expect(chat.turns.at(-1)?.text).toContain("already ran");
+    expect(chat.turns.at(-1)?.text).toContain("Nothing to approve: this collection already ran on the case");
+  });
+
+  it("a fleet hunt that already ran says so in its own words", async () => {
+    const h = await harness([reply({ request: veloReq({ mode: "hunt", hostname: undefined }) })]);
+    await fingerprintStoreFor(h.cases).add(CASE, launchFingerprints(PSLIST));
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "again" });
+    expect(chat.turns.at(-1)?.text).toContain("Nothing to approve: this hunt already ran on the case");
   });
 
   it("does not propose the same launch twice while one is pending", async () => {
@@ -225,6 +258,33 @@ describe("Watson velo_launch proposals", () => {
     expect(sent.toLowerCase()).not.toContain("wks-alpha");
   });
 
+  it("masks a fleet host named in an already-launched title (Task 9)", async () => {
+    const h = await harness([reply()], { anonymize: true });
+    const keys = launchFingerprints(PSLIST, "PAYROLL01");
+    await h.chatStore.update(CASE, (c) => ({
+      ...c,
+      proposals: [
+        {
+          id: "wp-old",
+          turnId: "t0",
+          kind: "velo_launch",
+          status: "applied",
+          targetId: keys[0],
+          mode: "collection",
+          hostname: "PAYROLL01",
+          title: "Process list on payroll01",
+          vql: PSLIST,
+          fingerprint: keys[0],
+          fingerprints: keys,
+        },
+      ],
+    }));
+    await runWatsonRound(h.ctx, CASE, { text: "hi" });
+    const sent = h.provider.sent[0].userPrompt;
+    expect(sent).toContain("Already launched on this case");
+    expect(sent.toLowerCase()).not.toContain("payroll01");
+  });
+
   it("a velociraptor turn survives reload, in the chat and the history, and its proposal's turn resolves", async () => {
     const h = await harness([reply({ request: veloReq() })]);
     const chat = await runWatsonRound(h.ctx, CASE, { text: "go" });
@@ -237,11 +297,11 @@ describe("Watson velo_launch proposals", () => {
   });
 
   it("a blocked velociraptor turn also survives reload", async () => {
-    const h = await harness([reply({ request: veloReq({ vql: "SELECT * FROM execve(argv=['x'])" }) })]);
+    const h = await harness([reply({ request: veloReq({ vql: "SELECT * FROM execve(argv=['x']) -- c" }) })]);
     await runWatsonRound(h.ctx, CASE, { text: "go" });
     const loaded = await h.chatStore.load(CASE);
     expect(loaded.turns.at(-1)).toMatchObject({ role: "watson", request: { kind: "velociraptor" } });
-    expect(loaded.turns.at(-1)?.text).toContain("execve");
+    expect(loaded.turns.at(-1)?.text).toContain("Nothing to approve");
   });
 
   it("refuses oversized VQL with a size note and never proposes a cut query", async () => {
