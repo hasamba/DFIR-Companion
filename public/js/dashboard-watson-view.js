@@ -194,15 +194,26 @@
     );
   }
 
+  // Size-control icons (static markup, no case data): chevrons for expand/collapse, corners for full screen.
+  const svg = (d) =>
+    `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="${d}"/></svg>`;
+  const ICON = {
+    expand: svg("M11 17l-5-5 5-5M18 17l-5-5 5-5"),
+    collapse: svg("M13 17l5-5-5-5M6 17l5-5-5-5"),
+    full: svg("M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"),
+    exitFull: svg("M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"),
+  };
+
   // One shell for all three states; the panel's classes decide what shows (see dashboard-watson.css).
   function panelHtml() {
     return (
-      `<button type="button" class="watson-rail" data-act="watsonAct" data-w-verb="open" aria-expanded="false" aria-label="Open Watson">` +
+      `<button type="button" class="watson-rail" data-act="watsonAct" data-w-verb="open" aria-expanded="false" aria-label="Open Watson" title="Open Watson">` +
+      `<span class="watson-rail-expand" aria-hidden="true">${ICON.expand}</span>` +
       `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span><span data-w="railmode"></span></button>` +
       `<div class="watson-root watson-body"><div class="watson-head"><strong>Watson</strong><span class="watson-mode" data-w="mode"></span><span data-w="velo"></span>` +
-      `<button type="button" class="watson-mini watson-only-open" data-act="watsonAct" data-w-verb="fullScreen" aria-expanded="false" aria-label="Full screen">Full screen</button>` +
-      `<button type="button" class="watson-mini watson-only-full" data-act="watsonAct" data-w-verb="exitFullScreen" aria-expanded="true" aria-label="Exit full screen">Exit full screen</button>` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson">Collapse</button></div>` +
+      `<button type="button" class="watson-icon-btn watson-only-open" data-act="watsonAct" data-w-verb="fullScreen" aria-expanded="false" aria-label="Full screen" title="Full screen">${ICON.full}</button>` +
+      `<button type="button" class="watson-icon-btn watson-only-full" data-act="watsonAct" data-w-verb="exitFullScreen" aria-expanded="true" aria-label="Exit full screen" title="Exit full screen">${ICON.exitFull}</button>` +
+      `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson" title="Collapse Watson">${ICON.collapse}</button></div>` +
       `<div class="watson-main"><div class="watson-board" data-w="board"></div>` +
       `<div class="watson-chat"><div class="watson-log" data-w="log"></div>` +
       composerHtml() +

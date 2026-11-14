@@ -6,7 +6,7 @@
 .watson-panel.watson-collapsed .watson-body { display: none; }
 .watson-panel.watson-fullscreen { top: var(--watson-top, 0); left: 0; width: auto; border-left: 0; }
 body.watson-full-open { overflow: hidden; }
-.watson-rail { display: none; border: 0; background: none; color: inherit; width: 100%; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; cursor: pointer; height: 100%; }
+.watson-rail { display: none; border: 0; background: none; color: inherit; width: 100%; flex-direction: column; align-items: center; justify-content: flex-start; gap: 8px; padding: 10px 0; cursor: pointer; height: 100%; }
 .watson-panel.watson-collapsed .watson-rail { display: flex; }
 .watson-rail-icon { width: 24px; height: 24px; border-radius: 50%; background: var(--brand-teal-deep, #0f766e); color: #fff;
   display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
@@ -36,6 +36,11 @@ body.watson-full-open { padding-right: 0; }
   background: var(--bg-primary); border-radius: 4px; }
 .watson-prop { margin-top: 6px; padding: 6px; border: 1px dashed var(--border-color); border-radius: 4px; }
 .watson-mini { font-size: 11px; padding: 2px 8px; }
+.watson-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0;
+  border: 1px solid var(--border-color); border-radius: 4px; background: none; color: var(--text-muted); cursor: pointer; }
+.watson-icon-btn:hover, .watson-icon-btn:focus-visible { color: var(--text-primary, inherit); background: var(--bg-primary); }
+.watson-rail-expand { display: inline-flex; color: var(--text-muted); }
+.watson-rail:hover .watson-rail-expand, .watson-rail:focus-visible .watson-rail-expand { color: var(--text-primary, inherit); }
 .watson-composer { padding: 8px 10px; border-top: 1px solid var(--border-color); }
 .watson-input, .watson-paste-text { width: 100%; box-sizing: border-box; resize: vertical; }
 .watson-paste-box { display: none; margin-top: 6px; }
@@ -49,7 +54,7 @@ body.watson-full-open { padding-right: 0; }
 .watson-board { display: none; }
 .watson-fullscreen .watson-board { display: block; flex: 0 0 40%; max-width: 560px; overflow-y: auto; padding: 8px 12px; border-right: 1px solid var(--border-color); }
 .watson-only-full { display: none; }
-.watson-fullscreen .watson-only-full { display: inline-block; }
+.watson-fullscreen .watson-only-full { display: inline-flex; }
 .watson-fullscreen .watson-only-open { display: none; }
 /* The toolbar button: the icon plus a short label that survives the .icons-only collapse. */
 #watsonToggle::before { content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;

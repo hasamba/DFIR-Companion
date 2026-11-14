@@ -500,6 +500,21 @@ describe("rail button, failed sends and paste limits", () => {
     expect(html).toContain('data-w="board"');
     expect(html).toContain('data-w="log"');
   });
+  it("the size controls are icons with tooltips, and the rail shows an expand icon at its top", () => {
+    expect(html).toMatch(/class="watson-rail"[^>]*>` \+\s*`<span class="watson-rail-expand"[^>]*>\$\{ICON\.expand\}/);
+    for (const [verb, tip, icon] of [
+      ["fullScreen", "Full screen", "full"],
+      ["exitFullScreen", "Exit full screen", "exitFull"],
+      ["collapse", "Collapse Watson", "collapse"],
+    ]) {
+      const btn = html.match(new RegExp(`<button[^>]*data-w-verb="${verb}"[^>]*>([^<]*)</button>`));
+      expect(btn, verb).not.toBeNull();
+      expect(btn?.[0]).toContain(`title="${tip}"`);
+      expect(btn?.[0]).toContain("watson-icon-btn");
+      expect(btn?.[1]).toBe(`\${ICON.${icon}}`); // icon only, no text label
+    }
+    expect(html).toMatch(/const ICON = \{/);
+  });
 
   it("puts one statement on a line in the log builder", () => {
     expect(html).not.toMatch(/;[ \t]+return\b/);
