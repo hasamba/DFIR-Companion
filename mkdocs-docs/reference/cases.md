@@ -101,14 +101,15 @@ refused too, unless they are on the short list below.
 - Refused: new evidence and imports, re-running the content tagger or a Sigma re-grade, applying the
   IOC whitelist or NSRL, applying a second opinion, promoting from the super-timeline, merging hosts,
   restoring a state backup, host-scope decisions, the correlation profile, false-positive marks, the
-  scope window, source trust, tags and stars, notebook entries, comments and pinned findings. Reopen
-  (or restore) the case to change any of them.
+  scope window, source trust, tags and stars, notebook entries, comments and pinned findings, and
+  messages to Watson (its chat stays readable; `/dfir ask` gets the same refusal). Reopen (or
+  restore) the case to change any of them.
 - Still accepted:
     - Reopen, close, archive, restore, delete and the encrypted export.
     - Case password, unlock and "forget this browser's unlock". Removing a push key. Checking,
       detaching or removing the case's cloud credentials.
     - Reports and pushes to IRIS, Timesketch, MISP, Notion, ClickUp, Jira and ServiceNow.
-    - Questions and summaries that save nothing: Ask, the view and executive summaries, the
+    - Questions and summaries that save nothing: the view and executive summaries, the
       remediation plan, the hypothesis review, hunt and memory suggestions, super-timeline hunt
       searches, rule previews and dry runs, and custody verification.
     - Stopping work that is already running: cancelling a hunt search, stopping a live monitor,

@@ -618,9 +618,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         }
       }
 
-      // #157 feedback loop: fill this hunt's outcome (by huntId) — for a bundle hunt OR a deployed
-      // suggested hunt. Done regardless of importedAny so a hunt that ran and found nothing is recorded
-      // as a miss (the loop must know it ran empty so it isn't re-proposed as productive). Best-effort.
+      // #157: fill this hunt's outcome (by huntId), bundle or suggested, even when nothing was imported:
+      // a hunt that ran empty is a recorded miss, never re-proposed as productive. Best-effort.
       if (options.huntOutcomeStore) {
         try {
           const cur = await options.huntOutcomeStore.load(caseId);
@@ -666,6 +665,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               runDiff,
             }),
           );
+          options.onVeloHuntCollected?.(caseId, { huntId: job.huntId, rows: totalRows, added: addedEvents });
         } catch (e) {
           logLine(`[hunt-outcomes] fill failed for hunt ${job.huntId}: ${(e as Error).message}`);
         }

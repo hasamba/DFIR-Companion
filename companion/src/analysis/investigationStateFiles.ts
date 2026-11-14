@@ -35,6 +35,7 @@ export const SNAPSHOT_STATE_FILES = [
   "evidence-attestations.json", // #1111 analyst-attested EvidenceClass coverage — signed assertions, same reason as host-scope.json
   "collection-generations.json", // #1108/#1128 collection-generation ledger — signed analyst assertions, same reason as host-scope.json (#1138: was missing since #1108 shipped)
   "mobile-backup-generations.json", // #1132 mobile backup-pairing ledger — same reason as collection-generations.json
+  "watson-chat.json", // Watson per-case AI chat (turns, proposals, memory) — investigation data, travels with the case
 ] as const;
 
 // Binary state is copied beside the JSON backup manifest rather than base64-encoded into it. A

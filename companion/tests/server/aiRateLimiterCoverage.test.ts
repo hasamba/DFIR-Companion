@@ -70,8 +70,8 @@ describe("AI rate limiter coverage", () => {
     expectAllThrottled(statuses);
   });
 
-  it("throttles POST /cases/:id/ask (previously unthrottled — bug #25)", async () => {
-    const statuses = await fireManyPost("/cases/nosuch/ask", 25);
+  it("throttles POST /cases/:id/watson/message (Watson replaced Ask, which bug #25 found unthrottled)", async () => {
+    const statuses = await fireManyPost("/cases/nosuch/watson/message", 25);
     expectAllThrottled(statuses);
   });
 

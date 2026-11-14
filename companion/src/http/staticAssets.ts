@@ -37,6 +37,12 @@ export const STATIC_ASSETS: Record<string, string> = {
   // public/js/dashboard-escape.js. That distinction matters here because the allowlist test used to
   // look only at `<script type="module">` tags, which would have skipped all eight of these.
   "/js/dashboard-state.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-watson-marks.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-watson-velo.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-watson-cards.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-watson-view.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-watson-mode.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-watson.js": "application/javascript; charset=utf-8",
   "/js/dashboard-escape.js": "application/javascript; charset=utf-8",
   "/js/dashboard-time.js": "application/javascript; charset=utf-8",
   "/js/dashboard-text.js": "application/javascript; charset=utf-8",
@@ -375,6 +381,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/css/dashboard-timeline.css": "text/css; charset=utf-8",
   "/css/dashboard-toolbar.css": "text/css; charset=utf-8",
   "/css/dashboard-sections.css": "text/css; charset=utf-8",
+  "/css/dashboard-watson.css": "text/css; charset=utf-8",
   // The MITRE panel's Matrix view (#1764). A feature sheet, not a ninth byte-split part.
   "/css/mitre-matrix.css": "text/css; charset=utf-8",
 };

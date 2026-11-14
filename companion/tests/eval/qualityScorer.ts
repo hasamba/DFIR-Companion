@@ -1,4 +1,4 @@
-import type { IOC, UncertaintyStatus } from "../../src/analysis/stateTypes.js";
+import type { IOC, QuestionStatus, UncertaintyStatus } from "../../src/analysis/stateTypes.js";
 
 export interface GoldenClaim {
   id: string;
@@ -31,7 +31,16 @@ export interface GoldenNextStep {
   requiredTerms: string[];
 }
 
+// The answer a seeded key question must end with (stability or anchoring, see corpus.ts).
+export interface GoldenKeyQuestion {
+  id: string;
+  allowedStatuses: QuestionStatus[];
+  requiredTerms: string[];
+  forbiddenTerms: string[];
+}
+
 export interface CaseGolden {
+  keyQuestions?: GoldenKeyQuestion[];
   claims: GoldenClaim[];
   iocs: GoldenIoc[];
   forbiddenConclusions: ForbiddenConclusion[];
@@ -68,7 +77,14 @@ export interface QualityNextStep {
   pointer: string;
 }
 
+export interface QualityKeyQuestion {
+  id: string;
+  status: QuestionStatus;
+  answer: string;
+}
+
 export interface QualityOutput {
+  keyQuestions?: QualityKeyQuestion[];
   evidenceEventIds: string[];
   claims: QualityClaim[];
   iocs: QualityIoc[];
@@ -99,6 +115,8 @@ export interface CaseQualityScore {
   confidenceBandMisses: string[];
   uncertainties: { total: number; matched: number; recall: number; missed: string[] };
   nextSteps: { total: number; matched: number; recall: number; missed: string[] };
+  /** Absent on a score built before seeded questions existed: nothing to check. */
+  keyQuestions?: { total: number; matched: number; recall: number; missed: string[] };
   abstentionPassed: boolean;
 }
 
@@ -527,6 +545,66 @@ function scoreNextSteps(
   };
 }
 
+// A corrected answer names the stale claim in order to retire it ("The previous answer (X) is
+// contradicted by ..."). For KEY-QUESTION forbidden terms only, a clause that mentions the term
+// together with one of these signals is a rejection, not an assertion. Kept separate from
+// REJECTION_SIGNALS so forbidden-conclusion scoring is unchanged.
+const SUPERSESSION_SIGNALS = [
+  "contradicted",
+  "contradicts",
+  "previous answer",
+  "earlier answer",
+  "prior answer",
+  "corrects",
+  "corrected",
+  "superseded",
+  "no longer",
+  "not delivered",
+  "never delivered",
+  "did not open",
+  "ruled out",
+  "rules out",
+];
+
+// Drops the clauses that carry a supersession signal, so a later clause that still asserts the term
+// is judged on its own.
+function withoutSupersededClauses(text: string): string {
+  // Split only where the delimiter ends a word, so "invoice.docm" or "203.0.113.50" stays whole.
+  return text
+    .split(/[.!?;]+(?=\s|$)/)
+    .filter((clause) => {
+      const normalized = norm(clause);
+      return !SUPERSESSION_SIGNALS.some((signal) => normalized.includes(signal));
+    })
+    .join(". ");
+}
+
+function keyQuestionAssertsTerm(answer: string, term: string): boolean {
+  return assertsAsFact(withoutSupersededClauses(answer), [term]);
+}
+
+// A seeded question passes when it is still there, its status is allowed, its answer states every
+// required term, and it does not assert a forbidden term (the stale answer) as fact.
+function scoreKeyQuestions(
+  golden: readonly GoldenKeyQuestion[],
+  produced: readonly QualityKeyQuestion[],
+): CaseQualityScore["keyQuestions"] {
+  const missed = golden
+    .filter((expected) => {
+      const actual = produced.find((q) => q.id === expected.id);
+      if (!actual || !expected.allowedStatuses.includes(actual.status)) return true;
+      if (!containsTerms(actual.answer, expected.requiredTerms)) return true;
+      return expected.forbiddenTerms.some((term) => keyQuestionAssertsTerm(actual.answer, term));
+    })
+    .map((expected) => expected.id);
+  return {
+    total: golden.length,
+    matched: golden.length - missed.length,
+    recall: ratio(golden.length - missed.length, golden.length),
+    missed,
+  };
+}
+
 export interface ScoreCaseQualityOptions {
   // #1704: forbidden-conclusion ids a semantic judge found asserted. Given on a real run, it
   // replaces the word-list verdict; absent (mock runs), the word list decides as before.
@@ -555,6 +633,7 @@ export function scoreCaseQuality(
     confidenceBandMisses: confidenceBandMisses(golden.claims, output.claims),
     uncertainties: scoreUncertainties(golden.uncertainties, output.uncertainties),
     nextSteps: scoreNextSteps(golden.nextSteps, output.nextSteps),
+    keyQuestions: scoreKeyQuestions(golden.keyQuestions ?? [], output.keyQuestions ?? []),
     abstentionPassed: !golden.expectAbstention || output.claims.length === 0,
   };
 }
@@ -609,6 +688,7 @@ export function passesCaseQuality(score: CaseQualityScore, options: PassesCaseQu
     (options.real === true || score.confidenceBandMisses.length === 0) &&
     score.uncertainties.recall === 1 &&
     score.nextSteps.recall === 1 &&
+    (score.keyQuestions?.recall ?? 1) === 1 &&
     score.abstentionPassed
   );
 }
@@ -643,6 +723,7 @@ export function formatCaseQualityReport(
     ...score.confidenceBandMisses,
     ...score.uncertainties.missed.map((id) => `missed uncertainty ${id}`),
     ...score.nextSteps.missed.map((id) => `missed next step ${id}`),
+    ...(score.keyQuestions?.missed ?? []).map((id) => `key question ${id} not answered as expected`),
   ];
   if (!score.abstentionPassed) problems.push("clean-case abstention failed");
   return [

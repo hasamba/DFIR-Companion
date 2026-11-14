@@ -14,6 +14,13 @@ import { CLIENT_RE, matchClient, normalizeClientRow, type VeloClientRecord } fro
 export { matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
 import { ChildOutputCollector } from "../childOutput.js";
 import { containedWhereOrThrow, MAX_READ_WHERE_LENGTH } from "../../analysis/vqlInput.js";
+import {
+  sanitizeVqlDurations,
+  splitVqlStatements,
+  unsafeVqlCharProblem,
+} from "../../analysis/vqlStatements.js";
+// Re-exported: moved to analysis/ so Watson's launch check runs on exactly the text launched.
+export { sanitizeVqlDurations, splitVqlStatements } from "../../analysis/vqlStatements.js";
 import { buildHuntSpec, HuntSpecError, type HuntSpecCheck } from "./huntSpec.js";
 import { parseHuntClientCounts, type HuntClientCounts } from "./huntClientCounts.js";
 export type { HuntClientCounts } from "./huntClientCounts.js";
@@ -95,19 +102,6 @@ export function parseVqlOutput(stdout: string): unknown[] {
   return rows;
 }
 
-// Velociraptor VQL has no duration-suffix literals (30d, 7h, 2w, etc.). AI models sometimes
-// generate them by analogy with other query languages. Rewrite any that appear in arithmetic
-// context (after + or -) to seconds so artifact_set does not reject the query at parse time.
-// Only operates in operator context to avoid touching unrelated "d"/"h" inside string literals
-// such as file paths (e.g. "C:/logs/30day_archive/").
-export function sanitizeVqlDurations(vql: string): string {
-  return String(vql || "")
-    .replace(/([-+])\s*(\d+)w\b/g, "$1 $2 * 604800")
-    .replace(/([-+])\s*(\d+)d\b/g, "$1 $2 * 86400")
-    .replace(/([-+])\s*(\d+)h\b/g, "$1 $2 * 3600")
-    .replace(/([-+])\s*(\d+)m\b/g, "$1 $2 * 60");
-}
-
 // Hunt expiry (relative, not an absolute date). Velociraptor's own hunt() default keeps a hunt
 // scheduling NEW clients for a WEEK; a Companion triage hunt rarely needs that long, so we default to
 // ONE HOUR. The UI offers three relative presets and the value is carried as seconds.
@@ -127,24 +121,6 @@ export function normalizeHuntExpirySeconds(
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(MAX_HUNT_EXPIRY_SECONDS, Math.max(MIN_HUNT_EXPIRY_SECONDS, Math.floor(n)));
-}
-
-// Split a VQL blob (e.g. the notebook pivots, separated by blank lines) into individual statements
-// and STRIP comment lines. Critical for the CLI: a query passed to `velociraptor query` that begins
-// with a `-- comment` is parsed by the flag lexer as an unknown long flag ("--"), so each statement
-// must start with real VQL. Comment-only chunks are dropped. Each statement becomes its own
-// positional `query` arg (the command is variadic), so multiple pivots run in one invocation.
-export function splitVqlStatements(vql: string): string[] {
-  return String(vql || "")
-    .split(/\n\s*\n/)
-    .map((chunk) =>
-      chunk
-        .split(/\r?\n/)
-        .filter((line) => line.trim() && !line.trim().startsWith("--")) // drop pure-comment lines
-        .join("\n")
-        .trim(),
-    )
-    .filter(Boolean);
 }
 
 // Transient process-spawn failures: the velociraptor binary is briefly locked when we try to launch it
@@ -516,6 +492,11 @@ function buildHuntArtifact(
   sources: string[],
   description: string,
 ): string {
+  // The artifact is embedded in a raw '''…''' literal on the server: a ''' would end it (G2).
+  if (statements.some((q) => q.includes("'''")))
+    throw new Error("the VQL may not contain ''' (a triple-quoted string)");
+  const unsafe = unsafeVqlCharProblem(statements.join("\n")); // a YAML line break the indent misses (I-1)
+  if (unsafe) throw new Error(unsafe);
   const blocks = statements
     .map(
       (q, i) =>

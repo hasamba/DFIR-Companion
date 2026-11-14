@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Watson case agent** — per-case investigation chat with a Key Questions board
+- **Watson answers free-form questions** — cited answers with Add to open questions and New thread; its full chat history is kept and searchable
+- **Watson writes findings, next steps and report text** — Conclusions and Investigation limitations wait for Apply, carry a Watson badge and the approver's name, and each has Undo
+- **Watson reads pasted files in known formats** — rows are graded like an import, the tagger's promotions wait for your approval; generic CSV and log stay searchable text
+- **Watson reacts to your work** — after a quiet window it reviews imports, notebook edits and new stars (`DFIR_AI_WATSON_REACT_DELAY_SEC`, 0 = off) and pauses after a Presidio hold, a cost limit or two errors
+- **Watson runs Velociraptor** — asks to launch single-host collections or fleet hunts as VQL cards (Launch / Reject), VQL checked against a reviewed read-only list, results come back into the case
+- **Risky Watson queries need your approval** — a query outside the reviewed list shows a red warning and a second confirm; Auto never launches it
+- **Watson Approve and Auto modes** — per-case switch, audited by analyst; Auto applies Watson's writes and launches single-host collections from dashboard messages, never fleet hunts
+- **Watson pinned to the right of the dashboard** — rail, open or full screen on every view
+- **Watson looks up forensic-timeline events** — when an event it needs is not in its case packet it fetches up to 200 (by finding, event, time, host or text), never the super-timeline; the card says what it read
+
+### Changed
+
+- **Velociraptor hunts refuse hidden characters** — control, zero-width and text-direction characters are refused in any launched VQL, including hand-written hunts
+
+### Removed
+
+- **"Ask the LLM" retired** — Watson answers free-form case questions; `/dfir ask` and the AI preview now go to Watson
+
 ## [0.46.0] - 2026-11-13
 
 ### Added

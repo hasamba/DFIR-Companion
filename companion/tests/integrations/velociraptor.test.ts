@@ -193,6 +193,32 @@ describe("normalizeHuntExpirySeconds", () => {
   });
 });
 
+describe("VelociraptorClient: a triple quote never reaches the server-side wrapper (G2)", () => {
+  it("launchHunt and collectOnClient refuse it before running anything", async () => {
+    const runs: string[][] = [];
+    const runner: VqlRunner = async (statements) => {
+      runs.push(statements);
+      return { rows: [], raw: "" };
+    };
+    const client = new VelociraptorClient(cfg, runner);
+    const vql = "SELECT 'x' AS A FROM info()\nLET Z = " + "'".repeat(3) + " AS B FROM info()";
+    await expect(client.launchHunt(vql, "t")).rejects.toThrow(/triple-quoted/);
+    await expect(client.collectOnClient("C.webserver1", vql, "t")).rejects.toThrow(/triple-quoted/);
+    expect(runs).toHaveLength(0);
+  });
+
+  it("refuses a Unicode line separator inside a string (I-1)", async () => {
+    const runs: string[][] = [];
+    const runner: VqlRunner = async (statements) => {
+      runs.push(statements);
+      return { rows: [], raw: "" };
+    };
+    const client = new VelociraptorClient(cfg, runner);
+    await expect(client.launchHunt("SELECT 'a\u2028b' AS A FROM info()", "t")).rejects.toThrow(/character/);
+    expect(runs).toHaveLength(0);
+  });
+});
+
 describe("VelociraptorClient.launchHunt", () => {
   it("packages the pivots as a CLIENT artifact and launches a hunt across all clients", async () => {
     let program = "";

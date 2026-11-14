@@ -85,25 +85,93 @@ export const reportMetaSchema = z.object({
   recommendations: z.array(z.string()).catch([]),
 });
 
+// The report text Watson may write (product decision D3): never the executive summary.
+export const WATSON_REPORT_FIELDS = ["conclusions", "investigationLimitations"] as const;
+export type WatsonReportField = (typeof WATSON_REPORT_FIELDS)[number];
+export type WatsonFieldMarks = Partial<Record<WatsonReportField, { proposalId: string; at: string }>>;
+
+// Bookkeeping kept beside the content, never part of it: the save version (`updatedAt`) and which
+// fields hold Watson's text. Parsed only from the stored file, so a PUT body can never forge them,
+// and left out of reportMetaSchema so the version diff and the version-dedupe hash ignore them.
+const markSchema = z.object({ proposalId: z.string(), at: z.string() }).optional().catch(undefined);
+const storedReportMetaSchema = reportMetaSchema.extend({
+  updatedAt: z.string().optional().catch(undefined),
+  watsonFields: z
+    .object({ conclusions: markSchema, investigationLimitations: markSchema })
+    .optional()
+    .catch(undefined),
+});
+
 export type ReportRevision = z.infer<typeof revisionSchema>;
 export type DistributionEntry = z.infer<typeof distributionSchema>;
 export type GlossaryEntry = z.infer<typeof glossarySchema>;
-export type ReportMeta = z.infer<typeof reportMetaSchema>;
+export type ReportMeta = z.infer<typeof reportMetaSchema> & {
+  /** Stamped on every save, strictly increasing: the version an analyst's form opened. */
+  updatedAt?: string;
+  /** Fields whose text Watson wrote (an approved proposal); an analyst edit removes the mark. */
+  watsonFields?: WatsonFieldMarks;
+};
 
 export function emptyReportMeta(): ReportMeta {
   return reportMetaSchema.parse({});
 }
 
 // Coerce untrusted input (file contents or a PUT body) into a valid ReportMeta. Unknown
-// keys are dropped; wrong-typed fields fall back to their default. Never throws.
+// keys are dropped; wrong-typed fields fall back to their default. Never throws. The
+// bookkeeping (`updatedAt`, `watsonFields`) is dropped too: only the store sets it.
 export function normalizeReportMeta(input: unknown): ReportMeta {
   const parsed = reportMetaSchema.safeParse(input ?? {});
   return parsed.success ? parsed.data : emptyReportMeta();
 }
 
+function normalizeStored(input: unknown): ReportMeta {
+  const parsed = storedReportMetaSchema.safeParse(input ?? {});
+  if (!parsed.success) return emptyReportMeta();
+  const { updatedAt, watsonFields, ...content } = parsed.data;
+  const marks = Object.fromEntries(Object.entries(watsonFields ?? {}).filter(([, m]) => m));
+  return {
+    ...content,
+    ...(updatedAt ? { updatedAt } : {}),
+    ...(Object.keys(marks).length ? { watsonFields: marks } : {}),
+  };
+}
+
+/** A save named the version it opened, and the stored report details are newer (route → 409). */
+export class ReportMetaStale extends Error {
+  constructor() {
+    super("Report details changed since you opened them — reload");
+    this.name = "ReportMetaStale";
+  }
+}
+
+/**
+ * An analyst's (or a version restore's) full replace: the content of `input`, the Watson marks of
+ * the fields whose text it leaves unchanged (a changed field is the analyst's text now).
+ */
+export function replaceReportMeta(current: ReportMeta, input: unknown): ReportMeta {
+  const next = normalizeReportMeta(input);
+  const marks = Object.fromEntries(
+    WATSON_REPORT_FIELDS.flatMap((f) => {
+      const mark = current.watsonFields?.[f];
+      return mark && next[f] === current[f] ? [[f, mark]] : [];
+    }),
+  ) as WatsonFieldMarks;
+  return Object.keys(marks).length ? { ...next, watsonFields: marks } : next;
+}
+
+/** A version stamp strictly after `prev`, so two saves in one millisecond still differ. */
+function nextStamp(prev: string | undefined): string {
+  const now = Date.now();
+  const last = prev ? Date.parse(prev) : NaN;
+  return new Date(Number.isNaN(last) || now > last ? now : last + 1).toISOString();
+}
+
 const UNKNOWN_INVESTIGATOR = "unknown";
 
 export class ReportMetaStore {
+  /** One promise chain per case: every save runs after the one before it. */
+  private readonly chains = new Map<string, Promise<unknown>>();
+
   constructor(private readonly cases: CaseStore) {}
 
   private path(caseId: string): string {
@@ -116,7 +184,7 @@ export class ReportMetaStore {
   // returned as saved, so save → load round-trips and clearing the field sticks.
   async load(caseId: string): Promise<ReportMeta> {
     try {
-      return normalizeReportMeta(JSON.parse(await readFile(this.path(caseId), "utf8")));
+      return normalizeStored(JSON.parse(await readFile(this.path(caseId), "utf8")));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       return { ...emptyReportMeta(), investigators: await this.creationInvestigators(caseId) };
@@ -130,11 +198,39 @@ export class ReportMetaStore {
     return name && name.toLowerCase() !== UNKNOWN_INVESTIGATOR ? [name] : [];
   }
 
-  // Persist atomically (temp-file + rename), like the other per-case stores. Returns the
-  // normalized value actually written so callers can echo it back to the UI.
-  async save(caseId: string, meta: unknown): Promise<ReportMeta> {
-    const normalized = normalizeReportMeta(meta);
-    await atomicWrite(this.path(caseId), JSON.stringify(normalized, null, 2));
-    return normalized;
+  /**
+   * The ONE write path: a per-case chain, so a read-check-write (the analyst's version check, a
+   * Watson field write) can never interleave with another save. `fn` gets the stored meta and returns
+   * the next one (spread its argument to keep the rest); a throw writes nothing and does not block
+   * later saves. Persisted atomically with a new strictly-increasing `updatedAt`.
+   */
+  update(caseId: string, fn: (current: ReportMeta) => ReportMeta | Promise<ReportMeta>): Promise<ReportMeta> {
+    const prev = this.chains.get(caseId) ?? Promise.resolve();
+    const run = prev.then(async () => {
+      const current = await this.load(caseId);
+      const next = normalizeStored({ ...(await fn(current)), updatedAt: nextStamp(current.updatedAt) });
+      await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+      return next;
+    });
+    const tail = run.catch(() => undefined);
+    this.chains.set(caseId, tail);
+    void tail.then(() => {
+      if (this.chains.get(caseId) === tail) this.chains.delete(caseId);
+    });
+    return run;
+  }
+
+  /**
+   * Replace the report details with `meta` (normalized), through update(). With `baseUpdatedAt`
+   * (the version the analyst's form opened; "" for a never-saved case) a newer stored version is
+   * refused with ReportMetaStale. Returns the value written so callers can echo it to the UI.
+   */
+  save(caseId: string, meta: unknown, baseUpdatedAt?: string): Promise<ReportMeta> {
+    return this.update(caseId, (current) => {
+      if (baseUpdatedAt !== undefined && baseUpdatedAt !== (current.updatedAt ?? "")) {
+        throw new ReportMetaStale();
+      }
+      return replaceReportMeta(current, meta);
+    });
   }
 }

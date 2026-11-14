@@ -32,6 +32,7 @@ describe("AnalysisPipeline encapsulation", () => {
     expect(typeof reachIn).toBe("function");
   });
 
+  // The cold import of pipeline.ts alone took 14.5 s of the 15 s default under load: a wide margin.
   it("still exposes the public import surface callers depend on", async () => {
     // The point of the adapter is that it changed nothing for callers. Routes and scripts call
     // pipeline.importThor(...) and friends; if the delegations had been rewired wrongly, these
@@ -41,5 +42,5 @@ describe("AnalysisPipeline encapsulation", () => {
     expect(named.length).toBeGreaterThanOrEqual(30);
     expect(named).toContain("importThor");
     expect(named).toContain("importVelociraptor");
-  });
+  }, 60_000);
 });

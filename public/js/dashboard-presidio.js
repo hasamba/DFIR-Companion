@@ -228,7 +228,7 @@
   // background pipeline job) so there is no synchronous response to carry a 409 when the gate
   // fires mid-import; it only ever surfaces as an ai_status "error" over the WebSocket. So this
   // list is loaded on case connect AND whenever ai_status goes to "error" (see applyAiStatus),
-  // with the 409 fast-path (see doAsk/synthesize/runSecondOpinion) as an optimisation on top —
+  // with the 409 fast-path (see synthesize/runSecondOpinion) as an optimisation on top —
   // never the only way the panel appears.
   let presidioPending = [];
   function loadPresidioPending(caseId) {

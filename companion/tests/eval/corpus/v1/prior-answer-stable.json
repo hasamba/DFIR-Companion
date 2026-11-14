@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "id": "prior-answer-stable",
+  "title": "Synthetic prior key-question answer that stays correct",
+  "scenario": "lateral-movement",
+  "traits": ["complete-evidence", "prior-answers"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional logon and service-install events plus one unrelated update event, with a correct key-question answer seeded from an earlier synthesis.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-11-13"
+  },
+  "seedEvents": [
+    {
+      "id": "pas-e1",
+      "timestamp": "2026-05-10T09:00:00.000Z",
+      "description": "Network logon from WS-07 to SRV-02 using svc-backup",
+      "severity": "High",
+      "mitreTechniques": ["T1078.002"],
+      "asset": "SRV-02",
+      "sources": ["Windows Security"]
+    },
+    {
+      "id": "pas-e2",
+      "timestamp": "2026-05-10T09:00:06.000Z",
+      "description": "PSEXESVC service installed on SRV-02 from WS-07",
+      "severity": "High",
+      "mitreTechniques": ["T1021.002"],
+      "asset": "SRV-02",
+      "sources": ["EDR"]
+    },
+    {
+      "id": "pas-e3",
+      "timestamp": "2026-05-10T11:30:00.000Z",
+      "description": "Windows Update installed a monthly security update on SRV-02",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "asset": "SRV-02",
+      "sources": ["Windows Update"]
+    }
+  ],
+  "seedKeyQuestions": [
+    {
+      "id": "kq-lateral",
+      "question": "How did the attacker reach SRV-02?",
+      "status": "answered",
+      "answer": "PsExec from WS-07 with the svc-backup account: a network logon followed by the PSEXESVC service install.",
+      "pointer": "pas-e1, pas-e2"
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "pas-f1",
+        "severity": "High",
+        "confidence": 90,
+        "confidenceReason": "The logon and the service install corroborate the same source and target.",
+        "title": "Lateral movement to SRV-02 via PsExec",
+        "description": "WS-07 reached SRV-02 with a svc-backup network logon and a PsExec service install.",
+        "relatedIocs": [],
+        "mitreTechniques": ["T1078.002", "T1021.002"],
+        "status": "open",
+        "relatedEventIds": ["pas-e1", "pas-e2"]
+      }
+    ],
+    "iocs": [],
+    "mitreTechniques": [],
+    "attackerPath": "WS-07 authenticated to SRV-02 as svc-backup and installed PSEXESVC.",
+    "narrativeTimeline": "",
+    "summary": "The earlier answer still holds: PsExec from WS-07 reached SRV-02. The later update is routine.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [
+      {
+        "id": "kq-lateral",
+        "question": "How did the attacker reach SRV-02?",
+        "status": "answered",
+        "answer": "PsExec from WS-07 with the svc-backup account: a network logon followed by the PSEXESVC service install.",
+        "pointer": "pas-e1, pas-e2",
+        "relatedFindingIds": ["pas-f1"]
+      }
+    ],
+    "nextSteps": [
+      {
+        "id": "pas-n1",
+        "priority": "high",
+        "action": "Collect process and logon history from WS-07",
+        "rationale": "WS-07 is the source of the movement and its own entry point is unknown.",
+        "pointer": "WS-07 Security.evtx",
+        "relatedFindingIds": ["pas-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "psexec-to-srv02",
+        "requiredTerms": ["PsExec", "SRV-02"],
+        "evidenceEventIds": ["pas-e1", "pas-e2"],
+        "confidence": {
+          "min": 70,
+          "max": 100
+        }
+      }
+    ],
+    "iocs": [],
+    "forbiddenConclusions": [],
+    "uncertainties": [],
+    "nextSteps": [
+      {
+        "id": "collect-ws07",
+        "requiredTerms": ["WS-07"]
+      }
+    ],
+    "expectAbstention": false,
+    "keyQuestions": [
+      {
+        "id": "kq-lateral",
+        "allowedStatuses": ["answered"],
+        "requiredTerms": ["PsExec", "WS-07"],
+        "forbiddenTerms": []
+      }
+    ]
+  }
+}

@@ -146,15 +146,18 @@ export function buildProvider(): AnalyzeProvider | undefined {
 }
 
 // Synthesis model: dedicated DFIR_AI_SYNTH_* vars, falling back to the main model.
-export function buildSynthesisProvider(): AnalyzeProvider | undefined {
+export function buildSynthesisProvider(
+  env: NodeJS.ProcessEnv = process.env,
+  modelOverride?: string,
+): AnalyzeProvider | undefined {
   // Text model — DFIR_AI_SYNTH_*, falling back to the vision model's config (DFIR_VISION_*, legacy
   // DFIR_AI_* via visionEnv) when a dedicated synth var is unset.
   return buildProviderFrom({
-    provider: AI_ROLE_SOURCES.synthesis.provider(process.env),
-    model: process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL"),
-    apiKey: resolveAiRoleSetting(process.env, "synthesis", "KEY"),
-    baseUrl: resolveAiRoleSetting(process.env, "synthesis", "BASE_URL"),
-    imageDetail: visionEnv(process.env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
+    provider: AI_ROLE_SOURCES.synthesis.provider(env),
+    model: modelOverride ?? env.DFIR_AI_SYNTH_MODEL ?? visionEnv(env, "MODEL"),
+    apiKey: resolveAiRoleSetting(env, "synthesis", "KEY"),
+    baseUrl: resolveAiRoleSetting(env, "synthesis", "BASE_URL"),
+    imageDetail: visionEnv(env, "IMAGE_DETAIL") as "high" | "low" | "auto" | undefined,
   });
 }
 
@@ -407,7 +410,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     cloudCoverageStore: new CloudCoverageStore(params.store), // #1063 per-upload cloud coverage for synthesis + the panel
     aiControlStore: new AiControlStore(params.store),
     huntOutcomeStore: new HuntOutcomeStore(params.store), // #157 hunting feedback loop
-    // #1411 ask() reads the analyst's marks, host-scope decisions and dwell windows. Read-only
+    // #1411 Watson reads the analyst's marks, host-scope decisions and dwell windows. Read-only
     // instances: TagsStore gets no protection sink because nothing here writes a tag.
     tagsStore: new TagsStore(params.store),
     commentsStore: new CommentsStore(params.store),

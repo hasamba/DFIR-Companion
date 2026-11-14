@@ -33,6 +33,7 @@
   <link rel="stylesheet" href="/css/dashboard-timeline.css" />
   <link rel="stylesheet" href="/css/dashboard-toolbar.css" />
   <link rel="stylesheet" href="/css/dashboard-sections.css" />
+  <link rel="stylesheet" href="/css/dashboard-watson.css" />
   <!-- The MITRE panel's Matrix view (#1764). A feature sheet, not one of the eight parts above. -->
   <link rel="stylesheet" href="/css/mitre-matrix.css" />
   <!-- Accessibility layer (#386): skip link, visible focus ring, reduced motion, .visually-hidden.
@@ -457,6 +458,12 @@
   <script src="/js/dashboard-ocr-search.js"></script>
   <script src="/js/dashboard-evidence-graph.js"></script>
   <script src="/js/dashboard-import-changes.js"></script>
+  <script src="/js/dashboard-watson-marks.js"></script>
+  <script src="/js/dashboard-watson-velo.js"></script>
+  <script src="/js/dashboard-watson-cards.js"></script>
+  <script src="/js/dashboard-watson-view.js"></script>
+  <script src="/js/dashboard-watson-mode.js"></script>
+  <script src="/js/dashboard-watson.js"></script>
   <script src="/js/dashboard-presidio.js"></script>
   <script src="/js/dashboard-hypotheses.js"></script>
   <script src="/js/dashboard-evidence-attestation.js"></script>
@@ -569,6 +576,7 @@
     </span>
     <span class="tb-sep" aria-hidden="true"></span>
     <span class="tb-group" data-tb-group="AI">
+    <button id="watsonToggle" type="button" aria-label="Watson" data-act="toggleWatsonPanel" data-tip="Watson: open the investigation chat panel, or collapse it to the rail. Watson answers questions about this case, proposes edits to the Key Questions and asks for the queries or files it needs.">Watson</button>
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
     <!-- Missed evidence review (#1540) — OPENS the panel, never starts a review: the press that
          spends money stays inside the panel, next to the row counts and the cost estimate. The
@@ -1914,6 +1922,12 @@
           <div class="sfield"><label for="env-DFIR_AI_SYNTH_SAFETY_RETRIES">Safety-stop retries<span class="sfield-hint">DFIR_AI_SYNTH_SAFETY_RETRIES — times a safety-stopped synthesis asks the same model again before the fallback (0–3, default 1). 0 = no same-model retry: switch to the fallback if set, otherwise fail</span></label><input id="env-DFIR_AI_SYNTH_SAFETY_RETRIES" type="number" min="0" max="3" step="1" placeholder="1" /></div>
           <div class="sfield"><label for="env-DFIR_AI_CAPTURE_SAFETY_STOPS">Save safety-stopped prompts<span class="sfield-hint">DFIR_AI_CAPTURE_SAFETY_STOPS — when a model's safety filter stops an answer, save the exact prompt it was sent (with the AI step, provider, model and time) in the case folder under state/safety-stops, so it can be replayed later. The file holds case evidence (masked when anonymisation is on). Restart after changing</span></label><select id="env-DFIR_AI_CAPTURE_SAFETY_STOPS"><option value="">off (default)</option><option value="1">on</option></select></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_WATSON_MODEL">Watson model<span class="sfield-hint">DFIR_AI_WATSON_MODEL — the model Watson (the per-case investigation chat) talks to. Blank = the synthesis model</span></label><input id="env-DFIR_AI_WATSON_MODEL" placeholder="blank = synthesis model" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_WATSON_COST_LIMIT_USD">Watson cost limit (USD per case)<span class="sfield-hint">DFIR_AI_WATSON_COST_LIMIT_USD — Watson stops answering on a case once it has spent this much. Blank = no limit. Only providers that report a dollar cost count toward it</span></label><input id="env-DFIR_AI_WATSON_COST_LIMIT_USD" inputmode="decimal" placeholder="blank = no limit" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_WATSON_TOKEN_LIMIT">Watson token limit (per case)<span class="sfield-hint">DFIR_AI_WATSON_TOKEN_LIMIT — input plus output tokens Watson may use on a case. Blank = no limit. Works with every provider</span></label><input id="env-DFIR_AI_WATSON_TOKEN_LIMIT" inputmode="numeric" placeholder="blank = no limit" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_WATSON_REACT_DELAY_SEC">Watson reaction delay (seconds)<span class="sfield-hint">DFIR_AI_WATSON_REACT_DELAY_SEC — seconds of quiet after an import, notebook edit (when the AI may read the notebook) or new star before Watson reacts once on its own. Each reaction is a full Watson round with the case context and counts toward the Watson cost and token limits. 0 = no automatic reactions. Default 60</span></label><input id="env-DFIR_AI_WATSON_REACT_DELAY_SEC" inputmode="numeric" placeholder="60" /></div>
+        </div>
         <div id="codex-status" class="sfield" data-safe-style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary)">
           <div data-safe-style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span id="cx-status-dot" data-safe-style="width:9px;height:9px;border-radius:50%;background:#6b7280"></span>
@@ -2115,7 +2129,6 @@
           <div class="sfield"><label for="env-DFIR_AI_LOG_PROMPT_FILE">Log prompt file<span class="sfield-hint">DFIR_AI_LOG_PROMPT_FILE</span></label><input id="env-DFIR_AI_LOG_PROMPT_FILE" placeholder="path/to/log.txt" /></div>
         </div>
         <div class="sfield-row3">
-          <div class="sfield"><label for="env-DFIR_AI_ASK_PROMPT_FILE">Ask prompt file<span class="sfield-hint">DFIR_AI_ASK_PROMPT_FILE</span></label><input id="env-DFIR_AI_ASK_PROMPT_FILE" placeholder="path/to/ask.txt" /></div>
           <div class="sfield"><label for="env-DFIR_AI_EXEC_PROMPT_FILE">Exec-summary prompt file<span class="sfield-hint">DFIR_AI_EXEC_PROMPT_FILE</span></label><input id="env-DFIR_AI_EXEC_PROMPT_FILE" placeholder="path/to/exec.txt" /></div>
           <div class="sfield"><label for="env-DFIR_AI_NARRATIVE_PROMPT_FILE">Narrative prompt file<span class="sfield-hint">DFIR_AI_NARRATIVE_PROMPT_FILE</span></label><input id="env-DFIR_AI_NARRATIVE_PROMPT_FILE" placeholder="path/to/narrative.txt" /></div>
         </div>
@@ -2140,11 +2153,12 @@
           <div class="sfield"><label for="env-DFIR_AI_VIEWSUMMARY_PROMPT_FILE">View-summary prompt file<span class="sfield-hint">DFIR_AI_VIEWSUMMARY_PROMPT_FILE — quick AI overview of the current super-timeline view (filters applied)</span></label><input id="env-DFIR_AI_VIEWSUMMARY_PROMPT_FILE" placeholder="path/to/view-summary.txt" /></div>
           <div class="sfield"><label for="env-DFIR_AI_SESSIONSUMMARY_PROMPT_FILE">Session-summary prompt file<span class="sfield-hint">DFIR_AI_SESSIONSUMMARY_PROMPT_FILE — focused account of ONE attacker session from the Attacker Sessions panel</span></label><input id="env-DFIR_AI_SESSIONSUMMARY_PROMPT_FILE" placeholder="path/to/session-summary.txt" /></div>
           <div class="sfield"><label for="env-DFIR_AI_FINDINGTASKS_PROMPT_FILE">Finding-tasks prompt file<span class="sfield-hint">DFIR_AI_FINDINGTASKS_PROMPT_FILE — the post-synthesis pass that turns each Critical/High finding into a playbook task (#1418)</span></label><input id="env-DFIR_AI_FINDINGTASKS_PROMPT_FILE" placeholder="path/to/finding-tasks.txt" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_WATSON_PROMPT_FILE">Watson prompt file<span class="sfield-hint">DFIR_AI_WATSON_PROMPT_FILE — the per-case Watson investigation chat agent</span></label><input id="env-DFIR_AI_WATSON_PROMPT_FILE" placeholder="path/to/watson.txt" /></div>
         </div>
         <div class="settings-group-head">AI analysis parameters</div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_AI_SYNTH_THINKING_TOKENS">Synthesis thinking tokens<span class="sfield-hint">DFIR_AI_SYNTH_THINKING_TOKENS — extended-thinking budget for synthesis (≥1024 to engage; 0 = off; Anthropic / reasoning-capable models only)</span></label><input id="env-DFIR_AI_SYNTH_THINKING_TOKENS" placeholder="0 (off)" /></div>
-          <div class="sfield"><label for="env-DFIR_ASK_GRAPH_MAX_EDGES">Ask graph max edges<span class="sfield-hint">DFIR_ASK_GRAPH_MAX_EDGES — max causal edges fed into "Ask the case" prompt via GraphRAG (default 120)</span></label><input id="env-DFIR_ASK_GRAPH_MAX_EDGES" placeholder="120" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_WATSON_GRAPH_MAX_EDGES">Watson graph max edges<span class="sfield-hint">DFIR_AI_WATSON_GRAPH_MAX_EDGES — max causal edges fed into Watson's prompt via GraphRAG (default 120; the old DFIR_ASK_GRAPH_MAX_EDGES still works)</span></label><input id="env-DFIR_AI_WATSON_GRAPH_MAX_EDGES" placeholder="120" /></div>
         </div>
         <div class="sfield-row3">
           <div class="sfield"><label for="env-DFIR_HUNT_SUGGEST_MAX">Fleet-hunt max suggestions<span class="sfield-hint">DFIR_HUNT_SUGGEST_MAX — max AI-suggested fleet hunts per generation (default 8)</span></label><input id="env-DFIR_HUNT_SUGGEST_MAX" placeholder="8" /></div>
@@ -3834,14 +3848,6 @@
       </h2>
       <div id="cockpitBody" aria-live="polite"><div class="now-state">Connect to or create a case to see the next investigative decisions.</div></div>
     </section>
-    <section id="sec-ask" data-safe-style="grid-column: 1 / -1">
-      <h2>Ask the LLM about this case<span class="ev-sub">answers from the forensic timeline, findings and IOCs plus your own decisions — hypotheses, host scope, dwell windows, prior hunts, stars and comments (notebook only when opted in); keeps a short thread for follow-ups</span></h2>
-      <div class="ask-row">
-        <input id="askInput" placeholder="e.g. Was data exfiltrated? Was a USB connected? Any signs of persistence?" />
-        <button id="askBtn">Ask</button>
-      </div>
-      <div id="askAnswer"></div>
-    </section>
     <section id="sec-nlquery" data-safe-style="grid-column: 1 / -1">
       <h2>Query Translator <span data-safe-style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)">natural language → VQL / KQL / ES|QL / SPL / Sigma / YARA / Suricata / CQL</span></h2>
       <div class="ask-row">
@@ -4561,7 +4567,7 @@
       <p data-safe-style="font-size:12px;color:var(--text-muted);margin:0 0 10px">Free-form notes and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below). Got a testable claim? Use <em>→ Hypothesis</em> to track it in the Hypotheses panel above.</p>
       <div class="nb-ai-row">
         <input type="checkbox" id="nbAiToggle" />
-        <label for="nbAiToggle">Include notebook in AI synthesis and Ask context</label>
+        <label for="nbAiToggle">Include notebook in AI synthesis and Watson context</label>
         <span data-safe-style="color:var(--text-faint);font-size:11px" id="nbAiHint">(gives the AI your current notes and open questions)</span>
       </div>
       <div id="nbList" data-safe-style="margin-top:12px">—</div>
@@ -4767,9 +4773,9 @@
         <label>Intended audience (1.4)<textarea id="rm-intendedAudience" rows="2" placeholder="Blank = default technical-audience text"></textarea></label>
         <label>Executive summary (2) — overrides the AI summary<textarea id="rm-executiveSummary" rows="3"></textarea></label>
         <label>Business Impact Analysis (2.1)<textarea id="rm-businessImpact" rows="3"></textarea></label>
-        <label>Investigation limitations (2.2)<textarea id="rm-investigationLimitations" rows="3"></textarea></label>
+        <label>Investigation limitations (2.2) <span data-watson-slot="investigationLimitations"></span><textarea id="rm-investigationLimitations" rows="3"></textarea></label>
         <label>Investigation goals / research questions (2.3) — blank = derive from key questions<textarea id="rm-investigationGoals" rows="3"></textarea></label>
-        <label>Conclusions (5) — overrides the derived conclusion<textarea id="rm-conclusions" rows="3"></textarea></label>
+        <label>Conclusions (5) — overrides the derived conclusion <span data-watson-slot="conclusions"></span><textarea id="rm-conclusions" rows="3"></textarea></label>
         <label>Recommendations (5) — one per line<textarea id="rm-recommendations" rows="3" placeholder="Deploy EDR to all endpoints"></textarea></label>
         <label>Report revisions (1.1) — one per line: <code>version | date | author | comments</code><textarea id="rm-revisions" rows="2" placeholder="1.0 | 2026-06-04 | Jane Doe | Release version"></textarea></label>
         <label>Distribution list (1.2, optional — omitted if blank) — one per line: <code>name | role | method</code><textarea id="rm-distribution" rows="2" placeholder="Ellie Example | CISO | email"></textarea></label>
@@ -4778,6 +4784,7 @@
       </div>
     </section>
   </main>
+  <aside id="watsonPanel" class="watson-panel" aria-label="Watson investigation chat"></aside>
   <footer data-safe-style="padding:14px 16px 28px; text-align:center; color:var(--text-muted); font-size:12px; border-top:1px solid var(--border-color); margin-top:8px;">
     That's every panel for this layout — refresh to pick up new data. More panels can be shown, hidden, or reordered from Settings → General → Dashboard sections.
   </footer>
@@ -4850,7 +4857,6 @@
       // Data-gated (see data-gate-open in its markup): stays hidden until the timeline actually
       // has Volatility/Rekall events, but the analyst can still switch it off here like any other.
       { id: "sec-mem-nextsteps", label: "Memory Next Steps" },
-      { id: "sec-ask",          label: "Ask the LLM" },
       { id: "sec-nlquery",      label: "Query Translator" },
       { id: "sec-exec",         label: "Executive Summary" },
       { id: "sec-playbook",     label: "Playbook" },
@@ -5412,7 +5418,6 @@
     // tier 3 continues, and the repeated form was already costing more lines than the features it
     // reported. Entry is [a name the module publishes, what to call it on screen].
     for (const [probe, label] of [
-      ["doAsk", "Ask the case a question"],
       ["loadHuntProfile", "Hunting Profile"],
       ["loadAdversaryHints", "Adversary Hints"],
       ["doHypothesizeGaps", "Gap Hypotheses"],
@@ -5795,7 +5800,7 @@
           + `</div>`
           + `<div class="ev-col-sev sev-${esc(e.severity)}" title="Severity: ${escAttr(e.severity || "unrated")}"><span class="ev-sq"></span>${esc(e.severity || "")}</div>`
           + `<div class="ev-col-time">${span}</div>`
-          + `<div class="ev-col-content">${promotedBadge(e) || ""}`   // #1554: outside the badges toggle and outside [details] — provenance, not decoration; `|| ""` covers the facade stub
+          + `<div class="ev-col-content">${promotedBadge(e) || ""}${watsonMarkHtml("event", e.id, e) || ""}`   // #1554: outside the badges toggle and outside [details] — provenance, not decoration; `|| ""` covers the facade stub
           + (tlShow("tags", tld) ? tagPills("event", e.id) : "")
           + (tlShow("badges", tld) ? `${newBadge}${badge}${corro}${chain}` : "")
           + (showHost ? host : "")
@@ -6207,16 +6212,6 @@
     document.getElementById("suggestHuntsBtn").addEventListener("click", (e) => { e.stopPropagation(); doSuggestHunts(); });
     document.getElementById("hypothesizeGapsBtn").addEventListener("click", (e) => { e.stopPropagation(); doHypothesizeGaps(); });
     document.getElementById("memNextStepsBtn").addEventListener("click", (e) => { e.stopPropagation(); doMemNextSteps(); });
-    // Guarded because doAsk moved to js/dashboard-import-changes.js (#415 tier 3): this runs while
-    // the page loads, so an unguarded read would throw before the facade could report anything and
-    // take every later top-level statement with it. The facade-report table below turns a stubbed
-    // doAsk into a visible chip rather than a button that quietly does nothing.
-    if (typeof doAsk === "function") {
-      document.getElementById("askBtn").onclick = doAsk;
-      document.getElementById("askInput").addEventListener("keydown", (e) => {
-        if (e.key === "Enter") doAsk();
-      });
-    }
     if (typeof initQueryTranslator !== "undefined") initQueryTranslator();
     else dfirFeatureUnavailable("Query Translator");
     // Guarded: connect() moved to js/dashboard-case-connect.js and this reads it at LOAD. The

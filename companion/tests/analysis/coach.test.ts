@@ -138,6 +138,18 @@ describe("recommendNextActions", () => {
     expect(recs.find((r) => r.id === "answer-questions")?.action).toBe("Answer 1 key question");
   });
 
+  it("does not count an unanswerable question as outstanding", () => {
+    const state = makeState({
+      forensicTimeline: [event()],
+      keyQuestions: [
+        question({ id: "q1", status: "unanswerable", answer: "No proxy logs exist" }),
+        question({ id: "q2", status: "partial", answer: "Maybe phishing, unconfirmed" }),
+      ],
+    });
+    const recs = recommendNextActions(state);
+    expect(recs.find((r) => r.id === "answer-questions")?.action).toBe("Answer 1 key question");
+  });
+
   it("does not call a case report-ready while a key question is only partial", () => {
     const state = makeState({
       forensicTimeline: [event()],

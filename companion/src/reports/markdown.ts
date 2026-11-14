@@ -28,6 +28,7 @@ import {
   oneLineMd,
   sessionCommandsMd,
 } from "./mdText.js";
+import { watsonApprovalLine } from "./watsonFindingMd.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
@@ -244,7 +245,8 @@ function investigationGoals(state: InvestigationState, meta: ReportMeta, lines: 
   }
   if (state.keyQuestions.length > 0) {
     lines.push("Derived from the investigation's key questions:", "");
-    for (const q of state.keyQuestions) lines.push(`- ${displayQuestionText(q.question)}`);
+    for (const q of state.keyQuestions)
+      lines.push(`- ${blockMd(oneLineMd(displayQuestionText(q.question)))}`);
     lines.push("");
     return;
   }
@@ -791,6 +793,7 @@ function investigation(
       const caution = findingCautionLine(f);
       if (caution) lines.push(caution);
       lines.push(blockMd(f.description) || "_no description_", ...sessionCommandsMd(f, eventById));
+      if (f.author === "watson") lines.push(watsonApprovalLine(f));
       lines.push(...findingIocsMd(f));
       if (f.mitreTechniques.length)
         lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
@@ -839,7 +842,14 @@ function investigation(
   if (state.keyQuestions.length === 0) {
     lines.push("_Not assessed yet — run synthesis._", "");
   } else {
-    const mark = (s: string) => (s === "answered" ? "✅" : s === "partial" ? "🟡" : "❓");
+    const mark = (s: string) =>
+      s === "answered"
+        ? "✅"
+        : s === "partial"
+          ? "🟡"
+          : s === "unanswerable"
+            ? "⛔ Not answerable with available data"
+            : "❓";
     lines.push("| | Question | Answer | Where to find it |", "| --- | --- | --- | --- |");
     for (const q of state.keyQuestions) {
       // A ⚠️ contradiction badge (investigation-guidance #3): the negative answer conflicts with

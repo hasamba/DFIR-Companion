@@ -9,7 +9,6 @@ import {
   CSV_SYSTEM_PROMPT,
   LOG_SYSTEM_PROMPT,
   SYNTHESIS_PROMPT,
-  ASK_PROMPT,
   EXEC_SUMMARY_PROMPT,
   HUNT_SUGGEST_PROMPT,
   PLAYBOOK_HUNT_PROMPT,
@@ -20,6 +19,7 @@ import {
   STARRED_REPORT_PROMPT,
   VIEW_SUMMARY_PROMPT,
   FINDING_TASK_PROMPT,
+  WATSON_PROMPT,
 } from "../src/analysis/ai/prompts/index.js";
 import { RECONCILE_PROMPT } from "../src/analysis/secondOpinion.js";
 
@@ -31,7 +31,6 @@ const files: Array<[string, string, string]> = [
   ["csv.txt", CSV_SYSTEM_PROMPT, "DFIR_AI_CSV_PROMPT_FILE"],
   ["log.txt", LOG_SYSTEM_PROMPT, "DFIR_AI_LOG_PROMPT_FILE"],
   ["synthesis.txt", SYNTHESIS_PROMPT, "DFIR_AI_SYNTH_PROMPT_FILE"],
-  ["ask.txt", ASK_PROMPT, "DFIR_AI_ASK_PROMPT_FILE"],
   ["exec-summary.txt", EXEC_SUMMARY_PROMPT, "DFIR_AI_EXEC_PROMPT_FILE"],
   ["hunts.txt", HUNT_SUGGEST_PROMPT, "DFIR_AI_HUNTS_PROMPT_FILE"],
   ["pbhunts.txt", PLAYBOOK_HUNT_PROMPT, "DFIR_AI_PBHUNTS_PROMPT_FILE"],
@@ -43,6 +42,7 @@ const files: Array<[string, string, string]> = [
   ["starred-report.txt", STARRED_REPORT_PROMPT, "DFIR_AI_STARREDREPORT_PROMPT_FILE"],
   ["view-summary.txt", VIEW_SUMMARY_PROMPT, "DFIR_AI_VIEWSUMMARY_PROMPT_FILE"],
   ["finding-tasks.txt", FINDING_TASK_PROMPT, "DFIR_AI_FINDINGTASKS_PROMPT_FILE"],
+  ["watson.txt", WATSON_PROMPT, "DFIR_AI_WATSON_PROMPT_FILE"],
 ];
 
 for (const [name, text] of files) {

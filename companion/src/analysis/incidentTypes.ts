@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { InvestigationState, InvestigationQuestion, NextStep } from "./stateTypes.js";
 import { buildInitialQuestions, buildInitialNextSteps, type CaseTemplate } from "./templateStore.js";
+import { keepWatsonItems, watsonItemsOf } from "./timeline/watsonItems.js";
 
 // Incident-type auto-playbooks (#236). A richer CaseTemplate: the template carries the GENERIC case
 // skeleton (questions, next steps, recommended imports, hunt platforms); an IncidentType extends it
@@ -176,7 +177,8 @@ export function applyIncidentTypeToState(
     nextSteps,
     updatedAt: now(),
   };
-  return { state: next, questionsAdded, nextStepsAdded };
+  // A replace never drops a finding or next step the analyst applied from Watson.
+  return { state: keepWatsonItems(next, watsonItemsOf(state)), questionsAdded, nextStepsAdded };
 }
 
 // Render the type's synthesis hint as a prompt block for the synthesis pass, so the AI prioritizes

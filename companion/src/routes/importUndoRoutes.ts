@@ -68,7 +68,7 @@ export function registerImportUndoRoutes(app: Express, ctx: RouteContext): void 
       if (options.importMetaStore) {
         try {
           await options.importMetaStore.clear(caseId);
-          options.onImportMeta?.(caseId);
+          options.onImportMeta?.(caseId, { step: step === applyUndo ? "undo" : "redo" });
         } catch {
           /* non-fatal */
         }

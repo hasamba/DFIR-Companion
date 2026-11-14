@@ -51,27 +51,30 @@ function diagAiCostBucketRow(label, bucket) {
 }
 function renderAiCostCard(cost) {
   if (!cost) return "";
+  // Watson has its own bucket; a server older than Watson sends none, so it is optional here.
+  const named = [["Vision", cost.vision], ["Synthesis", cost.synthesis], ["Watson", cost.watson], ["Other", cost.other]]
+    .filter(([, b]) => b);
+  const buckets = named.map(([, b]) => b);
+  const sum = key => buckets.reduce((n, b) => n + b[key], 0);
   const total = {
-    totalCalls: cost.vision.totalCalls + cost.synthesis.totalCalls + cost.other.totalCalls,
-    totalCostUSD: cost.vision.totalCostUSD + cost.synthesis.totalCostUSD + cost.other.totalCostUSD,
-    hasCost: cost.vision.hasCost || cost.synthesis.hasCost || cost.other.hasCost,
-    totalInputTokens: cost.vision.totalInputTokens + cost.synthesis.totalInputTokens + cost.other.totalInputTokens,
-    totalOutputTokens: cost.vision.totalOutputTokens + cost.synthesis.totalOutputTokens + cost.other.totalOutputTokens,
-    hasTokens: cost.vision.hasTokens || cost.synthesis.hasTokens || cost.other.hasTokens,
+    totalCalls: sum("totalCalls"),
+    totalCostUSD: sum("totalCostUSD"),
+    hasCost: buckets.some(b => b.hasCost),
+    totalInputTokens: sum("totalInputTokens"),
+    totalOutputTokens: sum("totalOutputTokens"),
+    hasTokens: buckets.some(b => b.hasTokens),
     byModel: {},
   };
   // A bucket that never reported cost/tokens makes the total "partial", not wrong —
   // say so rather than silently under-reporting real spend as a clean $ total.
   // Only buckets that actually made calls count toward this check — an unused bucket
   // (e.g. "Other" on a typical case) isn't a data-reporting gap.
-  const usedBuckets = [cost.vision, cost.synthesis, cost.other].filter(b => b.totalCalls > 0);
+  const usedBuckets = buckets.filter(b => b.totalCalls > 0);
   const someHaveCost = usedBuckets.some(b => b.hasCost);
   const allHaveCost = usedBuckets.every(b => b.hasCost);
   const totalNote = usedBuckets.length > 0 && someHaveCost && !allHaveCost
     ? `<div data-safe-style="font-size:11px;color:#7e8aa0;margin-top:2px">partial — not every bucket's provider reports cost</div>` : "";
-  const rows = diagAiCostBucketRow("Vision", cost.vision)
-    + diagAiCostBucketRow("Synthesis", cost.synthesis)
-    + diagAiCostBucketRow("Other", cost.other)
+  const rows = named.map(([label, b]) => diagAiCostBucketRow(label, b)).join("")
     + `<div data-safe-style="border-top:1px solid var(--border-color);margin-top:6px;padding-top:6px">`
     + diagRow("Total", `${total.totalCalls} call(s) · ${total.hasCost ? diagFmtCost(total.totalCostUSD) : "n/a"} · ${total.hasTokens ? `${total.totalInputTokens.toLocaleString()} in / ${total.totalOutputTokens.toLocaleString()} out` : "n/a"}`)
     + totalNote + `</div>`;

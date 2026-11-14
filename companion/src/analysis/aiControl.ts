@@ -26,6 +26,11 @@ export interface AiControl {
   // cleared when it ends. A restart that finds it set adopts those captures into the hold, so a
   // window cut off mid-call is still owed even when a later window moved the watermark past it.
   inFlightSeqs?: number[];
+  // Watson (analysis/ai/watson/runMode.ts): whether it asks before acting. A missing field is "approve".
+  // watsonAutoSince/By record who switched Auto on and when; both are cleared on a switch back.
+  watsonRunMode?: "approve" | "auto";
+  watsonAutoSince?: string;
+  watsonAutoBy?: { id?: string; name: string };
 }
 
 export interface AnalysisHold {

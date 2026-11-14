@@ -4,7 +4,6 @@ import { CSV_SYSTEM_PROMPT, IMPORTER_PROMPT, LOG_SYSTEM_PROMPT, OBSERVE_PROMPT, 
 import { EXEC_SUMMARY_PROMPT, NARRATIVE_PROMPT, SYNTHESIS_PROMPT } from "./synthesis.js";
 import { HUNT_SUGGEST_PROMPT, PLAYBOOK_HUNT_PROMPT, QUERY_TRANSLATE_PROMPT } from "./hunt.js";
 import {
-  ASK_PROMPT,
   EXPLAIN_EVENT_PROMPT,
   GAP_HYPOTHESIS_PROMPT,
   HYPOTHESIS_REVIEW_PROMPT,
@@ -12,6 +11,7 @@ import {
 } from "./investigation.js";
 import { FP_SIMILARITY_PROMPT, REMEDIATION_PROMPT, TAGGER_RULE_PROMPT } from "./findings.js";
 import { FINDING_TASK_PROMPT } from "./findingTasks.js";
+import { WATSON_PROMPT } from "./watson.js";
 import { SESSION_SUMMARY_PROMPT, STARRED_REPORT_PROMPT, VIEW_SUMMARY_PROMPT } from "./reporting.js";
 
 /**
@@ -35,7 +35,7 @@ import { SESSION_SUMMARY_PROMPT, STARRED_REPORT_PROMPT, VIEW_SUMMARY_PROMPT } fr
 // <NAME> is one of: SYSTEM, CSV, LOG, SYNTH. A missing/unreadable/empty file logs a warning
 // and falls back to the built-in prompt, so a typo never breaks analysis.
 // `npm run prompts:eject` writes the four defaults to ./prompts as a starting point.
-function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "ASK" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY" | "SESSIONSUMMARY" | "OBSERVE" | "FINDINGTASKS", fallback: string): string {
+function resolvePrompt(name: "SYSTEM" | "CSV" | "LOG" | "SYNTH" | "EXEC" | "NARRATIVE" | "HUNTS" | "PBHUNTS" | "GAPHYP" | "MEMNEXT" | "QUERYXLATE" | "RECONCILE" | "IMPORTGEN" | "EXPLAIN" | "REMEDIATION" | "FPSIMILARITY" | "TAGGERRULE" | "HYPREVIEW" | "STARREDREPORT" | "VIEWSUMMARY" | "SESSIONSUMMARY" | "OBSERVE" | "FINDINGTASKS" | "WATSON", fallback: string): string {
   const inline = process.env[`DFIR_AI_${name}_PROMPT`];
   if (inline && inline.trim().length > 0) return inline;
   const file = process.env[`DFIR_AI_${name}_PROMPT_FILE`];
@@ -84,7 +84,6 @@ export const getLogPrompt = (): string => resolvePrompt("LOG", LOG_SYSTEM_PROMPT
 export const getSynthesisPrompt = (): string => resolvePrompt("SYNTH", SYNTHESIS_PROMPT);
 export const getObservePrompt = (): string => resolvePrompt("OBSERVE", OBSERVE_PROMPT);
 
-export const getAskPrompt = (): string => resolvePrompt("ASK", ASK_PROMPT);
 export const getExecSummaryPrompt = (): string => resolvePrompt("EXEC", EXEC_SUMMARY_PROMPT);
 export const getNarrativePrompt = (): string => resolvePrompt("NARRATIVE", NARRATIVE_PROMPT);
 export const getHuntSuggestPrompt = (): string => resolvePrompt("HUNTS", HUNT_SUGGEST_PROMPT);
@@ -100,6 +99,7 @@ export const getHypothesisReviewPrompt = (): string => resolvePrompt("HYPREVIEW"
 export const getStarredReportPrompt = (): string => resolvePrompt("STARREDREPORT", STARRED_REPORT_PROMPT);
 export const getViewSummaryPrompt = (): string => resolvePrompt("VIEWSUMMARY", VIEW_SUMMARY_PROMPT);
 export const getSessionSummaryPrompt = (): string => resolvePrompt("SESSIONSUMMARY", SESSION_SUMMARY_PROMPT);
+export const getWatsonPrompt = (): string => resolvePrompt("WATSON", WATSON_PROMPT);
 export const getFindingTaskPrompt = (): string => resolvePrompt("FINDINGTASKS", FINDING_TASK_PROMPT);
 
 
@@ -117,7 +117,6 @@ export {
 export { EXEC_SUMMARY_PROMPT, NARRATIVE_PROMPT, SYNTHESIS_PROMPT } from "./synthesis.js";
 export { HUNT_SUGGEST_PROMPT, PLAYBOOK_HUNT_PROMPT, QUERY_TRANSLATE_PROMPT } from "./hunt.js";
 export {
-  ASK_PROMPT,
   EXPLAIN_EVENT_PROMPT,
   GAP_HYPOTHESIS_PROMPT,
   HYPOTHESIS_REVIEW_PROMPT,
@@ -125,4 +124,5 @@ export {
 } from "./investigation.js";
 export { FP_SIMILARITY_PROMPT, REMEDIATION_PROMPT, TAGGER_RULE_PROMPT } from "./findings.js";
 export { FINDING_TASK_PROMPT } from "./findingTasks.js";
+export { WATSON_PROMPT } from "./watson.js";
 export { SESSION_SUMMARY_PROMPT, STARRED_REPORT_PROMPT, VIEW_SUMMARY_PROMPT } from "./reporting.js";

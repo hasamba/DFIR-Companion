@@ -55,13 +55,6 @@ function renderVqlRows(j) {
     + `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-top:4px">${esc(j.total)} row(s)${j.truncated ? " (capped)" : ""}${cols.length === 12 ? " · first 12 columns" : ""}</div>`;
 }
 
-// --- Ask the LLM about this case ----------------------------------------------
-function askStatusBadge(s) {
-  const m = { answered: ["#1e3a2a", "#6bcB77"], partial: ["#3a3320", "#ffd93b"], unknown: ["#2a2f3a", "#9aa4b2"] };
-  const [bg, fg] = m[s] || m.unknown;
-  return `<span data-safe-style="background:${bg};color:${fg};padding:1px 8px;border-radius:10px;font-size:11px">${esc(s || "unknown")}</span>`;
-}
-
 function jobRowHtml(view) {
   const j = view.job;
   const cancel = view.cancel ? `<button class="job-cancel" data-job="${esc(j.id)}" title="Cancel this job">✕ Cancel</button>` : "";
@@ -515,7 +508,6 @@ window.DfirFragments = {
   mentionHtml,
   ticketPushChips,
   renderVqlRows,
-  askStatusBadge,
   jobFilesHtml,
   jobRowHtml,
   qaSpan,

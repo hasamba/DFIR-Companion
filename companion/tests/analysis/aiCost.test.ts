@@ -16,8 +16,11 @@ describe("bucketForLabel", () => {
   it("also maps analyzeRestored's unused default label 'ai' to synthesis (defensive; no real call site currently omits the label)", () => {
     expect(bucketForLabel("ai")).toBe("synthesis");
   });
+  it("maps Watson's label to its own watson bucket", () => {
+    expect(bucketForLabel("watson")).toBe("watson");
+  });
   it("maps everything else to other", () => {
-    expect(bucketForLabel("ask")).toBe("other");
+    expect(bucketForLabel("explain-event")).toBe("other");
     expect(bucketForLabel("csv")).toBe("other");
     expect(bucketForLabel("narrative")).toBe("other");
   });
@@ -45,6 +48,21 @@ describe("AiCostStore", () => {
     });
     expect(state.synthesis.totalCalls).toBe(0);
     expect(state.other.totalCalls).toBe(0);
+    expect(state.watson.totalCalls).toBe(0);
+  });
+
+  it("records into the watson bucket and reads an old file without one as empty", async () => {
+    await store.record("c1", "watson", "anthropic", "m", { costUSD: 0.25 });
+    expect((await store.load("c1")).watson.totalCostUSD).toBeCloseTo(0.25);
+    const root = await mkdtemp(join(tmpdir(), "dfir-aicost-old-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      join(cases.stateDir("c2"), "ai-cost.json"),
+      JSON.stringify({ vision: {}, synthesis: {}, other: {} }),
+    );
+    expect((await new AiCostStore(cases).load("c2")).watson.totalCalls).toBe(0);
   });
 
   it("accumulates cost and tokens into the right bucket and model", async () => {

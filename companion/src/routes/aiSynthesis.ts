@@ -3,7 +3,6 @@ import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { describeFindingTagDiffs, diffFindingTags } from "../analysis/findingTagDiff.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
-import { registerAskCaseRoute } from "./askCase.js";
 import { registerSecondOpinionRoutes } from "./secondOpinionRoutes.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { withNonce } from "../http/securityHeaders.js";
@@ -44,7 +43,6 @@ import { yieldToEventLoop } from "../analysis/yieldToEventLoop.js";
  *   - synth-meta / ai-cost  — read-only last-synthesis metadata + per-case token/cost totals.
  *   - second-opinion (POST run / GET last / apply / apply-all) — a second model's independent
  *     re-synthesis, stored as non-destructive deltas applied per-item.
- *   - ask                   — free-form grounded Q&A over the case (single-shot, ephemeral).
  *   - events/:eid/explain   — explain one forensic event in context (ephemeral).
  *   - questions             — pin an analyst key question so synthesis preserves + answers it.
  *   - hypotheses (CRUD)     — status-tracked investigative hypotheses.
@@ -256,10 +254,6 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   // The second-opinion routes live in routes/secondOpinionRoutes.ts (#1587); registered HERE so
   // their stack position is the one they always had.
   registerSecondOpinionRoutes(app, ctx);
-
-  // POST /cases/:id/ask lives in routes/askCase.ts (#1411); registered HERE so its stack position
-  // is the one it always had.
-  registerAskCaseRoute(app, ctx);
 
   // Explain a single forensic event in context (issue #141). EPHEMERAL — no state change.
   // Returns structured analysis: what happened, why it matters, ATT&CK mapping, pivot queries,
@@ -515,7 +509,8 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     }
   });
 
-  // Add an analyst question to the case's open key questions (e.g. from Ask, when unknown).
+  // Add an analyst question to the case's open key questions (any client; Watson's own
+  // "Add to open questions" goes through its proposals instead).
   // It's pinned, so synthesis preserves it and answers it once the evidence supports it.
   // Serialized on the per-case StateLock (same as PUT /narrative) so a concurrent synthesis's
   // persistLatest can't overwrite the analyst's just-added question.

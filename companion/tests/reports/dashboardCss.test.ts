@@ -36,10 +36,12 @@ describe("the split stylesheet is wired the way the cascade needs", () => {
     expect(css).toMatch(/\.tb-sep\s*\{[^}]*width:\s*1px/);
   });
 
-  it("links at least the eight dashboard parts plus a11y", () => {
+  it("links at least the eight dashboard parts, Watson's sheet and a11y", () => {
     // Guards the guard: every assertion below is vacuous if the extraction found nothing.
     expect(linked.length, "no /css/ links found — the regex or the markup moved").toBeGreaterThan(8);
-    expect(linked.filter((h) => h.startsWith("/css/dashboard-"))).toHaveLength(8);
+    // The eight parts of the #415 split, then dashboard-watson.css (the Watson panel), linked last.
+    expect(linked.filter((h) => h.startsWith("/css/dashboard-"))).toHaveLength(9);
+    expect(linked.filter((h) => h.startsWith("/css/dashboard-")).at(-1)).toBe("/css/dashboard-watson.css");
   });
 
   it("serves every stylesheet it links", () => {

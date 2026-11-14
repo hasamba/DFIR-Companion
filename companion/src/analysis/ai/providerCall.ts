@@ -27,7 +27,7 @@ import { noteAiCallStarted } from "../../http/rateLimiter.js";
 import { AnonymizationChangedError, anonRevision } from "../anonRevision.js";
 import { captureIfSafetyStop } from "./safetyStopCapture.js";
 import type { ProviderCallContext } from "./providerCallContext.js";
-import { maskRequest } from "./maskRequest.js";
+import { maskRequest, type GatedAnalyzeRequest } from "./maskRequest.js";
 import {
   alreadyApproved,
   capScanLength,
@@ -423,13 +423,15 @@ async function prepareCall(
   caseId: string,
   state: InvestigationState,
   provider: AIProvider,
-  req: AnalyzeRequest,
+  gated: GatedAnalyzeRequest,
   label: string,
   skipPresidioGate: boolean,
 ): Promise<PreparedCall> {
   // The text the provider receives comes from maskRequest — the one function the AI preview also
-  // uses (#2491), so the preview can never show a safer prompt than this send.
-  const m = await maskRequest(ctx, caseId, state, req);
+  // uses (#2491), so the preview can never show a safer prompt than this send. The per-call entities
+  // stop here: they hold real values, and neither the provider nor a safety-stop capture gets them.
+  const m = await maskRequest(ctx, caseId, state, gated);
+  const { promptEntities: _entities, ...req } = gated;
   ctx.log.debug(
     `AI call [${label}] provider=${provider.name} images=${req.images.length} promptChars=${m.plainPrompt.length} ` +
       `anonymize=${m.policy.enabled ? "on" : "off"}`,
@@ -477,7 +479,7 @@ export async function analyzeRestored(
   caseId: string,
   state: InvestigationState,
   provider: AIProvider,
-  req: AnalyzeRequest,
+  req: GatedAnalyzeRequest,
   label = "ai",
   skipPresidioGate: PresidioCoverage = false,
 ): Promise<unknown> {

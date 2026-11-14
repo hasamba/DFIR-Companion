@@ -2,6 +2,15 @@ import { z } from "zod";
 import { canonicalEventEnvelopeSchema } from "./canonicalEvent.js";
 import { tagNaiveAsUtc } from "./naiveTimestamp.js";
 
+// Shared parser for a key-question status; junk falls back to "unknown".
+export const questionStatusSchema = z
+  .enum(["answered", "partial", "unknown", "unanswerable"])
+  .catch("unknown");
+
+// The status synthesis may set. "unanswerable" is Watson's, set only through an analyst's
+// approval, so from these models it reads as "unknown" like any other value they may not use.
+export const modelQuestionStatusSchema = z.enum(["answered", "partial", "unknown"]).catch("unknown");
+
 // Enums use .catch(fallback) so ONE unexpected value (e.g. an IOC type of "malware")
 // maps to the fallback instead of rejecting the ENTIRE synthesis response.
 const severity = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
@@ -60,9 +69,12 @@ export function isDeterministicFindingId(id: string): boolean {
 // one: the rename is a downgrade of a provenance claim, not a redaction, and an analyst comparing a
 // report against a raw model response should still be able to find the row.
 export const MODEL_FINDING_ID_PREFIX = "f-model-";
+// Findings the analyst applied from Watson (`f-watson-<8 hex>`). Reserved so a model cannot mint one,
+// but NOT deterministic: a Watson finding is identified by `author: "watson"`, never by its prefix.
+export const WATSON_FINDING_ID_PREFIX = "f-watson-";
 
 /**
- * Ids the model may not MINT — the backfills' three, plus the rename target namespace.
+ * Ids the model may not MINT — the backfills' three, the rename target namespace, and Watson's.
  *
  * That last one is not tidiness. `renameForgedFindingIds` REUSES a canonical name the case already
  * holds, on the strength of it only ever coming from renaming that exact id — which is what stops a
@@ -75,7 +87,11 @@ export const MODEL_FINDING_ID_PREFIX = "f-model-";
  * which `carryOutOfWindowFindings` acts on, and a renamed model finding must never qualify.
  */
 function isReservedFindingId(id: string): boolean {
-  return isDeterministicFindingId(id) || id.startsWith(MODEL_FINDING_ID_PREFIX);
+  return (
+    isDeterministicFindingId(id) ||
+    id.startsWith(MODEL_FINDING_ID_PREFIX) ||
+    id.startsWith(WATSON_FINDING_ID_PREFIX)
+  );
 }
 
 const MAX_CONFIDENCE_REASON = 500;
@@ -281,7 +297,7 @@ export const deltaSchema = z.object({
       z.object({
         id: z.string().min(1),
         question: z.string().min(1),
-        status: z.enum(["answered", "partial", "unknown"]).default("unknown").catch("unknown"),
+        status: modelQuestionStatusSchema.default("unknown"),
         answer: z.string().default(""),
         pointer: z.string().default(""),
         // Finding ids this answer is based on — lets a later false-positive mark force a re-answer.
@@ -635,17 +651,6 @@ export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
     ),
   };
 }
-
-// Answer to an analyst's free-form question about the case ("was data exfiltrated?").
-// Lenient (.catch) like the delta so a slightly-off model response still parses.
-export const askSchema = z.object({
-  answer: z.string().catch(""),
-  status: z.enum(["answered", "partial", "unknown"]).catch("unknown"),
-  pointer: z.string().catch(""), // where/which artifact to look for or collect next
-  relatedEventIds: z.array(z.string()).catch([]),
-});
-
-export type AskAnswer = z.infer<typeof askSchema>;
 
 // Management-facing executive summary of the whole case (plain-language, no T-codes/hashes).
 // Lenient like the others so a slightly-off model response still parses.

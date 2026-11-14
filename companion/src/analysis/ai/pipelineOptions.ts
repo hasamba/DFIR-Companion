@@ -263,7 +263,7 @@ export interface PipelineOptions {
   // Analyst-attested EvidenceClass coverage (#1111): gateRefutedSeeds' third input, alongside
   // automatic detection. Absent → the gate behaves exactly as before this feature existed.
   evidenceAttestationStore?: EvidenceAttestationStore;
-  // The analyst-decision side files ask() reads INTO its prompt (#1411): tags + comments (what the
+  // The analyst-decision side files Watson reads INTO its prompt (#1411): tags + comments (what the
   // analyst starred/annotated), signed host-scope decisions, dwell windows. Load-only here; each
   // absent store simply leaves its block out (CLI/tests).
   tagsStore?: TagsStore;

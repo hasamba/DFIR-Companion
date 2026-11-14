@@ -195,23 +195,25 @@ test("US-045: the executive summary carries the provider's answer through to the
   expect(summary, "the provider's reply must reach the summary").toContain("Stubbed");
 });
 
-test("US-042: ask answers with a grounded-answer envelope", async ({ page, demoCase }) => {
+test("US-042: Watson answers a free-form case question in the case chat", async ({ page, demoCase }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
   await enableAi(page.request, demoCase);
 
-  const res = await page.request.post(`/cases/${demoCase}/ask`, {
-    data: { question: "How did the attacker first get in?" },
-  });
+  const question = "How did the attacker first get in?";
+  const res = await page.request.post(`/cases/${demoCase}/watson/message`, { data: { text: question } });
   expect(res.status(), await res.text()).toBe(200);
 
-  // Contract, not content: the stub's plain prose cannot satisfy the grounded-answer parser, so
-  // `answer` is legitimately empty here. What must hold is that every answer arrives with its
-  // provenance fields — an answer with no pointer or related events is an ungrounded claim, which
-  // is the thing this endpoint exists not to produce.
-  const body = rec(await res.json());
-  for (const k of ["answer", "status", "pointer", "relatedEventIds"]) {
-    expect(body, `a grounded answer must carry ${k}`).toHaveProperty(k);
-  }
+  // Contract, not content: the stub's fixed prose may not satisfy Watson's reply parser, and a reply
+  // Watson cannot read is saved as an error turn rather than lost. What must hold is that the question
+  // lands in the shared chat and the round leaves a turn after it — an answer or a stated failure.
+  const turns = rec(await res.json()).turns as Array<{ role: string; text: string; error?: boolean }>;
+  const asked = turns.findIndex((t) => t.role === "analyst" && t.text === question);
+  expect(asked, "the question is saved in the case chat").toBeGreaterThanOrEqual(0);
+  const after = turns.slice(asked + 1);
+  expect(
+    after.some((t) => t.role === "watson" || t.error),
+    "the round answers or says why it could not",
+  ).toBe(true);
 });
 
 test("US-043: translate-query refuses an empty request and answers a real one", async ({
@@ -237,7 +239,7 @@ test("US-046, US-137: narrative and remediation plan answer with their envelopes
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
   await enableAi(page.request, demoCase);
 
-  // Contract only, same reason as ask: both parse the reply into a structure the stub's fixed
+  // Contract only, same reason as Watson: both parse the reply into a structure the stub's fixed
   // prose does not produce. The envelope is still what the panel binds to.
   const narrative = await page.request.post(`/cases/${demoCase}/narrative`, { data: {} });
   expect(narrative.status(), await narrative.text()).toBe(200);

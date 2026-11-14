@@ -1,12 +1,11 @@
-// The analyst-decision blocks the Ask prompt carries (#1411). ask() used to see the case's evidence
-// (timeline, findings, IOCs, questions) but none of the investigator's OWN work, all of which lives
-// in per-case side files: hypotheses, host-scope decisions, dwell windows, hunt outcomes, tags and
-// comments, the notebook. Without them the model can name a host the analyst cleared, re-propose a
-// hunt that came back empty, or answer "was data exfiltrated?" without seeing the hypothesis opened
-// on exactly that.
+// The analyst-decision blocks Watson's case context carries (they were written for "Ask the LLM",
+// #1411, which Watson retired). The case's evidence (timeline, findings, IOCs) says nothing of the
+// investigator's OWN work, all of which lives in per-case side files: hypotheses, host-scope
+// decisions, dwell windows, hunt outcomes, tags and comments, the notebook. Without them the model can
+// name a host the analyst cleared, re-propose a hunt that came back empty, or answer "was data
+// exfiltrated?" without seeing the hypothesis opened on exactly that.
 //
-// ASK_PROMPT itself is NOT changed (CI's #378 change gate hashes every prompt constant), so each
-// block's legend line carries the instruction the model needs — the `PRIOR HUNTS (… do NOT
+// Each block's legend line carries the instruction the model needs — the `PRIOR HUNTS (… do NOT
 // re-propose …)` pattern from huntOutcomes.renderPriorHuntsBlock.
 //
 // PURE — no I/O, no clock. Every renderer returns "" when there is nothing to add (zero tokens on a
@@ -18,7 +17,6 @@ import type { DwellWindow } from "../dwellWindow.js";
 import type { Tag } from "../tags.js";
 import type { Comment } from "../comments.js";
 import type { NotebookEntry } from "../notebookStore.js";
-import type { AskTurn } from "../askHistory.js";
 import { STARRED_LABEL } from "../superTimeline.js";
 
 export const ASK_HYPOTHESES_MAX = 20;
@@ -171,13 +169,4 @@ export function renderAskNotebookBlock(entries: readonly NotebookEntry[], limit 
   if (!list.length) return "";
   const lines = list.map((e) => `[${e.type.toUpperCase()}] ${oneLine(e.text, 400)}`);
   return `ANALYST NOTEBOOK (investigator notes, newest first — context, not evidence):\n${lines.join("\n")}\n\n`;
-}
-
-export function renderAskHistoryBlock(turns: readonly AskTurn[]): string {
-  if (!turns?.length) return "";
-  const lines = turns.map((t) => `Q: ${t.question}\nA: ${t.answer || "(no answer)"}`);
-  return (
-    "PRIOR Q&A IN THIS SESSION (the question below may be a follow-up to these — resolve 'it', 'that host' " +
-    `and similar against them; do not repeat an earlier answer verbatim):\n${lines.join("\n")}\n\n`
-  );
 }

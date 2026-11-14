@@ -1,0 +1,194 @@
+import { z } from "zod";
+import { questionStatusSchema } from "../../responseSchema.js";
+import type { QuestionStatus } from "../../stateTypes.js";
+import { MAX_VQL_BYTES } from "../../vqlInput.js";
+import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
+import { WATSON_HISTORY_ID } from "./historyStore.js";
+import { lookupFieldSchema, type WatsonLookupAsk } from "./lookupSchema.js";
+import { ANSWER_MAX, POINTER_MAX, QUESTION_MAX } from "./roundProposals.js";
+import type { WatsonAnswer, WatsonRequest } from "./types.js";
+import {
+  lenientArray,
+  sanitizeWrites,
+  writesSchema,
+  type WatsonCitationSets,
+  type WatsonWrites,
+} from "./writesSchema.js";
+
+export type {
+  WatsonCitationSets,
+  WatsonFindingDraft,
+  WatsonStepDraft,
+  WatsonWrites,
+} from "./writesSchema.js";
+
+// Boundary for the model's JSON reply. The reply is untrusted: every field is lenient (.catch),
+// and sanitizeWatsonReply clamps lengths and drops references to ids that do not exist.
+
+const MAX_NEW_QUESTIONS = 3;
+const MAX_SEARCH_TERMS = 8;
+const MAX_TERM_CHARS = 200;
+const MAX_MEMORY_CHARS = 4000;
+const MAX_QUERY_CHARS = 20000;
+const MAX_ANSWER_EVENTS = 20;
+// Kept whole well past MAX_VQL_BYTES so checkLaunch sees the real size and refuses it: never cut a query
+// into a proposal. Beyond this bound the cut text is still over the size cap, so it is refused too.
+const MAX_VELO_VQL_CHARS = MAX_VQL_BYTES * 4;
+const MAX_VELO_TITLE = 200;
+const MAX_VELO_WHY = 1000;
+const MAX_VELO_HOST = 255;
+const LANGUAGES = ["vql", "kql", "spl", "cql", "esql", "sql", "other"];
+
+const str = z.string().catch("");
+
+const requestSchema = z
+  .union([
+    z.object({ kind: z.literal("query"), language: str, query: str, why: str }),
+    z.object({ kind: z.literal("import"), what: str, why: str }),
+    z.object({
+      kind: z.literal("velociraptor"),
+      mode: z.enum(["hunt", "collection"]).catch("collection"),
+      hostname: z.string().optional().catch(undefined),
+      title: str,
+      vql: str,
+      why: str,
+    }),
+  ])
+  .nullable()
+  .catch(null);
+
+const answerSchema = z
+  .object({
+    question: str,
+    status: questionStatusSchema,
+    answer: str,
+    pointer: str,
+    relatedEventIds: lenientArray(z.string()),
+    matchesQuestionId: z.string().optional().catch(undefined),
+  })
+  .nullable()
+  .catch(null);
+
+export const watsonReplySchema = z.object({
+  message: str,
+  workingOn: str,
+  learned: str,
+  questionUpdates: lenientArray(
+    z.object({ questionId: str, status: questionStatusSchema, answer: str, pointer: str }),
+  ),
+  newQuestions: lenientArray(z.object({ question: str, why: str })),
+  request: requestSchema,
+  search: z
+    .object({ pasteId: str, terms: lenientArray(z.string()) })
+    .nullable()
+    .catch(null),
+  lookup: lookupFieldSchema,
+  memory: str,
+  answer: answerSchema,
+  writes: writesSchema,
+});
+
+export interface WatsonReply {
+  message: string;
+  workingOn: string;
+  learned: string;
+  questionUpdates: { questionId: string; status: QuestionStatus; answer: string; pointer: string }[];
+  newQuestions: { question: string; why: string }[];
+  request: WatsonRequest | null;
+  search: { pasteId: string; terms: string[] } | null;
+  /** A forensic-timeline lookup (Task 11), checked, or why it was dropped. One hop: search wins. */
+  lookup?: WatsonLookupAsk | null;
+  memory: string;
+  /** Set only when the analyst asked a question about the case. */
+  answer: WatsonAnswer | null;
+  /** Findings, next steps and report text Watson proposes; each becomes a pending proposal. */
+  writes: WatsonWrites;
+}
+
+function sanitizeRequest(req: WatsonRequest | null, veloConnected: boolean): WatsonRequest | null {
+  if (!req) return null;
+  if (req.kind === "import") return req;
+  if (req.kind === "velociraptor") {
+    const why = req.why.slice(0, MAX_VELO_WHY);
+    // No Velociraptor on the case: the same VQL is a copy-ready query for the analyst to run.
+    if (!veloConnected)
+      return { kind: "query", language: "vql", query: req.vql.slice(0, MAX_QUERY_CHARS), why };
+    const host = req.hostname?.trim().slice(0, MAX_VELO_HOST);
+    return {
+      kind: "velociraptor",
+      mode: req.mode,
+      ...(host ? { hostname: host } : {}),
+      title: req.title.slice(0, MAX_VELO_TITLE),
+      vql: req.vql.slice(0, MAX_VELO_VQL_CHARS),
+      why,
+    };
+  }
+  const lang = req.language.trim().toLowerCase();
+  return {
+    ...req,
+    language: LANGUAGES.includes(lang) ? lang : "other",
+    query: req.query.slice(0, MAX_QUERY_CHARS),
+  };
+}
+
+/**
+ * The free-form answer: cited ids kept only when they are in the case's forensic timeline, texts
+ * capped, and `unanswerable` turned into `unknown` (only an approved Watson proposal may set it).
+ * An answer with no question is no answer. A link to a key question not on the board is dropped.
+ */
+export function sanitizeAnswer(
+  answer: WatsonAnswer | null,
+  knownEventIds: ReadonlySet<string>,
+  knownQuestionIds: ReadonlySet<string> = new Set(),
+): WatsonAnswer | null {
+  if (!answer || answer.question.trim() === "") return null;
+  const link = answer.matchesQuestionId;
+  return {
+    ...(link && knownQuestionIds.has(link) ? { matchesQuestionId: link } : {}),
+    question: answer.question.slice(0, QUESTION_MAX),
+    status: answer.status === "unanswerable" ? "unknown" : answer.status,
+    answer: answer.answer.slice(0, ANSWER_MAX),
+    pointer: answer.pointer.slice(0, POINTER_MAX),
+    relatedEventIds: [...new Set(answer.relatedEventIds.filter((id) => knownEventIds.has(id)))].slice(
+      0,
+      MAX_ANSWER_EVENTS,
+    ),
+  };
+}
+
+export function sanitizeWatsonReply(
+  reply: WatsonReply,
+  knownQuestionIds: ReadonlySet<string>,
+  knownPasteIds: ReadonlySet<string>,
+  knownEventIds: ReadonlySet<string>,
+  citations?: WatsonCitationSets,
+  veloConnected = false,
+): WatsonReply {
+  const search =
+    reply.search && (reply.search.pasteId === WATSON_HISTORY_ID || knownPasteIds.has(reply.search.pasteId))
+      ? {
+          pasteId: reply.search.pasteId,
+          terms: reply.search.terms
+            .filter((t) => t.trim() !== "")
+            .slice(0, MAX_SEARCH_TERMS)
+            .map((t) => t.slice(0, MAX_TERM_CHARS)),
+        }
+      : null;
+  // One hop per round: a valid search and a lookup together keep the search (Task 11).
+  const lookup: WatsonLookupAsk | null =
+    search && reply.lookup
+      ? { ok: false, why: "it came with a search, and Watson reads one thing per round" }
+      : (reply.lookup ?? null);
+  return {
+    ...reply,
+    lookup,
+    message: reply.message.slice(0, WATSON_TURN_TEXT_MAX),
+    memory: reply.memory.slice(0, MAX_MEMORY_CHARS),
+    questionUpdates: reply.questionUpdates.filter((u) => knownQuestionIds.has(u.questionId)),
+    newQuestions: reply.newQuestions.filter((q) => q.question.trim() !== "").slice(0, MAX_NEW_QUESTIONS),
+    request: sanitizeRequest(reply.request, veloConnected),
+    search,
+    answer: sanitizeAnswer(reply.answer, knownEventIds, knownQuestionIds),
+    writes: sanitizeWrites(reply.writes, knownEventIds, citations),
+  };
+}

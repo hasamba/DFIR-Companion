@@ -362,7 +362,7 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
   // task, so the gap the model identified is status-tracked instead of just displayed. Stable
   // sourceKey `question:<id>` keeps re-derivation idempotent (refreshes text, preserves analyst status).
   for (const q of state.keyQuestions ?? []) {
-    if (q.status === "answered") continue;
+    if (q.status === "answered" || q.status === "unanswerable") continue;
     if (!isActionableCollect(q.collect)) continue;
     const summary = collectSummary(q.collect);
     seeds.push({

@@ -7,13 +7,15 @@ import { IMPORT_PREVIEW_ACTIONS } from "./aiPreviewImportActions.js";
 import { JEV_PREVIEW_ACTIONS } from "./aiPreviewJevActions.js";
 import { PLAYBOOK_HUNTS_PREVIEW } from "./aiPreviewPlaybookAction.js";
 import type { RouteAiPreviewAction } from "./aiPreviewRouteAction.js";
+import { watsonPreviewAction } from "./aiPreviewWatsonAction.js";
 import type { RouteContext } from "./context.js";
 
-/** The preview actions that need the route's context (#2515), beside the 21 pipeline actions. */
+/** The preview actions that need the route's context (#2515), beside the 20 pipeline actions. */
 const ROUTE_AI_PREVIEW_ACTIONS: Readonly<Record<string, RouteAiPreviewAction>> = {
   ...IMPORT_PREVIEW_ACTIONS,
   "playbook-hunts": PLAYBOOK_HUNTS_PREVIEW,
   ...JEV_PREVIEW_ACTIONS,
+  watson: watsonPreviewAction,
 };
 
 type Prepared = (() => Promise<unknown>) | string;
@@ -46,7 +48,7 @@ function resolveAction(ctx: RouteContext, key: string): ResolvedAction | undefin
  *
  * Body: `{ action, params }`, `action` a key of AI_PREVIEW_ACTIONS (the pipeline actions) or of
  * ROUTE_AI_PREVIEW_ACTIONS (import-time extraction, playbook hunts, the Jev review and containment
- * check — #2515). The decision-model actions need Jev configured, not the chat model. Runs the real action inside an AI
+ * check — #2515 — and a Watson message). The decision-model actions need Jev configured, not the chat model. Runs the real action inside an AI
  * preview (analysis/ai/aiPreviewScope.ts): it stops at the AI-call gate, so NOTHING is sent to a
  * provider, nothing is spent and nothing in the case changes. Answers with the first request the
  * action would send — clear text and masked text side by side — and the system prompt, which is sent

@@ -1,0 +1,82 @@
+import { describe, it, expect } from "vitest";
+import { renderMarkdownReport } from "../../src/reports/markdown.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
+import { emptyReportMeta } from "../../src/reports/reportMeta.js";
+import { buildNotes } from "../../src/integrations/iris/irisMap.js";
+
+const HOSTILE = "Was it staged?\n## Forged section\n| a | b |\n=cmd|' /C calc'!A0";
+
+describe("Watson-authored key questions in the Markdown report", () => {
+  const state = emptyState("c1");
+  state.keyQuestions.push({
+    id: "q-watson-1",
+    question: HOSTILE,
+    status: "answered",
+    answer: HOSTILE,
+    pointer: HOSTILE,
+    pinned: true,
+    author: "watson",
+  });
+  const md = renderMarkdownReport(state);
+
+  it("adds no heading line from question, answer or pointer text", () => {
+    expect(md.split("\n").some((l) => /^#{1,6}\s+Forged section/.test(l))).toBe(false);
+  });
+
+  it("keeps the questions table intact (one row, no spill lines)", () => {
+    const lines = md.split("\n");
+    const start = lines.findIndex((l) => l.startsWith("| | Question | Answer"));
+    expect(start).toBeGreaterThan(-1);
+    const rows: string[] = [];
+    for (let i = start + 2; i < lines.length && lines[i].startsWith("|"); i++) rows.push(lines[i]);
+    expect(rows).toHaveLength(1);
+    expect(lines[start + 2 + 1] ?? "").not.toMatch(/^\|\s*a\s*\|/);
+    // The pipes inside the cells are escaped, and the formula text sits mid-cell on one line.
+    expect(rows[0]).toContain("\\| a \\| b \\|");
+    expect(rows[0]).toContain("=cmd\\|' /C calc'!A0");
+    expect(rows[0].split(/(?<!\\)\|/)).toHaveLength(6);
+  });
+
+  it("flattens the goals list entry onto one line", () => {
+    const goals = md.slice(md.indexOf("## 2.3"), md.indexOf("## 2.4"));
+    expect(goals).toContain("Derived from the investigation's key questions");
+    expect(goals).not.toMatch(/^## Forged/m);
+    expect(goals).not.toMatch(/^=cmd/m);
+    expect(goals).not.toMatch(/^\| a \| b \|/m);
+  });
+});
+
+describe("a key question that starts with a block marker", () => {
+  it("renders as list text in the goals list, not a heading inside the list item", () => {
+    const state = emptyState("c1");
+    state.keyQuestions.push({
+      id: "q1",
+      question: "## Forged heading",
+      status: "unknown",
+      answer: "",
+      pointer: "",
+    });
+    const md = renderMarkdownReport(state);
+    const goals = md.slice(md.indexOf("## 2.3"), md.indexOf("## 2.4"));
+    expect(goals).toContain("- \\## Forged heading");
+    expect(goals).not.toMatch(/^- #{1,6}\s/m);
+  });
+});
+
+describe("Watson-authored key questions in the IRIS notes", () => {
+  it("adds no heading or bullet line from hostile question text", () => {
+    const state = emptyState("c1");
+    state.keyQuestions.push({
+      id: "q1",
+      question: HOSTILE,
+      status: "answered",
+      answer: HOSTILE,
+      pointer: HOSTILE,
+    });
+    const note = buildNotes(state, emptyReportMeta()).find((n) => n.title === "Key Investigative Questions");
+    expect(note).toBeDefined();
+    const lines = note!.content.split("\n");
+    expect(lines.filter((l) => l.startsWith("#"))).toHaveLength(1);
+    expect(lines.some((l) => /^(=cmd|\| a)/.test(l))).toBe(false);
+  });
+});

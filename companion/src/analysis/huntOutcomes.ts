@@ -15,7 +15,7 @@
 
 import type { HuntRunDiff } from "./huntRunDiff.js";
 
-export type HuntOutcomeSource = "fleet" | "playbook" | "technique" | "bundle";
+export type HuntOutcomeSource = "fleet" | "playbook" | "technique" | "bundle" | "watson";
 export type HuntOutcomeStatus = "deployed" | "collected";
 
 // One recorded hunt. `vqlFingerprint`/`vqlPreview` are empty for bundles (artifact lists, not a single
@@ -32,6 +32,9 @@ export interface HuntOutcome {
   vqlPreview: string; // short normalized VQL snippet (profile + prompt); "" for bundles
   mitreTechniques: string[];
   huntId?: string; // Velociraptor hunt id when known (links to a VeloHuntJob for collection)
+  flowId?: string; // single-host collection: the launched flow (Watson phase 3)
+  clientId?: string; // single-host collection: the Velociraptor client it ran on
+  serverSetId?: string; // the server set the hunt/collection was launched on
   deployedAt: string; // ISO
   status: HuntOutcomeStatus;
   foundEvidence?: boolean; // collected: did the hunt return ANY rows / add any new events or IOCs
@@ -102,6 +105,10 @@ export interface HuntDeployInput {
   relatedHypothesisId?: string; // ACH (#14): the hypothesis this hunt tests, when deployed from one
   coverage?: HuntCoverage; // #803: "snapshot" marks a live-state query whose empty result is not a miss
   deployedAt: string; // ISO (the route stamps it — keeps this module time-free)
+  hostname?: string; // single-host collection target; keys the durable launch index per host (not persisted here)
+  flowId?: string; // single-host collection: the launched flow
+  clientId?: string; // single-host collection: the client it ran on
+  serverSetId?: string; // the server set it was launched on
 }
 
 // Record a freshly-deployed hunt (status "deployed"), prepended and capped (newest first). Upsert by
@@ -127,6 +134,9 @@ export function recordDeploy(
       (input.mitreTechniques ?? []).map((t) => String(t).trim()).filter(Boolean),
     ).slice(0, 20),
     ...(huntId ? { huntId } : {}),
+    ...(input.flowId ? { flowId: String(input.flowId) } : {}),
+    ...(input.clientId ? { clientId: String(input.clientId) } : {}),
+    ...(input.serverSetId ? { serverSetId: String(input.serverSetId) } : {}),
     ...(input.relatedHypothesisId ? { relatedHypothesisId: String(input.relatedHypothesisId).trim() } : {}),
     ...(input.coverage === "snapshot" ? { coverage: "snapshot" as const } : {}),
     deployedAt: input.deployedAt,
@@ -194,6 +204,22 @@ export function fillOutcome(
       collectedAt: result.collectedAt,
       runDiff: result.runDiff ?? o.runDiff, // keep the last-computed diff when this collect didn't recompute one
     };
+  });
+}
+
+// fillOutcome for a single-host collection, keyed by its flow + client. A no-op on an outcome that is
+// already collected, so a replay after a restart never adds its event counts twice. Pure.
+export function fillOutcomeByFlow(
+  outcomes: readonly HuntOutcome[],
+  ref: { flowId: string; clientId: string },
+  result: HuntCollectResult,
+): HuntOutcome[] {
+  const KEY = "\u0000flow";
+  const hit = (o: HuntOutcome) => !!ref.flowId && o.flowId === ref.flowId && o.clientId === ref.clientId;
+  return outcomes.map((o) => {
+    if (!hit(o) || o.status === "collected") return o;
+    const { huntId: _key, ...filled } = fillOutcome([{ ...o, huntId: KEY }], KEY, result)[0];
+    return o.huntId ? { ...filled, huntId: o.huntId } : filled;
   });
 }
 

@@ -72,6 +72,14 @@ kept apart from what a collector or the machine itself wrote.
 
 All of the above except CSV/log/DFIR-IRIS are **fully deterministic — no AI call** — they map the tool's own verdict/fields, not re-detect threats.
 
+### Chat pastes (Watson)
+
+Text you paste into the [Watson](watson.md) chat is stored in the case as evidence and logged in the import list, so it is part of the chain of custody. When the text is in a format a built-in importer reads, it is parsed into rows and graded like a normal import, with these differences:
+
+- The content tagger's promotions out of Info wait as a held-rows proposal in the chat. You choose Apply or Reject. Other grading is the same as in a normal import; for example, an account-creation row that resembles a case account is raised to High.
+- The paste starts no synthesis and sends no import notification, and it adds no step to the import undo list. It marks the conclusions out of date.
+- A generic CSV or log (for example a Defender CSV export) is not parsed. It stays searchable text that Watson can search and cite. Import the file with the Import button when you want rows.
+
 ### Packet captures (.pcap / .pcapng)
 
 No importer reads a raw capture directly. Run it through the built-in **Suricata** tool instead:

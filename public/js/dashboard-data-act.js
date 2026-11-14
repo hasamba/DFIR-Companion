@@ -215,6 +215,9 @@
     clearComplianceDiscovered: (el) => clearComplianceDiscovered(),
     toggleComplianceFramework: (el) => toggleComplianceFramework(),
     // Forms that never navigate (were an inline onsubmit returning false)
+    // Watson chat
+    toggleWatsonPanel: (el) => toggleWatsonPanel(),
+    watsonAct: (el) => watsonAct(el),
     noSubmit: (el, e) => e.preventDefault(),
   };
 
@@ -241,6 +244,7 @@
     });
     setupCollapsible();
     setupReorder();
+    if (typeof initWatson === "function") initWatson(); // Watson panel: the inline script has no spare line for its own call
   }
 
   window.initDataAct = initDataAct;

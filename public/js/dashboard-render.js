@@ -127,7 +127,7 @@
             const color = PRIO[s.priority] || "var(--c-9aa4b2)";
             return (
               `<div class="step-row" data-safe-style="--step-color:${color}">` +
-              `<span class="step-priority">${esc(String(s.priority || "").toUpperCase())}</span> ${esc(s.action)}` +
+              `<span class="step-priority">${esc(String(s.priority || "").toUpperCase())}</span> ${esc(s.action)}${watsonMarkHtml("next_step", s.id, s) || ""}` +
               // Immediate FP cascade (#12): this step advanced a finding just marked false positive.
               (s.staleReSynth
                 ? ` <span class="stale-badge" title="A finding this step relied on was marked false positive — press AI Re-synthesize to refresh it.">⏳ stale — press Re-synthesize</span>`
@@ -149,6 +149,7 @@
       answered: "Answered",
       partial: "Partial",
       unknown: "Unknown",
+      unanswerable: "Not answerable with available data",
     };
     const kq = state.keyQuestions || [];
     document.getElementById("keyQuestions").innerHTML = kq.length
@@ -179,7 +180,7 @@
               (q.pointer
                 ? `<span class="q-pointer">→ ${esc(q.pointer)}</span>`
                 : "") +
-              (q.status !== "answered" ? collectDirectiveHtml(q.collect) : "") +
+              (q.status !== "answered" && q.status !== "unanswerable" ? collectDirectiveHtml(q.collect) : "") +
               `</div>`
             );
           })
@@ -447,7 +448,7 @@
               `<span class="finding-sev-cell sev-${esc(f.severity)}"><span class="fsq"></span>${esc(f.severity)}</span>` +
               `<span class="finding-id-cell" title="${escAttr(f.id)}">${esc(f.id)}</span>` +
               `<span class="finding-main-cell">` +
-              `<span class="finding-title"><strong>${esc(f.title)}</strong>${auto}${relChip}</span>` +
+              `<span class="finding-title"><strong>${esc(f.title)}</strong>${auto}${relChip}${watsonMarkHtml("finding", f.id, f) || ""}</span>` +
               `<span class="finding-desc" title="${escAttr(f.description)}">${esc(f.description)}</span>` +
               sessionCommandsLine(f, ftIds) +
               (tagPillsHtml

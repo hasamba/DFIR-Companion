@@ -57,7 +57,13 @@ const mkState = (
   findings: findings.map(finding),
 });
 
-async function harness(opts: { wireUndo?: boolean; importLock?: ImportLock } = {}) {
+async function harness(
+  opts: {
+    wireUndo?: boolean;
+    importLock?: ImportLock;
+    onImportMeta?: (caseId: string, change?: { step?: "undo" | "redo" }) => void;
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "dfir-undo-route-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -70,6 +76,7 @@ async function harness(opts: { wireUndo?: boolean; importLock?: ImportLock } = {
     importMetaStore,
     ...(opts.wireUndo === false ? {} : { importUndoStore }),
     ...(opts.importLock ? { importLock: opts.importLock } : {}),
+    ...(opts.onImportMeta ? { onImportMeta: opts.onImportMeta } : {}),
   });
   return { app, store, stateStore, importUndoStore, importMetaStore };
 }
@@ -152,6 +159,31 @@ describe("import undo/redo routes (#76)", () => {
     const meta = (await request(app).get("/cases/INC-2/import-meta")).body;
     expect(meta.lastImportedAt).toBe("");
     expect(meta.addedCount).toBe(0);
+  });
+
+  it("tells onImportMeta the banner cleared because of an undo or a redo, not a new import", async () => {
+    const calls: unknown[][] = [];
+    const { app, stateStore, importUndoStore } = await harness({
+      onImportMeta: (...args) => void calls.push(args),
+    });
+    await request(app)
+      .post("/cases")
+      .send({ caseId: "INC-3", name: "C", investigator: "a", aiProvider: null });
+    await stateStore.save(mkState("INC-3", ["e1", "e2"], [], []));
+    await importUndoStore.save(
+      "INC-3",
+      pushCheckpoint(emptyUndoStack(), {
+        label: "thor (f)",
+        at: "2026-06-13T00:00:00Z",
+        state: mkState("INC-3", ["e1"], [], []),
+      }),
+    );
+    expect((await request(app).post("/cases/INC-3/import/undo")).status).toBe(200);
+    expect((await request(app).post("/cases/INC-3/import/redo")).status).toBe(200);
+    expect(calls).toEqual([
+      ["INC-3", { step: "undo" }],
+      ["INC-3", { step: "redo" }],
+    ]);
   });
 
   it("400s when there is nothing to undo / redo", async () => {

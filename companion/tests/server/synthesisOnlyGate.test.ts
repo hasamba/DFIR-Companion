@@ -73,20 +73,6 @@ describe("synthesis-provider gate (no vision provider)", () => {
     expect(res.body.findings).toBe(1);
   });
 
-  it("POST /cases/:id/ask answers on the synthesis provider alone", async () => {
-    const { app } = await makeSynthOnlyApp(
-      JSON.stringify({
-        answer: "No evidence of exfiltration.",
-        status: "unknown",
-        pointer: "Check egress proxy/firewall logs.",
-        relatedEventIds: [],
-      }),
-    );
-    const res = await request(app).post("/cases/c1/ask").send({ question: "was data exfiltrated?" });
-    expect(res.status).toBe(200);
-    expect(res.body.answer).toBeTruthy();
-  });
-
   it("POST /cases/:id/events/:eid/explain explains on the synthesis provider alone", async () => {
     const { app, stateStore } = await makeSynthOnlyApp(
       JSON.stringify({
@@ -161,8 +147,6 @@ describe("synthesis-provider gate (no vision provider)", () => {
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const synth = await request(app).post("/cases/c1/synthesize").send({});
     expect(synth.status).toBe(501);
-    const ask = await request(app).post("/cases/c1/ask").send({ question: "q" });
-    expect(ask.status).toBe(501);
     const csv = await request(app)
       .post("/cases/c1/import-csv")
       .send({ filename: "x.csv", csv: "a,b\n1,2\n" });

@@ -198,7 +198,6 @@ const PARAMS: Record<string, (h: Awaited<ReturnType<typeof harness>>) => Record<
   "deep-pass": () => ({ minSeverity: "Medium" }),
   "explain-event": () => ({ eventId: "raw1" }),
   "session-summary": () => ({ sessionId: segmentSessions(seedState("c1").forensicTimeline)[0].id }),
-  ask: () => ({ question: `Did ${USER} exfiltrate data from ${HOST}?` }),
   "technique-hunt": () => ({ techniqueId: "T1021.002", techniqueName: "SMB" }),
   "translate-query": () => ({ request: `logons on ${HOST}` }),
   "tagger-rule": () => ({ description: `flag ${HOST} admin shares` }),

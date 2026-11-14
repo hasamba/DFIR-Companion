@@ -1,5 +1,5 @@
 /**
- * Prompts for the analyst's interactive loop: asking a question, reviewing and generating
+ * Prompts for the analyst's interactive loop: reviewing and generating
  * hypotheses, proposing the next step, and explaining a single event.
  *
  * Moved verbatim from pipeline.ts (#384). The text is byte-for-byte what it was: tests/eval/
@@ -7,45 +7,6 @@
  * prompt and would demand a fresh no-regression attestation for a change that is not one.
  */
 
-
-// Answer a free-form analyst question about ONE case using only its evidence digest.
-export const ASK_PROMPT = [
-  "You are a DFIR analyst assistant answering a SPECIFIC question about ONE investigation, using ONLY the",
-  "case evidence provided below (compromised assets, threat-intel verdicts, attacker path, findings,",
-  "forensic timeline, current questions). Do NOT invent evidence — if the case doesn't show it, say so.",
-  "",
-  "When an ATTACK GRAPH section is present, it lists the case's deterministic CAUSAL relationships —",
-  "process spawns (parent → child), file lineage (wrote → executed), lateral movement (same",
-  "binary/account across hosts), and network connections (source → destination). For multi-hop or",
-  "PATH questions (e.g. 'trace the path from the phishing email to the Domain Controller'), FOLLOW",
-  "these edges end-to-end to reconstruct the route — chain spawn → file → lateral → network hops —",
-  "instead of guessing from the prose timeline alone, and cite the backing [event ids] in",
-  "relatedEventIds. The graph is the ground truth for what led to what.",
-  "",
-  "Pick a status:",
-  "- 'answered': the case evidence clearly settles it. Give the answer and cite the supporting event ids",
-  "  in relatedEventIds.",
-  "- 'partial': suggestive but incomplete evidence. State what is known and what is missing.",
-  "- 'unknown': the case has no evidence either way.",
-  "",
-  "For 'partial' or 'unknown', set 'pointer' to CONCRETE collection guidance — the exact artifact(s) to",
-  "examine or collect and where, named like a DFIR pro would (registry keys, event-log channels, file",
-  "paths, log sources, and the tool / Velociraptor artifact to pull). Examples:",
-  "- USB connected → USBSTOR + MountedDevices + MountPoints2 registry, setupapi.dev.log, and the",
-  "  Microsoft-Windows-DriverFrameworks-UserMode/Operational + Partition/Diagnostic event logs.",
-  "- Data exfiltration → proxy/firewall egress + netflow for large/unusual outbound transfers, cloud-upload",
-  "  logs, DNS logs for tunnelling, EDR network telemetry; look for archive/staging files (.zip/.rar/.7z).",
-  "- Lateral movement → 4624/4672 (logon type 3/10) + 4648, SMB/admin$ access, PsExec/WMI/WinRM artifacts.",
-  "Tailor it to the question and keep 'answer' to a few sentences.",
-  "",
-  "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape:",
-  JSON.stringify({
-    answer: "concise answer grounded in the evidence (or what's missing)",
-    status: "answered|partial|unknown",
-    pointer: "which artifact to examine/collect and where (required for partial/unknown)",
-    relatedEventIds: ["e1"],
-  }, null, 2),
-].join("\n");
 
 // On-demand falsification review of the OPEN hypotheses (issue #71) — a focused devil's-advocate pass
 // that explicitly hunts DISCONFIRMING evidence to counter confirmation bias. One text-only call; EPHEMERAL.

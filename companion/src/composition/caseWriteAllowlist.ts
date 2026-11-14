@@ -60,7 +60,7 @@ const READS_AS_POST: Entry[] = [
   ["POST", re("/timeline-gaps/hypothesize")],
   ["POST", re("/sessions/:seg/summary")],
   ["POST", re("/custody/verify")],
-  ["POST", re("/(ask|executive-summary|view-summary|remediation-plan|hypothesis-review)")],
+  ["POST", re("/(executive-summary|view-summary|remediation-plan|hypothesis-review)")],
   ["POST", re("/adversary-hints/hunt-technique")],
   ["POST", re("/memory/next-steps")],
   ["POST", re("/velociraptor/(suggest-hunts|hunt-rows)")],

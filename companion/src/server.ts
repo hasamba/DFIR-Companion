@@ -33,6 +33,9 @@ import {
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
+import { withFingerprintIndex, fingerprintStoreFor } from "./analysis/ai/watson/velo/fingerprintIndex.js";
+import { recoverWatsonLaunches } from "./composition/watsonVeloRecovery.js";
+import { createAppWatsonFlowWatcher } from "./composition/watsonVeloResultsWiring.js";
 import { setCaseWriteRefusalReporter } from "./storage/caseIncarnation.js";
 import { installUnhandledRejectionNet } from "./logging/unhandledRejectionNet.js";
 import { installUncaughtExceptionNet } from "./logging/uncaughtExceptionNet.js";
@@ -55,6 +58,7 @@ import { createDiagnosticsRings } from "./composition/diagnosticsRings.js";
 import { createCaseAppliers } from "./composition/caseAppliers.js";
 import { createEnrichmentEngine } from "./composition/enrichment.js";
 import { createCaptureAnalysis } from "./composition/captureAnalysis.js";
+import { createAppWatsonReactor } from "./composition/watsonReactorWiring.js";
 import { createImportIngest } from "./composition/importIngest.js";
 import { createExternalTools } from "./composition/externalTools.js";
 import { createDropFolder } from "./composition/dropFolder.js";
@@ -376,7 +380,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     createVeloMonitor: monitors.createVeloMonitor,
     verifyVeloMonitorEnabled: monitors.verifyVeloMonitorEnabled,
     deleteVeloMonitor: monitors.deleteVeloMonitor,
-    recordHuntDeploy: hunts.recordHuntDeploy,
+    recordHuntDeploy: withFingerprintIndex(hunts.recordHuntDeploy, fingerprintStoreFor(store), logLine),
     // Playbook derivation helpers (routes/playbookHunts.ts), shared with the staying
     // POST /cases/:id/push/iris route (syncPlaybook).
     syncPlaybook: appliers.syncPlaybook,
@@ -386,6 +390,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     dropScanning: () => drops.scanning,
     dropPendingLogged: () => drops.pendingLogged,
     veloHuntTimers: () => hunts.veloHuntTimers,
+    watsonFlowWatcher: () => app.locals.watsonFlowWatcher, // Task 5: an applied collection's result watch
   };
   // Every registerXRoutes call, in order, plus the AI rate-limit gate and the custody hook that are
   // interleaved with them. See composition/routeRegistry.ts — the order there is load-bearing.
@@ -394,12 +399,16 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   if (transports.telegramPoller) app.locals.telegramPoller = transports.telegramPoller;
   if (transports.slackSocketMode) app.locals.slackSocketMode = transports.slackSocketMode;
   app.locals.captureAnalysis = analysis; // shutdown cancels its pending host-duplicate checks (#2584)
+  app.locals.watsonReactor = createAppWatsonReactor(ctx, analysis.synthesisBusy); // spec §4.6, one per app
+  if (app.locals.watsonReactor) options.onWatsonReactorReady?.(app.locals.watsonReactor);
+  app.locals.watsonFlowWatcher = createAppWatsonFlowWatcher(ctx, (id) => app.locals.watsonReactor?.wake(id));
 
   // Re-arm any persisted live Velociraptor monitors so streaming survives a restart (#84). Fire-and-
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
   // tests and embeddings that don't use monitoring.
   void monitors.resumeVeloMonitors();
   void hunts.resumeVeloHuntStatusPolls({ startup: true }); // #2403: + interrupted collects (startup only)
+  void recoverWatsonLaunches(store, options.watsonChatStore, logLine, app.locals.watsonFlowWatcher); // + result watches
 
   // Arm the evidence drop-folder watcher (auto-import inbox). Gated on the status store being wired
   // (startServer), so createApp-only unit tests never start a filesystem poller.
@@ -706,6 +715,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     server,
     stopTransports: async () => {
       app.locals.captureAnalysis?.dispose();
+      app.locals.watsonReactor?.stop();
+      app.locals.watsonFlowWatcher?.stop();
       await app.locals.telegramPoller?.stop();
       await app.locals.slackSocketMode?.stop();
     },

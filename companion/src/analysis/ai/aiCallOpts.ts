@@ -1,5 +1,5 @@
 import type { PipelineOptions } from "./pipelineOptions.js";
-import { analystDecisionOpts } from "./analystQueries.js";
+import { analystDecisionOpts } from "./analystContext.js";
 
 /**
  * The option view the AI-backed families read through `AnalysisPipeline.aiCtx.opts`. Live getters,

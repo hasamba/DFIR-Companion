@@ -12,6 +12,7 @@
 
 import type { InvestigationQuestion, NextStep } from "./stateTypes.js";
 import { escapeRegExp } from "./regexEscape.js";
+import { isProtectedWatson } from "./timeline/watsonQuestions.js";
 
 // Pointer text shown on a question whose supporting finding was rejected. Identical wording the
 // synthesize() backstop has always used, so the two paths read the same.
@@ -64,6 +65,11 @@ export function reconsiderKeyQuestions(
         (textMentionsFindingId(q.pointer, id) || textMentionsFindingId(q.answer, id)),
     );
     const isReset = (structuralLoss || textualLoss) && q.status !== "unknown";
+    // An answer the analyst applied from Watson is not reset: the reset is recorded beside it.
+    if (isReset && isProtectedWatson(q)) {
+      changed = true;
+      return { ...rest, synthesisDisagrees: { status: "unknown" as const, answer: "" } };
+    }
     if (isReset) {
       changed = true;
       return {

@@ -1,19 +1,19 @@
 import type { Express, Request, Response } from "express";
 import { reloadEnvPrefix } from "../settings/envManager.js";
-import { logActivity, logActivityWithWarning, type NewActivityEntry } from "../analysis/activityLog.js";
+import { logActivity } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { parseVeloRef, EXTERNAL_IMPORT_NEEDS_SERVER } from "../analysis/veloRef.js";
 import { preflightBundleArtifacts } from "../integrations/velociraptor/bundlePreflight.js";
 import { launchWithUnheldToolHint } from "../integrations/velociraptor/artifactTools.js";
 import {
-  matchClient,
   normalizeHuntExpirySeconds,
   type HuntTarget,
   type VeloArtifactInfo,
   HuntSpecError,
 } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
-import { parseDeployHuntBody, deployHuntBodyProblem } from "./huntDeployBody.js";
+import { collectHostResolved as collectHostResolvedIn, deployAnalystHunt } from "./veloDeploy.js";
+import { requestAuthentication } from "../auth/types.js";
 import { resolveCollectVql } from "../analysis/collectDirectiveResolve.js";
 import {
   resolveTimeScope,
@@ -62,11 +62,6 @@ import { vqlSizeProblem } from "../analysis/vqlInput.js";
 export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
-  const recordAuditedActivity = async (caseId: string, input: NewActivityEntry) => {
-    const warning = await logActivityWithWarning(options.activityLogStore, options.onActivity, caseId, input);
-    if (warning) logLine(`[velociraptor] AUDIT NOT WRITTEN — ${warning}`);
-    return warning;
-  };
   // Module-private copy of createApp's toStringArray (a non-exported server.ts helper) so the moved
   // run-bundle / deploy-hunt bodies keep their original calls without importing across the route seam.
   const toStringArray = (v: unknown): string[] => {
@@ -84,26 +79,9 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     return v === "1" || v === "true";
   };
 
-  // Resolve a hostname → client_id from the set's persisted inventory (refreshing once on a miss) and launch
-  // a single-client collection. Throws when no client matches. Shared by the global /velociraptor/collect-host
-  // route and the case-scoped /cases/:id/velociraptor/deploy-hunt route (#157).
-  async function collectHostResolved(vc: VeloTarget, hostname: string, vql: string, description: string) {
-    const store = options.clientInventoryFor?.(vc.setId);
-    if (store) {
-      // Resolve from the inventory file; if the host isn't there yet, refresh once and retry (self-healing).
-      let rec = matchClient((await store.load()).clients, hostname);
-      if (!rec) {
-        await ctx.refreshVeloClients(vc.setId);
-        rec = matchClient((await store.load()).clients, hostname);
-      }
-      if (!rec)
-        throw new Error(
-          `No enrolled Velociraptor client matches host "${hostname}" — refresh the client list (Settings → Velociraptor) or run a fleet hunt instead`,
-        );
-      return await vc.client.collectOnClient(rec.clientId, vql, description, hostname);
-    }
-    return await vc.client.collectFromHost(hostname, vql, description);
-  }
+  // Shared by /velociraptor/collect-host, deploy-hunt and collect-directive (#157); lives in veloDeploy.ts.
+  const collectHostResolved = (vc: VeloTarget, hostname: string, vql: string, description: string) =>
+    collectHostResolvedIn(ctx, vc, hostname, vql, description);
   // The default set's inventory, or undefined when the default set has no Velociraptor.
   const defaultInventory = () => {
     const d = ctx.serverClients.forDefault();
@@ -823,113 +801,12 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     return res.status(200).json(job);
   });
 
+  // The deploy core lives in veloDeploy.ts (Watson's approved launches run the same path).
   app.post("/cases/:id/velociraptor/deploy-hunt", async (req: Request, res: Response) => {
-    const vc = caseVelo(ctx, req.params.id, res);
-    if (!vc) return;
-    const caseId = req.params.id;
-    // Body parsing lives in huntDeployBody.ts (#803): this file sits at its size cap.
-    const {
-      vql,
-      title,
-      description,
-      source,
-      mitreTechniques,
-      mode,
-      hostname,
-      relatedHypothesisId,
-      coverage,
-    } = parseDeployHuntBody(req.body);
-    const bodyProblem = deployHuntBodyProblem({ vql, title, mode, hostname });
-    if (bodyProblem) return res.status(400).json({ error: bodyProblem });
-    try {
-      if (mode === "collection") {
-        logLine(`[velociraptor] deploy-hunt collection "${title}" on ${hostname}`);
-        const result = await collectHostResolved(vc, hostname, vql, description);
-        await ctx.recordHuntDeploy(caseId, {
-          source,
-          title,
-          vql,
-          mitreTechniques,
-          deployedAt: new Date().toISOString(),
-          ...(relatedHypothesisId ? { relatedHypothesisId } : {}),
-          ...(coverage ? { coverage } : {}),
-        });
-        options.onVeloHunt?.(caseId);
-        const auditWarning = await recordAuditedActivity(caseId, {
-          category: "hunt",
-          action: "deploy-collection",
-          detail: `collection "${title}" on ${hostname}`,
-        });
-        return res.status(200).json({ mode, ...result, ...(auditWarning ? { auditWarning } : {}) });
-      }
-      const expirySeconds = normalizeHuntExpirySeconds(req.body?.expirySeconds); // relative; defaults to one hour
-      logLine(`[velociraptor] deploy-hunt fleet "${title}" (expires in ${expirySeconds}s)`);
-      const launch = await vc.client.launchHunt(vql, description, { expirySeconds });
-      const reqWait = Number(req.body?.waitMinutes);
-      const waitMinutes = Math.min(
-        1440,
-        Math.max(
-          1,
-          Number.isFinite(reqWait) && reqWait > 0
-            ? reqWait
-            : Number(process.env.DFIR_VELO_HUNT_WAIT_MIN) || 10,
-        ),
-      );
-      if (options.veloHuntStore) {
-        const now = new Date();
-        const job: VeloHuntJob = {
-          bundleId: `suggested:${source}`,
-          bundleName: title,
-          artifacts: launch.artifact ? [launch.artifact] : [],
-          sources: launch.sources, // #157: the Custom.Hunt artifact's named sources (Pivot0…) so collect reads `artifact/source`
-          huntId: launch.huntId,
-          guiUrl: launch.guiUrl,
-          launchedAt: now.toISOString(),
-          waitMinutes,
-          collectAt: new Date(now.getTime() + waitMinutes * 60_000).toISOString(),
-          status: "running",
-          expirySeconds,
-        };
-        await options.veloHuntStore.upsert(caseId, job);
-        const timer = setTimeout(() => {
-          ctx.startVeloHuntCollect(caseId, launch.huntId);
-        }, waitMinutes * 60_000);
-        timer.unref?.();
-        ctx.veloHuntTimers().set(caseId, timer, launch.huntId);
-        ctx.scheduleVeloHuntStatusPoll(caseId, launch.huntId);
-      }
-      await ctx.recordHuntDeploy(caseId, {
-        source,
-        title,
-        vql,
-        mitreTechniques,
-        huntId: launch.huntId,
-        deployedAt: new Date().toISOString(),
-        ...(relatedHypothesisId ? { relatedHypothesisId } : {}),
-        ...(coverage ? { coverage } : {}),
-      });
-      options.onVeloHunt?.(caseId);
-      const auditWarning = await recordAuditedActivity(caseId, {
-        category: "hunt",
-        action: "deploy-hunt",
-        detail: `fleet hunt "${title}" deployed (${source})`,
-        targetType: "hunt",
-        targetId: launch.huntId,
-      });
-      return res
-        .status(200)
-        .json({ mode, waitMinutes, ...launch, ...(auditWarning ? { auditWarning } : {}) });
-    } catch (err) {
-      const message = (err as Error).message;
-      logLine(`[velociraptor] deploy-hunt ERROR: ${message}`);
-      const auditWarning = await recordAuditedActivity(caseId, {
-        category: "hunt",
-        action: mode === "collection" ? "deploy-collection" : "deploy-hunt",
-        detail: `${mode === "collection" ? "collection" : "fleet hunt"} "${title}" failed: ${message}`,
-        outcome: "error",
-      });
-      return res.status(502).json({ error: message, ...(auditWarning ? { auditWarning } : {}) });
-    }
+    if (!caseVelo(ctx, req.params.id, res)) return;
+    const by = requestAuthentication(req)?.identity.displayName;
+    const result = await deployAnalystHunt(ctx, req.params.id, req.body, by);
+    return res.status(result.status).json(result.body);
   });
 
   // One-click deploy of a structured collection directive (investigation-guidance #8, phase 3). The

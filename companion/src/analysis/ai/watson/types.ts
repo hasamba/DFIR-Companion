@@ -1,0 +1,339 @@
+import type {
+  Finding,
+  ForensicEvent,
+  InvestigationQuestion,
+  NextStep,
+  QuestionStatus,
+} from "../../stateTypes.js";
+
+// Watson: the per-case AI investigation chat agent. These types describe the persisted chat
+// (state/watson-chat.json). Chat text and pasted content may carry adversary-controlled strings,
+// so every consumer must escape on render.
+
+export type WatsonRequest =
+  | { kind: "query"; language: string; query: string; why: string }
+  | { kind: "import"; what: string; why: string }
+  /** Run VQL on the case's Velociraptor: a fleet hunt, or a collection on one host. */
+  | {
+      kind: "velociraptor";
+      mode: "hunt" | "collection";
+      hostname?: string;
+      title: string;
+      vql: string;
+      why: string;
+    };
+
+/** How much of the in-scope forensic timeline a round carried; stored only when it was trimmed. */
+export interface WatsonCoverage {
+  usedEvents: number;
+  eventCount: number;
+  /** The analyst's decisions (hypotheses, host scope, marks, notebook) were cut to fit. */
+  decisionsTrimmed?: boolean;
+  /** The synthesis context, graph and findings were cut to fit. */
+  headTrimmed?: boolean;
+}
+
+/**
+ * One forensic-timeline lookup Watson asked for (Task 11). Id lists union; the window, host and text
+ * narrow. Checked by lookupSchema.ts before it is run.
+ */
+export interface WatsonLookup {
+  findingIds?: string[];
+  eventIds?: string[];
+  /** ISO timestamps; both or neither, at most 7 days apart. */
+  from?: string;
+  to?: string;
+  host?: string;
+  text?: string;
+}
+
+/** What a round's lookup showed Watson, stored on its turn so the card can disclose it (#452). */
+export interface WatsonLookedUp {
+  shown: number;
+  matched: number;
+  /** The lookup in plain words (server-built from the checked request). */
+  what: string;
+}
+
+/** Watson's answer to a free-form question from the analyst (what Ask used to return). */
+export interface WatsonAnswer {
+  question: string;
+  status: QuestionStatus;
+  answer: string;
+  pointer: string;
+  /** Forensic-timeline event ids the answer cites, already checked against the case. */
+  relatedEventIds: string[];
+  /** The id of the key question on the board that asks the same thing; checked against the case. */
+  matchesQuestionId?: string;
+}
+
+export interface WatsonTurn {
+  id: string;
+  at: string;
+  role: "analyst" | "watson" | "system";
+  text: string;
+  actor?: string;
+  workingOn?: string;
+  learned?: string;
+  request?: WatsonRequest;
+  proposalIds?: string[];
+  pasteId?: string;
+  error?: boolean;
+  costUSD?: number;
+  coverage?: WatsonCoverage;
+  answer?: WatsonAnswer;
+  /** The proposal made when the analyst added this turn's answer to the open questions. */
+  answerProposalId?: string;
+  /**
+   * The server's Velociraptor launch note ("Nothing to approve: …" / "Risky query: …"), also appended
+   * to `text`. Set only by the server, so the dashboard's warning block cannot be forged by the model.
+   */
+  veloNote?: string;
+  /** The forensic-timeline events this turn's lookup showed Watson. Set only by the server. */
+  lookedUp?: WatsonLookedUp;
+}
+
+/**
+ * `launching` / `uncertain` are velo_launch only: the launch intent is saved before the Velociraptor
+ * call (launching); a launch whose outcome is unknown (the call failed after it may have reached the
+ * server, or the server stopped mid-launch) is `uncertain` and waits for the analyst — never retried.
+ */
+export type WatsonProposalStatus = "pending" | "applied" | "rejected" | "undone" | "launching" | "uncertain";
+
+/** Fields every proposal kind carries. `appliedBy`/`appliedAt` are stamped when an analyst applies it. */
+interface WatsonProposalCommon {
+  id: string;
+  turnId: string;
+  status: WatsonProposalStatus;
+  appliedBy?: string;
+  appliedAt?: string;
+}
+
+/** What an applied proposal wrote into the forensic timeline: undo removes exactly these rows. */
+export interface WatsonCreatedRows {
+  /** Rows the apply appended (they did not exist before). A row that existed is never in here. */
+  createdEventIds?: string[];
+  /** The `promotedAt` stamp the apply put on those rows; undo refuses a row that lost it. */
+  promotedAt?: string;
+}
+
+/**
+ * Phase 1 shape, unchanged so an old chat file loads as it was: the target is `questionId`.
+ * `targetId` is optional here only; read the target through proposalTargetId().
+ */
+export interface WatsonQuestionProposal extends WatsonProposalCommon {
+  kind: "question_update" | "question_new";
+  questionId: string;
+  targetId?: string;
+  before?: InvestigationQuestion;
+  after: InvestigationQuestion;
+}
+
+/** A finding Watson drafted. On apply, `after` becomes the finding as written (live citations only). */
+export interface WatsonFindingProposal extends WatsonProposalCommon, WatsonCreatedRows {
+  kind: "finding_new" | "finding_update";
+  targetId: string;
+  /** finding_update only: the Watson-authored finding as it was when Watson proposed the change. */
+  before?: Finding;
+  after: Finding;
+  /** One event per cited paste line, built when proposed; appended on apply if not already there. */
+  pasteLineEvents: ForensicEvent[];
+  /** Set on undo: rows the apply created that stayed because other findings cite them. */
+  keptEventIds?: string[];
+}
+
+export interface WatsonNextStepProposal extends WatsonProposalCommon {
+  kind: "next_step_new";
+  targetId: string;
+  after: NextStep;
+}
+
+export interface WatsonReportTextProposal extends WatsonProposalCommon {
+  kind: "report_text";
+  targetId: string;
+  field: "conclusions" | "investigationLimitations";
+  before: string;
+  after: string;
+}
+
+/** A promoted row as it landed (lab normalisation or a name carry may change it): undo compares these. */
+export interface WatsonLandedRow {
+  id: string;
+  severity: ForensicEvent["severity"];
+  description: string;
+}
+
+/** Rows of a parsed paste the content tagger graded above Info, held for the analyst (spec §14). */
+export interface WatsonEventPromoteProposal extends WatsonProposalCommon, WatsonCreatedRows {
+  kind: "event_promote";
+  targetId: string;
+  /** The raised copies, kept after undo so a re-apply needs nothing else. */
+  events: ForensicEvent[];
+  pasteId: string;
+  /** Set on apply: the rows this proposal added, as they landed. */
+  landedRows?: WatsonLandedRow[];
+}
+
+/**
+ * A Velociraptor hunt or single-host collection Watson wants to run. Built only after checkLaunch
+ * passed; `fingerprints` is the exact list a launch reserves, and `targetId` is the first of them.
+ * Launching an endpoint cannot be undone, so the proposal has no undo.
+ */
+export interface WatsonVeloLaunchProposal extends WatsonProposalCommon {
+  kind: "velo_launch";
+  targetId: string;
+  mode: "hunt" | "collection";
+  /** The inventory's name for the host (collection only). */
+  hostname?: string;
+  title: string;
+  vql: string;
+  fingerprint: string;
+  fingerprints: string[];
+  /** `serverSetId`: the server set the launch went to; its results are read from that set (G6). */
+  launched?: {
+    huntId?: string;
+    clientId?: string;
+    flowId?: string;
+    serverSetId?: string;
+    at: string;
+    by: string;
+    /** The analyst launched it despite Watson's risk warning (Task 9). */
+    riskAccepted?: WatsonRiskAccepted;
+  };
+  /** The query failed only RISKY rules (vqlRiskClass.ts): it waits for an analyst, never Auto (Task 9). */
+  risk?: WatsonLaunchRisk;
+  /** The launch intent, saved before the call: `reserved` is exactly what a retry may release. */
+  launching?: WatsonLaunchIntent;
+  /** The analyst who confirmed an uncertain launch ran ("Mark as launched"); `launched.by` stays the launcher (G10). */
+  resolvedBy?: string;
+  /** View-only (never stored): `launching`, but no live request owns it — the card offers the uncertain actions (G11). */
+  stalled?: true;
+  /** Watson reading the result back (Task 5): a collection's watch, or a fleet hunt's one note. */
+  watch?: WatsonLaunchWatch;
+}
+
+/**
+ * Reading a launch's result back. `ingested` is claimed BEFORE the rows are read and `notified` is
+ * set with the `hunt` event, each inside one chat update, so neither ever happens twice. `rows`,
+ * `added` and `proposalIds` are saved with the ingest so a restart can still send the event.
+ */
+export interface WatsonLaunchWatch {
+  deadline: string;
+  state: "watching" | "finished" | "failed" | "timeout";
+  ingested?: true;
+  /** Set just before the ingest is called: a restart that finds it knows rows may be in the case. */
+  ingesting?: true;
+  notified?: true;
+  rows?: number;
+  /** The read was cut by the collection row cap; `total` is what Velociraptor counted (0 = unknown). */
+  truncated?: true;
+  total?: number;
+  added?: number;
+  proposalIds?: string[];
+  error?: string;
+}
+
+/** `reasons` is plain English for the warning; `checks` the raw reasons a recheck must stay within. */
+export interface WatsonLaunchRisk {
+  reasons: string[];
+  checks: string[];
+}
+
+/** Who launched a risky query despite the warning, and the reasons they saw. */
+export interface WatsonRiskAccepted {
+  by: string;
+  at: string;
+  reasons: string[];
+}
+
+export interface WatsonLaunchIntent {
+  at: string;
+  by: string;
+  fingerprint: string;
+  /** The keys the launch will reserve, saved BEFORE the reservation (final review G5). */
+  planned?: string[];
+  reserved: string[];
+  /** Why the launch became uncertain. */
+  error?: string;
+  /** Set when an analyst approved a risky query with acceptRisk (Task 9). */
+  riskAccepted?: WatsonRiskAccepted;
+}
+
+export type WatsonProposal =
+  | WatsonQuestionProposal
+  | WatsonFindingProposal
+  | WatsonNextStepProposal
+  | WatsonReportTextProposal
+  | WatsonEventPromoteProposal
+  | WatsonVeloLaunchProposal;
+
+export type WatsonProposalKind = WatsonProposal["kind"];
+
+export const isQuestionProposal = (p: WatsonProposal): p is WatsonQuestionProposal =>
+  p.kind === "question_new" || p.kind === "question_update";
+
+/** The item a proposal targets: question id, finding id, step id, report field or first event id. */
+export const proposalTargetId = (p: WatsonProposal): string =>
+  isQuestionProposal(p) ? (p.targetId ?? p.questionId) : p.targetId;
+
+/** What parsing a paste did: rows from a known format, or why it stayed searchable text. */
+export type WatsonPasteParsed =
+  { kind: string; rows: number; held: number } | { kind: "text"; reason: string };
+
+export interface WatsonPaste {
+  id: string;
+  storedName: string;
+  filename: string;
+  bytes: number;
+  lines: number;
+  at: string;
+  parsed?: WatsonPasteParsed;
+}
+
+/** Something that changed in the case since Watson's last round (spec §4.6). */
+export interface WatsonCaseEvent {
+  kind: "import" | "notebook" | "star" | "hunt" | "other";
+  text: string;
+  at: string;
+  /** A `hunt` event: the held-promotion proposals its result created (Auto may apply them). */
+  proposalIds?: string[];
+}
+
+/** Why automatic reactions stopped; the next analyst message clears it. */
+export type WatsonReactionsPaused = "presidio" | "limit" | "errors";
+
+export interface WatsonChat {
+  turns: WatsonTurn[];
+  proposals: WatsonProposal[];
+  pastes: WatsonPaste[];
+  /** Pastes no successful round has read yet, oldest first. The next round attaches the newest. */
+  unreadPasteIds: string[];
+  memory: string;
+  pendingCaseEvents: WatsonCaseEvent[];
+  /** Set when an automatic reaction hit a Presidio hold or a cost/token limit. */
+  reactionsPaused?: WatsonReactionsPaused;
+  /** Reaction rounds that failed in a row (reset by a success or an analyst message). */
+  reactionFailures?: number;
+  /** An analyst has messaged Watson on this case; survives the turn cap (reactions need it). */
+  analystEngaged?: boolean;
+  costUSD: number;
+  /** Input + output tokens Watson used on this case: the limit for providers that report no cost. */
+  tokens: number;
+  calls: number;
+  /** ISO time of the last "New thread": RECENT CHAT in the prompt starts here. Memory is kept. */
+  threadStartAt?: string;
+}
+
+export function emptyWatsonChat(): WatsonChat {
+  return {
+    turns: [],
+    proposals: [],
+    pastes: [],
+    unreadPasteIds: [],
+    memory: "",
+    pendingCaseEvents: [],
+    costUSD: 0,
+    tokens: 0,
+    calls: 0,
+  };
+}

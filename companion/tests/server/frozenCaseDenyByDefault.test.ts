@@ -87,7 +87,6 @@ const EXPECTED_ALLOWED = [
   "POST /timeline-gaps/hypothesize",
   "POST /sessions/:sid/summary",
   "POST /custody/verify",
-  "POST /ask",
   "POST /executive-summary",
   "POST /view-summary",
   "POST /remediation-plan",

@@ -9,6 +9,7 @@ import {
   falsePositiveEventIds,
 } from "../analysis/falsePositive.js";
 import { reconsiderKeyQuestions, reconsiderNextSteps } from "../analysis/fpCascade.js";
+import { keepWatsonItems, watsonItemsOf } from "../analysis/timeline/watsonItems.js";
 import { patternKey } from "../analysis/prevalence.js";
 import type { LearnedPatternInput } from "../analysis/learnedPatterns.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
@@ -148,7 +149,8 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
           });
           const s = reconsiderNextSteps(state.nextSteps, { removedFindingIds, staleReSynth: true });
           if (q.changed || s.changed) {
-            await stateStore.saveOverview({ ...state, keyQuestions: q.questions, nextSteps: s.steps });
+            const cascaded = { ...state, keyQuestions: q.questions, nextSteps: s.steps };
+            await stateStore.saveOverview(keepWatsonItems(cascaded, watsonItemsOf(state))); // Watson's kept
           }
         });
         // Hypotheses (a side store, not InvestigationState): flag/neutralize any whose evidence was

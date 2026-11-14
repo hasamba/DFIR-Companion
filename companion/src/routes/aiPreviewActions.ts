@@ -1,4 +1,3 @@
-import { parseAskRequest } from "../analysis/askHistory.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import {
   loadEventTagLabelMap,
@@ -22,9 +21,10 @@ import type { RouteContext } from "./context.js";
  *
  * The other covered AI requests need the route's own context and live beside these (#2515):
  * import-time extraction (aiPreviewImportActions.ts — the analyst chooses the file), playbook hunts
- * (aiPreviewPlaybookAction.ts — built from the stored fleet inventory, no refresh) and the Jev review
- * and containment check (aiPreviewJevActions.ts). The ONLY AI calls not previewed are the provider
- * "test connection" calls in Settings: they carry no case data.
+ * (aiPreviewPlaybookAction.ts — built from the stored fleet inventory, no refresh), the Jev review
+ * and containment check (aiPreviewJevActions.ts) and a Watson message (aiPreviewWatsonAction.ts). The
+ * ONLY AI calls not previewed are the provider "test connection" calls in Settings: they carry no
+ * case data.
  */
 type Options = RouteContext["options"];
 type Pipeline = NonNullable<Options["pipeline"]>;
@@ -122,13 +122,6 @@ export const AI_PREVIEW_ACTIONS: Readonly<Record<string, AiPreviewAction>> = {
     prepare: async (pipeline, _o, caseId, params) => {
       const sessionId = str(params.sessionId);
       return sessionId ? () => pipeline.sessionSummary(caseId, sessionId) : "sessionId is required";
-    },
-  },
-  ask: {
-    label: "Ask the case",
-    prepare: async (pipeline, _o, caseId, params) => {
-      const { question, history } = parseAskRequest(params);
-      return question ? () => pipeline.ask(caseId, question, { history }) : "question is required";
     },
   },
   // #2559: the same routing as the real press — VQL unchanged, else the main-source language.

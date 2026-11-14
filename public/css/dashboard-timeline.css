@@ -315,7 +315,7 @@
 /* Clickable finding references inside a timeline event → jump to the finding */
 .finding-jump { color:var(--accent); text-decoration:none; border-bottom:1px dotted var(--accent); cursor:pointer; }
 .finding-jump:hover { color:var(--accent-hover); border-bottom-style:solid; }
-/* Ask the LLM panel */
+/* Query Translator input row (.ask-row) */
 .ask-row { display: flex; gap: 8px; margin-bottom: 10px; }
 .ask-row input { flex: 1; }
 .report-links { font-size: 12px; }
@@ -461,6 +461,12 @@
 .q-status-answered { color: var(--sev-low); }
 .q-status-partial { color: var(--help-icon-color); }
 .q-status-unknown { color: var(--text-muted); }
+.q-status-unanswerable {
+  color: var(--text-muted);
+  border: 1px solid var(--border, currentColor);
+  border-radius: 4px;
+  padding: 0 4px;
+}
 .icon-pinned { color: var(--sev-medium); display: inline-flex; }
 .icon-pinned svg { width: 11px; height: 11px; vertical-align: -1px; }
 /* Investigation Threads — small status dot instead of a bare "•"/"✓" text prefix. */

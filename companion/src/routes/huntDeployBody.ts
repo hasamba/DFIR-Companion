@@ -1,6 +1,7 @@
 // The body of POST /cases/:id/velociraptor/deploy-hunt, parsed once (#157, #14, #803). Extracted from
 // routes/velociraptor.ts, which sits at its file-size cap. Pure: no I/O, no request object.
 
+import { unsafeVqlCharProblem } from "../analysis/vqlStatements.js";
 import type { HuntCoverage, HuntOutcomeSource } from "../analysis/huntOutcomes.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
@@ -16,7 +17,8 @@ export interface DeployHuntBody {
   coverage?: HuntCoverage;
 }
 
-const ALLOWED_SOURCES: readonly HuntOutcomeSource[] = ["fleet", "playbook", "technique"]; // "bundle" is server-set, not client-supplied
+// "bundle" and "watson" are server-set, never client-supplied (deploy-hunt refuses "watson": veloDeploy.ts).
+const ALLOWED_SOURCES: readonly HuntOutcomeSource[] = ["fleet", "playbook", "technique"];
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
@@ -78,5 +80,8 @@ export function deployHuntBodyProblem(
   if (!body.vql) return "vql is required";
   if (!body.title) return "title is required";
   if (body.mode === "collection" && !body.hostname) return "hostname is required for a collection";
-  return vqlSizeProblem(body.vql);
+  // The launch wraps the generated artifact in a raw ''' literal on the server; a ''' in the VQL
+  // would end it and run the rest as server-side VQL (final review G2).
+  if (body.vql.includes("'''")) return "the VQL may not contain ''' (a triple-quoted string)";
+  return unsafeVqlCharProblem(body.vql) ?? vqlSizeProblem(body.vql);
 }

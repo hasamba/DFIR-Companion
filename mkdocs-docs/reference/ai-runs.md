@@ -27,7 +27,7 @@ answers a narrower question: what it is allowed to see, and what it does to your
 | **Investigate (MCP agent)** | you press it | anything it chooses | **yes** | an autonomous loop — cost is unbounded in advance |
 | **Missed evidence review** | you press it | raw archive | no | one per 40 rows — scales, about 50 calls per 2,000 rows |
 | **View summary** | you press it | raw archive | no | 1 |
-| **Ask the case** | you press it | forensic timeline | no | 1 |
+| **Watson message** | you send it | forensic timeline | only what you apply (the first message adds the six standard questions) | 1, or 2 with a paste search |
 | **Executive summary** | you press it | forensic timeline | no | 1 |
 | **Remediation plan** | you press it | findings | no | 1 |
 | **Hypothesis review** | you press it | forensic timeline | no | 1, or 0 when nothing is open |
@@ -238,18 +238,18 @@ Nothing these do reaches your case file. Press them as often as you like; the on
 !!! warning "Know this"
     The count it reports is what *matched your filters*, not what was read. Filter down to 40,000 rows and you get a summary of 500 of them. The truncation flag deliberately cannot tell the row cap from the token budget.
 
-### Ask the case
+### Watson message
 
-**Where.** Ask — you press it.
+**Where.** The Watson chat (or `/dfir ask` from the war-room bot) — you send it. It replaced Ask the case.
 
-**Sees.** The scoped forensic timeline, the causal graph, the attacker path, up to 150 findings — and your own work: hypotheses, host scope, dwell windows, prior hunts, tags and comments.
+**Sees.** The scoped forensic timeline, the causal graph, the attacker path, up to 150 findings — and your own work: hypotheses, host scope, dwell windows, prior hunts, tags and comments (the notebook only when you opt in). Also the chat's recent turns, Watson's memory and the key questions.
 
-**Caps.** 120 graph edges (`DFIR_ASK_GRAPH_MAX_EDGES`), 150 findings, token-fitted
+**Caps.** 120 graph edges (`DFIR_AI_WATSON_GRAPH_MAX_EDGES`; the deprecated `DFIR_ASK_GRAPH_MAX_EDGES` still works), 150 findings, a bounded case context
 
-**Costs.** 1, using the synthesis model.
+**Costs.** 1, or 2 when Watson searches a stored paste, using the Watson model (blank = the synthesis model). Counts toward the case's Watson cost and token limits.
 
 !!! warning "Know this"
-    It answers from the forensic timeline only — **the raw archive is invisible to it**. The used-versus-matched count is your only signal that the prompt was trimmed.
+    It answers from the forensic timeline only — **the raw archive is invisible to it**. When the case context was trimmed, the answer says from how many of the in-scope events it was built.
 
 ### Executive summary
 

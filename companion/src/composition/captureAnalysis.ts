@@ -79,6 +79,8 @@ export interface CaptureAnalysis {
    * instead (#1608), unless `analyst` says a person asked for this run now (/dfir synthesize).
    */
   resynthesizeInBackground(caseId: string, opts?: { analyst?: boolean }): void;
+  /** A synthesis is running, queued, debounced or waiting to start: Watson's reactions wait for it. */
+  synthesisBusy(caseId: string): boolean;
   /** #2498: the analyst accepts the gap — see CaptureWindows.skipHeld. */
   skipHeldScreenshots(caseId: string, token: string): Promise<SkipHeldResult>;
   /** Server shutdown: cancel the pending host-duplicate checks (#2584). */
@@ -620,6 +622,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     resumeAfterRestart,
     scheduleSynthesis,
     resynthesizeInBackground,
+    synthesisBusy: (caseId) => synthTimers.has(caseId) || deferral.busy(caseId),
     skipHeldScreenshots: windows.skipHeld, // #2498
     dispose: () => hostDuplicateNotifier.dispose(),
   };

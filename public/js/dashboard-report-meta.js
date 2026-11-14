@@ -9,6 +9,19 @@
   // the rest of report-meta (the server re-validates: raster-only, length-capped).
   let rmLogo = ""; // current company-logo data URI, or ""
   const LOGO_MAX_LEN = 1000000; // mirror reportMeta.ts LOGO_MAX_LEN (~1 MB text)
+  // The version of the report details this form shows ("" = never saved). Sent with every save so
+  // the server refuses one that would overwrite a newer version (e.g. Watson's approved text).
+  let rmBaseUpdatedAt = "";
+  const STALE_TEXT = "Report details changed since you opened them — reload";
+  // The case whose stored details the form holds ("" = never loaded). A save from a form that was
+  // never loaded for this case loads them first, so it neither 409s nor wipes the other fields.
+  let rmFilledFor = "";
+  // The form as last filled from the server: a different reading now means unsaved edits.
+  let rmClean = "";
+  const formKey = () =>
+    Array.from(document.querySelectorAll('#sec-case-details input[id^="rm-"], #sec-case-details textarea[id^="rm-"]'))
+      .map((el) => (el.type === "checkbox" ? el.checked : el.value))
+      .join("\u0001") + rmLogo;
   function renderLogoPreview() {
     const wrap = document.getElementById("rm-logoPreviewWrap");
     const img = document.getElementById("rm-logoPreview");
@@ -22,6 +35,7 @@
   }
 
   function fillReportMeta(m) {
+    rmBaseUpdatedAt = m.updatedAt || "";
     const v = (id, val) => (document.getElementById(id).value = val || "");
     v("rm-companyName", m.companyName);
     rmLogo = m.companyLogo || "";
@@ -55,18 +69,51 @@
       "term",
       "explanation",
     ]);
+    rmClean = formKey();
+    if (typeof watsonMarkReportSlots === "function") watsonMarkReportSlots(m); // "Watson" badge on the fields it wrote
+  }
+
+  function fetchReportMeta(caseId) {
+    return fetch(`/cases/${caseId}/report-meta`)
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then((m) => {
+        fillReportMeta(m);
+        rmFilledFor = caseId;
+      });
+  }
+
+  // Watson wrote report text: show it, unless the analyst has unsaved edits in the form (a save would
+  // refuse on the newer version anyway, and typing must not be wiped).
+  function reloadReportMetaIfClean(caseId) {
+    if (rmFilledFor === caseId && formKey() !== rmClean) return Promise.resolve();
+    return fetchReportMeta(caseId).catch(() => {});
   }
 
   function loadReportMeta(caseId) {
-    fetch(`/cases/${caseId}/report-meta`)
-      .then((r) => r.json())
-      .then(fillReportMeta)
-      .catch(() => {});
+    return fetchReportMeta(caseId).catch(() => {});
   }
 
-  function saveReportMeta() {
+  // `edits` ({ "rm-<field>": value }) are applied to the form after it holds this case's details:
+  // how another panel (the Executive Summary "Save") changes one field without touching the rest.
+  function saveReportMeta(edits) {
     const caseId = document.getElementById("caseId").value.trim();
-    if (!caseId) return;
+    if (!caseId) return Promise.resolve();
+    if (rmFilledFor === caseId) return putReportMeta(caseId, edits);
+    const st = document.getElementById("rmStatus");
+    st.textContent = "loading case details…";
+    return fetchReportMeta(caseId)
+      .then(() => putReportMeta(caseId, edits))
+      .catch((e) => (st.textContent = "save failed: " + e.message));
+  }
+
+  function putReportMeta(caseId, edits) {
+    for (const [id, value] of Object.entries(edits || {})) {
+      const el = document.getElementById(id);
+      if (el) el.value = value;
+    }
     const g = (id) => document.getElementById(id).value;
     const body = {
       companyName: g("rm-companyName"),
@@ -94,30 +141,34 @@
       ]),
       distribution: parseRows(g("rm-distribution"), ["name", "role", "method"]),
       glossary: parseRows(g("rm-glossary"), ["term", "explanation"]),
+      baseUpdatedAt: rmBaseUpdatedAt,
     };
     const st = document.getElementById("rmStatus");
     st.textContent = "saving…";
-    fetch(`/cases/${caseId}/report-meta`, {
+    return fetch(`/cases/${caseId}/report-meta`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     })
       .then((r) => {
+        if (r.status === 409) throw new Error(STALE_TEXT);
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
       .then((m) => {
         fillReportMeta(m);
+        rmFilledFor = caseId;
         st.textContent = "saved ✓";
         setTimeout(() => (st.textContent = ""), 2500);
       })
-      .catch(
-        (e) =>
-          (st.textContent =
-            "save failed: " +
-            e.message +
-            " — restart the companion server if this 404s"),
-      );
+      .catch((e) => {
+        st.textContent =
+          e.message === STALE_TEXT
+            ? STALE_TEXT
+            : "save failed: " +
+              e.message +
+              " — restart the companion server if this 404s";
+      });
   }
 
   // THE PAGE OWNS THE FILE PICKER, THIS OWNS THE LOGO. The upload handler used to assign rmLogo
@@ -135,6 +186,7 @@
   // included — stays inside the closure, which is the point of moving it.
   window.fillReportMeta = fillReportMeta;
   window.loadReportMeta = loadReportMeta;
+  window.reloadReportMetaIfClean = reloadReportMetaIfClean;
   window.saveReportMeta = saveReportMeta;
   window.setReportLogo = setReportLogo;
 })();

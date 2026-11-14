@@ -219,6 +219,7 @@
     // every timeline row, so ITS call site in dashboard.html carries `|| ""`.
     "isPromotedEvent",
     "promotedBadge",
+    "watsonMarkHtml", // a stub returns undefined: its timeline call site carries `|| ""` like promotedBadge
     "promotedKeptCount",
     // The wizard AI step and the disk-space warning. Their initializers are the sentinels.
     "wizResetAiStep",
@@ -557,7 +558,6 @@
     "askRunToolsOnImport",
     "propagateFalsePositive",
     "paintIocImportMeta",
-    "doAsk",
     "isNewEvent",
     "isNewIoc",
     // Presidio approval panel. `initPresidio` is the sentinel.

@@ -2,6 +2,7 @@ import type { ExcludedIocRef, IocExcludeRule } from "./iocExclude.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 import type { EventRevisionFields } from "./eventRevisionTypes.js";
+import type { WatsonFindingMarks, WatsonItemMark } from "./watsonItemTypes.js";
 
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 
@@ -347,7 +348,7 @@ export interface FindingCorroboration {
   kevLinked?: boolean; // a CISA-KEV (actively-exploited) CVE appears in the finding, its events, or its IOCs
 }
 
-export interface Finding {
+export interface Finding extends WatsonFindingMarks {
   id: string;
   severity: Severity;
   confidence?: number; // 0–100: AI certainty this finding is real (absent = unknown)
@@ -663,20 +664,21 @@ export interface CollectDirective {
   issuedAfterImportSeq?: number;
 }
 
-export type QuestionStatus = "answered" | "partial" | "unknown";
+export type QuestionStatus = "answered" | "partial" | "unknown" | "unanswerable";
 
-// A standard DFIR question the AI tracks across the case, with its current answer
-// and a pointer to where the investigator can find/confirm it (or what to collect).
+// A DFIR question tracked across the case: current answer plus where to confirm it (or what to collect).
 export interface InvestigationQuestion {
   id: string;
   question: string; // "What was the initial access vector?"
   status: QuestionStatus;
   answer: string; // current best answer, or "" if unknown
   pointer: string; // where to look: finding ids / event times / screenshots, or what to collect next
-  pinned?: boolean; // analyst-added (via Ask) — preserved across synthesis, which may answer it later
-  // Finding ids this answer relies on (set by synthesis). Lets a later re-synthesis detect when a
-  // supporting finding was marked false-positive and force the question back to "unknown" instead
-  // of silently keeping a stale answer — see applyFalsePositive/reconsiderKeyQuestions in pipeline.ts.
+  pinned?: boolean; // analyst- or Watson-added — preserved across synthesis, which may answer it later
+  author?: "watson"; // Watson added or edited this question
+  synthesisDisagrees?: { status: QuestionStatus; answer: string }; // a later synthesis disagreed with this pinned answer
+  answeredBy?: "synthesis"; // a Watson question synthesis answered: not protected until Watson applies an answer
+  // Finding ids this answer relies on (set by synthesis): a supporting finding later marked false-positive
+  // forces the question back to "unknown", not a stale answer (applyFalsePositive/reconsiderKeyQuestions).
   relatedFindingIds?: string[];
   // Deterministic contradiction flag (investigation-guidance #3): set when the answer asserts an
   // ABSENCE ("no data exfiltration confirmed") but in-scope events carry the matching ATT&CK
@@ -687,8 +689,7 @@ export interface InvestigationQuestion {
     eventIds: string[]; // the events that carry them (a few, for the pointer/badge)
   };
   // Structured collection directive for an 'unknown'/'partial' question (investigation-guidance #8):
-  // where/what to collect to answer it, so the UI can offer a one-click Deploy and a later import can be
-  // matched back to it. Complements the free-text `pointer`.
+  // where/what to collect to answer it: one-click Deploy in the UI, and a later import matches back to it.
   collect?: CollectDirective;
   // Immediate FP cascade (investigation-guidance #12): set by reconsiderKeyQuestions when the FP-mark
   // route synchronously reset this question because a supporting finding was just rejected — the answer
@@ -696,12 +697,11 @@ export interface InvestigationQuestion {
   // recomputes the authoritative answer (which clears the flag). Absent = current.
   staleReSynth?: boolean;
 }
-
 export type StepPriority = "critical" | "high" | "medium" | "low";
 
 // A concrete, prioritized recommendation for what to do NEXT — the most valuable
 // thing to validate or find out given everything currently known about the case.
-export interface NextStep {
+export interface NextStep extends WatsonItemMark {
   id: string;
   priority: StepPriority;
   action: string; // what to do, e.g. "Pull Security.evtx 4624/4672 on ALClient07"

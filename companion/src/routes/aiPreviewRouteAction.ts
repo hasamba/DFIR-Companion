@@ -2,8 +2,9 @@ import type { RouteContext } from "./context.js";
 
 /**
  * A "Preview what the AI will see" action that needs the route's own context (#2515): the import-time
- * extraction reads (they take the chosen file), playbook hunts and the two decision-model requests.
- * The 21 pipeline actions keep their own shape in aiPreviewActions.ts.
+ * extraction reads (they take the chosen file), playbook hunts, the two decision-model requests and a
+ * Watson message (it needs the server's Watson model and limits).
+ * The 20 pipeline actions keep their own shape in aiPreviewActions.ts.
  */
 export interface RouteAiPreviewAction {
   readonly label: string;

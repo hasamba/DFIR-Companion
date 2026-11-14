@@ -52,6 +52,10 @@ import {
 } from "./integrationClients.js";
 import { createServerClients } from "./serverSetClients.js";
 import { buildProvider } from "./aiProviders.js";
+import { buildWatsonProvider } from "./watsonProvider.js";
+import { createWatsonCaseEvents } from "./watsonCaseEvents.js";
+import { noteWatsonFleetResult } from "./watsonVeloResults.js";
+import { AiControlStore } from "../analysis/aiControl.js";
 import { spawnToolRunner } from "../integrations/tools/toolRunner.js";
 import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "../http/originGuard.js";
 import { resolveHuntPlatforms } from "../analysis/huntPlatforms.js";
@@ -120,6 +124,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     servedLocationStore,
     sensitiveLocationStore,
     notebookStore,
+    watsonChatStore,
     hypothesisStore,
     learnedPatternStore,
     sourceTrustStore,
@@ -194,6 +199,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     cloudQueryUsage,
     cloudQueryBudget,
   } = rt;
+  // Case events Watson hears about; createApp attaches the shared reaction scheduler (spec §4.6).
+  const watsonEvents = createWatsonCaseEvents(watsonChatStore, tagsStore, new AiControlStore(store));
   const {
     teamAuth,
     pipeline,
@@ -256,7 +263,10 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,
-    onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
+    onTags: (caseId) => {
+      hub.broadcastTo(caseId, { type: "tags_changed" });
+      watsonEvents.tagsChanged(caseId);
+    },
     pinnedFindingsStore,
     onPins: (caseId) => hub.broadcastTo(caseId, { type: "pins_changed" }),
     findingWorkflowStore,
@@ -268,7 +278,14 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     servedLocationStore,
     sensitiveLocationStore,
     notebookStore,
-    onNotebook: (caseId) => hub.broadcastTo(caseId, { type: "notebook_changed" }),
+    onNotebook: (caseId) => {
+      hub.broadcastTo(caseId, { type: "notebook_changed" });
+      watsonEvents.notebookChanged(caseId);
+    },
+    watsonChatStore,
+    onWatsonReactorReady: watsonEvents.attach,
+    watsonProvider: () => buildWatsonProvider(process.env),
+    onWatson: (caseId) => hub.broadcastTo(caseId, { type: "watson_changed" }),
     hypothesisStore,
     onHypotheses: (caseId) => hub.broadcastTo(caseId, { type: "hypotheses_changed" }),
     learnedPatternStore,
@@ -314,7 +331,10 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     secondOpinionThinking: Boolean(secondOpinionProvider?.supportsThinking),
     onSecondOpinion: (caseId) => hub.broadcastTo(caseId, { type: "second_opinion_changed" }),
     importMetaStore,
-    onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),
+    onImportMeta: (caseId, change) => {
+      hub.broadcastTo(caseId, { type: "import_meta_changed" });
+      watsonEvents.importChanged(caseId, change?.step);
+    },
     dropStatusStore,
     onDropStatus: (caseId) => hub.broadcastTo(caseId, { type: "drop_status_changed" }),
     // External forensic tools (#211): the real spawn runner (tests inject a stub). Config is read live
@@ -402,6 +422,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     huntOutcomeStore,
     huntRunSnapshotStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
+    onVeloHuntCollected: (caseId, r) =>
+      void noteWatsonFleetResult(watsonChatStore, watsonEvents.wake, caseId, r, warnLine),
     veloMonitorStore,
     onVeloMonitor: (caseId) => hub.broadcastTo(caseId, { type: "velo_monitor_changed" }),
     veloMonitorPollSeconds,

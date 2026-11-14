@@ -24,7 +24,7 @@
     ["starred-report", "Starred events report", []],
     ["view-summary", "Summarize the current super-timeline view", []],
     ["session-summary", "Session summary", ["sessionId"]],
-    ["ask", "Ask the case", ["question"]],
+    ["watson", "Watson message", ["text"]],
     ["velociraptor-hunts", "Velociraptor hunt suggestions", []],
     ["technique-hunt", "Hunt for one ATT&CK technique", ["techniqueId", "techniqueName"]],
     ["memory-next-steps", "Memory forensics next steps", []],
@@ -44,7 +44,7 @@
     minSeverity: "Lowest severity to read",
     eventId: "Event id",
     sessionId: "Session id",
-    question: "Question",
+    text: "Your message to Watson",
     techniqueId: "ATT&CK technique id (e.g. T1021.002)",
     techniqueName: "Technique name (optional)",
     request: "What to search for",
@@ -98,6 +98,9 @@
   function renderParams() {
     const entry = ACTIONS.find((a) => a[0] === $("aiPreviewAction").value);
     $("aiPreviewParams").innerHTML = entry ? entry[2].map(paramInput).join("") : "";
+    // A Watson preview starts from what the analyst has typed in Watson's message box.
+    const draft = document.querySelector(".watson-input");
+    if (entry && entry[0] === "watson" && draft && $("aiPreviewParam-text")) $("aiPreviewParam-text").value = draft.value;
   }
 
   // The chosen file, read in the browser: text for a CSV or log, a data URL for a screenshot.
@@ -129,9 +132,6 @@
         if (el.checked) params[name] = true;
       } else if (el.value.trim()) params[name] = el.value.trim();
     }
-    // Ask sends the panel's current thread with the question, exactly as the Ask button does.
-    if (key === "ask" && typeof window.askHistoryFor === "function")
-      params.history = window.askHistoryFor(caseNow());
     // The view summary reads exactly the filters the super-timeline is showing, minus pagination.
     if (key === "view-summary" && typeof window.superQueryString === "function") {
       const p = new URLSearchParams(window.superQueryString());

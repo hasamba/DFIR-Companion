@@ -121,8 +121,16 @@ export async function importPlasoFile(
 //                 behaviour is exactly the write that refusal exists to stop.
 // `remediation-check` (#969): a super-timeline row attached as evidence to a remediation boundary
 // enters the case by promotion like any analyst promotion, and is marked like a manual one.
+// `watson`: the analyst approved a Watson proposal holding rows the content tagger graded above Info
+// during a chat paste ingest. The caller marks them `[watson]` through `tagById`.
 export type PromotionIntent =
-  "manual" | "explain" | "starred-report" | "second-look" | "remediation-check" | "missed-evidence";
+  | "manual"
+  | "explain"
+  | "starred-report"
+  | "second-look"
+  | "remediation-check"
+  | "missed-evidence"
+  | "watson";
 
 /** The intents for which a sandbox-produced row is DROPPED rather than normalised. See above. */
 const LAB_REFUSING_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionIntent>([
@@ -141,7 +149,12 @@ const LAB_REFUSING_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionInte
  * The route checks both, but against the state it read before its grade and archive lookups. This
  * runs under the state lock, on the state the merge will use, so an import in between changes nothing.
  */
-const NEW_ROWS_ONLY_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionIntent>(["missed-evidence"]);
+// `watson` too: its held rows carry a grade the tagger chose at paste time, and a row the case has
+// gained since (an analyst promotion, a later import) must not be re-graded or marked by the apply.
+const NEW_ROWS_ONLY_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionIntent>([
+  "missed-evidence",
+  "watson",
+]);
 
 export interface PromotionOptions {
   importedAt: string;
@@ -153,6 +166,12 @@ export interface PromotionOptions {
    * an empty answer writes no note.
    */
   note?: string | ((outcome: PromotionOutcome) => string);
+  /**
+   * Grading records the delta schema strips (a cap's record, the engine start-up anchor), re-applied
+   * by id to the rows this promotion merged, from a copy the caller trusts (the Watson held rows,
+   * graded by the settle's own corrections). Never model output.
+   */
+  records?: Record<string, Readonly<Record<string, unknown>>>;
 }
 
 export async function promoteSuperTimeline(
@@ -205,7 +224,11 @@ export async function promoteSuperTimelineWithOutcome(
       timestamp: opts.importedAt,
       sourceScreenshots: [],
     });
-    const stamped = stampPromoted(merged, toMerge, marked, opts.importedAt);
+    const stamped = withRecords(
+      stampPromoted(merged, toMerge, marked, opts.importedAt),
+      toMerge,
+      opts.records,
+    );
     const outcome = promotionOutcome(before, stamped, requestedIds);
     const state = withOutcomeNote(stamped, opts, outcome);
     await ctx.opts.stateStore.save(state);
@@ -214,6 +237,21 @@ export async function promoteSuperTimelineWithOutcome(
     if (!isReadOnlyScope()) ctx.opts.onState?.(state);
     return { state, outcome };
   });
+}
+
+/** The caller's trusted records laid back onto the merged rows, by id (see PromotionOptions.records). */
+function withRecords(
+  state: InvestigationState,
+  merged: readonly ForensicEvent[],
+  records: PromotionOptions["records"],
+): InvestigationState {
+  if (!records) return state;
+  const ids = new Set(merged.map((e) => e.id).filter((id) => records[id]));
+  if (!ids.size) return state;
+  return {
+    ...state,
+    forensicTimeline: state.forensicTimeline.map((e) => (ids.has(e.id) ? { ...e, ...records[e.id] } : e)),
+  };
 }
 
 function stampPromoted(
@@ -239,9 +277,10 @@ function stampPromoted(
   };
   // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
   // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
-  // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").
-  if (Object.keys(marked).length) {
-    const tagged = new Set(Object.keys(marked));
+  // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]"). Only the rows this
+  // promotion merged: a requested row the case already held keeps its own provenance.
+  const tagged = new Set(Object.keys(marked).filter((id) => promotedIds.has(id)));
+  if (tagged.size) {
     state = {
       ...state,
       forensicTimeline: state.forensicTimeline.map((e) =>

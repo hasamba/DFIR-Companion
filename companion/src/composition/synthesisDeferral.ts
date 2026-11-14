@@ -47,6 +47,11 @@ export interface SynthesisDeferral {
   /** Is a synthesis for this case running right now (its model call may already be paid for)? */
   running(caseId: string): boolean;
   /**
+   * Is a paid synthesis running, queued, or waiting here to start (Watson's reactions wait for it)?
+   * A run that ended held or cancelled is terminal, so it is not busy.
+   */
+  busy(caseId: string): boolean;
+  /**
    * Start once no synthesis for the case is running. If one of the runs it waited on ends
    * `cancelled` — the analyst pressed Cancel — `onCancelled` runs instead: a Cancel must not be
    * followed by a fresh run the analyst never asked for. It also runs, with `held` true, when a
@@ -81,6 +86,13 @@ export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisD
 
   function running(caseId: string): boolean {
     return runningIds(caseId).length > 0 || deps.inFlight?.has(caseId) === true;
+  }
+
+  function busy(caseId: string): boolean {
+    const active = (deps.jobManager?.list(caseId) ?? []).some(
+      (job) => (job.status === "running" || job.status === "queued") && paysForSynthesis(job),
+    );
+    return active || running(caseId) || waiting.has(caseId);
   }
 
   /** How a watched run ended, when it did not end in a result: "cancelled", "held", or null. */
@@ -123,5 +135,5 @@ export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisD
     wait(caseId);
   }
 
-  return { running, defer };
+  return { running, busy, defer };
 }

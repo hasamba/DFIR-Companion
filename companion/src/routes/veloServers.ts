@@ -16,19 +16,33 @@ export interface VeloTarget {
 const notInSet = (setName: string): string =>
   `Velociraptor is not configured in server set '${setName}'. Add it in Settings → Server sets.`;
 
+/** The client, or the refusal a route would send: an unresolved set (its status) or no Velociraptor (501). */
+export type VeloResolution = { ok: true; vc: VeloTarget } | { ok: false; status: number; error: string };
+
+function resolveTarget(r: ResolveResult, missing?: string): VeloResolution {
+  if (!r.ok) return { ok: false, status: r.status, error: r.error };
+  const client = r.servers.velociraptor;
+  if (!client) return { ok: false, status: 501, error: missing ?? notInSet(r.servers.setName) };
+  return { ok: true, vc: { client, setId: r.servers.setId, setName: r.servers.setName } };
+}
+
 // Sends the refusal and returns undefined, or returns the client. A set that does not resolve is a
 // 409 with the resolver's reason; a set without Velociraptor is a 501 (the feature is off).
 function pick(r: ResolveResult, res: Response, missing?: string): VeloTarget | undefined {
-  if (!r.ok) {
-    res.status(r.status).json({ error: r.error });
-    return undefined;
-  }
-  const client = r.servers.velociraptor;
-  if (!client) {
-    res.status(501).json({ error: missing ?? notInSet(r.servers.setName) });
-    return undefined;
-  }
-  return { client, setId: r.servers.setId, setName: r.servers.setName };
+  const t = resolveTarget(r, missing);
+  if (t.ok) return t.vc;
+  res.status(t.status).json({ error: t.error });
+  return undefined;
+}
+
+/** The case's Velociraptor without a response object (for callers that are not a route). */
+export function resolveCaseVelo(ctx: RouteContext, caseId: string): VeloResolution {
+  return resolveTarget(ctx.serverClients.forCase(caseId));
+}
+
+/** The Velociraptor of one server set by id (a launch reads its results from the set it went to). */
+export function resolveSetVelo(ctx: RouteContext, setId: string): VeloResolution {
+  return resolveTarget(ctx.serverClients.forSet(setId));
 }
 
 export function caseVelo(ctx: RouteContext, caseId: string, res: Response, missing?: string) {

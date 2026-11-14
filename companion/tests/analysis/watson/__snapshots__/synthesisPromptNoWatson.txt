@@ -1,0 +1,22 @@
+ATTACK PHASES (deterministic activity bursts, worst-severity first — the shape of the intrusion over time):
+- 00:00–00:00 Activity burst (2 ev, Medium)
+
+KNOWN UNKNOWNS / OPEN GAPS (evidence we'd expect in an intrusion but don't yet have — treat each as an open question to investigate or hunt; an absence is a lead, not proof):
+- No finding yet explains these ATT&CK phases: Initial Access, Persistence, Privilege Escalation, Lateral Movement, Command and Control, Exfiltration, Impact.
+
+FORENSIC TIMELINE (2 dated events).
+[e1] 2026-06-01T00:00:00.000Z [Medium] event e1 ⟨rare: seen 1×⟩
+[e2] 2026-06-01T00:00:00.000Z [Medium] event e2 ⟨rare: seen 1×⟩
+
+EXISTING FINDINGS (update by id, do not duplicate). "(severity: X)" is the severity a finding carried last run — keep it unless the evidence now supports a different grade. Indented lines show what a finding said last run and the events it cited and its ATT&CK tags. Keep every concrete detail it names (file, command, host, account, time) and every ATT&CK tag unless the evidence now contradicts it — then say why in the new description:
+[f-prior] (severity: High) Encoded PowerShell launched from Word
+    said: The pasted mail log shows the loader attached to a mail from mailer.example.com.
+    cites: e2
+    tags: T1059.001
+
+CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):
+(none open)
+
+Running notes: (none)
+
+Return the JSON conclusions.

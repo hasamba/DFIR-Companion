@@ -574,7 +574,7 @@ export const FEATURES: Feature[] = [
   {
     // Import undo / redo (#76). Its two toolbar buttons were bound beside the Narrative Timeline's
     // controls purely by proximity; that extraction left them behind and this one collects them.
-    // doAsk sits under the same banner and is the AI Ask box — it stayed.
+    // The AI Ask box sat under the same banner and stayed behind (since retired for Watson).
     file: "dashboard-import-undo.js",
     initializer: "initImportUndoRedo",
     publish: ["initImportUndoRedo", "loadUndoStack", "doImportUndoRedo"],
@@ -1559,7 +1559,13 @@ export const FEATURES: Feature[] = [
     // setReportLogo is the operation the page's file picker calls; rmLogo and its size cap never
     // leave the closure, which is what stopped the upload handler owning half this feature.
     file: "dashboard-report-meta.js",
-    publish: ["fillReportMeta", "loadReportMeta", "saveReportMeta", "setReportLogo"],
+    publish: [
+      "fillReportMeta",
+      "loadReportMeta",
+      "reloadReportMetaIfClean",
+      "saveReportMeta",
+      "setReportLogo",
+    ],
     private: ["rmLogo", "LOGO_MAX_LEN"],
   },
   {
@@ -1868,6 +1874,120 @@ export const FEATURES: Feature[] = [
     ],
   },
   {
+    // The "Watson" badge, Undo and synthesis notes on items Watson wrote, and the "Wrote:" link jump.
+    // dashboard-watson.js hands it the applied proposals (watsonMarksSet); the findings, next-steps,
+    // timeline-row and report-details renderers each call watsonMarkHtml / watsonMarkReportSlots once.
+    file: "dashboard-watson-marks.js",
+    publish: [
+      "watsonMarksSet",
+      "watsonMarkHtml",
+      "watsonUndoTarget",
+      "watsonMarkReportSlots",
+      "watsonJump",
+      "watsonSectionRefused",
+    ],
+    private: [
+      "SECTION",
+      "KIND_OF",
+      "WATSON_MARKER",
+      "REPORT_FIELDS",
+      "applied",
+      "signature",
+      "lastReportMeta",
+      "FLASH_MS",
+    ],
+  },
+  {
+    // Watson's Velociraptor launch card, "connected" chip, Auto listing and the uncertain-launch answer.
+    file: "dashboard-watson-velo.js",
+    publish: [
+      "watsonVeloCardHtml",
+      "watsonVeloAutoListHtml",
+      "watsonVeloResolve",
+      "watsonVeloChipSync",
+      "watsonVeloRiskArm",
+      "watsonVeloRiskCancel",
+      "watsonVeloApplyRisk",
+      "watsonCaseReset",
+    ],
+    private: [
+      "AUTO_HEADS",
+      "UNCERTAIN",
+      "NO_UNDO",
+      "NO_IDS",
+      "STALLED",
+      "hasIds",
+      "num",
+      "rowsText",
+      "where",
+      "btn",
+      "currentCase",
+      "wVeloConnected",
+      "RISK_TAIL",
+      "wRiskArmed",
+      "wRiskSending",
+      "isRisky",
+      "riskReasons",
+      "rerender",
+    ],
+  },
+  {
+    // Watson's proposal cards, the "Wrote:" line and the paused-reactions banner. Pure builders.
+    file: "dashboard-watson-cards.js",
+    publish: ["watsonCardHtml", "watsonWroteHtml", "watsonPausedHtml"],
+    private: ["HELD_SHOWN", "FIELD_LABEL", "PAUSED", "TITLE", "BODY", "btn"],
+  },
+  {
+    // Watson's markup builders, split from dashboard-watson.js to keep both under 400 lines. Pure:
+    // no state, no initializer; dashboard-watson.js calls the builders (and watsonCaseIsEmpty) by name.
+    file: "dashboard-watson-view.js",
+    publish: [
+      "watsonTurnHtml",
+      "watsonBoardHtml",
+      "watsonEarlierButtonHtml",
+      "watsonPanelHtml",
+      "watsonCaseIsEmpty",
+      "watsonComposerKey",
+      "watsonInsertNewline",
+    ],
+    private: ["QSTATUS", "btn"],
+  },
+  {
+    // Watson's Approve / Auto switch. dashboard-watson.js calls watsonModeSync on every render and routes
+    // the "setMode" verb to watsonModeSwitch; the mode itself is private here. No initializer.
+    file: "dashboard-watson-mode.js",
+    publish: ["watsonModeSync", "watsonModeSwitch"],
+    private: ["AUTO_CONFIRM", "MODES", "LABEL", "TIP", "wMode"],
+  },
+  {
+    // Watson chat panel (rail, open, full). initWatson() is called from initDataAct (the inline script has no
+    // spare line), so the manifest names no initializer. watsonAct is the one data-act entry.
+    file: "dashboard-watson.js",
+    publish: [
+      "initWatson",
+      "renderWatson",
+      "toggleWatsonPanel",
+      "setWatsonPanelState",
+      "loadWatson",
+      "watsonAct",
+    ],
+    private: [
+      "wChat",
+      "wQuestions",
+      "wEarlier",
+      "wMore",
+      "wCase",
+      "wSeq",
+      "wSeen",
+      "wNotice",
+      "wCardErr",
+      "wEmpty",
+      "wNoAi",
+      "wState",
+      "wBusy",
+    ],
+  },
+  {
     // Last-import change tracking. All three escapes were READS from the page's two renderers, so
     // what crosses the boundary is a question — isNewEvent / isNewIoc — not the key sets. No
     // initializer: nothing here runs at load, and loadImportMeta() is already in the refresh fan-out.
@@ -1879,13 +1999,10 @@ export const FEATURES: Feature[] = [
       "askRunToolsOnImport",
       "propagateFalsePositive",
       "paintIocImportMeta",
-      "doAsk",
-      "askHistoryFor",
       "isNewEvent",
       "isNewIoc",
     ],
-    // askHistory / askHistoryCase: the Ask box's per-session thread (#1411) — state, so it stays in.
-    private: ["newEventKeys", "newIocKeys", "evKey", "evNorm", "askHistory", "askHistoryCase"],
+    private: ["newEventKeys", "newIocKeys", "evKey", "evNorm"],
   },
   {
     // Presidio approval panel. Its escape was written from three places outside the section, each

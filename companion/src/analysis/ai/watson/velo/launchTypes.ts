@@ -1,0 +1,46 @@
+import type { HuntFingerprintStore } from "./huntFingerprintStore.js";
+import type { LaunchContext } from "./launchCheck.js";
+import type { VeloFleetSeams } from "./veloFleet.js";
+
+// The seams an approved Watson launch needs (phase 3). The route builds them: `launch` wraps the
+// existing deploy path (routes/veloDeploy.ts → deployCaseHunt), which analysis/ai may not import.
+
+export interface VeloLaunchRequest {
+  mode: "hunt" | "collection";
+  vql: string;
+  title: string;
+  hostname?: string;
+}
+
+/**
+ * What the deploy reported. `phase` says whether anything reached Velociraptor:
+ * `invalid` / `before-launch` — nothing ran; `launch-unknown` — maybe; `launched` — it ran (ids known).
+ */
+export interface VeloLaunchOutcome {
+  phase: "invalid" | "before-launch" | "launch-unknown" | "launched";
+  error?: string;
+  launched?: { huntId?: string; flowId?: string; clientId?: string; serverSetId?: string };
+}
+
+export interface VeloLaunchDeps {
+  /** `auditSuffix` is appended to the deploy's own audit entries (Auto mode's who/when). */
+  launch(
+    caseId: string,
+    req: VeloLaunchRequest,
+    actor: string,
+    auditSuffix?: string,
+  ): Promise<VeloLaunchOutcome>;
+  fleet: VeloFleetSeams;
+  matchClient: LaunchContext["matchClient"];
+  fingerprints: Pick<HuntFingerprintStore, "load" | "reserve" | "release">;
+  /** A launch was saved as applied: start watching for its result (a collection's flow). */
+  onLaunched?(caseId: string, proposalId: string): void;
+  /** The case is closed or archived: checked immediately before the external launch (G4). */
+  isFrozen?(caseId: string): Promise<boolean>;
+  log?(line: string): void;
+}
+
+/** What starts watching an applied collection for its result (composition/watsonVeloResults.ts). */
+export interface WatsonFlowWatch {
+  watch(caseId: string, proposalId: string): void;
+}
