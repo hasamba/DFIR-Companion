@@ -206,6 +206,17 @@ describe("VelociraptorClient: a triple quote never reaches the server-side wrapp
     await expect(client.collectOnClient("C.webserver1", vql, "t")).rejects.toThrow(/triple-quoted/);
     expect(runs).toHaveLength(0);
   });
+
+  it("refuses a Unicode line separator inside a string (I-1)", async () => {
+    const runs: string[][] = [];
+    const runner: VqlRunner = async (statements) => {
+      runs.push(statements);
+      return { rows: [], raw: "" };
+    };
+    const client = new VelociraptorClient(cfg, runner);
+    await expect(client.launchHunt("SELECT 'a\u2028b' AS A FROM info()", "t")).rejects.toThrow(/character/);
+    expect(runs).toHaveLength(0);
+  });
 });
 
 describe("VelociraptorClient.launchHunt", () => {

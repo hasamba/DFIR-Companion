@@ -32,3 +32,21 @@ export function splitVqlStatements(vql: string): string[] {
     )
     .filter(Boolean);
 }
+
+// Characters a launch refuses ANYWHERE, inside string literals too (final re-review I-1): every C0
+// control except tab and newline, DEL, every C1 control (U+0080-U+009F, NEL among them), the Unicode
+// line and paragraph separators, and the zero-width / byte-order marks. YAML reads U+0085, U+2028
+// and U+2029 as line breaks, but the artifact builder indents only after "\n", so one of them in a
+// string would end the `query: |` block and let the rest of the line become artifact YAML.
+const UNSAFE_CHAR = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u200B-\u200D\u2028\u2029\uFEFF]/u;
+
+/** The plain-English refusal for VQL holding such a character, or null when it has none. */
+export function unsafeVqlCharProblem(vql: string): string | null {
+  const m = UNSAFE_CHAR.exec(String(vql ?? ""));
+  if (!m) return null;
+  const code = `U+${m[0].charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}`;
+  return (
+    `the VQL contains an invisible control or line-break character (${code}) that Velociraptor ` +
+    "could read differently from what was checked; retype the query without it"
+  );
+}

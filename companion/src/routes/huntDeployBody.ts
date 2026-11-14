@@ -1,6 +1,7 @@
 // The body of POST /cases/:id/velociraptor/deploy-hunt, parsed once (#157, #14, #803). Extracted from
 // routes/velociraptor.ts, which sits at its file-size cap. Pure: no I/O, no request object.
 
+import { unsafeVqlCharProblem } from "../analysis/vqlStatements.js";
 import type { HuntCoverage, HuntOutcomeSource } from "../analysis/huntOutcomes.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
@@ -82,5 +83,5 @@ export function deployHuntBodyProblem(
   // The launch wraps the generated artifact in a raw ''' literal on the server; a ''' in the VQL
   // would end it and run the rest as server-side VQL (final review G2).
   if (body.vql.includes("'''")) return "the VQL may not contain ''' (a triple-quoted string)";
-  return vqlSizeProblem(body.vql);
+  return unsafeVqlCharProblem(body.vql) ?? vqlSizeProblem(body.vql);
 }

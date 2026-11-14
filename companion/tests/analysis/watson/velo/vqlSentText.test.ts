@@ -91,3 +91,26 @@ describe("the prompt tells the truth about approval in both modes (G9)", () => {
     expect(t).toContain("unless the\ncase is in Auto mode");
   });
 });
+
+describe("I-1 — line-breaking and invisible characters are refused anywhere", () => {
+  const seps = { "U+2028": " ", "U+2029": " ", "U+0085": "\u0085" };
+  for (const [name, ch] of Object.entries(seps)) {
+    it(`refuses ${name} inside a string, in the launch check and the deploy body check`, () => {
+      const vql = `SELECT 'a${ch}  - name: X' AS A FROM info()`;
+      expect(hunt(vql).ok).toBe(false);
+      expect(deployHuntBodyProblem({ vql, title: "t", mode: "hunt", hostname: "" })).toMatch(/character/);
+    });
+  }
+
+  it("refuses other control and zero-width characters", () => {
+    for (const ch of ["\u0001", "\u007f", "\u009b", "​", "‍", "﻿", "\r"]) {
+      expect(hunt(`SELECT 'a${ch}b' AS A FROM info()`).ok, JSON.stringify(ch)).toBe(false);
+    }
+  });
+
+  it("still allows a normal non-ASCII letter in a string", () => {
+    const vql = "SELECT * FROM pslist() WHERE Name = 'café'";
+    expect(hunt(vql).ok).toBe(true);
+    expect(deployHuntBodyProblem({ vql, title: "t", mode: "hunt", hostname: "" })).toBeNull();
+  });
+});

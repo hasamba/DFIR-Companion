@@ -1,7 +1,7 @@
 import { vqlSizeProblem } from "../../../vqlInput.js";
 import { vqlAllowed } from "./vqlAllowed.js";
 import { launchFingerprints } from "./launchFingerprint.js";
-import { sanitizeVqlDurations, splitVqlStatements } from "../../../vqlStatements.js";
+import { sanitizeVqlDurations, splitVqlStatements, unsafeVqlCharProblem } from "../../../vqlStatements.js";
 
 // The pure gate every Watson launch passes through (phase 3). Order: shape → size → allowlist →
 // already-ran → host. Any failure refuses; there is no path from a failed check to a launch, and an
@@ -83,6 +83,8 @@ function resolveHost(hostname: unknown, ctx: LaunchContext): LaunchCheck | Launc
  * checked text and the run text can never disagree (final review G1).
  */
 export function sentTextAllowed(vql: string): { ok: true } | { ok: false; reasons: string[] } {
+  const unsafe = unsafeVqlCharProblem(vql); // anywhere, strings included (I-1)
+  if (unsafe) return { ok: false, reasons: [unsafe] };
   const raw = vqlAllowed(vql);
   if (!raw.ok) return raw;
   const statements = splitVqlStatements(sanitizeVqlDurations(vql));

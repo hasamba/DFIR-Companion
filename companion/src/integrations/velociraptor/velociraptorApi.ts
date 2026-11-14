@@ -14,7 +14,11 @@ import { CLIENT_RE, matchClient, normalizeClientRow, type VeloClientRecord } fro
 export { matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
 import { ChildOutputCollector } from "../childOutput.js";
 import { containedWhereOrThrow, MAX_READ_WHERE_LENGTH } from "../../analysis/vqlInput.js";
-import { sanitizeVqlDurations, splitVqlStatements } from "../../analysis/vqlStatements.js";
+import {
+  sanitizeVqlDurations,
+  splitVqlStatements,
+  unsafeVqlCharProblem,
+} from "../../analysis/vqlStatements.js";
 // Re-exported: moved to analysis/ so Watson's launch check runs on exactly the text launched.
 export { sanitizeVqlDurations, splitVqlStatements } from "../../analysis/vqlStatements.js";
 import { buildHuntSpec, HuntSpecError, type HuntSpecCheck } from "./huntSpec.js";
@@ -491,6 +495,8 @@ function buildHuntArtifact(
   // The artifact is embedded in a raw '''…''' literal on the server: a ''' would end it (G2).
   if (statements.some((q) => q.includes("'''")))
     throw new Error("the VQL may not contain ''' (a triple-quoted string)");
+  const unsafe = unsafeVqlCharProblem(statements.join("\n")); // a YAML line break the indent misses (I-1)
+  if (unsafe) throw new Error(unsafe);
   const blocks = statements
     .map(
       (q, i) =>
