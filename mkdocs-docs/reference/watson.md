@@ -50,7 +50,7 @@ Watson can propose these changes. Each one appears in the chat as a proposal, an
 
 A finding that cites a line of a paste adds that line to the forensic timeline when you apply it, so the citation points at a real event. Watson never edits a finding that you or a synthesis run wrote. It updates only its own.
 
-Watson does not change the super-timeline, and it never reads it.
+Watson does not change the super-timeline. It searches it only when you ask (see Searching the super-timeline).
 
 ## The Watson badge and Undo
 
@@ -104,7 +104,7 @@ Watson reads the case, not only the chat. Besides the forensic timeline, the evi
 | **Stars, tags, comments** | What you marked or annotated. |
 | **Notebook** | Only when **Include notebook in AI synthesis and Watson context** (Notebook panel) is on. |
 
-When the case is too large for the model, Watson reads a prioritised part of it, and its answer says from how many of the in-scope events it was built. The super-timeline is never read.
+When the case is too large for the model, Watson reads a prioritised part of it, and its answer says from how many of the in-scope events it was built. The case packet never includes the super-timeline; Watson searches it only when you ask (see Searching the super-timeline).
 
 When an event Watson needs is not in that part (an event a finding cites, a time span, a host or a word), Watson looks it up in the forensic timeline before it answers. It reads at most 200 in-scope events per lookup and one lookup per message, and a lookup counts toward the Watson cost and token limits like any other call. The answer card says so: **Watson looked up 12 forensic-timeline events (on host WS-01)**. A lookup never reads the super-timeline: an event that is only there stays invisible to Watson until you promote it.
 
@@ -123,7 +123,7 @@ The forensic timeline holds the events that were graded Low or higher. The super
 
 When Watson cites a raw row, the row is promoted into the forensic timeline before the answer is saved. It shows the **Watson** badge and has an **Undo**. Rows that Watson saw but did not cite stay in the super-timeline. Nothing is promoted from a Watson reaction to an import.
 
-If a round cannot write to the case (the case is frozen, AI is off, or the promotion fails), nothing is promoted. Watson drops each item that depended on the row and says so in the answer. Watson also drops any text that mentions a raw row that was not promoted.
+If a round cannot write to the case (the case is frozen or AI is off), nothing is promoted. Watson drops each item that depended on the row and says so in the answer. If a promotion fails, Watson also drops those items. If some rows had already landed, the card offers **Apply** to finish and **Undo**. Watson also drops any text that mentions a raw row that was not promoted.
 
 Undo of a promotion is refused while a finding, next step or report text that Watson applied still depends on that row. Undo that item first.
 

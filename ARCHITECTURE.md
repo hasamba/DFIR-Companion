@@ -336,10 +336,10 @@ position 117 of 265 where chance is 132. A relevance floor kept 17 rows and drop
 findings used. The model does separate one question from another; that is not the same as knowing
 which rows will matter, and only the first was true when the work was proposed.
 
-### `viewSummary` is one of two exceptions
+### `viewSummary` is one of several exceptions
 
-It is one of two exceptions that let a model read the raw record. The other is Watson's super-timeline
-search (below). The S3 precursor promotion (#2563,
+It is one of several exceptions that let a model read the raw record. The others are below, including
+Watson's super-timeline search. The S3 precursor promotion (#2563,
 above) is the one automatic read, and it promotes before any model sees a row.
 
 It summarizes whatever the analyst has filtered the raw view down to, which can be thousands of
@@ -357,21 +357,23 @@ So it reads the raw record directly, under three constraints that keep it safe:
 The old 10,000 was more than a model summarizes usefully and more than an analyst can check, which
 made the single exception the widest path into the raw record in the codebase.
 
-### Watson's super-timeline search is the second exception that lets a model read the raw record
+### Watson's super-timeline search is a documented exception that lets a model read the raw record
 
 Watson answers an analyst's question by searching the raw record when the forensic timeline has no
-answer. It is the second documented exception, and it keeps four clauses. Tests in
+answer. It is a documented exception, and it keeps four clauses. Tests in
 `tests/analysis/forensicBoundary.test.ts` pin each one.
 
 1. **Targeted and bounded.** One lookup per round the analyst started. It must name text (3 or more
    characters), a hash, a host or a time window (7 days or less), alone or together; a search with
    none of these is refused. At most 100 rows (`WATSON_SUPER_MAX_ROWS`) and 20,000 characters reach the
-   model, from at most 5,000 candidate rows (`WATSON_SUPER_SCAN_ROWS`). Only `superTimelineSearch.ts`
+   model, from at most 5,000 candidate rows for each store query (`WATSON_SUPER_SCAN_ROWS`; a host with aliases runs up to 5 queries, so up to 25,000 candidates). Only `superTimelineSearch.ts`
    may read the store, and only through `query` and `meta`. Pinned by "only superTimelineSearch.ts
-   reads the store" and "a search with no narrowing field is refused, and the store read is bounded".
+   reads the store", "a search with no narrowing field is refused, and the bound constants are fixed" (constants
+   only) and "the store is queried with the 5,000-row candidate bound".
 2. **A cited row is promoted first.** Every row Watson cites is promoted into the forensic timeline
    before the turn is saved: intent `watson`, provenance `[watson]`, one undoable record. Where a round
-   may not write (frozen case, AI off, a failed promotion), each item that uses the row is dropped.
+   may not write (frozen case, AI off) or a promotion fails, each item that uses the row is dropped; if
+   rows had already landed, the card offers Apply to finish and Undo.
    Text that mentions a raw row that did not land is dropped. Undo is refused while an applied item
    depends on the promoted row. Pinned by "a cited raw row is promoted before the turn is saved" and
    "a cited id the search never showed is dropped, never fetched".
@@ -386,11 +388,11 @@ Three decisions sit under these clauses.
 - **Info rows (D5).** A promoted Info row keeps its Info grade, as `explainEvent` does. It is stamped as
   promoted, so a later demote keeps it.
 - **The door rule (D6).** Only the analyst opens the door. Watson's own reaction rounds (after an
-  import, a note or a star) never search the super-timeline; they get a short note that says why.
+  import, a note or a star) never search the super-timeline; they get a short note that says why. Pinned by "a reaction round never searches the super-timeline".
 - **The cap note (D7).** The super-timeline has a size cap and drops old rows. When it has dropped
   rows, the prompt and the card say that the search may have missed some.
 
-A masking roster covers names that exist only in raw rows, so the anonymizer hides them as well.
+A masking roster lets the anonymizer mask the host, user and IP names it recognises in the shown rows. It is heuristic: a name it is unsure of is left out of the roster.
 
 ### The remediation check is the second, narrower exception (#969)
 
