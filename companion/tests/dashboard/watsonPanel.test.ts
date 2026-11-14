@@ -191,6 +191,33 @@ describe("renderWatson escaping", () => {
     expect(log.innerHTML).toContain("kql");
   });
 
+  it("renders a velociraptor request as escaped VQL in a pre with a Copy button", () => {
+    const { api, log } = setup();
+    api.renderWatson(
+      chatWith([
+        {
+          id: "t3",
+          at: "x",
+          role: "watson",
+          text: "n",
+          request: {
+            kind: "velociraptor",
+            mode: "collection",
+            hostname: "<b>h</b>",
+            title: "<i>t</i>",
+            vql: "SELECT * FROM execve(argv=['<script>'])",
+            why: "<u>w</u>",
+          },
+        },
+      ]),
+    );
+    expect(log.innerHTML).not.toContain("<script>");
+    expect(log.innerHTML).not.toContain("<b>h</b>");
+    expect(log.innerHTML).toContain("<pre");
+    expect(log.innerHTML).toContain('data-w-verb="copy"');
+    expect(log.innerHTML).toContain("&lt;script&gt;");
+  });
+
   it("shows the board with the synthesis-disagrees line and no detail when the answer is empty", () => {
     const { api, board } = setup();
     api.renderWatson(chatWith([]));

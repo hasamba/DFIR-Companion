@@ -30,6 +30,9 @@ const MAX_TERM_CHARS = 200;
 const MAX_MEMORY_CHARS = 4000;
 const MAX_QUERY_CHARS = 20000;
 const MAX_ANSWER_EVENTS = 20;
+// Kept whole well past MAX_VQL_BYTES so checkLaunch sees the real size and refuses it: never cut a query
+// into a proposal. Beyond this bound the cut text is still over the size cap, so it is refused too.
+const MAX_VELO_VQL_CHARS = MAX_VQL_BYTES * 4;
 const MAX_VELO_TITLE = 200;
 const MAX_VELO_WHY = 1000;
 const MAX_VELO_HOST = 255;
@@ -111,7 +114,7 @@ function sanitizeRequest(req: WatsonRequest | null, veloConnected: boolean): Wat
       mode: req.mode,
       ...(host ? { hostname: host } : {}),
       title: req.title.slice(0, MAX_VELO_TITLE),
-      vql: req.vql.slice(0, MAX_VQL_BYTES),
+      vql: req.vql.slice(0, MAX_VELO_VQL_CHARS),
       why,
     };
   }

@@ -2,7 +2,7 @@ import type { InvestigationState } from "../../stateTypes.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_HISTORY_ID, WATSON_HISTORY_NAME } from "./historyStore.js";
 import type { WatsonChat, WatsonTurn } from "./types.js";
-import { veloRulesText, WATSON_VELO_HOSTS_MAX } from "./velo/veloPrompt.js";
+import { shownVeloHosts, veloRulesText } from "./velo/veloPrompt.js";
 
 // Pure builder for Watson's per-round user prompt. Every block is bounded. Every untrusted body
 // (case context, memory, chat, paste, analyst text) sits inside a fence the text cannot forge, and
@@ -114,13 +114,13 @@ function pastesBlock(chat: WatsonChat, historyTurns: number): string {
 
 /** The VELOCIRAPTOR block: the rules, and up to 50 enrolled hosts one per line (names are untrusted). */
 function veloBlock(velo: NonNullable<WatsonPromptInput["velo"]>): string {
-  const hosts = velo.hosts.slice(0, WATSON_VELO_HOSTS_MAX).map((h) => {
+  const hosts = shownVeloHosts(velo.hosts).map((h) => {
     const fq =
       h.fqdn && h.fqdn.toLowerCase() !== h.hostname.toLowerCase() ? ` (${line(h.fqdn, ID_CHARS)})` : "";
     return `- ${line(h.hostname, ID_CHARS)}${fq}`;
   });
   const cut = velo.hostCount - hosts.length;
-  const count = `The case's Velociraptor has ${Number(velo.hostCount) || 0} enrolled hosts${cut > 0 ? ` (first ${hosts.length} listed)` : ""}:`;
+  const count = `The case's Velociraptor has ${Number(velo.hostCount) || 0} enrolled hosts${cut > 0 ? ` (${cut} more not listed)` : ""}:`;
   return `VELOCIRAPTOR\n${veloRulesText()}\n${count}\n${hosts.join("\n") || "(none)"}`;
 }
 

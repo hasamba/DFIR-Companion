@@ -21,6 +21,7 @@ export interface VeloLaunchSeams extends VeloFleetSeams {
 }
 
 const NOTE_MAX = 600;
+const TITLE_MAX = 200;
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
 const wanted = (r: VeloRequest): string => `Watson wanted to run a ${r.mode} but`;
@@ -76,7 +77,7 @@ export async function withVeloLaunch(
       targetId: fingerprints[0],
       mode: result.mode,
       ...(result.clientHost ? { hostname: result.clientHost } : {}),
-      title: r.title,
+      title: oneLine(r.title).slice(0, TITLE_MAX),
       vql: r.vql,
       fingerprint: result.fingerprint,
       fingerprints,

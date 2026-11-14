@@ -26,7 +26,9 @@
       const where = r.mode === "hunt" ? "fleet hunt" : `collection on ${r.hostname || "a host"}`;
       return (
         `<div class="watson-req"><div class="watson-lbl">Velociraptor ${esc(where)}: ${esc(r.title)}</div>` +
-        `<pre class="watson-pre">${esc(r.vql)}</pre><div class="watson-why">${esc(r.why)}</div></div>`
+        `<pre class="watson-pre">${esc(r.vql)}</pre>` +
+        `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="copy">Copy</button>` +
+        `<div class="watson-why">${esc(r.why)}</div></div>`
       );
     }
     return (

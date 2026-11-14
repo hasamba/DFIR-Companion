@@ -28,3 +28,18 @@ export function veloRulesText(): string {
     "- wmi() takes one literal SELECT query on these classes only: " + WMI_CLASSES.join(", ") + ".",
   ].join("\n");
 }
+
+/** Longest host name the prompt prints; a longer one is left out whole, never shown as a prefix. */
+export const WATSON_VELO_HOST_CHARS = 120;
+
+export interface WatsonVeloHost {
+  hostname: string;
+  fqdn: string;
+}
+
+/** The hosts the block lists: at most 50, none with a name the prompt would cut. Masking uses the same list. */
+export function shownVeloHosts(hosts: readonly WatsonVeloHost[]): WatsonVeloHost[] {
+  return hosts
+    .filter((h) => h.hostname.length <= WATSON_VELO_HOST_CHARS && h.fqdn.length <= WATSON_VELO_HOST_CHARS)
+    .slice(0, WATSON_VELO_HOSTS_MAX);
+}

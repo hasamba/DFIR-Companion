@@ -7,6 +7,14 @@ import { questionStatusSchema } from "../../responseSchema.js";
 const requestSchema = z.union([
   z.object({ kind: z.literal("query"), language: z.string(), query: z.string(), why: z.string() }),
   z.object({ kind: z.literal("import"), what: z.string(), why: z.string() }),
+  z.object({
+    kind: z.literal("velociraptor"),
+    mode: z.enum(["hunt", "collection"]).catch("collection"),
+    hostname: z.string().optional().catch(undefined),
+    title: z.string().catch(""),
+    vql: z.string().catch(""),
+    why: z.string().catch(""),
+  }),
 ]);
 
 const answerSchema = z.object({

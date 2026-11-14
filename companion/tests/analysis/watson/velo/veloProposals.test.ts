@@ -225,6 +225,50 @@ describe("Watson velo_launch proposals", () => {
     expect(sent.toLowerCase()).not.toContain("wks-alpha");
   });
 
+  it("a velociraptor turn survives reload, in the chat and the history, and its proposal's turn resolves", async () => {
+    const h = await harness([reply({ request: veloReq() })]);
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "go" });
+    const p = chat.proposals[0];
+    const loaded = await h.chatStore.load(CASE);
+    expect(loaded.turns.find((t) => t.id === p.turnId)?.request).toMatchObject({ kind: "velociraptor" });
+    expect(loaded.proposals).toHaveLength(1);
+    const hist = await h.chatStore.history.text(CASE);
+    expect(hist.text).toContain(p.turnId);
+  });
+
+  it("a blocked velociraptor turn also survives reload", async () => {
+    const h = await harness([reply({ request: veloReq({ vql: "SELECT * FROM execve(argv=['x'])" }) })]);
+    await runWatsonRound(h.ctx, CASE, { text: "go" });
+    const loaded = await h.chatStore.load(CASE);
+    expect(loaded.turns.at(-1)).toMatchObject({ role: "watson", request: { kind: "velociraptor" } });
+    expect(loaded.turns.at(-1)?.text).toContain("execve");
+  });
+
+  it("refuses oversized VQL with a size note and never proposes a cut query", async () => {
+    const big = `SELECT * FROM pslist() WHERE Name = '${"a".repeat(100_001)}'`;
+    const h = await harness([reply({ request: veloReq({ vql: big }) })]);
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "go" });
+    expect(chat.proposals).toHaveLength(0);
+    expect(chat.turns.at(-1)?.text).toContain("too long");
+  });
+
+  it("leaves a host name longer than the prompt clip out of the list and counts it", async () => {
+    const long = `${"h".repeat(150)}`;
+    const h = await harness([reply()], {
+      fleet: [...FLEET, { clientId: "C.long", hostname: long, fqdn: "" }],
+    });
+    await runWatsonRound(h.ctx, CASE, { text: "hi" });
+    const prompt = h.provider.sent[0].userPrompt;
+    expect(prompt).not.toContain("h".repeat(60));
+    expect(prompt).toContain("1 more not listed");
+  });
+
+  it("flattens the proposal title to one line", async () => {
+    const h = await harness([reply({ request: veloReq({ title: "a\n\n  b\tc" }) })]);
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "go" });
+    expect((chat.proposals[0] as WatsonVeloLaunchProposal).title).toBe("a b c");
+  });
+
   it("a stored velo_launch proposal survives the lenient schema", () => {
     const p = {
       id: "wp-1",
