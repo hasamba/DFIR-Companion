@@ -25,6 +25,7 @@ import { WATSON_MARKER } from "../../src/analysis/timeline/watsonItems.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { createWatsonCaseEvents } from "../../src/composition/watsonCaseEvents.js";
 import { createApp } from "../../src/server.js";
+import { readWatsonFlowRows } from "../../src/composition/watsonVeloResultsWiring.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 
 // Spec §14: a paste in a known format is parsed and graded, but the content tagger's promotions are
@@ -159,6 +160,49 @@ async function paste(app: Express.Application, text: string, filename: string) {
 }
 
 describe("Watson paste ingest", () => {
+  it("reads a Watson collection's rows (as readWatsonFlowRows writes them) with the Velociraptor importer", async () => {
+    const h = await harness();
+    const client = {
+      getFlowInfo: async () => ({
+        artifacts: ["Custom.Collect.Companion.process_listing/Pivot0"],
+        hostname: "",
+      }),
+      collectionResults: async () => ({
+        rows: [
+          {
+            Pid: 4242,
+            Name: "rundll32.exe",
+            CommandLine: "rundll32.exe comsvcs.dll MiniDump 612 out.dmp full",
+          },
+          { Pid: 612, Name: "lsass.exe", CommandLine: "C:\\Windows\\system32\\lsass.exe" },
+        ],
+        total: 2,
+        truncated: false,
+      }),
+    };
+    const proposal = {
+      id: "wp-coll",
+      turnId: "t1",
+      kind: "velo_launch" as const,
+      status: "applied" as const,
+      targetId: "fp1",
+      mode: "collection" as const,
+      hostname: "web01.example.com",
+      title: "Process listing",
+      vql: "SELECT * FROM pslist()",
+      fingerprint: "fp1",
+      fingerprints: ["fp1"],
+      launched: { flowId: "F.SAMPLE", clientId: "C.webserver1", at: "2026-11-14T10:00:00Z", by: "Dana" },
+    };
+    const rows = await readWatsonFlowRows(client, proposal);
+    const res = await paste(h.app as never, rows.text, "velo-flow_F.SAMPLE.json");
+    expect(res.status).toBe(200);
+    const parsed = (await h.chatStore.load(CASE)).pastes[0].parsed;
+    expect(parsed).toMatchObject({ kind: "velociraptor" });
+    expect(parsed && "rows" in parsed ? parsed.rows : 0).toBeGreaterThan(0);
+    expect(h.synthesize).not.toHaveBeenCalled();
+  });
+
   it("parses a known format, holds the tagger's promotion as a proposal, and applies/undoes it", async () => {
     const h = await harness();
     const res = await paste(h.app as never, SIEM, "events.json");

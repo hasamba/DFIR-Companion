@@ -341,24 +341,69 @@ describe("a Watson single-host collection", () => {
 
   it("a crash after the ingest but before the event notifies once and never ingests again", async () => {
     await seed(collection());
-    const crashed = harness(
-      {
-        fillOutcome: async () => {
-          throw new Error("server stopped");
-        },
-      },
-      ["FINISHED"],
-    );
+    // The server dies on the save that would carry the event (after the result was saved).
+    const dying = {
+      load: (id: string) => chatStore.load(id),
+      update: (id: string, fn: (c: WatsonChat) => WatsonChat | Promise<WatsonChat>) =>
+        chatStore.update(id, async (c) => {
+          const next = await fn(c);
+          if (next.pendingCaseEvents.some((e) => e.kind === "hunt")) throw new Error("server stopped");
+          return next;
+        }),
+    };
+    const crashed = harness({ chatStore: dying }, ["FINISHED"]);
     crashed.watcher.watch(CASE, "wp-coll");
-    await crashed.t.runAll(crashed.watcher);
+    await crashed.t.runOne(crashed.watcher);
+    crashed.watcher.stop();
     expect(crashed.ingests).toBe(1);
     expect(await huntEvents()).toEqual([]);
+    expect((await stored("wp-coll")).watch).toMatchObject({ state: "finished", ingested: true, rows: 3 });
     const after = harness();
     await after.watcher.resume(CASE);
     await after.watcher.resume(CASE);
     expect(after.ingests).toBe(0);
-    expect(after.fills).toEqual([{ flowId: "F.SAMPLE", resultRows: 3 }]);
     expect(await huntEvents()).toHaveLength(1);
+  });
+
+  it("a failing step polls again instead of dropping the watch", async () => {
+    await seed(collection());
+    let frozenReads = 0;
+    const h = harness(
+      {
+        isFrozen: async () => {
+          if (++frozenReads === 1) throw new Error("EIO: read failed");
+          return false;
+        },
+      },
+      ["FINISHED", "FINISHED"],
+    );
+    h.watcher.watch(CASE, "wp-coll");
+    await h.t.runOne(h.watcher);
+    expect(h.t.queue).toHaveLength(1); // re-armed
+    await h.t.runAll(h.watcher);
+    expect(h.ingests).toBe(1);
+    expect(await huntEvents()).toHaveLength(1);
+  });
+
+  it("an outcome fill failure never holds the event back", async () => {
+    await seed(collection());
+    const h = harness({ fillOutcome: async () => Promise.reject(new Error("disk full")) }, ["FINISHED"]);
+    h.watcher.watch(CASE, "wp-coll");
+    await h.t.runAll(h.watcher);
+    expect(await huntEvents()).toHaveLength(1);
+  });
+
+  it("rows Velociraptor counted but the read did not return are a failure, not 'found nothing'", async () => {
+    await seed(collection());
+    const h = harness({
+      velo: () => ({ flowStatus: async () => ({ state: "FINISHED", error: "", rows: 7 }) }),
+      readRows: async () => ({ text: "{}", rows: 0 }),
+    });
+    h.watcher.watch(CASE, "wp-coll");
+    await h.t.runAll(h.watcher);
+    expect((await huntEvents()).map((e) => e.text)).toEqual([
+      "Watson's hunt Process listing failed: 7 rows were collected but none could be read",
+    ]);
   });
 
   it("a claim with no saved result is reported failed once, never re-read", async () => {

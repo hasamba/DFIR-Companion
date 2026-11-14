@@ -82,7 +82,13 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
     const set = this.deps.setTimer ?? setTimeout;
     const timer = set(() => {
       this.timers.delete(key);
-      this.track(this.tick(caseId, proposalId));
+      // A tick that throws (a store error) polls again: the deadline and the guards bound it.
+      this.track(
+        this.tick(caseId, proposalId).catch((err: unknown) => {
+          this.deps.log?.(`[watson] ${caseId}: result watch failed, retrying: ${msg(err)}`);
+          this.watch(caseId, proposalId);
+        }),
+      );
     }, this.deps.pollMs ?? WATSON_WATCH_POLL_MS);
     timer.unref?.();
     this.timers.set(key, timer);
@@ -129,7 +135,7 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
     const { flowId = "", clientId = "" } = p.launched ?? {};
     const client = this.deps.velo(caseId);
     if (!client) return this.end(caseId, p.id, "failed", "the case no longer has a Velociraptor server");
-    let status: { state: string; error: string };
+    let status: { state: string; error: string; rows: number };
     try {
       status = await client.flowStatus(clientId, flowId);
     } catch (err) {
@@ -139,11 +145,11 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
     const state = status.state.toUpperCase();
     if (state === "ERROR") return this.end(caseId, p.id, "failed", status.error || "the collection failed");
     if (state !== "FINISHED") return this.watch(caseId, p.id);
-    await this.collect(caseId, p.id);
+    await this.collect(caseId, p.id, status.rows);
   }
 
   /** Claim the ingest, read and ingest the rows, record the result; then fill and notify. */
-  private async collect(caseId: string, id: string): Promise<void> {
+  private async collect(caseId: string, id: string, reported: number): Promise<void> {
     if (await this.deps.isFrozen(caseId)) return this.end(caseId, id, "failed", "the case is closed");
     let claimed: WatsonVeloLaunchProposal | undefined;
     await this.deps.chatStore.update(caseId, (c) => {
@@ -156,6 +162,9 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
     let result: { rows: number; added: number; ingested?: WatsonIngested };
     try {
       const rows = await this.deps.readRows(caseId, claimed);
+      // Velociraptor counted rows the read did not return: never call that "found nothing".
+      if (rows.rows === 0 && reported > 0)
+        throw new Error(`${reported} rows were collected but none could be read`);
       if (rows.rows === 0) result = { rows: 0, added: 0 };
       else {
         const ingested = await this.deps.ingest(caseId, claimed, rows);
@@ -177,21 +186,27 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
     if (p) await this.notify(caseId, p);
   }
 
+  /** The outcome fill is best effort (as in the fleet collect): a failure never holds the event back. */
+  private async fill(caseId: string, ref: { flowId: string; clientId: string }, rows: number, added: number) {
+    try {
+      const at = new Date().toISOString();
+      await this.deps.fillOutcome(caseId, ref, {
+        resultRows: rows,
+        addedEvents: added,
+        addedIocs: 0,
+        collectedAt: at,
+      });
+    } catch (err) {
+      this.deps.log?.(`[watson] ${caseId}: hunt outcome fill failed for flow ${ref.flowId}: ${msg(err)}`);
+    }
+  }
+
   /** Fill the outcome (idempotent), then save the `hunt` event with `notified`, once. */
   private async notify(caseId: string, p: WatsonVeloLaunchProposal): Promise<void> {
     const { flowId, clientId } = p.launched ?? {};
     const fresh = findApplied(await this.deps.chatStore.load(caseId), p.id);
     if (fresh?.watch?.state === "finished" && flowId && clientId) {
-      await this.deps.fillOutcome(
-        caseId,
-        { flowId, clientId },
-        {
-          resultRows: fresh.watch.rows ?? 0,
-          addedEvents: fresh.watch.added ?? 0,
-          addedIocs: 0,
-          collectedAt: new Date().toISOString(),
-        },
-      );
+      await this.fill(caseId, { flowId, clientId }, fresh.watch.rows ?? 0, fresh.watch.added ?? 0);
     }
     let sent = false;
     await this.deps.chatStore.update(caseId, (c) => {
