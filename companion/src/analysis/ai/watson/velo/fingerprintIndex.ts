@@ -1,8 +1,9 @@
-import { deployedFingerprints, vqlFingerprint, type HuntDeployInput } from "../../../huntOutcomes.js";
+import { deployedFingerprints, type HuntDeployInput } from "../../../huntOutcomes.js";
 import type { HuntOutcomeStore } from "../../../huntOutcomeStore.js";
 import type { HuntFingerprintStore } from "./huntFingerprintStore.js";
 export { HuntFingerprintStore } from "./huntFingerprintStore.js";
-import { canonicalVqlFingerprint } from "./vqlAllowed.js";
+import { launchFingerprints } from "./launchFingerprint.js";
+export { launchFingerprints };
 
 // Wires the durable fingerprint index (huntFingerprintStore.ts) into every hunt deploy, Watson's or
 // not: server.ts wraps ctx.recordHuntDeploy with withFingerprintIndex, so all four deploy routes
@@ -10,13 +11,9 @@ import { canonicalVqlFingerprint } from "./vqlAllowed.js";
 
 type RecordDeploy = (caseId: string, input: HuntDeployInput) => Promise<void>;
 
-/** Both fingerprints a launch is remembered by: the ledger's own and the comment-blind canonical one. */
-export function launchFingerprints(vql: string | undefined): string[] {
-  if (!vql) return [];
-  return [vqlFingerprint(vql), canonicalVqlFingerprint(vql)].filter(Boolean);
-}
-
-/** Wrap recordHuntDeploy so each deploy is first added to the durable index. Index errors are logged, never thrown. */
+/** Wrap recordHuntDeploy so each deploy is first added to the durable index. Index errors are logged, never thrown.
+ * A fleet deploy is keyed by its VQL alone; an add is idempotent, so a launch reserved beforehand
+ * (HuntFingerprintStore.reserve) is unaffected. */
 export function withFingerprintIndex(
   inner: RecordDeploy,
   index: Pick<HuntFingerprintStore, "add">,

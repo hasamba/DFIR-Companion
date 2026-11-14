@@ -14,7 +14,7 @@ export const ALLOWED_CALLS: readonly string[] = [
   "netstat",
   "users",
   "info",
-  "wmi", // WQL SELECT only; the namespace argument must be a local root namespace (vqlAllowed.ts)
+  "wmi", // one literal WQL SELECT from a class on WMI_CLASSES; no namespace argument (vqlArgs.ts)
   // file system reads (an accessor argument must be a literal from ALLOWED_ACCESSORS)
   "glob",
   "stat",
@@ -61,16 +61,12 @@ export const ALLOWED_ARTIFACTS: readonly string[] = [
   "Linux.Sys.Pslist",
 ];
 
-/** Local accessors an `accessor=` argument may name. Network accessors (smb, s3, …) are refused. */
-export const ALLOWED_ACCESSORS: readonly string[] = [
-  "auto",
-  "file",
-  "ntfs",
-  "reg",
-  "registry",
-  "raw_reg",
-  "data",
-];
+/**
+ * Local accessors an `accessor=` argument may name. Network accessors (smb, s3, …) are refused, and
+ * so is raw_reg: it takes a JSON "delegate" pathspec that can chain to any other accessor, smb
+ * included. String literals that name a delegate or open a JSON object are refused too.
+ */
+export const ALLOWED_ACCESSORS: readonly string[] = ["auto", "file", "ntfs", "reg", "registry", "data"];
 
 /** VQL keywords that may be followed by `(` without being a call. */
 export const VQL_KEYWORDS: readonly string[] = [
@@ -146,3 +142,56 @@ export const DENIED_NAMES: readonly string[] = [
 
 /** Argument names refused on any call: uploads, dumps, and lambdas (strings evaluated as VQL). */
 export const BLOCKED_ARG = /upload|dump|lambda|^func$/i;
+
+/** WMI classes a `wmi(query=…)` may select from: read-only inventory, no side-effecting classes (Win32_PingStatus…). */
+export const WMI_CLASSES: readonly string[] = [
+  "Win32_Process",
+  "Win32_Service",
+  "Win32_StartupCommand",
+  "Win32_LogicalDisk",
+  "Win32_OperatingSystem",
+  "Win32_ComputerSystem",
+  "Win32_UserAccount",
+  "Win32_NetworkAdapterConfiguration",
+  "Win32_QuickFixEngineering",
+  "Win32_ScheduledJob",
+  "Win32_Product",
+];
+
+/** File-reading calls whose path arguments must be plain string literals (no runtime-built paths). */
+export const FILE_READ_CALLS: readonly string[] = [
+  "glob",
+  "stat",
+  "read_file",
+  "hash",
+  "yara",
+  "authenticode",
+  "parse_pe",
+  "parse_csv",
+  "parse_xml",
+  "parse_evtx",
+  "parse_lines",
+  "split_records",
+];
+
+/** Path-carrying argument names on FILE_READ_CALLS (`rules` only for yara). */
+export const PATH_ARGS: readonly string[] = [
+  "globs",
+  "glob",
+  "filename",
+  "filenames",
+  "file",
+  "path",
+  "paths",
+  "files",
+  "root",
+];
+
+/** Arguments a call may compile as a query: a string value is refused (only `{…}` or a LET name). */
+export const QUERY_ARGS: readonly string[] = ["then", "else", "query", "items", "row"];
+
+/** LET names that would set a Velociraptor config or credential variable. */
+export function isCredentialName(name: string): boolean {
+  if (/_CREDENTIALS$|_CONFIG$|^SSH_/i.test(name)) return true;
+  return name === name.toUpperCase() && /CRED|KEY|TOKEN|PASS|SECRET/.test(name);
+}

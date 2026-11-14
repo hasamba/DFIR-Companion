@@ -24,7 +24,7 @@ describe("vqlAllowed — plain read-only VQL", () => {
 
   it("allows nested read-only functions and plugins", () => {
     allowed(
-      "SELECT FullPath, hash(path=FullPath) AS Hash, format(format='%v', args=[Size]) FROM glob(globs='C:\\\\Users\\\\*\\\\Downloads\\\\*.exe')",
+      "SELECT FullPath, lowcase(string=FullPath) AS Lower, format(format='%v', args=[Size]) FROM glob(globs='C:\\\\Users\\\\*\\\\Downloads\\\\*.exe')",
     );
   });
 
@@ -36,7 +36,7 @@ describe("vqlAllowed — plain read-only VQL", () => {
   it("allows calling a capitalised LET stored query, with and without parameters", () => {
     allowed("LET Procs = SELECT * FROM pslist()\nSELECT * FROM Procs");
     allowed("LET Procs <= SELECT * FROM pslist()\nSELECT * FROM Procs()");
-    allowed("LET HashOf(P) = SELECT * FROM hash(path=P)\nSELECT * FROM HashOf(P='C:\\\\x.exe')");
+    allowed("LET ProcOf(P) = SELECT * FROM pslist(pid=P)\nSELECT * FROM ProcOf(P=4)");
   });
 
   it("allows an identifier that merely contains a blocked name", () => {
@@ -63,8 +63,8 @@ describe("vqlAllowed — plain read-only VQL", () => {
     allowed('SELECT * FROM stat(filename="C:\\\\x", accessor="file")');
   });
 
-  it("allows a WMI query on a root namespace", () => {
-    allowed("SELECT * FROM wmi(query='SELECT * FROM Win32_Service', namespace='ROOT\\\\CIMV2')");
+  it("allows a WMI query on a reviewed class (no namespace argument)", () => {
+    allowed("SELECT * FROM wmi(query='SELECT * FROM Win32_Service')");
   });
 });
 

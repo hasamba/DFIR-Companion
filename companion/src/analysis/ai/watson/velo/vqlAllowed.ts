@@ -1,14 +1,15 @@
 import { vqlFingerprint } from "../../../huntOutcomes.js";
 import { tokenizeVql, type VqlToken } from "./vqlTokens.js";
 import {
-  ALLOWED_ACCESSORS,
   ALLOWED_ARTIFACTS,
   ALLOWED_CALLS,
-  BLOCKED_ARG,
   DENIED_NAMES,
   DYNAMIC_CALLS,
   VQL_KEYWORDS,
+  isCredentialName,
 } from "./vqlAllowlist.js";
+import { checkCallArgs, checkStrings } from "./vqlArgs.js";
+import { has, isPunct, isWord, lc, type LetDef } from "./vqlHelpers.js";
 
 // Watson's launch gate for VQL (phase 3, decision P2): VQL is launched only when every call in it
 // is on a reviewed read-only allowlist. Parsed, not pattern-matched — see vqlTokens.ts. Anything the
@@ -16,22 +17,10 @@ import {
 
 export type VqlAllowed = { ok: true } | { ok: false; reasons: string[] };
 
-const lc = (s: string): string => s.toLowerCase();
-const has = (list: readonly string[], name: string): boolean => list.some((x) => lc(x) === lc(name));
-const isPunct = (t: VqlToken | undefined, text: string): boolean => t?.kind === "punct" && t.text === text;
-const isWord = (t: VqlToken | undefined, word: string): boolean => t?.kind === "ident" && lc(t.text) === word;
-
-/** A WMI namespace on this machine: `root` or `root\<name>…`, one or two backslashes or `/`. */
-const LOCAL_NAMESPACE = /^root(?:(?:\\{1,2}|\/)[a-z0-9_]+)*$/i;
-
 interface NameUnit {
   segments: string[];
   first: number; // token index of the first segment
   last: number; // token index of the last segment
-}
-
-interface LetDef {
-  callable: boolean;
 }
 
 /** `a.b.c` with no whitespace or comment around the dots, starting at token `i`. */
@@ -82,7 +71,11 @@ function collectLets(
       reasons.add(`LET ${nameTok.text} is malformed`);
       continue;
     }
-    if (has(DENIED_NAMES, nameTok.text)) reasons.add(`LET ${nameTok.text} reuses the name of a built-in`);
+    if (has(DENIED_NAMES, nameTok.text) || has(ALLOWED_CALLS, nameTok.text)) {
+      reasons.add(`LET ${nameTok.text} reuses the name of a built-in`);
+    }
+    if (isCredentialName(nameTok.text))
+      reasons.add(`LET ${nameTok.text} would set a config or credential variable`);
     defSites.add(i + 1);
     lets.set(nameTok.text, { callable: hasParams || isWord(toks[k + 1], "select") });
   }
@@ -157,34 +150,6 @@ function checkCallTargets(toks: readonly VqlToken[], reasons: Set<string>): void
   }
 }
 
-function literalArg(toks: readonly VqlToken[], k: number, accept: (v: string) => boolean): boolean {
-  const v = toks[k + 2];
-  const after = toks[k + 3];
-  return v?.kind === "string" && accept(v.value ?? "") && (isPunct(after, ",") || isPunct(after, ")"));
-}
-
-/** Named arguments: `name=` right after `(` or `,`. */
-function checkArgs(toks: readonly VqlToken[], reasons: Set<string>): void {
-  for (let k = 1; k < toks.length; k++) {
-    const t = toks[k];
-    if (t.kind !== "ident" || !isPunct(toks[k + 1], "=")) continue;
-    if (!(isPunct(toks[k - 1], "(") || isPunct(toks[k - 1], ","))) continue;
-    if (BLOCKED_ARG.test(t.text)) reasons.add(`argument ${t.text} is refused (uploads, dumps and lambdas)`);
-    if (lc(t.text) === "accessor" && !literalArg(toks, k, (v) => has(ALLOWED_ACCESSORS, v))) {
-      reasons.add(`accessor must be one quoted local accessor (${ALLOWED_ACCESSORS.join(", ")})`);
-    }
-    if (lc(t.text) === "namespace" && !literalArg(toks, k, (v) => LOCAL_NAMESPACE.test(v))) {
-      reasons.add("namespace must be one quoted local root namespace");
-    }
-  }
-}
-
-function checkStrings(toks: readonly VqlToken[], reasons: Set<string>): void {
-  if (toks.some((t) => t.kind === "string" && t.text.includes("=>"))) {
-    reasons.add("a lambda string (=>), which VQL evaluates as code");
-  }
-}
-
 /** Is this VQL safe for Watson to launch? Every call must be on the read-only allowlist. */
 export function vqlAllowed(vql: string): VqlAllowed {
   const tokenized = tokenizeVql(String(vql ?? ""));
@@ -195,7 +160,7 @@ export function vqlAllowed(vql: string): VqlAllowed {
   const lets = collectLets(toks, reasons, defSites);
   checkNames(toks, lets, defSites, reasons);
   checkCallTargets(toks, reasons);
-  checkArgs(toks, reasons);
+  checkCallArgs(toks, lets, defSites, reasons);
   checkStrings(toks, reasons);
   return reasons.size === 0 ? { ok: true } : { ok: false, reasons: [...reasons] };
 }

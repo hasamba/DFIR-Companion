@@ -64,6 +64,38 @@ describe("HuntFingerprintStore", () => {
   });
 });
 
+describe("HuntFingerprintStore.reserve", () => {
+  it("reserves a fingerprint exactly once under 20 concurrent callers", async () => {
+    const results = await Promise.all(Array.from({ length: 20 }, () => index.reserve("c1", "fpsame")));
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect((await index.load("c1")).has("fpsame")).toBe(true);
+  });
+
+  it("refuses a reservation when any of several fingerprints is already there", async () => {
+    await index.add("c1", ["b"]);
+    expect(await index.reserve("c1", ["a", "b"])).toBe(false);
+    expect((await index.load("c1")).has("a")).toBe(false);
+    expect(await index.reserve("c1", ["a", "c"])).toBe(true);
+  });
+
+  it("refuses an empty reservation", async () => {
+    expect(await index.reserve("c1", "")).toBe(false);
+  });
+
+  it("fails closed on a corrupt index", async () => {
+    await writeFile(join(dir, "hunt-fingerprints.json"), "nope");
+    await expect(index.reserve("c1", "x")).rejects.toThrow();
+  });
+
+  it("lets the post-deploy write stay idempotent after a reservation", async () => {
+    const vql = deployInput(4).vql!;
+    expect(await index.reserve("c1", vql)).toBe(true);
+    const record = withFingerprintIndex(innerRecord, index, () => {});
+    await record("c1", deployInput(4));
+    expect((await index.load("c1")).size).toBeGreaterThan(0);
+  });
+});
+
 describe("withFingerprintIndex", () => {
   it("still blocks the first VQL after the 51st distinct launch", async () => {
     const record = withFingerprintIndex(innerRecord, index, () => {});

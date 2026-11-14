@@ -1,6 +1,6 @@
-import { vqlFingerprint } from "../../../huntOutcomes.js";
 import { vqlSizeProblem } from "../../../vqlInput.js";
-import { canonicalVqlFingerprint, vqlAllowed } from "./vqlAllowed.js";
+import { vqlAllowed } from "./vqlAllowed.js";
+import { launchFingerprints } from "./launchFingerprint.js";
 
 // The pure gate every Watson launch passes through (phase 3). Order: shape → size → allowlist →
 // already-ran → host. Any failure refuses; there is no path from a failed check to a launch, and an
@@ -33,7 +33,15 @@ export interface LaunchContext {
 }
 
 export type LaunchCheck =
-  | { ok: true; mode: LaunchMode; clientHost?: string; fingerprint: string }
+  | {
+      ok: true;
+      mode: LaunchMode;
+      clientHost?: string;
+      /** The primary key (launchFingerprint.ts): VQL for a hunt, VQL + host for a collection. */
+      fingerprint: string;
+      /** Every key the launch must reserve before it deploys (HuntFingerprintStore.reserve). */
+      fingerprints: string[];
+    }
   | { ok: false; reason: string; reasons?: string[] };
 
 export const ALREADY_RAN = "this hunt already ran on the case";
@@ -78,14 +86,16 @@ export function checkLaunch(input: LaunchInput, ctx: LaunchContext): LaunchCheck
   const allowed = vqlAllowed(vql);
   if (!allowed.ok)
     return { ok: false, reason: `blocked: ${allowed.reasons.join("; ")}`, reasons: allowed.reasons };
-  const fingerprint = vqlFingerprint(vql);
-  if (ctx.deployed.has(fingerprint) || ctx.deployed.has(canonicalVqlFingerprint(vql)))
-    return refuse(ALREADY_RAN);
+  const fleetKeys = launchFingerprints(vql);
+  // A collection of VQL that already ran fleet-wide is a re-run on that host too.
+  if (fleetKeys.some((f) => ctx.deployed.has(f))) return refuse(ALREADY_RAN);
   if (mode === "hunt") {
     if (typeof hostname === "string" && hostname.trim()) return refuse("a fleet hunt does not take a host");
-    return { ok: true, mode, fingerprint };
+    return { ok: true, mode, fingerprint: fleetKeys[0], fingerprints: fleetKeys };
   }
   const rec = resolveHost(hostname, ctx);
   if ("ok" in rec) return rec;
-  return { ok: true, mode, clientHost: rec.hostname, fingerprint };
+  const hostKeys = launchFingerprints(vql, rec.hostname);
+  if (hostKeys.some((f) => ctx.deployed.has(f))) return refuse(ALREADY_RAN);
+  return { ok: true, mode, clientHost: rec.hostname, fingerprint: hostKeys[0], fingerprints: hostKeys };
 }

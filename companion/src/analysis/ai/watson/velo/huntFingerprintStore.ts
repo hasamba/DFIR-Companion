@@ -42,25 +42,51 @@ export class HuntFingerprintStore {
     return new Set(parsed);
   }
 
-  /** Add fingerprints (empty ones are skipped). Serialised per case file. */
+  /** Run `task` after every earlier write to this case's index has settled. */
+  private serialise<T>(caseId: string, task: () => Promise<T>): Promise<T> {
+    const path = this.path(caseId);
+    const prev = queues.get(path) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(task);
+    const tail = next.then(
+      () => {},
+      () => {},
+    );
+    queues.set(path, tail);
+    void tail.then(() => {
+      if (queues.get(path) === tail) queues.delete(path);
+    });
+    return next;
+  }
+
+  private async write(caseId: string, cur: ReadonlySet<string>, fresh: readonly string[]): Promise<void> {
+    await atomicWrite(this.path(caseId), JSON.stringify([...new Set([...cur, ...fresh])], null, 2));
+  }
+
+  /** Add fingerprints (empty ones are skipped). Idempotent; serialised per case file. */
   add(caseId: string, fingerprints: readonly string[]): Promise<void> {
     const fresh = fingerprints.filter((f) => typeof f === "string" && f.length > 0);
     if (fresh.length === 0) return Promise.resolve();
-    const path = this.path(caseId);
-    const prev = queues.get(path) ?? Promise.resolve();
-    const next = prev
-      .catch(() => {})
-      .then(async () => {
-        const cur = await this.load(caseId);
-        if (fresh.every((f) => cur.has(f))) return;
-        await atomicWrite(path, JSON.stringify([...new Set([...cur, ...fresh])], null, 2));
-      });
-    queues.set(path, next);
-    void next
-      .finally(() => {
-        if (queues.get(path) === next) queues.delete(path);
-      })
-      .catch(() => {});
-    return next;
+    return this.serialise(caseId, async () => {
+      const cur = await this.load(caseId);
+      if (!fresh.every((f) => cur.has(f))) await this.write(caseId, cur, fresh);
+    });
+  }
+
+  /**
+   * Atomic add-if-absent, for a launch to claim its fingerprint(s) BEFORE it deploys. True when none
+   * was present and all are now recorded; false when any already ran (nothing is written) or when
+   * nothing was given. Throws on a corrupt index — the caller must refuse the launch.
+   */
+  reserve(caseId: string, fingerprint: string | readonly string[]): Promise<boolean> {
+    const list = (typeof fingerprint === "string" ? [fingerprint] : [...fingerprint]).filter(
+      (f) => typeof f === "string" && f.length > 0,
+    );
+    if (list.length === 0) return Promise.resolve(false);
+    return this.serialise(caseId, async () => {
+      const cur = await this.load(caseId);
+      if (list.some((f) => cur.has(f))) return false;
+      await this.write(caseId, cur, list);
+      return true;
+    });
   }
 }
