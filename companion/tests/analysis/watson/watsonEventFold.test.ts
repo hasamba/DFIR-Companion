@@ -59,7 +59,7 @@ describe("keepWatsonItems across a correlation fold", () => {
 
   it("keeps the merged evidence when a Watson row is the survivor of the fold", () => {
     const watsonRow = thor("ev-watson-p1-4", marked);
-    const ordinary = velo("m1e1", { provenance: ["velociraptor"], user: "alice" });
+    const ordinary = velo("m1e1", { provenance: ["velociraptor"], mitreTechniques: ["T1105"] });
     const { next, absorbedInto } = run([watsonRow, ordinary]);
     expect(absorbedInto.get(ordinary.id)).toBe(watsonRow.id);
     const survivor = next.forensicTimeline.find((e) => e.id === watsonRow.id);
