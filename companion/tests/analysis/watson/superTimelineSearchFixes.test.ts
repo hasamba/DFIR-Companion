@@ -53,8 +53,10 @@ describe("fix round 1", () => {
   it("I2: a profile name with a space is one entity, plus each word", async () => {
     const r = await rosterFor({ path: "C:\\Users\\John Smith\\AppData\\rclone.exe" });
     expect(r.users).toEqual(expect.arrayContaining(["John Smith", "John", "Smith"]));
-    const r2 = await rosterFor({ commandLine: "cp /home/Mary Ann/x /tmp" });
-    expect(r2.users).toEqual(expect.arrayContaining(["Mary Ann", "Mary", "Ann"]));
+    // Round 2: in free text a spaced name counts only inside a quoted path, and is never split.
+    const r2 = await rosterFor({ commandLine: 'cp "/home/Mary Ann/x" /tmp' });
+    expect(r2.users).toContain("Mary Ann");
+    expect(r2.users).not.toEqual(expect.arrayContaining(["Mary"]));
   });
 
   it("I2: UNC hosts in the path, the command and the description go to the host roster", async () => {
@@ -69,7 +71,7 @@ describe("fix round 1", () => {
   it("I2: accounts named in a command go to the user roster", async () => {
     const r = await rosterFor({
       commandLine:
-        'runas /user:CORP\\eve cmd & net use z: /user:"bob" & ssh -u carol & x --user dave & y --user=erin & mail frank@corp.example & copy FIN\\grace',
+        'runas /user:CORP\\eve cmd & net use z: /user:"bob" & ssh -u carol & smbclient --user dave & curl --user=erin:pw & mail frank@corp.example & copy FIN\\grace',
     });
     expect(r.users).toEqual(
       expect.arrayContaining([
@@ -100,5 +102,67 @@ describe("fix round 1", () => {
     );
     expect(row).not.toMatch(/[\n\r\u0085\u2028\u2029\u000b\u000c\u001c]/);
     expect(row).toContain("cmd=a b c d e f g");
+  });
+});
+
+describe("fix round 2: the roster never takes evidence terms", () => {
+  const rosterFor = async (over: Partial<ForensicEvent>) =>
+    (
+      await searchSuperTimeline(
+        ctx,
+        readerOf([ev({ id: "a", description: "rclone", ...over })]),
+        "c1",
+        stateOf(),
+        sup({ text: "rclone" }),
+      )
+    ).roster;
+  const banned = [
+    "ran",
+    "powershell.exe",
+    "then",
+    "mimikatz",
+    "cmd.exe",
+    "script.py",
+    "file.txt",
+    "svchost",
+    "x",
+    "Microsoft",
+  ];
+
+  it("a free-text user folder takes no phrase after it", async () => {
+    const r = await rosterFor({
+      description: "rclone file C:\\Users\\alice ran powershell.exe then mimikatz then /tmp",
+    });
+    expect(r.users.filter((u) => banned.includes(u) || u.includes(" "))).toEqual([]);
+    const c = await rosterFor({ commandLine: "C:\\Users\\bob cmd.exe /c whoami" });
+    expect(c.users.filter((u) => banned.includes(u) || u.includes(" "))).toEqual([]);
+  });
+
+  it("-u on a program that takes no account adds nothing", async () => {
+    for (const commandLine of ["python -u script.py", "sort -u file.txt", "grep -u svchost"]) {
+      expect((await rosterFor({ commandLine })).users).toEqual([]);
+    }
+  });
+
+  it("a folder or a lower-case word before a backslash is not a domain", async () => {
+    expect((await rosterFor({ commandLine: "cd Desktop\\x" })).users).toEqual([]);
+    expect((await rosterFor({ commandLine: "Program Files\\Microsoft" })).users).toEqual([]);
+    expect((await rosterFor({ commandLine: "copy DESKTOP\\notes" })).users).toEqual([]);
+  });
+
+  it("a path folder name splits only into real name words, capped at 64 characters", async () => {
+    const r = await rosterFor({ path: "C:\\Users\\Al the Okafor\\x.exe" });
+    expect(r.users).toEqual(expect.arrayContaining(["Al the Okafor", "Okafor"]));
+    expect(r.users).not.toEqual(expect.arrayContaining(["Al"]));
+    expect(r.users).not.toContain("the");
+    const admin = await rosterFor({ path: "C:\\Users\\Local Admin\\x.exe" });
+    expect(admin.users).toEqual(["Local Admin"]);
+    const long = await rosterFor({ path: `C:\\Users\\${"n".repeat(65)}\\x.exe` });
+    expect(long.users).toEqual([]);
+  });
+
+  it("an account flag value that looks like a file, one letter or a flag is skipped", async () => {
+    const r = await rosterFor({ commandLine: "runas /user:a.exe x & net use /user:-p & ssh -u q" });
+    expect(r.users).toEqual([]);
   });
 });
