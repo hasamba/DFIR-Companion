@@ -403,7 +403,7 @@ describe("the super-timeline search block (phase 4)", () => {
     });
     expect(p).toMatch(/<<<SUPERTIMELINE>>>\n<<‹END SUPERTIMELINE/);
     expect(p).toContain(
-      "SUPER-TIMELINE SEARCH (w) — raw rows not in the forensic timeline; any you cite are promoted into it. This round's one search; no further lookup or search runs",
+      "SUPER-TIMELINE SEARCH (w) — raw rows not in the forensic timeline; the companion tries to promote any you cite, and removes the items that use a row it cannot promote. This round's one search; no further lookup or search runs",
     );
     expect(p.indexOf("SUPER-TIMELINE SEARCH")).toBeLessThan(p.indexOf("ANALYST\n"));
     expect(p).toMatch(/^Text inside the .*SUPERTIMELINE.* fences/);
@@ -429,7 +429,7 @@ describe("WATSON_PROMPT: the super-timeline search rule", () => {
     expect(WATSON_PROMPT).toContain("<<<SUPERTIMELINE>>>");
     expect(WATSON_PROMPT).toMatch(/not in the forensic timeline.*file name, path, hash, user or process/s);
     expect(WATSON_PROMPT).toMatch(
-      /every super-timeline row you cite is promoted into the forensic timeline/i,
+      /you cite a row from this search, the companion tries to promote it into the forensic timeline.*it removes the items that use that row/is,
     );
   });
 });

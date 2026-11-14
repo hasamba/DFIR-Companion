@@ -164,7 +164,7 @@ function superBlock(excerpt: NonNullable<WatsonPromptInput["superExcerpt"]>): st
   const rows = fence("SUPERTIMELINE", clip(excerpt.text, WATSON_PASTE_PROMPT_MAX));
   const cap = excerpt.capNote ? `\n${line(excerpt.capNote, WATSON_REQUEST_CHARS * 2)}` : "";
   return (
-    `SUPER-TIMELINE SEARCH (${what}) — raw rows not in the forensic timeline; any you cite are promoted into it. ` +
+    `SUPER-TIMELINE SEARCH (${what}) — raw rows not in the forensic timeline; the companion tries to promote any you cite, and removes the items that use a row it cannot promote. ` +
     `This round's one search; no further lookup or search runs\n${rows}${cap}`
   );
 }
