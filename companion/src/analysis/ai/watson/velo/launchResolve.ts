@@ -1,4 +1,5 @@
 import type { ActivityLogStore } from "../../../activityLog.js";
+import type { HuntDeployInput } from "../../../huntOutcomes.js";
 import type { WatsonChatStore } from "../chatStore.js";
 import {
   WatsonProposalConflict,
@@ -20,6 +21,20 @@ export interface LaunchResolveDeps {
   chatStore: WatsonChatStore;
   activity: ActivityLogStore;
   fingerprints: Pick<HuntFingerprintStore, "release">;
+  /** Records the hunt outcome of a launch the analyst confirmed (ctx.recordHuntDeploy). */
+  recordDeploy?(caseId: string, input: HuntDeployInput): Promise<void>;
+}
+
+/** The outcome a confirmed launch records: source watson, the original launch time, no ids. */
+export function confirmedLaunchOutcome(p: WatsonVeloLaunchProposal): HuntDeployInput {
+  return {
+    source: "watson",
+    title: p.title,
+    vql: p.vql,
+    ...(p.hostname ? { hostname: p.hostname } : {}),
+    ...(p.mode === "collection" ? { coverage: "snapshot" as const } : {}),
+    deployedAt: p.launching?.at || p.appliedAt || new Date().toISOString(),
+  };
 }
 
 export const STRANDED = "the server stopped before the launch was confirmed";
@@ -65,6 +80,7 @@ export async function resolveVeloLaunch(
     const next = done;
     return { ...c, proposals: c.proposals.map((x) => (x.id === proposalId ? next : x)) };
   });
+  if (done && outcome === "launched") await deps.recordDeploy?.(caseId, confirmedLaunchOutcome(done));
   if (done) {
     const what = outcome === "launched" ? "marked as launched" : "returned to pending to try again";
     await deps.activity.add(caseId, {

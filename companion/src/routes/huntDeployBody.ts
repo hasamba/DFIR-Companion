@@ -16,8 +16,8 @@ export interface DeployHuntBody {
   coverage?: HuntCoverage;
 }
 
-// "bundle" is server-set, not client-supplied. "watson" marks a launch from an approved Watson proposal.
-const ALLOWED_SOURCES: readonly HuntOutcomeSource[] = ["fleet", "playbook", "technique", "watson"];
+// "bundle" and "watson" are server-set, never client-supplied (deploy-hunt refuses "watson": veloDeploy.ts).
+const ALLOWED_SOURCES: readonly HuntOutcomeSource[] = ["fleet", "playbook", "technique"];
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 

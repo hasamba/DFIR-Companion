@@ -43,6 +43,13 @@ const CLIENTS = [{ clientId: "C.webserver1", hostname: HOST, fqdn: HOST }];
 class FlakyChatStore extends WatsonChatStore {
   saves = 0;
   failOn = 0;
+  loads = 0;
+  failLoadsAfter = Infinity;
+  override async load(caseId: string): Promise<WatsonChat> {
+    this.loads++;
+    if (this.loads > this.failLoadsAfter) throw new Error("EIO: read failed");
+    return super.load(caseId);
+  }
   override async save(caseId: string, chat: WatsonChat): Promise<void> {
     this.saves++;
     if (this.saves === this.failOn) throw new Error("EIO: disk gone");
@@ -313,6 +320,33 @@ describe("applying a velo_launch proposal", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("rethrows the original save error and logs it when the release after a failed save #1 also fails", async () => {
+    await seed(huntProposal());
+    chatStore.failOn = chatStore.saves + 1;
+    const lines: string[] = [];
+    const failingRelease = {
+      load: (id: string) => fps.load(id),
+      reserve: (id: string, keys: readonly string[]) => fps.reserve(id, keys),
+      release: async () => {
+        throw new Error("EACCES: index locked");
+      },
+    };
+    const d = deps(undefined, failingRelease);
+    const withLog = { ...d, veloLaunch: { ...d.veloLaunch!, log: (l: string) => void lines.push(l) } };
+    await expect(applyWatsonProposal(withLog, CASE, "wp-hunt", "apply")).rejects.toThrow(/EIO: disk gone/);
+    expect(calls).toHaveLength(0);
+    expect(lines.join("\n")).toMatch(/EACCES: index locked/);
+  });
+
+  it("launches from the proposal save #1 stored, without reloading the chat in between", async () => {
+    await seed(huntProposal());
+    chatStore.failLoadsAfter = chatStore.loads + 1; // the dispatcher's kind lookup only
+    await applyWatsonProposal(deps(), CASE, "wp-hunt", "apply");
+    expect(calls).toHaveLength(1);
+    chatStore.failLoadsAfter = Infinity;
+    expect((await stored("wp-hunt")).status).toBe("applied");
+  });
+
   it("refuses undo: a launched hunt cannot be undone", async () => {
     await seed(huntProposal());
     await applyWatsonProposal(deps(), CASE, "wp-hunt", "apply");
@@ -344,6 +378,40 @@ describe("resolving an uncertain launch", () => {
     expect(p.status).toBe("applied");
     expect(p.launched?.huntId).toBeUndefined();
     expect((await fps.load(CASE)).size).toBeGreaterThan(0);
+  });
+
+  it("launched records a source watson outcome at the original launch time, with no ids", async () => {
+    await seed(collectionProposal());
+    await applyWatsonProposal(deps(unknown), CASE, "wp-coll", "apply").catch(() => undefined);
+    const at = (await stored("wp-coll")).launching?.at;
+    const recorded: unknown[] = [];
+    const d = {
+      ...resolveDeps(),
+      recordDeploy: async (_id: string, input: unknown) => void recorded.push(input),
+    };
+    await resolveVeloLaunch(d, CASE, "wp-coll", "launched");
+    expect(recorded).toEqual([
+      {
+        source: "watson",
+        title: "Process listing",
+        vql: PSLIST,
+        hostname: HOST,
+        coverage: "snapshot",
+        deployedAt: at,
+      },
+    ]);
+  });
+
+  it("retry records no outcome", async () => {
+    await seed(huntProposal());
+    await applyWatsonProposal(deps(unknown), CASE, "wp-hunt", "apply").catch(() => undefined);
+    const recorded: unknown[] = [];
+    const d = {
+      ...resolveDeps(),
+      recordDeploy: async (_id: string, input: unknown) => void recorded.push(input),
+    };
+    await resolveVeloLaunch(d, CASE, "wp-hunt", "retry");
+    expect(recorded).toEqual([]);
   });
 
   it("refuses a proposal that is not uncertain", async () => {

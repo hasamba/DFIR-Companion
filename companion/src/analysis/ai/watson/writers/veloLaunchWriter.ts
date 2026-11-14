@@ -7,7 +7,7 @@ import {
 import type { WatsonChat, WatsonProposal, WatsonVeloLaunchProposal } from "../types.js";
 import { ALREADY_RAN, checkLaunch } from "../velo/launchCheck.js";
 import { clearInFlight, markInFlight } from "../velo/launchInFlight.js";
-import type { VeloLaunchDeps, VeloLaunchOutcome } from "../velo/launchTypes.js";
+import type { VeloLaunchDeps, VeloLaunchOutcome, VeloLaunchRequest } from "../velo/launchTypes.js";
 import { loadVeloFleet } from "../velo/veloFleet.js";
 import type { WatsonWriter, WriterDeps } from "./writerTypes.js";
 
@@ -71,13 +71,15 @@ async function recheck(v: VeloLaunchDeps, caseId: string, p: WatsonVeloLaunchPro
 }
 
 /**
- * Save #1: checks pass, keys reserved, status `launching`. Returns the keys this call reserved. Only
+ * Save #1: checks pass, keys reserved, status `launching`. Returns the keys this call reserved and
+ * the proposal as saved (the launch uses it — no reload between the two saves). Only
  * the caller that passed the status check marks the launch in flight (a losing double-click must
  * never clear the winner's mark, or its running launch would look stranded).
  */
 async function saveIntent(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, id: string, by: string) {
   let added: string[] = [];
   let marked = false;
+  let saved: WatsonVeloLaunchProposal | undefined;
   try {
     await deps.chatStore.update(caseId, async (c) => {
       const p = findLaunch(c, id);
@@ -91,14 +93,27 @@ async function saveIntent(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, i
       markInFlight(caseId, id);
       marked = true;
       const launching = { at: new Date().toISOString(), by, fingerprint: p.fingerprint, reserved: added };
-      return replace(c, { ...p, status: "launching", launching });
+      saved = { ...p, status: "launching", launching };
+      return replace(c, saved);
     });
   } catch (err) {
     if (marked) clearInFlight(caseId, id);
-    if (added.length) await v.fingerprints.release(caseId, added); // no call was made
-    throw err;
+    if (added.length) await releaseOrLog(v, caseId, added); // no call was made
+    throw err; // the original error, even when the release failed too
   }
-  return added;
+  if (!saved) throw new WatsonProposalConflict("the launch intent was not saved");
+  return { added, proposal: saved };
+}
+
+/** Release keys this call reserved; a failure is logged, never thrown. True when released. */
+async function releaseOrLog(v: VeloLaunchDeps, caseId: string, keys: string[]): Promise<boolean> {
+  try {
+    await v.fingerprints.release(caseId, keys);
+    return true;
+  } catch (err) {
+    v.log?.(`[watson] releasing reserved hunt fingerprints failed: ${(err as Error).message}`);
+    return false;
+  }
 }
 
 /** Save #2: the outcome. `fn` maps the stored launching proposal to its next state. */
@@ -115,12 +130,22 @@ function saveOutcome(
   });
 }
 
-async function runLaunch(v: VeloLaunchDeps, caseId: string, p: WatsonVeloLaunchProposal, actor: string) {
+async function runLaunch(
+  v: VeloLaunchDeps,
+  caseId: string,
+  p: WatsonVeloLaunchProposal,
+  actor: string,
+): Promise<VeloLaunchOutcome> {
+  let req: VeloLaunchRequest;
   try {
-    const req = { mode: p.mode, vql: p.vql, title: p.title, ...(p.hostname ? { hostname: p.hostname } : {}) };
+    req = { mode: p.mode, vql: p.vql, title: p.title, ...(p.hostname ? { hostname: p.hostname } : {}) };
+  } catch (err) {
+    return { phase: "before-launch", error: (err as Error).message }; // the launch was never called
+  }
+  try {
     return await v.launch(caseId, req, actor);
   } catch (err) {
-    return { phase: "launch-unknown", error: (err as Error).message } satisfies VeloLaunchOutcome;
+    return { phase: "launch-unknown", error: (err as Error).message };
   }
 }
 
@@ -157,9 +182,8 @@ export async function applyVeloLaunch(
 ): Promise<{ chat: WatsonChat }> {
   const v = deps.veloLaunch;
   if (!v) throw new WatsonProposalConflict("Velociraptor launches are not configured");
-  const added = await saveIntent(deps, v, caseId, proposalId, actor); // marks it in flight
+  const { added, proposal: p } = await saveIntent(deps, v, caseId, proposalId, actor); // marks it in flight
   try {
-    const p = findLaunch(await deps.chatStore.load(caseId), proposalId);
     const outcome = await runLaunch(v, caseId, p, actor);
     return await settle(deps, v, caseId, p, outcome, added, actor);
   } finally {
@@ -191,10 +215,7 @@ async function settle(
   }
   const why = outcome.error ?? "the launch did not complete";
   if (nothingRan(outcome)) {
-    const released = await v.fingerprints.release(caseId, added).then(
-      () => true,
-      (err: Error) => (v.log?.(`[watson] release after a failed launch failed: ${err.message}`), false),
-    );
+    const released = await releaseOrLog(v, caseId, added);
     if (released) {
       await saveOutcome(deps, caseId, p.id, (s) => ({ ...s, status: "pending", launching: undefined }));
       throw new WatsonProposalConflict(`Velociraptor refused the launch, nothing ran: ${why}`);

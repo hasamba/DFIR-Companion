@@ -2,7 +2,7 @@ import { logActivityWithWarning, type NewActivityEntry } from "../analysis/activ
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { matchClient, normalizeHuntExpirySeconds } from "../integrations/velociraptor/velociraptorApi.js";
 import type { RouteContext } from "./context.js";
-import { deployHuntBodyProblem, type DeployHuntBody } from "./huntDeployBody.js";
+import { deployHuntBodyProblem, parseDeployHuntBody, type DeployHuntBody } from "./huntDeployBody.js";
 import { resolveCaseVelo, type VeloTarget } from "./veloServers.js";
 
 // The deploy-hunt core (#157), moved out of routes/velociraptor.ts so Watson's approved launches
@@ -197,4 +197,23 @@ export async function deployCaseHunt(
 export function pickTiming(raw: unknown): Pick<DeployHuntRequest, "expirySeconds" | "waitMinutes"> {
   const body = (raw ?? {}) as Record<string, unknown>;
   return { expirySeconds: body.expirySeconds, waitMinutes: body.waitMinutes };
+}
+
+export const RESERVED_SOURCE = "source watson is reserved for Watson";
+
+/**
+ * The analyst's POST /cases/:id/velociraptor/deploy-hunt: parse the raw body and deploy. A body that
+ * claims `source: "watson"` is refused — only an approved Watson proposal launches as Watson.
+ */
+export async function deployAnalystHunt(
+  ctx: RouteContext,
+  caseId: string,
+  raw: unknown,
+  displayName: string | undefined,
+): Promise<DeployResult> {
+  if ((raw as { source?: unknown } | null)?.source === "watson") {
+    return { status: 400, body: { error: RESERVED_SOURCE }, phase: "invalid" };
+  }
+  const body = { ...parseDeployHuntBody(raw), ...pickTiming(raw) };
+  return deployCaseHunt(ctx, caseId, body, { name: displayName ?? "analyst", kind: "analyst" });
 }

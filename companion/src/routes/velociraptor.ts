@@ -12,8 +12,7 @@ import {
   HuntSpecError,
 } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
-import { parseDeployHuntBody } from "./huntDeployBody.js";
-import { collectHostResolved as collectHostResolvedIn, deployCaseHunt, pickTiming } from "./veloDeploy.js";
+import { collectHostResolved as collectHostResolvedIn, deployAnalystHunt } from "./veloDeploy.js";
 import { requestAuthentication } from "../auth/types.js";
 import { resolveCollectVql } from "../analysis/collectDirectiveResolve.js";
 import {
@@ -805,12 +804,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // The deploy core lives in veloDeploy.ts (Watson's approved launches run the same path).
   app.post("/cases/:id/velociraptor/deploy-hunt", async (req: Request, res: Response) => {
     if (!caseVelo(ctx, req.params.id, res)) return;
-    const body = { ...parseDeployHuntBody(req.body), ...pickTiming(req.body) };
-    const actor = {
-      name: requestAuthentication(req)?.identity.displayName ?? "analyst",
-      kind: "analyst" as const,
-    };
-    const result = await deployCaseHunt(ctx, req.params.id, body, actor);
+    const by = requestAuthentication(req)?.identity.displayName;
+    const result = await deployAnalystHunt(ctx, req.params.id, req.body, by);
     return res.status(result.status).json(result.body);
   });
 

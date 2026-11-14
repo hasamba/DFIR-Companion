@@ -180,6 +180,38 @@ describe("Watson velo_launch through the deploy path", () => {
     expect(retry.body.chat.proposals[0].status).toBe("pending");
   });
 
+  it("refuses an analyst deploy-hunt that claims source watson", async () => {
+    const h = await harness();
+    const res = await request(h.app)
+      .post(`/cases/${CASE}/velociraptor/deploy-hunt`)
+      .send({ vql: PSLIST, title: "ps", source: "watson" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("source watson is reserved for Watson");
+    expect(h.launches).toHaveLength(0);
+  });
+
+  it("a Watson collection outcome is a live-state snapshot", async () => {
+    const h = await harness();
+    await seed(h.chatStore, proposal({ mode: "collection" }));
+    expect((await apply(h.app)).status).toBe(200);
+    const [outcome] = await h.outcomes.load(CASE);
+    expect(outcome.coverage).toBe("snapshot");
+  });
+
+  it("resolving an uncertain launch as launched records a source watson outcome", async () => {
+    const h = await harness({ failLaunch: true });
+    await seed(h.chatStore, proposal());
+    await apply(h.app);
+    const res = await request(h.app)
+      .post(`/cases/${CASE}/watson/proposals/wp-1/resolve`)
+      .send({ outcome: "launched" });
+    expect(res.status).toBe(200);
+    const [outcome] = await h.outcomes.load(CASE);
+    expect(outcome).toMatchObject({ source: "watson", title: "Process listing", status: "deployed" });
+    expect(outcome.huntId).toBeUndefined();
+    expect(outcome.vqlFingerprint).toBeTruthy();
+  });
+
   it("the analyst's own deploy-hunt collection now records its flow and client", async () => {
     const h = await harness();
     const res = await request(h.app)

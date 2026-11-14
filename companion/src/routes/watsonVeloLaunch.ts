@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import type { HuntDeployInput } from "../analysis/huntOutcomes.js";
 import { requestAuthentication } from "../auth/types.js";
 import { fingerprintStoreFor } from "../analysis/ai/watson/velo/fingerprintIndex.js";
 import { resolveVeloLaunch, type LaunchResolution } from "../analysis/ai/watson/velo/launchResolve.js";
@@ -27,6 +28,8 @@ export function watsonVeloLaunchDeps(ctx: RouteContext): VeloLaunchDeps {
         mitreTechniques: [],
         mode: req.mode,
         hostname: req.hostname ?? "",
+        // A single-host collection reads live state: an empty result is not a miss.
+        ...(req.mode === "collection" ? { coverage: "snapshot" as const } : {}),
       };
       const r = await deployCaseHunt(ctx, caseId, body, { name: actor, kind: "analyst" });
       const error = r.status >= 400 ? String(r.body.error ?? `HTTP ${r.status}`) : undefined;
@@ -63,6 +66,7 @@ export function registerWatsonVeloLaunchRoutes(app: Express, ctx: RouteContext, 
       chatStore: options.watsonChatStore,
       activity: options.activityLogStore,
       fingerprints: fingerprintStoreFor(store),
+      recordDeploy: (id: string, input: HuntDeployInput) => ctx.recordHuntDeploy(id, input),
     };
     const actor = requestAuthentication(req)?.identity.displayName ?? "analyst";
     try {

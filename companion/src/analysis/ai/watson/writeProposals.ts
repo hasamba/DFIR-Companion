@@ -1,4 +1,5 @@
 import type { Finding, ForensicEvent, NextStep } from "../../stateTypes.js";
+import { WATSON_FINDING_ID_PREFIX } from "../../responseSchema.js";
 import type { WatsonFindingDraft, WatsonStepDraft, WatsonWrites } from "./writesSchema.js";
 import { pasteLineKey, type WatsonWriteInputs } from "./roundWrites.js";
 import type { WatsonFindingProposal, WatsonProposal } from "./types.js";
@@ -23,7 +24,8 @@ function findingProposal(
   const before = d.updateId ? inputs.findings.get(d.updateId) : undefined;
   // The Watson finding the update names is gone by now: drop the draft, never mint a new finding.
   if (d.updateId && !before) return null;
-  const id = before?.id ?? newId("f-watson");
+  // newId adds the "-": the prefix comes from the finding-id register (responseSchema.ts).
+  const id = before?.id ?? newId(WATSON_FINDING_ID_PREFIX.slice(0, -1));
   const pasteEvents: ForensicEvent[] = [];
   const citedPasteLines = d.pasteLines.filter(({ pasteId, line }) => {
     const paste = inputs.pastes.get(pasteId);
