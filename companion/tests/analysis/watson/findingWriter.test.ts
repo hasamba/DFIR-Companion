@@ -287,6 +287,16 @@ describe("Watson finding writer", () => {
     expect((await proposal()).keptEventIds).toEqual([PASTE_EV]);
   });
 
+  it("undo ignores a back-link to a finding that no longer exists and removes the row", async () => {
+    await applyWatsonProposal(deps, CASE, "wp-f", "apply");
+    const [r] = await stateStore.forensicRowsById(CASE, [PASTE_EV]);
+    await stateStore.deleteForensicRows(CASE, [r.rowId]);
+    await stateStore.appendForensicEvents(CASE, [{ ...r.event, relatedFindingIds: [FID, "f-deleted"] }]);
+    await applyWatsonProposal(deps, CASE, "wp-f", "undo");
+    expect(await row(PASTE_EV)).toBeUndefined();
+    expect((await proposal()).keptEventIds).toBeUndefined();
+  });
+
   it("undo still refuses when a row Watson added changed and nothing else cites it", async () => {
     await applyWatsonProposal(deps, CASE, "wp-f", "apply");
     const [r] = await stateStore.forensicRowsById(CASE, [PASTE_EV]);

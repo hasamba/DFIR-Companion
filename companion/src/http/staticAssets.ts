@@ -40,6 +40,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-watson-marks.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-cards.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-view.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-watson-mode.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson.js": "application/javascript; charset=utf-8",
   "/js/dashboard-escape.js": "application/javascript; charset=utf-8",
   "/js/dashboard-time.js": "application/javascript; charset=utf-8",

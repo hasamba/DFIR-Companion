@@ -1917,6 +1917,13 @@ export const FEATURES: Feature[] = [
     private: ["QSTATUS", "btn"],
   },
   {
+    // Watson's Approve / Auto switch. dashboard-watson.js calls watsonModeSync on every render and routes
+    // the "setMode" verb to watsonModeSwitch; the mode itself is private here. No initializer.
+    file: "dashboard-watson-mode.js",
+    publish: ["watsonModeSync", "watsonModeSwitch"],
+    private: ["AUTO_CONFIRM", "MODES", "LABEL", "TIP", "wMode"],
+  },
+  {
     // Watson chat panel (rail, open, full). initWatson() is called from initDataAct (the inline script has no
     // spare line), so the manifest names no initializer. watsonAct is the one data-act entry.
     file: "dashboard-watson.js",

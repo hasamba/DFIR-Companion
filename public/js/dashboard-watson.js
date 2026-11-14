@@ -76,6 +76,7 @@
     setHtml('[data-w="log"]', logHtml());
     setHtml('[data-w="board"]', watsonBoardHtml(wQuestions));
     setHtml('[data-w="foot"]', footHtml());
+    watsonModeSync(wChat); // the Approve / Auto switch and the rail's "A" (dashboard-watson-mode.js)
     const n = pendingCount();
     setHtml('[data-w="count"]', n ? esc(String(n)) : "");
     const collapsed = panelState() === "rail";
@@ -349,6 +350,7 @@
     addQuestion,
     loadEarlier,
     newThread,
+    setMode: (el) => watsonModeSwitch(el),
   };
   // data-act="watsonAct": a fixed table, never a lookup of a DOM-supplied name on window.
   function watsonAct(el) {

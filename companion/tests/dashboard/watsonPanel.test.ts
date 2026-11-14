@@ -47,6 +47,8 @@ function setup(
     noResizeObserver?: boolean;
     fetch?: unknown;
     stored?: Record<string, string>;
+    confirm?: (text: string) => boolean;
+    alert?: (text: string) => void;
   } = {},
 ) {
   const log = new FakeEl();
@@ -56,12 +58,16 @@ function setup(
   const dot = new FakeEl();
   const panel = new FakeEl();
   const body = new FakeEl();
+  const mode = new FakeEl();
+  const railMode = new FakeEl();
   const byW: Record<string, FakeEl[]> = {
     log: [log],
     board: [board],
     foot: [foot],
     count: [count],
     dot: [dot],
+    mode: [mode],
+    railmode: [railMode],
   };
   const caseInput = { value: "c1" };
   const keyListeners: ((e: { key: string; target?: unknown }) => void)[] = [];
@@ -104,9 +110,12 @@ function setup(
       "dashboard-watson-marks.js",
       "dashboard-watson-cards.js",
       "dashboard-watson-view.js",
+      "dashboard-watson-mode.js",
     ],
     {
       document,
+      confirm: opts.confirm ?? (() => true),
+      alert: opts.alert ?? (() => {}),
       DfirState: { onLastStateChange: (cb: StateListener) => stateListeners.push(cb) },
       // the real one links to the timeline; here a marker per id shows which ids reached it
       citeEvents: (ids: string[]) => (ids || []).map((id) => `[cited ${id}]`).join(" "),
@@ -128,7 +137,22 @@ function setup(
   const fireState = (st: unknown) => stateListeners.forEach((cb) => cb(st));
   const press = (key: string, defaultPrevented = false) =>
     keyListeners.forEach((cb) => cb({ key, target: {}, defaultPrevented } as never));
-  return { api, log, board, foot, count, dot, panel, body, caseInput, fireState, press, written };
+  return {
+    api,
+    log,
+    board,
+    foot,
+    count,
+    dot,
+    panel,
+    body,
+    mode,
+    railMode,
+    caseInput,
+    fireState,
+    press,
+    written,
+  };
 }
 
 const chatWith = (turns: unknown[], extra: Record<string, unknown> = {}) => ({
@@ -433,7 +457,7 @@ describe("a refused Undo pressed in a section (F6)", () => {
 });
 
 describe("rail button, failed sends and paste limits", () => {
-  const html = ["dashboard-watson.js", "dashboard-watson-view.js"]
+  const html = ["dashboard-watson.js", "dashboard-watson-view.js", "dashboard-watson-mode.js"]
     .map((f) => readFileSync(new URL(`../../../public/js/${f}`, import.meta.url), "utf8"))
     .join("\n");
   it("the rail is a real button that opens the panel; the header buttons are labelled", () => {
@@ -874,5 +898,93 @@ describe("the Watson reaction delay setting (F15)", () => {
     );
     expect(manual).toContain("Each reaction is a full Watson round with the case context");
     expect(manual).toContain("counts toward the Watson cost and token limits");
+  });
+});
+
+describe("run mode switch", () => {
+  const modeFetch =
+    (calls: string[], mode: string, ok = true) =>
+    async (url: string, init?: { method?: string; body?: string }) => {
+      calls.push(`${init?.method ?? "GET"} ${url} ${init?.body ?? ""}`.trim());
+      return init?.method === "POST"
+        ? response(ok ? 200 : 423, ok ? { mode } : { error: "case is closed" })
+        : response(200, chatWith([], { runMode: "approve" }));
+    };
+  const press = (api: Api, mode: string) => api.watsonAct({ dataset: { wVerb: "setMode", mode } });
+
+  it("renders Approve and Auto in the header, Approve on, and no 'A' on the rail", () => {
+    const { api, mode, railMode } = setup();
+    api.initWatson();
+    expect(mode.innerHTML).toContain('data-w-verb="setMode" data-mode="approve" aria-pressed="true"');
+    expect(mode.innerHTML).toContain('data-mode="auto" aria-pressed="false"');
+    expect(mode.innerHTML).not.toMatch(/ on[a-z]+=|style=/);
+    expect(railMode.innerHTML).toBe("");
+  });
+
+  it("follows the case's runMode from the server and shows 'A' on the rail for Auto", () => {
+    const { api, mode, railMode } = setup();
+    api.initWatson();
+    api.renderWatson(chatWith([], { runMode: "auto" }));
+    expect(mode.innerHTML).toContain('data-mode="auto" aria-pressed="true"');
+    expect(railMode.innerHTML).toContain(">A<");
+    api.renderWatson(chatWith([])); // a POST reply carries no runMode: the mode stays
+    expect(railMode.innerHTML).toContain(">A<");
+    api.renderWatson(chatWith([], { runMode: "junk" }));
+    expect(railMode.innerHTML).toContain(">A<");
+    api.renderWatson(chatWith([], { runMode: "approve" }));
+    expect(railMode.innerHTML).toBe("");
+  });
+
+  it("asks in plain words before Auto and does nothing when declined", async () => {
+    const asked: string[] = [];
+    const calls: string[] = [];
+    const { api, railMode } = setup({
+      fetch: modeFetch(calls, "auto"),
+      confirm: (t) => (asked.push(t), false),
+    });
+    api.initWatson();
+    await press(api, "auto");
+    expect(asked).toEqual([
+      "Watson will run single-host collections and write to the case without asking. Fleet-wide hunts still ask.",
+    ]);
+    expect(calls).toEqual([]);
+    expect(railMode.innerHTML).toBe("");
+  });
+
+  it("switches to Auto after a yes, and back to Approve without asking", async () => {
+    const asked: string[] = [];
+    const calls: string[] = [];
+    let next = "auto";
+    const fetch = async (url: string, init?: { method?: string; body?: string }) => {
+      calls.push(`${init?.method} ${url} ${init?.body}`);
+      return response(200, { mode: next });
+    };
+    const { api, mode, railMode } = setup({ fetch, confirm: (t) => (asked.push(t), true) });
+    api.initWatson();
+    await press(api, "auto");
+    expect(calls).toEqual(['POST /cases/c1/watson/mode {"mode":"auto"}']);
+    expect(railMode.innerHTML).toContain(">A<");
+    expect(mode.innerHTML).toContain('data-mode="auto" aria-pressed="true"');
+    next = "approve";
+    await press(api, "approve");
+    expect(asked).toHaveLength(1);
+    expect(railMode.innerHTML).toBe("");
+  });
+
+  it("tells the analyst when the server refuses and keeps the old mode", async () => {
+    const alerts: string[] = [];
+    const { api, railMode } = setup({ fetch: modeFetch([], "auto", false), alert: (t) => alerts.push(t) });
+    api.initWatson();
+    await press(api, "auto");
+    expect(alerts).toEqual(["Could not switch Watson's mode: case is closed"]);
+    expect(railMode.innerHTML).toBe("");
+  });
+
+  it("ignores a mode it does not know", async () => {
+    const calls: string[] = [];
+    const { api } = setup({ fetch: modeFetch(calls, "auto") });
+    api.initWatson();
+    await press(api, "fleet");
+    expect(calls).toEqual([]);
   });
 });

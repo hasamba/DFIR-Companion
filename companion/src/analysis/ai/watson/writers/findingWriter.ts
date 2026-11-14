@@ -142,8 +142,10 @@ function citedElsewhere(
   event: ForensicEvent,
   overview: InvestigationState,
 ): boolean {
+  // A back-link counts only while that finding still exists: a link to a deleted finding holds nothing.
+  const alive = new Set(overview.findings.map((f) => f.id));
   return (
-    (event.relatedFindingIds ?? []).some((f) => f !== p.targetId) ||
+    (event.relatedFindingIds ?? []).some((f) => f !== p.targetId && alive.has(f)) ||
     overview.findings.some((f) => f.id !== p.targetId && (f.relatedEventIds ?? []).includes(event.id))
   );
 }

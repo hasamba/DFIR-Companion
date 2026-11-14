@@ -20,6 +20,13 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { watsonRoundDeps } from "./watsonDeps.js";
 import { ingestWatsonPaste } from "./watsonPasteIngest.js";
+import { logActivity } from "../analysis/activityLog.js";
+import {
+  isWatsonRunMode,
+  watsonModeDetail,
+  watsonModePatch,
+  watsonRunMode,
+} from "../analysis/ai/watson/runMode.js";
 import { ingestRows, withPasteIngest } from "../analysis/ai/watson/pasteIngestChat.js";
 
 /**
@@ -34,6 +41,7 @@ import { ingestRows, withPasteIngest } from "../analysis/ai/watson/pasteIngestCh
  *   POST /watson/proposals/:pid/:action  apply | reject | undo one question proposal (no model call)
  *   POST /watson/turns/:tid/add-question add a turn's free-form answer to the open questions (no model call)
  *   POST /watson/new-thread              start a fresh chat thread; Watson's memory stays (no model call)
+ *   POST /watson/mode {mode}             switch the case's run mode, approve | auto → { mode } (no model call)
  *
  * A paste is stored as evidence and, in a format a built-in importer reads, parsed into rows whose
  * tagger promotions wait as Watson proposals (routes/watsonPasteIngest.ts). It never starts a
@@ -138,7 +146,12 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     try {
       // providerConfigured: false tells the dashboard to hide the panel; the chat stays readable.
       const chat = await options.watsonChatStore.load(req.params.id);
-      return res.status(200).json({ ...chat, providerConfigured: !!roundDeps() && !!options.pipeline });
+      const runMode = watsonRunMode(await ctx.getControl(req.params.id));
+      const servers = ctx.serverClients.forCase(req.params.id);
+      const veloConnected = servers.ok && !!servers.servers.velociraptor;
+      return res
+        .status(200)
+        .json({ ...chat, providerConfigured: !!roundDeps() && !!options.pipeline, runMode, veloConnected });
     } catch (err) {
       return sendPipelineError(res, err);
     }
@@ -304,6 +317,30 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       const result = await addAnswerAsQuestion(deps, caseId, req.params.tid, actorName(req));
       options.onStateChanged?.(caseId);
       return res.status(200).json({ chat: result.chat, state: { keyQuestions: result.state.keyQuestions } });
+    } catch (err) {
+      return sendWatsonError(res, err);
+    } finally {
+      options.onWatson?.(caseId);
+    }
+  });
+
+  app.post("/cases/:id/watson/mode", async (req: Request, res: Response) => {
+    const caseId = req.params.id;
+    const mode: unknown = req.body?.mode;
+    if (!isWatsonRunMode(mode)) return res.status(400).json({ error: "mode must be approve or auto" });
+    if (await caseMissing(caseId)) return res.status(404).json({ error: "case not found" });
+    try {
+      if (watsonRunMode(await ctx.getControl(caseId)) === mode) return res.status(200).json({ mode });
+      const auth = requestAuthentication(req);
+      const actor = actorName(req);
+      await ctx.setControl(caseId, watsonModePatch(mode, { id: auth?.identity.id, name: actor }));
+      await logActivity(options.activityLogStore, options.onActivity, caseId, {
+        actor,
+        category: "ai",
+        action: "watson.mode",
+        detail: watsonModeDetail(mode),
+      });
+      return res.status(200).json({ mode });
     } catch (err) {
       return sendWatsonError(res, err);
     } finally {
