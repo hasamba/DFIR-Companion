@@ -230,8 +230,28 @@ function fieldAccountForms(raw: string | undefined): { users: string[]; domains:
   if (cut <= 0 || cut >= v.length - 1 || !isPerson(v, true)) return { users: [v], domains: [] };
   const [domain, user] =
     slash >= 0 ? [v.slice(0, cut), v.slice(cut + 1)] : [v.slice(cut + 1), v.slice(0, cut)];
-  return { users: [v, user], domains: isDomain(domain) ? [domain] : [] };
+  return { users: [v, user], domains: isOwnDomain(domain) ? [domain] : [] };
 }
+
+/** Public mail providers: the user of `kate@gmail.com` is the person, the domain names nobody. */
+const PUBLIC_MAIL_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "yahoo.com",
+  "icloud.com",
+  "proton.me",
+  "protonmail.com",
+  "aol.com",
+  "gmx.com",
+  "mail.com",
+]);
+
+/** An account's domain worth masking: a real domain, not the default WORKGROUP or a public mail host. */
+const isOwnDomain = (d: string): boolean =>
+  isDomain(d) && !/^workgroup$/i.test(d) && !PUBLIC_MAIL_DOMAINS.has(d.toLowerCase());
 
 const accountFields = (e: ForensicEvent) => [e.canonical?.account?.name, e.callerName].map(fieldAccountForms);
 
@@ -253,14 +273,16 @@ function withShortLabel(host: string | undefined): string[] {
   return named ? [h, label] : [h];
 }
 
-/** Hosts the row states in a host field: asset, the asset record, the network hostnames. */
-const explicitHosts = (e: ForensicEvent): string[] =>
-  [
-    e.asset,
-    e.assetRecord,
-    e.canonical?.network?.source?.hostname,
-    e.canonical?.network?.destination?.hostname,
-  ].flatMap(withShortLabel);
+/**
+ * Hosts the row states in a host field. The case's own machines (asset, asset record) give their short
+ * label too; a network peer (login.mega.example) is listed whole only, so "login" or "www" is never a
+ * token.
+ */
+const explicitHosts = (e: ForensicEvent): (string | undefined)[] => [
+  ...[e.asset, e.assetRecord].flatMap(withShortLabel),
+  e.canonical?.network?.source?.hostname,
+  e.canonical?.network?.destination?.hostname,
+];
 
 /** Names only a pattern suggests: user folders and `user@domain`. */
 const inferredUsers = (e: ForensicEvent): string[] => [

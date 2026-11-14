@@ -23,7 +23,7 @@ describe("explicit host fields give the host's first label (I1)", () => {
       row({ asset: "FILESRV.acme.com", assetRecord: "dc01.corp.example.org" }),
       row({ canonical: { network: { source: { hostname: "Web-Gw.acme.com" } } } as never }),
     ]);
-    expect(r.hosts).toEqual(expect.arrayContaining(["FILESRV.acme.com", "FILESRV", "dc01", "Web-Gw"]));
+    expect(r.hosts).toEqual(expect.arrayContaining(["FILESRV.acme.com", "FILESRV", "dc01"]));
   });
 
   it("never labels an IP, a label under 3 characters or a common word", () => {
@@ -43,6 +43,16 @@ describe("explicit host fields give the host's first label (I1)", () => {
   });
 });
 
+describe("network hostnames are listed whole, never labelled (RI1)", () => {
+  it("a destination like login.mega.example gives no 'login' entry", () => {
+    const r = rosterOf([
+      row({ canonical: { network: { destination: { hostname: "login.mega.example" } } } as never }),
+      row({ canonical: { network: { source: { hostname: "raw.example.org" } } } as never }),
+    ]);
+    expect(r.hosts).toEqual(["login.mega.example", "raw.example.org"]);
+  });
+});
+
 describe("an account field is split into its forms (I2)", () => {
   it("DOMAIN\\user lists the whole value, the user and the domain", () => {
     const r = rosterOf([row(account("ACME\\jdoe"))]);
@@ -54,6 +64,20 @@ describe("an account field is split into its forms (I2)", () => {
     const r = rosterOf([row({ callerName: "mkowal@corp.acme.com" })]);
     expect(r.users).toEqual(expect.arrayContaining(["mkowal@corp.acme.com", "mkowal"]));
     expect(r.hosts).toContain("corp.acme.com");
+  });
+
+  it("WORKGROUP is not a domain; the user is kept", () => {
+    const r = rosterOf([row(account("WORKGROUP\\jdoe"))]);
+    expect(r.users).toEqual(expect.arrayContaining(["WORKGROUP\\jdoe", "jdoe"]));
+    expect(r.hosts).toEqual([]);
+  });
+
+  it("a public mail domain is not listed; the user is", () => {
+    for (const d of ["gmail.com", "Outlook.com", "proton.me"]) {
+      const r = rosterOf([row({ callerName: `kate.r@${d}` })]);
+      expect(r.users).toEqual(expect.arrayContaining([`kate.r@${d}`, "kate.r"]));
+      expect(r.hosts).toEqual([]);
+    }
   });
 
   it("a built-in principal gives no user and no domain", () => {

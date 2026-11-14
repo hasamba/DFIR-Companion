@@ -375,4 +375,13 @@ describe("explicit raw names stay masked like forensic ones (fix round 1)", () =
     await runWatsonRound(h.ctx, CASE, { text: "did jdoe log on to ACME today?" });
     expect(userPrompt(h.provider.sent[2])).not.toMatch(/\bjdoe\b|\bACME\b/i);
   });
+
+  it("a raw row's network hostnames never mask common words in later prompts (RI1)", async () => {
+    const net = (hostname: string) => ({ canonical: { network: { destination: { hostname } } } as never });
+    const rows = [raw("raw1", net("login.mega.example")), raw("raw2", net("raw.example.org"))];
+    const h = await harness([reply(superLookup()), reply(), reply()], { anonymize: true, raw: rows });
+    await runWatsonRound(h.ctx, CASE, { text: "x" });
+    await runWatsonRound(h.ctx, CASE, { text: "login page; raw data sent to mega" });
+    expect(userPrompt(h.provider.sent[2])).toContain("login page; raw data sent to mega");
+  });
 });
