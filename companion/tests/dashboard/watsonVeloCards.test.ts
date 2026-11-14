@@ -1,10 +1,13 @@
 // Task 7: Watson Velociraptor launch cards, the connected chip, Auto attribution and the Auto listing.
 import { describe, expect, it } from "vitest";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
+import { listingTurns } from "../../src/analysis/ai/watson/autoApply.js";
 
 interface Velo {
   watsonVeloCardHtml(p: unknown): string;
   watsonVeloAutoListHtml(text: string): string;
+  watsonVeloChipSync(chat: unknown): void;
+  watsonVeloResolve(el: unknown): Promise<void>;
 }
 interface Cards {
   watsonCardHtml(p: unknown): string;
@@ -74,7 +77,8 @@ describe("watsonVeloCardHtml", () => {
     const launched = { by: "Dana", at: "2026-11-14T10:00:00Z" };
     const card = (watch: unknown) => velo().watsonVeloCardHtml(base({ status: "applied", launched, watch }));
     const running = card({ deadline: "x", state: "watching" });
-    expect(running).toContain("Launched by Dana at 2026-11-14T10:00:00Z");
+    expect(running).toContain("Launched by Dana at ");
+    expect(running).toContain('title="2026-11-14T10:00:00Z"');
     expect(running).toContain("Running");
     expect(running).toContain("cannot be undone");
     expect(running).not.toContain('data-w-verb="undo"');
@@ -164,5 +168,90 @@ describe("card dispatch and Auto", () => {
 
   it("leaves ordinary system turns alone", () => {
     expect(velo().watsonVeloAutoListHtml("Watson reacted to a new import")).toBe("");
+  });
+});
+
+describe("chip, launch time, listing and resolve", () => {
+  const chipEnv = () => {
+    const slot = { innerHTML: "" };
+    const document = {
+      getElementById: () => ({ value: "case-1" }),
+      querySelectorAll: () => [slot],
+      createElement: () => ({ setAttribute() {}, className: "", textContent: "" }),
+    };
+    return { slot, document };
+  };
+
+  it("keeps the chip when a proposal reply carries no veloConnected", () => {
+    const { slot, document } = chipEnv();
+    const api = loadDashboardModule<Velo>("dashboard-watson-velo.js", ["dashboard-escape.js"], { document });
+    api.watsonVeloChipSync({ veloConnected: true });
+    expect(slot.innerHTML).toContain("Velociraptor connected");
+    api.watsonVeloChipSync({ proposals: [] });
+    expect(slot.innerHTML).toContain("Velociraptor connected");
+    api.watsonVeloChipSync({ veloConnected: false });
+    expect(slot.innerHTML).toBe("");
+  });
+
+  it("shows the launch time friendly with the ISO value in an escaped title", () => {
+    const iso = "2026-11-14T10:00:00Z";
+    const h = velo().watsonVeloCardHtml(base({ status: "applied", launched: { by: "Dana", at: iso } }));
+    expect(h).toContain(`title="${iso}"`);
+    expect(h).toContain(new Date(iso).toLocaleString());
+    const bad = velo().watsonVeloCardHtml(base({ status: "applied", launched: { by: "Dana", at: HOSTILE } }));
+    expect(bad).not.toContain("<img");
+  });
+
+  it("parses the text the real listingTurns writes", () => {
+    const vql = "SELECT 1 FROM info()";
+    const [turn] = listingTurns("Dana", [
+      { line: "- Launched collection on host-a.example.com: Collect autoruns", vql },
+      { line: "- Added next step: check backups" },
+    ]);
+    const h = velo().watsonVeloAutoListHtml(turn);
+    expect(h).toContain("<ul");
+    expect(h.match(/<li>/g)).toHaveLength(2);
+    expect(h).toContain(`<pre class="watson-pre">${vql}</pre>`);
+    expect(h).toContain("Added next step: check backups");
+    const [more] = listingTurns("Dana", [{ line: "x".repeat(10) }]);
+    expect(velo().watsonVeloAutoListHtml(more)).toContain("<ul");
+  });
+
+  const resolveEnv = (fetch: unknown) => {
+    const msg = { className: "", textContent: "", setAttribute() {} };
+    const host = { querySelector: () => null, appendChild: () => {} };
+    const document = {
+      getElementById: () => ({ value: "case-1" }),
+      querySelectorAll: () => [],
+      createElement: () => msg,
+    };
+    const api = loadDashboardModule<Velo>("dashboard-watson-velo.js", ["dashboard-escape.js"], {
+      document,
+      fetch,
+      renderWatson: () => {},
+    });
+    const el = { dataset: { pid: "wp 1", outcome: "retry" }, parentElement: host };
+    return { api, el, msg };
+  };
+
+  it("posts the outcome to the resolve route", async () => {
+    const calls: unknown[][] = [];
+    const fetch = async (...a: unknown[]) => {
+      calls.push(a);
+      return { ok: true, json: async () => ({ chat: {} }) };
+    };
+    const { api, el } = resolveEnv(fetch);
+    await api.watsonVeloResolve(el);
+    expect(calls[0][0]).toBe("/cases/case-1/watson/proposals/wp%201/resolve");
+    const init = calls[0][1] as { method: string; body: string };
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ outcome: "retry" });
+  });
+
+  it("shows a refusal through textContent", async () => {
+    const fetch = async () => ({ ok: false, status: 409, json: async () => ({ error: HOSTILE }) });
+    const { api, el, msg } = resolveEnv(fetch);
+    await api.watsonVeloResolve(el);
+    expect(msg.textContent).toContain(HOSTILE);
   });
 });

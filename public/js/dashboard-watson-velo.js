@@ -13,6 +13,15 @@
   const num = (n) => esc(String(Number(n) || 0));
   const rowsText = (n) => `${num(n)} row${Number(n) === 1 ? "" : "s"}`;
 
+  // A friendly local time with the exact ISO value in the title; an unparseable value is shown as is.
+  function timeHtml(iso) {
+    const raw = String(iso || "");
+    if (!raw || isNaN(Date.parse(raw))) return esc(raw);
+    const fmt = typeof window !== "undefined" && window.DfirTime && window.DfirTime.fmtDateTime;
+    const shown = fmt ? fmt(raw) : new Date(raw).toLocaleString();
+    return `<span title="${escAttr(raw)}">${esc(shown)}</span>`;
+  }
+
   function statusLine(w) {
     if (!w || w.state === "watching") return "Running. Watson reads the result when it finishes.";
     if (w.state === "timeout") return "Timed out waiting for the result. Check Velociraptor.";
@@ -37,7 +46,7 @@
     if (p.status === "applied") {
       const l = p.launched || {};
       lines.push(
-        `<div class="watson-why">Launched by ${esc(l.by || p.appliedBy || "an analyst")} at ${esc(l.at || p.appliedAt || "")}</div>`,
+        `<div class="watson-why">Launched by ${esc(l.by || p.appliedBy || "an analyst")} at ${timeHtml(l.at || p.appliedAt)}</div>`,
         `<div class="watson-why" data-w-status="launch">${statusLine(p.watch)}</div>`,
         `<div class="watson-why">${esc(NO_UNDO)}</div>`,
       );
@@ -77,7 +86,9 @@
       : "";
   }
 
-  // The Auto listing: "- line" items, each maybe followed by "  VQL:" and the query. "" for any other turn.
+  // The Auto listing. Its text shape is written by listingTurns in
+  // companion/src/analysis/ai/watson/autoApply.ts; watsonVeloCards.test.ts feeds this parser the real
+  // output, so a wording change there breaks a test. "- line" items, each maybe followed by "  VQL:" and the query. "" for any other turn.
   function autoListHtml(text) {
     const all = String(text || "").split("\n");
     if (!AUTO_HEADS.some((h) => all[0].startsWith(h))) return "";
@@ -133,9 +144,13 @@
     }
   }
 
+  // Only a GET carries veloConnected; the replies to a proposal POST do not, so they leave it be.
+  let wVeloConnected = false;
+
   function watsonVeloChipSync(chat) {
+    if (chat && typeof chat.veloConnected === "boolean") wVeloConnected = chat.veloConnected;
     if (typeof document === "undefined" || !document.querySelectorAll) return;
-    const html = chipHtml(!!(chat && chat.veloConnected));
+    const html = chipHtml(wVeloConnected);
     document.querySelectorAll('[data-w="velo"]').forEach((el) => { el.innerHTML = html; });
   }
 
