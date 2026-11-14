@@ -12,6 +12,10 @@ import {
 } from "../../../src/analysis/ai/watson/proposals.js";
 import type { WatsonEventPromoteProposal, WatsonPaste } from "../../../src/analysis/ai/watson/types.js";
 import { emptyWatsonChat } from "../../../src/analysis/ai/watson/types.js";
+import {
+  eventPromoteWriter,
+  promoteRows,
+} from "../../../src/analysis/ai/watson/writers/eventPromoteWriter.js";
 import { StateLock } from "../../../src/analysis/stateLock.js";
 import { StateStore } from "../../../src/analysis/stateStore.js";
 import { emptyState, type Finding, type ForensicEvent } from "../../../src/analysis/stateTypes.js";
@@ -270,5 +274,70 @@ describe("Watson event-promote writer", () => {
     await expect(undo).rejects.toThrow(/cited by finding f-1/);
     expect(await row(raised.id)).toBeDefined();
     expect((await stored()).status).toBe("applied");
+  });
+
+  // Phase 4 (D9): the same record carries the super-timeline rows Watson cited.
+  const superProposal = (promotedAt?: string): WatsonEventPromoteProposal => ({
+    id: "wp-s",
+    turnId: "t1",
+    kind: "event_promote",
+    targetId: raised.id,
+    events: [{ ...raised, severity: "Info", provenance: [] }],
+    source: "supertimeline",
+    status: "pending",
+    ...(promotedAt ? { promotedAt } : {}),
+  });
+
+  it("a super-timeline promotion writes its own timeline note and reads no paste", async () => {
+    const noChat = {
+      ...deps,
+      chatStore: {
+        load: async () => {
+          throw new Error("the chat must not be read");
+        },
+      } as unknown as WriterDeps["chatStore"],
+    };
+    const { proposal } = await eventPromoteWriter.apply(
+      noChat,
+      CASE,
+      superProposal("2026-11-14T10:00:00.000Z"),
+    );
+    expect(proposal?.createdEventIds).toEqual([raised.id]);
+    expect(proposal?.promotedAt).toBe("2026-11-14T10:00:00.000Z");
+    expect((await row(raised.id))?.severity).toBe("Info");
+    const timeline = (await stateStore.loadOverview(CASE)).timeline;
+    expect(timeline.some((t) => t.description.includes("Watson cited 1 super-timeline row"))).toBe(true);
+    expect(timeline.some((t) => t.description.includes("Watson paste"))).toBe(false);
+    expect(outOfDate).toEqual(["Watson promoted super-timeline rows it cited"]);
+  });
+
+  it("promoteRows adopts rows already stamped with the proposal's promotedAt (recovery is idempotent)", async () => {
+    const p = superProposal("2026-11-14T10:00:00.000Z");
+    const first = await promoteRows(deps, CASE, p);
+    expect(first.proposal.createdEventIds).toEqual([raised.id]);
+    // The record was lost after the rows landed: the retry finds them and adopts them.
+    const again = await promoteRows(deps, CASE, p);
+    expect(again.proposal.createdEventIds).toEqual([raised.id]);
+    expect(again.proposal.landedRows).toEqual(first.proposal.landedRows);
+    expect(outOfDate).toEqual([]);
+    // A Watson row stamped by another promotion is not this proposal's to adopt.
+    const other = await promoteRows(deps, CASE, superProposal("2026-11-14T11:00:00.000Z"));
+    expect(other.proposal.createdEventIds).toEqual([]);
+  });
+
+  it("an old chat file's paste promotion, and a super-timeline one, both load", async () => {
+    await chatStore.save(CASE, {
+      ...chatWithTurns(),
+      pastes: [paste],
+      proposals: [
+        proposalOf(),
+        { ...superProposal("2026-11-14T10:00:00.000Z"), rawEvidenceIds: ["x"] } as never,
+      ],
+    });
+    const loaded = (await chatStore.load(CASE)).proposals;
+    expect(loaded.map((p) => p.id)).toEqual(["wp-e", "wp-s"]);
+    expect(loaded[0]).toMatchObject({ pasteId: paste.id });
+    expect(loaded[1]).toMatchObject({ source: "supertimeline", promotedAt: "2026-11-14T10:00:00.000Z" });
+    expect("pasteId" in loaded[1]).toBe(false);
   });
 });

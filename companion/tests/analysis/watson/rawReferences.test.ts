@@ -73,6 +73,33 @@ describe("mentionedIds", () => {
   it("finds ids at the start and end of the text, and ids with punctuation inside them", () => {
     expect(mentionedIds("ev:1/a then evt-2", new Set(["ev:1/a", "evt-2"]))).toEqual(["ev:1/a", "evt-2"]);
   });
+  // Ruling 2 (Task 4 review M1): a model writes ids after a label, after an ellipsis, in a range, and
+  // straight against the next sentence.
+  it("counts an id after ':' or an ellipsis", () => {
+    const ids = new Set(["raw1", "st-row-17"]);
+    expect(mentionedIds("row:raw1", ids)).toEqual(["raw1"]);
+    expect(mentionedIds("see ...raw1 then", ids)).toEqual(["raw1"]);
+    expect(mentionedIds("rows: …st-row-17", ids)).toEqual(["st-row-17"]);
+    expect(mentionedIds("event:st-row-17", ids)).toEqual(["st-row-17"]);
+  });
+  it("counts both ends of a range or a joined pair of ids", () => {
+    const ids = new Set(["raw1", "raw2", "raw3", "st-row-17", "st-row-18"]);
+    expect(mentionedIds("raw1-raw3", ids)).toEqual(["raw1", "raw3"]);
+    expect(mentionedIds("raw1:raw2", ids)).toEqual(["raw1", "raw2"]);
+    expect(mentionedIds("rows st-row-17-st-row-18.", ids)).toEqual(["st-row-17", "st-row-18"]);
+  });
+  it("counts an id at a sentence end with no space after the full stop", () => {
+    expect(mentionedIds("It was raw1.Next it ran", new Set(["raw1"]))).toEqual(["raw1"]);
+    expect(mentionedIds("It was st-row-17.The", new Set(["st-row-17"]))).toEqual(["st-row-17"]);
+  });
+  it("still refuses an id inside a longer token", () => {
+    const ids = new Set(["raw1", "row-17"]);
+    expect(mentionedIds("raw1.5", ids)).toEqual([]);
+    expect(mentionedIds("raw10", ids)).toEqual([]);
+    expect(mentionedIds("raw1:x", ids)).toEqual([]);
+    expect(mentionedIds("raw1-x and xraw1", ids)).toEqual([]);
+    expect(mentionedIds("st-row-17", ids)).toEqual([]);
+  });
 });
 
 describe("earlierShownIds", () => {

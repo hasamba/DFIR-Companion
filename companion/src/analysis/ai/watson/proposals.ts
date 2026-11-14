@@ -5,6 +5,7 @@ import {
   WatsonProposalStateError,
   type WatsonProposalAction,
 } from "./proposalErrors.js";
+import { deadEvidenceIds, rawEvidenceOf } from "./rawEvidence.js";
 import { proposalTargetId, type WatsonChat, type WatsonProposal, type WatsonProposalKind } from "./types.js";
 import { eventPromoteWriter } from "./writers/eventPromoteWriter.js";
 import { findingWriter } from "./writers/findingWriter.js";
@@ -95,7 +96,9 @@ function describe(p: WatsonProposal): string {
     case "report_text":
       return `report text (${p.field})`;
     case "event_promote":
-      return `promotion of ${p.events.length} pasted row(s)`;
+      return p.source === "supertimeline"
+        ? `promotion of ${p.events.length} super-timeline row(s) Watson cited`
+        : `promotion of ${p.events.length} pasted row(s)`;
     case "velo_launch":
       return `Velociraptor ${p.mode}: ${p.title}`;
   }
@@ -106,6 +109,21 @@ function detailFor(action: WatsonProposalAction, p: WatsonProposal): string {
   const kept = action === "undo" && "keptEventIds" in p ? (p.keptEventIds?.length ?? 0) : 0;
   const note = kept ? `; kept ${kept} event${kept === 1 ? "" : "s"} other findings cite` : "";
   return `${verb} Watson's ${describe(p)}`.slice(0, 200) + note;
+}
+
+/**
+ * D9b: an item resting on super-timeline rows Watson promoted is refused, nothing written, once one
+ * of those rows is gone (its promotion was undone). Read under the state lock.
+ */
+async function checkRawEvidence(deps: WriterDeps, caseId: string, p: WatsonProposal): Promise<void> {
+  const ids = rawEvidenceOf(p);
+  if (!ids.length) return;
+  const dead = await deps.stateLock.runExclusive(caseId, () => deadEvidenceIds(deps.stateStore, caseId, ids));
+  if (dead.length) {
+    throw new WatsonProposalConflict(
+      `Event ${dead[0]} this rests on is no longer in the forensic timeline (its promotion was undone); nothing was written`,
+    );
+  }
 }
 
 async function runWriter(
@@ -157,21 +175,32 @@ export async function applyWatsonProposal(
     const p = c.proposals.find((x) => x.id === proposalId);
     if (!p) throw new WatsonProposalNotFoundError(proposalId);
     if (!allowed(p, action, opts.pendingOnly)) throw new WatsonProposalStateError(action, p.status);
+    if (action === "apply") await checkRawEvidence(deps, caseId, p);
     const result = action === "reject" ? {} : await runWriter(deps, caseId, p, action, actor);
     state = result.state;
     const next = decided(p, action, result.proposal, actor);
     done = next;
     return { ...c, proposals: c.proposals.map((x) => (x.id === proposalId ? next : x)) };
   });
-  if (done) {
-    await deps.activity.add(caseId, {
-      ...(actor ? { actor } : {}),
-      category: "ai",
-      action: `watson.${action}`,
-      detail: detailFor(action, done) + (opts.detailSuffix ?? ""),
-      targetType: TARGET_TYPE[done.kind],
-      targetId: proposalTargetId(done),
-    });
-  }
+  if (done) await recordWatsonActivity(deps, caseId, action, done, actor, opts.detailSuffix);
   return state ? { chat, state } : { chat };
+}
+
+/** The activity entry an analyst's decision writes; the round's own promotion writes the same one. */
+export async function recordWatsonActivity(
+  deps: Pick<WriterDeps, "activity">,
+  caseId: string,
+  action: WatsonProposalAction,
+  p: WatsonProposal,
+  actor?: string,
+  suffix?: string,
+): Promise<void> {
+  await deps.activity.add(caseId, {
+    ...(actor ? { actor } : {}),
+    category: "ai",
+    action: `watson.${action}`,
+    detail: detailFor(action, p) + (suffix ?? ""),
+    targetType: TARGET_TYPE[p.kind],
+    targetId: proposalTargetId(p),
+  });
 }

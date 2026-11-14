@@ -2,6 +2,7 @@ import { PresidioApprovalRequired } from "../../presidio.js";
 import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { AiReplyUnreadableError } from "../aiReplyUnreadable.js";
 import { AiAnswerParseError } from "../providerCall.js";
+import type { RawRefs } from "./rawReferences.js";
 import type { WatsonReply } from "./replySchema.js";
 import type { WatsonSpend } from "./roundContext.js";
 import type { WatsonWriteInputs } from "./roundWrites.js";
@@ -13,6 +14,7 @@ import type {
   WatsonCoverage,
   WatsonLookedUp,
   WatsonPaste,
+  WatsonProposalStatus,
   WatsonRequest,
   WatsonTurn,
   WatsonVeloLaunchProposal,
@@ -52,6 +54,23 @@ export interface Outcome {
   superShown?: ForensicEvent[];
   /** The names those rows printed: persisted on the chat even when the reply failed (the model saw them). */
   superRoster?: WatsonMaskRoster;
+  /** Proposals already in the chat that the turn lists (the round's own promotion record, roundPromote.ts). */
+  extraProposalIds?: string[];
+  /** D9b: each reply item's rawEvidenceIds, keyed by its position in the reply (rawReferences.ts refKey). */
+  rawEvidence?: Map<string, string[]>;
+  /** The round's super-timeline promotion, for the final save's revalidation (roundPromote.ts). */
+  promotion?: WatsonRoundPromotion;
+}
+
+/** The round's promotion as revalidatePromotion needs it: the reply before settling, and what kept it. */
+export interface WatsonRoundPromotion {
+  proposalId: string;
+  /** The record's statuses under which the items resting on it stay. */
+  keep: WatsonProposalStatus[];
+  unsettled: WatsonReply;
+  refs: RawRefs[];
+  /** Cited ids correlation had already folded into a live event: landed whatever the record does. */
+  folded: Map<string, string>;
 }
 
 /** The chat with the round's super-timeline roster folded into its persisted one (D2d). */
@@ -116,9 +135,11 @@ export function mergeOutcome(
   }
   const turnId = outcome.turnId ?? newWatsonId("wt");
   const proposals = [
-    ...buildProposals(reply, outcome.questions, turnId, outcome.writeInputs),
+    ...buildProposals(reply, outcome.questions, turnId, outcome.writeInputs, outcome.rawEvidence),
     ...(outcome.veloProposal ? [{ ...outcome.veloProposal, turnId }] : []),
   ];
+  // The round's promotion record is already in the chat: the turn lists it, it is not added again.
+  const proposalIds = [...proposals.map((p) => p.id), ...(outcome.extraProposalIds ?? [])];
   const notes = [outcome.note, outcome.veloNote].filter((n): n is string => !!n);
   const text = notes.length ? [reply.message, ...notes].join("\n\n").trim() : reply.message;
   const turn: WatsonTurn = {
@@ -133,7 +154,7 @@ export function mergeOutcome(
     ...(outcome.coverage ? { coverage: outcome.coverage } : {}),
     ...(outcome.veloNote ? { veloNote: outcome.veloNote } : {}),
     ...(outcome.lookedUp ? { lookedUp: outcome.lookedUp } : {}),
-    ...(proposals.length ? { proposalIds: proposals.map((p) => p.id) } : {}),
+    ...(proposalIds.length ? { proposalIds } : {}),
     costUSD: spent.usd,
   };
   return withUnreadable(

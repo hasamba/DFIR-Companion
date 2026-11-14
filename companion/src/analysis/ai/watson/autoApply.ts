@@ -58,6 +58,9 @@ export interface WatsonAutoRound {
 }
 
 const isHeldPromotion = (p: WatsonProposal): boolean => p.kind === "event_promote" && p.status === "pending";
+/** The round's own super-timeline promotion: applied by the round; a stuck one waits for an analyst's Apply. */
+const isRoundPromotion = (p: WatsonProposal): boolean =>
+  p.kind === "event_promote" && p.source === "supertimeline";
 
 /** The round's eligible proposals, in chat order. */
 export function eligibleProposals(chat: WatsonChat, round: WatsonAutoRound): WatsonProposal[] {
@@ -66,10 +69,11 @@ export function eligibleProposals(chat: WatsonChat, round: WatsonAutoRound): Wat
   const held = new Set(round.heldIds ?? []);
   const pasted = new Set(round.paste?.proposalIds ?? []);
   return chat.proposals.filter((p) => {
-    if (p.status !== "pending") return false;
+    if (p.status !== "pending" || isRoundPromotion(p)) return false;
     if (own.has(p.id) && p.turnId === round.turnId) return true;
     if (held.has(p.id)) return isHeldPromotion(p);
-    return pasted.has(p.id) && isHeldPromotion(p) && "pasteId" in p && p.pasteId === round.paste?.pasteId;
+    const pasteId = "pasteId" in p ? p.pasteId : undefined;
+    return pasted.has(p.id) && isHeldPromotion(p) && !!pasteId && pasteId === round.paste?.pasteId;
   });
 }
 
@@ -103,7 +107,9 @@ function what(p: WatsonProposal): string {
     case "report_text":
       return `report text (${p.field === "conclusions" ? "Conclusions" : "Investigation limitations"}): ${p.after}`;
     case "event_promote":
-      return `promotion of ${p.events.length} held row${p.events.length === 1 ? "" : "s"}`;
+      return p.source === "supertimeline"
+        ? `promotion of ${p.events.length} super-timeline row${p.events.length === 1 ? "" : "s"} Watson cited`
+        : `promotion of ${p.events.length} held row${p.events.length === 1 ? "" : "s"}`;
     case "velo_launch":
       return p.mode === "collection"
         ? `Velociraptor collection on ${p.hostname ?? "?"}: ${p.title}`

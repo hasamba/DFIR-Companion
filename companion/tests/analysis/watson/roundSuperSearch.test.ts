@@ -165,7 +165,12 @@ describe("Watson's super-timeline search hop", () => {
   it("the second reply may cite a shown raw row; the first call's sanitizer stays forensic-only", async () => {
     const h = await harness([reply(superLookup()), reply(answer(["raw1", "e1"]))]);
     const chat = await runWatsonRound(h.ctx, CASE, { text: "q?" });
-    expect(lastWatsonTurn(chat).answer?.relatedEventIds).toEqual(["raw1", "e1"]);
+    // The citation passed the sanitizer; this harness's writer cannot promote, so evidence-first
+    // promotion (Task 5, roundSuperPromote.test.ts) leaves it out rather than cite an unpromoted row.
+    expect(lastWatsonTurn(chat).answer?.relatedEventIds).toEqual(["e1"]);
+    expect(lastWatsonTurn(chat).text).toMatch(
+      /Watson cited 1 super-timeline row, but it could not be promoted/,
+    );
     const g = await harness([reply(answer(["raw1", "e1"]))]);
     const plain = await runWatsonRound(g.ctx, CASE, { text: "q?" });
     expect(lastWatsonTurn(plain).answer?.relatedEventIds).toEqual(["e1"]);

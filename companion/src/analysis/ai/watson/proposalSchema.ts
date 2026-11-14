@@ -27,8 +27,12 @@ const createdRows = {
   promotedAt: z.string().optional(),
 };
 
+// D9b: a malformed list drops to undefined, never the proposal.
+const rawEvidence = { rawEvidenceIds: z.array(z.string()).optional().catch(undefined) };
+
 const questionProposal = z.object({
   ...common,
+  ...rawEvidence,
   kind: z.enum(["question_update", "question_new"]),
   questionId: z.string(),
   targetId: z.string().optional(),
@@ -38,6 +42,7 @@ const questionProposal = z.object({
 
 const findingProposal = z.object({
   ...common,
+  ...rawEvidence,
   ...createdRows,
   kind: z.enum(["finding_new", "finding_update"]),
   targetId: z.string(),
@@ -49,6 +54,7 @@ const findingProposal = z.object({
 
 const nextStepProposal = z.object({
   ...common,
+  ...rawEvidence,
   kind: z.literal("next_step_new"),
   targetId: z.string(),
   after: step,
@@ -56,6 +62,7 @@ const nextStepProposal = z.object({
 
 const reportTextProposal = z.object({
   ...common,
+  ...rawEvidence,
   kind: z.literal("report_text"),
   targetId: z.string(),
   field: z.enum(["conclusions", "investigationLimitations"]),
@@ -69,7 +76,8 @@ const eventPromoteProposal = z.object({
   kind: z.literal("event_promote"),
   targetId: z.string(),
   events: z.array(event),
-  pasteId: z.string(),
+  pasteId: z.string().optional(),
+  source: z.literal("supertimeline").optional().catch(undefined),
   landedRows: z
     .array(
       z.object({

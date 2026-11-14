@@ -28,6 +28,8 @@ import {
 import { autoAfterRound, carriedHeldIds, type WatsonRoundSource } from "./autoApply.js";
 import { mergeOutcome, type Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
+import { revalidatePromotion, withCitedPromotion } from "./roundPromote.js";
+import { earlierShownIds } from "./rawReferences.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
 import { withVeloLaunch } from "./velo/veloLaunchProposals.js";
 import { withRoundInventory } from "./velo/veloFleet.js";
@@ -134,6 +136,8 @@ async function runRound(
     const importShown = input.reaction === true && outcome.shownEvents.some((e) => e.kind === "import");
     mayWrite = input.allowWrites !== false && !importShown;
     outcome = await withWriteInputs(ctx, caseId, outcome, mayWrite);
+    // Evidence first: the raw rows the reply cites are promoted before the turn is saved (D9).
+    outcome = await withCitedPromotion(ctx, caseId, outcome, mayWrite, turnId, chat);
     outcome = await withVeloLaunch(ctx, caseId, outcome, mayWrite);
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
@@ -143,7 +147,9 @@ async function runRound(
     const spent = before && after ? spendDelta(before, after) : NO_SPEND;
     const failed = input.reaction === true && reactionFailed(outcome.reply, outcome.error);
     saved = await ctx.chatStore.update(caseId, (fresh) => {
-      const merged = mergeOutcome(fresh, { ...outcome, turnId }, spent, counter.calls);
+      // D9b: an undo of the promotion while the round ran drops what rested on it before it is added.
+      const checked = revalidatePromotion(fresh, outcome);
+      const merged = mergeOutcome(fresh, { ...checked, turnId }, spent, counter.calls);
       return input.reaction ? withReactionResult(merged, failed) : merged;
     });
   }
@@ -196,10 +202,12 @@ async function converse(
     // The analyst's message is the ANALYST block; it is not repeated as recent chat.
     const others = { ...chat, turns: chat.turns.filter((t) => t.id !== analystTurn.id) };
     ({ base, cover } = await watsonBaseInput(ctx, caseId, state, others, analystTurn.text, true));
+    // Option B: ids an EARLIER super-timeline search showed pass the sanitizer too, so the
+    // promotion step (roundPromote.ts) sees them and drops whole any item resting on one.
     const known = {
       questions: new Set(state.keyQuestions.map((q) => q.id)),
       pastes: new Set(chat.pastes.map((p) => p.id)),
-      events: new Set(state.forensicTimeline.map((e) => e.id)),
+      events: new Set([...state.forensicTimeline.map((e) => e.id), ...earlierShownIds(chat)]),
       citations: citationSets(chat.pastes, state.findings),
     };
     const veloOn = base.velo !== undefined;

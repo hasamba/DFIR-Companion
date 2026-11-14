@@ -3,7 +3,9 @@ import type { InvestigationQuestion } from "../../stateTypes.js";
 import type { WatsonReply } from "./replySchema.js";
 import type { WatsonWriteInputs } from "./roundWrites.js";
 import type { WatsonProposal } from "./types.js";
-import { buildWriteProposals } from "./writeProposals.js";
+import { buildWriteProposals, evidenceFor, type WatsonRawEvidenceMap } from "./writeProposals.js";
+
+export type { WatsonRawEvidenceMap } from "./writeProposals.js";
 
 // Turn a sanitized Watson reply into PENDING proposals (its writes through writeProposals.ts). Nothing here touches case state: the analyst
 // applies or rejects each proposal later. Every question Watson writes is pinned and authored
@@ -20,9 +22,10 @@ export function buildProposals(
   questions: readonly InvestigationQuestion[],
   turnId: string,
   writeInputs?: WatsonWriteInputs,
+  evidence?: WatsonRawEvidenceMap,
 ): WatsonProposal[] {
   const byId = new Map(questions.map((q) => [q.id, q] as const));
-  const updates = reply.questionUpdates.flatMap((u): WatsonProposal[] => {
+  const updates = reply.questionUpdates.flatMap((u, index): WatsonProposal[] => {
     const before = byId.get(u.questionId);
     if (!before) return [];
     const after: InvestigationQuestion = {
@@ -42,10 +45,11 @@ export function buildProposals(
         before,
         after,
         status: "pending",
+        ...evidenceFor(evidence, "questionUpdate", index),
       },
     ];
   });
-  const created = reply.newQuestions.map((q): WatsonProposal => {
+  const created = reply.newQuestions.map((q, index): WatsonProposal => {
     const id = newWatsonId("wq");
     return {
       id: newWatsonId("wp"),
@@ -63,7 +67,9 @@ export function buildProposals(
         author: "watson",
       },
       status: "pending",
+      ...evidenceFor(evidence, "newQuestion", index),
     };
   });
-  return [...updates, ...created, ...buildWriteProposals(reply.writes, writeInputs, turnId, newWatsonId)];
+  const writes = buildWriteProposals(reply.writes, writeInputs, turnId, newWatsonId, evidence);
+  return [...updates, ...created, ...writes];
 }
