@@ -70,9 +70,14 @@ async function recheck(v: VeloLaunchDeps, caseId: string, p: WatsonVeloLaunchPro
   return check.fingerprints;
 }
 
-/** Save #1: checks pass, keys reserved, status `launching`. Returns the keys this call reserved. */
+/**
+ * Save #1: checks pass, keys reserved, status `launching`. Returns the keys this call reserved. Only
+ * the caller that passed the status check marks the launch in flight (a losing double-click must
+ * never clear the winner's mark, or its running launch would look stranded).
+ */
 async function saveIntent(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, id: string, by: string) {
   let added: string[] = [];
+  let marked = false;
   try {
     await deps.chatStore.update(caseId, async (c) => {
       const p = findLaunch(c, id);
@@ -83,10 +88,13 @@ async function saveIntent(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, i
       const r = await v.fingerprints.reserve(caseId, keys);
       if (!r.ok) throw new WatsonProposalConflict(`Watson will not launch this: ${ALREADY_RAN}`);
       added = r.added;
+      markInFlight(caseId, id);
+      marked = true;
       const launching = { at: new Date().toISOString(), by, fingerprint: p.fingerprint, reserved: added };
       return replace(c, { ...p, status: "launching", launching });
     });
   } catch (err) {
+    if (marked) clearInFlight(caseId, id);
     if (added.length) await v.fingerprints.release(caseId, added); // no call was made
     throw err;
   }
@@ -149,9 +157,8 @@ export async function applyVeloLaunch(
 ): Promise<{ chat: WatsonChat }> {
   const v = deps.veloLaunch;
   if (!v) throw new WatsonProposalConflict("Velociraptor launches are not configured");
-  markInFlight(caseId, proposalId);
+  const added = await saveIntent(deps, v, caseId, proposalId, actor); // marks it in flight
   try {
-    const added = await saveIntent(deps, v, caseId, proposalId, actor);
     const p = findLaunch(await deps.chatStore.load(caseId), proposalId);
     const outcome = await runLaunch(v, caseId, p, actor);
     return await settle(deps, v, caseId, p, outcome, added, actor);

@@ -27,7 +27,7 @@ import { veloServerClients } from "../helpers/serverClientsStub.js";
 const CASE = "c1";
 const PSLIST = "SELECT * FROM pslist()";
 const HOST = "web01.example.com";
-const CLIENT = "C.1a2b3c4d5e6f7a8b";
+const CLIENT = "C.webserver1";
 const CLIENTS = [{ clientId: CLIENT, hostname: HOST, fqdn: HOST }];
 
 const veloCfg: VelociraptorApiConfig = {

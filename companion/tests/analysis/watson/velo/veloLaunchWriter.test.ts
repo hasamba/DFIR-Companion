@@ -37,7 +37,7 @@ import { CaseStore } from "../../../../src/storage/caseStore.js";
 const CASE = "c1";
 const PSLIST = "SELECT * FROM pslist()";
 const HOST = "web01.example.com";
-const CLIENTS = [{ clientId: "C.1a2b3c4d5e6f7a8b", hostname: HOST, fqdn: HOST }];
+const CLIENTS = [{ clientId: "C.webserver1", hostname: HOST, fqdn: HOST }];
 
 /** A chat store whose Nth save (1-based) fails once. */
 class FlakyChatStore extends WatsonChatStore {
@@ -286,6 +286,31 @@ describe("applying a velo_launch proposal", () => {
     await applyWatsonProposal(deps(slow), CASE, "wp-hunt", "apply");
     expect(swept).toBe(0);
     expect((await stored("wp-hunt")).status).toBe("applied");
+  });
+
+  it("a losing double-click never makes the running launch look stranded", async () => {
+    await seed(huntProposal());
+    let finish: (o: VeloLaunchOutcome) => void = () => {};
+    let started: () => void = () => {};
+    const running = new Promise<void>((r) => (started = r));
+    const slow: Launch = () =>
+      new Promise((r) => {
+        finish = r;
+        started();
+      });
+    const first = applyWatsonProposal(deps(slow), CASE, "wp-hunt", "apply");
+    await running;
+    await expect(applyWatsonProposal(deps(), CASE, "wp-hunt", "apply")).rejects.toBeInstanceOf(
+      WatsonProposalStateError,
+    );
+    expect(await markStrandedLaunches(chatStore, CASE)).toBe(0);
+    await expect(
+      resolveVeloLaunch({ chatStore, activity, fingerprints: fps }, CASE, "wp-hunt", "retry"),
+    ).rejects.toBeInstanceOf(WatsonProposalStateError);
+    finish({ phase: "launched", launched: { huntId: "H.SAMPLE4" } });
+    await first;
+    expect((await stored("wp-hunt")).status).toBe("applied");
+    expect(calls).toHaveLength(1);
   });
 
   it("refuses undo: a launched hunt cannot be undone", async () => {
