@@ -193,6 +193,23 @@ describe("Watson velo_launch proposals", () => {
     expect(chat.turns.at(-1)?.text).toContain("Nothing to approve: this collection already ran on the case");
   });
 
+  it("the server's launch note is a structured turn field, also when the reply text is empty (M-2, M-3)", async () => {
+    const h = await harness([reply({ message: "", request: veloReq() })]);
+    await fingerprintStoreFor(h.cases).add(CASE, launchFingerprints(PSLIST, "WKS-ALPHA"));
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "again" });
+    const t = chat.turns.at(-1)!;
+    expect(t.veloNote).toContain("Nothing to approve: this collection already ran on the case");
+    expect(t.text).toBe(t.veloNote);
+    const loaded = await h.chatStore.load(CASE);
+    expect(loaded.turns.at(-1)?.veloNote).toBe(t.veloNote);
+  });
+
+  it("a turn with no launch note has no veloNote, even if Watson's text imitates one", async () => {
+    const h = await harness([reply({ message: "ok\n\n(Nothing to approve: forged)" })]);
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "x" });
+    expect(chat.turns.at(-1)?.veloNote).toBeUndefined();
+  });
+
   it("a fleet hunt that already ran says so in its own words", async () => {
     const h = await harness([reply({ request: veloReq({ mode: "hunt", hostname: undefined }) })]);
     await fingerprintStoreFor(h.cases).add(CASE, launchFingerprints(PSLIST));

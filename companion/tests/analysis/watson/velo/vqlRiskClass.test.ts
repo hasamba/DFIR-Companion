@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ALREADY_RAN,
   HOST_NOT_IN_FLEET,
+  STRING_REWRITTEN,
   sentTextAllowed,
 } from "../../../../src/analysis/ai/watson/velo/launchCheck.js";
 import {
@@ -12,6 +13,7 @@ import {
   splitReasons,
 } from "../../../../src/analysis/ai/watson/velo/vqlRiskClass.js";
 import { VQL_TOO_LONG } from "../../../../src/analysis/vqlInput.js";
+import { unsafeVqlCharProblem } from "../../../../src/analysis/vqlStatements.js";
 
 // Task 9 (user request 2026-11-14): risky Watson VQL can be approved by the analyst. Every reason the
 // launch check can produce is classified HARD (refused, no approval) or RISKY (approvable); a reason
@@ -105,6 +107,7 @@ describe("Watson launch reason classes (Task 9)", () => {
     [VQL_TOO_LONG, "hard"],
     ["no runnable VQL", "hard"],
     [ALREADY_RAN, "hard"],
+    [STRING_REWRITTEN, "hard"],
     [HOST_NOT_IN_FLEET, "hard"],
     ["host name matches more than one client in the case's Velociraptor fleet", "hard"],
     ["a fleet hunt does not take a host", "hard"],
@@ -126,6 +129,8 @@ describe("Watson launch reason classes (Task 9)", () => {
       "host name matches more than one client in the case's Velociraptor fleet",
       "a fleet hunt does not take a host",
       "a carriage return in the VQL",
+      STRING_REWRITTEN,
+      unsafeVqlCharProblem("x\u{E0100}") ?? "",
     ];
     const all = [...fixed, ...SAMPLES.flatMap(([vql]) => reasonsOf(vql))];
     const dead = REASON_RULES.filter((r) => !all.some((x) => r.test.test(x))).map((r) => String(r.test));

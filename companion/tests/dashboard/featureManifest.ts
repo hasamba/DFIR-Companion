@@ -1925,6 +1925,8 @@ export const FEATURES: Feature[] = [
       "wVeloConnected",
       "RISK_TAIL",
       "wRiskArmed",
+      "wRiskSending",
+      "isRisky",
       "riskReasons",
       "rerender",
     ],

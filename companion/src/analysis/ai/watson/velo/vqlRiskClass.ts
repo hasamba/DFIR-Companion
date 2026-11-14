@@ -71,12 +71,13 @@ export const REASON_RULES: readonly ReasonRule[] = [
   // ── HARD: the checked text could differ from the run text ──────────────────────────────
   {
     test: re(
-      "the VQL contains an invisible control or line-break character \\(U\\+[0-9A-F]{4}\\) that Velociraptor could read differently from what was checked; retype the query without it",
+      "the VQL contains an invisible control or line-break character \\(U\\+[0-9A-F]{4,6}\\) that Velociraptor could read differently from what was checked; retype the query without it",
     ),
     cls: "hard",
   },
   { test: re("''' \\(a triple-quoted string\\) is not allowed"), cls: "hard" },
   { test: re("a carriage return in the VQL"), cls: "hard" },
+  { test: re("the duration rewrite would change a string literal"), cls: "hard" },
   { test: re("comments are not allowed"), cls: "hard" },
   { test: re("a string literal holds a blank line or a line starting with --"), cls: "hard" },
   // ── HARD: the check cannot read it or cannot name what runs ────────────────────────────

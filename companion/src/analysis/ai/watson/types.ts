@@ -60,6 +60,11 @@ export interface WatsonTurn {
   answer?: WatsonAnswer;
   /** The proposal made when the analyst added this turn's answer to the open questions. */
   answerProposalId?: string;
+  /**
+   * The server's Velociraptor launch note ("Nothing to approve: …" / "Risky query: …"), also appended
+   * to `text`. Set only by the server, so the dashboard's warning block cannot be forged by the model.
+   */
+  veloNote?: string;
 }
 
 /**

@@ -169,10 +169,12 @@ Sometimes Watson needs something off the list: running a program, writing or upl
 
 Some VQL is refused outright and never becomes a card, because Velociraptor could read it differently from what you see, or the launch itself is not valid:
 
-- comments, triple-quoted strings, carriage returns, and hidden or control characters
+- comments, triple-quoted strings, carriage returns, and hidden, control or text-direction characters (for example a right-to-left override that makes a file name read backwards), even inside a quoted string
 - a string that holds a blank line or a line starting with `--`
 - VQL that Watson's check cannot read, or that calls something it cannot name
 - VQL longer than the size limit
+
+Watson also never changes the text inside a quoted string before it sends the query, so the query that runs matches the card character for character.
 - the same query that already ran on the case, an unknown or unclear host, or a fleet hunt with a host
 
 When Watson's request is refused, its turn ends with **Nothing to approve** and the reason. If Watson's own text asked you to approve something, there is no card: nothing runs. The VQL is still shown with **Copy**, so you can run it by hand in Velociraptor if you decide it is safe. Watson also sees the list of collections it already launched on the case, so it should not ask for them again.

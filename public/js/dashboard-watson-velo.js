@@ -20,6 +20,8 @@
   const RISK_TAIL = ". Watson's safety check would normally block this. Read the query before approving.";
   // Risky cards whose second confirmation is on screen (by proposal id); cleared on a case switch.
   const wRiskArmed = new Set();
+  // Risky launches whose "Yes, launch it" request is in flight: the button stays disabled (M-5).
+  const wRiskSending = new Set();
 
   const num = (n) => esc(String(Number(n) || 0));
   const rowsText = (n) => `${num(n)} row${Number(n) === 1 ? "" : "s"}`;
@@ -54,12 +56,14 @@
   const btn = (pid, verb, label, extra) =>
     `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="${verb}" data-pid="${escAttr(pid)}"${extra || ""}>${label}</button> `;
 
+  // Risky is decided by the stored risk field, never by how many reasons it lists (M-4).
+  const isRisky = (p) => !!p.risk && typeof p.risk === "object";
   const riskReasons = (p) => (p.risk && Array.isArray(p.risk.reasons) ? p.risk.reasons.map(String) : []);
 
   function riskHtml(p) {
-    const reasons = riskReasons(p);
-    if (!reasons.length || p.status === "applied" || p.status === "rejected") return "";
-    return `<div class="watson-why watson-risk" role="alert">${esc(`Risky query — ${reasons.join("; ")}${RISK_TAIL}`)}</div>`;
+    if (!isRisky(p) || p.status === "applied" || p.status === "rejected") return "";
+    const reasons = riskReasons(p).join("; ") || "Watson did not record why";
+    return `<div class="watson-why watson-risk" role="alert">${esc(`Risky query — ${reasons}${RISK_TAIL}`)}</div>`;
   }
 
   function acceptedHtml(l) {
@@ -90,12 +94,14 @@
     return (
       `<div class="watson-risk-confirm" role="group" aria-label="Confirm launching a risky query">` +
       `<div class="watson-why">Launch this risky query? You have read it and accept the risk.</div>` +
-      btn(p.id, "applyRisk", "Yes, launch it") + btn(p.id, "riskCancel", "Cancel") + `</div>`
+      btn(p.id, "applyRisk", "Yes, launch it", wRiskSending.has(p.id) ? " disabled" : "") +
+      btn(p.id, "riskCancel", "Cancel") + `</div>`
     );
   }
 
   function verbsFor(p) {
-    if (p.status === "pending" && riskReasons(p).length)
+    if (p.status !== "pending") wRiskArmed.delete(p.id); // a relaunch confirms twice again (M-7)
+    if (p.status === "pending" && isRisky(p))
       return wRiskArmed.has(p.id) ? riskConfirmHtml(p) : btn(p.id, "riskArm", "Review risk and launch…") + btn(p.id, "reject", "Reject");
     if (p.status === "pending") return btn(p.id, "apply", "Launch") + btn(p.id, "reject", "Reject");
     if (p.status === "uncertain" || (p.status === "launching" && p.stalled))
@@ -193,7 +199,9 @@
   async function watsonVeloApplyRisk(el) {
     const caseId = currentCase();
     const pid = String(el.dataset.pid || "");
-    if (!caseId || !pid) return;
+    if (!caseId || !pid || wRiskSending.has(pid)) return; // one request at a time (M-5)
+    wRiskSending.add(pid);
+    el.disabled = true;
     try {
       const r = await fetch(
         `/cases/${encodeURIComponent(caseId)}/watson/proposals/${encodeURIComponent(pid)}/apply`,
@@ -201,10 +209,16 @@
       );
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error ? String(body.error) : "HTTP " + r.status);
-      wRiskArmed.delete(pid);
+      el.disabled = false;
       if (caseId === currentCase() && body.chat && typeof renderWatson === "function") renderWatson(body.chat);
     } catch (e) {
       showError(el, "Could not launch: " + (e && e.message ? e.message : "network error"));
+    } finally {
+      // Whatever the outcome, a further launch of this card asks for the second confirmation again (M-7).
+      // A refused click's button stays disabled (its message stays beside it) until the next render,
+      // which draws "Review risk and launch…" again.
+      wRiskSending.delete(pid);
+      wRiskArmed.delete(pid);
     }
   }
 
@@ -228,6 +242,7 @@
   // A case switch: no chip and Approve shown until the new case's GET says otherwise (G15, G19).
   window.watsonCaseReset = () => {
     wRiskArmed.clear();
+    wRiskSending.clear();
     watsonVeloChipSync({ veloConnected: false });
     if (typeof watsonModeSync === "function") watsonModeSync({ runMode: "approve" });
   };

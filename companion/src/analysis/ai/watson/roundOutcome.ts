@@ -119,6 +119,7 @@ export function mergeOutcome(
     ...(reply.request ? { request: storedRequest(reply.request) } : {}),
     ...(reply.answer ? { answer: reply.answer } : {}),
     ...(outcome.coverage ? { coverage: outcome.coverage } : {}),
+    ...(outcome.veloNote ? { veloNote: outcome.veloNote } : {}),
     ...(proposals.length ? { proposalIds: proposals.map((p) => p.id) } : {}),
     costUSD: spent.usd,
   };

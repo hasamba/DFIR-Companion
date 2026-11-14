@@ -48,4 +48,5 @@ export const turnSchema = z.object({
     .optional(),
   answer: answerSchema.optional().catch(undefined),
   answerProposalId: z.string().optional(),
+  veloNote: z.string().optional().catch(undefined),
 });

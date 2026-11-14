@@ -1,6 +1,7 @@
 import { vqlSizeProblem } from "../../../vqlInput.js";
 import { vqlAllowed } from "./vqlAllowed.js";
 import { splitReasons } from "./vqlRiskClass.js";
+import { tokenizeVql } from "./vqlTokens.js";
 import { launchFingerprints } from "./launchFingerprint.js";
 import { sanitizeVqlDurations, splitVqlStatements, unsafeVqlCharProblem } from "../../../vqlStatements.js";
 
@@ -85,6 +86,21 @@ function resolveHost(hostname: unknown, ctx: LaunchContext): LaunchCheck | Launc
   return rec;
 }
 
+export const STRING_REWRITTEN = "the duration rewrite would change a string literal";
+
+const stringTexts = (vql: string): string[] | null => {
+  const t = tokenizeVql(vql);
+  return t.ok ? t.tokens.filter((x) => x.kind === "string").map((x) => x.text) : null;
+};
+
+/** Belt and braces for review I-2: the rewrite skips strings, and this proves it per launch. */
+function stringsChanged(vql: string, rewritten: string): boolean {
+  if (rewritten === vql) return false;
+  const a = stringTexts(vql);
+  const b = stringTexts(rewritten);
+  return !a || !b || a.length !== b.length || a.some((x, i) => x !== b[i]);
+}
+
 /**
  * The allowlist on the raw VQL AND on every statement the launch will actually send
  * (splitVqlStatements(sanitizeVqlDurations(vql)) — what launchHunt / collectOnClient run), so the
@@ -96,7 +112,9 @@ export function sentTextAllowed(vql: string): { ok: true } | { ok: false; reason
   const raw = vqlAllowed(vql);
   // A HARD raw refusal ends here; a RISKY-only one still checks every sent statement (Task 9).
   if (!raw.ok && splitReasons(raw.reasons).hard.length > 0) return raw;
-  const statements = splitVqlStatements(sanitizeVqlDurations(vql));
+  const rewritten = sanitizeVqlDurations(vql);
+  if (stringsChanged(vql, rewritten)) return { ok: false, reasons: [STRING_REWRITTEN] };
+  const statements = splitVqlStatements(rewritten);
   if (statements.length === 0) return { ok: false, reasons: ["no runnable VQL"] };
   const reasons = new Set<string>(raw.ok ? [] : raw.reasons);
   for (const s of statements) {

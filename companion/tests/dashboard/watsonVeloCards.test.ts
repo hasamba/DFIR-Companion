@@ -361,28 +361,107 @@ describe("risky launch cards (Task 9)", () => {
   });
 });
 
-describe("refusal and risk notes in a Watson turn (Task 9)", () => {
+describe("refusal and risk notes in a Watson turn (Task 9, M-2, M-3)", () => {
   const view = () =>
     loadDashboardModule<{ watsonTurnHtml(t: unknown, p: unknown[], ro?: boolean): string }>(
       "dashboard-watson-view.js",
       ["dashboard-escape.js"],
       { ...globals, watsonWroteHtml: () => "" },
     );
-  const turn = (text: string) => ({ id: "t1", at: "2026-11-14T00:00:00Z", role: "watson", text });
+  const NOTE = "(Nothing to approve: this collection already ran on the case, so Watson proposed nothing.)";
+  const turn = (text: string, veloNote?: string) => ({
+    id: "t1",
+    at: "2026-11-14T00:00:00Z",
+    role: "watson",
+    text,
+    ...(veloNote ? { veloNote } : {}),
+  });
 
-  it("draws 'Nothing to approve' as its own warning block, apart from Watson's promise", () => {
-    const h = view().watsonTurnHtml(
-      turn(
-        `Approve it in the request panel. ${HOSTILE}\n\n(Nothing to approve: this collection already ran on the case, so Watson proposed nothing.)`,
-      ),
-      [],
-    );
+  it("draws the server's veloNote as its own warning block, apart from Watson's promise", () => {
+    const h = view().watsonTurnHtml(turn(`Approve it in the request panel. ${HOSTILE}\n\n${NOTE}`, NOTE), []);
     expect(h).toContain('class="watson-why watson-warn watson-note"');
     expect(h).toContain("(Nothing to approve: this collection already ran on the case");
+    expect(h.split("Nothing to approve").length).toBe(2); // shown once, not twice
     expect(h).not.toContain("<img");
+  });
+
+  it("Watson's own text cannot forge a note block", () => {
+    const h = view().watsonTurnHtml(turn(`ok\n\n${NOTE}`), []);
+    expect(h).not.toContain("watson-note");
+  });
+
+  it("shows the note when Watson's reply text is empty", () => {
+    const h = view().watsonTurnHtml(turn(NOTE, NOTE), []);
+    expect(h).toContain("watson-note");
+    expect(h.split("Nothing to approve").length).toBe(2);
   });
 
   it("a plain turn has no note block", () => {
     expect(view().watsonTurnHtml(turn("Just text."), [])).not.toContain("watson-note");
+  });
+});
+
+describe("risky card fixes (M-4, M-5, M-7)", () => {
+  const RISK = { reasons: ["runs a program on the endpoint (execve)"], checks: ["x"] };
+
+  it("a risk with no reasons is still a risky card (decided by the risk field)", () => {
+    const h = velo().watsonVeloCardHtml(base({ risk: { reasons: [], checks: [] } }));
+    expect(h).toContain("Risky query");
+    expect(h).toContain('data-w-verb="riskArm"');
+    expect(h).not.toContain(">Launch</button>");
+  });
+
+  const armedEnv = (fetch: unknown) => {
+    const msg = { className: "", textContent: "", setAttribute() {} };
+    const host = { querySelector: () => null, appendChild: () => {} };
+    const document = {
+      getElementById: () => ({ value: "case-1" }),
+      querySelectorAll: () => [],
+      createElement: () => msg,
+    };
+    const api = loadDashboardModule<Velo>("dashboard-watson-velo.js", ["dashboard-escape.js"], {
+      document,
+      fetch,
+      renderWatson: () => {},
+    });
+    const el = { dataset: { pid: "wp-velo-1" }, parentElement: host, disabled: false };
+    return { api, el };
+  };
+
+  it("Yes, launch it is disabled while the request runs; a second click sends nothing", async () => {
+    let release: (v: unknown) => void = () => {};
+    const calls: unknown[] = [];
+    const fetch = (...a: unknown[]) => {
+      calls.push(a);
+      return new Promise((r) => (release = r));
+    };
+    const { api, el } = armedEnv(fetch);
+    api.watsonVeloRiskArm(el);
+    const first = api.watsonVeloApplyRisk(el);
+    expect(el.disabled).toBe(true);
+    expect(api.watsonVeloCardHtml(base({ risk: RISK }))).toMatch(/data-w-verb="applyRisk"[^>]*disabled/);
+    await api.watsonVeloApplyRisk(el);
+    expect(calls).toHaveLength(1);
+    release({ ok: true, json: async () => ({ chat: {} }) });
+    await first;
+    expect(el.disabled).toBe(false);
+  });
+
+  it("after a refused or uncertain launch the card asks for the second confirmation again", async () => {
+    const fetch = async () => ({ ok: false, status: 409, json: async () => ({ error: "uncertain" }) });
+    const { api, el } = armedEnv(fetch);
+    api.watsonVeloRiskArm(el);
+    await api.watsonVeloApplyRisk(el);
+    expect(el.disabled).toBe(true); // the stale "Yes" cannot be clicked again before the re-render
+    const h = api.watsonVeloCardHtml(base({ risk: RISK }));
+    expect(h).not.toContain('data-w-verb="applyRisk"');
+    expect(h).toContain('data-w-verb="riskArm"');
+  });
+
+  it("a card that is no longer pending forgets its armed state", () => {
+    const { api, el } = armedEnv(async () => ({}));
+    api.watsonVeloRiskArm(el);
+    api.watsonVeloCardHtml(base({ risk: RISK, status: "uncertain" }));
+    expect(api.watsonVeloCardHtml(base({ risk: RISK }))).not.toContain('data-w-verb="applyRisk"');
   });
 });

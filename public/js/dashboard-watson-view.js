@@ -118,17 +118,19 @@
   const autoList = (t) =>
     t.role === "system" && typeof watsonVeloAutoListHtml === "function" ? watsonVeloAutoListHtml(t.text) : "";
 
-  // The server appends a launch note to Watson's text ("(Nothing to approve: …)" when nothing was
-  // proposed, "(Risky query: …)" for a risky card). Drawn as its own warning block, so a promise in
-  // Watson's own words ("approve it in the panel") never hides that there is no card (Task 9).
-  const NOTE_HEADS = ["\n\n(Nothing to approve:", "\n\n(Risky query:"];
+  // The server's Velociraptor launch note ("Nothing to approve: …", "Risky query: …") arrives as the
+  // turn's own veloNote field (it is also appended to the text). It is drawn as its own warning block,
+  // so Watson's promise ("approve it in the panel") never hides that there is no card. Only the server
+  // sets veloNote: Watson's text can never forge the block (Task 9 review M-2), and an empty reply
+  // still shows it (M-3).
   function textHtml(t) {
     const text = String(t.text || "");
-    const at = t.role === "watson" ? Math.max(...NOTE_HEADS.map((h) => text.lastIndexOf(h))) : -1;
-    if (at < 0) return `<div class="watson-text">${esc(text)}</div>`;
+    const note = typeof t.veloNote === "string" ? t.veloNote : "";
+    if (!note) return `<div class="watson-text">${esc(text)}</div>`;
+    const body = text.endsWith(note) ? text.slice(0, text.length - note.length).trim() : text;
     return (
-      `<div class="watson-text">${esc(text.slice(0, at))}</div>` +
-      `<div class="watson-why watson-warn watson-note" role="note">${esc(text.slice(at + 2))}</div>`
+      (body ? `<div class="watson-text">${esc(body)}</div>` : "") +
+      `<div class="watson-why watson-warn watson-note" role="note">${esc(note)}</div>`
     );
   }
 
