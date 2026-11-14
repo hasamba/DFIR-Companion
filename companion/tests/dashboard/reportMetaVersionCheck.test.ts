@@ -34,7 +34,8 @@ function load(opts: { getBody?: unknown; putStatus?: number } = {}) {
   const win: Record<string, unknown> = {};
   runInNewContext(source, {
     window: win,
-    document: { getElementById: (id: string) => withRemove(el(id)) },
+    // querySelectorAll feeds the form's unsaved-edits key (formKey); no form fields in this harness.
+    document: { getElementById: (id: string) => withRemove(el(id)), querySelectorAll: () => [] },
     fetch: async (url: string, init?: { method?: string; body?: string }) => {
       const method = init?.method ?? "GET";
       const body = init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : {};
