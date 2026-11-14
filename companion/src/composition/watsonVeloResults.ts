@@ -38,6 +38,8 @@ export interface WatsonFlowClient {
 export interface WatsonFlowRows {
   text: string;
   rows: number;
+  /** The read was cut by the collection row cap. */
+  truncated?: true;
 }
 
 export interface WatsonFlowWatcherDeps {
@@ -66,10 +68,26 @@ export interface WatsonIngested {
   ingest: WatsonPasteIngest;
 }
 
-const INTERRUPTED = "Watson was interrupted while reading the results; check the case before re-running it";
+/** Past the deadline, a status or row read that keeps failing is retried this much longer. */
+export const WATSON_WATCH_GRACE_MS = 60 * 60_000;
+/** Ticks that throw (a failing chat store) in a row before the watch gives up until the next boot. */
+export const WATSON_WATCH_MAX_FAILED_TICKS = 10;
+
+const where = (p: WatsonVeloLaunchProposal): string =>
+  `flow ${p.launched?.flowId ?? "?"}${p.hostname ? ` on ${p.hostname}` : ""}`;
+const notImported = (p: WatsonVeloLaunchProposal, why: string): string =>
+  `${why} (${where(p)}). The results are in Velociraptor and may not have been imported into the case`;
+const interruptedImport = (p: WatsonVeloLaunchProposal): string =>
+  `Watson was interrupted while importing the results of ${where(p)}: rows may have been imported, ` +
+  "but rows the tagger graded above Info were not offered for approval. " +
+  "Re-import the flow from Velociraptor to get them";
+
+type Watched = WatsonVeloLaunchProposal & { watch: NonNullable<WatsonVeloLaunchProposal["watch"]> };
 
 export class WatsonFlowWatcher implements WatsonFlowWatch {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly failedTicks = new Map<string, number>();
+  private readonly collecting = new Set<string>();
   private readonly inFlight = new Set<Promise<void>>();
   private stopped = false;
 
@@ -77,24 +95,23 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
 
   /** Start (or keep) the poll for one applied collection. */
   watch(caseId: string, proposalId: string): void {
-    const key = `${caseId}\u0000${proposalId}`;
+    const key = keyOf(caseId, proposalId);
     if (this.stopped || this.timers.has(key)) return;
     const set = this.deps.setTimer ?? setTimeout;
     const timer = set(() => {
       this.timers.delete(key);
-      // A tick that throws (a store error) polls again: the deadline and the guards bound it.
       this.track(
-        this.tick(caseId, proposalId).catch((err: unknown) => {
-          this.deps.log?.(`[watson] ${caseId}: result watch failed, retrying: ${msg(err)}`);
-          this.watch(caseId, proposalId);
-        }),
+        this.tick(caseId, proposalId).then(
+          () => this.ticked(key),
+          (err: unknown) => this.failed(caseId, proposalId, err),
+        ),
       );
     }, this.deps.pollMs ?? WATSON_WATCH_POLL_MS);
     timer.unref?.();
     this.timers.set(key, timer);
   }
 
-  /** At startup, for one case: notify ended watches, end expired ones once, resume the rest. */
+  /** At startup, for one case: notify ended watches, read expired ones once, resume the rest. */
   async resume(caseId: string): Promise<void> {
     const chat = await this.deps.chatStore.load(caseId);
     for (const p of openWatches(chat)) await this.tickOnce(caseId, p.id, true);
@@ -116,68 +133,153 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
     void p.finally(() => this.inFlight.delete(p));
   }
 
+  private ticked(key: string): void {
+    this.failedTicks.delete(key);
+  }
+
+  /** A tick that threw polls again, up to the cap; then it waits for the next boot, logged once. */
+  private failed(caseId: string, id: string, err: unknown): void {
+    const key = keyOf(caseId, id);
+    const n = (this.failedTicks.get(key) ?? 0) + 1;
+    this.failedTicks.set(key, n);
+    if (n < WATSON_WATCH_MAX_FAILED_TICKS) return this.watch(caseId, id);
+    this.failedTicks.delete(key);
+    this.deps.log?.(
+      `[watson] ${caseId}: gave up watching launch ${id} after ${n} failed attempts (${msg(err)}); it resumes on the next start`,
+    );
+  }
+
   private async tick(caseId: string, id: string): Promise<void> {
     if (!this.stopped) await this.tickOnce(caseId, id, false);
   }
 
-  private async tickOnce(caseId: string, id: string, startup: boolean): Promise<void> {
-    const p = findApplied(await this.deps.chatStore.load(caseId), id);
-    const w = p?.watch;
-    if (!p || !w) return;
-    if (w.state !== "watching") return this.notify(caseId, p); // ended earlier, event not yet sent
-    if (w.ingested) return this.end(caseId, id, "failed", INTERRUPTED); // a claim with no result
-    if ((this.deps.now?.() ?? Date.now()) >= Date.parse(w.deadline)) return this.end(caseId, id, "timeout");
-    if (startup) return this.watch(caseId, id);
-    await this.poll(caseId, p);
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
   }
 
-  private async poll(caseId: string, p: WatsonVeloLaunchProposal): Promise<void> {
+  private async tickOnce(caseId: string, id: string, startup: boolean): Promise<void> {
+    if (this.collecting.has(keyOf(caseId, id))) return;
+    const p = findApplied(await this.deps.chatStore.load(caseId), id);
+    if (!p?.watch) return;
+    const w = p as Watched;
+    if (w.watch.state !== "watching") return this.notify(caseId, w); // ended earlier, event not yet sent
+    if (w.watch.ingesting) return this.end(caseId, id, "failed", interruptedImport(w));
+    if (w.watch.ingested) await this.release(caseId, id); // claimed, but the ingest was never called
+    const past = this.now() >= Date.parse(w.watch.deadline);
+    if (startup && !past) return this.watch(caseId, id);
+    await this.poll(caseId, w, past);
+  }
+
+  /** Before the deadline, poll again; after it, keep retrying a failing read for the grace period. */
+  private retryOr(caseId: string, p: Watched, end: () => Promise<void>): Promise<void> | void {
+    if (this.now() < Date.parse(p.watch.deadline) + WATSON_WATCH_GRACE_MS) return this.watch(caseId, p.id);
+    return end();
+  }
+
+  /** Read the flow's status; past the deadline a FINISHED flow is still collected, else it times out. */
+  private async poll(caseId: string, p: Watched, past: boolean): Promise<void> {
     const { flowId = "", clientId = "" } = p.launched ?? {};
     const client = this.deps.velo(caseId);
-    if (!client) return this.end(caseId, p.id, "failed", "the case no longer has a Velociraptor server");
+    if (!client)
+      return this.end(caseId, p.id, "failed", notImported(p, "The case no longer has a Velociraptor server"));
     let status: { state: string; error: string; rows: number };
     try {
       status = await client.flowStatus(clientId, flowId);
     } catch (err) {
       this.deps.log?.(`[watson] ${caseId}: flow ${flowId} status read failed: ${msg(err)}`);
-      return this.watch(caseId, p.id); // transient: try again until the deadline
+      return this.retryOr(caseId, p, () => this.end(caseId, p.id, "timeout"));
     }
     const state = status.state.toUpperCase();
-    if (state === "ERROR") return this.end(caseId, p.id, "failed", status.error || "the collection failed");
-    if (state !== "FINISHED") return this.watch(caseId, p.id);
-    await this.collect(caseId, p.id, status.rows);
+    if (state === "ERROR") {
+      return this.end(
+        caseId,
+        p.id,
+        "failed",
+        `the collection failed on the endpoint (${where(p)}): ${status.error || "no reason given"}`,
+      );
+    }
+    if (state !== "FINISHED") return past ? this.end(caseId, p.id, "timeout") : this.watch(caseId, p.id);
+    const key = keyOf(caseId, p.id);
+    this.collecting.add(key);
+    try {
+      await this.collect(caseId, p, status.rows);
+    } finally {
+      this.collecting.delete(key);
+    }
   }
 
-  /** Claim the ingest, read and ingest the rows, record the result; then fill and notify. */
-  private async collect(caseId: string, id: string, reported: number): Promise<void> {
-    if (await this.deps.isFrozen(caseId)) return this.end(caseId, id, "failed", "the case is closed");
-    let claimed: WatsonVeloLaunchProposal | undefined;
-    await this.deps.chatStore.update(caseId, (c) => {
-      const p = findApplied(c, id);
-      if (!p?.watch || p.watch.state !== "watching" || p.watch.ingested) return c;
-      claimed = p;
-      return withWatch(c, p, { ...p.watch, ingested: true });
-    });
+  /** Claim, read the rows (a read failure releases the claim), mark ingesting, ingest, record. */
+  private async collect(caseId: string, p: Watched, reported: number): Promise<void> {
+    if (await this.deps.isFrozen(caseId)) {
+      return this.end(
+        caseId,
+        p.id,
+        "failed",
+        notImported(p, "The case is closed, so Watson did not import the results"),
+      );
+    }
+    const claimed = await this.claim(caseId, p.id, { ingested: true });
     if (!claimed) return; // another tick (or a restart) owns it
-    let result: { rows: number; added: number; ingested?: WatsonIngested };
+    let rows: WatsonFlowRows;
     try {
-      const rows = await this.deps.readRows(caseId, claimed);
+      rows = await this.deps.readRows(caseId, claimed);
       // Velociraptor counted rows the read did not return: never call that "found nothing".
       if (rows.rows === 0 && reported > 0)
         throw new Error(`${reported} rows were collected but none could be read`);
-      if (rows.rows === 0) result = { rows: 0, added: 0 };
-      else {
-        const ingested = await this.deps.ingest(caseId, claimed, rows);
-        if (isTextIngest(ingested.ingest))
-          throw new Error(`the rows could not be parsed: ${ingested.ingest.reason}`);
-        result = { rows: ingested.ingest.rows, added: ingested.ingest.added ?? 0, ingested };
-      }
     } catch (err) {
-      await this.deps.chatStore.update(caseId, (c) => failClaimed(c, id, msg(err)));
-      return this.notify(caseId, claimed);
+      await this.release(caseId, p.id);
+      this.deps.log?.(`[watson] ${caseId}: reading ${where(p)} failed: ${msg(err)}`);
+      return this.retryOr(caseId, p, () =>
+        this.end(caseId, p.id, "failed", notImported(p, `Watson could not read the results: ${msg(err)}`)),
+      );
     }
-    await this.deps.chatStore.update(caseId, (c) => withResult(c, id, result));
-    await this.notify(caseId, claimed);
+    const cut = rows.truncated ? { truncated: true as const, total: reported } : {};
+    if (rows.rows === 0) {
+      await this.deps.chatStore.update(caseId, (c) => withResult(c, p.id, { rows: 0, added: 0 }));
+      return this.notify(caseId, p);
+    }
+    if (!(await this.claim(caseId, p.id, { ingesting: true }))) return;
+    let result: { rows: number; added: number; ingested: WatsonIngested };
+    try {
+      const ingested = await this.deps.ingest(caseId, claimed, rows);
+      if (isTextIngest(ingested.ingest))
+        throw new Error(`the rows could not be parsed: ${ingested.ingest.reason}`);
+      result = { rows: ingested.ingest.rows, added: ingested.ingest.added ?? 0, ingested };
+    } catch (err) {
+      const why = notImported(p, `Watson could not import the results: ${msg(err)}`);
+      await this.deps.chatStore.update(caseId, (c) => failClaimed(c, p.id, why));
+      return this.notify(caseId, p);
+    }
+    await this.deps.chatStore.update(caseId, (c) => withResult(c, p.id, { ...result, ...cut }));
+    await this.notify(caseId, p);
+  }
+
+  /** Set a flag on a watching launch, once; the launch as claimed, or undefined when another owns it. */
+  private async claim(
+    caseId: string,
+    id: string,
+    flag: { ingested: true } | { ingesting: true },
+  ): Promise<Watched | undefined> {
+    let claimed: Watched | undefined;
+    const name = "ingested" in flag ? "ingested" : "ingesting";
+    await this.deps.chatStore.update(caseId, (c) => {
+      const p = findApplied(c, id);
+      if (!p?.watch || p.watch.state !== "watching" || p.watch[name]) return c;
+      if (name === "ingesting" && !p.watch.ingested) return c;
+      claimed = { ...p, watch: { ...p.watch, ...flag } };
+      return withWatch(c, p, claimed.watch);
+    });
+    return claimed;
+  }
+
+  /** Drop a claim whose ingest was never called (the read failed, or the server stopped mid-read). */
+  private async release(caseId: string, id: string): Promise<void> {
+    await this.deps.chatStore.update(caseId, (c) => {
+      const p = findApplied(c, id);
+      if (!p?.watch || p.watch.state !== "watching" || !p.watch.ingested || p.watch.ingesting) return c;
+      const { ingested: _claim, ...watch } = p.watch;
+      return withWatch(c, p, watch);
+    });
   }
 
   private async end(caseId: string, id: string, state: "timeout" | "failed", error?: string): Promise<void> {
@@ -210,7 +312,7 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
     }
     let sent = false;
     await this.deps.chatStore.update(caseId, (c) => {
-      const r = withHuntNotified(c, p.id, new Date(this.deps.now?.() ?? Date.now()).toISOString());
+      const r = withHuntNotified(c, p.id, new Date(this.now()).toISOString());
       sent = r.sent;
       return r.chat;
     });
@@ -220,7 +322,9 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
   }
 }
 
-/** The claimed launch failed while reading: end it (it was `watching` with `ingested`). */
+const keyOf = (caseId: string, id: string): string => `${caseId}\u0000${id}`;
+
+/** The claimed launch failed while importing: end it (it was `watching`). */
 function failClaimed(chat: WatsonChat, id: string, error: string): WatsonChat {
   const p = findApplied(chat, id);
   if (!p?.watch || p.watch.state !== "watching") return chat;
@@ -231,14 +335,15 @@ function failClaimed(chat: WatsonChat, id: string, error: string): WatsonChat {
 function withResult(
   chat: WatsonChat,
   id: string,
-  r: { rows: number; added: number; ingested?: WatsonIngested },
+  r: { rows: number; added: number; ingested?: WatsonIngested; truncated?: true; total?: number },
 ): WatsonChat {
   const p = findApplied(chat, id);
   if (!p?.watch || p.watch.state !== "watching") return chat;
   const before = new Set(chat.proposals.map((x) => x.id));
   const next = r.ingested ? withPasteIngest(chat, r.ingested.paste, r.ingested.ingest) : chat;
   const proposalIds = next.proposals.filter((x) => !before.has(x.id)).map((x) => x.id);
-  const watch = { ...p.watch, state: "finished" as const, rows: r.rows, added: r.added };
+  const cut = r.truncated ? { truncated: true as const, total: r.total ?? 0 } : {};
+  const watch = { ...p.watch, state: "finished" as const, rows: r.rows, added: r.added, ...cut };
   return withWatch(next, p, proposalIds.length ? { ...watch, proposalIds } : watch);
 }
 
@@ -247,15 +352,17 @@ function withResult(
  * `hunt` event, found nothing included. Best effort and never throws — the collect has landed.
  */
 export async function noteWatsonFleetResult(
-  chatStore: Pick<WatsonChatStore, "update">,
+  chatStore: Pick<WatsonChatStore, "load" | "update">,
   wake: (caseId: string) => void,
   caseId: string,
   result: { huntId: string; rows: number; added: number },
   log?: (line: string) => void,
 ): Promise<void> {
   try {
-    let sent = false;
     const at = new Date().toISOString();
+    // Read first: a case that never used Watson (or this hunt is not Watson's) gets no chat write.
+    if (!withFleetResult(await chatStore.load(caseId), result.huntId, result, at).id) return;
+    let sent = false;
     await chatStore.update(caseId, (c) => {
       const marked = withFleetResult(c, result.huntId, result, at);
       if (!marked.id) return c;

@@ -174,8 +174,13 @@ export interface WatsonLaunchWatch {
   deadline: string;
   state: "watching" | "finished" | "failed" | "timeout";
   ingested?: true;
+  /** Set just before the ingest is called: a restart that finds it knows rows may be in the case. */
+  ingesting?: true;
   notified?: true;
   rows?: number;
+  /** The read was cut by the collection row cap; `total` is what Velociraptor counted (0 = unknown). */
+  truncated?: true;
+  total?: number;
   added?: number;
   proposalIds?: string[];
   error?: string;

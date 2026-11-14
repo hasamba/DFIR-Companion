@@ -42,13 +42,15 @@ export async function readWatsonFlowRows(
   const host = p.hostname ?? info.hostname;
   const map: Record<string, unknown[]> = {};
   let rows = 0;
+  let truncated = false;
   for (const artifact of info.artifacts) {
     const sources = artifact.includes("/") ? [] : pivots;
     const read = await client.collectionResults(clientId, flowId, artifact, sources, undefined, true);
     map[artifact] = read.rows.map((r) => stampHost(r, host));
     rows += read.rows.length;
+    truncated = truncated || read.truncated;
   }
-  return { text: JSON.stringify(map), rows };
+  return { text: JSON.stringify(map), rows, ...(truncated ? { truncated: true as const } : {}) };
 }
 
 const countLines = (text: string): number => (text ? text.split("\n").length : 0);

@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { access, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -12,6 +12,8 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { createWatsonCaseEvents } from "../../src/composition/watsonCaseEvents.js";
 import {
   noteWatsonFleetResult,
+  WATSON_WATCH_GRACE_MS,
+  WATSON_WATCH_MAX_FAILED_TICKS,
   WatsonFlowWatcher,
   type WatsonFlowWatcherDeps,
 } from "../../src/composition/watsonVeloResults.js";
@@ -227,6 +229,11 @@ describe("a Watson fleet hunt's collect", () => {
     expect(wakes).toBe(0);
   });
 
+  it("writes no chat into a case that never used Watson", async () => {
+    await noteWatsonFleetResult(chatStore, () => {}, CASE, { huntId: "H.SAMPLE1", rows: 2, added: 0 });
+    await expect(access(join(store.stateDir(CASE), "watson-chat.json"))).rejects.toThrow();
+  });
+
   it("notes a straggler re-collect of the same hunt only once", async () => {
     await seed(launch({}));
     const note = (rows: number) =>
@@ -307,7 +314,7 @@ describe("a Watson single-host collection", () => {
     h.watcher.watch(CASE, "wp-coll");
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing failed: bad plugin arg",
+      "Watson's hunt Process listing failed: the collection failed on the endpoint (flow F.SAMPLE on web01.example.com): bad plugin arg",
     ]);
   });
 
@@ -400,13 +407,18 @@ describe("a Watson single-host collection", () => {
       readRows: async () => ({ text: "{}", rows: 0 }),
     });
     h.watcher.watch(CASE, "wp-coll");
+    await h.t.runOne(h.watcher);
+    expect(await huntEvents()).toEqual([]); // retried, the claim released
+    expect((await stored("wp-coll")).watch?.ingested).toBeUndefined();
+    expect(h.t.queue).toHaveLength(1);
+    h.clock.now = T0 + WATSON_WATCH_DEFAULT_MS + WATSON_WATCH_GRACE_MS + 1;
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing failed: 7 rows were collected but none could be read",
+      "Watson's hunt Process listing failed: Watson could not read the results: 7 rows were collected but none could be read (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
     ]);
   });
 
-  it("a claim with no saved result is reported failed once, never re-read", async () => {
+  it("a claim whose ingest was never called is released and read again", async () => {
     await seed(
       collection({
         watch: {
@@ -416,13 +428,105 @@ describe("a Watson single-host collection", () => {
         },
       }),
     );
+    const h = harness({}, ["FINISHED"]);
+    await h.watcher.resume(CASE);
+    expect((await stored("wp-coll")).watch?.ingested).toBeUndefined();
+    await h.t.runAll(h.watcher);
+    expect(h.ingests).toBe(1);
+    expect((await huntEvents()).map((e) => e.text)).toEqual([
+      "Watson's hunt Process listing finished: 3 rows, 1 new event",
+    ]);
+  });
+
+  it("a restart mid-ingest is reported once, honestly, and never re-read", async () => {
+    await seed(
+      collection({
+        watch: {
+          deadline: new Date(T0 + WATSON_WATCH_DEFAULT_MS).toISOString(),
+          state: "watching",
+          ingested: true,
+          ingesting: true,
+        },
+      }),
+    );
     const h = harness();
     await h.watcher.resume(CASE);
     await h.watcher.resume(CASE);
     expect(h.ingests).toBe(0);
-    const events = await huntEvents();
-    expect(events).toHaveLength(1);
-    expect(events[0].text).toMatch(/^Watson's hunt Process listing failed: Watson was interrupted/);
+    expect((await huntEvents()).map((e) => e.text)).toEqual([
+      "Watson's hunt Process listing failed: Watson was interrupted while importing the results of flow F.SAMPLE on web01.example.com: rows may have been imported, but rows the tagger graded above Info were not offered for approval. Re-import the flow from Velociraptor to get them",
+    ]);
+  });
+
+  it("a row read that fails is retried, not the end of the watch", async () => {
+    await seed(collection());
+    let reads = 0;
+    const h = harness(
+      {
+        readRows: async () => {
+          if (++reads === 1) throw new Error("connection reset");
+          return { text: "{}", rows: 3 };
+        },
+      },
+      ["FINISHED", "FINISHED"],
+    );
+    h.watcher.watch(CASE, "wp-coll");
+    await h.t.runAll(h.watcher);
+    expect(reads).toBe(2);
+    expect(h.ingests).toBe(1);
+    expect(await huntEvents()).toHaveLength(1);
+  });
+
+  it("an ingest that fails says the results may not be in the case", async () => {
+    await seed(collection());
+    const h = harness({ ingest: async () => Promise.reject(new Error("importer crashed")) }, ["FINISHED"]);
+    h.watcher.watch(CASE, "wp-coll");
+    await h.t.runAll(h.watcher);
+    expect((await huntEvents()).map((e) => e.text)).toEqual([
+      "Watson's hunt Process listing failed: Watson could not import the results: importer crashed (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
+    ]);
+  });
+
+  it("a restart after the deadline still reads a flow that finished meanwhile", async () => {
+    await seed(collection());
+    const h = harness({}, ["FINISHED"]);
+    h.clock.now = T0 + WATSON_WATCH_DEFAULT_MS + 10 * 60_000;
+    await h.watcher.resume(CASE);
+    expect(h.ingests).toBe(1);
+    expect((await huntEvents()).map((e) => e.text)).toEqual([
+      "Watson's hunt Process listing finished: 3 rows, 1 new event",
+    ]);
+  });
+
+  it("a read cut by the row cap says so", async () => {
+    await seed(collection());
+    const h = harness({
+      velo: () => ({ flowStatus: async () => ({ state: "FINISHED", error: "", rows: 5000 }) }),
+      readRows: async () => ({ text: "{}", rows: 3, truncated: true }),
+    });
+    h.watcher.watch(CASE, "wp-coll");
+    await h.t.runAll(h.watcher);
+    expect((await huntEvents()).map((e) => e.text)).toEqual([
+      "Watson's hunt Process listing finished: first 3 of 5000 rows imported, 1 new event",
+    ]);
+  });
+
+  it("a chat store that keeps failing stops re-arming after the cap, logged once", async () => {
+    await seed(collection());
+    const logs: string[] = [];
+    const broken = {
+      load: async () => Promise.reject(new Error("EIO")),
+      update: async () => Promise.reject(new Error("EIO")),
+    };
+    const h = harness({ chatStore: broken, log: (l) => logs.push(l) });
+    h.watcher.watch(CASE, "wp-coll");
+    let ticks = 0;
+    while (h.t.queue.length && ticks < 50) {
+      ticks++;
+      await h.t.runOne(h.watcher);
+    }
+    expect(ticks).toBe(WATSON_WATCH_MAX_FAILED_TICKS);
+    expect(logs.filter((l) => l.includes("gave up"))).toHaveLength(1);
   });
 
   it("refuses to ingest into a closed case", async () => {
@@ -431,7 +535,9 @@ describe("a Watson single-host collection", () => {
     h.watcher.watch(CASE, "wp-coll");
     await h.t.runAll(h.watcher);
     expect(h.ingests).toBe(0);
-    expect((await huntEvents())[0].text).toBe("Watson's hunt Process listing failed: the case is closed");
+    expect((await huntEvents())[0].text).toBe(
+      "Watson's hunt Process listing failed: The case is closed, so Watson did not import the results (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
+    );
   });
 });
 
