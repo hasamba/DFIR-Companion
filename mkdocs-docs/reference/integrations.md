@@ -31,6 +31,7 @@ Run fleet hunts, collect artifacts, and stream live monitoring events into cases
 - Custom VQL hunts from the dashboard
 - Per-hunt auto-collect (results import automatically after `DFIR_VELO_HUNT_WAIT_MIN`)
 - Live CLIENT_EVENT monitoring (see [Live Monitoring](live-monitoring.md))
+- Watson can ask to run VQL on a single host or fleet-wide, with your approval or in Auto for single-host collections (see [Running Velociraptor](watson.md#running-velociraptor))
 - Triage bundles (Best Practice / Best Practice - Big Hogs / Hayabusa Full / Super-Timeline Triage / Linux Triage / custom)
 
 ### Triage Bundles

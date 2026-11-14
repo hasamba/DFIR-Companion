@@ -6,6 +6,8 @@ Watson follows the case's AI switch. With AI off for the case, Watson does not a
 
 Watson can read the case, answer questions, and draft changes to it. Watson never changes your findings, next steps, report text or Key Questions without your **Apply**.
 
+Apply is also what Auto mode skips for Watson's own case writes; see [Approve and Auto](#approve-and-auto).
+
 Two things happen without Apply. Text you paste into the chat is stored as evidence in the case at once, and it is parsed into rows when its format is known. Watson also notes what you do in the dashboard. Only the content tagger's promotions of pasted rows wait for your Apply (see [Pasted files in a known format](#pasted-files-in-a-known-format)).
 
 ---
@@ -129,6 +131,61 @@ When a paste is in a format that a built-in importer reads (for example SIEM or 
 
 See [Importing Data](importing.md#chat-pastes-watson) for the import side.
 
+## Running Velociraptor
+
+When the case's server set includes a Velociraptor server, the panel header shows a **Velociraptor connected** chip, and Watson can ask to run VQL on it. There are two kinds of run:
+
+- **A single-host collection** on one host that belongs to the case's fleet.
+- **A fleet-wide hunt** across the fleet.
+
+Each request appears in the chat as a card. The card shows the VQL, the target and Watson's reason, with **Launch** and **Reject**. Nothing runs until you choose Launch (or Auto allows it, see below).
+
+Watson refuses, and does not guess, in these cases:
+
+- The host is unknown or could be more than one machine. Watson never turns an unclear host into a fleet hunt.
+- The same VQL already ran on the case as a hunt. For a collection, the same VQL on the same host counts as already run.
+
+**A launch cannot be undone.** Once Velociraptor has started a collection or hunt, Watson cannot stop it.
+
+If Watson cannot tell whether a launch ran (for example after a crash or a network error), the card says so. Check Velociraptor, then choose **Mark launched** or **Try again**. Watson never retries by itself.
+
+### What VQL Watson may use
+
+Watson may only use a reviewed, read-only list of plugins, functions, artifacts and WMI classes. Anything else is blocked: running commands, writing or uploading, network calls, network paths and URLs, and queries built at run time. When Watson writes VQL that uses something blocked, its turn names what was blocked and shows the VQL with **Copy**. You can then run it by hand in Velociraptor if you decide it is safe.
+
+Two practical limits help Watson stay inside the list: every argument has a name, and file paths are plain quoted text with forward slashes.
+
+### Approve and Auto
+
+Each case has a run mode, shown in the panel:
+
+- **Approve** (default) — every write and every Velociraptor launch waits for your choice.
+- **Auto** — Watson acts on the limits below without asking.
+
+Any analyst with write access to the case can switch the mode. Switching to Auto asks you to confirm first. Each switch is written to the audit log with the analyst's name. While the case is on Auto, the rail shows an **A**.
+
+In Auto, Watson:
+
+- applies its own case writes, from every round (a reaction to an import still changes Key Questions only, as before)
+- launches single-host collections from messages you type in the dashboard, any number of them
+
+In Auto, Watson never:
+
+- starts a fleet-wide hunt (those always ask)
+- launches from a round it started itself, such as a reaction or a round that reads its own results
+- launches from a `/dfir ask` sent through a chat bot
+
+Every Auto action is listed in the chat with the exact VQL, and is logged as **Watson (Auto)** with who switched Auto on and when. Switching back to Approve stops the rest of the actions.
+
+### Results coming back
+
+- **A fleet hunt** is collected as for any hunt: the results are imported and a synthesis runs. Watson then reacts, and because an import arrived it proposes Key Question changes only.
+- **A single-host collection** is imported like a pasted file in a known format: the rows are graded, the tagger's promotions wait for your Apply, and no synthesis runs. Watson reacts and may propose case writes.
+
+If the collection returned nothing, Watson reports that it found nothing. If the row limit cut a result, the message says so. If a result could not be read, or was interrupted, the message names the flow and the host and says the results are in Velociraptor and may not be in the case.
+
+Watson watches a collection for 30 minutes. If the companion restarts during that time, the watch resumes.
+
 ## Watson and synthesis
 
 A synthesis run keeps the answers Watson gave, and it keeps Watson's findings and next steps with their badge. If a new synthesis reaches a different conclusion, the board shows **Synthesis disagrees** next to the question. Synthesis does not overwrite Watson's work. You decide which one to keep.
@@ -184,7 +241,7 @@ Watson's chat history stays out of state backups, so restoring a state backup do
 
 Watson does not yet:
 
-- run in an automatic mode that works without your approval
-- run Velociraptor actions
+- run Velociraptor actions on servers other than Velociraptor
+- start fleet-wide hunts on its own
 - search the super-timeline
 - parse a generic CSV or log into timeline rows

@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Watson writes findings, next steps and report text** — Conclusions and Investigation limitations wait for Apply, carry a Watson badge and the approver's name, and each has Undo
 - **Watson reads pasted files in known formats** — rows are graded like an import, the tagger's promotions wait for your approval; generic CSV and log stay searchable text
 - **Watson reacts to your work** — after a quiet window it reviews imports, notebook edits and new stars (`DFIR_AI_WATSON_REACT_DELAY_SEC`, 0 = off) and pauses after a Presidio hold, a cost limit or two errors
+- **Watson runs Velociraptor** — asks to launch single-host collections or fleet hunts as VQL cards (Launch / Reject), VQL limited to a reviewed read-only list, results come back into the case
+- **Watson Approve and Auto modes** — per-case switch, audited by analyst; Auto applies Watson's writes and launches single-host collections from dashboard messages, never fleet hunts
 - **Watson pinned to the right of the dashboard** — rail, open or full screen on every view
 
 ### Removed
