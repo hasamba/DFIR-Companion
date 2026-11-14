@@ -97,6 +97,7 @@ const veloLaunchProposal = z.object({
       huntId: z.string().optional(),
       clientId: z.string().optional(),
       flowId: z.string().optional(),
+      serverSetId: z.string().optional(),
       at: z.string(),
       by: z.string(),
     })
@@ -107,6 +108,7 @@ const veloLaunchProposal = z.object({
       at: z.string(),
       by: z.string(),
       fingerprint: z.string(),
+      planned: z.array(z.string()).optional().catch(undefined),
       reserved: z.array(z.string()).catch([]),
       error: z.string().optional(),
     })

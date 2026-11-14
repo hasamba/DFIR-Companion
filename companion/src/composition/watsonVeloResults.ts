@@ -1,21 +1,20 @@
 import type { WatsonChatStore } from "../analysis/ai/watson/chatStore.js";
-import {
-  isTextIngest,
-  withPasteIngest,
-  type WatsonPasteIngest,
-} from "../analysis/ai/watson/pasteIngestChat.js";
-import type { WatsonChat, WatsonPaste, WatsonVeloLaunchProposal } from "../analysis/ai/watson/types.js";
+import { isTextIngest, type WatsonPasteIngest } from "../analysis/ai/watson/pasteIngestChat.js";
+import type { WatsonPaste, WatsonVeloLaunchProposal } from "../analysis/ai/watson/types.js";
 import {
   findApplied,
   openWatches,
   WATSON_WATCH_POLL_MS,
-  withFleetResult,
   withHuntNotified,
   withWatch,
   withWatchEnded,
 } from "../analysis/ai/watson/velo/launchWatch.js";
 import type { WatsonFlowWatch } from "../analysis/ai/watson/velo/launchTypes.js";
 import type { HuntCollectResult } from "../analysis/huntOutcomes.js";
+import type { StagedIngest, WatsonIngestStage } from "./watsonFlowStage.js";
+import { failClaimed, withResult } from "./watsonVeloResultsChat.js";
+
+export { noteWatsonFleetResult } from "./watsonVeloResultsChat.js";
 
 // Watson phase 3, Task 5: results come back to Watson. A fleet hunt keeps today's collect (import +
 // synthesis); its one hook notes a `hunt` event for Watson's own hunt, rows or none. A single-host
@@ -44,14 +43,16 @@ export interface WatsonFlowRows {
 
 export interface WatsonFlowWatcherDeps {
   chatStore: Pick<WatsonChatStore, "load" | "update">;
-  /** The case's Velociraptor client, or null when the case has none. */
-  velo(caseId: string): WatsonFlowClient | null;
+  /** The Velociraptor client of the server set the launch went to, or null when it is gone. */
+  velo(caseId: string, p: WatsonVeloLaunchProposal): WatsonFlowClient | null;
   /** Read every row of a finished flow (all its sources) as importer text. */
   readRows(caseId: string, p: WatsonVeloLaunchProposal): Promise<WatsonFlowRows>;
   /** Store the rows as evidence and ingest them like a chat paste. */
   ingest(caseId: string, p: WatsonVeloLaunchProposal, rows: WatsonFlowRows): Promise<WatsonIngested>;
   /** Fill the collection's hunt outcome by flow (a no-op once collected). */
   fillOutcome(caseId: string, ref: { flowId: string; clientId: string }, r: HuntCollectResult): Promise<void>;
+  /** Where an ingest result waits until the chat save records it (G7). Optional for tests. */
+  stage?: WatsonIngestStage;
   /** A frozen case takes no new evidence. */
   isFrozen(caseId: string): Promise<boolean>;
   /** Start Watson's quiet window for the `hunt` event saved on the chat. */
@@ -67,6 +68,9 @@ export interface WatsonIngested {
   paste: WatsonPaste;
   ingest: WatsonPasteIngest;
 }
+
+export const NO_LAUNCH_SERVER =
+  "The Velociraptor server this collection was launched on is no longer available";
 
 /** Past the deadline, a status or row read that keeps failing is retried this much longer. */
 export const WATSON_WATCH_GRACE_MS = 60 * 60_000;
@@ -163,7 +167,7 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
     if (!p?.watch) return;
     const w = p as Watched;
     if (w.watch.state !== "watching") return this.notify(caseId, w); // ended earlier, event not yet sent
-    if (w.watch.ingesting) return this.end(caseId, id, "failed", interruptedImport(w));
+    if (w.watch.ingesting) return this.finishStaged(caseId, w);
     if (w.watch.ingested) await this.release(caseId, id); // claimed, but the ingest was never called
     const past = this.now() >= Date.parse(w.watch.deadline);
     if (startup && !past) return this.watch(caseId, id);
@@ -179,15 +183,15 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
   /** Read the flow's status; past the deadline a FINISHED flow is still collected, else it times out. */
   private async poll(caseId: string, p: Watched, past: boolean): Promise<void> {
     const { flowId = "", clientId = "" } = p.launched ?? {};
-    const client = this.deps.velo(caseId);
-    if (!client)
-      return this.end(caseId, p.id, "failed", notImported(p, "The case no longer has a Velociraptor server"));
+    const client = this.deps.velo(caseId, p);
+    if (!client) return this.end(caseId, p.id, "failed", notImported(p, NO_LAUNCH_SERVER));
     let status: { state: string; error: string; rows: number };
     try {
       status = await client.flowStatus(clientId, flowId);
     } catch (err) {
       this.deps.log?.(`[watson] ${caseId}: flow ${flowId} status read failed: ${msg(err)}`);
-      return this.retryOr(caseId, p, () => this.end(caseId, p.id, "timeout"));
+      const why = notImported(p, "Watson could not read the collection's status from Velociraptor");
+      return this.retryOr(caseId, p, () => this.end(caseId, p.id, "timeout", why));
     }
     const state = status.state.toUpperCase();
     if (state === "ERROR") {
@@ -250,8 +254,25 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
       await this.deps.chatStore.update(caseId, (c) => failClaimed(c, p.id, why));
       return this.notify(caseId, p);
     }
-    await this.deps.chatStore.update(caseId, (c) => withResult(c, p.id, { ...result, ...cut }));
+    const staged = { flowId: p.launched?.flowId ?? "", ...result, ...cut };
+    await this.deps.stage?.save(caseId, p.id, staged).catch((err: unknown) => {
+      this.deps.log?.(`[watson] ${caseId}: staging the result of ${where(p)} failed: ${msg(err)}`);
+    });
+    await this.record(caseId, p, staged);
+  }
+
+  /** The chat save of an ingested result (once: withResult needs `watching`), then the event. */
+  private async record(caseId: string, p: WatsonVeloLaunchProposal, r: Omit<StagedIngest, "flowId">) {
+    await this.deps.chatStore.update(caseId, (c) => withResult(c, p.id, r));
+    await this.deps.stage?.clear(caseId, p.id).catch(() => {});
     await this.notify(caseId, p);
+  }
+
+  /** An ingest that ran but whose chat save did not: finish it from the stage, or report it lost. */
+  private async finishStaged(caseId: string, p: Watched): Promise<void> {
+    const staged = await this.deps.stage?.load(caseId, p.id, p.launched?.flowId ?? "");
+    if (staged) return this.record(caseId, p, staged);
+    return this.end(caseId, p.id, "failed", interruptedImport(p));
   }
 
   /** Set a flag on a watching launch, once; the launch as claimed, or undefined when another owns it. */
@@ -323,57 +344,5 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
 }
 
 const keyOf = (caseId: string, id: string): string => `${caseId}\u0000${id}`;
-
-/** The claimed launch failed while importing: end it (it was `watching`). */
-function failClaimed(chat: WatsonChat, id: string, error: string): WatsonChat {
-  const p = findApplied(chat, id);
-  if (!p?.watch || p.watch.state !== "watching") return chat;
-  return withWatch(chat, p, { ...p.watch, state: "failed", error });
-}
-
-/** The ingested rows on the chat (paste, system turn, held proposals) and the finished watch. */
-function withResult(
-  chat: WatsonChat,
-  id: string,
-  r: { rows: number; added: number; ingested?: WatsonIngested; truncated?: true; total?: number },
-): WatsonChat {
-  const p = findApplied(chat, id);
-  if (!p?.watch || p.watch.state !== "watching") return chat;
-  const before = new Set(chat.proposals.map((x) => x.id));
-  const next = r.ingested ? withPasteIngest(chat, r.ingested.paste, r.ingested.ingest) : chat;
-  const proposalIds = next.proposals.filter((x) => !before.has(x.id)).map((x) => x.id);
-  const cut = r.truncated ? { truncated: true as const, total: r.total ?? 0 } : {};
-  const watch = { ...p.watch, state: "finished" as const, rows: r.rows, added: r.added, ...cut };
-  return withWatch(next, p, proposalIds.length ? { ...watch, proposalIds } : watch);
-}
-
-/**
- * The fleet hook (veloHunts.ts, after the collect fills the outcome): Watson's own hunt notes one
- * `hunt` event, found nothing included. Best effort and never throws — the collect has landed.
- */
-export async function noteWatsonFleetResult(
-  chatStore: Pick<WatsonChatStore, "load" | "update">,
-  wake: (caseId: string) => void,
-  caseId: string,
-  result: { huntId: string; rows: number; added: number },
-  log?: (line: string) => void,
-): Promise<void> {
-  try {
-    const at = new Date().toISOString();
-    // Read first: a case that never used Watson (or this hunt is not Watson's) gets no chat write.
-    if (!withFleetResult(await chatStore.load(caseId), result.huntId, result, at).id) return;
-    let sent = false;
-    await chatStore.update(caseId, (c) => {
-      const marked = withFleetResult(c, result.huntId, result, at);
-      if (!marked.id) return c;
-      const r = withHuntNotified(marked.chat, marked.id, at);
-      sent = r.sent;
-      return r.chat;
-    });
-    if (sent) wake(caseId);
-  } catch (err) {
-    log?.(`[watson] ${caseId}: could not note the hunt result: ${msg(err)}`);
-  }
-}
 
 const msg = (err: unknown): string => (err instanceof Error ? err.message : String(err));

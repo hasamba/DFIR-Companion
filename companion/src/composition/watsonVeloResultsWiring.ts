@@ -8,10 +8,16 @@ import {
 } from "../integrations/velociraptor/velociraptorApi.js";
 import type { RouteContext } from "../routes/context.js";
 import { frozenCaseRefusal } from "../routes/importCaseGuard.js";
-import { resolveCaseVelo } from "../routes/veloServers.js";
+import { resolveCaseVelo, resolveSetVelo } from "../routes/veloServers.js";
 import { ingestWatsonPaste } from "../routes/watsonPasteIngest.js";
 import { warnLine } from "../logging/serverLogger.js";
-import { WatsonFlowWatcher, type WatsonFlowRows, type WatsonIngested } from "./watsonVeloResults.js";
+import { fileIngestStage } from "./watsonFlowStage.js";
+import {
+  NO_LAUNCH_SERVER,
+  WatsonFlowWatcher,
+  type WatsonFlowRows,
+  type WatsonIngested,
+} from "./watsonVeloResults.js";
 
 // The app's one Watson result watcher, built on the route context: the case's existing Velociraptor
 // client (resolveCaseVelo, never a new connection), the chat-paste ingest (routes/watsonPasteIngest.ts:
@@ -102,16 +108,20 @@ export function createAppWatsonFlowWatcher(
   const { options, store } = ctx;
   const chatStore = options.watsonChatStore;
   if (!chatStore) return undefined;
-  const client = (caseId: string): VelociraptorClient | null => {
-    const t = resolveCaseVelo(ctx, caseId);
+  // The server set the collection was LAUNCHED on, never the case's current one (final review G6):
+  // a case moved to another set mid-collection still reads from where the flow lives. A launch from
+  // before the set was recorded falls back to the case's set.
+  const client = (caseId: string, p: WatsonVeloLaunchProposal): VelociraptorClient | null => {
+    const setId = p.launched?.serverSetId;
+    const t = setId ? resolveSetVelo(ctx, setId) : resolveCaseVelo(ctx, caseId);
     return t.ok ? t.vc.client : null;
   };
   return new WatsonFlowWatcher({
     chatStore,
     velo: client,
     readRows: async (caseId, p) => {
-      const c = client(caseId);
-      if (!c) throw new Error("the case no longer has a Velociraptor server");
+      const c = client(caseId, p);
+      if (!c) throw new Error(NO_LAUNCH_SERVER);
       return readWatsonFlowRows(c, p);
     },
     ingest: (caseId, p, rows) => ingestFlowRows(ctx, caseId, p, rows),
@@ -121,6 +131,7 @@ export function createAppWatsonFlowWatcher(
       await outcomes.save(caseId, fillOutcomeByFlow(await outcomes.load(caseId), ref, result));
       options.onVeloHunt?.(caseId);
     },
+    stage: fileIngestStage(store),
     isFrozen: async (caseId) => (await frozenCaseRefusal(store, caseId)) !== null,
     wake,
     onChanged: (caseId) => options.onWatson?.(caseId),

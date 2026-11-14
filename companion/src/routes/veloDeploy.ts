@@ -37,7 +37,8 @@ export interface DeployResult {
   status: number;
   body: Record<string, unknown>;
   phase: DeployPhase;
-  launched?: { huntId?: string; flowId?: string; clientId?: string };
+  /** `serverSetId`: the set the launch went to, so its results are read from that server (G6). */
+  launched?: { huntId?: string; flowId?: string; clientId?: string; serverSetId?: string };
 }
 
 /**
@@ -122,7 +123,7 @@ export async function deployCaseHunt(
       const markLaunch = () => (phase = "launch-unknown");
       const result = await collectHostResolved(ctx, vc, hostname, vql, description, markLaunch);
       phase = "launched";
-      launched = { flowId: result.flowId, clientId: result.clientId };
+      launched = { flowId: result.flowId, clientId: result.clientId, serverSetId: vc.setId };
       await ctx.recordHuntDeploy(caseId, {
         ...shared,
         hostname, // keys the durable launch index per host (Watson phase 3)
@@ -143,7 +144,7 @@ export async function deployCaseHunt(
     phase = "launch-unknown";
     const launch = await vc.client.launchHunt(vql, description, { expirySeconds });
     phase = "launched";
-    launched = { huntId: launch.huntId };
+    launched = { huntId: launch.huntId, serverSetId: vc.setId };
     const waitMinutes = waitMinutesOf(body.waitMinutes);
     if (options.veloHuntStore) {
       const now = new Date();

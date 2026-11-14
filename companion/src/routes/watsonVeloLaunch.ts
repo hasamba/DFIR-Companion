@@ -8,6 +8,7 @@ import { matchClient } from "../integrations/velociraptor/clientInventory.js";
 import type { RouteContext } from "./context.js";
 import { WATSON_AUTO_ACTOR } from "../analysis/ai/watson/autoApply.js";
 import { deployCaseHunt } from "./veloDeploy.js";
+import { isFrozenCase } from "./importCaseGuard.js";
 
 // Watson phase 3: the seams an approved velo_launch proposal launches through (the existing deploy
 // path, routes/veloDeploy.ts), and the route that answers an uncertain launch. Registered BEFORE the
@@ -55,6 +56,7 @@ export function watsonVeloLaunchDeps(ctx: RouteContext): VeloLaunchDeps {
     matchClient,
     fingerprints: fingerprintStoreFor(store),
     onLaunched: (caseId, id) => ctx.watsonFlowWatcher?.()?.watch(caseId, id),
+    isFrozen: (caseId) => isFrozenCase(store, caseId),
     log: (line) => ctx.serverLogger.info(line),
   };
 }

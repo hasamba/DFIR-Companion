@@ -26,10 +26,12 @@ export const WATSON_AUTO_ACTOR = "Watson (Auto)";
 export type WatsonAutoControl = Pick<AiControl, "watsonRunMode" | "watsonAutoSince" | "watsonAutoBy"> & {
   /** The case's AI switch: off stops Auto as surely as a switch to Approve. */
   enabled?: boolean;
+  /** The case is closed or archived: Auto does nothing on it (final review G4). */
+  frozen?: boolean;
 };
 
 const autoOn = (c: WatsonAutoControl | null): boolean =>
-  !!c && watsonRunMode(c) === "auto" && c.enabled !== false;
+  !!c && watsonRunMode(c) === "auto" && c.enabled !== false && !c.frozen;
 
 /** What a round needs to act in Auto mode (route-built: the same seams an analyst's apply uses). */
 export interface WatsonAutoDeps {
@@ -195,11 +197,14 @@ export async function autoApply(
   const lines: Listed[] = [];
   let stateChanged = false;
   let stopped = false;
+  let stopReason = "Auto mode is no longer on for this case";
   for (const p of todo) {
     if (!stopped && deps.recheck && !waitReason(p, round)) {
-      stopped = !autoOn(await deps.recheck().catch(() => null));
+      const now = await deps.recheck().catch(() => null);
+      stopped = !autoOn(now);
+      if (now?.frozen) stopReason = "the case was closed or archived";
     }
-    const wait = stopped ? "Auto mode is no longer on for this case" : waitReason(p, round);
+    const wait = stopped ? stopReason : waitReason(p, round);
     if (wait) {
       const vql = vqlOf(p);
       lines.push({

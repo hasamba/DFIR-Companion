@@ -314,7 +314,7 @@ describe("a Watson single-host collection", () => {
     h.watcher.watch(CASE, "wp-coll");
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing failed: the collection failed on the endpoint (flow F.SAMPLE on web01.example.com): bad plugin arg",
+      "Watson's hunt Process listing did not complete: the collection failed on the endpoint (flow F.SAMPLE on web01.example.com): bad plugin arg",
     ]);
   });
 
@@ -414,7 +414,7 @@ describe("a Watson single-host collection", () => {
     h.clock.now = T0 + WATSON_WATCH_DEFAULT_MS + WATSON_WATCH_GRACE_MS + 1;
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing failed: Watson could not read the results: 7 rows were collected but none could be read (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
+      "Watson's hunt Process listing did not complete: Watson could not read the results: 7 rows were collected but none could be read (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
     ]);
   });
 
@@ -454,7 +454,7 @@ describe("a Watson single-host collection", () => {
     await h.watcher.resume(CASE);
     expect(h.ingests).toBe(0);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing failed: Watson was interrupted while importing the results of flow F.SAMPLE on web01.example.com: rows may have been imported, but rows the tagger graded above Info were not offered for approval. Re-import the flow from Velociraptor to get them",
+      "Watson's hunt Process listing did not complete: Watson was interrupted while importing the results of flow F.SAMPLE on web01.example.com: rows may have been imported, but rows the tagger graded above Info were not offered for approval. Re-import the flow from Velociraptor to get them",
     ]);
   });
 
@@ -483,7 +483,7 @@ describe("a Watson single-host collection", () => {
     h.watcher.watch(CASE, "wp-coll");
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing failed: Watson could not import the results: importer crashed (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
+      "Watson's hunt Process listing did not complete: Watson could not import the results: importer crashed (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
     ]);
   });
 
@@ -536,7 +536,7 @@ describe("a Watson single-host collection", () => {
     await h.t.runAll(h.watcher);
     expect(h.ingests).toBe(0);
     expect((await huntEvents())[0].text).toBe(
-      "Watson's hunt Process listing failed: The case is closed, so Watson did not import the results (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
+      "Watson's hunt Process listing did not complete: The case is closed, so Watson did not import the results (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
     );
   });
 });

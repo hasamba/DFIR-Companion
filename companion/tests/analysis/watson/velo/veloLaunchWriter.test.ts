@@ -296,7 +296,7 @@ describe("applying a velo_launch proposal", () => {
 
   it("stays launching when the save after the launch fails; the boot sweep makes it uncertain", async () => {
     await seed(huntProposal());
-    chatStore.failOn = chatStore.saves + 2;
+    chatStore.failOn = chatStore.saves + 3; // intent, reserved keys, then the outcome (G5)
     await expect(applyWatsonProposal(deps(), CASE, "wp-hunt", "apply")).rejects.toThrow(/EIO/);
     expect(calls).toHaveLength(1);
     expect((await stored("wp-hunt")).status).toBe("launching");
@@ -343,9 +343,9 @@ describe("applying a velo_launch proposal", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("rethrows the original save error and logs it when the release after a failed save #1 also fails", async () => {
+  it("rethrows the original save error and logs it when the release after a failed reserved-keys save also fails", async () => {
     await seed(huntProposal());
-    chatStore.failOn = chatStore.saves + 1;
+    chatStore.failOn = chatStore.saves + 2; // save #1 (launching) ok, the reserved-keys save fails (G5)
     const lines: string[] = [];
     const failingRelease = {
       load: (id: string) => fps.load(id),

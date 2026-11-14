@@ -158,7 +158,15 @@ export interface WatsonVeloLaunchProposal extends WatsonProposalCommon {
   vql: string;
   fingerprint: string;
   fingerprints: string[];
-  launched?: { huntId?: string; clientId?: string; flowId?: string; at: string; by: string };
+  /** `serverSetId`: the server set the launch went to; its results are read from that set (G6). */
+  launched?: {
+    huntId?: string;
+    clientId?: string;
+    flowId?: string;
+    serverSetId?: string;
+    at: string;
+    by: string;
+  };
   /** The launch intent, saved before the call: `reserved` is exactly what a retry may release. */
   launching?: WatsonLaunchIntent;
   /** Watson reading the result back (Task 5): a collection's watch, or a fleet hunt's one note. */
@@ -190,6 +198,8 @@ export interface WatsonLaunchIntent {
   at: string;
   by: string;
   fingerprint: string;
+  /** The keys the launch will reserve, saved BEFORE the reservation (final review G5). */
+  planned?: string[];
   reserved: string[];
   /** Why the launch became uncertain. */
   error?: string;

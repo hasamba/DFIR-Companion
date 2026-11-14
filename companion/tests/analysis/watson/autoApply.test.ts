@@ -490,3 +490,32 @@ describe("autoApply", () => {
     expect(lastTurn(after).text).toMatch(/Applied new finding: Second/);
   });
 });
+
+describe("Auto on a case closed mid-round (final review G4)", () => {
+  it("autoAfterRound does nothing when the case is now closed", async () => {
+    await seed([
+      launch("wp-a", TURN, "collection", PSLIST, HOST_A),
+      findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish"),
+    ]);
+    const auto = { control: async () => ({ ...AUTO_ON, frozen: true }), writer: deps() };
+    const before = await chatStore.load(CASE);
+    const after = await autoAfterRound(auto, CASE, { turnId: TURN, reaction: false }, before, () => {});
+    expect(after).toBe(before);
+    expect(launches).toHaveLength(0);
+    expect(await status("wp-a")).toBe("pending");
+    expect(await status("wp-f")).toBe("pending");
+  });
+
+  it("a case closed during the batch stops the rest, and the listing says why", async () => {
+    await seed([
+      launch("wp-a", TURN, "collection", PSLIST, HOST_A),
+      launch("wp-b", TURN, "collection", NETSTAT, HOST_B),
+    ]);
+    let checks = 0;
+    const recheck = async () => (++checks === 1 ? AUTO_ON : { ...AUTO_ON, frozen: true });
+    const chat = await autoApply({ ...deps(), recheck }, CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    expect(launches.map((l) => l.hostname)).toEqual([HOST_A]);
+    expect(await status("wp-b")).toBe("pending");
+    expect(lastTurn(chat).text).toMatch(/the case was closed or archived/);
+  });
+});

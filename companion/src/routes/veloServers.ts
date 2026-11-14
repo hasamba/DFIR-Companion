@@ -40,6 +40,11 @@ export function resolveCaseVelo(ctx: RouteContext, caseId: string): VeloResoluti
   return resolveTarget(ctx.serverClients.forCase(caseId));
 }
 
+/** The Velociraptor of one server set by id (a launch reads its results from the set it went to). */
+export function resolveSetVelo(ctx: RouteContext, setId: string): VeloResolution {
+  return resolveTarget(ctx.serverClients.forSet(setId));
+}
+
 export function caseVelo(ctx: RouteContext, caseId: string, res: Response, missing?: string) {
   return pick(ctx.serverClients.forCase(caseId), res, missing);
 }

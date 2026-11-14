@@ -6,6 +6,7 @@ import {
 } from "../proposalErrors.js";
 import type { WatsonChat, WatsonProposal, WatsonVeloLaunchProposal } from "../types.js";
 import { ALREADY_RAN, checkLaunch } from "../velo/launchCheck.js";
+import { launchFingerprints } from "../velo/launchFingerprint.js";
 import { clearInFlight, markInFlight } from "../velo/launchInFlight.js";
 import type { VeloLaunchDeps, VeloLaunchOutcome, VeloLaunchRequest } from "../velo/launchTypes.js";
 import { initialWatch } from "../velo/launchWatch.js";
@@ -71,39 +72,95 @@ async function recheck(v: VeloLaunchDeps, caseId: string, p: WatsonVeloLaunchPro
   return check.fingerprints;
 }
 
+/** The keys that must be ABSENT for this launch, checked inside the reservation: a collection of VQL
+ * that already ran fleet-wide is a re-run on that host too (final review G5). */
+const absentKeys = (p: WatsonVeloLaunchProposal): string[] =>
+  p.mode === "collection" ? launchFingerprints(p.vql) : [];
+
+/** Put a launching proposal back to pending (nothing ran). A failure is logged, never thrown. */
+async function backToPending(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, id: string): Promise<void> {
+  try {
+    await saveOutcome(deps, caseId, id, (s) => ({ ...s, status: "pending", launching: undefined }));
+  } catch (err) {
+    v.log?.(`[watson] returning a refused launch to pending failed: ${(err as Error).message}`);
+  }
+}
+
 /**
- * Save #1: checks pass, keys reserved, status `launching`. Returns the keys this call reserved and
- * the proposal as saved (the launch uses it — no reload between the two saves). Only
+ * Save #1: checks pass, status `launching` with the PLANNED keys and nothing reserved yet. Only
  * the caller that passed the status check marks the launch in flight (a losing double-click must
  * never clear the winner's mark, or its running launch would look stranded).
  */
-async function saveIntent(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, id: string, by: string) {
-  let added: string[] = [];
-  let marked = false;
+async function saveLaunching(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, id: string, by: string) {
   let saved: WatsonVeloLaunchProposal | undefined;
+  let marked = false;
   try {
     await deps.chatStore.update(caseId, async (c) => {
       const p = findLaunch(c, id);
       if (p.status !== "pending") throw new WatsonProposalStateError("apply", p.status);
       if (sameLaunchLive(c, p))
         throw new WatsonProposalConflict("an identical launch already ran or is running");
-      const keys = await recheck(v, caseId, p);
-      const r = await v.fingerprints.reserve(caseId, keys);
-      if (!r.ok) throw new WatsonProposalConflict(`Watson will not launch this: ${ALREADY_RAN}`);
-      added = r.added;
+      const planned = await recheck(v, caseId, p);
       markInFlight(caseId, id);
       marked = true;
-      const launching = { at: new Date().toISOString(), by, fingerprint: p.fingerprint, reserved: added };
+      const launching = {
+        at: new Date().toISOString(),
+        by,
+        fingerprint: p.fingerprint,
+        planned,
+        reserved: [],
+      };
       saved = { ...p, status: "launching", launching };
       return replace(c, saved);
     });
   } catch (err) {
     if (marked) clearInFlight(caseId, id);
-    if (added.length) await releaseOrLog(v, caseId, added); // no call was made
+    throw err;
+  }
+  if (!saved?.launching?.planned) throw new WatsonProposalConflict("the launch intent was not saved");
+  return saved;
+}
+
+/**
+ * The launch intent, in an order a crash cannot strand (final review G5): save `launching` with
+ * the planned keys FIRST, then reserve them, then record what was reserved. A refused reserve
+ * returns the proposal to pending. A crash after the first save leaves a `launching` proposal the
+ * boot sweep makes uncertain; with nothing recorded as reserved, a retry releases nothing (it never
+ * removes a key it cannot prove it added).
+ */
+async function saveIntent(deps: WriterDeps, v: VeloLaunchDeps, caseId: string, id: string, by: string) {
+  const launching = await saveLaunching(deps, v, caseId, id, by);
+  const planned = launching.launching?.planned ?? [];
+  let added: string[] = [];
+  try {
+    const r = await v.fingerprints.reserve(caseId, planned, absentKeys(launching));
+    if (!r.ok) throw new WatsonProposalConflict(`Watson will not launch this: ${ALREADY_RAN}`);
+    added = r.added;
+    const proposal = await saveReserved(deps, caseId, id, added);
+    return { added, proposal };
+  } catch (err) {
+    clearInFlight(caseId, id);
+    const released = added.length ? await releaseOrLog(v, caseId, added) : true; // no call was made
+    if (released) await backToPending(deps, v, caseId, id);
     throw err; // the original error, even when the release failed too
   }
+}
+
+/** Save #1b: what the reservation added, so a retry may release exactly that. */
+async function saveReserved(deps: WriterDeps, caseId: string, id: string, added: string[]) {
+  let saved: WatsonVeloLaunchProposal | undefined;
+  await saveOutcome(deps, caseId, id, (s) => {
+    const base = s.launching ?? {
+      at: new Date().toISOString(),
+      by: "",
+      fingerprint: s.fingerprint,
+      reserved: [],
+    };
+    saved = { ...s, launching: { ...base, reserved: added } };
+    return saved;
+  });
   if (!saved) throw new WatsonProposalConflict("the launch intent was not saved");
-  return { added, proposal: saved };
+  return saved;
 }
 
 /** Release keys this call reserved; a failure is logged, never thrown. True when released. */
@@ -177,6 +234,19 @@ async function audit(
   });
 }
 
+/** A case closed or archived since the round: launch nothing, release this call's keys (G4). */
+async function refuseIfFrozen(
+  deps: WriterDeps,
+  v: VeloLaunchDeps,
+  caseId: string,
+  p: WatsonVeloLaunchProposal,
+  added: string[],
+): Promise<void> {
+  if (!(await v.isFrozen?.(caseId))) return;
+  if (await releaseOrLog(v, caseId, added)) await backToPending(deps, v, caseId, p.id);
+  throw new WatsonProposalConflict("the case is closed or archived; Watson launched nothing");
+}
+
 /** Apply one velo_launch proposal: launch once, record the ids, or leave it uncertain. */
 export async function applyVeloLaunch(
   deps: WriterDeps,
@@ -189,6 +259,7 @@ export async function applyVeloLaunch(
   if (!v) throw new WatsonProposalConflict("Velociraptor launches are not configured");
   const { added, proposal: p } = await saveIntent(deps, v, caseId, proposalId, actor); // marks it in flight
   try {
+    await refuseIfFrozen(deps, v, caseId, p, added);
     const outcome = await runLaunch(v, caseId, p, actor, auditSuffix);
     return await settle(deps, v, caseId, p, outcome, { added, actor, auditSuffix });
   } finally {

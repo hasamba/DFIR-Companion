@@ -5,6 +5,7 @@ import type { WatsonAutoDeps } from "../analysis/ai/watson/autoApply.js";
 import type { WriterDeps } from "../analysis/ai/watson/proposals.js";
 import type { RouteContext } from "./context.js";
 import { caseVeloConnected, watsonVeloLaunchDeps } from "./watsonVeloLaunch.js";
+import { isFrozenCase } from "./importCaseGuard.js";
 
 /** A positive finite number from a setting, else undefined: blank, junk, zero and negatives mean "no limit". */
 export function positiveLimit(raw: string | undefined): number | undefined {
@@ -48,7 +49,8 @@ function watsonAutoDeps(ctx: RouteContext): WatsonAutoDeps | undefined {
   const writer = watsonProposalDeps(ctx);
   if (!writer) return undefined;
   return {
-    control: (id) => ctx.getControl(id),
+    // A case closed or archived mid-round stops Auto like a switch to Approve (final review G4).
+    control: async (id) => ({ ...(await ctx.getControl(id)), frozen: await isFrozenCase(ctx.store, id) }),
     writer,
     onStateChanged: (id) => ctx.options.onStateChanged?.(id),
   };

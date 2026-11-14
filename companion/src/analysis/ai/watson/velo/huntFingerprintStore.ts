@@ -101,14 +101,20 @@ export class HuntFingerprintStore {
    * release() must be given exactly `r.added`, never other keys, so a key that existed before the
    * reservation is never removed.
    */
-  reserve(caseId: string, fingerprint: string | readonly string[]): Promise<ReserveResult> {
+  reserve(
+    caseId: string,
+    fingerprint: string | readonly string[],
+    /** Keys that must also be absent (checked atomically, never added): a collection's fleet keys. */
+    mustBeAbsent: readonly string[] = [],
+  ): Promise<ReserveResult> {
     const list = [...new Set(typeof fingerprint === "string" ? [fingerprint] : fingerprint)].filter(
       (f) => typeof f === "string" && f.length > 0,
     );
     if (list.length === 0) return Promise.resolve({ ok: false, added: [] });
     return this.serialise(caseId, async (): Promise<ReserveResult> => {
       const cur = await this.load(caseId);
-      if (list.some((f) => cur.has(f))) return { ok: false, added: [] };
+      if (list.some((f) => cur.has(f)) || mustBeAbsent.some((f) => cur.has(f)))
+        return { ok: false, added: [] };
       await this.write(caseId, cur, list);
       return { ok: true, added: list };
     });

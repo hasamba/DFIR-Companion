@@ -26,9 +26,11 @@ const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" 
 export function huntEventText(title: string, watch: WatsonLaunchWatch): string {
   const name = `Watson's hunt ${title}`;
   if (watch.state === "timeout") {
-    return `${name} timed out: no result within ${WATSON_WATCH_DEFAULT_MS / 60_000} minutes`;
+    const why = watch.error ?? `no result within ${WATSON_WATCH_DEFAULT_MS / 60_000} minutes`;
+    return `${name} timed out: ${why}`;
   }
-  if (watch.state === "failed") return `${name} failed: ${watch.error ?? "unknown error"}`;
+  // "did not complete", not "failed": the error itself says what failed (G18).
+  if (watch.state === "failed") return `${name} did not complete: ${watch.error ?? "unknown error"}`;
   const rows = watch.rows ?? 0;
   if (rows === 0 && !watch.added) return `${name} found nothing`;
   if (watch.truncated) {

@@ -19,7 +19,7 @@ export interface VeloLaunchRequest {
 export interface VeloLaunchOutcome {
   phase: "invalid" | "before-launch" | "launch-unknown" | "launched";
   error?: string;
-  launched?: { huntId?: string; flowId?: string; clientId?: string };
+  launched?: { huntId?: string; flowId?: string; clientId?: string; serverSetId?: string };
 }
 
 export interface VeloLaunchDeps {
@@ -35,6 +35,8 @@ export interface VeloLaunchDeps {
   fingerprints: Pick<HuntFingerprintStore, "load" | "reserve" | "release">;
   /** A launch was saved as applied: start watching for its result (a collection's flow). */
   onLaunched?(caseId: string, proposalId: string): void;
+  /** The case is closed or archived: checked immediately before the external launch (G4). */
+  isFrozen?(caseId: string): Promise<boolean>;
   log?(line: string): void;
 }
 
