@@ -38,7 +38,7 @@
 
   // ── Rendering ──────────────────────────────────────────────────────────────────────────
   function pendingCount() {
-    return wChat ? wChat.proposals.filter((p) => p.status === "pending").length : 0;
+    return wChat ? wChat.proposals.filter((p) => p.status === "pending" && wChat.turns.some((t) => t.id === p.turnId)).length : 0;
   }
 
   function logHtml() {

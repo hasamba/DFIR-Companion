@@ -79,11 +79,17 @@ function recentTurn(t: WatsonTurn): string {
   return rows.join("\n");
 }
 
+/** A paste parsed into rows: cite the rows' forensic-timeline event ids, not its paste lines (F12). */
+const parsedNote = (p: WatsonChat["pastes"][number]): string =>
+  p.parsed && "rows" in p.parsed
+    ? ` — parsed into ${Number(p.parsed.rows) || 0} rows: cite their forensic-timeline event ids when present, not its paste lines`
+    : "";
+
 function pastesBlock(chat: WatsonChat, historyTurns: number): string {
   const unread = new Set(chat.unreadPasteIds);
   const listed = chat.pastes.slice(-WATSON_PASTES_LISTED).map((p) => {
     const note = unread.has(p.id) ? ", not read yet" : "";
-    return `- [${line(p.id, ID_CHARS)}] ${line(p.filename, FILENAME_CHARS)} (${Number(p.lines) || 0} lines${note})`;
+    return `- [${line(p.id, ID_CHARS)}] ${line(p.filename, FILENAME_CHARS)} (${Number(p.lines) || 0} lines${note})${parsedNote(p)}`;
   });
   const cut = chat.pastes.length - listed.length;
   const history =

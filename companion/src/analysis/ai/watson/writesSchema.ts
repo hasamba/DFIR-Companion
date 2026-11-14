@@ -102,6 +102,8 @@ function sanitizeFinding(
   sets: WatsonCitationSets,
 ): WatsonFindingDraft | null {
   if (d.title.trim() === "") return null;
+  // Info never reaches the forensic timeline (CLAUDE.md §7): a finding graded Info is not proposed.
+  if (d.severity === "Info") return null;
   // An update to a finding Watson did not write (or that does not exist) is dropped, never turned
   // into a new finding: that would be a near-duplicate of the synthesis finding it named.
   if (d.updateId && !sets.watsonFindingIds.has(d.updateId)) return null;

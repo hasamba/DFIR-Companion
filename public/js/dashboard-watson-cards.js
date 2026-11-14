@@ -85,21 +85,21 @@
   const link = (kind, id, label) =>
     `<button type="button" class="watson-link" data-act="watsonAct" data-w-verb="jump" data-w-kind="${escAttr(kind)}" data-w-id="${escAttr(id)}">${label}</button>`;
 
-  // "Wrote: 2 finding · 1 next step · 3 events · Report § Conclusions": each part jumps to its item.
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  // The rows an applied promotion actually added (a row the case already held is not Watson's).
+  const landedIds = (p) => (Array.isArray(p.createdEventIds) ? p.createdEventIds : []);
+
+  // "Wrote: 2 findings · 1 next step · 3 events · Report § Conclusions": each part jumps to its item.
   function watsonWroteHtml(proposals) {
     const done = (proposals || []).filter((p) => p.status === "applied");
     const of = (...kinds) => done.filter((p) => kinds.includes(p.kind));
     const findings = of("finding_new", "finding_update");
     const steps = of("next_step_new");
-    const events = of("event_promote");
-    const rows = events.reduce((n, p) => n + (Array.isArray(p.events) ? p.events.length : 0), 0);
+    const rowIds = of("event_promote").flatMap(landedIds);
     const parts = [];
-    if (findings.length) parts.push(link("finding", findings[0].targetId, `${findings.length} finding`));
-    if (steps.length) parts.push(link("next_step", steps[0].targetId, `${steps.length} next step`));
-    if (events.length) {
-      const first = (events[0].events || [])[0];
-      parts.push(link("event", first ? first.id : events[0].targetId, `${rows} events`));
-    }
+    if (findings.length) parts.push(link("finding", findings[0].targetId, plural(findings.length, "finding", "findings")));
+    if (steps.length) parts.push(link("next_step", steps[0].targetId, plural(steps.length, "next step", "next steps")));
+    if (rowIds.length) parts.push(link("event", rowIds[0], plural(rowIds.length, "event", "events")));
     of("report_text").forEach((p) => parts.push(link("report", p.field, `Report § ${esc(FIELD_LABEL[p.field] || p.field)}`)));
     return parts.length ? `<div class="watson-wrote"><b>Wrote:</b> ${parts.join(" · ")}</div>` : "";
   }

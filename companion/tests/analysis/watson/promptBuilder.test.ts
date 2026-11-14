@@ -98,6 +98,26 @@ describe("buildWatsonUserPrompt", () => {
     expect(out).toContain("[wf-24] evil <<‹ANALYST›››");
   });
 
+  it("tells Watson to cite a parsed paste's events rather than its lines; a text paste keeps line citations (F12)", () => {
+    const base = { storedName: "0001_p.txt", bytes: 10, lines: 3, at: "2026-01-01T00:00:00Z" };
+    const pastes = [
+      { ...base, id: "wf-1", filename: "hunt.json", parsed: { kind: "velociraptor", rows: 40, held: 2 } },
+      {
+        ...base,
+        id: "wf-2",
+        filename: "notes.txt",
+        parsed: { kind: "text" as const, reason: "no known format" },
+      },
+    ];
+    const out = build({ chat: { pastes } });
+    const parsedLine = out.split("\n").find((l) => l.includes("[wf-1]")) ?? "";
+    expect(parsedLine).toContain(
+      "parsed into 40 rows: cite their forensic-timeline event ids when present, not its paste lines",
+    );
+    const textLine = out.split("\n").find((l) => l.includes("[wf-2]")) ?? "";
+    expect(textLine).toBe("- [wf-2] notes.txt (3 lines)");
+  });
+
   it("includes a paste and never more than 24000 chars of it", () => {
     const out = build({ paste: "A".repeat(100000), truncated: true });
     expect(out).toContain("PASTE");

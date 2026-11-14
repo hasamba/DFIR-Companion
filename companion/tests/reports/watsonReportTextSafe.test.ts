@@ -4,9 +4,11 @@
 import { describe, expect, it } from "vitest";
 import { buildWriteProposals } from "../../src/analysis/ai/watson/writeProposals.js";
 import type { WatsonWriteInputs } from "../../src/analysis/ai/watson/roundWrites.js";
-import type { WatsonReportTextProposal } from "../../src/analysis/ai/watson/types.js";
 import type { WatsonWrites } from "../../src/analysis/ai/watson/writesSchema.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { pasteLineEvent } from "../../src/analysis/ai/watson/writers/pasteLineEvents.js";
+import type { WatsonPaste, WatsonReportTextProposal } from "../../src/analysis/ai/watson/types.js";
+import { renderHtmlReport } from "../../src/reports/html.js";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { blockMd } from "../../src/reports/mdText.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
@@ -71,5 +73,39 @@ describe("Watson report text is neutralised when the proposal is built", () => {
 
   it("proposes no report text without the neutraliser", () => {
     expect(proposals({ reportBlockText: undefined })).toEqual([]);
+  });
+});
+
+// F16: a hostile pasted line a Watson finding cites becomes a forensic event; its row in the report's
+// event table stays one row, with the pipe escaped, no forged heading, and no live markup in HTML.
+describe("a hostile pasted line cited as an event", () => {
+  const paste: WatsonPaste = {
+    id: "wf-1",
+    storedName: "0001_p.txt",
+    filename: "gateway.log",
+    bytes: 80,
+    lines: 1,
+    at: "2026-03-01T09:00:00Z",
+  };
+  const LINE = "2026-03-01T08:00:00Z <img src=x onerror=alert(1)> a | b\n## Forged heading";
+  const event = pasteLineEvent(paste, 1, LINE, "High", "f-watson-1a2b3c4d", "2026-03-01T09:00:00Z");
+  const state = { ...emptyState("c1"), forensicTimeline: [event] };
+
+  it("renders as one table row in the Markdown report", () => {
+    const lines = renderMarkdownReport(state).split("\n");
+    expect(lines.some((l) => /^#{1,6}\s+Forged/.test(l))).toBe(false);
+    const rows = lines.filter((l) => l.includes("Pasted gateway.log line 1"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("a \\| b");
+    expect(rows[0]).toContain("## Forged heading"); // kept as text, inside the cell
+    const header = lines.find((l) => l.startsWith("| Time |")) ?? "";
+    const cells = (l: string) => l.replace(/\\\|/g, "").split("|").length;
+    expect(cells(rows[0])).toBe(cells(header));
+  });
+
+  it("carries no live markup into the HTML report", () => {
+    const html = renderHtmlReport(state);
+    expect(html).not.toMatch(/<img[^>]*onerror/i);
+    expect(html).not.toMatch(/<h\d[^>]*>\s*Forged heading/i);
   });
 });

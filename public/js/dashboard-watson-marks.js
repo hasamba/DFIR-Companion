@@ -26,9 +26,10 @@
   let signature = "";
   let lastReportMeta = null;
 
-  // The ids one applied proposal marks: a finding/step id, a report field, every held event row.
+  // The ids one applied proposal marks: a finding/step id, a report field, every row a promotion
+  // actually added (its recorded ids — a held row the case already held is not Watson's).
   function idsOf(p) {
-    if (p.kind === "event_promote") return (p.events || []).map((e) => e.id);
+    if (p.kind === "event_promote") return Array.isArray(p.createdEventIds) ? p.createdEventIds : [];
     return p.kind === "report_text" ? [p.field || p.targetId] : [p.targetId];
   }
   const proposalFor = (kind, id) =>
@@ -60,10 +61,12 @@
     const p = proposalFor(kind, id);
     if (!p && !isWatsonItem(kind, item)) return "";
     const who = (p && p.appliedBy) || (item && item.approvedBy) || "an analyst";
+    const rows = p && p.kind === "event_promote" ? idsOf(p).length : 0;
+    const undoTitle = rows ? `Undo — removes all ${rows} row${rows === 1 ? "" : "s"} Watson promoted` : "Undo what Watson wrote";
     return (
       `<span class="watson-mark" data-w-mark="${escAttr(kind + ":" + id)}" title="${escAttr("Added by Watson, approved by " + who)}">Watson</span>` +
       (p
-        ? `<button type="button" class="watson-mini watson-undo" data-act="watsonAct" data-w-verb="undo" data-pid="${escAttr(p.id)}" title="Undo what Watson wrote">Undo</button>`
+        ? `<button type="button" class="watson-mini watson-undo" data-act="watsonAct" data-w-verb="undo" data-pid="${escAttr(p.id)}" title="${escAttr(undoTitle)}" aria-label="${escAttr(undoTitle)}">Undo</button>`
         : "") +
       (kind === "finding" && item ? notesHtml(item) : "")
     );
@@ -75,7 +78,8 @@
     const marked = (lastReportMeta && lastReportMeta.watsonFields) || {};
     document.querySelectorAll("[data-watson-slot]").forEach((el) => {
       const f = el.dataset.watsonSlot;
-      el.innerHTML = REPORT_FIELDS.includes(f) && marked[f] ? watsonMarkHtml("report", f, {}) : "";
+      // Marked but the proposal left the chat: the badge stays (no Undo), as for the other kinds.
+      el.innerHTML = REPORT_FIELDS.includes(f) && marked[f] ? watsonMarkHtml("report", f, { author: "watson" }) : "";
     });
   }
   function watsonMarkReportSlots(meta) {

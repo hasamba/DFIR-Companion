@@ -21,6 +21,17 @@ import {
 } from "../../../src/analysis/stateTypes.js";
 import type { CaseStore } from "../../../src/storage/caseStore.js";
 
+// The proposals' turns are in the chat: a settled proposal whose turn left the chat is dropped (F11).
+const chatWithTurns = () => ({
+  ...emptyWatsonChat(),
+  turns: ["t1", "t2", "t-sys"].map((id) => ({
+    id,
+    at: "2026-03-01T09:00:00Z",
+    role: "watson" as const,
+    text: "",
+  })),
+});
+
 const CASE = "c1";
 
 const original: InvestigationQuestion = {
@@ -110,7 +121,7 @@ describe("applyWatsonProposal", () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "watson-proposals-"));
     chatStore = new WatsonChatStore({ stateDir: () => dir } as unknown as CaseStore);
-    await chatStore.save(CASE, { ...emptyWatsonChat(), proposals: [updateProposal, newProposal] });
+    await chatStore.save(CASE, { ...chatWithTurns(), proposals: [updateProposal, newProposal] });
     mem = memoryStore({ ...emptyState(CASE), keyQuestions: [original] });
     entries = [];
     const activity = {
@@ -170,7 +181,7 @@ describe("applyWatsonProposal", () => {
     };
     mem.state = { ...mem.state, keyQuestions: [bySynth] };
     await chatStore.save(CASE, {
-      ...emptyWatsonChat(),
+      ...chatWithTurns(),
       proposals: [{ ...updateProposal, before: bySynth, after: { ...updated, answeredBy: "synthesis" } }],
     });
     await applyWatsonProposal(deps, CASE, "wp-u", "apply");
@@ -187,7 +198,7 @@ describe("applyWatsonProposal", () => {
     };
     mem.state = { ...mem.state, keyQuestions: [annotated] };
     await chatStore.save(CASE, {
-      ...emptyWatsonChat(),
+      ...chatWithTurns(),
       proposals: [{ ...updateProposal, before: annotated, after: { ...annotated, ...updated } }],
     });
     await applyWatsonProposal(deps, CASE, "wp-u", "apply");
@@ -239,7 +250,7 @@ describe("applyWatsonProposal", () => {
     ["undo", "rejected"],
     ["undo", "undone"],
   ] as const)("refuses %s from %s with a state error and changes nothing", async (action, from) => {
-    await chatStore.save(CASE, { ...emptyWatsonChat(), proposals: [{ ...updateProposal, status: from }] });
+    await chatStore.save(CASE, { ...chatWithTurns(), proposals: [{ ...updateProposal, status: from }] });
     await expect(applyWatsonProposal(deps, CASE, "wp-u", action)).rejects.toBeInstanceOf(
       WatsonProposalStateError,
     );
@@ -333,7 +344,7 @@ describe("applyWatsonProposal", () => {
     expect(order).toEqual(["other start", "other end", "apply done"]);
   });
   it("a phase 1 chat file with question proposals loads unchanged and undoes as before", async () => {
-    const phase1 = { ...emptyWatsonChat(), proposals: [{ ...updateProposal, status: "applied" }] };
+    const phase1 = { ...chatWithTurns(), proposals: [{ ...updateProposal, status: "applied" }] };
     await writeFile(join(dir, "watson-chat.json"), JSON.stringify(phase1));
     expect((await chatStore.load(CASE)).proposals).toEqual(phase1.proposals);
     mem.state = { ...mem.state, keyQuestions: [{ ...updated }] };
@@ -360,7 +371,7 @@ describe("applyWatsonProposal", () => {
       relatedEventIds: [],
     };
     await chatStore.save(CASE, {
-      ...emptyWatsonChat(),
+      ...chatWithTurns(),
       turns: [{ id: "t9", at: "2026-01-01T00:00:00Z", role: "watson", text: "x", answer }],
     });
     const out = await addAnswerAsQuestion(deps, CASE, "t9", "alice");
@@ -373,7 +384,7 @@ describe("applyWatsonProposal", () => {
 
   it("a proposal its writer cannot write (no promotion seam, no rows) is refused and stays pending", async () => {
     await chatStore.save(CASE, {
-      ...emptyWatsonChat(),
+      ...chatWithTurns(),
       proposals: [
         {
           id: "wp-r",

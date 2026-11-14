@@ -1,5 +1,5 @@
 import type { ForensicRow } from "../../../forensicRows.js";
-import type { Finding, InvestigationState } from "../../../stateTypes.js";
+import type { Finding, ForensicEvent, InvestigationState } from "../../../stateTypes.js";
 import { isWatsonEvent, isWatsonItem } from "../../../timeline/watsonItems.js";
 import { WatsonProposalConflict } from "../proposalErrors.js";
 import type { WatsonFindingProposal } from "../types.js";
@@ -22,6 +22,12 @@ const gone = (id: string): WatsonProposalConflict =>
 
 function checkApplyTarget(p: WatsonFindingProposal, stored: Finding | undefined): void {
   if (p.kind === "finding_new") {
+    // Defence in depth: a new Watson finding wears the reserved prefix and is the finding it names.
+    if (!p.targetId.startsWith("f-watson-") || p.after.id !== p.targetId) {
+      throw new WatsonProposalConflict(
+        `Finding ${p.targetId} is not a Watson finding id; nothing was written`,
+      );
+    }
     if (stored) throw unchanged(p.targetId);
     return;
   }
@@ -69,8 +75,12 @@ async function apply(deps: WriterDeps, caseId: string, p: WatsonFindingProposal,
     caseId,
     live.pasteEvents.map((e) => e.id),
   );
-  const created = live.pasteEvents.filter((e) => !existing.has(e.id));
-  const createdIds = new Set(created.map((e) => e.id));
+  const recovered = await leftByFailedApply(deps, caseId, p, existing);
+  // One stamp for every row this apply owns, so undo recognises the recovered rows too.
+  const stamp = recovered[0]?.promotedAt ?? promotedAt;
+  const pasteEvents = live.pasteEvents.map((e) => ({ ...e, promotedAt: stamp }));
+  const created = pasteEvents.filter((e) => !existing.has(e.id));
+  const createdIds = new Set([...created, ...recovered].map((e) => e.id));
   const finding = written(
     p,
     [...live.eventIds, ...live.pasteEvents.map((e) => e.id)],
@@ -93,11 +103,36 @@ async function apply(deps: WriterDeps, caseId: string, p: WatsonFindingProposal,
   const proposal: WatsonFindingProposal = {
     ...p,
     after: finding,
-    pasteLineEvents: live.pasteEvents,
+    pasteLineEvents: pasteEvents,
     createdEventIds: [...createdIds],
-    promotedAt,
+    promotedAt: stamp,
   };
   return { state, proposal };
+}
+
+/**
+ * Rows an earlier attempt of this apply appended before it failed: marked `[watson]`, linked to this
+ * finding only, and not cited by the finding it updates. A retry counts them as created, so undo
+ * still removes them. One stamp only: rows of two different attempts are left alone.
+ */
+async function leftByFailedApply(
+  deps: WriterDeps,
+  caseId: string,
+  p: WatsonFindingProposal,
+  existing: ReadonlySet<string>,
+): Promise<ForensicEvent[]> {
+  const before = new Set(p.before?.relatedEventIds ?? []);
+  const ids = p.pasteLineEvents.map((e) => e.id).filter((id) => existing.has(id) && !before.has(id));
+  if (!ids.length) return [];
+  const ours = (await deps.stateStore.forensicRowsById(caseId, ids))
+    .map((r) => r.event)
+    .filter(
+      (e) =>
+        isWatsonEvent(e) &&
+        e.relatedFindingIds.length > 0 &&
+        e.relatedFindingIds.every((f) => f === p.targetId),
+    );
+  return new Set(ours.map((e) => e.promotedAt)).size === 1 ? ours : [];
 }
 
 /** A created row may go only while it is still Watson's own, unchanged, and cited by nothing else. */

@@ -18,6 +18,17 @@ import { emptyState, type Finding, type ForensicEvent } from "../../../src/analy
 import { WATSON_MARKER } from "../../../src/analysis/timeline/watsonItems.js";
 import { CaseStore } from "../../../src/storage/caseStore.js";
 
+// The proposals' turns are in the chat: a settled proposal whose turn left the chat is dropped (F11).
+const chatWithTurns = () => ({
+  ...emptyWatsonChat(),
+  turns: ["t1", "t2", "t-sys"].map((id) => ({
+    id,
+    at: "2026-03-01T09:00:00Z",
+    role: "watson" as const,
+    text: "",
+  })),
+});
+
 // The event-promote writer: a row the content tagger graded above Info during a Watson paste ingest
 // is held as a proposal. Apply promotes it into the forensic timeline at the raised grade with the
 // Watson mark; undo removes only the rows that apply added, only while they are unchanged and no
@@ -89,7 +100,7 @@ describe("Watson event-promote writer", () => {
     stateStore = new StateStore(cases);
     await stateStore.save(emptyState(CASE));
     chatStore = new WatsonChatStore(cases);
-    await chatStore.save(CASE, { ...emptyWatsonChat(), pastes: [paste], proposals: [proposalOf()] });
+    await chatStore.save(CASE, { ...chatWithTurns(), pastes: [paste], proposals: [proposalOf()] });
     const stateLock = new StateLock();
     const pipeline = new AnalysisPipeline({
       stateStore,
@@ -181,6 +192,25 @@ describe("Watson event-promote writer", () => {
     expect(await row(raised.id)).toBeDefined();
   });
 
+  it("marks only the rows it merged, never a requested row the case already held (F8)", async () => {
+    const second: ForensicEvent = {
+      ...raised,
+      id: "ev-held-2",
+      description: "reg save HKLM\\SAM on host vault.example.com",
+      mitreTechniques: ["T1003.002"],
+    };
+    await chatStore.save(CASE, {
+      ...chatWithTurns(),
+      pastes: [paste],
+      proposals: [proposalOf([raised, second])],
+    });
+    await stateStore.appendForensicEvents(CASE, [{ ...raised, severity: "Low", provenance: [] }]);
+    await applyWatsonProposal(deps, CASE, "wp-e", "apply", "Ana");
+    expect((await stored()).createdEventIds).toEqual([second.id]);
+    expect((await row(second.id))?.provenance).toContain(WATSON_MARKER);
+    expect((await row(raised.id))?.provenance ?? []).not.toContain(WATSON_MARKER);
+  });
+
   it("an undone proposal of another kind still cannot be applied again", async () => {
     const q = {
       id: "wp-q",
@@ -215,7 +245,7 @@ describe("Watson event-promote writer", () => {
       defenderEngineBoot: { bootAt: "2026-03-01T08:04:00.000Z" },
     } as ForensicEvent;
     await chatStore.save(CASE, {
-      ...emptyWatsonChat(),
+      ...chatWithTurns(),
       pastes: [paste],
       proposals: [proposalOf([recorded])],
     });

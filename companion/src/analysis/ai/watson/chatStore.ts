@@ -105,14 +105,21 @@ function parseChat(raw: unknown): WatsonChat {
   };
 }
 
-// New object: oldest turns dropped past the cap, over-long text trimmed. The input is not mutated.
+// A decided-against proposal (rejected, undone) whose turn left the chat is dropped; every pending and
+// applied proposal stays, since apply and undo need them.
+const SETTLED: ReadonlySet<WatsonProposal["status"]> = new Set(["rejected", "undone"]);
+
+// New object: oldest turns dropped past the cap, over-long text trimmed, settled proposals of dropped
+// turns removed. The input is not mutated.
 function normalize(chat: WatsonChat): WatsonChat {
   const turns = chat.turns
     .slice(-WATSON_MAX_TURNS)
     .map((t) =>
       t.text.length > WATSON_TURN_TEXT_MAX ? { ...t, text: t.text.slice(0, WATSON_TURN_TEXT_MAX) } : t,
     );
-  return { ...chat, turns };
+  const kept = new Set(turns.map((t) => t.id));
+  const proposals = chat.proposals.filter((p) => !SETTLED.has(p.status) || kept.has(p.turnId));
+  return { ...chat, turns, proposals };
 }
 
 export class WatsonChatStore {

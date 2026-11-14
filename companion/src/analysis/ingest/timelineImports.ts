@@ -277,9 +277,10 @@ function stampPromoted(
   };
   // Stamp provenance markers on the promoted rows (second-look #11) — mergeDelta carries no
   // provenance through the delta schema, so apply them here by id (union with any existing). Lets the
-  // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]").
-  if (Object.keys(marked).length) {
-    const tagged = new Set(Object.keys(marked));
+  // forensic timeline show WHY a raw row was pulled up ("[second-look: h2]"). Only the rows this
+  // promotion merged: a requested row the case already held keeps its own provenance.
+  const tagged = new Set(Object.keys(marked).filter((id) => promotedIds.has(id)));
+  if (tagged.size) {
     state = {
       ...state,
       forensicTimeline: state.forensicTimeline.map((e) =>

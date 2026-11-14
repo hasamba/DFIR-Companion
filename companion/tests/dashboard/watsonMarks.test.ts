@@ -70,12 +70,17 @@ describe("watsonMarkHtml", () => {
     expect(api.watsonUndoTarget("finding", "f-other")).toBe("");
   });
 
-  it("marks next steps, report fields and every held event row", () => {
+  it("marks next steps, report fields and every row a promotion actually added", () => {
     const api = marks();
     api.watsonMarksSet([
       prop("next_step_new", "applied", { targetId: "s-watson-1" }),
       prop("report_text", "applied", { targetId: "conclusions", field: "conclusions" }),
-      prop("event_promote", "applied", { targetId: "ev1", events: [{ id: "ev1" }, { id: "ev2" }] }),
+      // ev3 was requested but the case already held it: not Watson's, not marked (F8).
+      prop("event_promote", "applied", {
+        targetId: "ev1",
+        events: [{ id: "ev1" }, { id: "ev2" }, { id: "ev3" }],
+        createdEventIds: ["ev1", "ev2"],
+      }),
     ]);
     expect(api.watsonMarkHtml("next_step", "s-watson-1")).toContain("watson-mark");
     expect(api.watsonMarkHtml("report", "conclusions")).toContain("watson-mark");
@@ -87,7 +92,11 @@ describe("watsonMarkHtml", () => {
 
   it("an event that went undone and was applied again is marked again", () => {
     const api = marks();
-    const p = prop("event_promote", "undone", { targetId: "ev1", events: [{ id: "ev1" }] });
+    const p = prop("event_promote", "undone", {
+      targetId: "ev1",
+      events: [{ id: "ev1" }],
+      createdEventIds: ["ev1"],
+    });
     api.watsonMarksSet([p]);
     expect(api.watsonMarkHtml("event", "ev1")).toBe("");
     api.watsonMarksSet([{ ...p, status: "applied" }]);
@@ -120,6 +129,34 @@ describe("watsonMarkHtml", () => {
     expect(html).not.toContain('data-w-verb="undo"');
     expect(api.watsonMarkHtml("event", "e9", { provenance: ["[watson]"] })).toContain("watson-mark");
     expect(api.watsonMarkHtml("event", "e9", { provenance: ["[second-look: h2]"] })).toBe("");
+  });
+
+  it("a promoted row's Undo says it removes every row the promotion added (F9)", () => {
+    const api = marks();
+    api.watsonMarksSet([
+      prop("event_promote", "applied", { events: [{ id: "a" }], createdEventIds: ["a", "b", "c"] }),
+      prop("finding_new", "applied", { id: "wp-f", targetId: "f-watson-1" }),
+    ]);
+    expect(api.watsonMarkHtml("event", "b")).toContain('title="Undo — removes all 3 rows Watson promoted"');
+    expect(api.watsonMarkHtml("event", "b")).toContain(
+      'aria-label="Undo — removes all 3 rows Watson promoted"',
+    );
+    expect(api.watsonMarkHtml("finding", "f-watson-1")).toContain('title="Undo what Watson wrote"');
+  });
+
+  it("a report field marked by Watson keeps its badge, without Undo, once the proposal left the chat (F10)", () => {
+    const slot = { dataset: { watsonSlot: "conclusions" }, innerHTML: "" };
+    const other = { dataset: { watsonSlot: "investigationLimitations" }, innerHTML: "" };
+    const api = loadDashboardModule<Marks & { watsonMarkReportSlots(meta: unknown): void }>(
+      "dashboard-watson-marks.js",
+      ["dashboard-escape.js"],
+      { ...globals, document: { ...globals.document, querySelectorAll: () => [slot, other] } },
+    );
+    api.watsonMarksSet([]);
+    api.watsonMarkReportSlots({ watsonFields: { conclusions: { proposalId: "wp-gone", at: "x" } } });
+    expect(slot.innerHTML).toContain("watson-mark");
+    expect(slot.innerHTML).not.toContain('data-w-verb="undo"');
+    expect(other.innerHTML).toBe("");
   });
 });
 
@@ -199,7 +236,11 @@ describe("the Wrote: line", () => {
       fprop("applied"),
       { ...fprop("applied"), id: "wp2", kind: "finding_update", targetId: "f-watson-ffff0000" },
       prop("next_step_new", "applied", { targetId: "s1" }),
-      prop("event_promote", "applied", { events: [{ id: "a" }, { id: "b" }, { id: "c" }] }),
+      // four rows requested, three landed: the count is the rows Watson actually added (F8)
+      prop("event_promote", "applied", {
+        events: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }],
+        createdEventIds: ["a", "b", "c"],
+      }),
       prop("report_text", "applied", { field: "conclusions", targetId: "conclusions" }),
       prop("report_text", "applied", {
         id: "wp9",
@@ -210,8 +251,8 @@ describe("the Wrote: line", () => {
       prop("next_step_new", "rejected", { id: "wp-rej" }),
     ]);
     expect(html).toContain("Wrote:");
-    expect(html).toContain("2 finding");
-    expect(html).toContain("1 next step");
+    expect(html).toContain("2 findings");
+    expect(html).toContain("1 next step<");
     expect(html).toContain("3 events");
     expect(html).toContain("Report § Conclusions");
     expect(html).toContain("Report § Investigation limitations");
@@ -220,6 +261,29 @@ describe("the Wrote: line", () => {
     expect(html).toContain('data-w-kind="finding"');
     expect(html).not.toContain("onclick");
     expect(html).not.toContain("style=");
+  });
+
+  it("uses the singular for one and the plural for more (F7)", () => {
+    const c = cards();
+    const one = c.watsonWroteHtml([
+      fprop("applied"),
+      prop("event_promote", "applied", { createdEventIds: ["a"] }),
+    ]);
+    expect(one).toContain(">1 finding<");
+    expect(one).toContain(">1 event<");
+    const many = c.watsonWroteHtml([
+      prop("next_step_new", "applied", { targetId: "s1" }),
+      prop("next_step_new", "applied", { id: "wp-s2", targetId: "s2" }),
+    ]);
+    expect(many).toContain(">2 next steps<");
+  });
+
+  it("leaves out the events part when a promotion added no rows", () => {
+    const html = cards().watsonWroteHtml([
+      fprop("applied"),
+      prop("event_promote", "applied", { events: [{ id: "a" }], createdEventIds: [] }),
+    ]);
+    expect(html).not.toContain("event");
   });
 
   it("is empty when nothing was applied, and ignores question proposals", () => {

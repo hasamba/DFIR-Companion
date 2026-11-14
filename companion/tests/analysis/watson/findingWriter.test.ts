@@ -88,8 +88,9 @@ describe("Watson finding writer", () => {
 
   const seedChat = (...proposals: WatsonFindingProposal[]) =>
     chatStore.save(CASE, { ...emptyChat(), pastes: [paste], proposals });
+  // The proposals' turns are in the chat: a settled proposal whose turn left the chat is dropped (F11).
   const emptyChat = () => ({
-    turns: [],
+    turns: ["t1", "t2"].map((id) => ({ id, at: "2026-03-01T09:00:00Z", role: "watson" as const, text: "" })),
     proposals: [],
     pastes: [],
     unreadPasteIds: [],
@@ -282,6 +283,44 @@ describe("Watson finding writer", () => {
       WatsonProposalConflict,
     );
     expect(await row(PASTE_EV)).toBeUndefined();
+  });
+
+  it("refuses a new finding whose id is not a Watson id or differs from the finding it writes (F14)", async () => {
+    await seedChat(
+      { ...findingNew(), targetId: "f-model-1" },
+      { ...findingNew(), id: "wp-g", targetId: "f-watson-ffff0000" },
+    );
+    for (const id of ["wp-f", "wp-g"]) {
+      await expect(applyWatsonProposal(deps, CASE, id, "apply")).rejects.toThrow(/not a Watson finding id/);
+    }
+    expect(await findings()).toEqual([]);
+    expect(await row(PASTE_EV)).toBeUndefined();
+  });
+
+  it("a retry after an apply that failed past the row append owns the row, and undo removes it (F14)", async () => {
+    let failSave = true;
+    const failing = Object.create(stateStore) as StateStore;
+    failing.saveOverview = async (st) => {
+      if (failSave) {
+        failSave = false;
+        throw new Error("disk full");
+      }
+      return stateStore.saveOverview(st);
+    };
+    await expect(
+      applyWatsonProposal({ ...deps, stateStore: failing }, CASE, "wp-f", "apply"),
+    ).rejects.toThrow(/disk full/);
+    expect(await row(PASTE_EV)).toBeDefined(); // the row landed, the finding did not
+    expect((await proposal()).status).toBe("pending");
+
+    await applyWatsonProposal(deps, CASE, "wp-f", "apply");
+    const p = await proposal();
+    expect(p.createdEventIds).toEqual([PASTE_EV]);
+    expect(p.promotedAt).toBe((await row(PASTE_EV))?.promotedAt);
+
+    await applyWatsonProposal(deps, CASE, "wp-f", "undo");
+    expect(await row(PASTE_EV)).toBeUndefined();
+    expect(await findings()).toEqual([]);
   });
 
   describe("finding_update", () => {

@@ -230,8 +230,14 @@ describe("rail, open and full", () => {
     const { api, panel, count } = setup();
     api.initWatson();
     api.renderWatson(
-      chatWith([], {
-        proposals: [proposal("p1", "pending"), proposal("p2", "applied"), proposal("p3", "pending")],
+      // p4's turn left the chat: it is not counted (F11)
+      chatWith([{ id: "t1", at: "x", role: "watson", text: "hi" }], {
+        proposals: [
+          proposal("p1", "pending"),
+          proposal("p2", "applied"),
+          proposal("p3", "pending"),
+          { ...proposal("p4", "pending"), turnId: "t-gone" },
+        ],
       }),
     );
     api.toggleWatsonPanel();
@@ -851,5 +857,22 @@ describe("Load earlier messages", () => {
     expect(log.innerHTML).not.toContain("<b>old</b>");
     expect(log.innerHTML).not.toContain("Add to open questions");
     expect(log.innerHTML).not.toContain("Load earlier messages"); // more: false
+  });
+});
+
+describe("the Watson reaction delay setting (F15)", () => {
+  it("says in the dashboard and the manual that each reaction is a full round that counts toward the limits", () => {
+    const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const field =
+      /<div class="sfield"><label for="env-DFIR_AI_WATSON_REACT_DELAY_SEC">[\s\S]*?<\/div>/.exec(html)?.[0] ??
+      "";
+    expect(field).toContain("Each reaction is a full Watson round with the case context");
+    expect(field).toContain("counts toward the Watson cost and token limits");
+    const manual = readFileSync(
+      new URL("../../../mkdocs-docs/reference/settings.md", import.meta.url),
+      "utf8",
+    );
+    expect(manual).toContain("Each reaction is a full Watson round with the case context");
+    expect(manual).toContain("counts toward the Watson cost and token limits");
   });
 });

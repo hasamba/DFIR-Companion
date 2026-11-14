@@ -78,6 +78,28 @@ describe("WatsonChatStore", () => {
     expect(legacy).toMatchObject({ analystEngaged: true, reactionsPaused: "errors", reactionFailures: 2 });
   });
 
+  it("drops rejected and undone proposals whose turn left the chat, and keeps pending and applied ones", async () => {
+    const turns = makeTurns(WATSON_MAX_TURNS + 1); // t0 falls off the end
+    const prop = (id: string, turnId: string, status: string) => ({
+      id,
+      turnId,
+      kind: "question_new",
+      questionId: "q1",
+      status,
+      after: { id: "q1", question: "Q?", status: "unknown", answer: "", pointer: "" },
+    });
+    const proposals = [
+      prop("gone-rejected", "t0", "rejected"),
+      prop("gone-undone", "t0", "undone"),
+      prop("gone-pending", "t0", "pending"),
+      prop("gone-applied", "t0", "applied"),
+      prop("kept-rejected", "t5", "rejected"),
+    ];
+    await store.save("c1", { ...emptyWatsonChat(), turns, proposals } as never);
+    const ids = (await store.load("c1")).proposals.map((p) => p.id);
+    expect(ids).toEqual(["gone-pending", "gone-applied", "kept-rejected"]);
+  });
+
   it("round-trips and caps turns at WATSON_MAX_TURNS", async () => {
     const chat = { ...emptyWatsonChat(), turns: makeTurns(WATSON_MAX_TURNS + 5), memory: "kept" };
     await store.save("c1", chat);
