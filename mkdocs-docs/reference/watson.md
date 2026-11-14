@@ -125,9 +125,13 @@ The forensic timeline holds the events that were graded Low or higher. The super
 
 When Watson cites a raw row, the row is promoted into the forensic timeline before the answer is saved. It shows the **Watson** badge and has an **Undo**. Rows that Watson saw but did not cite stay in the super-timeline. Nothing is promoted from a Watson reaction to an import.
 
-If a round cannot write to the case (the case is frozen or AI is off), nothing is promoted. Watson drops each item that depended on the row and says so in the answer. If a promotion fails, Watson also drops those items. If some rows had already landed, the card offers **Apply** to finish and **Undo**. Watson also drops any text that mentions a raw row that was not promoted.
+If a round cannot write to the case (writes are off for this message, the case is frozen, or AI is off), nothing is promoted. Watson drops each item that depended on the row and says so in the answer. If a promotion fails, Watson also drops those items. If some rows had already landed, the card offers **Apply** to finish and **Undo**.
 
-Undo of a promotion is refused while a finding, next step or report text that Watson applied still depends on that row. Undo that item first.
+Watson's answer in the chat keeps its text. If the answer names a raw row that is not in the forensic timeline, **Add to open questions** is refused. Ask Watson again.
+
+Undo of a promotion is refused while a finding, next step, report text, key question or key question answer that Watson applied still depends on that row. Undo that item first.
+
+Raw rows can show host and account names that the case does not know yet. Watson keeps a list of these names for the case. When anonymization is on, these names are masked in every AI request on the case, synthesis included. The list holds at most 500 hosts and 500 accounts, and Watson never removes a name from it. When a search would need more names, Watson does not search the super-timeline for that message and tells you why. This limit applies even when anonymization is off.
 
 Synthesis and the deep pass never read the super-timeline.
 

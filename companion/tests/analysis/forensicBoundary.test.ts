@@ -946,7 +946,7 @@ describe("Watson's super-timeline search is targeted, bounded and promotes only 
     expect(s.WATSON_SUPER_SCAN_ROWS).toBe(5_000);
   });
 
-  it("the store is queried with the 5,000-row candidate bound", async () => {
+  it("the store is queried with the 5,000-row return-and-count bound", async () => {
     const f = await import("./watson/superPromoteFixtures.js");
     const { runWatsonRound } = await import("../../src/analysis/ai/watson/round.js");
     const h = await f.harness([f.reply(f.superLookup()), f.reply(f.answer(["raw1"]))]);

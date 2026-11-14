@@ -352,8 +352,9 @@ export interface WatsonChat {
   /** ISO time of the last "New thread": RECENT CHAT in the prompt starts here. Memory is kept. */
   threadStartAt?: string;
   /**
-   * Names Watson's super-timeline searches showed it (raw-only hosts, users, IPs). Every later Watson
-   * call masks them, since a restored reply can carry them into memory and chat (D2d). Case-private.
+   * Names Watson's super-timeline searches showed it (raw-only hosts, users, IPs). Every later AI call
+   * on the case masks them (H3), since a restored reply can carry them into memory, chat and applied
+   * items (D2d). A host or user is never evicted (H5). Case-private.
    */
   maskRoster?: WatsonMaskRoster;
 }

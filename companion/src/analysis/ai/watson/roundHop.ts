@@ -131,21 +131,27 @@ async function lookupHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promi
 
 /**
  * One bounded super-timeline search, then the second call with its rows. Only that call may cite the
- * rows shown. The roster rides on the outcome even when the call fails: the rows were already sent.
+ * rows shown. The roster and the search record ride on the outcome even when the call fails.
  */
 async function superHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promise<Outcome> {
   const raw = h.ctx.rawSearch as WatsonRawSearchDeps;
   const found = await searchSuperTimeline(h.ctx, raw.reader, h.caseId, h.state, query);
   // Before anything is sent: rows whose names do not fit the roster are never shown (H5).
   if (maskRosterFull(h.chat.maskRoster, found.roster)) return withNote(kept, ROSTER_FULL_NOTE);
-  const rostered: Outcome = { ...kept, superRoster: found.roster };
+  const shownIds = found.shown.map((e) => e.id);
+  // M2: the roster AND the search record ride on the outcome even when the call fails, so the card
+  // still says the search ran: the rows were already sent.
+  const rostered: Outcome = {
+    ...kept,
+    superRoster: found.roster,
+    lookedUp: { ...found.lookedUp, shownIds },
+  };
   const input: WatsonPromptInput = {
     ...h.base,
     ...(h.head ? { pasteExcerpt: h.head } : {}),
     superExcerpt: found.excerpt,
     rawRoster: found.roster,
   };
-  const shownIds = found.shown.map((e) => e.id);
   let second: WatsonReply;
   try {
     second = await h.ask(input, new Set(shownIds));
@@ -155,7 +161,6 @@ async function superHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promis
   return {
     ...rostered,
     reply: { ...second, search: null, lookup: null },
-    lookedUp: { ...found.lookedUp, shownIds },
     superShown: found.shown,
   };
 }
