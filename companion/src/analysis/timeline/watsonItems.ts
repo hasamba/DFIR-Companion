@@ -91,6 +91,14 @@ function reconcile<T extends { id: string; author?: "watson" }>(
   return out;
 }
 
+/** The event without the `[watson]` marker (a new object; the provenance key goes when emptied). */
+function withoutMarker(e: ForensicEvent): ForensicEvent {
+  if (!isWatsonEvent(e)) return e;
+  const { provenance, ...rest } = e;
+  const left = (provenance ?? []).filter((p) => p !== WATSON_MARKER);
+  return left.length ? { ...rest, provenance: left } : rest;
+}
+
 /**
  * Watson-marked events: a row the store holds as Watson's comes back with the store's fields (and
  * the run's `relatedFindingIds`, which the fold rebuilt). The run's copy of a marked row is dropped
@@ -99,6 +107,8 @@ function reconcile<T extends { id: string; author?: "watson" }>(
  * survivor inherits `[watson]` with the folded row's provenance. A row this run's correlation folded
  * evidence into keeps the run's merged copy, so the folded rows' evidence is never lost (F1). An
  * event folded into another (in the run's `eventAliases`) is not re-added: its citations follow.
+ * Only a row the store holds as Watson's keeps `[watson]`: every other kept row loses the inherited
+ * marker, so an ordinary survivor stays the case's own event (synthesis's fields win next time).
  */
 function reconcileEvents(next: InvestigationState, latest: WatsonItemsSource): ForensicEvent[] {
   const events = latest.forensicTimeline ?? [];
@@ -113,10 +123,10 @@ function reconcileEvents(next: InvestigationState, latest: WatsonItemsSource): F
       .map(([, to]) => to),
   );
   const kept = next.forensicTimeline.flatMap((e) => {
-    if (absorbers.has(e.id)) return [e];
     const s = stored.get(e.id);
+    if (absorbers.has(e.id)) return [s ? e : withoutMarker(e)];
     if (s) return [{ ...s, relatedFindingIds: e.relatedFindingIds }];
-    return isWatsonEvent(e) && !inStore.has(e.id) ? [] : [e];
+    return isWatsonEvent(e) && !inStore.has(e.id) ? [] : [withoutMarker(e)];
   });
   const added = [...stored.values()].filter((e) => !runIds.has(e.id) && !(e.id in folded));
   return added.length ? sortByEventTime([...kept, ...added]) : kept;

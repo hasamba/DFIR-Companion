@@ -54,7 +54,26 @@ describe("keepWatsonItems across a correlation fold", () => {
     expect(survivor?.provenance).toContain(WATSON_MARKER); // inherited from the folded row
 
     const out = keepWatsonItems(next, state([watsonRow, ordinary]));
-    expect(out.forensicTimeline).toEqual([survivor]);
+    // Kept with its evidence, but not marked as Watson's: it is the case's own event.
+    const { provenance, ...evidence } = survivor!;
+    const left = (provenance ?? []).filter((p) => p !== WATSON_MARKER);
+    expect(out.forensicTimeline).toEqual([left.length ? { ...evidence, provenance: left } : evidence]);
+    expect(out.forensicTimeline[0].provenance ?? []).not.toContain(WATSON_MARKER);
+  });
+
+  it("an ordinary survivor that absorbed a Watson row stays ordinary: a later synthesis's fields win", () => {
+    const watsonRow = velo("ev-watson-p1-3", marked);
+    const ordinary = thor("t2e5");
+    const { next } = run([watsonRow, ordinary]);
+    const persisted = keepWatsonItems(next, state([watsonRow, ordinary]));
+
+    const later = state(
+      persisted.forensicTimeline.map((e) => ({ ...e, severity: "Medium" as const, description: "regraded" })),
+    );
+    const out = keepWatsonItems(later, persisted);
+    expect(out.forensicTimeline).toEqual(later.forensicTimeline);
+    // A run that drops it does not see it re-added as a stored Watson row.
+    expect(keepWatsonItems(state([]), persisted).forensicTimeline).toEqual([]);
   });
 
   it("keeps the merged evidence when a Watson row is the survivor of the fold", () => {
