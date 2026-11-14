@@ -343,3 +343,16 @@ describe("raw-only names are masked (spec §8)", () => {
     expect(userPrompt(h.provider.sent[2])).not.toMatch(/FINSRV-07/i);
   });
 });
+
+describe("inventory hosts keep their short-label masking", () => {
+  it("a dotted inventory hostname with a plain first label still masks that label", async () => {
+    const { veloHostNames } = await import("../../../src/analysis/ai/watson/requestBuild.js");
+    const { promptEntities } = await import("../../../src/analysis/ai/watson/pasteEntities.js");
+    const names = veloHostNames({
+      velo: { hostCount: 1, hosts: [{ hostname: "fileserver.example.com", fqdn: "fileserver.example.com" }] },
+    });
+    expect(promptEntities("FILESERVER is down", names).hosts).toContain("fileserver");
+    // The raw-row rule alone would not label it: the inventory adds it.
+    expect(promptEntities("x", ["fileserver.example.com"]).hosts).not.toContain("fileserver");
+  });
+});

@@ -144,9 +144,22 @@ export async function watsonBaseInput(
   };
 }
 
-/** Every inventory hostname and FQDN the VELOCIRAPTOR block shows: all of them go to masking. */
-const veloHostNames = (input: WatsonPromptInput): string[] =>
-  shownVeloHosts(input.velo?.hosts ?? []).flatMap((h) => [h.hostname, h.fqdn]);
+const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+/** A name's first label, unconditionally (a trusted inventory name); none for an IP or a bare name. */
+const firstLabel = (n: string): string[] => (n.includes(".") && !IPV4.test(n) ? [n.split(".")[0]] : []);
+
+/**
+ * Every inventory hostname and FQDN the VELOCIRAPTOR block shows, and each one's first label: all of
+ * them go to masking. promptEntities labels only machine-like roster names (the raw-row rule), so the
+ * inventory's labels are added here, as they always were.
+ */
+export const veloHostNames = (input: Pick<WatsonPromptInput, "velo">): string[] =>
+  shownVeloHosts(input.velo?.hosts ?? []).flatMap((h) => [
+    h.hostname,
+    h.fqdn,
+    ...firstLabel(h.hostname),
+    ...firstLabel(h.fqdn),
+  ]);
 
 /**
  * The raw-only names masking must know: this call's super-timeline rows plus every name an earlier
