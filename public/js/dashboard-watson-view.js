@@ -114,6 +114,10 @@
     return events === 0 && findings === 0;
   }
 
+  // Watson's Auto listing (a system turn) is drawn as a list.
+  const autoList = (t) =>
+    t.role === "system" && typeof watsonVeloAutoListHtml === "function" ? watsonVeloAutoListHtml(t.text) : "";
+
   // readOnly: an older turn paged back from the history file. It shows no proposal or add button.
   function turnHtml(t, proposals, readOnly) {
     const reacted = t.role === "system" && String(t.text).startsWith("Watson reacted to");
@@ -124,7 +128,7 @@
     return (
       `<div class="${cls}"><div class="watson-who">${who}</div>` +
       (t.workingOn ? `<div class="watson-meta"><b>Working on:</b> ${esc(t.workingOn)}</div>` : "") +
-      `<div class="watson-text">${esc(t.text)}</div>` +
+      (autoList(t) || `<div class="watson-text">${esc(t.text)}</div>`) +
       answerHtml(t, readOnly) +
       coverageHtml(t.coverage) +
       (t.learned ? `<div class="watson-meta"><b>Learned:</b> ${esc(t.learned)}</div>` : "") +
@@ -179,7 +183,7 @@
     return (
       `<button type="button" class="watson-rail" data-act="watsonAct" data-w-verb="open" aria-expanded="false" aria-label="Open Watson">` +
       `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span><span data-w="railmode"></span></button>` +
-      `<div class="watson-root watson-body"><div class="watson-head"><strong>Watson</strong><span class="watson-mode" data-w="mode"></span>` +
+      `<div class="watson-root watson-body"><div class="watson-head"><strong>Watson</strong><span class="watson-mode" data-w="mode"></span><span data-w="velo"></span>` +
       `<button type="button" class="watson-mini watson-only-open" data-act="watsonAct" data-w-verb="fullScreen" aria-expanded="false" aria-label="Full screen">Full screen</button>` +
       `<button type="button" class="watson-mini watson-only-full" data-act="watsonAct" data-w-verb="exitFullScreen" aria-expanded="true" aria-label="Exit full screen">Exit full screen</button>` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson">Collapse</button></div>` +

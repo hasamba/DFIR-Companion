@@ -64,7 +64,7 @@
     const rows = p && p.kind === "event_promote" ? idsOf(p).length : 0;
     const undoTitle = rows ? `Undo — removes all ${rows} row${rows === 1 ? "" : "s"} Watson promoted` : "Undo what Watson wrote";
     return (
-      `<span class="watson-mark" data-w-mark="${escAttr(kind + ":" + id)}" title="${escAttr("Added by Watson, approved by " + who)}">Watson</span>` +
+      `<span class="watson-mark" data-w-mark="${escAttr(kind + ":" + id)}" title="${escAttr(who === "Watson (Auto)" ? "Added by Watson (Auto), without asking" : "Added by Watson, approved by " + who)}">Watson</span>` +
       (p
         ? `<button type="button" class="watson-mini watson-undo" data-act="watsonAct" data-w-verb="undo" data-pid="${escAttr(p.id)}" title="${escAttr(undoTitle)}" aria-label="${escAttr(undoTitle)}">Undo</button>`
         : "") +

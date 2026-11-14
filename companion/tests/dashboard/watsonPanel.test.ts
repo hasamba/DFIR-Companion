@@ -111,6 +111,7 @@ function setup(
       "dashboard-watson-cards.js",
       "dashboard-watson-view.js",
       "dashboard-watson-mode.js",
+      "dashboard-watson-velo.js",
     ],
     {
       document,

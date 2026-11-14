@@ -72,7 +72,7 @@
     const rows = Array.isArray(p.events) ? p.events : [];
     const more = rows.length - HELD_SHOWN;
     return (
-      `<div>${esc(String(rows.length))} rows held for you</div>` +
+      `<div>${esc(String(rows.length))} rows held for you${p.status === "pending" ? " · Waiting for your approval" : ""}</div>` +
       pre(rows.slice(0, HELD_SHOWN).map((e) => `[${e.severity}] ${e.description}`).join("\n")) +
       (more > 0 ? `<div class="watson-why">and ${esc(String(more))} more</div>` : "")
     );
@@ -82,6 +82,7 @@
 
   // uiError: the server's message when this card's action was refused (a 409 on undo).
   function watsonCardHtml(p) {
+    if (p.kind === "velo_launch" && typeof watsonVeloCardHtml === "function") return watsonVeloCardHtml(p);
     const body = Object.prototype.hasOwnProperty.call(BODY, p.kind) ? BODY[p.kind](p) : "";
     return (
       `<div class="watson-prop" data-pid="${escAttr(p.id)}">` +

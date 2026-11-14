@@ -76,3 +76,6 @@ body.watson-full-open { padding-right: 0; }
 .watson-mode-label { font-size: 11px; color: var(--text-muted); }
 .watson-mode-btn.watson-mode-on { background: var(--brand-teal-deep, #0f766e); color: #fff; }
 .watson-rail-mode { font-size: 11px; font-weight: 700; color: var(--brand-teal-deep, #0f766e); }
+.watson-velo-chip { font-size: 11px; padding: 1px 6px; border: 1px solid var(--border-color); border-radius: 8px; margin-left: 6px; }
+.watson-rejected { opacity: 0.55; }
+.watson-auto-list { margin: 4px 0; padding-left: 18px; }
