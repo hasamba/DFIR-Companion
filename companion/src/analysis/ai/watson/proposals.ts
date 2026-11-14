@@ -87,7 +87,9 @@ function describe(p: WatsonProposal): string {
 
 function detailFor(action: WatsonProposalAction, p: WatsonProposal): string {
   const verb = { apply: "Applied", reject: "Rejected", undo: "Undid" }[action];
-  return `${verb} Watson's ${describe(p)}`.slice(0, 240);
+  const kept = action === "undo" && "keptEventIds" in p ? (p.keptEventIds?.length ?? 0) : 0;
+  const note = kept ? `; kept ${kept} event${kept === 1 ? "" : "s"} other findings cite` : "";
+  return `${verb} Watson's ${describe(p)}`.slice(0, 200) + note;
 }
 
 async function runWriter(

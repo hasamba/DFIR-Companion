@@ -254,16 +254,54 @@ describe("Watson finding writer", () => {
     expect(await row(PASTE_EV)).toBeDefined();
   });
 
-  it("undo refuses while another finding cites the row Watson added", async () => {
+  // Live check: synthesis made its own findings cite the paste-line row Watson's finding created.
+  it("undo removes the finding but keeps a row synthesis findings now cite, marked, and says so", async () => {
+    await applyWatsonProposal(deps, CASE, "wp-f", "apply");
+    const overview = await stateStore.loadOverview(CASE);
+    const f1: Finding = { ...draft, id: "f1", title: "Synthesis view", relatedEventIds: [PASTE_EV] };
+    await stateStore.saveOverview({ ...overview, findings: [...overview.findings, f1] });
+    const [r] = await stateStore.forensicRowsById(CASE, [PASTE_EV]);
+    await stateStore.deleteForensicRows(CASE, [r.rowId]);
+    await stateStore.appendForensicEvents(CASE, [{ ...r.event, relatedFindingIds: [FID, "f1"] }]);
+
+    await applyWatsonProposal(deps, CASE, "wp-f", "undo", "alice");
+    expect((await findings()).map((f) => f.id)).toEqual(["f1"]);
+    const kept = await row(PASTE_EV);
+    expect(kept?.provenance).toContain(WATSON_MARKER);
+    expect(kept?.relatedFindingIds).toEqual(["f1"]);
+    expect((await findings())[0].relatedEventIds).toEqual([PASTE_EV]);
+    expect((await row("e1"))?.relatedFindingIds).toEqual([]);
+    const p = await proposal();
+    expect(p).toMatchObject({ status: "undone", keptEventIds: [PASTE_EV] });
+    expect(entries.at(-1)?.detail).toContain("kept 1 event other findings cite");
+  });
+
+  it("undo keeps a row only another finding's citation holds, even with no back-link on the row", async () => {
     await applyWatsonProposal(deps, CASE, "wp-f", "apply");
     const overview = await stateStore.loadOverview(CASE);
     const other: Finding = { ...draft, id: "f-analyst", title: "Analyst view", relatedEventIds: [PASTE_EV] };
     await stateStore.saveOverview({ ...overview, findings: [...overview.findings, other] });
-    await expect(applyWatsonProposal(deps, CASE, "wp-f", "undo")).rejects.toBeInstanceOf(
-      WatsonProposalConflict,
-    );
+    await applyWatsonProposal(deps, CASE, "wp-f", "undo");
+    expect((await findings()).map((f) => f.id)).toEqual(["f-analyst"]);
     expect(await row(PASTE_EV)).toBeDefined();
-    expect((await findings()).map((f) => f.id)).toEqual([FID, "f-analyst"]);
+    expect((await proposal()).keptEventIds).toEqual([PASTE_EV]);
+  });
+
+  it("undo still refuses when a row Watson added changed and nothing else cites it", async () => {
+    await applyWatsonProposal(deps, CASE, "wp-f", "apply");
+    const [r] = await stateStore.forensicRowsById(CASE, [PASTE_EV]);
+    await stateStore.deleteForensicRows(CASE, [r.rowId]);
+    await stateStore.appendForensicEvents(CASE, [{ ...r.event, severity: "Low" }]);
+    await expect(applyWatsonProposal(deps, CASE, "wp-f", "undo")).rejects.toThrow(/changed/);
+    expect((await findings()).map((f) => f.id)).toEqual([FID]);
+    expect((await row(PASTE_EV))?.severity).toBe("Low");
+  });
+
+  it("undo of a finding with no other citation deletes its row and records nothing kept", async () => {
+    await applyWatsonProposal(deps, CASE, "wp-f", "apply");
+    await applyWatsonProposal(deps, CASE, "wp-f", "undo");
+    expect(await row(PASTE_EV)).toBeUndefined();
+    expect((await proposal()).keptEventIds).toBeUndefined();
   });
 
   it("a paste row that existed before the apply is linked, never created, and survives undo", async () => {

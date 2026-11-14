@@ -41,8 +41,18 @@
       `<div><span class="sev-${esc(f.severity)}">${esc(f.severity)}</span> <strong>${esc(f.title)}</strong></div>` +
       `<div class="watson-text">${esc(f.description)}</div>` +
       (cited ? `<div class="watson-why">cited events: ${cited}</div>` : "") +
-      (lines.length ? `<div class="watson-why">cited paste lines</div>` + pre(lines.map((e) => e.description).join("\n")) : "")
+      (lines.length ? `<div class="watson-why">cited paste lines</div>` + pre(lines.map((e) => e.description).join("\n")) : "") +
+      keptHtml(p)
     );
+  }
+
+  // An undone finding whose created rows other findings cite: those rows stayed in the timeline.
+  function keptHtml(p) {
+    const kept = p.status === "undone" && Array.isArray(p.keptEventIds) ? p.keptEventIds : [];
+    if (!kept.length) return "";
+    const cited = typeof citeEvents === "function" ? citeEvents(kept) : "";
+    const n = kept.length === 1 ? "1 event" : `${esc(String(kept.length))} events`;
+    return `<div class="watson-why">Removed the finding; kept ${n} because other findings cite ${kept.length === 1 ? "it" : "them"}${cited ? `: ${cited}` : ""}</div>`;
   }
 
   function stepBody(p) {

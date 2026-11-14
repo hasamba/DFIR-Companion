@@ -93,6 +93,8 @@ export interface WatsonFindingProposal extends WatsonProposalCommon, WatsonCreat
   after: Finding;
   /** One event per cited paste line, built when proposed; appended on apply if not already there. */
   pasteLineEvents: ForensicEvent[];
+  /** Set on undo: rows the apply created that stayed because other findings cite them. */
+  keptEventIds?: string[];
 }
 
 export interface WatsonNextStepProposal extends WatsonProposalCommon {

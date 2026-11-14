@@ -9,7 +9,8 @@ import type { WatsonWriter, WriterDeps } from "./writerTypes.js";
 // A finding Watson drafted, applied by the analyst. It is written with loadOverview/saveOverview and
 // the row APIs, never through mergeDelta (assembleMerge keeps Watson items from the base state only).
 // Every check runs before the first write, so a conflict leaves the case exactly as it was. Undo
-// removes only what the apply created, and only while it is still exactly what Watson wrote.
+// removes only what the apply created, and only while it is still exactly what Watson wrote; a
+// created row another finding now cites stays in the timeline (recorded as `keptEventIds`).
 
 const OUT_OF_DATE = "Watson wrote a finding";
 
@@ -135,26 +136,51 @@ async function leftByFailedApply(
   return new Set(ours.map((e) => e.promotedAt)).size === 1 ? ours : [];
 }
 
-/** A created row may go only while it is still Watson's own, unchanged, and cited by nothing else. */
-function checkCreatedRows(p: WatsonFindingProposal, rows: ForensicRow[], overview: InvestigationState): void {
+/** Another finding cites the row, or the row links to one (a synthesis back-link). */
+function citedElsewhere(
+  p: WatsonFindingProposal,
+  event: ForensicEvent,
+  overview: InvestigationState,
+): boolean {
+  return (
+    (event.relatedFindingIds ?? []).some((f) => f !== p.targetId) ||
+    overview.findings.some((f) => f.id !== p.targetId && (f.relatedEventIds ?? []).includes(event.id))
+  );
+}
+
+/**
+ * What undo does with each row the apply created. A row another finding cites stays (still marked
+ * Watson's; only this finding's link goes), so no citation is left dangling. Any other row goes, and
+ * only while it is still exactly what Watson wrote — a changed row nobody else cites is a conflict.
+ */
+function planCreatedRows(
+  p: WatsonFindingProposal,
+  rows: ForensicRow[],
+  overview: InvestigationState,
+): { remove: ForensicRow[]; keep: string[] } {
   const ids = p.createdEventIds ?? [];
   if (rows.length !== new Set(ids).size) throw gone(p.targetId);
-  for (const { event } of rows) {
+  const remove: ForensicRow[] = [];
+  const keep: string[] = [];
+  for (const r of rows) {
+    const { event } = r;
+    if (citedElsewhere(p, event, overview)) {
+      keep.push(event.id);
+      continue;
+    }
     const drafted = p.pasteLineEvents.find((e) => e.id === event.id);
-    const ours =
+    const unchangedRow =
       !!drafted &&
       isWatsonEvent(event) &&
       event.promotedAt === p.promotedAt &&
       event.severity === drafted.severity &&
-      event.description === drafted.description &&
-      (event.relatedFindingIds ?? []).every((f) => f === p.targetId) &&
-      !overview.findings.some((f) => f.id !== p.targetId && (f.relatedEventIds ?? []).includes(event.id));
-    if (!ours) {
-      throw new WatsonProposalConflict(
-        `Event ${event.id} that Watson added changed or is now cited elsewhere; nothing was changed`,
-      );
+      event.description === drafted.description;
+    if (!unchangedRow) {
+      throw new WatsonProposalConflict(`Event ${event.id} that Watson added changed; nothing was changed`);
     }
+    remove.push(r);
   }
+  return { remove, keep };
 }
 
 async function undo(deps: WriterDeps, caseId: string, p: WatsonFindingProposal) {
@@ -164,27 +190,28 @@ async function undo(deps: WriterDeps, caseId: string, p: WatsonFindingProposal) 
   if (!sameFinding(stored, p.after)) throw unchanged(p.targetId);
   const createdIds = new Set(p.createdEventIds ?? []);
   const rows = await deps.stateStore.forensicRowsById(caseId, [...createdIds]);
-  checkCreatedRows(p, rows, overview);
+  const { remove, keep } = planCreatedRows(p, rows, overview);
   const before = new Set(p.before?.relatedEventIds ?? []);
   const after = p.after.relatedEventIds ?? [];
-  // Writes: unlink and relink the rows that stay, drop the rows the apply created, then the finding.
+  // Writes: unlink and relink the rows that stay (kept created rows lose this finding's link), drop
+  // the created rows nobody else cites, then the finding.
   await relink(
     deps,
     caseId,
     p.targetId,
     [...before].filter((id) => !after.includes(id)),
-    after.filter((id) => !createdIds.has(id) && !before.has(id)),
+    [...after.filter((id) => !createdIds.has(id) && !before.has(id)), ...keep],
   );
   await deps.stateStore.deleteForensicRows(
     caseId,
-    rows.map((r) => r.rowId),
+    remove.map((r) => r.rowId),
   );
   const state: InvestigationState = p.before
     ? withFinding(overview, p.before)
     : { ...overview, findings: overview.findings.filter((f) => f.id !== p.targetId) };
   await deps.stateStore.saveOverview(state);
   await deps.markConclusionsOutOfDate(caseId, OUT_OF_DATE);
-  return { state };
+  return keep.length ? { state, proposal: { ...p, keptEventIds: keep } } : { state };
 }
 
 export const findingWriter: WatsonWriter<WatsonFindingProposal> = { apply, undo };

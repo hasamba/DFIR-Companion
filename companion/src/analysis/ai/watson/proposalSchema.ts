@@ -44,6 +44,7 @@ const findingProposal = z.object({
   before: finding.optional(),
   after: finding,
   pasteLineEvents: z.array(event).catch([]),
+  keptEventIds: z.array(z.string()).optional().catch(undefined),
 });
 
 const nextStepProposal = z.object({

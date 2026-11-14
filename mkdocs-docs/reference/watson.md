@@ -57,7 +57,9 @@ Everything you apply from Watson carries a **Watson** badge. The badge shows on 
 Each applied item has its own **Undo**, in the chat and next to the badge. Undo puts back what was there before. Undo is refused, and nothing changes, in two cases. The card says why:
 
 - the item was changed after you applied it (for example you edited the finding), because Undo would destroy your edit;
-- a finding still cites the item. Undo the finding that cites it first.
+- a finding still cites an event that Watson promoted. Undo the finding that cites it first.
+
+Undo of a Watson finding works differently for the events the finding added (one for each pasted line it cited). If another finding now cites such an event, for example a finding from a later synthesis, Undo still removes the Watson finding but keeps that event in the timeline, with its Watson badge. The card then says **Removed the finding; kept N event(s) because other findings cite them**. An added event that no other finding cites is removed with the finding. If such an event was changed after you applied the finding, Undo is refused.
 
 If you mark a Watson finding as a false positive, it stays in the case (Undo removes it), but synthesis no longer treats it as live.
 

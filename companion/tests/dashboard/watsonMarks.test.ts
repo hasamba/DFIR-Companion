@@ -211,6 +211,17 @@ describe("proposal cards", () => {
     expect(undone).toContain('data-w-verb="apply"');
   });
 
+  it("an undone finding says which events stayed because other findings cite them, escaped", () => {
+    const c = cards();
+    const one = c.watsonCardHtml(fprop("undone", { keptEventIds: ["ev-watson-wf-1-2"] }));
+    expect(one).toContain("Removed the finding; kept 1 event because other findings cite it");
+    expect(one).toContain("[cited ev-watson-wf-1-2]");
+    const many = c.watsonCardHtml(fprop("undone", { keptEventIds: ["a", "b"] }));
+    expect(many).toContain("kept 2 events because other findings cite them");
+    expect(c.watsonCardHtml(fprop("undone"))).not.toContain("Removed the finding");
+    expect(c.watsonCardHtml(fprop("applied", { keptEventIds: ["a"] }))).not.toContain("Removed the finding");
+  });
+
   it("shows the server message of a refused undo on the card", () => {
     const html = cards().watsonCardHtml({ ...fprop("applied"), uiError: "Finding changed since; <b>x</b>" });
     expect(html).toContain("Finding changed since; &lt;b&gt;x&lt;/b&gt;");
