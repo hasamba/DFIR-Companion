@@ -4,6 +4,7 @@ import { buildWatsonUserPrompt } from "../../../src/analysis/ai/watson/promptBui
 import { ensureStandardQuestions } from "../../../src/analysis/ai/watson/standardQuestions.js";
 import { emptyWatsonChat, type WatsonChat, type WatsonTurn } from "../../../src/analysis/ai/watson/types.js";
 import { getWatsonPrompt } from "../../../src/analysis/ai/prompts/index.js";
+import { WATSON_PROMPT } from "../../../src/analysis/ai/prompts/watson.js";
 import type { InvestigationQuestion, InvestigationState } from "../../../src/analysis/stateTypes.js";
 
 function question(id: string, extra: Partial<InvestigationQuestion> = {}): InvestigationQuestion {
@@ -418,5 +419,17 @@ describe("the super-timeline search block (phase 4)", () => {
 
   it("has no super-timeline block when no search ran", () => {
     expect(buildWatsonUserPrompt(base)).not.toContain("SUPER-TIMELINE SEARCH");
+  });
+});
+
+describe("WATSON_PROMPT: the super-timeline search rule", () => {
+  it("tells Watson when to search the super-timeline and that what it cites is promoted", () => {
+    expect(WATSON_PROMPT).toMatch(/"source": "forensic\|supertimeline"/);
+    expect(WATSON_PROMPT).toMatch(/"hash"/);
+    expect(WATSON_PROMPT).toContain("<<<SUPERTIMELINE>>>");
+    expect(WATSON_PROMPT).toMatch(/not in the forensic timeline.*file name, path, hash, user or process/s);
+    expect(WATSON_PROMPT).toMatch(
+      /every super-timeline row you cite is promoted into the forensic timeline/i,
+    );
   });
 });
