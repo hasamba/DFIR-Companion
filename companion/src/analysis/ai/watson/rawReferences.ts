@@ -28,31 +28,22 @@ export const refKey = (item: RefItem): string =>
   item.kind === "answer" ? "answer" : `${item.kind}:${item.index}`;
 
 // An id is its own token-part when neither neighbour is a letter, digit or underscore, whatever joins
-// it ("e1-raw1", "raw1-related", "...raw1", "raw1.Next" all name raw1). Two shapes stay non-matches:
-// a decimal ("raw1.5") and a label-value pair whose value is not a candidate ("raw1:x"; "raw1:raw2"
-// names both).
+// it ("e1-raw1", "raw1-related", "...raw1", "raw1:4624", "raw1.5" all name raw1). Controller ruling
+// (Task 5 re-review NEW-I1): no exceptions — over-matching only promotes a shown row or drops the
+// item, while under-matching would let an unpromoted raw id reach the case.
 const WORD = /[A-Za-z0-9_]/;
-const DIGIT = /[0-9]/;
 
 const isWord = (c: string | undefined): boolean => c !== undefined && WORD.test(c);
-const candidateAt = (text: string, at: number, candidates: ReadonlySet<string>): boolean =>
-  [...candidates].some((id) => id !== "" && text.startsWith(id, at));
 
-function isMention(text: string, at: number, id: string, candidates: ReadonlySet<string>): boolean {
-  const end = at + id.length;
-  const after = text[end];
-  const next = text[end + 1];
-  if (isWord(text[at - 1]) || isWord(after)) return false;
-  if (after === "." && next !== undefined && DIGIT.test(next)) return false;
-  return !(after === ":" && isWord(next) && !candidateAt(text, end + 1, candidates));
-}
+const isMention = (text: string, at: number, id: string): boolean =>
+  !isWord(text[at - 1]) && !isWord(text[at + id.length]);
 
-function mentionsAt(text: string, id: string, candidates: ReadonlySet<string>): number | null {
+function mentionsAt(text: string, id: string): number | null {
   let from = 0;
   while (id !== "") {
     const at = text.indexOf(id, from);
     if (at < 0) return null;
-    if (isMention(text, at, id, candidates)) return at;
+    if (isMention(text, at, id)) return at;
     from = at + 1;
   }
   return null;
@@ -63,7 +54,7 @@ export function mentionedIds(text: string, candidates: ReadonlySet<string>): str
   if (text === "") return [];
   return [...candidates]
     .flatMap((id) => {
-      const at = mentionsAt(text, id, candidates);
+      const at = mentionsAt(text, id);
       return at === null ? [] : [{ id, at }];
     })
     .sort((a, b) => a.at - b.at)

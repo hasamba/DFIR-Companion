@@ -68,7 +68,9 @@ describe("mentionedIds", () => {
   });
   it("treats an id at a sentence end as a mention, but not an id inside a longer dotted token", () => {
     expect(mentionedIds("It was raw1.", new Set(["raw1"]))).toEqual(["raw1"]);
-    expect(mentionedIds("see raw1.5 and raw1:x", new Set(["raw1"]))).toEqual([]);
+    // Re-review NEW-I1: "raw1.5" and "raw1:x" now count (over-matching fails safe).
+    expect(mentionedIds("see raw1.5", new Set(["raw1"]))).toEqual(["raw1"]);
+    expect(mentionedIds("see raw1:x", new Set(["raw1"]))).toEqual(["raw1"]);
   });
   it("finds ids at the start and end of the text, and ids with punctuation inside them", () => {
     expect(mentionedIds("ev:1/a then evt-2", new Set(["ev:1/a", "evt-2"]))).toEqual(["ev:1/a", "evt-2"]);
@@ -92,12 +94,14 @@ describe("mentionedIds", () => {
     expect(mentionedIds("It was raw1.Next it ran", new Set(["raw1"]))).toEqual(["raw1"]);
     expect(mentionedIds("It was st-row-17.The", new Set(["st-row-17"]))).toEqual(["st-row-17"]);
   });
-  it("still refuses an id inside a longer token", () => {
-    const ids = new Set(["raw1"]);
-    expect(mentionedIds("raw1.5", ids)).toEqual([]);
+  it("still refuses an id inside a longer word, and counts any other join", () => {
+    const ids = new Set(["raw1", "row-17"]);
     expect(mentionedIds("raw10", ids)).toEqual([]);
-    expect(mentionedIds("raw1:x", ids)).toEqual([]);
     expect(mentionedIds("xraw1 and raw1_b", ids)).toEqual([]);
+    for (const text of ["raw1.5", "raw1:x", "raw1:4624", "raw1:Mimikatz"]) {
+      expect(mentionedIds(text, ids), text).toEqual(["raw1"]);
+    }
+    expect(mentionedIds("st-row-17", ids)).toEqual(["row-17"]);
   });
   // Task 5 review I2: a raw id joined to anything that is not a letter, digit or underscore is its own
   // token-part, whatever the other side is (a forensic id, a word) — only "raw1.5" stays a non-match.

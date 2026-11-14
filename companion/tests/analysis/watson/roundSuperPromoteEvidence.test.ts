@@ -93,3 +93,45 @@ describe("a raw id joined to a forensic id or a word is a mention (I2)", () => {
     expect(lastWatsonTurn(chat).text).toContain("2 items that rested on them were dropped");
   });
 });
+
+// Re-review NEW-I1 (controller ruling): a raw id followed by ':' + a word or '.' + a digit is a mention
+// too. The item either rests on a promoted row or is dropped — never applied with the row unpromoted.
+describe("a raw id before ':' or '.'+digit is a mention", () => {
+  const texts = [
+    "raw1:4624 logon then exfil",
+    "raw1:e1 pair",
+    "See raw1:svchost.exe",
+    "raw1:Mimikatz",
+    "raw1.5",
+  ];
+
+  for (const text of texts) {
+    it(`Approve: "${text}" promotes raw1 and records it`, async () => {
+      const h = await harness([reply(superLookup()), reply(writes({ nextSteps: [step(text)] }))]);
+      const chat = await h.run();
+      expect((await h.row("raw1"))?.promotedAt).toBeTruthy();
+      expect(evidence(own(chat, "next_step_new"))).toEqual(["raw1"]);
+    });
+  }
+
+  it('Approve: "raw1:4624 logon then exfil" is dropped when raw1 could not be promoted', async () => {
+    const h = await harness([reply(superLookup()), reply(writes({ nextSteps: [step(texts[0])] }))], {
+      onCall: (n, flags) => {
+        if (n === 2) flags.frozen = true;
+      },
+    });
+    const chat = await h.run();
+    expect(await h.row("raw1")).toBeUndefined();
+    expect(chat.proposals.some((p) => p.kind === "next_step_new")).toBe(false);
+  });
+
+  it('Auto: "Timeline raw1:4624 shows it" is applied only with raw1 promoted', async () => {
+    const body = writes({ report: [{ field: "conclusions", text: "Timeline raw1:4624 shows it" }] });
+    const h = await harness([reply(superLookup()), reply(body)], { mode: "auto" });
+    const chat = await h.run();
+    const r = chat.proposals.find((p) => p.kind === "report_text");
+    expect(r?.status).toBe("applied");
+    expect(evidence(r)).toEqual(["raw1"]);
+    expect((await h.row("raw1"))?.promotedAt).toBeTruthy();
+  });
+});
