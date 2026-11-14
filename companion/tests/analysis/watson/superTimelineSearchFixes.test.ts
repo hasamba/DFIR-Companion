@@ -217,3 +217,28 @@ describe("fix round 3: built-ins are not people, and wrapped programs still coun
     );
   });
 });
+
+describe("final fix: an explicit account named like a registry hive is kept", () => {
+  const rosterFor = async (over: Partial<ForensicEvent>) =>
+    (
+      await searchSuperTimeline(
+        ctx,
+        readerOf([ev({ id: "a", description: "rclone", ...over })]),
+        "c1",
+        stateOf(),
+        sup({ text: "rclone" }),
+      )
+    ).roster;
+
+  it("lists sam from the account field, from runas /user:CORP\\sam and from net use /user:sam", async () => {
+    expect((await rosterFor({ canonical: { account: { name: "sam" } } as never })).users).toContain("sam");
+    expect((await rosterFor({ commandLine: "runas /user:CORP\\sam cmd" })).users).toEqual(
+      expect.arrayContaining(["CORP\\sam", "sam"]),
+    );
+    expect((await rosterFor({ commandLine: "net use \\\\fs1\\c$ /user:sam pw" })).users).toContain("sam");
+  });
+
+  it("reg save HKLM\\SAM still lists nothing", async () => {
+    expect((await rosterFor({ commandLine: "reg save HKLM\\SAM sam.hiv" })).users).toEqual([]);
+  });
+});

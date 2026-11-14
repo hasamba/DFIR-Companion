@@ -91,10 +91,9 @@ const WELL_KNOWN = new Set([
   "default",
   "default user",
   "all users",
-  "sam",
-  "security",
-  "software",
 ]);
+/** Registry hive names: dropped when a pattern only inferred them, kept from an explicit account. */
+const HIVE_NAMES = new Set(["sam", "security", "software"]);
 
 /** Words a multi-word profile name is not split into. */
 const COMMON_WORDS = new Set([
@@ -178,14 +177,15 @@ const isDomain = (d: string): boolean =>
   !NOT_A_DOMAIN.test(d);
 
 /** A built-in principal, a shared profile folder, or a name under a built-in prefix: not a person. */
-function isPerson(name: string): boolean {
+function isPerson(name: string, explicit = false): boolean {
   const lower = name.toLowerCase();
-  if (WELL_KNOWN.has(lower)) return false;
+  if (WELL_KNOWN.has(lower) || (!explicit && HIVE_NAMES.has(lower))) return false;
   const cut = name.lastIndexOf("\\");
   if (cut < 0) return true;
   const domain = name.slice(0, cut).trim();
   const last = domain.split(/\s+/).pop() ?? "";
-  return !NOT_A_DOMAIN.test(last) && !BUILTIN_PREFIX.test(domain) && isPerson(name.slice(cut + 1));
+  const user = name.slice(cut + 1);
+  return !NOT_A_DOMAIN.test(last) && !BUILTIN_PREFIX.test(domain) && isPerson(user, explicit);
 }
 
 function domainUsers(cmd: string): string[] {
@@ -194,8 +194,8 @@ function domainUsers(cmd: string): string[] {
     .flatMap((m) => [`${m[1]}\\${m[2]}`, m[2]]);
 }
 
-/** Accounts a command names: account flags of known programs, `DOMAIN\user`, `user@domain`. */
-function commandUsers(cmd: string | undefined): string[] {
+/** Accounts a command names explicitly: account flags of known programs and `DOMAIN\user`. */
+function commandAccounts(cmd: string | undefined): string[] {
   if (!cmd) return [];
   const flagged = cmd.split(/[&|;]+/).flatMap((part) =>
     [...part.matchAll(ACCOUNT_FLAG)].flatMap((m) => {
@@ -204,7 +204,7 @@ function commandUsers(cmd: string | undefined): string[] {
       return program && value ? accountForms(value, program) : [];
     }),
   );
-  return [...flagged, ...domainUsers(cmd), ...groups(cmd, EMAIL_USER)];
+  return [...flagged, ...domainUsers(cmd)];
 }
 
 const printed = (e: ForensicEvent): string[] =>
@@ -214,6 +214,19 @@ const uncHosts = (e: ForensicEvent): string[] => printed(e).flatMap((s) => group
 
 const distinct = (xs: readonly (string | undefined)[]): string[] => [
   ...new Set(xs.filter((x): x is string => !!x && !!x.trim()).map((x) => x.trim())),
+];
+
+/** Names an account source states outright: the account field, the caller, account flags, DOMAIN\user. */
+const explicitUsers = (e: ForensicEvent): (string | undefined)[] => [
+  e.canonical?.account?.name,
+  e.callerName,
+  ...commandAccounts(e.commandLine),
+];
+
+/** Names only a pattern suggests: user folders and `user@domain`. */
+const inferredUsers = (e: ForensicEvent): string[] => [
+  ...folderUsers(e),
+  ...(e.commandLine ? groups(e.commandLine, EMAIL_USER) : []),
 ];
 
 /** Every host, account, user-folder name and IP the shown rows print. */
@@ -229,14 +242,10 @@ export function rosterOf(shown: readonly ForensicEvent[]): WatsonMaskRoster {
         ...uncHosts(e),
       ]),
     ),
-    users: distinct(
-      shown.flatMap((e) => [
-        e.canonical?.account?.name,
-        e.callerName,
-        ...folderUsers(e),
-        ...commandUsers(e.commandLine),
-      ]),
-    ).filter(isPerson),
+    users: distinct([
+      ...distinct(shown.flatMap(explicitUsers)).filter((n) => isPerson(n, true)),
+      ...distinct(shown.flatMap(inferredUsers)).filter((n) => isPerson(n)),
+    ]),
     ips: distinct(
       shown.flatMap((e) => [e.srcIp, e.dstIp, net(e)?.source?.address, net(e)?.destination?.address]),
     ),
