@@ -1947,6 +1947,8 @@ export const FEATURES: Feature[] = [
       "watsonEarlierButtonHtml",
       "watsonPanelHtml",
       "watsonCaseIsEmpty",
+      "watsonComposerKey",
+      "watsonInsertNewline",
     ],
     private: ["QSTATUS", "btn"],
   },
