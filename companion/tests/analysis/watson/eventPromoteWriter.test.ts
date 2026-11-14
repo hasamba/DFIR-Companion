@@ -169,7 +169,7 @@ describe("Watson event-promote writer", () => {
     await stateStore.saveOverview({ ...overview, findings: [watsonFinding(raised.id)] });
     const undo = applyWatsonProposal(deps, CASE, "wp-e", "undo", "Ana");
     await expect(undo).rejects.toBeInstanceOf(WatsonProposalConflict);
-    await expect(undo).rejects.toThrow(/undo the finding that cites it first/);
+    await expect(undo).rejects.toThrow(/Undo that finding first/);
     expect(await row(raised.id)).toBeDefined();
     expect((await stored()).status).toBe("applied");
   });
@@ -232,7 +232,7 @@ describe("Watson event-promote writer", () => {
     };
     await chatStore.update(CASE, (c) => ({ ...c, proposals: [...c.proposals, q] }));
     await expect(applyWatsonProposal(deps, CASE, "wp-q", "apply", "Ana")).rejects.toThrow(
-      /Cannot apply a proposal that is undone/,
+      /You cannot apply a proposal that is undone/,
     );
   });
 
@@ -271,7 +271,7 @@ describe("Watson event-promote writer", () => {
     await stateStore.saveOverview({ ...overview, findings: [{ ...analyst, id: "f-1" }] });
     const undo = applyWatsonProposal(deps, CASE, "wp-e", "undo", "Ana");
     await expect(undo).rejects.toBeInstanceOf(WatsonProposalConflict);
-    await expect(undo).rejects.toThrow(/cited by finding f-1/);
+    await expect(undo).rejects.toThrow(/Finding f-1 cites event/);
     expect(await row(raised.id)).toBeDefined();
     expect((await stored()).status).toBe("applied");
   });

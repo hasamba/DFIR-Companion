@@ -26,20 +26,19 @@ const NOTE_MAX = 600;
 const TITLE_MAX = 200;
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
-const wanted = (r: VeloRequest): string => `Watson wanted to run a ${r.mode} but`;
 /** Said whatever Watson's own reply promised: no card was made, so there is nothing to approve (Task 9). */
 const skipped = (r: VeloRequest, why: string): string =>
-  oneLine(`(Nothing to approve: ${wanted(r)} ${why}, so it proposed nothing.)`).slice(0, NOTE_MAX);
+  oneLine(`(Nothing to approve: Watson did not propose the ${r.mode}, because ${why}.)`).slice(0, NOTE_MAX);
 const alreadyRan = (r: VeloRequest): string =>
-  oneLine(`(Nothing to approve: this ${r.mode} already ran on the case, so Watson proposed nothing.)`);
+  oneLine(`(Nothing to approve: this ${r.mode} already ran on the case. Watson proposed nothing.)`);
 const riskyNote = (reasons: readonly string[]): string =>
   oneLine(
-    `(Risky query: ${reasons.join("; ")}. It waits for an analyst to read it and approve it; Auto mode never launches it.)`,
+    `(Risky query: ${reasons.join("; ")}. An analyst must read it and approve it. Auto mode never launches it.)`,
   ).slice(0, NOTE_MAX);
 
 /** The reason a failed check gives, in a sentence: a blocked request names the calls. */
 function reasonText(reason: string, reasons?: string[]): string {
-  return reasons?.length ? `it was blocked: ${reasons.join("; ")}` : reason;
+  return reasons?.length ? `the safety check blocked it: ${reasons.join("; ")}` : reason;
 }
 
 async function check(
@@ -80,7 +79,7 @@ export async function withVeloLaunch(
       (p) => p.kind === "velo_launch" && p.status === "pending" && p.targetId === fingerprints[0],
     );
     if (open) {
-      const note = `(${wanted(r)} an identical launch is already proposed: use that card.)`;
+      const note = `(Watson did not propose the ${r.mode} again. The same launch is already on a card. Use that card.)`;
       return { ...outcome, veloNote: oneLine(note) };
     }
     const proposal: Omit<WatsonVeloLaunchProposal, "turnId"> = {

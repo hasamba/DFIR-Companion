@@ -168,7 +168,7 @@ export function renderSuperRows(
 
 /** The warning the prompt and card carry when the store's size cap has dropped rows. */
 export function capNote(evicted: number): string {
-  return `The super-timeline has dropped ${fmt(evicted)} old rows to its size limit (DFIR_SUPERTIMELINE_MAX), so this search may have missed rows. Re-importing the artifact brings them back.`;
+  return `The super-timeline removed ${fmt(evicted)} old rows because of its size limit (DFIR_SUPERTIMELINE_MAX). This search can miss rows. Import the artifact again to get them back.`;
 }
 
 /** The store terms: the hash (or text), else the host's terms, else none for a window-only search. */
@@ -229,7 +229,7 @@ async function inCaseRows(
 function unsearchableHost(q: WatsonLookup, aliases: HostAliasIndex | undefined): WatsonSuperSearch | null {
   if (!q.host || q.hash || q.text || hostTerms(q.host, aliases).length) return null;
   const what = describeLookup(q);
-  const text = `host '${flat(q.host)}' could not be searched — name it by hostname or IP`;
+  const text = `Watson cannot search host '${flat(q.host)}'. Use its hostname or IP address.`;
   return {
     excerpt: { what, text },
     lookedUp: { source: "supertimeline", shown: 0, matched: 0, what },

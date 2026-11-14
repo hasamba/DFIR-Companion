@@ -57,7 +57,7 @@ export async function evidenceBlocker(
     const hit = rawEvidenceOf(p).find((id) => removing.has(id) || removing.has(resolve(id)));
     if (hit === undefined) continue;
     const row = removing.has(hit) ? hit : resolve(hit);
-    return `Event ${row} is cited by Watson's ${KIND_WORDS[p.kind] ?? p.kind} ${proposalTargetId(p)}: undo that first`;
+    return `Watson's ${KIND_WORDS[p.kind] ?? p.kind} ${proposalTargetId(p)} cites event ${row}. Undo that item first`;
   }
   return null;
 }

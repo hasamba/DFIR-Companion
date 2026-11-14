@@ -61,7 +61,7 @@ describe("watsonMarkHtml", () => {
     api.watsonMarksSet([fprop("applied")]);
     const html = api.watsonMarkHtml("finding", "f-watson-1a2b3c4d");
     expect(html).toContain("Watson");
-    expect(html).toContain("Added by Watson, approved by Dana");
+    expect(html).toContain("Watson added this. Dana approved it.");
     expect(html).toContain('data-w-verb="undo"');
     expect(html).toContain('data-pid="wp-finding_new-applied"');
     expect(html).not.toContain("style=");
@@ -115,9 +115,9 @@ describe("watsonMarkHtml", () => {
     expect(html).not.toContain("<img");
     expect(html).not.toContain("‮");
     expect(html).toContain("&lt;img src=x onerror=1&gt;");
-    expect(html).toContain("Synthesis disagrees: Low");
+    expect(html).toContain("Synthesis does not agree: Low");
     expect(html).toContain("Synthesis has a similar finding");
-    expect(html).toContain("cited evidence changed");
+    expect(html).toContain("The cited evidence changed");
     expect(html).not.toContain("onclick");
     expect(html).not.toContain("style=");
   });
@@ -137,9 +137,11 @@ describe("watsonMarkHtml", () => {
       prop("event_promote", "applied", { events: [{ id: "a" }], createdEventIds: ["a", "b", "c"] }),
       prop("finding_new", "applied", { id: "wp-f", targetId: "f-watson-1" }),
     ]);
-    expect(api.watsonMarkHtml("event", "b")).toContain('title="Undo — removes all 3 rows Watson promoted"');
     expect(api.watsonMarkHtml("event", "b")).toContain(
-      'aria-label="Undo — removes all 3 rows Watson promoted"',
+      'title="Undo. This removes all 3 rows that Watson promoted"',
+    );
+    expect(api.watsonMarkHtml("event", "b")).toContain(
+      'aria-label="Undo. This removes all 3 rows that Watson promoted"',
     );
     expect(api.watsonMarkHtml("finding", "f-watson-1")).toContain('title="Undo what Watson wrote"');
   });
@@ -214,12 +216,12 @@ describe("proposal cards", () => {
   it("an undone finding says which events stayed because other findings cite them, escaped", () => {
     const c = cards();
     const one = c.watsonCardHtml(fprop("undone", { keptEventIds: ["ev-watson-wf-1-2"] }));
-    expect(one).toContain("Removed the finding; kept 1 event because other findings cite it");
+    expect(one).toContain("Watson removed the finding. It kept 1 event, because other findings cite it");
     expect(one).toContain("[cited ev-watson-wf-1-2]");
     const many = c.watsonCardHtml(fprop("undone", { keptEventIds: ["a", "b"] }));
-    expect(many).toContain("kept 2 events because other findings cite them");
-    expect(c.watsonCardHtml(fprop("undone"))).not.toContain("Removed the finding");
-    expect(c.watsonCardHtml(fprop("applied", { keptEventIds: ["a"] }))).not.toContain("Removed the finding");
+    expect(many).toContain("It kept 2 events, because other findings cite them");
+    expect(c.watsonCardHtml(fprop("undone"))).not.toContain("removed the finding");
+    expect(c.watsonCardHtml(fprop("applied", { keptEventIds: ["a"] }))).not.toContain("removed the finding");
   });
 
   it("shows the server message of a refused undo on the card", () => {
@@ -231,7 +233,7 @@ describe("proposal cards", () => {
     const c = cards();
     for (const reason of ["presidio", "limit", "errors"]) {
       const html = c.watsonPausedHtml(reason);
-      expect(html).toContain("Send a message to resume");
+      expect(html).toContain("Send a message to start them again");
       expect(html).not.toContain("\n");
     }
     expect(c.watsonPausedHtml("bogus<")).toBe("");
@@ -343,15 +345,15 @@ describe("super-timeline search and promotion cards", () => {
   it("says Watson searched the super-timeline, with 'at least' for a floor", () => {
     const v = view();
     const h = v.watsonTurnHtml(
-      answer({ source: "supertimeline", shown: 40, matched: 312, what: 'rows containing "rclone"' }),
+      answer({ source: "supertimeline", shown: 40, matched: 312, what: 'rows with the text "rclone"' }),
       [],
     );
-    expect(h).toContain("Watson searched the super-timeline: 40 of 312 matching raw rows");
+    expect(h).toContain("Watson searched the super-timeline. It shows 40 of 312 raw rows that match");
     const floor = v.watsonTurnHtml(
       answer({ source: "supertimeline", shown: 3, matched: 3, matchedIsFloor: true, what: "w" }),
       [],
     );
-    expect(floor).toContain("3 of at least 3 matching raw rows");
+    expect(floor).toContain("3 of at least 3 raw rows that match");
     expect(floor).not.toContain("size limit");
   });
 
@@ -360,7 +362,7 @@ describe("super-timeline search and promotion cards", () => {
       answer({ source: "supertimeline", shown: 0, matched: 0, what: "w", capEvicted: 1234 }),
       [],
     );
-    expect(h).toContain("The super-timeline dropped 1,234 old rows because of its size limit.");
+    expect(h).toContain("The super-timeline removed 1,234 old rows because of its size limit.");
     expect(h).toContain("This search can miss rows. Import the artifact again to search them.");
   });
 
@@ -374,19 +376,19 @@ describe("super-timeline search and promotion cards", () => {
 
   it("keeps the forensic-lookup line and the held-paste card unchanged", () => {
     const h = view().watsonTurnHtml(answer({ shown: 5, matched: 9, what: "w" }), []);
-    expect(h).toContain("Watson looked up 5 of 9 matching forensic-timeline events (w)");
+    expect(h).toContain("Watson looked up 5 of 9 forensic-timeline events that match (w)");
     const held = cards().watsonCardHtml(
       prop("event_promote", "pending", { events: [{ severity: "High", description: "d" }], pasteId: "pp1" }),
     );
     expect(held).toContain("Held events · pending");
-    expect(held).toContain("rows held for you");
+    expect(held).toContain("rows wait for you");
     expect(held).toContain('data-w-verb="reject"');
   });
 
   it("shows the promoted rows escaped, with Undo", () => {
     const html = cards().watsonCardHtml(raw("applied"));
     expect(html).toContain("Promoted events · applied");
-    expect(html).toContain("Promoted 1 super-timeline row from Watson's answer");
+    expect(html).toContain("Watson promoted 1 super-timeline row from its answer");
     expect(html).not.toContain("<img");
     expect(html).toContain('data-w-verb="undo"');
     const many = cards().watsonCardHtml(
@@ -399,7 +401,7 @@ describe("super-timeline search and promotion cards", () => {
         })),
       }),
     );
-    expect(many).toContain("Promoted 7 super-timeline rows from Watson's answer");
+    expect(many).toContain("Watson promoted 7 super-timeline rows from its answer");
     expect(many).toContain("and 2 more");
   });
 
@@ -416,23 +418,23 @@ describe("super-timeline search and promotion cards", () => {
         createdEventIds: ["a", "b"],
       }),
     );
-    expect(html).toContain("Promoted 2 super-timeline rows from Watson's answer");
+    expect(html).toContain("Watson promoted 2 super-timeline rows from its answer");
     expect(html).toContain("1 row was already in the case. Undo does not remove it.");
     expect(html).toContain("desc-b");
     expect(html).not.toContain("desc-c");
     const undone = cards().watsonCardHtml(
       raw("undone", { events: [row("a"), row("b")], landedRows: [row("a")], createdEventIds: ["a"] }),
     );
-    expect(undone).toContain("Promoted 1 super-timeline row from");
+    expect(undone).toContain("Watson promoted 1 super-timeline row from");
     expect(undone).not.toContain("desc-b");
   });
 
   it("does not claim a promotion while the record is pending", () => {
     const html = cards().watsonCardHtml(raw("pending"));
     expect(html).toContain(
-      "Watson started to promote 1 super-timeline row. Promotion not finished. Press Apply to finish it.",
+      "Watson started to promote 1 super-timeline row. The promotion is not complete. Press Apply to finish it.",
     );
-    expect(html).not.toContain("Promoted 1");
+    expect(html).not.toContain("promoted 1");
   });
 
   it("gives a stuck pending promotion only Apply, and shows the server's refusal", () => {
@@ -440,7 +442,7 @@ describe("super-timeline search and promotion cards", () => {
       ...raw("pending"),
       uiError: "Press Apply to finish this promotion; Undo is available afterwards",
     });
-    expect(html).toContain("Promotion not finished. Press Apply to finish it.");
+    expect(html).toContain("The promotion is not complete. Press Apply to finish it.");
     expect(html).toContain('data-w-verb="apply"');
     expect(html).not.toContain('data-w-verb="reject"');
     expect(html).not.toContain('data-w-verb="undo"');

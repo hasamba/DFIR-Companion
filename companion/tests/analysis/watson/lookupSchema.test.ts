@@ -41,7 +41,7 @@ describe("lookupSchema super-timeline search", () => {
   });
   it("describes a super-timeline search in plain words", () => {
     expect(describeLookup({ source: "supertimeline", text: "rclone", host: "ws-01" })).toBe(
-      'super-timeline rows on host ws-01; containing "rclone"',
+      'super-timeline rows on host ws-01; with the text "rclone"',
     );
     expect(describeLookup({ source: "supertimeline", hash: "a".repeat(32) })).toBe(
       `super-timeline rows with hash ${"a".repeat(32)}`,

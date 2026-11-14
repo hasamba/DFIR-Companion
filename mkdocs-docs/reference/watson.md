@@ -4,6 +4,8 @@ Watson is an AI assistant that works one case with you. You talk to it in a chat
 
 Watson follows the case's AI switch. With AI off for the case, Watson does not answer.
 
+Watson writes the chat in ASD-STE100 Simplified Technical English. Its messages, answers, pointers, notes, and the findings, next steps and report text it proposes use short sentences (20 words or fewer for an instruction, 25 for a description), one instruction per sentence, the active voice and no idioms. The fixed text of the panel, its cards and its notes follows the same rules. Technical names stay exactly as they are: host names, user names, paths, hashes, ids, tool and artifact names, quoted evidence and queries.
+
 Watson can read the case, answer questions, and draft changes to it. Watson never changes your findings, next steps, report text or Key Questions without your **Apply**.
 
 Apply is also what Auto mode skips for Watson's own case writes; see [Approve and Auto](#approve-and-auto).
@@ -119,7 +121,7 @@ The forensic timeline holds the events that were graded Low or higher. The super
 - Watson makes one search for each question you ask. A search names text (3 characters or more), a hash, a host or a time window of 7 days or less. It can combine these.
 - Watson sees at most 100 rows from a search. It does not read the whole super-timeline.
 - Watson does not search in its own reactions to imports, notes or stars. Only a question or message you send starts a search.
-- If the super-timeline has dropped old rows to its size limit, the answer carries a warning that the search may have missed rows. Re-importing the artifact brings them back.
+- If the super-timeline has removed old rows because of its size limit, the answer carries a warning that the search can miss rows. Import the artifact again to get them back.
 
 When Watson cites a raw row, the row is promoted into the forensic timeline before the answer is saved. It shows the **Watson** badge and has an **Undo**. Rows that Watson saw but did not cite stay in the super-timeline. Nothing is promoted from a Watson reaction to an import.
 
@@ -143,7 +145,7 @@ If Watson cannot read a stored paste at once, the paste stays in the case. Watso
 
 ### Pasted files in a known format
 
-When a paste is in a format that a built-in importer reads (for example SIEM or EDR JSON, or a known event log export), Watson parses it into rows. The rows are graded like a normal import. The chat shows a line such as: "Parsed 2 rows from events.json (siem). 1 rows the tagger graded above Info wait for your approval."
+When a paste is in a format that a built-in importer reads (for example SIEM or EDR JSON, or a known event log export), Watson parses it into rows. The rows are graded like a normal import. The chat shows a line such as: "Watson read 2 rows from events.json (siem). The tagger graded 1 rows above Info. These rows wait for your approval."
 
 - The content tagger may raise some rows above Info (for example a `ntdsutil` command line). **Watson holds those promotions.** The rows stay in the super-timeline, and the raised copies wait as a **held rows** proposal. Choose **Apply** to put them in the forensic timeline, or **Reject** to leave them out. Large batches are split, 25 rows per proposal, and the chat says if more than 200 rows were cut.
 - Only the tagger's promotions are held. Other grading works as in a normal import. For example, a pasted account-creation row that resembles a case account is raised to High, the same as in a normal import.
@@ -240,7 +242,7 @@ Watson watches a collection for 30 minutes. If the companion restarts during tha
 
 ## Watson and synthesis
 
-A synthesis run keeps the answers Watson gave, and it keeps Watson's findings and next steps with their badge. If a new synthesis reaches a different conclusion, the board shows **Synthesis disagrees** next to the question. Synthesis does not overwrite Watson's work. You decide which one to keep.
+A synthesis run keeps the answers Watson gave, and it keeps Watson's findings and next steps with their badge. If a new synthesis reaches a different conclusion, the board shows **Synthesis does not agree** next to the question. Synthesis does not overwrite Watson's work. You decide which one to keep.
 
 ## What happens while you work
 

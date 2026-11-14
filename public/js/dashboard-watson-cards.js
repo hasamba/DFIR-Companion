@@ -8,9 +8,9 @@
   const HELD_SHOWN = 5;
   const FIELD_LABEL = { conclusions: "Conclusions", investigationLimitations: "Investigation limitations" };
   const PAUSED = {
-    presidio: "Presidio is holding a value for approval",
-    limit: "the Watson cost or token limit was reached",
-    errors: "several reactions failed in a row",
+    presidio: "Presidio has a value that waits for approval",
+    limit: "Watson reached its cost or token limit",
+    errors: "many reactions failed, one after the other",
   };
   const TITLE = {
     finding_new: "New finding",
@@ -54,7 +54,7 @@
     if (!kept.length) return "";
     const cited = typeof citeEvents === "function" ? citeEvents(kept) : "";
     const n = kept.length === 1 ? "1 event" : `${esc(String(kept.length))} events`;
-    return `<div class="watson-why">Removed the finding; kept ${n} because other findings cite ${kept.length === 1 ? "it" : "them"}${cited ? `: ${cited}` : ""}</div>`;
+    return `<div class="watson-why">Watson removed the finding. It kept ${n}, because other findings cite ${kept.length === 1 ? "it" : "them"}${cited ? `: ${cited}` : ""}</div>`;
   }
 
   function stepBody(p) {
@@ -73,7 +73,7 @@
   function heldBody(p) {
     const rows = Array.isArray(p.events) ? p.events : [];
     return (
-      `<div>${esc(String(rows.length))} rows held for you${p.status === "pending" ? " · Waiting for your approval" : ""}</div>` +
+      `<div>${esc(String(rows.length))} rows wait for you${p.status === "pending" ? " · Apply or reject them" : ""}</div>` +
       rowLines(rows)
     );
   }
@@ -89,7 +89,7 @@
     if (p.status === "pending") {
       return (
         `<div>Watson started to promote ${esc(String(cited.length))} super-timeline ${cited.length === 1 ? "row" : "rows"}. ` +
-        `Promotion not finished. Press Apply to finish it.</div>` +
+        `The promotion is not complete. Press Apply to finish it.</div>` +
         rowLines(cited)
       );
     }
@@ -97,7 +97,7 @@
     const n = landed ? landed.length : landedIds(p).length || cited.length;
     const old = cited.length - n;
     return (
-      `<div>Promoted ${esc(String(n))} super-timeline ${n === 1 ? "row" : "rows"} from Watson's answer</div>` +
+      `<div>Watson promoted ${esc(String(n))} super-timeline ${n === 1 ? "row" : "rows"} from its answer</div>` +
       (old > 0 ? `<div class="watson-why">${esc(String(old))} ${old === 1 ? "row was" : "rows were"} already in the case. Undo does not remove ${old === 1 ? "it" : "them"}.</div>` : "") +
       rowLines(landed || (landedIds(p).length ? [] : cited))
     );
@@ -148,7 +148,7 @@
   // One line, only for a reason the server sets.
   function watsonPausedHtml(reason) {
     return Object.prototype.hasOwnProperty.call(PAUSED, reason)
-      ? `<div class="watson-turn watson-warn watson-paused">Watson paused its reactions: ${esc(PAUSED[reason])}. Send a message to resume.</div>`
+      ? `<div class="watson-turn watson-warn watson-paused">Watson stopped its reactions: ${esc(PAUSED[reason])}. Send a message to start them again.</div>`
       : "";
   }
 

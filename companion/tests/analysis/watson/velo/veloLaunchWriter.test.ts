@@ -249,7 +249,7 @@ describe("applying a velo_launch proposal", () => {
       phase: "before-launch",
       error: "No enrolled Velociraptor client matches",
     });
-    await expect(applyWatsonProposal(deps(fail), CASE, "wp-coll", "apply")).rejects.toThrow(/nothing ran/);
+    await expect(applyWatsonProposal(deps(fail), CASE, "wp-coll", "apply")).rejects.toThrow(/Nothing ran/);
     const p = await stored("wp-coll");
     expect(p.status).toBe("pending");
     expect(p.launching).toBeUndefined();

@@ -265,10 +265,11 @@ function timelineBlock(scoped: ForensicEvent[], budget: number): { text: string;
 export async function readPasteText(cases: CaseStore, caseId: string, paste: WatsonPaste): Promise<string> {
   const name = paste.storedName;
   if (!name || name !== basename(name) || name.startsWith(".") || /[\\/:]/.test(name)) {
-    throw new Error("The pasted text cannot be read: its stored file name is not valid.");
+    throw new Error("Watson cannot read the pasted text. Its stored file name is not valid.");
   }
   const path = join(cases.importsDir(caseId), name);
   const info = await stat(path);
-  if (info.size > WATSON_PASTE_MAX_BYTES) throw new Error("The pasted text is too large to read.");
+  if (info.size > WATSON_PASTE_MAX_BYTES)
+    throw new Error("The pasted text is too large. Watson cannot read it.");
   return readFile(path, "utf8");
 }

@@ -27,27 +27,27 @@ const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n =
 const rows = (n: number): string => plural(n, "super-timeline row");
 
 const WITHHELD = {
-  writes: "this round may not write to the case",
+  writes: "this round cannot write to the case",
   unwired: "the super-timeline is not available on this server",
-  frozen: "the case was closed, archived or had AI turned off during the round",
+  frozen: "someone closed or archived the case, or turned off AI, during the round",
 };
 const withheldNote = (n: number, why: string): string =>
-  `(Watson cited ${rows(n)}, but ${why}, so nothing was promoted.)`;
+  `(Watson cited ${rows(n)}, but it promoted nothing, because ${why}.)`;
 const failedNote = (n: number, err: unknown): string =>
-  `(Watson cited ${rows(n)}, but ${n === 1 ? "it" : "they"} could not be promoted (${errText(err)}), so nothing was promoted.)`.slice(
+  `(Watson cited ${rows(n)}, but it could not promote ${n === 1 ? "it" : "them"} (${errText(err)}). Watson promoted nothing.)`.slice(
     0,
     600,
   );
 const recordNote = (n: number): string =>
-  `(Watson promoted ${rows(n)}, but the record could not be saved: press Apply on the card to finish it.)`;
+  `(Watson promoted ${rows(n)}, but it could not save the record. Press Apply on the card to finish it.)`;
 const stuckNote = (n: number): string =>
-  `(Watson promoted ${rows(n)} but could not finish recording it — press Apply to finish.)`;
+  `(Watson promoted ${rows(n)}, but it could not finish the record. Press Apply to finish it.)`;
 const earlierNote = (n: number): string =>
-  `(Watson cited ${rows(n)} from an earlier search that ${n === 1 ? "is" : "are"} not in the forensic timeline; only rows from this round's search are promoted.)`;
+  `(Watson cited ${rows(n)} from an earlier search that ${n === 1 ? "is" : "are"} not in the forensic timeline. Watson promotes only rows from the search in this round.)`;
 const droppedNote = (n: number): string =>
-  `(${plural(n, "item")} that rested on ${n === 1 ? "it was" : "them were"} dropped.)`;
+  `(Watson removed ${plural(n, "item")} that used ${n === 1 ? "it" : "them"}.)`;
 export const UNDONE_NOTE =
-  "(The rows Watson promoted were undone before its answer was saved, so items resting on them were dropped.)";
+  "(Someone undid the rows that Watson promoted before Watson saved its answer. Watson removed the items that used these rows.)";
 
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 const joinNotes = (...notes: (string | undefined)[]): string | undefined =>

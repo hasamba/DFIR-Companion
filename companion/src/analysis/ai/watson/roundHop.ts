@@ -49,17 +49,16 @@ const WANTED: Record<HopKind, string> = {
   super: "search the super-timeline",
 };
 const FAILED: Record<HopKind, string> = {
-  paste: "Watson's search of the pasted text failed",
-  lookup: "Watson's forensic-timeline lookup failed",
-  super: "Watson's super-timeline search failed",
+  paste: "Watson could not search the pasted text",
+  lookup: "Watson could not look up forensic-timeline events",
+  super: "Watson could not search the super-timeline",
 };
-const skipped = (kind: HopKind, why: string): string =>
-  `(Watson wanted to ${WANTED[kind]}, but ${why}, so it did not.)`;
+const skipped = (kind: HopKind, why: string): string => `(Watson did not ${WANTED[kind]}, because ${why}.)`;
 const failed = (kind: HopKind, err: unknown): string => oneLine(`(${FAILED[kind]}: ${errText(err)})`);
 const dropped = (why: string): string =>
-  oneLine(`(Watson asked for a timeline lookup that was not valid (${why}), so it did not run.)`);
+  oneLine(`(Watson did not do its timeline lookup, because the lookup is not valid: ${why}.)`);
 /** D6, the analyst's decision: the raw record is searched only when the analyst asks something. */
-const REACTION_WHY = "it searches the raw record only when you ask it something";
+const REACTION_WHY = "Watson searches the raw record only when you ask it a question";
 const UNWIRED_WHY = "the super-timeline is not available on this server";
 
 const joinNotes = (...notes: (string | undefined)[]): string | undefined =>
@@ -91,7 +90,7 @@ export async function secondHop(h: HopInput): Promise<Outcome> {
   if (kind === "super" && !h.ctx.rawSearch) return withNote(kept, skipped(kind, UNWIRED_WHY));
   try {
     const now = await h.spent().catch(() => null);
-    if (!now) return withNote(kept, skipped(kind, "its cost could not be checked"));
+    if (!now) return withNote(kept, skipped(kind, "it could not check its cost"));
     const reached = limitReached(h.ctx, now);
     if (reached) return withNote(kept, skipped(kind, `this case reached its Watson ${reached}`));
     if (first.search) return await searchHop(h, kept, first.search);

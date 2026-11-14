@@ -89,7 +89,9 @@ async function recheck(
   const added = newRisks(p, check.risky);
   if (added.length) {
     const what = added.map(plainRisk).join("; ");
-    throw new WatsonProposalConflict(`Watson will not launch this: a risk you did not approve: ${what}`);
+    throw new WatsonProposalConflict(
+      `Watson will not launch this. It has a risk that you did not approve: ${what}`,
+    );
   }
   if (check.fingerprint !== p.fingerprint || (check.clientHost ?? "") !== (p.hostname ?? "")) {
     throw new WatsonProposalConflict("the launch no longer matches what Watson proposed");
@@ -341,7 +343,7 @@ async function settle(
     const released = await releaseOrLog(v, caseId, added);
     if (released) {
       await saveOutcome(deps, caseId, p.id, (s) => ({ ...s, status: "pending", launching: undefined }));
-      throw new WatsonProposalConflict(`Velociraptor refused the launch, nothing ran: ${why}`);
+      throw new WatsonProposalConflict(`Velociraptor refused the launch. Nothing ran: ${why}`);
     }
   }
   await saveOutcome(deps, caseId, p.id, (s) => ({
@@ -354,6 +356,6 @@ async function settle(
   }));
   await audit(deps, caseId, p, actor, false, auditSuffix);
   throw new WatsonLaunchUncertain(
-    `Watson could not confirm the launch (${why}). Check Velociraptor, then mark it launched or try again.`,
+    `Watson could not confirm the launch (${why}). Check Velociraptor. Then mark it as launched or try again.`,
   );
 }

@@ -15,10 +15,10 @@ import type { WatsonWriter, WriterDeps } from "./writerTypes.js";
 const OUT_OF_DATE = "Watson wrote a finding";
 
 const unchanged = (id: string): WatsonProposalConflict =>
-  new WatsonProposalConflict(`Finding ${id} changed since this proposal; nothing was written`);
+  new WatsonProposalConflict(`Finding ${id} changed after this proposal. Watson wrote nothing`);
 const gone = (id: string): WatsonProposalConflict =>
   new WatsonProposalConflict(
-    `Finding ${id} or the rows it added are no longer in the case; nothing was changed`,
+    `Finding ${id} or the rows that it added are no longer in the case. Watson changed nothing`,
   );
 
 function checkApplyTarget(p: WatsonFindingProposal, stored: Finding | undefined): void {
@@ -26,7 +26,7 @@ function checkApplyTarget(p: WatsonFindingProposal, stored: Finding | undefined)
     // Defence in depth: a new Watson finding wears the reserved prefix and is the finding it names.
     if (!p.targetId.startsWith("f-watson-") || p.after.id !== p.targetId) {
       throw new WatsonProposalConflict(
-        `Finding ${p.targetId} is not a Watson finding id; nothing was written`,
+        `Finding ${p.targetId} is not a Watson finding id. Watson wrote nothing`,
       );
     }
     if (stored) throw unchanged(p.targetId);
@@ -178,7 +178,9 @@ function planCreatedRows(
       event.severity === drafted.severity &&
       event.description === drafted.description;
     if (!unchangedRow) {
-      throw new WatsonProposalConflict(`Event ${event.id} that Watson added changed; nothing was changed`);
+      throw new WatsonProposalConflict(
+        `Event ${event.id} changed after Watson added it. Watson changed nothing`,
+      );
     }
     remove.push(r);
   }

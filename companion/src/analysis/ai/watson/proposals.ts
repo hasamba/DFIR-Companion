@@ -60,7 +60,7 @@ const allowed = (p: WatsonProposal, action: WatsonProposalAction, pendingOnly?: 
   p.status === FROM[action] ||
   (action === "apply" && !pendingOnly && p.status === "undone" && REAPPLIABLE.has(p.kind));
 
-const STUCK_PROMOTION = "Press Apply to finish this promotion; Undo is available afterwards";
+const STUCK_PROMOTION = "Press Apply to finish this promotion. Then you can use Undo";
 
 /** How a caller other than an analyst's click applies: Auto mode (autoApply.ts). */
 export interface WatsonApplyOptions {
@@ -123,7 +123,7 @@ async function checkRawEvidence(deps: WriterDeps, caseId: string, p: WatsonPropo
   const dead = await deps.stateLock.runExclusive(caseId, () => deadEvidenceIds(deps.stateStore, caseId, ids));
   if (dead.length) {
     throw new WatsonProposalConflict(
-      `Event ${dead[0]} this rests on is no longer in the forensic timeline (its promotion was undone); nothing was written`,
+      `This proposal uses event ${dead[0]}. That event is no longer in the forensic timeline, because someone undid its promotion. Watson wrote nothing`,
     );
   }
 }

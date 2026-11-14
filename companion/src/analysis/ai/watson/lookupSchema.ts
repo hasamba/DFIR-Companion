@@ -105,12 +105,12 @@ const listed = (ids: readonly string[], max = 5): string =>
 export function describeLookup(q: WatsonLookup): string {
   const parts = [
     isSuperLookup(q) ? "super-timeline rows" : "",
-    q.findingIds ? `events cited by finding ${listed(q.findingIds)}` : "",
+    q.findingIds ? `events that finding ${listed(q.findingIds)} cites` : "",
     q.eventIds ? `event ${listed(q.eventIds)}` : "",
     q.from && q.to ? `from ${q.from} to ${q.to}` : "",
     q.host ? `on host ${q.host}` : "",
     q.hash ? `with hash ${q.hash}` : "",
-    q.text ? `containing "${q.text}"` : "",
+    q.text ? `with the text "${q.text}"` : "",
   ].filter(Boolean);
   // The "super-timeline rows" lead reads as a noun phrase: the criteria follow it, not a semicolon.
   return isSuperLookup(q)

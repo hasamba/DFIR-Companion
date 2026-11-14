@@ -16,7 +16,7 @@ export const WATSON_REACTION_PROMPT =
   "(No analyst message. The case changed: see CASE CHANGES SINCE LAST ROUND. Say briefly what the change means for the investigation.)";
 
 const ERRORS_PAUSE_TEXT =
-  "Watson paused automatic reactions after repeated errors. Send a message to resume.";
+  "Watson stopped its automatic reactions because of many errors. Send a message to start them again.";
 
 /** The turn that stands in for the analyst's message on a reaction round. */
 export function reactionTurn(chat: WatsonChat): WatsonTurn {

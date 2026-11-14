@@ -10,14 +10,14 @@
 (function () {
   const AUTO_HEADS = ["Watson acted on its own (Auto mode", "(Watson's Auto actions, continued)"];
   const UNCERTAIN =
-    "Watson cannot tell whether this ran. Check Velociraptor, then mark it launched or try again.";
-  const NO_UNDO = "A launched hunt cannot be undone: it already ran on the endpoints.";
+    "Watson does not know if this ran. Check Velociraptor. Then mark it as launched or try again.";
+  const NO_UNDO = "You cannot undo a launched hunt. It already ran on the endpoints.";
   const NO_IDS =
-    "Marked as launched. Watson does not know this run's id and will not read its result; import it from Velociraptor.";
+    "An analyst marked this as launched. Watson does not know the id of this run, so it will not read the result. Import the result from Velociraptor.";
   const STALLED =
-    "This launch was interrupted before Watson saved its outcome. Check Velociraptor, then mark it launched or try again.";
+    "This launch stopped before Watson saved its result. Check Velociraptor. Then mark it as launched or try again.";
 
-  const RISK_TAIL = ". Watson's safety check would normally block this. Read the query before approving.";
+  const RISK_TAIL = ". Usually, Watson's safety check blocks this. Read the query before you approve it.";
   // Risky cards whose second confirmation is on screen (by proposal id); cleared on a case switch.
   const wRiskArmed = new Set();
   // Risky launches whose "Yes, launch it" request is in flight: the button stays disabled (M-5).
@@ -36,22 +36,22 @@
   }
 
   function statusLine(w) {
-    if (!w || w.state === "watching") return "Running. Watson reads the result when it finishes.";
-    if (w.state === "timeout") return "Timed out waiting for the result. Check Velociraptor.";
-    if (w.state === "failed") return `Could not read the result${w.error ? `: ${esc(w.error)}` : ""}.`;
+    if (!w || w.state === "watching") return "Velociraptor runs this now. Watson reads the result when it finishes.";
+    if (w.state === "timeout") return "No result came before the time limit. Check Velociraptor.";
+    if (w.state === "failed") return `Watson could not read the result${w.error ? `: ${esc(w.error)}` : ""}.`;
     if (typeof w.rows !== "number") return "Finished.";
-    if (w.rows === 0) return "Found nothing: the collection returned no rows.";
+    if (w.rows === 0) return "Watson found nothing. The collection returned no rows.";
     const cut = w.truncated
-      ? ` (cut by the row cap${Number(w.total) > 0 ? `; Velociraptor counted ${num(w.total)}` : ""})`
+      ? ` (the row cap cut the rest${Number(w.total) > 0 ? `. Velociraptor counted ${num(w.total)}` : ""})`
       : "";
-    return `Collected ${rowsText(w.rows)}${cut}.`;
+    return `Velociraptor collected ${rowsText(w.rows)}${cut}.`;
   }
 
   // A launch "marked as launched" by an analyst has no ids: Watson never reads its result (G8).
   const hasIds = (l) => !!(l && (l.huntId || l.flowId));
 
   const where = (p) =>
-    p.mode === "hunt" ? "Fleet-wide hunt — all enrolled clients" : `Collection on ${esc(p.hostname || "a host")}`;
+    p.mode === "hunt" ? "Fleet-wide hunt on all enrolled clients" : `Collection on ${esc(p.hostname || "a host")}`;
 
   const btn = (pid, verb, label, extra) =>
     `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="${verb}" data-pid="${escAttr(pid)}"${extra || ""}>${label}</button> `;
@@ -62,25 +62,25 @@
 
   function riskHtml(p) {
     if (!isRisky(p) || p.status === "applied" || p.status === "rejected") return "";
-    const reasons = riskReasons(p).join("; ") || "Watson did not record why";
-    return `<div class="watson-why watson-risk" role="alert">${esc(`Risky query — ${reasons}${RISK_TAIL}`)}</div>`;
+    const reasons = riskReasons(p).join("; ") || "Watson did not record the reason";
+    return `<div class="watson-why watson-risk" role="alert">${esc(`Risky query: ${reasons}${RISK_TAIL}`)}</div>`;
   }
 
   function acceptedHtml(l) {
     const r = l && l.riskAccepted;
     if (!r) return "";
     const why = Array.isArray(r.reasons) ? r.reasons.map(String).join("; ") : "";
-    return `<div class="watson-why watson-risk">${esc(`Approved by ${r.by || "an analyst"} despite the warning: ${why}`)}</div>`;
+    return `<div class="watson-why watson-risk">${esc(`${r.by || "An analyst"} approved this launch after the warning: ${why}`)}</div>`;
   }
 
   function bodyFor(p) {
     const lines = [riskHtml(p)];
     if (p.status === "launching" && p.stalled) lines.push(`<div class="watson-why watson-warn">${esc(STALLED)}</div>`);
-    else if (p.status === "launching") lines.push(`<div class="watson-why">Launching…</div>`);
+    else if (p.status === "launching") lines.push(`<div class="watson-why">Watson launches this now…</div>`);
     if (p.status === "applied") {
       const l = p.launched || {};
       lines.push(
-        `<div class="watson-why">Launched by ${esc(l.by || p.appliedBy || "an analyst")} at ${timeHtml(l.at || p.appliedAt)}</div>`,
+        `<div class="watson-why">${esc(l.by || p.appliedBy || "An analyst")} launched this at ${timeHtml(l.at || p.appliedAt)}</div>`,
         acceptedHtml(l),
         `<div class="watson-why" data-w-status="launch">${hasIds(l) ? statusLine(p.watch) : esc(NO_IDS)}</div>`,
         `<div class="watson-why">${esc(NO_UNDO)}</div>`,
@@ -92,8 +92,8 @@
 
   function riskConfirmHtml(p) {
     return (
-      `<div class="watson-risk-confirm" role="group" aria-label="Confirm launching a risky query">` +
-      `<div class="watson-why">Launch this risky query? You have read it and accept the risk.</div>` +
+      `<div class="watson-risk-confirm" role="group" aria-label="Confirm the launch of a risky query">` +
+      `<div class="watson-why">Launch this risky query? Confirm that you read it and accept the risk.</div>` +
       btn(p.id, "applyRisk", "Yes, launch it", wRiskSending.has(p.id) ? " disabled" : "") +
       btn(p.id, "riskCancel", "Cancel") + `</div>`
     );
@@ -129,7 +129,7 @@
 
   function chipHtml(connected) {
     return connected
-      ? `<span class="watson-velo-chip" title="This case has a Velociraptor server Watson can launch on">Velociraptor connected</span>`
+      ? `<span class="watson-velo-chip" title="This case has a Velociraptor server. Watson can launch queries on it.">Velociraptor connected</span>`
       : "";
   }
 
@@ -187,7 +187,7 @@
       if (!r.ok) throw new Error(body.error ? String(body.error) : "HTTP " + r.status);
       if (caseId === currentCase() && body.chat && typeof renderWatson === "function") renderWatson(body.chat);
     } catch (e) {
-      showError(el, "Could not update the launch: " + (e && e.message ? e.message : "network error"));
+      showError(el, "Watson could not update the launch: " + (e && e.message ? e.message : "network error"));
     }
   }
 
@@ -212,7 +212,7 @@
       el.disabled = false;
       if (caseId === currentCase() && body.chat && typeof renderWatson === "function") renderWatson(body.chat);
     } catch (e) {
-      showError(el, "Could not launch: " + (e && e.message ? e.message : "network error"));
+      showError(el, "Watson could not launch: " + (e && e.message ? e.message : "network error"));
     } finally {
       // Whatever the outcome, a further launch of this card asks for the second confirmation again (M-7).
       // A refused click's button stays disabled (its message stays beside it) until the next render,

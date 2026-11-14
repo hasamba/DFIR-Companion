@@ -226,7 +226,7 @@ describe("renderWatson escaping", () => {
     const { api, board } = setup();
     api.renderWatson(chatWith([]));
     // the board reads questions from the dashboard state; an empty board says so
-    expect(board.innerHTML).toContain("No key questions");
+    expect(board.innerHTML).toContain("There are no key questions");
   });
 
   it("footer shows tokens when the cost is zero and calls exist", () => {
@@ -418,7 +418,7 @@ describe("rail, open and full", () => {
     });
     expect(board.innerHTML).toContain("&lt;img src=x onerror=1&gt;");
     expect(board.innerHTML).not.toContain("<img");
-    expect(board.innerHTML).toContain("Synthesis disagrees");
+    expect(board.innerHTML).toContain("Synthesis does not agree");
     expect(board.innerHTML).toContain("q-status-partial");
   });
 });
@@ -629,12 +629,12 @@ describe("requests stay with the case they started on", () => {
     const input = { value: "about case one" };
     const done = api.watsonAct(sendEl(input)) as Promise<void>;
     expect(held.calls[0].url).toBe("/cases/c1/watson/message");
-    expect(log.innerHTML).toContain("thinking");
+    expect(log.innerHTML).toContain("prepares an answer");
     caseInput.value = "c2";
     void api.loadWatson("c2");
     held.calls[1].release(response(200, chatWith([])));
     await tick();
-    expect(log.innerHTML).not.toContain("thinking"); // c1's request does not block c2
+    expect(log.innerHTML).not.toContain("prepares an answer"); // c1's request does not block c2
     const second = { value: "about case two" };
     void api.watsonAct(sendEl(second));
     expect(held.calls[2].url).toBe("/cases/c2/watson/message");
@@ -707,7 +707,7 @@ describe("paste failures say whether the text was stored", () => {
     const area = { value: "evidence text" };
     await api.watsonAct({ dataset: { wVerb: "pasteSend" }, closest: () => pasteRoot(area) });
     expect(area.value).toBe("");
-    expect(log.innerHTML).toContain("The paste was stored as evidence");
+    expect(log.innerHTML).toContain("The case keeps the paste as evidence");
     expect(log.innerHTML).toContain("cost limit");
   });
 
@@ -721,8 +721,8 @@ describe("paste failures say whether the text was stored", () => {
     const area = { value: "evidence text" };
     await api.watsonAct({ dataset: { wVerb: "pasteSend" }, closest: () => pasteRoot(area) });
     expect(area.value).toBe("evidence text");
-    expect(log.innerHTML).toContain("The paste was not stored");
-    expect(log.innerHTML).not.toContain("was stored as evidence");
+    expect(log.innerHTML).toContain("The companion did not keep the paste");
+    expect(log.innerHTML).not.toContain("keeps the paste as evidence");
   });
 });
 
@@ -792,7 +792,7 @@ describe("a free-form answer in the Watson log", () => {
     const { api, log } = setup();
     api.renderWatson(chatWith([answerTurn({ coverage: { usedEvents: 120, eventCount: 5000 } })]));
     expect(log.innerHTML).toContain(
-      "answered from 120 of 5000 in-scope events — the timeline was trimmed to fit the model",
+      "Watson used 120 of 5000 in-scope events. The companion cut the timeline to fit the model.",
     );
     api.renderWatson(chatWith([answerTurn()]));
     expect(log.innerHTML).not.toContain("in-scope events");
@@ -808,7 +808,7 @@ describe("a free-form answer in the Watson log", () => {
       chatWith([answerTurn({ lookedUp: { shown: 12, matched: 12, what: "on host <b>WS-01</b>" } })]),
     );
     expect(log.innerHTML).toContain(
-      "Watson looked up 12 forensic-timeline events (on host &lt;b&gt;WS-01&lt;/b&gt;)",
+      "Watson looked up 12 forensic-timeline events that match (on host &lt;b&gt;WS-01&lt;/b&gt;)",
     );
     api.renderWatson(
       chatWith([
@@ -818,9 +818,9 @@ describe("a free-form answer in the Watson log", () => {
         }),
       ]),
     );
-    expect(log.innerHTML).toContain("answered from 120 of 5000 in-scope events");
+    expect(log.innerHTML).toContain("Watson used 120 of 5000 in-scope events");
     expect(log.innerHTML).toContain(
-      "Watson looked up 200 of 450 matching forensic-timeline events (from a to b)",
+      "Watson looked up 200 of 450 forensic-timeline events that match (from a to b)",
     );
     api.renderWatson(chatWith([answerTurn()]));
     expect(log.innerHTML).not.toContain("looked up");
@@ -832,13 +832,13 @@ describe("a free-form answer in the Watson log", () => {
       chatWith([answerTurn({ coverage: { usedEvents: 9, eventCount: 9, decisionsTrimmed: true } })]),
     );
     expect(log.innerHTML).toContain(
-      "some of your case decisions — hypotheses, scope, marks, notebook — were trimmed to fit the model",
+      "The companion cut some of your case decisions (hypotheses, scope, marks, notebook) to fit the model.",
     );
     expect(log.innerHTML).not.toContain("case summary was trimmed");
     api.renderWatson(
       chatWith([answerTurn({ coverage: { usedEvents: 9, eventCount: 9, headTrimmed: true } })]),
     );
-    expect(log.innerHTML).toContain("part of the case summary was trimmed to fit the model");
+    expect(log.innerHTML).toContain("The companion cut part of the case summary to fit the model.");
     expect(log.innerHTML).not.toContain("case decisions");
   });
 
@@ -940,13 +940,13 @@ describe("the empty-case hint in the Watson log", () => {
     api.initWatson();
     api.renderWatson(chatWith([]));
     fireState({ forensicTimelineTotal: 0, findings: [] });
-    expect(log.innerHTML).toContain("No forensic-timeline events or findings yet");
+    expect(log.innerHTML).toContain("This case has no forensic-timeline events or findings");
     fireState({ forensicTimelineTotal: 12, findings: [] });
-    expect(log.innerHTML).not.toContain("No forensic-timeline events or findings yet");
+    expect(log.innerHTML).not.toContain("This case has no forensic-timeline events or findings");
     fireState({ forensicTimeline: [], findings: [{ id: "f1" }] });
-    expect(log.innerHTML).not.toContain("No forensic-timeline events or findings yet");
+    expect(log.innerHTML).not.toContain("This case has no forensic-timeline events or findings");
     fireState({ forensicTimelineTotalIsLowerBound: true, forensicTimelineTotal: 0, findings: [] });
-    expect(log.innerHTML).not.toContain("No forensic-timeline events or findings yet");
+    expect(log.innerHTML).not.toContain("This case has no forensic-timeline events or findings");
   });
 
   it("is not shown once the log has turns", () => {
@@ -954,7 +954,7 @@ describe("the empty-case hint in the Watson log", () => {
     api.initWatson();
     api.renderWatson(chatWith([{ id: "t", at: "x", role: "watson", text: "hi" }]));
     fireState({ forensicTimelineTotal: 0, findings: [] });
-    expect(log.innerHTML).not.toContain("No forensic-timeline events or findings yet");
+    expect(log.innerHTML).not.toContain("This case has no forensic-timeline events or findings");
   });
 });
 
@@ -1064,7 +1064,7 @@ describe("run mode switch", () => {
     api.initWatson();
     await press(api, "auto");
     expect(asked).toEqual([
-      "Watson will run single-host collections and write to the case without asking. Fleet-wide hunts still ask.",
+      "Watson will run single-host collections and write to the case. It will not ask you first. A fleet-wide hunt still waits for your approval.",
     ]);
     expect(calls).toEqual([]);
     expect(railMode.innerHTML).toBe("");
@@ -1095,7 +1095,7 @@ describe("run mode switch", () => {
     const { api, railMode } = setup({ fetch: modeFetch([], "auto", false), alert: (t) => alerts.push(t) });
     api.initWatson();
     await press(api, "auto");
-    expect(alerts).toEqual(["Could not switch Watson's mode: case is closed"]);
+    expect(alerts).toEqual(["The companion could not change Watson's mode: case is closed"]);
     expect(railMode.innerHTML).toBe("");
   });
 

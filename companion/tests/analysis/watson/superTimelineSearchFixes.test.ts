@@ -35,7 +35,7 @@ describe("fix round 1", () => {
     const reader = readerOf([ev({ id: "a" })]);
     const out = await searchSuperTimeline(ctx, reader, "c1", stateOf(), sup({ host: "..." }));
     expect(reader.calls).toEqual([]);
-    expect(out.excerpt.text).toBe("host '...' could not be searched — name it by hostname or IP");
+    expect(out.excerpt.text).toBe("Watson cannot search host '...'. Use its hostname or IP address.");
     expect(out.shown).toEqual([]);
   });
 

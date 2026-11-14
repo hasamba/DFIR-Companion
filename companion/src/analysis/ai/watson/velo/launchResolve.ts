@@ -44,7 +44,7 @@ function riskNote(p: WatsonVeloLaunchProposal): string {
   return r ? riskAcceptedText(r) : "";
 }
 
-export const STRANDED = "the server stopped before the launch was confirmed";
+export const STRANDED = "the server stopped before Watson confirmed the launch";
 
 const stranded = (caseId: string, p: WatsonProposal): p is WatsonVeloLaunchProposal =>
   p.kind === "velo_launch" && p.status === "launching" && !isInFlight(caseId, p.id);
@@ -98,12 +98,13 @@ export async function resolveVeloLaunch(
   const chat = await deps.chatStore.update(caseId, async (c) => {
     const p = c.proposals.find((x) => x.id === proposalId);
     if (!p) throw new WatsonProposalNotFoundError(proposalId);
-    if (p.kind !== "velo_launch") throw new WatsonProposalConflict("not a Velociraptor launch proposal");
+    if (p.kind !== "velo_launch")
+      throw new WatsonProposalConflict("This is not a Velociraptor launch proposal");
     if (!resolvable(caseId, p)) {
       throw new WatsonProposalStateError(
         "apply",
         p.status,
-        `Only an uncertain launch can be resolved (${p.status})`,
+        `You can mark only an uncertain launch as launched or try it again (${p.status})`,
       );
     }
     if (outcome === "retry") await deps.fingerprints.release(caseId, p.launching?.reserved ?? []);

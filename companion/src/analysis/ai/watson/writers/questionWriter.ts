@@ -8,7 +8,7 @@ import type { WatsonWriter } from "./writerTypes.js";
 // edit never rewrites the forensic timeline.
 
 const conflict = (questionId: string): WatsonProposalConflict =>
-  new WatsonProposalConflict(`Key question ${questionId} changed since this proposal; nothing was written`);
+  new WatsonProposalConflict(`Key question ${questionId} changed after this proposal. Watson wrote nothing`);
 
 /**
  * The question Watson writes: its answer, pinned, authored. Every annotation that belonged to the

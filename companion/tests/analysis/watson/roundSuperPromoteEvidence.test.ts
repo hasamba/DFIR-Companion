@@ -38,7 +38,7 @@ describe("a row an earlier round promoted stays raw evidence (I1)", () => {
     await applyWatsonProposal(h.deps, CASE, s!.id, "apply", "Ana");
     const undo = applyWatsonProposal(h.deps, CASE, promotion.id, "undo", "Ana");
     await expect(undo).rejects.toBeInstanceOf(WatsonProposalConflict);
-    await expect(undo).rejects.toThrow(/raw1 is cited by Watson's next step/);
+    await expect(undo).rejects.toThrow(/Watson's next step \S+ cites event raw1/);
     expect(await h.row("raw1")).toBeDefined();
   });
 
@@ -90,7 +90,7 @@ describe("a raw id joined to a forensic id or a word is a mention (I2)", () => {
     const chat = await h.run();
     expect(await h.row("raw1")).toBeUndefined();
     expect(chat.proposals.some((p) => p.kind === "report_text" || p.kind === "next_step_new")).toBe(false);
-    expect(lastWatsonTurn(chat).text).toContain("2 items that rested on them were dropped");
+    expect(lastWatsonTurn(chat).text).toContain("Watson removed 2 items that used them");
   });
 });
 

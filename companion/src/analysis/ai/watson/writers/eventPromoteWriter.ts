@@ -75,7 +75,7 @@ export async function promoteRows(
   p: WatsonEventPromoteProposal,
 ): Promise<{ state: InvestigationState; proposal: WatsonEventPromoteProposal }> {
   if (!deps.promoteEvents) throw new WatsonProposalConflict("Watson cannot promote rows on this server");
-  if (!p.events.length) throw new WatsonProposalConflict("This proposal holds no rows; nothing was written");
+  if (!p.events.length) throw new WatsonProposalConflict("This proposal has no rows. Watson wrote nothing");
   const promotedAt = p.promotedAt ?? new Date().toISOString();
   const stamped = { ...p, promotedAt };
   const tagById = Object.fromEntries(p.events.map((e) => [e.id, [WATSON_MARKER]]));
@@ -125,7 +125,7 @@ function checkRows(p: WatsonEventPromoteProposal, rows: ForensicRow[], overview:
       event.description === was.description;
     if (!same) {
       throw new WatsonProposalConflict(
-        `Event ${event.id} changed since Watson promoted it; nothing was changed`,
+        `Event ${event.id} changed after Watson promoted it. Watson changed nothing`,
       );
     }
     // Any finding citing the row blocks the undo: removing it would leave that citation dangling.
@@ -133,8 +133,8 @@ function checkRows(p: WatsonEventPromoteProposal, rows: ForensicRow[], overview:
     if (citing) {
       throw new WatsonProposalConflict(
         isWatsonItem(citing)
-          ? `Event ${event.id} is cited by Watson finding ${citing.id}: undo the finding that cites it first`
-          : `Event ${event.id} is cited by finding ${citing.id}; nothing was changed`,
+          ? `Watson finding ${citing.id} cites event ${event.id}. Undo that finding first`
+          : `Finding ${citing.id} cites event ${event.id}. Watson changed nothing`,
       );
     }
   }

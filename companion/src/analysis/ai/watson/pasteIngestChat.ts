@@ -20,10 +20,10 @@ export const ingestRows = (i: WatsonPasteIngest): number => (isTextIngest(i) ? 0
 
 function systemText(paste: WatsonPaste, kind: string, rows: number, held: number): string {
   const lead =
-    `Parsed ${rows} rows from ${paste.filename} (${kind}). ` +
-    `${held} rows the tagger graded above Info wait for your approval.`;
+    `Watson read ${rows} rows from ${paste.filename} (${kind}). ` +
+    `The tagger graded ${held} rows above Info. These rows wait for your approval.`;
   if (held <= HELD_MAX) return lead;
-  return `${lead} Only the first ${HELD_MAX} are proposed; the other ${held - HELD_MAX} stay in the super-timeline.`;
+  return `${lead} Watson proposes only the first ${HELD_MAX}. The other ${held - HELD_MAX} stay in the super-timeline.`;
 }
 
 function chunks<T>(items: readonly T[], size: number): T[][] {

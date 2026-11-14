@@ -17,7 +17,7 @@ describe("storedRequest", () => {
     const vql = "x".repeat(MAX_VQL_BYTES + 10);
     const out = storedRequest(req(vql));
     expect(out.kind === "velociraptor" && out.vql).toBe(
-      `${"x".repeat(REFUSED_VQL_KEEP)}…(${vql.length - REFUSED_VQL_KEEP} more characters, refused as too long)`,
+      `${"x".repeat(REFUSED_VQL_KEEP)}…(${vql.length - REFUSED_VQL_KEEP} more characters. This VQL is too long, so it did not run.)`,
     );
   });
 

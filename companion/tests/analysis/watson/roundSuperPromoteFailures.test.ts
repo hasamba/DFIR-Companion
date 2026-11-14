@@ -20,7 +20,7 @@ import {
 
 const SECOND = reply({ ...answer(["raw1", "e1"]), ...writes({ findings: [finding(["raw1"])] }) });
 const FROZEN =
-  "(Watson cited 1 super-timeline row, but the case was closed, archived or had AI turned off during the round, so nothing was promoted.)";
+  "(Watson cited 1 super-timeline row, but it promoted nothing, because someone closed or archived the case, or turned off AI, during the round.)";
 
 const status = (c: WatsonChat) => promotionOf(c)?.status;
 /** The update that marks the round's promotion record applied. */
@@ -48,8 +48,8 @@ describe("Watson's promotion when something fails", () => {
     const chat = await h.run();
     expect(await h.row("raw1")).toBeUndefined();
     expectNothingPromoted(chat);
-    expect(lastWatsonTurn(chat).text).toMatch(/could not be promoted \(state database is locked\)/);
-    expect(lastWatsonTurn(chat).text).toContain("1 item that rested on it was dropped");
+    expect(lastWatsonTurn(chat).text).toMatch(/could not promote it \(state database is locked\)/);
+    expect(lastWatsonTurn(chat).text).toContain("Watson removed 1 item that used it");
   });
 
   it("markConclusionsOutOfDate throws after the rows landed: the record is applied and undoable, no 'failed' note", async () => {
@@ -57,7 +57,7 @@ describe("Watson's promotion when something fails", () => {
     h.flags.markThrows = true;
     const chat = await h.run();
     expect(status(chat)).toBe("applied");
-    expect(lastWatsonTurn(chat).text).not.toMatch(/could not be promoted|failed/);
+    expect(lastWatsonTurn(chat).text).not.toMatch(/could not promote|failed/);
     expect(turnProposals(chat).some((p) => p.kind === "finding_new")).toBe(true);
     h.flags.markThrows = false;
     await applyWatsonProposal(h.deps, CASE, promotionOf(chat)!.id, "undo", "Ana");
@@ -70,7 +70,7 @@ describe("Watson's promotion when something fails", () => {
     const chat = await h.run();
     expect(status(chat)).toBe("applied");
     expect(lastWatsonTurn(chat).proposalIds).toContain(promotionOf(chat)!.id);
-    expect(lastWatsonTurn(chat).text).not.toMatch(/could not be promoted|failed/);
+    expect(lastWatsonTurn(chat).text).not.toMatch(/could not promote|failed/);
   });
 
   it("the 'applied' record save throws after the rows landed: the pending intent stays; Apply adopts the rows; one undoable operation", async () => {
@@ -86,7 +86,7 @@ describe("Watson's promotion when something fails", () => {
     const p = promotionOf(chat)!;
     expect(p.status).toBe("pending");
     expect(lastWatsonTurn(chat).proposalIds).toContain(p.id);
-    expect(lastWatsonTurn(chat).text).toContain("press Apply on the card to finish it");
+    expect(lastWatsonTurn(chat).text).toContain("Press Apply on the card to finish it");
     // The rows landed, so what rests on them stays.
     expect(lastWatsonTurn(chat).answer?.relatedEventIds).toEqual(["raw1", "e1"]);
     await applyWatsonProposal(h.deps, CASE, p.id, "apply", "Ana");
@@ -141,7 +141,7 @@ describe("Watson's promotion when something fails", () => {
     expect(turn.answer?.relatedEventIds).toEqual(["e1"]);
     expect(turn.proposalIds ?? []).not.toContain(id);
     expect(turn.text).toContain(
-      "(The rows Watson promoted were undone before its answer was saved, so items resting on them were dropped.)",
+      "(Someone undid the rows that Watson promoted before Watson saved its answer. Watson removed the items that used these rows.)",
     );
   });
 
@@ -190,7 +190,7 @@ describe("Watson's promotion when something fails", () => {
     h.stateStore.hasForensicEventIds = real;
     expect(await h.row("raw1")).toBeUndefined();
     expectNothingPromoted(chat);
-    expect(lastWatsonTurn(chat).text).toMatch(/could not be promoted \(worker gone\)/);
+    expect(lastWatsonTurn(chat).text).toMatch(/could not promote it \(worker gone\)/);
   });
 
   // Task 5 review I3 + M1: the promotion threw AFTER its rows landed.
@@ -209,7 +209,7 @@ describe("Watson's promotion when something fails", () => {
     expect(await h.row("raw1")).toBeDefined();
     const text = lastWatsonTurn(chat).text;
     expect(text).toContain(
-      "Watson promoted 1 super-timeline row but could not finish recording it — press Apply to finish.",
+      "Watson promoted 1 super-timeline row, but it could not finish the record. Press Apply to finish it.",
     );
     expect(text).not.toContain("nothing was promoted");
     expect(h.outOfDate).toEqual(["Watson promoted super-timeline rows it cited"]);
@@ -219,9 +219,7 @@ describe("Watson's promotion when something fails", () => {
     // Reject would leave Watson's rows with no record to undo them: the server refuses it.
     const reject = applyWatsonProposal(h.deps, CASE, p.id, "reject", "Ana");
     await expect(reject).rejects.toBeInstanceOf(WatsonProposalStateError);
-    await expect(reject).rejects.toThrow(
-      "Press Apply to finish this promotion; Undo is available afterwards",
-    );
+    await expect(reject).rejects.toThrow("Press Apply to finish this promotion. Then you can use Undo");
     await applyWatsonProposal(h.deps, CASE, p.id, "apply", "Ana");
     expect(promotionOf(await h.chatStore.load(CASE))?.createdEventIds).toEqual(["raw1"]);
   });

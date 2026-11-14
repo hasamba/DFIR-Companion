@@ -132,8 +132,8 @@ describe("Watson promotes the super-timeline rows it cites", () => {
     const turn = lastWatsonTurn(chat);
     expect(turn.answer?.relatedEventIds).toEqual(["e1"]);
     expect(ofKind(chat.proposals, "question_new")).toBeUndefined();
-    expect(turn.text).toContain("this round may not write to the case, so nothing was promoted");
-    expect(turn.text).toContain("1 item that rested on it was dropped");
+    expect(turn.text).toContain("it promoted nothing, because this round cannot write to the case");
+    expect(turn.text).toContain("Watson removed 1 item that used it");
   });
 
   it("withCitedPromotion withholds promotion whenever mayWrite is false", async () => {
@@ -203,7 +203,7 @@ describe("dependency-aware undo (D9b)", () => {
       await applyWatsonProposal(h.deps, CASE, dep!.id, "apply", "Ana");
       const undo = applyWatsonProposal(h.deps, CASE, promotionOf(chat)!.id, "undo", "Ana");
       await expect(undo).rejects.toBeInstanceOf(WatsonProposalConflict);
-      await expect(undo).rejects.toThrow(/raw1 is cited by (Watson's|Watson) /);
+      await expect(undo).rejects.toThrow(/(Watson's|Watson) .+ cites event raw1/);
       expect(await h.row("raw1")).toBeDefined();
       // Undo the dependent first, and the promotion's undo goes through.
       await applyWatsonProposal(h.deps, CASE, dep!.id, "undo", "Ana");
@@ -249,7 +249,7 @@ describe("controller rulings", () => {
     expect(ofKind(chat.proposals, "finding_new")).toBeUndefined();
     expect(await h.row("raw2")).toBeUndefined();
     expect(lastWatsonTurn(chat).text).toMatch(
-      /from an earlier search[\s\S]*1 item that rested on it was dropped/,
+      /from an earlier search[\s\S]*Watson removed 1 item that used it/,
     );
   });
 

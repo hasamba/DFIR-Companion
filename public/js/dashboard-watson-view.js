@@ -84,7 +84,7 @@
         : linked
           ? `<div class="watson-why watson-linked">Key question on the board: ${esc(linked.question)}</div>`
           : `<div><button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="addQuestion" data-tid="${escAttr(t.id)}"` +
-          ` title="Add this to the case's open Key Investigative Questions, with the pointer"${used ? " disabled" : ""}>` +
+          ` title="Add this answer and its pointer to the open Key Investigative Questions of the case"${used ? " disabled" : ""}>` +
           `${used ? "Added to open questions" : "Add to open questions"}</button></div>${err}`) +
       `</div>`
     );
@@ -98,12 +98,12 @@
     const line = (text) => `<div class="watson-cov">⚠ ${text}</div>`;
     return (
       (Number.isFinite(used) && Number.isFinite(total) && used < total
-        ? line(`answered from ${esc(String(used))} of ${esc(String(total))} in-scope events — the timeline was trimmed to fit the model`)
+        ? line(`Watson used ${esc(String(used))} of ${esc(String(total))} in-scope events. The companion cut the timeline to fit the model.`)
         : "") +
       (c.decisionsTrimmed
-        ? line("some of your case decisions — hypotheses, scope, marks, notebook — were trimmed to fit the model")
+        ? line("The companion cut some of your case decisions (hypotheses, scope, marks, notebook) to fit the model.")
         : "") +
-      (c.headTrimmed ? line("part of the case summary was trimmed to fit the model") : "")
+      (c.headTrimmed ? line("The companion cut part of the case summary to fit the model.") : "")
     );
   }
 
@@ -118,11 +118,11 @@
     const evicted = Number(l.capEvicted);
     const cap =
       Number.isFinite(evicted) && evicted > 0
-        ? `<div class="watson-cov">⚠ The super-timeline dropped ${esc(fmt(evicted))} old rows because of its size limit. ` +
+        ? `<div class="watson-cov">⚠ The super-timeline removed ${esc(fmt(evicted))} old rows because of its size limit. ` +
           `This search can miss rows. Import the artifact again to search them.</div>`
         : "";
     return (
-      `<div class="watson-cov watson-lookup">Watson searched the super-timeline: ${esc(fmt(shown))} of ${of}${esc(fmt(matched))} matching raw rows${what}</div>` +
+      `<div class="watson-cov watson-lookup">Watson searched the super-timeline. It shows ${esc(fmt(shown))} of ${of}${esc(fmt(matched))} raw rows that match${what}</div>` +
       cap
     );
   }
@@ -133,9 +133,9 @@
     const matched = Number(l.matched);
     if (!Number.isFinite(shown) || !Number.isFinite(matched)) return "";
     if (l.source === "supertimeline") return superLookedUpHtml(l, shown, matched);
-    const count = matched > shown ? `${shown} of ${matched} matching` : String(shown);
+    const count = matched > shown ? `${shown} of ${matched}` : String(shown);
     const what = l.what ? ` (${esc(String(l.what))})` : "";
-    return `<div class="watson-cov watson-lookup">Watson looked up ${esc(count)} forensic-timeline events${what}</div>`;
+    return `<div class="watson-cov watson-lookup">Watson looked up ${esc(count)} forensic-timeline events that match${what}</div>`;
   }
 
   // #2468: no forensic-timeline events and no findings yet, so an answer would have nothing to read.
@@ -181,7 +181,7 @@
     const props = mine.map(proposalHtml).join("") + watsonWroteHtml(mine);
     return (
       `<div class="${cls}"><div class="watson-who">${who}</div>` +
-      (t.workingOn ? `<div class="watson-meta"><b>Working on:</b> ${esc(t.workingOn)}</div>` : "") +
+      (t.workingOn ? `<div class="watson-meta"><b>Watson works on:</b> ${esc(t.workingOn)}</div>` : "") +
       (autoList(t) || textHtml(t)) +
       answerHtml(t, readOnly, ctx) +
       coverageHtml(t.coverage) +
@@ -198,11 +198,11 @@
   }
 
   function boardHtml(questions) {
-    if (!questions.length) return `<div class="watson-empty">No key questions yet.</div>`;
+    if (!questions.length) return `<div class="watson-empty">There are no key questions.</div>`;
     return questions
       .map((q) => {
         const dis = q.synthesisDisagrees
-          ? `<div class="q-contradicted">Synthesis disagrees: ${esc(q.synthesisDisagrees.status)}` +
+          ? `<div class="q-contradicted">Synthesis does not agree: ${esc(q.synthesisDisagrees.status)}` +
             (q.synthesisDisagrees.answer ? ` — ${esc(q.synthesisDisagrees.answer)}` : "") +
             `</div>`
           : "";
@@ -220,14 +220,14 @@
   function composerHtml() {
     return (
       `<div class="watson-composer">` +
-      `<textarea class="watson-input" rows="2" placeholder="Ask Watson… (Enter to send, Ctrl+Enter for a new line)" aria-label="Message Watson"></textarea>` +
+      `<textarea class="watson-input" rows="2" placeholder="Ask Watson… (Enter sends. Ctrl+Enter starts a new line.)" aria-label="Message Watson"></textarea>` +
       `<div class="watson-paste-box"><textarea class="watson-paste-text" rows="5" placeholder="Paste evidence text here" aria-label="Paste evidence"></textarea>` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="pasteSend">Send paste</button></div>` +
       `<div class="watson-actions">` +
       `<button type="button" data-act="watsonAct" data-w-verb="send">Send</button> ` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="pasteToggle">Paste evidence</button> ` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="attachPick">Attach file</button> ` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="newThread" title="Start a fresh thread: Watson keeps its case memory, the earlier chat stays in the history">↺ New thread</button>` +
+      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="newThread" title="Start a new thread. Watson keeps its case memory. The earlier chat stays in the history.">↺ New thread</button>` +
       `<input type="file" class="watson-file" data-act="watsonAct" data-act-on="change" data-w-verb="file" accept=".txt,.log,.csv,.tsv,.json,.xml,text/*,application/json,application/xml" />` +
       `</div></div>`
     );

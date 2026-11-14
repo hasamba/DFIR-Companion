@@ -99,10 +99,10 @@ function withoutShown(
 
 function errorText(err: unknown): string {
   if (err instanceof PresidioApprovalRequired) {
-    return "Watson's message is held: Presidio found values that need your approval before they go to the AI.";
+    return "Watson stopped this message. Presidio found values that you must approve before they go to the AI.";
   }
   if (err instanceof AiAnswerParseError || err instanceof AiReplyUnreadableError) {
-    return "Watson's reply could not be read. Send your message again.";
+    return "The companion cannot read Watson's reply. Send your message again.";
   }
   const msg = err instanceof Error ? err.message : String(err);
   return `Watson could not answer: ${msg}`.slice(0, 600);
@@ -181,7 +181,7 @@ function withUnreadable(chat: WatsonChat, outcome: Outcome, at: string): WatsonC
     id: newWatsonId("wt"),
     at,
     role: "system",
-    text: `Watson could not read ${p.filename}. It stays stored as evidence — ask Watson to search it.`,
+    text: `Watson could not read ${p.filename}. The file stays in the case as evidence. Ask Watson to search it.`,
   };
   return { ...chat, unreadPasteIds, turns: [...chat.turns, note] };
 }
@@ -192,6 +192,6 @@ export const REFUSED_VQL_KEEP = 2000;
 export function storedRequest(request: WatsonRequest): WatsonRequest {
   if (request.kind !== "velociraptor" || !vqlSizeProblem(request.vql)) return request;
   const more = request.vql.length - REFUSED_VQL_KEEP;
-  const vql = `${request.vql.slice(0, REFUSED_VQL_KEEP)}…(${more} more characters, refused as too long)`;
+  const vql = `${request.vql.slice(0, REFUSED_VQL_KEEP)}…(${more} more characters. This VQL is too long, so it did not run.)`;
   return { ...request, vql };
 }

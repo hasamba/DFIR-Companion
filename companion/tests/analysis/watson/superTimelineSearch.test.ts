@@ -251,7 +251,9 @@ describe("searchSuperTimeline — bounds and counts", () => {
     const search = (o: { evictedTotal: number }) =>
       searchSuperTimeline(ctx, readerOf(rows(2), o), "c1", stateOf(), sup({ text: "x" }));
     expect((await search({ evictedTotal: 1234 })).excerpt.capNote).toBe(capNote(1234));
-    expect(capNote(1234)).toMatch(/dropped 1,234 old rows to its size limit .*may have missed rows/);
+    expect(capNote(1234)).toMatch(
+      /removed 1,234 old rows because of its size limit .*This search can miss rows/,
+    );
     expect((await search({ evictedTotal: 0 })).excerpt.capNote).toBeUndefined();
     expect((await search({ evictedTotal: 0 })).lookedUp.capEvicted).toBeUndefined();
     expect((await search({ evictedTotal: 1234 })).lookedUp.capEvicted).toBe(1234);

@@ -35,7 +35,7 @@ interface Armed {
   rearms: number;
 }
 
-const PRESIDIO_REASON = "Presidio found values that need your approval before they go to the AI";
+const PRESIDIO_REASON = "Presidio found values that you must approve before they go to the AI";
 
 function pauseOf(err: unknown): { why: WatsonReactionsPaused; reason: string } | null {
   if (err instanceof PresidioApprovalRequired) return { why: "presidio", reason: PRESIDIO_REASON };
@@ -141,7 +141,7 @@ export class WatsonReactor {
   }
 
   private async pause(caseId: string, why: WatsonReactionsPaused, reason: string): Promise<void> {
-    const text = `Watson paused automatic reactions: ${reason}. Send a message to resume.`;
+    const text = `Watson stopped its automatic reactions: ${reason}. Send a message to start them again.`;
     await this.deps.chatStore.update(caseId, (c) => pausedReactions(c, why, text));
   }
 

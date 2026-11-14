@@ -222,7 +222,7 @@ describe("Watson velo_launch proposals", () => {
     await runWatsonRound(h.ctx, CASE, { text: "one" });
     const chat = await runWatsonRound(h.ctx, CASE, { text: "two" });
     expect(chat.proposals).toHaveLength(1);
-    expect(chat.turns.at(-1)?.text).toContain("already proposed");
+    expect(chat.turns.at(-1)?.text).toContain("The same launch is already on a card");
   });
 
   it("refuses an unknown host without widening to a fleet hunt", async () => {

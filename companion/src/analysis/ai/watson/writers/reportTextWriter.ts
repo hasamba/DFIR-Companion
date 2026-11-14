@@ -19,7 +19,7 @@ function store(deps: WriterDeps): WatsonReportText {
 }
 
 const changed = (p: WatsonReportTextProposal): WatsonProposalConflict =>
-  new WatsonProposalConflict(`${LABEL[p.field]} changed since this proposal; nothing was written`);
+  new WatsonProposalConflict(`${LABEL[p.field]} changed after this proposal. Watson wrote nothing`);
 
 function withoutMark(m: WatsonReportFields, p: WatsonReportTextProposal): WatsonReportFields["watsonFields"] {
   const { [p.field]: mark, ...rest } = m.watsonFields ?? {};

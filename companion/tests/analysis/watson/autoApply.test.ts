@@ -262,7 +262,7 @@ describe("autoApply", () => {
     expect(await status("wp-h")).toBe("pending");
     expect(launches).toHaveLength(0);
     expect(lastTurn(chat)).toMatchObject({ role: "system" });
-    expect(lastTurn(chat).text).toMatch(/fleet-wide hunts always wait for an analyst/);
+    expect(lastTurn(chat).text).toMatch(/a fleet-wide hunt always waits for an analyst/);
   });
 
   it("a risky collection is held for the analyst in Auto, even from a dashboard round (Task 9)", async () => {
@@ -285,7 +285,7 @@ describe("autoApply", () => {
     expect(await status("wp-f")).toBe("applied");
     expect(launches).toHaveLength(0);
     expect(lastTurn(chat).text).toContain(
-      "held for your approval: risky query (runs a program on the endpoint (execve))",
+      "it waits for your approval because the query is risky (runs a program on the endpoint (execve))",
     );
   });
 
@@ -423,7 +423,7 @@ describe("autoApply", () => {
     ]).join("\n");
     expect(text).toContain(PSLIST);
     expect(text).not.toContain(long.slice(0, 100));
-    expect(text).toContain(`VQL: ${long.length} characters, too long to repeat here`);
+    expect(text).toContain(`VQL: ${long.length} characters. It is too long to repeat here`);
   });
 
   it("a long write never pushes a launch off the listing: it overflows into another turn", async () => {
@@ -594,6 +594,6 @@ describe("Auto on a case closed mid-round (final review G4)", () => {
     );
     expect(launches.map((l) => l.hostname)).toEqual([HOST_A]);
     expect(await status("wp-b")).toBe("pending");
-    expect(lastTurn(chat).text).toMatch(/the case was closed or archived/);
+    expect(lastTurn(chat).text).toMatch(/someone closed or archived the case/);
   });
 });

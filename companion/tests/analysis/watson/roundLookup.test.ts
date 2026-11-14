@@ -230,7 +230,7 @@ describe("Watson's timeline lookup hop", () => {
     const turn = chat.turns.at(-1)!;
     expect(turn.role).toBe("watson");
     expect(turn.text).toContain("FIRST");
-    expect(turn.text).toMatch(/lookup.*failed.*boom/is);
+    expect(turn.text).toMatch(/could not look up.*boom/is);
     expect(turn.lookedUp).toBeUndefined();
   });
 

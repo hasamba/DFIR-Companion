@@ -146,7 +146,7 @@ describe("Watson's super-timeline search hop", () => {
     const chat = await runWatsonRound(h.ctx, CASE, { text: "any rclone?" });
     expect(h.provider.sent).toHaveLength(2);
     const second = userPrompt(h.provider.sent[1]);
-    expect(second).toMatch(/SUPER-TIMELINE SEARCH \(super-timeline rows containing "rclone"\)/);
+    expect(second).toMatch(/SUPER-TIMELINE SEARCH \(super-timeline rows with the text "rclone"\)/);
     expect(second).toContain("<<<SUPERTIMELINE>>>");
     expect(second).toContain("[raw1]");
     expect(second).not.toContain("<<<LOOKUP>>>");
@@ -169,7 +169,7 @@ describe("Watson's super-timeline search hop", () => {
     // promotion (Task 5, roundSuperPromote.test.ts) leaves it out rather than cite an unpromoted row.
     expect(lastWatsonTurn(chat).answer?.relatedEventIds).toEqual(["e1"]);
     expect(lastWatsonTurn(chat).text).toMatch(
-      /Watson cited 1 super-timeline row, but it could not be promoted/,
+      /Watson cited 1 super-timeline row, but it could not promote it/,
     );
     const g = await harness([reply(answer(["raw1", "e1"]))]);
     const plain = await runWatsonRound(g.ctx, CASE, { text: "q?" });
@@ -194,7 +194,7 @@ describe("Watson's super-timeline search hop", () => {
   it("a failed search call keeps the first reply and says the super-timeline search failed", async () => {
     const h = await harness([reply({ message: "FIRST", ...superLookup() }), new Error("boom")]);
     const chat = await runWatsonRound(h.ctx, CASE, { text: "x" });
-    expect(lastWatsonTurn(chat).text).toMatch(/FIRST[\s\S]*super-timeline search failed.*boom/i);
+    expect(lastWatsonTurn(chat).text).toMatch(/FIRST[\s\S]*could not search the super-timeline.*boom/i);
   });
 
   it("a reaction round never searches the super-timeline, and says why", async () => {
@@ -207,7 +207,7 @@ describe("Watson's super-timeline search hop", () => {
     expect(h.provider.sent).toHaveLength(1);
     expect(h.queries).toHaveLength(0);
     expect(lastWatsonTurn(chat).text).toContain(
-      "(Watson wanted to search the super-timeline, but it searches the raw record only when you ask it something, so it did not.)",
+      "(Watson did not search the super-timeline, because Watson searches the raw record only when you ask it a question.)",
     );
   });
 
@@ -215,7 +215,7 @@ describe("Watson's super-timeline search hop", () => {
     const many = Array.from({ length: 12 }, (_, i) => raw(`raw${i}`));
     const h = await harness([reply(superLookup()), reply()], { raw: many, superMax: 5 });
     const chat = await runWatsonRound(h.ctx, CASE, { text: "x" });
-    expect(userPrompt(h.provider.sent[1])).toMatch(/<<<END SUPERTIMELINE>>>\nThe super-timeline has dropped/);
+    expect(userPrompt(h.provider.sent[1])).toMatch(/<<<END SUPERTIMELINE>>>\nThe super-timeline removed/);
     expect(lastWatsonTurn(chat).lookedUp?.capEvicted).toBeGreaterThan(0);
   });
 });

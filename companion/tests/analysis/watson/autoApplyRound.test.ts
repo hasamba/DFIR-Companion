@@ -313,7 +313,7 @@ describe("Auto launches only from a dashboard round (final review G12 / G20)", (
 
   it.each([
     ["slash", "does not launch from a chat-bot command"],
-    [undefined, "only from a message sent in the Watson panel"],
+    [undefined, "only from a message in the Watson panel"],
   ] as const)("a round from source %s holds the launch", async (source, why) => {
     replyText = askCollection;
     const h = await veloHarness();

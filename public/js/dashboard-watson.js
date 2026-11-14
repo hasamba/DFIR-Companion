@@ -50,10 +50,10 @@
     const hint = wChat.turns.length
       ? ""
       : wEmpty
-        ? `<div class="watson-empty">No forensic-timeline events or findings yet — import evidence first; until then an answer has nothing to read.</div>`
+        ? `<div class="watson-empty">This case has no forensic-timeline events or findings. Import evidence first. Until then, Watson has no data for an answer.</div>`
         : `<div class="watson-empty">Ask Watson about this case, or paste evidence.</div>`;
     const warn = wNotice ? `<div class="watson-turn watson-warn"><div class="watson-text">${esc(wNotice.text)}</div></div>` : "";
-    const thinking = wBusy.has(currentCase()) ? `<div class="watson-empty">Watson is thinking…</div>` : "";
+    const thinking = wBusy.has(currentCase()) ? `<div class="watson-empty">Watson prepares an answer…</div>` : "";
     return hint + turns + watsonPausedHtml(wChat.reactionsPaused) + warn + thinking;
   }
 
@@ -173,17 +173,17 @@
 
   async function failure(r, action, stored) {
     const body = await r.json().catch(() => ({}));
-    const why = body.error ? String(body.error) : "Watson request failed (HTTP " + r.status + ")";
+    const why = body.error ? String(body.error) : "The Watson request failed (HTTP " + r.status + ")";
     if (r.status === 409 && body.error === "presidio_approval_required") {
       if (typeof setPresidioPending === "function") setPresidioPending(body.findings);
       return stored
-        ? "The paste was stored as evidence. Presidio found new value(s) awaiting approval; resolve them in Anonymization, then send a message and Watson will read the paste."
-        : "Presidio found new value(s) awaiting approval. Resolve them in Anonymization, then send again.";
+        ? "The case keeps the paste as evidence. Presidio found new values that wait for approval. Examine them in Anonymization. Then send a message, and Watson reads the paste."
+        : "Presidio found new values that wait for approval. Examine them in Anonymization. Then send again.";
     }
     if (action !== "paste") return why;
     return stored
-      ? "The paste was stored as evidence, but Watson could not read it yet: " + why + " Watson will read it on your next message."
-      : "The paste was not stored: " + why;
+      ? "The case keeps the paste as evidence, but Watson could not read it: " + why + " Watson reads it after your next message."
+      : "The companion did not keep the paste: " + why;
   }
 
   // POST to the case the action started on. { ok, stored }: stored is true once the server kept a paste.
@@ -244,7 +244,7 @@
     const box = el.closest(".watson-root").querySelector(".watson-paste-box");
     const bytes = typeof TextEncoder === "function" ? new TextEncoder().encode(text).length : text.length;
     if (bytes > PASTE_LIMIT_BYTES) {
-      wNotice = { text: "That text is larger than 50 MB. Watson takes smaller pastes." };
+      wNotice = { text: "That text is larger than 50 MB. Use a smaller paste." };
       return renderWatson();
     }
     area.value = "";
@@ -265,8 +265,8 @@
     if (!f) return;
     const caseId = currentCase(); // before the file is read: the paste belongs to this case
     const refuse = !isTextFile(f)
-      ? "Watson reads text files only (text, JSON, XML, CSV, TSV or log). Choose another file."
-      : f.size > PASTE_LIMIT_BYTES ? "That file is larger than 50 MB. Watson takes smaller files." : "";
+      ? "Watson reads only text files (text, JSON, XML, CSV, TSV or log). Choose a different file."
+      : f.size > PASTE_LIMIT_BYTES ? "That file is larger than 50 MB. Use a smaller file." : "";
     if (refuse) {
       wNotice = { text: refuse };
       return renderWatson();
@@ -317,7 +317,7 @@
       wEarlier = [...(Array.isArray(page.turns) ? page.turns : []), ...wEarlier];
       wMore = page.more === true;
     } catch (e) {
-      if (live(caseId)) wNotice = { text: "Could not load earlier messages: " + (e && e.message ? e.message : "network error") };
+      if (live(caseId)) wNotice = { text: "Watson could not load earlier messages: " + (e && e.message ? e.message : "network error") };
     } finally {
       wBusy.delete(caseId);
       if (live(caseId)) renderWatson();
