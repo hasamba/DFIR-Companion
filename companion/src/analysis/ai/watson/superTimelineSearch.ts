@@ -10,8 +10,11 @@ import { loadCtxAliasIndex, loadScopedEvents, type AiCallContext } from "../aiCo
 import { promptDescription } from "../promptDescription.js";
 import type { WriterDeps } from "./writers/writerTypes.js";
 import { describeLookup } from "./lookupSchema.js";
+import { rosterOf, type WatsonMaskRoster } from "./superRoster.js";
 import { sameHost } from "./timelineLookup.js";
 import type { WatsonLookedUp, WatsonLookup } from "./types.js";
+
+export type { WatsonMaskRoster } from "./superRoster.js";
 
 // Watson's targeted search of the analyst-only super-timeline (phase 4). This is the ONE AI-facing
 // door to the raw record besides the analyst's own buttons (CLAUDE.md §7): synthesis and the deep
@@ -45,17 +48,13 @@ export interface WatsonRawSearchDeps {
   writable(caseId: string): Promise<boolean>;
 }
 
-/** Names the shown rows carry, handed to masking as known entities. */
-export interface WatsonMaskRoster {
-  hosts: string[];
-  users: string[];
-  ips: string[];
-}
+// JS `\s` misses NEL (U+0085) and the C0 separators U+001C-U+001E, which some readers break lines on.
+const VERTICAL_OR_SPACE = /[\s\u0085\u001c-\u001e]+/g;
 
 /** One field value on one line, bounded: a hostile value can neither forge a row nor crowd others out. */
 function flat(v: string | undefined): string {
   if (!v) return "";
-  const one = v.replace(/\s+/g, " ").trim();
+  const one = v.replace(VERTICAL_OR_SPACE, " ").trim();
   return one.length > FIELD_MAX ? `${one.slice(0, FIELD_MAX - 1)}…` : one;
 }
 
@@ -76,33 +75,9 @@ export function superRow(e: ForensicEvent): string {
     .map(([k, v]) => [k, flat(v)])
     .filter(([, v]) => v)
     .map(([k, v]) => `${k}=${v}`);
-  const lead = `[${flat(e.id)}] ${flat(e.timestamp) || "(undated)"} [${e.severity}]`;
+  const lead = `[${flat(e.id)}] ${flat(e.timestamp) || "(undated)"} [${flat(e.severity)}]`;
   const desc = flat(promptDescription(e.description));
   return [lead, [...fields, desc].join(" | ")].join(" ");
-}
-
-const USER_SEGMENT = /[\\/](?:users|home)[\\/]([^\\/\s"'|]+)/gi;
-
-/** The `<name>` of every `\Users\<name>\` or `/home/<name>/` segment in the path or command. */
-function pathUsers(e: ForensicEvent): string[] {
-  return [e.path, e.commandLine].flatMap((s) => (s ? [...s.matchAll(USER_SEGMENT)].map((m) => m[1]) : []));
-}
-
-const distinct = (xs: readonly (string | undefined)[]): string[] => [
-  ...new Set(xs.filter((x): x is string => !!x && !!x.trim())),
-];
-
-function rosterOf(shown: readonly ForensicEvent[]): WatsonMaskRoster {
-  const net = (e: ForensicEvent) => e.canonical?.network;
-  return {
-    hosts: distinct(
-      shown.flatMap((e) => [e.asset, e.assetRecord, net(e)?.source?.hostname, net(e)?.destination?.hostname]),
-    ),
-    users: distinct(shown.flatMap((e) => [e.canonical?.account?.name, e.callerName, ...pathUsers(e)])),
-    ips: distinct(
-      shown.flatMap((e) => [e.srcIp, e.dstIp, net(e)?.source?.address, net(e)?.destination?.address]),
-    ),
-  };
 }
 
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
@@ -114,14 +89,16 @@ function termOf(spelling: string): string | null {
   if (!h || CLIENT_ID.test(h)) return null;
   if (IPV4.test(h) || h.includes(":")) return h; // an IP is searched whole
   const label = h.split(".")[0];
-  return label.length >= 2 ? label : null;
+  return label.length >= 2 ? label : null; // a client id or 1-letter label would match anything
 }
 
 /** Store search terms for a host: its first label, then each alias spelling's, at most 5 (D2b). */
 export function hostTerms(host: string, aliases?: HostAliasIndex): string[] {
   const canonical = aliases ? resolveHost(aliases, host) : undefined;
   const group = canonical ? [canonical, ...(aliases?.aliasesOf.get(canonical) ?? [])] : [];
-  const terms = [host, ...group].map(termOf).filter((t): t is string => t !== null);
+  // Watson's own spelling is always searched: whole, when no label of it can be (a client id, "x").
+  const own = termOf(host) ?? (canonicalHostName(host) || null);
+  const terms = [own, ...group.map(termOf)].filter((t): t is string => t !== null);
   return [...new Set(terms)].slice(0, MAX_HOST_TERMS);
 }
 
@@ -221,8 +198,9 @@ async function fetchCandidates(
       }),
     ),
   );
+  // A floor only when a query really stopped short: merged pages counted after the filters are exact.
   const cut = pages.some((p) => p.totalIsLowerBound || p.total > p.events.length);
-  return { events: pages.flatMap((p) => p.events), floor: cut || terms.length > 1 };
+  return { events: pages.flatMap((p) => p.events), floor: cut };
 }
 
 /** What one search hands the round: the prompt block, the disclosure, the rows shown and the roster. */
@@ -247,6 +225,19 @@ async function inCaseRows(
   return { rows: filterFalsePositiveEvents(filterEventsByScope([...candidates], scope), markers), keep };
 }
 
+/** A host search with no term the store can run: refused in words, never reported as "no match". */
+function unsearchableHost(q: WatsonLookup, aliases: HostAliasIndex | undefined): WatsonSuperSearch | null {
+  if (!q.host || q.hash || q.text || hostTerms(q.host, aliases).length) return null;
+  const what = describeLookup(q);
+  const text = `host '${flat(q.host)}' could not be searched — name it by hostname or IP`;
+  return {
+    excerpt: { what, text },
+    lookedUp: { source: "supertimeline", shown: 0, matched: 0, what },
+    shown: [],
+    roster: { hosts: [], users: [], ips: [] },
+  };
+}
+
 /** Run one bounded search of the super-timeline for Watson. */
 export async function searchSuperTimeline(
   ctx: AiCallContext & Parameters<typeof loadCtxAliasIndex>[0],
@@ -256,6 +247,8 @@ export async function searchSuperTimeline(
   q: WatsonLookup,
 ): Promise<WatsonSuperSearch> {
   const aliases = q.host ? await loadCtxAliasIndex(ctx, caseId) : undefined;
+  const refused = unsearchableHost(q, aliases);
+  if (refused) return refused;
   const [fetched, meta] = await Promise.all([
     fetchCandidates(reader, caseId, q, aliases),
     reader.meta(caseId),

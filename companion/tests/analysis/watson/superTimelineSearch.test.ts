@@ -11,73 +11,12 @@ import {
   WATSON_SUPER_SCAN_ROWS,
   type WatsonRawReader,
 } from "../../../src/analysis/ai/watson/superTimelineSearch.js";
-import type { WatsonLookup } from "../../../src/analysis/ai/watson/types.js";
 import { buildHostAliasIndex } from "../../../src/analysis/hostAlias.js";
-import { eventMatchesSearch } from "../../../src/analysis/searchFilter.js";
-import type { SuperQuery } from "../../../src/analysis/superTimeline.js";
 import { SuperTimelineStore } from "../../../src/analysis/superTimelineStore.js";
-import type { ForensicEvent, InvestigationState } from "../../../src/analysis/stateTypes.js";
 import { CaseStore } from "../../../src/storage/caseStore.js";
+import { ctx, ctxOf, ev, F, H, H2, readerOf, rows, stateOf, sup, T } from "./superSearchFixtures.js";
 
 // Watson phase 4, Task 2: Watson's targeted, bounded search of the analyst-only super-timeline.
-
-const F = "2026-01-01T00:00:00Z";
-const T = "2026-01-02T00:00:00Z";
-const H = "ab".repeat(32);
-const H2 = "cd".repeat(32);
-
-const ev = (over: Partial<ForensicEvent> & { id: string }): ForensicEvent => ({
-  timestamp: "2026-01-01T10:00:00Z",
-  description: `raw row ${over.id}`,
-  severity: "Info",
-  mitreTechniques: [],
-  relatedFindingIds: [],
-  sourceScreenshots: [],
-  ...over,
-});
-
-const rows = (n: number, over: Partial<ForensicEvent> = {}): ForensicEvent[] =>
-  Array.from({ length: n }, (_, i) =>
-    ev({ id: `r${String(i).padStart(5, "0")}`, description: `x row ${i}`, ...over }),
-  );
-
-const stateOf = (forensic: ForensicEvent[] = [], extra: Partial<InvestigationState> = {}) =>
-  ({ forensicTimeline: forensic, findings: [], ...extra }) as unknown as InvestigationState;
-
-type Ctx = Parameters<typeof searchSuperTimeline>[0];
-const ctxOf = (over: Record<string, unknown> = {}, opts: Record<string, unknown> = {}): Ctx =>
-  ({ opts: { stateStore: {}, ...opts }, ...over }) as unknown as Ctx;
-const ctx = ctxOf();
-
-/** A store stand-in: applies the search and time filter as the real store does (undated rows kept). */
-function readerOf(
-  all: ForensicEvent[],
-  o: { evictedTotal?: number; total?: (q: SuperQuery, matched: number) => number } = {},
-) {
-  const calls: SuperQuery[] = [];
-  const reader: WatsonRawReader & { calls: SuperQuery[] } = {
-    calls,
-    async query(_caseId, q) {
-      calls.push(q);
-      const hit = all.filter((e) => {
-        if (q.search && !eventMatchesSearch(e, q.search)) return false;
-        const t = Date.parse(e.timestamp);
-        if (!Number.isFinite(t)) return true;
-        if (q.from && t < Date.parse(q.from)) return false;
-        if (q.to && t > Date.parse(q.to)) return false;
-        return true;
-      });
-      const events = hit.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? hit.length));
-      return { events, total: o.total ? o.total(q, hit.length) : hit.length };
-    },
-    async meta() {
-      return { evictedTotal: o.evictedTotal ?? 0 };
-    },
-  };
-  return reader;
-}
-
-const sup = (q: Omit<WatsonLookup, "source">): WatsonLookup => ({ source: "supertimeline", ...q });
 
 describe("searchSuperTimeline — the store query", () => {
   it("asks the store one bounded query: the text (or hash, or host) as the search term and the window", async () => {
@@ -206,7 +145,8 @@ describe("searchSuperTimeline — host terms", () => {
       ),
     ).toBe(true);
     expect(out.shown.map((e) => e.id).sort()).toEqual(["alias", "both", "short"]);
-    expect(out.lookedUp.matchedIsFloor).toBe(true); // more than one host term ran
+    expect(out.lookedUp.matchedIsFloor).toBeUndefined(); // no page hit the ceiling: the merged count is exact
+    expect(out.excerpt.text).not.toMatch(/at least|stopped counting/);
   });
 });
 
@@ -228,7 +168,7 @@ describe("searchSuperTimeline — the case's rules", () => {
     );
     const state = stateOf([ev({ id: "forensic" }), ev({ id: "live" })], {
       eventAliases: { aliased: "live" },
-    } as never);
+    });
     const out = await searchSuperTimeline(scoped, reader, "c1", state, sup({ text: "rclone" }));
     expect(out.shown.map((e) => e.id)).toEqual(["keep"]);
   });
@@ -236,7 +176,7 @@ describe("searchSuperTimeline — the case's rules", () => {
   it("an id aliased to a forensic row the analyst scoped out or marked false positive still stays out", async () => {
     const reader = readerOf([ev({ id: "rawcopy", description: "rclone" })]);
     const fp = ctxOf({}, { falsePositiveStore: { load: async () => [{ kind: "event", ref: "live" }] } });
-    const state = stateOf([ev({ id: "live" })], { eventAliases: { rawcopy: "live" } } as never);
+    const state = stateOf([ev({ id: "live" })], { eventAliases: { rawcopy: "live" } });
     const out = await searchSuperTimeline(fp, reader, "c1", state, sup({ text: "rclone" }));
     expect(out.shown).toEqual([]);
   });
