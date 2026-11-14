@@ -324,3 +324,99 @@ describe("the Wrote: line", () => {
     expect(sys).toContain("Watson reacted to: an import");
   });
 });
+
+describe("super-timeline search and promotion cards", () => {
+  const cards = () =>
+    loadDashboardModule<Cards>("dashboard-watson-cards.js", ["dashboard-escape.js"], globals);
+  const view = () => loadDashboardModule<View>("dashboard-watson-view.js", baseDeps, globals);
+  const answer = (lookedUp: unknown) => ({ id: "t1", at: "x", role: "watson", text: "ok", lookedUp });
+  const raw = (status: string, over: Record<string, unknown> = {}) =>
+    prop("event_promote", status, {
+      id: "wp-1",
+      source: "supertimeline",
+      events: [{ id: "r1", severity: "Info", description: "<img src=x onerror=alert(1)>" }],
+      createdEventIds: ["r1"],
+      ...over,
+    });
+
+  it("says Watson searched the super-timeline, with 'at least' for a floor", () => {
+    const v = view();
+    const h = v.watsonTurnHtml(
+      answer({ source: "supertimeline", shown: 40, matched: 312, what: 'rows containing "rclone"' }),
+      [],
+    );
+    expect(h).toContain("Watson searched the super-timeline: 40 of 312 matching raw rows");
+    const floor = v.watsonTurnHtml(
+      answer({ source: "supertimeline", shown: 3, matched: 3, matchedIsFloor: true, what: "w" }),
+      [],
+    );
+    expect(floor).toContain("3 of at least 3 matching raw rows");
+    expect(floor).not.toContain("size limit");
+  });
+
+  it("warns, in plain words, that the size limit may have hidden rows", () => {
+    const h = view().watsonTurnHtml(
+      answer({ source: "supertimeline", shown: 0, matched: 0, what: "w", capEvicted: 1234 }),
+      [],
+    );
+    expect(h).toContain("The super-timeline dropped 1,234 old rows because of its size limit.");
+    expect(h).toContain("This search can miss rows. Import the artifact again to search them.");
+  });
+
+  it("escapes the search description", () => {
+    const h = view().watsonTurnHtml(
+      answer({ source: "supertimeline", shown: 1, matched: 1, what: "<b>x</b>" }),
+      [],
+    );
+    expect(h).not.toContain("<b>x</b>");
+  });
+
+  it("keeps the forensic-lookup line and the held-paste card unchanged", () => {
+    const h = view().watsonTurnHtml(answer({ shown: 5, matched: 9, what: "w" }), []);
+    expect(h).toContain("Watson looked up 5 of 9 matching forensic-timeline events (w)");
+    const held = cards().watsonCardHtml(
+      prop("event_promote", "pending", { events: [{ severity: "High", description: "d" }], pasteId: "pp1" }),
+    );
+    expect(held).toContain("Held events · pending");
+    expect(held).toContain("rows held for you");
+    expect(held).toContain('data-w-verb="reject"');
+  });
+
+  it("shows the promoted rows escaped, with Undo", () => {
+    const html = cards().watsonCardHtml(raw("applied"));
+    expect(html).toContain("Promoted events · applied");
+    expect(html).toContain("Promoted 1 super-timeline row Watson cited");
+    expect(html).not.toContain("<img");
+    expect(html).toContain('data-w-verb="undo"');
+    const many = cards().watsonCardHtml(
+      raw("applied", {
+        events: Array.from({ length: 7 }, (_, i) => ({ id: `r${i}`, severity: "Info", description: "d" })),
+      }),
+    );
+    expect(many).toContain("Promoted 7 super-timeline rows");
+    expect(many).toContain("and 2 more");
+  });
+
+  it("offers an undone promotion Apply again", () => {
+    expect(cards().watsonCardHtml(raw("undone"))).toContain("Apply again");
+  });
+
+  it("gives a stuck pending promotion only Apply, and shows the server's refusal", () => {
+    const html = cards().watsonCardHtml({
+      ...raw("pending"),
+      uiError: "Press Apply to finish this promotion; Undo is available afterwards",
+    });
+    expect(html).toContain("Promotion not finished. Press Apply to finish it.");
+    expect(html).toContain('data-w-verb="apply"');
+    expect(html).not.toContain('data-w-verb="reject"');
+    expect(html).not.toContain('data-w-verb="undo"');
+    expect(html).toContain("Press Apply to finish this promotion; Undo is available afterwards");
+  });
+
+  it("draws no card for a promotion the turn does not list (undone before it was saved)", () => {
+    const turn = { id: "t1", at: "x", role: "watson", text: "ok", proposalIds: [] };
+    const html = view().watsonTurnHtml(turn, [raw("undone")]);
+    expect(html).not.toContain("Promoted events");
+    expect(html).not.toContain("watson-prop");
+  });
+});

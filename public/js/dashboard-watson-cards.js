@@ -24,7 +24,9 @@
     `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="${verb}" data-pid="${escAttr(pid)}">${label}</button> `;
 
   // Pending: Apply / Reject. Applied: Undo. A promotion that was undone can be applied again.
+  // A pending super-timeline promotion is an unfinished one: Apply only (the server refuses Reject).
   function verbsHtml(p) {
+    if (p.kind === "event_promote" && p.source === "supertimeline" && p.status === "pending") return btn(p.id, "apply", "Apply");
     if (p.status === "pending") return btn(p.id, "apply", "Apply") + btn(p.id, "reject", "Reject");
     if (p.status === "applied") return btn(p.id, "undo", "Undo");
     return p.kind === "event_promote" && p.status === "undone" ? btn(p.id, "apply", "Apply again") : "";
@@ -78,7 +80,25 @@
     );
   }
 
-  const BODY = { finding_new: findingBody, finding_update: findingBody, next_step_new: stepBody, report_text: reportBody, event_promote: heldBody };
+  // Rows Watson cited from the raw super-timeline. A pending record is a promotion the server did not finish.
+  function promotedBody(p) {
+    const rows = Array.isArray(p.events) ? p.events : [];
+    const more = rows.length - HELD_SHOWN;
+    const n = rows.length;
+    return (
+      `<div>Promoted ${esc(String(n))} super-timeline ${n === 1 ? "row" : "rows"} Watson cited</div>` +
+      (p.status === "pending" ? `<div class="watson-why">Promotion not finished. Press Apply to finish it.</div>` : "") +
+      pre(rows.slice(0, HELD_SHOWN).map((e) => `[${e.severity}] ${e.description}`).join("\n")) +
+      (more > 0 ? `<div class="watson-why">and ${esc(String(more))} more</div>` : "")
+    );
+  }
+
+  const eventBody = (p) => (p.source === "supertimeline" ? promotedBody(p) : heldBody(p));
+
+  const BODY = { finding_new: findingBody, finding_update: findingBody, next_step_new: stepBody, report_text: reportBody, event_promote: eventBody };
+
+  // The title follows the source: a super-timeline promotion is not a held paste.
+  const titleOf = (p) => (p.kind === "event_promote" && p.source === "supertimeline" ? "Promoted events" : TITLE[p.kind] || "Proposal");
 
   // uiError: the server's message when this card's action was refused (a 409 on undo).
   function watsonCardHtml(p) {
@@ -86,7 +106,7 @@
     const body = Object.prototype.hasOwnProperty.call(BODY, p.kind) ? BODY[p.kind](p) : "";
     return (
       `<div class="watson-prop" data-pid="${escAttr(p.id)}">` +
-      `<div class="watson-lbl">${esc(TITLE[p.kind] || "Proposal")} · ${esc(p.status)}</div>` +
+      `<div class="watson-lbl">${esc(titleOf(p))} · ${esc(p.status)}</div>` +
       body +
       (p.uiError ? `<div class="watson-why watson-err">${esc(p.uiError)}</div>` : "") +
       `<div>${verbsHtml(p)}</div></div>`

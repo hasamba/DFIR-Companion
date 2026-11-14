@@ -109,11 +109,30 @@
 
   // Task 11: the forensic-timeline events Watson looked up for this answer. Server-set (never from the
   // model's text), shown on its own line so the analyst sees everything Watson read (#452).
+  const fmt = (n) => Number(n).toLocaleString("en-US");
+
+  // The raw super-timeline search: the count may be a floor, and the size limit may have hidden rows.
+  function superLookedUpHtml(l, shown, matched) {
+    const of = l.matchedIsFloor ? "at least " : "";
+    const what = l.what ? ` (${esc(String(l.what))})` : "";
+    const evicted = Number(l.capEvicted);
+    const cap =
+      Number.isFinite(evicted) && evicted > 0
+        ? `<div class="watson-cov">⚠ The super-timeline dropped ${esc(fmt(evicted))} old rows because of its size limit. ` +
+          `This search can miss rows. Import the artifact again to search them.</div>`
+        : "";
+    return (
+      `<div class="watson-cov watson-lookup">Watson searched the super-timeline: ${esc(fmt(shown))} of ${of}${esc(fmt(matched))} matching raw rows${what}</div>` +
+      cap
+    );
+  }
+
   function lookedUpHtml(l) {
     if (!l) return "";
     const shown = Number(l.shown);
     const matched = Number(l.matched);
     if (!Number.isFinite(shown) || !Number.isFinite(matched)) return "";
+    if (l.source === "supertimeline") return superLookedUpHtml(l, shown, matched);
     const count = matched > shown ? `${shown} of ${matched} matching` : String(shown);
     const what = l.what ? ` (${esc(String(l.what))})` : "";
     return `<div class="watson-cov watson-lookup">Watson looked up ${esc(count)} forensic-timeline events${what}</div>`;
