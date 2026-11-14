@@ -27,43 +27,24 @@ type ListKind = Exclude<RefItem["kind"], "answer">;
 export const refKey = (item: RefItem): string =>
   item.kind === "answer" ? "answer" : `${item.kind}:${item.index}`;
 
-const ID_CHAR = /[\w.:-]/;
-const SEPARATOR = /[.:-]/;
-const SENTENCE_START = /[A-Z]/;
+// An id is its own token-part when neither neighbour is a letter, digit or underscore, whatever joins
+// it ("e1-raw1", "raw1-related", "...raw1", "raw1.Next" all name raw1). Two shapes stay non-matches:
+// a decimal ("raw1.5") and a label-value pair whose value is not a candidate ("raw1:x"; "raw1:raw2"
+// names both).
+const WORD = /[A-Za-z0-9_]/;
+const DIGIT = /[0-9]/;
 
-const isIdChar = (c: string | undefined): boolean => c !== undefined && ID_CHAR.test(c);
+const isWord = (c: string | undefined): boolean => c !== undefined && WORD.test(c);
+const candidateAt = (text: string, at: number, candidates: ReadonlySet<string>): boolean =>
+  [...candidates].some((id) => id !== "" && text.startsWith(id, at));
 
-/** A candidate id that starts at `at` and is itself closed there: the right end of a range ("raw1-raw3"). */
-function candidateAt(text: string, at: number, candidates: ReadonlySet<string>): boolean {
-  for (const id of candidates) {
-    if (id !== "" && text.startsWith(id, at) && closesToken(text, at + id.length, candidates)) return true;
-  }
-  return false;
-}
-
-/**
- * True when `text[end]` closes a token: the text ends, the next char is outside [\w.:-], or a run of
- * `.`/`:`/`-` follows and then the token ends ("see raw1." names raw1; "raw1.5" and "raw1:x" do not).
- * A run before another candidate id is a range or a joined pair ("raw1-raw3"); a full stop before a
- * capital letter is a sentence end with no space ("raw1.Next").
- */
-function closesToken(text: string, end: number, candidates: ReadonlySet<string>): boolean {
-  let i = end;
-  while (i < text.length && SEPARATOR.test(text[i] ?? "")) i++;
-  if (i >= text.length || !isIdChar(text[i])) return true;
-  if (i === end) return false;
-  if (text[i - 1] === "." && SENTENCE_START.test(text[i] ?? "")) return true;
-  return candidateAt(text, i, candidates);
-}
-
-/** The id at `at` is not the tail of a longer token: start of text, a non-id char, ':' or an ellipsis. */
-function opensToken(text: string, at: number): boolean {
-  const prev = text[at - 1];
-  if (at === 0 || !isIdChar(prev) || prev === ":") return true;
-  if (prev !== ".") return false;
-  let i = at - 1;
-  while (i > 0 && text[i - 1] === ".") i--;
-  return at - i >= 3 || i === 0 || !isIdChar(text[i - 1]);
+function isMention(text: string, at: number, id: string, candidates: ReadonlySet<string>): boolean {
+  const end = at + id.length;
+  const after = text[end];
+  const next = text[end + 1];
+  if (isWord(text[at - 1]) || isWord(after)) return false;
+  if (after === "." && next !== undefined && DIGIT.test(next)) return false;
+  return !(after === ":" && isWord(next) && !candidateAt(text, end + 1, candidates));
 }
 
 function mentionsAt(text: string, id: string, candidates: ReadonlySet<string>): number | null {
@@ -71,29 +52,13 @@ function mentionsAt(text: string, id: string, candidates: ReadonlySet<string>): 
   while (id !== "") {
     const at = text.indexOf(id, from);
     if (at < 0) return null;
-    if (
-      (opensToken(text, at) || rangeEnd(text, at, candidates)) &&
-      closesToken(text, at + id.length, candidates)
-    )
-      return at;
+    if (isMention(text, at, id, candidates)) return at;
     from = at + 1;
   }
   return null;
 }
 
-/** The id at `at` follows a separator run that closes another candidate: "raw1-raw3" names raw3. */
-function rangeEnd(text: string, at: number, candidates: ReadonlySet<string>): boolean {
-  let i = at;
-  while (i > 0 && SEPARATOR.test(text[i - 1] ?? "")) i--;
-  if (i === at) return false;
-  for (const id of candidates) {
-    const start = i - id.length;
-    if (id !== "" && start >= 0 && text.startsWith(id, start) && opensToken(text, start)) return true;
-  }
-  return false;
-}
-
-/** Whole-token mentions of `candidates` in `text` (see opensToken / closesToken for what bounds a token). */
+/** Whole-token mentions of `candidates` in `text` (see isMention for what bounds a token). */
 export function mentionedIds(text: string, candidates: ReadonlySet<string>): string[] {
   if (text === "") return [];
   return [...candidates]

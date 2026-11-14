@@ -40,6 +40,8 @@ const failedNote = (n: number, err: unknown): string =>
   );
 const recordNote = (n: number): string =>
   `(Watson promoted ${rows(n)}, but the record could not be saved: press Apply on the card to finish it.)`;
+const stuckNote = (n: number): string =>
+  `(Watson promoted ${rows(n)} but could not finish recording it — press Apply to finish.)`;
 const earlierNote = (n: number): string =>
   `(Watson cited ${rows(n)} from an earlier search that ${n === 1 ? "is" : "are"} not in the forensic timeline; only rows from this round's search are promoted.)`;
 const droppedNote = (n: number): string =>
@@ -63,6 +65,16 @@ interface Plan {
   earlier: number;
 }
 
+/** Rows Watson's applied super-timeline promotions created: still raw evidence while live (I1). */
+const promotedByWatson = (chat: WatsonChat): Set<string> =>
+  new Set(
+    chat.proposals.flatMap((p) =>
+      p.kind === "event_promote" && p.source === "supertimeline" && p.status === "applied"
+        ? (p.createdEventIds ?? [])
+        : [],
+    ),
+  );
+
 async function planRefs(
   ctx: WatsonRoundContext,
   caseId: string,
@@ -71,9 +83,15 @@ async function planRefs(
   chat: WatsonChat,
 ): Promise<Plan> {
   const shown = outcome.superShown ?? [];
-  const candidates = [...new Set([...shown.map((e) => e.id), ...earlierShownIds(chat)])];
-  const { live, folded } = await evidenceStanding(ctx.stateStore, caseId, candidates);
-  const refs = collectRawRefs(reply, new Set(candidates.filter((id) => !live.has(id))));
+  const promoted = promotedByWatson(chat);
+  const candidates = [...new Set([...shown.map((e) => e.id), ...earlierShownIds(chat), ...promoted])];
+  const standing = await evidenceStanding(ctx.stateStore, caseId, candidates);
+  // Controller ruling (refines D4): a row live only because Watson's promotion landed it is raw
+  // evidence for a later item too, already landed at itself, so the item records it.
+  const kept = candidates.filter((id) => standing.live.has(id) && promoted.has(id));
+  const folded = new Map([...standing.folded, ...kept.map((id) => [id, id] as const)]);
+  const raw = new Set([...candidates.filter((id) => !standing.live.has(id)), ...kept]);
+  const refs = collectRawRefs(reply, raw);
   const citedIds = new Set(refs.flatMap((r) => r.ids).filter((id) => !folded.has(id)));
   const cited = shown.filter((e) => citedIds.has(e.id));
   const earlier = citedIds.size - cited.length;
@@ -288,11 +306,15 @@ async function promotionFailed(
       intent.events.map((e) => e.id),
     )
     .catch(() => []);
-  const stuck = found.some((r) => r.event.promotedAt === intent.promotedAt);
-  if (!stuck) await dropIntent(ctx, caseId, intent.id);
-  const note = joinNotes(failedNote(plan.cited.length, err), stuck ? recordNote(found.length) : undefined);
-  const s = settled(outcome, plan, plan.folded, note);
-  return stuck ? { ...s, extraProposalIds: [intent.id] } : s;
+  const landed = found.filter((r) => r.event.promotedAt === intent.promotedAt).length;
+  if (!landed) {
+    await dropIntent(ctx, caseId, intent.id);
+    return settled(outcome, plan, plan.folded, failedNote(plan.cited.length, err));
+  }
+  // The case changed: say so, and still tell the conclusions and the dashboard (review I3).
+  await sideEffects(ctx, caseId, null);
+  const s = settled(outcome, plan, plan.folded, stuckNote(landed));
+  return { ...s, extraProposalIds: [intent.id] };
 }
 
 /** Remove an intent that never promoted anything, so no card offers to finish it. Best effort. */

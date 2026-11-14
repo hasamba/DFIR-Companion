@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyWatsonProposal } from "../../../src/analysis/ai/watson/proposals.js";
+import { applyWatsonProposal, WatsonProposalStateError } from "../../../src/analysis/ai/watson/proposals.js";
 import type { WatsonChat } from "../../../src/analysis/ai/watson/types.js";
 import {
   answer,
@@ -191,5 +191,38 @@ describe("Watson's promotion when something fails", () => {
     expect(await h.row("raw1")).toBeUndefined();
     expectNothingPromoted(chat);
     expect(lastWatsonTurn(chat).text).toMatch(/could not be promoted \(worker gone\)/);
+  });
+
+  // Task 5 review I3 + M1: the promotion threw AFTER its rows landed.
+  it("promoteEvents throws after the rows landed: the note says so, conclusions and dashboard still told", async () => {
+    let refreshed = 0;
+    let thrown = 0;
+    const h = await harness([reply(superLookup()), SECOND], {
+      promote: (real) => async (caseId, events, o) => {
+        const done = await real(caseId, events, o);
+        if (thrown++ === 0) throw new Error("announce failed");
+        return done;
+      },
+    });
+    h.ctx.onStateChanged = () => void refreshed++;
+    const chat = await h.run();
+    expect(await h.row("raw1")).toBeDefined();
+    const text = lastWatsonTurn(chat).text;
+    expect(text).toContain(
+      "Watson promoted 1 super-timeline row but could not finish recording it — press Apply to finish.",
+    );
+    expect(text).not.toContain("nothing was promoted");
+    expect(h.outOfDate).toEqual(["Watson promoted super-timeline rows it cited"]);
+    expect(refreshed).toBeGreaterThan(0);
+    const p = promotionOf(chat)!;
+    expect(p.status).toBe("pending");
+    // Reject would leave Watson's rows with no record to undo them: the server refuses it.
+    const reject = applyWatsonProposal(h.deps, CASE, p.id, "reject", "Ana");
+    await expect(reject).rejects.toBeInstanceOf(WatsonProposalStateError);
+    await expect(reject).rejects.toThrow(
+      "Press Apply to finish this promotion; Undo is available afterwards",
+    );
+    await applyWatsonProposal(h.deps, CASE, p.id, "apply", "Ana");
+    expect(promotionOf(await h.chatStore.load(CASE))?.createdEventIds).toEqual(["raw1"]);
   });
 });

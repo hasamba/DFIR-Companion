@@ -60,6 +60,8 @@ const allowed = (p: WatsonProposal, action: WatsonProposalAction, pendingOnly?: 
   p.status === FROM[action] ||
   (action === "apply" && !pendingOnly && p.status === "undone" && REAPPLIABLE.has(p.kind));
 
+const STUCK_PROMOTION = "Press Apply to finish this promotion; Undo is available afterwards";
+
 /** How a caller other than an analyst's click applies: Auto mode (autoApply.ts). */
 export interface WatsonApplyOptions {
   /** Appended to the activity entry's detail (who switched Auto on, and when). */
@@ -175,6 +177,10 @@ export async function applyWatsonProposal(
     const p = c.proposals.find((x) => x.id === proposalId);
     if (!p) throw new WatsonProposalNotFoundError(proposalId);
     if (!allowed(p, action, opts.pendingOnly)) throw new WatsonProposalStateError(action, p.status);
+    // Rejecting a stuck promotion would leave Watson's rows in the case with no record to undo them.
+    if (action === "reject" && p.kind === "event_promote" && p.source === "supertimeline") {
+      throw new WatsonProposalStateError(action, p.status, STUCK_PROMOTION);
+    }
     if (action === "apply") await checkRawEvidence(deps, caseId, p);
     const result = action === "reject" ? {} : await runWriter(deps, caseId, p, action, actor);
     state = result.state;

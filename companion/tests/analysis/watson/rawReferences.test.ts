@@ -93,12 +93,19 @@ describe("mentionedIds", () => {
     expect(mentionedIds("It was st-row-17.The", new Set(["st-row-17"]))).toEqual(["st-row-17"]);
   });
   it("still refuses an id inside a longer token", () => {
-    const ids = new Set(["raw1", "row-17"]);
+    const ids = new Set(["raw1"]);
     expect(mentionedIds("raw1.5", ids)).toEqual([]);
     expect(mentionedIds("raw10", ids)).toEqual([]);
     expect(mentionedIds("raw1:x", ids)).toEqual([]);
-    expect(mentionedIds("raw1-x and xraw1", ids)).toEqual([]);
-    expect(mentionedIds("st-row-17", ids)).toEqual([]);
+    expect(mentionedIds("xraw1 and raw1_b", ids)).toEqual([]);
+  });
+  // Task 5 review I2: a raw id joined to anything that is not a letter, digit or underscore is its own
+  // token-part, whatever the other side is (a forensic id, a word) — only "raw1.5" stays a non-match.
+  it("finds a raw id joined to a forensic id or a word", () => {
+    const ids = new Set(["raw1"]);
+    for (const text of ["e1-raw1", "raw1-e1", "e1..raw1", "raw1-related", "Activity spans e1-raw1."]) {
+      expect(mentionedIds(text, ids), text).toEqual(["raw1"]);
+    }
   });
 });
 
