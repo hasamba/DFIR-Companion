@@ -117,7 +117,8 @@ async function parseInSection(
     const candidates = held.held();
     const windows = candidates.length ? await heldBuildWindows(settleDeps.stateStore, caseId, offered) : [];
     const finalized = finalizeHeld(candidates, { windows, labPaths: labSetupPaths(), offered });
-    return { kind, rows: offered.length || settled.timelineDiff.added.length, held: finalized };
+    const added = settled.timelineDiff.added.length; // rows that landed in the forensic timeline
+    return { kind, rows: offered.length || added, held: finalized, added };
   } finally {
     section.release();
   }

@@ -36,6 +36,8 @@ export function noteWatsonCaseEvent(
 /** Where a noted event goes: the reaction scheduler once the app has built one. */
 export interface WatsonCaseEventSink {
   note(caseId: string, event: WatsonCaseEventNote): void;
+  /** Start the quiet window for an event already saved on the chat (a `hunt` result). */
+  wake?(caseId: string): void;
 }
 
 export interface WatsonCaseEvents {
@@ -54,6 +56,8 @@ export interface WatsonCaseEvents {
    * edit never pays for a round that cannot see it.
    */
   notebookChanged(caseId: string): void;
+  /** An event the caller saved on the chat itself (with its own guard): only wake Watson. */
+  wake(caseId: string): void;
   /** Called once by createApp with the shared reactor. */
   attach(sink: WatsonCaseEventSink): void;
 }
@@ -140,6 +144,7 @@ export function createWatsonCaseEvents(
     importChanged,
     tagsChanged,
     notebookChanged,
+    wake: (caseId) => sink?.wake?.(caseId),
     attach: (next) => {
       sink = next;
     },

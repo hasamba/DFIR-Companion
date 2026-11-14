@@ -1,3 +1,4 @@
+import type { WatsonFlowWatch } from "../analysis/ai/watson/velo/launchTypes.js";
 import type { Request } from "express";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { Logger } from "../logging/logger.js";
@@ -428,4 +429,6 @@ export interface RouteContext {
   // collect, still in createApp) — exposed as a live accessor so the routes mutate the SAME Map; call
   // ctx.veloHuntTimers() INSIDE the handler and set/delete on the returned map.
   veloHuntTimers(): { set(caseId: string, timer: NodeJS.Timeout, huntId: string): unknown };
+  /** Watson's result watcher (Task 5), read live: an applied collection starts its watch here. */
+  watsonFlowWatcher?(): WatsonFlowWatch | undefined;
 }

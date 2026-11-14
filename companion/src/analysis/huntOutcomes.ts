@@ -207,6 +207,22 @@ export function fillOutcome(
   });
 }
 
+// fillOutcome for a single-host collection, keyed by its flow + client. A no-op on an outcome that is
+// already collected, so a replay after a restart never adds its event counts twice. Pure.
+export function fillOutcomeByFlow(
+  outcomes: readonly HuntOutcome[],
+  ref: { flowId: string; clientId: string },
+  result: HuntCollectResult,
+): HuntOutcome[] {
+  const KEY = "\u0000flow";
+  const hit = (o: HuntOutcome) => !!ref.flowId && o.flowId === ref.flowId && o.clientId === ref.clientId;
+  return outcomes.map((o) => {
+    if (!hit(o) || o.status === "collected") return o;
+    const { huntId: _key, ...filled } = fillOutcome([{ ...o, huntId: KEY }], KEY, result)[0];
+    return o.huntId ? { ...filled, huntId: o.huntId } : filled;
+  });
+}
+
 // The set of VQL fingerprints already deployed — the deterministic exclusion list for new suggestions
 // (a hunt the analyst already deployed is never shown again). Bundles (no fingerprint) don't contribute.
 export function deployedFingerprints(outcomes: readonly HuntOutcome[]): Set<string> {

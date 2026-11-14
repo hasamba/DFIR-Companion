@@ -162,6 +162,29 @@ describe("applying a velo_launch proposal", () => {
     });
   });
 
+  it("saves a collection's result watch with its ids and starts it; a fleet hunt gets none", async () => {
+    await seed(collectionProposal(), huntProposal());
+    const started: string[] = [];
+    const launch: Launch = async (req) =>
+      req.mode === "collection"
+        ? { phase: "launched", launched: { flowId: "F.SAMPLE", clientId: CLIENTS[0].clientId } }
+        : { phase: "launched", launched: { huntId: "H.SAMPLE1" } };
+    const d = deps(launch);
+    const withHook = {
+      ...d,
+      veloLaunch: { ...d.veloLaunch!, onLaunched: (_c: string, id: string) => started.push(id) },
+    };
+    await applyWatsonProposal(withHook, CASE, "wp-coll", "apply");
+    await applyWatsonProposal(withHook, CASE, "wp-hunt", "apply");
+    expect(started).toEqual(["wp-coll"]);
+    const watch = (await stored("wp-coll")).watch;
+    expect(watch?.state).toBe("watching");
+    expect(Date.parse(watch!.deadline) - Date.parse((await stored("wp-coll")).launched!.at)).toBe(
+      30 * 60_000,
+    );
+    expect((await stored("wp-hunt")).watch).toBeUndefined();
+  });
+
   it("refuses a second apply of the same proposal without launching again", async () => {
     await seed(huntProposal());
     await applyWatsonProposal(deps(), CASE, "wp-hunt", "apply");

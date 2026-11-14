@@ -54,6 +54,7 @@ import { createServerClients } from "./serverSetClients.js";
 import { buildProvider } from "./aiProviders.js";
 import { buildWatsonProvider } from "./watsonProvider.js";
 import { createWatsonCaseEvents } from "./watsonCaseEvents.js";
+import { noteWatsonFleetResult } from "./watsonVeloResults.js";
 import { AiControlStore } from "../analysis/aiControl.js";
 import { spawnToolRunner } from "../integrations/tools/toolRunner.js";
 import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "../http/originGuard.js";
@@ -421,6 +422,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     huntOutcomeStore,
     huntRunSnapshotStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),
+    onVeloHuntCollected: (caseId, r) =>
+      void noteWatsonFleetResult(watsonChatStore, watsonEvents.wake, caseId, r, warnLine),
     veloMonitorStore,
     onVeloMonitor: (caseId) => hub.broadcastTo(caseId, { type: "velo_monitor_changed" }),
     veloMonitorPollSeconds,

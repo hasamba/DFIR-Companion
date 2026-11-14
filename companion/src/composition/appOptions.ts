@@ -532,6 +532,8 @@ export interface AppOptions {
   artifactBundleStore?: ArtifactBundleStore;
   veloHuntStore?: VeloHuntStore;
   onVeloHunt?: (caseId: string) => void;
+  // A fleet hunt's collect filled its outcome (rows or none): Watson notes its own hunt's result (Task 5).
+  onVeloHuntCollected?: (caseId: string, r: { huntId: string; rows: number; added: number }) => void;
   // Durable background-job ledger (#225, #380): tracks heavy async operations across restarts.
   // Jobs appear in the dashboard Jobs panel + /api/jobs. Constructed in startServer (its
   // onJob hook WS-broadcasts job_changed); absent in createApp-only unit tests + scripts/* pipelines.

@@ -15,12 +15,25 @@ export type WatsonCaseEventNote = Omit<WatsonCaseEvent, "at">;
 export function withCaseEvent(chat: WatsonChat, event: WatsonCaseEventNote, at: string): WatsonChat {
   const last = chat.pendingCaseEvents[chat.pendingCaseEvents.length - 1];
   if (last && last.kind === event.kind && last.text === event.text) {
-    if (last.at === at) return chat;
-    return { ...chat, pendingCaseEvents: [...chat.pendingCaseEvents.slice(0, -1), { ...last, at }] };
+    const ids = mergedIds(last.proposalIds, event.proposalIds);
+    if (last.at === at && ids.length === (last.proposalIds?.length ?? 0)) return chat;
+    const moved: WatsonCaseEvent = { ...last, at, ...(ids.length ? { proposalIds: ids } : {}) };
+    return { ...chat, pendingCaseEvents: [...chat.pendingCaseEvents.slice(0, -1), moved] };
   }
-  const noted: WatsonCaseEvent = { kind: event.kind, text: event.text, at };
+  const ids = mergedIds(undefined, event.proposalIds);
+  const noted: WatsonCaseEvent = {
+    kind: event.kind,
+    text: event.text,
+    at,
+    ...(ids.length ? { proposalIds: ids } : {}),
+  };
   return {
     ...chat,
     pendingCaseEvents: [...chat.pendingCaseEvents, noted].slice(-WATSON_PENDING_EVENTS_MAX),
   };
+}
+
+/** A repeat keeps the held-promotion proposal ids of both notes (a `hunt` event's), each once. */
+function mergedIds(a: readonly string[] | undefined, b: readonly string[] | undefined): string[] {
+  return [...new Set([...(a ?? []), ...(b ?? [])])];
 }

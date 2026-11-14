@@ -161,6 +161,24 @@ export interface WatsonVeloLaunchProposal extends WatsonProposalCommon {
   launched?: { huntId?: string; clientId?: string; flowId?: string; at: string; by: string };
   /** The launch intent, saved before the call: `reserved` is exactly what a retry may release. */
   launching?: WatsonLaunchIntent;
+  /** Watson reading the result back (Task 5): a collection's watch, or a fleet hunt's one note. */
+  watch?: WatsonLaunchWatch;
+}
+
+/**
+ * Reading a launch's result back. `ingested` is claimed BEFORE the rows are read and `notified` is
+ * set with the `hunt` event, each inside one chat update, so neither ever happens twice. `rows`,
+ * `added` and `proposalIds` are saved with the ingest so a restart can still send the event.
+ */
+export interface WatsonLaunchWatch {
+  deadline: string;
+  state: "watching" | "finished" | "failed" | "timeout";
+  ingested?: true;
+  notified?: true;
+  rows?: number;
+  added?: number;
+  proposalIds?: string[];
+  error?: string;
 }
 
 export interface WatsonLaunchIntent {
@@ -205,9 +223,11 @@ export interface WatsonPaste {
 
 /** Something that changed in the case since Watson's last round (spec §4.6). */
 export interface WatsonCaseEvent {
-  kind: "import" | "notebook" | "star" | "other";
+  kind: "import" | "notebook" | "star" | "hunt" | "other";
   text: string;
   at: string;
+  /** A `hunt` event: the held-promotion proposals its result created (Auto may apply them). */
+  proposalIds?: string[];
 }
 
 /** Why automatic reactions stopped; the next analyst message clears it. */

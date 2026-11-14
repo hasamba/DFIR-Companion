@@ -64,6 +64,11 @@ export class WatsonReactor {
     this.arm(caseId, 0);
   }
 
+  /** (Re)start the quiet window for an event the caller has already saved on the chat itself. */
+  wake(caseId: string): void {
+    this.arm(caseId, 0);
+  }
+
   /** Cancel every window (server shutdown); later events are only noted. */
   stop(): void {
     this.stopped = true;
@@ -117,8 +122,15 @@ export class WatsonReactor {
     }
     if (decision === "skip") return;
     const allowWrites = !chat.pendingCaseEvents.some((e) => e.kind === "import");
+    const held = chat.pendingCaseEvents.flatMap((e) => (e.kind === "hunt" ? (e.proposalIds ?? []) : []));
+    const input = {
+      text: "",
+      reaction: true,
+      allowWrites,
+      ...(held.length ? { heldProposalIds: held } : {}),
+    };
     try {
-      await this.deps.runRound(caseId, { text: "", reaction: true, allowWrites });
+      await this.deps.runRound(caseId, input);
     } catch (err) {
       const pause = pauseOf(err);
       if (!pause) throw err;

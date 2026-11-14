@@ -666,6 +666,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               runDiff,
             }),
           );
+          options.onVeloHuntCollected?.(caseId, { huntId: job.huntId, rows: totalRows, added: addedEvents });
         } catch (e) {
           logLine(`[hunt-outcomes] fill failed for hunt ${job.huntId}: ${(e as Error).message}`);
         }

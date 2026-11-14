@@ -8,6 +8,7 @@ import type { WatsonChat, WatsonProposal, WatsonVeloLaunchProposal } from "../ty
 import { ALREADY_RAN, checkLaunch } from "../velo/launchCheck.js";
 import { clearInFlight, markInFlight } from "../velo/launchInFlight.js";
 import type { VeloLaunchDeps, VeloLaunchOutcome, VeloLaunchRequest } from "../velo/launchTypes.js";
+import { initialWatch } from "../velo/launchWatch.js";
 import { loadVeloFleet } from "../velo/veloFleet.js";
 import type { WatsonWriter, WriterDeps } from "./writerTypes.js";
 
@@ -203,13 +204,16 @@ async function settle(
   const at = new Date().toISOString();
   if (outcome.launched) {
     const launched = { ...outcome.launched, at, by: actor };
+    const watch = initialWatch(p, launched, at); // saved WITH the ids: no applied collection goes unwatched
     const chat = await saveOutcome(deps, caseId, p.id, (s) => ({
       ...s,
       status: "applied",
       launched,
+      ...(watch ? { watch } : {}),
       appliedAt: at,
       appliedBy: actor,
     }));
+    if (watch) v.onLaunched?.(caseId, p.id);
     await audit(deps, caseId, p, actor, true);
     return { chat };
   }

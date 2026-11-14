@@ -27,5 +27,12 @@ export interface VeloLaunchDeps {
   fleet: VeloFleetSeams;
   matchClient: LaunchContext["matchClient"];
   fingerprints: Pick<HuntFingerprintStore, "load" | "reserve" | "release">;
+  /** A launch was saved as applied: start watching for its result (a collection's flow). */
+  onLaunched?(caseId: string, proposalId: string): void;
   log?(line: string): void;
+}
+
+/** What starts watching an applied collection for its result (composition/watsonVeloResults.ts). */
+export interface WatsonFlowWatch {
+  watch(caseId: string, proposalId: string): void;
 }

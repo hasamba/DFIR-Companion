@@ -11,7 +11,7 @@ export const HELD_MAX = 200;
 
 /** What ingesting a paste did: rows from a known format (with the held rows), or why it stayed text. */
 export type WatsonPasteIngest =
-  { kind: string; rows: number; held: ForensicEvent[] } | { kind: "text"; reason: string };
+  { kind: string; rows: number; held: ForensicEvent[]; added?: number } | { kind: "text"; reason: string };
 
 export const isTextIngest = (i: WatsonPasteIngest): i is { kind: "text"; reason: string } => "reason" in i;
 

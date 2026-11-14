@@ -112,6 +112,19 @@ const veloLaunchProposal = z.object({
     })
     .optional()
     .catch(undefined),
+  watch: z
+    .object({
+      deadline: z.string(),
+      state: z.enum(["watching", "finished", "failed", "timeout"]),
+      ingested: z.literal(true).optional().catch(undefined),
+      notified: z.literal(true).optional().catch(undefined),
+      rows: z.number().optional().catch(undefined),
+      added: z.number().optional().catch(undefined),
+      proposalIds: z.array(z.string()).optional().catch(undefined),
+      error: z.string().optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
 });
 
 export const proposalSchema: z.ZodType<WatsonProposal, z.ZodTypeDef, unknown> = z.union([

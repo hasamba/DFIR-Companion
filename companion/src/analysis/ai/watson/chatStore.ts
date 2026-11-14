@@ -39,9 +39,10 @@ const pasteSchema = z.object({
 });
 
 const caseEventSchema = z.object({
-  kind: z.enum(["import", "notebook", "star", "other"]).catch("other"),
+  kind: z.enum(["import", "notebook", "star", "hunt", "other"]).catch("other"),
   text: z.string(),
   at: z.string().catch(""),
+  proposalIds: z.array(z.string()).optional().catch(undefined),
 });
 
 /** A phase-1 chat stored each case event as a bare line: it loads as kind "other", time unknown. */

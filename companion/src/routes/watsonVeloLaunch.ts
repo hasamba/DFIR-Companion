@@ -43,6 +43,7 @@ export function watsonVeloLaunchDeps(ctx: RouteContext): VeloLaunchDeps {
     },
     matchClient,
     fingerprints: fingerprintStoreFor(store),
+    onLaunched: (caseId, id) => ctx.watsonFlowWatcher?.()?.watch(caseId, id),
     log: (line) => ctx.serverLogger.info(line),
   };
 }

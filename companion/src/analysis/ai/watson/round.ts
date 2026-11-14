@@ -53,6 +53,12 @@ export interface WatsonRoundInput {
    * cost/token limit is thrown like a Presidio hold so the reactor can pause.
    */
   reaction?: boolean;
+  /**
+   * A reaction to the result of Watson's own launch: the held-promotion proposals that result
+   * created (from the pending `hunt` events). Only these, never older pending ones, may be applied
+   * by Auto in this round (Task 6).
+   */
+  heldProposalIds?: string[];
 }
 
 const searchSkipped = (why: string): string =>
