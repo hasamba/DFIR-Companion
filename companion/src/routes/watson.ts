@@ -22,7 +22,7 @@ import type { RouteContext } from "./context.js";
 import { caseVeloConnected, watsonProposalDeps, watsonRoundDeps } from "./watsonDeps.js";
 import { ingestWatsonPaste } from "./watsonPasteIngest.js";
 import { registerWatsonVeloLaunchRoutes } from "./watsonVeloLaunch.js";
-import { logActivity } from "../analysis/activityLog.js";
+import { logActivity, logActivityWithWarning } from "../analysis/activityLog.js";
 import {
   isWatsonRunMode,
   watsonModeDetail,
@@ -175,7 +175,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     try {
       const input = { text, actor: actorName(req), source: "dashboard" as const }; // may auto-launch (G12)
       const chat = await run.pipeline.watsonRound(caseId, input, run.deps);
-      return res.status(200).json(chat);
+      return res.status(200).json(withStalledLaunches(caseId, chat));
     } catch (err) {
       return sendWatsonError(res, err);
     } finally {
@@ -219,7 +219,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
         },
         run.deps,
       );
-      return res.status(200).json(chat);
+      return res.status(200).json(withStalledLaunches(caseId, chat));
     } catch (err) {
       return sendWatsonError(res, err);
     } finally {
@@ -330,10 +330,16 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       if (watsonRunMode(await ctx.getControl(caseId)) === mode) return res.status(200).json({ mode });
       const auth = requestAuthentication(req);
       const actor = actorName(req);
-      // The audit is written BEFORE the switch (G15): a switch is never left unaudited, and a
-      // failed switch is audited as failed.
+      // The audit is written BEFORE the switch (G15): a switch is never left unaudited (an audit
+      // that cannot be written refuses the switch), and a failed switch is audited as failed.
       const entry = { actor, category: "ai" as const, action: "watson.mode", detail: watsonModeDetail(mode) };
-      await logActivity(options.activityLogStore, options.onActivity, caseId, entry);
+      const unaudited = await logActivityWithWarning(
+        options.activityLogStore,
+        options.onActivity,
+        caseId,
+        entry,
+      );
+      if (unaudited) return res.status(503).json({ error: `Watson's mode was not changed: ${unaudited}` });
       try {
         await ctx.setControl(caseId, watsonModePatch(mode, { id: auth?.identity.id, name: actor }));
       } catch (err) {
@@ -354,7 +360,9 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     if (!options.watsonChatStore) return res.status(501).json({ error: "Watson is not configured" });
     if (await caseMissing(caseId)) return res.status(404).json({ error: "case not found" });
     try {
-      return res.status(200).json(await startNewThread(options.watsonChatStore, caseId));
+      return res
+        .status(200)
+        .json(withStalledLaunches(caseId, await startNewThread(options.watsonChatStore, caseId)));
     } catch (err) {
       return sendWatsonError(res, err);
     } finally {

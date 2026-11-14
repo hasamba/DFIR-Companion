@@ -214,6 +214,23 @@ describe("G6 / G20 — the app's watcher (real wiring) reads from the launch's s
     expect(calls).toEqual(["A"]);
   });
 
+  it("never guesses the case's current set for a launch with no recorded set", async () => {
+    await seed(collection());
+    await chatStore.update(CASE, (c) => ({
+      ...c,
+      proposals: c.proposals.map((p) =>
+        p.kind === "velo_launch"
+          ? { ...p, watch: { deadline: new Date(0).toISOString(), state: "watching" as const } }
+          : p,
+      ),
+    }));
+    const w = createAppWatsonFlowWatcher(ctxWith({}), () => {})!;
+    await w.resume(CASE);
+    w.stop();
+    expect(calls).toEqual([]);
+    expect((await huntTexts())[0]).toContain(NO_LAUNCH_SERVER);
+  });
+
   it("fails with the Velociraptor pointer when the launch's set no longer exists", async () => {
     await seed(collection({ serverSetId: "set-gone" }));
     await chatStore.update(CASE, (c) => ({

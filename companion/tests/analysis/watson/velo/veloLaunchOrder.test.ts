@@ -218,3 +218,30 @@ describe("G20 — apply racing reject on the same launch", () => {
     }
   });
 });
+
+describe("G5 — retry after a crash between the reservation and its record (fail closed)", () => {
+  it("releases nothing it cannot prove it reserved: the re-apply is refused, never run twice", async () => {
+    await seed(collection());
+    const keys = launchFingerprints(PSLIST, HOST);
+    await fps.reserve(CASE, keys); // the reservation reached the disk...
+    await chatStore.update(CASE, (c) => ({
+      ...c,
+      proposals: c.proposals.map((p) =>
+        p.kind === "velo_launch"
+          ? {
+              ...p,
+              status: "launching" as const,
+              launching: { at: "", by: "x", fingerprint: p.fingerprint, planned: keys, reserved: [] },
+            }
+          : p,
+      ),
+    })); // ...but its record did not
+    await markStrandedLaunches(chatStore, CASE);
+    const resolveDeps = { chatStore, activity: new ActivityLogStore(store), fingerprints: fps };
+    await resolveVeloLaunch(resolveDeps, CASE, "wp-coll", "retry", "Dana Analyst");
+    expect((await stored("wp-coll")).status).toBe("pending");
+    expect([...(await fps.load(CASE))]).toEqual(expect.arrayContaining(keys)); // not released
+    await expect(applyWatsonProposal(deps(), CASE, "wp-coll", "apply")).rejects.toThrow(/already ran/);
+    expect(calls).toHaveLength(0);
+  });
+});

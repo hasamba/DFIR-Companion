@@ -1900,11 +1900,20 @@ export const FEATURES: Feature[] = [
   {
     // Watson's Velociraptor launch card, "connected" chip, Auto listing and the uncertain-launch answer.
     file: "dashboard-watson-velo.js",
-    publish: ["watsonVeloCardHtml", "watsonVeloAutoListHtml", "watsonVeloResolve", "watsonVeloChipSync"],
+    publish: [
+      "watsonVeloCardHtml",
+      "watsonVeloAutoListHtml",
+      "watsonVeloResolve",
+      "watsonVeloChipSync",
+      "watsonCaseReset",
+    ],
     private: [
       "AUTO_HEADS",
       "UNCERTAIN",
       "NO_UNDO",
+      "NO_IDS",
+      "STALLED",
+      "hasIds",
       "num",
       "rowsText",
       "where",

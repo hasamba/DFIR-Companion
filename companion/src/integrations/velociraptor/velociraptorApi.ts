@@ -488,6 +488,9 @@ function buildHuntArtifact(
   sources: string[],
   description: string,
 ): string {
+  // The artifact is embedded in a raw '''…''' literal on the server: a ''' would end it (G2).
+  if (statements.some((q) => q.includes("'''")))
+    throw new Error("the VQL may not contain ''' (a triple-quoted string)");
   const blocks = statements
     .map(
       (q, i) =>

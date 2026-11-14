@@ -8,7 +8,7 @@ import {
 } from "../integrations/velociraptor/velociraptorApi.js";
 import type { RouteContext } from "../routes/context.js";
 import { frozenCaseRefusal } from "../routes/importCaseGuard.js";
-import { resolveCaseVelo, resolveSetVelo } from "../routes/veloServers.js";
+import { resolveSetVelo } from "../routes/veloServers.js";
 import { ingestWatsonPaste } from "../routes/watsonPasteIngest.js";
 import { warnLine } from "../logging/serverLogger.js";
 import { fileIngestStage } from "./watsonFlowStage.js";
@@ -109,11 +109,12 @@ export function createAppWatsonFlowWatcher(
   const chatStore = options.watsonChatStore;
   if (!chatStore) return undefined;
   // The server set the collection was LAUNCHED on, never the case's current one (final review G6):
-  // a case moved to another set mid-collection still reads from where the flow lives. A launch from
-  // before the set was recorded falls back to the case's set.
-  const client = (caseId: string, p: WatsonVeloLaunchProposal): VelociraptorClient | null => {
+  // a case moved to another set mid-collection still reads from where the flow lives. A launch with
+  // no recorded set is never guessed onto the case's current one: it fails with the pointer text.
+  const client = (_caseId: string, p: WatsonVeloLaunchProposal): VelociraptorClient | null => {
     const setId = p.launched?.serverSetId;
-    const t = setId ? resolveSetVelo(ctx, setId) : resolveCaseVelo(ctx, caseId);
+    if (!setId) return null;
+    const t = resolveSetVelo(ctx, setId);
     return t.ok ? t.vc.client : null;
   };
   return new WatsonFlowWatcher({

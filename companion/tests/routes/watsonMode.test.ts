@@ -93,3 +93,25 @@ describe("the mode switch audit comes first (final review G15)", () => {
     expect(entries[0].outcome).toBe("error");
   });
 });
+
+describe("an audit that cannot be written refuses the switch (final review G15)", () => {
+  it("leaves the mode unchanged", async () => {
+    const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-watson-mode-noaudit-")));
+    await store.createCase({ caseId: CASE, name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(store);
+    await stateStore.save(emptyState(CASE));
+    const activity = new ActivityLogStore(store);
+    activity.add = async () => {
+      throw new Error("EROFS: read-only file system");
+    };
+    const app = createApp(store, {
+      stateStore,
+      activityLogStore: activity,
+      watsonChatStore: new WatsonChatStore(store),
+    });
+    const res = await request(app).post(`/cases/${CASE}/watson/mode`).send({ mode: "auto" });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/not changed/);
+    expect((await request(app).get(`/cases/${CASE}/watson`)).body.runMode).toBe("approve");
+  });
+});
