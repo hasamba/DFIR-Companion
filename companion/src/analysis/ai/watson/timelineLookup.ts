@@ -29,7 +29,7 @@ const firstLabel = (h: string): string => h.split(".")[0];
  * (the merges and fleet names synthesis uses), or a bare short name against an FQDN with that first
  * label. Two FQDNs never match on their first label alone (web.prod.x is not web.dev.x).
  */
-function sameHost(a: string, b: string, aliases: HostAliasIndex | undefined): boolean {
+export function sameHost(a: string, b: string, aliases: HostAliasIndex | undefined): boolean {
   const x = aliases ? resolveHost(aliases, a) : canonicalHostName(a);
   const y = aliases ? resolveHost(aliases, b) : canonicalHostName(b);
   if (x === y) return true;
