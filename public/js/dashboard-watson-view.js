@@ -188,7 +188,7 @@
   function composerHtml() {
     return (
       `<div class="watson-composer">` +
-      `<textarea class="watson-input" rows="2" placeholder="Ask Watson… (Ctrl+Enter to send)" aria-label="Message Watson"></textarea>` +
+      `<textarea class="watson-input" rows="2" placeholder="Ask Watson… (Enter to send, Ctrl+Enter for a new line)" aria-label="Message Watson"></textarea>` +
       `<div class="watson-paste-box"><textarea class="watson-paste-text" rows="5" placeholder="Paste evidence text here" aria-label="Paste evidence"></textarea>` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="pasteSend">Send paste</button></div>` +
       `<div class="watson-actions">` +
@@ -228,6 +228,24 @@
     );
   }
 
+  // The composer's Enter key: "send", "newline" (Ctrl, Cmd or Shift held) or null (not Enter, or an
+  // IME composition is still open, so Enter belongs to the input method).
+  function composerKey(e) {
+    if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return null;
+    return e.ctrlKey || e.metaKey || e.shiftKey ? "newline" : "send";
+  }
+
+  // A line break at the caret (replacing any selection), the caret left after it.
+  function insertNewline(ta) {
+    const start = Number.isInteger(ta.selectionStart) ? ta.selectionStart : ta.value.length;
+    const end = Number.isInteger(ta.selectionEnd) ? ta.selectionEnd : start;
+    if (typeof ta.setRangeText === "function") return ta.setRangeText("\n", start, end, "end");
+    ta.value = ta.value.slice(0, start) + "\n" + ta.value.slice(end);
+    ta.selectionStart = ta.selectionEnd = start + 1;
+  }
+
+  window.watsonComposerKey = composerKey;
+  window.watsonInsertNewline = insertNewline;
   window.watsonTurnHtml = turnHtml;
   window.watsonBoardHtml = boardHtml;
   window.watsonEarlierButtonHtml = earlierButtonHtml;

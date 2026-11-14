@@ -35,6 +35,8 @@ class FakeEl {
 }
 
 const KEY = "dfir.watson.panel";
+let recentKeyListeners: ((e: never) => void)[] = [];
+const lastKeyListeners = () => recentKeyListeners as ((e: unknown) => void)[];
 
 const headerBox = { bottom: 80 };
 const rootVars: Record<string, string> = {};
@@ -71,6 +73,7 @@ function setup(
   };
   const caseInput = { value: "c1" };
   const keyListeners: ((e: { key: string; target?: unknown }) => void)[] = [];
+  recentKeyListeners = keyListeners;
   const written: Record<string, string> = { ...opts.stored };
   const document = {
     body,
@@ -1111,5 +1114,70 @@ describe("risky launch through the panel's verbs (Task 9)", () => {
     const apply = calls.find((c) => String(c[0]).endsWith("/watson/proposals/wp-r/apply"));
     expect(apply).toBeDefined();
     expect(JSON.parse((apply![1] as { body: string }).body)).toEqual({ acceptRisk: true });
+  });
+});
+
+describe("Watson composer keys", () => {
+  // A fake .watson-input whose root finds itself, so send() reads it.
+  function composer(value: string, caret = value.length) {
+    const ta = {
+      value,
+      selectionStart: caret,
+      selectionEnd: caret,
+      classList: { contains: (c: string) => c === "watson-input" },
+      closest: (): unknown => ({ querySelector: () => ta }),
+    };
+    return ta;
+  }
+  function keyed() {
+    const calls: string[] = [];
+    const fetch = async (url: string, init?: { method?: string }) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      return response(200, chatWith([]));
+    };
+    const { api } = setup({ fetch });
+    api.initWatson();
+    return { calls };
+  }
+  const fire = (target: unknown, mods: Record<string, unknown> = {}) => {
+    let prevented = false;
+    const e = { key: "Enter", target, preventDefault: () => (prevented = true), ...mods };
+    for (const cb of lastKeyListeners()) cb(e);
+    return prevented;
+  };
+
+  it("Enter sends the message", async () => {
+    const k = keyed();
+    const ta = composer("who ran it?");
+    expect(fire(ta)).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(k.calls).toContain("POST /cases/c1/watson/message");
+    expect(ta.value).toBe("");
+  });
+
+  it("Ctrl+Enter, Cmd+Enter and Shift+Enter add a line at the caret and do not send", async () => {
+    const k = keyed();
+    for (const mods of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }]) {
+      const ta = composer("abcd", 2);
+      expect(fire(ta, mods)).toBe(true);
+      expect(ta.value).toBe("ab\ncd");
+      expect(ta.selectionStart).toBe(3);
+      expect(ta.selectionEnd).toBe(3);
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    expect(k.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+  });
+
+  it("does not send during an IME composition, a blank message, or from the paste box", async () => {
+    const k = keyed();
+    const ta = composer("こんにちは");
+    expect(fire(ta, { isComposing: true })).toBe(false);
+    expect(fire(ta, { keyCode: 229 })).toBe(false);
+    fire(composer("   "));
+    const paste = { ...composer("data"), classList: { contains: (c: string) => c === "watson-paste-text" } };
+    expect(fire(paste)).toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(k.calls.filter((c) => c.startsWith("POST"))).toEqual([]);
+    expect(ta.value).toBe("こんにちは");
   });
 });

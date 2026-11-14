@@ -379,10 +379,10 @@
     }
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && !e.defaultPrevented && !wNoAi && wState === "full") setWatsonPanelState("open");
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.target.classList && e.target.classList.contains("watson-input")) {
-        e.preventDefault();
-        send(e.target);
-      }
+      const k = e.target && e.target.classList && e.target.classList.contains("watson-input") ? watsonComposerKey(e) : null;
+      if (k) e.preventDefault();
+      if (k === "send") send(e.target);
+      else if (k === "newline") watsonInsertNewline(e.target);
     });
     renderWatson();
   }

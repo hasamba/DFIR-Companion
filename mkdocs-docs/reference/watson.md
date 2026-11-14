@@ -69,6 +69,8 @@ An undo does not wake Watson.
 
 ## A round
 
+In the message box, press **Enter** to send. Press **Ctrl+Enter** (or **Shift+Enter**, or **Cmd+Enter** on a Mac) to start a new line.
+
 Each time you send a message, Watson answers with three parts:
 
 1. **Working on** — the question or lead Watson is following.
