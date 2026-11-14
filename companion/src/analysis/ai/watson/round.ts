@@ -25,11 +25,12 @@ import {
   WATSON_REACTION_PROMPT,
   withReactionResult,
 } from "./reactionState.js";
-import { autoAfterRound, carriedHeldIds } from "./autoApply.js";
+import { autoAfterRound, carriedHeldIds, type WatsonRoundSource } from "./autoApply.js";
 import { mergeOutcome, type Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
 import { withVeloLaunch } from "./velo/veloLaunchProposals.js";
+import { withRoundInventory } from "./velo/veloFleet.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
 export { WatsonAiOff, WatsonCostLimitReached, type WatsonRoundContext } from "./roundContext.js";
@@ -61,8 +62,11 @@ export interface WatsonRoundInput {
   heldProposalIds?: string[];
   /** The held promotions this message's paste created (routes/watson.ts): Auto may apply them. */
   pasteProposalIds?: string[];
-  /** Where the message came from. A chat-bot command (`/dfir ask`) never launches in Auto mode. */
-  source?: "slash";
+  /**
+   * Where the message came from. Only a message an analyst sent in the dashboard's Watson panel
+   * ("dashboard", set by routes/watson.ts) may launch in Auto mode; every other source holds (G12).
+   */
+  source?: WatsonRoundSource;
 }
 
 const searchSkipped = (why: string): string =>
@@ -81,7 +85,7 @@ export function runWatsonRound(
   input: WatsonRoundInput,
 ): Promise<WatsonChat> {
   const prev = chains.get(caseId) ?? Promise.resolve();
-  const run = prev.then(() => runRound(ctx, caseId, input));
+  const run = prev.then(() => runRound(withRoundInventory(ctx), caseId, input)); // one inventory read (G16)
   const tail = run.catch(() => undefined);
   chains.set(caseId, tail);
   void tail.then(() => {
@@ -165,7 +169,7 @@ async function runRound(
   const round = {
     turnId,
     reaction,
-    chatBot: input.source === "slash",
+    ...(input.source ? { source: input.source } : {}),
     heldIds: mayWrite ? carriedHeldIds(reaction, input.heldProposalIds, outcome.shownEvents) : [],
     ...(pasteId ? { paste: { pasteId, proposalIds: input.pasteProposalIds ?? [] } } : {}),
   };

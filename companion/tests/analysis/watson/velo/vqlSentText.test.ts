@@ -81,3 +81,13 @@ describe("the prompt teaches the shape rules", () => {
     expect(veloRulesText()).toContain("no triple-quoted strings");
   });
 });
+
+describe("the prompt tells the truth about approval in both modes (G9)", () => {
+  it("says a fleet hunt always waits and a collection may launch in Auto", async () => {
+    const { veloRulesText } = await import("../../../../src/analysis/ai/watson/velo/veloPrompt.js");
+    const t = veloRulesText();
+    expect(t).not.toContain("The analyst approves it first.");
+    expect(t).toContain("A fleet hunt always waits for the analyst's approval");
+    expect(t).toContain("unless the\ncase is in Auto mode");
+  });
+});

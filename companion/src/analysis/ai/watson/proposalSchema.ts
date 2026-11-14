@@ -103,6 +103,7 @@ const veloLaunchProposal = z.object({
     })
     .optional()
     .catch(undefined),
+  resolvedBy: z.string().optional().catch(undefined),
   launching: z
     .object({
       at: z.string(),

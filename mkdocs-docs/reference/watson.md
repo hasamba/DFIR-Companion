@@ -147,13 +147,15 @@ Watson refuses, and does not guess, in these cases:
 
 **A launch cannot be undone.** Once Velociraptor has started a collection or hunt, Watson cannot stop it.
 
-If Watson cannot tell whether a launch ran (for example after a crash or a network error), the card says so. Check Velociraptor, then choose **Mark launched** or **Try again**. Watson never retries by itself.
+If Watson cannot tell whether a launch ran (for example after a crash or a network error), the card says so. Check Velociraptor, then choose **Mark as launched** or **Try again**. Watson never retries by itself. A card that stays on *Launching* after the companion stopped mid-launch offers the same two choices.
+
+A launch you marked as launched has no hunt or flow id that Watson knows. Its card says so, and Watson does not read its result: import that result from Velociraptor yourself.
 
 ### What VQL Watson may use
 
 Watson may only use a reviewed, read-only list of plugins, functions, artifacts and WMI classes. Anything else is blocked: running commands, writing or uploading, network calls, network paths and URLs, and queries built at run time. When Watson writes VQL that uses something blocked, its turn names what was blocked and shows the VQL with **Copy**. You can then run it by hand in Velociraptor if you decide it is safe.
 
-Two practical limits help Watson stay inside the list: every argument has a name, and file paths are plain quoted text with forward slashes.
+Two practical limits help Watson stay inside the list: every argument has a name, and file paths are plain quoted text with forward slashes. Watson's VQL also has no comments, no triple-quoted strings and no carriage returns: Velociraptor could read those differently from the check, so they are blocked.
 
 ### Approve and Auto
 
@@ -167,20 +169,24 @@ Any analyst with write access to the case can switch the mode. Switching to Auto
 In Auto, Watson:
 
 - applies its own case writes, from every round (a reaction to an import still changes Key Questions only, as before)
-- launches single-host collections from messages you type in the dashboard, any number of them
+- applies the tagger's promotions from the results of its own single-host collections, and from a file you paste in that round
+- launches single-host collections from messages you type or files you paste in the dashboard's Watson panel, any number of them
 
 In Auto, Watson never:
 
 - starts a fleet-wide hunt (those always ask)
 - launches from a round it started itself, such as a reaction or a round that reads its own results
-- launches from a `/dfir ask` sent through a chat bot
+- launches from a `/dfir ask` sent through a chat bot, or from any round that did not start from the Watson panel
+- acts on a case that was closed or archived while the round ran
 
 Every Auto action is listed in the chat with the exact VQL, and is logged as **Watson (Auto)** with who switched Auto on and when. Switching back to Approve stops the rest of the actions.
 
 ### Results coming back
 
 - **A fleet hunt** is collected as for any hunt: the results are imported and a synthesis runs. Watson then reacts, and because an import arrived it proposes Key Question changes only.
-- **A single-host collection** is imported like a pasted file in a known format: the rows are graded, the tagger's promotions wait for your Apply, and no synthesis runs. Watson reacts and may propose case writes.
+- **A single-host collection** is imported like a pasted file in a known format: the rows are graded, the tagger's promotions wait for your Apply, and no synthesis runs. Watson reacts and may propose case writes. In Auto, the tagger's promotions from Watson's own collection results, and from a file you paste in that round, are applied automatically and listed in the chat.
+
+Watson reads a collection's results from the Velociraptor server it was launched on, even if the case moves to another server set meanwhile. If that server is no longer available, the message says the results are in Velociraptor.
 
 If the collection returned nothing, Watson reports that it found nothing. If the row limit cut a result, the message says so. If a result could not be read, or was interrupted, the message names the flow and the host and says the results are in Velociraptor and may not be in the case.
 
@@ -241,7 +247,7 @@ Watson's chat history stays out of state backups, so restoring a state backup do
 
 Watson does not yet:
 
-- run Velociraptor actions on servers other than Velociraptor
+- run queries on any platform other than Velociraptor
 - start fleet-wide hunts on its own
 - search the super-timeline
 - parse a generic CSV or log into timeline rows

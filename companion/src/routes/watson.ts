@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { withStalledLaunches } from "../analysis/ai/watson/velo/launchResolve.js";
 import { requestAuthentication } from "../auth/types.js";
 import { WATSON_TURN_TEXT_MAX } from "../analysis/ai/watson/chatStore.js";
 import { WATSON_PASTE_MAX_BYTES } from "../analysis/ai/watson/pasteSearch.js";
@@ -130,9 +131,12 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       const chat = await options.watsonChatStore.load(req.params.id);
       const runMode = watsonRunMode(await ctx.getControl(req.params.id));
       const veloConnected = caseVeloConnected(ctx, req.params.id);
-      return res
-        .status(200)
-        .json({ ...chat, providerConfigured: !!roundDeps() && !!options.pipeline, runMode, veloConnected });
+      return res.status(200).json({
+        ...withStalledLaunches(req.params.id, chat),
+        providerConfigured: !!roundDeps() && !!options.pipeline,
+        runMode,
+        veloConnected,
+      });
     } catch (err) {
       return sendPipelineError(res, err);
     }
@@ -169,7 +173,8 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     const run = await refuseBeforeWork(res, caseId);
     if (!run) return res;
     try {
-      const chat = await run.pipeline.watsonRound(caseId, { text, actor: actorName(req) }, run.deps);
+      const input = { text, actor: actorName(req), source: "dashboard" as const }; // may auto-launch (G12)
+      const chat = await run.pipeline.watsonRound(caseId, input, run.deps);
       return res.status(200).json(chat);
     } catch (err) {
       return sendWatsonError(res, err);
@@ -208,6 +213,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
         {
           text: note ? `${lead}\n${note}` : lead,
           actor,
+          source: "dashboard" as const,
           pasteId: paste.id,
           ...(heldIds.length ? { pasteProposalIds: heldIds } : {}),
         },
@@ -306,7 +312,8 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     try {
       const result = await addAnswerAsQuestion(deps, caseId, req.params.tid, actorName(req));
       options.onStateChanged?.(caseId);
-      return res.status(200).json({ chat: result.chat, state: { keyQuestions: result.state.keyQuestions } });
+      const chat = withStalledLaunches(caseId, result.chat);
+      return res.status(200).json({ chat, state: { keyQuestions: result.state.keyQuestions } });
     } catch (err) {
       return sendWatsonError(res, err);
     } finally {
@@ -323,13 +330,17 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       if (watsonRunMode(await ctx.getControl(caseId)) === mode) return res.status(200).json({ mode });
       const auth = requestAuthentication(req);
       const actor = actorName(req);
-      await ctx.setControl(caseId, watsonModePatch(mode, { id: auth?.identity.id, name: actor }));
-      await logActivity(options.activityLogStore, options.onActivity, caseId, {
-        actor,
-        category: "ai",
-        action: "watson.mode",
-        detail: watsonModeDetail(mode),
-      });
+      // The audit is written BEFORE the switch (G15): a switch is never left unaudited, and a
+      // failed switch is audited as failed.
+      const entry = { actor, category: "ai" as const, action: "watson.mode", detail: watsonModeDetail(mode) };
+      await logActivity(options.activityLogStore, options.onActivity, caseId, entry);
+      try {
+        await ctx.setControl(caseId, watsonModePatch(mode, { id: auth?.identity.id, name: actor }));
+      } catch (err) {
+        const failed = { ...entry, detail: `${entry.detail} (the switch failed)`, outcome: "error" as const };
+        await logActivity(options.activityLogStore, options.onActivity, caseId, failed);
+        throw err;
+      }
       return res.status(200).json({ mode });
     } catch (err) {
       return sendWatsonError(res, err);

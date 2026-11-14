@@ -52,6 +52,7 @@
       if (caseId === currentCase() && MODES.includes(body.mode)) wMode = body.mode;
     } catch (e) {
       alert("Could not switch Watson's mode: " + (e && e.message ? e.message : "network error"));
+      if (typeof loadWatson === "function") loadWatson(caseId); // the GET re-syncs the mode shown (G15)
     }
     paint();
   }

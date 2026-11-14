@@ -1,4 +1,4 @@
-import type { CaseFleetInventory } from "../../../velociraptorClientStore.js";
+import type { CaseFleetInventory, VeloClientInventory } from "../../../velociraptorClientStore.js";
 import type { LaunchClient } from "./launchCheck.js";
 
 // What a Watson round knows about the case's Velociraptor: whether the case has a server, and its
@@ -31,4 +31,20 @@ export async function loadVeloFleet(ctx: VeloFleetSeams, caseId: string): Promis
     .filter((r) => r.hostname || r.fqdn)
     .map((r) => ({ hostname: r.hostname || r.fqdn, fqdn: r.fqdn }));
   return { records, prompt: { hostCount: hosts.length, hosts } };
+}
+
+/**
+ * The same seams with the inventory read at most once per case for as long as they live: a round
+ * reads it for the prompt and again for the launch check, and both must see the same fleet (G16).
+ */
+export function withRoundInventory<T extends VeloFleetSeams>(ctx: T): T {
+  const inv = ctx.velociraptorClientStore;
+  if (!inv) return ctx;
+  const cache = new Map<string, Promise<VeloClientInventory>>();
+  const load = (caseId: string): Promise<VeloClientInventory> => {
+    const hit = cache.get(caseId) ?? inv.load(caseId);
+    cache.set(caseId, hit);
+    return hit;
+  };
+  return { ...ctx, velociraptorClientStore: { load } };
 }

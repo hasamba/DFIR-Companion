@@ -11,9 +11,11 @@ import type {
   WatsonChat,
   WatsonCoverage,
   WatsonPaste,
+  WatsonRequest,
   WatsonTurn,
   WatsonVeloLaunchProposal,
 } from "./types.js";
+import { vqlSizeProblem } from "../../vqlInput.js";
 
 // How a round's result is folded into the saved chat: the Outcome the model calls produced, the turn
 // built from it, and the unread-paste bookkeeping. Pure functions over the FRESH chat, so a paste or
@@ -114,7 +116,7 @@ export function mergeOutcome(
     text,
     ...(reply.workingOn ? { workingOn: reply.workingOn } : {}),
     ...(reply.learned ? { learned: reply.learned } : {}),
-    ...(reply.request ? { request: reply.request } : {}),
+    ...(reply.request ? { request: storedRequest(reply.request) } : {}),
     ...(reply.answer ? { answer: reply.answer } : {}),
     ...(outcome.coverage ? { coverage: outcome.coverage } : {}),
     ...(proposals.length ? { proposalIds: proposals.map((p) => p.id) } : {}),
@@ -147,4 +149,14 @@ function withUnreadable(chat: WatsonChat, outcome: Outcome, at: string): WatsonC
     text: `Watson could not read ${p.filename}. It stays stored as evidence — ask Watson to search it.`,
   };
   return { ...chat, unreadPasteIds, turns: [...chat.turns, note] };
+}
+
+/** The stored copy of a refused oversize VQL is clipped: it never ran, and the chat file stays small (G16). */
+export const REFUSED_VQL_KEEP = 2000;
+
+export function storedRequest(request: WatsonRequest): WatsonRequest {
+  if (request.kind !== "velociraptor" || !vqlSizeProblem(request.vql)) return request;
+  const more = request.vql.length - REFUSED_VQL_KEEP;
+  const vql = `${request.vql.slice(0, REFUSED_VQL_KEEP)}…(${more} more characters, refused as too long)`;
+  return { ...request, vql };
 }

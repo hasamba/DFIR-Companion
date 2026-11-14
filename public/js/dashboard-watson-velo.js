@@ -9,6 +9,10 @@
   const UNCERTAIN =
     "Watson cannot tell whether this ran. Check Velociraptor, then mark it launched or try again.";
   const NO_UNDO = "A launched hunt cannot be undone: it already ran on the endpoints.";
+  const NO_IDS =
+    "Marked as launched. Watson does not know this run's id and will not read its result; import it from Velociraptor.";
+  const STALLED =
+    "This launch was interrupted before Watson saved its outcome. Check Velociraptor, then mark it launched or try again.";
 
   const num = (n) => esc(String(Number(n) || 0));
   const rowsText = (n) => `${num(n)} row${Number(n) === 1 ? "" : "s"}`;
@@ -34,6 +38,9 @@
     return `Collected ${rowsText(w.rows)}${cut}.`;
   }
 
+  // A launch "marked as launched" by an analyst has no ids: Watson never reads its result (G8).
+  const hasIds = (l) => !!(l && (l.huntId || l.flowId));
+
   const where = (p) =>
     p.mode === "hunt" ? "Fleet-wide hunt — all enrolled clients" : `Collection on ${esc(p.hostname || "a host")}`;
 
@@ -42,12 +49,13 @@
 
   function bodyFor(p) {
     const lines = [];
-    if (p.status === "launching") lines.push(`<div class="watson-why">Launching…</div>`);
+    if (p.status === "launching" && p.stalled) lines.push(`<div class="watson-why watson-warn">${esc(STALLED)}</div>`);
+    else if (p.status === "launching") lines.push(`<div class="watson-why">Launching…</div>`);
     if (p.status === "applied") {
       const l = p.launched || {};
       lines.push(
         `<div class="watson-why">Launched by ${esc(l.by || p.appliedBy || "an analyst")} at ${timeHtml(l.at || p.appliedAt)}</div>`,
-        `<div class="watson-why" data-w-status="launch">${statusLine(p.watch)}</div>`,
+        `<div class="watson-why" data-w-status="launch">${hasIds(l) ? statusLine(p.watch) : esc(NO_IDS)}</div>`,
         `<div class="watson-why">${esc(NO_UNDO)}</div>`,
       );
     }
@@ -57,7 +65,7 @@
 
   function verbsFor(p) {
     if (p.status === "pending") return btn(p.id, "apply", "Launch") + btn(p.id, "reject", "Reject");
-    if (p.status === "uncertain")
+    if (p.status === "uncertain" || (p.status === "launching" && p.stalled))
       return (
         btn(p.id, "resolveLaunch", "Mark as launched", ' data-outcome="launched"') +
         btn(p.id, "resolveLaunch", "Try again", ' data-outcome="retry"')
@@ -158,4 +166,9 @@
   window.watsonVeloAutoListHtml = autoListHtml;
   window.watsonVeloResolve = watsonVeloResolve;
   window.watsonVeloChipSync = watsonVeloChipSync;
+  // A case switch: no chip and Approve shown until the new case's GET says otherwise (G15, G19).
+  window.watsonCaseReset = () => {
+    watsonVeloChipSync({ veloConnected: false });
+    if (typeof watsonModeSync === "function") watsonModeSync({ runMode: "approve" });
+  };
 })();

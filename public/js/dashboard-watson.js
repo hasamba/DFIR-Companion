@@ -155,6 +155,7 @@
       wSeen = 0;
       wNotice = null;
       wCardErr.clear();
+      watsonCaseReset(); // the chip and the mode wait for this case's GET (G15, G19)
     }
     const seq = ++wSeq;
     return fetch(api(id, ""))

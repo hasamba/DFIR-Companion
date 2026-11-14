@@ -13,7 +13,6 @@ import { resolveCaseVelo, type VeloTarget } from "./veloServers.js";
 /** Who deployed: the analyst (Deploy button, or an approved Watson proposal) or an agent. */
 export interface DeployActor {
   name: string;
-  kind: "analyst" | "agent";
   /** Appended to every audit detail this deploy writes (Watson Auto: who switched Auto on, and when). */
   detailSuffix?: string;
 }
@@ -218,5 +217,5 @@ export async function deployAnalystHunt(
     return { status: 400, body: { error: RESERVED_SOURCE }, phase: "invalid" };
   }
   const body = { ...parseDeployHuntBody(raw), ...pickTiming(raw) };
-  return deployCaseHunt(ctx, caseId, body, { name: displayName ?? "analyst", kind: "analyst" });
+  return deployCaseHunt(ctx, caseId, body, { name: displayName ?? "analyst" });
 }

@@ -169,6 +169,10 @@ export interface WatsonVeloLaunchProposal extends WatsonProposalCommon {
   };
   /** The launch intent, saved before the call: `reserved` is exactly what a retry may release. */
   launching?: WatsonLaunchIntent;
+  /** The analyst who confirmed an uncertain launch ran ("Mark as launched"); `launched.by` stays the launcher (G10). */
+  resolvedBy?: string;
+  /** View-only (never stored): `launching`, but no live request owns it — the card offers the uncertain actions (G11). */
+  stalled?: true;
   /** Watson reading the result back (Task 5): a collection's watch, or a fleet hunt's one note. */
   watch?: WatsonLaunchWatch;
 }

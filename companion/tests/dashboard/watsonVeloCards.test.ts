@@ -74,7 +74,7 @@ describe("watsonVeloCardHtml", () => {
   });
 
   it("shows who launched, the live status and no Undo", () => {
-    const launched = { by: "Dana", at: "2026-11-14T10:00:00Z" };
+    const launched = { by: "Dana", at: "2026-11-14T10:00:00Z", flowId: "F.SAMPLE", clientId: "C.webserver1" };
     const card = (watch: unknown) => velo().watsonVeloCardHtml(base({ status: "applied", launched, watch }));
     const running = card({ deadline: "x", state: "watching" });
     expect(running).toContain("Launched by Dana at ");
@@ -89,6 +89,23 @@ describe("watsonVeloCardHtml", () => {
     );
     expect(card({ deadline: "x", state: "failed", error: HOSTILE })).toContain("&lt;img");
     expect(card({ deadline: "x", state: "timeout" })).toContain("Timed out");
+  });
+
+  it("a launch marked as launched (no ids) never claims to be running (G8)", () => {
+    const launched = { by: "Dana", at: "2026-11-14T10:00:00Z" };
+    const h = velo().watsonVeloCardHtml(base({ status: "applied", launched }));
+    expect(h).toContain(
+      "Marked as launched. Watson does not know this run&#39;s id and will not read its result; import it from Velociraptor.",
+    );
+    expect(h).not.toContain("Running");
+  });
+
+  it("a launching card no live request owns offers the uncertain answers (G11)", () => {
+    const h = velo().watsonVeloCardHtml(base({ status: "launching", stalled: true }));
+    expect(h).toContain("interrupted");
+    expect(h).toContain('data-outcome="launched"');
+    expect(h).toContain('data-outcome="retry"');
+    expect(h).not.toContain("Launching…");
   });
 
   it("an uncertain launch explains itself and offers both answers", () => {
@@ -190,6 +207,19 @@ describe("chip, launch time, listing and resolve", () => {
     api.watsonVeloChipSync({ proposals: [] });
     expect(slot.innerHTML).toContain("Velociraptor connected");
     api.watsonVeloChipSync({ veloConnected: false });
+    expect(slot.innerHTML).toBe("");
+  });
+
+  it("a case switch clears the chip until the new case's GET (G19)", () => {
+    const { slot, document } = chipEnv();
+    const api = loadDashboardModule<Velo & { watsonCaseReset(): void }>(
+      "dashboard-watson-velo.js",
+      ["dashboard-escape.js"],
+      { document },
+    );
+    api.watsonVeloChipSync({ veloConnected: true });
+    expect(slot.innerHTML).toContain("Velociraptor connected");
+    api.watsonCaseReset();
     expect(slot.innerHTML).toBe("");
   });
 

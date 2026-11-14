@@ -192,3 +192,29 @@ describe("G5 — launching is saved before the reservation", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("G20 — apply racing reject on the same launch", () => {
+  it("exactly one wins; a rejected launch never runs", async () => {
+    for (let i = 0; i < 5; i++) {
+      const id = `wp-race-${i}`;
+      const vql = `SELECT * FROM pslist() WHERE Pid = ${i}`;
+      const keys = launchFingerprints(vql, HOST);
+      await seed({ ...collection(id), vql, targetId: keys[0], fingerprint: keys[0], fingerprints: keys });
+      const before = calls.length;
+      const [apply, reject] = await Promise.allSettled([
+        applyWatsonProposal(deps(), CASE, id, "apply", "Dana Analyst"),
+        applyWatsonProposal(deps(), CASE, id, "reject", "Robin Lead"),
+      ]);
+      const wins = [apply, reject].filter((r) => r.status === "fulfilled");
+      expect(wins).toHaveLength(1);
+      const p = await stored(id);
+      if (reject.status === "fulfilled") {
+        expect(p?.status ?? "rejected").toBe("rejected"); // a settled card with no turn is pruned
+        expect(calls.length).toBe(before);
+      } else {
+        expect(p.status).toBe("applied");
+        expect(calls.length).toBe(before + 1);
+      }
+    }
+  });
+});

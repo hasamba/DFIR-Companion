@@ -1,13 +1,15 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ActivityLogStore } from "../../../src/analysis/activityLog.js";
 import { AiCostStore } from "../../../src/analysis/aiCost.js";
 import { AnonControlStore } from "../../../src/analysis/anonControl.js";
 import { analyzeRestored } from "../../../src/analysis/ai/providerCall.js";
 import { WATSON_AUTO_ACTOR, type WatsonAutoControl } from "../../../src/analysis/ai/watson/autoApply.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
+import { fingerprintStoreFor } from "../../../src/analysis/ai/watson/velo/fingerprintIndex.js";
+import { matchClient } from "../../../src/integrations/velociraptor/clientInventory.js";
 import { runWatsonRound, type WatsonRoundContext } from "../../../src/analysis/ai/watson/round.js";
 import type {
   WatsonCaseEvent,
@@ -78,13 +80,15 @@ const reply = JSON.stringify({
   memory: "m",
 });
 
+let replyText = reply;
+
 class OneReply implements AIProvider {
   readonly name = "fake";
   readonly model = "fake-model";
   constructor(private readonly onCall: () => void = () => undefined) {}
   async analyze(_req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.onCall();
-    return { rawText: reply, usage: { costUSD: 0.01 } };
+    return { rawText: replyText, usage: { costUSD: 0.01 } };
   }
 }
 
@@ -249,5 +253,85 @@ describe("Auto mode in a Watson round", () => {
       allowWrites: false,
     });
     expect(statusOf(chat, "wp-mine")).toBe("pending");
+  });
+});
+
+describe("Auto launches only from a dashboard round (final review G12 / G20)", () => {
+  const HOST = "web01.example.com";
+  const askCollection = JSON.stringify({
+    ...(JSON.parse(reply) as Record<string, unknown>),
+    request: {
+      kind: "velociraptor",
+      mode: "collection",
+      hostname: HOST,
+      title: "Process listing",
+      vql: "SELECT * FROM pslist()",
+      why: "see what runs",
+    },
+  });
+
+  async function veloHarness() {
+    const h = await harness(() => AUTO);
+    const launches: string[] = [];
+    const loads = { n: 0 };
+    const fleet = {
+      veloConnected: () => true,
+      velociraptorClientStore: {
+        load: async () => ({
+          ...(loads.n++, {}),
+          updatedAt: "",
+          clients: [{ clientId: "C.webserver1", hostname: HOST, fqdn: HOST }],
+        }),
+      },
+    };
+    const ctx: WatsonRoundContext = {
+      ...h.ctx,
+      ...fleet,
+      matchClient,
+      auto: {
+        ...h.ctx.auto!,
+        writer: {
+          ...h.ctx.auto!.writer,
+          veloLaunch: {
+            launch: async (_c, req) => {
+              launches.push(req.hostname ?? "");
+              return { phase: "launched", launched: { flowId: "F.SAMPLE1", clientId: "C.webserver1" } };
+            },
+            fleet,
+            matchClient,
+            fingerprints: fingerprintStoreFor(h.ctx.cases),
+          },
+        },
+      },
+    };
+    return { ...h, ctx, launches, loads };
+  }
+
+  afterEach(() => {
+    replyText = reply;
+  });
+
+  it.each([
+    ["slash", "does not launch from a chat-bot command"],
+    [undefined, "only from a message sent in the Watson panel"],
+  ] as const)("a round from source %s holds the launch", async (source, why) => {
+    replyText = askCollection;
+    const h = await veloHarness();
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "Check web01", ...(source ? { source } : {}) });
+    const launch = chat.proposals.find((p) => p.kind === "velo_launch");
+    expect(launch?.status).toBe("pending");
+    expect(h.launches).toEqual([]);
+    expect(chat.turns[chat.turns.length - 1].text).toContain(why);
+  });
+
+  it("a dashboard round launches the collection", async () => {
+    replyText = askCollection;
+    const h = await veloHarness();
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "Check web01", source: "dashboard" });
+    expect(chat.proposals.find((p) => p.kind === "velo_launch")?.status).toBe("applied");
+    expect(h.launches).toEqual([HOST]);
+    // The round itself read the inventory once, for the prompt and the launch check (G16); the
+    // apply re-checks against a fresh read.
+    expect(h.loads.n).toBe(2);
   });
 });

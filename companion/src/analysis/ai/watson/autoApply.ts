@@ -22,6 +22,9 @@ import type { WriterDeps } from "./writers/writerTypes.js";
 
 export const WATSON_AUTO_ACTOR = "Watson (Auto)";
 
+/** Where a round came from. Explicit: an unknown source never launches in Auto mode (G12). */
+export type WatsonRoundSource = "dashboard" | "slash";
+
 /** The ai-control fields Auto reads: the mode and the persisted who/when of the switch. */
 export type WatsonAutoControl = Pick<AiControl, "watsonRunMode" | "watsonAutoSince" | "watsonAutoBy"> & {
   /** The case's AI switch: off stops Auto as surely as a switch to Approve. */
@@ -46,8 +49,8 @@ export interface WatsonAutoRound {
   turnId: string;
   /** A round Watson started itself (reactor.ts): it never launches. */
   reaction: boolean;
-  /** A round a chat-bot command started (`/dfir ask`): it never launches either. */
-  chatBot?: boolean;
+  /** Where the round came from: only "dashboard" (an analyst's message or paste) may launch (G12). */
+  source?: WatsonRoundSource;
   /** Held promotions from the result events the round showed. */
   heldIds?: readonly string[];
   /** The held promotions the round's own paste created. */
@@ -75,7 +78,10 @@ function waitReason(p: WatsonProposal, round: WatsonAutoRound): string | null {
   if (p.kind !== "velo_launch") return null;
   if (p.mode !== "collection") return "fleet-wide hunts always wait for an analyst";
   if (round.reaction) return "Watson does not launch from a round it started itself";
-  if (round.chatBot) return "Watson does not launch from a chat-bot command; approve it in the Watson panel";
+  if (round.source === "slash")
+    return "Watson does not launch from a chat-bot command; approve it in the Watson panel";
+  if (round.source !== "dashboard")
+    return "Watson launches on its own only from a message sent in the Watson panel; approve it there";
   return null;
 }
 

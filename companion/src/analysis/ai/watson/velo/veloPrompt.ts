@@ -12,7 +12,8 @@ export function veloRulesText(): string {
   return [
     "You may ask to run VQL on this case's Velociraptor server: set 'request' to",
     '{ "kind": "velociraptor", "mode": "collection" or "hunt", "hostname": "(collection only)", "title": "...", "vql": "...", "why": "..." }.',
-    "The analyst approves it first. Rules:",
+    "A fleet hunt always waits for the analyst's approval. A single-host collection waits for approval too, unless the",
+    "case is in Auto mode and the analyst sent this message from the Watson panel. Rules:",
     '- Prefer a single-host collection (mode "collection", one hostname from the list below) when one host matters.',
     '  Use a fleet hunt (mode "hunt", no hostname) only when the question spans hosts. Never repeat a hunt that already ran.',
     "- Read-only only: never use anything that changes an endpoint, runs a program, or sends data out. A request that",

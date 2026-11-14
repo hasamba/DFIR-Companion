@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -74,5 +74,22 @@ describe("Watson run mode route", () => {
     await store.updateCaseMeta(CASE, { status: "closed" });
     const res = await request(app).post(`/cases/${CASE}/watson/mode`).send({ mode: "auto" });
     expect(res.status).toBe(423);
+  });
+});
+
+describe("the mode switch audit comes first (final review G15)", () => {
+  it("a switch whose save fails is still audited, and audited as failed", async () => {
+    const { app, store, activity } = await harness();
+    await request(app).get(`/cases/${CASE}/watson`); // the control is cached: only the save fails
+    // Make the ai-control save fail: a directory where the file goes.
+    await mkdir(join(store.stateDir(CASE), "ai-control.json"), { recursive: true });
+    const res = await request(app).post(`/cases/${CASE}/watson/mode`).send({ mode: "auto" });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const entries = (await activity.load(CASE)).filter((e) => e.action === "watson.mode");
+    expect(entries.map((e) => e.detail)).toEqual([
+      "Switched Watson to Auto (the switch failed)",
+      "Switched Watson to Auto",
+    ]);
+    expect(entries[0].outcome).toBe("error");
   });
 });

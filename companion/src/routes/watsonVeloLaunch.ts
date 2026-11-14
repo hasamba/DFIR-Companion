@@ -2,11 +2,14 @@ import type { Express, Request, Response } from "express";
 import type { HuntDeployInput } from "../analysis/huntOutcomes.js";
 import { requestAuthentication } from "../auth/types.js";
 import { fingerprintStoreFor } from "../analysis/ai/watson/velo/fingerprintIndex.js";
-import { resolveVeloLaunch, type LaunchResolution } from "../analysis/ai/watson/velo/launchResolve.js";
+import {
+  resolveVeloLaunch,
+  withStalledLaunches,
+  type LaunchResolution,
+} from "../analysis/ai/watson/velo/launchResolve.js";
 import type { VeloLaunchDeps } from "../analysis/ai/watson/velo/launchTypes.js";
 import { matchClient } from "../integrations/velociraptor/clientInventory.js";
 import type { RouteContext } from "./context.js";
-import { WATSON_AUTO_ACTOR } from "../analysis/ai/watson/autoApply.js";
 import { deployCaseHunt } from "./veloDeploy.js";
 import { isFrozenCase } from "./importCaseGuard.js";
 
@@ -38,10 +41,8 @@ export function watsonVeloLaunchDeps(ctx: RouteContext): VeloLaunchDeps {
         // A single-host collection reads live state: an empty result is not a miss.
         ...(req.mode === "collection" ? { coverage: "snapshot" as const } : {}),
       };
-      const kind = actor === WATSON_AUTO_ACTOR ? ("agent" as const) : ("analyst" as const);
       const r = await deployCaseHunt(ctx, caseId, body, {
         name: actor,
-        kind,
         ...(auditSuffix ? { detailSuffix: auditSuffix } : {}),
       });
       const error = r.status >= 400 ? String(r.body.error ?? `HTTP ${r.status}`) : undefined;
@@ -84,7 +85,8 @@ export function registerWatsonVeloLaunchRoutes(app: Express, ctx: RouteContext, 
     };
     const actor = requestAuthentication(req)?.identity.displayName ?? "analyst";
     try {
-      return res.status(200).json(await resolveVeloLaunch(deps, caseId, req.params.pid, outcome, actor));
+      const { chat } = await resolveVeloLaunch(deps, caseId, req.params.pid, outcome, actor);
+      return res.status(200).json({ chat: withStalledLaunches(caseId, chat) });
     } catch (err) {
       return sendError(res, err);
     } finally {

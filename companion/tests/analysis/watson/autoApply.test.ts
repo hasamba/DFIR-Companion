@@ -215,7 +215,12 @@ describe("autoApply", () => {
       findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish"),
       launch("wp-c", TURN, "collection", PSLIST, HOST_A),
     ]);
-    const chat = await autoApply(deps(), CASE, { turnId: TURN, reaction: false }, APPROVE);
+    const chat = await autoApply(
+      deps(),
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      APPROVE,
+    );
     expect(chat.proposals.map((p) => p.status)).toEqual(["pending", "pending"]);
     expect(chat.turns).toHaveLength(2);
     expect(launches).toHaveLength(0);
@@ -226,7 +231,9 @@ describe("autoApply", () => {
       findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish"),
       launch("wp-c", TURN, "collection", PSLIST, HOST_A),
     ]);
-    await runWithIdentity(ANALYST, () => autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON));
+    await runWithIdentity(ANALYST, () =>
+      autoApply(deps(), CASE, { turnId: TURN, reaction: false, source: "dashboard" }, AUTO_ON),
+    );
     expect(await status("wp-f")).toBe("applied");
     expect(await status("wp-c")).toBe("applied");
     expect(launches).toEqual([
@@ -246,7 +253,12 @@ describe("autoApply", () => {
 
   it("a fleet-wide hunt stays pending in Auto, and the turn says it waits for an analyst", async () => {
     await seed([launch("wp-h", TURN, "hunt", PSLIST)]);
-    const chat = await autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    const chat = await autoApply(
+      deps(),
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      AUTO_ON,
+    );
     expect(await status("wp-h")).toBe("pending");
     expect(launches).toHaveLength(0);
     expect(lastTurn(chat)).toMatchObject({ role: "system" });
@@ -270,7 +282,12 @@ describe("autoApply", () => {
       launch("wp-a", TURN, "collection", PSLIST, HOST_A),
       launch("wp-b", TURN, "collection", NETSTAT, HOST_B),
     ]);
-    const chat = await autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    const chat = await autoApply(
+      deps(),
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      AUTO_ON,
+    );
     expect(launches.map((l) => l.hostname)).toEqual([HOST_A, HOST_B]);
     expect(await status("wp-a")).toBe("applied");
     expect(await status("wp-b")).toBe("applied");
@@ -284,7 +301,7 @@ describe("autoApply", () => {
 
   it("undo of an auto-applied finding works as in phase 2", async () => {
     await seed([findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish")]);
-    await autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    await autoApply(deps(), CASE, { turnId: TURN, reaction: false, source: "dashboard" }, AUTO_ON);
     await applyWatsonProposal(deps(), CASE, "wp-f", "undo", "Dana Analyst");
     expect(await status("wp-f")).toBe("undone");
     expect((await stateStore.loadOverview(CASE)).findings).toHaveLength(0);
@@ -330,7 +347,12 @@ describe("autoApply", () => {
       throw new Error("socket hang up");
     };
     await seed([launch("wp-c", TURN, "collection", PSLIST, HOST_A)]);
-    const chat = await autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    const chat = await autoApply(
+      deps(),
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      AUTO_ON,
+    );
     expect(await status("wp-c")).toBe("uncertain");
     expect(launches).toHaveLength(1);
     expect(lastTurn(chat).text).toMatch(/could not confirm/i);
@@ -360,7 +382,7 @@ describe("autoApply", () => {
     await seed([findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish")]);
     const [click, auto] = await Promise.allSettled([
       applyWatsonProposal(deps(), CASE, "wp-f", "apply", "Dana Analyst"),
-      autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON),
+      autoApply(deps(), CASE, { turnId: TURN, reaction: false, source: "dashboard" }, AUTO_ON),
     ]);
     expect(auto.status).toBe("fulfilled"); // a lost race is listed, never thrown
     const applies = (await activity.load(CASE)).filter((e) => e.action === "watson.apply");
@@ -392,7 +414,7 @@ describe("autoApply", () => {
       status: "pending" as const,
     };
     await seed([report, launch("wp-c", TURN, "collection", PSLIST, HOST_A)]);
-    await autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    await autoApply(deps(), CASE, { turnId: TURN, reaction: false, source: "dashboard" }, AUTO_ON);
     const reloaded = await chatStore.load(CASE);
     const listing = reloaded.turns.filter((t) => t.role === "system");
     expect(listing.length).toBeGreaterThan(1);
@@ -410,7 +432,12 @@ describe("autoApply", () => {
     ]);
     let checks = 0;
     const recheck = async () => (++checks === 1 ? AUTO_ON : APPROVE);
-    const chat = await autoApply({ ...deps(), recheck }, CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    const chat = await autoApply(
+      { ...deps(), recheck },
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      AUTO_ON,
+    );
     expect(launches.map((l) => l.hostname)).toEqual([HOST_A]);
     expect(await status("wp-b")).toBe("pending");
     expect(lastTurn(chat).text).toMatch(/Auto mode is no longer on for this case/);
@@ -419,7 +446,12 @@ describe("autoApply", () => {
   it("turning the case's AI off during the batch stops it too", async () => {
     await seed([launch("wp-a", TURN, "collection", PSLIST, HOST_A)]);
     const recheck = async () => ({ ...AUTO_ON, enabled: false });
-    await autoApply({ ...deps(), recheck }, CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    await autoApply(
+      { ...deps(), recheck },
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      AUTO_ON,
+    );
     expect(launches).toHaveLength(0);
     expect(await status("wp-a")).toBe("pending");
   });
@@ -429,7 +461,7 @@ describe("autoApply", () => {
       findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish"),
       launch("wp-c", TURN, "collection", PSLIST, HOST_A),
     ]);
-    const chat = await autoApply(deps(), CASE, { turnId: TURN, reaction: false, chatBot: true }, AUTO_ON);
+    const chat = await autoApply(deps(), CASE, { turnId: TURN, reaction: false, source: "slash" }, AUTO_ON);
     expect(await status("wp-c")).toBe("pending");
     expect(await status("wp-f")).toBe("applied");
     expect(launches).toHaveLength(0);
@@ -451,7 +483,7 @@ describe("autoApply", () => {
       },
     };
     await seed([launch("wp-c", TURN, "collection", PSLIST, HOST_A)]);
-    await autoApply(spy, CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    await autoApply(spy, CASE, { turnId: TURN, reaction: false, source: "dashboard" }, AUTO_ON);
     expect(suffixes).toEqual([`; Auto mode on since ${SINCE}, switched on by Robin Lead`]);
   });
 
@@ -474,19 +506,30 @@ describe("autoApply", () => {
     chatStore = flaky;
     await seed([findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish")]);
     // One failure: the retry saves it.
-    const once = await autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    const once = await autoApply(
+      deps(),
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      AUTO_ON,
+    );
     expect(lastTurn(once).text).toMatch(/Applied new finding: Phish/);
 
     // Two failures: the apply stands, the listing waits for the next pass, which adds it.
     await seed([findingNew("wp-g", TURN, "f-watson-22222222", "Second")]);
     failListing = 2;
-    await expect(autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON)).rejects.toBeInstanceOf(
-      WatsonAutoListingUnsaved,
-    );
+    await expect(
+      autoApply(deps(), CASE, { turnId: TURN, reaction: false, source: "dashboard" }, AUTO_ON),
+    ).rejects.toBeInstanceOf(WatsonAutoListingUnsaved);
     expect(await status("wp-g")).toBe("applied");
     const auto = { control: async () => APPROVE, writer: deps() };
     const before = await chatStore.load(CASE);
-    const after = await autoAfterRound(auto, CASE, { turnId: TURN, reaction: false }, before, () => {});
+    const after = await autoAfterRound(
+      auto,
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      before,
+      () => {},
+    );
     expect(lastTurn(after).text).toMatch(/Applied new finding: Second/);
   });
 });
@@ -499,7 +542,13 @@ describe("Auto on a case closed mid-round (final review G4)", () => {
     ]);
     const auto = { control: async () => ({ ...AUTO_ON, frozen: true }), writer: deps() };
     const before = await chatStore.load(CASE);
-    const after = await autoAfterRound(auto, CASE, { turnId: TURN, reaction: false }, before, () => {});
+    const after = await autoAfterRound(
+      auto,
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      before,
+      () => {},
+    );
     expect(after).toBe(before);
     expect(launches).toHaveLength(0);
     expect(await status("wp-a")).toBe("pending");
@@ -513,7 +562,12 @@ describe("Auto on a case closed mid-round (final review G4)", () => {
     ]);
     let checks = 0;
     const recheck = async () => (++checks === 1 ? AUTO_ON : { ...AUTO_ON, frozen: true });
-    const chat = await autoApply({ ...deps(), recheck }, CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    const chat = await autoApply(
+      { ...deps(), recheck },
+      CASE,
+      { turnId: TURN, reaction: false, source: "dashboard" },
+      AUTO_ON,
+    );
     expect(launches.map((l) => l.hostname)).toEqual([HOST_A]);
     expect(await status("wp-b")).toBe("pending");
     expect(lastTurn(chat).text).toMatch(/the case was closed or archived/);
