@@ -4,6 +4,7 @@ import type { QuestionStatus } from "../../stateTypes.js";
 import { MAX_VQL_BYTES } from "../../vqlInput.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_HISTORY_ID } from "./historyStore.js";
+import { lookupFieldSchema, type WatsonLookupAsk } from "./lookupSchema.js";
 import { ANSWER_MAX, POINTER_MAX, QUESTION_MAX } from "./roundProposals.js";
 import type { WatsonAnswer, WatsonRequest } from "./types.js";
 import {
@@ -81,6 +82,7 @@ export const watsonReplySchema = z.object({
     .object({ pasteId: str, terms: lenientArray(z.string()) })
     .nullable()
     .catch(null),
+  lookup: lookupFieldSchema,
   memory: str,
   answer: answerSchema,
   writes: writesSchema,
@@ -94,6 +96,8 @@ export interface WatsonReply {
   newQuestions: { question: string; why: string }[];
   request: WatsonRequest | null;
   search: { pasteId: string; terms: string[] } | null;
+  /** A forensic-timeline lookup (Task 11), checked, or why it was dropped. One hop: search wins. */
+  lookup?: WatsonLookupAsk | null;
   memory: string;
   /** Set only when the analyst asked a question about the case. */
   answer: WatsonAnswer | null;
@@ -170,8 +174,14 @@ export function sanitizeWatsonReply(
             .map((t) => t.slice(0, MAX_TERM_CHARS)),
         }
       : null;
+  // One hop per round: a valid search and a lookup together keep the search (Task 11).
+  const lookup: WatsonLookupAsk | null =
+    search && reply.lookup
+      ? { ok: false, why: "it came with a search, and Watson reads one thing per round" }
+      : (reply.lookup ?? null);
   return {
     ...reply,
+    lookup,
     message: reply.message.slice(0, WATSON_TURN_TEXT_MAX),
     memory: reply.memory.slice(0, MAX_MEMORY_CHARS),
     questionUpdates: reply.questionUpdates.filter((u) => knownQuestionIds.has(u.questionId)),

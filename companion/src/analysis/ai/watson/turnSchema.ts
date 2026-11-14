@@ -50,4 +50,8 @@ export const turnSchema = z.object({
   answer: answerSchema.optional().catch(undefined),
   answerProposalId: z.string().optional(),
   veloNote: z.string().optional().catch(undefined),
+  lookedUp: z
+    .object({ shown: z.number(), matched: z.number(), what: z.string() })
+    .optional()
+    .catch(undefined),
 });

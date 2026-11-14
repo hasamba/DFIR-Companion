@@ -802,6 +802,30 @@ describe("a free-form answer in the Watson log", () => {
     expect(log.innerHTML).not.toContain("in-scope events");
   });
 
+  it("says which forensic-timeline events Watson looked up, escaped, with or without a trim", () => {
+    const { api, log } = setup();
+    api.renderWatson(
+      chatWith([answerTurn({ lookedUp: { shown: 12, matched: 12, what: "on host <b>WS-01</b>" } })]),
+    );
+    expect(log.innerHTML).toContain(
+      "Watson looked up 12 forensic-timeline events (on host &lt;b&gt;WS-01&lt;/b&gt;)",
+    );
+    api.renderWatson(
+      chatWith([
+        answerTurn({
+          coverage: { usedEvents: 120, eventCount: 5000 },
+          lookedUp: { shown: 200, matched: 450, what: "from a to b" },
+        }),
+      ]),
+    );
+    expect(log.innerHTML).toContain("answered from 120 of 5000 in-scope events");
+    expect(log.innerHTML).toContain(
+      "Watson looked up 200 of 450 matching forensic-timeline events (from a to b)",
+    );
+    api.renderWatson(chatWith([answerTurn()]));
+    expect(log.innerHTML).not.toContain("looked up");
+  });
+
   it("discloses trimmed case decisions and a trimmed case summary on their own lines", () => {
     const { api, log } = setup();
     api.renderWatson(

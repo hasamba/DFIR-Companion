@@ -10,6 +10,7 @@ import type {
   WatsonCaseEvent,
   WatsonChat,
   WatsonCoverage,
+  WatsonLookedUp,
   WatsonPaste,
   WatsonRequest,
   WatsonTurn,
@@ -42,6 +43,8 @@ export interface Outcome {
   veloNote?: string;
   /** What the reply's writes need from disk (roundWrites.ts); without it no write is proposed. */
   writeInputs?: WatsonWriteInputs;
+  /** The forensic-timeline events the round's lookup showed Watson (Task 11), for the card. */
+  lookedUp?: WatsonLookedUp;
   /** The id Watson's turn gets (round.ts sets it, so Auto knows which proposals are this round's). */
   turnId?: string;
 }
@@ -120,6 +123,7 @@ export function mergeOutcome(
     ...(reply.answer ? { answer: reply.answer } : {}),
     ...(outcome.coverage ? { coverage: outcome.coverage } : {}),
     ...(outcome.veloNote ? { veloNote: outcome.veloNote } : {}),
+    ...(outcome.lookedUp ? { lookedUp: outcome.lookedUp } : {}),
     ...(proposals.length ? { proposalIds: proposals.map((p) => p.id) } : {}),
     costUSD: spent.usd,
   };

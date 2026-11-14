@@ -16,6 +16,7 @@ describe("watsonReplySchema", () => {
       newQuestions: [],
       request: null,
       search: null,
+      lookup: null,
       memory: "",
       answer: null,
       writes: { findings: [], nextSteps: [], report: [] },

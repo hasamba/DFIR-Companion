@@ -33,6 +33,28 @@ export interface WatsonCoverage {
   headTrimmed?: boolean;
 }
 
+/**
+ * One forensic-timeline lookup Watson asked for (Task 11). Id lists union; the window, host and text
+ * narrow. Checked by lookupSchema.ts before it is run.
+ */
+export interface WatsonLookup {
+  findingIds?: string[];
+  eventIds?: string[];
+  /** ISO timestamps; both or neither, at most 7 days apart. */
+  from?: string;
+  to?: string;
+  host?: string;
+  text?: string;
+}
+
+/** What a round's lookup showed Watson, stored on its turn so the card can disclose it (#452). */
+export interface WatsonLookedUp {
+  shown: number;
+  matched: number;
+  /** The lookup in plain words (server-built from the checked request). */
+  what: string;
+}
+
 /** Watson's answer to a free-form question from the analyst (what Ask used to return). */
 export interface WatsonAnswer {
   question: string;
@@ -67,6 +89,8 @@ export interface WatsonTurn {
    * to `text`. Set only by the server, so the dashboard's warning block cannot be forged by the model.
    */
   veloNote?: string;
+  /** The forensic-timeline events this turn's lookup showed Watson. Set only by the server. */
+  lookedUp?: WatsonLookedUp;
 }
 
 /**

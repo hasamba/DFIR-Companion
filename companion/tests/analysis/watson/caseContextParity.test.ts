@@ -171,10 +171,16 @@ describe("Watson reads the case context Ask did", () => {
     const turn = chat.turns.find((t) => t.role === "watson");
     expect(turn?.coverage?.eventCount).toBe(2000);
     expect(turn?.coverage?.usedEvents).toBeLessThan(2000);
+    // Task 11: the packet tells Watson it is partial and how to read the rest.
+    const used = turn?.coverage?.usedEvents ?? -1;
+    expect(big.provider.sent[0].userPrompt).toContain(
+      `(showing ${used} of 2000 in-scope events — ask for a 'lookup' to read others)`,
+    );
 
     const small = await make([ev("e1")]);
     const chat2 = await runWatsonRound(small.ctx, CASE, { text: "Summarise" });
     expect(chat2.turns.find((t) => t.role === "watson")?.coverage).toBeUndefined();
+    expect(small.provider.sent[0].userPrompt).not.toContain("ask for a 'lookup'");
   });
 });
 

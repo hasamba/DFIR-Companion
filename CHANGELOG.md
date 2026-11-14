@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Risky Watson queries need your approval** — a query outside the reviewed list shows a red warning and a second confirm; Auto never launches it
 - **Watson Approve and Auto modes** — per-case switch, audited by analyst; Auto applies Watson's writes and launches single-host collections from dashboard messages, never fleet hunts
 - **Watson pinned to the right of the dashboard** — rail, open or full screen on every view
+- **Watson looks up forensic-timeline events** — when an event it needs is not in its case packet it fetches up to 200 (by finding, event, time, host or text), never the super-timeline; the card says what it read
 
 ### Changed
 

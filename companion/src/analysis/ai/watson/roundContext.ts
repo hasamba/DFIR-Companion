@@ -13,7 +13,6 @@ import type { StateStore } from "../../stateStore.js";
 import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { buildSynthesisContext, selectSynthesisEvents } from "../../synthSelect.js";
 import { loadCtxAliasIndex, loadScopedEvents, type AiCallContext } from "../aiContext.js";
-import { promptDescription } from "../promptDescription.js";
 import { analystDecisionBlocks, graphMaxEdges, type AnalystDecisionStores } from "../analystContext.js";
 import { stateEventResolver } from "../../eventAliasLookup.js";
 import { buildGraphContext } from "../../graphContext.js";
@@ -25,6 +24,7 @@ import type { WatsonChatStore } from "./chatStore.js";
 import { WATSON_PASTE_MAX_BYTES } from "./pasteSearch.js";
 import { WATSON_CASE_CONTEXT_PROMPT_MAX } from "./promptBuilder.js";
 import { ensureStandardQuestions } from "./standardQuestions.js";
+import { timelineRow } from "./timelineLookup.js";
 import type { WatsonCoverage, WatsonPaste } from "./types.js";
 import type { LaunchContext } from "./velo/launchCheck.js";
 import type { WatsonAutoDeps } from "./autoApply.js";
@@ -233,17 +233,23 @@ export async function buildWatsonCaseContext(
   };
 }
 
+/** Said under the rows when the packet could not carry every in-scope event (Task 11). */
+const partialNote = (shown: number, total: number): string =>
+  `\n(showing ${shown} of ${total} in-scope events — ask for a 'lookup' to read others)`;
+
 function timelineBlock(scoped: ForensicEvent[], budget: number): { text: string; used: number } {
   const title = `FORENSIC TIMELINE (${scoped.length} in-scope events, most significant first):\n`;
+  const reserve = partialNote(scoped.length, scoped.length).length;
   const rows: string[] = [];
-  let used = title.length;
+  let used = title.length + reserve;
   for (const e of selectSynthesisEvents(scoped, 400)) {
-    const row = `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${promptDescription(e.description)}`;
+    const row = timelineRow(e);
     if (used + row.length + 1 > budget) break;
     rows.push(row);
     used += row.length + 1;
   }
-  return { text: title + (rows.join("\n") || "(no events shown)"), used: rows.length };
+  const note = rows.length < scoped.length ? partialNote(rows.length, scoped.length) : "";
+  return { text: title + (rows.join("\n") || "(no events shown)") + note, used: rows.length };
 }
 
 /**

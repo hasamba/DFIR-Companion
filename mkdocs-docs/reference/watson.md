@@ -106,6 +106,8 @@ Watson reads the case, not only the chat. Besides the forensic timeline, the evi
 
 When the case is too large for the model, Watson reads a prioritised part of it, and its answer says from how many of the in-scope events it was built. The super-timeline is never read.
 
+When an event Watson needs is not in that part (an event a finding cites, a time span, a host or a word), Watson looks it up in the forensic timeline before it answers. It reads at most 200 in-scope events per lookup and one lookup per message, and a lookup counts toward the Watson cost and token limits like any other call. The answer card says so: **Watson looked up 12 forensic-timeline events (on host WS-01)**. A lookup never reads the super-timeline: an event that is only there stays invisible to Watson until you promote it.
+
 To see exactly what Watson would send for a message, use **Preview what the AI will see** and choose **Watson message**. The preview builds the same request a real message sends, masked the same way, and saves nothing.
 
 From Slack, Teams or Telegram, `/dfir ask <question>` sends the question to Watson in the same shared chat. See [War-Room Bot](war-room-bot.md).

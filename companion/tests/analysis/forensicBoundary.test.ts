@@ -875,3 +875,31 @@ describe("the S3 ransomware-precursor promotion is the one automatic super-timel
     expect(m.precursorPromotionNote(result)).toMatch(/stopped after 5000 super-timeline rows/);
   });
 });
+
+describe("Watson's timeline lookup reads the forensic timeline only (Task 11)", () => {
+  // Watson may ask for more events than its packet carries. The lookup selects from the scoped
+  // forensic timeline its round already loads, never the raw record or any store behind it.
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("has no path to the super-timeline store in the lookup, the hop or the request builder", () => {
+    for (const rel of [
+      "../../src/analysis/ai/watson/timelineLookup.ts",
+      "../../src/analysis/ai/watson/lookupSchema.ts",
+      "../../src/analysis/ai/watson/roundHop.ts",
+      "../../src/analysis/ai/watson/round.ts",
+      "../../src/analysis/ai/watson/requestBuild.ts",
+      "../../src/analysis/ai/watson/roundContext.ts",
+    ]) {
+      expect(read(rel), rel).not.toMatch(/superTimelineStore|SuperTimelineStore|superTimeline\.js|rawEvents/);
+    }
+  });
+
+  it("an event id that lives only in the raw record is never returned", async () => {
+    const { selectLookupEvents } = await import("../../src/analysis/ai/watson/timelineLookup.js");
+    const forensic = [ev({ id: "e1", description: "graded row", severity: "High" })];
+    const state = { ...emptyState("c1"), forensicTimeline: forensic };
+    expect(selectLookupEvents(forensic, state, { eventIds: ["e1", "rawonly"] }).map((e) => e.id)).toEqual([
+      "e1",
+    ]);
+  });
+});

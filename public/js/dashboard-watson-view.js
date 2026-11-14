@@ -107,6 +107,18 @@
     );
   }
 
+  // Task 11: the forensic-timeline events Watson looked up for this answer. Server-set (never from the
+  // model's text), shown on its own line so the analyst sees everything Watson read (#452).
+  function lookedUpHtml(l) {
+    if (!l) return "";
+    const shown = Number(l.shown);
+    const matched = Number(l.matched);
+    if (!Number.isFinite(shown) || !Number.isFinite(matched)) return "";
+    const count = matched > shown ? `${shown} of ${matched} matching` : String(shown);
+    const what = l.what ? ` (${esc(String(l.what))})` : "";
+    return `<div class="watson-cov watson-lookup">Watson looked up ${esc(count)} forensic-timeline events${what}</div>`;
+  }
+
   // #2468: no forensic-timeline events and no findings yet, so an answer would have nothing to read.
   // A count that is only a lower bound is not "zero".
   function caseIsEmpty(st) {
@@ -154,6 +166,7 @@
       (autoList(t) || textHtml(t)) +
       answerHtml(t, readOnly, ctx) +
       coverageHtml(t.coverage) +
+      lookedUpHtml(t.lookedUp) +
       (t.learned ? `<div class="watson-meta"><b>Learned:</b> ${esc(t.learned)}</div>` : "") +
       requestHtml(t.request) +
       props +

@@ -39,10 +39,12 @@ export interface WatsonPromptInput {
   velo?: { hostCount: number; hosts: { hostname: string; fqdn: string }[] };
   /** A paste excerpt, or (pasteId "history") the lines a history search found. */
   pasteExcerpt?: { pasteId: string; filename: string; text: string; truncated: boolean };
+  /** The forensic-timeline rows Watson's lookup found (Task 11), and the lookup in plain words. */
+  lookupExcerpt?: { what: string; text: string };
 }
 
 /** Every fence label. One list feeds both the fences and the defang, so no label is left forgeable. */
-const FENCE_LABELS = ["CONTEXT", "MEMORY", "CHAT", "PASTE", "HISTORY", "ANALYST"] as const;
+const FENCE_LABELS = ["CONTEXT", "MEMORY", "CHAT", "PASTE", "HISTORY", "LOOKUP", "ANALYST"] as const;
 type FenceLabel = (typeof FENCE_LABELS)[number];
 const MARKER_RE = new RegExp(`<<<\\s*(END\\s+)?(${FENCE_LABELS.join("|")})`, "gi");
 
@@ -144,6 +146,7 @@ function veloBlock(velo: NonNullable<WatsonPromptInput["velo"]>, chat: WatsonCha
 
 export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
   const { state, chat, analystText, caseContext, mainLanguages, pasteExcerpt, historyTurns, velo } = input;
+  const { lookupExcerpt } = input;
   const questions = (state.keyQuestions ?? [])
     .slice(0, WATSON_QUESTIONS_MAX)
     .map(
@@ -178,6 +181,12 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     const name = line(pasteExcerpt.filename, FILENAME_CHARS);
     const label = pasteExcerpt.pasteId === WATSON_HISTORY_ID ? "HISTORY" : "PASTE";
     blocks.push(`${label} (${name})${note}\n${fence(label, text, ` id=${safeId(pasteExcerpt.pasteId)}`)}`);
+  }
+  if (lookupExcerpt) {
+    const what = line(lookupExcerpt.what, WATSON_REQUEST_CHARS);
+    blocks.push(
+      `TIMELINE LOOKUP (${what})\n${fence("LOOKUP", clip(lookupExcerpt.text, WATSON_PASTE_PROMPT_MAX))}`,
+    );
   }
   blocks.push(`ANALYST\n${fence("ANALYST", clip(analystText, WATSON_ANALYST_PROMPT_MAX))}`);
   return blocks.join("\n\n");

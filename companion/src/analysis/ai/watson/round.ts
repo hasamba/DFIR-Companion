@@ -3,10 +3,10 @@ import type { InvestigationState } from "../../stateTypes.js";
 import { retryPolicy } from "../aiContext.js";
 import { isRetryableError } from "../retry.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
-import { WATSON_HISTORY_ID } from "./historyStore.js";
 import { WATSON_CASE_EVENTS_MAX, type WatsonPromptInput } from "./promptBuilder.js";
 import { sanitizeWatsonReply, type WatsonReply } from "./replySchema.js";
-import { callWatson, choosePaste, headExcerpt, searchExcerpt, watsonBaseInput } from "./requestBuild.js";
+import { callWatson, choosePaste, headExcerpt, watsonBaseInput } from "./requestBuild.js";
+import { secondHop } from "./roundHop.js";
 import {
   limitReached,
   NO_SPEND,
@@ -68,14 +68,6 @@ export interface WatsonRoundInput {
    */
   source?: WatsonRoundSource;
 }
-
-const searchSkipped = (why: string): string =>
-  `(Watson wanted to search the pasted text, but ${why}, so it did not.)`;
-const searchFailed = (err: unknown): string =>
-  `(Watson's search of the pasted text failed: ${err instanceof Error ? err.message : String(err)})`.slice(
-    0,
-    600,
-  );
 
 const chains = new Map<string, Promise<unknown>>();
 
@@ -193,10 +185,12 @@ async function converse(
   let first: WatsonReply;
   let ask: (input: WatsonPromptInput) => Promise<WatsonReply>;
   let base: WatsonPromptInput;
+  let state: InvestigationState;
+  let excerpt: WatsonPromptInput["pasteExcerpt"];
   try {
     // The board and the Key Questions section show the seeded questions now, whatever the round does.
     if (await seedStandardQuestions(ctx, caseId)) ctx.onStateChanged?.(caseId);
-    const state = await ctx.stateStore.load(caseId);
+    state = await ctx.stateStore.load(caseId);
     questions = state.keyQuestions;
     // The analyst's message is the ANALYST block; it is not repeated as recent chat.
     const others = { ...chat, turns: chat.turns.filter((t) => t.id !== analystTurn.id) };
@@ -219,7 +213,7 @@ async function converse(
       return sanitizeWatsonReply(raw, known.questions, known.pastes, known.events, known.citations, veloOn);
     };
     // A stored file that is gone or unreadable never fails the round: Watson answers without it.
-    const excerpt = newPaste
+    excerpt = newPaste
       ? await headExcerpt(ctx, caseId, newPaste).catch(() => {
           headFailed = true;
           return undefined;
@@ -243,27 +237,19 @@ async function converse(
     ...(newPaste ? { readPasteIds: [newPaste.id], ...(headFailed ? { unreadable: newPaste } : {}) } : {}),
     ...(cover ? { coverage: cover } : {}),
   };
-  if (!first.search) return { reply: first, shownEvents, questions, ...read };
-  const kept: Outcome = { reply: { ...first, search: null }, shownEvents, questions, ...read };
-  // At most one search hop per round. From here on a failure never loses the first reply.
-  try {
-    const now = await spentNow(ctx, caseId, chat, before).catch(() => null);
-    if (!now) return { ...kept, note: searchSkipped("its cost could not be checked") };
-    const reached = limitReached(ctx, now);
-    if (reached) return { ...kept, note: searchSkipped(`this case reached its Watson ${reached}`) };
-    const excerpt = await searchExcerpt(ctx, caseId, chat, first.search);
-    if (!excerpt) return kept;
-    const second = await ask({ ...base, pasteExcerpt: excerpt });
-    // A paste read through a search counts as read; the history is not a paste.
-    const readId = excerpt.pasteId === WATSON_HISTORY_ID ? [] : [excerpt.pasteId];
-    return {
-      ...kept,
-      reply: { ...second, search: null },
-      readPasteIds: [...(kept.readPasteIds ?? []), ...readId],
-    };
-  } catch (error) {
-    return { ...kept, note: searchFailed(error), rethrow: error };
-  }
+  // At most one search or lookup hop per round (roundHop.ts); its failure never loses this reply.
+  return secondHop({
+    ctx,
+    caseId,
+    chat,
+    state,
+    first,
+    base,
+    head: excerpt,
+    ask,
+    spent: () => spentNow(ctx, caseId, chat, before),
+    rest: { shownEvents, questions, ...read },
+  });
 }
 
 /** Watson's spend on the case now: the chat's total before this round plus what the round used. */
