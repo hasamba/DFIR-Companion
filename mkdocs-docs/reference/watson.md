@@ -112,6 +112,23 @@ To see exactly what Watson would send for a message, use **Preview what the AI w
 
 From Slack, Teams or Telegram, `/dfir ask <question>` sends the question to Watson in the same shared chat. See [War-Room Bot](war-room-bot.md).
 
+## Searching the super-timeline
+
+The forensic timeline holds the events that were graded Low or higher. The super-timeline holds the raw rows, including the Info rows that were cut. When the forensic timeline cannot answer your question, Watson can search the super-timeline.
+
+- Watson makes one search for each question you ask. A search names text (3 characters or more), a hash, a host or a time window of 7 days or less. It can combine these.
+- Watson sees at most 100 rows from a search. It does not read the whole super-timeline.
+- Watson does not search in its own reactions to imports, notes or stars. Only a question or message you send starts a search.
+- If the super-timeline has dropped old rows to its size limit, the answer carries a warning that the search may have missed rows. Re-importing the artifact brings them back.
+
+When Watson cites a raw row, the row is promoted into the forensic timeline before the answer is saved. It shows the **Watson** badge and has an **Undo**. Rows that Watson saw but did not cite stay in the super-timeline. Nothing is promoted from a Watson reaction to an import.
+
+If a round cannot write to the case (the case is frozen, AI is off, or the promotion fails), nothing is promoted. Watson drops each item that depended on the row and says so in the answer. Watson also drops any text that mentions a raw row that was not promoted.
+
+Undo of a promotion is refused while a finding, next step or report text that Watson applied still depends on that row. Undo that item first.
+
+Synthesis and the deep pass never read the super-timeline.
+
 ## Giving Watson evidence
 
 You can paste text into the chat or attach a text file. Watson stores it as evidence in the case.
@@ -278,5 +295,4 @@ Watson does not yet:
 
 - run queries on any platform other than Velociraptor
 - start fleet-wide hunts on its own
-- search the super-timeline
 - parse a generic CSV or log into timeline rows

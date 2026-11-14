@@ -31,8 +31,10 @@ import { psSessionSeats } from "../../src/analysis/ai/synthPsSessionSeats.js";
 // budget and drowns the signal that earned the forensic cut.
 //
 // Three analyst-initiated paths touch the raw record. Two now PROMOTE before asking, so the rule
-// holds literally. The third is a documented exception. These tests are the difference between that
-// being a policy in a comment and a policy the code obeys.
+// holds literally. The third is a documented exception. Watson's super-timeline search is the SECOND
+// documented exception: one targeted, bounded lookup per analyst-started round, and every row it
+// cites is promoted into the forensic timeline before the turn is saved. These tests are the
+// difference between that being a policy in a comment and a policy the code obeys.
 
 // starredReport and viewSummary both parse `{ markdown }`; they are report writers, not extractors.
 const VALID = JSON.stringify({ markdown: "# Report\n\nBody." });
@@ -927,5 +929,63 @@ describe("Watson's super-timeline search is the second documented exception (pha
     const src = readFileSync(join(watsonDir, "superTimelineSearch.ts"), "utf8");
     expect(src).not.toMatch(/scanWindow|eventBatches|\.collect\(|memoizeScan|queryIndexed|reader\.get\(/);
     expect(src.match(/reader\.(\w+)\(/g)?.sort()).toEqual(["reader.meta(", "reader.query("]);
+  });
+});
+
+describe("Watson's super-timeline search is targeted, bounded and promotes only what it cites", () => {
+  it("a search with no narrowing field is refused, and the store read is bounded", async () => {
+    const { parseLookup } = await import("../../src/analysis/ai/watson/lookupSchema.js");
+    const s = await import("../../src/analysis/ai/watson/superTimelineSearch.js");
+    expect(parseLookup({ source: "supertimeline" })).toMatchObject({ ok: false });
+    expect(parseLookup({ source: "supertimeline", text: "ab" })).toMatchObject({ ok: false });
+    expect(parseLookup({ source: "supertimeline", text: "rclone" })).toMatchObject({ ok: true });
+    expect(s.WATSON_SUPER_MAX_ROWS).toBe(100);
+    expect(s.WATSON_SUPER_MAX_CHARS).toBe(20_000);
+    expect(s.WATSON_SUPER_SCAN_ROWS).toBe(5_000);
+  });
+
+  it("a cited raw row is promoted before the turn is saved; a shown-but-uncited row is not", async () => {
+    const f = await import("./watson/superPromoteFixtures.js");
+    const h = await f.harness([f.reply(f.superLookup()), f.reply(f.answer(["raw1"]))]);
+    await h.run();
+    expect((await h.row("raw1"))?.promotedAt).toBeTruthy();
+    expect(await h.row("raw2")).toBeUndefined();
+  });
+
+  it("a cited id the search never showed is dropped, never fetched", async () => {
+    const f = await import("./watson/superPromoteFixtures.js");
+    const h = await f.harness([f.reply(f.superLookup()), f.reply(f.answer(["raw1", "raw9"]))], {
+      raw: [f.raw("raw1"), f.raw("raw9", { description: "quiet raw row" })],
+    });
+    const chat = await h.run();
+    expect(f.lastWatsonTurn(chat).answer?.relatedEventIds).toEqual(["raw1"]);
+    expect(await h.row("raw9")).toBeUndefined();
+  });
+});
+
+describe("the deep pass never touches the raw record", () => {
+  it("never calls the super-timeline store", async () => {
+    const { pipeline, stateStore, superTimelineStore } = await harness([ev({ id: "raw1" })]);
+    await stateStore.save({
+      ...emptyState("c1"),
+      forensicTimeline: [ev({ id: "e1", severity: "High", description: "graded row" })],
+    });
+    const names = Object.getOwnPropertyNames(SuperTimelineStore.prototype).filter(
+      (n) =>
+        n !== "constructor" &&
+        typeof (superTimelineStore as never as Record<string, unknown>)[n] === "function",
+    );
+    expect(names.length).toBeGreaterThan(3);
+    const spies = names.map((n) => vi.spyOn(superTimelineStore as never, n));
+    await pipeline.deepPass("c1", { minSeverity: "High" }).catch(() => undefined);
+    for (const [i, spy] of spies.entries()) expect(spy, names[i]).not.toHaveBeenCalled();
+  });
+
+  it("has no path to the super-timeline store in its run module", () => {
+    const src = readFileSync(
+      fileURLToPath(new URL("../../src/analysis/ai/deepPassRun.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(src).not.toMatch(/superTimelineStore|SuperTimelineStore/);
   });
 });
