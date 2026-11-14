@@ -80,9 +80,9 @@ export const WATSON_WATCH_MAX_FAILED_TICKS = 10;
 const where = (p: WatsonVeloLaunchProposal): string =>
   `flow ${p.launched?.flowId ?? "?"}${p.hostname ? ` on ${p.hostname}` : ""}`;
 const notImported = (p: WatsonVeloLaunchProposal, why: string): string =>
-  `${why} (${where(p)}). The results are in Velociraptor. The case possibly does not have them`;
+  `${why} (${where(p)}). The results are in Velociraptor. Watson does not know if the case has them`;
 const interruptedImport = (p: WatsonVeloLaunchProposal): string =>
-  `Watson stopped before it finished the import of ${where(p)}. The case possibly has some rows. ` +
+  `Watson stopped before it finished the import of ${where(p)}. Watson does not know if the case has some of the rows. ` +
   "Watson did not show the rows that the tagger graded above Info for approval. " +
   "Import the flow from Velociraptor again to get them";
 

@@ -99,7 +99,7 @@ function withoutShown(
 
 function errorText(err: unknown): string {
   if (err instanceof PresidioApprovalRequired) {
-    return "Watson stopped this message. Presidio found values that you must approve before they go to the AI.";
+    return "This message waits for your approval. Presidio found values that you must approve before they go to the AI.";
   }
   if (err instanceof AiAnswerParseError || err instanceof AiReplyUnreadableError) {
     return "The companion cannot read Watson's reply. Send your message again.";

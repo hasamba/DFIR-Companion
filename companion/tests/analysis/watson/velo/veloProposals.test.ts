@@ -160,10 +160,13 @@ describe("Watson velo_launch proposals", () => {
     expect(p.risk).toEqual({
       reasons: ["runs a program on the endpoint (execve)"],
       checks: ["the VQL calls execve, which is not on Watson's read-only list"],
+      display: ["The query runs a program on the endpoint (execve)."],
     });
     const text = chat.turns.at(-1)?.text ?? "";
     expect(text).toContain("Risky query");
-    expect(text).toContain("runs a program on the endpoint (execve)");
+    expect(text).toContain(
+      "(Risky query: The query runs a program on the endpoint (execve). An analyst must read it",
+    );
     expect(proposalSchema.parse(p)).toEqual(p);
   });
 
@@ -182,7 +185,8 @@ describe("Watson velo_launch proposals", () => {
     expect(chat.proposals).toHaveLength(0);
     const text = chat.turns.at(-1)?.text ?? "";
     expect(text).toContain("Nothing to approve");
-    expect(text).toContain("comments are not allowed");
+    expect(text).toContain("The safety check blocked it. Watson does not accept comments in the query.");
+    expect(text).not.toContain("comments are not allowed");
   });
 
   it("makes no proposal for VQL that already ran, and says so", async () => {
@@ -229,7 +233,7 @@ describe("Watson velo_launch proposals", () => {
     const h = await harness([reply({ request: veloReq({ hostname: "nope" }) })]);
     const chat = await runWatsonRound(h.ctx, CASE, { text: "x" });
     expect(chat.proposals).toHaveLength(0);
-    expect(chat.turns.at(-1)?.text).toContain("not in the case's Velociraptor fleet");
+    expect(chat.turns.at(-1)?.text).toContain("The host is not in the Velociraptor fleet of this case.");
   });
 
   it("without a Velociraptor server the request is a copy-ready query and no proposal", async () => {

@@ -270,7 +270,7 @@ describe("Watson paste ingest", () => {
     expect(chat.proposals.find((p) => p.kind === "event_promote")?.status).toBe("applied");
     expect(mentions((await h.stateStore.load(CASE)).forensicTimeline, "ntdsutil")).toHaveLength(1);
     expect(chat.turns.at(-1)?.text).toMatch(
-      /^Watson acted on its own \(Auto mode, switched on by Robin Lead\)/,
+      /^Watson did these actions in Auto mode\. Robin Lead set Auto mode\./,
     );
     const entry = (await new ActivityLogStore(h.store).load(CASE)).find((e) => e.action === "watson.apply");
     expect(entry).toMatchObject({ actor: "Watson (Auto)" });

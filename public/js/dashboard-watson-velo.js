@@ -8,7 +8,8 @@
 // Every model and evidence string (title, VQL, host, ids, names, error text) goes through
 // esc()/escAttr() (dashboard-escape.js). Actions ride on data-act="watsonAct" + data-w-verb.
 (function () {
-  const AUTO_HEADS = ["Watson acted on its own (Auto mode", "(Watson's Auto actions, continued)"];
+  // New heads (Task 10, STE) and the old ones, so stored history still renders as a list.
+  const AUTO_HEADS = ["Watson did these actions in Auto mode.", "More Auto actions:", "Watson acted on its own (Auto mode", "(Watson's Auto actions, continued)"];
   const UNCERTAIN =
     "Watson does not know if this ran. Check Velociraptor. Then mark it as launched or try again.";
   const NO_UNDO = "You cannot undo a launched hunt. It already ran on the endpoints.";
@@ -17,7 +18,7 @@
   const STALLED =
     "This launch stopped before Watson saved its result. Check Velociraptor. Then mark it as launched or try again.";
 
-  const RISK_TAIL = ". Usually, Watson's safety check blocks this. Read the query before you approve it.";
+  const RISK_TAIL = " Usually, Watson's safety check blocks this. Read the query before you approve it.";
   // Risky cards whose second confirmation is on screen (by proposal id); cleared on a case switch.
   const wRiskArmed = new Set();
   // Risky launches whose "Yes, launch it" request is in flight: the button stays disabled (M-5).
@@ -59,17 +60,19 @@
   // Risky is decided by the stored risk field, never by how many reasons it lists (M-4).
   const isRisky = (p) => !!p.risk && typeof p.risk === "object";
   const riskReasons = (p) => (p.risk && Array.isArray(p.risk.reasons) ? p.risk.reasons.map(String) : []);
+  // The STE copy (Task 10) as sentences; a proposal saved before it shows its plain reasons with a period.
+  const riskText = (p) => p.risk && Array.isArray(p.risk.display) && p.risk.display.length ? p.risk.display.map(String).join(" ") : (riskReasons(p).join("; ") || "Watson did not record the reason") + ".";
 
   function riskHtml(p) {
     if (!isRisky(p) || p.status === "applied" || p.status === "rejected") return "";
-    const reasons = riskReasons(p).join("; ") || "Watson did not record the reason";
-    return `<div class="watson-why watson-risk" role="alert">${esc(`Risky query: ${reasons}${RISK_TAIL}`)}</div>`;
+    return `<div class="watson-why watson-risk" role="alert">${esc(`Risky query: ${riskText(p)}${RISK_TAIL}`)}</div>`;
   }
 
-  function acceptedHtml(l) {
+  function acceptedHtml(l, p) {
     const r = l && l.riskAccepted;
     if (!r) return "";
-    const why = Array.isArray(r.reasons) ? r.reasons.map(String).join("; ") : "";
+    const ste = p.risk && Array.isArray(p.risk.display) && p.risk.display.length ? p.risk.display.map(String).join(" ") : "";
+    const why = ste || (Array.isArray(r.reasons) ? r.reasons.map(String).join("; ") : "");
     return `<div class="watson-why watson-risk">${esc(`${r.by || "An analyst"} approved this launch after the warning: ${why}`)}</div>`;
   }
 
@@ -81,7 +84,7 @@
       const l = p.launched || {};
       lines.push(
         `<div class="watson-why">${esc(l.by || p.appliedBy || "An analyst")} launched this at ${timeHtml(l.at || p.appliedAt)}</div>`,
-        acceptedHtml(l),
+        acceptedHtml(l, p),
         `<div class="watson-why" data-w-status="launch">${hasIds(l) ? statusLine(p.watch) : esc(NO_IDS)}</div>`,
         `<div class="watson-why">${esc(NO_UNDO)}</div>`,
       );

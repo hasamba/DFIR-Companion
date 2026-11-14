@@ -182,11 +182,11 @@ Watson prefers a reviewed, read-only list of plugins, functions, artifacts and W
 
 Sometimes Watson needs something off the list: running a program, writing or uploading, a network call, a network path or URL, a path built at run time, or an artifact nobody reviewed. Watson can still propose that query, with its reason. The card is marked as risky:
 
-- A red warning block names the risks in plain words, for example *runs a program on the endpoint (execve)*, and says that Watson's safety check would normally block this query. Read the query before you approve it.
+- A red warning block names the risks in ASD-STE100 sentences, for example *The query runs a program on the endpoint (execve).*, and says that Watson's safety check usually blocks this query. Read the query before you approve it.
 - The card has **Review risk and launch…** instead of **Launch**. Click it, read the question that opens on the card, then click **Yes, launch it**, or **Cancel**. Nothing runs before that second click.
 - Just before the launch, Watson checks the query again. If the query now has a risk you did not see on the card, Watson refuses it.
-- The launched card, the audit log and the hunt entry all say *approved by* the analyst *despite warning*, with the risks.
-- **Auto mode never launches a risky query**, from any round. The Auto listing shows it as *held for your approval: risky query*, and it waits for an analyst.
+- The launched card says that the analyst *approved this launch after the warning*. The audit log and the hunt entry say *approved by* the analyst *despite warning*, with the risks.
+- **Auto mode never launches a risky query**, from any round. The Auto listing says *It waits for your approval, because the query is risky*, and names the risks.
 
 ### What is always refused
 

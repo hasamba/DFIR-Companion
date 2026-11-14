@@ -171,6 +171,18 @@ describe("card dispatch and Auto", () => {
     expect(h).toContain('data-w-verb="undo"');
   });
 
+  it("draws a listing with the new STE heads as a list too, and keeps other turns plain", () => {
+    const text = [
+      "Watson did these actions in Auto mode. Dana set Auto mode.",
+      "- Applied next step: check backups",
+    ].join("\n");
+    expect(velo().watsonVeloAutoListHtml(text).match(/<li>/g)).toHaveLength(1);
+    expect(
+      velo().watsonVeloAutoListHtml("More Auto actions:\n- Applied new finding: x").match(/<li>/g),
+    ).toHaveLength(1);
+    expect(velo().watsonVeloAutoListHtml("Watson did something else")).toBe("");
+  });
+
   it("draws the Auto listing as a list with the VQL in a pre, escaped", () => {
     const text = [
       "Watson acted on its own (Auto mode, switched on by Dana):",
@@ -324,6 +336,21 @@ describe("risky launch cards (Task 9)", () => {
     expect(h).toContain('data-w-verb="riskArm"');
     expect(h).not.toContain(">Launch</button>");
     expect(h).toContain(">Reject</button>");
+  });
+
+  it("shows the STE copy of the reasons when the proposal has it, escaped (Task 10)", () => {
+    const risk = { ...RISK, display: ["The query runs a program on the endpoint (execve).", HOSTILE] };
+    const h = velo().watsonVeloCardHtml(base({ risk }));
+    expect(h).toContain("Risky query: The query runs a program on the endpoint (execve). ");
+    expect(h).not.toContain("<img");
+    const launched = velo().watsonVeloCardHtml(
+      base({
+        status: "applied",
+        risk,
+        launched: { at: "x", by: "Dana", riskAccepted: { by: "Dana", at: "x", reasons: ["raw"] } },
+      }),
+    );
+    expect(launched).toContain("Dana approved this launch after the warning: The query runs a program");
   });
 
   it("arming shows an inline second confirmation; cancel takes it away", () => {

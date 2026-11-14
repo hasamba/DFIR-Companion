@@ -25,7 +25,7 @@ const D = `${N}(?:\\.${N})*`;
 const re = (s: string): RegExp => new RegExp(`^${s}$`);
 
 /** What a known call does, in plain words (the denied names of vqlAllowlist.ts). */
-const CALL_PLAIN: Readonly<Record<string, string>> = {
+export const CALL_PLAIN: Readonly<Record<string, string>> = {
   execve: "runs a program on the endpoint",
   shell: "runs a shell command on the endpoint",
   rm: "deletes files on the endpoint",

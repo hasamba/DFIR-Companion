@@ -262,6 +262,8 @@ export interface WatsonLaunchWatch {
 export interface WatsonLaunchRisk {
   reasons: string[];
   checks: string[];
+  /** The checks as ASD-STE100 sentences, for display only (Task 10). Older proposals have none. */
+  display?: string[];
 }
 
 /** Who launched a risky query despite the warning, and the reasons they saw. */

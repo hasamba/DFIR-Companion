@@ -12,7 +12,8 @@ import { clearInFlight, markInFlight } from "../velo/launchInFlight.js";
 import type { VeloLaunchDeps, VeloLaunchOutcome, VeloLaunchRequest } from "../velo/launchTypes.js";
 import { initialWatch } from "../velo/launchWatch.js";
 import { loadVeloFleet } from "../velo/veloFleet.js";
-import { plainRisk, riskAcceptedText } from "../velo/vqlRiskClass.js";
+import { steReason, steReasons } from "../velo/vqlReasonSte.js";
+import { riskAcceptedText } from "../velo/vqlRiskClass.js";
 import type { WatsonWriter, WriterDeps } from "./writerTypes.js";
 
 // Applying a velo_launch proposal launches a Velociraptor hunt or collection through the existing
@@ -66,6 +67,13 @@ const replace = (chat: WatsonChat, next: WatsonProposal): WatsonChat => ({
   proposals: chat.proposals.map((x) => (x.id === next.id ? next : x)),
 });
 
+/** A failed check in STE sentences, for the analyst (the raw reason is never shown). */
+function refusalText(check: { reason: string; reasons?: string[] }): string {
+  return check.reasons?.length
+    ? `The safety check blocked it. ${steReasons(check.reasons)}`
+    : steReason(check.reason);
+}
+
 /** RISKY reasons the recheck found that the proposal did not store (compared raw, never plain). */
 function newRisks(p: WatsonVeloLaunchProposal, found: readonly string[] | undefined): string[] {
   const stored = new Set(p.risk?.checks ?? []);
@@ -86,12 +94,11 @@ async function recheck(
   const allowRisky = !!p.risk && acceptRisk;
   const ctx = { inventory: fleet.records, deployed, matchClient: v.matchClient, allowRisky };
   const check = checkLaunch(input, ctx);
-  if (!check.ok) throw new WatsonProposalConflict(`Watson will not launch this: ${check.reason}`);
+  if (!check.ok) throw new WatsonProposalConflict(`Watson will not launch this. ${refusalText(check)}`);
   const added = newRisks(p, check.risky);
   if (added.length) {
-    const what = added.map(plainRisk).join("; ");
     throw new WatsonProposalConflict(
-      `Watson will not launch this. It has a risk that you did not approve: ${what}`,
+      `Watson will not launch this. It has a risk that you did not approve. ${steReasons(added)}`,
     );
   }
   if (check.fingerprint !== p.fingerprint || (check.clientHost ?? "") !== (p.hostname ?? "")) {
@@ -133,7 +140,7 @@ async function saveLaunching(
     await deps.chatStore.update(caseId, async (c) => {
       const p = findLaunch(c, id);
       if (p.status !== "pending") throw new WatsonProposalStateError("apply", p.status);
-      if (p.risk && !acceptRisk) throw new WatsonRiskNotAccepted(p.risk.reasons);
+      if (p.risk && !acceptRisk) throw new WatsonRiskNotAccepted(p.risk.reasons, p.risk.display);
       if (sameLaunchLive(c, p)) throw new WatsonProposalConflict("the same launch already ran or runs now");
       const planned = await recheck(v, caseId, p, acceptRisk);
       markInFlight(caseId, id);
@@ -171,7 +178,7 @@ async function saveIntent(
   let added: string[] = [];
   try {
     const r = await v.fingerprints.reserve(caseId, planned, absentKeys(launching));
-    if (!r.ok) throw new WatsonProposalConflict(`Watson will not launch this: ${ALREADY_RAN}`);
+    if (!r.ok) throw new WatsonProposalConflict(`Watson will not launch this. ${steReason(ALREADY_RAN)}`);
     added = r.added;
     const proposal = await saveReserved(deps, caseId, id, added);
     return { added, proposal };

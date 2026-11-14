@@ -119,7 +119,11 @@ const veloLaunchProposal = z.object({
     .optional()
     .catch(undefined),
   risk: z
-    .object({ reasons: z.array(z.string()), checks: z.array(z.string()) })
+    .object({
+      reasons: z.array(z.string()),
+      checks: z.array(z.string()),
+      display: z.array(z.string()).optional().catch(undefined),
+    })
     .optional()
     .catch(undefined),
   resolvedBy: z.string().optional().catch(undefined),

@@ -77,17 +77,23 @@ export function eligibleProposals(chat: WatsonChat, round: WatsonAutoRound): Wat
   });
 }
 
-/** Why Auto leaves a proposal for an analyst; null when Auto applies it. */
+/** A risky launch waits, in STE; a proposal saved before Task 10 has no display copy. */
+const riskyWait = (risk: { reasons: readonly string[]; display?: readonly string[] }): string =>
+  risk.display?.length
+    ? `It waits for your approval, because the query is risky. ${risk.display.join(" ")}`
+    : `It waits for your approval, because the query is risky (${risk.reasons.join("; ")}).`;
+
+/** Why Auto leaves a proposal for an analyst, in full sentences; null when Auto applies it. */
 function waitReason(p: WatsonProposal, round: WatsonAutoRound): string | null {
   if (p.kind !== "velo_launch") return null;
   // Task 9: a risky query waits for an analyst in every mode and from every round source.
-  if (p.risk) return `it waits for your approval because the query is risky (${p.risk.reasons.join("; ")})`;
-  if (p.mode !== "collection") return "a fleet-wide hunt always waits for an analyst";
-  if (round.reaction) return "Watson does not launch from a round it started itself";
+  if (p.risk) return riskyWait(p.risk);
+  if (p.mode !== "collection") return "A fleet-wide hunt always waits for an analyst.";
+  if (round.reaction) return "Watson does not launch from a round that it started itself.";
   if (round.source === "slash")
-    return "Watson does not launch from a chat-bot command. Approve it in the Watson panel";
+    return "Watson does not launch from a chat-bot command. Approve it in the Watson panel.";
   if (round.source !== "dashboard")
-    return "Watson launches on its own only from a message in the Watson panel. Approve it there";
+    return "Watson launches on its own only from a message in the Watson panel. Approve it there.";
   return null;
 }
 
@@ -130,8 +136,8 @@ const vqlOf = (p: WatsonProposal): string | undefined => (p.kind === "velo_launc
  * off the end. A VQL too long for a turn of its own is pointed at, never cut.
  */
 export function listingTurns(by: string, listed: readonly Listed[]): string[] {
-  const head = `Watson acted on its own (Auto mode, switched on by ${by.slice(0, 200)}):`;
-  const more = "(Watson's Auto actions, continued)";
+  const head = `Watson did these actions in Auto mode. ${by.slice(0, 200)} set Auto mode.`;
+  const more = "More Auto actions:";
   const turns: string[][] = [[head]];
   let used = head.length;
   const push = (text: string) => {
@@ -211,18 +217,18 @@ export async function autoApply(
   const lines: Listed[] = [];
   let stateChanged = false;
   let stopped = false;
-  let stopReason = "Auto mode is no longer on for this case";
+  let stopReason = "Auto mode is no longer on for this case.";
   for (const p of todo) {
     if (!stopped && deps.recheck && !waitReason(p, round)) {
       const now = await deps.recheck().catch(() => null);
       stopped = !autoOn(now);
-      if (now?.frozen) stopReason = "someone closed or archived the case";
+      if (now?.frozen) stopReason = "Someone closed or archived the case.";
     }
     const wait = stopped ? stopReason : waitReason(p, round);
     if (wait) {
       const vql = vqlOf(p);
       lines.push({
-        line: `- Watson left this for an analyst: ${what(p)}. Reason: ${wait}.`,
+        line: `- Watson left this for an analyst: ${what(p)}. ${wait}`,
         ...(vql !== undefined ? { vql } : {}),
       });
       continue;

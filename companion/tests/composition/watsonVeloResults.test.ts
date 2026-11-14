@@ -414,7 +414,7 @@ describe("a Watson single-host collection", () => {
     h.clock.now = T0 + WATSON_WATCH_DEFAULT_MS + WATSON_WATCH_GRACE_MS + 1;
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing did not complete: Watson could not read the results: Velociraptor collected 7 rows, but Watson could not read them (flow F.SAMPLE on web01.example.com). The results are in Velociraptor. The case possibly does not have them",
+      "Watson's hunt Process listing did not complete: Watson could not read the results: Velociraptor collected 7 rows, but Watson could not read them (flow F.SAMPLE on web01.example.com). The results are in Velociraptor. Watson does not know if the case has them",
     ]);
   });
 
@@ -454,7 +454,7 @@ describe("a Watson single-host collection", () => {
     await h.watcher.resume(CASE);
     expect(h.ingests).toBe(0);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing did not complete: Watson stopped before it finished the import of flow F.SAMPLE on web01.example.com. The case possibly has some rows. Watson did not show the rows that the tagger graded above Info for approval. Import the flow from Velociraptor again to get them",
+      "Watson's hunt Process listing did not complete: Watson stopped before it finished the import of flow F.SAMPLE on web01.example.com. Watson does not know if the case has some of the rows. Watson did not show the rows that the tagger graded above Info for approval. Import the flow from Velociraptor again to get them",
     ]);
   });
 
@@ -483,7 +483,7 @@ describe("a Watson single-host collection", () => {
     h.watcher.watch(CASE, "wp-coll");
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing did not complete: Watson could not import the results: importer crashed (flow F.SAMPLE on web01.example.com). The results are in Velociraptor. The case possibly does not have them",
+      "Watson's hunt Process listing did not complete: Watson could not import the results: importer crashed (flow F.SAMPLE on web01.example.com). The results are in Velociraptor. Watson does not know if the case has them",
     ]);
   });
 
@@ -536,7 +536,7 @@ describe("a Watson single-host collection", () => {
     await h.t.runAll(h.watcher);
     expect(h.ingests).toBe(0);
     expect((await huntEvents())[0].text).toBe(
-      "Watson's hunt Process listing did not complete: The case is closed, so Watson did not import the results (flow F.SAMPLE on web01.example.com). The results are in Velociraptor. The case possibly does not have them",
+      "Watson's hunt Process listing did not complete: The case is closed, so Watson did not import the results (flow F.SAMPLE on web01.example.com). The results are in Velociraptor. Watson does not know if the case has them",
     );
   });
 });

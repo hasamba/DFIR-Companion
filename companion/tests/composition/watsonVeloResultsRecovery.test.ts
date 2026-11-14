@@ -166,7 +166,7 @@ describe("G18 — a timeout after failed status reads", () => {
     await w.resume(CASE);
     const [text] = await huntTexts();
     expect(text).toMatch(/timed out: Watson could not read the collection's status/);
-    expect(text).toMatch(/The results are in Velociraptor\. The case possibly does not have them/);
+    expect(text).toMatch(/The results are in Velociraptor\. Watson does not know if the case has them/);
     expect(text).not.toMatch(/failed: Watson could not/);
   });
 });
