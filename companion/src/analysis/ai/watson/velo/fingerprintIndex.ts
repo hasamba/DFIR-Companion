@@ -1,7 +1,8 @@
 import { deployedFingerprints, type HuntDeployInput } from "../../../huntOutcomes.js";
-import type { HuntOutcomeStore } from "../../../huntOutcomeStore.js";
-import type { HuntFingerprintStore } from "./huntFingerprintStore.js";
-export { HuntFingerprintStore } from "./huntFingerprintStore.js";
+import { HuntOutcomeStore } from "../../../huntOutcomeStore.js";
+import type { CaseStore } from "../../../../storage/caseStore.js";
+import { HuntFingerprintStore } from "./huntFingerprintStore.js";
+export { HuntFingerprintStore };
 import { launchFingerprints } from "./launchFingerprint.js";
 export { launchFingerprints };
 
@@ -12,7 +13,7 @@ export { launchFingerprints };
 type RecordDeploy = (caseId: string, input: HuntDeployInput) => Promise<void>;
 
 /** Wrap recordHuntDeploy so each deploy is first added to the durable index. Index errors are logged, never thrown.
- * A fleet deploy is keyed by its VQL alone; an add is idempotent, so a launch reserved beforehand
+ * A fleet deploy is keyed by its VQL alone, a collection (input.hostname) by VQL + host only; an add is idempotent, so a launch reserved beforehand
  * (HuntFingerprintStore.reserve) is unaffected. */
 export function withFingerprintIndex(
   inner: RecordDeploy,
@@ -21,7 +22,7 @@ export function withFingerprintIndex(
 ): RecordDeploy {
   return async (caseId, input) => {
     try {
-      await index.add(caseId, launchFingerprints(input.vql));
+      await index.add(caseId, launchFingerprints(input.vql, input.hostname));
     } catch (e) {
       log(`[hunt-fingerprints] index write failed: ${(e as Error).message}`);
     }
@@ -30,15 +31,24 @@ export function withFingerprintIndex(
 }
 
 /**
- * What already ran on the case: the durable index unioned with the outcome ledger (cases that
- * deployed before the index existed). Throws when the index is corrupt — the caller must refuse.
+ * What already ran on the case, from the durable index alone (the outcome ledger is VQL-only, so it
+ * cannot tell a collection from a fleet hunt). Throws when the index is corrupt — the caller must refuse.
  */
 export async function loadLaunchFingerprints(
   caseId: string,
   index: Pick<HuntFingerprintStore, "load">,
-  outcomes: Pick<HuntOutcomeStore, "load"> | undefined,
 ): Promise<Set<string>> {
-  const fromIndex = await index.load(caseId);
-  const fromOutcomes = outcomes ? deployedFingerprints(await outcomes.load(caseId)) : new Set<string>();
-  return new Set([...fromIndex, ...fromOutcomes]);
+  return index.load(caseId);
+}
+
+/**
+ * The store every caller should use: the index, seeded from the outcome ledger for a case that has
+ * no index file yet. A legacy entry cannot be told apart from a fleet hunt, so it is treated as one
+ * (refuses more, never less), and it is persisted with the first write.
+ */
+export function fingerprintStoreFor(cases: CaseStore): HuntFingerprintStore {
+  const outcomes = new HuntOutcomeStore(cases);
+  return new HuntFingerprintStore(cases, async (caseId) => [
+    ...deployedFingerprints(await outcomes.load(caseId)),
+  ]);
 }

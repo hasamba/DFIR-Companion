@@ -102,6 +102,7 @@ export interface HuntDeployInput {
   relatedHypothesisId?: string; // ACH (#14): the hypothesis this hunt tests, when deployed from one
   coverage?: HuntCoverage; // #803: "snapshot" marks a live-state query whose empty result is not a miss
   deployedAt: string; // ISO (the route stamps it — keeps this module time-free)
+  hostname?: string; // single-host collection target; keys the durable launch index per host (not persisted here)
 }
 
 // Record a freshly-deployed hunt (status "deployed"), prepended and capped (newest first). Upsert by

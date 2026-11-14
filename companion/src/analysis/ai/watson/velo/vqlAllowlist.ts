@@ -143,7 +143,11 @@ export const DENIED_NAMES: readonly string[] = [
 /** Argument names refused on any call: uploads, dumps, and lambdas (strings evaluated as VQL). */
 export const BLOCKED_ARG = /upload|dump|lambda|^func$/i;
 
-/** WMI classes a `wmi(query=…)` may select from: read-only inventory, no side-effecting classes (Win32_PingStatus…). */
+/**
+ * WMI classes a `wmi(query=…)` may select from: read-only inventory, no side-effecting classes
+ * (Win32_PingStatus pings; Win32_Product is left out because enumerating it runs a Windows
+ * Installer consistency check that can repair packages).
+ */
 export const WMI_CLASSES: readonly string[] = [
   "Win32_Process",
   "Win32_Service",
@@ -155,7 +159,6 @@ export const WMI_CLASSES: readonly string[] = [
   "Win32_NetworkAdapterConfiguration",
   "Win32_QuickFixEngineering",
   "Win32_ScheduledJob",
-  "Win32_Product",
 ];
 
 /** File-reading calls whose path arguments must be plain string literals (no runtime-built paths). */
@@ -192,6 +195,6 @@ export const QUERY_ARGS: readonly string[] = ["then", "else", "query", "items", 
 
 /** LET names that would set a Velociraptor config or credential variable. */
 export function isCredentialName(name: string): boolean {
-  if (/_CREDENTIALS$|_CONFIG$|^SSH_/i.test(name)) return true;
+  if (/credential|_CONFIG$|^SSH_/i.test(name)) return true;
   return name === name.toUpperCase() && /CRED|KEY|TOKEN|PASS|SECRET/.test(name);
 }

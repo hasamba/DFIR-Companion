@@ -849,6 +849,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           source,
           title,
           vql,
+          hostname, // keys the durable launch index per host (Watson phase 3)
           mitreTechniques,
           deployedAt: new Date().toISOString(),
           ...(relatedHypothesisId ? { relatedHypothesisId } : {}),

@@ -54,6 +54,9 @@ function quotedEnd(src: string, start: number, escapes: boolean): number {
 }
 
 const ESCAPES: Record<string, string> = { n: "\n", t: "\t", r: "\r" };
+// The only escapes accepted. Anything else (\x5c, \u005c, \0 …) could decode differently in
+// Velociraptor than here — a UNC path spelled in hex — so it fails closed.
+const KNOWN_ESCAPE = /^[\\'"ntr]$/;
 
 function decodeEscaped(body: string): string {
   return body.replace(/\\(.)/gs, (_m, ch: string) => ESCAPES[ch] ?? ch);
@@ -71,6 +74,12 @@ function readString(src: string, start: number): VqlToken {
   if (escaped < 0 || raw < 0) throw new TokenError("unterminated string literal");
   if (escaped !== raw) throw new TokenError("a string literal whose end depends on backslash escapes");
   const text = src.slice(start, escaped);
+  for (let k = 1; k < text.length - 1; k++) {
+    if (text[k] !== "\\") continue;
+    if (!KNOWN_ESCAPE.test(text[k + 1] ?? ""))
+      throw new TokenError("an unsupported escape in a string literal");
+    k++;
+  }
   return { kind: "string", text, value: decodeEscaped(text.slice(1, -1)), start, end: escaped };
 }
 

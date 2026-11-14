@@ -73,7 +73,25 @@ const isLiteral = (v: readonly VqlToken[]): boolean => v.length === 1 && v[0].ki
 function isLiteralList(v: readonly VqlToken[]): boolean {
   if (isLiteral(v)) return true;
   if (v.length < 3 || !isPunct(v[0], "[") || !isPunct(v[v.length - 1], "]")) return false;
-  return v.slice(1, -1).every((t, i) => (i % 2 === 0 ? t.kind === "string" : isPunct(t, ",")));
+  const inner = v.slice(1, -1);
+  if (inner.length % 2 === 0) return false; // empty, or a trailing comma
+  return inner.every((t, i) => (i % 2 === 0 ? t.kind === "string" : isPunct(t, ",")));
+}
+
+const literalValues = (v: readonly VqlToken[]): string[] =>
+  v.filter((t) => t.kind === "string").map((t) => t.value ?? "");
+
+/**
+ * A path literal that could reach another machine anywhere in it: `//`, a doubled backslash, or a
+ * `{a,b}` glob alternation holding a path separator (which can hide a UNC root).
+ */
+function pathLiteralProblem(v: readonly VqlToken[], name: string): string | null {
+  for (const s of literalValues(v)) {
+    if (s.includes("//") || s.includes("\\\\"))
+      return `${name} holds // or a doubled backslash (a possible network path)`;
+    if (/\{[^}]*[\\/][^}]*\}/.test(s)) return `${name} has a {…} alternation holding a path separator`;
+  }
+  return null;
 }
 
 /** `{ … }` spanning the whole value. */
@@ -118,11 +136,19 @@ function argProblem(callee: string, arg: Arg, lets: ReadonlyMap<string, LetDef>)
   }
   if (isArtifact) {
     if (isCredentialName(name)) return `argument ${name} would set a config or credential variable`;
-    return isLiteralList(v) ? null : `artifact argument ${name} must be a plain quoted value`;
+    if (!isLiteralList(v)) return `artifact argument ${name} must be a plain quoted value`;
+    return pathLiteralProblem(v, name);
   }
-  const pathArg = has(PATH_ARGS, lname) || (lname === "rules" && lc(callee) === "yara");
-  if (has(FILE_READ_CALLS, callee) && pathArg && !isLiteralList(v)) {
-    return `${callee} argument ${name} must be a plain quoted path (no paths built at run time)`;
+  if (lc(callee) === "yara" && lname === "rules") {
+    if (!isLiteralList(v)) return "yara rules must be a plain quoted value";
+    return literalValues(v).some((s) => /\binclude\b/i.test(s))
+      ? "yara rules may not include other files"
+      : null;
+  }
+  if (has(FILE_READ_CALLS, callee) && has(PATH_ARGS, lname)) {
+    if (!isLiteralList(v))
+      return `${callee} argument ${name} must be a plain quoted path (no paths built at run time)`;
+    return pathLiteralProblem(v, name);
   }
   return null;
 }

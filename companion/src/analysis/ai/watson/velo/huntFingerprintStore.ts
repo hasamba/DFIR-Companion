@@ -4,6 +4,7 @@ import type { CaseStore } from "../../../../storage/caseStore.js";
 import { atomicWrite } from "../../../../storage/atomicWrite.js";
 
 // Per-case durable index of every VQL fingerprint ever deployed (state/hunt-fingerprints.json).
+// Only release() removes entries: a launch that reserved its keys and then definitely did not run.
 // The hunt-outcome ledger is capped (DFIR_HUNT_OUTCOME_MAX, default 50), so it cannot answer "did
 // this hunt EVER run on the case?" — this set can. Append-only: never truncated, never pruned.
 //
@@ -20,7 +21,14 @@ const FILE = "hunt-fingerprints.json";
 const queues = new Map<string, Promise<void>>();
 
 export class HuntFingerprintStore {
-  constructor(private readonly cases: CaseStore) {}
+  /**
+   * @param legacy fingerprints to start from when the case has no index file yet (the outcome
+   *   ledger, via fingerprintIndex.ts → fingerprintStoreFor); persisted with the first write.
+   */
+  constructor(
+    private readonly cases: CaseStore,
+    private readonly legacy?: (caseId: string) => Promise<readonly string[]>,
+  ) {}
 
   private path(caseId: string): string {
     return join(this.cases.stateDir(caseId), FILE);
@@ -32,7 +40,9 @@ export class HuntFingerprintStore {
     try {
       raw = await readFile(this.path(caseId), "utf8");
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        return new Set(this.legacy ? await this.legacy(caseId) : []);
+      }
       throw err;
     }
     const parsed = JSON.parse(raw) as unknown;
@@ -87,6 +97,18 @@ export class HuntFingerprintStore {
       if (list.some((f) => cur.has(f))) return false;
       await this.write(caseId, cur, list);
       return true;
+    });
+  }
+
+  /** Drop fingerprints a reserved launch never used (the deploy definitely did not run). Serialised like reserve. */
+  release(caseId: string, fingerprints: readonly string[]): Promise<void> {
+    const drop = new Set(fingerprints.filter((f) => typeof f === "string" && f.length > 0));
+    if (drop.size === 0) return Promise.resolve();
+    return this.serialise(caseId, async () => {
+      const cur = await this.load(caseId);
+      if (![...drop].some((f) => cur.has(f))) return;
+      const kept = [...cur].filter((f) => !drop.has(f));
+      await atomicWrite(this.path(caseId), JSON.stringify(kept, null, 2));
     });
   }
 }

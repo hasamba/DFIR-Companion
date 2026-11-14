@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CaseStore } from "../../../../src/storage/caseStore.js";
@@ -7,6 +7,7 @@ import { HuntFingerprintStore } from "../../../../src/analysis/ai/watson/velo/hu
 import {
   withFingerprintIndex,
   loadLaunchFingerprints,
+  fingerprintStoreFor,
 } from "../../../../src/analysis/ai/watson/velo/fingerprintIndex.js";
 import { checkLaunch } from "../../../../src/analysis/ai/watson/velo/launchCheck.js";
 import { HuntOutcomeStore } from "../../../../src/analysis/huntOutcomeStore.js";
@@ -96,12 +97,63 @@ describe("HuntFingerprintStore.reserve", () => {
   });
 });
 
+describe("HuntFingerprintStore.release", () => {
+  it("frees a reservation so the same launch can be reserved again", async () => {
+    expect(await index.reserve("c1", ["k1", "k2"])).toBe(true);
+    expect(await index.reserve("c1", "k1")).toBe(false);
+    await index.release("c1", ["k1", "k2"]);
+    expect(await index.reserve("c1", ["k1", "k2"])).toBe(true);
+  });
+
+  it("leaves other fingerprints alone", async () => {
+    await index.add("c1", ["keep", "drop"]);
+    await index.release("c1", ["drop"]);
+    expect([...(await index.load("c1"))]).toEqual(["keep"]);
+  });
+});
+
+describe("per-host launch keys through withFingerprintIndex (ruling 7)", () => {
+  const VQL = "SELECT * FROM pslist()";
+  const inventory = [
+    { clientId: "C.a1", hostname: "HOST-A", fqdn: "host-a.corp.example.com" },
+    { clientId: "C.b1", hostname: "HOST-B", fqdn: "host-b.corp.example.com" },
+  ];
+  const launch = async (mode: "hunt" | "collection", hostname?: string) => {
+    const deployed = await loadLaunchFingerprints("c1", index);
+    return checkLaunch(
+      { vql: VQL, mode, ...(hostname ? { hostname } : {}) },
+      { inventory, deployed, matchClient },
+    );
+  };
+  const deploy = (hostname?: string) =>
+    withFingerprintIndex(innerRecord, index, () => {})("c1", {
+      source: "fleet",
+      title: "t",
+      vql: VQL,
+      deployedAt: "2026-11-14T00:00:00Z",
+      ...(hostname ? { hostname } : {}),
+    });
+
+  it("collection on A: B allowed, A refused, a later fleet hunt allowed", async () => {
+    await deploy("host-a.corp.example.com"); // the route passes the hostname the analyst typed
+    expect((await launch("collection", "HOST-B")).ok).toBe(true);
+    expect((await launch("collection", "host-a")).ok).toBe(false);
+    expect((await launch("hunt")).ok).toBe(true);
+  });
+
+  it("fleet hunt first: every collection of the same VQL is refused", async () => {
+    await deploy();
+    expect((await launch("collection", "HOST-A")).ok).toBe(false);
+    expect((await launch("collection", "HOST-B")).ok).toBe(false);
+  });
+});
+
 describe("withFingerprintIndex", () => {
   it("still blocks the first VQL after the 51st distinct launch", async () => {
     const record = withFingerprintIndex(innerRecord, index, () => {});
     for (let n = 1; n <= 51; n++) await record("c1", deployInput(n));
     expect((await outcomes.load("c1")).length).toBe(50);
-    const deployed = await loadLaunchFingerprints("c1", index, outcomes);
+    const deployed = await loadLaunchFingerprints("c1", index);
     const r = checkLaunch(
       { vql: deployInput(1).vql!, mode: "hunt" },
       { inventory: [], deployed, matchClient },
@@ -136,14 +188,18 @@ describe("withFingerprintIndex", () => {
   });
 });
 
-describe("loadLaunchFingerprints", () => {
-  it("unions the index with outcomes recorded before the index existed", async () => {
+describe("legacy outcomes seed the index", () => {
+  it("treats hunts recorded before the index existed as already run, and persists them on first write", async () => {
     await innerRecord("c1", deployInput(9));
-    const raw = await readFile(join(dir, "hunt-outcomes.json"), "utf8");
-    expect(raw).toContain("vqlFingerprint");
-    const deployed = await loadLaunchFingerprints("c1", index, outcomes);
-    expect(
-      checkLaunch({ vql: deployInput(9).vql!, mode: "hunt" }, { inventory: [], deployed, matchClient }).ok,
-    ).toBe(false);
+    const seeded = fingerprintStoreFor(cases);
+    const deployed = await loadLaunchFingerprints("c1", seeded);
+    const r = checkLaunch(
+      { vql: deployInput(9).vql!, mode: "hunt" },
+      { inventory: [], deployed, matchClient },
+    );
+    expect(r.ok).toBe(false);
+    await seeded.add("c1", ["other"]);
+    await outcomes.save("c1", []);
+    expect((await loadLaunchFingerprints("c1", seeded)).size).toBe(2);
   });
 });
