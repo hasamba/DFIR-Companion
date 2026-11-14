@@ -22,6 +22,13 @@
         `<div class="watson-why">${esc(r.why)}</div></div>`
       );
     }
+    if (r.kind === "velociraptor") {
+      const where = r.mode === "hunt" ? "fleet hunt" : `collection on ${r.hostname || "a host"}`;
+      return (
+        `<div class="watson-req"><div class="watson-lbl">Velociraptor ${esc(where)}: ${esc(r.title)}</div>` +
+        `<pre class="watson-pre">${esc(r.vql)}</pre><div class="watson-why">${esc(r.why)}</div></div>`
+      );
+    }
     return (
       `<div class="watson-req"><div class="watson-lbl">Import ${esc(r.what)}</div>` +
       `<div class="watson-why">${esc(r.why)}</div></div>`

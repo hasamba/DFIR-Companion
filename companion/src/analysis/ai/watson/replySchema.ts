@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { questionStatusSchema } from "../../responseSchema.js";
 import type { QuestionStatus } from "../../stateTypes.js";
+import { MAX_VQL_BYTES } from "../../vqlInput.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_HISTORY_ID } from "./historyStore.js";
 import { ANSWER_MAX, POINTER_MAX, QUESTION_MAX } from "./roundProposals.js";
@@ -29,6 +30,9 @@ const MAX_TERM_CHARS = 200;
 const MAX_MEMORY_CHARS = 4000;
 const MAX_QUERY_CHARS = 20000;
 const MAX_ANSWER_EVENTS = 20;
+const MAX_VELO_TITLE = 200;
+const MAX_VELO_WHY = 1000;
+const MAX_VELO_HOST = 255;
 const LANGUAGES = ["vql", "kql", "spl", "cql", "esql", "sql", "other"];
 
 const str = z.string().catch("");
@@ -37,6 +41,14 @@ const requestSchema = z
   .union([
     z.object({ kind: z.literal("query"), language: str, query: str, why: str }),
     z.object({ kind: z.literal("import"), what: str, why: str }),
+    z.object({
+      kind: z.literal("velociraptor"),
+      mode: z.enum(["hunt", "collection"]).catch("collection"),
+      hostname: z.string().optional().catch(undefined),
+      title: str,
+      vql: str,
+      why: str,
+    }),
   ])
   .nullable()
   .catch(null);
@@ -85,9 +97,24 @@ export interface WatsonReply {
   writes: WatsonWrites;
 }
 
-function sanitizeRequest(req: WatsonRequest | null): WatsonRequest | null {
+function sanitizeRequest(req: WatsonRequest | null, veloConnected: boolean): WatsonRequest | null {
   if (!req) return null;
   if (req.kind === "import") return req;
+  if (req.kind === "velociraptor") {
+    const why = req.why.slice(0, MAX_VELO_WHY);
+    // No Velociraptor on the case: the same VQL is a copy-ready query for the analyst to run.
+    if (!veloConnected)
+      return { kind: "query", language: "vql", query: req.vql.slice(0, MAX_QUERY_CHARS), why };
+    const host = req.hostname?.trim().slice(0, MAX_VELO_HOST);
+    return {
+      kind: "velociraptor",
+      mode: req.mode,
+      ...(host ? { hostname: host } : {}),
+      title: req.title.slice(0, MAX_VELO_TITLE),
+      vql: req.vql.slice(0, MAX_VQL_BYTES),
+      why,
+    };
+  }
   const lang = req.language.trim().toLowerCase();
   return {
     ...req,
@@ -124,6 +151,7 @@ export function sanitizeWatsonReply(
   knownPasteIds: ReadonlySet<string>,
   knownEventIds: ReadonlySet<string>,
   citations?: WatsonCitationSets,
+  veloConnected = false,
 ): WatsonReply {
   const search =
     reply.search && (reply.search.pasteId === WATSON_HISTORY_ID || knownPasteIds.has(reply.search.pasteId))
@@ -141,7 +169,7 @@ export function sanitizeWatsonReply(
     memory: reply.memory.slice(0, MAX_MEMORY_CHARS),
     questionUpdates: reply.questionUpdates.filter((u) => knownQuestionIds.has(u.questionId)),
     newQuestions: reply.newQuestions.filter((q) => q.question.trim() !== "").slice(0, MAX_NEW_QUESTIONS),
-    request: sanitizeRequest(reply.request),
+    request: sanitizeRequest(reply.request, veloConnected),
     search,
     answer: sanitizeAnswer(reply.answer, knownEventIds),
     writes: sanitizeWrites(reply.writes, knownEventIds, citations),

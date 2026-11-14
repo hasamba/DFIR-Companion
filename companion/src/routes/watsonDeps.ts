@@ -1,4 +1,5 @@
 import type { WatsonRoundDeps } from "../analysis/ai/watson/pipelineRound.js";
+import { matchClient } from "../integrations/velociraptor/clientInventory.js";
 import { blockMd } from "../reports/mdText.js";
 import type { RouteContext } from "./context.js";
 
@@ -7,6 +8,12 @@ export function positiveLimit(raw: string | undefined): number | undefined {
   const text = raw?.trim();
   const n = Number(text);
   return text && Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Whether the case has a Velociraptor server (the same test GET /watson reports as `veloConnected`). */
+export function caseVeloConnected(ctx: RouteContext, caseId: string): boolean {
+  const servers = ctx.serverClients.forCase(caseId);
+  return servers.ok && !!servers.servers.velociraptor;
 }
 
 /**
@@ -29,5 +36,7 @@ export function watsonRoundDeps(ctx: RouteContext): WatsonRoundDeps | undefined 
     reportText: options.reportMetaStore,
     reportBlockText: blockMd,
     onStateChanged: options.onStateChanged,
+    veloConnected: (id) => caseVeloConnected(ctx, id),
+    matchClient,
   };
 }

@@ -26,6 +26,7 @@ import { WATSON_PASTE_MAX_BYTES } from "./pasteSearch.js";
 import { WATSON_CASE_CONTEXT_PROMPT_MAX } from "./promptBuilder.js";
 import { ensureStandardQuestions } from "./standardQuestions.js";
 import type { WatsonCoverage, WatsonPaste } from "./types.js";
+import type { LaunchContext } from "./velo/launchCheck.js";
 import type { WatsonReportText } from "./writers/writerTypes.js";
 
 // What a Watson round needs besides the AI-call seam, and the read-only helpers that build its
@@ -54,6 +55,10 @@ export type WatsonRoundContext = AiCallContext & {
   /** Host-identity sources, so Watson names hosts the way synthesis does. */
   assetOverridesStore?: AssetOverridesStore;
   velociraptorClientStore?: CaseFleetInventory;
+  /** Whether the case has a Velociraptor server (the route knows; the pipeline does not). Absent: no. */
+  veloConnected?(caseId: string): boolean;
+  /** The inventory host matcher for launch checks, injected (analysis/ai may not import integrations). */
+  matchClient?: LaunchContext["matchClient"];
   /** The report details, for the text a report-text proposal would replace. Absent: none proposed. */
   reportText?: WatsonReportText;
   /** Report text made safe for report.md (reports' blockMd, injected). Absent: none proposed. */

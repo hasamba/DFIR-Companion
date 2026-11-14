@@ -64,6 +64,7 @@ const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {
   next_step_new: "next_step",
   report_text: "report",
   event_promote: "event",
+  velo_launch: "hunt",
 };
 
 function describe(p: WatsonProposal): string {
@@ -82,6 +83,8 @@ function describe(p: WatsonProposal): string {
       return `report text (${p.field})`;
     case "event_promote":
       return `promotion of ${p.events.length} pasted row(s)`;
+    case "velo_launch":
+      return `Velociraptor ${p.mode}: ${p.title}`;
   }
 }
 

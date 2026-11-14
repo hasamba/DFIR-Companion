@@ -28,6 +28,7 @@ import {
 import { mergeOutcome, type Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
+import { withVeloLaunch } from "./velo/veloLaunchProposals.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
 export { WatsonAiOff, WatsonCostLimitReached, type WatsonRoundContext } from "./roundContext.js";
@@ -122,7 +123,9 @@ async function runRound(
     outcome = await converse(ctx, caseId, chat, promptTurn, { paste: newPaste, auto }, counter, before);
     // Spec §4.4: a reaction to an import writes nothing, judged on the events the prompt showed.
     const importShown = input.reaction === true && outcome.shownEvents.some((e) => e.kind === "import");
-    outcome = await withWriteInputs(ctx, caseId, outcome, input.allowWrites !== false && !importShown);
+    const mayWrite = input.allowWrites !== false && !importShown;
+    outcome = await withWriteInputs(ctx, caseId, outcome, mayWrite);
+    outcome = await withVeloLaunch(ctx, caseId, outcome, mayWrite);
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
   } finally {
@@ -177,6 +180,7 @@ async function converse(
       events: new Set(state.forensicTimeline.map((e) => e.id)),
       citations: citationSets(chat.pastes, state.findings),
     };
+    const veloOn = base.velo !== undefined;
     ask = async (input) => {
       const raw = await guardedCall(
         ctx,
@@ -185,7 +189,7 @@ async function converse(
         () => spentNow(ctx, caseId, chat, before),
         (one) => callWatson(one, caseId, state, ctx.provider, input),
       );
-      return sanitizeWatsonReply(raw, known.questions, known.pastes, known.events, known.citations);
+      return sanitizeWatsonReply(raw, known.questions, known.pastes, known.events, known.citations, veloOn);
     };
     // A stored file that is gone or unreadable never fails the round: Watson answers without it.
     const excerpt = newPaste

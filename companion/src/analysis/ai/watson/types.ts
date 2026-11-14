@@ -12,7 +12,16 @@ import type {
 
 export type WatsonRequest =
   | { kind: "query"; language: string; query: string; why: string }
-  | { kind: "import"; what: string; why: string };
+  | { kind: "import"; what: string; why: string }
+  /** Run VQL on the case's Velociraptor: a fleet hunt, or a collection on one host. */
+  | {
+      kind: "velociraptor";
+      mode: "hunt" | "collection";
+      hostname?: string;
+      title: string;
+      vql: string;
+      why: string;
+    };
 
 /** How much of the in-scope forensic timeline a round carried; stored only when it was trimmed. */
 export interface WatsonCoverage {
@@ -129,12 +138,31 @@ export interface WatsonEventPromoteProposal extends WatsonProposalCommon, Watson
   landedRows?: WatsonLandedRow[];
 }
 
+/**
+ * A Velociraptor hunt or single-host collection Watson wants to run. Built only after checkLaunch
+ * passed; `fingerprints` is the exact list a launch reserves, and `targetId` is the first of them.
+ * Launching an endpoint cannot be undone, so the proposal has no undo.
+ */
+export interface WatsonVeloLaunchProposal extends WatsonProposalCommon {
+  kind: "velo_launch";
+  targetId: string;
+  mode: "hunt" | "collection";
+  /** The inventory's name for the host (collection only). */
+  hostname?: string;
+  title: string;
+  vql: string;
+  fingerprint: string;
+  fingerprints: string[];
+  launched?: { huntId?: string; clientId?: string; flowId?: string; at: string; by: string };
+}
+
 export type WatsonProposal =
   | WatsonQuestionProposal
   | WatsonFindingProposal
   | WatsonNextStepProposal
   | WatsonReportTextProposal
-  | WatsonEventPromoteProposal;
+  | WatsonEventPromoteProposal
+  | WatsonVeloLaunchProposal;
 
 export type WatsonProposalKind = WatsonProposal["kind"];
 

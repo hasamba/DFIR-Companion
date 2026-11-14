@@ -2,6 +2,7 @@ import type { InvestigationState } from "../../stateTypes.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_HISTORY_ID, WATSON_HISTORY_NAME } from "./historyStore.js";
 import type { WatsonChat, WatsonTurn } from "./types.js";
+import { veloRulesText, WATSON_VELO_HOSTS_MAX } from "./velo/veloPrompt.js";
 
 // Pure builder for Watson's per-round user prompt. Every block is bounded. Every untrusted body
 // (case context, memory, chat, paste, analyst text) sits inside a fence the text cannot forge, and
@@ -34,6 +35,8 @@ export interface WatsonPromptInput {
   mainLanguages: string[];
   /** Turns in the full history file; the STORED PASTES block lists the history as searchable when above 0. */
   historyTurns?: number;
+  /** Set only when the case has a Velociraptor server: its enrolled hosts, for the VELOCIRAPTOR block. */
+  velo?: { hostCount: number; hosts: { hostname: string; fqdn: string }[] };
   /** A paste excerpt, or (pasteId "history") the lines a history search found. */
   pasteExcerpt?: { pasteId: string; filename: string; text: string; truncated: boolean };
 }
@@ -73,6 +76,13 @@ function recentTurn(t: WatsonTurn): string {
     rows.push(
       line(`asked for: ${r.language} query: ${clip(r.query, WATSON_REQUEST_CHARS)}`, WATSON_TURN_PROMPT_MAX),
     );
+  } else if (r?.kind === "velociraptor") {
+    rows.push(
+      line(
+        `asked for: velociraptor ${r.mode}: ${clip(r.title, WATSON_REQUEST_CHARS)}`,
+        WATSON_TURN_PROMPT_MAX,
+      ),
+    );
   } else if (r) {
     rows.push(line(`asked for: import: ${clip(r.what, WATSON_REQUEST_CHARS)}`, WATSON_TURN_PROMPT_MAX));
   }
@@ -102,8 +112,20 @@ function pastesBlock(chat: WatsonChat, historyTurns: number): string {
   return [pastes, ...history].join("\n");
 }
 
+/** The VELOCIRAPTOR block: the rules, and up to 50 enrolled hosts one per line (names are untrusted). */
+function veloBlock(velo: NonNullable<WatsonPromptInput["velo"]>): string {
+  const hosts = velo.hosts.slice(0, WATSON_VELO_HOSTS_MAX).map((h) => {
+    const fq =
+      h.fqdn && h.fqdn.toLowerCase() !== h.hostname.toLowerCase() ? ` (${line(h.fqdn, ID_CHARS)})` : "";
+    return `- ${line(h.hostname, ID_CHARS)}${fq}`;
+  });
+  const cut = velo.hostCount - hosts.length;
+  const count = `The case's Velociraptor has ${Number(velo.hostCount) || 0} enrolled hosts${cut > 0 ? ` (first ${hosts.length} listed)` : ""}:`;
+  return `VELOCIRAPTOR\n${veloRulesText()}\n${count}\n${hosts.join("\n") || "(none)"}`;
+}
+
 export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
-  const { state, chat, analystText, caseContext, mainLanguages, pasteExcerpt, historyTurns } = input;
+  const { state, chat, analystText, caseContext, mainLanguages, pasteExcerpt, historyTurns, velo } = input;
   const questions = (state.keyQuestions ?? [])
     .slice(0, WATSON_QUESTIONS_MAX)
     .map(
@@ -128,6 +150,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     `STORED PASTES (ask for a 'search' by id to read one)\n${pastesBlock(chat, historyTurns ?? 0)}`,
     `RECENT CHAT\n${fence("CHAT", recent.join("\n") || "(none)")}`,
   ];
+  if (velo) blocks.push(veloBlock(velo));
   if (pasteExcerpt) {
     const text = clip(pasteExcerpt.text, WATSON_PASTE_PROMPT_MAX);
     const note =

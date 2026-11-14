@@ -18,7 +18,7 @@ import { WatsonAiOff, WatsonCostLimitReached } from "../analysis/ai/watson/round
 import type { WatsonChat, WatsonPaste } from "../analysis/ai/watson/types.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
-import { watsonRoundDeps } from "./watsonDeps.js";
+import { caseVeloConnected, watsonRoundDeps } from "./watsonDeps.js";
 import { ingestWatsonPaste } from "./watsonPasteIngest.js";
 import { logActivity } from "../analysis/activityLog.js";
 import {
@@ -147,8 +147,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       // providerConfigured: false tells the dashboard to hide the panel; the chat stays readable.
       const chat = await options.watsonChatStore.load(req.params.id);
       const runMode = watsonRunMode(await ctx.getControl(req.params.id));
-      const servers = ctx.serverClients.forCase(req.params.id);
-      const veloConnected = servers.ok && !!servers.servers.velociraptor;
+      const veloConnected = caseVeloConnected(ctx, req.params.id);
       return res
         .status(200)
         .json({ ...chat, providerConfigured: !!roundDeps() && !!options.pipeline, runMode, veloConnected });

@@ -67,4 +67,4 @@ export interface WatsonWriter<P extends WatsonProposal> {
 }
 
 /** The activity entry's target, per kind. */
-export type WatsonTargetType = "question" | "finding" | "next_step" | "report" | "event";
+export type WatsonTargetType = "question" | "finding" | "next_step" | "report" | "event" | "hunt";

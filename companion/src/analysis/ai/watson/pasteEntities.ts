@@ -32,13 +32,20 @@ function shortLabels(hosts: readonly string[]): string[] {
   return shortHostLabels(candidates, []);
 }
 
-/** The hostnames and usernames in `text`, for the masking step of one call. */
-export function promptEntities(text: string): PromptEntities {
+/**
+ * The hostnames and usernames in `text`, for the masking step of one call. `known` are names the
+ * prompt shows from a trusted roster (the Velociraptor inventory): each is masked as it is, and its
+ * short label too when it is an FQDN, so an inventory-only host never reaches the model in clear.
+ */
+export function promptEntities(text: string, known: readonly string[] = []): PromptEntities {
   const fqdns = new Set(extractDomains(text));
+  const roster = known.map((h) => h.trim().toLowerCase()).filter((h) => h !== "");
   for (const m of text.matchAll(INTERNAL_HOST_RE)) fqdns.add(m[0].toLowerCase());
   return {
     // No cap: a cap would fail open on a dense paste, and the prompt itself is already bounded.
-    hosts: [...new Set([...fqdns, ...shortLabels([...fqdns])])],
+    hosts: [
+      ...new Set([...fqdns, ...shortLabels([...fqdns]), ...roster, ...roster.map((h) => h.split(".")[0])]),
+    ],
     usernames: collectUsernames({ texts: [text], accountsOf: extractAccounts, internalDomains: [] }),
   };
 }

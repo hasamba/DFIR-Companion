@@ -82,10 +82,33 @@ const eventPromoteProposal = z.object({
     .catch(undefined),
 });
 
+const veloLaunchProposal = z.object({
+  ...common,
+  kind: z.literal("velo_launch"),
+  targetId: z.string(),
+  mode: z.enum(["hunt", "collection"]),
+  hostname: z.string().optional(),
+  title: z.string(),
+  vql: z.string(),
+  fingerprint: z.string(),
+  fingerprints: z.array(z.string()).catch([]),
+  launched: z
+    .object({
+      huntId: z.string().optional(),
+      clientId: z.string().optional(),
+      flowId: z.string().optional(),
+      at: z.string(),
+      by: z.string(),
+    })
+    .optional()
+    .catch(undefined),
+});
+
 export const proposalSchema: z.ZodType<WatsonProposal, z.ZodTypeDef, unknown> = z.union([
   questionProposal,
   findingProposal,
   nextStepProposal,
   reportTextProposal,
   eventPromoteProposal,
+  veloLaunchProposal,
 ]);

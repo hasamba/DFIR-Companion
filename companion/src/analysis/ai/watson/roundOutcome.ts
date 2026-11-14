@@ -6,7 +6,14 @@ import type { WatsonReply } from "./replySchema.js";
 import type { WatsonSpend } from "./roundContext.js";
 import type { WatsonWriteInputs } from "./roundWrites.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
-import type { WatsonCaseEvent, WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
+import type {
+  WatsonCaseEvent,
+  WatsonChat,
+  WatsonCoverage,
+  WatsonPaste,
+  WatsonTurn,
+  WatsonVeloLaunchProposal,
+} from "./types.js";
 
 // How a round's result is folded into the saved chat: the Outcome the model calls produced, the turn
 // built from it, and the unread-paste bookkeeping. Pure functions over the FRESH chat, so a paste or
@@ -27,6 +34,10 @@ export interface Outcome {
   questions: InvestigationState["keyQuestions"];
   /** Set only when the forensic timeline was trimmed to fit the prompt (#452). */
   coverage?: WatsonCoverage;
+  /** The launch Watson's Velociraptor request became (velo/veloLaunchProposals.ts), before its turn id. */
+  veloProposal?: Omit<WatsonVeloLaunchProposal, "turnId">;
+  /** Why a Velociraptor request became no proposal (blocked VQL, a re-run, an unknown host). */
+  veloNote?: string;
   /** What the reply's writes need from disk (roundWrites.ts); without it no write is proposed. */
   writeInputs?: WatsonWriteInputs;
 }
@@ -88,8 +99,12 @@ export function mergeOutcome(
     return withUnreadable({ ...charged, turns: [...charged.turns, turn] }, outcome, at);
   }
   const turnId = newWatsonId("wt");
-  const proposals = buildProposals(reply, outcome.questions, turnId, outcome.writeInputs);
-  const text = outcome.note ? `${reply.message}\n\n${outcome.note}`.trim() : reply.message;
+  const proposals = [
+    ...buildProposals(reply, outcome.questions, turnId, outcome.writeInputs),
+    ...(outcome.veloProposal ? [{ ...outcome.veloProposal, turnId }] : []),
+  ];
+  const notes = [outcome.note, outcome.veloNote].filter((n): n is string => !!n);
+  const text = notes.length ? [reply.message, ...notes].join("\n\n").trim() : reply.message;
   const turn: WatsonTurn = {
     id: turnId,
     at,

@@ -8,6 +8,7 @@ import type { WatsonReply } from "./replySchema.js";
 import type { WatsonReportText } from "./writers/writerTypes.js";
 import { runWatsonRound, type WatsonRoundContext, type WatsonRoundInput } from "./round.js";
 import type { WatsonChat } from "./types.js";
+import type { LaunchContext } from "./velo/launchCheck.js";
 
 export type { WatsonRoundInput } from "./round.js";
 
@@ -24,6 +25,10 @@ export interface WatsonRoundDeps {
   /** Report text made safe for report.md (the route injects reports' blockMd). Absent: none proposed. */
   reportBlockText?(text: string): string;
   onStateChanged?(caseId: string): void;
+  /** Whether the case has a Velociraptor server; absent means no (Watson then writes copy-ready queries). */
+  veloConnected?(caseId: string): boolean;
+  /** The inventory host matcher (matchClient), injected so analysis/ai imports no integration. */
+  matchClient?: LaunchContext["matchClient"];
 }
 
 /** The arguments of AnalysisPipeline.watsonRound. */

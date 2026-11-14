@@ -15,6 +15,8 @@ import {
   readPasteText,
   type WatsonRoundContext,
 } from "./roundContext.js";
+import { WATSON_VELO_HOSTS_MAX } from "./velo/veloPrompt.js";
+import { loadVeloFleet } from "./velo/veloFleet.js";
 import { ensureStandardQuestions } from "./standardQuestions.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
@@ -135,10 +137,15 @@ export async function watsonBaseInput(
       caseContext: cc.text,
       mainLanguages: await mainLanguages(ctx, caseId, state),
       historyTurns: await historyTurnCount(ctx, caseId, chat, analystSaved),
+      ...(await loadVeloFleet(ctx, caseId).then((f) => (f ? { velo: f.prompt } : {}))),
     },
     cover: coverageOf(cc),
   };
 }
+
+/** Every inventory hostname and FQDN the VELOCIRAPTOR block shows: all of them go to masking. */
+const veloHostNames = (input: WatsonPromptInput): string[] =>
+  (input.velo?.hosts ?? []).slice(0, WATSON_VELO_HOSTS_MAX).flatMap((h) => [h.hostname, h.fqdn]);
 
 /** One Watson model call: the user prompt and its entities, through callAiJson (anonymizer, Presidio). */
 export function callWatson(
@@ -158,6 +165,6 @@ export function callWatson(
     getWatsonPrompt,
     prompt,
     (r) => watsonReplySchema.parse(r),
-    { promptEntities: promptEntities(prompt) },
+    { promptEntities: promptEntities(prompt, veloHostNames(input)) },
   );
 }
