@@ -1048,3 +1048,48 @@ describe("scoreCaseQuality takes judged forbidden ids on a real run (#1704)", ()
     ).toEqual(["invented-actor"]);
   });
 });
+
+describe("scoreCaseQuality key question accepts a corrected stale answer", () => {
+  const golden: CaseGolden = {
+    ...GOLDEN,
+    claims: [],
+    iocs: [],
+    forbiddenConclusions: [],
+    uncertainties: [],
+    nextSteps: [],
+    keyQuestions: [
+      {
+        id: "kq-access",
+        allowedStatuses: ["answered"],
+        requiredTerms: ["VPN"],
+        forbiddenTerms: ["phishing"],
+      },
+    ],
+  };
+  const missedFor = (answer: string): string[] | undefined =>
+    scoreCaseQuality(golden, {
+      claims: [],
+      iocs: [],
+      uncertainties: [],
+      nextSteps: [],
+      keyQuestions: [{ id: "kq-access", status: "answered", answer }],
+    } as unknown as QualityOutput).keyQuestions?.missed;
+
+  const CORRECTED = [
+    "Revised: the access vector was a VPN login with user-c's valid account from external IP 203.0.113.50. The credential was most likely guessed: 240 failures from the same IP immediately came before the successful login. The previous answer (user-c opened a phishing macro) is contradicted by psa-e1, which shows the invoice.docm email was quarantined and not delivered. Still unconfirmed: the authentication method and MFA status of the successful login.",
+    "Brute force of user-c's VPN account from external IP 203.0.113.50: 240 failures from 07:55Z, then an accepted login at 08:05Z on VPN gateway vpn-01. This corrects the previous answer. The phishing email with invoice.docm was quarantined by the mail gateway and never delivered (psa-e1), so user-c did not open it. The credential appears to have been obtained by password guessing. Still to confirm: whether the accepted login needed only a password (no MFA), and whether the password came from guessing rather than an earlier leak.",
+    "Revised: the earlier answer (user-c opened a phishing macro attachment) is contradicted by psa-e1, which shows invoice.docm was quarantined and not delivered. The vector was the external VPN service (vpn-01) with user-c's valid credential. 240 failed logins from 203.0.113.50 came just before the success, so the credential was probably obtained by password guessing. We have not confirmed whether the accepted login used a guessed password or one obtained earlier, or whether MFA was involved.",
+  ];
+
+  it.each(CORRECTED)("passes a correct answer that names the superseded phishing claim", (answer) => {
+    expect(missedFor(answer)).toEqual([]);
+  });
+
+  it.each([
+    "Phishing email with a macro attachment that user-c opened. VPN was also seen.",
+    "Initial access was a phishing email user-c opened, followed by a VPN login.",
+    "Revised: VPN login observed. Initial access was still the phishing macro that user-c opened.",
+  ])("still fails when phishing is asserted in a sentence with no supersession signal", (answer) => {
+    expect(missedFor(answer)).toEqual(["kq-access"]);
+  });
+});

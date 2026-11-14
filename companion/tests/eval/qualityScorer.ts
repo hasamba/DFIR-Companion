@@ -545,6 +545,44 @@ function scoreNextSteps(
   };
 }
 
+// A corrected answer names the stale claim in order to retire it ("The previous answer (X) is
+// contradicted by ..."). For KEY-QUESTION forbidden terms only, a clause that mentions the term
+// together with one of these signals is a rejection, not an assertion. Kept separate from
+// REJECTION_SIGNALS so forbidden-conclusion scoring is unchanged.
+const SUPERSESSION_SIGNALS = [
+  "contradicted",
+  "contradicts",
+  "previous answer",
+  "earlier answer",
+  "prior answer",
+  "corrects",
+  "corrected",
+  "superseded",
+  "no longer",
+  "not delivered",
+  "never delivered",
+  "did not open",
+  "ruled out",
+  "rules out",
+];
+
+// Drops the clauses that carry a supersession signal, so a later clause that still asserts the term
+// is judged on its own.
+function withoutSupersededClauses(text: string): string {
+  // Split only where the delimiter ends a word, so "invoice.docm" or "203.0.113.50" stays whole.
+  return text
+    .split(/[.!?;]+(?=\s|$)/)
+    .filter((clause) => {
+      const normalized = norm(clause);
+      return !SUPERSESSION_SIGNALS.some((signal) => normalized.includes(signal));
+    })
+    .join(". ");
+}
+
+function keyQuestionAssertsTerm(answer: string, term: string): boolean {
+  return assertsAsFact(withoutSupersededClauses(answer), [term]);
+}
+
 // A seeded question passes when it is still there, its status is allowed, its answer states every
 // required term, and it does not assert a forbidden term (the stale answer) as fact.
 function scoreKeyQuestions(
@@ -556,7 +594,7 @@ function scoreKeyQuestions(
       const actual = produced.find((q) => q.id === expected.id);
       if (!actual || !expected.allowedStatuses.includes(actual.status)) return true;
       if (!containsTerms(actual.answer, expected.requiredTerms)) return true;
-      return expected.forbiddenTerms.some((term) => assertsAsFact(actual.answer, [term]));
+      return expected.forbiddenTerms.some((term) => keyQuestionAssertsTerm(actual.answer, term));
     })
     .map((expected) => expected.id);
   return {
