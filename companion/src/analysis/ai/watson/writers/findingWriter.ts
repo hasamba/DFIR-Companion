@@ -70,7 +70,7 @@ async function apply(deps: WriterDeps, caseId: string, p: WatsonFindingProposal,
   const promotedAt = new Date().toISOString();
   const live = await liveCitations(deps, caseId, p, promotedAt);
   if (!live.eventIds.length && !live.pasteEvents.length) {
-    throw new WatsonProposalConflict("the cited evidence is gone");
+    throw new WatsonProposalConflict("the cited evidence is no longer in the case");
   }
   const existing = await deps.stateStore.hasForensicEventIds(
     caseId,

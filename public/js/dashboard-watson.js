@@ -177,8 +177,8 @@
     if (r.status === 409 && body.error === "presidio_approval_required") {
       if (typeof setPresidioPending === "function") setPresidioPending(body.findings);
       return stored
-        ? "The case keeps the paste as evidence. Presidio found new values that wait for approval. Examine them in Anonymization. Then send a message, and Watson reads the paste."
-        : "Presidio found new values that wait for approval. Examine them in Anonymization. Then send again.";
+        ? "The case keeps the paste as evidence. Presidio found new values that wait for approval. Approve or reject them in Anonymization. Then send a message, and Watson reads the paste."
+        : "Presidio found new values that wait for approval. Approve or reject them in Anonymization. Then send again.";
     }
     if (action !== "paste") return why;
     return stored

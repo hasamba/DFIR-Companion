@@ -99,6 +99,6 @@ export async function withVeloLaunch(
     return { ...outcome, veloProposal: proposal, ...risk };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ...outcome, veloNote: skipped(r, `the checks could not run (${msg})`) };
+    return { ...outcome, veloNote: skipped(r, `Watson could not run the checks (${msg})`) };
   }
 }

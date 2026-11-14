@@ -111,7 +111,7 @@ describe("an audit that cannot be written refuses the switch (final review G15)"
     });
     const res = await request(app).post(`/cases/${CASE}/watson/mode`).send({ mode: "auto" });
     expect(res.status).toBe(503);
-    expect(res.body.error).toMatch(/not changed/);
+    expect(res.body.error).toMatch(/mode did not change/);
     expect((await request(app).get(`/cases/${CASE}/watson`)).body.runMode).toBe("approve");
   });
 });

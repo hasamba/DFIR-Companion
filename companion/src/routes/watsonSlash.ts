@@ -46,7 +46,7 @@ export async function runWatsonSlash(
   if (frozen) return refusal(frozen);
   const deps = watsonRoundDeps(ctx);
   const pipeline = ctx.options.pipeline;
-  if (!deps || !pipeline) return refusal("AI provider not configured for Watson.");
+  if (!deps || !pipeline) return refusal("Watson has no AI provider. Set one up in Settings.");
   if (!(await deps.isAiEnabled(caseId))) return refusal(new WatsonAiOff().message);
   const text = question.slice(0, WATSON_TURN_TEXT_MAX); // the round stores at most this much
   try {
@@ -54,7 +54,7 @@ export async function runWatsonSlash(
     const turn = roundTurn(chat, text, actor);
     if (!turn || turn.error) {
       // The stored error turn already reads "Watson could not answer: …"; it goes to chat, so no paths.
-      const why = turn?.text ?? "Watson could not answer: no reply was saved.";
+      const why = turn?.text ?? "Watson could not answer. The companion saved no reply.";
       return refusal(redactPaths(why, [ctx.store.casesRoot]));
     }
     const answer = turn.answer;
@@ -69,7 +69,9 @@ export async function runWatsonSlash(
   } catch (err) {
     if (err instanceof WatsonAiOff || err instanceof WatsonCostLimitReached) return refusal(err.message);
     if (err instanceof PresidioApprovalRequired) {
-      return refusal(`${err.message} — resolve them in the dashboard's Anonymization panel, then ask again.`);
+      return refusal(
+        `${err.message}. Approve or reject them in the Anonymization panel of the dashboard. Then ask again.`,
+      );
     }
     return refusal(`Watson failed: ${redactPaths((err as Error).message, [ctx.store.casesRoot])}`);
   } finally {

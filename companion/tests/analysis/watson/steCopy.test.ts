@@ -51,7 +51,13 @@ describe("WATSON_PROMPT: the ASD-STE100 rule", () => {
 const SRC = join(__dirname, "../../../src");
 const WATSON_DIR = join(SRC, "analysis/ai/watson");
 /** Chat-visible notes written outside the Watson folder. */
-const EXTRA_FILES = ["composition/watsonCaseEvents.ts", "composition/watsonVeloResults.ts"];
+const EXTRA_FILES = [
+  "composition/watsonCaseEvents.ts",
+  "composition/watsonVeloResults.ts",
+  "routes/watson.ts",
+  "routes/watsonPasteIngest.ts",
+  "routes/watsonSlash.ts",
+];
 /** Model-facing prompt text (not shown in the chat), and VQL name lists. */
 const SKIP = new Set(["promptBuilder.ts", "velo/veloPrompt.ts", "velo/vqlAllowlist.ts"]);
 const MAX_WORDS = 25;

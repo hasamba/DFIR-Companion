@@ -27,7 +27,7 @@ import type { WatsonWriter, WriterDeps } from "./writerTypes.js";
 // beyond the ones stored on the proposal. HARD reasons refuse always. The acceptance is saved on the
 // launch intent (so every return to pending clears it) and copied onto `launched`.
 
-export const UNDO_REFUSED = "a launched hunt cannot be undone";
+export const UNDO_REFUSED = "you cannot undo a launched hunt";
 
 /** In the writer table so undo is refused; apply goes through applyVeloLaunch (two saves). */
 export const veloLaunchWriter: WatsonWriter<WatsonVeloLaunchProposal> = {
@@ -56,7 +56,8 @@ function sameLaunchLive(chat: WatsonChat, p: WatsonVeloLaunchProposal): boolean 
 function findLaunch(chat: WatsonChat, proposalId: string): WatsonVeloLaunchProposal {
   const p = chat.proposals.find((x) => x.id === proposalId);
   if (!p) throw new WatsonProposalNotFoundError(proposalId);
-  if (p.kind !== "velo_launch") throw new WatsonProposalConflict("not a Velociraptor launch proposal");
+  if (p.kind !== "velo_launch")
+    throw new WatsonProposalConflict("This is not a Velociraptor launch proposal");
   return p;
 }
 
@@ -133,8 +134,7 @@ async function saveLaunching(
       const p = findLaunch(c, id);
       if (p.status !== "pending") throw new WatsonProposalStateError("apply", p.status);
       if (p.risk && !acceptRisk) throw new WatsonRiskNotAccepted(p.risk.reasons);
-      if (sameLaunchLive(c, p))
-        throw new WatsonProposalConflict("an identical launch already ran or is running");
+      if (sameLaunchLive(c, p)) throw new WatsonProposalConflict("the same launch already ran or runs now");
       const planned = await recheck(v, caseId, p, acceptRisk);
       markInFlight(caseId, id);
       marked = true;
@@ -148,7 +148,7 @@ async function saveLaunching(
     if (marked) clearInFlight(caseId, id);
     throw err;
   }
-  if (!saved?.launching?.planned) throw new WatsonProposalConflict("the launch intent was not saved");
+  if (!saved?.launching?.planned) throw new WatsonProposalConflict("Watson could not save the launch intent");
   return saved;
 }
 
@@ -196,7 +196,7 @@ async function saveReserved(deps: WriterDeps, caseId: string, id: string, added:
     saved = { ...s, launching: { ...base, reserved: added } };
     return saved;
   });
-  if (!saved) throw new WatsonProposalConflict("the launch intent was not saved");
+  if (!saved) throw new WatsonProposalConflict("Watson could not save the launch intent");
   return saved;
 }
 
@@ -281,7 +281,7 @@ async function refuseIfFrozen(
 ): Promise<void> {
   if (!(await v.isFrozen?.(caseId))) return;
   if (await releaseOrLog(v, caseId, added)) await backToPending(deps, v, caseId, p.id);
-  throw new WatsonProposalConflict("the case is closed or archived; Watson launched nothing");
+  throw new WatsonProposalConflict("the case is closed or archived. Watson launched nothing");
 }
 
 /** The audit words for a risky launch an analyst accepted; "" otherwise. */
@@ -299,7 +299,7 @@ export async function applyVeloLaunch(
   opts: { auditSuffix?: string; acceptRisk?: boolean } = {},
 ): Promise<{ chat: WatsonChat }> {
   const v = deps.veloLaunch;
-  if (!v) throw new WatsonProposalConflict("Velociraptor launches are not configured");
+  if (!v) throw new WatsonProposalConflict("Velociraptor launches are not set up on this server");
   const who = { by: actor, acceptRisk: opts.acceptRisk === true };
   const { added, proposal: p } = await saveIntent(deps, v, caseId, proposalId, who); // marks it in flight
   const auditSuffix = (opts.auditSuffix ?? "") + riskAcceptedNote(p);

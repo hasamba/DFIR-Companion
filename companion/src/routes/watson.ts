@@ -116,7 +116,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     const deps = roundDeps();
     const pipeline = options.pipeline;
     if (!deps || !pipeline) {
-      res.status(501).json({ error: "AI provider not configured for Watson" });
+      res.status(501).json({ error: "Watson has no AI provider. Set one up in Settings." });
       return null;
     }
     if (!(await deps.isAiEnabled(caseId))) {
@@ -170,7 +170,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     if (!text) return res.status(400).json({ error: "text is required" });
     if (text.length > WATSON_TURN_TEXT_MAX) {
       return res.status(400).json({
-        error: `message is longer than ${WATSON_TURN_TEXT_MAX} characters; send long text with the paste button`,
+        error: `The message is longer than ${WATSON_TURN_TEXT_MAX} characters. Send long text with the paste button.`,
       });
     }
     const run = await refuseBeforeWork(res, caseId);
@@ -192,7 +192,9 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     if (!text.trim()) return res.status(400).json({ error: "text is required" });
     const bytes = Buffer.byteLength(text, "utf8");
     if (bytes > WATSON_PASTE_MAX_BYTES) {
-      return res.status(413).json({ error: `pasted text is larger than ${WATSON_PASTE_MAX_BYTES} bytes` });
+      return res
+        .status(413)
+        .json({ error: `The pasted text is larger than ${WATSON_PASTE_MAX_BYTES} bytes.` });
     }
     const run = await refuseBeforeWork(res, caseId);
     if (!run) return res;
@@ -345,7 +347,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
         caseId,
         entry,
       );
-      if (unaudited) return res.status(503).json({ error: `Watson's mode was not changed: ${unaudited}` });
+      if (unaudited) return res.status(503).json({ error: `Watson's mode did not change: ${unaudited}` });
       try {
         await ctx.setControl(caseId, watsonModePatch(mode, { id: auth?.identity.id, name: actor }));
       } catch (err) {

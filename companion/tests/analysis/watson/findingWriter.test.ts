@@ -203,7 +203,7 @@ describe("Watson finding writer", () => {
     await unlink(join(cases.importsDir(CASE), paste.storedName));
     const err = await applyWatsonProposal(deps, CASE, "wp-f", "apply").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(WatsonProposalConflict);
-    expect((err as Error).message).toBe("the cited evidence is gone");
+    expect((err as Error).message).toBe("the cited evidence is no longer in the case");
     expect(await findings()).toEqual([]);
     expect(await row(PASTE_EV)).toBeUndefined();
     expect((await proposal()).status).toBe("pending");
