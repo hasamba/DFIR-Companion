@@ -42,9 +42,13 @@ function keepStep(stored: NextStep, run: NextStep | undefined): NextStep {
   return { ...out, collect: { ...out.collect, issuedAfterImportSeq: seq } };
 }
 
-/** What `keepWatsonItems` reads from the store. `forensicTimeline` present → events reconcile too. */
+/**
+ * What `keepWatsonItems` reads from the store. `forensicTimeline` present → events reconcile too;
+ * the store's `eventAliases` tell this run's correlation folds from older ones.
+ */
 export type WatsonItemsSource = Pick<InvestigationState, "findings" | "nextSteps"> & {
   forensicTimeline?: readonly ForensicEvent[];
+  eventAliases?: Readonly<Record<string, string>>;
 };
 
 /** The store's Watson findings and next steps only — for callers that must not reconcile events. */
@@ -88,18 +92,31 @@ function reconcile<T extends { id: string; author?: "watson" }>(
 }
 
 /**
- * Watson-marked events: present iff present in `latest`, with `latest`'s fields — except the run's
- * `relatedFindingIds`, which the fold rebuilt. An event the run's correlation folded into another
- * (listed in the run's `eventAliases`) is not re-added: its citations already follow the survivor.
+ * Watson-marked events: a row the store holds as Watson's comes back with the store's fields (and
+ * the run's `relatedFindingIds`, which the fold rebuilt). The run's copy of a marked row is dropped
+ * only when Watson created it and the store no longer holds it (undone while the run worked) —
+ * never merely for the marker: correlation folds a Watson row into an ordinary survivor and the
+ * survivor inherits `[watson]` with the folded row's provenance. A row this run's correlation folded
+ * evidence into keeps the run's merged copy, so the folded rows' evidence is never lost (F1). An
+ * event folded into another (in the run's `eventAliases`) is not re-added: its citations follow.
  */
-function reconcileEvents(next: InvestigationState, latest: readonly ForensicEvent[]): ForensicEvent[] {
-  const stored = new Map(latest.filter(isWatsonEvent).map((e) => [e.id, e] as const));
+function reconcileEvents(next: InvestigationState, latest: WatsonItemsSource): ForensicEvent[] {
+  const events = latest.forensicTimeline ?? [];
+  const stored = new Map(events.filter(isWatsonEvent).map((e) => [e.id, e] as const));
+  const inStore = new Set(events.map((e) => e.id));
   const runIds = new Set(next.forensicTimeline.map((e) => e.id));
   const folded = next.eventAliases ?? {};
+  const known = latest.eventAliases ?? {};
+  const absorbers = new Set(
+    Object.entries(folded)
+      .filter(([from, to]) => known[from] !== to)
+      .map(([, to]) => to),
+  );
   const kept = next.forensicTimeline.flatMap((e) => {
+    if (absorbers.has(e.id)) return [e];
     const s = stored.get(e.id);
     if (s) return [{ ...s, relatedFindingIds: e.relatedFindingIds }];
-    return isWatsonEvent(e) ? [] : [e];
+    return isWatsonEvent(e) && !inStore.has(e.id) ? [] : [e];
   });
   const added = [...stored.values()].filter((e) => !runIds.has(e.id) && !(e.id in folded));
   return added.length ? sortByEventTime([...kept, ...added]) : kept;
@@ -124,7 +141,7 @@ export function keepWatsonItems(next: InvestigationState, latest: WatsonItemsSou
     ...next,
     findings: reconcile(next.findings, latest.findings, keepFinding),
     nextSteps: reconcile(next.nextSteps, latest.nextSteps, keepStep),
-    ...(events && anyEvent ? { forensicTimeline: reconcileEvents(next, events) } : {}),
+    ...(events && anyEvent ? { forensicTimeline: reconcileEvents(next, latest) } : {}),
   };
 }
 

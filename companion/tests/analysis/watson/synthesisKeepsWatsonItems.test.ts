@@ -247,7 +247,7 @@ describe("the synthesis fold and persist keep Watson findings and next steps", (
   });
 
   it("does not bring back a Watson finding and its paste-line event undone while the model call ran", async () => {
-    const pasteEvent = ev("e-paste-1", {
+    const pasteEvent = ev("ev-watson-p1-4", {
       provenance: [WATSON_MARKER],
       relatedFindingIds: [watsonFinding.id],
     });
@@ -256,7 +256,7 @@ describe("the synthesis fold and persist keep Watson findings and next steps", (
     const out = await foldAndPersist(state, delta([synthFinding("f-1")]), latest);
     expect(findingById(out, watsonFinding.id)).toBeUndefined();
     expect(out.nextSteps).toEqual([]);
-    expect(eventById(out, "e-paste-1")).toBeUndefined();
+    expect(eventById(out, "ev-watson-p1-4")).toBeUndefined();
   });
 
   it("marks cited evidence changed when every cited event is a false positive, not for paste citations", async () => {
