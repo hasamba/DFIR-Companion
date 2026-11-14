@@ -43,15 +43,16 @@ describe("vqlAllowed — plain read-only VQL", () => {
     allowed("SELECT myexecvehelper, execve_count FROM pslist()");
   });
 
-  it("allows a call that sits inside a comment", () => {
-    allowed("-- execve(argv=['calc'])\nSELECT * FROM pslist()");
-    allowed("// upload(file='x')\nSELECT * FROM pslist()");
-    allowed("/* execve(argv=['calc']) */ SELECT * FROM pslist()");
+  it("blocks any comment, even one that only holds a call (final review G3)", () => {
+    blocked("-- execve(argv=['calc'])\nSELECT * FROM pslist()");
+    blocked("// upload(file='x')\nSELECT * FROM pslist()");
+    blocked("/* execve(argv=['calc']) */ SELECT * FROM pslist()");
   });
 
   it("allows a call name inside a string literal", () => {
     allowed("SELECT * FROM pslist() WHERE Name = 'execve(x)'");
-    allowed("SELECT * FROM pslist() WHERE Name = '''it's execve()'''");
+    // ''' is refused outright: it would end the server-side '''…''' wrapper (final review G2).
+    blocked("SELECT * FROM pslist() WHERE Name = '''it's execve()'''");
   });
 
   it("allows non-ASCII text inside a string literal", () => {

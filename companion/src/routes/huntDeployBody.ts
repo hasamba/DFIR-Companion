@@ -79,5 +79,8 @@ export function deployHuntBodyProblem(
   if (!body.vql) return "vql is required";
   if (!body.title) return "title is required";
   if (body.mode === "collection" && !body.hostname) return "hostname is required for a collection";
+  // The launch wraps the generated artifact in a raw ''' literal on the server; a ''' in the VQL
+  // would end it and run the rest as server-side VQL (final review G2).
+  if (body.vql.includes("'''")) return "the VQL may not contain ''' (a triple-quoted string)";
   return vqlSizeProblem(body.vql);
 }

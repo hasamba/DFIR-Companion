@@ -10,6 +10,7 @@ import {
 } from "./vqlAllowlist.js";
 import { checkCallArgs, checkStrings } from "./vqlArgs.js";
 import { has, isPunct, isWord, lc, type LetDef } from "./vqlHelpers.js";
+import { TRIPLE_QUOTE, TRIPLE_QUOTE_REASON, vqlShapeProblems } from "./vqlShape.js";
 
 // Watson's launch gate for VQL (phase 3, decision P2): VQL is launched only when every call in it
 // is on a reviewed read-only allowlist. Parsed, not pattern-matched — see vqlTokens.ts. Anything the
@@ -152,10 +153,12 @@ function checkCallTargets(toks: readonly VqlToken[], reasons: Set<string>): void
 
 /** Is this VQL safe for Watson to launch? Every call must be on the read-only allowlist. */
 export function vqlAllowed(vql: string): VqlAllowed {
-  const tokenized = tokenizeVql(String(vql ?? ""));
+  const src = String(vql ?? "");
+  if (src.includes(TRIPLE_QUOTE)) return { ok: false, reasons: [TRIPLE_QUOTE_REASON] };
+  const tokenized = tokenizeVql(src);
   if (!tokenized.ok) return { ok: false, reasons: [`unreadable VQL: ${tokenized.reason}`] };
   const toks = tokenized.tokens;
-  const reasons = new Set<string>();
+  const reasons = new Set<string>(vqlShapeProblems(src, toks));
   const defSites = new Set<number>();
   const lets = collectLets(toks, reasons, defSites);
   checkNames(toks, lets, defSites, reasons);

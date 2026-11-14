@@ -1062,6 +1062,7 @@
     "velociraptorRelease.ts": "analysis/case",
     "velociraptorTitle.ts": "analysis/ingest",
     "vqlInput.ts": "analysis/hunt",
+    "vqlStatements.ts": "analysis/hunt",
     "wazuhImport.ts": "analysis/ingest",
     "werImport.ts": "analysis/ingest",
     "wholeCaseLoadLimit.ts": "storage",

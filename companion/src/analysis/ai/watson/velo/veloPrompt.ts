@@ -18,6 +18,8 @@ export function veloRulesText(): string {
     "- Read-only only: never use anything that changes an endpoint, runs a program, or sends data out. A request that",
     "  breaks the rules below is blocked, not proposed. The VQL is at most " + MAX_VQL_BYTES + " bytes.",
     "- Every argument is name=value (no positional arguments).",
+    "- No comments of any kind (no --, //, /* */), no triple-quoted strings (three single quotes in a row), no carriage",
+    "  returns, and no string literal that holds a blank line or a line starting with --. Separate statements with one blank line.",
     "- A LET name that you call as a function must be CamelCase (contain a capital letter) and must not equal a built-in.",
     "- Paths use forward slashes: no '//', no doubled backslashes, no network paths, no URLs.",
     "- Path and artifact arguments must be plain quoted literals: no format(), no +, no variables.",

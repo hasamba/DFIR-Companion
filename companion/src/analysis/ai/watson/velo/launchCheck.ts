@@ -1,6 +1,7 @@
 import { vqlSizeProblem } from "../../../vqlInput.js";
 import { vqlAllowed } from "./vqlAllowed.js";
 import { launchFingerprints } from "./launchFingerprint.js";
+import { sanitizeVqlDurations, splitVqlStatements } from "../../../vqlStatements.js";
 
 // The pure gate every Watson launch passes through (phase 3). Order: shape → size → allowlist →
 // already-ran → host. Any failure refuses; there is no path from a failed check to a launch, and an
@@ -76,6 +77,24 @@ function resolveHost(hostname: unknown, ctx: LaunchContext): LaunchCheck | Launc
   return rec;
 }
 
+/**
+ * The allowlist on the raw VQL AND on every statement the launch will actually send
+ * (splitVqlStatements(sanitizeVqlDurations(vql)) — what launchHunt / collectOnClient run), so the
+ * checked text and the run text can never disagree (final review G1).
+ */
+export function sentTextAllowed(vql: string): { ok: true } | { ok: false; reasons: string[] } {
+  const raw = vqlAllowed(vql);
+  if (!raw.ok) return raw;
+  const statements = splitVqlStatements(sanitizeVqlDurations(vql));
+  if (statements.length === 0) return { ok: false, reasons: ["no runnable VQL"] };
+  const reasons = new Set<string>();
+  for (const s of statements) {
+    const r = vqlAllowed(s);
+    if (!r.ok) r.reasons.forEach((x) => reasons.add(x));
+  }
+  return reasons.size === 0 ? { ok: true } : { ok: false, reasons: [...reasons] };
+}
+
 /** May this VQL be launched? Pure — the caller supplies the inventory and what already ran. */
 export function checkLaunch(input: LaunchInput, ctx: LaunchContext): LaunchCheck {
   const { vql, mode, hostname } = input ?? ({} as LaunchInput);
@@ -83,7 +102,7 @@ export function checkLaunch(input: LaunchInput, ctx: LaunchContext): LaunchCheck
   if (mode !== "hunt" && mode !== "collection") return refuse("unknown launch mode");
   const size = vqlSizeProblem(vql);
   if (size) return refuse(size);
-  const allowed = vqlAllowed(vql);
+  const allowed = sentTextAllowed(vql);
   if (!allowed.ok)
     return { ok: false, reason: `blocked: ${allowed.reasons.join("; ")}`, reasons: allowed.reasons };
   const fleetKeys = launchFingerprints(vql);
