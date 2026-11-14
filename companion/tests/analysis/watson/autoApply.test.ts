@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ActivityLogStore } from "../../../src/analysis/activityLog.js";
-import { autoApply, listingText, WATSON_AUTO_ACTOR } from "../../../src/analysis/ai/watson/autoApply.js";
+import { autoApply, listingTurns, WATSON_AUTO_ACTOR } from "../../../src/analysis/ai/watson/autoApply.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
 import {
   applyWatsonProposal,
@@ -365,12 +365,56 @@ describe("autoApply", () => {
 
   it("a VQL too long for the turn is pointed at, never cut", () => {
     const long = `SELECT * FROM pslist() WHERE Name =~ '${"a".repeat(9000)}'`;
-    const text = listingText("Robin Lead", [
+    const text = listingTurns("Robin Lead", [
       { line: "- Launched Velociraptor collection on web01.example.com: short", vql: PSLIST },
       { line: "- Launched Velociraptor collection on db02.example.com: long", vql: long },
-    ]);
+    ]).join("\n");
     expect(text).toContain(PSLIST);
     expect(text).not.toContain(long.slice(0, 100));
     expect(text).toContain(`VQL: ${long.length} characters, too long to repeat here`);
+  });
+
+  it("a long write never pushes a launch off the listing: it overflows into another turn", async () => {
+    const report = {
+      id: "wp-r",
+      turnId: TURN,
+      kind: "report_text" as const,
+      targetId: "conclusions",
+      field: "conclusions" as const,
+      before: "",
+      after: "The intruder staged data. ".repeat(400),
+      status: "pending" as const,
+    };
+    await seed([report, launch("wp-c", TURN, "collection", PSLIST, HOST_A)]);
+    await autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    const reloaded = await chatStore.load(CASE);
+    const listing = reloaded.turns.filter((t) => t.role === "system");
+    expect(listing.length).toBeGreaterThan(1);
+    for (const t of listing) expect(t.text.length).toBeLessThanOrEqual(8000);
+    const all = listing.map((t) => t.text).join("\n");
+    expect(all).toContain(`Launched Velociraptor collection on ${HOST_A}`);
+    expect(all).toContain(PSLIST);
+    expect(await status("wp-c")).toBe("applied");
+  });
+
+  it("a switch to Approve during the batch stops the remaining launches", async () => {
+    await seed([
+      launch("wp-a", TURN, "collection", PSLIST, HOST_A),
+      launch("wp-b", TURN, "collection", NETSTAT, HOST_B),
+    ]);
+    let checks = 0;
+    const recheck = async () => (++checks === 1 ? AUTO_ON : APPROVE);
+    const chat = await autoApply({ ...deps(), recheck }, CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    expect(launches.map((l) => l.hostname)).toEqual([HOST_A]);
+    expect(await status("wp-b")).toBe("pending");
+    expect(lastTurn(chat).text).toMatch(/Auto mode is no longer on for this case/);
+  });
+
+  it("turning the case's AI off during the batch stops it too", async () => {
+    await seed([launch("wp-a", TURN, "collection", PSLIST, HOST_A)]);
+    const recheck = async () => ({ ...AUTO_ON, enabled: false });
+    await autoApply({ ...deps(), recheck }, CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    expect(launches).toHaveLength(0);
+    expect(await status("wp-a")).toBe("pending");
   });
 });

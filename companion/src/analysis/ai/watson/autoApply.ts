@@ -23,7 +23,13 @@ import type { WriterDeps } from "./writers/writerTypes.js";
 export const WATSON_AUTO_ACTOR = "Watson (Auto)";
 
 /** The ai-control fields Auto reads: the mode and the persisted who/when of the switch. */
-export type WatsonAutoControl = Pick<AiControl, "watsonRunMode" | "watsonAutoSince" | "watsonAutoBy">;
+export type WatsonAutoControl = Pick<AiControl, "watsonRunMode" | "watsonAutoSince" | "watsonAutoBy"> & {
+  /** The case's AI switch: off stops Auto as surely as a switch to Approve. */
+  enabled?: boolean;
+};
+
+const autoOn = (c: WatsonAutoControl | null): boolean =>
+  !!c && watsonRunMode(c) === "auto" && c.enabled !== false;
 
 /** What a round needs to act in Auto mode (route-built: the same seams an analyst's apply uses). */
 export interface WatsonAutoDeps {
@@ -100,18 +106,32 @@ interface Listed {
 
 const vqlOf = (p: WatsonProposal): string | undefined => (p.kind === "velo_launch" ? p.vql : undefined);
 
-/** The turn text. A VQL that would push the turn past its cap is pointed at, never cut. */
-export function listingText(by: string, listed: readonly Listed[]): string {
-  const parts = [`Watson acted on its own (Auto mode, switched on by ${by}):`];
-  let used = parts[0].length;
-  for (const { line, vql } of listed) {
-    const whole = vql === undefined ? line : `${line}\n  VQL:\n${vql}`;
-    const pointer = `${line}\n  VQL: ${vql?.length ?? 0} characters, too long to repeat here; shown whole on the launch card.`;
-    const text = used + whole.length + 1 <= WATSON_TURN_TEXT_MAX || vql === undefined ? whole : pointer;
-    parts.push(text);
+/**
+ * The listing as one or more system-turn texts, each within the turn cap, so no action is ever cut
+ * off the end. A VQL too long for a turn of its own is pointed at, never cut.
+ */
+export function listingTurns(by: string, listed: readonly Listed[]): string[] {
+  const head = `Watson acted on its own (Auto mode, switched on by ${by.slice(0, 200)}):`;
+  const more = "(Watson's Auto actions, continued)";
+  const turns: string[][] = [[head]];
+  let used = head.length;
+  const push = (text: string) => {
+    if (used + text.length + 1 > WATSON_TURN_TEXT_MAX && turns[turns.length - 1].length > 1) {
+      turns.push([more]);
+      used = more.length;
+    }
+    turns[turns.length - 1].push(text);
     used += text.length + 1;
+  };
+  for (const { line, vql } of listed) {
+    const room = WATSON_TURN_TEXT_MAX - Math.max(head.length, more.length) - 1;
+    const whole = vql === undefined ? line : `${line}\n  VQL:\n${vql}`;
+    const pointer = `${line.slice(0, room - 120)}\n  VQL: ${vql?.length ?? 0} characters, too long to repeat here; shown whole on the launch card.`;
+    if (whole.length <= room) push(whole);
+    else if (vql !== undefined) push(pointer);
+    else for (let i = 0; i < line.length; i += room) push(line.slice(i, i + room)); // a long write's text, in parts
   }
-  return parts.join("\n").slice(0, WATSON_TURN_TEXT_MAX);
+  return turns.map((t) => t.join("\n"));
 }
 
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err)).slice(0, 300);
@@ -155,20 +175,28 @@ async function applyOne(
  * and is listed. Returns the chat as saved (unchanged in Approve mode or when nothing is eligible).
  */
 export async function autoApply(
-  deps: WriterDeps & { onStateChanged?(caseId: string): void },
+  deps: WriterDeps & {
+    onStateChanged?(caseId: string): void;
+    /** Re-read before each apply: a switch to Approve (or AI off) stops the rest of the batch. */
+    recheck?(): Promise<WatsonAutoControl>;
+  },
   caseId: string,
   round: WatsonAutoRound,
   control: WatsonAutoControl,
 ): Promise<WatsonChat> {
   const chat = await deps.chatStore.load(caseId);
-  if (watsonRunMode(control) !== "auto") return chat;
+  if (!autoOn(control)) return chat;
   const todo = eligibleProposals(chat, round);
   if (!todo.length) return chat;
   const suffix = autoDetail(control);
   const lines: Listed[] = [];
   let stateChanged = false;
+  let stopped = false;
   for (const p of todo) {
-    const wait = waitReason(p, round);
+    if (!stopped && deps.recheck && !waitReason(p, round)) {
+      stopped = !autoOn(await deps.recheck().catch(() => null));
+    }
+    const wait = stopped ? "Auto mode is no longer on for this case" : waitReason(p, round);
     if (wait) {
       const vql = vqlOf(p);
       lines.push({
@@ -183,13 +211,14 @@ export async function autoApply(
   }
   if (stateChanged) deps.onStateChanged?.(caseId);
   const by = control.watsonAutoBy?.name ?? "an analyst";
-  const turn: WatsonTurn = {
+  const at = new Date().toISOString();
+  const turns: WatsonTurn[] = listingTurns(by, lines).map((text) => ({
     id: newWatsonId("wt"),
-    at: new Date().toISOString(),
+    at,
     role: "system",
-    text: listingText(by, lines),
-  };
-  return deps.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, turn] }));
+    text,
+  }));
+  return deps.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, ...turns] }));
 }
 
 /** The held promotions a reaction carries: ids the reactor passed AND the result events it showed. */
@@ -216,8 +245,9 @@ export async function autoAfterRound(
 ): Promise<WatsonChat> {
   try {
     const control = await auto.control(caseId);
-    if (watsonRunMode(control) !== "auto") return saved;
-    return await autoApply({ ...auto.writer, onStateChanged: auto.onStateChanged }, caseId, round, control);
+    if (!autoOn(control)) return saved;
+    const deps = { ...auto.writer, onStateChanged: auto.onStateChanged, recheck: () => auto.control(caseId) };
+    return await autoApply(deps, caseId, round, control);
   } catch (err) {
     warn(`Watson Auto mode could not act: ${errText(err)}`);
     return saved;
