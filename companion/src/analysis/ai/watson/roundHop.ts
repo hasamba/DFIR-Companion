@@ -1,3 +1,4 @@
+import { toAnonPolicy } from "../../anonControl.js";
 import type { InvestigationState } from "../../stateTypes.js";
 import { WATSON_HISTORY_ID } from "./historyStore.js";
 import type { WatsonPromptInput } from "./promptBuilder.js";
@@ -129,6 +130,16 @@ async function lookupHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promi
   return { ...kept, reply: { ...second, search: null, lookup: null }, lookedUp };
 }
 
+/** Whether the AI-call gate masks for this case. Fails closed: a store that cannot be read counts as on. */
+async function maskingOn(ctx: WatsonRoundContext, caseId: string): Promise<boolean> {
+  const store = ctx.opts.anonStore;
+  if (!store) return false; // no store: the gate does not anonymize either
+  return store.load(caseId).then(
+    (control) => toAnonPolicy(control).enabled,
+    () => true,
+  );
+}
+
 /**
  * One bounded super-timeline search, then the second call with its rows. Only that call may cite the
  * rows shown. The roster and the search record ride on the outcome even when the call fails.
@@ -137,7 +148,10 @@ async function superHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promis
   const raw = h.ctx.rawSearch as WatsonRawSearchDeps;
   const found = await searchSuperTimeline(h.ctx, raw.reader, h.caseId, h.state, query);
   // Before anything is sent: rows whose names do not fit the roster are never shown (H5).
-  if (maskRosterFull(h.chat.maskRoster, found.roster)) return withNote(kept, ROSTER_FULL_NOTE);
+  // Only when the provider call would mask: with anonymization off the search runs, and the roster
+  // still records the names so masking turned on later knows them.
+  if (maskRosterFull(h.chat.maskRoster, found.roster) && (await maskingOn(h.ctx, h.caseId)))
+    return withNote(kept, ROSTER_FULL_NOTE);
   const shownIds = found.shown.map((e) => e.id);
   // M2: the roster AND the search record ride on the outcome even when the call fails, so the card
   // still says the search ran: the rows were already sent.

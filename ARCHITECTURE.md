@@ -398,7 +398,7 @@ Three decisions sit under these clauses.
 - **The cap note (D7).** The super-timeline has a size cap and drops old rows. When it has dropped
   rows, the prompt and the card say that the search may have missed some.
 
-A masking roster lets the anonymizer mask the host, user and IP names it recognises in the shown rows. It is heuristic: a name it is unsure of is left out of the roster. The roster is case-private and is masked on every AI call on the case, not only Watson's (synthesis, the deep pass, Explain, Jev: `watson/rosterNames.ts` through the shared masker). No host or user is ever evicted, because memory, chat history and applied items can still carry it. At 500 hosts or 500 users a search that needs a new name is refused for that round; IPs keep the newest 500, since the anonymizer also masks them by pattern.
+A masking roster lets the anonymizer mask the host, user and IP names it recognises in the shown rows. It is heuristic: a name it is unsure of is left out of the roster. The roster is case-private and is masked on every AI call on the case, not only Watson's (synthesis, the deep pass, Explain, Jev: `watson/rosterNames.ts` through the shared masker). No host or user is ever evicted, because memory, chat history and applied items can still carry it. With anonymization on, at 500 hosts or 500 users a search that needs a new name is refused for that round (with it off the search runs and the roster still records the names); IPs keep the newest 500, since the anonymizer also masks them by pattern.
 
 ### The remediation check is the second, narrower exception (#969)
 

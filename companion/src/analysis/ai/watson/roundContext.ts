@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import type { AIProvider } from "../../../providers/provider.js";
 import type { CaseStore } from "../../../storage/caseStore.js";
 import type { AiCostStore } from "../../aiCost.js";
+import type { AnonControlStore } from "../../anonControl.js";
 import type { AssetOverridesStore } from "../../assetOverrides.js";
 import type { CaseFleetInventory } from "../../velociraptorClientStore.js";
 import { computeMainSource, type SourceFamily } from "../../caseMainSource.js";
@@ -43,6 +44,8 @@ export type WatsonRoundContext = AiCallContext & {
     huntOutcomeStore?: HuntOutcomeStore;
     notebookStore?: NotebookStore;
     aiControlStore?: AiControlStore;
+    /** The case's anonymization switch (the AI-call gate reads the same store). */
+    anonStore?: AnonControlStore;
   };
   chatStore: WatsonChatStore;
   stateStore: StateStore;

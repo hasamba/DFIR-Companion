@@ -37,6 +37,22 @@ describe("a full masking roster refuses the super-timeline search (H5)", () => {
     expect(chat.maskRoster?.hosts).not.toContain("newhost-9");
   });
 
+  it("anonymization off: the search runs on a full roster, and the roster still records the new name", async () => {
+    const h = await harness([reply(superLookup()), reply()], {
+      raw: [raw("raw1", { asset: "NEWHOST-9" })],
+    });
+    await h.chatStore.update(CASE, (c) => ({
+      ...c,
+      maskRoster: { hosts: hosts(WATSON_MASK_ROSTER_MAX), users: [], ips: [] },
+    }));
+    const chat = await h.run();
+    expect(h.provider.sent).toHaveLength(2);
+    expect(lastWatsonTurn(chat).text).not.toContain(ROSTER_FULL_NOTE);
+    expect(lastWatsonTurn(chat).lookedUp?.shownIds).toEqual(["raw1"]);
+    expect(chat.maskRoster?.hosts).toContain("newhost-9");
+    expect(chat.maskRoster?.hosts).toHaveLength(WATSON_MASK_ROSTER_MAX + 1);
+  });
+
   it("the search runs when the rows add no new name to a full roster", async () => {
     const h = await harness([reply(superLookup()), reply()], { raw: [raw("raw1", { asset: "HOST-A" })] });
     await h.chatStore.update(CASE, (c) => ({

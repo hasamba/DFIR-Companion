@@ -191,7 +191,7 @@ export async function harness(replies: string[], opts: HarnessOpts = {}) {
   const provider = new FakeProvider(replies, opts.onCall && ((n) => opts.onCall?.(n, flags)));
   const gateCtx = { log, opts: { anonStore, aiCostStore: costStore } };
   const ctx: WatsonRoundContext = {
-    opts: { stateStore, retries: 0, backoffMs: 0 },
+    opts: { stateStore, retries: 0, backoffMs: 0, anonStore },
     log,
     requireProvider: () => provider,
     getKevCatalog: async () => undefined,
