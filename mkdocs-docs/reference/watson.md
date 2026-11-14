@@ -153,9 +153,31 @@ A launch you marked as launched has no hunt or flow id that Watson knows. Its ca
 
 ### What VQL Watson may use
 
-Watson may only use a reviewed, read-only list of plugins, functions, artifacts and WMI classes. Anything else is blocked: running commands, writing or uploading, network calls, network paths and URLs, and queries built at run time. When Watson writes VQL that uses something blocked, its turn names what was blocked and shows the VQL with **Copy**. You can then run it by hand in Velociraptor if you decide it is safe.
+Watson prefers a reviewed, read-only list of plugins, functions, artifacts and WMI classes. VQL that stays on that list gets a normal card.
 
-Two practical limits help Watson stay inside the list: every argument has a name, and file paths are plain quoted text with forward slashes. Watson's VQL also has no comments, no triple-quoted strings and no carriage returns: Velociraptor could read those differently from the check, so they are blocked.
+### Risky queries
+
+Sometimes Watson needs something off the list: running a program, writing or uploading, a network call, a network path or URL, a path built at run time, or an artifact nobody reviewed. Watson can still propose that query, with its reason. The card is marked as risky:
+
+- A red warning block names the risks in plain words, for example *runs a program on the endpoint (execve)*, and says that Watson's safety check would normally block this query. Read the query before you approve it.
+- The card has **Review risk and launch…** instead of **Launch**. Click it, read the question that opens on the card, then click **Yes, launch it**, or **Cancel**. Nothing runs before that second click.
+- Just before the launch, Watson checks the query again. If the query now has a risk you did not see on the card, Watson refuses it.
+- The launched card, the audit log and the hunt entry all say *approved by* the analyst *despite warning*, with the risks.
+- **Auto mode never launches a risky query**, from any round. The Auto listing shows it as *held for your approval: risky query*, and it waits for an analyst.
+
+### What is always refused
+
+Some VQL is refused outright and never becomes a card, because Velociraptor could read it differently from what you see, or the launch itself is not valid:
+
+- comments, triple-quoted strings, carriage returns, and hidden or control characters
+- a string that holds a blank line or a line starting with `--`
+- VQL that Watson's check cannot read, or that calls something it cannot name
+- VQL longer than the size limit
+- the same query that already ran on the case, an unknown or unclear host, or a fleet hunt with a host
+
+When Watson's request is refused, its turn ends with **Nothing to approve** and the reason. If Watson's own text asked you to approve something, there is no card: nothing runs. The VQL is still shown with **Copy**, so you can run it by hand in Velociraptor if you decide it is safe. Watson also sees the list of collections it already launched on the case, so it should not ask for them again.
+
+Two practical limits help Watson stay inside the list: every argument has a name, and file paths are plain quoted text with forward slashes.
 
 ### Approve and Auto
 
@@ -175,6 +197,7 @@ In Auto, Watson:
 In Auto, Watson never:
 
 - starts a fleet-wide hunt (those always ask)
+- launches a risky query (those always wait for an analyst)
 - launches from a round it started itself, such as a reaction or a round that reads its own results
 - launches from a `/dfir ask` sent through a chat bot, or from any round that did not start from the Watson panel
 - acts on a case that was closed or archived while the round ran

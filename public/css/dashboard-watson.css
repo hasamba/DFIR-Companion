@@ -24,6 +24,9 @@ body.watson-full-open { padding-right: 0; }
 .watson-log { flex: 1; overflow-y: auto; padding: 8px 10px; min-height: 120px; }
 .watson-turn { border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; }
 .watson-analyst { background: var(--bg-hover); }
+.watson-risk { border: 1px solid var(--sev-critical); border-radius: 4px; padding: 4px 6px; margin: 4px 0; color: var(--sev-critical); font-weight: 600; }
+.watson-note { border: 1px solid var(--sev-medium); border-radius: 4px; padding: 4px 6px; margin-top: 4px; font-weight: 600; }
+.watson-risk-confirm { border: 1px dashed var(--sev-critical); border-radius: 4px; padding: 4px 6px; margin-top: 4px; }
 .watson-warn { border-color: var(--sev-medium); color: var(--badge-warning-text, var(--sev-medium)); }
 .watson-who { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
 .watson-text { white-space: pre-wrap; overflow-wrap: anywhere; }

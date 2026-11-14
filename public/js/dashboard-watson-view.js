@@ -118,6 +118,20 @@
   const autoList = (t) =>
     t.role === "system" && typeof watsonVeloAutoListHtml === "function" ? watsonVeloAutoListHtml(t.text) : "";
 
+  // The server appends a launch note to Watson's text ("(Nothing to approve: …)" when nothing was
+  // proposed, "(Risky query: …)" for a risky card). Drawn as its own warning block, so a promise in
+  // Watson's own words ("approve it in the panel") never hides that there is no card (Task 9).
+  const NOTE_HEADS = ["\n\n(Nothing to approve:", "\n\n(Risky query:"];
+  function textHtml(t) {
+    const text = String(t.text || "");
+    const at = t.role === "watson" ? Math.max(...NOTE_HEADS.map((h) => text.lastIndexOf(h))) : -1;
+    if (at < 0) return `<div class="watson-text">${esc(text)}</div>`;
+    return (
+      `<div class="watson-text">${esc(text.slice(0, at))}</div>` +
+      `<div class="watson-why watson-warn watson-note" role="note">${esc(text.slice(at + 2))}</div>`
+    );
+  }
+
   // readOnly: an older turn paged back from the history file. It shows no proposal or add button.
   function turnHtml(t, proposals, readOnly) {
     const reacted = t.role === "system" && String(t.text).startsWith("Watson reacted to");
@@ -128,7 +142,7 @@
     return (
       `<div class="${cls}"><div class="watson-who">${who}</div>` +
       (t.workingOn ? `<div class="watson-meta"><b>Working on:</b> ${esc(t.workingOn)}</div>` : "") +
-      (autoList(t) || `<div class="watson-text">${esc(t.text)}</div>`) +
+      (autoList(t) || textHtml(t)) +
       answerHtml(t, readOnly) +
       coverageHtml(t.coverage) +
       (t.learned ? `<div class="watson-meta"><b>Learned:</b> ${esc(t.learned)}</div>` : "") +

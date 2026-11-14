@@ -354,6 +354,9 @@
     newThread,
     setMode: (el) => watsonModeSwitch(el),
     resolveLaunch: (el) => watsonVeloResolve(el),
+    riskArm: (el) => watsonVeloRiskArm(el), // a risky launch's inline second confirmation (Task 9)
+    riskCancel: (el) => watsonVeloRiskCancel(el),
+    applyRisk: (el) => watsonVeloApplyRisk(el),
   };
   // data-act="watsonAct": a fixed table, never a lookup of a DOM-supplied name on window.
   function watsonAct(el) {

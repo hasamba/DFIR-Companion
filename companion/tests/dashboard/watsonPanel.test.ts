@@ -1016,3 +1016,36 @@ describe("run mode switch", () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe("risky launch through the panel's verbs (Task 9)", () => {
+  it("riskArm shows the inline confirmation; applyRisk posts acceptRisk:true to the apply route", async () => {
+    const calls: unknown[][] = [];
+    const fetch = async (...a: unknown[]) => {
+      calls.push(a);
+      return { ok: true, json: async () => ({ chat: chatWith([]) }) };
+    };
+    const { api, log } = setup({ fetch });
+    const p = {
+      id: "wp-r",
+      turnId: "t1",
+      kind: "velo_launch",
+      status: "pending",
+      targetId: "f",
+      mode: "hunt",
+      title: "Run calc",
+      vql: "SELECT * FROM execve(argv=['calc'])",
+      fingerprint: "f",
+      fingerprints: ["f"],
+      risk: { reasons: ["runs a program on the endpoint (execve)"], checks: ["x"] },
+    };
+    const turn = { id: "t1", at: "2026-11-14T00:00:00Z", role: "watson", text: "x", proposalIds: ["wp-r"] };
+    api.renderWatson(chatWith([turn], { proposals: [p] }));
+    expect(log.innerHTML).toContain('data-w-verb="riskArm"');
+    await api.watsonAct({ dataset: { wVerb: "riskArm", pid: "wp-r" } });
+    expect(log.innerHTML).toContain('data-w-verb="applyRisk"');
+    await api.watsonAct({ dataset: { wVerb: "applyRisk", pid: "wp-r" }, parentElement: null });
+    const apply = calls.find((c) => String(c[0]).endsWith("/watson/proposals/wp-r/apply"));
+    expect(apply).toBeDefined();
+    expect(JSON.parse((apply![1] as { body: string }).body)).toEqual({ acceptRisk: true });
+  });
+});

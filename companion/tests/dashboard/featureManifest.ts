@@ -1905,6 +1905,9 @@ export const FEATURES: Feature[] = [
       "watsonVeloAutoListHtml",
       "watsonVeloResolve",
       "watsonVeloChipSync",
+      "watsonVeloRiskArm",
+      "watsonVeloRiskCancel",
+      "watsonVeloApplyRisk",
       "watsonCaseReset",
     ],
     private: [
@@ -1920,6 +1923,10 @@ export const FEATURES: Feature[] = [
       "btn",
       "currentCase",
       "wVeloConnected",
+      "RISK_TAIL",
+      "wRiskArmed",
+      "riskReasons",
+      "rerender",
     ],
   },
   {

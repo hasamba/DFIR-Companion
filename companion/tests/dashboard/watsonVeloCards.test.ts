@@ -8,6 +8,9 @@ interface Velo {
   watsonVeloAutoListHtml(text: string): string;
   watsonVeloChipSync(chat: unknown): void;
   watsonVeloResolve(el: unknown): Promise<void>;
+  watsonVeloRiskArm(el: unknown): void;
+  watsonVeloRiskCancel(el: unknown): void;
+  watsonVeloApplyRisk(el: unknown): Promise<void>;
 }
 interface Cards {
   watsonCardHtml(p: unknown): string;
@@ -283,5 +286,103 @@ describe("chip, launch time, listing and resolve", () => {
     const { api, el, msg } = resolveEnv(fetch);
     await api.watsonVeloResolve(el);
     expect(msg.textContent).toContain(HOSTILE);
+  });
+
+  it("posts acceptRisk:true to the apply route for a confirmed risky launch (Task 9)", async () => {
+    const calls: unknown[][] = [];
+    const fetch = async (...a: unknown[]) => {
+      calls.push(a);
+      return { ok: true, json: async () => ({ chat: {} }) };
+    };
+    const { api, el } = resolveEnv(fetch);
+    await api.watsonVeloApplyRisk(el);
+    expect(calls[0][0]).toBe("/cases/case-1/watson/proposals/wp%201/apply");
+    const init = calls[0][1] as { method: string; body: string };
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ acceptRisk: true });
+  });
+
+  it("a refused risky launch shows the server message through textContent", async () => {
+    const fetch = async () => ({ ok: false, status: 409, json: async () => ({ error: HOSTILE }) });
+    const { api, el, msg } = resolveEnv(fetch);
+    await api.watsonVeloApplyRisk(el);
+    expect(msg.textContent).toContain(HOSTILE);
+  });
+});
+
+describe("risky launch cards (Task 9)", () => {
+  const RISK = { reasons: ["runs a program on the endpoint (execve)", HOSTILE], checks: ["x"] };
+
+  it("a risky pending card shows the red warning and asks for review instead of Launch", () => {
+    const h = velo().watsonVeloCardHtml(base({ risk: RISK }));
+    expect(h).toContain("Risky query — runs a program on the endpoint (execve)");
+    expect(h).toContain("safety check would normally block this. Read the query before approving.");
+    expect(h).toContain("watson-risk");
+    expect(h).not.toContain("<img");
+    expect(h).toContain('data-w-verb="riskArm"');
+    expect(h).not.toContain(">Launch</button>");
+    expect(h).toContain(">Reject</button>");
+  });
+
+  it("arming shows an inline second confirmation; cancel takes it away", () => {
+    const api = velo();
+    const el = { dataset: { pid: "wp-velo-1" } };
+    api.watsonVeloRiskArm(el);
+    const armed = api.watsonVeloCardHtml(base({ risk: RISK }));
+    expect(armed).toContain('data-w-verb="applyRisk"');
+    expect(armed).toContain('data-w-verb="riskCancel"');
+    expect(armed).toContain('role="group"');
+    api.watsonVeloRiskCancel(el);
+    expect(api.watsonVeloCardHtml(base({ risk: RISK }))).not.toContain('data-w-verb="applyRisk"');
+  });
+
+  it("a launched risky card says who approved it despite the warning", () => {
+    const h = velo().watsonVeloCardHtml(
+      base({
+        status: "applied",
+        risk: RISK,
+        launched: {
+          huntId: "H.1",
+          at: "2026-11-14T00:00:00Z",
+          by: "Dana",
+          riskAccepted: { by: HOSTILE, at: "2026-11-14T00:00:00Z", reasons: RISK.reasons },
+        },
+      }),
+    );
+    expect(h).toContain("despite the warning");
+    expect(h).not.toContain("<img");
+    expect(h).not.toContain('data-w-verb="riskArm"');
+  });
+
+  it("a safe card still shows Launch and no warning", () => {
+    const h = velo().watsonVeloCardHtml(base());
+    expect(h).toContain(">Launch</button>");
+    expect(h).not.toContain("Risky query");
+  });
+});
+
+describe("refusal and risk notes in a Watson turn (Task 9)", () => {
+  const view = () =>
+    loadDashboardModule<{ watsonTurnHtml(t: unknown, p: unknown[], ro?: boolean): string }>(
+      "dashboard-watson-view.js",
+      ["dashboard-escape.js"],
+      { ...globals, watsonWroteHtml: () => "" },
+    );
+  const turn = (text: string) => ({ id: "t1", at: "2026-11-14T00:00:00Z", role: "watson", text });
+
+  it("draws 'Nothing to approve' as its own warning block, apart from Watson's promise", () => {
+    const h = view().watsonTurnHtml(
+      turn(
+        `Approve it in the request panel. ${HOSTILE}\n\n(Nothing to approve: this collection already ran on the case, so Watson proposed nothing.)`,
+      ),
+      [],
+    );
+    expect(h).toContain('class="watson-why watson-warn watson-note"');
+    expect(h).toContain("(Nothing to approve: this collection already ran on the case");
+    expect(h).not.toContain("<img");
+  });
+
+  it("a plain turn has no note block", () => {
+    expect(view().watsonTurnHtml(turn("Just text."), [])).not.toContain("watson-note");
   });
 });

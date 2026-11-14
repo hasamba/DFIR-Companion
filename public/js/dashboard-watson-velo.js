@@ -2,6 +2,9 @@
 // chip, and the Auto listing turn drawn as a list. Pure HTML builders except watsonVeloResolve, which
 // posts the analyst's answer for an uncertain launch. dashboard-watson-cards.js calls the card builder.
 //
+// A risky launch (Task 9) carries a red warning; its Approve is a two-step inline confirmation
+// (never confirm(): a browser modal blocks automation) that posts acceptRisk:true.
+//
 // Every model and evidence string (title, VQL, host, ids, names, error text) goes through
 // esc()/escAttr() (dashboard-escape.js). Actions ride on data-act="watsonAct" + data-w-verb.
 (function () {
@@ -13,6 +16,10 @@
     "Marked as launched. Watson does not know this run's id and will not read its result; import it from Velociraptor.";
   const STALLED =
     "This launch was interrupted before Watson saved its outcome. Check Velociraptor, then mark it launched or try again.";
+
+  const RISK_TAIL = ". Watson's safety check would normally block this. Read the query before approving.";
+  // Risky cards whose second confirmation is on screen (by proposal id); cleared on a case switch.
+  const wRiskArmed = new Set();
 
   const num = (n) => esc(String(Number(n) || 0));
   const rowsText = (n) => `${num(n)} row${Number(n) === 1 ? "" : "s"}`;
@@ -47,14 +54,30 @@
   const btn = (pid, verb, label, extra) =>
     `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="${verb}" data-pid="${escAttr(pid)}"${extra || ""}>${label}</button> `;
 
+  const riskReasons = (p) => (p.risk && Array.isArray(p.risk.reasons) ? p.risk.reasons.map(String) : []);
+
+  function riskHtml(p) {
+    const reasons = riskReasons(p);
+    if (!reasons.length || p.status === "applied" || p.status === "rejected") return "";
+    return `<div class="watson-why watson-risk" role="alert">${esc(`Risky query — ${reasons.join("; ")}${RISK_TAIL}`)}</div>`;
+  }
+
+  function acceptedHtml(l) {
+    const r = l && l.riskAccepted;
+    if (!r) return "";
+    const why = Array.isArray(r.reasons) ? r.reasons.map(String).join("; ") : "";
+    return `<div class="watson-why watson-risk">${esc(`Approved by ${r.by || "an analyst"} despite the warning: ${why}`)}</div>`;
+  }
+
   function bodyFor(p) {
-    const lines = [];
+    const lines = [riskHtml(p)];
     if (p.status === "launching" && p.stalled) lines.push(`<div class="watson-why watson-warn">${esc(STALLED)}</div>`);
     else if (p.status === "launching") lines.push(`<div class="watson-why">Launching…</div>`);
     if (p.status === "applied") {
       const l = p.launched || {};
       lines.push(
         `<div class="watson-why">Launched by ${esc(l.by || p.appliedBy || "an analyst")} at ${timeHtml(l.at || p.appliedAt)}</div>`,
+        acceptedHtml(l),
         `<div class="watson-why" data-w-status="launch">${hasIds(l) ? statusLine(p.watch) : esc(NO_IDS)}</div>`,
         `<div class="watson-why">${esc(NO_UNDO)}</div>`,
       );
@@ -63,7 +86,17 @@
     return lines.join("");
   }
 
+  function riskConfirmHtml(p) {
+    return (
+      `<div class="watson-risk-confirm" role="group" aria-label="Confirm launching a risky query">` +
+      `<div class="watson-why">Launch this risky query? You have read it and accept the risk.</div>` +
+      btn(p.id, "applyRisk", "Yes, launch it") + btn(p.id, "riskCancel", "Cancel") + `</div>`
+    );
+  }
+
   function verbsFor(p) {
+    if (p.status === "pending" && riskReasons(p).length)
+      return wRiskArmed.has(p.id) ? riskConfirmHtml(p) : btn(p.id, "riskArm", "Review risk and launch…") + btn(p.id, "reject", "Reject");
     if (p.status === "pending") return btn(p.id, "apply", "Launch") + btn(p.id, "reject", "Reject");
     if (p.status === "uncertain" || (p.status === "launching" && p.stalled))
       return (
@@ -152,6 +185,29 @@
     }
   }
 
+  const rerender = () => { if (typeof renderWatson === "function") renderWatson(); };
+  function watsonVeloRiskArm(el) { wRiskArmed.add(String(el.dataset.pid)); rerender(); }
+  function watsonVeloRiskCancel(el) { wRiskArmed.delete(String(el.dataset.pid)); rerender(); }
+
+  // The second confirmation's "Yes": the only path that sends acceptRisk (Task 9).
+  async function watsonVeloApplyRisk(el) {
+    const caseId = currentCase();
+    const pid = String(el.dataset.pid || "");
+    if (!caseId || !pid) return;
+    try {
+      const r = await fetch(
+        `/cases/${encodeURIComponent(caseId)}/watson/proposals/${encodeURIComponent(pid)}/apply`,
+        { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ acceptRisk: true }) },
+      );
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error ? String(body.error) : "HTTP " + r.status);
+      wRiskArmed.delete(pid);
+      if (caseId === currentCase() && body.chat && typeof renderWatson === "function") renderWatson(body.chat);
+    } catch (e) {
+      showError(el, "Could not launch: " + (e && e.message ? e.message : "network error"));
+    }
+  }
+
   // Only a GET carries veloConnected; the replies to a proposal POST do not, so they leave it be.
   let wVeloConnected = false;
 
@@ -166,8 +222,12 @@
   window.watsonVeloAutoListHtml = autoListHtml;
   window.watsonVeloResolve = watsonVeloResolve;
   window.watsonVeloChipSync = watsonVeloChipSync;
+  window.watsonVeloRiskArm = watsonVeloRiskArm;
+  window.watsonVeloRiskCancel = watsonVeloRiskCancel;
+  window.watsonVeloApplyRisk = watsonVeloApplyRisk;
   // A case switch: no chip and Approve shown until the new case's GET says otherwise (G15, G19).
   window.watsonCaseReset = () => {
+    wRiskArmed.clear();
     watsonVeloChipSync({ veloConnected: false });
     if (typeof watsonModeSync === "function") watsonModeSync({ runMode: "approve" });
   };
