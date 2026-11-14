@@ -5,6 +5,7 @@ import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
 import { WatsonHistoryStore } from "./historyStore.js";
 import { proposalSchema } from "./proposalSchema.js";
+import { mergeMaskRoster } from "./superRoster.js";
 import { turnSchema } from "./turnSchema.js";
 import {
   emptyWatsonChat,
@@ -103,7 +104,20 @@ function parseChat(raw: unknown): WatsonChat {
     tokens: num(o.tokens),
     calls: num(o.calls),
     ...(typeof o.threadStartAt === "string" && o.threadStartAt ? { threadStartAt: o.threadStartAt } : {}),
+    ...maskRosterField(o.maskRoster),
   };
+}
+
+/** The persisted mask roster, read leniently (an older chat has none) and kept within its caps. */
+function maskRosterField(raw: unknown): Pick<WatsonChat, "maskRoster"> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const r = raw as Record<string, unknown>;
+  const roster = mergeMaskRoster(undefined, {
+    hosts: strings(r.hosts),
+    users: strings(r.users),
+    ips: strings(r.ips),
+  });
+  return roster.hosts.length || roster.users.length || roster.ips.length ? { maskRoster: roster } : {};
 }
 
 // A decided-against proposal (rejected, undone) whose turn left the chat is dropped; every pending and

@@ -6,6 +6,7 @@ import type { CaseStore } from "../../../src/storage/caseStore.js";
 import { WatsonChatStore, WATSON_MAX_TURNS } from "../../../src/analysis/ai/watson/chatStore.js";
 import { emptyWatsonChat, type WatsonTurn } from "../../../src/analysis/ai/watson/types.js";
 import { SNAPSHOT_STATE_FILES } from "../../../src/analysis/investigationStateFiles.js";
+import { mergeMaskRoster, WATSON_MASK_ROSTER_MAX } from "../../../src/analysis/ai/watson/superRoster.js";
 
 const makeTurns = (n: number): WatsonTurn[] =>
   Array.from({ length: n }, (_, i) => ({
@@ -146,6 +147,55 @@ describe("WatsonChatStore", () => {
     await expect(bad).rejects.toThrow("boom");
     expect((await good).memory).toBe("after");
     expect((await store.load("c1")).memory).toBe("after");
+  });
+});
+
+describe("the persisted mask roster (Watson phase 4, D2d)", () => {
+  let dir: string;
+  let store: WatsonChatStore;
+  let path: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "watson-chat-roster-"));
+    store = new WatsonChatStore({ stateDir: () => dir } as unknown as CaseStore);
+    path = join(dir, "watson-chat.json");
+  });
+
+  it("an old chat file loads without a roster", async () => {
+    await writeFile(path, JSON.stringify({ turns: [], memory: "m" }));
+    expect((await store.load("c1")).maskRoster).toBeUndefined();
+  });
+
+  it("round-trips, lower-cased and deduped case-insensitively; junk entries are dropped", async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        maskRoster: { hosts: ["FINSRV-07", "finsrv-07", 5, ""], users: "nope", ips: ["10.0.0.1"] },
+      }),
+    );
+    expect((await store.load("c1")).maskRoster).toEqual({
+      hosts: ["finsrv-07"],
+      users: [],
+      ips: ["10.0.0.1"],
+    });
+  });
+
+  it("keeps each list at 500 names, dropping the oldest; a name seen again counts as newest", () => {
+    const older = { hosts: Array.from({ length: 500 }, (_, i) => `h${i}`), users: [], ips: [] };
+    const merged = mergeMaskRoster(older, { hosts: ["NEW", "H0"], users: ["Alice"], ips: [] });
+    expect(merged.hosts).toHaveLength(WATSON_MASK_ROSTER_MAX);
+    expect(merged.hosts.slice(-2)).toEqual(["new", "h0"]);
+    expect(merged.hosts).not.toContain("h1"); // the oldest left
+    expect(merged.users).toEqual(["alice"]);
+    expect(older.hosts).toHaveLength(500); // the input is not changed
+  });
+
+  it("a cap applies on load too", async () => {
+    const hosts = Array.from({ length: 600 }, (_, i) => `h${i}`);
+    await writeFile(path, JSON.stringify({ maskRoster: { hosts, users: [], ips: [] } }));
+    const loaded = (await store.load("c1")).maskRoster;
+    expect(loaded?.hosts).toHaveLength(500);
+    expect(loaded?.hosts[0]).toBe("h100");
   });
 });
 

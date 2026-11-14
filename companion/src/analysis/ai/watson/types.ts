@@ -1,3 +1,4 @@
+import type { WatsonMaskRoster } from "./superRoster.js";
 import type {
   Finding,
   ForensicEvent,
@@ -333,6 +334,11 @@ export interface WatsonChat {
   calls: number;
   /** ISO time of the last "New thread": RECENT CHAT in the prompt starts here. Memory is kept. */
   threadStartAt?: string;
+  /**
+   * Names Watson's super-timeline searches showed it (raw-only hosts, users, IPs). Every later Watson
+   * call masks them, since a restored reply can carry them into memory and chat (D2d). Case-private.
+   */
+  maskRoster?: WatsonMaskRoster;
 }
 
 export function emptyWatsonChat(): WatsonChat {

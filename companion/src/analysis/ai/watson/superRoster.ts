@@ -251,3 +251,32 @@ export function rosterOf(shown: readonly ForensicEvent[]): WatsonMaskRoster {
     ),
   };
 }
+
+/** Each list of a chat's persisted roster keeps at most this many names, the newest (D2d). */
+export const WATSON_MASK_ROSTER_MAX = 500;
+
+/** One roster list: lower-cased, deduped, a name seen again counts as newest, oldest dropped past the cap. */
+function mergeList(older: readonly string[], newer: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const newestFirst = [...older, ...newer]
+    .map((n) => (typeof n === "string" ? n.trim().toLowerCase() : ""))
+    .reverse()
+    .filter((n) => n !== "" && !seen.has(n) && !!seen.add(n));
+  return newestFirst.slice(0, WATSON_MASK_ROSTER_MAX).reverse();
+}
+
+/** A new roster: `older` with `newer` folded in. Neither input is changed. */
+export function mergeMaskRoster(
+  older: Partial<WatsonMaskRoster> | undefined,
+  newer: Partial<WatsonMaskRoster> | undefined,
+): WatsonMaskRoster {
+  const list = (r: Partial<WatsonMaskRoster> | undefined, k: keyof WatsonMaskRoster): string[] => {
+    const v = r?.[k];
+    return Array.isArray(v) ? v : [];
+  };
+  return {
+    hosts: mergeList(list(older, "hosts"), list(newer, "hosts")),
+    users: mergeList(list(older, "users"), list(newer, "users")),
+    ips: mergeList(list(older, "ips"), list(newer, "ips")),
+  };
+}

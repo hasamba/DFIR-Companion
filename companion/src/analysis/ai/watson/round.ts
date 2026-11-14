@@ -6,7 +6,7 @@ import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_CASE_EVENTS_MAX, type WatsonPromptInput } from "./promptBuilder.js";
 import { sanitizeWatsonReply, type WatsonReply } from "./replySchema.js";
 import { callWatson, choosePaste, headExcerpt, watsonBaseInput } from "./requestBuild.js";
-import { secondHop } from "./roundHop.js";
+import { secondHop, type HopInput } from "./roundHop.js";
 import {
   limitReached,
   NO_SPEND,
@@ -128,7 +128,8 @@ async function runRound(
   let mayWrite = false; // the door rule's verdict: Auto applies no carried rows when writes are off
   try {
     before = await watsonSpend(ctx, caseId);
-    outcome = await converse(ctx, caseId, chat, promptTurn, { paste: newPaste, auto }, counter, before);
+    const attach = { paste: newPaste, auto, reaction: input.reaction === true };
+    outcome = await converse(ctx, caseId, chat, promptTurn, attach, counter, before);
     // Spec §4.4: a reaction to an import writes nothing, judged on the events the prompt showed.
     const importShown = input.reaction === true && outcome.shownEvents.some((e) => e.kind === "import");
     mayWrite = input.allowWrites !== false && !importShown;
@@ -173,7 +174,7 @@ async function converse(
   caseId: string,
   chat: WatsonChat,
   analystTurn: Pick<WatsonTurn, "id" | "text">,
-  attach: { paste: WatsonPaste | undefined; auto: boolean },
+  attach: { paste: WatsonPaste | undefined; auto: boolean; reaction: boolean },
   counter: { calls: number },
   before: WatsonSpend,
 ): Promise<Outcome> {
@@ -183,7 +184,7 @@ async function converse(
   let questions: InvestigationState["keyQuestions"] = [];
   let cover: WatsonCoverage | undefined;
   let first: WatsonReply;
-  let ask: (input: WatsonPromptInput) => Promise<WatsonReply>;
+  let ask: HopInput["ask"];
   let base: WatsonPromptInput;
   let state: InvestigationState;
   let excerpt: WatsonPromptInput["pasteExcerpt"];
@@ -202,7 +203,8 @@ async function converse(
       citations: citationSets(chat.pastes, state.findings),
     };
     const veloOn = base.velo !== undefined;
-    ask = async (input) => {
+    // Only a super-timeline hop's call passes `extra`: the raw rows it showed may be cited there alone.
+    ask = async (input, extra) => {
       const raw = await guardedCall(
         ctx,
         caseId,
@@ -210,7 +212,8 @@ async function converse(
         () => spentNow(ctx, caseId, chat, before),
         (one) => callWatson(one, caseId, state, ctx.provider, input),
       );
-      return sanitizeWatsonReply(raw, known.questions, known.pastes, known.events, known.citations, veloOn);
+      const events = extra ? new Set([...known.events, ...extra]) : known.events;
+      return sanitizeWatsonReply(raw, known.questions, known.pastes, events, known.citations, veloOn);
     };
     // A stored file that is gone or unreadable never fails the round: Watson answers without it.
     excerpt = newPaste
@@ -249,6 +252,7 @@ async function converse(
     ask,
     spent: () => spentNow(ctx, caseId, chat, before),
     rest: { shownEvents, questions, ...read },
+    reaction: attach.reaction,
   });
 }
 

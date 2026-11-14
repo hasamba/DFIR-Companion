@@ -3,6 +3,7 @@ import { matchClient } from "../integrations/velociraptor/clientInventory.js";
 import { blockMd } from "../reports/mdText.js";
 import type { WatsonAutoDeps } from "../analysis/ai/watson/autoApply.js";
 import type { WriterDeps } from "../analysis/ai/watson/proposals.js";
+import type { WatsonRawSearchDeps } from "../analysis/ai/watson/superTimelineSearch.js";
 import type { RouteContext } from "./context.js";
 import { caseVeloConnected, watsonVeloLaunchDeps } from "./watsonVeloLaunch.js";
 import { isFrozenCase } from "./importCaseGuard.js";
@@ -57,6 +58,22 @@ function watsonAutoDeps(ctx: RouteContext): WatsonAutoDeps | undefined {
 }
 
 /**
+ * Watson's one door to the raw record (D12): the super-timeline reader, the writer its promotion uses,
+ * and the guard Auto uses too (AI on, case neither closed nor archived). Undefined when either is
+ * missing: a super-timeline search is then skipped with a note.
+ */
+export function watsonRawSearchDeps(ctx: RouteContext): WatsonRawSearchDeps | undefined {
+  const reader = ctx.options.superTimelineStore;
+  const writer = watsonProposalDeps(ctx);
+  if (!reader || !writer) return undefined;
+  return {
+    reader,
+    writer,
+    writable: async (id) => (await ctx.getControl(id)).enabled && !(await isFrozenCase(ctx.store, id)),
+  };
+}
+
+/**
  * What a Watson round needs from the server: the shared chat store, the model and the limits. Read per
  * call so a Settings change applies at once. One builder for every caller — the Watson routes, the
  * `/dfir ask` slash command and the AI preview — so each runs the round on the same terms.
@@ -67,6 +84,7 @@ export function watsonRoundDeps(ctx: RouteContext): WatsonRoundDeps | undefined 
   const provider = options.watsonProvider?.();
   if (!options.watsonChatStore || !provider) return undefined;
   const auto = watsonAutoDeps(ctx);
+  const rawSearch = watsonRawSearchDeps(ctx);
   return {
     chatStore: options.watsonChatStore,
     cases: store,
@@ -80,5 +98,6 @@ export function watsonRoundDeps(ctx: RouteContext): WatsonRoundDeps | undefined 
     veloConnected: (id) => caseVeloConnected(ctx, id),
     matchClient,
     ...(auto ? { auto } : {}),
+    ...(rawSearch ? { rawSearch } : {}),
   };
 }

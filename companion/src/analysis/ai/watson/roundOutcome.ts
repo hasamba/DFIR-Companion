@@ -1,11 +1,12 @@
 import { PresidioApprovalRequired } from "../../presidio.js";
-import type { InvestigationState } from "../../stateTypes.js";
+import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { AiReplyUnreadableError } from "../aiReplyUnreadable.js";
 import { AiAnswerParseError } from "../providerCall.js";
 import type { WatsonReply } from "./replySchema.js";
 import type { WatsonSpend } from "./roundContext.js";
 import type { WatsonWriteInputs } from "./roundWrites.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
+import { mergeMaskRoster, type WatsonMaskRoster } from "./superRoster.js";
 import type {
   WatsonCaseEvent,
   WatsonChat,
@@ -47,7 +48,15 @@ export interface Outcome {
   lookedUp?: WatsonLookedUp;
   /** The id Watson's turn gets (round.ts sets it, so Auto knows which proposals are this round's). */
   turnId?: string;
+  /** The raw rows the round's super-timeline search showed Watson (for promotion of what it cites). */
+  superShown?: ForensicEvent[];
+  /** The names those rows printed: persisted on the chat even when the reply failed (the model saw them). */
+  superRoster?: WatsonMaskRoster;
 }
+
+/** The chat with the round's super-timeline roster folded into its persisted one (D2d). */
+const withRoster = (chat: WatsonChat, roster: WatsonMaskRoster | undefined): WatsonChat =>
+  roster ? { ...chat, maskRoster: mergeMaskRoster(chat.maskRoster, roster) } : chat;
 
 const sameEvent = (a: WatsonCaseEvent, b: WatsonCaseEvent): boolean =>
   a.kind === b.kind && a.text === b.text && a.at === b.at;
@@ -88,7 +97,7 @@ export function mergeOutcome(
 ): WatsonChat {
   const at = new Date().toISOString();
   const charged = {
-    ...fresh,
+    ...withRoster(fresh, outcome.superRoster),
     costUSD: fresh.costUSD + spent.usd,
     tokens: fresh.tokens + spent.tokens,
     calls: fresh.calls + calls,

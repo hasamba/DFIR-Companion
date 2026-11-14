@@ -18,6 +18,7 @@ import {
 import { shownVeloHosts } from "./velo/veloPrompt.js";
 import { loadVeloFleet } from "./velo/veloFleet.js";
 import { ensureStandardQuestions } from "./standardQuestions.js";
+import { mergeMaskRoster } from "./superRoster.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
 // How a Watson request is built, shared by the round (round.ts) and "Preview what the AI will see"
@@ -147,6 +148,12 @@ export async function watsonBaseInput(
 const veloHostNames = (input: WatsonPromptInput): string[] =>
   shownVeloHosts(input.velo?.hosts ?? []).flatMap((h) => [h.hostname, h.fqdn]);
 
+/**
+ * The raw-only names masking must know: this call's super-timeline rows plus every name an earlier
+ * search showed (the chat's persisted roster), on EVERY call — the round's, a hop's and the preview's.
+ */
+const maskNames = (input: WatsonPromptInput) => mergeMaskRoster(input.chat.maskRoster, input.rawRoster);
+
 /** One Watson model call: the user prompt and its entities, through callAiJson (anonymizer, Presidio). */
 export function callWatson(
   ctx: WatsonRoundContext,
@@ -156,6 +163,7 @@ export function callWatson(
   input: WatsonPromptInput,
 ): Promise<WatsonReply> {
   const prompt = buildWatsonUserPrompt(input);
+  const roster = maskNames(input);
   return callAiJson(
     ctx,
     caseId,
@@ -165,6 +173,6 @@ export function callWatson(
     getWatsonPrompt,
     prompt,
     (r) => watsonReplySchema.parse(r),
-    { promptEntities: promptEntities(prompt, veloHostNames(input)) },
+    { promptEntities: promptEntities(prompt, [...veloHostNames(input), ...roster.hosts], roster.users) },
   );
 }

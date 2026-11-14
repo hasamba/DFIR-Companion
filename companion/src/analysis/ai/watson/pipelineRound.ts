@@ -10,6 +10,7 @@ import { runWatsonRound, type WatsonRoundContext, type WatsonRoundInput } from "
 import type { WatsonChat } from "./types.js";
 import type { LaunchContext } from "./velo/launchCheck.js";
 import type { WatsonAutoDeps } from "./autoApply.js";
+import type { WatsonRawSearchDeps } from "./superTimelineSearch.js";
 
 export type { WatsonRoundInput } from "./round.js";
 
@@ -32,6 +33,8 @@ export interface WatsonRoundDeps {
   matchClient?: LaunchContext["matchClient"];
   /** Auto mode's seams: the same apply deps and launch seam an analyst's click uses. */
   auto?: WatsonAutoDeps;
+  /** The super-timeline reader, promotion writer and writable guard (D12). Absent: no raw search. */
+  rawSearch?: WatsonRawSearchDeps;
 }
 
 /** The arguments of AnalysisPipeline.watsonRound. */

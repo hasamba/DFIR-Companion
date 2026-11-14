@@ -18,7 +18,7 @@ import {
 import type { JevAnswer } from "../../src/analysis/ai/jev/jevClient.js";
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
 import { buildContainmentState } from "../../src/analysis/ai/jev/containmentState.js";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Finding } from "../../src/analysis/stateTypes.js";
 import { psSessionSeats } from "../../src/analysis/ai/synthPsSessionSeats.js";
@@ -876,21 +876,22 @@ describe("the S3 ransomware-precursor promotion is the one automatic super-timel
   });
 });
 
-describe("Watson's timeline lookup reads the forensic timeline only (Task 11)", () => {
-  // Watson may ask for more events than its packet carries. The lookup selects from the scoped
-  // forensic timeline its round already loads, never the raw record or any store behind it.
+describe("Watson's forensic lookup reads the forensic timeline only (Task 11)", () => {
+  // Watson may ask for more events than its packet carries. The forensic lookup selects from the
+  // scoped forensic timeline its round already loads, never the raw record or any store behind it.
   const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
-  it("has no path to the super-timeline store in the lookup, the hop or the request builder", () => {
+  it("has no path to the super-timeline store in the forensic lookup files", () => {
     for (const rel of [
-      "../../src/analysis/ai/watson/timelineLookup.ts",
-      "../../src/analysis/ai/watson/lookupSchema.ts",
-      "../../src/analysis/ai/watson/roundHop.ts",
-      "../../src/analysis/ai/watson/round.ts",
-      "../../src/analysis/ai/watson/requestBuild.ts",
-      "../../src/analysis/ai/watson/roundContext.ts",
+      "timelineLookup.ts",
+      "lookupSchema.ts",
+      "requestBuild.ts",
+      "roundContext.ts",
+      "round.ts",
     ]) {
-      expect(read(rel), rel).not.toMatch(/superTimelineStore|SuperTimelineStore|superTimeline\.js|rawEvents/);
+      expect(read(`../../src/analysis/ai/watson/${rel}`), rel).not.toMatch(
+        /superTimelineStore|SuperTimelineStore|superTimeline\.js|rawEvents/,
+      );
     }
   });
 
@@ -901,5 +902,26 @@ describe("Watson's timeline lookup reads the forensic timeline only (Task 11)", 
     expect(selectLookupEvents(forensic, state, { eventIds: ["e1", "rawonly"] }).map((e) => e.id)).toEqual([
       "e1",
     ]);
+  });
+});
+
+describe("Watson's super-timeline search is the second documented exception (phase 4)", () => {
+  const watsonDir = fileURLToPath(new URL("../../src/analysis/ai/watson", import.meta.url));
+  const listTs = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+      d.isDirectory() ? listTs(join(dir, d.name)) : d.name.endsWith(".ts") ? [join(dir, d.name)] : [],
+    );
+
+  it("only superTimelineSearch.ts reads the store, and only through query and meta", () => {
+    const others = listTs(watsonDir).filter((f) => !f.endsWith("superTimelineSearch.ts"));
+    expect(others.length).toBeGreaterThan(10);
+    for (const f of others) {
+      expect(readFileSync(f, "utf8"), f).not.toMatch(
+        /\.reader\.(?!query|meta)|scanWindow|eventBatches|collect\(|memoizeScan|queryIndexed|SuperTimelineStore|superTimelineStore/,
+      );
+    }
+    const src = readFileSync(join(watsonDir, "superTimelineSearch.ts"), "utf8");
+    expect(src).not.toMatch(/scanWindow|eventBatches|\.collect\(|memoizeScan|queryIndexed|reader\.get\(/);
+    expect(src.match(/reader\.(\w+)\(/g)?.sort()).toEqual(["reader.meta(", "reader.query("]);
   });
 });
