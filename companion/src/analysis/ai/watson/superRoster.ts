@@ -71,6 +71,31 @@ const KNOWN_FOLDERS = new Set([
   "pictures",
   "videos",
 ]);
+/** Registry roots and the last word of built-in account prefixes (NT AUTHORITY, IIS APPPOOL, …). */
+const NOT_A_DOMAIN =
+  /^(?:hklm|hkcu|hkcr|hku|hkcc|hkey_[a-z_]+|authority|builtin|service|apppool|manager|host)$/i;
+const BUILTIN_PREFIX = /^(?:nt authority|builtin|nt service|iis apppool|window manager|font driver host)$/i;
+/** Built-in principals and shared profile folders. Administrator is a real account and stays. */
+const WELL_KNOWN = new Set([
+  "system",
+  "local service",
+  "localservice",
+  "network service",
+  "networkservice",
+  "administrators",
+  "users",
+  "everyone",
+  "authenticated users",
+  "trustedinstaller",
+  "public",
+  "default",
+  "default user",
+  "all users",
+  "sam",
+  "security",
+  "software",
+]);
+
 /** Words a multi-word profile name is not split into. */
 const COMMON_WORDS = new Set([
   "the",
@@ -107,17 +132,33 @@ const withNameWords = (name: string): string[] => [
 ];
 
 function folderUsers(e: ForensicEvent): string[] {
-  const fromPath = e.path ? groups(e.path, PATH_USER).flatMap(withNameWords) : [];
+  const shared = (n: string) => WELL_KNOWN.has(n.toLowerCase()); // never split "All Users"
+  const fromPath = e.path
+    ? groups(e.path, PATH_USER)
+        .filter((n) => !shared(n))
+        .flatMap(withNameWords)
+    : [];
   const text = [e.commandLine, e.description].filter((s): s is string => !!s);
   const quoted = text.flatMap((s) => groups(s, QUOTED_PATH)).flatMap((q) => groups(q, PATH_USER));
   return [...fromPath, ...quoted, ...text.flatMap((s) => groups(s, TEXT_USER))];
 }
 
-const programOf = (part: string): string =>
-  (part.trim().split(/\s+/)[0] ?? "")
+/** A command word as a program name: quotes, directory and extension dropped (`"C:\\T\\PsExec.exe"`). */
+const programName = (word: string): string =>
+  word
+    .replace(/^["']+|["']+$/g, "")
     .replace(/^.*[\\/]/, "")
-    .replace(/\.exe$/i, "")
+    .replace(/\.[a-z0-9]{1,4}$/i, "")
     .toLowerCase();
+
+/** The last account program among the words before `at`, so `cmd /c net use … /user:x` counts. */
+const accountProgramBefore = (part: string, at: number): string | undefined =>
+  part
+    .slice(0, at)
+    .split(/\s+/)
+    .map(programName)
+    .filter((w) => ACCOUNT_PROGRAMS.has(w))
+    .pop();
 
 const looksLikeAccount = (v: string): boolean => v.length > 1 && !v.startsWith("-") && !HAS_EXTENSION.test(v);
 
@@ -132,7 +173,20 @@ function accountForms(raw: string, program: string): string[] {
 }
 
 const isDomain = (d: string): boolean =>
-  (UPPER_DOMAIN.test(d) || DOTTED_DOMAIN.test(d)) && !KNOWN_FOLDERS.has(d.toLowerCase());
+  (UPPER_DOMAIN.test(d) || DOTTED_DOMAIN.test(d)) &&
+  !KNOWN_FOLDERS.has(d.toLowerCase()) &&
+  !NOT_A_DOMAIN.test(d);
+
+/** A built-in principal, a shared profile folder, or a name under a built-in prefix: not a person. */
+function isPerson(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (WELL_KNOWN.has(lower)) return false;
+  const cut = name.lastIndexOf("\\");
+  if (cut < 0) return true;
+  const domain = name.slice(0, cut).trim();
+  const last = domain.split(/\s+/).pop() ?? "";
+  return !NOT_A_DOMAIN.test(last) && !BUILTIN_PREFIX.test(domain) && isPerson(name.slice(cut + 1));
+}
 
 function domainUsers(cmd: string): string[] {
   return [...cmd.matchAll(DOMAIN_USER)]
@@ -143,12 +197,13 @@ function domainUsers(cmd: string): string[] {
 /** Accounts a command names: account flags of known programs, `DOMAIN\user`, `user@domain`. */
 function commandUsers(cmd: string | undefined): string[] {
   if (!cmd) return [];
-  const flagged = cmd.split(/[&|;]+/).flatMap((part) => {
-    const program = programOf(part);
-    return ACCOUNT_PROGRAMS.has(program)
-      ? groups(part, ACCOUNT_FLAG).flatMap((v) => accountForms(v, program))
-      : [];
-  });
+  const flagged = cmd.split(/[&|;]+/).flatMap((part) =>
+    [...part.matchAll(ACCOUNT_FLAG)].flatMap((m) => {
+      const program = accountProgramBefore(part, m.index);
+      const value = (m[1] ?? m[2] ?? "").trim();
+      return program && value ? accountForms(value, program) : [];
+    }),
+  );
   return [...flagged, ...domainUsers(cmd), ...groups(cmd, EMAIL_USER)];
 }
 
@@ -181,7 +236,7 @@ export function rosterOf(shown: readonly ForensicEvent[]): WatsonMaskRoster {
         ...folderUsers(e),
         ...commandUsers(e.commandLine),
       ]),
-    ),
+    ).filter(isPerson),
     ips: distinct(
       shown.flatMap((e) => [e.srcIp, e.dstIp, net(e)?.source?.address, net(e)?.destination?.address]),
     ),

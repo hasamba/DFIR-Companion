@@ -166,3 +166,54 @@ describe("fix round 2: the roster never takes evidence terms", () => {
     expect(r.users).toEqual([]);
   });
 });
+
+describe("fix round 3: built-ins are not people, and wrapped programs still count", () => {
+  const rosterFor = async (over: Partial<ForensicEvent>) =>
+    (
+      await searchSuperTimeline(
+        ctx,
+        readerOf([ev({ id: "a", description: "rclone", ...over })]),
+        "c1",
+        stateOf(),
+        sup({ text: "rclone" }),
+      )
+    ).roster;
+
+  it("registry roots, built-in account prefixes and well-known principals are never listed", async () => {
+    const commands = [
+      "reg save HKLM\\SAM sam.hiv",
+      "reg save HKLM\\SYSTEM sys.hiv",
+      "reg save HKLM\\SECURITY sec.hiv",
+      "reg query HKCU\\Software & reg query HKEY_LOCAL_MACHINE\\Software",
+      "whoami NT AUTHORITY\\SYSTEM",
+      "net localgroup BUILTIN\\Administrators",
+      'runas /user:"NT AUTHORITY\\SYSTEM" cmd',
+      'sc config x obj= "NT SERVICE\\TrustedInstaller" & IIS APPPOOL\\DefaultAppPool',
+    ];
+    for (const commandLine of commands) {
+      expect({ commandLine, users: (await rosterFor({ commandLine })).users }).toEqual({
+        commandLine,
+        users: [],
+      });
+    }
+  });
+
+  it("the shared profile folders are not users", async () => {
+    expect((await rosterFor({ path: "C:\\Users\\Public\\x.exe" })).users).toEqual([]);
+    expect((await rosterFor({ path: "C:\\Users\\Default User\\" })).users).toEqual([]);
+    expect((await rosterFor({ path: "C:\\Users\\All Users\\x.exe" })).users).toEqual([]);
+  });
+
+  it("an account flag behind cmd /c or a quoted program path is still read", async () => {
+    const kate = await rosterFor({ commandLine: "cmd.exe /c net use \\\\fs1\\c$ /user:kate pass" });
+    expect(kate.users).toContain("kate");
+    const leo = await rosterFor({ commandLine: '"C:\\Tools\\PsExec.exe" \\\\dc03 -u leo -p x' });
+    expect(leo.users).toContain("leo");
+  });
+
+  it("a real Administrator account stays maskable", async () => {
+    expect((await rosterFor({ commandLine: "runas /user:CORP\\Administrator cmd" })).users).toEqual(
+      expect.arrayContaining(["CORP\\Administrator", "Administrator"]),
+    );
+  });
+});
