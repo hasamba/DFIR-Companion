@@ -40,6 +40,8 @@ export interface Outcome {
   veloNote?: string;
   /** What the reply's writes need from disk (roundWrites.ts); without it no write is proposed. */
   writeInputs?: WatsonWriteInputs;
+  /** The id Watson's turn gets (round.ts sets it, so Auto knows which proposals are this round's). */
+  turnId?: string;
 }
 
 const sameEvent = (a: WatsonCaseEvent, b: WatsonCaseEvent): boolean =>
@@ -98,7 +100,7 @@ export function mergeOutcome(
     };
     return withUnreadable({ ...charged, turns: [...charged.turns, turn] }, outcome, at);
   }
-  const turnId = newWatsonId("wt");
+  const turnId = outcome.turnId ?? newWatsonId("wt");
   const proposals = [
     ...buildProposals(reply, outcome.questions, turnId, outcome.writeInputs),
     ...(outcome.veloProposal ? [{ ...outcome.veloProposal, turnId }] : []),

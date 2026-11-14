@@ -159,15 +159,17 @@ async function audit(
   p: WatsonVeloLaunchProposal,
   actor: string,
   ok: boolean,
+  suffix = "",
 ) {
   await deps.activity.add(caseId, {
     actor,
     category: "ai",
     action: "watson.apply",
-    detail: (ok
-      ? `Applied Watson's Velociraptor ${p.mode}: ${p.title}`
-      : `Watson's Velociraptor ${p.mode} could not be confirmed (check Velociraptor): ${p.title}`
-    ).slice(0, 200),
+    detail:
+      (ok
+        ? `Applied Watson's Velociraptor ${p.mode}: ${p.title}`
+        : `Watson's Velociraptor ${p.mode} could not be confirmed (check Velociraptor): ${p.title}`
+      ).slice(0, 200) + suffix,
     targetType: "hunt",
     targetId: p.targetId,
     ...(ok ? {} : { outcome: "error" as const }),
@@ -180,13 +182,14 @@ export async function applyVeloLaunch(
   caseId: string,
   proposalId: string,
   actor = "analyst",
+  auditSuffix = "",
 ): Promise<{ chat: WatsonChat }> {
   const v = deps.veloLaunch;
   if (!v) throw new WatsonProposalConflict("Velociraptor launches are not configured");
   const { added, proposal: p } = await saveIntent(deps, v, caseId, proposalId, actor); // marks it in flight
   try {
     const outcome = await runLaunch(v, caseId, p, actor);
-    return await settle(deps, v, caseId, p, outcome, added, actor);
+    return await settle(deps, v, caseId, p, outcome, { added, actor, auditSuffix });
   } finally {
     clearInFlight(caseId, proposalId);
   }
@@ -198,9 +201,9 @@ async function settle(
   caseId: string,
   p: WatsonVeloLaunchProposal,
   outcome: VeloLaunchOutcome,
-  added: string[],
-  actor: string,
+  by: { added: string[]; actor: string; auditSuffix: string },
 ): Promise<{ chat: WatsonChat }> {
+  const { added, actor, auditSuffix } = by;
   const at = new Date().toISOString();
   if (outcome.launched) {
     const launched = { ...outcome.launched, at, by: actor };
@@ -214,7 +217,7 @@ async function settle(
       appliedBy: actor,
     }));
     if (watch) v.onLaunched?.(caseId, p.id);
-    await audit(deps, caseId, p, actor, true);
+    await audit(deps, caseId, p, actor, true, auditSuffix);
     return { chat };
   }
   const why = outcome.error ?? "the launch did not complete";
@@ -233,7 +236,7 @@ async function settle(
       error: why,
     },
   }));
-  await audit(deps, caseId, p, actor, false);
+  await audit(deps, caseId, p, actor, false, auditSuffix);
   throw new WatsonLaunchUncertain(
     `Watson could not confirm the launch (${why}). Check Velociraptor, then mark it launched or try again.`,
   );

@@ -7,13 +7,18 @@ import type { VeloLaunchDeps } from "../analysis/ai/watson/velo/launchTypes.js";
 import { matchClient } from "../integrations/velociraptor/clientInventory.js";
 import type { RouteContext } from "./context.js";
 import { deployCaseHunt } from "./veloDeploy.js";
-import { caseVeloConnected } from "./watsonDeps.js";
 
 // Watson phase 3: the seams an approved velo_launch proposal launches through (the existing deploy
 // path, routes/veloDeploy.ts), and the route that answers an uncertain launch. Registered BEFORE the
 // generic /watson/proposals/:pid/:action route, which would otherwise take "resolve" as an action.
 
 const OUTCOMES: readonly LaunchResolution[] = ["launched", "retry"];
+
+/** Whether the case has a Velociraptor server (the same test GET /watson reports as `veloConnected`). */
+export function caseVeloConnected(ctx: RouteContext, caseId: string): boolean {
+  const servers = ctx.serverClients.forCase(caseId);
+  return servers.ok && !!servers.servers.velociraptor;
+}
 
 /** The launch seams for one request; the actor is the analyst who approved the proposal. */
 export function watsonVeloLaunchDeps(ctx: RouteContext): VeloLaunchDeps {

@@ -27,6 +27,7 @@ import { WATSON_CASE_CONTEXT_PROMPT_MAX } from "./promptBuilder.js";
 import { ensureStandardQuestions } from "./standardQuestions.js";
 import type { WatsonCoverage, WatsonPaste } from "./types.js";
 import type { LaunchContext } from "./velo/launchCheck.js";
+import type { WatsonAutoDeps } from "./autoApply.js";
 import type { WatsonReportText } from "./writers/writerTypes.js";
 
 // What a Watson round needs besides the AI-call seam, and the read-only helpers that build its
@@ -65,6 +66,8 @@ export type WatsonRoundContext = AiCallContext & {
   reportBlockText?(text: string): string;
   /** Tells the dashboard the case state changed (the standard questions were seeded). */
   onStateChanged?(caseId: string): void;
+  /** Auto mode's seams (route-built); absent: Watson only proposes, whatever the case's mode. */
+  auto?: WatsonAutoDeps;
 };
 
 /** Thrown before anything is saved when the case's AI switch is off. The route answers 409. */

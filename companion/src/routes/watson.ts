@@ -18,9 +18,9 @@ import { WatsonAiOff, WatsonCostLimitReached } from "../analysis/ai/watson/round
 import type { WatsonChat, WatsonPaste } from "../analysis/ai/watson/types.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
-import { caseVeloConnected, watsonRoundDeps } from "./watsonDeps.js";
+import { caseVeloConnected, watsonProposalDeps, watsonRoundDeps } from "./watsonDeps.js";
 import { ingestWatsonPaste } from "./watsonPasteIngest.js";
-import { registerWatsonVeloLaunchRoutes, watsonVeloLaunchDeps } from "./watsonVeloLaunch.js";
+import { registerWatsonVeloLaunchRoutes } from "./watsonVeloLaunch.js";
 import { logActivity } from "../analysis/activityLog.js";
 import {
   isWatsonRunMode,
@@ -71,12 +71,6 @@ interface WatsonRun {
   deps: WatsonRoundDeps;
 }
 
-type Pipeline = NonNullable<RouteContext["options"]["pipeline"]>;
-const promoteVia =
-  (pipeline: Pipeline): NonNullable<WriterDeps["promoteEvents"]> =>
-  (caseId, events, opts) =>
-    pipeline.promoteSuperTimelineWithOutcome(caseId, events, opts);
-
 const stringOrEmpty = (v: unknown): string => (typeof v === "string" ? v : "");
 
 function actorName(req: Request): string {
@@ -94,22 +88,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
   registerWatsonVeloLaunchRoutes(app, ctx, sendWatsonError); // before /proposals/:pid/:action
 
   /** What applying a proposal (or adding an answer as a question) needs; undefined when not wired. */
-  function proposalDeps(): WriterDeps | undefined {
-    if (!options.watsonChatStore || !options.stateStore || !options.stateLock || !options.activityLogStore) {
-      return undefined;
-    }
-    return {
-      stateStore: options.stateStore,
-      stateLock: options.stateLock,
-      chatStore: options.watsonChatStore,
-      activity: options.activityLogStore,
-      cases: store,
-      markConclusionsOutOfDate: ctx.markConclusionsOutOfDate,
-      reportText: options.reportMetaStore,
-      ...(options.pipeline ? { promoteEvents: promoteVia(options.pipeline) } : {}),
-      veloLaunch: watsonVeloLaunchDeps(ctx),
-    };
-  }
+  const proposalDeps = (): WriterDeps | undefined => watsonProposalDeps(ctx);
 
   function sendWatsonError(res: Response, err: unknown): Response {
     if (
@@ -220,13 +199,18 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       .slice(0, WATSON_TURN_TEXT_MAX - 200);
     const actor = actorName(req);
     try {
-      const paste = await storePaste(caseId, filename, text, bytes, actor);
+      const { paste, heldIds } = await storePaste(caseId, filename, text, bytes, actor);
       res.setHeader(PASTE_STORED_HEADER, "1");
       await ctx.markConclusionsOutOfDate(caseId, "Watson paste stored");
       const lead = `Pasted ${paste.filename} (${paste.lines} lines, ${paste.bytes} bytes).`;
       const chat = await run.pipeline.watsonRound(
         caseId,
-        { text: note ? `${lead}\n${note}` : lead, actor, pasteId: paste.id },
+        {
+          text: note ? `${lead}\n${note}` : lead,
+          actor,
+          pasteId: paste.id,
+          ...(heldIds.length ? { pasteProposalIds: heldIds } : {}),
+        },
         run.deps,
       );
       return res.status(200).json(chat);
@@ -248,7 +232,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     text: string,
     bytes: number,
     actor: string,
-  ): Promise<WatsonPaste> {
+  ): Promise<{ paste: WatsonPaste; heldIds: string[] }> {
     const seq = await store.nextImportSeq(caseId);
     const safeName = filename.replace(/[^\w.-]+/g, "_").slice(0, 80) || DEFAULT_PASTE_NAME;
     const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
@@ -276,8 +260,12 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       rows: ingestRows(ingest),
       bytes,
     });
-    await options.watsonChatStore!.update(caseId, (chat: WatsonChat) => withPasteIngest(chat, paste, ingest));
-    return paste;
+    const chat = await options.watsonChatStore!.update(caseId, (c: WatsonChat) =>
+      withPasteIngest(c, paste, ingest),
+    );
+    // The held promotions this paste created: Auto mode may apply them after the round.
+    const heldIds = chat.turns.find((t) => t.role === "system" && t.pasteId === paste.id)?.proposalIds ?? [];
+    return { paste, heldIds };
   }
 
   app.post("/cases/:id/watson/proposals/:pid/:action", async (req: Request, res: Response) => {

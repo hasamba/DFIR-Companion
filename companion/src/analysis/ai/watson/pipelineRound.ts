@@ -9,6 +9,7 @@ import type { WatsonReportText } from "./writers/writerTypes.js";
 import { runWatsonRound, type WatsonRoundContext, type WatsonRoundInput } from "./round.js";
 import type { WatsonChat } from "./types.js";
 import type { LaunchContext } from "./velo/launchCheck.js";
+import type { WatsonAutoDeps } from "./autoApply.js";
 
 export type { WatsonRoundInput } from "./round.js";
 
@@ -29,6 +30,8 @@ export interface WatsonRoundDeps {
   veloConnected?(caseId: string): boolean;
   /** The inventory host matcher (matchClient), injected so analysis/ai imports no integration. */
   matchClient?: LaunchContext["matchClient"];
+  /** Auto mode's seams: the same apply deps and launch seam an analyst's click uses. */
+  auto?: WatsonAutoDeps;
 }
 
 /** The arguments of AnalysisPipeline.watsonRound. */

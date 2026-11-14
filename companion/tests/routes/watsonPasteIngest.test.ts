@@ -138,6 +138,8 @@ async function harness() {
   });
   return {
     app,
+    store,
+    aiControlStore,
     stateStore,
     chatStore,
     fake,
@@ -253,6 +255,26 @@ describe("Watson paste ingest", () => {
     const undone = await request(h.app).post(`/cases/${CASE}/watson/proposals/${held[0].id}/undo`);
     expect(undone.status).toBe(200);
     expect(mentions((await h.stateStore.load(CASE)).forensicTimeline, "ntdsutil")).toHaveLength(0);
+  });
+
+  it("in Auto mode, the paste's held promotion is applied after the round, logged as Watson (Auto)", async () => {
+    const h = await harness();
+    await h.aiControlStore.save(CASE, {
+      ...(await h.aiControlStore.load(CASE)),
+      watsonRunMode: "auto",
+      watsonAutoSince: "2026-11-14T07:30:00.000Z",
+      watsonAutoBy: { name: "Robin Lead" },
+    });
+    expect((await paste(h.app as never, SIEM, "events.json")).status).toBe(200);
+    const chat = await h.chatStore.load(CASE);
+    expect(chat.proposals.find((p) => p.kind === "event_promote")?.status).toBe("applied");
+    expect(mentions((await h.stateStore.load(CASE)).forensicTimeline, "ntdsutil")).toHaveLength(1);
+    expect(chat.turns.at(-1)?.text).toMatch(
+      /^Watson acted on its own \(Auto mode, switched on by Robin Lead\)/,
+    );
+    const entry = (await new ActivityLogStore(h.store).load(CASE)).find((e) => e.action === "watson.apply");
+    expect(entry).toMatchObject({ actor: "Watson (Auto)" });
+    expect(h.synthesize).not.toHaveBeenCalled();
   });
 
   it("a paste ingest and a proposal apply schedule no Watson reaction (spec §4.6)", async () => {

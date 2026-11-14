@@ -1,7 +1,10 @@
 import type { WatsonRoundDeps } from "../analysis/ai/watson/pipelineRound.js";
 import { matchClient } from "../integrations/velociraptor/clientInventory.js";
 import { blockMd } from "../reports/mdText.js";
+import type { WatsonAutoDeps } from "../analysis/ai/watson/autoApply.js";
+import type { WriterDeps } from "../analysis/ai/watson/proposals.js";
 import type { RouteContext } from "./context.js";
+import { caseVeloConnected, watsonVeloLaunchDeps } from "./watsonVeloLaunch.js";
 
 /** A positive finite number from a setting, else undefined: blank, junk, zero and negatives mean "no limit". */
 export function positiveLimit(raw: string | undefined): number | undefined {
@@ -10,10 +13,45 @@ export function positiveLimit(raw: string | undefined): number | undefined {
   return text && Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-/** Whether the case has a Velociraptor server (the same test GET /watson reports as `veloConnected`). */
-export function caseVeloConnected(ctx: RouteContext, caseId: string): boolean {
-  const servers = ctx.serverClients.forCase(caseId);
-  return servers.ok && !!servers.servers.velociraptor;
+export { caseVeloConnected };
+
+type Pipeline = NonNullable<RouteContext["options"]["pipeline"]>;
+const promoteVia =
+  (pipeline: Pipeline): NonNullable<WriterDeps["promoteEvents"]> =>
+  (caseId, events, opts) =>
+    pipeline.promoteSuperTimelineWithOutcome(caseId, events, opts);
+
+/**
+ * What applying a Watson proposal needs — an analyst's click and Auto mode alike, so both launch
+ * through the same Velociraptor seam. Undefined when not wired.
+ */
+export function watsonProposalDeps(ctx: RouteContext): WriterDeps | undefined {
+  const { options, store } = ctx;
+  if (!options.watsonChatStore || !options.stateStore || !options.stateLock || !options.activityLogStore) {
+    return undefined;
+  }
+  return {
+    stateStore: options.stateStore,
+    stateLock: options.stateLock,
+    chatStore: options.watsonChatStore,
+    activity: options.activityLogStore,
+    cases: store,
+    markConclusionsOutOfDate: ctx.markConclusionsOutOfDate,
+    reportText: options.reportMetaStore,
+    ...(options.pipeline ? { promoteEvents: promoteVia(options.pipeline) } : {}),
+    veloLaunch: watsonVeloLaunchDeps(ctx),
+  };
+}
+
+/** Auto mode's seams for a round; undefined when proposals cannot be applied on this server. */
+function watsonAutoDeps(ctx: RouteContext): WatsonAutoDeps | undefined {
+  const writer = watsonProposalDeps(ctx);
+  if (!writer) return undefined;
+  return {
+    control: (id) => ctx.getControl(id),
+    writer,
+    onStateChanged: (id) => ctx.options.onStateChanged?.(id),
+  };
 }
 
 /**
@@ -26,6 +64,7 @@ export function watsonRoundDeps(ctx: RouteContext): WatsonRoundDeps | undefined 
   const { options, store } = ctx;
   const provider = options.watsonProvider?.();
   if (!options.watsonChatStore || !provider) return undefined;
+  const auto = watsonAutoDeps(ctx);
   return {
     chatStore: options.watsonChatStore,
     cases: store,
@@ -38,5 +77,6 @@ export function watsonRoundDeps(ctx: RouteContext): WatsonRoundDeps | undefined 
     onStateChanged: options.onStateChanged,
     veloConnected: (id) => caseVeloConnected(ctx, id),
     matchClient,
+    ...(auto ? { auto } : {}),
   };
 }

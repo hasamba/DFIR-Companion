@@ -55,8 +55,17 @@ const WRITERS: Partial<Record<WatsonProposalKind, WatsonWriter<WatsonProposal>>>
 
 // The pasted file stays the evidence, so held rows an analyst undid may be applied again.
 const REAPPLIABLE: ReadonlySet<WatsonProposalKind> = new Set<WatsonProposalKind>(["event_promote"]);
-const allowed = (p: WatsonProposal, action: WatsonProposalAction): boolean =>
-  p.status === FROM[action] || (action === "apply" && p.status === "undone" && REAPPLIABLE.has(p.kind));
+const allowed = (p: WatsonProposal, action: WatsonProposalAction, pendingOnly?: boolean): boolean =>
+  p.status === FROM[action] ||
+  (action === "apply" && !pendingOnly && p.status === "undone" && REAPPLIABLE.has(p.kind));
+
+/** How a caller other than an analyst's click applies: Auto mode (autoApply.ts). */
+export interface WatsonApplyOptions {
+  /** Appended to the activity entry's detail (who switched Auto on, and when). */
+  detailSuffix?: string;
+  /** Apply only a `pending` proposal: never redo a held promotion an analyst undid. */
+  pendingOnly?: boolean;
+}
 
 const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {
   question_update: "question",
@@ -128,19 +137,21 @@ export async function applyWatsonProposal(
   proposalId: string,
   action: WatsonProposalAction,
   actor?: string,
+  opts: WatsonApplyOptions = {},
 ): Promise<{ chat: WatsonChat; state?: InvestigationState }> {
   // A launch saves twice around its external call (writers/veloLaunchWriter.ts); a proposal's kind
   // never changes, so reading it before the update is safe.
   if (action === "apply") {
     const found = (await deps.chatStore.load(caseId)).proposals.find((x) => x.id === proposalId);
-    if (found?.kind === "velo_launch") return applyVeloLaunch(deps, caseId, proposalId, actor);
+    if (found?.kind === "velo_launch")
+      return applyVeloLaunch(deps, caseId, proposalId, actor, opts.detailSuffix);
   }
   let state: InvestigationState | undefined;
   let done: WatsonProposal | undefined;
   const chat = await deps.chatStore.update(caseId, async (c) => {
     const p = c.proposals.find((x) => x.id === proposalId);
     if (!p) throw new WatsonProposalNotFoundError(proposalId);
-    if (!allowed(p, action)) throw new WatsonProposalStateError(action, p.status);
+    if (!allowed(p, action, opts.pendingOnly)) throw new WatsonProposalStateError(action, p.status);
     const result = action === "reject" ? {} : await runWriter(deps, caseId, p, action, actor);
     state = result.state;
     const next = decided(p, action, result.proposal, actor);
@@ -152,7 +163,7 @@ export async function applyWatsonProposal(
       ...(actor ? { actor } : {}),
       category: "ai",
       action: `watson.${action}`,
-      detail: detailFor(action, done),
+      detail: detailFor(action, done) + (opts.detailSuffix ?? ""),
       targetType: TARGET_TYPE[done.kind],
       targetId: proposalTargetId(done),
     });

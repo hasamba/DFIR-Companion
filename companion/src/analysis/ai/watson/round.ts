@@ -25,6 +25,7 @@ import {
   WATSON_REACTION_PROMPT,
   withReactionResult,
 } from "./reactionState.js";
+import { autoAfterRound, carriedHeldIds } from "./autoApply.js";
 import { mergeOutcome, type Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
@@ -55,10 +56,11 @@ export interface WatsonRoundInput {
   reaction?: boolean;
   /**
    * A reaction to the result of Watson's own launch: the held-promotion proposals that result
-   * created (from the pending `hunt` events). Only these, never older pending ones, may be applied
-   * by Auto in this round (Task 6).
+   * created (from the pending `hunt` events). Auto applies only those the round actually showed.
    */
   heldProposalIds?: string[];
+  /** The held promotions this message's paste created (routes/watson.ts): Auto may apply them. */
+  pasteProposalIds?: string[];
 }
 
 const searchSkipped = (why: string): string =>
@@ -121,6 +123,7 @@ async function runRound(
   });
 
   const counter = { calls: 0 };
+  const turnId = newWatsonId("wt"); // Watson's turn: Auto applies only its proposals
   let outcome: Outcome = { reply: null, shownEvents: [], questions: [] };
   let before: WatsonSpend | null = null;
   let saved: WatsonChat | undefined;
@@ -140,7 +143,7 @@ async function runRound(
     const spent = before && after ? spendDelta(before, after) : NO_SPEND;
     const failed = input.reaction === true && reactionFailed(outcome.reply, outcome.error);
     saved = await ctx.chatStore.update(caseId, (fresh) => {
-      const merged = mergeOutcome(fresh, outcome, spent, counter.calls);
+      const merged = mergeOutcome(fresh, { ...outcome, turnId }, spent, counter.calls);
       return input.reaction ? withReactionResult(merged, failed) : merged;
     });
   }
@@ -152,7 +155,17 @@ async function runRound(
   }
   if (failure instanceof PresidioApprovalRequired) throw failure;
   if (input.reaction && failure instanceof WatsonCostLimitReached) throw failure;
-  return saved;
+  // Auto mode acts only on a round that produced Watson's turn; a launch is not a model call.
+  if (!ctx.auto || !outcome.reply) return saved;
+  const reaction = input.reaction === true;
+  const pasteId = input.pasteId && input.pasteProposalIds?.length ? input.pasteId : undefined;
+  const round = {
+    turnId,
+    reaction,
+    heldIds: carriedHeldIds(reaction, input.heldProposalIds, outcome.shownEvents),
+    ...(pasteId ? { paste: { pasteId, proposalIds: input.pasteProposalIds ?? [] } } : {}),
+  };
+  return autoAfterRound(ctx.auto, caseId, round, saved, (line) => ctx.log?.warn(line, { caseId }));
 }
 
 async function converse(
