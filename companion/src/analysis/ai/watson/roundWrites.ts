@@ -21,6 +21,8 @@ export interface WatsonWriteInputs {
   lines: ReadonlyMap<string, string>;
   /** The report text now; absent when the report details cannot be read (no report_text proposal). */
   report?: Pick<WatsonReportFields, "conclusions" | "investigationLimitations">;
+  /** Neutralises Watson's report text for report.md; required for any report_text proposal. */
+  reportBlockText?(text: string): string;
 }
 
 export const pasteLineKey = (pasteId: string, line: number): string => `${pasteId}:${line}`;
@@ -66,9 +68,10 @@ async function resolve(
   const { pastes } = await ctx.chatStore.load(caseId);
   const byId = new Map(pastes.map((p) => [p.id, p] as const));
   const { findings } = await ctx.stateStore.loadOverview(caseId);
-  const report = reply.writes.report.length
-    ? await ctx.reportText?.load(caseId).catch(() => undefined)
-    : undefined;
+  const report =
+    reply.writes.report.length && ctx.reportBlockText
+      ? await ctx.reportText?.load(caseId).catch(() => undefined)
+      : undefined;
   return {
     findings: new Map(findings.filter(isWatsonFinding).map((f) => [f.id, f] as const)),
     pastes: byId,
@@ -79,6 +82,7 @@ async function resolve(
             conclusions: report.conclusions,
             investigationLimitations: report.investigationLimitations,
           },
+          reportBlockText: ctx.reportBlockText,
         }
       : {}),
   };

@@ -13,6 +13,7 @@ import { resetLimiters } from "../../src/http/rateLimiter.js";
 import { createApp } from "../../src/server.js";
 import { WatsonChatStore } from "../../src/analysis/ai/watson/chatStore.js";
 import { WatsonAiOff, WatsonCostLimitReached } from "../../src/analysis/ai/watson/round.js";
+import { PresidioApprovalRequired } from "../../src/analysis/presidio.js";
 import { emptyWatsonChat, type WatsonChat } from "../../src/analysis/ai/watson/types.js";
 import type { WatsonRoundInput } from "../../src/analysis/ai/watson/pipelineRound.js";
 
@@ -32,6 +33,7 @@ let app: ReturnType<typeof createApp>;
 let asked: Array<{ caseId: string; question: string }>;
 let actors: Array<string | undefined>;
 let roundError: Error | undefined;
+let errorTurn: string | undefined; // the round saved an error turn with this text instead of a reply
 let delivered: Array<{ url: string; body: unknown }>;
 
 // /dfir ask is a Watson round in the case's shared chat (D2): the fake records the round's input and
@@ -42,15 +44,23 @@ const fakePipeline = {
     actors.push(input.actor);
     if (roundError) throw roundError;
     const at = new Date().toISOString();
+    const analyst = { id: "wt-a", at, role: "analyst" as const, text: input.text, actor: input.actor };
+    if (errorTurn !== undefined) {
+      return {
+        ...emptyWatsonChat(),
+        turns: [analyst, { id: "wt-e", at, role: "watson", text: errorTurn, error: true }],
+      } as WatsonChat;
+    }
     return {
       ...emptyWatsonChat(),
       turns: [
-        { id: "wt-a", at, role: "analyst", text: input.text, actor: input.actor },
+        analyst,
         {
           id: "wt-w",
           at,
           role: "watson",
-          text: `answer for ${caseId}`,
+          // The message and the free-form answer differ: the bot reply must carry both (F2).
+          text: `message for ${caseId}`,
           answer: {
             question: input.text,
             status: "answered",
@@ -78,6 +88,7 @@ beforeEach(async () => {
   asked = [];
   actors = [];
   roundError = undefined;
+  errorTurn = undefined;
   delivered = [];
 
   // Stub fetch for EVERY test, not just the delivery ones. An async command's result is posted to
@@ -440,8 +451,49 @@ describe("async command delivery", () => {
     await vi.waitFor(() => expect(delivered).toHaveLength(1));
     expect(asked).toEqual([{ caseId: "c1", question: "was data exfiltrated" }]);
     expect(actors[0]).toBe("U1 via slack");
-    expect(text(0)).toMatch(/answer for c1/);
+    expect(text(0)).toMatch(/message for c1/);
+    expect(text(0)).toMatch(/\[answered\] answer for c1/);
     expect(text(0)).toMatch(/Next: collect the prefetch dir/);
+  });
+
+  it("replies with a Presidio hold as a refusal that points at the Anonymization panel", async () => {
+    roundError = new PresidioApprovalRequired([]);
+    await slack("ask c1 was data exfiltrated");
+    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    expect(text(0)).toContain("awaiting approval");
+    expect(text(0)).toContain("Anonymization panel");
+  });
+
+  it("replies with the stored error turn, with case paths redacted", async () => {
+    errorTurn = `Watson could not answer: cannot read ${store.casesRoot}/c1/state.json`;
+    await slack("ask c1 was data exfiltrated");
+    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    expect(text(0)).toContain("Watson could not answer: cannot read");
+    expect(text(0)).not.toContain(store.casesRoot);
+    expect(text(0)).not.toMatch(/answer for c1/);
+  });
+
+  it("replies with a generic failure, with case paths redacted", async () => {
+    roundError = new Error(`disk full under ${store.casesRoot}/c1`);
+    await slack("ask c1 was data exfiltrated");
+    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    expect(text(0)).toContain("Watson failed: disk full");
+    expect(text(0)).not.toContain(store.casesRoot);
+  });
+
+  it("refuses ask when no AI provider is configured for Watson", async () => {
+    resetLimiters();
+    app = createApp(store, {
+      stateStore,
+      activityLogStore,
+      slashCommandChannelStore: bindings,
+      pipeline: fakePipeline,
+      watsonChatStore: new WatsonChatStore(store),
+    });
+    await slack("ask c1 was data exfiltrated");
+    await vi.waitFor(() => expect(delivered).toHaveLength(1));
+    expect(text(0)).toContain("AI provider not configured for Watson.");
+    expect(asked).toEqual([]);
   });
 
   it("refuses ask on a closed case without running a round", async () => {

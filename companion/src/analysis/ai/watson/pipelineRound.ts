@@ -21,6 +21,8 @@ export interface WatsonRoundDeps {
   tokenLimit?: number;
   /** The report details (ReportMetaStore), for report-text proposals. */
   reportText?: WatsonReportText;
+  /** Report text made safe for report.md (the route injects reports' blockMd). Absent: none proposed. */
+  reportBlockText?(text: string): string;
   onStateChanged?(caseId: string): void;
 }
 

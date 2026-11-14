@@ -48,11 +48,18 @@ export interface WatsonCaseEvents {
   importChanged(caseId: string, step?: "undo" | "redo"): void;
   /** The case's tags changed (onTags): a newly starred event wakes Watson, any other change does not. */
   tagsChanged(caseId: string): void;
+  /**
+   * The notebook changed (onNotebook). It wakes Watson only when the case's AI control includes the
+   * notebook (`includeNotebook`), the one way Watson can read it; otherwise it is only noted, so an
+   * edit never pays for a round that cannot see it.
+   */
+  notebookChanged(caseId: string): void;
   /** Called once by createApp with the shared reactor. */
   attach(sink: WatsonCaseEventSink): void;
 }
 
 const STARS_LISTED = 5;
+const NOTEBOOK_EDITED = "Analyst edited the notebook";
 
 function starredIds(tags: readonly Tag[]): Set<string> {
   return new Set(
@@ -77,6 +84,7 @@ function starText(ids: readonly string[]): string {
 export function createWatsonCaseEvents(
   chatStore: WatsonEventChatStore,
   tagsStore?: { load(caseId: string): Promise<Tag[]> },
+  aiControl?: { load(caseId: string): Promise<{ includeNotebook?: boolean }> },
 ): WatsonCaseEvents {
   let sink: WatsonCaseEventSink | undefined;
   const seenStars = new Map<string, Set<string>>();
@@ -115,10 +123,23 @@ export function createWatsonCaseEvents(
     noteWatsonCaseEvent(chatStore, caseId, { kind: "other", text });
   }
 
+  // Fails closed: an unreadable AI control only notes the edit.
+  function notebookChanged(caseId: string): void {
+    const event: WatsonCaseEventNote = { kind: "notebook", text: NOTEBOOK_EDITED };
+    void (aiControl?.load(caseId) ?? Promise.resolve({ includeNotebook: false }))
+      .then((c) => c.includeNotebook === true)
+      .catch(() => false)
+      .then((wakes) => {
+        if (wakes) note(caseId, event);
+        else noteWatsonCaseEvent(chatStore, caseId, { kind: "other", text: NOTEBOOK_EDITED });
+      });
+  }
+
   return {
     note,
     importChanged,
     tagsChanged,
+    notebookChanged,
     attach: (next) => {
       sink = next;
     },

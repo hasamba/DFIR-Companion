@@ -71,6 +71,10 @@ function setup(
     documentElement: { style: { setProperty: (k: string, v: string) => (rootVars[k] = v) } },
     querySelector: (sel: string) => (sel === "header" ? { getBoundingClientRect: () => headerBox } : null),
     readyState: "complete",
+    createElement: () => {
+      const node = { className: "", textContent: "", attrs: {} as Record<string, string> };
+      return { ...node, setAttribute: (k: string, v: string) => (node.attrs[k] = v), attrs: node.attrs };
+    },
     getElementById: (id: string) => (id === "watsonPanel" ? panel : id === "caseId" ? caseInput : null),
     querySelectorAll: (sel: string) => byW[/data-w="(\w+)"/.exec(sel)?.[1] ?? ""] ?? [],
     addEventListener: (t: string, cb: (e: { key: string }) => void) => {
@@ -374,6 +378,51 @@ describe("409 handling", () => {
     await api.watsonAct({ dataset: { wVerb: "send" }, closest: () => root });
     expect(log.innerHTML).toContain("cost limit reached");
     expect(log.innerHTML).toContain("watson-warn");
+  });
+});
+
+describe("a refused Undo pressed in a section (F6)", () => {
+  const refused = async (url: string, init?: { method?: string }) =>
+    init?.method === "POST"
+      ? {
+          ok: false,
+          status: 409,
+          json: async () => ({ error: "Finding f-watson-1 changed since this proposal" }),
+        }
+      : { ok: true, status: 200, json: async () => chatWith([]) };
+
+  function sectionUndo() {
+    const inserted: { className: string; textContent: string; attrs: Record<string, string> }[] = [];
+    const host = { querySelector: () => inserted[0] ?? null };
+    const el = {
+      dataset: { wVerb: "undo", pid: "wp-1" },
+      closest: () => null, // not inside the Watson panel
+      parentElement: host,
+      insertAdjacentElement: (_where: string, node: (typeof inserted)[number]) => inserted.push(node),
+    };
+    return { el, inserted };
+  }
+
+  it("shows the server message in the panel notice and beside the section's Undo button", async () => {
+    const { api, log } = setup({ fetch: refused });
+    api.renderWatson(chatWith([]));
+    const { el, inserted } = sectionUndo();
+    await api.watsonAct(el);
+    expect(log.innerHTML).toContain("Finding f-watson-1 changed since this proposal");
+    expect(log.innerHTML).toContain("watson-warn");
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0].className).toBe("watson-undo-msg");
+    expect(inserted[0].textContent).toBe("Finding f-watson-1 changed since this proposal");
+    expect(inserted[0].attrs.role).toBe("alert");
+    await api.watsonAct(el); // a second refusal reuses the same message element
+    expect(inserted).toHaveLength(1);
+  });
+
+  it("a refused Undo on a card in the panel keeps its message on the card only", async () => {
+    const { api, log } = setup({ fetch: refused });
+    api.renderWatson(chatWith([]));
+    await api.watsonAct({ dataset: { wVerb: "undo", pid: "wp-1" }, closest: () => ({}) });
+    expect(log.innerHTML).not.toContain("watson-warn");
   });
 });
 

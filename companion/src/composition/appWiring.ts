@@ -54,6 +54,7 @@ import { createServerClients } from "./serverSetClients.js";
 import { buildProvider } from "./aiProviders.js";
 import { buildWatsonProvider } from "./watsonProvider.js";
 import { createWatsonCaseEvents } from "./watsonCaseEvents.js";
+import { AiControlStore } from "../analysis/aiControl.js";
 import { spawnToolRunner } from "../integrations/tools/toolRunner.js";
 import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "../http/originGuard.js";
 import { resolveHuntPlatforms } from "../analysis/huntPlatforms.js";
@@ -198,7 +199,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     cloudQueryBudget,
   } = rt;
   // Case events Watson hears about; createApp attaches the shared reaction scheduler (spec §4.6).
-  const watsonEvents = createWatsonCaseEvents(watsonChatStore, tagsStore);
+  const watsonEvents = createWatsonCaseEvents(watsonChatStore, tagsStore, new AiControlStore(store));
   const {
     teamAuth,
     pipeline,
@@ -278,7 +279,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     notebookStore,
     onNotebook: (caseId) => {
       hub.broadcastTo(caseId, { type: "notebook_changed" });
-      watsonEvents.note(caseId, { kind: "notebook", text: "Analyst edited the notebook" });
+      watsonEvents.notebookChanged(caseId);
     },
     watsonChatStore,
     onWatsonReactorReady: watsonEvents.attach,

@@ -56,6 +56,8 @@ export type WatsonRoundContext = AiCallContext & {
   velociraptorClientStore?: CaseFleetInventory;
   /** The report details, for the text a report-text proposal would replace. Absent: none proposed. */
   reportText?: WatsonReportText;
+  /** Report text made safe for report.md (reports' blockMd, injected). Absent: none proposed. */
+  reportBlockText?(text: string): string;
   /** Tells the dashboard the case state changed (the standard questions were seeded). */
   onStateChanged?(caseId: string): void;
 };

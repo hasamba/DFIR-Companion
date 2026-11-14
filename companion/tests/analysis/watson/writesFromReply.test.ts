@@ -14,6 +14,7 @@ import {
 } from "../../../src/analysis/ai/watson/proposals.js";
 import { sanitizeWatsonReply, watsonReplySchema } from "../../../src/analysis/ai/watson/replySchema.js";
 import { runWatsonRound, type WatsonRoundContext } from "../../../src/analysis/ai/watson/round.js";
+import { blockMd } from "../../../src/reports/mdText.js";
 import { buildWriteProposals } from "../../../src/analysis/ai/watson/writeProposals.js";
 import type { WatsonFindingDraft } from "../../../src/analysis/ai/watson/writesSchema.js";
 import type {
@@ -165,6 +166,7 @@ async function harness(replies: string[]): Promise<Harness> {
     provider,
     isAiEnabled: async () => true,
     reportText: reportMeta,
+    reportBlockText: blockMd,
   };
   return { ctx, chatStore, stateStore, reportMeta, cases, paste };
 }

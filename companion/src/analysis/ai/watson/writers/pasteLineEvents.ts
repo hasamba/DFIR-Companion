@@ -15,10 +15,34 @@ const SPACED = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/;
 
 export const pasteLineEventId = (pasteId: string, line: number): string => `ev-watson-${pasteId}-${line}`;
 
-/** The first ISO-8601 or `YYYY-MM-DD HH:MM:SS` time in the line, as ISO (UTC when it names no zone). */
+/** The match of either form that starts first in the line. */
+function firstTime(text: string): string | undefined {
+  const found = [ISO.exec(text), SPACED.exec(text)].filter((m): m is RegExpExecArray => m !== null);
+  found.sort((a, b) => a.index - b.index);
+  return found[0]?.[0];
+}
+
+/** The written Y-M-D h:m:s names a real calendar time (Date would roll 02-30 over into March). */
+function isRealTime(written: string): boolean {
+  const [y, mo, d, h, mi, sec] = written.match(/\d+/g)!.slice(0, 6).map(Number);
+  const t = new Date(Date.UTC(y, mo - 1, d, h, mi, sec));
+  return (
+    t.getUTCFullYear() === y &&
+    t.getUTCMonth() === mo - 1 &&
+    t.getUTCDate() === d &&
+    t.getUTCHours() === h &&
+    t.getUTCMinutes() === mi &&
+    t.getUTCSeconds() === sec
+  );
+}
+
+/**
+ * The first ISO-8601 or `YYYY-MM-DD HH:MM:SS` time in the line, as ISO (UTC when it names no zone).
+ * An impossible date or clock time (2026-02-30, 24:30) gives "" rather than a rolled-over time.
+ */
 export function lineTimestamp(text: string): string {
-  const found = ISO.exec(text)?.[0] ?? SPACED.exec(text)?.[0];
-  if (!found) return "";
+  const found = firstTime(text);
+  if (!found || !isRealTime(found)) return "";
   const iso = found.replace(" ", "T");
   const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`;
   const ms = Date.parse(zoned);

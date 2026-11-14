@@ -273,7 +273,7 @@
   }
 
   // A write that answers { chat, state?: { keyQuestions } } (a proposal decision, an added answer).
-  async function decide(path, pid) {
+  async function decide(path, pid, el) {
     const caseId = currentCase();
     wNotice = null;
     try {
@@ -283,7 +283,7 @@
         const text = await failure(r, "proposal", false);
         if (!live(caseId)) return;
         if (pid) wCardErr.set(pid, text);
-        else wNotice = { text };
+        if (!pid || watsonSectionRefused(el, text)) wNotice = { text }; // a section's Undo: shown where the analyst is
         return renderWatson();
       }
       if (pid) wCardErr.delete(pid);
@@ -298,7 +298,7 @@
     }
   }
 
-  const proposal = (el, verb) => decide(`/proposals/${encodeURIComponent(el.dataset.pid)}/${verb}`, el.dataset.pid);
+  const proposal = (el, verb) => decide(`/proposals/${encodeURIComponent(el.dataset.pid)}/${verb}`, el.dataset.pid, el);
   const addQuestion = (el) => decide(`/turns/${encodeURIComponent(el.dataset.tid)}/add-question`);
   // Older turns from the full history file, above the oldest one shown. Read-only.
   async function loadEarlier() {

@@ -7,7 +7,9 @@ import { pasteLineEvent } from "./writers/pasteLineEvents.js";
 // A reply's sanitized writes as PENDING proposals. Pure: everything read from disk arrives in
 // `inputs`. A finding's paste-line events are built now, so the analyst sees the exact rows that will
 // land; a finding left with no citation once the lines are read is not proposed. Watson's ids are
-// fixed here: findings `f-watson-<8 hex>`, next steps `ns-watson-<8 hex>`.
+// fixed here: findings `f-watson-<8 hex>`, next steps `ns-watson-<8 hex>`. Report text is model text
+// that report.md renders raw, so it is neutralised here (the injected blockMd: no heading, fence or
+// raw-HTML block can open), and the card, the stored text and undo's comparison all see that string.
 
 type NewId = (prefix: string) => string;
 
@@ -71,6 +73,34 @@ function stepProposal(s: WatsonStepDraft, turnId: string, newId: NewId): WatsonP
   return { id: newId("wp"), turnId, kind: "next_step_new", targetId: id, after, status: "pending" };
 }
 
+/** One proposal per report field whose neutralised text differs from the report's text now. */
+function reportProposals(
+  writes: WatsonWrites,
+  inputs: WatsonWriteInputs,
+  turnId: string,
+  newId: NewId,
+): WatsonProposal[] {
+  const { report: current, reportBlockText: safe } = inputs;
+  if (!current || !safe) return [];
+  return writes.report.flatMap((r): WatsonProposal[] => {
+    const after = safe(r.text);
+    if (after === current[r.field]) return [];
+    const before = current[r.field];
+    return [
+      {
+        id: newId("wp"),
+        turnId,
+        kind: "report_text",
+        targetId: r.field,
+        field: r.field,
+        before,
+        after,
+        status: "pending",
+      },
+    ];
+  });
+}
+
 export function buildWriteProposals(
   writes: WatsonWrites,
   inputs: WatsonWriteInputs | undefined,
@@ -81,24 +111,5 @@ export function buildWriteProposals(
   const now = new Date().toISOString();
   const findings = writes.findings.flatMap((d) => findingProposal(d, inputs, turnId, newId, now) ?? []);
   const steps = writes.nextSteps.map((s) => stepProposal(s, turnId, newId));
-  const { report: current } = inputs;
-  const report = current
-    ? writes.report.flatMap((r): WatsonProposal[] =>
-        r.text === current[r.field]
-          ? []
-          : [
-              {
-                id: newId("wp"),
-                turnId,
-                kind: "report_text",
-                targetId: r.field,
-                field: r.field,
-                before: current[r.field],
-                after: r.text,
-                status: "pending",
-              },
-            ],
-      )
-    : [];
-  return [...findings, ...steps, ...report];
+  return [...findings, ...steps, ...reportProposals(writes, inputs, turnId, newId)];
 }

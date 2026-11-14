@@ -371,6 +371,39 @@ describe("star detection (createWatsonCaseEvents)", () => {
     expect(s.rounds).toEqual([{ text: "", reaction: true, allowWrites: false }]);
   });
 
+  it("a notebook edit wakes Watson only when the case's AI control includes the notebook", async () => {
+    const s = setup();
+    let includeNotebook = false;
+    const events = createWatsonCaseEvents(s.chats, undefined, { load: async () => ({ includeNotebook }) });
+    events.attach(s.reactor);
+    events.notebookChanged(CASE);
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(0);
+    expect(s.chats.chat.pendingCaseEvents).toMatchObject([
+      { kind: "other", text: "Analyst edited the notebook" },
+    ]);
+    includeNotebook = true;
+    events.notebookChanged(CASE);
+    await advance(s, DELAY);
+    expect(s.rounds).toEqual([{ text: "", reaction: true, allowWrites: true }]);
+  });
+
+  it("a notebook edit is only noted when the AI control cannot be read", async () => {
+    const s = setup();
+    const events = createWatsonCaseEvents(s.chats, undefined, {
+      load: async () => {
+        throw new Error("unreadable");
+      },
+    });
+    events.attach(s.reactor);
+    events.notebookChanged(CASE);
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(0);
+    expect(s.chats.chat.pendingCaseEvents).toMatchObject([
+      { kind: "other", text: "Analyst edited the notebook" },
+    ]);
+  });
+
   it("without a reactor, events are only noted (phase 1)", async () => {
     const chats = new MemoryChats();
     const events = createWatsonCaseEvents(chats);

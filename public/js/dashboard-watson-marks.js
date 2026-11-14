@@ -96,6 +96,23 @@
     }
   }
 
+  // A refused Undo pressed in a section (not on a card in the panel): the server's message goes in a
+  // short line beside that button, so the analyst sees it where they clicked. True when it did.
+  function watsonSectionRefused(el, text) {
+    if (!el || typeof el.closest !== "function" || el.closest(".watson-root")) return false;
+    const host = el.parentElement;
+    if (!host || typeof document === "undefined" || !document.createElement) return true;
+    let msg = host.querySelector(".watson-undo-msg");
+    if (!msg) {
+      msg = document.createElement("span");
+      msg.className = "watson-undo-msg";
+      msg.setAttribute("role", "alert");
+      el.insertAdjacentElement("afterend", msg);
+    }
+    msg.textContent = text; // textContent: the server message is never markup
+    return true;
+  }
+
   const FLASH_MS = 1800;
   // "Wrote:" link: reveal the section, scroll to the item, flash it. A row that is not drawn (a
   // filtered or paged timeline) leaves the section itself in view.
@@ -118,4 +135,5 @@
   window.watsonUndoTarget = watsonUndoTarget;
   window.watsonMarkReportSlots = watsonMarkReportSlots;
   window.watsonJump = watsonJump;
+  window.watsonSectionRefused = watsonSectionRefused;
 })();

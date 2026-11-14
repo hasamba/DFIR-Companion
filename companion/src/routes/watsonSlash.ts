@@ -13,8 +13,8 @@ import { watsonRoundDeps } from "./watsonDeps.js";
  * (product decision D2). The team sees the question and the answer in the Watson panel, the round
  * counts toward Watson's limits, and it waits behind a round already running on the case.
  *
- * The bot reply is Watson's message plus the answer's "Next:" pointer. A refused round answers with
- * the refusal: a closed or archived case (the same sentence a Watson POST gets from the case-write
+ * The bot reply is Watson's message, the free-form answer ("[status] answer") and its "Next:"
+ * pointer. A refused round answers with the refusal: a closed or archived case (the same sentence a Watson POST gets from the case-write
  * gate — checked here because chat routes are outside /cases/:id), AI off, a reached limit, a
  * Presidio hold. `ok` is false for every refusal and failure, so the caller can audit the outcome.
  */
@@ -57,11 +57,12 @@ export async function runWatsonSlash(
       const why = turn?.text ?? "Watson could not answer: no reply was saved.";
       return refusal(redactPaths(why, [ctx.store.casesRoot]));
     }
-    const pointer = turn.answer?.pointer;
+    const answer = turn.answer;
+    const said = answer?.answer ? [`[${answer.status}] ${answer.answer}`] : [];
     return {
       reply: {
         title: `Q: ${question}`,
-        lines: [turn.text || "(no answer)", ...(pointer ? [`Next: ${pointer}`] : [])],
+        lines: [turn.text || "(no answer)", ...said, ...(answer?.pointer ? [`Next: ${answer.pointer}`] : [])],
       },
       ok: true,
     };

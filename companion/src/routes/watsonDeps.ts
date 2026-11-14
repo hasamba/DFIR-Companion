@@ -1,4 +1,5 @@
 import type { WatsonRoundDeps } from "../analysis/ai/watson/pipelineRound.js";
+import { blockMd } from "../reports/mdText.js";
 import type { RouteContext } from "./context.js";
 
 /** A positive finite number from a setting, else undefined: blank, junk, zero and negatives mean "no limit". */
@@ -26,6 +27,7 @@ export function watsonRoundDeps(ctx: RouteContext): WatsonRoundDeps | undefined 
     costLimitUSD: positiveLimit(process.env.DFIR_AI_WATSON_COST_LIMIT_USD),
     tokenLimit: positiveLimit(process.env.DFIR_AI_WATSON_TOKEN_LIMIT),
     reportText: options.reportMetaStore,
+    reportBlockText: blockMd,
     onStateChanged: options.onStateChanged,
   };
 }
