@@ -38,12 +38,15 @@ export class FakeProvider implements AIProvider {
   readonly name = "fake";
   readonly model = "fake-model";
   calls = 0;
+  /** Every request the provider received, as sent (after masking). */
+  readonly sent: AnalyzeRequest[] = [];
   constructor(
     private readonly replies: string[],
     private readonly onCall?: (n: number) => void | Promise<void>,
   ) {}
-  async analyze(_req: AnalyzeRequest): Promise<AnalyzeResult> {
+  async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.calls++;
+    this.sent.push(req);
     await this.onCall?.(this.calls);
     return { rawText: this.replies.shift() ?? reply(), usage: { costUSD: 0.01 } };
   }

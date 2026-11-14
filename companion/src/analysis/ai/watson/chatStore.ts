@@ -108,7 +108,7 @@ function parseChat(raw: unknown): WatsonChat {
   };
 }
 
-/** The persisted mask roster, read leniently (an older chat has none) and kept within its caps. */
+/** The persisted mask roster, read leniently (an older chat has none). No host or user is dropped (H5). */
 function maskRosterField(raw: unknown): Pick<WatsonChat, "maskRoster"> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
   const r = raw as Record<string, unknown>;

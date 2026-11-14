@@ -108,6 +108,12 @@ function errorText(err: unknown): string {
   return `Watson could not answer: ${msg}`.slice(0, 600);
 }
 
+/** H1: the answer's canonical raw evidence, stamped on the question "Add to open questions" makes. */
+function answerEvidence(reply: WatsonReply, outcome: Outcome): Pick<WatsonTurn, "answerRawEvidenceIds"> {
+  const ids = reply.answer ? outcome.rawEvidence?.get("answer") : undefined;
+  return ids?.length ? { answerRawEvidenceIds: [...ids] } : {};
+}
+
 export function mergeOutcome(
   fresh: WatsonChat,
   outcome: Outcome,
@@ -151,6 +157,7 @@ export function mergeOutcome(
     ...(reply.learned ? { learned: reply.learned } : {}),
     ...(reply.request ? { request: storedRequest(reply.request) } : {}),
     ...(reply.answer ? { answer: reply.answer } : {}),
+    ...answerEvidence(reply, outcome),
     ...(outcome.coverage ? { coverage: outcome.coverage } : {}),
     ...(outcome.veloNote ? { veloNote: outcome.veloNote } : {}),
     ...(outcome.lookedUp ? { lookedUp: outcome.lookedUp } : {}),

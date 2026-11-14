@@ -96,6 +96,8 @@ export interface WatsonTurn {
   answer?: WatsonAnswer;
   /** The proposal made when the analyst added this turn's answer to the open questions. */
   answerProposalId?: string;
+  /** H1: the canonical ids of promoted super-timeline rows the answer rests on. Set only by the server. */
+  answerRawEvidenceIds?: string[];
   /**
    * The server's Velociraptor launch note ("Nothing to approve: …" / "Risky query: …"), also appended
    * to `text`. Set only by the server, so the dashboard's warning block cannot be forged by the model.

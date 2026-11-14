@@ -7,6 +7,7 @@ import { AiCostStore } from "../aiCost.js";
 import type { AnalysisRunStore } from "../analysisRunStore.js";
 import type { AnonControlStore } from "../anonControl.js";
 import type { DiscoveredEntitiesStore } from "../anonDiscovered.js";
+import type { RawNamesSource } from "./providerCallContext.js";
 import type { CustomEntitiesStore } from "../anonEntities.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
 import type { CommentsStore } from "../comments.js";
@@ -144,6 +145,8 @@ export interface PipelineOptions {
   // every entity it tokenizes out of a screenshot back here (so the auto-discovery list grows), and
   // suppressed values are excluded from anonymization. Absent → no screenshot auto-discovery.
   discoveredStore?: DiscoveredEntitiesStore;
+  // Watson's masking roster (final review H3): raw-only names masked on every AI call on the case.
+  rawNamesStore?: RawNamesSource;
   stateStore: StateStore;
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage>;
   retries?: number;

@@ -180,22 +180,25 @@ describe("the persisted mask roster (Watson phase 4, D2d)", () => {
     });
   });
 
-  it("keeps each list at 500 names, dropping the oldest; a name seen again counts as newest", () => {
-    const older = { hosts: Array.from({ length: 500 }, (_, i) => `h${i}`), users: [], ips: [] };
-    const merged = mergeMaskRoster(older, { hosts: ["NEW", "H0"], users: ["Alice"], ips: [] });
-    expect(merged.hosts).toHaveLength(WATSON_MASK_ROSTER_MAX);
+  it("never evicts a host or user (H5); a name seen again counts as newest; IPs keep the newest 500", () => {
+    const n = (p: string, k: number) => Array.from({ length: k }, (_, i) => `${p}${i}`);
+    const older = { hosts: n("h", 500), users: [], ips: n("10.0.0.", 500) };
+    const merged = mergeMaskRoster(older, { hosts: ["NEW", "H0"], users: ["Alice"], ips: ["10.9.9.9"] });
+    expect(merged.hosts).toHaveLength(WATSON_MASK_ROSTER_MAX + 1);
     expect(merged.hosts.slice(-2)).toEqual(["new", "h0"]);
-    expect(merged.hosts).not.toContain("h1"); // the oldest left
+    expect(merged.hosts).toContain("h1"); // nothing left
     expect(merged.users).toEqual(["alice"]);
+    expect(merged.ips).toHaveLength(WATSON_MASK_ROSTER_MAX);
+    expect(merged.ips).not.toContain("10.0.0.0");
     expect(older.hosts).toHaveLength(500); // the input is not changed
   });
 
-  it("a cap applies on load too", async () => {
+  it("drops no host on load either (H5)", async () => {
     const hosts = Array.from({ length: 600 }, (_, i) => `h${i}`);
     await writeFile(path, JSON.stringify({ maskRoster: { hosts, users: [], ips: [] } }));
     const loaded = (await store.load("c1")).maskRoster;
-    expect(loaded?.hosts).toHaveLength(500);
-    expect(loaded?.hosts[0]).toBe("h100");
+    expect(loaded?.hosts).toHaveLength(600);
+    expect(loaded?.hosts[0]).toBe("h0");
   });
 });
 

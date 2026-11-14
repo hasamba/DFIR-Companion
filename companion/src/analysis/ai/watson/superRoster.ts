@@ -311,17 +311,25 @@ export function rosterOf(shown: readonly ForensicEvent[]): WatsonMaskRoster {
   };
 }
 
-/** Each list of a chat's persisted roster keeps at most this many names, the newest (D2d). */
+/**
+ * The most hosts, and the most users, a chat's roster may hold (D2d). Controller ruling H5: a name is
+ * NEVER evicted, because memory, chat history and case items may still carry it in clear. When a
+ * search would need more names than this, the search is refused instead (roundHop.ts).
+ */
 export const WATSON_MASK_ROSTER_MAX = 500;
 
-/** One roster list: lower-cased, deduped, a name seen again counts as newest, oldest dropped past the cap. */
-function mergeList(older: readonly string[], newer: readonly string[]): string[] {
+/**
+ * One roster list: lower-cased, deduped, a name seen again counts as newest. Hosts and users drop
+ * nothing; `keep` (IPs only, which the anonymizer also masks by pattern) drops the oldest past it.
+ */
+function mergeList(older: readonly string[], newer: readonly string[], keep = Infinity): string[] {
   const seen = new Set<string>();
-  const newestFirst = [...older, ...newer]
+  return [...older, ...newer]
     .map((n) => (typeof n === "string" ? n.trim().toLowerCase() : ""))
     .reverse()
-    .filter((n) => n !== "" && !seen.has(n) && !!seen.add(n));
-  return newestFirst.slice(0, WATSON_MASK_ROSTER_MAX).reverse();
+    .filter((n) => n !== "" && !seen.has(n) && !!seen.add(n))
+    .slice(0, keep)
+    .reverse();
 }
 
 /** A new roster: `older` with `newer` folded in. Neither input is changed. */
@@ -336,6 +344,18 @@ export function mergeMaskRoster(
   return {
     hosts: mergeList(list(older, "hosts"), list(newer, "hosts")),
     users: mergeList(list(older, "users"), list(newer, "users")),
-    ips: mergeList(list(older, "ips"), list(newer, "ips")),
+    ips: mergeList(list(older, "ips"), list(newer, "ips"), WATSON_MASK_ROSTER_MAX),
   };
+}
+
+/**
+ * True when folding `newer` into `older` would put more than WATSON_MASK_ROSTER_MAX hosts or users on
+ * the roster. IPs are not counted: the anonymizer also masks them by pattern.
+ */
+export function maskRosterFull(
+  older: Partial<WatsonMaskRoster> | undefined,
+  newer: Partial<WatsonMaskRoster> | undefined,
+): boolean {
+  const merged = mergeMaskRoster(older, newer);
+  return merged.hosts.length > WATSON_MASK_ROSTER_MAX || merged.users.length > WATSON_MASK_ROSTER_MAX;
 }

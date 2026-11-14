@@ -88,7 +88,7 @@ function listRefs<T>(
 export function collectRawRefs(reply: WatsonReply, raw: ReadonlySet<string>): RawRefs[] {
   if (raw.size === 0) return [];
   const a = reply.answer;
-  const answerIds = a ? idsOf(a.relatedEventIds, [a.answer, a.pointer], raw) : [];
+  const answerIds = a ? idsOf(a.relatedEventIds, [a.question, a.answer, a.pointer], raw) : [];
   const w = reply.writes;
   return [
     ...(answerIds.length ? [{ item: { kind: "answer" } as RefItem, ids: answerIds }] : []),

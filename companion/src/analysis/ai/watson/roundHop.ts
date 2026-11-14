@@ -6,6 +6,7 @@ import { searchExcerpt } from "./requestBuild.js";
 import { limitReached, type WatsonRoundContext, type WatsonSpend } from "./roundContext.js";
 import type { Outcome } from "./roundOutcome.js";
 import { isSuperLookup } from "./lookupSchema.js";
+import { maskRosterFull } from "./superRoster.js";
 import { searchSuperTimeline, type WatsonRawSearchDeps } from "./superTimelineSearch.js";
 import { lookupTimeline } from "./timelineLookup.js";
 import type { WatsonChat, WatsonLookup } from "./types.js";
@@ -60,6 +61,9 @@ const dropped = (why: string): string =>
 /** D6, the analyst's decision: the raw record is searched only when the analyst asks something. */
 const REACTION_WHY = "Watson searches the raw record only when you ask it a question";
 const UNWIRED_WHY = "the super-timeline is not available on this server";
+/** H5: no name is ever sent unmasked, so a full roster refuses the search (STE). */
+export const ROSTER_FULL_NOTE =
+  "(Watson cannot search the super-timeline now. The list of masked names is full.)";
 
 const joinNotes = (...notes: (string | undefined)[]): string | undefined =>
   notes.filter((n): n is string => !!n).join("\n\n") || undefined;
@@ -132,6 +136,8 @@ async function lookupHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promi
 async function superHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promise<Outcome> {
   const raw = h.ctx.rawSearch as WatsonRawSearchDeps;
   const found = await searchSuperTimeline(h.ctx, raw.reader, h.caseId, h.state, query);
+  // Before anything is sent: rows whose names do not fit the roster are never shown (H5).
+  if (maskRosterFull(h.chat.maskRoster, found.roster)) return withNote(kept, ROSTER_FULL_NOTE);
   const rostered: Outcome = { ...kept, superRoster: found.roster };
   const input: WatsonPromptInput = {
     ...h.base,

@@ -10,6 +10,14 @@ import type { PresidioPendingStore } from "../presidioPending.js";
 import type { AiAuthoredTextStore } from "../aiAuthoredText.js";
 import type { SafetyStopCapture } from "./safetyStopCapture.js";
 
+/**
+ * Names the case anonymizer cannot derive from state, masked on every AI call on the case: the raw-only
+ * hosts and accounts Watson's super-timeline searches showed (watson/rosterNames.ts, final review H3).
+ */
+export interface RawNamesSource {
+  load(caseId: string): Promise<{ readonly hosts: readonly string[]; readonly usernames: readonly string[] }>;
+}
+
 /** What the gate needs. Deliberately no state store, no providers list, no synthesis knobs. */
 export interface ProviderCallContext {
   readonly log: Logger;
@@ -17,6 +25,8 @@ export interface ProviderCallContext {
     anonStore?: AnonControlStore;
     customEntitiesStore?: CustomEntitiesStore;
     discoveredStore?: DiscoveredEntitiesStore;
+    /** Watson's masking roster (H3). Absent → only state-derived, custom and discovered entities. */
+    rawNamesStore?: RawNamesSource;
     ocrRunner?: OcrRunner;
     presidio?: { client: PresidioClient; url: string; minScore: number };
     presidioPendingStore?: PresidioPendingStore;

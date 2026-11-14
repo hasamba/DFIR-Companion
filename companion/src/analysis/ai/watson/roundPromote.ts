@@ -2,7 +2,7 @@ import { stateEventResolver } from "../../eventAliasLookup.js";
 import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { recordWatsonActivity } from "./proposals.js";
 import { collectRawRefs, earlierShownIds, settleRawRefs, type RawRefs } from "./rawReferences.js";
-import { evidenceStanding } from "./rawEvidence.js";
+import { evidenceStanding, watsonLandedRows } from "./rawEvidence.js";
 import type { WatsonReply } from "./replySchema.js";
 import type { WatsonRoundContext } from "./roundContext.js";
 import type { Outcome, WatsonRoundPromotion } from "./roundOutcome.js";
@@ -65,16 +65,6 @@ interface Plan {
   earlier: number;
 }
 
-/** Rows Watson's applied super-timeline promotions created: still raw evidence while live (I1). */
-const promotedByWatson = (chat: WatsonChat): Set<string> =>
-  new Set(
-    chat.proposals.flatMap((p) =>
-      p.kind === "event_promote" && p.source === "supertimeline" && p.status === "applied"
-        ? (p.createdEventIds ?? [])
-        : [],
-    ),
-  );
-
 async function planRefs(
   ctx: WatsonRoundContext,
   caseId: string,
@@ -83,7 +73,8 @@ async function planRefs(
   chat: WatsonChat,
 ): Promise<Plan> {
   const shown = outcome.superShown ?? [];
-  const promoted = promotedByWatson(chat);
+  // Applied records' rows, and a stuck (pending) record's rows that carry its stamp (H4).
+  const promoted = await watsonLandedRows(ctx.stateStore, caseId, chat);
   const candidates = [...new Set([...shown.map((e) => e.id), ...earlierShownIds(chat), ...promoted])];
   const standing = await evidenceStanding(ctx.stateStore, caseId, candidates);
   // Controller ruling (refines D4): a row live only because Watson's promotion landed it is raw

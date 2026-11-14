@@ -1,7 +1,12 @@
 import { storedEventResolver, type EventResolver } from "../../eventAliasLookup.js";
 import { eventAliasSource } from "../../eventAliasRead.js";
 import type { StateStore } from "../../stateStore.js";
-import { proposalTargetId, type WatsonChat, type WatsonProposal } from "./types.js";
+import {
+  proposalTargetId,
+  type WatsonChat,
+  type WatsonEventPromoteProposal,
+  type WatsonProposal,
+} from "./types.js";
 
 // D9b: a Watson item that rests on a super-timeline row Watson promoted names that row in its
 // `rawEvidenceIds`. Two guards read it: an item whose rows are gone cannot be applied, and a
@@ -60,6 +65,31 @@ export async function evidenceBlocker(
     return `Watson's ${KIND_WORDS[p.kind] ?? p.kind} ${proposalTargetId(p)} cites event ${row}. Undo that item first`;
   }
   return null;
+}
+
+type RowStore = Pick<StateStore, "forensicRowsById">;
+
+const isSuperPromotion = (p: WatsonProposal): p is WatsonEventPromoteProposal =>
+  p.kind === "event_promote" && p.source === "supertimeline";
+
+/**
+ * Rows Watson's super-timeline promotions landed: an applied record's `createdEventIds`, plus (H4) the
+ * rows of a stuck (pending) record that carry its `promotedAt` stamp: the rows were saved but the
+ * record was not marked applied. Both count as raw evidence for later items.
+ */
+export async function watsonLandedRows(
+  store: RowStore,
+  caseId: string,
+  chat: Pick<WatsonChat, "proposals">,
+): Promise<Set<string>> {
+  const supers = chat.proposals.filter(isSuperPromotion);
+  const applied = supers.flatMap((p) => (p.status === "applied" ? (p.createdEventIds ?? []) : []));
+  const stuck = supers.filter((p) => p.status === "pending" && p.promotedAt && p.events.length);
+  const ids = [...new Set(stuck.flatMap((p) => p.events.map((e) => e.id)))];
+  const rows = ids.length ? await store.forensicRowsById(caseId, ids) : [];
+  const stamps = new Set(stuck.map((p) => p.promotedAt));
+  const owned = rows.filter((r) => r.event.promotedAt && stamps.has(r.event.promotedAt));
+  return new Set([...applied, ...owned.map((r) => r.event.id)]);
 }
 
 /**
