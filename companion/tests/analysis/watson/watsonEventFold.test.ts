@@ -84,6 +84,22 @@ describe("keepWatsonItems across a correlation fold", () => {
     expect(out.forensicTimeline.map((e) => e.id)).toEqual(["e1"]);
   });
 
+  it("an older fold the store already records is not this run's: the store copy wins, an undone row goes", () => {
+    const row = ev({ id: "ev-watson-p1-5", ...marked, severity: "High" });
+    const runCopy = { ...row, severity: "Low" as const };
+    const aliases = { "m-old": row.id };
+    const out = keepWatsonItems(state([runCopy], { eventAliases: aliases }), {
+      ...state([row]),
+      eventAliases: aliases,
+    });
+    expect(out.forensicTimeline).toEqual([row]);
+    const undone = keepWatsonItems(state([runCopy, ev({ id: "e1" })], { eventAliases: aliases }), {
+      ...state([ev({ id: "e1" })]),
+      eventAliases: aliases,
+    });
+    expect(undone.forensicTimeline.map((e) => e.id)).toEqual(["e1"]);
+  });
+
   it("keeps the store's copy of a Watson row the run did not fold", () => {
     const row = ev({ id: "ev-watson-p1-2", ...marked, severity: "High" });
     const runCopy = { ...row, severity: "Low" as const, relatedFindingIds: ["f-watson-1a2b3c4d"] };

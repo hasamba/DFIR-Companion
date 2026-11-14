@@ -49,7 +49,7 @@ const fakePipeline = {
       return {
         ...emptyWatsonChat(),
         turns: [analyst, { id: "wt-e", at, role: "watson", text: errorTurn, error: true }],
-      } as WatsonChat;
+      };
     }
     return {
       ...emptyWatsonChat(),

@@ -1878,7 +1878,14 @@ export const FEATURES: Feature[] = [
     // dashboard-watson.js hands it the applied proposals (watsonMarksSet); the findings, next-steps,
     // timeline-row and report-details renderers each call watsonMarkHtml / watsonMarkReportSlots once.
     file: "dashboard-watson-marks.js",
-    publish: ["watsonMarksSet", "watsonMarkHtml", "watsonUndoTarget", "watsonMarkReportSlots", "watsonJump"],
+    publish: [
+      "watsonMarksSet",
+      "watsonMarkHtml",
+      "watsonUndoTarget",
+      "watsonMarkReportSlots",
+      "watsonJump",
+      "watsonSectionRefused",
+    ],
     private: [
       "SECTION",
       "KIND_OF",

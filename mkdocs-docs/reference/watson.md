@@ -135,12 +135,12 @@ A synthesis run keeps the answers Watson gave, and it keeps Watson's findings an
 
 Watson notes these actions while you use the rest of the dashboard:
 
-- notebook edits
+- notebook edits (they wake Watson only when **Include notebook in AI synthesis and Watson context** is on; otherwise they are noted, because Watson cannot read the notebook)
 - new stars on events (other tag changes are noted, but do not wake Watson)
 - imports
 - an import undo or redo (noted, but does not wake Watson)
 
-When nothing new happens for 60 seconds, Watson reacts once to everything it noted. One reaction covers a whole batch of files. A reaction shows in the chat as **Watson reacted to: …**, followed by Watson's answer. A reaction never starts a synthesis, and a reaction never starts another reaction.
+When nothing new happens for 60 seconds, Watson reacts once to everything it noted. Each reaction is a full Watson round with the case context, so it costs like a message and counts toward the Watson cost and token limits. One reaction covers a whole batch of files. A reaction shows in the chat as **Watson reacted to: …**, followed by Watson's answer. A reaction never starts a synthesis, and a reaction never starts another reaction.
 
 - Watson reacts only on a case where you already sent it a message.
 - Watson does not react while AI is off for the case, or on a closed or archived case.
