@@ -356,3 +356,23 @@ describe("inventory hosts keep their short-label masking", () => {
     expect(promptEntities("x", ["fileserver.example.com"]).hosts).not.toContain("fileserver");
   });
 });
+
+describe("explicit raw names stay masked like forensic ones (fix round 1)", () => {
+  it("a raw FQDN's bare NetBIOS name is masked on the hop and when the analyst types it later (I1)", async () => {
+    const row = raw("raw1", { asset: "FILESRV.acme.com", description: "rclone Workstation Name: FILESRV" });
+    const h = await harness([reply(superLookup()), reply(), reply()], { anonymize: true, raw: [row] });
+    await runWatsonRound(h.ctx, CASE, { text: "x" });
+    await runWatsonRound(h.ctx, CASE, { text: "what ran on FILESRV?" });
+    expect(h.provider.sent).toHaveLength(3);
+    expect(userPrompt(h.provider.sent[1])).toContain("Workstation Name:");
+    for (const req of h.provider.sent.slice(1)) expect(userPrompt(req)).not.toMatch(/filesrv/i);
+  });
+
+  it("an account field ACME\\jdoe keeps bare jdoe and ACME masked in the next round (I2)", async () => {
+    const row = raw("raw1", { canonical: { account: { name: "ACME\\jdoe" } } as never });
+    const h = await harness([reply(superLookup()), reply(), reply()], { anonymize: true, raw: [row] });
+    await runWatsonRound(h.ctx, CASE, { text: "x" });
+    await runWatsonRound(h.ctx, CASE, { text: "did jdoe log on to ACME today?" });
+    expect(userPrompt(h.provider.sent[2])).not.toMatch(/\bjdoe\b|\bACME\b/i);
+  });
+});

@@ -917,7 +917,11 @@ describe("Watson's super-timeline search is the second documented exception (pha
     expect(others.length).toBeGreaterThan(10);
     for (const f of others) {
       expect(readFileSync(f, "utf8"), f).not.toMatch(
-        /\.reader\.(?!query|meta)|scanWindow|eventBatches|collect\(|memoizeScan|queryIndexed|SuperTimelineStore|superTimelineStore/,
+        /\.reader\.|scanWindow|eventBatches|collect\(|memoizeScan|queryIndexed|SuperTimelineStore|superTimelineStore/,
+      );
+      // No direct store call either: the round passes the reader to the search, it never calls it.
+      expect(readFileSync(f, "utf8"), f).not.toMatch(
+        /\.\s*(?:query|meta)\s*\(|\[\s*["'`](?:query|meta)["'`]\s*\]|\{\s*(?:query|meta)\b[^}]*\}\s*=/,
       );
     }
     const src = readFileSync(join(watsonDir, "superTimelineSearch.ts"), "utf8");

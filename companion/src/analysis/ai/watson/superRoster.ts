@@ -216,12 +216,51 @@ const distinct = (xs: readonly (string | undefined)[]): string[] => [
   ...new Set(xs.filter((x): x is string => !!x && !!x.trim()).map((x) => x.trim())),
 ];
 
+/**
+ * An account field's forms, as the forensic path masks them: the whole value, the user, and the domain
+ * (for the host list) when it is a real one. A built-in principal gives nothing beyond the value, which
+ * the person check then drops.
+ */
+function fieldAccountForms(raw: string | undefined): { users: string[]; domains: string[] } {
+  const v = raw?.trim();
+  if (!v) return { users: [], domains: [] };
+  const slash = v.lastIndexOf("\\");
+  const at = slash < 0 ? v.indexOf("@") : -1;
+  const cut = slash >= 0 ? slash : at;
+  if (cut <= 0 || cut >= v.length - 1 || !isPerson(v, true)) return { users: [v], domains: [] };
+  const [domain, user] =
+    slash >= 0 ? [v.slice(0, cut), v.slice(cut + 1)] : [v.slice(cut + 1), v.slice(0, cut)];
+  return { users: [v, user], domains: isDomain(domain) ? [domain] : [] };
+}
+
+const accountFields = (e: ForensicEvent) => [e.canonical?.account?.name, e.callerName].map(fieldAccountForms);
+
 /** Names an account source states outright: the account field, the caller, account flags, DOMAIN\user. */
-const explicitUsers = (e: ForensicEvent): (string | undefined)[] => [
-  e.canonical?.account?.name,
-  e.callerName,
+const explicitUsers = (e: ForensicEvent): string[] => [
+  ...accountFields(e).flatMap((f) => f.users),
   ...commandAccounts(e.commandLine),
 ];
+
+const IP_LIKE = /^\d{1,3}(?:\.\d{1,3}){3}$|:/;
+
+/** A host field's FQDN gives its short label too (FILESRV.acme.com → FILESRV), as forensic assets do. */
+function withShortLabel(host: string | undefined): string[] {
+  const h = host?.trim();
+  if (!h) return [];
+  const label = h.split(".")[0];
+  const named =
+    h.includes(".") && !IP_LIKE.test(h) && label.length >= 3 && !COMMON_WORDS.has(label.toLowerCase());
+  return named ? [h, label] : [h];
+}
+
+/** Hosts the row states in a host field: asset, the asset record, the network hostnames. */
+const explicitHosts = (e: ForensicEvent): string[] =>
+  [
+    e.asset,
+    e.assetRecord,
+    e.canonical?.network?.source?.hostname,
+    e.canonical?.network?.destination?.hostname,
+  ].flatMap(withShortLabel);
 
 /** Names only a pattern suggests: user folders and `user@domain`. */
 const inferredUsers = (e: ForensicEvent): string[] => [
@@ -235,10 +274,8 @@ export function rosterOf(shown: readonly ForensicEvent[]): WatsonMaskRoster {
   return {
     hosts: distinct(
       shown.flatMap((e) => [
-        e.asset,
-        e.assetRecord,
-        net(e)?.source?.hostname,
-        net(e)?.destination?.hostname,
+        ...explicitHosts(e),
+        ...accountFields(e).flatMap((f) => f.domains),
         ...uncHosts(e),
       ]),
     ),
