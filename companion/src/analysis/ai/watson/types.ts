@@ -45,6 +45,10 @@ export interface WatsonLookup {
   to?: string;
   host?: string;
   text?: string;
+  /** Absent = the forensic timeline; "supertimeline" = a targeted search of the analyst-only super-timeline. */
+  source?: "supertimeline";
+  /** MD5, SHA-1 or SHA-256 hex; super-timeline searches only. */
+  hash?: string;
 }
 
 /** What a round's lookup showed Watson, stored on its turn so the card can disclose it (#452). */
@@ -53,6 +57,13 @@ export interface WatsonLookedUp {
   matched: number;
   /** The lookup in plain words (server-built from the checked request). */
   what: string;
+  source?: "supertimeline";
+  /** The match count is a lower bound: the search stopped counting at its scan limit. */
+  matchedIsFloor?: boolean;
+  /** Rows evicted by the search's result cap. */
+  capEvicted?: number;
+  /** Ids of the rows the search showed (at most 100); the earlier-round check reads them. */
+  shownIds?: string[];
 }
 
 /** Watson's answer to a free-form question from the analyst (what Ask used to return). */
