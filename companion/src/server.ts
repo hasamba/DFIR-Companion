@@ -33,6 +33,7 @@ import {
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
+import { withFingerprintIndex, HuntFingerprintStore } from "./analysis/ai/watson/velo/fingerprintIndex.js";
 import { setCaseWriteRefusalReporter } from "./storage/caseIncarnation.js";
 import { installUnhandledRejectionNet } from "./logging/unhandledRejectionNet.js";
 import { installUncaughtExceptionNet } from "./logging/uncaughtExceptionNet.js";
@@ -377,7 +378,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     createVeloMonitor: monitors.createVeloMonitor,
     verifyVeloMonitorEnabled: monitors.verifyVeloMonitorEnabled,
     deleteVeloMonitor: monitors.deleteVeloMonitor,
-    recordHuntDeploy: hunts.recordHuntDeploy,
+    recordHuntDeploy: withFingerprintIndex(hunts.recordHuntDeploy, new HuntFingerprintStore(store), logLine),
     // Playbook derivation helpers (routes/playbookHunts.ts), shared with the staying
     // POST /cases/:id/push/iris route (syncPlaybook).
     syncPlaybook: appliers.syncPlaybook,
