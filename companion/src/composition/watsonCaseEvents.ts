@@ -123,7 +123,8 @@ export function createWatsonCaseEvents(
 
   function importChanged(caseId: string, step?: "undo" | "redo"): void {
     if (!step) return note(caseId, { kind: "import", text: "An import finished" });
-    const text = step === "undo" ? "An import was undone" : "An import undo was redone";
+    const text =
+      step === "undo" ? "An analyst undid an import" : "An analyst did an import again after an undo";
     noteWatsonCaseEvent(chatStore, caseId, { kind: "other", text });
   }
 

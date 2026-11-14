@@ -6,7 +6,7 @@ import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_CASE_EVENTS_MAX, type WatsonPromptInput } from "./promptBuilder.js";
 import { sanitizeWatsonReply, type WatsonReply } from "./replySchema.js";
 import { callWatson, choosePaste, headExcerpt, watsonBaseInput } from "./requestBuild.js";
-import { secondHop } from "./roundHop.js";
+import { secondHop, type HopInput } from "./roundHop.js";
 import {
   limitReached,
   NO_SPEND,
@@ -28,6 +28,8 @@ import {
 import { autoAfterRound, carriedHeldIds, type WatsonRoundSource } from "./autoApply.js";
 import { mergeOutcome, type Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
+import { revalidatePromotion, withCitedPromotion } from "./roundPromote.js";
+import { earlierShownIds } from "./rawReferences.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
 import { withVeloLaunch } from "./velo/veloLaunchProposals.js";
 import { withRoundInventory } from "./velo/veloFleet.js";
@@ -128,11 +130,14 @@ async function runRound(
   let mayWrite = false; // the door rule's verdict: Auto applies no carried rows when writes are off
   try {
     before = await watsonSpend(ctx, caseId);
-    outcome = await converse(ctx, caseId, chat, promptTurn, { paste: newPaste, auto }, counter, before);
+    const attach = { paste: newPaste, auto, reaction: input.reaction === true };
+    outcome = await converse(ctx, caseId, chat, promptTurn, attach, counter, before);
     // Spec §4.4: a reaction to an import writes nothing, judged on the events the prompt showed.
     const importShown = input.reaction === true && outcome.shownEvents.some((e) => e.kind === "import");
     mayWrite = input.allowWrites !== false && !importShown;
     outcome = await withWriteInputs(ctx, caseId, outcome, mayWrite);
+    // Evidence first: the raw rows the reply cites are promoted before the turn is saved (D9).
+    outcome = await withCitedPromotion(ctx, caseId, outcome, mayWrite, turnId, chat);
     outcome = await withVeloLaunch(ctx, caseId, outcome, mayWrite);
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
@@ -142,7 +147,9 @@ async function runRound(
     const spent = before && after ? spendDelta(before, after) : NO_SPEND;
     const failed = input.reaction === true && reactionFailed(outcome.reply, outcome.error);
     saved = await ctx.chatStore.update(caseId, (fresh) => {
-      const merged = mergeOutcome(fresh, { ...outcome, turnId }, spent, counter.calls);
+      // D9b: an undo of the promotion while the round ran drops what rested on it before it is added.
+      const checked = revalidatePromotion(fresh, outcome);
+      const merged = mergeOutcome(fresh, { ...checked, turnId }, spent, counter.calls);
       return input.reaction ? withReactionResult(merged, failed) : merged;
     });
   }
@@ -173,7 +180,7 @@ async function converse(
   caseId: string,
   chat: WatsonChat,
   analystTurn: Pick<WatsonTurn, "id" | "text">,
-  attach: { paste: WatsonPaste | undefined; auto: boolean },
+  attach: { paste: WatsonPaste | undefined; auto: boolean; reaction: boolean },
   counter: { calls: number },
   before: WatsonSpend,
 ): Promise<Outcome> {
@@ -183,7 +190,7 @@ async function converse(
   let questions: InvestigationState["keyQuestions"] = [];
   let cover: WatsonCoverage | undefined;
   let first: WatsonReply;
-  let ask: (input: WatsonPromptInput) => Promise<WatsonReply>;
+  let ask: HopInput["ask"];
   let base: WatsonPromptInput;
   let state: InvestigationState;
   let excerpt: WatsonPromptInput["pasteExcerpt"];
@@ -195,14 +202,17 @@ async function converse(
     // The analyst's message is the ANALYST block; it is not repeated as recent chat.
     const others = { ...chat, turns: chat.turns.filter((t) => t.id !== analystTurn.id) };
     ({ base, cover } = await watsonBaseInput(ctx, caseId, state, others, analystTurn.text, true));
+    // Option B: ids an EARLIER super-timeline search showed pass the sanitizer too, so the
+    // promotion step (roundPromote.ts) sees them and drops whole any item resting on one.
     const known = {
       questions: new Set(state.keyQuestions.map((q) => q.id)),
       pastes: new Set(chat.pastes.map((p) => p.id)),
-      events: new Set(state.forensicTimeline.map((e) => e.id)),
+      events: new Set([...state.forensicTimeline.map((e) => e.id), ...earlierShownIds(chat)]),
       citations: citationSets(chat.pastes, state.findings),
     };
     const veloOn = base.velo !== undefined;
-    ask = async (input) => {
+    // Only a super-timeline hop's call passes `extra`: the raw rows it showed may be cited there alone.
+    ask = async (input, extra) => {
       const raw = await guardedCall(
         ctx,
         caseId,
@@ -210,7 +220,8 @@ async function converse(
         () => spentNow(ctx, caseId, chat, before),
         (one) => callWatson(one, caseId, state, ctx.provider, input),
       );
-      return sanitizeWatsonReply(raw, known.questions, known.pastes, known.events, known.citations, veloOn);
+      const events = extra ? new Set([...known.events, ...extra]) : known.events;
+      return sanitizeWatsonReply(raw, known.questions, known.pastes, events, known.citations, veloOn);
     };
     // A stored file that is gone or unreadable never fails the round: Watson answers without it.
     excerpt = newPaste
@@ -249,6 +260,7 @@ async function converse(
     ask,
     spent: () => spentNow(ctx, caseId, chat, before),
     rest: { shownEvents, questions, ...read },
+    reaction: attach.reaction,
   });
 }
 

@@ -54,7 +54,7 @@ describe("watsonVeloCardHtml", () => {
 
   it("names a fleet hunt", () => {
     expect(velo().watsonVeloCardHtml(base({ mode: "hunt", hostname: undefined }))).toContain(
-      "Fleet-wide hunt — all enrolled clients",
+      "Fleet-wide hunt on all enrolled clients",
     );
   });
 
@@ -69,7 +69,7 @@ describe("watsonVeloCardHtml", () => {
 
   it("shows launching without buttons", () => {
     const h = velo().watsonVeloCardHtml(base({ status: "launching" }));
-    expect(h).toContain("Launching…");
+    expect(h).toContain("Watson launches this now…");
     expect(h).not.toContain(
       '<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="apply"',
     );
@@ -80,41 +80,41 @@ describe("watsonVeloCardHtml", () => {
     const launched = { by: "Dana", at: "2026-11-14T10:00:00Z", flowId: "F.SAMPLE", clientId: "C.webserver1" };
     const card = (watch: unknown) => velo().watsonVeloCardHtml(base({ status: "applied", launched, watch }));
     const running = card({ deadline: "x", state: "watching" });
-    expect(running).toContain("Launched by Dana at ");
+    expect(running).toContain("Dana launched this at ");
     expect(running).toContain('title="2026-11-14T10:00:00Z"');
-    expect(running).toContain("Running");
-    expect(running).toContain("cannot be undone");
+    expect(running).toContain("runs this now");
+    expect(running).toContain("You cannot undo a launched hunt");
     expect(running).not.toContain('data-w-verb="undo"');
-    expect(card({ deadline: "x", state: "finished", rows: 12 })).toContain("Collected 12 rows");
-    expect(card({ deadline: "x", state: "finished", rows: 0 })).toContain("Found nothing");
+    expect(card({ deadline: "x", state: "finished", rows: 12 })).toContain("Velociraptor collected 12 rows");
+    expect(card({ deadline: "x", state: "finished", rows: 0 })).toContain("Watson found nothing");
     expect(card({ deadline: "x", state: "finished", rows: 500, truncated: true, total: 900 })).toContain(
       "row cap",
     );
     expect(card({ deadline: "x", state: "failed", error: HOSTILE })).toContain("&lt;img");
-    expect(card({ deadline: "x", state: "timeout" })).toContain("Timed out");
+    expect(card({ deadline: "x", state: "timeout" })).toContain("No result came before the time limit");
   });
 
   it("a launch marked as launched (no ids) never claims to be running (G8)", () => {
     const launched = { by: "Dana", at: "2026-11-14T10:00:00Z" };
     const h = velo().watsonVeloCardHtml(base({ status: "applied", launched }));
     expect(h).toContain(
-      "Marked as launched. Watson does not know this run&#39;s id and will not read its result; import it from Velociraptor.",
+      "An analyst marked this as launched. Watson does not know the id of this run, so it will not read the result. Import the result from Velociraptor.",
     );
-    expect(h).not.toContain("Running");
+    expect(h).not.toContain("runs this now");
   });
 
   it("a launching card no live request owns offers the uncertain answers (G11)", () => {
     const h = velo().watsonVeloCardHtml(base({ status: "launching", stalled: true }));
-    expect(h).toContain("interrupted");
+    expect(h).toContain("This launch stopped before Watson saved its result");
     expect(h).toContain('data-outcome="launched"');
     expect(h).toContain('data-outcome="retry"');
-    expect(h).not.toContain("Launching…");
+    expect(h).not.toContain("Watson launches this now…");
   });
 
   it("an uncertain launch explains itself and offers both answers", () => {
     const h = velo().watsonVeloCardHtml(base({ status: "uncertain" }));
     expect(h).toContain(
-      "Watson cannot tell whether this ran. Check Velociraptor, then mark it launched or try again.",
+      "Watson does not know if this ran. Check Velociraptor. Then mark it as launched or try again.",
     );
     expect(h).toContain('data-outcome="launched"');
     expect(h).toContain('data-outcome="retry"');
@@ -157,8 +157,8 @@ describe("card dispatch and Auto", () => {
         status,
         events: [{ severity: "High", description: "d" }],
       });
-    expect(held("pending")).toContain("Waiting for your approval");
-    expect(held("applied")).not.toContain("Waiting for your approval");
+    expect(held("pending")).toContain("Apply or reject them");
+    expect(held("applied")).not.toContain("Apply or reject them");
   });
 
   it("the badge title names Watson (Auto)", () => {
@@ -167,8 +167,20 @@ describe("card dispatch and Auto", () => {
       { id: "p", kind: "next_step_new", status: "applied", targetId: "s1", appliedBy: "Watson (Auto)" },
     ]);
     const h = api.watsonMarkHtml("next_step", "s1");
-    expect(h).toContain("Added by Watson (Auto)");
+    expect(h).toContain("Watson (Auto) added this");
     expect(h).toContain('data-w-verb="undo"');
+  });
+
+  it("draws a listing with the new STE heads as a list too, and keeps other turns plain", () => {
+    const text = [
+      "Watson did these actions in Auto mode. Dana set Auto mode.",
+      "- Applied next step: check backups",
+    ].join("\n");
+    expect(velo().watsonVeloAutoListHtml(text).match(/<li>/g)).toHaveLength(1);
+    expect(
+      velo().watsonVeloAutoListHtml("More Auto actions:\n- Applied new finding: x").match(/<li>/g),
+    ).toHaveLength(1);
+    expect(velo().watsonVeloAutoListHtml("Watson did something else")).toBe("");
   });
 
   it("draws the Auto listing as a list with the VQL in a pre, escaped", () => {
@@ -315,13 +327,30 @@ describe("risky launch cards (Task 9)", () => {
 
   it("a risky pending card shows the red warning and asks for review instead of Launch", () => {
     const h = velo().watsonVeloCardHtml(base({ risk: RISK }));
-    expect(h).toContain("Risky query — runs a program on the endpoint (execve)");
-    expect(h).toContain("safety check would normally block this. Read the query before approving.");
+    expect(h).toContain("Risky query: runs a program on the endpoint (execve)");
+    expect(h).toContain(
+      "Usually, Watson&#39;s safety check blocks this. Read the query before you approve it.",
+    );
     expect(h).toContain("watson-risk");
     expect(h).not.toContain("<img");
     expect(h).toContain('data-w-verb="riskArm"');
     expect(h).not.toContain(">Launch</button>");
     expect(h).toContain(">Reject</button>");
+  });
+
+  it("shows the STE copy of the reasons when the proposal has it, escaped (Task 10)", () => {
+    const risk = { ...RISK, display: ["The query runs a program on the endpoint (execve).", HOSTILE] };
+    const h = velo().watsonVeloCardHtml(base({ risk }));
+    expect(h).toContain("Risky query: The query runs a program on the endpoint (execve). ");
+    expect(h).not.toContain("<img");
+    const launched = velo().watsonVeloCardHtml(
+      base({
+        status: "applied",
+        risk,
+        launched: { at: "x", by: "Dana", riskAccepted: { by: "Dana", at: "x", reasons: ["raw"] } },
+      }),
+    );
+    expect(launched).toContain("Dana approved this launch after the warning: The query runs a program");
   });
 
   it("arming shows an inline second confirmation; cancel takes it away", () => {
@@ -349,7 +378,7 @@ describe("risky launch cards (Task 9)", () => {
         },
       }),
     );
-    expect(h).toContain("despite the warning");
+    expect(h).toContain("approved this launch after the warning");
     expect(h).not.toContain("<img");
     expect(h).not.toContain('data-w-verb="riskArm"');
   });

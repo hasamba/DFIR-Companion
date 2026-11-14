@@ -4,6 +4,9 @@ import { questionStatusSchema } from "../../responseSchema.js";
 // The persisted shape of one Watson turn: a lenient parse shared by the chat file (chatStore.ts) and
 // the append-only history file (historyStore.ts).
 
+/** A super-timeline search shows at most 100 rows, so a turn records at most 100 shown ids. */
+const WATSON_SHOWN_IDS_MAX = 100;
+
 const requestSchema = z.union([
   z.object({ kind: z.literal("query"), language: z.string(), query: z.string(), why: z.string() }),
   z.object({ kind: z.literal("import"), what: z.string(), why: z.string() }),
@@ -49,9 +52,18 @@ export const turnSchema = z.object({
     .optional(),
   answer: answerSchema.optional().catch(undefined),
   answerProposalId: z.string().optional(),
+  answerRawEvidenceIds: z.array(z.string()).optional().catch(undefined),
   veloNote: z.string().optional().catch(undefined),
   lookedUp: z
-    .object({ shown: z.number(), matched: z.number(), what: z.string() })
+    .object({
+      shown: z.number(),
+      matched: z.number(),
+      what: z.string(),
+      source: z.literal("supertimeline").optional().catch(undefined),
+      matchedIsFloor: z.boolean().optional().catch(undefined),
+      capEvicted: z.number().optional().catch(undefined),
+      shownIds: z.array(z.string()).max(WATSON_SHOWN_IDS_MAX).optional().catch(undefined),
+    })
     .optional()
     .catch(undefined),
 });

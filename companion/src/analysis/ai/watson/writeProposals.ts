@@ -14,6 +14,19 @@ import { pasteLineEvent } from "./writers/pasteLineEvents.js";
 
 type NewId = (prefix: string) => string;
 
+/** D9b: an item's rawEvidenceIds by its position in the reply (rawReferences.ts `refKey`). */
+export type WatsonRawEvidenceMap = ReadonlyMap<string, readonly string[]>;
+
+/** `{ rawEvidenceIds }` for the item at `kind:index`, or nothing when it rests on no promoted row. */
+export function evidenceFor(
+  evidence: WatsonRawEvidenceMap | undefined,
+  kind: string,
+  index: number,
+): { rawEvidenceIds?: string[] } {
+  const ids = evidence?.get(`${kind}:${index}`);
+  return ids?.length ? { rawEvidenceIds: [...ids] } : {};
+}
+
 function findingProposal(
   d: WatsonFindingDraft,
   inputs: WatsonWriteInputs,
@@ -81,10 +94,11 @@ function reportProposals(
   inputs: WatsonWriteInputs,
   turnId: string,
   newId: NewId,
+  evidence: WatsonRawEvidenceMap | undefined,
 ): WatsonProposal[] {
   const { report: current, reportBlockText: safe } = inputs;
   if (!current || !safe) return [];
-  return writes.report.flatMap((r): WatsonProposal[] => {
+  return writes.report.flatMap((r, index): WatsonProposal[] => {
     const after = safe(r.text);
     if (after === current[r.field]) return [];
     const before = current[r.field];
@@ -98,20 +112,38 @@ function reportProposals(
         before,
         after,
         status: "pending",
+        ...evidenceFor(evidence, "report", index),
       },
     ];
   });
 }
+
+/** `p` with the rawEvidenceIds of the reply item it was built from (D9b), by the item's own index. */
+const stamped = <P extends WatsonProposal>(
+  p: P,
+  ev: WatsonRawEvidenceMap | undefined,
+  kind: string,
+  i: number,
+): P => ({
+  ...p,
+  ...evidenceFor(ev, kind, i),
+});
 
 export function buildWriteProposals(
   writes: WatsonWrites,
   inputs: WatsonWriteInputs | undefined,
   turnId: string,
   newId: NewId,
+  evidence?: WatsonRawEvidenceMap,
 ): WatsonProposal[] {
   if (!inputs) return [];
   const now = new Date().toISOString();
-  const findings = writes.findings.flatMap((d) => findingProposal(d, inputs, turnId, newId, now) ?? []);
-  const steps = writes.nextSteps.map((s) => stepProposal(s, turnId, newId));
-  return [...findings, ...steps, ...reportProposals(writes, inputs, turnId, newId)];
+  const findings = writes.findings.flatMap((d, i) => {
+    const p = findingProposal(d, inputs, turnId, newId, now);
+    return p ? [stamped(p, evidence, "finding", i)] : [];
+  });
+  const steps = writes.nextSteps.map((s, i) =>
+    stamped(stepProposal(s, turnId, newId), evidence, "nextStep", i),
+  );
+  return [...findings, ...steps, ...reportProposals(writes, inputs, turnId, newId, evidence)];
 }

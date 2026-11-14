@@ -1,17 +1,20 @@
 import { PresidioApprovalRequired } from "../../presidio.js";
-import type { InvestigationState } from "../../stateTypes.js";
+import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { AiReplyUnreadableError } from "../aiReplyUnreadable.js";
 import { AiAnswerParseError } from "../providerCall.js";
+import type { RawRefs } from "./rawReferences.js";
 import type { WatsonReply } from "./replySchema.js";
 import type { WatsonSpend } from "./roundContext.js";
 import type { WatsonWriteInputs } from "./roundWrites.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
+import { mergeMaskRoster, type WatsonMaskRoster } from "./superRoster.js";
 import type {
   WatsonCaseEvent,
   WatsonChat,
   WatsonCoverage,
   WatsonLookedUp,
   WatsonPaste,
+  WatsonProposalStatus,
   WatsonRequest,
   WatsonTurn,
   WatsonVeloLaunchProposal,
@@ -47,7 +50,32 @@ export interface Outcome {
   lookedUp?: WatsonLookedUp;
   /** The id Watson's turn gets (round.ts sets it, so Auto knows which proposals are this round's). */
   turnId?: string;
+  /** The raw rows the round's super-timeline search showed Watson (for promotion of what it cites). */
+  superShown?: ForensicEvent[];
+  /** The names those rows printed: persisted on the chat even when the reply failed (the model saw them). */
+  superRoster?: WatsonMaskRoster;
+  /** Proposals already in the chat that the turn lists (the round's own promotion record, roundPromote.ts). */
+  extraProposalIds?: string[];
+  /** D9b: each reply item's rawEvidenceIds, keyed by its position in the reply (rawReferences.ts refKey). */
+  rawEvidence?: Map<string, string[]>;
+  /** The round's super-timeline promotion, for the final save's revalidation (roundPromote.ts). */
+  promotion?: WatsonRoundPromotion;
 }
+
+/** The round's promotion as revalidatePromotion needs it: the reply before settling, and what kept it. */
+export interface WatsonRoundPromotion {
+  proposalId: string;
+  /** The record's statuses under which the items resting on it stay. */
+  keep: WatsonProposalStatus[];
+  unsettled: WatsonReply;
+  refs: RawRefs[];
+  /** Cited ids correlation had already folded into a live event: landed whatever the record does. */
+  folded: Map<string, string>;
+}
+
+/** The chat with the round's super-timeline roster folded into its persisted one (D2d). */
+const withRoster = (chat: WatsonChat, roster: WatsonMaskRoster | undefined): WatsonChat =>
+  roster ? { ...chat, maskRoster: mergeMaskRoster(chat.maskRoster, roster) } : chat;
 
 const sameEvent = (a: WatsonCaseEvent, b: WatsonCaseEvent): boolean =>
   a.kind === b.kind && a.text === b.text && a.at === b.at;
@@ -71,13 +99,19 @@ function withoutShown(
 
 function errorText(err: unknown): string {
   if (err instanceof PresidioApprovalRequired) {
-    return "Watson's message is held: Presidio found values that need your approval before they go to the AI.";
+    return "This message waits for your approval. Presidio found values that you must approve before they go to the AI.";
   }
   if (err instanceof AiAnswerParseError || err instanceof AiReplyUnreadableError) {
-    return "Watson's reply could not be read. Send your message again.";
+    return "The companion cannot read Watson's reply. Send your message again.";
   }
   const msg = err instanceof Error ? err.message : String(err);
   return `Watson could not answer: ${msg}`.slice(0, 600);
+}
+
+/** H1: the answer's canonical raw evidence, stamped on the question "Add to open questions" makes. */
+function answerEvidence(reply: WatsonReply, outcome: Outcome): Pick<WatsonTurn, "answerRawEvidenceIds"> {
+  const ids = reply.answer ? outcome.rawEvidence?.get("answer") : undefined;
+  return ids?.length ? { answerRawEvidenceIds: [...ids] } : {};
 }
 
 export function mergeOutcome(
@@ -88,7 +122,7 @@ export function mergeOutcome(
 ): WatsonChat {
   const at = new Date().toISOString();
   const charged = {
-    ...fresh,
+    ...withRoster(fresh, outcome.superRoster),
     costUSD: fresh.costUSD + spent.usd,
     tokens: fresh.tokens + spent.tokens,
     calls: fresh.calls + calls,
@@ -107,9 +141,11 @@ export function mergeOutcome(
   }
   const turnId = outcome.turnId ?? newWatsonId("wt");
   const proposals = [
-    ...buildProposals(reply, outcome.questions, turnId, outcome.writeInputs),
+    ...buildProposals(reply, outcome.questions, turnId, outcome.writeInputs, outcome.rawEvidence),
     ...(outcome.veloProposal ? [{ ...outcome.veloProposal, turnId }] : []),
   ];
+  // The round's promotion record is already in the chat: the turn lists it, it is not added again.
+  const proposalIds = [...proposals.map((p) => p.id), ...(outcome.extraProposalIds ?? [])];
   const notes = [outcome.note, outcome.veloNote].filter((n): n is string => !!n);
   const text = notes.length ? [reply.message, ...notes].join("\n\n").trim() : reply.message;
   const turn: WatsonTurn = {
@@ -121,10 +157,11 @@ export function mergeOutcome(
     ...(reply.learned ? { learned: reply.learned } : {}),
     ...(reply.request ? { request: storedRequest(reply.request) } : {}),
     ...(reply.answer ? { answer: reply.answer } : {}),
+    ...answerEvidence(reply, outcome),
     ...(outcome.coverage ? { coverage: outcome.coverage } : {}),
     ...(outcome.veloNote ? { veloNote: outcome.veloNote } : {}),
     ...(outcome.lookedUp ? { lookedUp: outcome.lookedUp } : {}),
-    ...(proposals.length ? { proposalIds: proposals.map((p) => p.id) } : {}),
+    ...(proposalIds.length ? { proposalIds } : {}),
     costUSD: spent.usd,
   };
   return withUnreadable(
@@ -151,7 +188,7 @@ function withUnreadable(chat: WatsonChat, outcome: Outcome, at: string): WatsonC
     id: newWatsonId("wt"),
     at,
     role: "system",
-    text: `Watson could not read ${p.filename}. It stays stored as evidence — ask Watson to search it.`,
+    text: `Watson could not read ${p.filename}. The file stays in the case as evidence. Ask Watson to search it.`,
   };
   return { ...chat, unreadPasteIds, turns: [...chat.turns, note] };
 }
@@ -162,6 +199,6 @@ export const REFUSED_VQL_KEEP = 2000;
 export function storedRequest(request: WatsonRequest): WatsonRequest {
   if (request.kind !== "velociraptor" || !vqlSizeProblem(request.vql)) return request;
   const more = request.vql.length - REFUSED_VQL_KEEP;
-  const vql = `${request.vql.slice(0, REFUSED_VQL_KEEP)}…(${more} more characters, refused as too long)`;
+  const vql = `${request.vql.slice(0, REFUSED_VQL_KEEP)}…(${more} more characters. This VQL is too long, so it did not run.)`;
   return { ...request, vql };
 }

@@ -177,7 +177,7 @@ export function sanitizeWatsonReply(
   // One hop per round: a valid search and a lookup together keep the search (Task 11).
   const lookup: WatsonLookupAsk | null =
     search && reply.lookup
-      ? { ok: false, why: "it came with a search, and Watson reads one thing per round" }
+      ? { ok: false, why: "Watson can do only one search or lookup in each round" }
       : (reply.lookup ?? null);
   return {
     ...reply,

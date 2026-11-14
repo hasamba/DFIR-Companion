@@ -32,20 +32,36 @@ function shortLabels(hosts: readonly string[]): string[] {
   return shortHostLabels(candidates, []);
 }
 
+const clean = (names: readonly string[]): string[] =>
+  names.map((n) => n.trim().toLowerCase()).filter((n) => n !== "");
+
+const IP_LIKE = /^\d{1,3}(?:\.\d{1,3}){3}$|:/;
+
 /**
- * The hostnames and usernames in `text`, for the masking step of one call. `known` are names the
- * prompt shows from a trusted roster (the Velociraptor inventory): each is masked as it is, and its
- * short label too when it is an FQDN, so an inventory-only host never reaches the model in clear.
+ * The hostnames and usernames in `text`, for the masking step of one call. `knownHosts` and
+ * `knownUsers` are names the prompt shows from a roster (the Velociraptor inventory, the hosts and
+ * accounts of shown super-timeline rows, a chat's persisted roster): each is masked as it is, so a
+ * name the case state never held still never reaches the model in clear. A known FQDN's short label
+ * is masked by the same rule as an extracted one, and an IP never gives one ("10" in 10.9.8.7). IPs
+ * need no roster: the anonymizer matches them by pattern.
  */
-export function promptEntities(text: string, known: readonly string[] = []): PromptEntities {
+export function promptEntities(
+  text: string,
+  knownHosts: readonly string[] = [],
+  knownUsers: readonly string[] = [],
+): PromptEntities {
   const fqdns = new Set(extractDomains(text));
-  const roster = known.map((h) => h.trim().toLowerCase()).filter((h) => h !== "");
+  const roster = clean(knownHosts);
   for (const m of text.matchAll(INTERNAL_HOST_RE)) fqdns.add(m[0].toLowerCase());
+  const rosterLabels = shortLabels(roster.filter((h) => !IP_LIKE.test(h)));
   return {
     // No cap: a cap would fail open on a dense paste, and the prompt itself is already bounded.
-    hosts: [
-      ...new Set([...fqdns, ...shortLabels([...fqdns]), ...roster, ...roster.map((h) => h.split(".")[0])]),
+    hosts: [...new Set([...fqdns, ...shortLabels([...fqdns]), ...roster, ...rosterLabels])],
+    usernames: [
+      ...new Set([
+        ...collectUsernames({ texts: [text], accountsOf: extractAccounts, internalDomains: [] }),
+        ...clean(knownUsers),
+      ]),
     ],
-    usernames: collectUsernames({ texts: [text], accountsOf: extractAccounts, internalDomains: [] }),
   };
 }

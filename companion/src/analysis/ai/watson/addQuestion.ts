@@ -6,13 +6,15 @@ import {
   WatsonProposalStateError,
   type WriterDeps,
 } from "./proposals.js";
+import { answerRawEvidence } from "./answerEvidence.js";
 import { ANSWER_MAX, newWatsonId, POINTER_MAX, QUESTION_MAX } from "./roundProposals.js";
 import type { WatsonAnswer, WatsonChat, WatsonQuestionProposal } from "./types.js";
 
 // "Add to open questions" on a Watson answer: the analyst's click is the approval, so the question
 // is proposed and applied in one call. The proposal stays on the chat, so Undo works as for any other.
 // A question already on the board is refused (Task 10): Watson linked the answer to it, or its text
-// normalizes to the same words. The normalization is deliberately simple and deterministic.
+// normalizes to the same words. The normalization is deliberately simple and deterministic. An answer
+// that names a super-timeline row must rest on a live promoted row (answerEvidence.ts).
 
 /** The question is already a key question on the board; nothing was written (route → 409). */
 export class WatsonQuestionOnBoard extends WatsonProposalConflict {
@@ -53,7 +55,7 @@ function onBoard(
   return want ? board.find((q) => normalizeQuestionText(q.question) === want) : undefined;
 }
 
-function proposalFor(answer: WatsonAnswer, turnId: string): WatsonQuestionProposal {
+function proposalFor(answer: WatsonAnswer, turnId: string, evidence: string[]): WatsonQuestionProposal {
   const id = newWatsonId("wq");
   return {
     id: newWatsonId("wp"),
@@ -71,6 +73,7 @@ function proposalFor(answer: WatsonAnswer, turnId: string): WatsonQuestionPropos
       author: "watson",
     },
     status: "pending",
+    ...(evidence.length ? { rawEvidenceIds: evidence } : {}),
   };
 }
 
@@ -83,7 +86,7 @@ export async function addAnswerAsQuestion(
   let proposal: WatsonQuestionProposal | undefined;
   const board = (await deps.stateStore.loadOverview(caseId)).keyQuestions ?? [];
   // The status check and the append are one chat update, so two clicks cannot both add.
-  await deps.chatStore.update(caseId, (c) => {
+  await deps.chatStore.update(caseId, async (c) => {
     const turn = c.turns.find((t) => t.id === turnId);
     if (!turn?.answer) throw new WatsonProposalNotFoundError(turnId);
     if (turn.answerProposalId) {
@@ -92,7 +95,9 @@ export async function addAnswerAsQuestion(
     }
     const existing = onBoard(turn.answer, board);
     if (existing) throw new WatsonQuestionOnBoard(existing.question);
-    proposal = proposalFor(turn.answer, turnId);
+    // H1/H2: refused before anything is added when it names a raw row that is not live.
+    const evidence = await answerRawEvidence(deps.stateStore, caseId, c, turn);
+    proposal = proposalFor(turn.answer, turnId, evidence);
     const made = proposal;
     return {
       ...c,

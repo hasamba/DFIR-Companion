@@ -105,3 +105,12 @@ paths = [
   '''\.betterleaks\.toml''',
   '''\.betterleaks-config\.toml''',
 ]
+
+# The Watson super-timeline mask-roster tests feed a curl command with a fake `user:password` pair to
+# assert that only the account ("erin") is listed and the password part never is — the string IS the
+# assertion. Scoped to the one rule and the one file, so a real curl credential anywhere else still
+# fails the scan.
+[[allowlists]]
+description = "Fake curl user:password fixture in the Watson mask-roster tests"
+targetRules = ["curl-auth-user"]
+paths = ['''companion/tests/analysis/watson/superTimelineSearchFixes\.test\.ts''']

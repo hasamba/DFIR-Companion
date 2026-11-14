@@ -43,11 +43,11 @@
   function notesHtml(f) {
     const d = f.synthesisDisagrees;
     return (
-      (d ? `<span class="watson-note">Synthesis disagrees: ${esc(d.severity)} — ${esc(d.title)}</span>` : "") +
+      (d ? `<span class="watson-note">Synthesis does not agree: ${esc(d.severity)} — ${esc(d.title)}</span>` : "") +
       (f.similarSynthesisId
-        ? `<span class="watson-note">Synthesis has a similar finding: <a class="finding-jump" data-fid="${escAttr(f.similarSynthesisId)}" title="Jump to that finding">${esc(f.similarSynthesisId)}</a></span>`
+        ? `<span class="watson-note">Synthesis has a similar finding: <a class="finding-jump" data-fid="${escAttr(f.similarSynthesisId)}" title="Go to that finding">${esc(f.similarSynthesisId)}</a></span>`
         : "") +
-      (f.citationsChanged ? `<span class="watson-note">cited evidence changed</span>` : "")
+      (f.citationsChanged ? `<span class="watson-note">The cited evidence changed</span>` : "")
     );
   }
 
@@ -62,9 +62,9 @@
     if (!p && !isWatsonItem(kind, item)) return "";
     const who = (p && p.appliedBy) || (item && item.approvedBy) || "an analyst";
     const rows = p && p.kind === "event_promote" ? idsOf(p).length : 0;
-    const undoTitle = rows ? `Undo — removes all ${rows} row${rows === 1 ? "" : "s"} Watson promoted` : "Undo what Watson wrote";
+    const undoTitle = rows ? `Undo. This removes all ${rows} row${rows === 1 ? "" : "s"} that Watson promoted` : "Undo what Watson wrote";
     return (
-      `<span class="watson-mark" data-w-mark="${escAttr(kind + ":" + id)}" title="${escAttr(who === "Watson (Auto)" ? "Added by Watson (Auto), without asking" : "Added by Watson, approved by " + who)}">Watson</span>` +
+      `<span class="watson-mark" data-w-mark="${escAttr(kind + ":" + id)}" title="${escAttr(who === "Watson (Auto)" ? "Watson (Auto) added this. It did not ask first." : "Watson added this. " + who + " approved it.")}">Watson</span>` +
       (p
         ? `<button type="button" class="watson-mini watson-undo" data-act="watsonAct" data-w-verb="undo" data-pid="${escAttr(p.id)}" title="${escAttr(undoTitle)}" aria-label="${escAttr(undoTitle)}">Undo</button>`
         : "") +

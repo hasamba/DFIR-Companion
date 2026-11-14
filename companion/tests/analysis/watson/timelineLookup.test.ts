@@ -104,7 +104,7 @@ describe("parseLookup", () => {
       host: "WS-01",
       text: "rar",
     });
-    expect(text).toContain("cited by finding f6, f2");
+    expect(text).toContain("events that finding f6, f2 cites");
     expect(text).toContain("2026-01-01T15:55:00Z");
     expect(text).toContain("WS-01");
     expect(text).toContain('"rar"');

@@ -18,7 +18,7 @@ import {
 import type { JevAnswer } from "../../src/analysis/ai/jev/jevClient.js";
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
 import { buildContainmentState } from "../../src/analysis/ai/jev/containmentState.js";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Finding } from "../../src/analysis/stateTypes.js";
 import { psSessionSeats } from "../../src/analysis/ai/synthPsSessionSeats.js";
@@ -31,8 +31,10 @@ import { psSessionSeats } from "../../src/analysis/ai/synthPsSessionSeats.js";
 // budget and drowns the signal that earned the forensic cut.
 //
 // Three analyst-initiated paths touch the raw record. Two now PROMOTE before asking, so the rule
-// holds literally. The third is a documented exception. These tests are the difference between that
-// being a policy in a comment and a policy the code obeys.
+// holds literally. The third is a documented exception. Watson's super-timeline search is a further
+// documented exception: one targeted, bounded lookup per analyst-started round, and every row it
+// cites is promoted into the forensic timeline before the turn is saved. These tests are the
+// difference between that being a policy in a comment and a policy the code obeys.
 
 // starredReport and viewSummary both parse `{ markdown }`; they are report writers, not extractors.
 const VALID = JSON.stringify({ markdown: "# Report\n\nBody." });
@@ -876,21 +878,22 @@ describe("the S3 ransomware-precursor promotion is the one automatic super-timel
   });
 });
 
-describe("Watson's timeline lookup reads the forensic timeline only (Task 11)", () => {
-  // Watson may ask for more events than its packet carries. The lookup selects from the scoped
-  // forensic timeline its round already loads, never the raw record or any store behind it.
+describe("Watson's forensic lookup reads the forensic timeline only (Task 11)", () => {
+  // Watson may ask for more events than its packet carries. The forensic lookup selects from the
+  // scoped forensic timeline its round already loads, never the raw record or any store behind it.
   const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
-  it("has no path to the super-timeline store in the lookup, the hop or the request builder", () => {
+  it("has no path to the super-timeline store in the forensic lookup files", () => {
     for (const rel of [
-      "../../src/analysis/ai/watson/timelineLookup.ts",
-      "../../src/analysis/ai/watson/lookupSchema.ts",
-      "../../src/analysis/ai/watson/roundHop.ts",
-      "../../src/analysis/ai/watson/round.ts",
-      "../../src/analysis/ai/watson/requestBuild.ts",
-      "../../src/analysis/ai/watson/roundContext.ts",
+      "timelineLookup.ts",
+      "lookupSchema.ts",
+      "requestBuild.ts",
+      "roundContext.ts",
+      "round.ts",
     ]) {
-      expect(read(rel), rel).not.toMatch(/superTimelineStore|SuperTimelineStore|superTimeline\.js|rawEvents/);
+      expect(read(`../../src/analysis/ai/watson/${rel}`), rel).not.toMatch(
+        /superTimelineStore|SuperTimelineStore|superTimeline\.js|rawEvents/,
+      );
     }
   });
 
@@ -901,5 +904,172 @@ describe("Watson's timeline lookup reads the forensic timeline only (Task 11)", 
     expect(selectLookupEvents(forensic, state, { eventIds: ["e1", "rawonly"] }).map((e) => e.id)).toEqual([
       "e1",
     ]);
+  });
+});
+
+describe("Watson's super-timeline search is a documented exception (phase 4)", () => {
+  const watsonDir = fileURLToPath(new URL("../../src/analysis/ai/watson", import.meta.url));
+  const listTs = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+      d.isDirectory() ? listTs(join(dir, d.name)) : d.name.endsWith(".ts") ? [join(dir, d.name)] : [],
+    );
+
+  it("only superTimelineSearch.ts reads the store, and only through query and meta", () => {
+    const others = listTs(watsonDir).filter((f) => !f.endsWith("superTimelineSearch.ts"));
+    expect(others.length).toBeGreaterThan(10);
+    for (const f of others) {
+      expect(readFileSync(f, "utf8"), f).not.toMatch(
+        /\.reader\.|scanWindow|eventBatches|collect\(|memoizeScan|queryIndexed|SuperTimelineStore|superTimelineStore/,
+      );
+      // No direct store call either: the round passes the reader to the search, it never calls it.
+      expect(readFileSync(f, "utf8"), f).not.toMatch(
+        /\.\s*(?:query|meta)\s*\(|\[\s*["'`](?:query|meta)["'`]\s*\]|\{\s*(?:query|meta)\b[^}]*\}\s*=/,
+      );
+    }
+    const src = readFileSync(join(watsonDir, "superTimelineSearch.ts"), "utf8");
+    expect(src).not.toMatch(/scanWindow|eventBatches|\.collect\(|memoizeScan|queryIndexed|reader\.get\(/);
+    expect(src.match(/reader\.(\w+)\(/g)?.sort()).toEqual(["reader.meta(", "reader.query("]);
+  });
+});
+
+describe("Watson's super-timeline search is targeted, bounded and promotes only what it cites", () => {
+  // The bound is pinned in two parts: the constants here, and the limit/countCeiling the store is
+  // actually called with in the next test.
+  it("a search with no narrowing field is refused, and the bound constants are fixed", async () => {
+    const { parseLookup } = await import("../../src/analysis/ai/watson/lookupSchema.js");
+    const s = await import("../../src/analysis/ai/watson/superTimelineSearch.js");
+    expect(parseLookup({ source: "supertimeline" })).toMatchObject({ ok: false });
+    expect(parseLookup({ source: "supertimeline", text: "ab" })).toMatchObject({ ok: false });
+    expect(parseLookup({ source: "supertimeline", text: "rclone" })).toMatchObject({ ok: true });
+    expect(s.WATSON_SUPER_MAX_ROWS).toBe(100);
+    expect(s.WATSON_SUPER_MAX_CHARS).toBe(20_000);
+    expect(s.WATSON_SUPER_SCAN_ROWS).toBe(5_000);
+  });
+
+  it("the store is queried with the 5,000-row return-and-count bound", async () => {
+    const f = await import("./watson/superPromoteFixtures.js");
+    const { runWatsonRound } = await import("../../src/analysis/ai/watson/round.js");
+    const h = await f.harness([f.reply(f.superLookup()), f.reply(f.answer(["raw1"]))]);
+    const calls: Array<{ limit?: number; countCeiling?: number }> = [];
+    const rs = h.ctx.rawSearch!;
+    const ctx = {
+      ...h.ctx,
+      rawSearch: {
+        ...rs,
+        reader: {
+          meta: (id: string) => rs.reader.meta(id),
+          query: (id: string, q: { limit?: number; countCeiling?: number }) => {
+            calls.push(q);
+            return rs.reader.query(id, q);
+          },
+        },
+      },
+    };
+    await runWatsonRound(ctx, f.CASE, { text: "any rclone?", source: "dashboard" });
+    expect(calls.length).toBeGreaterThan(0);
+    for (const q of calls) expect([q.limit, q.countCeiling]).toEqual([5000, 5000]);
+  });
+
+  it("a reaction round never searches the super-timeline (the door rule)", async () => {
+    const f = await import("./watson/superPromoteFixtures.js");
+    const { runWatsonRound } = await import("../../src/analysis/ai/watson/round.js");
+    const h = await f.harness([f.reply(f.superLookup()), f.reply(f.answer(["raw1"]))]);
+    const touched: string[] = [];
+    const rs = h.ctx.rawSearch!;
+    const ctx = {
+      ...h.ctx,
+      rawSearch: {
+        ...rs,
+        reader: {
+          meta: (id: string) => (touched.push("meta"), rs.reader.meta(id)),
+          query: (id: string, q: never) => (touched.push("query"), rs.reader.query(id, q)),
+        },
+      },
+    };
+    await runWatsonRound(ctx, f.CASE, { text: "", reaction: true });
+    expect(touched).toEqual([]);
+    expect(await h.row("raw1")).toBeUndefined();
+  });
+
+  it("a cited raw row is promoted before the turn is saved; a shown-but-uncited row is not", async () => {
+    const f = await import("./watson/superPromoteFixtures.js");
+    const h = await f.harness([f.reply(f.superLookup()), f.reply(f.answer(["raw1"]))]);
+    await h.run();
+    expect((await h.row("raw1"))?.promotedAt).toBeTruthy();
+    expect(await h.row("raw2")).toBeUndefined();
+  });
+
+  it("a cited id the search never showed is dropped, never fetched", async () => {
+    const f = await import("./watson/superPromoteFixtures.js");
+    const h = await f.harness([f.reply(f.superLookup()), f.reply(f.answer(["raw1", "raw9"]))], {
+      raw: [f.raw("raw1"), f.raw("raw9", { description: "quiet raw row" })],
+    });
+    const chat = await h.run();
+    expect(f.lastWatsonTurn(chat).answer?.relatedEventIds).toEqual(["raw1"]);
+    expect(await h.row("raw9")).toBeUndefined();
+  });
+});
+
+describe("the deep pass never touches the raw record", () => {
+  it("never calls the super-timeline store", async () => {
+    const h = await harness([ev({ id: "raw1" })]);
+    const { stateStore, superTimelineStore } = h;
+    const provider = new CapturingProvider("");
+    provider.analyze = async (req) => ({
+      rawText: /ONE SLICE/i.test(req.systemPrompt)
+        ? JSON.stringify({
+            observations: [{ summary: "s", hosts: [], eventIds: ["e1"], whyItMatters: "w" }],
+          })
+        : JSON.stringify({
+            findings: [],
+            iocs: [],
+            mitreTechniques: [],
+            attackerPath: "",
+            summary: "done",
+            forensicEvents: [],
+            threadsOpened: [],
+            threadsClosed: [],
+            timelineNote: "deep pass",
+          }),
+    });
+    const pipeline = new AnalysisPipeline({
+      provider,
+      synthesisProvider: provider,
+      stateStore,
+      superTimelineStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    await stateStore.save({
+      ...emptyState("c1"),
+      forensicTimeline: [
+        ev({
+          id: "e1",
+          severity: "High",
+          description: "graded row",
+          mitreTechniques: [],
+          relatedFindingIds: [],
+          sourceScreenshots: [],
+        }),
+      ],
+    });
+    const names = Object.getOwnPropertyNames(SuperTimelineStore.prototype).filter(
+      (n) =>
+        n !== "constructor" &&
+        typeof (superTimelineStore as never as Record<string, unknown>)[n] === "function",
+    );
+    expect(names.length).toBeGreaterThan(3);
+    const spies = names.map((n) => vi.spyOn(superTimelineStore as never, n));
+    // No catch: if the deep pass cannot run, this test fails instead of passing vacuously.
+    const result = await pipeline.deepPass("c1", { minSeverity: "High" });
+    expect(result.events).toBe(1);
+    for (const [i, spy] of spies.entries()) expect(spy, names[i]).not.toHaveBeenCalled();
+  });
+
+  it("has no path to the super-timeline store in its run module", () => {
+    const src = readFileSync(
+      fileURLToPath(new URL("../../src/analysis/ai/deepPassRun.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(src).not.toMatch(/superTimelineStore|SuperTimelineStore/);
   });
 });

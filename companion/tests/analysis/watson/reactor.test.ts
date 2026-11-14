@@ -253,7 +253,9 @@ describe("WatsonReactor", () => {
     expect(chat.reactionsPaused).toBe("presidio");
     const turn = chat.turns.at(-1);
     expect(turn?.role).toBe("system");
-    expect(turn?.text).toMatch(/^Watson paused automatic reactions: .+\. Send a message to resume\.$/);
+    expect(turn?.text).toMatch(
+      /^Watson stopped its automatic reactions: .+\. Send a message to start them again\.$/,
+    );
     expect(changed).toHaveBeenCalledWith(CASE);
 
     // A later note while paused → no round.
@@ -363,8 +365,8 @@ describe("star detection (createWatsonCaseEvents)", () => {
     await advance(s, DELAY);
     expect(s.rounds).toHaveLength(0);
     expect(s.chats.chat.pendingCaseEvents).toMatchObject([
-      { kind: "other", text: "An import was undone" },
-      { kind: "other", text: "An import undo was redone" },
+      { kind: "other", text: "An analyst undid an import" },
+      { kind: "other", text: "An analyst did an import again after an undo" },
     ]);
     events.importChanged(CASE);
     await advance(s, DELAY);

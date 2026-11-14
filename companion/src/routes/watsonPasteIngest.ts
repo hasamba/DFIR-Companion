@@ -49,10 +49,13 @@ export async function ingestWatsonPaste(
   try {
     kind = ctx.resolveImportKind()(paste.filename, text);
   } catch (err) {
-    return { kind: "text", reason: `the format could not be detected: ${message(err)}` };
+    return { kind: "text", reason: `Watson could not find the format: ${message(err)}` };
   }
   if (AI_ONLY_KINDS.has(kind)) {
-    return { kind: "text", reason: "no built-in importer reads this format; it stays searchable text" };
+    return {
+      kind: "text",
+      reason: "no built-in importer reads this format. It stays as text that Watson can search",
+    };
   }
   let imported = false;
   try {
@@ -68,7 +71,7 @@ export async function ingestWatsonPaste(
       await ctx.markConclusionsOutOfDate(caseId, "Watson paste parsed").catch(() => undefined);
       return {
         kind: "text",
-        reason: `the ${kind} rows were imported, but grading them failed: ${message(err)}`,
+        reason: `Watson imported the ${kind} rows, but it could not grade them: ${message(err)}`,
       };
     }
     return { kind: "text", reason: `the ${kind} importer could not parse it: ${message(err)}` };
@@ -105,7 +108,7 @@ async function parseInSection(
     wording: PASTE_REFUSAL_WORDING,
   });
   try {
-    if (!section.baseline) return { kind: "text", reason: "the case could not be snapshotted" };
+    if (!section.baseline) return { kind: "text", reason: "Watson could not make a snapshot of the case" };
     await ctx.dispatchImport(kind, caseId, text, {
       label: paste.storedName,
       idPrefix: `watson-${paste.id}`,

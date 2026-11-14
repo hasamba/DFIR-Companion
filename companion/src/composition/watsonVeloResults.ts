@@ -70,7 +70,7 @@ export interface WatsonIngested {
 }
 
 export const NO_LAUNCH_SERVER =
-  "The Velociraptor server this collection was launched on is no longer available";
+  "The Velociraptor server that Watson launched this collection on is no longer available";
 
 /** Past the deadline, a status or row read that keeps failing is retried this much longer. */
 export const WATSON_WATCH_GRACE_MS = 60 * 60_000;
@@ -80,11 +80,11 @@ export const WATSON_WATCH_MAX_FAILED_TICKS = 10;
 const where = (p: WatsonVeloLaunchProposal): string =>
   `flow ${p.launched?.flowId ?? "?"}${p.hostname ? ` on ${p.hostname}` : ""}`;
 const notImported = (p: WatsonVeloLaunchProposal, why: string): string =>
-  `${why} (${where(p)}). The results are in Velociraptor and may not have been imported into the case`;
+  `${why} (${where(p)}). The results are in Velociraptor. Watson does not know if the case has them`;
 const interruptedImport = (p: WatsonVeloLaunchProposal): string =>
-  `Watson was interrupted while importing the results of ${where(p)}: rows may have been imported, ` +
-  "but rows the tagger graded above Info were not offered for approval. " +
-  "Re-import the flow from Velociraptor to get them";
+  `Watson stopped before it finished the import of ${where(p)}. Watson does not know if the case has some of the rows. ` +
+  "Watson did not show the rows that the tagger graded above Info for approval. " +
+  "Import the flow from Velociraptor again to get them";
 
 type Watched = WatsonVeloLaunchProposal & { watch: NonNullable<WatsonVeloLaunchProposal["watch"]> };
 
@@ -199,7 +199,7 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
         caseId,
         p.id,
         "failed",
-        `the collection failed on the endpoint (${where(p)}): ${status.error || "no reason given"}`,
+        `the collection failed on the endpoint (${where(p)}): ${status.error || "Velociraptor gave no reason"}`,
       );
     }
     if (state !== "FINISHED") return past ? this.end(caseId, p.id, "timeout") : this.watch(caseId, p.id);
@@ -229,7 +229,7 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
       rows = await this.deps.readRows(caseId, claimed);
       // Velociraptor counted rows the read did not return: never call that "found nothing".
       if (rows.rows === 0 && reported > 0)
-        throw new Error(`${reported} rows were collected but none could be read`);
+        throw new Error(`Velociraptor collected ${reported} rows, but Watson could not read them`);
     } catch (err) {
       await this.release(caseId, p.id);
       this.deps.log?.(`[watson] ${caseId}: reading ${where(p)} failed: ${msg(err)}`);
@@ -247,7 +247,7 @@ export class WatsonFlowWatcher implements WatsonFlowWatch {
     try {
       const ingested = await this.deps.ingest(caseId, claimed, rows);
       if (isTextIngest(ingested.ingest))
-        throw new Error(`the rows could not be parsed: ${ingested.ingest.reason}`);
+        throw new Error(`Watson could not parse the rows: ${ingested.ingest.reason}`);
       result = { rows: ingested.ingest.rows, added: ingested.ingest.added ?? 0, ingested };
     } catch (err) {
       const why = notImported(p, `Watson could not import the results: ${msg(err)}`);

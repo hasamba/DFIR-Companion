@@ -1,6 +1,7 @@
 import type { InvestigationState } from "../../stateTypes.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_HISTORY_ID, WATSON_HISTORY_NAME } from "./historyStore.js";
+import type { WatsonMaskRoster } from "./superRoster.js";
 import type { WatsonChat, WatsonTurn } from "./types.js";
 import { shownVeloHosts, veloRulesText } from "./velo/veloPrompt.js";
 
@@ -41,10 +42,23 @@ export interface WatsonPromptInput {
   pasteExcerpt?: { pasteId: string; filename: string; text: string; truncated: boolean };
   /** The forensic-timeline rows Watson's lookup found (Task 11), and the lookup in plain words. */
   lookupExcerpt?: { what: string; text: string };
+  /** The raw rows Watson's super-timeline search found (phase 4), the search in words, and the cap warning. */
+  superExcerpt?: { what: string; text: string; capNote?: string };
+  /** The names those rows print, for masking (requestBuild.ts); the prompt itself never shows this. */
+  rawRoster?: WatsonMaskRoster;
 }
 
 /** Every fence label. One list feeds both the fences and the defang, so no label is left forgeable. */
-const FENCE_LABELS = ["CONTEXT", "MEMORY", "CHAT", "PASTE", "HISTORY", "LOOKUP", "ANALYST"] as const;
+const FENCE_LABELS = [
+  "CONTEXT",
+  "MEMORY",
+  "CHAT",
+  "PASTE",
+  "HISTORY",
+  "LOOKUP",
+  "SUPERTIMELINE",
+  "ANALYST",
+] as const;
 type FenceLabel = (typeof FENCE_LABELS)[number];
 const MARKER_RE = new RegExp(`<<<\\s*(END\\s+)?(${FENCE_LABELS.join("|")})`, "gi");
 
@@ -144,6 +158,17 @@ function veloBlock(velo: NonNullable<WatsonPromptInput["velo"]>, chat: WatsonCha
   return `VELOCIRAPTOR\n${veloRulesText()}\n${count}\n${hosts.join("\n") || "(none)"}${ranText}`;
 }
 
+/** The SUPER-TIMELINE SEARCH block: the rows fenced as data, the cap warning on the line under them. */
+function superBlock(excerpt: NonNullable<WatsonPromptInput["superExcerpt"]>): string {
+  const what = line(excerpt.what, WATSON_REQUEST_CHARS);
+  const rows = fence("SUPERTIMELINE", clip(excerpt.text, WATSON_PASTE_PROMPT_MAX));
+  const cap = excerpt.capNote ? `\n${line(excerpt.capNote, WATSON_REQUEST_CHARS * 2)}` : "";
+  return (
+    `SUPER-TIMELINE SEARCH (${what}) — raw rows not in the forensic timeline; the companion tries to promote any you cite, and removes the items that use a row it cannot promote. ` +
+    `This round's one search; no further lookup or search runs\n${rows}${cap}`
+  );
+}
+
 export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
   const { state, chat, analystText, caseContext, mainLanguages, pasteExcerpt, historyTurns, velo } = input;
   const { lookupExcerpt } = input;
@@ -189,6 +214,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
       `TIMELINE LOOKUP (${what}) — this round's one lookup; no further lookup or search runs\n${rows}`,
     );
   }
+  if (input.superExcerpt) blocks.push(superBlock(input.superExcerpt));
   blocks.push(`ANALYST\n${fence("ANALYST", clip(analystText, WATSON_ANALYST_PROMPT_MAX))}`);
   return blocks.join("\n\n");
 }

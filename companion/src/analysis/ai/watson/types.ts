@@ -1,3 +1,4 @@
+import type { WatsonMaskRoster } from "./superRoster.js";
 import type {
   Finding,
   ForensicEvent,
@@ -45,6 +46,10 @@ export interface WatsonLookup {
   to?: string;
   host?: string;
   text?: string;
+  /** Absent = the forensic timeline; "supertimeline" = a targeted search of the analyst-only super-timeline. */
+  source?: "supertimeline";
+  /** MD5, SHA-1 or SHA-256 hex; super-timeline searches only. */
+  hash?: string;
 }
 
 /** What a round's lookup showed Watson, stored on its turn so the card can disclose it (#452). */
@@ -53,6 +58,13 @@ export interface WatsonLookedUp {
   matched: number;
   /** The lookup in plain words (server-built from the checked request). */
   what: string;
+  source?: "supertimeline";
+  /** The match count is a lower bound: the search stopped counting at its scan limit. */
+  matchedIsFloor?: boolean;
+  /** Rows evicted by the search's result cap. */
+  capEvicted?: number;
+  /** Ids of the rows the search showed (at most 100); the earlier-round check reads them. */
+  shownIds?: string[];
 }
 
 /** Watson's answer to a free-form question from the analyst (what Ask used to return). */
@@ -84,6 +96,8 @@ export interface WatsonTurn {
   answer?: WatsonAnswer;
   /** The proposal made when the analyst added this turn's answer to the open questions. */
   answerProposalId?: string;
+  /** H1: the canonical ids of promoted super-timeline rows the answer rests on. Set only by the server. */
+  answerRawEvidenceIds?: string[];
   /**
    * The server's Velociraptor launch note ("Nothing to approve: …" / "Risky query: …"), also appended
    * to `text`. Set only by the server, so the dashboard's warning block cannot be forged by the model.
@@ -118,10 +132,18 @@ export interface WatsonCreatedRows {
 }
 
 /**
+ * The canonical forensic ids of super-timeline rows Watson promoted that this item rests on (D9b):
+ * its apply is refused once one is gone, and the promotion's undo is refused while it is applied.
+ */
+export interface WatsonRawEvidence {
+  rawEvidenceIds?: string[];
+}
+
+/**
  * Phase 1 shape, unchanged so an old chat file loads as it was: the target is `questionId`.
  * `targetId` is optional here only; read the target through proposalTargetId().
  */
-export interface WatsonQuestionProposal extends WatsonProposalCommon {
+export interface WatsonQuestionProposal extends WatsonProposalCommon, WatsonRawEvidence {
   kind: "question_update" | "question_new";
   questionId: string;
   targetId?: string;
@@ -130,7 +152,7 @@ export interface WatsonQuestionProposal extends WatsonProposalCommon {
 }
 
 /** A finding Watson drafted. On apply, `after` becomes the finding as written (live citations only). */
-export interface WatsonFindingProposal extends WatsonProposalCommon, WatsonCreatedRows {
+export interface WatsonFindingProposal extends WatsonProposalCommon, WatsonCreatedRows, WatsonRawEvidence {
   kind: "finding_new" | "finding_update";
   targetId: string;
   /** finding_update only: the Watson-authored finding as it was when Watson proposed the change. */
@@ -142,13 +164,13 @@ export interface WatsonFindingProposal extends WatsonProposalCommon, WatsonCreat
   keptEventIds?: string[];
 }
 
-export interface WatsonNextStepProposal extends WatsonProposalCommon {
+export interface WatsonNextStepProposal extends WatsonProposalCommon, WatsonRawEvidence {
   kind: "next_step_new";
   targetId: string;
   after: NextStep;
 }
 
-export interface WatsonReportTextProposal extends WatsonProposalCommon {
+export interface WatsonReportTextProposal extends WatsonProposalCommon, WatsonRawEvidence {
   kind: "report_text";
   targetId: string;
   field: "conclusions" | "investigationLimitations";
@@ -163,13 +185,18 @@ export interface WatsonLandedRow {
   description: string;
 }
 
-/** Rows of a parsed paste the content tagger graded above Info, held for the analyst (spec §14). */
+/**
+ * Rows of a parsed paste the content tagger graded above Info, held for the analyst (spec §14), or
+ * (`source: "supertimeline"`) the super-timeline rows Watson cited, promoted by the round itself.
+ */
 export interface WatsonEventPromoteProposal extends WatsonProposalCommon, WatsonCreatedRows {
   kind: "event_promote";
   targetId: string;
   /** The raised copies, kept after undo so a re-apply needs nothing else. */
   events: ForensicEvent[];
-  pasteId: string;
+  /** The paste the rows came from; absent for a super-timeline promotion. */
+  pasteId?: string;
+  source?: "supertimeline";
   /** Set on apply: the rows this proposal added, as they landed. */
   landedRows?: WatsonLandedRow[];
 }
@@ -237,6 +264,8 @@ export interface WatsonLaunchWatch {
 export interface WatsonLaunchRisk {
   reasons: string[];
   checks: string[];
+  /** The checks as ASD-STE100 sentences, for display only (Task 10). Older proposals have none. */
+  display?: string[];
 }
 
 /** Who launched a risky query despite the warning, and the reasons they saw. */
@@ -322,6 +351,12 @@ export interface WatsonChat {
   calls: number;
   /** ISO time of the last "New thread": RECENT CHAT in the prompt starts here. Memory is kept. */
   threadStartAt?: string;
+  /**
+   * Names Watson's super-timeline searches showed it (raw-only hosts, users, IPs). Every later AI call
+   * on the case masks them (H3), since a restored reply can carry them into memory, chat and applied
+   * items (D2d). A host or user is never evicted (H5). Case-private.
+   */
+  maskRoster?: WatsonMaskRoster;
 }
 
 export function emptyWatsonChat(): WatsonChat {

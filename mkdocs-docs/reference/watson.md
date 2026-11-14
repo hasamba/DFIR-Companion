@@ -4,6 +4,8 @@ Watson is an AI assistant that works one case with you. You talk to it in a chat
 
 Watson follows the case's AI switch. With AI off for the case, Watson does not answer.
 
+Watson writes the chat in ASD-STE100 Simplified Technical English. Its messages, answers, pointers, notes, and the findings, next steps and report text it proposes use short sentences (20 words or fewer for an instruction, 25 for a description), one instruction per sentence, the active voice and no idioms. The fixed text of the panel, its cards and its notes follows the same rules. Technical names stay exactly as they are: host names, user names, paths, hashes, ids, tool and artifact names, quoted evidence and queries.
+
 Watson can read the case, answer questions, and draft changes to it. Watson never changes your findings, next steps, report text or Key Questions without your **Apply**.
 
 Apply is also what Auto mode skips for Watson's own case writes; see [Approve and Auto](#approve-and-auto).
@@ -50,7 +52,7 @@ Watson can propose these changes. Each one appears in the chat as a proposal, an
 
 A finding that cites a line of a paste adds that line to the forensic timeline when you apply it, so the citation points at a real event. Watson never edits a finding that you or a synthesis run wrote. It updates only its own.
 
-Watson does not change the super-timeline, and it never reads it.
+Watson does not change the super-timeline. It searches it only when you ask (see Searching the super-timeline).
 
 ## The Watson badge and Undo
 
@@ -104,13 +106,34 @@ Watson reads the case, not only the chat. Besides the forensic timeline, the evi
 | **Stars, tags, comments** | What you marked or annotated. |
 | **Notebook** | Only when **Include notebook in AI synthesis and Watson context** (Notebook panel) is on. |
 
-When the case is too large for the model, Watson reads a prioritised part of it, and its answer says from how many of the in-scope events it was built. The super-timeline is never read.
+When the case is too large for the model, Watson reads a prioritised part of it, and its answer says from how many of the in-scope events it was built. The case packet never includes the super-timeline; Watson searches it only when you ask (see Searching the super-timeline).
 
 When an event Watson needs is not in that part (an event a finding cites, a time span, a host or a word), Watson looks it up in the forensic timeline before it answers. It reads at most 200 in-scope events per lookup and one lookup per message, and a lookup counts toward the Watson cost and token limits like any other call. The answer card says so: **Watson looked up 12 forensic-timeline events (on host WS-01)**. A lookup never reads the super-timeline: an event that is only there stays invisible to Watson until you promote it.
 
 To see exactly what Watson would send for a message, use **Preview what the AI will see** and choose **Watson message**. The preview builds the same request a real message sends, masked the same way, and saves nothing.
 
 From Slack, Teams or Telegram, `/dfir ask <question>` sends the question to Watson in the same shared chat. See [War-Room Bot](war-room-bot.md).
+
+## Searching the super-timeline
+
+The forensic timeline holds the events that were graded Low or higher. The super-timeline holds the raw rows, including the Info rows that were cut. When the forensic timeline cannot answer your question, Watson can search the super-timeline.
+
+- Watson makes one search for each question you ask. A search names text (3 characters or more), a hash, a host or a time window of 7 days or less. It can combine these.
+- Watson sees at most 100 rows from a search. It does not read the whole super-timeline.
+- Watson does not search in its own reactions to imports, notes or stars. Only a question or message you send starts a search.
+- If the super-timeline has removed old rows because of its size limit, the answer carries a warning that the search can miss rows. Import the artifact again to get them back.
+
+When Watson cites a raw row, the row is promoted into the forensic timeline before the answer is saved. It shows the **Watson** badge and has an **Undo**. Rows that Watson saw but did not cite stay in the super-timeline. Nothing is promoted from a Watson reaction to an import.
+
+If a round cannot write to the case (writes are off for this message, the case is frozen, or AI is off), nothing is promoted. Watson drops each item that depended on the row and says so in the answer. If a promotion fails, Watson also drops those items. If some rows had already landed, the card offers **Apply** to finish and **Undo**.
+
+Watson's answer in the chat keeps its text. If the answer names a raw row that is not in the forensic timeline, **Add to open questions** is refused. Ask Watson again.
+
+Undo of a promotion is refused while a finding, next step, report text, key question or key question answer that Watson applied still depends on that row. Undo that item first.
+
+Raw rows can show host and account names that the case does not know yet. Watson keeps a list of these names for the case. When anonymization is on, these names are masked in every AI request on the case, synthesis included. Watson never removes a name from the list. When anonymization is on and the list already holds 500 hosts or 500 accounts, a search that would need a new name does not run for that message, and Watson tells you why. When anonymization is off, the search runs as usual and the list still records the names, so they are masked if you turn anonymization on later.
+
+Synthesis and the deep pass never read the super-timeline.
 
 ## Giving Watson evidence
 
@@ -126,7 +149,7 @@ If Watson cannot read a stored paste at once, the paste stays in the case. Watso
 
 ### Pasted files in a known format
 
-When a paste is in a format that a built-in importer reads (for example SIEM or EDR JSON, or a known event log export), Watson parses it into rows. The rows are graded like a normal import. The chat shows a line such as: "Parsed 2 rows from events.json (siem). 1 rows the tagger graded above Info wait for your approval."
+When a paste is in a format that a built-in importer reads (for example SIEM or EDR JSON, or a known event log export), Watson parses it into rows. The rows are graded like a normal import. The chat shows a line such as: "Watson read 2 rows from events.json (siem). The tagger graded 1 rows above Info. These rows wait for your approval."
 
 - The content tagger may raise some rows above Info (for example a `ntdsutil` command line). **Watson holds those promotions.** The rows stay in the super-timeline, and the raised copies wait as a **held rows** proposal. Choose **Apply** to put them in the forensic timeline, or **Reject** to leave them out. Large batches are split, 25 rows per proposal, and the chat says if more than 200 rows were cut.
 - Only the tagger's promotions are held. Other grading works as in a normal import. For example, a pasted account-creation row that resembles a case account is raised to High, the same as in a normal import.
@@ -163,11 +186,11 @@ Watson prefers a reviewed, read-only list of plugins, functions, artifacts and W
 
 Sometimes Watson needs something off the list: running a program, writing or uploading, a network call, a network path or URL, a path built at run time, or an artifact nobody reviewed. Watson can still propose that query, with its reason. The card is marked as risky:
 
-- A red warning block names the risks in plain words, for example *runs a program on the endpoint (execve)*, and says that Watson's safety check would normally block this query. Read the query before you approve it.
+- A red warning block names the risks in ASD-STE100 sentences, for example *The query runs a program on the endpoint (execve).*, and says that Watson's safety check usually blocks this query. Read the query before you approve it.
 - The card has **Review risk and launch…** instead of **Launch**. Click it, read the question that opens on the card, then click **Yes, launch it**, or **Cancel**. Nothing runs before that second click.
 - Just before the launch, Watson checks the query again. If the query now has a risk you did not see on the card, Watson refuses it.
-- The launched card, the audit log and the hunt entry all say *approved by* the analyst *despite warning*, with the risks.
-- **Auto mode never launches a risky query**, from any round. The Auto listing shows it as *held for your approval: risky query*, and it waits for an analyst.
+- The launched card says that the analyst *approved this launch after the warning*. The audit log and the hunt entry say *approved by* the analyst *despite warning*, with the risks.
+- **Auto mode never launches a risky query**, from any round. The Auto listing says *It waits for your approval, because the query is risky*, and names the risks.
 
 ### What is always refused
 
@@ -223,7 +246,7 @@ Watson watches a collection for 30 minutes. If the companion restarts during tha
 
 ## Watson and synthesis
 
-A synthesis run keeps the answers Watson gave, and it keeps Watson's findings and next steps with their badge. If a new synthesis reaches a different conclusion, the board shows **Synthesis disagrees** next to the question. Synthesis does not overwrite Watson's work. You decide which one to keep.
+A synthesis run keeps the answers Watson gave, and it keeps Watson's findings and next steps with their badge. If a new synthesis reaches a different conclusion, the board shows **Synthesis does not agree** next to the question. Synthesis does not overwrite Watson's work. You decide which one to keep.
 
 ## What happens while you work
 
@@ -278,5 +301,4 @@ Watson does not yet:
 
 - run queries on any platform other than Velociraptor
 - start fleet-wide hunts on its own
-- search the super-timeline
 - parse a generic CSV or log into timeline rows

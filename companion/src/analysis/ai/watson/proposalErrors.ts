@@ -20,7 +20,7 @@ export interface WatsonProposalDeps {
 /** No proposal with that id on this case (route → 404). */
 export class WatsonProposalNotFoundError extends Error {
   constructor(proposalId: string) {
-    super(`No Watson proposal ${proposalId}`);
+    super(`Watson proposal ${proposalId} does not exist`);
     this.name = "WatsonProposalNotFoundError";
   }
 }
@@ -31,8 +31,8 @@ export class WatsonProposalStateError extends Error {
     super(
       message ??
         (action === "add"
-          ? `This answer was already added to the open questions (${status})`
-          : `Cannot ${action} a proposal that is ${status}`),
+          ? `This answer is already in the open questions (${status})`
+          : `You cannot ${action} a proposal that is ${status}`),
     );
     this.name = "WatsonProposalStateError";
   }
@@ -56,9 +56,15 @@ export class WatsonLaunchUncertain extends WatsonProposalConflict {
 
 /** A risky launch applied without the analyst's explicit acceptRisk (Task 9, route → 409 with reasons). */
 export class WatsonRiskNotAccepted extends WatsonProposalConflict {
-  constructor(readonly reasons: readonly string[]) {
+  /** `display` is the STE copy of the reasons (Task 10); a proposal saved before it has only `reasons`. */
+  constructor(
+    readonly reasons: readonly string[],
+    display?: readonly string[],
+  ) {
     super(
-      `This is a risky query (${reasons.join("; ")}). Read it, then confirm you accept the risk to launch it.`,
+      display?.length
+        ? `This query is risky. ${display.join(" ")} Read the query. Then confirm that you accept the risk to launch it.`
+        : `This query is risky (${reasons.join("; ")}). Read it. Then confirm that you accept the risk to launch it.`,
     );
     this.name = "WatsonRiskNotAccepted";
   }

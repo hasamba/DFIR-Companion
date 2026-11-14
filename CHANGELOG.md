@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Watson searches the super-timeline** — one targeted search per round; cited raw rows are promoted with the Watson badge and Undo
+- **Watson writes in ASD-STE100** — the chat, its cards and notes use Simplified Technical English
 - **Watson case agent** — per-case investigation chat with a Key Questions board
 - **Watson answers free-form questions** — cited answers with Add to open questions and New thread; its full chat history is kept and searchable
 - **Watson writes findings, next steps and report text** — Conclusions and Investigation limitations wait for Apply, carry a Watson badge and the approver's name, and each has Undo

@@ -4,12 +4,12 @@
 // routes the "setMode" verb here. Actions ride on data-act="watsonAct"; the CSP bans inline handlers.
 (function () {
   const AUTO_CONFIRM =
-    "Watson will run single-host collections and write to the case without asking. Fleet-wide hunts still ask.";
+    "Watson will run single-host collections and write to the case. It will not ask you first. A fleet-wide hunt still waits for your approval.";
   const MODES = ["approve", "auto"];
   const LABEL = { approve: "Approve", auto: "Auto" };
   const TIP = {
-    approve: "Watson proposes; you approve each action",
-    auto: "Watson runs single-host collections and writes to the case without asking; fleet-wide hunts still ask",
+    approve: "Watson proposes each action. You approve it.",
+    auto: "Watson runs single-host collections and writes to the case. It does not ask you first. A fleet-wide hunt still waits for your approval.",
   };
 
   let wMode = "approve";
@@ -51,7 +51,7 @@
       if (!r.ok) throw new Error(body.error ? String(body.error) : "HTTP " + r.status);
       if (caseId === currentCase() && MODES.includes(body.mode)) wMode = body.mode;
     } catch (e) {
-      alert("Could not switch Watson's mode: " + (e && e.message ? e.message : "network error"));
+      alert("The companion could not change Watson's mode: " + (e && e.message ? e.message : "network error"));
       if (typeof loadWatson === "function") loadWatson(caseId); // the GET re-syncs the mode shown (G15)
     }
     paint();

@@ -5,6 +5,7 @@ import type { WatsonChat, WatsonRequest, WatsonVeloLaunchProposal } from "../typ
 import { fingerprintStoreFor } from "./fingerprintIndex.js";
 import { ALREADY_RAN, checkLaunch, type LaunchClient, type LaunchContext } from "./launchCheck.js";
 import { plainRisk } from "./vqlRiskClass.js";
+import { steReason, steReasons } from "./vqlReasonSte.js";
 import { loadVeloFleet, type VeloFleetSeams } from "./veloFleet.js";
 
 // Turns the reply's Velociraptor request into a PENDING velo_launch proposal (launching is the
@@ -26,32 +27,38 @@ const NOTE_MAX = 600;
 const TITLE_MAX = 200;
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
-const wanted = (r: VeloRequest): string => `Watson wanted to run a ${r.mode} but`;
 /** Said whatever Watson's own reply promised: no card was made, so there is nothing to approve (Task 9). */
-const skipped = (r: VeloRequest, why: string): string =>
-  oneLine(`(Nothing to approve: ${wanted(r)} ${why}, so it proposed nothing.)`).slice(0, NOTE_MAX);
+const skipped = (r: VeloRequest, detail: string): string =>
+  oneLine(`(Nothing to approve: Watson did not propose the ${r.mode}. ${detail})`).slice(0, NOTE_MAX);
 const alreadyRan = (r: VeloRequest): string =>
-  oneLine(`(Nothing to approve: this ${r.mode} already ran on the case, so Watson proposed nothing.)`);
-const riskyNote = (reasons: readonly string[]): string =>
+  oneLine(`(Nothing to approve: this ${r.mode} already ran on the case. Watson proposed nothing.)`);
+const riskyNote = (display: readonly string[]): string =>
   oneLine(
-    `(Risky query: ${reasons.join("; ")}. It waits for an analyst to read it and approve it; Auto mode never launches it.)`,
+    `(Risky query: ${display.join(" ")} An analyst must read it and approve it. Auto mode never launches it.)`,
   ).slice(0, NOTE_MAX);
 
-/** The reason a failed check gives, in a sentence: a blocked request names the calls. */
+/** The reason a failed check gives, in STE sentences: a blocked request names the calls (display only). */
 function reasonText(reason: string, reasons?: string[]): string {
-  return reasons?.length ? `it was blocked: ${reasons.join("; ")}` : reason;
+  return reasons?.length ? `The safety check blocked it. ${steReasons(reasons)}` : steReason(reason);
 }
+
+/** The stored risk: raw checks and plain reasons stay as they are; `display` is the STE copy. */
+const riskOf = (checks: string[]) => ({
+  reasons: checks.map(plainRisk),
+  checks,
+  display: checks.map(steReason),
+});
 
 async function check(
   seams: VeloLaunchSeams,
   caseId: string,
   r: VeloRequest,
   inventory: readonly LaunchClient[],
+  matchClient: NonNullable<LaunchContext["matchClient"]>,
 ) {
-  if (!seams.matchClient) return { ok: false as const, reason: "the host matcher is not available" };
   const deployed = await fingerprintStoreFor(seams.cases).load(caseId);
   const input = { vql: r.vql, mode: r.mode, ...(r.hostname ? { hostname: r.hostname } : {}) };
-  return checkLaunch(input, { inventory, deployed, matchClient: seams.matchClient, allowRisky: true });
+  return checkLaunch(input, { inventory, deployed, matchClient, allowRisky: true });
 }
 
 /**
@@ -68,8 +75,9 @@ export async function withVeloLaunch(
   if (!r || r.kind !== "velociraptor" || !allowed) return outcome;
   try {
     const fleet = await loadVeloFleet(seams, caseId);
-    if (!fleet) return { ...outcome, veloNote: skipped(r, "this case has no Velociraptor server") };
-    const result = await check(seams, caseId, r, fleet.records);
+    if (!fleet) return { ...outcome, veloNote: skipped(r, "This case has no Velociraptor server.") };
+    if (!seams.matchClient) return { ...outcome, veloNote: skipped(r, "The host matcher is not available.") };
+    const result = await check(seams, caseId, r, fleet.records, seams.matchClient);
     if (!result.ok && result.reason === ALREADY_RAN) return { ...outcome, veloNote: alreadyRan(r) };
     if (!result.ok) {
       const why = reasonText(result.reason, "reasons" in result ? result.reasons : undefined);
@@ -80,7 +88,7 @@ export async function withVeloLaunch(
       (p) => p.kind === "velo_launch" && p.status === "pending" && p.targetId === fingerprints[0],
     );
     if (open) {
-      const note = `(${wanted(r)} an identical launch is already proposed: use that card.)`;
+      const note = `(Watson did not propose the ${r.mode} again. The same launch is already on a card. Use that card.)`;
       return { ...outcome, veloNote: oneLine(note) };
     }
     const proposal: Omit<WatsonVeloLaunchProposal, "turnId"> = {
@@ -94,12 +102,12 @@ export async function withVeloLaunch(
       vql: r.vql,
       fingerprint: result.fingerprint,
       fingerprints,
-      ...(result.risky ? { risk: { reasons: result.risky.map(plainRisk), checks: result.risky } } : {}),
+      ...(result.risky ? { risk: riskOf(result.risky) } : {}),
     };
-    const risk = proposal.risk ? { veloNote: riskyNote(proposal.risk.reasons) } : {};
+    const risk = proposal.risk ? { veloNote: riskyNote(proposal.risk.display ?? proposal.risk.reasons) } : {};
     return { ...outcome, veloProposal: proposal, ...risk };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ...outcome, veloNote: skipped(r, `the checks could not run (${msg})`) };
+    return { ...outcome, veloNote: skipped(r, `Watson could not run the checks (${msg}).`) };
   }
 }

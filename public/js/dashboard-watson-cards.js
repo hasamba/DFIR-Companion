@@ -8,9 +8,9 @@
   const HELD_SHOWN = 5;
   const FIELD_LABEL = { conclusions: "Conclusions", investigationLimitations: "Investigation limitations" };
   const PAUSED = {
-    presidio: "Presidio is holding a value for approval",
-    limit: "the Watson cost or token limit was reached",
-    errors: "several reactions failed in a row",
+    presidio: "Presidio has a value that waits for approval",
+    limit: "Watson reached its cost or token limit",
+    errors: "many reactions failed, one after the other",
   };
   const TITLE = {
     finding_new: "New finding",
@@ -24,7 +24,9 @@
     `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="${verb}" data-pid="${escAttr(pid)}">${label}</button> `;
 
   // Pending: Apply / Reject. Applied: Undo. A promotion that was undone can be applied again.
+  // A pending super-timeline promotion is an unfinished one: Apply only (the server refuses Reject).
   function verbsHtml(p) {
+    if (p.kind === "event_promote" && p.source === "supertimeline" && p.status === "pending") return btn(p.id, "apply", "Apply");
     if (p.status === "pending") return btn(p.id, "apply", "Apply") + btn(p.id, "reject", "Reject");
     if (p.status === "applied") return btn(p.id, "undo", "Undo");
     return p.kind === "event_promote" && p.status === "undone" ? btn(p.id, "apply", "Apply again") : "";
@@ -52,7 +54,7 @@
     if (!kept.length) return "";
     const cited = typeof citeEvents === "function" ? citeEvents(kept) : "";
     const n = kept.length === 1 ? "1 event" : `${esc(String(kept.length))} events`;
-    return `<div class="watson-why">Removed the finding; kept ${n} because other findings cite ${kept.length === 1 ? "it" : "them"}${cited ? `: ${cited}` : ""}</div>`;
+    return `<div class="watson-why">Watson removed the finding. It kept ${n}, because other findings cite ${kept.length === 1 ? "it" : "them"}${cited ? `: ${cited}` : ""}</div>`;
   }
 
   function stepBody(p) {
@@ -70,15 +72,43 @@
 
   function heldBody(p) {
     const rows = Array.isArray(p.events) ? p.events : [];
-    const more = rows.length - HELD_SHOWN;
     return (
-      `<div>${esc(String(rows.length))} rows held for you${p.status === "pending" ? " · Waiting for your approval" : ""}</div>` +
-      pre(rows.slice(0, HELD_SHOWN).map((e) => `[${e.severity}] ${e.description}`).join("\n")) +
-      (more > 0 ? `<div class="watson-why">and ${esc(String(more))} more</div>` : "")
+      `<div>${esc(String(rows.length))} rows wait for you${p.status === "pending" ? " · Apply or reject them" : ""}</div>` +
+      rowLines(rows)
     );
   }
 
-  const BODY = { finding_new: findingBody, finding_update: findingBody, next_step_new: stepBody, report_text: reportBody, event_promote: heldBody };
+  const rowLines = (rows) =>
+    pre(rows.slice(0, HELD_SHOWN).map((e) => `[${e.severity}] ${e.description}`).join("\n")) +
+    (rows.length > HELD_SHOWN ? `<div class="watson-why">and ${esc(String(rows.length - HELD_SHOWN))} more</div>` : "");
+
+  // Rows from the raw super-timeline. Applied or undone: the rows that landed (landedRows, else the
+  // created ids). Pending: nothing is confirmed, so the text names the cited rows and claims no promotion.
+  function promotedBody(p) {
+    const cited = Array.isArray(p.events) ? p.events : [];
+    if (p.status === "pending") {
+      return (
+        `<div>Watson started to promote ${esc(String(cited.length))} super-timeline ${cited.length === 1 ? "row" : "rows"}. ` +
+        `The promotion is not complete. Press Apply to finish it.</div>` +
+        rowLines(cited)
+      );
+    }
+    const landed = Array.isArray(p.landedRows) ? p.landedRows : null;
+    const n = landed ? landed.length : landedIds(p).length || cited.length;
+    const old = cited.length - n;
+    return (
+      `<div>Watson promoted ${esc(String(n))} super-timeline ${n === 1 ? "row" : "rows"} from its answer</div>` +
+      (old > 0 ? `<div class="watson-why">${esc(String(old))} ${old === 1 ? "row was" : "rows were"} already in the case. Undo does not remove ${old === 1 ? "it" : "them"}.</div>` : "") +
+      rowLines(landed || (landedIds(p).length ? [] : cited))
+    );
+  }
+
+  const eventBody = (p) => (p.source === "supertimeline" ? promotedBody(p) : heldBody(p));
+
+  const BODY = { finding_new: findingBody, finding_update: findingBody, next_step_new: stepBody, report_text: reportBody, event_promote: eventBody };
+
+  // The title follows the source: a super-timeline promotion is not a held paste.
+  const titleOf = (p) => (p.kind === "event_promote" && p.source === "supertimeline" ? "Promoted events" : TITLE[p.kind] || "Proposal");
 
   // uiError: the server's message when this card's action was refused (a 409 on undo).
   function watsonCardHtml(p) {
@@ -86,7 +116,7 @@
     const body = Object.prototype.hasOwnProperty.call(BODY, p.kind) ? BODY[p.kind](p) : "";
     return (
       `<div class="watson-prop" data-pid="${escAttr(p.id)}">` +
-      `<div class="watson-lbl">${esc(TITLE[p.kind] || "Proposal")} · ${esc(p.status)}</div>` +
+      `<div class="watson-lbl">${esc(titleOf(p))} · ${esc(p.status)}</div>` +
       body +
       (p.uiError ? `<div class="watson-why watson-err">${esc(p.uiError)}</div>` : "") +
       `<div>${verbsHtml(p)}</div></div>`
@@ -118,7 +148,7 @@
   // One line, only for a reason the server sets.
   function watsonPausedHtml(reason) {
     return Object.prototype.hasOwnProperty.call(PAUSED, reason)
-      ? `<div class="watson-turn watson-warn watson-paused">Watson paused its reactions: ${esc(PAUSED[reason])}. Send a message to resume.</div>`
+      ? `<div class="watson-turn watson-warn watson-paused">Watson stopped its reactions: ${esc(PAUSED[reason])}. Send a message to start them again.</div>`
       : "";
   }
 

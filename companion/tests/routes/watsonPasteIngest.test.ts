@@ -227,14 +227,14 @@ describe("Watson paste ingest", () => {
     expect(chat.pastes[0].parsed).toMatchObject({ kind: "siem", rows: 2, held: 1 });
     const system = chat.turns.find((t) => t.role === "system");
     expect(system?.text).toBe(
-      "Parsed 2 rows from events.json (siem). 1 rows the tagger graded above Info wait for your approval.",
+      "Watson read 2 rows from events.json (siem). The tagger graded 1 rows above Info. These rows wait for your approval.",
     );
     expect(system?.proposalIds).toEqual([held[0].id]);
     // The system turn comes before the round's analyst turn.
     const roles = chat.turns.map((t) => t.role);
     expect(roles.indexOf("system")).toBeLessThan(roles.indexOf("analyst"));
     // The round's prompt carries the system turn.
-    expect(JSON.stringify(h.fake.sent[0])).toContain("Parsed 2 rows from events.json (siem)");
+    expect(JSON.stringify(h.fake.sent[0])).toContain("Watson read 2 rows from events.json (siem)");
 
     // The import log records the parsed row count, not 0.
     expect(h.loggedRows()).toBe(2);
@@ -270,7 +270,7 @@ describe("Watson paste ingest", () => {
     expect(chat.proposals.find((p) => p.kind === "event_promote")?.status).toBe("applied");
     expect(mentions((await h.stateStore.load(CASE)).forensicTimeline, "ntdsutil")).toHaveLength(1);
     expect(chat.turns.at(-1)?.text).toMatch(
-      /^Watson acted on its own \(Auto mode, switched on by Robin Lead\)/,
+      /^Watson did these actions in Auto mode\. Robin Lead set Auto mode\./,
     );
     const entry = (await new ActivityLogStore(h.store).load(CASE)).find((e) => e.action === "watson.apply");
     expect(entry).toMatchObject({ actor: "Watson (Auto)" });
@@ -313,7 +313,7 @@ describe("Watson paste ingest", () => {
     await h.stateStore.saveOverview({ ...overview, findings: [finding] });
     const res = await request(h.app).post(`/cases/${CASE}/watson/proposals/${pid}/undo`);
     expect(res.status).toBe(409);
-    expect(res.body.error).toMatch(/undo the finding that cites it first/);
+    expect(res.body.error).toMatch(/Undo that finding first/);
   });
 
   it("proposes a row a lab cap lowers at the capped grade, not the tagger's", async () => {
@@ -388,9 +388,9 @@ describe("held tagger and the chat it builds", () => {
     const chat = withPasteIngest(emptyWatsonChat(), paste, { kind: "siem", rows: 500, held: many });
     expect(chat.proposals).toHaveLength(8);
     expect(chat.proposals.every((p) => p.kind === "event_promote" && p.events.length === 25)).toBe(true);
-    expect(chat.turns[0].text).toContain("230 rows the tagger graded above Info");
+    expect(chat.turns[0].text).toContain("The tagger graded 230 rows above Info");
     expect(chat.turns[0].text).toContain(
-      "Only the first 200 are proposed; the other 30 stay in the super-timeline.",
+      "Watson proposes only the first 200. The other 30 stay in the super-timeline.",
     );
     expect(chat.pastes[0].parsed).toEqual({ kind: "siem", rows: 500, held: 230 });
   });

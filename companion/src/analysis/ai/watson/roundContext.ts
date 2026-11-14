@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import type { AIProvider } from "../../../providers/provider.js";
 import type { CaseStore } from "../../../storage/caseStore.js";
 import type { AiCostStore } from "../../aiCost.js";
+import type { AnonControlStore } from "../../anonControl.js";
 import type { AssetOverridesStore } from "../../assetOverrides.js";
 import type { CaseFleetInventory } from "../../velociraptorClientStore.js";
 import { computeMainSource, type SourceFamily } from "../../caseMainSource.js";
@@ -28,10 +29,13 @@ import { timelineRow } from "./timelineLookup.js";
 import type { WatsonCoverage, WatsonPaste } from "./types.js";
 import type { LaunchContext } from "./velo/launchCheck.js";
 import type { WatsonAutoDeps } from "./autoApply.js";
+import type { WatsonRawSearchDeps } from "./superTimelineSearch.js";
 import type { WatsonReportText } from "./writers/writerTypes.js";
 
 // What a Watson round needs besides the AI-call seam, and the read-only helpers that build its
-// prompt inputs. Watson reads the forensic timeline only — never the super-timeline (spec, §7).
+// prompt inputs. Watson's packet and its lookups read the forensic timeline only. It reads the raw
+// record only through the `rawSearch` seam: one bounded, targeted search per analyst round, never in
+// a reaction round, and only through superTimelineSearch.ts (CLAUDE.md §7, phase 4).
 
 export type WatsonRoundContext = AiCallContext & {
   /** The analyst's own decisions Watson reads, as Ask did (carried by the pipeline's AI context). */
@@ -40,6 +44,8 @@ export type WatsonRoundContext = AiCallContext & {
     huntOutcomeStore?: HuntOutcomeStore;
     notebookStore?: NotebookStore;
     aiControlStore?: AiControlStore;
+    /** The case's anonymization switch (the AI-call gate reads the same store). */
+    anonStore?: AnonControlStore;
   };
   chatStore: WatsonChatStore;
   stateStore: StateStore;
@@ -68,6 +74,8 @@ export type WatsonRoundContext = AiCallContext & {
   onStateChanged?(caseId: string): void;
   /** Auto mode's seams (route-built); absent: Watson only proposes, whatever the case's mode. */
   auto?: WatsonAutoDeps;
+  /** Watson's ONE door to the raw record (route-built, D12). Absent: a super-timeline search is skipped. */
+  rawSearch?: WatsonRawSearchDeps;
 };
 
 /** Thrown before anything is saved when the case's AI switch is off. The route answers 409. */
@@ -260,10 +268,11 @@ function timelineBlock(scoped: ForensicEvent[], budget: number): { text: string;
 export async function readPasteText(cases: CaseStore, caseId: string, paste: WatsonPaste): Promise<string> {
   const name = paste.storedName;
   if (!name || name !== basename(name) || name.startsWith(".") || /[\\/:]/.test(name)) {
-    throw new Error("The pasted text cannot be read: its stored file name is not valid.");
+    throw new Error("Watson cannot read the pasted text. Its stored file name is not valid.");
   }
   const path = join(cases.importsDir(caseId), name);
   const info = await stat(path);
-  if (info.size > WATSON_PASTE_MAX_BYTES) throw new Error("The pasted text is too large to read.");
+  if (info.size > WATSON_PASTE_MAX_BYTES)
+    throw new Error("The pasted text is too large. Watson cannot read it.");
   return readFile(path, "utf8");
 }

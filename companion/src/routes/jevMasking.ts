@@ -3,6 +3,8 @@ import { anonRevision } from "../analysis/anonRevision.js";
 import { AnonControlStore } from "../analysis/anonControl.js";
 import { CustomEntitiesStore } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
+import { WatsonChatStore } from "../analysis/ai/watson/chatStore.js";
+import { WatsonRosterNames } from "../analysis/ai/watson/rosterNames.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -28,6 +30,7 @@ export function jevAnonStores(store: CaseStore) {
     anonStore: new AnonControlStore(store),
     customEntitiesStore: new CustomEntitiesStore(store),
     discoveredStore: new DiscoveredEntitiesStore(store),
+    rawNamesStore: new WatsonRosterNames(new WatsonChatStore(store)), // Watson's roster (H3)
   };
 }
 

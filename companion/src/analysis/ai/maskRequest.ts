@@ -63,14 +63,16 @@ function withPromptEntities(known: KnownEntities, extra: PromptEntities | undefi
   };
 }
 
-/** The case's known entities: derived from the state, plus custom and auto-discovered ones. */
+/** The case's known entities: derived from the state, Watson's roster, custom and auto-discovered ones. */
 export async function knownEntitiesFor(
   ctx: ProviderCallContext,
   caseId: string,
   state: InvestigationState,
   extra?: PromptEntities,
 ): Promise<KnownEntities> {
-  const known = withPromptEntities(deriveKnownEntities(state), extra);
+  // Watson's roster (H3): raw-only names an applied Watson item may carry into any prompt.
+  const rawNames = ctx.opts.rawNamesStore ? await ctx.opts.rawNamesStore.load(caseId) : undefined;
+  const known = withPromptEntities(withPromptEntities(deriveKnownEntities(state), extra), rawNames);
   const custom = ctx.opts.customEntitiesStore ? await ctx.opts.customEntitiesStore.load(caseId) : [];
   // Auto-discovered screenshot entities are tokenized too; suppressed ones are never tokenized.
   const disc = ctx.opts.discoveredStore

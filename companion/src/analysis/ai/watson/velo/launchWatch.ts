@@ -36,11 +36,11 @@ export function huntEventText(title: string, watch: WatsonLaunchWatch): string {
   if (watch.truncated) {
     const cut =
       watch.total && watch.total > rows
-        ? `first ${rows} of ${watch.total} rows imported`
-        : `first ${plural(rows, "row")} imported (the collection row cap cut the rest)`;
-    return `${name} finished: ${cut}, ${plural(watch.added ?? 0, "new event")}`;
+        ? `imported the first ${rows} of ${watch.total} rows`
+        : `imported the first ${plural(rows, "row")} (the collection row cap cut the rest)`;
+    return `${name} finished. It ${cut} and added ${plural(watch.added ?? 0, "new event")}`;
   }
-  return `${name} finished: ${plural(rows, "row")}, ${plural(watch.added ?? 0, "new event")}`;
+  return `${name} finished. It found ${plural(rows, "row")} and added ${plural(watch.added ?? 0, "new event")}`;
 }
 
 /** The applied launch with this id, or undefined. */

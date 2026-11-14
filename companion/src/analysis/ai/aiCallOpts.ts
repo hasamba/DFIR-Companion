@@ -60,6 +60,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get discoveredStore() {
       return opts.discoveredStore;
     },
+    get rawNamesStore() {
+      return opts.rawNamesStore;
+    },
     get ocrRunner() {
       return opts.ocrRunner;
     },

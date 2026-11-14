@@ -262,7 +262,7 @@ describe("autoApply", () => {
     expect(await status("wp-h")).toBe("pending");
     expect(launches).toHaveLength(0);
     expect(lastTurn(chat)).toMatchObject({ role: "system" });
-    expect(lastTurn(chat).text).toMatch(/fleet-wide hunts always wait for an analyst/);
+    expect(lastTurn(chat).text).toMatch(/A fleet-wide hunt always waits for an analyst\./);
   });
 
   it("a risky collection is held for the analyst in Auto, even from a dashboard round (Task 9)", async () => {
@@ -272,6 +272,7 @@ describe("autoApply", () => {
       risk: {
         reasons: ["runs a program on the endpoint (execve)"],
         checks: ["the VQL calls execve, which is not on Watson's read-only list"],
+        display: ["The query runs a program on the endpoint (execve)."],
       },
     };
     await seed([risky, findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish")]);
@@ -285,7 +286,7 @@ describe("autoApply", () => {
     expect(await status("wp-f")).toBe("applied");
     expect(launches).toHaveLength(0);
     expect(lastTurn(chat).text).toContain(
-      "held for your approval: risky query (runs a program on the endpoint (execve))",
+      "It waits for your approval, because the query is risky. The query runs a program on the endpoint (execve).",
     );
   });
 
@@ -298,7 +299,7 @@ describe("autoApply", () => {
     expect(await status("wp-c")).toBe("pending");
     expect(await status("wp-f")).toBe("applied");
     expect(launches).toHaveLength(0);
-    expect(lastTurn(chat).text).toMatch(/does not launch from a round it started itself/);
+    expect(lastTurn(chat).text).toMatch(/does not launch from a round that it started itself/);
   });
 
   it("two collections in one analyst round both launch (no cap), and the turn lists each exact VQL", async () => {
@@ -423,7 +424,7 @@ describe("autoApply", () => {
     ]).join("\n");
     expect(text).toContain(PSLIST);
     expect(text).not.toContain(long.slice(0, 100));
-    expect(text).toContain(`VQL: ${long.length} characters, too long to repeat here`);
+    expect(text).toContain(`VQL: ${long.length} characters. It is too long to repeat here`);
   });
 
   it("a long write never pushes a launch off the listing: it overflows into another turn", async () => {
@@ -517,8 +518,8 @@ describe("autoApply", () => {
       override async update(caseId: string, fn: (c: WatsonChat) => WatsonChat | Promise<WatsonChat>) {
         return super.update(caseId, async (c) => {
           const next = await fn(c);
-          const listing = next.turns.some((t) => t.text.startsWith("Watson acted on its own"));
-          const had = c.turns.some((t) => t.text.startsWith("Watson acted on its own"));
+          const listing = next.turns.some((t) => t.text.startsWith("Watson did these actions in Auto mode."));
+          const had = c.turns.some((t) => t.text.startsWith("Watson did these actions in Auto mode."));
           if (listing && !had && failListing > 0) {
             failListing--;
             throw new Error("EIO: disk busy");
@@ -594,6 +595,6 @@ describe("Auto on a case closed mid-round (final review G4)", () => {
     );
     expect(launches.map((l) => l.hostname)).toEqual([HOST_A]);
     expect(await status("wp-b")).toBe("pending");
-    expect(lastTurn(chat).text).toMatch(/the case was closed or archived/);
+    expect(lastTurn(chat).text).toMatch(/Someone closed or archived the case\./);
   });
 });

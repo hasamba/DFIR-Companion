@@ -496,7 +496,7 @@ describe("async command delivery", () => {
     });
     await slack("ask c1 was data exfiltrated");
     await vi.waitFor(() => expect(delivered).toHaveLength(1));
-    expect(text(0)).toContain("AI provider not configured for Watson.");
+    expect(text(0)).toContain("Watson has no AI provider. Set one up in Settings.");
     expect(asked).toEqual([]);
   });
 

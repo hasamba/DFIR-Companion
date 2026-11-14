@@ -604,7 +604,7 @@ describe("runWatsonRound", () => {
     expect(h.provider.sent[0].userPrompt).not.toContain("<<<PASTE");
     expect(chat.turns.map((t) => t.role)).toEqual(["analyst", "watson", "system"]);
     expect(chat.turns.at(-1)?.text).toBe(
-      "Watson could not read x. It stays stored as evidence — ask Watson to search it.",
+      "Watson could not read x. The file stays in the case as evidence. Ask Watson to search it.",
     );
   });
 
@@ -619,7 +619,7 @@ describe("runWatsonRound", () => {
     expect(chat.turns.map((t) => t.text)).toEqual([
       "go on",
       "answered anyway",
-      "Watson could not read gone.txt. It stays stored as evidence — ask Watson to search it.",
+      "Watson could not read gone.txt. The file stays in the case as evidence. Ask Watson to search it.",
     ]);
     expect(chat.unreadPasteIds).toEqual([]);
     expect(h.provider.sent[0].userPrompt).toContain("[p8] gone.txt (1 lines");
@@ -643,7 +643,7 @@ describe("runWatsonRound", () => {
     const failed = await runWatsonRound(h.ctx, CASE, { text: "look" });
     expect(failed.unreadPasteIds).toEqual([]);
     expect(failed.turns.at(-1)?.text).toBe(
-      "Watson could not read netstat.txt. It stays stored as evidence — ask Watson to search it.",
+      "Watson could not read netstat.txt. The file stays in the case as evidence. Ask Watson to search it.",
     );
     const chat = await runWatsonRound(h.ctx, CASE, { text: "next" });
     expect(h.provider.sent).toHaveLength(1);
@@ -762,7 +762,7 @@ describe("reaction rounds (spec §4.6)", () => {
     expect(two.reactionsPaused).toBe("errors");
     expect(two.turns.at(-1)).toMatchObject({
       role: "system",
-      text: "Watson paused automatic reactions after repeated errors. Send a message to resume.",
+      text: "Watson stopped its automatic reactions because of many errors. Send a message to start them again.",
     });
     const message = await runWatsonRound(h.ctx, CASE, { text: "carry on" });
     expect(message.reactionsPaused).toBeUndefined();

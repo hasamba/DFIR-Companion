@@ -23,7 +23,7 @@ function sameStep(a: NextStep, b: NextStep): boolean {
 async function apply(deps: WriterDeps, caseId: string, p: WatsonNextStepProposal) {
   const overview = await deps.stateStore.loadOverview(caseId);
   if (overview.nextSteps.some((s) => s.id === p.targetId)) {
-    throw new WatsonProposalConflict(`Next step ${p.targetId} is already in the case; nothing was written`);
+    throw new WatsonProposalConflict(`Next step ${p.targetId} is already in the case. Watson wrote nothing`);
   }
   const step: NextStep = { ...p.after, id: p.targetId, author: "watson" };
   const state: InvestigationState = { ...overview, nextSteps: [...overview.nextSteps, step] };
@@ -37,7 +37,7 @@ async function undo(deps: WriterDeps, caseId: string, p: WatsonNextStepProposal)
   const stored = overview.nextSteps.find((s) => s.id === p.targetId);
   if (!stored || !sameStep(stored, { ...p.after, author: "watson" })) {
     throw new WatsonProposalConflict(
-      `Next step ${p.targetId} changed or is gone since it was applied; nothing was changed`,
+      `Someone changed or removed next step ${p.targetId} after Watson applied it. Watson changed nothing`,
     );
   }
   const state: InvestigationState = {

@@ -134,7 +134,9 @@ describe("G7 — a failed result save after the ingest", () => {
     const p = await stored();
     expect(p.watch?.state).toBe("finished");
     expect(p.watch?.proposalIds).toHaveLength(1);
-    expect(await huntTexts()).toEqual(["Watson's hunt Process listing finished: 3 rows, 1 new event"]);
+    expect(await huntTexts()).toEqual([
+      "Watson's hunt Process listing finished. It found 3 rows and added 1 new event",
+    ]);
   });
 
   it("is finished from the stage after a restart, once", async () => {
@@ -164,7 +166,7 @@ describe("G18 — a timeout after failed status reads", () => {
     await w.resume(CASE);
     const [text] = await huntTexts();
     expect(text).toMatch(/timed out: Watson could not read the collection's status/);
-    expect(text).toMatch(/The results are in Velociraptor and may not have been imported/);
+    expect(text).toMatch(/The results are in Velociraptor\. Watson does not know if the case has them/);
     expect(text).not.toMatch(/failed: Watson could not/);
   });
 });

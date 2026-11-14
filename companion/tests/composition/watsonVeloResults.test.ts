@@ -200,7 +200,7 @@ describe("a Watson fleet hunt's collect", () => {
     events.importChanged(CASE); // the collect's onImportMeta comes first
     await noteWatsonFleetResult(chatStore, events.wake, CASE, { huntId: "H.SAMPLE1", rows: 3, added: 2 });
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing finished: 3 rows, 2 new events",
+      "Watson's hunt Process listing finished. It found 3 rows and added 2 new events",
     ]);
     await r.fire();
     expect(rounds).toHaveLength(1);
@@ -260,7 +260,7 @@ describe("a Watson single-host collection", () => {
     expect(c.pastes.map((p) => p.id)).toEqual(["wf-1"]);
     const events = await huntEvents();
     expect(events.map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing finished: 3 rows, 1 new event",
+      "Watson's hunt Process listing finished. It found 3 rows and added 1 new event",
     ]);
     expect(events[0].proposalIds).toEqual([promote[0].id]);
     expect((await stored("wp-coll")).watch).toMatchObject({
@@ -414,7 +414,7 @@ describe("a Watson single-host collection", () => {
     h.clock.now = T0 + WATSON_WATCH_DEFAULT_MS + WATSON_WATCH_GRACE_MS + 1;
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing did not complete: Watson could not read the results: 7 rows were collected but none could be read (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
+      "Watson's hunt Process listing did not complete: Watson could not read the results: Velociraptor collected 7 rows, but Watson could not read them (flow F.SAMPLE on web01.example.com). The results are in Velociraptor. Watson does not know if the case has them",
     ]);
   });
 
@@ -434,7 +434,7 @@ describe("a Watson single-host collection", () => {
     await h.t.runAll(h.watcher);
     expect(h.ingests).toBe(1);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing finished: 3 rows, 1 new event",
+      "Watson's hunt Process listing finished. It found 3 rows and added 1 new event",
     ]);
   });
 
@@ -454,7 +454,7 @@ describe("a Watson single-host collection", () => {
     await h.watcher.resume(CASE);
     expect(h.ingests).toBe(0);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing did not complete: Watson was interrupted while importing the results of flow F.SAMPLE on web01.example.com: rows may have been imported, but rows the tagger graded above Info were not offered for approval. Re-import the flow from Velociraptor to get them",
+      "Watson's hunt Process listing did not complete: Watson stopped before it finished the import of flow F.SAMPLE on web01.example.com. Watson does not know if the case has some of the rows. Watson did not show the rows that the tagger graded above Info for approval. Import the flow from Velociraptor again to get them",
     ]);
   });
 
@@ -483,7 +483,7 @@ describe("a Watson single-host collection", () => {
     h.watcher.watch(CASE, "wp-coll");
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing did not complete: Watson could not import the results: importer crashed (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
+      "Watson's hunt Process listing did not complete: Watson could not import the results: importer crashed (flow F.SAMPLE on web01.example.com). The results are in Velociraptor. Watson does not know if the case has them",
     ]);
   });
 
@@ -494,7 +494,7 @@ describe("a Watson single-host collection", () => {
     await h.watcher.resume(CASE);
     expect(h.ingests).toBe(1);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing finished: 3 rows, 1 new event",
+      "Watson's hunt Process listing finished. It found 3 rows and added 1 new event",
     ]);
   });
 
@@ -507,7 +507,7 @@ describe("a Watson single-host collection", () => {
     h.watcher.watch(CASE, "wp-coll");
     await h.t.runAll(h.watcher);
     expect((await huntEvents()).map((e) => e.text)).toEqual([
-      "Watson's hunt Process listing finished: first 3 of 5000 rows imported, 1 new event",
+      "Watson's hunt Process listing finished. It imported the first 3 of 5000 rows and added 1 new event",
     ]);
   });
 
@@ -536,7 +536,7 @@ describe("a Watson single-host collection", () => {
     await h.t.runAll(h.watcher);
     expect(h.ingests).toBe(0);
     expect((await huntEvents())[0].text).toBe(
-      "Watson's hunt Process listing did not complete: The case is closed, so Watson did not import the results (flow F.SAMPLE on web01.example.com). The results are in Velociraptor and may not have been imported into the case",
+      "Watson's hunt Process listing did not complete: The case is closed, so Watson did not import the results (flow F.SAMPLE on web01.example.com). The results are in Velociraptor. Watson does not know if the case has them",
     );
   });
 });

@@ -58,6 +58,9 @@ export interface WatsonAutoRound {
 }
 
 const isHeldPromotion = (p: WatsonProposal): boolean => p.kind === "event_promote" && p.status === "pending";
+/** The round's own super-timeline promotion: applied by the round; a stuck one waits for an analyst's Apply. */
+const isRoundPromotion = (p: WatsonProposal): boolean =>
+  p.kind === "event_promote" && p.source === "supertimeline";
 
 /** The round's eligible proposals, in chat order. */
 export function eligibleProposals(chat: WatsonChat, round: WatsonAutoRound): WatsonProposal[] {
@@ -66,24 +69,31 @@ export function eligibleProposals(chat: WatsonChat, round: WatsonAutoRound): Wat
   const held = new Set(round.heldIds ?? []);
   const pasted = new Set(round.paste?.proposalIds ?? []);
   return chat.proposals.filter((p) => {
-    if (p.status !== "pending") return false;
+    if (p.status !== "pending" || isRoundPromotion(p)) return false;
     if (own.has(p.id) && p.turnId === round.turnId) return true;
     if (held.has(p.id)) return isHeldPromotion(p);
-    return pasted.has(p.id) && isHeldPromotion(p) && "pasteId" in p && p.pasteId === round.paste?.pasteId;
+    const pasteId = "pasteId" in p ? p.pasteId : undefined;
+    return pasted.has(p.id) && isHeldPromotion(p) && !!pasteId && pasteId === round.paste?.pasteId;
   });
 }
 
-/** Why Auto leaves a proposal for an analyst; null when Auto applies it. */
+/** A risky launch waits, in STE; a proposal saved before Task 10 has no display copy. */
+const riskyWait = (risk: { reasons: readonly string[]; display?: readonly string[] }): string =>
+  risk.display?.length
+    ? `It waits for your approval, because the query is risky. ${risk.display.join(" ")}`
+    : `It waits for your approval, because the query is risky (${risk.reasons.join("; ")}).`;
+
+/** Why Auto leaves a proposal for an analyst, in full sentences; null when Auto applies it. */
 function waitReason(p: WatsonProposal, round: WatsonAutoRound): string | null {
   if (p.kind !== "velo_launch") return null;
   // Task 9: a risky query waits for an analyst in every mode and from every round source.
-  if (p.risk) return `held for your approval: risky query (${p.risk.reasons.join("; ")})`;
-  if (p.mode !== "collection") return "fleet-wide hunts always wait for an analyst";
-  if (round.reaction) return "Watson does not launch from a round it started itself";
+  if (p.risk) return riskyWait(p.risk);
+  if (p.mode !== "collection") return "A fleet-wide hunt always waits for an analyst.";
+  if (round.reaction) return "Watson does not launch from a round that it started itself.";
   if (round.source === "slash")
-    return "Watson does not launch from a chat-bot command; approve it in the Watson panel";
+    return "Watson does not launch from a chat-bot command. Approve it in the Watson panel.";
   if (round.source !== "dashboard")
-    return "Watson launches on its own only from a message sent in the Watson panel; approve it there";
+    return "Watson launches on its own only from a message in the Watson panel. Approve it there.";
   return null;
 }
 
@@ -103,7 +113,9 @@ function what(p: WatsonProposal): string {
     case "report_text":
       return `report text (${p.field === "conclusions" ? "Conclusions" : "Investigation limitations"}): ${p.after}`;
     case "event_promote":
-      return `promotion of ${p.events.length} held row${p.events.length === 1 ? "" : "s"}`;
+      return p.source === "supertimeline"
+        ? `promotion of ${p.events.length} super-timeline row${p.events.length === 1 ? "" : "s"} Watson cited`
+        : `promotion of ${p.events.length} held row${p.events.length === 1 ? "" : "s"}`;
     case "velo_launch":
       return p.mode === "collection"
         ? `Velociraptor collection on ${p.hostname ?? "?"}: ${p.title}`
@@ -124,8 +136,8 @@ const vqlOf = (p: WatsonProposal): string | undefined => (p.kind === "velo_launc
  * off the end. A VQL too long for a turn of its own is pointed at, never cut.
  */
 export function listingTurns(by: string, listed: readonly Listed[]): string[] {
-  const head = `Watson acted on its own (Auto mode, switched on by ${by.slice(0, 200)}):`;
-  const more = "(Watson's Auto actions, continued)";
+  const head = `Watson did these actions in Auto mode. ${by.slice(0, 200)} set Auto mode.`;
+  const more = "More Auto actions:";
   const turns: string[][] = [[head]];
   let used = head.length;
   const push = (text: string) => {
@@ -139,7 +151,7 @@ export function listingTurns(by: string, listed: readonly Listed[]): string[] {
   for (const { line, vql } of listed) {
     const room = WATSON_TURN_TEXT_MAX - Math.max(head.length, more.length) - 1;
     const whole = vql === undefined ? line : `${line}\n  VQL:\n${vql}`;
-    const pointer = `${line.slice(0, room - 120)}\n  VQL: ${vql?.length ?? 0} characters, too long to repeat here; shown whole on the launch card.`;
+    const pointer = `${line.slice(0, room - 120)}\n  VQL: ${vql?.length ?? 0} characters. It is too long to repeat here. The launch card shows all of it.`;
     if (whole.length <= room) push(whole);
     else if (vql !== undefined) push(pointer);
     else for (let i = 0; i < line.length; i += room) push(line.slice(i, i + room)); // a long write's text, in parts
@@ -175,10 +187,10 @@ async function applyOne(
   } catch (err) {
     if (err instanceof WatsonLaunchUncertain) {
       return listed(
-        `- Could not confirm the launch of ${what(p)} — check Velociraptor, then mark it launched or try again.`,
+        `- Watson could not confirm the launch of ${what(p)}. Check Velociraptor. Then mark it as launched or try again.`,
       );
     }
-    return listed(`- Did not apply ${what(p)}: ${errText(err)}. It stays pending.`);
+    return listed(`- Watson did not apply ${what(p)}: ${errText(err)}. It stays pending.`);
   }
 }
 
@@ -205,18 +217,18 @@ export async function autoApply(
   const lines: Listed[] = [];
   let stateChanged = false;
   let stopped = false;
-  let stopReason = "Auto mode is no longer on for this case";
+  let stopReason = "Auto mode is no longer on for this case.";
   for (const p of todo) {
     if (!stopped && deps.recheck && !waitReason(p, round)) {
       const now = await deps.recheck().catch(() => null);
       stopped = !autoOn(now);
-      if (now?.frozen) stopReason = "the case was closed or archived";
+      if (now?.frozen) stopReason = "Someone closed or archived the case.";
     }
     const wait = stopped ? stopReason : waitReason(p, round);
     if (wait) {
       const vql = vqlOf(p);
       lines.push({
-        line: `- Left for an analyst: ${what(p)} — ${wait}.`,
+        line: `- Watson left this for an analyst: ${what(p)}. ${wait}`,
         ...(vql !== undefined ? { vql } : {}),
       });
       continue;
@@ -247,7 +259,7 @@ const unsavedListings = new Map<string, WatsonTurn[]>();
 export class WatsonAutoListingUnsaved extends Error {
   constructor(cause: unknown) {
     super(
-      `Watson's Auto actions were applied, but their listing could not be saved (kept for the next round): ${errText(cause)}`,
+      `Watson applied its Auto actions, but it could not save their list. Watson keeps the list for the next round: ${errText(cause)}`,
     );
     this.name = "WatsonAutoListingUnsaved";
   }
