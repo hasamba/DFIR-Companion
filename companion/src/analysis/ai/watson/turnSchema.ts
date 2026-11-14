@@ -23,6 +23,7 @@ const answerSchema = z.object({
   answer: z.string(),
   pointer: z.string(),
   relatedEventIds: z.array(z.string()).catch([]),
+  matchesQuestionId: z.string().optional().catch(undefined),
 });
 
 export const turnSchema = z.object({

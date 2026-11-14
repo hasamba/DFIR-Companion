@@ -121,3 +121,29 @@ describe("sanitizeWatsonReply", () => {
     expect(r.questionUpdates).toHaveLength(1);
   });
 });
+
+describe("the answer's link to an existing key question", () => {
+  const ans = (matchesQuestionId: unknown) =>
+    parse({
+      answer: {
+        question: "Do we know the initial access?",
+        status: "unknown",
+        answer: "Not yet.",
+        pointer: "",
+        relatedEventIds: [],
+        matchesQuestionId,
+      },
+    });
+  const sanitized = (matchesQuestionId: unknown) =>
+    sanitizeWatsonReply(ans(matchesQuestionId), qs, ps, new Set()).answer;
+
+  it("keeps an id that is on the case's board", () => {
+    expect(sanitized("q1")?.matchesQuestionId).toBe("q1");
+  });
+  it("drops an id that is not on the board, and junk", () => {
+    expect(sanitized("q-invented")).not.toHaveProperty("matchesQuestionId");
+    expect(sanitized(7)).not.toHaveProperty("matchesQuestionId");
+    expect(sanitized("")).not.toHaveProperty("matchesQuestionId");
+    expect(sanitized(undefined)).not.toHaveProperty("matchesQuestionId");
+  });
+});

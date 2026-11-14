@@ -63,12 +63,17 @@
 
   // The answer to a free-form question: badge, answer, where to look, cited events, the add button.
   // citeEvents (dashboard-ioc-provenance.js) escapes the ids and links them to the timeline.
-  function answerHtml(t, readOnly) {
+  // ctx: { questions (the board), addError (the server's refusal of this card's add) }. An answer
+  // Watson linked to a key question still on the board names it instead of offering to add it.
+  function answerHtml(t, readOnly, ctx) {
     const a = t.answer;
     if (!a) return "";
     const ids = Array.isArray(a.relatedEventIds) ? a.relatedEventIds : [];
     const cited = typeof citeEvents === "function" ? citeEvents(ids) : "";
     const used = !!t.answerProposalId;
+    const board = ctx && Array.isArray(ctx.questions) ? ctx.questions : [];
+    const linked = a.matchesQuestionId ? board.find((q) => q && q.id === a.matchesQuestionId) : null;
+    const err = ctx && ctx.addError ? `<div class="watson-why watson-err">${esc(ctx.addError)}</div>` : "";
     return (
       `<div class="watson-ans"><div>${statusBadge(a.status)} <strong>${esc(a.question)}</strong></div>` +
       `<div>${esc(a.answer || "(no answer)")}</div>` +
@@ -76,9 +81,11 @@
       (cited ? `<div class="watson-why">cited events: ${cited}</div>` : "") +
       (readOnly
         ? ""
-        : `<div><button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="addQuestion" data-tid="${escAttr(t.id)}"` +
+        : linked
+          ? `<div class="watson-why watson-linked">Key question on the board: ${esc(linked.question)}</div>`
+          : `<div><button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="addQuestion" data-tid="${escAttr(t.id)}"` +
           ` title="Add this to the case's open Key Investigative Questions, with the pointer"${used ? " disabled" : ""}>` +
-          `${used ? "Added to open questions" : "Add to open questions"}</button></div>`) +
+          `${used ? "Added to open questions" : "Add to open questions"}</button></div>${err}`) +
       `</div>`
     );
   }
@@ -135,7 +142,7 @@
   }
 
   // readOnly: an older turn paged back from the history file. It shows no proposal or add button.
-  function turnHtml(t, proposals, readOnly) {
+  function turnHtml(t, proposals, readOnly, ctx) {
     const reacted = t.role === "system" && String(t.text).startsWith("Watson reacted to");
     const cls = "watson-turn watson-" + (t.error ? "warn" : t.role) + (reacted ? " watson-reacted" : "");
     const who = t.role === "analyst" ? esc(t.actor || "You") : t.role === "system" ? "System" : "Watson";
@@ -145,7 +152,7 @@
       `<div class="${cls}"><div class="watson-who">${who}</div>` +
       (t.workingOn ? `<div class="watson-meta"><b>Working on:</b> ${esc(t.workingOn)}</div>` : "") +
       (autoList(t) || textHtml(t)) +
-      answerHtml(t, readOnly) +
+      answerHtml(t, readOnly, ctx) +
       coverageHtml(t.coverage) +
       (t.learned ? `<div class="watson-meta"><b>Learned:</b> ${esc(t.learned)}</div>` : "") +
       requestHtml(t.request) +

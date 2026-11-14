@@ -41,6 +41,8 @@ export interface WatsonAnswer {
   pointer: string;
   /** Forensic-timeline event ids the answer cites, already checked against the case. */
   relatedEventIds: string[];
+  /** The id of the key question on the board that asks the same thing; checked against the case. */
+  matchesQuestionId?: string;
 }
 
 export interface WatsonTurn {

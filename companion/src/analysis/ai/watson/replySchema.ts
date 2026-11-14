@@ -63,6 +63,7 @@ const answerSchema = z
     answer: str,
     pointer: str,
     relatedEventIds: lenientArray(z.string()),
+    matchesQuestionId: z.string().optional().catch(undefined),
   })
   .nullable()
   .catch(null);
@@ -129,14 +130,17 @@ function sanitizeRequest(req: WatsonRequest | null, veloConnected: boolean): Wat
 /**
  * The free-form answer: cited ids kept only when they are in the case's forensic timeline, texts
  * capped, and `unanswerable` turned into `unknown` (only an approved Watson proposal may set it).
- * An answer with no question is no answer.
+ * An answer with no question is no answer. A link to a key question not on the board is dropped.
  */
 export function sanitizeAnswer(
   answer: WatsonAnswer | null,
   knownEventIds: ReadonlySet<string>,
+  knownQuestionIds: ReadonlySet<string> = new Set(),
 ): WatsonAnswer | null {
   if (!answer || answer.question.trim() === "") return null;
+  const link = answer.matchesQuestionId;
   return {
+    ...(link && knownQuestionIds.has(link) ? { matchesQuestionId: link } : {}),
     question: answer.question.slice(0, QUESTION_MAX),
     status: answer.status === "unanswerable" ? "unknown" : answer.status,
     answer: answer.answer.slice(0, ANSWER_MAX),
@@ -174,7 +178,7 @@ export function sanitizeWatsonReply(
     newQuestions: reply.newQuestions.filter((q) => q.question.trim() !== "").slice(0, MAX_NEW_QUESTIONS),
     request: sanitizeRequest(reply.request, veloConnected),
     search,
-    answer: sanitizeAnswer(reply.answer, knownEventIds),
+    answer: sanitizeAnswer(reply.answer, knownEventIds, knownQuestionIds),
     writes: sanitizeWrites(reply.writes, knownEventIds, citations),
   };
 }

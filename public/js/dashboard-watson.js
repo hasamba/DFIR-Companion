@@ -23,7 +23,7 @@
   let wSeq = 0;
   let wSeen = 0;
   let wNotice = null; // { text } — a warning shown under the log
-  const wCardErr = new Map(); // proposal id -> the server's message when its action was refused (shown on the card)
+  const wCardErr = new Map(); // proposal id (or "t:"+turn id for an add) -> the refusal message, shown on the card
   let wEmpty = false; // the case has no forensic events and no findings (#2468)
   let wNoAi = false; // the server has no Watson provider: the panel is hidden
   let wState = null; // "rail" | "open" | "full", seeded from storage on first use (a blocked store still switches)
@@ -46,7 +46,7 @@
     const older = wEarlier.map((t) => watsonTurnHtml(t, [], true)).join("");
     const more = wMore === true || (wMore === null && wChat.turns.length >= CHAT_CAP);
     const props = wCardErr.size ? wChat.proposals.map((p) => (wCardErr.has(p.id) ? { ...p, uiError: wCardErr.get(p.id) } : p)) : wChat.proposals;
-    const turns = (more ? watsonEarlierButtonHtml() : "") + older + wChat.turns.map((t) => watsonTurnHtml(t, props)).join("");
+    const turns = (more ? watsonEarlierButtonHtml() : "") + older + wChat.turns.map((t) => watsonTurnHtml(t, props, false, { questions: wQuestions, addError: wCardErr.get("t:" + t.id) })).join("");
     const hint = wChat.turns.length
       ? ""
       : wEmpty
@@ -302,7 +302,7 @@
   }
 
   const proposal = (el, verb) => decide(`/proposals/${encodeURIComponent(el.dataset.pid)}/${verb}`, el.dataset.pid, el);
-  const addQuestion = (el) => decide(`/turns/${encodeURIComponent(el.dataset.tid)}/add-question`);
+  const addQuestion = (el) => decide(`/turns/${encodeURIComponent(el.dataset.tid)}/add-question`, "t:" + el.dataset.tid, el);
   // Older turns from the full history file, above the oldest one shown. Read-only.
   async function loadEarlier() {
     const caseId = currentCase();

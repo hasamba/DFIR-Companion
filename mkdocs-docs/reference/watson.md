@@ -87,7 +87,7 @@ Watson replaced the **Ask the LLM** panel. Type any question about the case in t
 - the answer, with clickable citations to the forensic events it is based on;
 - a pointer: where to look or what to collect next when the case cannot settle it yet.
 
-Choose **Add to open questions** to put the question on the Key Questions board. Your click is the approval: the question is added at once, and you can choose **Undo** like any applied proposal. Choose **New thread** to start a fresh conversation; Watson's memory of the case stays.
+Choose **Add to open questions** to put the question on the Key Questions board. Your click is the approval: the question is added at once, and you can choose **Undo** like any applied proposal. When your question is already on the board, even in other words, the card names that key question instead of offering the button, and an add of a question already on the board is refused with a message on the card. Choose **New thread** to start a fresh conversation; Watson's memory of the case stays.
 
 On a case with no forensic-timeline events and no findings, the chat says so: an answer would have nothing to read until you import evidence.
 

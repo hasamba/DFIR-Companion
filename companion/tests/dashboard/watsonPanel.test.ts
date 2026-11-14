@@ -501,7 +501,9 @@ describe("rail button, failed sends and paste limits", () => {
     expect(html).toContain('data-w="log"');
   });
   it("the size controls are icons with tooltips, and the rail shows an expand icon at its top", () => {
-    expect(html).toMatch(/class="watson-rail"[^>]*>` \+\s*`<span class="watson-rail-expand"[^>]*>\$\{ICON\.expand\}/);
+    expect(html).toMatch(
+      /class="watson-rail"[^>]*>` \+\s*`<span class="watson-rail-expand"[^>]*>\$\{ICON\.expand\}/,
+    );
     for (const [verb, tip, icon] of [
       ["fullScreen", "Full screen", "full"],
       ["exitFullScreen", "Exit full screen", "exitFull"],
@@ -829,6 +831,53 @@ describe("a free-form answer in the Watson log", () => {
     expect(calls).toEqual(["POST /cases/c1/watson/turns/wt-9/add-question"]);
     expect(board.innerHTML).toContain("ADDED QUESTION");
     expect(log.innerHTML).toMatch(/data-w-verb="addQuestion"[^>]* disabled/);
+  });
+
+  it("shows the linked key question (escaped) instead of Add to open questions", () => {
+    const { api, log, fireState } = setup();
+    api.initWatson();
+    fireState({
+      keyQuestions: [
+        {
+          id: "q-ia",
+          question: "What was the <b>initial</b> access?",
+          status: "unknown",
+          answer: "",
+          pointer: "",
+        },
+      ],
+    });
+    api.renderWatson(
+      chatWith([answerTurn({ answer: { ...answerTurn().answer, matchesQuestionId: "q-ia" } })]),
+    );
+    expect(log.innerHTML).toContain(
+      "Key question on the board: What was the &lt;b&gt;initial&lt;/b&gt; access?",
+    );
+    expect(log.innerHTML).not.toContain('data-w-verb="addQuestion"');
+  });
+
+  it("keeps the Add button when the linked question is no longer on the board", () => {
+    const { api, log } = setup();
+    api.renderWatson(
+      chatWith([answerTurn({ answer: { ...answerTurn().answer, matchesQuestionId: "q-gone" } })]),
+    );
+    expect(log.innerHTML).toContain('data-w-verb="addQuestion"');
+    expect(log.innerHTML).not.toContain("Key question on the board");
+  });
+
+  it("shows a refused add's message on the answer card, escaped", async () => {
+    const fetch = async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: "This question is already on the board: <i>Q</i>" }),
+    });
+    const { api, log } = setup({ fetch });
+    api.renderWatson(chatWith([answerTurn()]));
+    await api.watsonAct({ dataset: { wVerb: "addQuestion", tid: "wt-9" } });
+    expect(log.innerHTML).toContain(
+      '<div class="watson-why watson-err">This question is already on the board: &lt;i&gt;Q&lt;/i&gt;</div>',
+    );
+    expect(log.innerHTML).not.toContain('watson-turn watson-warn"><div class="watson-text">This question');
   });
 
   it("New thread posts and shows the system turn", async () => {

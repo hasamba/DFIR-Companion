@@ -264,6 +264,15 @@ describe("getWatsonPrompt", () => {
   });
 });
 
+describe("getWatsonPrompt: an answer that matches a key question", () => {
+  it("asks Watson to link the answer to the existing key question and not suggest adding it", () => {
+    const p = getWatsonPrompt();
+    expect(p).toContain('"matchesQuestionId"');
+    expect(p).toMatch(/same as a Key Question on the board/);
+    expect(p).toMatch(/do not suggest adding it/i);
+  });
+});
+
 describe("ensureStandardQuestions", () => {
   it("adds six pinned watson questions to an empty list", () => {
     const out = ensureStandardQuestions([]);
