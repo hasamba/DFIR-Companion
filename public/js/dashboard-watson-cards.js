@@ -72,24 +72,34 @@
 
   function heldBody(p) {
     const rows = Array.isArray(p.events) ? p.events : [];
-    const more = rows.length - HELD_SHOWN;
     return (
       `<div>${esc(String(rows.length))} rows held for you${p.status === "pending" ? " · Waiting for your approval" : ""}</div>` +
-      pre(rows.slice(0, HELD_SHOWN).map((e) => `[${e.severity}] ${e.description}`).join("\n")) +
-      (more > 0 ? `<div class="watson-why">and ${esc(String(more))} more</div>` : "")
+      rowLines(rows)
     );
   }
 
-  // Rows Watson cited from the raw super-timeline. A pending record is a promotion the server did not finish.
+  const rowLines = (rows) =>
+    pre(rows.slice(0, HELD_SHOWN).map((e) => `[${e.severity}] ${e.description}`).join("\n")) +
+    (rows.length > HELD_SHOWN ? `<div class="watson-why">and ${esc(String(rows.length - HELD_SHOWN))} more</div>` : "");
+
+  // Rows from the raw super-timeline. Applied or undone: the rows that landed (landedRows, else the
+  // created ids). Pending: nothing is confirmed, so the text names the cited rows and claims no promotion.
   function promotedBody(p) {
-    const rows = Array.isArray(p.events) ? p.events : [];
-    const more = rows.length - HELD_SHOWN;
-    const n = rows.length;
+    const cited = Array.isArray(p.events) ? p.events : [];
+    if (p.status === "pending") {
+      return (
+        `<div>Watson started to promote ${esc(String(cited.length))} super-timeline ${cited.length === 1 ? "row" : "rows"}. ` +
+        `Promotion not finished. Press Apply to finish it.</div>` +
+        rowLines(cited)
+      );
+    }
+    const landed = Array.isArray(p.landedRows) ? p.landedRows : null;
+    const n = landed ? landed.length : landedIds(p).length || cited.length;
+    const old = cited.length - n;
     return (
-      `<div>Promoted ${esc(String(n))} super-timeline ${n === 1 ? "row" : "rows"} Watson cited</div>` +
-      (p.status === "pending" ? `<div class="watson-why">Promotion not finished. Press Apply to finish it.</div>` : "") +
-      pre(rows.slice(0, HELD_SHOWN).map((e) => `[${e.severity}] ${e.description}`).join("\n")) +
-      (more > 0 ? `<div class="watson-why">and ${esc(String(more))} more</div>` : "")
+      `<div>Promoted ${esc(String(n))} super-timeline ${n === 1 ? "row" : "rows"} from Watson's answer</div>` +
+      (old > 0 ? `<div class="watson-why">${esc(String(old))} ${old === 1 ? "row was" : "rows were"} already in the case. Undo does not remove ${old === 1 ? "it" : "them"}.</div>` : "") +
+      rowLines(landed || (landedIds(p).length ? [] : cited))
     );
   }
 

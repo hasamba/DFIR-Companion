@@ -336,6 +336,7 @@ describe("super-timeline search and promotion cards", () => {
       source: "supertimeline",
       events: [{ id: "r1", severity: "Info", description: "<img src=x onerror=alert(1)>" }],
       createdEventIds: ["r1"],
+      landedRows: [{ id: "r1", severity: "Info", description: "<img src=x onerror=alert(1)>" }],
       ...over,
     });
 
@@ -385,20 +386,53 @@ describe("super-timeline search and promotion cards", () => {
   it("shows the promoted rows escaped, with Undo", () => {
     const html = cards().watsonCardHtml(raw("applied"));
     expect(html).toContain("Promoted events · applied");
-    expect(html).toContain("Promoted 1 super-timeline row Watson cited");
+    expect(html).toContain("Promoted 1 super-timeline row from Watson's answer");
     expect(html).not.toContain("<img");
     expect(html).toContain('data-w-verb="undo"');
     const many = cards().watsonCardHtml(
       raw("applied", {
         events: Array.from({ length: 7 }, (_, i) => ({ id: `r${i}`, severity: "Info", description: "d" })),
+        landedRows: Array.from({ length: 7 }, (_, i) => ({
+          id: `r${i}`,
+          severity: "Info",
+          description: "d",
+        })),
       }),
     );
-    expect(many).toContain("Promoted 7 super-timeline rows");
+    expect(many).toContain("Promoted 7 super-timeline rows from Watson's answer");
     expect(many).toContain("and 2 more");
   });
 
   it("offers an undone promotion Apply again", () => {
     expect(cards().watsonCardHtml(raw("undone"))).toContain("Apply again");
+  });
+
+  it("counts and lists only the rows that landed, and says how many were already there", () => {
+    const row = (id: string) => ({ id, severity: "High", description: `desc-${id}` });
+    const html = cards().watsonCardHtml(
+      raw("applied", {
+        events: [row("a"), row("b"), row("c")],
+        landedRows: [row("a"), row("b")],
+        createdEventIds: ["a", "b"],
+      }),
+    );
+    expect(html).toContain("Promoted 2 super-timeline rows from Watson's answer");
+    expect(html).toContain("1 row was already in the case. Undo does not remove it.");
+    expect(html).toContain("desc-b");
+    expect(html).not.toContain("desc-c");
+    const undone = cards().watsonCardHtml(
+      raw("undone", { events: [row("a"), row("b")], landedRows: [row("a")], createdEventIds: ["a"] }),
+    );
+    expect(undone).toContain("Promoted 1 super-timeline row from");
+    expect(undone).not.toContain("desc-b");
+  });
+
+  it("does not claim a promotion while the record is pending", () => {
+    const html = cards().watsonCardHtml(raw("pending"));
+    expect(html).toContain(
+      "Watson started to promote 1 super-timeline row. Promotion not finished. Press Apply to finish it.",
+    );
+    expect(html).not.toContain("Promoted 1");
   });
 
   it("gives a stuck pending promotion only Apply, and shows the server's refusal", () => {
