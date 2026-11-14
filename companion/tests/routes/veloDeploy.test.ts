@@ -4,6 +4,11 @@ import { join } from "node:path";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
+import { AiControlStore } from "../../src/analysis/aiControl.js";
+import { AiCostStore } from "../../src/analysis/aiCost.js";
+import { AnonControlStore } from "../../src/analysis/anonControl.js";
+import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
+import type { AIProvider, AnalyzeResult } from "../../src/providers/provider.js";
 import { WatsonChatStore } from "../../src/analysis/ai/watson/chatStore.js";
 import type { WatsonVeloLaunchProposal } from "../../src/analysis/ai/watson/types.js";
 import { launchFingerprints } from "../../src/analysis/ai/watson/velo/fingerprintIndex.js";
@@ -38,7 +43,34 @@ const veloCfg: VelociraptorApiConfig = {
   maxOutputBytes: 1024 * 1024,
 };
 
-async function harness(opts: { failLaunch?: boolean } = {}) {
+/** Watson's one reply: a collection on HOST (Auto mode tests). */
+class CollectReply implements AIProvider {
+  readonly name = "fake";
+  readonly model = "fake-model";
+  async analyze(): Promise<AnalyzeResult> {
+    const request = {
+      kind: "velociraptor",
+      mode: "collection",
+      hostname: HOST,
+      title: "Process list",
+      vql: PSLIST,
+      why: "w",
+    };
+    const reply = {
+      message: "Collecting.",
+      workingOn: "",
+      learned: "",
+      questionUpdates: [],
+      newQuestions: [],
+    };
+    return {
+      rawText: JSON.stringify({ ...reply, request, search: null, memory: "" }),
+      usage: { costUSD: 0.01 },
+    };
+  }
+}
+
+async function harness(opts: { failLaunch?: boolean; watson?: boolean } = {}) {
   const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-velo-deploy-")));
   await store.createCase({ caseId: CASE, name: "n", investigator: "i", aiProvider: null });
   const stateStore = new StateStore(store);
@@ -61,9 +93,30 @@ async function harness(opts: { failLaunch?: boolean } = {}) {
   const activity = new ActivityLogStore(store);
   const outcomes = new HuntOutcomeStore(store);
   const inventory = { load: async () => ({ updatedAt: "", clients: CLIENTS }) };
+  const stateLock = new StateLock();
+  const aiCostStore = new AiCostStore(store);
+  const fake = new CollectReply();
+  const watson = opts.watson
+    ? {
+        aiCostStore,
+        watsonProvider: () => fake,
+        pipeline: new AnalysisPipeline({
+          provider: fake,
+          synthesisProvider: fake,
+          stateStore,
+          stateLock,
+          aiCostStore,
+          anonStore: new AnonControlStore(store),
+          retries: 0,
+          velociraptorClientStore: inventory,
+          imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+        }),
+      }
+    : {};
   const app = createApp(store, {
+    ...watson,
     stateStore,
-    stateLock: new StateLock(),
+    stateLock,
     activityLogStore: activity,
     watsonChatStore: chatStore,
     huntOutcomeStore: outcomes,
@@ -102,6 +155,34 @@ const apply = (app: Parameters<typeof request>[0], pid = "wp-1") =>
   request(app).post(`/cases/${CASE}/watson/proposals/${pid}/apply`).send({});
 
 describe("Watson velo_launch through the deploy path", () => {
+  it("Auto mode launches Watson's collection; both audit entries name Watson (Auto) and who switched Auto on", async () => {
+    const h = await harness({ watson: true });
+    const control = new AiControlStore(h.store);
+    await control.save(CASE, {
+      ...(await control.load(CASE)),
+      enabled: true,
+      watsonRunMode: "auto",
+      watsonAutoSince: "2026-11-14T07:30:00.000Z",
+      watsonAutoBy: { name: "Robin Lead" },
+    });
+    const res = await request(h.app)
+      .post(`/cases/${CASE}/watson/message`)
+      .send({ text: "what runs on web01?" });
+    expect(res.status).toBe(200);
+    expect(h.launches).toEqual(["collection"]);
+    const entries = await h.activity.load(CASE);
+    const suffix = "Auto mode on since 2026-11-14T07:30:00.000Z, switched on by Robin Lead";
+    const hunt = entries.filter((e) => e.category === "hunt");
+    expect(hunt.length).toBeGreaterThan(0);
+    for (const e of hunt) {
+      expect(e.actor).toBe("Watson (Auto)");
+      expect(e.detail).toContain(suffix);
+    }
+    const applied = entries.find((e) => e.action === "watson.apply");
+    expect(applied).toMatchObject({ actor: "Watson (Auto)" });
+    expect(applied?.detail).toContain(suffix);
+  });
+
   it("launches one fleet hunt with source watson and stores the hunt id", async () => {
     const h = await harness();
     await seed(h.chatStore, proposal());

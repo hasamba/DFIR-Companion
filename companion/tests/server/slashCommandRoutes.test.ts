@@ -32,6 +32,7 @@ let bindings: SlashCommandChannelStore;
 let app: ReturnType<typeof createApp>;
 let asked: Array<{ caseId: string; question: string }>;
 let actors: Array<string | undefined>;
+let sources: Array<WatsonRoundInput["source"]>;
 let roundError: Error | undefined;
 let errorTurn: string | undefined; // the round saved an error turn with this text instead of a reply
 let delivered: Array<{ url: string; body: unknown }>;
@@ -42,6 +43,7 @@ const fakePipeline = {
   watsonRound: async (caseId: string, input: WatsonRoundInput): Promise<WatsonChat> => {
     asked.push({ caseId, question: input.text });
     actors.push(input.actor);
+    sources.push(input.source);
     if (roundError) throw roundError;
     const at = new Date().toISOString();
     const analyst = { id: "wt-a", at, role: "analyst" as const, text: input.text, actor: input.actor };
@@ -87,6 +89,7 @@ beforeEach(async () => {
   bindings = new SlashCommandChannelStore(join(bindDir, "slash-command-bindings.json"));
   asked = [];
   actors = [];
+  sources = [];
   roundError = undefined;
   errorTurn = undefined;
   delivered = [];
@@ -451,6 +454,7 @@ describe("async command delivery", () => {
     await vi.waitFor(() => expect(delivered).toHaveLength(1));
     expect(asked).toEqual([{ caseId: "c1", question: "was data exfiltrated" }]);
     expect(actors[0]).toBe("U1 via slack");
+    expect(sources[0]).toBe("slash"); // Auto mode never launches from a chat-bot command
     expect(text(0)).toMatch(/message for c1/);
     expect(text(0)).toMatch(/\[answered\] answer for c1/);
     expect(text(0)).toMatch(/Next: collect the prefetch dir/);

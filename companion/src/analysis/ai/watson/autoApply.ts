@@ -44,6 +44,8 @@ export interface WatsonAutoRound {
   turnId: string;
   /** A round Watson started itself (reactor.ts): it never launches. */
   reaction: boolean;
+  /** A round a chat-bot command started (`/dfir ask`): it never launches either. */
+  chatBot?: boolean;
   /** Held promotions from the result events the round showed. */
   heldIds?: readonly string[];
   /** The held promotions the round's own paste created. */
@@ -71,6 +73,7 @@ function waitReason(p: WatsonProposal, round: WatsonAutoRound): string | null {
   if (p.kind !== "velo_launch") return null;
   if (p.mode !== "collection") return "fleet-wide hunts always wait for an analyst";
   if (round.reaction) return "Watson does not launch from a round it started itself";
+  if (round.chatBot) return "Watson does not launch from a chat-bot command; approve it in the Watson panel";
   return null;
 }
 
@@ -218,7 +221,46 @@ export async function autoApply(
     role: "system",
     text,
   }));
-  return deps.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, ...turns] }));
+  return saveListing(deps.chatStore, caseId, turns);
+}
+
+/**
+ * Listings whose save failed twice after their applies succeeded (each apply is audited already).
+ * Kept in memory and added on the case's next Auto pass, so the chat still tells what Watson did.
+ */
+const unsavedListings = new Map<string, WatsonTurn[]>();
+
+/** Thrown when a listing could not be saved after one retry; it is kept for the next pass. */
+export class WatsonAutoListingUnsaved extends Error {
+  constructor(cause: unknown) {
+    super(
+      `Watson's Auto actions were applied, but their listing could not be saved (kept for the next round): ${errText(cause)}`,
+    );
+    this.name = "WatsonAutoListingUnsaved";
+  }
+}
+
+async function saveListing(
+  store: WriterDeps["chatStore"],
+  caseId: string,
+  turns: readonly WatsonTurn[],
+): Promise<WatsonChat> {
+  const all = [...(unsavedListings.get(caseId) ?? []), ...turns];
+  const save = () => store.update(caseId, (c) => ({ ...c, turns: [...c.turns, ...all] }));
+  try {
+    const chat = await save().catch(() => save()); // one retry
+    unsavedListings.delete(caseId);
+    return chat;
+  } catch (err) {
+    unsavedListings.set(caseId, all);
+    throw new WatsonAutoListingUnsaved(err);
+  }
+}
+
+/** Add a listing an earlier pass could not save. A failure keeps it for the pass after. */
+async function flushUnsaved(store: WriterDeps["chatStore"], caseId: string): Promise<WatsonChat | null> {
+  if (!unsavedListings.has(caseId)) return null;
+  return saveListing(store, caseId, []);
 }
 
 /** The held promotions a reaction carries: ids the reactor passed AND the result events it showed. */
@@ -244,8 +286,9 @@ export async function autoAfterRound(
   warn: (line: string) => void,
 ): Promise<WatsonChat> {
   try {
+    const flushed = await flushUnsaved(auto.writer.chatStore, caseId); // whatever the mode is now
     const control = await auto.control(caseId);
-    if (!autoOn(control)) return saved;
+    if (!autoOn(control)) return flushed ?? saved;
     const deps = { ...auto.writer, onStateChanged: auto.onStateChanged, recheck: () => auto.control(caseId) };
     return await autoApply(deps, caseId, round, control);
   } catch (err) {

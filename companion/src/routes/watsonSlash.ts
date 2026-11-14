@@ -50,7 +50,7 @@ export async function runWatsonSlash(
   if (!(await deps.isAiEnabled(caseId))) return refusal(new WatsonAiOff().message);
   const text = question.slice(0, WATSON_TURN_TEXT_MAX); // the round stores at most this much
   try {
-    const chat = await pipeline.watsonRound(caseId, { text, actor }, deps);
+    const chat = await pipeline.watsonRound(caseId, { text, actor, source: "slash" }, deps);
     const turn = roundTurn(chat, text, actor);
     if (!turn || turn.error) {
       // The stored error turn already reads "Watson could not answer: …"; it goes to chat, so no paths.

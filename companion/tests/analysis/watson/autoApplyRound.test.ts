@@ -224,4 +224,30 @@ describe("Auto mode in a Watson round", () => {
     expect(statusOf(chat, "wp-mine")).toBe("applied");
     expect(statusOf(chat, "wp-other")).toBe("pending");
   });
+
+  it("a reaction that shows an import keeps the door shut: a result's held rows stay pending", async () => {
+    const h = await harness(() => AUTO);
+    const result: WatsonCaseEvent = { kind: "hunt", text: "result", at: SINCE, proposalIds: ["wp-shown"] };
+    const imported: WatsonCaseEvent = { kind: "import", text: "An import finished", at: SINCE };
+    await h.seed([heldPromotion("wp-shown")], [imported, result]);
+    const chat = await runWatsonRound(h.ctx, CASE, {
+      text: "",
+      reaction: true,
+      heldProposalIds: ["wp-shown"],
+    });
+    expect(statusOf(chat, "wp-shown")).toBe("pending");
+    expect(h.promoted).toEqual([]);
+  });
+
+  it("a paste round with writes off applies none of its paste's rows", async () => {
+    const h = await harness(() => AUTO);
+    await h.seed([heldPromotion("wp-mine", "wf-1")]);
+    const chat = await runWatsonRound(h.ctx, CASE, {
+      text: "Pasted netstat.txt",
+      pasteId: "wf-1",
+      pasteProposalIds: ["wp-mine"],
+      allowWrites: false,
+    });
+    expect(statusOf(chat, "wp-mine")).toBe("pending");
+  });
 });

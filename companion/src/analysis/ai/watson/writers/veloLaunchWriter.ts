@@ -136,6 +136,7 @@ async function runLaunch(
   caseId: string,
   p: WatsonVeloLaunchProposal,
   actor: string,
+  auditSuffix: string,
 ): Promise<VeloLaunchOutcome> {
   let req: VeloLaunchRequest;
   try {
@@ -144,7 +145,7 @@ async function runLaunch(
     return { phase: "before-launch", error: (err as Error).message }; // the launch was never called
   }
   try {
-    return await v.launch(caseId, req, actor);
+    return await v.launch(caseId, req, actor, auditSuffix || undefined);
   } catch (err) {
     return { phase: "launch-unknown", error: (err as Error).message };
   }
@@ -188,7 +189,7 @@ export async function applyVeloLaunch(
   if (!v) throw new WatsonProposalConflict("Velociraptor launches are not configured");
   const { added, proposal: p } = await saveIntent(deps, v, caseId, proposalId, actor); // marks it in flight
   try {
-    const outcome = await runLaunch(v, caseId, p, actor);
+    const outcome = await runLaunch(v, caseId, p, actor, auditSuffix);
     return await settle(deps, v, caseId, p, outcome, { added, actor, auditSuffix });
   } finally {
     clearInFlight(caseId, proposalId);

@@ -61,6 +61,8 @@ export interface WatsonRoundInput {
   heldProposalIds?: string[];
   /** The held promotions this message's paste created (routes/watson.ts): Auto may apply them. */
   pasteProposalIds?: string[];
+  /** Where the message came from. A chat-bot command (`/dfir ask`) never launches in Auto mode. */
+  source?: "slash";
 }
 
 const searchSkipped = (why: string): string =>
@@ -127,12 +129,13 @@ async function runRound(
   let outcome: Outcome = { reply: null, shownEvents: [], questions: [] };
   let before: WatsonSpend | null = null;
   let saved: WatsonChat | undefined;
+  let mayWrite = false; // the door rule's verdict: Auto applies no carried rows when writes are off
   try {
     before = await watsonSpend(ctx, caseId);
     outcome = await converse(ctx, caseId, chat, promptTurn, { paste: newPaste, auto }, counter, before);
     // Spec §4.4: a reaction to an import writes nothing, judged on the events the prompt showed.
     const importShown = input.reaction === true && outcome.shownEvents.some((e) => e.kind === "import");
-    const mayWrite = input.allowWrites !== false && !importShown;
+    mayWrite = input.allowWrites !== false && !importShown;
     outcome = await withWriteInputs(ctx, caseId, outcome, mayWrite);
     outcome = await withVeloLaunch(ctx, caseId, outcome, mayWrite);
   } catch (error) {
@@ -158,11 +161,12 @@ async function runRound(
   // Auto mode acts only on a round that produced Watson's turn; a launch is not a model call.
   if (!ctx.auto || !outcome.reply) return saved;
   const reaction = input.reaction === true;
-  const pasteId = input.pasteId && input.pasteProposalIds?.length ? input.pasteId : undefined;
+  const pasteId = mayWrite && input.pasteId && input.pasteProposalIds?.length ? input.pasteId : undefined;
   const round = {
     turnId,
     reaction,
-    heldIds: carriedHeldIds(reaction, input.heldProposalIds, outcome.shownEvents),
+    chatBot: input.source === "slash",
+    heldIds: mayWrite ? carriedHeldIds(reaction, input.heldProposalIds, outcome.shownEvents) : [],
     ...(pasteId ? { paste: { pasteId, proposalIds: input.pasteProposalIds ?? [] } } : {}),
   };
   return autoAfterRound(ctx.auto, caseId, round, saved, (line) => ctx.log?.warn(line, { caseId }));

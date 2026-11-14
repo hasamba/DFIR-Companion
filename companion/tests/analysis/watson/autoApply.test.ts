@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ActivityLogStore } from "../../../src/analysis/activityLog.js";
-import { autoApply, listingTurns, WATSON_AUTO_ACTOR } from "../../../src/analysis/ai/watson/autoApply.js";
+import {
+  autoAfterRound,
+  autoApply,
+  listingTurns,
+  WATSON_AUTO_ACTOR,
+  WatsonAutoListingUnsaved,
+} from "../../../src/analysis/ai/watson/autoApply.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
 import {
   applyWatsonProposal,
@@ -416,5 +422,71 @@ describe("autoApply", () => {
     await autoApply({ ...deps(), recheck }, CASE, { turnId: TURN, reaction: false }, AUTO_ON);
     expect(launches).toHaveLength(0);
     expect(await status("wp-a")).toBe("pending");
+  });
+
+  it("a round started from a chat-bot command launches nothing, but its writes still apply", async () => {
+    await seed([
+      findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish"),
+      launch("wp-c", TURN, "collection", PSLIST, HOST_A),
+    ]);
+    const chat = await autoApply(deps(), CASE, { turnId: TURN, reaction: false, chatBot: true }, AUTO_ON);
+    expect(await status("wp-c")).toBe("pending");
+    expect(await status("wp-f")).toBe("applied");
+    expect(launches).toHaveLength(0);
+    expect(lastTurn(chat).text).toMatch(/does not launch from a chat-bot command/);
+  });
+
+  it("passes the Auto who/when to the launch seam, so the deploy's own audit names them", async () => {
+    const suffixes: Array<string | undefined> = [];
+    const d = deps();
+    const v = d.veloLaunch!;
+    const spy = {
+      ...d,
+      veloLaunch: {
+        ...v,
+        launch: async (c: string, req: VeloLaunchRequest, a: string, s?: string) => {
+          suffixes.push(s);
+          return v.launch(c, req, a, s);
+        },
+      },
+    };
+    await seed([launch("wp-c", TURN, "collection", PSLIST, HOST_A)]);
+    await autoApply(spy, CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    expect(suffixes).toEqual([`; Auto mode on since ${SINCE}, switched on by Robin Lead`]);
+  });
+
+  it("retries a failed listing save once; a second failure keeps it for the next Auto pass", async () => {
+    let failListing = 1;
+    const flaky = new (class extends WatsonChatStore {
+      override async update(caseId: string, fn: (c: WatsonChat) => WatsonChat | Promise<WatsonChat>) {
+        return super.update(caseId, async (c) => {
+          const next = await fn(c);
+          const listing = next.turns.some((t) => t.text.startsWith("Watson acted on its own"));
+          const had = c.turns.some((t) => t.text.startsWith("Watson acted on its own"));
+          if (listing && !had && failListing > 0) {
+            failListing--;
+            throw new Error("EIO: disk busy");
+          }
+          return next;
+        });
+      }
+    })(cases);
+    chatStore = flaky;
+    await seed([findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish")]);
+    // One failure: the retry saves it.
+    const once = await autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON);
+    expect(lastTurn(once).text).toMatch(/Applied new finding: Phish/);
+
+    // Two failures: the apply stands, the listing waits for the next pass, which adds it.
+    await seed([findingNew("wp-g", TURN, "f-watson-22222222", "Second")]);
+    failListing = 2;
+    await expect(autoApply(deps(), CASE, { turnId: TURN, reaction: false }, AUTO_ON)).rejects.toBeInstanceOf(
+      WatsonAutoListingUnsaved,
+    );
+    expect(await status("wp-g")).toBe("applied");
+    const auto = { control: async () => APPROVE, writer: deps() };
+    const before = await chatStore.load(CASE);
+    const after = await autoAfterRound(auto, CASE, { turnId: TURN, reaction: false }, before, () => {});
+    expect(lastTurn(after).text).toMatch(/Applied new finding: Second/);
   });
 });

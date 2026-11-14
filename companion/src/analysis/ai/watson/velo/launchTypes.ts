@@ -23,7 +23,13 @@ export interface VeloLaunchOutcome {
 }
 
 export interface VeloLaunchDeps {
-  launch(caseId: string, req: VeloLaunchRequest, actor: string): Promise<VeloLaunchOutcome>;
+  /** `auditSuffix` is appended to the deploy's own audit entries (Auto mode's who/when). */
+  launch(
+    caseId: string,
+    req: VeloLaunchRequest,
+    actor: string,
+    auditSuffix?: string,
+  ): Promise<VeloLaunchOutcome>;
   fleet: VeloFleetSeams;
   matchClient: LaunchContext["matchClient"];
   fingerprints: Pick<HuntFingerprintStore, "load" | "reserve" | "release">;

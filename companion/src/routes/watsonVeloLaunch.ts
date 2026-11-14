@@ -6,6 +6,7 @@ import { resolveVeloLaunch, type LaunchResolution } from "../analysis/ai/watson/
 import type { VeloLaunchDeps } from "../analysis/ai/watson/velo/launchTypes.js";
 import { matchClient } from "../integrations/velociraptor/clientInventory.js";
 import type { RouteContext } from "./context.js";
+import { WATSON_AUTO_ACTOR } from "../analysis/ai/watson/autoApply.js";
 import { deployCaseHunt } from "./veloDeploy.js";
 
 // Watson phase 3: the seams an approved velo_launch proposal launches through (the existing deploy
@@ -24,7 +25,7 @@ export function caseVeloConnected(ctx: RouteContext, caseId: string): boolean {
 export function watsonVeloLaunchDeps(ctx: RouteContext): VeloLaunchDeps {
   const { options, store } = ctx;
   return {
-    launch: async (caseId, req, actor) => {
+    launch: async (caseId, req, actor, auditSuffix) => {
       const body = {
         vql: req.vql,
         title: req.title,
@@ -36,7 +37,12 @@ export function watsonVeloLaunchDeps(ctx: RouteContext): VeloLaunchDeps {
         // A single-host collection reads live state: an empty result is not a miss.
         ...(req.mode === "collection" ? { coverage: "snapshot" as const } : {}),
       };
-      const r = await deployCaseHunt(ctx, caseId, body, { name: actor, kind: "analyst" });
+      const kind = actor === WATSON_AUTO_ACTOR ? ("agent" as const) : ("analyst" as const);
+      const r = await deployCaseHunt(ctx, caseId, body, {
+        name: actor,
+        kind,
+        ...(auditSuffix ? { detailSuffix: auditSuffix } : {}),
+      });
       const error = r.status >= 400 ? String(r.body.error ?? `HTTP ${r.status}`) : undefined;
       return { phase: r.phase, ...(r.launched ? { launched: r.launched } : {}), ...(error ? { error } : {}) };
     },

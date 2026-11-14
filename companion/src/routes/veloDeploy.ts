@@ -14,6 +14,8 @@ import { resolveCaseVelo, type VeloTarget } from "./veloServers.js";
 export interface DeployActor {
   name: string;
   kind: "analyst" | "agent";
+  /** Appended to every audit detail this deploy writes (Watson Auto: who switched Auto on, and when). */
+  detailSuffix?: string;
 }
 
 /** The parsed body plus the two raw timing fields the route reads from the request as-is. */
@@ -91,7 +93,7 @@ export async function deployCaseHunt(
   const { options } = ctx;
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
   const audit = async (input: NewActivityEntry) => {
-    const entry = { ...input, actor: actor.name };
+    const entry = { ...input, actor: actor.name, detail: input.detail + (actor.detailSuffix ?? "") };
     const warning = await logActivityWithWarning(options.activityLogStore, options.onActivity, caseId, entry);
     if (warning) logLine(`[velociraptor] AUDIT NOT WRITTEN — ${warning}`);
     return warning ? { auditWarning: warning } : {};
