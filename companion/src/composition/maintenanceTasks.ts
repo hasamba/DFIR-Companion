@@ -38,6 +38,7 @@ import {
   SHARED_DELIVERY_DIRNAME,
   sweepStaleStaging,
 } from "../storage/exportStaging.js";
+import { keepChatRosterDurable } from "../analysis/ai/watson/rosterRead.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import {
@@ -137,7 +138,8 @@ export function startMaintenanceTasks({
 
   // Automatic state backup (#180): snapshot SNAPSHOT_STATE_FILES before synthesis + on a timer.
   const backupConfig = resolveBackupConfig(process.env);
-  const backupManager = new BackupManager(store, backupConfig);
+  // A restore rewinds watson-chat.json: Watson's mask roster is folded into its sidecar first.
+  const backupManager = new BackupManager(store, backupConfig, { beforeRestore: keepChatRosterDurable });
   if (backupConfig.intervalMs > 0) {
     // Time-based: only back up cases that have changed since the last scheduled backup.
     const lastScheduledBackupAt = new CaseKeyedMap<number>(() => store.casesRoot); // #1866

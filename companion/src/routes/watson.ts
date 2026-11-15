@@ -17,6 +17,7 @@ import { WatsonRiskNotAccepted } from "../analysis/ai/watson/proposalErrors.js";
 import type { WatsonRoundDeps } from "../analysis/ai/watson/pipelineRound.js";
 import { newWatsonId } from "../analysis/ai/watson/roundProposals.js";
 import { WatsonAiOff, WatsonCostLimitReached } from "../analysis/ai/watson/round.js";
+import { WatsonRosterUnreadable } from "../analysis/ai/watson/rosterRead.js";
 import type { WatsonChat, WatsonPaste } from "../analysis/ai/watson/types.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
@@ -99,7 +100,8 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       err instanceof WatsonAiOff ||
       err instanceof WatsonCostLimitReached ||
       err instanceof WatsonProposalStateError ||
-      err instanceof WatsonProposalConflict
+      err instanceof WatsonProposalConflict ||
+      err instanceof WatsonRosterUnreadable
     ) {
       return res.status(409).json({ error: err.message });
     }

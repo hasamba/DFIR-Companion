@@ -148,13 +148,23 @@ export interface BackupManagerDeps {
   atomicWrite?: (path: string, content: string) => Promise<void>;
 }
 
+/** What the composition root adds to a restore. Kept apart from the fs seams above. */
+export interface BackupManagerHooks {
+  /**
+   * Runs on the case's state dir after the backup is validated and before any live file is replaced.
+   * The composition root passes Watson's roster fold, so a restore never rewinds a name it must mask.
+   */
+  beforeRestore?: (stateDir: string) => Promise<void>;
+}
+
 export class BackupManager {
   private readonly deps: Required<BackupManagerDeps>;
+  private readonly beforeRestore: (stateDir: string) => Promise<void>;
 
   constructor(
     private readonly cases: CaseStore,
     readonly config: BackupConfig,
-    deps: BackupManagerDeps = {},
+    deps: BackupManagerDeps & BackupManagerHooks = {},
   ) {
     this.deps = {
       mkdir: deps.mkdir ?? ((p, o) => mkdir(p, o)),
@@ -164,6 +174,7 @@ export class BackupManager {
       unlink: deps.unlink ?? ((p) => unlink(p)),
       atomicWrite: deps.atomicWrite ?? atomicWrite,
     };
+    this.beforeRestore = deps.beforeRestore ?? (async () => undefined);
   }
 
   backupDir(caseId: string): string {
@@ -357,6 +368,7 @@ export class BackupManager {
     // A bundle without tags.json leaves the case's tags as they are (#1874). They live in the database
     // the restore replaces, so restoreDatabase settles the tag list on the new copy before it goes live
     // (the bundle's list, or the live one carried over) — one atomic swap, no window for a tag write.
+    await this.beforeRestore(stateDir);
     const bundleHadTags = Object.prototype.hasOwnProperty.call(bundle.files ?? {}, TAGS_FILENAME);
     const replacesDatabase = binaryRestores.some(({ name }) => name === INVESTIGATION_DB_FILENAME);
     for (const { name, sidecarPath } of binaryRestores) {

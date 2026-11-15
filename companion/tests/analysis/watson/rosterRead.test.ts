@@ -1,7 +1,7 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AnonControlStore } from "../../../src/analysis/anonControl.js";
 import { analyzeRestored } from "../../../src/analysis/ai/providerCall.js";
 import { converseRestored } from "../../../src/analysis/ai/converseRestored.js";
@@ -14,6 +14,7 @@ import {
 } from "../../../src/analysis/ai/watson/rosterRead.js";
 import { rosterEntities, WatsonRosterNames } from "../../../src/analysis/ai/watson/rosterNames.js";
 import { emptyState } from "../../../src/analysis/stateTypes.js";
+import { getServerLogger } from "../../../src/logging/serverLogger.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../../src/providers/provider.js";
 import { BackupManager, resolveBackupConfig } from "../../../src/storage/backupManager.js";
 import { CaseStore } from "../../../src/storage/caseStore.js";
@@ -135,6 +136,11 @@ describe("the roster reader: fail closed", () => {
     await expect(r.read("/s")).rejects.toBeInstanceOf(WatsonRosterUnreadable);
     await expect(r.read("/s")).rejects.toBeInstanceOf(WatsonRosterUnreadable);
     expect(fs.reads).toBe(2);
+    const chatFs = fakeFs({ "/s/watson-chat.json": "[]" });
+    const rc = createRosterReader(chatFs);
+    await expect(rc.read("/s")).rejects.toBeInstanceOf(WatsonRosterUnreadable);
+    await expect(rc.read("/s")).rejects.toBeInstanceOf(WatsonRosterUnreadable);
+    expect(chatFs.reads).toBe(2);
   });
 
   it("a corrupt chat with a valid sidecar reads the sidecar", async () => {
@@ -172,8 +178,17 @@ describe("the roster reader: fail closed", () => {
     const side = join(cases.stateDir(CASE), "watson-mask-roster.json");
     await writeFile(side, "{bad");
     const store = new WatsonChatStore(cases);
-    await store.update(CASE, (c) => ({ ...c, maskRoster: { hosts: ["ws-fake01"], users: [], ips: [] } }));
+    const warn = vi.spyOn(getServerLogger(), "warn");
+    try {
+      await store.update(CASE, (c) => ({ ...c, maskRoster: { hosts: ["ws-fake01"], users: [], ips: [] } }));
+      const line = warn.mock.calls.map((c) => String(c[0])).find((m) => m.includes("mask roster"));
+      expect(line).toContain(cases.stateDir(CASE));
+      expect(line).not.toContain("ws-fake01");
+    } finally {
+      warn.mockRestore();
+    }
     expect((await store.load(CASE)).maskRoster?.hosts).toEqual(["ws-fake01"]);
+    expect(await readFile(side, "utf8")).toBe("{bad");
     await expect(store.loadRoster(CASE)).rejects.toBeInstanceOf(WatsonRosterUnreadable);
   });
 });

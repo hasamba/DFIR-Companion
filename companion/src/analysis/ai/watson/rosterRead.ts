@@ -1,5 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { getServerLogger } from "../../../logging/serverLogger.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
 import { WATSON_ROSTER_FILE } from "../../investigationStateFiles.js";
 import { mergeMaskRoster, type WatsonMaskRoster } from "./superRoster.js";
@@ -129,41 +130,74 @@ const copyOf = (r: WatsonMaskRoster | undefined): WatsonMaskRoster | undefined =
 
 const nodeFs: RosterFs = { stat, readFile: (p, enc) => readFile(p, enc) };
 
-export function createRosterReader(fs: RosterFs = nodeFs, max = WATSON_ROSTER_CACHE_MAX): RosterReader {
-  const cache = new Map<string, { key: string; roster: WatsonMaskRoster | undefined }>();
-  const generations = new Map<string, number>();
-  const generation = (dir: string): number => generations.get(dir) ?? 0;
+type Cached = { key: string; roster: WatsonMaskRoster | undefined };
 
-  const store = (dir: string, key: string, roster: WatsonMaskRoster | undefined): void => {
+type StatKeys = { chat: string | null; side: string | null };
+
+/** Both files' stat keys, or null when neither exists. */
+async function statKeys(fs: RosterFs, stateDir: string): Promise<StatKeys | null> {
+  const [chat, side] = await Promise.all([
+    statKey(fs, join(stateDir, WATSON_CHAT_FILE)),
+    statKey(fs, join(stateDir, WATSON_ROSTER_FILE)),
+  ]);
+  return chat === null && side === null ? null : { chat, side };
+}
+
+async function readRoster(
+  fs: RosterFs,
+  stateDir: string,
+  keys: StatKeys,
+): Promise<WatsonMaskRoster | undefined> {
+  const [chatText, sideText] = await Promise.all([
+    readText(fs, join(stateDir, WATSON_CHAT_FILE), keys.chat),
+    readText(fs, join(stateDir, WATSON_ROSTER_FILE), keys.side),
+  ]);
+  return mergedRoster(chatText, sideText);
+}
+
+export function createRosterReader(fs: RosterFs = nodeFs, max = WATSON_ROSTER_CACHE_MAX): RosterReader {
+  const cache = new Map<string, Cached>();
+  // One entry per state dir with a read in flight, so the map is bounded by the reads running now.
+  // A forget() bumps `gen`, and a read that started before it does not store its result.
+  const flights = new Map<string, { count: number; gen: number }>();
+
+  const store = (dir: string, entry: Cached): void => {
     cache.delete(dir);
     if (cache.size >= max) {
       const oldest = cache.keys().next();
       if (!oldest.done) cache.delete(oldest.value);
     }
-    cache.set(dir, { key, roster });
+    cache.set(dir, entry);
+  };
+
+  const readThrough = async (dir: string, flight: { gen: number }): Promise<WatsonMaskRoster | undefined> => {
+    const gen = flight.gen;
+    const keys = await statKeys(fs, dir);
+    if (keys === null) return undefined;
+    const key = `${keys.chat ?? "-"}|${keys.side ?? "-"}`;
+    const hit = cache.get(dir);
+    if (hit && hit.key === key) return hit.roster;
+    const roster = await readRoster(fs, dir, keys);
+    if (flight.gen === gen) store(dir, { key, roster });
+    return roster;
   };
 
   return {
     async read(stateDir) {
-      const gen = generation(stateDir);
-      const chatPath = join(stateDir, WATSON_CHAT_FILE);
-      const sidePath = join(stateDir, WATSON_ROSTER_FILE);
-      const [chatKey, sideKey] = await Promise.all([statKey(fs, chatPath), statKey(fs, sidePath)]);
-      if (chatKey === null && sideKey === null) return undefined;
-      const key = `${chatKey ?? "-"}|${sideKey ?? "-"}`;
-      const hit = cache.get(stateDir);
-      if (hit && hit.key === key) return copyOf(hit.roster);
-      const [chatText, sideText] = await Promise.all([
-        readText(fs, chatPath, chatKey),
-        readText(fs, sidePath, sideKey),
-      ]);
-      const roster = mergedRoster(chatText, sideText);
-      if (generation(stateDir) === gen) store(stateDir, key, roster);
-      return copyOf(roster);
+      const live = flights.get(stateDir) ?? { count: 0, gen: 0 };
+      live.count += 1;
+      flights.set(stateDir, live);
+      try {
+        return copyOf(await readThrough(stateDir, live));
+      } finally {
+        live.count -= 1;
+        if (live.count === 0 && flights.get(stateDir) === live) flights.delete(stateDir);
+      }
     },
     forget(stateDir) {
       cache.delete(stateDir);
-      generations.set(stateDir, generation(stateDir) + 1);
+      const flight = flights.get(stateDir);
+      if (flight) flight.gen += 1;
     },
   };
 }
@@ -173,7 +207,7 @@ export const watsonRosterReader: RosterReader = createRosterReader();
 
 const sidecarChains = new Map<string, Promise<unknown>>();
 
-/** The sidecar's roster, or undefined when it is absent or unreadable (a save never overwrites it). */
+/** The sidecar's roster, undefined when it is absent, or "unreadable" (a save never overwrites it). */
 async function sidecarForSave(path: string): Promise<WatsonMaskRoster | undefined | "unreadable"> {
   let text: string;
   try {
@@ -190,11 +224,22 @@ async function sidecarForSave(path: string): Promise<WatsonMaskRoster | undefine
   }
 }
 
+/** True when the sidecar exists and reads as a roster: then it alone can stand for a corrupt chat. */
+export async function rosterSidecarReadable(stateDir: string): Promise<boolean> {
+  const side = await sidecarForSave(join(stateDir, WATSON_ROSTER_FILE));
+  return side !== undefined && side !== "unreadable";
+}
+
 async function syncSidecar(path: string, roster: WatsonMaskRoster): Promise<void> {
   const side = await sidecarForSave(path);
   // A corrupt sidecar is never overwritten: that would turn "unreadable" into "readable with names
   // missing". The read keeps failing closed until the file is restored.
-  if (side === "unreadable") return;
+  if (side === "unreadable") {
+    getServerLogger().warn(
+      `[watson] the mask roster file in ${dirname(path)} is unreadable, so it was not updated`,
+    );
+    return;
+  }
   const union = mergeMaskRoster(side, roster);
   const grew =
     union.hosts.length > (side?.hosts.length ?? 0) || union.users.length > (side?.users.length ?? 0);
@@ -216,4 +261,26 @@ export function keepRosterDurable(stateDir: string, roster: WatsonMaskRoster | u
     if (sidecarChains.get(path) === tail) sidecarChains.delete(path);
   });
   return run;
+}
+
+/**
+ * Before a backup restore rewinds watson-chat.json: fold the current chat's roster into the sidecar, so
+ * a case that has no sidecar yet keeps its names. An absent or corrupt chat is skipped: the restore
+ * must not fail for it. Other I/O errors are rethrown, so nothing is rewound that was not kept.
+ */
+export async function keepChatRosterDurable(stateDir: string): Promise<void> {
+  let text: string;
+  try {
+    text = await readFile(join(stateDir, WATSON_CHAT_FILE), "utf8");
+  } catch (err) {
+    if (isMissing(err)) return;
+    throw err;
+  }
+  const chat = chatRosterOf(text);
+  if (chat.corrupt) return;
+  try {
+    await keepRosterDurable(stateDir, chat.roster);
+  } finally {
+    watsonRosterReader.forget(stateDir);
+  }
 }

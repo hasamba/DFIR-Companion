@@ -5,7 +5,13 @@ import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
 import { WatsonHistoryStore } from "./historyStore.js";
 import { proposalSchema } from "./proposalSchema.js";
-import { keepRosterDurable, maskRosterOf, watsonRosterReader } from "./rosterRead.js";
+import {
+  keepRosterDurable,
+  maskRosterOf,
+  rosterSidecarReadable,
+  watsonRosterReader,
+  WatsonRosterUnreadable,
+} from "./rosterRead.js";
 import type { WatsonMaskRoster } from "./superRoster.js";
 import { turnSchema } from "./turnSchema.js";
 import {
@@ -165,6 +171,13 @@ export class WatsonChatStore {
     return { chat: parseChat(raw), corrupt: typeof raw !== "object" || raw === null || Array.isArray(raw) };
   }
 
+  // A corrupt chat's roster is unknown. Without a readable sidecar (the superset), a write would save a
+  // clean chat with no roster and the roster read would stop failing closed, so the write is refused.
+  private async refuseUnknownRoster(caseId: string, corrupt: boolean): Promise<void> {
+    if (corrupt && !(await rosterSidecarReadable(this.cases.stateDir(caseId))))
+      throw new WatsonRosterUnreadable();
+  }
+
   /** Keep a corrupt chat file beside the new one before the first write replaces it. No colons: Windows. */
   private async backUpCorrupt(caseId: string): Promise<void> {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -207,6 +220,7 @@ export class WatsonChatStore {
     const prev = this.chains.get(caseId) ?? Promise.resolve();
     const run = prev.then(async () => {
       const { chat, corrupt } = await this.read(caseId);
+      await this.refuseUnknownRoster(caseId, corrupt);
       const changed = await fn(chat);
       await this.keepHistory(caseId, chat, changed);
       const next = normalize(changed);
