@@ -738,7 +738,7 @@ Pick one option. Each one runs the same server and dashboard on `http://127.0.0.
 | [Windows](#option-1---windows)                         | Most Windows users        | Nothing (release zip) |
 | [Linux (AppImage)](#option-2---linux-appimage)         | Most Linux users          | Nothing (AppImage)    |
 | [Docker / Compose](#option-3---docker--docker-compose) | Servers, teams, isolation | Docker + Compose      |
-| [From source](#option-4---from-source-nodejs)          | Developers, contributors  | Node.js 22.19+, git   |
+| [From source](#option-4---from-source-nodejs-dev-version)          | Developers, contributors  | Node.js 22.19+, git   |
 
 After you start the server, [install the capture extension](#capture-extension-and-first-case).
 
@@ -870,7 +870,7 @@ port to `127.0.0.1` on your host - so the dashboard is never exposed on your net
 - To reach an AI endpoint running on the host, use `http://host.docker.internal:<port>/v1`
   (on Linux without Docker Desktop, also uncomment the `extra_hosts` line in the compose file).
 
-## Option 4 - From source (Node.js)
+## Option 4 - From source (Node.js) (dev version)
 
 For developers and contributors. Most users should pick one of the options above.
 
