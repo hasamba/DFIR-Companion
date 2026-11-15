@@ -59,7 +59,7 @@ export class LiveHub {
   dropCase(caseId: string): void {
     this.epochs.set(caseId, this.authEpoch(caseId) + 1);
     const set = this.subs.get(caseId);
-    this.subs.delete(caseId);
+    this.forgetSubscribers(caseId);
     for (const socket of set ?? []) socket.terminate?.();
   }
 
@@ -114,7 +114,13 @@ export class LiveHub {
 
   unsubscribe(caseId: string, socket: SocketLike): void {
     this.subs.get(caseId)?.delete(socket);
-    if (this.subs.get(caseId)?.size === 0) this.subs.delete(caseId);
+    if (this.subs.get(caseId)?.size === 0) this.forgetSubscribers(caseId);
+  }
+
+  /** Drop a case's subscriber set and its notice counter together (#2631): one without the other leaks. */
+  private forgetSubscribers(caseId: string): void {
+    this.subs.delete(caseId);
+    this.stateVersions.delete(caseId);
   }
 
   /** For the ping/reaper: every socket that has not ponged since the last sweep is dead. */
@@ -139,7 +145,7 @@ export class LiveHub {
           reaped++;
         }
       }
-      if (set.size === 0) this.subs.delete(caseId);
+      if (set.size === 0) this.forgetSubscribers(caseId);
     }
     return reaped;
   }

@@ -44,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Watson names in exports** — the redacted export and the support bundle now mask the names Watson masked for the AI.
 - **Watson masks hosts in raw row text** — a host named only in a raw row or paste description is masked.
 - **Watson rechecks before every send** — the AI switch and the case-closed state are checked right before each Watson AI call, so a switch-off or a close stops the next send.
+- **Watson fail-closed note is accurate** — when its citations cannot be checked, the note no longer claims a citation count (closes #2634)
+- **Stale connection banner clears** — "live updates unavailable" goes away once a state read recovers (closes #2630)
+- **Live notice counters are released** — a case's notice counter is forgotten with its last subscriber, so it no longer grows for the process's life (closes #2631)
+- **AWS SDK and @smithy/core bumped** — moved past the two-week wait to the current clean releases (closes #2341)
 
 ## [0.46.0] - 2026-11-13
 

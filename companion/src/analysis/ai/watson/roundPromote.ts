@@ -35,10 +35,10 @@ const WITHHELD = {
 const withheldNote = (n: number, why: string): string =>
   `(Watson cited ${rows(n)}, but it promoted nothing, because ${why}.)`;
 const failedNote = (n: number, err: unknown): string =>
-  `(Watson cited ${rows(n)}, but it could not promote ${n === 1 ? "it" : "them"} (${errText(err)}). Watson promoted nothing.)`.slice(
-    0,
-    600,
-  );
+  `(Watson cited ${rows(n)}, but it could not promote ${n === 1 ? "it" : "them"} (${shortErrText(err)}). Watson promoted nothing.)`;
+// Used when the citations could not be planned, so the count is unknown and must not be stated (#2634).
+const unplannedNote = (err: unknown): string =>
+  `(Watson could not check its super-timeline citations, so it could not promote them (${shortErrText(err)}). Watson promoted nothing.)`;
 const recordNote = (n: number): string =>
   `(Watson promoted ${rows(n)}, but it could not save the record. Press Apply on the card to finish it.)`;
 const stuckNote = (n: number): string =>
@@ -51,6 +51,12 @@ export const UNDONE_NOTE =
   "(Someone undid the rows that Watson promoted before Watson saved its answer. Watson removed the items that used these rows.)";
 
 const errText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+// Truncates the error text only, so a long message never cuts off the closing sentence of a note.
+const MAX_ERR_CHARS = 300;
+const shortErrText = (err: unknown): string => {
+  const text = errText(err);
+  return text.length > MAX_ERR_CHARS ? `${text.slice(0, MAX_ERR_CHARS)}...` : text;
+};
 const joinNotes = (...notes: (string | undefined)[]): string | undefined =>
   notes.filter((n): n is string => !!n).join("\n\n") || undefined;
 
@@ -166,7 +172,9 @@ function failClosed(
   const shown = [...(outcome.superShown ?? []).map((e) => e.id), ...earlierShownIds(chat)];
   const refs = plan?.refs ?? collectRawRefs(reply, new Set(shown));
   const all: Plan = plan ?? { reply, refs, cited: [], folded: new Map(), earlier: 0 };
-  return settled(outcome, all, new Map(), failedNote(Math.max(1, all.cited.length), err));
+  const count = plan?.cited.length ?? 0;
+  const note = count ? failedNote(count, err) : unplannedNote(err);
+  return settled(outcome, all, new Map(), note);
 }
 
 /** The cited ids that are live after the promotion, each mapped to the event that holds it now. */

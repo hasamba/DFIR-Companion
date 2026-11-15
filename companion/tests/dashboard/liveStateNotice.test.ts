@@ -46,8 +46,13 @@ function harness() {
   FakeSocket.made = [];
   const requests: Pending[] = [];
   const messages: LiveMsg[] = [];
+  const status = { textContent: "" }; // the #status line the connection notice writes to
   const api = loadDashboardModule<LiveApi>("dashboard-live-socket.js", [], {
-    document: { visibilityState: "visible", getElementById: () => null, addEventListener: () => {} },
+    document: {
+      visibilityState: "visible",
+      getElementById: (id: string) => (id === "status" ? status : null),
+      addEventListener: () => {},
+    },
     location: { protocol: "http:", host: "127.0.0.1:4773" },
     WebSocket: FakeSocket,
     ws: null,
@@ -71,7 +76,7 @@ function harness() {
   api.openCaseSocket("INC-1", (m) => messages.push(m));
   const sock = FakeSocket.made[0];
   sock.open();
-  return { api, sock, requests, messages };
+  return { api, sock, requests, messages, status };
 }
 
 const notice = (version: number, caseId = "INC-1") => ({ type: "state_changed", caseId, version });
@@ -232,5 +237,41 @@ describe("a state-changed notice (#2615)", () => {
     h.requests[0].resolve({ caseId: "INC-1", v: "very-late" }); // the timed-out read answering
     await vi.advanceTimersByTimeAsync(0);
     expect(h.messages).toHaveLength(1);
+  });
+
+  it("clears the unavailable banner once a read recovers after a give-up", async () => {
+    const h = harness();
+    h.sock.push(notice(1));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    for (let i = 0; i < 5; i++) {
+      h.requests[i].fail(500);
+      await vi.advanceTimersByTimeAsync(40000);
+    }
+    expect(h.status.textContent).toMatch(/^live updates unavailable/);
+    h.sock.push(notice(2));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    h.requests[5].resolve({ caseId: "INC-1", v: "recovered" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.messages.map((m) => m.state?.v)).toEqual(["recovered"]);
+    expect(h.status.textContent).toBe("connected (live)");
+  });
+
+  it("a read that lands after the socket closed does not overwrite the disconnected status", async () => {
+    const h = harness();
+    h.sock.push(notice(1));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    for (let i = 0; i < 5; i++) {
+      h.requests[i].fail(500);
+      await vi.advanceTimersByTimeAsync(40000);
+    }
+    h.sock.push(notice(2));
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    expect(h.requests).toHaveLength(6);
+    h.sock.readyState = FakeSocket.CLOSED;
+    h.sock.onclose?.();
+    expect(h.status.textContent).toBe("disconnected — reconnecting…");
+    h.requests[5].resolve({ caseId: "INC-1", v: "late" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.status.textContent).toBe("disconnected — reconnecting…");
   });
 });

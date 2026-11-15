@@ -60,6 +60,60 @@ describe("LiveHub", () => {
     expect(versions[2]).toBeGreaterThan(versions[1]);
   });
 
+  // #2631: a case's notice counter is only read by notifyStateChanged, so once its last socket is
+  // gone the entry is dead weight. A later subscriber gets a fresh socket whose dashboard resets its
+  // own counter, so the counter restarting at 1 is safe. Covers every path that drops a case's subs.
+  describe("forgets a case's notice counter when its last subscriber leaves (#2631)", () => {
+    const counterOf = (hub: LiveHub) =>
+      (hub as unknown as { stateVersions: Map<string, number> }).stateVersions;
+
+    it("unsubscribe", () => {
+      const hub = new LiveHub();
+      const a = fakeSocket();
+      hub.subscribe("c1", a);
+      hub.notifyStateChanged("c1");
+      expect(counterOf(hub).has("c1")).toBe(true);
+      hub.unsubscribe("c1", a);
+      expect(counterOf(hub).has("c1")).toBe(false);
+    });
+
+    it("dropCase", () => {
+      const hub = new LiveHub();
+      const a = fakeSocket();
+      hub.subscribe("c1", a);
+      hub.notifyStateChanged("c1");
+      hub.dropCase("c1");
+      expect(counterOf(hub).has("c1")).toBe(false);
+    });
+
+    it("sweepReaper", () => {
+      const hub = new LiveHub();
+      const a = fakeSocket();
+      hub.subscribe("c1", a);
+      hub.notifyStateChanged("c1");
+      // First sweep marks the socket as awaiting a pong; the second reaps it (no pong arrived).
+      hub.sweepReaper();
+      hub.sweepReaper();
+      expect(hub.hasSubscribers("c1")).toBe(false);
+      expect(counterOf(hub).has("c1")).toBe(false);
+    });
+
+    it("a later subscriber still gets numbered from 1, and the counter keeps working", () => {
+      const hub = new LiveHub();
+      const a = fakeSocket();
+      hub.subscribe("c1", a);
+      hub.notifyStateChanged("c1");
+      hub.unsubscribe("c1", a);
+
+      const b = fakeSocket();
+      hub.subscribe("c1", b);
+      hub.notifyStateChanged("c1");
+      hub.notifyStateChanged("c1");
+      expect(b.sent.map((d) => JSON.parse(d).version)).toEqual([1, 2]);
+      expect(counterOf(hub).get("c1")).toBe(2);
+    });
+  });
+
   // The hub is transport, and its callers include tests that hand it a partial state. A throw
   // here would surface inside a route that has already saved — the worst place for one.
   it("tolerates a partial state rather than throwing inside the caller", () => {
