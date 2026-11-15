@@ -7,6 +7,8 @@
 // (an argument that uploads, runs, or evaluates a string disqualifies it), and add a test.
 // Names are compared case-insensitively.
 
+import { BUILT_IN_BUNDLES } from "../../../artifactBundleStore.js";
+
 /** Read-only VQL plugins and functions. */
 export const ALLOWED_CALLS: readonly string[] = [
   // endpoint state (read-only)
@@ -51,14 +53,31 @@ export const ALLOWED_CALLS: readonly string[] = [
   "enumerate",
 ];
 
-/** Read-only artifacts Watson may call as `Artifact.<Name>(…)`. */
-export const ALLOWED_ARTIFACTS: readonly string[] = [
+/** The individually reviewed read-only artifacts. */
+const REVIEWED_ARTIFACTS: readonly string[] = [
   "Windows.System.Pslist",
   "Windows.Network.Netstat",
   "Windows.EventLogs.EvtxHunter",
   "Windows.Search.FileFinder", // its Upload_File argument is refused (any argument named *upload*)
   "Generic.Client.Info",
   "Linux.Sys.Pslist",
+];
+
+/**
+ * The built-in bundle whose artifacts are safe for Watson (user decision of 2026-11-15). This is a
+ * product decision, not a per-artifact review: some of these run a bundled tool on the endpoint
+ * (Hayabusa, Autoruns). Read from the shipped bundle, so the two lists cannot drift. An analyst's edit of that bundle does not change
+ * this list. The "best-practice-big-hogs" bundle (slow full-disk scans) is deliberately not included.
+ * Every argument, accessor and character rule still applies to these artifacts.
+ */
+export const SAFE_BUNDLE_ID = "best-practice";
+
+const bundleArtifacts = (id: string): readonly string[] =>
+  BUILT_IN_BUNDLES.find((b) => b.id === id)?.artifacts ?? [];
+
+/** Read-only artifacts Watson may call as `Artifact.<Name>(…)`. */
+export const ALLOWED_ARTIFACTS: readonly string[] = [
+  ...new Set([...REVIEWED_ARTIFACTS, ...bundleArtifacts(SAFE_BUNDLE_ID)]),
 ];
 
 /**

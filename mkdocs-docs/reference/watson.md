@@ -207,6 +207,8 @@ A launch you marked as launched has no hunt or flow id that Watson knows. Its ca
 
 Watson prefers a reviewed, read-only list of plugins, functions, artifacts and WMI classes. VQL that stays on that list gets a normal card.
 
+Every artifact in the built-in **Best Practice** bundle is on the safe list too, for example `Windows.Hayabusa.Rules`. The list comes from the bundle as it ships, so your edits to that bundle do not change it. The **Best Practice - Big Hogs** bundle (slow full-disk scans) is not on the list. The other rules still apply to these artifacts: an argument named like *upload*, *dump* or *lambda* makes the query risky, and so does an accessor or a path that is not on the list. In Auto mode, a safe query on one host can launch without a click (see the follow-up chain below). Some of these artifacts run a tool on the endpoint, such as Hayabusa or Autoruns.
+
 ### Risky queries
 
 Sometimes Watson needs something off the list: running a program, writing or uploading, a network call, a network path or URL, a path built at run time, or an artifact nobody reviewed. Watson can still propose that query, with its reason. The card is marked as risky:

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stop Watson** — a stop icon ends a running answer; all viewers see when Watson works; a resent message is not paid twice
 - **Watson model dropdown** — Settings lists the provider's models for Watson, like the other AI roles
 - **Watson tool calling** — several lookups (up to 10) per question with native tool calls, each masked, cost-checked and listed on the card
+- **Best Practice artifacts are safe for Watson** — every artifact of the built-in Best Practice bundle (not Big Hogs) is on Watson's safe list, so Auto can launch it
 - **Watson Auto follow-up chain** — in Auto, Watson may launch up to 3 safe single-host collections in a row from its own rounds; your next message resets the count
 - **Watson Auto holds raw-cited writes** — writes that rest on super-timeline or paste rows wait for approval
 - **Watson searches the super-timeline** — one targeted search per round; cited raw rows are promoted with the Watson badge and Undo
