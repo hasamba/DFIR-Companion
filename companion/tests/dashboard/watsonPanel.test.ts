@@ -114,6 +114,7 @@ function setup(
       "dashboard-watson-cards.js",
       "dashboard-watson-view.js",
       "dashboard-watson-mode.js",
+      "dashboard-watson-run.js",
       "dashboard-watson-velo.js",
     ],
     {
@@ -629,12 +630,12 @@ describe("requests stay with the case they started on", () => {
     const input = { value: "about case one" };
     const done = api.watsonAct(sendEl(input)) as Promise<void>;
     expect(held.calls[0].url).toBe("/cases/c1/watson/message");
-    expect(log.innerHTML).toContain("prepares an answer");
+    expect(log.innerHTML).toContain("Watson is working on an answer.");
     caseInput.value = "c2";
     void api.loadWatson("c2");
     held.calls[1].release(response(200, chatWith([])));
     await tick();
-    expect(log.innerHTML).not.toContain("prepares an answer"); // c1's request does not block c2
+    expect(log.innerHTML).not.toContain("Watson is working on an answer."); // c1's request does not block c2
     const second = { value: "about case two" };
     void api.watsonAct(sendEl(second));
     expect(held.calls[2].url).toBe("/cases/c2/watson/message");

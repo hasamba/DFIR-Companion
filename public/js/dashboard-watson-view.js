@@ -263,6 +263,7 @@
     collapse: svg("M13 17l5-5-5-5M6 17l5-5-5-5"),
     full: svg("M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"),
     exitFull: svg("M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"),
+    stop: svg("M6 6h12v12H6z"),
   };
 
   // One shell for all three states; the panel's classes decide what shows (see dashboard-watson.css).
@@ -272,6 +273,7 @@
       `<span class="watson-rail-expand" aria-hidden="true">${ICON.expand}</span>` +
       `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span><span data-w="railmode"></span></button>` +
       `<div class="watson-root watson-body"><div class="watson-head"><strong>Watson</strong><span class="watson-mode" data-w="mode"></span><span data-w="velo"></span>` +
+      `<button type="button" class="watson-icon-btn watson-stop" data-w="stop" data-act="watsonAct" data-w-verb="stop" aria-label="Stop Watson" title="Stop Watson" hidden>${ICON.stop}</button>` +
       `<button type="button" class="watson-icon-btn watson-only-open" data-act="watsonAct" data-w-verb="fullScreen" aria-expanded="false" aria-label="Full screen" title="Full screen">${ICON.full}</button>` +
       `<button type="button" class="watson-icon-btn watson-only-full" data-act="watsonAct" data-w-verb="exitFullScreen" aria-expanded="true" aria-label="Exit full screen" title="Exit full screen">${ICON.exitFull}</button>` +
       `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson" title="Collapse Watson">${ICON.collapse}</button></div>` +

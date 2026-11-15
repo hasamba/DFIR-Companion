@@ -2,11 +2,9 @@
 // view, in three states: rail (a thin strip), open (360px) and full (the whole content area, with the
 // Key Questions board beside the chat). It is not a dashboard section: no view profile hides it.
 //
-// This file owns the state and the server calls; the markup is built by dashboard-watson-view.js
-// (watsonTurnHtml, watsonBoardHtml, watsonPanelHtml), which escapes every model, analyst and evidence string. Actions ride on
-// data-act="watsonAct" + data-w-verb; the CSP bans inline handlers. dashboard.html carries one
-// empty container. Every request is sent to the case it was started on, and its answer is dropped
-// when the analyst has since opened another case.
+// This file owns the state and the server calls; the markup is built by dashboard-watson-view.js, which escapes every
+// model, analyst and evidence string. The running state (working line, stop icon, send key) is in dashboard-watson-run.js.
+// Actions ride on data-act="watsonAct" + data-w-verb. Each request goes to the case it started on; another open case drops its answer.
 (function () {
   const PANEL_KEY = "dfir.watson.panel";
   const STATES = ["rail", "open", "full"];
@@ -53,7 +51,7 @@
         ? `<div class="watson-empty">This case has no forensic-timeline events or findings. Import evidence first. Until then, Watson has no data for an answer.</div>`
         : `<div class="watson-empty">Ask Watson about this case, or paste evidence.</div>`;
     const warn = wNotice ? `<div class="watson-turn watson-warn"><div class="watson-text">${esc(wNotice.text)}</div></div>` : "";
-    const thinking = wBusy.has(currentCase()) ? `<div class="watson-empty">Watson prepares an answer…</div>` : "";
+    const thinking = watsonWorkingHtml(wChat, wBusy.has(currentCase()));
     return hint + turns + watsonPausedHtml(wChat.reactionsPaused) + warn + thinking;
   }
 
@@ -77,6 +75,7 @@
     setHtml('[data-w="board"]', watsonBoardHtml(wQuestions));
     setHtml('[data-w="foot"]', footHtml());
     watsonVeloChipSync(wChat);
+    watsonStopSync(wChat, wBusy.has(currentCase())); // the stop icon (dashboard-watson-run.js)
     watsonModeSync(wChat); // the Approve / Auto switch and the rail's "A" (dashboard-watson-mode.js)
     const n = pendingCount();
     setHtml('[data-w="count"]', n ? esc(String(n)) : "");
@@ -186,9 +185,10 @@
       : "The companion did not keep the paste: " + why;
   }
 
-  // POST to the case the action started on. { ok, stored }: stored is true once the server kept a paste.
-  async function post(caseId, path, payload, action) {
-    const out = { ok: false, stored: false };
+  // POST to the case the action started on. { ok, stored, transport }: stored is true once the server kept a paste; transport is "lost" when no readable answer came back.
+  async function post(caseId, path, payload, action, headers) {
+    const out = { ok: false, stored: false, transport: "response" };
+    let answered = false;
     if (!caseId || wBusy.has(caseId)) return out;
     wBusy.add(caseId);
     if (live(caseId)) {
@@ -198,13 +198,14 @@
     try {
       const r = await fetch(api(caseId, path), {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...headers },
         body: JSON.stringify(payload),
       });
+      answered = true;
       out.stored = action === "paste" && !!r.headers && r.headers.get(STORED_HEADER) === "1";
       if (r.ok) {
+        const chat = await r.json().catch((e) => { answered = false; throw e; });
         out.ok = true;
-        const chat = await r.json();
         if (live(caseId)) {
           wNotice = null;
           renderWatson(chat);
@@ -214,6 +215,7 @@
         if (live(caseId)) wNotice = { text };
       }
     } catch (e) {
+      if (!answered) out.transport = "lost";
       if (live(caseId)) wNotice = { text: "Watson request failed: " + (e && e.message ? e.message : "network error") };
     } finally {
       wBusy.delete(caseId);
@@ -231,7 +233,8 @@
     const caseId = currentCase();
     if (!text || wBusy.has(caseId)) return;
     input.value = "";
-    return post(caseId, "/message", { text }, "message").then((r) => {
+    return post(caseId, "/message", { text }, "message", { "Idempotency-Key": watsonSendKey(caseId, text) }).then((r) => {
+      watsonSendSettled(caseId, r.transport === "lost");
       // a failed send keeps what the analyst typed, in the case they typed it for
       if (!r.ok && !input.value && live(caseId)) input.value = text;
     });
@@ -332,6 +335,7 @@
 
   const VERBS = {
     send,
+    stop: () => watsonStop(currentCase()).then((t) => { if (t) { wNotice = { text: t }; renderWatson(); } }),
     copy: copyQuery,
     collapse: () => setWatsonPanelState("rail"),
     open: () => setWatsonPanelState("open"),
