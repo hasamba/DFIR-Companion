@@ -151,6 +151,7 @@ export async function sendStep(env: StepEnv, s: LoopState, finalize = false): Pr
       idSalt: `t${k}`,
       promptEntities: entities(env, s),
       beforeSend: () => assertCanContinue(env.ctx, env.caseId),
+      ...(one.signal ? { signal: one.signal } : {}),
     };
     let answer: unknown;
     try {

@@ -206,6 +206,7 @@ export function callWatson(
     {
       promptEntities: promptEntities(prompt, [...veloHostNames(input), ...roster.hosts], roster.users),
       beforeSend: () => assertCanContinue(ctx, caseId),
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
     },
   );
 }

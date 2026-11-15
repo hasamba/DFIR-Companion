@@ -1,7 +1,7 @@
 import { PresidioApprovalRequired } from "../../presidio.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_CASE_EVENTS_MAX } from "./promptBuilder.js";
-import { WatsonCostLimitReached } from "./roundContext.js";
+import { WatsonCancelled, WatsonCostLimitReached } from "./roundContext.js";
 import { newWatsonId } from "./roundProposals.js";
 import type { WatsonChat, WatsonReactionsPaused, WatsonTurn } from "./types.js";
 
@@ -41,10 +41,17 @@ export function pausedReactions(chat: WatsonChat, why: WatsonReactionsPaused, te
   return { ...chat, reactionsPaused: why, turns: [...chat.turns, turn] };
 }
 
-/** A reaction that failed for a reason other than a Presidio hold or a limit (both pause at once). */
+/**
+ * A reaction that failed for a reason other than a Presidio hold or a limit (both pause at once). An
+ * analyst's stop is no failure either.
+ */
 export function reactionFailed(reply: unknown, error: unknown): boolean {
   if (reply) return false;
-  return !(error instanceof PresidioApprovalRequired || error instanceof WatsonCostLimitReached);
+  return !(
+    error instanceof PresidioApprovalRequired ||
+    error instanceof WatsonCostLimitReached ||
+    error instanceof WatsonCancelled
+  );
 }
 
 /** Count a reaction's result: a success resets the count, the Nth failure in a row pauses reactions. */

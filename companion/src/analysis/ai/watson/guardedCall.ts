@@ -11,6 +11,7 @@ import {
   type WatsonRoundContext,
   type WatsonSpend,
 } from "./roundContext.js";
+import { cancelReason } from "./roundCancel.js";
 import type { WatsonChat } from "./types.js";
 
 // Watson's guarded model call (moved out of round.ts for the tool loop, phase 5). Before EVERY
@@ -47,9 +48,20 @@ export async function assertMayContinue(
   await assertCanContinue(ctx, caseId);
 }
 
-/** Throws WatsonAiOff or WatsonCaseFrozen. Run before each tool: a lookup costs nothing (D5). */
+/** Throws the analyst's stop when the round's signal is aborted. */
+function assertNotCancelled(ctx: WatsonRoundContext): void {
+  const stop = cancelReason(ctx.signal);
+  if (stop) throw stop;
+}
+
+/**
+ * Throws WatsonCancelled, WatsonAiOff or WatsonCaseFrozen. Run before each tool: a lookup costs
+ * nothing (D5). The stop is checked before AND after the awaited read, so a stop during it counts.
+ */
 export async function assertCanContinue(ctx: WatsonRoundContext, caseId: string): Promise<void> {
+  assertNotCancelled(ctx);
   const state = await continueState(ctx, caseId);
+  assertNotCancelled(ctx);
   if (state === "off") throw new WatsonAiOff();
   if (state === "frozen") throw new WatsonCaseFrozen();
 }
@@ -97,6 +109,8 @@ export async function guardedCall<T>(
     try {
       return await call(one);
     } catch (err) {
+      // An abort while the fetch was in flight is the analyst's stop, not a transport error to retry.
+      assertNotCancelled(ctx);
       if (attempt >= retries || !mayRetry(err, o)) throw err;
       last = err;
       ctx.log?.warn(`Watson call attempt ${attempt + 1} failed; retrying`, { caseId });

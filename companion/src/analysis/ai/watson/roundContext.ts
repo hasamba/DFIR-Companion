@@ -30,6 +30,7 @@ import { timelineRow } from "./timelineLookup.js";
 import type { WatsonCoverage, WatsonPaste } from "./types.js";
 import type { LaunchContext } from "./velo/launchCheck.js";
 import type { WatsonAutoDeps } from "./autoApply.js";
+import type { WatsonRunRegistry } from "./runRegistry.js";
 import type { WatsonRawSearchDeps } from "./superTimelineSearch.js";
 import type { WatsonReportText } from "./writers/writerTypes.js";
 
@@ -81,7 +82,25 @@ export type WatsonRoundContext = AiCallContext & {
   auto?: WatsonAutoDeps;
   /** Watson's ONE door to the raw record (route-built, D12). Absent: a super-timeline search is skipped. */
   rawSearch?: WatsonRawSearchDeps;
+  /** The round's stop signal (runWatsonRound sets it from the run registry). Aborted: Watson stops. */
+  signal?: AbortSignal;
+  /** The per-case registry of running rounds (memory only). Absent: a round cannot be stopped. */
+  runs?: WatsonRunRegistry;
+  /** Tells the dashboard a round started or ended on the case. */
+  onRunChange?(caseId: string): void;
 };
+
+/** The stop note. No class name in it: system turns may reach later prompts. */
+export const WATSON_CANCELLED_TEXT =
+  "Watson stopped this answer because an analyst selected Stop. Watson did not propose changes after the stop.";
+
+/** An analyst stopped the round (run registry cancel). Never retried: it extends SendStopped. */
+export class WatsonCancelled extends SendStopped {
+  constructor() {
+    super(WATSON_CANCELLED_TEXT);
+    this.name = "WatsonCancelled";
+  }
+}
 
 /** Thrown before anything is saved when the case's AI switch is off. The route answers 409. */
 export class WatsonAiOff extends SendStopped {

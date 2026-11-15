@@ -60,7 +60,11 @@ export interface WatsonAutoRound {
   heldIds?: readonly string[];
   /** The held promotions the round's own paste created. */
   paste?: { pasteId: string; proposalIds: readonly string[] };
+  /** The round's stop signal: once aborted, Auto applies nothing more (an action running finishes). */
+  signal?: AbortSignal;
 }
+
+const ANALYST_STOP_WHY = "An analyst stopped Watson.";
 
 const isHeldPromotion = (p: WatsonProposal): boolean => p.kind === "event_promote" && p.status === "pending";
 /** The round's own super-timeline promotion: applied by the round; a stuck one waits for an analyst's Apply. */
@@ -250,10 +254,12 @@ export async function autoApply(
   let stopped = false;
   let stopReason = "Auto mode is no longer on for this case.";
   for (const p of todo) {
+    if (!stopped && round.signal?.aborted) [stopped, stopReason] = [true, ANALYST_STOP_WHY];
     if (!stopped && deps.recheck && !waitReason(p, round)) {
       const now = await deps.recheck().catch(() => null);
       stopped = !autoOn(now);
       if (now?.frozen) stopReason = "Someone closed or archived the case.";
+      if (round.signal?.aborted) [stopped, stopReason] = [true, ANALYST_STOP_WHY];
     }
     const wait = stopped ? stopReason : waitReason(p, round);
     if (wait) {
@@ -345,7 +351,7 @@ export async function autoAfterRound(
   try {
     const flushed = await flushUnsaved(auto.writer.chatStore, caseId); // whatever the mode is now
     const control = await auto.control(caseId);
-    if (!autoOn(control)) return flushed ?? saved;
+    if (round.signal?.aborted || !autoOn(control)) return flushed ?? saved;
     const deps = { ...auto.writer, onStateChanged: auto.onStateChanged, recheck: () => auto.control(caseId) };
     return await autoApply(deps, caseId, round, control);
   } catch (err) {

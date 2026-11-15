@@ -11,6 +11,7 @@ import {
   seedStandardQuestions,
   spendDelta,
   WatsonAiOff,
+  WatsonCancelled,
   WatsonCostLimitReached,
   watsonSpend,
   type WatsonRoundContext,
@@ -32,13 +33,20 @@ import { autoAfterRound, carriedHeldIds, type WatsonRoundSource } from "./autoAp
 import { mergeOutcome, type Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
 import { revalidatePromotion, withCitedPromotion } from "./roundPromote.js";
+import { commitCheck } from "./roundCancel.js";
 import { earlierShownIds } from "./rawReferences.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
 import { withVeloLaunch } from "./velo/veloLaunchProposals.js";
 import { withRoundInventory } from "./velo/veloFleet.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
-export { WatsonAiOff, WatsonCostLimitReached, type WatsonRoundContext } from "./roundContext.js";
+export {
+  WATSON_CANCELLED_TEXT,
+  WatsonAiOff,
+  WatsonCancelled,
+  WatsonCostLimitReached,
+  type WatsonRoundContext,
+} from "./roundContext.js";
 export { WATSON_REACTION_PROMPT } from "./reactionState.js";
 
 // One Watson round: the analyst's message in, Watson's turn and pending proposals out.
@@ -82,7 +90,17 @@ export function runWatsonRound(
   input: WatsonRoundInput,
 ): Promise<WatsonChat> {
   const prev = chains.get(caseId) ?? Promise.resolve();
-  const run = prev.then(() => runRound(withRoundInventory(ctx), caseId, input)); // one inventory read (G16)
+  // Registered now, so a queued round can be stopped too. Ended and announced before `run` settles.
+  const kind = input.reaction ? "reaction" : "analyst";
+  const handle = ctx.runs?.begin(caseId, { kind, ...(input.actor ? { actor: input.actor } : {}) });
+  ctx.onRunChange?.(caseId);
+  const runCtx = handle ? { ...ctx, signal: handle.signal } : ctx;
+  const run = prev
+    .then(() => runRound(withRoundInventory(runCtx), caseId, input)) // one inventory read (G16)
+    .finally(() => {
+      handle?.end();
+      ctx.onRunChange?.(caseId);
+    });
   const tail = run.catch(() => undefined);
   chains.set(caseId, tail);
   void tail.then(() => {
@@ -135,17 +153,21 @@ async function runRound(
     before = await watsonSpend(ctx, caseId);
     const attach = { paste: newPaste, auto, reaction: input.reaction === true };
     outcome = await converse(ctx, caseId, chat, promptTurn, attach, counter, before);
+    outcome = commitCheck(ctx, outcome); // a stop drops the reply: nothing below proposes anything
     // Spec §4.4: a reaction to an import writes nothing, judged on the events the prompt showed.
     const importShown = input.reaction === true && outcome.shownEvents.some((e) => e.kind === "import");
     mayWrite = input.allowWrites !== false && !importShown;
-    outcome = await withWriteInputs(ctx, caseId, outcome, mayWrite);
+    outcome = commitCheck(ctx, await withWriteInputs(ctx, caseId, outcome, mayWrite));
     // Evidence first: the raw rows the reply cites are promoted before the turn is saved (D9).
-    outcome = await withCitedPromotion(ctx, caseId, outcome, mayWrite, turnId, chat);
-    outcome = await withVeloLaunch(ctx, caseId, outcome, mayWrite);
+    outcome = commitCheck(ctx, await withCitedPromotion(ctx, caseId, outcome, mayWrite, turnId, chat));
+    // A stop after the promotion started keeps the settled reply, but launches nothing.
+    if (!ctx.signal?.aborted) outcome = await withVeloLaunch(ctx, caseId, outcome, mayWrite);
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
   } finally {
-    // Every exit charges the round, and every exit leaves a turn: a reply or an error.
+    // Every exit charges the round, and every exit leaves a turn: a reply or an error. The stop
+    // check here is the commit point of a round that promoted nothing.
+    outcome = commitCheck(ctx, outcome);
     const after = await watsonSpend(ctx, caseId).catch(() => null);
     const spent = before && after ? spendDelta(before, after) : NO_SPEND;
     const failed = input.reaction === true && reactionFailed(outcome.reply, outcome.error);
@@ -153,7 +175,9 @@ async function runRound(
       // D9b: an undo of the promotion while the round ran drops what rested on it before it is added.
       const checked = revalidatePromotion(fresh, outcome);
       const merged = mergeOutcome(fresh, { ...checked, turnId }, spent, counter.calls);
-      return input.reaction ? withReactionResult(merged, failed) : merged;
+      // A stopped reaction neither counts as a failure nor resets the count.
+      const counts = input.reaction === true && !(outcome.error instanceof WatsonCancelled);
+      return counts ? withReactionResult(merged, failed) : merged;
     });
   }
   const failure = outcome.error ?? outcome.rethrow;
@@ -165,7 +189,7 @@ async function runRound(
   if (failure instanceof PresidioApprovalRequired) throw failure;
   if (input.reaction && failure instanceof WatsonCostLimitReached) throw failure;
   // Auto mode acts only on a round that produced Watson's turn; a launch is not a model call.
-  if (!ctx.auto || !outcome.reply) return saved;
+  if (!ctx.auto || !outcome.reply || ctx.signal?.aborted) return saved;
   const reaction = input.reaction === true;
   const pasteId = mayWrite && input.pasteId && input.pasteProposalIds?.length ? input.pasteId : undefined;
   const round = {
@@ -174,6 +198,7 @@ async function runRound(
     ...(input.source ? { source: input.source } : {}),
     heldIds: mayWrite ? carriedHeldIds(reaction, input.heldProposalIds, outcome.shownEvents) : [],
     ...(pasteId ? { paste: { pasteId, proposalIds: input.pasteProposalIds ?? [] } } : {}),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
   };
   return autoAfterRound(ctx.auto, caseId, round, saved, (line) => ctx.log?.warn(line, { caseId }));
 }

@@ -4,7 +4,7 @@ import { AiReplyUnreadableError } from "../aiReplyUnreadable.js";
 import { AiAnswerParseError } from "../providerCall.js";
 import type { RawRefs } from "./rawReferences.js";
 import type { WatsonReply } from "./replySchema.js";
-import type { WatsonSpend } from "./roundContext.js";
+import { WatsonCancelled, type WatsonSpend } from "./roundContext.js";
 import type { WatsonWriteInputs } from "./roundWrites.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
 import { WATSON_MAX_SUPER_SEARCHES } from "./toolMode.js";
@@ -103,6 +103,7 @@ function withoutShown(
 }
 
 function errorText(err: unknown): string {
+  if (err instanceof WatsonCancelled) return err.message;
   if (err instanceof PresidioApprovalRequired) {
     return "This message waits for your approval. Presidio found values that you must approve before they go to the AI.";
   }

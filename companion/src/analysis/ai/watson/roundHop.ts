@@ -3,6 +3,7 @@ import type { InvestigationState } from "../../stateTypes.js";
 import { WATSON_HISTORY_ID } from "./historyStore.js";
 import type { WatsonPromptInput } from "./promptBuilder.js";
 import type { WatsonReply } from "./replySchema.js";
+import { assertCanContinue } from "./guardedCall.js";
 import { searchExcerpt } from "./requestBuild.js";
 import { limitReached, type WatsonRoundContext, type WatsonSpend } from "./roundContext.js";
 import type { Outcome } from "./roundOutcome.js";
@@ -114,6 +115,8 @@ export async function secondHop(h: HopInput): Promise<Outcome> {
     if (!now) return withNote(kept, skipped(kind, "it could not check its cost"));
     const reached = limitReached(h.ctx, now);
     if (reached) return withNote(kept, skipped(kind, `this case reached its Watson ${reached}`));
+    // A stop, AI off or a closed case before the hop's lookup starts: no lookup and no second send.
+    await assertCanContinue(h.ctx, h.caseId);
     if (first.search) return await searchHop(h, kept, first.search);
     if (kind === "super") return await superHop(h, kept, lookup as WatsonLookup);
     return await lookupHop(h, kept, lookup as WatsonLookup);

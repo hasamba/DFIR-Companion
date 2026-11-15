@@ -233,6 +233,6 @@ describe("beforeSend runs after preparation and before the send (Codex P2 #4)", 
       beforeSend: async () => {},
     });
     expect(provider.requests).toHaveLength(1);
-    expect("beforeSend" in provider.requests[0]!).toBe(false);
+    expect("beforeSend" in provider.requests[0]).toBe(false);
   });
 });
