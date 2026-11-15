@@ -54,9 +54,13 @@ export interface PromptEntities {
 /**
  * An AnalyzeRequest as the AI-call gate accepts it. `promptEntities` rides on the request (not a new
  * positional argument) so every binding of `analyzeRestored` forwards it unchanged; prepareCall
- * strips it before the provider sees the request.
+ * strips it before the provider sees the request. `beforeSend` rides the same way: it runs after
+ * masking and Presidio, immediately before the send, and a throw stops the send.
  */
-export type GatedAnalyzeRequest = AnalyzeRequest & { promptEntities?: PromptEntities };
+export type GatedAnalyzeRequest = AnalyzeRequest & {
+  promptEntities?: PromptEntities;
+  beforeSend?: () => Promise<void>;
+};
 
 const byLenDesc = (a: string, b: string): number => b.length - a.length || a.localeCompare(b);
 
