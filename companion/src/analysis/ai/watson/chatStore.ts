@@ -6,6 +6,7 @@ import { atomicWrite } from "../../../storage/atomicWrite.js";
 import { WatsonHistoryStore } from "./historyStore.js";
 import { proposalSchema } from "./proposalSchema.js";
 import {
+  isRosterFieldValid,
   keepRosterDurable,
   maskRosterOf,
   rosterSidecarReadable,
@@ -157,7 +158,7 @@ export class WatsonChatStore {
     return (await this.read(caseId)).chat;
   }
 
-  /** The chat, and whether a file exists that is not a chat at all (bad JSON or the wrong shape). */
+  /** The chat, and whether the file is corrupt: bad JSON, the wrong shape, or a malformed roster (F4). */
   private async read(caseId: string): Promise<{ chat: WatsonChat; corrupt: boolean }> {
     let raw: unknown;
     try {
@@ -168,7 +169,9 @@ export class WatsonChatStore {
       if (err instanceof SyntaxError) return { chat: emptyWatsonChat(), corrupt: true };
       throw err;
     }
-    return { chat: parseChat(raw), corrupt: typeof raw !== "object" || raw === null || Array.isArray(raw) };
+    const notChat = typeof raw !== "object" || raw === null || Array.isArray(raw);
+    const corrupt = notChat || !isRosterFieldValid((raw as Record<string, unknown>).maskRoster);
+    return { chat: parseChat(raw), corrupt };
   }
 
   // A corrupt chat's roster is unknown. Without a readable sidecar (the superset), a write would save a
@@ -216,12 +219,15 @@ export class WatsonChatStore {
 
   // Load, apply fn, save, return the saved chat. Calls for one case run one at a time, so
   // concurrent writers never lose each other's writes. A throwing fn rejects only its own call.
+  // Order (F3): the new roster goes to the durable sidecar first, then the turns to the history, then
+  // the chat. A failed sidecar write stops the update, so history never holds a name both rosters lack.
   update(caseId: string, fn: (chat: WatsonChat) => WatsonChat | Promise<WatsonChat>): Promise<WatsonChat> {
     const prev = this.chains.get(caseId) ?? Promise.resolve();
     const run = prev.then(async () => {
       const { chat, corrupt } = await this.read(caseId);
       await this.refuseUnknownRoster(caseId, corrupt);
       const changed = await fn(chat);
+      await keepRosterDurable(this.cases.stateDir(caseId), changed.maskRoster);
       await this.keepHistory(caseId, chat, changed);
       const next = normalize(changed);
       if (corrupt) await this.backUpCorrupt(caseId);

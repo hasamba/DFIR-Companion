@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AnonControlStore } from "../../../src/analysis/anonControl.js";
 import { analyzeRestored } from "../../../src/analysis/ai/providerCall.js";
+import { isRetryableError, withRetry } from "../../../src/analysis/ai/retry.js";
 import { converseRestored } from "../../../src/analysis/ai/converseRestored.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
 import { runWatsonRound } from "../../../src/analysis/ai/watson/round.js";
@@ -171,6 +172,38 @@ describe("the roster reader: fail closed", () => {
       WatsonRosterUnreadable,
     );
     expect(sent).toHaveLength(0);
+  });
+
+  it("an AI send still masks a standalone machine-like label when only its FQDN is stored (final review F1)", async () => {
+    const cases = await newCases();
+    const anonStore = new AnonControlStore(cases);
+    await anonStore.save(CASE, { ...(await anonStore.load(CASE)), enabled: true });
+    await writeFile(join(cases.stateDir(CASE), "watson-mask-roster.json"), ROSTER(["c2-node1.evil.example"]));
+    const sent: AnalyzeRequest[] = [];
+    const provider: AIProvider = {
+      name: "capture",
+      model: "capture-model",
+      analyze: async (req): Promise<AnalyzeResult> => (sent.push(req), { rawText: "{}" }),
+    };
+    const gate = {
+      log,
+      opts: { anonStore, rawNamesStore: new WatsonRosterNames(new WatsonChatStore(cases)) },
+    };
+    const req = { systemPrompt: "s", userPrompt: "c2-node1 answered from c2-node1.evil.example", images: [] };
+    await analyzeRestored(gate, CASE, emptyState(CASE), provider, req).catch(() => undefined);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].userPrompt).not.toMatch(/c2-node1/i);
+  });
+
+  it("is never retried (final review F5)", async () => {
+    expect(isRetryableError(new WatsonRosterUnreadable())).toBe(false);
+    let attempts = 0;
+    const call = async (): Promise<never> => {
+      attempts++;
+      throw new WatsonRosterUnreadable();
+    };
+    await expect(withRetry(call, 3, 1)).rejects.toBeInstanceOf(WatsonRosterUnreadable);
+    expect(attempts).toBe(1);
   });
 
   it("a save() never overwrites a corrupt sidecar, and the chat is still saved", async () => {

@@ -1,5 +1,4 @@
-import { withShortLabel } from "./hostLabel.js";
-import { promptEntities } from "./pasteEntities.js";
+import { promptEntities, storableHosts, textFqdns } from "./pasteEntities.js";
 import { isIdentifierToken, isNonHostValue } from "./rowTextVocab.js";
 import type { WatsonMaskRoster } from "./superRoster.js";
 
@@ -60,20 +59,23 @@ export const NOT_A_HOST = new RegExp(
       "EID-\\d+",
       "ICSA-\\d{2}-\\d+-\\d+",
       "VU-\\d+",
+      "COVID-\\d{2}",
     ].join("|") +
     ")$",
 );
 
 // A value followed by ":" (not a port number) is the next field's label, so the field was blank.
 const NEXT_LABEL = /^:(?!\d)/;
+// A labelled value with no digit, hyphen or dot is a plain word (Microsoft, Windows), not a host name.
+const HOST_SHAPED = /[\d.-]/;
 
-/** Rule 1: each labelled value, cleaned; an FQDN value gives its short label too. */
+/** Rule 1: each labelled host-shaped value, cleaned; only an internal FQDN gives its short label. */
 function labelledHosts(text: string): string[] {
-  return [...text.matchAll(HOST_LABEL)]
+  const values = [...text.matchAll(HOST_LABEL)]
     .filter((m) => !NEXT_LABEL.test(text.slice(m.index + m[0].length)))
     .map((m) => (m[1] ?? "").replace(TRAILING_PUNCT, ""))
-    .filter((v) => v.length >= 2 && !EMPTY_VALUE.test(v) && !isNonHostValue(v))
-    .flatMap(withShortLabel);
+    .filter((v) => v.length >= 2 && HOST_SHAPED.test(v) && !EMPTY_VALUE.test(v) && !isNonHostValue(v));
+  return storableHosts(values);
 }
 
 /** Rule 2: machine-shaped bare tokens within the NetBIOS length, minus known identifier shapes. */
@@ -108,7 +110,7 @@ export function descriptionHostNames(text: string | undefined): string[] {
  */
 export function excerptRoster(text: string | undefined): WatsonMaskRoster | undefined {
   if (!text) return undefined;
-  const { hosts, usernames } = promptEntities(text);
-  const all = distinctNames([...hosts, ...descriptionHostNames(text)]);
+  const { usernames } = promptEntities(text);
+  const all = distinctNames([...storableHosts(textFqdns(text)), ...descriptionHostNames(text)]);
   return all.length || usernames.length ? { hosts: all, users: [...usernames], ips: [] } : undefined;
 }

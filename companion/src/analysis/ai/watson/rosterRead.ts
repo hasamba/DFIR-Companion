@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getServerLogger } from "../../../logging/serverLogger.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
+import { SendStopped } from "../sendStop.js";
 import { WATSON_ROSTER_FILE } from "../../investigationStateFiles.js";
 import { mergeMaskRoster, type WatsonMaskRoster } from "./superRoster.js";
 
@@ -21,7 +22,11 @@ export { WATSON_ROSTER_FILE };
 export const WATSON_CHAT_FILE = "watson-chat.json";
 export const WATSON_ROSTER_CACHE_MAX = 256;
 
-export class WatsonRosterUnreadable extends Error {
+/** What the redacted export answers when the roster cannot be read (final review F10): no AI is involved. */
+export const WATSON_ROSTER_EXPORT_TEXT = "The export stopped. Watson's masking list cannot be read.";
+
+/** Nothing was sent, and a retry would fail the same way: it extends SendStopped, so it is never retried. */
+export class WatsonRosterUnreadable extends SendStopped {
   constructor() {
     super(
       "Watson cannot read its list of masked names for this case, so nothing went to the AI. " +
@@ -64,7 +69,16 @@ export function maskRosterOf(raw: unknown): WatsonMaskRoster | undefined {
 const isStringList = (v: unknown): boolean =>
   v === undefined || (Array.isArray(v) && v.every((e) => typeof e === "string"));
 
-/** The sidecar's roster. Throws WatsonRosterUnreadable for bad JSON, a non-object, or bad hosts/users. */
+/**
+ * A chat's `maskRoster` field as stored: absent, or an object whose hosts, users and ips are each
+ * absent or a list of strings. Any other shape is corruption: its names cannot be known (fail closed).
+ */
+export function isRosterFieldValid(v: unknown): boolean {
+  if (v === undefined) return true;
+  return isRecord(v) && isStringList(v.hosts) && isStringList(v.users) && isStringList(v.ips);
+}
+
+/** The sidecar's roster. Throws WatsonRosterUnreadable for bad JSON, a non-object, or bad name lists. */
 export function parseRosterSidecar(text: string): WatsonMaskRoster {
   let raw: unknown;
   try {
@@ -72,12 +86,11 @@ export function parseRosterSidecar(text: string): WatsonMaskRoster {
   } catch {
     throw new WatsonRosterUnreadable();
   }
-  if (!isRecord(raw) || !isStringList(raw.hosts) || !isStringList(raw.users))
-    throw new WatsonRosterUnreadable();
+  if (!isRecord(raw) || !isRosterFieldValid(raw)) throw new WatsonRosterUnreadable();
   return maskRosterOf(raw) ?? { hosts: [], users: [], ips: [] };
 }
 
-/** The chat file's roster; `corrupt` when the file is bad JSON or not an object. */
+/** The chat file's roster; `corrupt` when the file is bad JSON, not an object, or has a malformed roster. */
 function chatRosterOf(text: string): { roster?: WatsonMaskRoster; corrupt: boolean } {
   let raw: unknown;
   try {
@@ -85,7 +98,7 @@ function chatRosterOf(text: string): { roster?: WatsonMaskRoster; corrupt: boole
   } catch {
     return { corrupt: true };
   }
-  if (!isRecord(raw)) return { corrupt: true };
+  if (!isRecord(raw) || !isRosterFieldValid(raw.maskRoster)) return { corrupt: true };
   const roster = maskRosterOf(raw.maskRoster);
   return roster ? { roster, corrupt: false } : { corrupt: false };
 }

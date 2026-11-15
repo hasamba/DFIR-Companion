@@ -12,6 +12,7 @@ import { resolveRedactedExportOptions, redactedExportFilename } from "../analysi
 import { buildRedactedExport } from "../reports/redactedExportBuilder.js";
 import { CustomerStore } from "../analysis/customerStore.js";
 import { WatsonChatStore } from "../analysis/ai/watson/chatStore.js";
+import { WATSON_ROSTER_EXPORT_TEXT, WatsonRosterUnreadable } from "../analysis/ai/watson/rosterRead.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { resolveTranslatePlatforms } from "./aiActionArgs.js";
 import { visionEnv } from "../config/aiEnv.js";
@@ -446,6 +447,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(zip);
     } catch (err) {
+      if (err instanceof WatsonRosterUnreadable)
+        return res.status(500).json({ error: WATSON_ROSTER_EXPORT_TEXT });
       return res.status(500).json({ error: (err as Error).message });
     }
   });

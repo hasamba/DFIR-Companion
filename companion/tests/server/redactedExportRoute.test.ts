@@ -13,7 +13,7 @@ import { readZip } from "../../src/analysis/zipArchive.js";
 import type { OcrRunner } from "../../src/analysis/ocrRedact.js";
 import type { Finding } from "../../src/analysis/stateTypes.js";
 import { WatsonChatStore } from "../../src/analysis/ai/watson/chatStore.js";
-import { WATSON_ROSTER_FILE } from "../../src/analysis/ai/watson/rosterRead.js";
+import { WATSON_ROSTER_EXPORT_TEXT, WATSON_ROSTER_FILE } from "../../src/analysis/ai/watson/rosterRead.js";
 
 // OCR runner that always "reads" an internal IP at a fixed box — so the blur path is exercised
 // deterministically without tesseract.
@@ -175,8 +175,9 @@ describe("GET /cases/:id/export/redacted", () => {
     const res = await request(app).get("/cases/c1/export/redacted");
     expect(res.status).toBe(500);
     expect(res.headers["content-type"]).not.toContain("application/zip");
-    expect(res.body).toEqual({
-      error: expect.stringContaining("Watson cannot read its list of masked names"),
-    });
+    // Final review F10: an export-specific text, with no claim about the AI.
+    expect(res.body).toEqual({ error: WATSON_ROSTER_EXPORT_TEXT });
+    expect(res.body.error).toBe("The export stopped. Watson's masking list cannot be read.");
+    expect(res.body.error).not.toMatch(/\bAI\b/);
   });
 });

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +60,102 @@ describe("a corrupt chat with no readable sidecar refuses every write (review I1
     await writeFile(chatPath(h.ctx.cases), "{bad");
     await expect(h.run("what ran?")).rejects.toThrow(new WatsonRosterUnreadable().message);
     expect(p.sent).toHaveLength(0);
+  });
+});
+
+describe("a malformed chat roster counts as corrupt (final review F4, Codex P1#4)", () => {
+  const BAD = [
+    { maskRoster: { hosts: "fakepc", users: [] } },
+    { maskRoster: { hosts: ["fakepc"], users: "fake.user" } },
+    { maskRoster: { hosts: ["fakepc", 5], users: [] } },
+    { maskRoster: { hosts: [], users: [], ips: "192.0.2.1" } },
+    { maskRoster: "fakepc" },
+    { maskRoster: ["fakepc"] },
+  ];
+
+  it("with no sidecar, loadRoster throws for each malformed shape", async () => {
+    for (const bad of BAD) {
+      const cases = await newCases();
+      await writeFile(chatPath(cases), JSON.stringify({ turns: [], ...bad }));
+      await expect(new WatsonChatStore(cases).loadRoster(CASE)).rejects.toBeInstanceOf(
+        WatsonRosterUnreadable,
+      );
+    }
+  });
+
+  it("with no sidecar, update() refuses and the malformed field is not erased", async () => {
+    const cases = await newCases();
+    const text = JSON.stringify({ turns: [], maskRoster: { hosts: "fakepc", users: [] } });
+    await writeFile(chatPath(cases), text);
+    const store = new WatsonChatStore(cases);
+    await expect(store.update(CASE, (c) => ({ ...c, memory: "m" }))).rejects.toBeInstanceOf(
+      WatsonRosterUnreadable,
+    );
+    expect(await readFile(chatPath(cases), "utf8")).toBe(text);
+  });
+
+  it("a readable sidecar stands for a malformed chat roster, as for corrupt JSON", async () => {
+    const cases = await newCases();
+    await writeFile(chatPath(cases), JSON.stringify({ turns: [], maskRoster: { hosts: "fakepc" } }));
+    await writeFile(join(cases.stateDir(CASE), ROSTER_FILE), JSON.stringify({ hosts: ["fakepc"] }));
+    const store = new WatsonChatStore(cases);
+    expect((await store.loadRoster(CASE))?.hosts).toEqual(["fakepc"]);
+    await store.update(CASE, (c) => ({ ...c, memory: "m" }));
+    expect((await store.loadRoster(CASE))?.hosts).toEqual(["fakepc"]);
+  });
+
+  it("a well-formed roster, and a chat with no roster, still read", async () => {
+    const cases = await newCases();
+    await writeFile(chatPath(cases), JSON.stringify({ turns: [] }));
+    expect(await new WatsonChatStore(cases).loadRoster(CASE)).toBeUndefined();
+    await writeFile(chatPath(cases), chatJson(["ws-fake01"]));
+    expect((await new WatsonChatStore(cases).loadRoster(CASE))?.hosts).toEqual(["ws-fake01"]);
+  });
+});
+
+describe("the roster is durable before history holds its names (final review F3, Codex P1#3)", () => {
+  const turn = (id: string, text: string) => ({
+    id,
+    at: "2026-11-15T10:00:00Z",
+    role: "watson" as const,
+    text,
+  });
+
+  it("a sidecar write that fails leaves history and the chat unchanged", async () => {
+    const cases = await newCases();
+    const store = new WatsonChatStore(cases);
+    await store.update(CASE, (c) => ({ ...c, turns: [turn("wt-1", "first")] }));
+    expect(await store.history.count(CASE)).toBe(1);
+    await mkdir(join(cases.stateDir(CASE), ROSTER_FILE)); // reading it now fails with EISDIR
+    const before = await readFile(chatPath(cases), "utf8");
+    await expect(
+      store.update(CASE, (c) => ({
+        ...c,
+        turns: [...c.turns, turn("wt-2", "fakepc ran it")],
+        maskRoster: { hosts: ["fakepc"], users: [], ips: [] },
+      })),
+    ).rejects.toThrow();
+    expect(await store.history.count(CASE)).toBe(1);
+    expect((await store.history.text(CASE)).text).not.toContain("fakepc");
+    expect(await readFile(chatPath(cases), "utf8")).toBe(before);
+  });
+
+  it("the sidecar holds the new names before the history append runs", async () => {
+    const cases = await newCases();
+    const store = new WatsonChatStore(cases);
+    const side = join(cases.stateDir(CASE), ROSTER_FILE);
+    let seen = "";
+    const append = store.history.append.bind(store.history);
+    store.history.append = async (id, turns) => {
+      seen = await readFile(side, "utf8").catch(() => "");
+      return append(id, turns);
+    };
+    await store.update(CASE, (c) => ({
+      ...c,
+      turns: [turn("wt-1", "fakepc ran it")],
+      maskRoster: { hosts: ["fakepc"], users: [], ips: [] },
+    }));
+    expect(seen).toContain("fakepc");
   });
 });
 

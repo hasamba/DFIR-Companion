@@ -29,17 +29,19 @@ describe("descriptionHostNames", () => {
       ["WS-FAKE01"],
     ],
     ["Logon from WS-FAKE01 to SRV-FAKE-02.", ["WS-FAKE01", "SRV-FAKE-02"]],
-    ["Workstation Name: fakepc", ["fakepc"]],
-    ['Computer="ws-fake03.example.com"', ["ws-fake03.example.com", "ws-fake03"]],
+    ["Workstation Name: fake-pc", ["fake-pc"]],
+    ["Workstation Name: fakepc7", ["fakepc7"]],
+    ['Computer="ws-fake03.example.com"', ["ws-fake03.example.com"]],
+    ["Host Name: files.corp.internal", ["files.corp.internal", "files"]],
     ["DESKTOP-FAKE7Q2 started", ["DESKTOP-FAKE7Q2"]],
     ["Copied to DEV-01, FIN-02 and S1-DC01", ["DEV-01", "FIN-02", "S1-DC01"]],
-    ["Workstation Name: fakepc.", ["fakepc"]],
+    ["Workstation Name: fake-pc.", ["fake-pc"]],
     ["host=WS-FAKE01:445", ["WS-FAKE01"]],
     ["New computer WIN-7Q2K3J9LMN joined", ["WIN-7Q2K3J9LMN"]],
     ["Share SRV-SMB01 mounted", ["SRV-SMB01"]],
   ])("finds the host in %s", (text, hosts) => {
     expect(descriptionHostNames(text)).toEqual(expect.arrayContaining(hosts));
-    expect(descriptionHostNames(text)).not.toContain("fakepc.");
+    expect(descriptionHostNames(text)).not.toContain("fake-pc.");
   });
 
   it.each([
@@ -65,6 +67,11 @@ describe("descriptionHostNames", () => {
     "Workstation Name: Source: 192.0.2.1",
     "Computer Name: no",
     "Host: ab",
+    // Final review F1: a single plain word is no host, and COVID-19 is no machine name.
+    "Computer: Microsoft",
+    "Host Name: Windows",
+    "Workstation Name: fakepc",
+    "Cases of COVID-19 rose",
     // Review I2: crypto, encoding, protocol and platform identifiers stay readable.
     "Ticket encryption RC4-HMAC requested",
     "Decoded from UTF-16LE base64",
@@ -115,6 +122,35 @@ describe("descriptionHostNames on a command line (review M1)", () => {
     "certutil -urlcache -split -f https://cdn.example.com/WS-FAKE01.exe C:\\Temp\\a.exe",
   ])("finds no host in %s", (text) => {
     expect(descriptionHostNames(text)).toEqual([]);
+  });
+});
+
+describe("no derived short label for a public FQDN (final review F1)", () => {
+  it.each([
+    ["GET / Host: www.google.com", "www.google.com", "www"],
+    ["Host: login.microsoftonline.com", "login.microsoftonline.com", "login"],
+    ["cs-host=api.github.com", "api.github.com", "api"],
+    ["Hostname: mail.example.com", "mail.example.com", "mail"],
+    ['Computer="ws-fake03.example.com"', "ws-fake03.example.com", "ws-fake03"],
+  ])("%s gives the FQDN at most, never its first label", (text, fqdn, label) => {
+    const names = descriptionHostNames(text).map((h) => h.toLowerCase());
+    expect(names).not.toContain(label);
+    expect(names.every((n) => n === fqdn)).toBe(true);
+    const r = excerptRoster(text);
+    expect((r?.hosts ?? []).map((h) => h.toLowerCase())).not.toContain(label);
+  });
+
+  it("a paste of an attacker FQDN stores the FQDN, not its machine-like label", () => {
+    const r = excerptRoster("beacon to c2-node1.example.com every 60s");
+    expect(r?.hosts).toContain("c2-node1.example.com");
+    expect(r?.hosts.map((h) => h.toLowerCase())).not.toContain("c2-node1");
+  });
+
+  it("an internal FQDN still gives its label", () => {
+    const r = excerptRoster("mounted \\\\files.corp.internal\\share");
+    expect(r?.hosts.map((h) => h.toLowerCase())).toEqual(
+      expect.arrayContaining(["files.corp.internal", "files"]),
+    );
   });
 });
 

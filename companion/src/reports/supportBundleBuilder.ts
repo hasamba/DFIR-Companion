@@ -196,16 +196,44 @@ async function storedImportName(deps: SupportBundleDeps, caseId: string, name: s
 
 type Redact = (text: string) => string;
 
+/** What support.json says instead when it names a case whose masking list cannot be read (F2). */
+export const SUPPORT_JSON_WITHHELD =
+  "This file named a case whose masking list cannot be read, so the bundle does not include it.";
+
+const mentionsAny = (text: string, caseIds: readonly string[]): boolean => {
+  const lower = text.toLowerCase();
+  return caseIds.some((id) => id.trim() !== "" && lower.includes(id.trim().toLowerCase()));
+};
+
+/** support.json, or a fixed stand-in when it names a withheld case: that case's names are unknown. */
+function supportJsonOf(json: string, withheld: readonly string[], redact: Redact): string {
+  if (mentionsAny(json, withheld)) return JSON.stringify({ withheld: SUPPORT_JSON_WITHHELD }, null, 2);
+  return redact(json);
+}
+
+/**
+ * The failure records of the cases whose vocabulary loaded. A withheld case's records are omitted
+ * whole, with one fixed line: its error and file name can hold names the redactor does not know (F2).
+ */
+function readableFailures(deps: SupportBundleDeps, withheld: readonly string[]) {
+  const held = new Set(withheld);
+  const kept = deps.recentImportFailures.filter((f) => !held.has(f.caseId));
+  const dropped = deps.recentImportFailures.length - kept.length;
+  const omitted = dropped ? [`${dropped} failed import(s) of a case whose masking list cannot be read.`] : [];
+  return { kept, omitted };
+}
+
 async function importReports(
   deps: SupportBundleDeps,
   redact: Redact,
+  withheld: readonly string[],
 ): Promise<{ reports: SupportImportReport[]; omitted: string[] }> {
+  const { kept, omitted } = readableFailures(deps, withheld);
   const seen = new Set<string>();
   const reports: SupportImportReport[] = [];
-  const omitted: string[] = [];
   const budget = { left: SHAPE_SCAN_BUDGET_BYTES };
   let dropped = 0;
-  for (const f of deps.recentImportFailures) {
+  for (const f of kept) {
     const name = basename(f.filename);
     const key = `${f.caseId}\u0000${name}`;
     if (seen.has(key)) continue;
@@ -318,14 +346,14 @@ export async function buildSupportBundleZip(
   };
   const redact: Redact = (t) => redactor.redactText(t);
 
-  const { reports, omitted } = await importReports(deps, redact);
+  const { reports, omitted } = await importReports(deps, redact, withheld);
   const caseToken =
     req.includeCaseLog && req.caseId && isValidCaseId(req.caseId) ? redact(req.caseId) : undefined;
   return assembleSupportBundle({
     generatedAt: req.generatedAt,
     version: req.version,
     diagnosticsText: redactor.redactLog(req.diagnosticsText, { withheldCaseIds: withheld }),
-    supportJson: redact(req.supportJson),
+    supportJson: supportJsonOf(req.supportJson, withheld, redact),
     sessionLog: redactPart(sessionLog, SUPPORT_LOG_CAPS.sessionBytes),
     debugLog: redactPart(debugLog, SUPPORT_LOG_CAPS.debugBytes),
     caseLog: caseLog ? redactPart(caseLog, SUPPORT_LOG_CAPS.caseBytes) : undefined,

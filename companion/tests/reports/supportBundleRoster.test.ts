@@ -3,6 +3,7 @@ import {
   buildSupportBundleZip,
   type SupportBundleDeps,
   type SupportBundleRequest,
+  SUPPORT_JSON_WITHHELD,
 } from "../../src/reports/supportBundleBuilder.js";
 import { readZip } from "../../src/analysis/zipArchive.js";
 
@@ -77,5 +78,52 @@ describe("support bundle — Watson's masking roster", () => {
     );
     expect(allText(zip)).not.toContain("WS-FAKE09");
     expect(summaryOf(zip).withheldCases).toBe(1);
+  });
+
+  // Final review F2 (Codex P1#2): a withheld case's import-failure records are not exported either.
+  const failing = {
+    ...base,
+    loadRawNames: async () => {
+      throw new Error("EIO");
+    },
+    recentImportFailures: [
+      {
+        at: "2026-11-15T00:00:00.000Z",
+        caseId: "case-fake1",
+        kind: "evtx",
+        filename: "fakepc-security.evtx",
+        error: "Cannot parse value on host fakepc",
+      },
+    ],
+  };
+
+  it("omits the import-failure records of a withheld case, with a fixed message", async () => {
+    const zip = await buildSupportBundleZip(failing, req);
+    expect(allText(zip)).not.toMatch(/fakepc/i);
+    expect(readZip(zip).some((e) => e.path.startsWith("imports/"))).toBe(false);
+    const readme = readZip(zip)
+      .find((e) => e.path === "README.txt")!
+      .data.toString("utf8");
+    expect(readme).toContain("1 failed import(s) of a case whose masking list cannot be read.");
+  });
+
+  it("keeps the import-failure records of a readable case", async () => {
+    const zip = await buildSupportBundleZip(
+      { ...failing, loadRawNames: async () => ({ hosts: ["fakepc"], usernames: [] }) },
+      req,
+    );
+    expect(readZip(zip).some((e) => e.path === "imports/failure-1.json")).toBe(true);
+  });
+
+  it("withholds support.json when it names a withheld case", async () => {
+    const zip = await buildSupportBundleZip(failing, {
+      ...req,
+      supportJson: JSON.stringify({ note: "case-fake1 on fakepc" }),
+    });
+    const json = readZip(zip)
+      .find((e) => e.path === "support.json")!
+      .data.toString("utf8");
+    expect(json).not.toMatch(/fakepc/i);
+    expect(JSON.parse(json)).toEqual({ withheld: SUPPORT_JSON_WITHHELD });
   });
 });

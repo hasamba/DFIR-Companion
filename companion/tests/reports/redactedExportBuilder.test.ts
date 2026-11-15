@@ -8,6 +8,7 @@ import type { InvestigationState } from "../../src/analysis/stateTypes.js";
 import { isVictimSideHost } from "../../src/analysis/anonymize.js";
 import { WatsonRosterUnreadable } from "../../src/analysis/ai/watson/rosterRead.js";
 import { promptEntities } from "../../src/analysis/ai/watson/pasteEntities.js";
+import { excerptRoster } from "../../src/analysis/ai/watson/rowTextHosts.js";
 import type { WatsonMaskRoster } from "../../src/analysis/ai/watson/superRoster.js";
 
 // Minimal investigation state — one internal host so deriveKnownEntities has something to anonymize.
@@ -348,28 +349,47 @@ describe("buildRedactedExport — Watson's masking roster", () => {
     expect(md).not.toContain("files.corp.internal"); // a victim-side FQDN on the roster is masked
   });
 
-  // The roster as excerptRoster (toolDispatch.ts) persists it from a paste: promptEntities' output,
-  // which holds the C2 FQDN AND its short label as a bare host.
-  const pasteRoster = (text: string): WatsonMaskRoster => {
+  // A legacy roster: what excerptRoster stored before final review F1 (promptEntities' output), which
+  // holds the C2 FQDN AND its short label as a bare host.
+  const legacyPasteRoster = (text: string): WatsonMaskRoster => {
     const { hosts, usernames } = promptEntities(text);
     return { hosts: [...hosts], users: [...usernames], ips: [] };
   };
   const C2_TEXT = "c2-node1.example.com answered; c2-node1 resolved";
-
-  it("keeps a pasted C2 domain and its stored short label readable (real excerpt roster)", async () => {
-    const roster = pasteRoster("WS-FAKE09 beaconed to c2-node1.example.com");
-    expect(roster.hosts).toEqual(expect.arrayContaining(["c2-node1.example.com", "c2-node1"])); // fixture check
+  const exportOf = async (roster: WatsonMaskRoster, text: string): Promise<string> => {
     const out = await buildRedactedExport(
       deps({
         roster: { loadRoster: async () => roster },
         reportWriter: {
-          redactedReportContents: async (_c, redact) => ({ ...contents, markdown: redact(C2_TEXT) }),
+          redactedReportContents: async (_c, redact) => ({ ...contents, markdown: redact(text) }),
         },
       }),
       "c1",
       DEFAULT_REDACTED_EXPORT_OPTIONS,
     );
-    expect(reportMd(out.zip)).toBe(C2_TEXT);
+    return reportMd(out.zip);
+  };
+
+  it("a fresh paste of a C2 domain keeps the domain whole in the export (final review F1, a)", async () => {
+    const roster = excerptRoster("WS-FAKE09 beaconed to c2-node1.example.com");
+    expect(roster?.hosts).toContain("c2-node1.example.com"); // fixture check
+    expect(roster?.hosts).not.toContain("c2-node1"); // no derived label is stored
+    const md = await exportOf(roster!, C2_TEXT);
+    expect(md).toContain("c2-node1.example.com answered");
+    expect(md).not.toMatch(/WS-FAKE09/i);
+  });
+
+  it("a victim host that shares an attacker label is never shown in clear (final review F1, b)", async () => {
+    const roster = { hosts: ["ws-fake01", "ws-fake01.evil.example"], users: [], ips: [] };
+    const md = await exportOf(roster, "WS-FAKE01 beaconed to ws-fake01.evil.example");
+    expect(md).not.toMatch(/ws-fake01/i);
+    expect(md).toMatch(/^ANON_HOST_(\d+) beaconed to ANON_HOST_\1\.evil\.example$/);
+  });
+
+  it("a legacy roster's bare label stays masked (final review F1, c)", async () => {
+    const roster = legacyPasteRoster("beacon to c2-node1.example.com");
+    expect(roster.hosts).toEqual(expect.arrayContaining(["c2-node1.example.com", "c2-node1"])); // fixture check
+    expect(await exportOf(roster, C2_TEXT)).toMatch(/ANON_HOST_\d+ resolved/);
   });
 
   it("still masks that bare name when the case's own hosts name it", async () => {
@@ -381,7 +401,7 @@ describe("buildRedactedExport — Watson's masking roster", () => {
     const out = await buildRedactedExport(
       deps({
         stateStore: { load: async () => own } as unknown as RedactedExportDeps["stateStore"],
-        roster: { loadRoster: async () => pasteRoster("beacon to c2-node1.example.com") },
+        roster: { loadRoster: async () => legacyPasteRoster("beacon to c2-node1.example.com") },
         reportWriter: {
           redactedReportContents: async (_c, redact) => ({ ...contents, markdown: redact(C2_TEXT) }),
         },

@@ -24,25 +24,21 @@ export function rosterEntities(chat: Pick<WatsonChat, "maskRoster">): PromptEnti
 
 // The redacted export keeps adversary infrastructure readable (deriveKnownEntities, user decision
 // 2026-11-15). Since F7 the roster also holds the domains of paste and history excerpts, public ones
-// included, AND their short labels (excerptRoster stores promptEntities' output: c2-node1.x.com and
-// c2-node1). So the export drops each FQDN that is not victim-side, then every bare roster name that
-// is the first label of a dropped FQDN. The C2 domain and its label both stay readable. A real victim
-// host of that name stays masked through the export's own derivation (the case's known hosts), and a
-// kept victim-side FQDN gives its label again in rosterEntities. Other bare names and users are kept.
+// included, so the export drops each FQDN that is not victim-side. Every bare name stays: since final
+// review F1 no derived label of a public FQDN is stored, so a bare name was found on its own (or is a
+// legacy stored label) and stays masked. When a victim host shares an attacker domain's first label,
+// the domain then reads ANON_HOST_n.evil.example. Masking fails closed, so the victim host wins.
 const isAttackerFqdn = (h: string, internalDomains: readonly string[]): boolean =>
   h.includes(".") && !IP_LIKE.test(h) && !isVictimSideHost(h, internalDomains);
 
-/** The roster as masking entities for the redacted export: attacker domains and their labels stay out. */
+/** The roster as masking entities for the redacted export: attacker domains stay out. */
 export function exportRosterEntities(
   roster: WatsonMaskRoster | undefined,
   internalDomains: readonly string[],
 ): PromptEntities {
   if (!roster) return { hosts: [], usernames: [] };
   const domains = internalDomains.map((d) => d.toLowerCase());
-  const names = roster.hosts.map((h) => h.trim().toLowerCase());
-  const dropped = new Set(names.filter((h) => isAttackerFqdn(h, domains)));
-  const labels = new Set([...dropped].map((h) => h.slice(0, h.indexOf("."))));
-  const hosts = names.filter((h) => !dropped.has(h) && !labels.has(h));
+  const hosts = roster.hosts.map((h) => h.trim().toLowerCase()).filter((h) => !isAttackerFqdn(h, domains));
   return rosterEntities({ maskRoster: { ...roster, hosts } });
 }
 
