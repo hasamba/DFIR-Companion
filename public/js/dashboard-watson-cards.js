@@ -115,7 +115,7 @@
     if (p.kind === "velo_launch" && typeof watsonVeloCardHtml === "function") return watsonVeloCardHtml(p);
     const body = Object.prototype.hasOwnProperty.call(BODY, p.kind) ? BODY[p.kind](p) : "";
     return (
-      `<div class="watson-prop" data-pid="${escAttr(p.id)}">` +
+      `<div class="watson-prop watson-prop-${escAttr(p.kind)} watson-prop-${escAttr(p.status)}" data-pid="${escAttr(p.id)}">` +
       `<div class="watson-lbl">${esc(titleOf(p))} · ${esc(p.status)}</div>` +
       body +
       (p.uiError ? `<div class="watson-why watson-err">${esc(p.uiError)}</div>` : "") +

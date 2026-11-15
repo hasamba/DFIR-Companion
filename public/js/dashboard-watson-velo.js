@@ -118,7 +118,7 @@
   function veloCardHtml(p) {
     const grey = p.status === "rejected" ? " watson-rejected" : "";
     return (
-      `<div class="watson-prop watson-velo${grey}" data-pid="${escAttr(p.id)}">` +
+      `<div class="watson-prop watson-velo watson-prop-${escAttr(p.status)}${grey}" data-pid="${escAttr(p.id)}">` +
       `<div class="watson-lbl">Velociraptor launch · ${esc(p.status)}</div>` +
       `<div><strong>${esc(p.title)}</strong></div>` +
       `<div class="watson-why">${where(p)}</div>` +

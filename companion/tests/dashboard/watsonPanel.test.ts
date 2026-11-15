@@ -535,6 +535,29 @@ describe("rail button, failed sends and paste limits", () => {
     expect(input.value).toBe("keep me");
   });
 
+  it("loads the chat when a case opens, with no live-socket push (a quiet case)", async () => {
+    const urls: string[] = [];
+    const fetch = async (u: string) => {
+      urls.push(String(u));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => chatWith([{ id: "t1", at: "x", role: "watson", text: "earlier answer" }]),
+      };
+    };
+    const { api, log, fireState } = setup({ fetch });
+    api.initWatson();
+    urls.length = 0;
+    fireState({ keyQuestions: [], forensicTimeline: [] }); // the case's first render, from the GET /state
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(urls.filter((u) => u.endsWith("/cases/c1/watson"))).toHaveLength(1);
+    expect(log.innerHTML).toContain("earlier answer");
+    fireState({ keyQuestions: [], forensicTimeline: [] }); // a later render of the same case does not reload
+    await new Promise((r) => setTimeout(r, 0));
+    expect(urls.filter((u) => u.endsWith("/cases/c1/watson"))).toHaveLength(1);
+  });
+
   it("warns that no case is open when the analyst sends with no case, keeps the text and posts nothing", async () => {
     let posted = false;
     const fetch = async () => {
@@ -1048,6 +1071,57 @@ describe("a free-form answer in the Watson log", () => {
     await api.watsonAct({ dataset: { wVerb: "newThread" } });
     expect(calls).toEqual(["POST /cases/c1/watson/new-thread"]);
     expect(log.innerHTML).toContain("New thread — Watson starts");
+  });
+
+  it("the composer buttons are labelled icons, with Send as the main one", () => {
+    const view = readFileSync(
+      new URL("../../../public/js/dashboard-watson-view.js", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    for (const [verb, label] of [
+      ["send", "Send"],
+      ["pasteToggle", "Paste evidence"],
+      ["attachPick", "Attach a file"],
+      ["newThread", "New thread"],
+    ]) {
+      expect(view).toMatch(
+        new RegExp(
+          `class="watson-icon-btn[^"]*" data-act="watsonAct" data-w-verb="${verb}" aria-label="${label}[^"]*" title="${label}`,
+        ),
+      );
+    }
+    expect(view).toContain('class="watson-icon-btn watson-send"');
+  });
+
+  it("a card carries its kind and status, so the chat can colour each kind", () => {
+    const cards = readFileSync(
+      new URL("../../../public/js/dashboard-watson-cards.js", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    expect(cards).toContain(
+      'class="watson-prop watson-prop-${escAttr(p.kind)} watson-prop-${escAttr(p.status)}"',
+    );
+    const css = readFileSync(
+      new URL("../../../public/css/dashboard-watson.css", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    for (const cls of [
+      "watson-prop-next_step",
+      "watson-prop-question_new",
+      "watson-prop-finding_new",
+      "watson-prop-pending",
+      "watson-velo",
+    ]) {
+      expect(css).toContain(`.${cls}`);
+    }
+  });
+
+  it("the Watson badge and its Undo button share one height", () => {
+    const css = readFileSync(
+      new URL("../../../public/css/dashboard-watson.css", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    expect(css).toMatch(/\.watson-mark,\s*\.watson-undo \{[^}]*height: 20px/);
   });
 
   it("has a New thread button in the composer", () => {

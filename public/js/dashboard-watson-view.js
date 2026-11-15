@@ -246,10 +246,11 @@
       `<div class="watson-paste-box"><textarea class="watson-paste-text" rows="5" placeholder="Paste evidence text here" aria-label="Paste evidence"></textarea>` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="pasteSend">Send paste</button></div>` +
       `<div class="watson-actions">` +
-      `<button type="button" data-act="watsonAct" data-w-verb="send">Send</button> ` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="pasteToggle">Paste evidence</button> ` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="attachPick">Attach file</button> ` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="newThread" title="Start a new thread. Watson keeps its case memory. The earlier chat stays in the history.">↺ New thread</button>` +
+      `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="pasteToggle" aria-label="Paste evidence" title="Paste evidence">${ICON.paste}</button>` +
+      `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="attachPick" aria-label="Attach a file" title="Attach a file (text, JSON, XML, CSV, TSV or log)">${ICON.attach}</button>` +
+      `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="newThread" aria-label="New thread" title="New thread. Watson keeps its case memory. The earlier chat stays in the history.">${ICON.thread}</button>` +
+      `<span class="watson-actions-gap"></span>` +
+      `<button type="button" class="watson-icon-btn watson-send" data-act="watsonAct" data-w-verb="send" aria-label="Send" title="Send (Enter)">${ICON.send}</button>` +
       `<input type="file" class="watson-file" data-act="watsonAct" data-act-on="change" data-w-verb="file" accept=".txt,.log,.csv,.tsv,.json,.xml,text/*,application/json,application/xml" />` +
       `</div></div>`
     );
@@ -264,6 +265,10 @@
     full: svg("M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"),
     exitFull: svg("M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"),
     stop: svg("M6 6h12v12H6z"),
+    send: svg("M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"),
+    paste: svg("M9 4h6v3H9zM8 5H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2M9 12h6M9 16h4"),
+    attach: svg("M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"),
+    thread: svg("M12 5v14M5 12h14"),
   };
 
   // One shell for all three states; the panel's classes decide what shows (see dashboard-watson.css).

@@ -119,3 +119,34 @@ body.watson-full-open #watsonToggle::before { background-image: url("data:image/
 .watson-status-actions { display: inline-flex; gap: 4px; margin-left: auto; }
 .watson-rail .watson-status-dot { display: block; width: 9px; height: 9px; border-radius: 50%; background: currentColor; margin: 6px auto 0; }
 .watson-prop.watson-flash { outline: 2px solid #fb923c; outline-offset: 2px; transition: outline-color 0.3s; }
+
+/* Chat design: the analyst's messages sit right, Watson's answers left with a teal edge, system notes
+   are small and muted. Each card kind has its own colour on the left edge; a card that waits for the
+   analyst has a solid orange frame, a card that is done is dimmed. */
+.watson-turn.watson-analyst { margin-left: 14%; border-color: rgba(96, 165, 250, 0.45); background: rgba(96, 165, 250, 0.10); border-radius: 10px 10px 2px 10px; }
+.watson-turn.watson-watson { margin-right: 4%; border-left: 3px solid var(--brand-teal, #14b8a6); border-radius: 2px 10px 10px 10px; }
+.watson-turn.watson-system { border-style: dashed; background: none; font-size: 12px; color: var(--text-muted); padding: 4px 8px; }
+.watson-turn.watson-system .watson-text { color: var(--text-secondary, var(--text-muted)); }
+.watson-analyst .watson-who { color: #93c5fd; }
+.watson-watson .watson-who { color: var(--brand-teal, #2dd4bf); }
+.watson-prop { border-style: solid; border-left-width: 3px; background: rgba(255, 255, 255, 0.02); }
+.watson-prop-next_step { border-left-color: #60a5fa; }
+.watson-prop-question_new, .watson-prop-question_update { border-left-color: #a78bfa; }
+.watson-prop-finding_new, .watson-prop-finding_update { border-left-color: #f87171; }
+.watson-prop-event_promote { border-left-color: #34d399; }
+.watson-prop-report_text { border-left-color: #94a3b8; }
+.watson-velo { border-left-color: #fbbf24; }
+.watson-prop.watson-prop-pending { border-color: rgba(251, 146, 60, 0.7); border-left-color: #fb923c; background: rgba(251, 146, 60, 0.06); }
+.watson-prop.watson-prop-applied, .watson-prop.watson-prop-rejected, .watson-prop.watson-prop-undone { opacity: 0.8; }
+
+/* The Watson badge and its Undo button: one height, one shape. */
+.watson-mark, .watson-undo { display: inline-flex; align-items: center; box-sizing: border-box; height: 20px; padding: 0 8px;
+  border-radius: 10px; font-size: 11px; line-height: 1; vertical-align: middle; }
+
+/* Composer: icon buttons in one row; Send is the filled main button on the right. */
+.watson-actions { display: flex; align-items: center; gap: 4px; }
+.watson-actions-gap { flex: 1; }
+.watson-composer .watson-icon-btn { width: 30px; height: 30px; }
+.watson-icon-btn.watson-send { background: var(--accent, #2563eb); border-color: var(--accent, #2563eb); color: #fff; }
+.watson-icon-btn.watson-send:hover, .watson-icon-btn.watson-send:focus-visible { filter: brightness(1.1); background: var(--accent, #2563eb); color: #fff; }
+.watson-input { border-radius: 8px; padding: 8px 10px; }
