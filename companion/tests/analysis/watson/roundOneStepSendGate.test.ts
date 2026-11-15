@@ -9,14 +9,17 @@ import { superLookup } from "./superPromoteFixtures.js";
 type Stop = "off" | "frozen";
 
 /** A one-step harness. Once the guard's pre-check ran (`armed`), the next store read flips the state. */
-async function stopDuringPrep(stop: Stop, p: Scripted, armWhen: () => boolean = () => true) {
+async function stopDuringPrep(stop: Stop, p: Scripted, armWhen: () => boolean = () => true, retries = 0) {
   let armed = false;
   let state: Stop | null = null;
+  const checks = { n: 0 };
   const h = await toolHarness(p, {
     anonymize: true,
     maxToolCalls: 0,
+    retries,
     ctx: {
       canContinue: async () => {
+        checks.n++;
         if (armWhen()) armed = true;
         return state;
       },
@@ -28,7 +31,7 @@ async function stopDuringPrep(stop: Stop, p: Scripted, armWhen: () => boolean = 
     if (armed) state = stop;
     return load(caseId);
   };
-  return h;
+  return { ...h, checks };
 }
 
 describe("a stop during one-step send preparation prevents the send (Codex P2 #4)", () => {
@@ -51,8 +54,17 @@ describe("a stop during one-step send preparation prevents the send (Codex P2 #4
   it("the hop's call: AI off during its preparation → exactly one send", async () => {
     const p = new Scripted([], { hop: [reply(superLookup())] });
     const h = await stopDuringPrep("off", p, () => p.analyzed.length >= 1);
+    const chat = await h.run();
+    expect(p.analyzed).toHaveLength(1); // the first call only: the gate refused the hop's send
+    expect(lastTurn(chat).text).toContain("AI is off for this case");
+  });
+
+  it("a stop is never retried: the check runs once more, not once per retry", async () => {
+    const p = new Scripted([]);
+    const h = await stopDuringPrep("off", p, () => true, 3);
     await h.run();
-    expect(p.analyzed).toHaveLength(1);
+    expect(p.analyzed).toHaveLength(0);
+    expect(h.checks.n).toBe(2); // the guard's pre-check, then beforeSend
   });
 
   it("a reaction round: AI off during preparation → no send", async () => {

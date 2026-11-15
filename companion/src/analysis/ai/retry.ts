@@ -8,6 +8,7 @@ import { PresidioApprovalRequired, PresidioScanError } from "../presidio.js";
 import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 import { OcrRedactionError } from "../ocrRedact.js";
 import { isAiPreviewCapture } from "./aiPreviewScope.js";
+import { SendStopped } from "./sendStop.js";
 
 /**
  * Retry policy for AI calls (#418).
@@ -40,6 +41,9 @@ export function isRetryableError(err: unknown): boolean {
   if (err instanceof Error && err.name === "AbortError") return false;
   // An AI preview stopping at the gate (#2491). Nothing was sent; asking again would only stop again.
   if (isAiPreviewCapture(err)) return false;
+  // A stop right before the send (AI off, case closed, cancel): nothing was sent, and a retry would
+  // redo masking and Presidio and could send after the stop. Surface it on the first throw.
+  if (err instanceof SendStopped) return false;
   // An approval gate is not a transient failure. Retrying it re-runs the Presidio scan and delays
   // the 409 the analyst is waiting on, so surface it on the first throw.
   if (err instanceof PresidioApprovalRequired) return false;

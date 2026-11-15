@@ -1,8 +1,8 @@
 import type { AIProvider } from "../../../providers/provider.js";
 import type { InvestigationState } from "../../stateTypes.js";
 import { callAiJson } from "../aiContext.js";
-import { assertCanContinue } from "./guardedCall.js";
 import { getWatsonPrompt } from "../prompts/index.js";
+import { assertCanContinue } from "./guardedCall.js";
 import { WATSON_HISTORY_ID, WATSON_HISTORY_NAME } from "./historyStore.js";
 import { promptEntities } from "./pasteEntities.js";
 import { pasteHead, searchPaste } from "./pasteSearch.js";

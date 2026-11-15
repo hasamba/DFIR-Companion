@@ -10,6 +10,7 @@ import { computeMainSource, type SourceFamily } from "../../caseMainSource.js";
 import type { CaseMainSourceStore } from "../../caseMainSourceStore.js";
 import { enabledHuntPlatforms, huntLanguageFor } from "../../huntLanguage.js";
 import type { StateLock } from "../../stateLock.js";
+import { SendStopped } from "../sendStop.js";
 import type { StateStore } from "../../stateStore.js";
 import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { buildSynthesisContext, selectSynthesisEvents } from "../../synthSelect.js";
@@ -83,7 +84,7 @@ export type WatsonRoundContext = AiCallContext & {
 };
 
 /** Thrown before anything is saved when the case's AI switch is off. The route answers 409. */
-export class WatsonAiOff extends Error {
+export class WatsonAiOff extends SendStopped {
   constructor() {
     super("AI is off for this case. Turn it on to talk to Watson.");
     this.name = "WatsonAiOff";
@@ -91,7 +92,7 @@ export class WatsonAiOff extends Error {
 }
 
 /** Thrown before a model call when the case was closed or archived during the round (D5). */
-export class WatsonCaseFrozen extends Error {
+export class WatsonCaseFrozen extends SendStopped {
   constructor() {
     super("The case was closed or archived, so Watson stopped.");
     this.name = "WatsonCaseFrozen";
