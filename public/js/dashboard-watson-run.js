@@ -55,6 +55,7 @@
     const running = !!(chat && chat.running);
     Array.from(document.querySelectorAll('[data-w="stop"]')).forEach((el) => { el.hidden = !(localBusy || running); });
     pollSync(running);
+    if (typeof watsonStatusSync === "function") watsonStatusSync(chat, localBusy); // dashboard-watson-status.js
   }
 
   // POST the stop, then re-read the chat. Returns null on success, else the text to show the analyst.

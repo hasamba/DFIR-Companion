@@ -217,6 +217,7 @@
     // Forms that never navigate (were an inline onsubmit returning false)
     // Watson chat
     toggleWatsonPanel: (el) => toggleWatsonPanel(),
+    watsonStatusShow: (el) => watsonStatusShow(el),
     watsonAct: (el) => watsonAct(el),
     noSubmit: (el, e) => e.preventDefault(),
   };

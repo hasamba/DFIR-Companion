@@ -93,3 +93,29 @@ body.watson-full-open #watsonToggle::before { background-image: url("data:image/
 .watson-velo-chip::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #22c55e; margin-right: 4px; vertical-align: middle; }
 .watson-rejected { opacity: 0.55; }
 .watson-auto-list { margin: 4px 0; padding-left: 18px; }
+
+/* Watson status: the header pill, the bar above the message box and the rail dot (dashboard-watson-status.js). */
+.watson-status { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; line-height: 16px; padding: 1px 8px;
+  border-radius: 10px; white-space: nowrap; flex-shrink: 0; border: 1px solid transparent; }
+.watson-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.watson-status-working { color: #60a5fa; border-color: rgba(96, 165, 250, 0.5); background: rgba(96, 165, 250, 0.12); }
+.watson-status-velo { color: #fbbf24; border-color: rgba(251, 191, 36, 0.5); background: rgba(251, 191, 36, 0.12); }
+.watson-status-you { color: #fb923c; border-color: rgba(251, 146, 60, 0.6); background: rgba(251, 146, 60, 0.14); }
+.watson-status-ready { color: var(--text-muted); border-color: var(--border-color); }
+.watson-status-working::before, .watson-statusbar .watson-status-working { animation: watson-pulse 1.2s ease-in-out infinite; }
+@keyframes watson-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .watson-status-working::before, .watson-statusbar .watson-status-working { animation: none; } }
+.watson-statusbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 8px 0; padding: 7px 10px;
+  border: 1px solid var(--border-color); border-left-width: 4px; border-radius: 6px; font-size: 13px; background: var(--bg-secondary, rgba(255, 255, 255, 0.03)); }
+.watson-statusbar[hidden] { display: none; }
+.watson-statusbar:has(.watson-status-working) { border-left-color: #60a5fa; }
+.watson-statusbar:has(.watson-status-velo) { border-left-color: #fbbf24; }
+.watson-statusbar:has(.watson-status-you) { border-left-color: #fb923c; }
+.watson-statusbar .watson-status-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.watson-status-dot.watson-status-working { color: #60a5fa; }
+.watson-status-dot.watson-status-velo { color: #fbbf24; }
+.watson-status-dot.watson-status-you { color: #fb923c; }
+.watson-status-dot.watson-status-ready { color: #6b7280; }
+.watson-status-actions { display: inline-flex; gap: 4px; margin-left: auto; }
+.watson-rail .watson-status-dot { display: block; width: 9px; height: 9px; border-radius: 50%; background: currentColor; margin: 6px auto 0; }
+.watson-prop.watson-flash { outline: 2px solid #fb923c; outline-offset: 2px; transition: outline-color 0.3s; }
