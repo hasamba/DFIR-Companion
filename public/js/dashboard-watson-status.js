@@ -98,23 +98,65 @@
   }
 
   // A case with no events or findings gives Watson nothing to work with. With a Velociraptor server,
-  // the Best Practice bundle collects a detection base; the button opens its run form in the
-  // Velociraptor panel (dashboard-velo-collect.js), so the analyst picks the OS and labels and runs it.
+  // the Best Practice bundle collects a detection base; the button opens its run form in the Fleet
+  // Collection section (dashboard-velo-collect.js), so the analyst picks the OS and labels and runs it.
+  // When Watson cannot get there, a notice in the panel says why (never an unrelated form). The notice
+  // is module state, so a re-render of the panel keeps it.
   const EMPTY_TEXT = "This case has no forensic-timeline events or findings. Until it has some, Watson has no data for an answer.";
   const BUNDLE_ID = "best-practice";
+  const SECTION_ID = "sec-fleet-collection";
+  const BP_NOTE = {
+    section: "Watson cannot find the Fleet Collection section on this dashboard. Make sure that the Velociraptor server is connected.",
+    hidden: "The current dashboard view does not show the Fleet Collection section. Show the section in Settings, or select the Analyst view.",
+    form: "Watson cannot find the Best Practice bundle. Open the Fleet Collection section and run the bundle from its list.",
+  };
+  let bpNote = "";
+  const bpNoteHtml = () => `<div class="watson-why watson-warn" data-w="bpnote" role="status"${bpNote ? "" : " hidden"}>${esc(bpNote)}</div>`;
+  function setBpNote(text) {
+    bpNote = text;
+    Array.from(document.querySelectorAll('[data-w="bpnote"]')).forEach((el) => {
+      el.textContent = text;
+      el.hidden = !text;
+    });
+  }
   function watsonEmptyCaseHtml(chat) {
     if (!chat || !chat.veloConnected) return `<div class="watson-empty">${EMPTY_TEXT} Import evidence first.</div>`;
     return (
       `<div class="watson-empty">${EMPTY_TEXT} To get a detection base, run the Best Practice bundle on your endpoints, or import evidence.` +
-      ` <button type="button" class="watson-mini" data-act="watsonBestPractice">Run the Best Practice bundle</button></div>`
+      ` <button type="button" class="watson-mini" data-act="watsonBestPractice">Run the Best Practice bundle</button>${bpNoteHtml()}</div>`
     );
   }
-  function watsonBestPractice() {
-    if (typeof toggleVeloRunForm !== "function") return;
-    const form = document.querySelector(`.velo-run-form[data-id="${BUNDLE_ID}"]`);
-    if (form && form.style.display !== "block") toggleVeloRunForm(BUNDLE_ID);
-    const target = form || document.querySelector(".velo-run-form");
-    if (target && target.scrollIntoView) target.scrollIntoView({ block: "center", behavior: "smooth" });
+  const bpForm = () => document.querySelector(`.velo-run-form[data-id="${BUNDLE_ID}"]`);
+  const isShown = (el) => !!el && !el.hidden && !(el.style && el.style.display === "none");
+
+  // Leave full screen, show the Fleet Collection section, load the bundle list if its form is not
+  // there yet, then open and focus the Best Practice run form. Resolves to the note shown ("" = opened).
+  async function watsonBestPractice() {
+    setBpNote("");
+    const body = document.body;
+    if (body && body.classList && body.classList.contains("watson-full-open") && typeof setWatsonPanelState === "function") {
+      setWatsonPanelState("open");
+    }
+    const sec = document.getElementById(SECTION_ID);
+    if (!sec) return fail(BP_NOTE.section);
+    if (typeof revealSection === "function") revealSection(SECTION_ID);
+    else if (sec.classList) sec.classList.remove("collapsed");
+    if (!isShown(sec)) return fail(BP_NOTE.hidden);
+    if (!bpForm() && typeof loadVeloBundles === "function") {
+      try { await loadVeloBundles(); } catch { /* a failed load leaves no form: the note below says so */ }
+    }
+    const form = bpForm();
+    if (!form || typeof toggleVeloRunForm !== "function") return fail(BP_NOTE.form);
+    if (form.style.display !== "block") toggleVeloRunForm(BUNDLE_ID);
+    if (form.style.display !== "block") return fail(BP_NOTE.form);
+    if (form.scrollIntoView) form.scrollIntoView({ block: "center", behavior: "smooth" });
+    const first = form.querySelector ? form.querySelector("select, input, button") : null;
+    if (first && first.focus) first.focus();
+    return "";
+  }
+  function fail(text) {
+    setBpNote(text);
+    return text;
   }
 
   window.watsonStatusOf = watsonStatusOf;

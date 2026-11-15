@@ -226,3 +226,121 @@ describe("Watson status: launches that need recovery", () => {
     expect(s.state).toBe("velo");
   });
 });
+
+// Codex branch review #4: "Run the Best Practice bundle" must reach the run form: leave full screen,
+// show the Fleet Collection section, load the bundle list, open and focus the form, or say why not.
+describe("Run the Best Practice bundle", () => {
+  type BpApi = { watsonBestPractice(): Promise<string>; watsonEmptyCaseHtml(chat: unknown): string };
+  function bpSetup(
+    o: {
+      full?: boolean;
+      section?: boolean;
+      viewHides?: boolean;
+      formAfterLoad?: boolean;
+      formNow?: boolean;
+      bundleKnown?: boolean;
+    } = {},
+  ) {
+    const calls: string[] = [];
+    const note = { textContent: "", hidden: true };
+    const field = { focus: () => calls.push("focus") };
+    const form = {
+      style: { display: "none" },
+      scrollIntoView: () => calls.push("scroll"),
+      querySelector: () => field,
+    };
+    let loaded = false;
+    const sec = {
+      hidden: false,
+      style: { display: o.viewHides ? "none" : "" },
+      classList: { remove: () => {} },
+    };
+    const document = {
+      body: { classList: { contains: (c: string) => c === "watson-full-open" && !!o.full } },
+      getElementById: (id: string) => (id === "sec-fleet-collection" && o.section !== false ? sec : null),
+      querySelector: (sel: string) =>
+        sel === '.velo-run-form[data-id="best-practice"]' && (o.formNow || (loaded && o.formAfterLoad))
+          ? form
+          : null,
+      querySelectorAll: (sel: string) => (sel === '[data-w="bpnote"]' ? [note] : []),
+      addEventListener: () => {},
+    };
+    const api = loadDashboardModule<BpApi>(
+      "dashboard-watson-status.js",
+      ["dashboard-escape.js", "dashboard-watson-cards.js"],
+      {
+        document,
+        setWatsonPanelState: (s: string) => calls.push(`panel:${s}`),
+        revealSection: (id: string) => calls.push(`reveal:${id}`),
+        loadVeloBundles: async () => {
+          calls.push("load");
+          loaded = true;
+        },
+        toggleVeloRunForm: (id: string) => {
+          calls.push(`toggle:${id}`);
+          if (o.bundleKnown !== false) form.style.display = "block";
+        },
+      },
+    );
+    return { api, calls, note, form };
+  }
+
+  it("leaves full screen, shows the section, loads the bundles, then opens and focuses the form", async () => {
+    const { api, calls, note } = bpSetup({ full: true, formAfterLoad: true });
+    expect(await api.watsonBestPractice()).toBe("");
+    expect(calls).toEqual([
+      "panel:open",
+      "reveal:sec-fleet-collection",
+      "load",
+      "toggle:best-practice",
+      "scroll",
+      "focus",
+    ]);
+    expect(note.hidden).toBe(true);
+  });
+
+  it("does not change the panel when it is not full screen, and does not reload a list that is there", async () => {
+    const { api, calls } = bpSetup({ formNow: true });
+    expect(await api.watsonBestPractice()).toBe("");
+    expect(calls).not.toContain("panel:open");
+    expect(calls).not.toContain("load");
+  });
+
+  it("does not close a form that is already open", async () => {
+    const { api, calls, form } = bpSetup({ formNow: true });
+    form.style.display = "block";
+    await api.watsonBestPractice();
+    expect(calls).not.toContain("toggle:best-practice");
+    expect(calls).toContain("focus");
+  });
+
+  it("says so when there is no Fleet Collection section", async () => {
+    const { api, note } = bpSetup({ section: false });
+    expect(await api.watsonBestPractice()).toContain("cannot find the Fleet Collection section");
+    expect(note.hidden).toBe(false);
+  });
+
+  it("says where the section is when the current view hides it", async () => {
+    const { api, calls } = bpSetup({ viewHides: true, formNow: true });
+    expect(await api.watsonBestPractice()).toContain("Show the section in Settings");
+    expect(calls).not.toContain("toggle:best-practice");
+  });
+
+  it.each([
+    ["the bundle list has no Best Practice form", { formAfterLoad: false }],
+    ["the form does not open", { formNow: true, bundleKnown: false }],
+  ])("shows a notice, and opens no other form, when %s", async (_n, o) => {
+    const { api, calls } = bpSetup(o);
+    expect(await api.watsonBestPractice()).toContain("cannot find the Best Practice bundle");
+    expect(calls).not.toContain("focus");
+  });
+
+  it("keeps the notice across a re-render of the empty case, escaped", async () => {
+    const { api } = bpSetup({ section: false });
+    await api.watsonBestPractice();
+    const html = api.watsonEmptyCaseHtml({ veloConnected: true });
+    expect(html).toContain('data-w="bpnote"');
+    expect(html).toContain("cannot find the Fleet Collection section");
+    expect(html).not.toContain(" hidden>");
+  });
+});
