@@ -80,6 +80,8 @@ export interface WatsonRoundInput {
    * analyst's stop, else "failed" (routes/watsonMessage.ts replays only the first two).
    */
   onDisposition?(disposition: WatsonDisposition): void;
+  /** The message's admission signal (routes/watsonMessage.ts): aborted means the round begins stopped. */
+  admitted?: AbortSignal;
 }
 
 const chains = new Map<string, Promise<unknown>>();
@@ -92,7 +94,11 @@ export function runWatsonRound(
   const prev = chains.get(caseId) ?? Promise.resolve();
   // Registered now, so a queued round can be stopped too. Ended and announced before `run` settles.
   const kind = input.reaction ? "reaction" : "analyst";
-  const handle = ctx.runs?.begin(caseId, { kind, ...(input.actor ? { actor: input.actor } : {}) });
+  const handle = ctx.runs?.begin(caseId, {
+    kind,
+    ...(input.actor ? { actor: input.actor } : {}),
+    ...(input.admitted ? { admitted: input.admitted } : {}),
+  });
   announce(ctx, caseId); // a failing notifier never leaks the run: it cannot throw here
   const runCtx = handle ? { ...ctx, signal: handle.signal } : ctx;
   const run = prev

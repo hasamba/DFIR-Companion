@@ -85,25 +85,14 @@ function messageText(body: unknown): { text: string } | { error: string } {
 /**
  * Admits new messages per case. A message counts from its admission until its round registers in
  * watsonRuns (the same synchronous step), then watsonRuns counts it. So two concurrent requests
- * cannot both pass a full case during the asynchronous checks.
+ * cannot both pass a full case during the asynchronous checks. The admission is held in watsonRuns,
+ * so a stop during the checks reaches the message too (final review F6).
  */
-class WatsonAdmission {
-  private readonly admitting = new Map<string, number>();
-
-  enter(caseId: string): () => void {
-    const status = watsonRuns.status(caseId);
-    const active = (status ? status.queued + 1 : 0) + (this.admitting.get(caseId) ?? 0);
-    if (active >= WATSON_MAX_ACTIVE_PER_CASE) throw new WatsonRouteRefusal(429, BUSY_TEXT);
-    this.admitting.set(caseId, (this.admitting.get(caseId) ?? 0) + 1);
-    let left = false;
-    return () => {
-      if (left) return;
-      left = true;
-      const n = (this.admitting.get(caseId) ?? 1) - 1;
-      if (n > 0) this.admitting.set(caseId, n);
-      else this.admitting.delete(caseId);
-    };
-  }
+function admit(caseId: string) {
+  const status = watsonRuns.status(caseId);
+  const active = (status ? status.queued + 1 : 0) + watsonRuns.admitting(caseId);
+  if (active >= WATSON_MAX_ACTIVE_PER_CASE) throw new WatsonRouteRefusal(429, BUSY_TEXT);
+  return watsonRuns.admit(caseId);
 }
 
 export function registerWatsonMessageRoutes(
@@ -113,24 +102,24 @@ export function registerWatsonMessageRoutes(
 ): void {
   const { options } = ctx;
   const dedupe: Dedupe = new WatsonMessageDedupe();
-  const admission = new WatsonAdmission();
 
   /**
    * One admitted round. The admission ends in the same step the round registers in watsonRuns. The
    * disposition is reported also when the round throws (a Presidio hold after a saved reply).
    */
   async function runMessage(caseId: string, text: string, actor: string, onDisposition?: OnDisposition) {
-    const leave = admission.enter(caseId);
+    const ticket = admit(caseId);
     let run: WatsonRun;
     try {
       run = await watsonRunOrRefuse(ctx, caseId); // the mutable checks run only here (Codex #8)
     } finally {
-      leave();
+      ticket.leave();
     }
     const input = {
       text,
       actor,
       source: "dashboard" as const, // may auto-launch (G12)
+      admitted: ticket.signal, // a stop during the checks: the round begins stopped
       ...(onDisposition ? { onDisposition } : {}),
     };
     return run.pipeline.watsonRound(caseId, input, run.deps);

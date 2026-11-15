@@ -132,7 +132,7 @@ async function harness(opts: { aiOn?: boolean; chatStore?: boolean } = {}) {
   const aiSwitch = (enabled: boolean) => request(app).post(`/cases/${CASE}/ai-control`).send({ enabled });
   const cancel = () => request(app).post(`/cases/${CASE}/watson/cancel`).send({});
   const get = () => request(app).get(`/cases/${CASE}/watson`);
-  return { app, CASE, provider, broadcasts, stateStore, post, aiSwitch, cancel, get };
+  return { app, CASE, store, provider, broadcasts, stateStore, post, aiSwitch, cancel, get };
 }
 
 async function until(check: () => boolean, ms = 3000): Promise<void> {
@@ -171,6 +171,31 @@ describe("Watson stop and running state", () => {
     expect(res.status).toBe(200);
     expect(lastTurn(res.body).text).toBe(WATSON_CANCELLED_TEXT);
     expect((await h.get()).body.running).toBeNull();
+  });
+
+  it("a stop during the admission checks stops the message before any provider call (final review F6)", async () => {
+    const h = await harness();
+    const real = h.store.getCaseMeta.bind(h.store);
+    let release: () => void = () => {};
+    let held = false;
+    h.store.getCaseMeta = async (id: string) => {
+      // Only the message's admission check waits (not the route guards, not the cancel route).
+      if (!held && new Error().stack?.includes("watsonRunOrRefuse")) {
+        held = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      return real(id);
+    };
+    const pending = h.post(undefined, "hi");
+    await until(() => held);
+    const stop = await h.cancel();
+    expect(stop.body).toEqual({ cancelled: 1 });
+    release();
+    const res = await pending;
+    expect(res.status).toBe(200);
+    expect(lastTurn(res.body).text).toBe(WATSON_CANCELLED_TEXT);
+    expect(h.provider.sent).toHaveLength(0);
+    expect(watsonRuns.status(h.CASE)).toBeNull();
   });
 
   it("POST /cancel with nothing running answers { cancelled: 0 }; AI off still lets it run", async () => {

@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Watson names in exports** — the redacted export and the support bundle now mask the names Watson masked for the AI.
 - **Watson masks hosts in raw row text** — a host named only in a raw row or paste description is masked.
+- **Watson rechecks before every send** — the AI switch and the case-closed state are checked right before each Watson AI call, so a switch-off or a close stops the next send.
 
 ## [0.46.0] - 2026-11-13
 

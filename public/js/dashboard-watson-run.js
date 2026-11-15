@@ -12,6 +12,8 @@
   const wStopping = new Set(); // case ids with a stop request in flight
   let wPoll = null; // { caseId, timer } while a run shows
 
+  const selectedCase = () => String((document.getElementById("caseId") || {}).value || "").trim();
+
   const newKey = () =>
     typeof crypto !== "undefined" && crypto && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
@@ -31,13 +33,15 @@
   // The stop icon follows the run. While the server reports a run, the chat is re-read on a timer, so a
   // missed ping cannot leave the icon and the line stuck. The timer ends when the run ends or the case changes.
   const pollSync = (running) => {
-    const caseId = String((document.getElementById("caseId") || {}).value || "").trim();
+    const caseId = selectedCase();
     if (wPoll && (!running || wPoll.caseId !== caseId)) {
       clearInterval(wPoll.timer);
       wPoll = null;
     }
     if (!running || wPoll || !caseId || typeof setInterval !== "function") return;
-    const timer = setInterval(() => { if (typeof loadWatson === "function") loadWatson(caseId); }, REFETCH_MS);
+    const timer = setInterval(() => {
+      if (caseId === selectedCase() && typeof loadWatson === "function") loadWatson(caseId);
+    }, REFETCH_MS);
     wPoll = { caseId, timer };
   };
 
@@ -48,22 +52,29 @@
   }
 
   // POST the stop, then re-read the chat. Returns null on success, else the text to show the analyst.
-  // A repeat click while the request is in flight is ignored.
+  // A repeat click while the request is in flight is ignored. An answer that arrives after the analyst
+  // selected another case neither re-reads nor reports: it belongs to a case the panel no longer shows.
   async function watsonStop(caseId) {
     if (wStopping.has(caseId)) return null;
     wStopping.add(caseId);
     try {
+      const why = await stopRequest(caseId);
+      if (caseId !== selectedCase()) return null;
+      if (why === null && typeof loadWatson === "function") loadWatson(caseId);
+      return why;
+    } finally {
+      wStopping.delete(caseId);
+    }
+  }
+
+  async function stopRequest(caseId) {
+    try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/watson/cancel`, { method: "POST" });
-      if (r.ok) {
-        if (typeof loadWatson === "function") loadWatson(caseId);
-        return null;
-      }
+      if (r.ok) return null;
       const body = await r.json().catch(() => ({}));
       return body && body.error ? String(body.error) : `Watson could not stop (HTTP ${r.status}).`;
     } catch {
       return "Watson could not stop: network error.";
-    } finally {
-      wStopping.delete(caseId);
     }
   }
 

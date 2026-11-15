@@ -211,6 +211,73 @@ describe("the working line and the stop icon", () => {
   });
 });
 
+describe("a stop or a refresh never moves the panel to another case (final review F8, F9)", () => {
+  const deferred = () => {
+    let resolve: (v: unknown) => void = () => {};
+    const promise = new Promise((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  const getsFor = (calls: Call[], id: string) =>
+    calls.filter((c) => c.method === "GET" && c.url === `/cases/${id}/watson`).length;
+
+  it("a stop on c1 that answers after the switch to c2 does not re-read c1", async () => {
+    const cancel = deferred();
+    const { api, calls, caseInput } = setup((c) => (c.url.endsWith("/cancel") ? cancel.promise : okChat));
+    await api.loadWatson("c1");
+    const stopping = api.watsonAct({ dataset: { wVerb: "stop" } });
+    caseInput.value = "c2";
+    await api.loadWatson("c2");
+    const before = getsFor(calls, "c1");
+    cancel.resolve({ ok: true, status: 200 });
+    await stopping;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getsFor(calls, "c1")).toBe(before);
+  });
+
+  it("a stop error for c1 that answers after the switch to c2 is not shown", async () => {
+    const cancel = deferred();
+    const { api, log, caseInput } = setup((c) => (c.url.endsWith("/cancel") ? cancel.promise : okChat));
+    await api.loadWatson("c1");
+    const stopping = api.watsonAct({ dataset: { wVerb: "stop" } });
+    caseInput.value = "c2";
+    await api.loadWatson("c2");
+    cancel.resolve(httpAnswer(423, "The case fake-c1 is closed."));
+    await stopping;
+    expect(log.innerHTML).not.toContain("fake-c1");
+  });
+
+  it("loadWatson for a case that is not selected does nothing", async () => {
+    const { api, calls, caseInput } = setup(() => okChat);
+    caseInput.value = "c2";
+    await api.loadWatson("c1");
+    expect(getsFor(calls, "c1")).toBe(0);
+  });
+
+  it("a c1 answer that arrives after the switch to c2 is not rendered", async () => {
+    const get1 = deferred();
+    const { api, log, caseInput } = setup((c) => (c.url === "/cases/c1/watson" ? get1.promise : okChat));
+    const loading = api.loadWatson("c1");
+    caseInput.value = "c2"; // the selector moved, but no loadWatson(c2) ran yet
+    get1.resolve({
+      ok: true,
+      status: 200,
+      json: async () => chatWith([], { running: running({ actor: "fake-c1-actor" }) }),
+    });
+    await loading;
+    expect(log.innerHTML).not.toContain("fake-c1-actor");
+  });
+
+  it("the poll timer of c1 does not re-read c1 once c2 is selected", async () => {
+    const { api, calls, timers, caseInput } = setup(runningGet);
+    await api.loadWatson("c1");
+    expect(timers.size).toBe(1);
+    caseInput.value = "c2";
+    const before = getsFor(calls, "c1");
+    [...timers.values()][0]();
+    expect(getsFor(calls, "c1")).toBe(before);
+  });
+});
+
 describe("the Idempotency-Key", () => {
   const SHAPE = /^[A-Za-z0-9_-]{8,64}$/;
 

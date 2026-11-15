@@ -144,7 +144,7 @@
   // ── Server calls ───────────────────────────────────────────────────────────────────────
   function loadWatson(caseId, onlyIfNew) {
     const id = caseId || currentCase();
-    if (!id) return Promise.resolve();
+    if (!id || id !== currentCase()) return Promise.resolve(); // never for a case that is not selected (F8)
     if (onlyIfNew && wCase === id) return Promise.resolve();
     if (wCase !== id) {
       const stale = !!(wCase && wChat);
@@ -162,7 +162,7 @@
         return r.ok ? r.json() : null;
       })
       .then((c) => {
-        if (seq !== wSeq || !c) return;
+        if (seq !== wSeq || !c || id !== currentCase()) return;
         setNoAi(c.providerConfigured === false);
         renderWatson(c);
       })

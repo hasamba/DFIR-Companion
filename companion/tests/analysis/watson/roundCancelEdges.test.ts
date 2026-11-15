@@ -5,7 +5,7 @@ import { PresidioApprovalRequired } from "../../../src/analysis/presidio.js";
 import { WATSON_CANCELLED_TEXT, runWatsonRound } from "../../../src/analysis/ai/watson/round.js";
 import type { WatsonRoundContext } from "../../../src/analysis/ai/watson/roundContext.js";
 import type { Outcome } from "../../../src/analysis/ai/watson/roundOutcome.js";
-import { saveRound } from "../../../src/analysis/ai/watson/roundSave.js";
+import { saveRound, WATSON_STOPPED_LATE_TEXT } from "../../../src/analysis/ai/watson/roundSave.js";
 import { WatsonRunRegistry } from "../../../src/analysis/ai/watson/runRegistry.js";
 import { ProviderError } from "../../../src/providers/provider.js";
 import type { ConverseRequest, ConverseResult } from "../../../src/providers/toolCalling.js";
@@ -110,7 +110,21 @@ describe("the commit point (review Minor 1, item 9)", () => {
     h.chatStore.hook = () => ctl.abort(); // runs after the merge, before the write
     const { saved, outcome } = await saveRound({ ...h.ctx, signal: ctl.signal }, CASE, answered, save);
     expect(outcome.stoppedAfterCommit).toBe(true);
-    expect(lastTurn(saved).role).toBe("watson");
+    // Final review F7: the analyst sees that the stop came too late.
+    expect(saved.turns.at(-2)?.role).toBe("watson");
+    expect(lastTurn(saved)).toMatchObject({ role: "system", text: WATSON_STOPPED_LATE_TEXT });
+    expect(lastTurn(saved).error).toBeUndefined();
+  });
+
+  it("a round with no late stop gets no late-stop note", async () => {
+    const h = await harness([]);
+    const { saved } = await saveRound(
+      { ...h.ctx, signal: new AbortController().signal },
+      CASE,
+      answered,
+      save,
+    );
+    expect(saved.turns.some((t) => t.text === WATSON_STOPPED_LATE_TEXT)).toBe(false);
   });
 
   it("a round with no stop is not marked", async () => {
