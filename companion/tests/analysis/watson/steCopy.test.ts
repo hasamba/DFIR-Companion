@@ -55,6 +55,7 @@ const EXTRA_FILES = [
   "composition/watsonCaseEvents.ts",
   "composition/watsonVeloResults.ts",
   "routes/watson.ts",
+  "routes/watsonMessage.ts",
   "routes/watsonPasteIngest.ts",
   "routes/watsonSlash.ts",
 ];

@@ -31,7 +31,9 @@ class CapturingProvider implements AIProvider {
   readonly name = "stub";
   readonly model = "stub-model";
   readonly sent: string[] = [];
+  readonly requests: AnalyzeRequest[] = [];
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
+    this.requests.push(req);
     this.sent.push(req.userPrompt);
     // Echo the masked prompt back, so the test can see the answer is restored to real values.
     return { rawText: JSON.stringify({ echo: req.userPrompt }) };
@@ -185,5 +187,52 @@ describe("what bumps the revision", () => {
     expect(() => assertAnonRevision("r2", at, "x")).not.toThrow();
     bumpAnonRevision("r2");
     expect(() => assertAnonRevision("r2", at, "x")).toThrow(AnonymizationChangedError);
+  });
+});
+
+describe("beforeSend runs after preparation and before the send (Codex P2 #4)", () => {
+  const base = { systemPrompt: "s", userPrompt: PROMPT, images: [] };
+
+  it("a beforeSend that throws sends nothing", async () => {
+    const { stores } = await setup("b1");
+    const provider = new CapturingProvider();
+    await expect(
+      analyzeRestored(ctxWith({ ...stores }), "b1", emptyState("b1"), provider, {
+        ...base,
+        beforeSend: async () => {
+          throw new Error("AI is off");
+        },
+      }),
+    ).rejects.toThrow("AI is off");
+    expect(provider.sent).toHaveLength(0);
+  });
+
+  it("a Hide during beforeSend masks again before the send (the revision check comes after it)", async () => {
+    const { stores } = await setup("b2");
+    const calls = { n: 0 };
+    let first = true;
+    const beforeSend = async () => {
+      if (!first) return;
+      first = false;
+      await stores.customEntitiesStore.save("b2", [{ value: NAME, category: "PERSON" }]);
+    };
+    const provider = new CapturingProvider();
+    const ctx = ctxWith({ ...stores, presidio: presidio(async () => {}, calls) });
+    await analyzeRestored(ctx, "b2", emptyState("b2"), provider, { ...base, beforeSend });
+    expect(provider.sent).toHaveLength(1);
+    expect(provider.sent[0]).not.toContain(NAME);
+    expect(provider.sent[0]).toMatch(/ANON_PERSON_\d+/);
+    expect(calls.n).toBe(2);
+  });
+
+  it("beforeSend never reaches the provider", async () => {
+    const { stores } = await setup("b3");
+    const provider = new CapturingProvider();
+    await analyzeRestored(ctxWith({ ...stores }), "b3", emptyState("b3"), provider, {
+      ...base,
+      beforeSend: async () => {},
+    });
+    expect(provider.requests).toHaveLength(1);
+    expect("beforeSend" in provider.requests[0]).toBe(false);
   });
 });

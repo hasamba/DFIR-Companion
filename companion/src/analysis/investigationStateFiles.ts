@@ -9,10 +9,12 @@
 // erase the record of the very run being rolled back. It travels with the case in .dfircase
 // archives instead, which walk the whole case directory.
 //
-// Two Watson files are also deliberately NOT listed (R6, NEVER_SNAPSHOT_STATE_FILES below):
+// Three Watson files are also deliberately NOT listed (R6, NEVER_SNAPSHOT_STATE_FILES below):
 // - watson-history.jsonl is append-only across a restore. A restore rewinds watson-chat.json, but
 //   the history keeps every turn it ever had, including turns the restored chat no longer holds. It
 //   is a record, like the analysis-runs/ ledger.
+// - watson-mask-roster.json is never rewound. It holds every name Watson's chat ever had to mask; the
+//   history keeps old answers that may carry those names, so a rewound roster would let them leak.
 // - hunt-fingerprints.json is never rewound. A restore must not make a hunt that already ran look
 //   un-run, because that would let a duplicate launch through the re-run check.
 export const SNAPSHOT_STATE_FILES = [
@@ -51,4 +53,11 @@ export const SNAPSHOT_BINARY_STATE_FILES = ["investigation.sqlite"] as const;
 
 // State files a restore must never touch. Not in SNAPSHOT_STATE_FILES, so the backup never reads them
 // and the restore never writes them. They still travel with a case export, which walks the folder.
-export const NEVER_SNAPSHOT_STATE_FILES = ["watson-history.jsonl", "hunt-fingerprints.json"] as const;
+/** Watson's durable mask roster (watson/rosterRead.ts): a superset of every roster the chat saved. */
+export const WATSON_ROSTER_FILE = "watson-mask-roster.json";
+
+export const NEVER_SNAPSHOT_STATE_FILES = [
+  "watson-history.jsonl",
+  WATSON_ROSTER_FILE,
+  "hunt-fingerprints.json",
+] as const;

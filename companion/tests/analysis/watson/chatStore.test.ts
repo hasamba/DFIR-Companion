@@ -38,6 +38,8 @@ describe("WatsonChatStore", () => {
     ["valid JSON of the wrong shape", "[1, 2]"],
   ])("keeps a corrupt file (%s) as a backup before the first write replaces it", async (_why, body) => {
     await writeFile(path, body);
+    // A corrupt chat is written over only when a readable roster sidecar stands for it (rosterRestore.test.ts).
+    await writeFile(join(dir, "watson-mask-roster.json"), JSON.stringify({ hosts: [], users: [], ips: [] }));
     await store.update("c1", (c) => ({ ...c, memory: "new" }));
     const backups = (await readdir(dir)).filter((f) => f.startsWith("watson-chat.json.corrupt-"));
     expect(backups).toHaveLength(1);

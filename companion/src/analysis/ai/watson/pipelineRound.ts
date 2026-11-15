@@ -11,6 +11,7 @@ import type { WatsonChat } from "./types.js";
 import type { LaunchContext } from "./velo/launchCheck.js";
 import type { WatsonAutoDeps } from "./autoApply.js";
 import type { WatsonRawSearchDeps } from "./superTimelineSearch.js";
+import type { WatsonRunRegistry } from "./runRegistry.js";
 
 export type { WatsonRoundInput } from "./round.js";
 
@@ -39,6 +40,10 @@ export interface WatsonRoundDeps {
   auto?: WatsonAutoDeps;
   /** The super-timeline reader, promotion writer and writable guard (D12). Absent: no raw search. */
   rawSearch?: WatsonRawSearchDeps;
+  /** The per-case registry of running rounds (the route passes watsonRuns). Absent: no Stop. */
+  runs?: WatsonRunRegistry;
+  /** Tells the dashboard a round started or ended on the case. */
+  onRunChange?(caseId: string): void;
 }
 
 /** The arguments of AnalysisPipeline.watsonRound. */

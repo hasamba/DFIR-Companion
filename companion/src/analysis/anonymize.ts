@@ -715,6 +715,10 @@ function hasInternalTld(host: string): boolean {
   return INTERNAL_TLDS.has(tld);
 }
 
+export function isVictimSideHost(host: string, internalDomains: Iterable<string>): boolean {
+  return hasInternalTld(host) || [...internalDomains].some((d) => host === d || host.endsWith("." + d));
+}
+
 // An IP literal (IPv4, IPv6, bracketed, IPv4-mapped) has no parent domain: "203.0.113.10" must not
 // yield "0.113.10" as an internal domain (#2624). The IP itself still stays in hosts.
 function isIpLiteralHost(h: string): boolean {
@@ -769,9 +773,7 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
     if (!host || !host.includes(".")) continue;
     if (isNoiseDomain(host) || isIpLiteralHost(host)) continue;
     const parent = host.slice(host.indexOf(".") + 1);
-    const victimSide =
-      hasInternalTld(host) || [...internalDomains].some((d) => host === d || host.endsWith("." + d));
-    if (!victimSide) continue;
+    if (!isVictimSideHost(host, internalDomains)) continue;
     hosts.add(host);
     if (!isNoiseDomain(parent)) internalDomains.add(parent);
   }

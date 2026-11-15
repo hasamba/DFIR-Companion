@@ -3,11 +3,13 @@ import type { InvestigationState } from "../../stateTypes.js";
 import { WATSON_HISTORY_ID } from "./historyStore.js";
 import type { WatsonPromptInput } from "./promptBuilder.js";
 import type { WatsonReply } from "./replySchema.js";
+import { assertCanContinue } from "./guardedCall.js";
 import { searchExcerpt } from "./requestBuild.js";
 import { limitReached, type WatsonRoundContext, type WatsonSpend } from "./roundContext.js";
 import type { Outcome } from "./roundOutcome.js";
 import { isSuperLookup } from "./lookupSchema.js";
-import { maskRosterFull } from "./superRoster.js";
+import { excerptRoster } from "./rowTextHosts.js";
+import { maskRosterFull, mergeMaskRoster } from "./superRoster.js";
 import { searchSuperTimeline, type WatsonRawSearchDeps } from "./superTimelineSearch.js";
 import { lookupTimeline } from "./timelineLookup.js";
 import type { WatsonChat, WatsonLookup } from "./types.js";
@@ -113,6 +115,8 @@ export async function secondHop(h: HopInput): Promise<Outcome> {
     if (!now) return withNote(kept, skipped(kind, "it could not check its cost"));
     const reached = limitReached(h.ctx, now);
     if (reached) return withNote(kept, skipped(kind, `this case reached its Watson ${reached}`));
+    // A stop, AI off or a closed case before the hop's lookup starts: no lookup and no second send.
+    await assertCanContinue(h.ctx, h.caseId);
     if (first.search) return await searchHop(h, kept, first.search);
     if (kind === "super") return await superHop(h, kept, lookup as WatsonLookup);
     return await lookupHop(h, kept, lookup as WatsonLookup);
@@ -128,11 +132,19 @@ async function searchHop(
 ): Promise<Outcome> {
   const excerpt = await searchExcerpt(h.ctx, h.caseId, h.chat, search);
   if (!excerpt) return kept;
-  const second = await h.ask({ ...h.base, pasteExcerpt: excerpt });
+  // Codex #6: the excerpt's names ride on the outcome BEFORE the call, so a failed call keeps them.
+  const names = excerptRoster(excerpt.text);
+  const rostered: Outcome = names ? { ...kept, superRoster: mergeMaskRoster(kept.superRoster, names) } : kept;
+  let second: WatsonReply;
+  try {
+    second = await h.ask({ ...h.base, pasteExcerpt: excerpt });
+  } catch (error) {
+    return failedOutcome(rostered, "paste", error);
+  }
   // A paste read through a search counts as read; the history is not a paste.
   const readId = excerpt.pasteId === WATSON_HISTORY_ID ? [] : [excerpt.pasteId];
   return {
-    ...kept,
+    ...rostered,
     reply: { ...second, search: null, lookup: null },
     readPasteIds: [...(kept.readPasteIds ?? []), ...readId],
   };
@@ -179,7 +191,8 @@ async function superHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promis
     ...h.base,
     ...(h.head ? { pasteExcerpt: h.head } : {}),
     superExcerpt: found.excerpt,
-    rawRoster: found.roster,
+    // The base roster (paste head, tool-loop names) stays: a future base field may print them.
+    rawRoster: mergeMaskRoster(h.base.rawRoster, found.roster),
   };
   let second: WatsonReply;
   try {

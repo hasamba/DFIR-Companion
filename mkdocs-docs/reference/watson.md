@@ -83,6 +83,8 @@ Each time you send a message, Watson answers with three parts:
 
 Watson asks for one request at a time so that you always know the next step.
 
+While Watson works on an answer, every analyst who has the case open sees "Watson is working on a message from NAME" in the panel, and the stop icon. The line also shows how many more messages wait. To stop the answer, select the stop icon in the Watson header. The lookups that Watson made stay in the chat, and their cost stays counted. Watson does not propose changes after you stop it. Rows that Watson promoted before the stop stay promoted. If the stop comes after Watson saved its answer, the chat shows "Watson finished this answer before the stop." Then the answer and its proposals stay. If you send the same message again because the network failed, Watson does not answer it two times.
+
 ## Asking Watson a question
 
 Watson replaced the **Ask the LLM** panel. Type any question about the case in the chat, for example "Was data exfiltrated?" or "When did the attacker first reach the domain controller?". Watson answers it as part of the round, with:
@@ -131,7 +133,7 @@ Watson's answer in the chat keeps its text. If the answer names a raw row that i
 
 Undo of a promotion is refused while a finding, next step, report text, key question or key question answer that Watson applied still depends on that row. Undo that item first.
 
-Raw rows can show host and account names that the case does not know yet. Watson keeps a list of these names for the case. When anonymization is on, these names are masked in every AI request on the case, synthesis included. Watson never removes a name from the list. When anonymization is on and the list already holds 500 hosts or 500 accounts, a search that would need a new name does not run for that message, and Watson tells you why. When anonymization is off, the search runs as usual and the list still records the names, so they are masked if you turn anonymization on later.
+Raw rows can show host and account names that the case does not know yet. Watson keeps a list of these names for the case. When anonymization is on, these names are masked in every AI request on the case, synthesis included. The redacted case export and the support bundle mask these names too. The redacted export keeps attacker domains readable, as it always does. A domain is masked in part when a victim host has the same first label, for example ANON_HOST_1.evil.example. Watson never removes a name from the list. When anonymization is on and the list already holds 500 hosts or 500 accounts, a search that would need a new name does not run for that message, and Watson tells you why. When anonymization is off, the search runs as usual and the list still records the names, so they are masked if you turn anonymization on later.
 
 Synthesis and the deep pass never read the super-timeline.
 
@@ -300,8 +302,17 @@ When Presidio finds a new value in Watson's message, it holds the message until 
 
 Known limits:
 
-- A short hostname or username that appears alone, without its full name, may not be masked.
+- Watson also masks a host name in the text of a raw row or a paste. It finds a name after a label such as Workstation Name or Computer, or a name in capitals with a hyphen and a digit, such as WS-PC01.
+- After a label, Watson takes any name, also a plain word such as fakepc. It does not take a vendor, system or placeholder word, such as Microsoft, Windows, Unknown or Yes.
+- For a domain after a label or in a paste, Watson keeps the full domain on its list. It keeps the first label alone only for an internal domain, such as files in files.corp.local. Common words such as www and login are not masked.
+- A host name with no label before it, in lowercase or without a hyphen, such as dc01, may still go to the AI when no field of the case names it.
 - With the anonymizer on, Watson masks all domains in its message. This includes attacker domains, which the other AI features leave readable.
+
+Recovery from an unreadable chat file:
+
+- If watson-chat.json is damaged and the case has no readable masking list file (watson-mask-roster.json), Watson refuses every change to the chat. The AI calls on the case also stop, because the masked names are not known.
+- To recover, an administrator restores watson-chat.json from a backup.
+- Alternatively, an administrator removes watson-chat.json. Watson then starts a new chat with an empty list. Names from the old chat are not masked after that.
 
 ## Settings and cost
 

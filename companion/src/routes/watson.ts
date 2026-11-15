@@ -17,11 +17,19 @@ import { WatsonRiskNotAccepted } from "../analysis/ai/watson/proposalErrors.js";
 import type { WatsonRoundDeps } from "../analysis/ai/watson/pipelineRound.js";
 import { newWatsonId } from "../analysis/ai/watson/roundProposals.js";
 import { WatsonAiOff, WatsonCostLimitReached } from "../analysis/ai/watson/round.js";
+import { WatsonRosterUnreadable } from "../analysis/ai/watson/rosterRead.js";
 import type { WatsonChat, WatsonPaste } from "../analysis/ai/watson/types.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { caseVeloConnected, watsonProposalDeps, watsonRoundDeps } from "./watsonDeps.js";
 import { ingestWatsonPaste } from "./watsonPasteIngest.js";
+import {
+  registerWatsonMessageRoutes,
+  watsonRunOrRefuse,
+  WatsonRouteRefusal,
+  type WatsonRun,
+} from "./watsonMessage.js";
+import { watsonRuns } from "../analysis/ai/watson/runRegistry.js";
 import { parseApplyBody, registerWatsonVeloLaunchRoutes } from "./watsonVeloLaunch.js";
 import { logActivity, logActivityWithWarning } from "../analysis/activityLog.js";
 import {
@@ -37,9 +45,11 @@ import { ingestRows, withPasteIngest } from "../analysis/ai/watson/pasteIngestCh
  * here: GET is a read, every POST a write. A closed or archived case refuses the POSTs by default
  * (composition/caseWriteAllowlist.ts), and this file adds nothing to that allowlist.
  *
- *   GET  /watson                         the chat
+ *   GET  /watson                         the chat, with running: the active round or null
  *   GET  /watson/history?before=&limit= older turns from the full history file, oldest first: { turns, more }
- *   POST /watson/message                 one analyst message → one round (a model call)
+ *   POST /watson/message                 one analyst message → one round (a model call); an
+ *                                        Idempotency-Key dedupes a resend (routes/watsonMessage.ts)
+ *   POST /watson/cancel                  stop the case's running and queued rounds → { cancelled }
  *   POST /watson/paste                   store pasted text or a text file as case evidence, then a round
  *   POST /watson/proposals/:pid/:action  apply | reject | undo one proposal; {acceptRisk} for a risky launch
  *   POST /watson/turns/:tid/add-question add a turn's free-form answer to the open questions (no model call)
@@ -65,12 +75,6 @@ export function countLines(text: string): number {
   let lines = 0;
   for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) lines++;
   return text.endsWith("\n") ? lines : lines + 1;
-}
-
-/** What a model-calling route needs once its checks pass. */
-interface WatsonRun {
-  pipeline: NonNullable<RouteContext["options"]["pipeline"]>;
-  deps: WatsonRoundDeps;
 }
 
 const stringOrEmpty = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -99,7 +103,8 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       err instanceof WatsonAiOff ||
       err instanceof WatsonCostLimitReached ||
       err instanceof WatsonProposalStateError ||
-      err instanceof WatsonProposalConflict
+      err instanceof WatsonProposalConflict ||
+      err instanceof WatsonRosterUnreadable
     ) {
       return res.status(409).json({ error: err.message });
     }
@@ -109,21 +114,13 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
 
   /** The checks every model-calling route makes before it saves anything. Null means "go ahead". */
   async function refuseBeforeWork(res: Response, caseId: string): Promise<WatsonRun | null> {
-    if (await caseMissing(caseId)) {
-      res.status(404).json({ error: "case not found" });
+    try {
+      return await watsonRunOrRefuse(ctx, caseId);
+    } catch (err) {
+      if (!(err instanceof WatsonRouteRefusal)) throw err;
+      res.status(err.status).json({ error: err.message });
       return null;
     }
-    const deps = roundDeps();
-    const pipeline = options.pipeline;
-    if (!deps || !pipeline) {
-      res.status(501).json({ error: "Watson has no AI provider. Set one up in Settings." });
-      return null;
-    }
-    if (!(await deps.isAiEnabled(caseId))) {
-      res.status(409).json({ error: new WatsonAiOff().message });
-      return null;
-    }
-    return { pipeline, deps };
   }
 
   app.get("/cases/:id/watson", async (req: Request, res: Response) => {
@@ -139,6 +136,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
         providerConfigured: !!roundDeps() && !!options.pipeline,
         runMode,
         veloConnected,
+        running: watsonRuns.status(req.params.id), // memory only: null after a restart
       });
     } catch (err) {
       return sendPipelineError(res, err);
@@ -164,27 +162,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  app.post("/cases/:id/watson/message", async (req: Request, res: Response) => {
-    const caseId = req.params.id;
-    const text = stringOrEmpty(req.body?.text).trim();
-    if (!text) return res.status(400).json({ error: "text is required" });
-    if (text.length > WATSON_TURN_TEXT_MAX) {
-      return res.status(400).json({
-        error: `The message is longer than ${WATSON_TURN_TEXT_MAX} characters. Send long text with the paste button.`,
-      });
-    }
-    const run = await refuseBeforeWork(res, caseId);
-    if (!run) return res;
-    try {
-      const input = { text, actor: actorName(req), source: "dashboard" as const }; // may auto-launch (G12)
-      const chat = await run.pipeline.watsonRound(caseId, input, run.deps);
-      return res.status(200).json(withStalledLaunches(caseId, chat));
-    } catch (err) {
-      return sendWatsonError(res, err);
-    } finally {
-      options.onWatson?.(caseId); // the round saves the analyst turn (or an error turn) even when it fails
-    }
-  });
+  registerWatsonMessageRoutes(app, ctx, sendWatsonError); // POST /message and POST /cancel
 
   app.post("/cases/:id/watson/paste", async (req: Request, res: Response) => {
     const caseId = req.params.id;

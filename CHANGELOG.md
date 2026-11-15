@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Stop Watson** — a stop icon ends a running answer; all viewers see when Watson works; a resent message is not paid twice
 - **Watson tool calling** — several lookups (up to 10) per question with native tool calls, each masked, cost-checked and listed on the card
 - **Watson Auto holds raw-cited writes** — writes that rest on super-timeline or paste rows wait for approval
 - **Watson searches the super-timeline** — one targeted search per round; cited raw rows are promoted with the Watson badge and Undo
@@ -37,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - **"Ask the LLM" retired** — Watson answers free-form case questions; `/dfir ask` and the AI preview now go to Watson
+
+### Fixed
+
+- **Watson names in exports** — the redacted export and the support bundle now mask the names Watson masked for the AI.
+- **Watson masks hosts in raw row text** — a host named only in a raw row or paste description is masked.
+- **Watson rechecks before every send** — the AI switch and the case-closed state are checked right before each Watson AI call, so a switch-off or a close stops the next send.
 
 ## [0.46.0] - 2026-11-13
 

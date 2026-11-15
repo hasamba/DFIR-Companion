@@ -149,6 +149,7 @@ export async function callAiJson<T>(
         images: [],
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.promptEntities ? { promptEntities: options.promptEntities } : {}),
+        ...(options.beforeSend ? { beforeSend: options.beforeSend } : {}),
       },
       kind,
     );
@@ -185,6 +186,8 @@ export interface AiCallOptions {
   signal?: AbortSignal;
   /** Entities in this prompt the case state does not know yet; masked for this call only. */
   promptEntities?: PromptEntities;
+  /** Run after masking and Presidio, immediately before the send; a throw stops the send. */
+  beforeSend?: () => Promise<void>;
 }
 
 /** One SynthesisModelChoice per call, or undefined when the call keeps today's behaviour. */

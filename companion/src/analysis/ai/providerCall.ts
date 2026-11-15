@@ -379,7 +379,7 @@ async function prepareCall(
   // uses (#2491), so the preview can never show a safer prompt than this send. The per-call entities
   // stop here: they hold real values, and neither the provider nor a safety-stop capture gets them.
   const m = await maskRequest(ctx, caseId, state, gated);
-  const { promptEntities: _entities, ...req } = gated;
+  const { promptEntities: _entities, beforeSend: _check, ...req } = gated;
   ctx.log.debug(
     `AI call [${label}] provider=${provider.name} images=${req.images.length} promptChars=${m.plainPrompt.length} ` +
       `anonymize=${m.policy.enabled ? "on" : "off"}`,
@@ -448,6 +448,7 @@ export async function analyzeRestored(
       label,
       presidioCovered(skipPresidioGate, revision),
     );
+    await req.beforeSend?.(); // AI off or case closed during preparation; then the synchronous check below
     if (anonRevision(caseId) === revision) return sendPrepared(ctx, caseId, provider, prepared, label);
     ctx.log.warn(
       `[anon] anonymization changed while [${label}] was being prepared — masking again before sending`,

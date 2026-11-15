@@ -38,6 +38,7 @@ body.watson-full-open { padding-right: 0; }
 .watson-mini { font-size: 11px; padding: 2px 8px; }
 .watson-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0;
   border: 1px solid var(--border-color); border-radius: 4px; background: none; color: var(--text-muted); cursor: pointer; }
+.watson-icon-btn[hidden] { display: none; }
 .watson-icon-btn:hover, .watson-icon-btn:focus-visible { color: var(--text-primary, inherit); background: var(--bg-primary); }
 .watson-rail-expand { display: inline-flex; color: var(--text-muted); }
 .watson-rail:hover .watson-rail-expand, .watson-rail:focus-visible .watson-rail-expand { color: var(--text-primary, inherit); }

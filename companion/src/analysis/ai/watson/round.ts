@@ -7,38 +7,42 @@ import { callWatson, choosePaste, headExcerpt, watsonBaseInput } from "./request
 import { secondHop, type HopInput } from "./roundHop.js";
 import {
   limitReached,
-  NO_SPEND,
   seedStandardQuestions,
-  spendDelta,
   WatsonAiOff,
+  WatsonCancelled,
   WatsonCostLimitReached,
   watsonSpend,
   type WatsonRoundContext,
   type WatsonSpend,
 } from "./roundContext.js";
 import { guardedCall, spentNow } from "./guardedCall.js";
-import { mergeMaskRoster } from "./superRoster.js";
+import { excerptRoster } from "./rowTextHosts.js";
+import { mergeMaskRoster, type WatsonMaskRoster } from "./superRoster.js";
 import { runToolLoop, ToolModeFallback, type ToolLoopInput } from "./toolLoop.js";
 import { markToolsRejected, watsonToolCap } from "./toolMode.js";
-import {
-  engaged,
-  reactionFailed,
-  reactionTurn,
-  WATSON_REACTION_PROMPT,
-  withReactionResult,
-} from "./reactionState.js";
+import { engaged, reactionTurn, WATSON_REACTION_PROMPT } from "./reactionState.js";
 import { autoAfterRound, carriedHeldIds, type WatsonRoundSource } from "./autoApply.js";
-import { mergeOutcome, type Outcome } from "./roundOutcome.js";
+import type { Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
-import { revalidatePromotion, withCitedPromotion } from "./roundPromote.js";
+import { withCitedPromotion } from "./roundPromote.js";
+import { commitCheck } from "./roundCancel.js";
+import { dispositionOf, reportedRound, type WatsonDisposition } from "./roundDisposition.js";
+import { logRoundEnd, saveRound } from "./roundSave.js";
 import { earlierShownIds } from "./rawReferences.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
 import { withVeloLaunch } from "./velo/veloLaunchProposals.js";
 import { withRoundInventory } from "./velo/veloFleet.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
-export { WatsonAiOff, WatsonCostLimitReached, type WatsonRoundContext } from "./roundContext.js";
+export {
+  WATSON_CANCELLED_TEXT,
+  WatsonAiOff,
+  WatsonCancelled,
+  WatsonCostLimitReached,
+  type WatsonRoundContext,
+} from "./roundContext.js";
 export { WATSON_REACTION_PROMPT } from "./reactionState.js";
+export type { WatsonDisposition } from "./roundDisposition.js";
 
 // One Watson round: the analyst's message in, Watson's turn and pending proposals out.
 //
@@ -71,6 +75,13 @@ export interface WatsonRoundInput {
    * ("dashboard", set by routes/watson.ts) may launch in Auto mode; every other source holds (G12).
    */
   source?: WatsonRoundSource;
+  /**
+   * Called once when the round ends: "answered" when Watson's turn was saved, "cancelled" for an
+   * analyst's stop, else "failed" (routes/watsonMessage.ts replays only the first two).
+   */
+  onDisposition?(disposition: WatsonDisposition): void;
+  /** The message's admission signal (routes/watsonMessage.ts): aborted means the round begins stopped. */
+  admitted?: AbortSignal;
 }
 
 const chains = new Map<string, Promise<unknown>>();
@@ -81,7 +92,25 @@ export function runWatsonRound(
   input: WatsonRoundInput,
 ): Promise<WatsonChat> {
   const prev = chains.get(caseId) ?? Promise.resolve();
-  const run = prev.then(() => runRound(withRoundInventory(ctx), caseId, input)); // one inventory read (G16)
+  // Registered now, so a queued round can be stopped too. Ended and announced before `run` settles.
+  const kind = input.reaction ? "reaction" : "analyst";
+  const handle = ctx.runs?.begin(caseId, {
+    kind,
+    ...(input.actor ? { actor: input.actor } : {}),
+    ...(input.admitted ? { admitted: input.admitted } : {}),
+  });
+  announce(ctx, caseId); // a failing notifier never leaks the run: it cannot throw here
+  const runCtx = handle ? { ...ctx, signal: handle.signal } : ctx;
+  const run = prev
+    .then(() =>
+      reportedRound(input.onDisposition, (report) =>
+        runRound(withRoundInventory(runCtx), caseId, input, report),
+      ),
+    ) // one inventory read (G16)
+    .finally(() => {
+      handle?.end();
+      announce(ctx, caseId);
+    });
   const tail = run.catch(() => undefined);
   chains.set(caseId, tail);
   void tail.then(() => {
@@ -90,12 +119,27 @@ export function runWatsonRound(
   return run;
 }
 
+/** Tells the dashboard a round started or ended. A notifier that throws is logged, never rethrown. */
+function announce(ctx: WatsonRoundContext, caseId: string): void {
+  try {
+    ctx.onRunChange?.(caseId);
+  } catch (err) {
+    ctx.log?.warn(
+      `Watson could not announce a round change: ${err instanceof Error ? err.message : String(err)}`,
+      {
+        caseId,
+      },
+    );
+  }
+}
+
 const chatSpend = (c: WatsonChat): WatsonSpend => ({ usd: c.costUSD, tokens: c.tokens });
 
 async function runRound(
   ctx: WatsonRoundContext,
   caseId: string,
   input: WatsonRoundInput,
+  report: (d: WatsonDisposition) => void,
 ): Promise<WatsonChat> {
   if (!(await ctx.isAiEnabled(caseId))) throw new WatsonAiOff();
   const start = await ctx.chatStore.load(caseId);
@@ -128,43 +172,35 @@ async function runRound(
   const turnId = newWatsonId("wt"); // Watson's turn: Auto applies only its proposals
   let outcome: Outcome = { reply: null, shownEvents: [], questions: [] };
   let before: WatsonSpend | null = null;
-  let saved: WatsonChat | undefined;
+  let saved: WatsonChat;
   let mayWrite = false; // the door rule's verdict: Auto applies no carried rows when writes are off
   try {
     before = await watsonSpend(ctx, caseId);
     const attach = { paste: newPaste, auto, reaction: input.reaction === true };
     outcome = await converse(ctx, caseId, chat, promptTurn, attach, counter, before);
+    outcome = commitCheck(ctx, outcome); // a stop drops the reply: nothing below proposes anything
     // Spec §4.4: a reaction to an import writes nothing, judged on the events the prompt showed.
     const importShown = input.reaction === true && outcome.shownEvents.some((e) => e.kind === "import");
     mayWrite = input.allowWrites !== false && !importShown;
-    outcome = await withWriteInputs(ctx, caseId, outcome, mayWrite);
+    outcome = commitCheck(ctx, await withWriteInputs(ctx, caseId, outcome, mayWrite));
     // Evidence first: the raw rows the reply cites are promoted before the turn is saved (D9).
-    outcome = await withCitedPromotion(ctx, caseId, outcome, mayWrite, turnId, chat);
-    outcome = await withVeloLaunch(ctx, caseId, outcome, mayWrite);
+    outcome = commitCheck(ctx, await withCitedPromotion(ctx, caseId, outcome, mayWrite, turnId, chat));
+    // A stop after the promotion started keeps the settled reply, but launches nothing.
+    if (!ctx.signal?.aborted) outcome = await withVeloLaunch(ctx, caseId, outcome, mayWrite);
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
   } finally {
-    // Every exit charges the round, and every exit leaves a turn: a reply or an error.
-    const after = await watsonSpend(ctx, caseId).catch(() => null);
-    const spent = before && after ? spendDelta(before, after) : NO_SPEND;
-    const failed = input.reaction === true && reactionFailed(outcome.reply, outcome.error);
-    saved = await ctx.chatStore.update(caseId, (fresh) => {
-      // D9b: an undo of the promotion while the round ran drops what rested on it before it is added.
-      const checked = revalidatePromotion(fresh, outcome);
-      const merged = mergeOutcome(fresh, { ...checked, turnId }, spent, counter.calls);
-      return input.reaction ? withReactionResult(merged, failed) : merged;
-    });
+    // Every exit is saved; the stop check in saveRound is the commit point (roundSave.ts).
+    const save = { turnId, reaction: input.reaction === true, before, calls: counter.calls };
+    ({ saved, outcome } = await saveRound(ctx, caseId, outcome, save));
   }
   const failure = outcome.error ?? outcome.rethrow;
-  if (failure) {
-    ctx.log?.warn(`Watson round failed: ${failure instanceof Error ? failure.message : String(failure)}`, {
-      caseId,
-    });
-  }
+  logRoundEnd(ctx, caseId, failure);
+  report(dispositionOf(outcome)); // before a hold is thrown: a saved reply is answered
   if (failure instanceof PresidioApprovalRequired) throw failure;
   if (input.reaction && failure instanceof WatsonCostLimitReached) throw failure;
   // Auto mode acts only on a round that produced Watson's turn; a launch is not a model call.
-  if (!ctx.auto || !outcome.reply) return saved;
+  if (!ctx.auto || !outcome.reply || ctx.signal?.aborted) return saved;
   const reaction = input.reaction === true;
   const pasteId = mayWrite && input.pasteId && input.pasteProposalIds?.length ? input.pasteId : undefined;
   const round = {
@@ -173,6 +209,7 @@ async function runRound(
     ...(input.source ? { source: input.source } : {}),
     heldIds: mayWrite ? carriedHeldIds(reaction, input.heldProposalIds, outcome.shownEvents) : [],
     ...(pasteId ? { paste: { pasteId, proposalIds: input.pasteProposalIds ?? [] } } : {}),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
   };
   return autoAfterRound(ctx.auto, caseId, round, saved, (line) => ctx.log?.warn(line, { caseId }));
 }
@@ -200,6 +237,8 @@ async function converse(
   let ceiling: number | undefined;
   // F1: rows the tool loop showed before it fell back. The hop's reply may cite them, so they promote.
   let loopShown: ReadonlySet<string> = new Set();
+  // The paste head's names: masked on every send of the round, and saved on every return.
+  let headNames: WatsonMaskRoster | undefined;
   try {
     // The board and the Key Questions section show the seeded questions now, whatever the round does.
     if (await seedStandardQuestions(ctx, caseId)) ctx.onStateChanged?.(caseId);
@@ -238,6 +277,8 @@ async function converse(
           return undefined;
         })
       : undefined;
+    headNames = excerptRoster(excerpt?.text);
+    if (headNames) base = { ...base, rawRoster: mergeMaskRoster(base.rawRoster, headNames) };
     const cap = watsonToolCap(ctx, attach.reaction);
     if (cap > 0) {
       // R1, controller ruling on review I1: cap + 1 provider calls per question, the hop's included.
@@ -260,15 +301,18 @@ async function converse(
         ask,
       };
       fallback = await toolRound({ ...loop, reaction: attach.reaction });
-      if (!(fallback instanceof ToolModeFallback)) return fallback;
-      if (fallback.carried.superRoster) base = { ...base, rawRoster: fallback.carried.superRoster };
+      if (!(fallback instanceof ToolModeFallback)) return withNames(fallback, headNames);
+      if (fallback.carried.superRoster) {
+        base = { ...base, rawRoster: mergeMaskRoster(base.rawRoster, fallback.carried.superRoster) };
+      }
       loopShown = new Set((fallback.carried.superShown ?? []).map((e) => e.id));
     }
     first = await ask(excerpt ? { ...base, pasteExcerpt: excerpt } : base);
   } catch (error) {
     // An auto-attached head is not tried again; the paste stays stored and searchable.
     // A Presidio hold is not a failure to read: the paste stays unread for the approved retry.
-    const held = error instanceof PresidioApprovalRequired;
+    // An analyst's stop is not a failure to read either: the paste stays unread and auto-attached.
+    const held = error instanceof PresidioApprovalRequired || error instanceof WatsonCancelled;
     const giveUp = newPaste && (headFailed || (attach.auto && !held)) ? newPaste : undefined;
     const failed: Outcome = {
       reply: null,
@@ -278,7 +322,8 @@ async function converse(
       ...(giveUp ? { readPasteIds: [giveUp.id], unreadable: giveUp } : {}),
     };
     // A fallback hop that fails still keeps what the tool loop read: those rows were sent.
-    return fallback instanceof ToolModeFallback ? withCarried(failed, fallback.carried) : failed;
+    const kept = fallback instanceof ToolModeFallback ? withCarried(failed, fallback.carried) : failed;
+    return withNames(kept, headNames);
   }
   const read = readOf(newPaste, headFailed, cover);
   // At most one search or lookup hop per round (roundHop.ts); its failure never loses this reply.
@@ -299,8 +344,15 @@ async function converse(
       : {}),
     ...(ceiling !== undefined ? { callsLeft: callsLeftOf(counter, ceiling) } : {}),
   });
-  return fallback instanceof ToolModeFallback ? withCarried(hop, fallback.carried) : hop;
+  return withNames(
+    fallback instanceof ToolModeFallback ? withCarried(hop, fallback.carried) : hop,
+    headNames,
+  );
 }
+
+/** The outcome with the paste head's names on its roster: the head was sent, so they are kept. */
+const withNames = (o: Outcome, names: WatsonMaskRoster | undefined): Outcome =>
+  names ? { ...o, superRoster: mergeMaskRoster(o.superRoster, names) } : o;
 
 const callsLeftOf = (counter: { calls: number }, ceiling: number) => (): number => ceiling - counter.calls;
 

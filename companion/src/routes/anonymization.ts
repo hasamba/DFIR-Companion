@@ -11,6 +11,8 @@ import { TesseractOcrRunner } from "../analysis/ocrRedact.js";
 import { resolveRedactedExportOptions, redactedExportFilename } from "../analysis/redactedExport.js";
 import { buildRedactedExport } from "../reports/redactedExportBuilder.js";
 import { CustomerStore } from "../analysis/customerStore.js";
+import { WatsonChatStore } from "../analysis/ai/watson/chatStore.js";
+import { WATSON_ROSTER_EXPORT_TEXT, WatsonRosterUnreadable } from "../analysis/ai/watson/rosterRead.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { resolveTranslatePlatforms } from "./aiActionArgs.js";
 import { visionEnv } from "../config/aiEnv.js";
@@ -427,6 +429,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
           // Victim org NAME: the anonymizer has no free-text detector, so feed meta.organization
           // as a custom OTHER entity so it's tokenized to ANON_OTHER_n wherever it appears (#13).
           reportMetaStore: options.reportMetaStore,
+          roster: options.watsonChatStore ?? new WatsonChatStore(store), // Watson's roster (H3)
           ocrRunner: options.ocrRunner ?? new TesseractOcrRunner(),
         },
         req.params.id,
@@ -444,6 +447,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       res.setHeader("Cache-Control", "private, no-cache");
       return res.send(zip);
     } catch (err) {
+      if (err instanceof WatsonRosterUnreadable)
+        return res.status(500).json({ error: WATSON_ROSTER_EXPORT_TEXT });
       return res.status(500).json({ error: (err as Error).message });
     }
   });

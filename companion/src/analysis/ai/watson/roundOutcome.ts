@@ -4,7 +4,7 @@ import { AiReplyUnreadableError } from "../aiReplyUnreadable.js";
 import { AiAnswerParseError } from "../providerCall.js";
 import type { RawRefs } from "./rawReferences.js";
 import type { WatsonReply } from "./replySchema.js";
-import type { WatsonSpend } from "./roundContext.js";
+import { WatsonCancelled, type WatsonSpend } from "./roundContext.js";
 import type { WatsonWriteInputs } from "./roundWrites.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
 import { WATSON_MAX_SUPER_SEARCHES } from "./toolMode.js";
@@ -65,6 +65,8 @@ export interface Outcome {
   rawEvidence?: Map<string, string[]>;
   /** The round's super-timeline promotion, for the final save's revalidation (roundPromote.ts). */
   promotion?: WatsonRoundPromotion;
+  /** An analyst's stop landed after the round's commit point: it was saved as answered (roundSave.ts). */
+  stoppedAfterCommit?: boolean;
 }
 
 /** The round's promotion as revalidatePromotion needs it: the reply before settling, and what kept it. */
@@ -103,6 +105,7 @@ function withoutShown(
 }
 
 function errorText(err: unknown): string {
+  if (err instanceof WatsonCancelled) return err.message;
   if (err instanceof PresidioApprovalRequired) {
     return "This message waits for your approval. Presidio found values that you must approve before they go to the AI.";
   }

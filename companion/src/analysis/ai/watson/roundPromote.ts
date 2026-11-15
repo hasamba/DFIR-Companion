@@ -4,6 +4,7 @@ import { recordWatsonActivity } from "./proposals.js";
 import { collectRawRefs, earlierShownIds, settleRawRefs, type RawRefs } from "./rawReferences.js";
 import { evidenceStanding, watsonLandedRows } from "./rawEvidence.js";
 import type { WatsonReply } from "./replySchema.js";
+import { cancelReason } from "./roundCancel.js";
 import type { WatsonRoundContext } from "./roundContext.js";
 import type { Outcome, WatsonRoundPromotion } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
@@ -145,6 +146,8 @@ export async function withCitedPromotion(
     if (!plan.cited.length) return settled(outcome, plan, plan.folded);
     const why = await whyWithheld(ctx, caseId, mayWrite);
     if (why) return settled(outcome, plan, plan.folded, withheldNote(plan.cited.length, why));
+    // The first promotion write is the round's irreversible point: a stop before it promotes nothing.
+    if (cancelReason(ctx.signal)) return outcome;
     return await promote(ctx, caseId, outcome, plan, turnId);
   } catch (err) {
     ctx.log?.warn(`Watson could not settle its super-timeline citations: ${errText(err)}`, { caseId });

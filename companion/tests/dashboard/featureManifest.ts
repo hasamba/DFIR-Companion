@@ -1960,6 +1960,13 @@ export const FEATURES: Feature[] = [
     private: ["AUTO_CONFIRM", "MODES", "LABEL", "TIP", "wMode"],
   },
   {
+    // Watson's running state: the working line, the stop icon, the stop call and the per-send idempotency
+    // key. dashboard-watson.js calls them by name. No initializer.
+    file: "dashboard-watson-run.js",
+    publish: ["watsonWorkingHtml", "watsonStopSync", "watsonStop", "watsonSendKey", "watsonSendSettled"],
+    private: ["REFETCH_MS", "wPendingKey", "wStopping", "wPoll", "newKey", "pollSync"],
+  },
+  {
     // Two Settings warnings for Watson (lookups without a cost or token limit; provider without model or
     // key). dashboard-env-settings.js calls watsonLimitWarnRefresh once the saved values are loaded; the
     // script wires its own input listeners on that first call. No initializer.
