@@ -269,6 +269,7 @@ export function rosterOf(shown: readonly ForensicEvent[]): WatsonMaskRoster {
         ...accountFields(e).flatMap((f) => f.domains),
         ...uncHosts(e),
         ...descriptionHostNames(e.description),
+        ...descriptionHostNames(e.commandLine),
       ]),
     ),
     users: distinct([

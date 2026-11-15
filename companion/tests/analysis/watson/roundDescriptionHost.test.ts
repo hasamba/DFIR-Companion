@@ -5,6 +5,7 @@ import { runAiPreview } from "../../../src/analysis/ai/aiPreviewScope.js";
 import { previewWatsonRound } from "../../../src/analysis/ai/watson/preview.js";
 import type { WatsonRoundContext } from "../../../src/analysis/ai/watson/roundContext.js";
 import { WATSON_MASK_ROSTER_MAX } from "../../../src/analysis/ai/watson/superRoster.js";
+import { ROSTER_FULL_WHY } from "../../../src/analysis/ai/watson/toolDispatch.js";
 import { PresidioApprovalRequired } from "../../../src/analysis/presidio.js";
 import type { AnalyzeRequest } from "../../../src/providers/provider.js";
 import type { ConverseRequest } from "../../../src/providers/toolCalling.js";
@@ -26,7 +27,6 @@ import { raw } from "./superPromoteFixtures.js";
 
 const rawRow = raw("raw1", { description: "Logon from WS-FAKE01 by fake.user" });
 const PASTE = "Logon from SRV-FAKE-02\n";
-const ROSTER_FULL_WHY = "the list of masked names is full";
 
 const wire = (p: Scripted): string =>
   JSON.stringify([...p.sent, ...p.analyzed] as (ConverseRequest | AnalyzeRequest)[]);

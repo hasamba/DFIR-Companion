@@ -188,7 +188,8 @@ async function superHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promis
     ...h.base,
     ...(h.head ? { pasteExcerpt: h.head } : {}),
     superExcerpt: found.excerpt,
-    rawRoster: found.roster,
+    // The base roster (paste head, tool-loop names) stays: a future base field may print them.
+    rawRoster: mergeMaskRoster(h.base.rawRoster, found.roster),
   };
   let second: WatsonReply;
   try {

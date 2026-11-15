@@ -1,5 +1,6 @@
 import { withShortLabel } from "./hostLabel.js";
 import { promptEntities } from "./pasteEntities.js";
+import { isIdentifierToken, isNonHostValue } from "./rowTextVocab.js";
 import type { WatsonMaskRoster } from "./superRoster.js";
 
 // A host named only in free text: a raw row's description, a paste or a history excerpt. No host field
@@ -9,9 +10,10 @@ import type { WatsonMaskRoster } from "./superRoster.js";
 // those calls, so each rule stays narrow. Accepted misses (see watson.md): a lowercase bare name, and
 // a name with no hyphen (DC01).
 
-// Rule 1: a host label, optional spaces, ":" or "=", an optional quote, then the value (any case or shape).
+// Rule 1: a host label, optional spaces, ":" or "=", an optional quote, then the value (any case or
+// shape). Only spaces and tabs may sit around ":" or "=": a blank field never takes the next line.
 const HOST_LABEL =
-  /\b(?:workstation(?:\s?name)?|computer(?:\s?name)?|host(?:\s?name)?|machine\s?name|device\s?name|client\s?(?:name|hostname)|server\s?name|(?:source|src|destination|dst|target)\s?(?:host(?:name)?|workstation(?:\s?name)?|server\s?name))\s*[:=]\s*"?([A-Za-z0-9][A-Za-z0-9._-]{0,252})/gi;
+  /\b(?:workstation(?:\s?name)?|computer(?:\s?name)?|host(?:\s?name)?|machine\s?name|device\s?name|client\s?(?:name|hostname)|server\s?name|(?:source|src|destination|dst|target)\s?(?:host(?:name)?|workstation(?:\s?name)?|server\s?name))[ \t]*[:=][ \t]*"?([A-Za-z0-9][A-Za-z0-9._-]{0,252})/gi;
 // A rule-1 value that names no host: a dash, N/A, null, none, unknown, localhost or an IPv4 literal.
 const EMPTY_VALUE = /^(?:-+|n\/?a|n|null|none|unknown|localhost|\d{1,3}(?:\.\d{1,3}){3})$/i;
 const TRAILING_PUNCT = /[._-]+$/;
@@ -62,11 +64,15 @@ export const NOT_A_HOST = new RegExp(
     ")$",
 );
 
+// A value followed by ":" (not a port number) is the next field's label, so the field was blank.
+const NEXT_LABEL = /^:(?!\d)/;
+
 /** Rule 1: each labelled value, cleaned; an FQDN value gives its short label too. */
 function labelledHosts(text: string): string[] {
   return [...text.matchAll(HOST_LABEL)]
+    .filter((m) => !NEXT_LABEL.test(text.slice(m.index + m[0].length)))
     .map((m) => (m[1] ?? "").replace(TRAILING_PUNCT, ""))
-    .filter((v) => v.length >= 2 && !EMPTY_VALUE.test(v))
+    .filter((v) => v.length >= 2 && !EMPTY_VALUE.test(v) && !isNonHostValue(v))
     .flatMap(withShortLabel);
 }
 
@@ -75,7 +81,7 @@ function machineNames(text: string): string[] {
   return [...text.matchAll(MACHINE_NAME)]
     .map((m) => m[0])
     .filter((t) => t.length >= NETBIOS_MIN && t.length <= NETBIOS_MAX)
-    .filter((t) => /\d/.test(t) && !NOT_A_HOST.test(t));
+    .filter((t) => /\d/.test(t) && !NOT_A_HOST.test(t) && !isIdentifierToken(t));
 }
 
 /** Each name once (case-insensitive), spelled as first printed. */

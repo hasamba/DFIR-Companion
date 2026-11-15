@@ -53,7 +53,7 @@ const failedRun = (ctx: WatsonRoundContext, caseId: string, name: string, err: u
 };
 const BAD_KEY_WHY = "The lookup has a field it does not accept.";
 const NOT_OFFERED_WHY = "this tool is not available in this round";
-const ROSTER_FULL_WHY = "the list of masked names is full";
+export const ROSTER_FULL_WHY = "the list of masked names is full";
 const NO_SUPER_LEFT_WHY = "this question used all its super-timeline searches";
 
 /** The refusals that need no I/O: unknown tool, bad argument keys, and the super-timeline gates. */
