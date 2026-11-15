@@ -147,6 +147,16 @@ const STE_RULES: readonly SteRule[] = [
     ste: (m) => `Argument ${m[1]} sets a configuration or credential variable.`,
   },
   {
+    test: re(`artifact (${D}) takes arguments, but only its default run is safe`),
+    ste: (m) =>
+      `The query changes the arguments of Best Practice artifact ${m[1]}. Only its default run is on the safe list.`,
+  },
+  {
+    test: re(`artifact argument (${N}) can change the tool, file or command that runs`),
+    ste: (m) =>
+      `The query uses artifact argument ${m[1]}. This argument can change the tool, file or command that runs.`,
+  },
+  {
     test: re(`artifact argument (${N}) must be a plain quoted value`),
     ste: (m) => `The query makes artifact argument ${m[1]} at run time.`,
   },

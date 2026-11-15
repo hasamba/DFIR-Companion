@@ -68,7 +68,9 @@ const REVIEWED_ARTIFACTS: readonly string[] = [
  * product decision, not a per-artifact review: some of these run a bundled tool on the endpoint
  * (Hayabusa, Autoruns). Read from the shipped bundle, so the two lists cannot drift. An analyst's edit of that bundle does not change
  * this list. The "best-practice-big-hogs" bundle (slow full-disk scans) is deliberately not included.
- * Every argument, accessor and character rule still applies to these artifacts.
+ * Many of these fetch and run a tool and take tool overrides, so one of them is safe ONLY in its default
+ * run, `Artifact.<Name>()` with no arguments (controller ruling of 2026-11-15, Codex review #1). Any
+ * argument makes the query risky: the analyst can approve it, and Auto never launches it.
  */
 export const SAFE_BUNDLE_ID = "best-practice";
 
@@ -79,6 +81,20 @@ const bundleArtifacts = (id: string): readonly string[] =>
 export const ALLOWED_ARTIFACTS: readonly string[] = [
   ...new Set([...REVIEWED_ARTIFACTS, ...bundleArtifacts(SAFE_BUNDLE_ID)]),
 ];
+
+const REVIEWED_LC = new Set(REVIEWED_ARTIFACTS.map((a) => a.toLowerCase()));
+
+/** True for an allowed artifact that is safe only with no arguments (Best Practice, not individually reviewed). */
+export function isDefaultRunOnly(name: string): boolean {
+  const n = name.toLowerCase();
+  return !REVIEWED_LC.has(n) && bundleArtifacts(SAFE_BUNDLE_ID).some((a) => a.toLowerCase() === n);
+}
+
+/**
+ * Artifact argument names that can change the tool, file or command an artifact runs (Tool_* overrides,
+ * tool archives, modules, command lines, paths). Risky on every artifact, the reviewed ones included.
+ */
+export const TOOL_OVERRIDE_ARG = /^tool_|filename|hash|url|archive|module|binary|exe|command|path/i;
 
 /**
  * Local accessors an `accessor=` argument may name. Network accessors (smb, s3, …) are refused, and

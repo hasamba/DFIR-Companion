@@ -73,3 +73,74 @@ describe("Best Practice artifacts on Watson's safe list", () => {
     expect(collect("SELECT * FROM Artifact.Windows.Hayabusa.Rules(UploadResults='Y')").ok).toBe(false);
   });
 });
+
+// Codex branch review #1 (controller ruling 2026-11-15): a Best Practice artifact is safe only in its
+// default run, `Artifact.<Name>()` with no arguments. Any argument makes the query RISKY (the analyst
+// can still approve it; Auto never launches it). An argument that can swap the tool, file or command
+// (Tool_*, *filename*, *hash*, *url*, *archive*, *module*, *binary*, *exe*, *command*, *path*) is RISKY
+// on every artifact, the six reviewed ones included.
+const auto = (vql: string) =>
+  checkLaunch({ vql, mode: "collection", hostname: "wks-alpha" }, { ...ctx, allowRisky: true });
+
+function expectRiskyOnly(vql: string): string[] {
+  const r = vqlAllowed(vql);
+  expect(r.ok, vql).toBe(false);
+  const reasons = r.ok ? [] : r.reasons;
+  expect(splitReasons(reasons), vql).toEqual({ hard: [], risky: reasons });
+  expect(collect(vql).ok, vql).toBe(false);
+  const a = auto(vql);
+  expect(a.ok && a.risky && a.risky.length > 0, vql).toBe(true);
+  return reasons;
+}
+
+describe("Best Practice artifacts: only the default run is safe", () => {
+  it("Autoruns with a tool file name and hash override is risky, not safe and not refused", () => {
+    const reasons = expectRiskyOnly(
+      "SELECT * FROM Artifact.Windows.Sysinternals.Autoruns(Tool_Autorun_amd64_FILENAME='a.exe', Tool_Autorun_amd64_HASH='abc')",
+    );
+    expect(reasons.join(" ")).toContain("Tool_Autorun_amd64_FILENAME");
+    expect(reasons.join(" ")).toContain("Windows.Sysinternals.Autoruns");
+  });
+
+  it("Windows.Hayabusa.Rules with no arguments is safe", () => {
+    expect(vqlAllowed("SELECT * FROM Artifact.Windows.Hayabusa.Rules()")).toEqual({ ok: true });
+  });
+
+  it.each([
+    "SELECT * FROM Artifact.Windows.Hayabusa.Rules(RuleLevel='Critical')",
+    "SELECT * FROM Artifact.windows.sys.startupitems(x='1')",
+    "SELECT * FROM Artifact.Windows.EventLogs.Chainsaw(SomeOption='Y')",
+  ])("a Best Practice artifact with any argument is risky: %s", (vql) => {
+    const reasons = expectRiskyOnly(vql);
+    expect(reasons.some((r) => /only its default run/.test(r))).toBe(true);
+  });
+
+  it("EvtxHunter with its usual IdRegex arguments is still safe", () => {
+    expect(
+      vqlAllowed(
+        "SELECT * FROM Artifact.Windows.EventLogs.EvtxHunter(EvtxGlob='C:/Windows/System32/winevt/Logs/*.evtx', IdRegex='^4624$')",
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  it.each([
+    "SELECT * FROM Artifact.Windows.EventLogs.EvtxHunter(Tool_X_URL='x')",
+    "SELECT * FROM Artifact.Generic.Client.Info(tool_thing='x')",
+    "SELECT * FROM Artifact.Windows.Search.FileFinder(SearchFilesGlob='C:/x', ModuleName='m')",
+    "SELECT * FROM Artifact.Windows.System.Pslist(CommandLine='x')",
+  ])("a tool or file override on a reviewed artifact is risky: %s", (vql) => {
+    const reasons = expectRiskyOnly(vql);
+    expect(reasons.some((r) => /can change the tool, file or command/.test(r))).toBe(true);
+  });
+
+  it("keeps the upload refusal on a Best Practice artifact, beside the default-run reason", () => {
+    const r = vqlAllowed("SELECT * FROM Artifact.Windows.Hayabusa.Rules(UploadResults='Y')");
+    const reasons = r.ok ? [] : r.reasons;
+    expect(reasons).toContain("argument UploadResults is refused (uploads, dumps and lambdas)");
+  });
+
+  it("a path argument on a plain file read is not affected", () => {
+    expect(vqlAllowed("SELECT * FROM glob(globs='C:/x/*', root='C:/x')")).toEqual({ ok: true });
+    expect(vqlAllowed("SELECT * FROM read_file(filenames='C:/x/a.txt')")).toEqual({ ok: true });
+  });
+});

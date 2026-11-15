@@ -6,9 +6,11 @@ import {
   FILE_READ_CALLS,
   PATH_ARGS,
   QUERY_ARGS,
+  TOOL_OVERRIDE_ARG,
   VQL_KEYWORDS,
   WMI_CLASSES,
   isCredentialName,
+  isDefaultRunOnly,
 } from "./vqlAllowlist.js";
 
 // Argument- and literal-level checks for Watson's VQL allowlist (security review round 1). Every
@@ -155,6 +157,22 @@ function argProblem(callee: string, arg: Arg, lets: ReadonlyMap<string, LetDef>)
   return null;
 }
 
+/**
+ * Risks of the arguments given to an artifact, added beside argProblem's reasons (so a refused upload
+ * keeps its own reason): any argument on a default-run-only artifact, and a tool or file override.
+ */
+function artifactArgRisks(callee: string, args: readonly Arg[]): string[] {
+  if (!lc(callee).startsWith("artifact.") || args.length === 0) return [];
+  const name = callee.slice("artifact.".length);
+  const out: string[] = [];
+  if (isDefaultRunOnly(name)) out.push(`artifact ${name} takes arguments, but only its default run is safe`);
+  for (const a of args) {
+    if (a.name && TOOL_OVERRIDE_ARG.test(a.name.text))
+      out.push(`artifact argument ${a.name.text} can change the tool, file or command that runs`);
+  }
+  return out;
+}
+
 /** glob(root='/', globs='/host/s') joins to `//host/s`. */
 function rootJoinProblem(args: readonly Arg[]): boolean {
   const values = (n: string): string[] =>
@@ -193,6 +211,7 @@ export function checkCallArgs(
       const problem = argProblem(callee, arg, lets);
       if (problem) reasons.add(problem);
     }
+    artifactArgRisks(callee, args).forEach((r) => reasons.add(r));
     if (lc(callee) === "glob" && rootJoinProblem(args)) {
       reasons.add(
         "glob root ending in a separator joined to globs starting with one (a possible network path)",

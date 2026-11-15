@@ -153,6 +153,16 @@ export const REASON_RULES: readonly ReasonRule[] = [
   },
   { test: re(`argument ${N} would set a config or credential variable`), cls: "risky" },
   {
+    test: re(`artifact (${D}) takes arguments, but only its default run is safe`),
+    cls: "risky",
+    plain: (m) => `changes the arguments of Best Practice artifact ${m[1]} (only its default run is safe)`,
+  },
+  {
+    test: re(`artifact argument (${N}) can change the tool, file or command that runs`),
+    cls: "risky",
+    plain: (m) => `uses artifact argument ${m[1]}, which can change the tool, file or command that runs`,
+  },
+  {
     test: re(`artifact argument (${N}) must be a plain quoted value`),
     cls: "risky",
     plain: (m) => `builds artifact argument ${m[1]} at run time`,
