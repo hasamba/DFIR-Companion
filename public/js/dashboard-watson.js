@@ -379,6 +379,7 @@
         wQuestions = st && Array.isArray(st.keyQuestions) ? st.keyQuestions : [];
         wEmpty = watsonCaseIsEmpty(st);
         renderWatson();
+        loadWatson(null, true); // a case opened with no live push still loads its chat (only once per case)
       });
     }
     document.addEventListener("keydown", (e) => {
@@ -390,7 +391,6 @@
     });
     renderWatson();
   }
-
   window.initWatson = initWatson;
   window.renderWatson = renderWatson;
   window.toggleWatsonPanel = toggleWatsonPanel;
