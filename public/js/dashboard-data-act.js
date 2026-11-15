@@ -219,6 +219,13 @@
     toggleWatsonPanel: (el) => toggleWatsonPanel(),
     watsonStatusShow: (el) => watsonStatusShow(el),
     watsonBestPractice: () => watsonBestPractice(),
+    // Leaving for the account page must not drop the open case: the link carries its id, so the
+    // page's Dashboard link can reopen it. Same charset as the server's case ids.
+    accountLink: (el) => {
+      const id = String((document.getElementById("caseId") || {}).value || "").trim();
+      const ok = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(id) && id.indexOf("..") < 0;
+      el.setAttribute("href", ok ? "/admin?return=" + encodeURIComponent(id) : "/admin");
+    },
     watsonAct: (el) => watsonAct(el),
     noSubmit: (el, e) => e.preventDefault(),
   };
@@ -247,6 +254,7 @@
     setupCollapsible();
     setupReorder();
     if (typeof initWatson === "function") initWatson(); // Watson panel: the inline script has no spare line for its own call
+    if (typeof initWatsonLayout === "function") initWatsonLayout(); // the panel width and the board columns (dashboard-watson-layout.js)
   }
 
   window.initDataAct = initDataAct;

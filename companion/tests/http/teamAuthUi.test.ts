@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { validateLocalPassword } from "../../src/auth/password.js";
@@ -89,9 +90,12 @@ describe("team authentication UI", () => {
 
   it("keeps the open case across the account page (?return=<caseId> to /dashboard?caseId=)", async () => {
     const [dashboard, account] = await Promise.all([loadPublic("dashboard.html"), loadPublic("admin.html")]);
-    expect(dashboard).toContain('id="profileAccountLink" href="/admin"');
-    expect(dashboard).toContain("'/admin?return=' + encodeURIComponent(id)");
-    expect(dashboard).toContain("/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/");
+    expect(dashboard).toContain(
+      'id="profileAccountLink" href="/admin" role="menuitem" data-act="accountLink"',
+    );
+    const act = readFileSync(new URL("../../../public/js/dashboard-data-act.js", import.meta.url), "utf8");
+    expect(act).toContain('"/admin?return=" + encodeURIComponent(id)');
+    expect(act).toContain("/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/");
     expect(account).toContain('id="backToDashboard" href="/dashboard"');
     expect(account).toContain("get('return')");
     expect(account).toContain("'/dashboard?caseId=' + encodeURIComponent(id)");

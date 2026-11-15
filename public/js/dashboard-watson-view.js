@@ -278,12 +278,16 @@
       `<button type="button" class="watson-rail" data-act="watsonAct" data-w-verb="open" aria-expanded="false" aria-label="Open Watson" title="Open Watson">` +
       `<span class="watson-rail-expand" aria-hidden="true">${ICON.expand}</span>` +
       `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span><span data-w="railmode"></span><span data-w="railstatus"></span></button>` +
+      `<div class="watson-resize" role="separator" aria-orientation="vertical" aria-label="Resize Watson" title="Drag to resize. Double-click to reset." tabindex="0"></div>` +
       `<div class="watson-root watson-body"><div class="watson-head"><strong>Watson</strong><span data-w="status"></span><span class="watson-mode" data-w="mode"></span><span data-w="velo"></span>` +
       `<button type="button" class="watson-icon-btn watson-stop" data-w="stop" data-act="watsonAct" data-w-verb="stop" aria-label="Stop Watson" title="Stop Watson" hidden>${ICON.stop}</button>` +
       `<button type="button" class="watson-icon-btn watson-only-open" data-act="watsonAct" data-w-verb="fullScreen" aria-expanded="false" aria-label="Full screen" title="Full screen">${ICON.full}</button>` +
       `<button type="button" class="watson-icon-btn watson-only-full" data-act="watsonAct" data-w-verb="exitFullScreen" aria-expanded="true" aria-label="Exit full screen" title="Exit full screen">${ICON.exitFull}</button>` +
       `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson" title="Collapse Watson">${ICON.collapse}</button></div>` +
-      `<div class="watson-main"><div class="watson-board" data-w="board"></div>` +
+      `<div class="watson-main"><div class="watson-board">` +
+      `<details class="watson-board-sec" data-w-sec="questions" open><summary>Key questions</summary><div data-w="board"></div></details>` +
+      `<details class="watson-board-sec" data-w-sec="steps" open><summary>Next steps<span data-w="boardnextcount"></span></summary><div data-w="boardnext"></div></details>` +
+      `</div>` +
       `<div class="watson-chat"><div class="watson-log" data-w="log"></div>` +
       `<div class="watson-statusbar" data-w="statusbar" hidden></div>` +
       composerHtml() +

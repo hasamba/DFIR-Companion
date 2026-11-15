@@ -96,15 +96,6 @@
             menu.hidden = !menu.hidden;
             button.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
           });
-          // Leaving for the account page must not drop the open case: carry its id so the page's
-          // Dashboard link can reopen it. Set at click time from #caseId, same charset as the server.
-          var accountLink = document.getElementById('profileAccountLink');
-          if (accountLink) accountLink.addEventListener('click', function () {
-            var field = document.getElementById('caseId');
-            var id = field ? String(field.value || '').trim() : '';
-            var ok = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(id) && id.indexOf('..') < 0;
-            accountLink.setAttribute('href', ok ? '/admin?return=' + encodeURIComponent(id) : '/admin');
-          });
           logout.addEventListener('click', function () {
             window.fetch('/auth/logout', { method:'POST' }).then(function () {
               location.assign('/login');
@@ -673,7 +664,7 @@
       <button id="profileMenuBtn" type="button" title="Account menu" aria-label="Account menu" aria-haspopup="menu" aria-expanded="false"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></button>
       <span id="profileMenu" class="profile-menu" role="menu" hidden>
         <span id="profileIdentityName" class="profile-menu-identity"></span>
-        <a id="profileAccountLink" href="/admin" role="menuitem">Account &amp; team</a>
+        <a id="profileAccountLink" href="/admin" role="menuitem" data-act="accountLink">Account &amp; team</a>
         <button id="profileSignOut" type="button" role="menuitem">Sign out</button>
       </span>
     </span>

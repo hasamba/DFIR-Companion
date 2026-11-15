@@ -1971,6 +1971,24 @@ export const FEATURES: Feature[] = [
     private: ["AUTO_CONFIRM", "MODES", "LABEL", "TIP", "wMode"],
   },
   {
+    // The Watson panel width (drag handle, saved per browser) and the full-screen board's Next steps
+    // column. initDataAct calls initWatsonLayout once at load.
+    file: "dashboard-watson-layout.js",
+    publish: ["watsonSetWidth", "watsonNextStepsHtml", "initWatsonLayout"],
+    private: [
+      "WIDTH_KEY",
+      "SEC_KEY",
+      "DEFAULT_WIDTH",
+      "MIN_WIDTH",
+      "MAX_SHARE",
+      "KEY_STEP",
+      "store",
+      "maxWidth",
+      "currentWidth",
+      "onHandle",
+    ],
+  },
+  {
     // Watson's status pill, the bar above the message box and the rail dot. dashboard-watson-run.js
     // calls watsonStatusSync on every render. "Show card" runs through data-act.
     file: "dashboard-watson-status.js",
