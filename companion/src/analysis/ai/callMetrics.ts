@@ -43,6 +43,8 @@ export async function withCallMetrics<R extends { usage?: ProviderUsage }>(
     });
     return result;
   } catch (error) {
+    // A caller's cancel (an analyst's Stop) is not a provider failure: no transport error is recorded.
+    if (signal?.aborted) throw error;
     const billed = error instanceof ProviderError ? error.usage : undefined; // cut off or refused, still billed
     void ctx.opts.operationalMetrics?.record({
       type: "ai",

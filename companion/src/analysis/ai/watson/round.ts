@@ -7,9 +7,7 @@ import { callWatson, choosePaste, headExcerpt, watsonBaseInput } from "./request
 import { secondHop, type HopInput } from "./roundHop.js";
 import {
   limitReached,
-  NO_SPEND,
   seedStandardQuestions,
-  spendDelta,
   WatsonAiOff,
   WatsonCancelled,
   WatsonCostLimitReached,
@@ -22,18 +20,13 @@ import { excerptRoster } from "./rowTextHosts.js";
 import { mergeMaskRoster, type WatsonMaskRoster } from "./superRoster.js";
 import { runToolLoop, ToolModeFallback, type ToolLoopInput } from "./toolLoop.js";
 import { markToolsRejected, watsonToolCap } from "./toolMode.js";
-import {
-  engaged,
-  reactionFailed,
-  reactionTurn,
-  WATSON_REACTION_PROMPT,
-  withReactionResult,
-} from "./reactionState.js";
+import { engaged, reactionTurn, WATSON_REACTION_PROMPT } from "./reactionState.js";
 import { autoAfterRound, carriedHeldIds, type WatsonRoundSource } from "./autoApply.js";
-import { mergeOutcome, type Outcome } from "./roundOutcome.js";
+import type { Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
-import { revalidatePromotion, withCitedPromotion } from "./roundPromote.js";
+import { withCitedPromotion } from "./roundPromote.js";
 import { commitCheck } from "./roundCancel.js";
+import { logRoundEnd, saveRound } from "./roundSave.js";
 import { earlierShownIds } from "./rawReferences.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
 import { withVeloLaunch } from "./velo/veloLaunchProposals.js";
@@ -93,13 +86,13 @@ export function runWatsonRound(
   // Registered now, so a queued round can be stopped too. Ended and announced before `run` settles.
   const kind = input.reaction ? "reaction" : "analyst";
   const handle = ctx.runs?.begin(caseId, { kind, ...(input.actor ? { actor: input.actor } : {}) });
-  ctx.onRunChange?.(caseId);
+  announce(ctx, caseId); // a failing notifier never leaks the run: it cannot throw here
   const runCtx = handle ? { ...ctx, signal: handle.signal } : ctx;
   const run = prev
     .then(() => runRound(withRoundInventory(runCtx), caseId, input)) // one inventory read (G16)
     .finally(() => {
       handle?.end();
-      ctx.onRunChange?.(caseId);
+      announce(ctx, caseId);
     });
   const tail = run.catch(() => undefined);
   chains.set(caseId, tail);
@@ -107,6 +100,20 @@ export function runWatsonRound(
     if (chains.get(caseId) === tail) chains.delete(caseId);
   });
   return run;
+}
+
+/** Tells the dashboard a round started or ended. A notifier that throws is logged, never rethrown. */
+function announce(ctx: WatsonRoundContext, caseId: string): void {
+  try {
+    ctx.onRunChange?.(caseId);
+  } catch (err) {
+    ctx.log?.warn(
+      `Watson could not announce a round change: ${err instanceof Error ? err.message : String(err)}`,
+      {
+        caseId,
+      },
+    );
+  }
 }
 
 const chatSpend = (c: WatsonChat): WatsonSpend => ({ usd: c.costUSD, tokens: c.tokens });
@@ -147,7 +154,7 @@ async function runRound(
   const turnId = newWatsonId("wt"); // Watson's turn: Auto applies only its proposals
   let outcome: Outcome = { reply: null, shownEvents: [], questions: [] };
   let before: WatsonSpend | null = null;
-  let saved: WatsonChat | undefined;
+  let saved: WatsonChat;
   let mayWrite = false; // the door rule's verdict: Auto applies no carried rows when writes are off
   try {
     before = await watsonSpend(ctx, caseId);
@@ -165,27 +172,12 @@ async function runRound(
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
   } finally {
-    // Every exit charges the round, and every exit leaves a turn: a reply or an error. The stop
-    // check here is the commit point of a round that promoted nothing.
-    outcome = commitCheck(ctx, outcome);
-    const after = await watsonSpend(ctx, caseId).catch(() => null);
-    const spent = before && after ? spendDelta(before, after) : NO_SPEND;
-    const failed = input.reaction === true && reactionFailed(outcome.reply, outcome.error);
-    saved = await ctx.chatStore.update(caseId, (fresh) => {
-      // D9b: an undo of the promotion while the round ran drops what rested on it before it is added.
-      const checked = revalidatePromotion(fresh, outcome);
-      const merged = mergeOutcome(fresh, { ...checked, turnId }, spent, counter.calls);
-      // A stopped reaction neither counts as a failure nor resets the count.
-      const counts = input.reaction === true && !(outcome.error instanceof WatsonCancelled);
-      return counts ? withReactionResult(merged, failed) : merged;
-    });
+    // Every exit is saved; the stop check in saveRound is the commit point (roundSave.ts).
+    const save = { turnId, reaction: input.reaction === true, before, calls: counter.calls };
+    ({ saved, outcome } = await saveRound(ctx, caseId, outcome, save));
   }
   const failure = outcome.error ?? outcome.rethrow;
-  if (failure) {
-    ctx.log?.warn(`Watson round failed: ${failure instanceof Error ? failure.message : String(failure)}`, {
-      caseId,
-    });
-  }
+  logRoundEnd(ctx, caseId, failure);
   if (failure instanceof PresidioApprovalRequired) throw failure;
   if (input.reaction && failure instanceof WatsonCostLimitReached) throw failure;
   // Auto mode acts only on a round that produced Watson's turn; a launch is not a model call.
@@ -300,7 +292,8 @@ async function converse(
   } catch (error) {
     // An auto-attached head is not tried again; the paste stays stored and searchable.
     // A Presidio hold is not a failure to read: the paste stays unread for the approved retry.
-    const held = error instanceof PresidioApprovalRequired;
+    // An analyst's stop is not a failure to read either: the paste stays unread and auto-attached.
+    const held = error instanceof PresidioApprovalRequired || error instanceof WatsonCancelled;
     const giveUp = newPaste && (headFailed || (attach.auto && !held)) ? newPaste : undefined;
     const failed: Outcome = {
       reply: null,

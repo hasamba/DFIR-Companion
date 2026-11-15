@@ -35,6 +35,10 @@ describe("WatsonRunRegistry", () => {
     expect(a.signal.reason).toBeInstanceOf(WatsonCancelled);
     expect(other.signal.aborted).toBe(false);
     expect(r.cancel("c3")).toBe(0);
+    // A second Stop counts only runs it newly aborted (review Minor 9).
+    expect(r.cancel("c1")).toBe(0);
+    r.begin("c1", { kind: "analyst" });
+    expect(r.cancel("c1")).toBe(1);
   });
 
   it("a new registry (a restarted server) knows no run", () => {

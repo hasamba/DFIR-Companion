@@ -63,13 +63,11 @@ export class WatsonRunRegistry {
     };
   }
 
-  /** Aborts every active run of the case with a WatsonCancelled reason; returns how many. */
+  /** Aborts every active run of the case with a WatsonCancelled reason; returns how many it newly aborted. */
   cancel(caseId: string): number {
-    const list = this.runs.get(caseId) ?? [];
-    for (const run of list) {
-      if (!run.controller.signal.aborted) run.controller.abort(new WatsonCancelled());
-    }
-    return list.length;
+    const live = (this.runs.get(caseId) ?? []).filter((r) => !r.controller.signal.aborted);
+    for (const run of live) run.controller.abort(new WatsonCancelled());
+    return live.length;
   }
 
   private remove(caseId: string, entry: ActiveRun): void {

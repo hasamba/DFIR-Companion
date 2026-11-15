@@ -65,6 +65,8 @@ export interface Outcome {
   rawEvidence?: Map<string, string[]>;
   /** The round's super-timeline promotion, for the final save's revalidation (roundPromote.ts). */
   promotion?: WatsonRoundPromotion;
+  /** An analyst's stop landed after the round's commit point: it was saved as answered (roundSave.ts). */
+  stoppedAfterCommit?: boolean;
 }
 
 /** The round's promotion as revalidatePromotion needs it: the reply before settling, and what kept it. */

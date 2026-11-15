@@ -19,6 +19,7 @@ export function cancelledOutcome(o: Outcome, err: WatsonCancelled): Outcome {
     veloProposal: _velo,
     veloNote: _veloNote,
     note: _note,
+    unreadable: _unreadable,
     ...rest
   } = o;
   return { ...rest, reply: null, error: err, superShown: [] };
