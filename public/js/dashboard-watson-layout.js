@@ -19,13 +19,26 @@
     set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* a blocked store must not break the panel */ } },
   };
   const maxWidth = () => Math.max(MIN_WIDTH, Math.floor((Number(window.innerWidth) || 1280) * MAX_SHARE));
-  const currentWidth = () => Number(store.get(WIDTH_KEY)) || DEFAULT_WIDTH;
+  // The saved width is the analyst's preferred width; the applied width is that, clamped to the
+  // current window. A resize re-applies the preferred width and never saves (Codex review #5).
+  let applied = 0;
+  const currentWidth = () => applied || Number(store.get(WIDTH_KEY)) || DEFAULT_WIDTH;
+
+  function applyWidth(px) {
+    applied = Math.min(maxWidth(), Math.max(MIN_WIDTH, Math.round(Number(px) || DEFAULT_WIDTH)));
+    document.documentElement.style.setProperty("--watson-width", applied + "px");
+    return applied;
+  }
 
   function watsonSetWidth(px) {
-    const w = Math.min(maxWidth(), Math.max(MIN_WIDTH, Math.round(Number(px) || DEFAULT_WIDTH)));
-    document.documentElement.style.setProperty("--watson-width", w + "px");
+    const w = applyWidth(px);
     store.set(WIDTH_KEY, String(w));
     return w;
+  }
+
+  function onResize() {
+    const saved = Number(store.get(WIDTH_KEY));
+    if (saved || applied) applyWidth(saved || applied);
   }
 
   function watsonNextStepsHtml(steps) {
@@ -74,7 +87,8 @@
 
   function initWatsonLayout() {
     const saved = Number(store.get(WIDTH_KEY));
-    if (saved) watsonSetWidth(saved);
+    if (saved) applyWidth(saved);
+    if (typeof window.addEventListener === "function") window.addEventListener("resize", onResize);
     document.addEventListener("pointerdown", (e) => { if (onHandle(e)) startDrag(e); });
     document.addEventListener("dblclick", (e) => { if (onHandle(e)) watsonSetWidth(DEFAULT_WIDTH); });
     document.addEventListener("keydown", (e) => { if (onHandle(e)) onKey(e); });

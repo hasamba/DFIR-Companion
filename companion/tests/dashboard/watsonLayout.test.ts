@@ -19,8 +19,12 @@ function setup(opts: { stored?: Record<string, string>; innerWidth?: number } = 
     querySelectorAll: () => [],
     addEventListener: () => {},
   };
+  const resizers: (() => void)[] = [];
   const api = loadDashboardModule<Api>("dashboard-watson-layout.js", ["dashboard-escape.js"], {
     document,
+    addEventListener: (t: string, cb: () => void) => {
+      if (t === "resize") resizers.push(cb);
+    },
     innerWidth: opts.innerWidth ?? 1600,
     localStorage: {
       getItem: (k: string) => written[k] ?? null,
@@ -28,7 +32,7 @@ function setup(opts: { stored?: Record<string, string>; innerWidth?: number } = 
     },
     DfirState: { onLastStateChange: () => {} },
   });
-  return { api, vars, written };
+  return { api, vars, written, resizers };
 }
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -41,6 +45,21 @@ describe("Watson panel width", () => {
     expect(written["dfir.watson.width"]).toBe("500");
     expect(api.watsonSetWidth(100)).toBe(300);
     expect(api.watsonSetWidth(5000)).toBe(700);
+  });
+
+  it("re-clamps the width when the window shrinks, and returns to the saved width when it grows", () => {
+    const { api, vars, written, resizers } = setup({ innerWidth: 1600 });
+    api.initWatsonLayout();
+    api.watsonSetWidth(900);
+    expect(vars["--watson-width"]).toBe("900px");
+    const win = api as unknown as { innerWidth: number };
+    win.innerWidth = 1000;
+    resizers.forEach((cb) => cb());
+    expect(vars["--watson-width"]).toBe("700px");
+    expect(written["dfir.watson.width"]).toBe("900");
+    win.innerWidth = 1600;
+    resizers.forEach((cb) => cb());
+    expect(vars["--watson-width"]).toBe("900px");
   });
 
   it("restores a saved width at start, and ignores a bad one", () => {
