@@ -241,7 +241,22 @@ describe("Watson's promotion when something fails", () => {
     h.stateStore.hasForensicEventIds = real;
     expect(await h.row("raw1")).toBeUndefined();
     expectNothingPromoted(chat);
-    expect(lastWatsonTurn(chat).text).toMatch(/could not promote it \(worker gone\)/);
+    expect(lastWatsonTurn(chat).text).toMatch(/could not promote them \(worker gone\)/);
+  });
+
+  // #2634: when the citations cannot be planned, the note must not invent a citation count.
+  it("when the citations cannot be checked, the note claims no citation count", async () => {
+    const h = await harness([reply(superLookup()), SECOND]);
+    const real = h.stateStore.hasForensicEventIds.bind(h.stateStore);
+    h.stateStore.hasForensicEventIds = async () => {
+      throw new Error("worker gone");
+    };
+    const chat = await h.run();
+    h.stateStore.hasForensicEventIds = real;
+    const text = lastWatsonTurn(chat).text;
+    expect(text).not.toContain("cited 1");
+    expect(text).toContain("worker gone");
+    expect(text).toContain("Watson promoted nothing.");
   });
 
   // Task 5 review I3 + M1: the promotion threw AFTER its rows landed.
