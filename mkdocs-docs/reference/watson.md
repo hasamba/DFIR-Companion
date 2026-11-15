@@ -131,7 +131,7 @@ Watson's answer in the chat keeps its text. If the answer names a raw row that i
 
 Undo of a promotion is refused while a finding, next step, report text, key question or key question answer that Watson applied still depends on that row. Undo that item first.
 
-Raw rows can show host and account names that the case does not know yet. Watson keeps a list of these names for the case. When anonymization is on, these names are masked in every AI request on the case, synthesis included. Watson never removes a name from the list. When anonymization is on and the list already holds 500 hosts or 500 accounts, a search that would need a new name does not run for that message, and Watson tells you why. When anonymization is off, the search runs as usual and the list still records the names, so they are masked if you turn anonymization on later.
+Raw rows can show host and account names that the case does not know yet. Watson keeps a list of these names for the case. When anonymization is on, these names are masked in every AI request on the case, synthesis included. The redacted case export and the support bundle mask these names too. The redacted export keeps attacker domains readable, as it always does. Watson never removes a name from the list. When anonymization is on and the list already holds 500 hosts or 500 accounts, a search that would need a new name does not run for that message, and Watson tells you why. When anonymization is off, the search runs as usual and the list still records the names, so they are masked if you turn anonymization on later.
 
 Synthesis and the deep pass never read the super-timeline.
 

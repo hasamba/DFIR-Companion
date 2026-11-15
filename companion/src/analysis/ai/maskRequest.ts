@@ -60,7 +60,7 @@ export type GatedAnalyzeRequest = AnalyzeRequest & { promptEntities?: PromptEnti
 
 const byLenDesc = (a: string, b: string): number => b.length - a.length || a.localeCompare(b);
 
-function withPromptEntities(known: KnownEntities, extra: PromptEntities | undefined): KnownEntities {
+export function withPromptEntities(known: KnownEntities, extra: PromptEntities | undefined): KnownEntities {
   if (!extra || (extra.hosts.length === 0 && extra.usernames.length === 0)) return known;
   return {
     ...known,

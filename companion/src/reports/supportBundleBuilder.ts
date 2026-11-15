@@ -14,6 +14,7 @@ import {
   type SupportImportReport,
   type SupportLogPart,
 } from "../analysis/supportBundleZip.js";
+import type { PromptEntities } from "../analysis/ai/maskRequest.js";
 import type { ImporterFailure } from "../analysis/diagnostics.js";
 import { sanitizeImportDebugSummary } from "../analysis/importDebug.js";
 import type { LogPaths } from "../logging/logger.js";
@@ -36,6 +37,8 @@ export interface SupportBundleDeps {
   loadState?: (caseId: string) => Promise<Parameters<typeof deriveKnownEntities>[0]>;
   loadCustomEntities?: (caseId: string) => Promise<CustomEntity[]>;
   loadDiscovered?: (caseId: string) => Promise<{ discovered: CustomEntity[] }>;
+  /** Watson's masking roster (H3), fully masked. A rejection withholds the case (fail-closed). */
+  loadRawNames?: (caseId: string) => Promise<PromptEntities>;
   logPaths: LogPaths | null;
   recentImportFailures: readonly ImporterFailure[];
   /** True when this requester may see this case (no password, or unlocked in this session). */
@@ -142,6 +145,11 @@ async function loadVocabulary(
       }
       if (deps.loadCustomEntities) known.custom!.push(...(await deps.loadCustomEntities(caseId)));
       if (deps.loadDiscovered) known.custom!.push(...(await deps.loadDiscovered(caseId)).discovered);
+      const names = deps.loadRawNames ? await deps.loadRawNames(caseId) : undefined;
+      if (names) {
+        known.hosts.push(...names.hosts);
+        known.usernames!.push(...names.usernames);
+      }
     } catch {
       withheld.push(caseId);
     }

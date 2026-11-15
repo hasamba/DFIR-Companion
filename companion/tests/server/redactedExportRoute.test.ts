@@ -11,6 +11,8 @@ import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 import { readZip } from "../../src/analysis/zipArchive.js";
 import type { OcrRunner } from "../../src/analysis/ocrRedact.js";
+import type { Finding } from "../../src/analysis/stateTypes.js";
+import { WatsonChatStore } from "../../src/analysis/ai/watson/chatStore.js";
 
 // OCR runner that always "reads" an internal IP at a fixed box — so the blur path is exercised
 // deterministically without tesseract.
@@ -20,13 +22,14 @@ const stubOcr: OcrRunner = {
 
 let app: ReturnType<typeof createApp>;
 let cases: CaseStore;
+let stateStore: StateStore;
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-redactexport-"));
   cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
 
-  const stateStore = new StateStore(cases);
+  stateStore = new StateStore(cases);
   await stateStore.save({
     ...emptyState("c1"),
     forensicTimeline: [
@@ -128,5 +131,41 @@ describe("GET /cases/:id/export/redacted", () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("ENOENT: no such file or directory, open '<path>'");
     expect(JSON.stringify(res.body)).not.toContain("evidence");
+  });
+  it("masks the names on Watson's roster that the case state never names (H3)", async () => {
+    await new WatsonChatStore(cases).update("c1", (c) => ({
+      ...c,
+      maskRoster: { hosts: ["finsrv-fake07"], users: ["svc_fake"], ips: [] },
+    }));
+    const finding: Finding = {
+      id: "f1",
+      severity: "High",
+      title: "Data staged",
+      description: "copy ran on FINSRV-FAKE07 as svc_fake",
+      relatedIocs: [],
+      sourceScreenshots: [],
+      mitreTechniques: [],
+      relatedEventIds: [],
+      firstSeen: "2026-01-01T00:00:00Z",
+      lastUpdated: "2026-01-01T00:00:00Z",
+      status: "open",
+    };
+    const state = await stateStore.load("c1");
+    await stateStore.save({ ...state, findings: [finding] });
+    const res = await request(app)
+      .get("/cases/c1/export/redacted?screenshots=0")
+      .buffer()
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on("data", (c: Buffer) => chunks.push(c));
+        r.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    const md = readZip(res.body as Buffer)
+      .find((e) => e.path === "report/report.md")!
+      .data.toString("utf8");
+    expect(md).toContain("copy ran on"); // the finding reaches the report
+    expect(md).not.toMatch(/finsrv-fake07/i);
+    expect(md).not.toMatch(/svc_fake/i);
   });
 });

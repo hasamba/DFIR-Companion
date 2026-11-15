@@ -19,6 +19,9 @@ import {
   type ScreenshotRedactResult,
 } from "../analysis/imageRedact.js";
 import type { OcrRunner } from "../analysis/ocrRedact.js";
+import { withPromptEntities } from "../analysis/ai/maskRequest.js";
+import { exportRosterEntities } from "../analysis/ai/watson/rosterNames.js";
+import type { WatsonMaskRoster } from "../analysis/ai/watson/superRoster.js";
 import { createZip } from "../analysis/zipArchive.js";
 import { getAppVersion } from "../version.js";
 import {
@@ -51,6 +54,10 @@ export interface RedactedExportDeps {
   // unredacted on the title page and throughout the report while the same org's DOMAINS were
   // tokenized (#13). The org's domains come in via customerStore; the org NAME comes in here.
   reportMetaStore?: { load(caseId: string): Promise<{ organization?: string }> };
+  // Optional: Watson's masking roster (H3). A host or user name only a super-timeline or paste row
+  // showed is masked on every AI call, so the export masks it too. A WatsonChatStore satisfies it. A
+  // rejection (WatsonRosterUnreadable) propagates: the export fails, it never ships unmasked.
+  roster?: { loadRoster(caseId: string): Promise<WatsonMaskRoster | undefined> };
   ocrRunner: OcrRunner;
   // Injectable for tests; default is the real sharp-backed redactor + fs readers.
   redactImage?: (buf: Buffer, opts: ScreenshotRedactOptions) => Promise<ScreenshotRedactResult>;
@@ -93,7 +100,7 @@ export async function buildRedactedExport(
       /* no meta or corrupt — skip; the org name stays as-is */
     }
   }
-  const known: KnownEntities = {
+  const baseKnown: KnownEntities = {
     hosts: derived.hosts,
     accounts: derived.accounts,
     usernames: derived.usernames,
@@ -101,6 +108,13 @@ export async function buildRedactedExport(
     custom: [...custom, ...disc.discovered, ...targetEmails, ...orgEntity],
     suppressed: disc.suppressed,
   };
+  // Roster names join hosts/usernames (never custom), with the export's attacker-domain rule.
+  const known = withPromptEntities(
+    baseKnown,
+    deps.roster
+      ? exportRosterEntities(await deps.roster.loadRoster(caseId), baseKnown.internalDomains)
+      : undefined,
+  );
   const policy = redactedExportPolicy();
   const anon = createAnonymizer(policy, known);
 

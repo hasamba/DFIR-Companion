@@ -5,6 +5,8 @@ import { buildSupportBundleZip } from "../reports/supportBundleBuilder.js";
 import { supportBundleFilename } from "../analysis/supportBundleZip.js";
 import { CustomEntitiesStore } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
+import { WatsonChatStore } from "../analysis/ai/watson/chatStore.js";
+import { WatsonRosterNames } from "../analysis/ai/watson/rosterNames.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { getAppVersion } from "../version.js";
@@ -23,6 +25,7 @@ export function registerSupportBundleRoutes(app: Express, ctx: RouteContext): vo
   const { store, options } = ctx;
   const customEntities = new CustomEntitiesStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
+  const rosterNames = new WatsonRosterNames(options.watsonChatStore ?? new WatsonChatStore(store));
 
   app.post("/diagnostics/support-bundle", async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as { caseId?: unknown; includeCaseLog?: unknown };
@@ -45,6 +48,7 @@ export function registerSupportBundleRoutes(app: Express, ctx: RouteContext): vo
           loadState: stateStore ? (id) => stateStore.load(id) : undefined,
           loadCustomEntities: (id) => customEntities.load(id),
           loadDiscovered: (id) => discoveredEntities.load(id),
+          loadRawNames: (id) => rosterNames.load(id), // Watson's roster (H3), fully masked
           logPaths: getServerLogger().paths?.() ?? null,
           recentImportFailures: ctx.recentImportFailures,
           canSee,
