@@ -36,6 +36,7 @@ const ROLES = new Set<ModelRole>([
   "light",
   "second-opinion",
   "reconcile",
+  "watson",
 ]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {

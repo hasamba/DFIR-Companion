@@ -8,6 +8,7 @@ const MODEL_FIELDS = [
   ["DFIR_AI_VELO_MODEL", "velociraptor"],
   ["DFIR_AI_SECOND_OPINION_MODEL", "second-opinion"],
   ["DFIR_AI_SYNTH_FALLBACK_MODEL", "synthesis-fallback"],
+  ["DFIR_AI_WATSON_MODEL", "watson"],
 ] as const;
 
 describe("Settings AI model pickers", () => {

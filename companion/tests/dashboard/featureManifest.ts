@@ -1963,7 +1963,14 @@ export const FEATURES: Feature[] = [
     // Watson's running state: the working line, the stop icon, the stop call and the per-send idempotency
     // key. dashboard-watson.js calls them by name. No initializer.
     file: "dashboard-watson-run.js",
-    publish: ["watsonWorkingHtml", "watsonStopSync", "watsonStop", "watsonSendKey", "watsonSendSettled"],
+    publish: [
+      "watsonWorkingHtml",
+      "watsonStopSync",
+      "watsonStop",
+      "watsonSendKey",
+      "watsonSendSettled",
+      "watsonNoCaseHtml",
+    ],
     private: ["REFETCH_MS", "wPendingKey", "wStopping", "wPoll", "newKey", "pollSync"],
   },
   {

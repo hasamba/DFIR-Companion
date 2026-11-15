@@ -185,7 +185,7 @@ See [Importing Data](importing.md#chat-pastes-watson) for the import side.
 
 ## Running Velociraptor
 
-When the case's server set includes a Velociraptor server, the panel header shows a **Velociraptor connected** chip, and Watson can ask to run VQL on it. There are two kinds of run:
+When the case's server set includes a Velociraptor server, the panel header shows a **Velociraptor** chip with a green dot (its tooltip says "Velociraptor connected"), and Watson can ask to run VQL on it. There are two kinds of run:
 
 - **A single-host collection** on one host that belongs to the case's fleet.
 - **A fleet-wide hunt** across the fleet.

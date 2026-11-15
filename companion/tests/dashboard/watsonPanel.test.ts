@@ -535,6 +535,56 @@ describe("rail button, failed sends and paste limits", () => {
     expect(input.value).toBe("keep me");
   });
 
+  it("warns that no case is open when the analyst sends with no case, keeps the text and posts nothing", async () => {
+    let posted = false;
+    const fetch = async () => {
+      posted = true;
+      return { ok: true, status: 200, json: async () => chatWith([]) };
+    };
+    const { api, log, caseInput } = setup({ fetch });
+    caseInput.value = "";
+    const input = { value: "who logged in?" };
+    await api.watsonAct({ dataset: { wVerb: "send" }, closest: () => ({ querySelector: () => input }) });
+    expect(posted).toBe(false);
+    expect(input.value).toBe("who logged in?");
+    expect(log.innerHTML).toContain("No case is open. Open a case first.");
+  });
+
+  it("warns that no case is open for a paste with no case, and keeps the pasted text", async () => {
+    let posted = false;
+    const fetch = async () => {
+      posted = true;
+      return { ok: true, status: 200, json: async () => chatWith([]) };
+    };
+    const { api, log, caseInput } = setup({ fetch });
+    caseInput.value = "";
+    const area = { value: "4624 logon WS-FAKE01" };
+    const box = { classList: { remove() {} } };
+    const root = { querySelector: (s: string) => (s.includes("text") ? area : box) };
+    await api.watsonAct({ dataset: { wVerb: "pasteSend" }, closest: () => root });
+    expect(posted).toBe(false);
+    expect(area.value).toBe("4624 logon WS-FAKE01");
+    expect(log.innerHTML).toContain("No case is open. Open a case first.");
+  });
+
+  it("the Velociraptor chip in the panel header stays on one line", () => {
+    const css = readFileSync(
+      new URL("../../../public/css/dashboard-watson.css", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    expect(css).toMatch(/\.watson-velo-chip \{[^}]*white-space: nowrap/);
+  });
+
+  it("the toolbar Watson button shows a minimize icon while the panel is open or full", () => {
+    const css = readFileSync(
+      new URL("../../../public/css/dashboard-watson.css", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    expect(css).toMatch(
+      /body\.watson-panel-open #watsonToggle::before,\s*body\.watson-full-open #watsonToggle::before\s*\{[^}]*background-image/,
+    );
+  });
+
   it("refuses a paste over 50 MB without posting", async () => {
     let posted = false;
     const fetch = async () => {

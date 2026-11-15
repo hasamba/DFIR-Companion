@@ -50,6 +50,13 @@
     rolePicker("light", "LIGHT"), // #2593 light-task model
     rolePicker("second-opinion", "SECOND_OPINION"),
     rolePicker("reconcile", "RECONCILE"),
+    // Watson's blank provider / key / base URL use synthesis's, the same order the server uses.
+    {
+      ...rolePicker("watson", "WATSON"),
+      fallbackProviderId: "env-DFIR_AI_SYNTH_PROVIDER",
+      fallbackKeyId: "env-DFIR_AI_SYNTH_KEY",
+      fallbackBaseUrlId: "env-DFIR_AI_SYNTH_BASE_URL",
+    },
   ];
 
   function fieldValue(id) {

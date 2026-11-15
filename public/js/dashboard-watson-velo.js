@@ -132,7 +132,7 @@
 
   function chipHtml(connected) {
     return connected
-      ? `<span class="watson-velo-chip" title="This case has a Velociraptor server. Watson can launch queries on it.">Velociraptor connected</span>`
+      ? `<span class="watson-velo-chip" aria-label="Velociraptor connected" title="Velociraptor connected. This case has a Velociraptor server. Watson can launch queries on it.">Velociraptor</span>`
       : "";
   }
 

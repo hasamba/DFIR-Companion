@@ -40,7 +40,7 @@
   }
 
   function logHtml() {
-    if (!wChat) return `<div class="watson-empty">Open a case to talk to Watson.</div>`;
+    if (!wChat) return watsonNoCaseHtml(wNotice); // dashboard-watson-run.js
     const older = wEarlier.map((t) => watsonTurnHtml(t, [], true)).join("");
     const more = wMore === true || (wMore === null && wChat.turns.length >= CHAT_CAP);
     const props = wCardErr.size ? wChat.proposals.map((p) => (wCardErr.has(p.id) ? { ...p, uiError: wCardErr.get(p.id) } : p)) : wChat.proposals;
@@ -188,6 +188,7 @@
   async function post(caseId, path, payload, action, headers) {
     const out = { ok: false, stored: false, transport: "response" };
     let answered = false;
+    if (!caseId) { wNotice = { text: "No case is open. Open a case first." }; renderWatson(); }
     if (!caseId || wBusy.has(caseId)) return out;
     wBusy.add(caseId);
     if (live(caseId)) {
@@ -235,7 +236,7 @@
     return post(caseId, "/message", { text }, "message", { "Idempotency-Key": watsonSendKey(caseId, text) }).then((r) => {
       watsonSendSettled(caseId, r.transport === "lost");
       // a failed send keeps what the analyst typed, in the case they typed it for
-      if (!r.ok && !input.value && live(caseId)) input.value = text;
+      if (!r.ok && !input.value && (live(caseId) || !caseId)) input.value = text;
     });
   }
   function sendPaste(el) {
@@ -253,7 +254,7 @@
     box.classList.remove("watson-on");
     return post(caseId, "/paste", { text }, "paste").then((r) => {
       // A stored paste is evidence already: putting it back would invite a duplicate.
-      if (!r.ok && !r.stored && !area.value && live(caseId)) area.value = text;
+      if (!r.ok && !r.stored && !area.value && (live(caseId) || !caseId)) area.value = text;
     });
   }
 
