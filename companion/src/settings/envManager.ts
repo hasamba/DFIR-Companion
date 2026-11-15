@@ -108,6 +108,8 @@ export const RELOADABLE_ENV_PREFIXES = new Set([
   // Import-time Sigma rules (#2202): the grader reads process.env on every import, so a saved
   // switch is live once reloaded. Same contract with the browser list and LIVE_FROM_ENV below.
   "DFIR_SIGMA_",
+  // Watson (U2): the browser reloads DFIR_AI_WATSON_* as its own group so it can be reported live.
+  "DFIR_AI_WATSON_",
 ]);
 
 /**
@@ -142,6 +144,9 @@ export const LIVE_FROM_ENV_PREFIXES = new Set([
   "DFIR_JEV_",
   // Import-time Sigma rules (#2202): the grader reads process.env on every import.
   "DFIR_SIGMA_",
+  // Watson (U2): buildWatsonProvider, the limits, the prompt file, the graph cap and the reaction
+  // delay are all read from process.env per message. Exact match: DFIR_AI_ itself stays NOT live.
+  "DFIR_AI_WATSON_",
 ]);
 
 // Only keys starting with one of these prefixes may be written via POST /settings/env. The

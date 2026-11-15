@@ -1960,6 +1960,14 @@ export const FEATURES: Feature[] = [
     private: ["AUTO_CONFIRM", "MODES", "LABEL", "TIP", "wMode"],
   },
   {
+    // Two Settings warnings for Watson (lookups without a cost or token limit; provider without model or
+    // key). dashboard-env-settings.js calls watsonLimitWarnRefresh once the saved values are loaded; the
+    // script wires its own input listeners on that first call. No initializer.
+    file: "dashboard-watson-limit-warn.js",
+    publish: ["watsonLimitWarnRefresh"],
+    private: ["ID", "LIMIT_TEXT", "PROVIDER_TEXT", "NO_KEY", "LOCAL_HOST", "SAVED", "wired"],
+  },
+  {
     // Watson chat panel (rail, open, full). initWatson() is called from initDataAct (the inline script has no
     // spare line), so the manifest names no initializer. watsonAct is the one data-act entry.
     file: "dashboard-watson.js",

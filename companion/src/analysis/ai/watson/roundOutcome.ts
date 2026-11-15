@@ -7,6 +7,7 @@ import type { WatsonReply } from "./replySchema.js";
 import type { WatsonSpend } from "./roundContext.js";
 import type { WatsonWriteInputs } from "./roundWrites.js";
 import { buildProposals, newWatsonId } from "./roundProposals.js";
+import { WATSON_MAX_SUPER_SEARCHES } from "./toolMode.js";
 import { mergeMaskRoster, type WatsonMaskRoster } from "./superRoster.js";
 import type {
   WatsonCaseEvent,
@@ -48,6 +49,10 @@ export interface Outcome {
   writeInputs?: WatsonWriteInputs;
   /** The forensic-timeline events the round's lookup showed Watson (Task 11), for the card. */
   lookedUp?: WatsonLookedUp;
+  /** Tool mode (phase 5): one entry per tool call that ran, in order (D9). */
+  lookups?: WatsonLookedUp[];
+  /** Tool mode: the question asked for a super-timeline search past its limit (R2). */
+  superCapHit?: boolean;
   /** The id Watson's turn gets (round.ts sets it, so Auto knows which proposals are this round's). */
   turnId?: string;
   /** The raw rows the round's super-timeline search showed Watson (for promotion of what it cites). */
@@ -114,6 +119,12 @@ function answerEvidence(reply: WatsonReply, outcome: Outcome): Pick<WatsonTurn, 
   return ids?.length ? { answerRawEvidenceIds: [...ids] } : {};
 }
 
+/** Tool mode: the round's lookups and its super-search limit flag, for the turn and the error turn (D5). */
+const savedLookups = (o: Outcome): Pick<WatsonTurn, "lookups" | "superCapHit" | "superCapLimit"> => ({
+  ...(o.lookups?.length ? { lookups: o.lookups } : {}),
+  ...(o.superCapHit ? { superCapHit: true, superCapLimit: WATSON_MAX_SUPER_SEARCHES } : {}),
+});
+
 export function mergeOutcome(
   fresh: WatsonChat,
   outcome: Outcome,
@@ -136,6 +147,7 @@ export function mergeOutcome(
       text: errorText(outcome.error),
       error: true,
       costUSD: spent.usd,
+      ...savedLookups(outcome),
     };
     return withUnreadable({ ...charged, turns: [...charged.turns, turn] }, outcome, at);
   }
@@ -161,6 +173,7 @@ export function mergeOutcome(
     ...(outcome.coverage ? { coverage: outcome.coverage } : {}),
     ...(outcome.veloNote ? { veloNote: outcome.veloNote } : {}),
     ...(outcome.lookedUp ? { lookedUp: outcome.lookedUp } : {}),
+    ...savedLookups(outcome),
     ...(proposalIds.length ? { proposalIds } : {}),
     costUSD: spent.usd,
   };

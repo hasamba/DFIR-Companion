@@ -200,6 +200,29 @@ describe("the persisted mask roster (Watson phase 4, D2d)", () => {
     expect(loaded?.hosts).toHaveLength(600);
     expect(loaded?.hosts[0]).toBe("h0");
   });
+
+  it("a saved turn keeps lookups and superCapHit; one malformed entry is dropped alone", async () => {
+    const good = { source: "supertimeline", shown: 2, matched: 5, what: "x", shownIds: ["raw1", "raw2"] };
+    const later = { shown: 1, matched: 1, what: "y", source: "bogus" };
+    await writeFile(
+      path,
+      JSON.stringify({
+        turns: [
+          {
+            id: "t1",
+            at: "2026-11-14T10:00:00.000Z",
+            role: "watson",
+            text: "ok",
+            superCapHit: true,
+            lookups: [good, { shown: "many" }, later, 7],
+          },
+        ],
+      }),
+    );
+    const t = (await store.load("c1")).turns[0];
+    expect(t.superCapHit).toBe(true);
+    expect(t.lookups).toEqual([good, { shown: 1, matched: 1, what: "y" }]);
+  });
 });
 
 describe("snapshot allowlist", () => {

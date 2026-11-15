@@ -1,7 +1,5 @@
 import { PresidioApprovalRequired } from "../../presidio.js";
 import type { InvestigationState } from "../../stateTypes.js";
-import { retryPolicy } from "../aiContext.js";
-import { isRetryableError } from "../retry.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_CASE_EVENTS_MAX, type WatsonPromptInput } from "./promptBuilder.js";
 import { sanitizeWatsonReply, type WatsonReply } from "./replySchema.js";
@@ -18,6 +16,10 @@ import {
   type WatsonRoundContext,
   type WatsonSpend,
 } from "./roundContext.js";
+import { guardedCall, spentNow } from "./guardedCall.js";
+import { mergeMaskRoster } from "./superRoster.js";
+import { runToolLoop, ToolModeFallback, type ToolLoopInput } from "./toolLoop.js";
+import { markToolsRejected, watsonToolCap } from "./toolMode.js";
 import {
   engaged,
   reactionFailed,
@@ -194,6 +196,10 @@ async function converse(
   let base: WatsonPromptInput;
   let state: InvestigationState;
   let excerpt: WatsonPromptInput["pasteExcerpt"];
+  let fallback: Outcome | ToolModeFallback | undefined;
+  let ceiling: number | undefined;
+  // F1: rows the tool loop showed before it fell back. The hop's reply may cite them, so they promote.
+  let loopShown: ReadonlySet<string> = new Set();
   try {
     // The board and the Key Questions section show the seeded questions now, whatever the round does.
     if (await seedStandardQuestions(ctx, caseId)) ctx.onStateChanged?.(caseId);
@@ -219,8 +225,10 @@ async function converse(
         counter,
         () => spentNow(ctx, caseId, chat, before),
         (one) => callWatson(one, caseId, state, ctx.provider, input),
+        ceiling === undefined ? {} : { ceiling },
       );
-      const events = extra ? new Set([...known.events, ...extra]) : known.events;
+      const more = [...loopShown, ...(extra ?? [])];
+      const events = more.length ? new Set([...known.events, ...more]) : known.events;
       return sanitizeWatsonReply(raw, known.questions, known.pastes, events, known.citations, veloOn);
     };
     // A stored file that is gone or unreadable never fails the round: Watson answers without it.
@@ -230,26 +238,51 @@ async function converse(
           return undefined;
         })
       : undefined;
+    const cap = watsonToolCap(ctx, attach.reaction);
+    if (cap > 0) {
+      // R1, controller ruling on review I1: cap + 1 provider calls per question, the hop's included.
+      ceiling = counter.calls + cap + 1;
+      const rest = { shownEvents, questions, ...readOf(newPaste, headFailed, cover) };
+      const spent = () => spentNow(ctx, caseId, chat, before);
+      const loop = {
+        ctx,
+        caseId,
+        chat,
+        state,
+        base,
+        head: excerpt,
+        cap,
+        ceiling,
+        known,
+        counter,
+        spent,
+        rest,
+        ask,
+      };
+      fallback = await toolRound({ ...loop, reaction: attach.reaction });
+      if (!(fallback instanceof ToolModeFallback)) return fallback;
+      if (fallback.carried.superRoster) base = { ...base, rawRoster: fallback.carried.superRoster };
+      loopShown = new Set((fallback.carried.superShown ?? []).map((e) => e.id));
+    }
     first = await ask(excerpt ? { ...base, pasteExcerpt: excerpt } : base);
   } catch (error) {
     // An auto-attached head is not tried again; the paste stays stored and searchable.
     // A Presidio hold is not a failure to read: the paste stays unread for the approved retry.
     const held = error instanceof PresidioApprovalRequired;
     const giveUp = newPaste && (headFailed || (attach.auto && !held)) ? newPaste : undefined;
-    return {
+    const failed: Outcome = {
       reply: null,
       error,
       shownEvents,
       questions,
       ...(giveUp ? { readPasteIds: [giveUp.id], unreadable: giveUp } : {}),
     };
+    // A fallback hop that fails still keeps what the tool loop read: those rows were sent.
+    return fallback instanceof ToolModeFallback ? withCarried(failed, fallback.carried) : failed;
   }
-  const read = {
-    ...(newPaste ? { readPasteIds: [newPaste.id], ...(headFailed ? { unreadable: newPaste } : {}) } : {}),
-    ...(cover ? { coverage: cover } : {}),
-  };
+  const read = readOf(newPaste, headFailed, cover);
   // At most one search or lookup hop per round (roundHop.ts); its failure never loses this reply.
-  return secondHop({
+  const hop = await secondHop({
     ctx,
     caseId,
     chat,
@@ -261,45 +294,49 @@ async function converse(
     spent: () => spentNow(ctx, caseId, chat, before),
     rest: { shownEvents, questions, ...read },
     reaction: attach.reaction,
+    ...(fallback instanceof ToolModeFallback
+      ? { superLeft: fallback.superLeft, lookupsLeft: fallback.lookupsLeft }
+      : {}),
+    ...(ceiling !== undefined ? { callsLeft: callsLeftOf(counter, ceiling) } : {}),
   });
+  return fallback instanceof ToolModeFallback ? withCarried(hop, fallback.carried) : hop;
 }
 
-/** Watson's spend on the case now: the chat's total before this round plus what the round used. */
-async function spentNow(
-  ctx: WatsonRoundContext,
-  caseId: string,
-  chat: WatsonChat,
-  before: WatsonSpend,
-): Promise<WatsonSpend> {
-  const d = spendDelta(before, await watsonSpend(ctx, caseId));
-  return { usd: chat.costUSD + d.usd, tokens: chat.tokens + d.tokens };
+const callsLeftOf = (counter: { calls: number }, ceiling: number) => (): number => ceiling - counter.calls;
+
+/** What a reply marks read: the attached paste, and the coverage note. */
+const readOf = (paste: WatsonPaste | undefined, headFailed: boolean, cover: WatsonCoverage | undefined) => ({
+  ...(paste ? { readPasteIds: [paste.id], ...(headFailed ? { unreadable: paste } : {}) } : {}),
+  ...(cover ? { coverage: cover } : {}),
+});
+
+/** The tool loop, or the fallback that sends the round to the hop (D7b, D12). Other throws propagate. */
+async function toolRound(i: ToolLoopInput): Promise<Outcome | ToolModeFallback> {
+  try {
+    return await runToolLoop(i);
+  } catch (err) {
+    if (!(err instanceof ToolModeFallback)) throw err;
+    if (err.remember) markToolsRejected(i.ctx.provider);
+    i.ctx.log?.warn(`Watson tool mode fell back to one lookup: ${err.message}`, { caseId: i.caseId });
+    return err;
+  }
 }
 
 /**
- * One model call with Watson's own retry loop, so the cost and token limits are checked before EVERY
- * provider attempt (a retry on a malformed reply included), and `counter` counts attempts, not calls.
- * callAiJson runs with retries off; the same policy and the same retry rules apply out here.
+ * The hop's outcome with what the tool loop read before it fell back: the rows were sent. The loop's
+ * shown rows join the hop's, so a cited one is promoted (F1). The hop's own lookup joins the list, so
+ * the card shows it (F2).
  */
-async function guardedCall<T>(
-  ctx: WatsonRoundContext,
-  caseId: string,
-  counter: { calls: number },
-  spent: () => Promise<WatsonSpend>,
-  call: (one: WatsonRoundContext) => Promise<T>,
-): Promise<T> {
-  const { retries, backoffMs } = retryPolicy(ctx);
-  const one: WatsonRoundContext = { ...ctx, opts: { ...ctx.opts, retries: 0 } };
-  const limited = ctx.costLimitUSD !== undefined || ctx.tokenLimit !== undefined;
-  for (let attempt = 0; ; attempt++) {
-    const reached = limited ? limitReached(ctx, await spent()) : null;
-    if (reached) throw new WatsonCostLimitReached(reached);
-    counter.calls++;
-    try {
-      return await call(one);
-    } catch (err) {
-      if (attempt >= retries || !isRetryableError(err)) throw err;
-      ctx.log?.warn(`Watson call attempt ${attempt + 1} failed; retrying`, { caseId });
-      await new Promise((r) => setTimeout(r, backoffMs * 2 ** attempt));
-    }
-  }
+function withCarried(o: Outcome, c: ToolModeFallback["carried"]): Outcome {
+  const read = [...(o.readPasteIds ?? []), ...(c.readPasteIds ?? [])];
+  const lookups = [...(c.lookups ?? []), ...(o.lookedUp ? [o.lookedUp] : [])];
+  const seen = new Set((o.superShown ?? []).map((e) => e.id));
+  const shown = [...(o.superShown ?? []), ...(c.superShown ?? []).filter((e) => !seen.has(e.id))];
+  return {
+    ...o,
+    ...(c.lookups && lookups.length ? { lookups } : {}),
+    ...(shown.length ? { superShown: shown } : {}),
+    ...(c.superRoster || o.superRoster ? { superRoster: mergeMaskRoster(c.superRoster, o.superRoster) } : {}),
+    ...(read.length ? { readPasteIds: [...new Set(read)] } : {}),
+  };
 }

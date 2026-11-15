@@ -82,6 +82,13 @@
         ai.secondOpinionModel
           ? diagRow("2nd-opinion model", esc(ai.secondOpinionModel))
           : "",
+        // U2: Watson on its own connection — provider, model and whether it stays on this machine.
+        ai.watson
+          ? diagRow(
+              "Watson",
+              `${esc(ai.watson.provider)} / ${esc(ai.watson.model || "no model configured")} <span data-safe-style="color:${ai.watson.local ? "#5ad17a" : "#ffb05a"}">(${ai.watson.local ? "local" : "external"})</span>`,
+            )
+          : "",
         // #2593: the model each small task runs on (light-task model, synthesis, or the VQL hunt model).
         ai.smallTaskModels
           ? diagRow("VQL hunts", esc(ai.smallTaskModels["vql-hunt"])) +

@@ -1,5 +1,6 @@
 import {
   type AIProvider,
+  billedChecks,
   type AnalyzeRequest,
   type AnalyzeResult,
   type ProviderUsage,
@@ -10,8 +11,15 @@ import {
   requestSignal,
   safetyStopError,
 } from "./provider.js";
-import { validateBaseUrl } from "./urlValidation.js";
+import { safeEndpoint, validateBaseUrl } from "./urlValidation.js";
 import { readBoundedJson, readBoundedText, RESPONSE_SIZE_LIMITS } from "./boundedResponse.js";
+import {
+  type ConverseRequest,
+  type ConverseResult,
+  isToolsRejection,
+  ToolsUnsupportedError,
+} from "./toolCalling.js";
+import { type ChatMessageWire, openAiEchoedText, openAiToolBody, parseOpenAiTurn } from "./openaiTools.js";
 
 type FetchFn = typeof fetch;
 
@@ -46,10 +54,7 @@ function estTokens(text: string): number {
 // model hit max_tokens. `message.reasoning` is the thinking text hosted Ollama (and OpenRouter)
 // return; OpenAI proper reports only a count, in usage.completion_tokens_details.
 interface ChatCompletion {
-  choices?: {
-    message?: { content?: string | null; reasoning?: unknown; refusal?: string | null };
-    finish_reason?: string;
-  }[];
+  choices?: { message?: ChatMessageWire; finish_reason?: string }[];
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -67,15 +72,22 @@ function reasoningTokensOf(json: ChatCompletion): number | undefined {
   return typeof reasoning === "string" && reasoning.length > 0 ? estTokens(reasoning) : undefined;
 }
 
+/** The request fields the reasoning hook reads. A tool turn sends no thinking budget. */
+export type ReasoningRequest = Pick<AnalyzeRequest, "thinkingTokens">;
+
 export class OpenAIProvider implements AIProvider {
   readonly name: string = "openai";
   readonly model: string;
+  // Native tool calling (Watson phase 5): converse() sends one tool turn. LiteLLM turns it off.
+  readonly supportsTools: boolean = true;
+  readonly endpoint: string;
   private readonly fetchFn: FetchFn;
   private readonly baseUrl: string;
   constructor(private readonly opts: OpenAIOptions) {
     this.model = opts.model;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
+    this.endpoint = safeEndpoint(this.baseUrl);
     const urlErr = validateBaseUrl(this.baseUrl);
     if (urlErr) throw new ProviderError(urlErr, "transport");
   }
@@ -99,7 +111,7 @@ export class OpenAIProvider implements AIProvider {
   // Extra request-body fields to enable Chain-of-Thought / reasoning (issue #121). The base
   // OpenAI chat-completions shape has no portable reasoning flag, so this is a NO-OP here; gateways
   // that DO expose one (OpenRouter's unified `reasoning`) override this. Returns {} unless enabled.
-  protected reasoningBody(_req: AnalyzeRequest): Record<string, unknown> {
+  protected reasoningBody(_req: ReasoningRequest): Record<string, unknown> {
     return {};
   }
 
@@ -113,47 +125,95 @@ export class OpenAIProvider implements AIProvider {
       });
     }
 
-    // Pre-flight context guard: keep the request inside the model's window so an oversized
-    // prompt fails fast with an actionable message (or sends with reduced output room),
-    // rather than a cryptic upstream "maximum context length" 400.
-    let maxTokens = this.opts.maxTokens;
-    const ctx = this.opts.contextTokens ?? 0;
-    if (ctx > 0) {
-      // ~1100 tokens per full-detail image tile (upper bound); "low" is roughly one tile.
-      const imageTokens = req.images.length * (detail === "low" ? 400 : 1200);
-      const promptTokens = estTokens(req.systemPrompt) + estTokens(req.userPrompt) + imageTokens;
-      const margin = Math.max(1000, Math.ceil(ctx * 0.05));
-      const MIN_OUTPUT = 1024;
-      if (promptTokens + margin >= ctx - MIN_OUTPUT) {
-        throw new ProviderError(
-          `${this.label} prompt is ~${promptTokens.toLocaleString()} tokens, over the model's ${ctx.toLocaleString()}-token context. ` +
-            `Reduce the input (lower DFIR_AI_SYNTH_MAX_EVENTS, split the import into smaller files / fewer rows per batch) ` +
-            `or set DFIR_AI_CONTEXT_TOKENS to your model's real window.`,
-          "context",
-        );
-      }
-      const room = ctx - promptTokens - margin; // shrink reserved output to fit if needed
-      if (maxTokens === undefined || maxTokens > room) maxTokens = Math.max(MIN_OUTPUT, room);
-    }
+    // Context guard input: ~1100 tokens per full-detail image tile (upper bound); "low" is one tile.
+    const imageTokens = req.images.length * (detail === "low" ? 400 : 1200);
+    const maxTokens = this.fitContext(estTokens(req.systemPrompt) + estTokens(req.userPrompt) + imageTokens);
+    const body = {
+      model: this.opts.model,
+      response_format: { type: "json_object" },
+      ...(maxTokens ? { max_tokens: maxTokens } : {}),
+      ...this.reasoningBody(req), // Chain-of-Thought hook (#121) — no-op unless a subclass adds it
+      ...this.usageFlag(),
+      messages: [
+        { role: "system", content: req.systemPrompt },
+        { role: "user", content },
+      ],
+    };
+    const json = await this.send(body, req.signal, false);
+    const text = this.answerText(json, req, maxTokens);
+    const usage = this.usageOf(json.usage);
+    return { rawText: text, ...(usage ? { usage } : {}) };
+  }
 
+  // One tool-calling turn (Watson phase 5). The same max_tokens, context guard and provider extras
+  // as analyze, with no thinking budget. A model or gateway without tool support raises
+  // ToolsUnsupportedError, so the caller falls back to the one-step lookup.
+  echoedReadableText(req: ConverseRequest): string[] {
+    const extras = { model: this.opts.model, ...this.reasoningBody({}), ...this.usageFlag() };
+    return openAiEchoedText(openAiToolBody(req, extras, this.name));
+  }
+
+  async converse(req: ConverseRequest): Promise<ConverseResult> {
+    const extras = { model: this.opts.model, ...this.reasoningBody({}), ...this.usageFlag() };
+    const draft = openAiToolBody(req, extras, this.name);
+    const maxTokens = this.fitContext(estTokens(JSON.stringify([draft.messages, draft.tools])));
+    const body = maxTokens ? { ...draft, max_tokens: maxTokens } : draft;
+    const json = await this.send(body, req.signal, true);
+    const choice = json.choices?.[0];
+    const usage = this.usageOf(json.usage);
+    const turn = billedChecks(usage, () => {
+      this.checkSafety(choice);
+      if (choice?.finish_reason === "length")
+        throw outputLimitError(this.label, maxTokens, reasoningTokensOf(json));
+      const t = parseOpenAiTurn(choice?.message ?? {}, this.name, this.opts.model, req.idSalt);
+      if (!t.text && t.calls.length === 0)
+        throw new ProviderError(`${this.label} returned no content`, "other");
+      return t;
+    });
+    return { ...turn, ...(usage ? { usage } : {}) };
+  }
+
+  // Pre-flight context guard: keep the request inside the model's window so an oversized prompt
+  // fails fast with an actionable message (or sends with reduced output room), rather than a cryptic
+  // upstream "maximum context length" 400. Returns the max_tokens to send.
+  private fitContext(promptTokens: number): number | undefined {
+    const maxTokens = this.opts.maxTokens;
+    const ctx = this.opts.contextTokens ?? 0;
+    if (ctx <= 0) return maxTokens;
+    const margin = Math.max(1000, Math.ceil(ctx * 0.05));
+    const MIN_OUTPUT = 1024;
+    if (promptTokens + margin >= ctx - MIN_OUTPUT) {
+      throw new ProviderError(
+        `${this.label} prompt is ~${promptTokens.toLocaleString()} tokens, over the model's ${ctx.toLocaleString()}-token context. ` +
+          `Reduce the input (lower DFIR_AI_SYNTH_MAX_EVENTS, split the import into smaller files / fewer rows per batch) ` +
+          `or set DFIR_AI_CONTEXT_TOKENS to your model's real window.`,
+        "context",
+      );
+    }
+    const room = ctx - promptTokens - margin; // shrink reserved output to fit if needed
+    return maxTokens === undefined || maxTokens > room ? Math.max(MIN_OUTPUT, room) : maxTokens;
+  }
+
+  // Ask OpenRouter for the exact per-call cost.
+  private usageFlag(): Record<string, unknown> {
+    return this.name === "openrouter" ? { usage: { include: true } } : {};
+  }
+
+  // POST one chat-completions request: transport and HTTP errors mapped to ProviderError kinds, and
+  // a bounded JSON read. On a tool request a "no tool support" refusal is ToolsUnsupportedError.
+  private async send(
+    body: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    tools: boolean,
+  ): Promise<ChatCompletion> {
     const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
     try {
       res = await this.fetchFn(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${this.opts.apiKey}` },
-        body: JSON.stringify({
-          model: this.opts.model,
-          response_format: { type: "json_object" },
-          ...(maxTokens ? { max_tokens: maxTokens } : {}),
-          ...this.reasoningBody(req), // Chain-of-Thought hook (#121) — no-op unless a subclass adds it
-          ...(this.name === "openrouter" ? { usage: { include: true } } : {}), // ask OpenRouter for exact per-call cost
-          messages: [
-            { role: "system", content: req.systemPrompt },
-            { role: "user", content },
-          ],
-        }),
-        signal: requestSignal(timeoutMs, req.signal),
+        body: JSON.stringify(body),
+        signal: requestSignal(timeoutMs, signal),
       });
     } catch (err) {
       const msg =
@@ -163,19 +223,26 @@ export class OpenAIProvider implements AIProvider {
       throw new ProviderError(msg, "transport");
     }
     if (!res.ok) {
-      const body = await readBoundedText(res, {
+      const text = await readBoundedText(res, {
         maxBytes: RESPONSE_SIZE_LIMITS.text,
         context: this.label,
       }).catch(() => "");
-      throw new ProviderError(httpErrorMessage(this.label, res.status, body), httpErrorKind(res.status));
+      const message = httpErrorMessage(this.label, res.status, text);
+      if (tools && isToolsRejection(res.status, text)) throw new ToolsUnsupportedError(message);
+      throw new ProviderError(message, httpErrorKind(res.status));
     }
-    const json = await readBoundedJson<ChatCompletion>(res, {
-      maxBytes: RESPONSE_SIZE_LIMITS.json,
-      context: this.label,
-    });
-    const text = this.answerText(json, req, maxTokens);
-    const usage = this.usageOf(json.usage);
-    return { rawText: text, ...(usage ? { usage } : {}) };
+    return readBoundedJson<ChatCompletion>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: this.label });
+  }
+
+  // #2083: a content filter or a refusal is the safety filter — the same safety_stop Claude Code
+  // raises, so the synthesis safety retries and fallback run and the generic retry never resends it.
+  private checkSafety(choice: NonNullable<ChatCompletion["choices"]>[number] | undefined): void {
+    if (choice?.finish_reason === "content_filter" || choice?.message?.refusal) {
+      throw safetyStopError(
+        `${this.label} (${this.opts.model})`,
+        choice.finish_reason === "content_filter" ? "Finish reason: content_filter." : undefined,
+      );
+    }
   }
 
   // The answer text, or the error that explains why there is none. finish_reason "length" means
@@ -185,14 +252,7 @@ export class OpenAIProvider implements AIProvider {
   private answerText(json: ChatCompletion, req: AnalyzeRequest, maxTokens: number | undefined): string {
     const choice = json.choices?.[0];
     const text = choice?.message?.content;
-    // #2083: a content filter or a refusal is the safety filter — the same safety_stop Claude Code
-    // raises, so the synthesis safety retries and fallback run and the generic retry never resends it.
-    if (choice?.finish_reason === "content_filter" || choice?.message?.refusal) {
-      throw safetyStopError(
-        `${this.label} (${this.opts.model})`,
-        choice.finish_reason === "content_filter" ? "Finish reason: content_filter." : undefined,
-      );
-    }
+    this.checkSafety(choice);
     if (choice?.finish_reason === "length" && (!text || req.rejectTruncated)) {
       throw outputLimitError(this.label, maxTokens, reasoningTokensOf(json));
     }

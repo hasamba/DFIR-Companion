@@ -61,9 +61,14 @@ export function mentionedIds(text: string, candidates: ReadonlySet<string>): str
     .map((m) => m.id);
 }
 
-/** All ids shown by earlier super-timeline searches in this chat (turn.lookedUp.shownIds). */
+/** All ids shown by earlier super-timeline searches in this chat (turn.lookedUp and turn.lookups shownIds). */
 export function earlierShownIds(chat: Pick<WatsonChat, "turns">): Set<string> {
-  return new Set(chat.turns.flatMap((t) => t.lookedUp?.shownIds ?? []));
+  return new Set(
+    chat.turns.flatMap((t) => [
+      ...(t.lookedUp?.shownIds ?? []),
+      ...(t.lookups ?? []).flatMap((l) => l.shownIds ?? []),
+    ]),
+  );
 }
 
 function idsOf(structured: readonly string[], texts: readonly string[], raw: ReadonlySet<string>): string[] {

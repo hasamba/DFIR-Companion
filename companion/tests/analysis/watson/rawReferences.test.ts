@@ -113,6 +113,20 @@ describe("mentionedIds", () => {
   });
 });
 
+describe("earlierShownIds (tool mode)", () => {
+  it("unions lookedUp and lookups shownIds", () => {
+    const t: WatsonTurn = {
+      ...turn("t1", ["raw1"]),
+      lookups: [
+        { source: "supertimeline", shown: 2, matched: 2, what: "a", shownIds: ["raw2", "raw3"] },
+        { shown: 1, matched: 1, what: "b" },
+        { source: "supertimeline", shown: 1, matched: 1, what: "c", shownIds: ["raw1", "raw4"] },
+      ],
+    };
+    expect([...earlierShownIds({ turns: [t] })].sort()).toEqual(["raw1", "raw2", "raw3", "raw4"]);
+  });
+});
+
 describe("earlierShownIds", () => {
   it("collects every id earlier super-timeline searches showed", () => {
     const chat: Pick<WatsonChat, "turns"> = {

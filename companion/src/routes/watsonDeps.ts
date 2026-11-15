@@ -7,6 +7,7 @@ import type { WatsonRawSearchDeps } from "../analysis/ai/watson/superTimelineSea
 import type { RouteContext } from "./context.js";
 import { caseVeloConnected, watsonVeloLaunchDeps } from "./watsonVeloLaunch.js";
 import { isFrozenCase } from "./importCaseGuard.js";
+import { WATSON_MAX_TOOL_CALLS_CEILING } from "../analysis/ai/watson/toolMode.js";
 
 /** A positive finite number from a setting, else undefined: blank, junk, zero and negatives mean "no limit". */
 export function positiveLimit(raw: string | undefined): number | undefined {
@@ -16,6 +17,27 @@ export function positiveLimit(raw: string | undefined): number | undefined {
 }
 
 export { caseVeloConnected };
+
+const DEFAULT_MAX_TOOL_CALLS = 4;
+
+/**
+ * "Watson lookups per question" (D13): blank, junk or negative → 4; 0 → the one-step hop; decimals
+ * are floored; above the ceiling → the ceiling.
+ */
+export function watsonMaxToolCalls(env: NodeJS.ProcessEnv): number {
+  const text = env.DFIR_AI_WATSON_MAX_TOOL_CALLS?.trim();
+  const n = Number(text);
+  if (!text || !Number.isFinite(n) || n < 0) return DEFAULT_MAX_TOOL_CALLS;
+  return Math.min(Math.floor(n), WATSON_MAX_TOOL_CALLS_CEILING);
+}
+
+/** AI off, a closed or archived case, or null: the same expression as rawSearch.writable (D5). */
+const canContinueOf =
+  (ctx: RouteContext) =>
+  async (id: string): Promise<"off" | "frozen" | null> => {
+    if (!(await ctx.getControl(id)).enabled) return "off";
+    return (await isFrozenCase(ctx.store, id)) ? "frozen" : null;
+  };
 
 type Pipeline = NonNullable<RouteContext["options"]["pipeline"]>;
 const promoteVia =
@@ -90,6 +112,8 @@ export function watsonRoundDeps(ctx: RouteContext): WatsonRoundDeps | undefined 
     cases: store,
     provider,
     isAiEnabled: async (id) => (await ctx.getControl(id)).enabled,
+    maxToolCalls: watsonMaxToolCalls(process.env),
+    canContinue: canContinueOf(ctx),
     costLimitUSD: positiveLimit(process.env.DFIR_AI_WATSON_COST_LIMIT_USD),
     tokenLimit: positiveLimit(process.env.DFIR_AI_WATSON_TOKEN_LIMIT),
     reportText: options.reportMetaStore,

@@ -258,6 +258,7 @@
         loadedEnvValues[key] = el.value;
       }
       renderPresidioLocalWarning();
+      window.watsonLimitWarnRefresh?.(); // Watson limit and provider warnings
       // Built-in HTTPS line + certificate link (#2285) — js/dashboard-tls-info.js.
       void window.renderTlsInfo?.();
       await Promise.all([
@@ -278,6 +279,7 @@
     velociraptor: "Velociraptor",
     "second-opinion": "2nd opinion",
     reconcile: "Referee",
+    watson: "Watson",
   };
   const MIGRATION_PROVIDER_NAMES = {
     openai: "OpenAI",
@@ -503,6 +505,9 @@
     "DFIR_JEV_",
     // Import-time Sigma rules (#2202): read from process.env on every import. Same contract.
     "DFIR_SIGMA_",
+    // Watson (U2): rebuilt from process.env on every message, so its own group is live. The longest
+    // match keeps DFIR_AI_WATSON_* out of DFIR_AI_, which still needs a restart. Same contract.
+    "DFIR_AI_WATSON_",
   ];
 
   // Apply the groups a just-saved set of .env keys belongs to, without a restart (#178).

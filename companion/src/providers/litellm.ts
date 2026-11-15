@@ -10,6 +10,8 @@ import { OpenAIProvider, type OpenAIOptions } from "./openai.js";
 // fully local with no auth — an empty key sends a harmless `Bearer` the proxy ignores.
 export class LiteLlmProvider extends OpenAIProvider {
   override readonly name = "litellm";
+  // Watson stays on the one-step lookup: a proxy hides whether the model behind it can call tools.
+  override readonly supportsTools = false;
   constructor(opts: OpenAIOptions) {
     super({ ...opts, baseUrl: opts.baseUrl ?? "http://localhost:4000/v1" });
   }

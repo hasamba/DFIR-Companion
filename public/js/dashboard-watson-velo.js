@@ -9,7 +9,7 @@
 // esc()/escAttr() (dashboard-escape.js). Actions ride on data-act="watsonAct" + data-w-verb.
 (function () {
   // New heads (Task 10, STE) and the old ones, so stored history still renders as a list.
-  const AUTO_HEADS = ["Watson did these actions in Auto mode.", "More Auto actions:", "Watson acted on its own (Auto mode", "(Watson's Auto actions, continued)"];
+  const AUTO_HEADS = ["Watson did these actions in Auto mode.", "Watson left these actions for you in Auto mode.", "More Auto actions:", "Watson acted on its own (Auto mode", "(Watson's Auto actions, continued)"];
   const UNCERTAIN =
     "Watson does not know if this ran. Check Velociraptor. Then mark it as launched or try again.";
   const NO_UNDO = "You cannot undo a launched hunt. It already ran on the endpoints.";

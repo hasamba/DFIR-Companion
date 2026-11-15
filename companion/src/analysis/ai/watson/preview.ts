@@ -1,5 +1,7 @@
+import { noteAiPreview } from "../aiPreviewScope.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import type { WatsonReply } from "./replySchema.js";
+import { watsonToolCap } from "./toolMode.js";
 import {
   callWatson,
   choosePaste,
@@ -7,6 +9,7 @@ import {
   watsonBaseInput,
   withStandardQuestions,
 } from "./requestBuild.js";
+import { previewToolRequest } from "./previewTools.js";
 import {
   limitReached,
   WatsonAiOff,
@@ -40,5 +43,13 @@ export async function previewWatsonRound(
   // A paste whose stored file cannot be read is left out, as the round leaves it out.
   const excerpt = newPaste ? await headExcerpt(ctx, caseId, newPaste).catch(() => undefined) : undefined;
   const one: WatsonRoundContext = { ...ctx, opts: { ...ctx.opts, retries: 0 } };
-  return callWatson(one, caseId, state, ctx.provider, excerpt ? { ...base, pasteExcerpt: excerpt } : base);
+  const input = excerpt ? { ...base, pasteExcerpt: excerpt } : base;
+  const cap = watsonToolCap(ctx, false);
+  noteAiPreview(
+    cap > 0
+      ? `Watson can make up to ${cap} lookups before it answers. This preview shows the first request only. Each later request is masked in the same way.`
+      : "Watson makes one lookup before it answers. This preview shows the first request only.",
+  );
+  if (cap > 0) return previewToolRequest(one, caseId, state, chat, input, cap);
+  return callWatson(one, caseId, state, ctx.provider, input);
 }

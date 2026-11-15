@@ -58,7 +58,7 @@ export interface WatsonLookedUp {
   matched: number;
   /** The lookup in plain words (server-built from the checked request). */
   what: string;
-  source?: "supertimeline";
+  source?: "supertimeline" | "paste" | "history";
   /** The match count is a lower bound: the search stopped counting at its scan limit. */
   matchedIsFloor?: boolean;
   /** Rows evicted by the search's result cap. */
@@ -105,6 +105,12 @@ export interface WatsonTurn {
   veloNote?: string;
   /** The forensic-timeline events this turn's lookup showed Watson. Set only by the server. */
   lookedUp?: WatsonLookedUp;
+  /** Tool mode: every lookup the round made, in order (also on an error turn). Set only by the server. */
+  lookups?: WatsonLookedUp[];
+  /** Tool mode: Watson asked for a super-timeline search past the 2-search limit. Set only by the server. */
+  superCapHit?: boolean;
+  /** The super-timeline search limit that `superCapHit` refers to, so the card never hardcodes it. */
+  superCapLimit?: number;
 }
 
 /**

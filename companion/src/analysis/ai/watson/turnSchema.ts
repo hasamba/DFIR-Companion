@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { questionStatusSchema } from "../../responseSchema.js";
+import { WATSON_MAX_TOOL_CALLS_CEILING } from "./toolMode.js";
 
 // The persisted shape of one Watson turn: a lenient parse shared by the chat file (chatStore.ts) and
 // the append-only history file (historyStore.ts).
@@ -29,6 +30,16 @@ const answerSchema = z.object({
   matchesQuestionId: z.string().optional().catch(undefined),
 });
 
+const lookedUpSchema = z.object({
+  shown: z.number(),
+  matched: z.number(),
+  what: z.string(),
+  source: z.enum(["supertimeline", "paste", "history"]).optional().catch(undefined),
+  matchedIsFloor: z.boolean().optional().catch(undefined),
+  capEvicted: z.number().optional().catch(undefined),
+  shownIds: z.array(z.string()).max(WATSON_SHOWN_IDS_MAX).optional().catch(undefined),
+});
+
 export const turnSchema = z.object({
   id: z.string(),
   at: z.string(),
@@ -54,16 +65,14 @@ export const turnSchema = z.object({
   answerProposalId: z.string().optional(),
   answerRawEvidenceIds: z.array(z.string()).optional().catch(undefined),
   veloNote: z.string().optional().catch(undefined),
-  lookedUp: z
-    .object({
-      shown: z.number(),
-      matched: z.number(),
-      what: z.string(),
-      source: z.literal("supertimeline").optional().catch(undefined),
-      matchedIsFloor: z.boolean().optional().catch(undefined),
-      capEvicted: z.number().optional().catch(undefined),
-      shownIds: z.array(z.string()).max(WATSON_SHOWN_IDS_MAX).optional().catch(undefined),
-    })
+  lookedUp: lookedUpSchema.optional().catch(undefined),
+  lookups: z
+    .array(lookedUpSchema.nullable().catch(null))
     .optional()
+    .transform((a) =>
+      a?.filter((l): l is NonNullable<typeof l> => l !== null).slice(0, WATSON_MAX_TOOL_CALLS_CEILING),
+    )
     .catch(undefined),
+  superCapHit: z.boolean().optional().catch(undefined),
+  superCapLimit: z.number().optional().catch(undefined),
 });

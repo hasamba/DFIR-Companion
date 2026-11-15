@@ -1,5 +1,11 @@
 import type { AnalyzeRequest } from "../../providers/provider.js";
-import { createAnonymizer, deriveKnownEntities, type Anonymizer, type KnownEntities } from "../anonymize.js";
+import {
+  createAnonymizer,
+  deriveKnownEntities,
+  type AnonPair,
+  type Anonymizer,
+  type KnownEntities,
+} from "../anonymize.js";
 import { toAnonPolicy, type AnonControl } from "../anonControl.js";
 import type { InvestigationState } from "../stateTypes.js";
 import { splitAiSpans } from "./aiSpan.js";
@@ -63,6 +69,35 @@ function withPromptEntities(known: KnownEntities, extra: PromptEntities | undefi
   };
 }
 
+/**
+ * Watson D6 (review I1): every value an earlier send of the round masked stays known, so it keeps its
+ * token on every later send even when this call's entities no longer name it. Hosts, domains and
+ * usernames join the known lists; every other value is an exact custom entity.
+ */
+function withSeedEntities(known: KnownEntities, seed: readonly AnonPair[] | undefined): KnownEntities {
+  if (!seed?.length) return known;
+  const of = (category: string) => seed.filter((p) => p.category === category).map((p) => p.value);
+  const merge = (a: readonly string[] | undefined, b: string[]) =>
+    [...new Set([...(a ?? []), ...b])].sort(byLenDesc);
+  // Hosts, domains and users go on the lists the account pass reads, never on the custom list: a
+  // custom qualifier is masked BEFORE the account pass, which then misses `CORP\\admin` (R1-I1).
+  const others = seed
+    .filter((p) => !SEED_LISTED.has(p.category))
+    .map((p) => ({ value: p.value, category: p.category }));
+  return {
+    ...known,
+    hosts: merge(known.hosts, of("HOST")),
+    internalDomains: merge(
+      known.internalDomains,
+      of("DOMAIN").map((d) => d.toLowerCase()),
+    ),
+    usernames: merge(known.usernames, of("USER")),
+    custom: [...(known.custom ?? []), ...others],
+  };
+}
+
+const SEED_LISTED: ReadonlySet<string> = new Set(["HOST", "DOMAIN", "USER"]);
+
 /** The case's known entities: derived from the state, Watson's roster, custom and auto-discovered ones. */
 export async function knownEntitiesFor(
   ctx: ProviderCallContext,
@@ -103,13 +138,14 @@ export async function caseMasker(
   caseId: string,
   state: InvestigationState,
   extra?: PromptEntities,
+  seed?: readonly AnonPair[], // Watson D6: an earlier send's pairs, so its tokens keep their meaning
 ): Promise<CaseMasker> {
   const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
   const policy = toAnonPolicy(control);
   // Off: no entity list is read at all, and Presidio (which needs `known`) does not run either.
   if (!policy.enabled) return { control, policy, known: null, anon: null, mask: (t) => t };
-  const known = await knownEntitiesFor(ctx, caseId, state, extra);
-  const anon = createAnonymizer(policy, known);
+  const known = withSeedEntities(await knownEntitiesFor(ctx, caseId, state, extra), seed);
+  const anon = createAnonymizer(policy, known, seed);
   return { control, policy, known, anon, mask: (t) => anon.apply(t) };
 }
 
@@ -118,9 +154,10 @@ export async function maskRequest(
   ctx: ProviderCallContext,
   caseId: string,
   state: InvestigationState,
-  req: Pick<GatedAnalyzeRequest, "userPrompt" | "promptEntities">,
+  req: Pick<GatedAnalyzeRequest, "userPrompt" | "promptEntities"> & { anonSeed?: readonly AnonPair[] },
 ): Promise<MaskedRequest> {
-  const { control, policy, known, anon, mask } = await caseMasker(ctx, caseId, state, req.promptEntities);
+  const m = await caseMasker(ctx, caseId, state, req.promptEntities, req.anonSeed);
+  const { control, policy, known, anon, mask } = m;
   // The AI-field markers (aiSpan.ts) come out first, whatever happens next: nothing is sent with them.
   const segments = splitAiSpans(req.userPrompt);
   const plainPrompt = segments.map((sg) => sg.text).join("");

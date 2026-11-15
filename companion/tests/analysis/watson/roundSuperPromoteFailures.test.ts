@@ -73,6 +73,57 @@ describe("Watson's promotion when something fails", () => {
     expect(lastWatsonTurn(chat).text).not.toMatch(/could not promote|failed/);
   });
 
+  it("R5: a failed activity-log write gives the STE warning on Watson's turn (never silent)", async () => {
+    const h = await harness([reply(superLookup()), SECOND]);
+    h.flags.activityThrows = true;
+    const chat = await h.run();
+    expect(status(chat)).toBe("applied");
+    expect(lastWatsonTurn(chat).text).toContain(
+      "Watson promoted the rows. It could not write the activity log entry. The rows are in the forensic timeline.",
+    );
+  });
+
+  it("R5: the activity-log write is not retried (no duplicate entry); a failure shows the warning once", async () => {
+    const h = await harness([reply(superLookup()), SECOND]);
+    h.flags.activityFailsOnce = true;
+    const chat = await h.run();
+    expect(lastWatsonTurn(chat).text).toContain("It could not write the activity log entry.");
+    expect(h.entries).toHaveLength(0);
+  });
+
+  it("R5: a failed out-of-date mark is retried once; success on the retry adds no note", async () => {
+    const h = await harness([reply(superLookup()), SECOND]);
+    h.flags.markFailsOnce = true;
+    const chat = await h.run();
+    expect(lastWatsonTurn(chat).text).not.toContain("could not mark");
+    expect(h.outOfDate.length).toBe(1);
+  });
+
+  it("R5: a mark that fails twice tells Watson's turn to run synthesis again", async () => {
+    const h = await harness([reply(superLookup()), SECOND]);
+    h.flags.markThrows = true;
+    const chat = await h.run();
+    expect(lastWatsonTurn(chat).text).toContain(
+      "Watson promoted the rows. It could not mark the conclusions out of date. Run synthesis again to update them.",
+    );
+  });
+
+  it("R5: on the stuck path (promotion threw after rows landed) a failing out-of-date mark is also told", async () => {
+    const h = await harness([reply(superLookup()), SECOND], {
+      promote:
+        (real) =>
+        async (...a) => {
+          await real(...a);
+          throw new Error("crash after the save");
+        },
+    });
+    h.flags.markThrows = true;
+    const chat = await h.run();
+    expect(lastWatsonTurn(chat).text).toContain(
+      "It could not mark the conclusions out of date. Run synthesis again to update them.",
+    );
+  });
+
   it("the 'applied' record save throws after the rows landed: the pending intent stays; Apply adopts the rows; one undoable operation", async () => {
     const h = await harness([reply(superLookup()), SECOND]);
     let failed = false;

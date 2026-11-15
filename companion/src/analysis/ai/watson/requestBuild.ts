@@ -69,6 +69,12 @@ export async function headExcerpt(
   return { pasteId: paste.id, filename: paste.filename, text: head, truncated: shownLines < paste.lines };
 }
 
+/** A search's excerpt, plus its honest counts: every matching line, and the ones written to `text`. */
+export type SearchExcerpt = NonNullable<WatsonPromptInput["pasteExcerpt"]> & {
+  matchedLines: number;
+  emittedMatchLines: number[];
+};
+
 /**
  * What a search hop shows: the lines of a stored paste, or (pasteId "history") of the full chat
  * history, that match the terms. Undefined for a paste id the chat does not hold.
@@ -78,7 +84,7 @@ export async function searchExcerpt(
   caseId: string,
   chat: WatsonChat,
   search: { pasteId: string; terms: readonly string[] },
-): Promise<NonNullable<WatsonPromptInput["pasteExcerpt"]> | undefined> {
+): Promise<SearchExcerpt | undefined> {
   const none = `(no line matched: ${search.terms.join(", ")})`;
   if (search.pasteId === WATSON_HISTORY_ID) {
     const history = await ctx.chatStore.history.text(caseId);
@@ -88,6 +94,8 @@ export async function searchExcerpt(
       filename: WATSON_HISTORY_NAME,
       text: found.excerpt || none,
       truncated: found.truncated || history.truncated,
+      matchedLines: found.matchedLines,
+      emittedMatchLines: found.emittedMatchLines,
     };
   }
   const target = chat.pastes.find((p) => p.id === search.pasteId);
@@ -98,6 +106,8 @@ export async function searchExcerpt(
     filename: target.filename,
     text: found.excerpt || none,
     truncated: found.truncated,
+    matchedLines: found.matchedLines,
+    emittedMatchLines: found.emittedMatchLines,
   };
 }
 

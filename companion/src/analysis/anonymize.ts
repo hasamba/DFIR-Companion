@@ -366,10 +366,15 @@ export function luhnValid(digits: string): boolean {
   return sum % 10 === 0;
 }
 
-export function createAnonymizer(policy: AnonPolicy, known: KnownEntities): Anonymizer {
-  const toToken = new Map<string, string>(); // "CAT:reallower" -> token
-  const toReal = new Map<string, string>(); // token (UPPER) -> real value
+export function createAnonymizer(
+  policy: AnonPolicy,
+  known: KnownEntities,
+  seed: readonly AnonPair[] = [], // Watson D6: earlier sends' pairs keep their tokens; new ones number above
+): Anonymizer {
+  const toToken = new Map(seed.map((p) => [`${p.category}:${p.value.toLowerCase()}`, p.token])); // CAT:real
+  const toReal = new Map(seed.map((p) => [p.token, p.value])); // token (UPPER) -> real value
   const counters: Record<string, number> = {};
+  for (const p of seed) counters[p.category] = Math.max(counters[p.category] ?? 0, +p.token.split("_")[2]);
   const reserved = new Set<string>(); // token-shaped literals seen in the input — never minted (#2569)
   // Values the analyst removed from auto-discovery — never tokenize them (leave as-is), even when
   // a pattern matches. The check sits in assign(), the single point every matcher funnels through.
@@ -788,10 +793,5 @@ export function deriveKnownEntities(state: InvestigationState): KnownEntities {
   return { hosts: allHosts.sort(byLenDesc), accounts: [...accounts], usernames, internalDomains: domains };
 }
 
-// Is the configured AI provider on-box (so screenshots sent to it don't leave the machine)?
-// Used to decide whether to warn that screenshots are NOT anonymized.
-export function isLocalAiProvider(name: string | undefined, baseUrl: string | undefined): boolean {
-  if ((name ?? "").toLowerCase() === "ollama") return true;
-  const u = (baseUrl ?? "").toLowerCase();
-  return /(?:\/\/|@)(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(?::|\/|$)/.test(u);
-}
+// Moved to localAiProvider.ts; re-exported for existing importers.
+export { isLocalAiProvider } from "./localAiProvider.js";

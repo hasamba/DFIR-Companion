@@ -40,7 +40,8 @@ export {
 } from "./ai/viewReports.js";
 import type { ExtractionContext } from "./ai/extraction.js";
 import * as extraction from "./ai/extraction.js";
-import { analyzeRestored, presidioGate } from "./ai/providerCall.js";
+import { presidioGate } from "./ai/providerCall.js";
+import { gateBindings } from "./ai/gateBindings.js";
 import { presidioPreviewText } from "./ai/aiPreviewCall.js";
 import type { KnownEntities } from "./anonymize.js";
 import type { AnonControl } from "./anonControl.js";
@@ -127,8 +128,7 @@ export class AnalysisPipeline {
       withRetry: (caseId, label, fn, retries, backoffMs) =>
         this.withRetry(caseId, label, fn, retries, backoffMs),
       recordRetry: (caseId, label, err) => this.recordRetry(label, err),
-      analyzeRestored: (caseId, state, provider, req, label, skipPresidioGate) =>
-        analyzeRestored(this.aiCtx, caseId, state, provider, req, label, skipPresidioGate),
+      ...gateBindings(() => this.aiCtx),
       promoteSuperTimeline: (caseId, events, o) => this.promoteSuperTimeline(caseId, events, o),
     };
   }

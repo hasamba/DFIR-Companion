@@ -1,12 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 
-import {
-  ProviderError,
-  type AIProvider,
-  type AnalyzeRequest,
-  type AnalyzeResult,
-} from "../../providers/provider.js";
+import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../providers/provider.js";
 import {
   isMaskableIpv4,
   isInternalIp,
@@ -18,12 +13,10 @@ import { toAnonPolicy, type AnonControl } from "../anonControl.js";
 import { bucketForLabel } from "../aiCost.js";
 import { parseJsonLoose } from "../extractJson.js";
 import { OcrRedactionError, ocrRedactImage, type OcrRunner } from "../ocrRedact.js";
-import { safeAiErrorKind, safeAiPhase } from "../operationalMetrics.js";
 import { mapFindings, PresidioApprovalRequired, type PresidioFinding } from "../presidio.js";
 import { authoredFor, reportAnswer, reportGate, type AuthoredText } from "./presidioAuthoredText.js";
 import type { InvestigationState } from "../stateTypes.js";
-import { servedModels } from "../servedModels.js";
-import { noteAiCallStarted } from "../../http/rateLimiter.js";
+import { withCallMetrics } from "./callMetrics.js";
 import { AnonymizationChangedError, anonRevision } from "../anonRevision.js";
 import { captureIfSafetyStop } from "./safetyStopCapture.js";
 import type { ProviderCallContext } from "./providerCallContext.js";
@@ -83,59 +76,14 @@ async function dumpRedactedImage(
   }
 }
 
-/** The provider call itself, wrapped in the operational-metrics record for both outcomes. */
-async function analyzeProvider(
-  ctx: ProviderCallContext,
-  provider: AIProvider,
-  req: AnalyzeRequest,
-  label: string,
-): Promise<AnalyzeResult> {
-  const startedAt = Date.now();
-  noteAiCallStarted(); // the request that caused this call keeps its AI-budget slot (#1825)
-  try {
-    const result = await provider.analyze(req);
-    const usage = result.usage;
-    // #1601: which concrete model served this call — for the job row and the run manifest.
-    servedModels.record({
-      provider: provider.name,
-      alias: provider.model,
-      resolvedModel: usage?.resolvedModel,
-      ...(req.signal ? { signal: req.signal } : {}),
-    });
-    void ctx.opts.operationalMetrics?.record({
-      type: "ai",
-      phase: safeAiPhase(label),
-      durationMs: Date.now() - startedAt,
-      success: true,
-      inputTokens: usage?.inputTokens ?? 0,
-      outputTokens: usage?.outputTokens ?? 0,
-      costUsd: usage?.costUSD ?? 0,
-      errorKind: "none",
-    });
-    return result;
-  } catch (error) {
-    void ctx.opts.operationalMetrics?.record({
-      type: "ai",
-      phase: safeAiPhase(label),
-      durationMs: Date.now() - startedAt,
-      success: false,
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
-      errorKind: safeAiErrorKind(error instanceof ProviderError ? error.kind : "other"),
-    });
-    throw error;
-  }
-}
-
 // Accumulate this call's tokens/cost into the case's running AI-cost totals (Settings →
 // Diagnostics). Best-effort: a write failure here must never fail the underlying AI call.
-async function recordAiCost(
+export async function recordAiCost(
   ctx: ProviderCallContext,
   caseId: string,
   label: string,
   provider: AIProvider,
-  result: AnalyzeResult,
+  result: Pick<AnalyzeResult, "usage">,
 ): Promise<void> {
   if (!ctx.opts.aiCostStore) return;
   try {
@@ -152,12 +100,12 @@ async function recordAiCost(
 }
 
 // Log token usage at DEBUG after a provider call (surfaced with DFIR_LOG_LEVEL=debug).
-function logAiUsage(
+export function logAiUsage(
   ctx: ProviderCallContext,
   caseId: string,
   label: string,
   provider: AIProvider,
-  result: AnalyzeResult,
+  result: Pick<AnalyzeResult, "usage">,
 ): void {
   const u = result.usage;
   if (!u) {
@@ -522,7 +470,8 @@ async function sendPrepared(
 ): Promise<unknown> {
   let result: AnalyzeResult;
   try {
-    result = await analyzeProvider(ctx, provider, prepared.req, label);
+    const req = prepared.req;
+    result = await withCallMetrics(ctx, provider, label, req.signal, () => provider.analyze(req));
   } catch (err) {
     // #2083: opt-in, best-effort save of the exact (as-sent) prompt a safety filter refused.
     const sent = { req: prepared.req, anonymized: prepared.anon !== null };
@@ -554,7 +503,7 @@ export class AiAnswerParseError extends Error {
 }
 
 // Wraps ONLY the JSON parse, so a provider, Presidio or accounting error is never mistaken for a bad answer.
-function parseAnswer(rawText: string, restore: (text: string) => string): unknown {
+export function parseAnswer(rawText: string, restore: (text: string) => string): unknown {
   try {
     return parseJsonLoose(rawText);
   } catch (err) {

@@ -99,7 +99,14 @@ export function resolveRoleSetting(
 // and the per-provider key migration checks every role against it — one reader, so the three
 // cannot drift apart.
 export type AiRoleId =
-  "vision" | "synthesis" | "synthesis-fallback" | "velociraptor" | "light" | "second-opinion" | "reconcile";
+  | "vision"
+  | "synthesis"
+  | "synthesis-fallback"
+  | "velociraptor"
+  | "light"
+  | "second-opinion"
+  | "reconcile"
+  | "watson";
 
 /** The Velociraptor role's provider when DFIR_AI_VELO_PROVIDER is unset or blank. */
 export const DEFAULT_VELO_PROVIDER = "openrouter";
@@ -154,6 +161,30 @@ export const AI_ROLE_SOURCES: Readonly<Record<AiRoleId, AiRoleSource>> = {
     provider: (env) => env.DFIR_AI_RECONCILE_PROVIDER?.trim() || visionEnv(env, "PROVIDER"),
     ownNames: (s) => [`DFIR_AI_RECONCILE_${s}`],
   },
+  // U2: Watson, the per-case chat. A blank provider runs on the synthesis provider and sends what
+  // synthesis sends, like synthesis-fallback; a named provider resolves its own like any role.
+  watson: {
+    role: "watson",
+    provider: (env) =>
+      env.DFIR_AI_WATSON_PROVIDER?.trim().toLowerCase() || AI_ROLE_SOURCES.synthesis.provider(env),
+    ownNames: (s) => [`DFIR_AI_WATSON_${s}`],
+  },
+};
+
+/**
+ * U2: Watson is off when it runs on a provider other than synthesis's and has no model of its own —
+ * it never guesses a model on another provider. A blank Watson provider always runs on synthesis's.
+ */
+export function watsonRoleOff(env: EnvSource): boolean {
+  const own = env.DFIR_AI_WATSON_PROVIDER?.trim().toLowerCase();
+  if (!own || env.DFIR_AI_WATSON_MODEL?.trim()) return false;
+  return own !== AI_ROLE_SOURCES.synthesis.provider(env)?.trim().toLowerCase();
+}
+
+/** The roles that inherit the synthesis role's key and base URL while their own provider is blank. */
+const SYNTHESIS_INHERITORS: Readonly<Partial<Record<AiRoleId, string>>> = {
+  "synthesis-fallback": "DFIR_AI_SYNTH_FALLBACK_PROVIDER",
+  watson: "DFIR_AI_WATSON_PROVIDER",
 };
 
 /** The role's own value: the first of its names that is set, `??` style like visionEnv. */
@@ -175,9 +206,10 @@ export function resolveAiRoleSetting(
   setting: ProviderEnvSetting,
 ): string | undefined {
   const own = roleOwnSetting(env, role, setting);
-  // #1734: a fallback on the synthesis provider (its own provider blank) sends what synthesis
-  // sends, so a blank fallback key never swaps the synthesis key for another value.
-  if (role === "synthesis-fallback" && !own?.trim() && !env.DFIR_AI_SYNTH_FALLBACK_PROVIDER?.trim())
+  // #1734 / U2: a fallback or Watson on the synthesis provider (its own provider blank) sends what
+  // synthesis sends, so a blank own key never swaps the synthesis key for another value.
+  const providerName = SYNTHESIS_INHERITORS[role];
+  if (providerName && !own?.trim() && !env[providerName]?.trim())
     return resolveAiRoleSetting(env, "synthesis", setting);
   return resolveRoleSetting(env, AI_ROLE_SOURCES[role].provider(env), setting, own);
 }

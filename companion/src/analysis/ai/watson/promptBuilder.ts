@@ -158,15 +158,40 @@ function veloBlock(velo: NonNullable<WatsonPromptInput["velo"]>, chat: WatsonCha
   return `VELOCIRAPTOR\n${veloRulesText()}\n${count}\n${hosts.join("\n") || "(none)"}${ranText}`;
 }
 
-/** The SUPER-TIMELINE SEARCH block: the rows fenced as data, the cap warning on the line under them. */
-function superBlock(excerpt: NonNullable<WatsonPromptInput["superExcerpt"]>): string {
+const ONE_HOP = "This round's one search; no further lookup or search runs";
+
+/**
+ * The SUPER-TIMELINE SEARCH block: the rows fenced as data, the cap warning on the line under them.
+ * `oneHop` (the one-step hop) adds that no further search runs; a tool result leaves it out.
+ */
+export function superBlock(excerpt: NonNullable<WatsonPromptInput["superExcerpt"]>, oneHop: boolean): string {
   const what = line(excerpt.what, WATSON_REQUEST_CHARS);
   const rows = fence("SUPERTIMELINE", clip(excerpt.text, WATSON_PASTE_PROMPT_MAX));
   const cap = excerpt.capNote ? `\n${line(excerpt.capNote, WATSON_REQUEST_CHARS * 2)}` : "";
   return (
-    `SUPER-TIMELINE SEARCH (${what}) — raw rows not in the forensic timeline; the companion tries to promote any you cite, and removes the items that use a row it cannot promote. ` +
-    `This round's one search; no further lookup or search runs\n${rows}${cap}`
+    `SUPER-TIMELINE SEARCH (${what}) — raw rows not in the forensic timeline; the companion tries to promote any you cite, and removes the items that use a row it cannot promote.` +
+    `${oneHop ? ` ${ONE_HOP}` : ""}\n${rows}${cap}`
   );
+}
+
+/** The TIMELINE LOOKUP block: the forensic rows fenced as data. `oneHop` as for superBlock. */
+export function lookupBlock(
+  excerpt: NonNullable<WatsonPromptInput["lookupExcerpt"]>,
+  oneHop: boolean,
+): string {
+  const what = line(excerpt.what, WATSON_REQUEST_CHARS);
+  const rows = fence("LOOKUP", clip(excerpt.text, WATSON_PASTE_PROMPT_MAX));
+  const tail = oneHop ? " — this round's one lookup; no further lookup or search runs" : "";
+  return `TIMELINE LOOKUP (${what})${tail}\n${rows}`;
+}
+
+/** The PASTE block, or (pasteId "history") the HISTORY block: the lines fenced as data. */
+export function pasteBlock(excerpt: NonNullable<WatsonPromptInput["pasteExcerpt"]>): string {
+  const text = clip(excerpt.text, WATSON_PASTE_PROMPT_MAX);
+  const note = excerpt.truncated || text.length < excerpt.text.length ? " (truncated: ask for a search)" : "";
+  const name = line(excerpt.filename, FILENAME_CHARS);
+  const label = excerpt.pasteId === WATSON_HISTORY_ID ? "HISTORY" : "PASTE";
+  return `${label} (${name})${note}\n${fence(label, text, ` id=${safeId(excerpt.pasteId)}`)}`;
 }
 
 export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
@@ -197,24 +222,9 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     `RECENT CHAT\n${fence("CHAT", recent.join("\n") || "(none)")}`,
   ];
   if (velo) blocks.push(veloBlock(velo, chat));
-  if (pasteExcerpt) {
-    const text = clip(pasteExcerpt.text, WATSON_PASTE_PROMPT_MAX);
-    const note =
-      pasteExcerpt.truncated || text.length < pasteExcerpt.text.length
-        ? " (truncated: ask for a search)"
-        : "";
-    const name = line(pasteExcerpt.filename, FILENAME_CHARS);
-    const label = pasteExcerpt.pasteId === WATSON_HISTORY_ID ? "HISTORY" : "PASTE";
-    blocks.push(`${label} (${name})${note}\n${fence(label, text, ` id=${safeId(pasteExcerpt.pasteId)}`)}`);
-  }
-  if (lookupExcerpt) {
-    const what = line(lookupExcerpt.what, WATSON_REQUEST_CHARS);
-    const rows = fence("LOOKUP", clip(lookupExcerpt.text, WATSON_PASTE_PROMPT_MAX));
-    blocks.push(
-      `TIMELINE LOOKUP (${what}) — this round's one lookup; no further lookup or search runs\n${rows}`,
-    );
-  }
-  if (input.superExcerpt) blocks.push(superBlock(input.superExcerpt));
+  if (pasteExcerpt) blocks.push(pasteBlock(pasteExcerpt));
+  if (lookupExcerpt) blocks.push(lookupBlock(lookupExcerpt, true));
+  if (input.superExcerpt) blocks.push(superBlock(input.superExcerpt, true));
   blocks.push(`ANALYST\n${fence("ANALYST", clip(analystText, WATSON_ANALYST_PROMPT_MAX))}`);
   return blocks.join("\n\n");
 }

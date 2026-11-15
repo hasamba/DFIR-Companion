@@ -10,8 +10,8 @@ export interface RouteAiPreviewAction {
   readonly label: string;
   /** Shown with the result when the action asks more than once. */
   readonly multiRequest?: string;
-  /** "jev": needs the decision model configured; "ai": needs the synthesis provider. */
-  readonly needs: "ai" | "jev";
+  /** "jev": needs the decision model configured; "ai": needs the synthesis provider; "watson": needs Watson's provider. */
+  readonly needs: "ai" | "jev" | "watson";
   /** Validates params only — every case read happens inside the returned run. */
   prepare(
     ctx: RouteContext,

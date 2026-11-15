@@ -75,20 +75,34 @@ function isPrivateNetworkHost(host: string): boolean {
  *    risk to anyone on that path — see this module's top-of-file note on what this can and can't
  *    prevent)
  */
+// Error text names the URL through safeEndpoint only: never a user name, password or query string.
 export function validateBaseUrl(url: string | undefined): string | null {
   if (!url || !url.trim()) return null; // empty = use provider default (always https)
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    return `base URL "${url}" is not a valid URL`;
+    return "base URL is not a valid URL";
   }
   const scheme = parsed.protocol.toLowerCase();
   if (scheme !== "https:" && scheme !== "http:") {
-    return `base URL "${url}" must use http: or https: scheme (got ${scheme})`;
+    return `base URL "${safeEndpoint(url)}" must use http: or https: scheme (got ${scheme})`;
   }
   if (scheme === "http:" && !isLoopbackHost(parsed.host) && !isPrivateNetworkHost(parsed.host)) {
-    return `base URL "${url}" uses http:// to a public host — the API key and case prompts will be sent in cleartext and are interceptable. Use https:// or a loopback/private-network host.`;
+    return `base URL "${safeEndpoint(url)}" uses http:// to a public host — the API key and case prompts will be sent in cleartext and are interceptable. Use https:// or a loopback/private-network host.`;
   }
   return null;
+}
+
+/**
+ * A base URL safe to show or log: no user name, password, query string or fragment, where a proxy
+ * key could sit. An unparsable URL shows nothing.
+ */
+export function safeEndpoint(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname === "/" ? "" : u.pathname}`;
+  } catch {
+    return "";
+  }
 }

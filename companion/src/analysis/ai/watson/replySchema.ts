@@ -26,8 +26,8 @@ export type {
 // and sanitizeWatsonReply clamps lengths and drops references to ids that do not exist.
 
 const MAX_NEW_QUESTIONS = 3;
-const MAX_SEARCH_TERMS = 8;
-const MAX_TERM_CHARS = 200;
+export const MAX_SEARCH_TERMS = 8;
+export const MAX_TERM_CHARS = 200;
 const MAX_MEMORY_CHARS = 4000;
 const MAX_QUERY_CHARS = 20000;
 const MAX_ANSWER_EVENTS = 20;

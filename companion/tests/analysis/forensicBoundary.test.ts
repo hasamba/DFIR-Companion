@@ -32,8 +32,9 @@ import { psSessionSeats } from "../../src/analysis/ai/synthPsSessionSeats.js";
 //
 // Three analyst-initiated paths touch the raw record. Two now PROMOTE before asking, so the rule
 // holds literally. The third is a documented exception. Watson's super-timeline search is a further
-// documented exception: one targeted, bounded lookup per analyst-started round, and every row it
-// cites is promoted into the forensic timeline before the turn is saved. These tests are the
+// documented exception: up to WATSON_MAX_SUPER_SEARCHES (2) targeted, bounded searches per analyst
+// question, 100 rows each, and every row it cites is promoted into the forensic timeline before the
+// turn is saved. These tests are the
 // difference between that being a policy in a comment and a policy the code obeys.
 
 // starredReport and viewSummary both parse `{ markdown }`; they are report writers, not extractors.
@@ -928,7 +929,30 @@ describe("Watson's super-timeline search is a documented exception (phase 4)", (
     }
     const src = readFileSync(join(watsonDir, "superTimelineSearch.ts"), "utf8");
     expect(src).not.toMatch(/scanWindow|eventBatches|\.collect\(|memoizeScan|queryIndexed|reader\.get\(/);
-    expect(src.match(/reader\.(\w+)\(/g)?.sort()).toEqual(["reader.meta(", "reader.query("]);
+    // Coarse static check: the SET of reader methods, so a legitimate second reader.query( call
+    // (a host with aliases runs several) is not a failure. The spy tests below do the real work.
+    expect([...new Set(src.match(/reader\.(\w+)\(/g))].sort()).toEqual(["reader.meta(", "reader.query("]);
+  });
+
+  it("the tool files and converseRestored.ts have no direct store access", () => {
+    const aiDir = fileURLToPath(new URL("../../src/analysis/ai", import.meta.url));
+    const files = [
+      ...["toolDispatch.ts", "toolLoop.ts", "toolSpecs.ts"].map((f) => join(watsonDir, f)),
+      join(aiDir, "converseRestored.ts"),
+    ];
+    for (const f of files) {
+      const text = readFileSync(f, "utf8");
+      expect(text, f).not.toMatch(
+        /\.reader\.|scanWindow|eventBatches|collect\(|memoizeScan|queryIndexed|SuperTimelineStore|superTimelineStore/,
+      );
+      expect(text, f).not.toMatch(/\.\s*(?:query|meta)\s*\(/);
+    }
+  });
+
+  it("toolDispatch.ts reaches the raw record only through searchSuperTimeline and ctx.rawSearch", () => {
+    const text = readFileSync(join(watsonDir, "toolDispatch.ts"), "utf8");
+    expect(text.match(/searchSuperTimeline\(/g)).toHaveLength(1);
+    expect(text).toMatch(/ctx\.rawSearch/);
   });
 });
 
@@ -1007,6 +1031,79 @@ describe("Watson's super-timeline search is targeted, bounded and promotes only 
     const chat = await h.run();
     expect(f.lastWatsonTurn(chat).answer?.relatedEventIds).toEqual(["raw1"]);
     expect(await h.row("raw9")).toBeUndefined();
+  });
+});
+
+describe("Watson's tool-mode searches stay bounded per call and per question", () => {
+  const tools = async () => {
+    const t = await import("./watson/roundToolsFixtures.js");
+    const f = await import("./watson/superPromoteFixtures.js");
+    const { runWatsonRound } = await import("../../src/analysis/ai/watson/round.js");
+    return { ...t, raw: f.raw, answer: f.answer, runWatsonRound };
+  };
+  /** Records the name of every reader method a round calls. */
+  const spy = (reader: object) => {
+    const touched: string[] = [];
+    const proxy = new Proxy(reader, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop);
+        if (typeof prop === "string" && typeof v === "function") touched.push(prop);
+        return v;
+      },
+    });
+    return { touched, proxy };
+  };
+
+  it("a real tool-mode round calls reader.query and reader.meta and no other reader method", async () => {
+    const t = await tools();
+    const p = new t.Scripted([
+      t.calls(t.superSearch({ text: "rclone" })),
+      t.final(t.reply(t.answer(["raw1"]))),
+    ]);
+    const h = await t.toolHarness(p, { maxToolCalls: 4 });
+    const s = spy(h.ctx.rawSearch!.reader);
+    const ctx = { ...h.ctx, rawSearch: { ...h.ctx.rawSearch!, reader: s.proxy as never } };
+    await t.runWatsonRound(ctx, "c1", { text: "any rclone?", source: "dashboard" });
+    expect(s.touched.length).toBeGreaterThan(0);
+    expect(new Set(s.touched)).toEqual(new Set(["query", "meta"]));
+  });
+
+  it("with a cap of 4 a reaction round makes no reader.query call", async () => {
+    const t = await tools();
+    const p = new t.Scripted([]);
+    const h = await t.toolHarness(p, { maxToolCalls: 4 });
+    const s = spy(h.ctx.rawSearch!.reader);
+    await h.ctx.chatStore.update("c1", (c) => ({
+      ...c,
+      pendingCaseEvents: [{ kind: "notebook" as const, text: "n", at: new Date().toISOString() }],
+    }));
+    const ctx = { ...h.ctx, rawSearch: { ...h.ctx.rawSearch!, reader: s.proxy as never } };
+    await t.runWatsonRound(ctx, "c1", { text: "", reaction: true });
+    expect(s.touched).not.toContain("query");
+  });
+
+  it("with a cap of 10 and only super searches, at most 2 x 100 = 200 raw rows reach the model", async () => {
+    const t = await tools();
+    const s = await import("../../src/analysis/ai/watson/superTimelineSearch.js");
+    const tm = await import("../../src/analysis/ai/watson/toolMode.js");
+    expect(tm.WATSON_MAX_SUPER_SEARCHES * s.WATSON_SUPER_MAX_ROWS).toBe(200);
+    const rows = Array.from({ length: 250 }, (_, i) => t.raw(`bulk${i}`));
+    const p = new t.Scripted([
+      t.calls(t.superSearch({ text: "rclone" })),
+      t.calls(t.superSearch({ text: "rclone copy" })),
+      t.calls(t.superSearch({ text: "rclone bulk" })),
+      t.calls(t.superSearch({ text: "copy bulk" })),
+      t.final(),
+    ]);
+    const h = await t.toolHarness(p, { maxToolCalls: 10, raw: rows });
+    const { outcome } = await t.loopOutcome(h.ctx);
+    const lookups = outcome.lookups ?? [];
+    expect(lookups).toHaveLength(tm.WATSON_MAX_SUPER_SEARCHES);
+    for (const l of lookups) expect(l.shown).toBeLessThanOrEqual(s.WATSON_SUPER_MAX_ROWS);
+    const total = lookups.reduce((n, l) => n + l.shown, 0);
+    expect(total).toBeGreaterThan(s.WATSON_SUPER_MAX_ROWS);
+    expect(total).toBeLessThanOrEqual(200);
+    expect(outcome.superCapHit).toBe(true);
   });
 });
 

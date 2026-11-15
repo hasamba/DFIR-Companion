@@ -1,4 +1,5 @@
 import type { AIProvider } from "../../providers/provider.js";
+import type { ConverseRestoredSend, ConverseSession, GatedConverseRequest } from "./converseRestored.js";
 import type { Logger } from "../../logging/logger.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
 import type { FalsePositiveMarker, FalsePositiveStore } from "../falsePositive.js";
@@ -88,6 +89,16 @@ export interface AiCallContext {
     label?: string,
     skipPresidioGate?: PresidioCoverage,
   ): Promise<unknown>;
+
+  /** The same gate for one send of a tool-calling conversation (Watson phase 5): converseRestored.ts. */
+  converseRestored?(
+    caseId: string,
+    state: InvestigationState,
+    provider: AIProvider,
+    req: GatedConverseRequest,
+    session: ConverseSession,
+    label?: string,
+  ): Promise<ConverseRestoredSend>;
 }
 
 /** `opts.retries` / `opts.backoffMs` with the defaults every AI call site repeated inline. */

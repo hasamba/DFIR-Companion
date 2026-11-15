@@ -17,6 +17,7 @@ import {
   type AiRoleId,
   type EnvSource,
   type ProviderEnvSetting,
+  watsonRoleOff,
 } from "./aiEnv.js";
 
 export type MigrationSetting = "key" | "baseUrl";
@@ -168,6 +169,8 @@ export function effectiveRoleSetting(
   if (role === "synthesis-fallback" && !env.DFIR_AI_SYNTH_FALLBACK_MODEL?.trim()) return undefined;
   // #2593: the light-task model is off without a model too.
   if (role === "light" && !env.DFIR_AI_LIGHT_MODEL?.trim()) return undefined;
+  // U2: Watson on another provider with no model of its own is off too.
+  if (role === "watson" && watsonRoleOff(env)) return undefined;
   return resolveAiRoleSetting(env, role, setting)?.trim() || undefined;
 }
 

@@ -11,6 +11,7 @@ import type { ImporterLoadError } from "./importerStore.js";
 import type { EvidenceIntegrityStatus } from "./custodyIntegrity.js";
 import type { OperationalDiagnostics } from "./operationalDiagnostics.js";
 import { smallTaskModels, type SmallTask } from "../config/smallTaskModels.js";
+import { watsonDiagnostics, watsonDiagnosticsLine, type WatsonDiagnostics } from "./watsonDiagnostics.js";
 
 /** Human-readable byte size (binary units, 1 decimal place under 100). */
 export function formatBytes(bytes: number): string {
@@ -39,9 +40,8 @@ export function formatAge(ms: number): string {
 }
 
 // ── AI config sanity (REDACTED — never carries an API key) ──────────────────────────────
-// All fields here are non-secret config: provider names, model ids, base URLs, numeric
-// bounds. API keys (DFIR_VISION_KEY etc.) are deliberately NOT read so they can never leak into
-// the diagnostics payload or the copy-to-clipboard blob.
+// Non-secret config only: provider names, model ids, base URLs, numeric bounds. API keys (DFIR_VISION_KEY
+// etc.) are deliberately NOT read, so they can never leak into the payload or the copy-to-clipboard blob.
 export interface AiDiagnostics {
   configured: boolean;
   provider: string | null;
@@ -58,8 +58,9 @@ export interface AiDiagnostics {
   maxTokens: number;
   contextTokens: number;
   anonymizeDefault: boolean;
-  // True when the configured provider/base URL is local (Ollama or a localhost endpoint) —
-  // i.e. screenshots/text never leave the machine. Surfaced so operators can confirm OPSEC.
+  // Watson's own connection when it differs from synthesis (U2); null when it uses synthesis's.
+  watson: WatsonDiagnostics | null;
+  // True when the provider/base URL (and Watson's own) is local: nothing leaves the machine (OPSEC).
   local: boolean;
 }
 
@@ -72,15 +73,11 @@ function num(v: string | undefined, fallback: number): number {
 }
 
 function orNull(v: string | undefined): string | null {
-  const t = (v ?? "").trim();
-  return t ? t : null;
+  return (v ?? "").trim() || null;
 }
 
-/**
- * Build the redacted AI-config view from the environment. NEVER includes secrets.
- * `configured` mirrors how startServer decides whether a provider exists: a provider name
- * AND a model are the minimum (a key may legitimately be absent for a local Ollama).
- */
+// buildAiDiagnostics: the redacted AI-config view, NEVER secrets. `configured` mirrors startServer: a
+// provider name AND a model are the minimum (a key may legitimately be absent for a local Ollama).
 // The 2nd-opinion referee as the analyst reads it (#1466): blank/same-as-a → model A, same-as-b →
 // model B, anything else → that model. Null when the feature itself is off.
 function refereeModelLabel(env: NodeJS.ProcessEnv, modelA: string | null): string | null {
@@ -102,6 +99,7 @@ export function buildAiDiagnostics(env: EnvLike): AiDiagnostics {
   const provider = orNull(visionEnv(env, "PROVIDER"));
   const model = orNull(visionEnv(env, "MODEL"));
   const baseUrl = orNull(visionEnv(env, "BASE_URL"));
+  const watson = watsonDiagnostics(env);
   return {
     configured: Boolean(provider && model),
     provider,
@@ -117,7 +115,8 @@ export function buildAiDiagnostics(env: EnvLike): AiDiagnostics {
     maxTokens: num(env.DFIR_AI_MAX_TOKENS, 16_000),
     contextTokens: num(env.DFIR_AI_CONTEXT_TOKENS, 128_000),
     anonymizeDefault: (env.DFIR_ANONYMIZE ?? "on").toLowerCase() !== "off",
-    local: isLocalAiProvider(provider ?? undefined, baseUrl ?? undefined),
+    watson,
+    local: isLocalAiProvider(provider ?? undefined, baseUrl ?? undefined) && (watson?.local ?? true),
   };
 }
 
@@ -363,6 +362,7 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
     if (r.ai.synthModel && r.ai.synthModel !== r.ai.model) lines.push(`  synth:    ${r.ai.synthModel}`);
     if (r.ai.secondOpinionModel) lines.push(`  2nd-op:   ${r.ai.secondOpinionModel}`);
     if (r.ai.refereeModel) lines.push(`  referee:  ${r.ai.refereeModel}`);
+    if (r.ai.watson) lines.push(watsonDiagnosticsLine(r.ai.watson));
     lines.push(`  VQL hunts:         ${r.ai.smallTaskModels["vql-hunt"]}`);
     lines.push(`  language hunts:    ${r.ai.smallTaskModels["language-hunt"]}`);
     lines.push(`  query translation: ${r.ai.smallTaskModels["query-translation"]}`);

@@ -363,14 +363,18 @@ Watson answers an analyst's question by searching the raw record when the forens
 answer. It is a documented exception, and it keeps four clauses. Tests in
 `tests/analysis/forensicBoundary.test.ts` pin each one.
 
-1. **Targeted and bounded.** One lookup per round the analyst started. It must name text (3 or more
+1. **Targeted and bounded.** Up to `DFIR_AI_WATSON_MAX_TOOL_CALLS` (default 4, at most 10) lookups per
+   analyst question, of which at most 2 (`WATSON_MAX_SUPER_SEARCHES`) search the super-timeline. Each
+   search is bounded as before and the cap is checked per call, before the call runs: 100 rows / 20,000
+   characters / 5,000 candidates, so at most 200 raw rows reach the model per question. Only rounds the
+   analyst started search; a reaction never does. A search must name text (3 or more
    characters), a hash, a host or a time window (7 days or less), alone or together; a search with
    none of these is refused. At most 100 rows (`WATSON_SUPER_MAX_ROWS`) and 20,000 characters reach the
    model. The store returns and counts at most 5,000 rows for each query (`WATSON_SUPER_SCAN_ROWS`; up
    to 5 queries for a host with aliases). This bounds the rows returned and counted, not the rows the
    store examines. Only `superTimelineSearch.ts`
    may read the store, and only through `query` and `meta`. Pinned by "only superTimelineSearch.ts
-   reads the store", "a search with no narrowing field is refused, and the bound constants are fixed" (constants
+   reads the store", "a real tool-mode round calls reader.query and reader.meta and no other reader method", "with a cap of 10 and only super searches, at most 2 x 100 = 200 raw rows reach the model", "a search with no narrowing field is refused, and the bound constants are fixed" (constants
    only) and "the store is queried with the 5,000-row return-and-count bound".
 2. **A cited row is promoted first.** Every row Watson cites is promoted into the forensic timeline
    before the turn is saved: intent `watson`, provenance `[watson]`, one undoable record. Where a round

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  AI_ROLE_SOURCES,
   providerEnv,
+  resolveAiRoleSetting,
   PROVIDER_ENV_NAMES,
   resolveRoleSetting,
   visionEnv,
@@ -124,5 +126,24 @@ describe("resolveRoleSetting — per-provider keys and base URLs", () => {
       "openai",
       "openrouter",
     ]);
+  });
+});
+
+describe("the watson role (U2)", () => {
+  it("runs on its own provider, or on the synthesis provider when blank", () => {
+    const synth = { DFIR_VISION_PROVIDER: "gemini", DFIR_AI_SYNTH_PROVIDER: "openrouter" };
+    expect(AI_ROLE_SOURCES.watson.provider(synth)).toBe("openrouter");
+    expect(AI_ROLE_SOURCES.watson.provider({ ...synth, DFIR_AI_WATSON_PROVIDER: " " })).toBe("openrouter");
+    expect(AI_ROLE_SOURCES.watson.provider({ DFIR_VISION_PROVIDER: "gemini" })).toBe("gemini");
+    expect(AI_ROLE_SOURCES.watson.provider({ ...synth, DFIR_AI_WATSON_PROVIDER: "anthropic" })).toBe(
+      "anthropic",
+    );
+    expect(AI_ROLE_SOURCES.watson.ownNames("KEY")).toEqual(["DFIR_AI_WATSON_KEY"]);
+  });
+
+  it("sends the synthesis key when its provider and key are blank, its own key otherwise", () => {
+    const env = { DFIR_AI_SYNTH_PROVIDER: "openai", DFIR_AI_SYNTH_KEY: "s", DFIR_AI_KEY_OPENAI: "slot" };
+    expect(resolveAiRoleSetting(env, "watson", "KEY")).toBe("s");
+    expect(resolveAiRoleSetting({ ...env, DFIR_AI_WATSON_KEY: "w" }, "watson", "KEY")).toBe("w");
   });
 });
