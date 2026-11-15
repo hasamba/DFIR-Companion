@@ -3,6 +3,7 @@ import { collectUsernames, shortHostLabels } from "../../anonUsernames.js";
 import { extractAccounts } from "../../assetGraph.js";
 import { extractDomains } from "../../textDomains.js";
 import type { PromptEntities } from "../maskRequest.js";
+import { IP_LIKE } from "./superRoster.js";
 
 // Every hostname and username in a Watson prompt (spec §8). The case anonymizer only knows entities
 // derived from state, so a hostname that arrives in an analyst paste, that Watson repeats from one, or
@@ -34,8 +35,6 @@ function shortLabels(hosts: readonly string[]): string[] {
 
 const clean = (names: readonly string[]): string[] =>
   names.map((n) => n.trim().toLowerCase()).filter((n) => n !== "");
-
-const IP_LIKE = /^\d{1,3}(?:\.\d{1,3}){3}$|:/;
 
 /**
  * The hostnames and usernames in `text`, for the masking step of one call. `knownHosts` and

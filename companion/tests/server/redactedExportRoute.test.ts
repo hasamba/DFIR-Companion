@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -13,6 +13,7 @@ import { readZip } from "../../src/analysis/zipArchive.js";
 import type { OcrRunner } from "../../src/analysis/ocrRedact.js";
 import type { Finding } from "../../src/analysis/stateTypes.js";
 import { WatsonChatStore } from "../../src/analysis/ai/watson/chatStore.js";
+import { WATSON_ROSTER_FILE } from "../../src/analysis/ai/watson/rosterRead.js";
 
 // OCR runner that always "reads" an internal IP at a fixed box — so the blur path is exercised
 // deterministically without tesseract.
@@ -167,5 +168,15 @@ describe("GET /cases/:id/export/redacted", () => {
     expect(md).toContain("copy ran on"); // the finding reaches the report
     expect(md).not.toMatch(/finsrv-fake07/i);
     expect(md).not.toMatch(/svc_fake/i);
+  });
+  it("fails with no zip when Watson's roster cannot be read (fail closed)", async () => {
+    await mkdir(cases.stateDir("c1"), { recursive: true });
+    await writeFile(join(cases.stateDir("c1"), WATSON_ROSTER_FILE), "{not json", "utf8");
+    const res = await request(app).get("/cases/c1/export/redacted");
+    expect(res.status).toBe(500);
+    expect(res.headers["content-type"]).not.toContain("application/zip");
+    expect(res.body).toEqual({
+      error: expect.stringContaining("Watson cannot read its list of masked names"),
+    });
   });
 });

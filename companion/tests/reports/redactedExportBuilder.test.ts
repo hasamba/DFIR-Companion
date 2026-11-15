@@ -3,11 +3,12 @@ import { createHash } from "node:crypto";
 import { buildRedactedExport, type RedactedExportDeps } from "../../src/reports/redactedExportBuilder.js";
 import { readZip } from "../../src/analysis/zipArchive.js";
 import { DEFAULT_REDACTED_EXPORT_OPTIONS } from "../../src/analysis/redactedExport.js";
-import type { ScreenshotRedactResult } from "../../src/analysis/imageRedact.js";
+import type { ScreenshotRedactOptions, ScreenshotRedactResult } from "../../src/analysis/imageRedact.js";
 import type { InvestigationState } from "../../src/analysis/stateTypes.js";
 import { isVictimSideHost } from "../../src/analysis/anonymize.js";
-import type { ScreenshotRedactOptions } from "../../src/analysis/imageRedact.js";
 import { WatsonRosterUnreadable } from "../../src/analysis/ai/watson/rosterRead.js";
+import { promptEntities } from "../../src/analysis/ai/watson/pasteEntities.js";
+import type { WatsonMaskRoster } from "../../src/analysis/ai/watson/superRoster.js";
 
 // Minimal investigation state — one internal host so deriveKnownEntities has something to anonymize.
 function fakeState(): InvestigationState {
@@ -345,6 +346,50 @@ describe("buildRedactedExport — Watson's masking roster", () => {
     expect(md).toMatch(/c2-node1 resolved/); // its short label is not generated
     expect(md).not.toMatch(/WS-FAKE09/i); // a bare roster host is masked
     expect(md).not.toContain("files.corp.internal"); // a victim-side FQDN on the roster is masked
+  });
+
+  // The roster as excerptRoster (toolDispatch.ts) persists it from a paste: promptEntities' output,
+  // which holds the C2 FQDN AND its short label as a bare host.
+  const pasteRoster = (text: string): WatsonMaskRoster => {
+    const { hosts, usernames } = promptEntities(text);
+    return { hosts: [...hosts], users: [...usernames], ips: [] };
+  };
+  const C2_TEXT = "c2-node1.example.com answered; c2-node1 resolved";
+
+  it("keeps a pasted C2 domain and its stored short label readable (real excerpt roster)", async () => {
+    const roster = pasteRoster("WS-FAKE09 beaconed to c2-node1.example.com");
+    expect(roster.hosts).toEqual(expect.arrayContaining(["c2-node1.example.com", "c2-node1"])); // fixture check
+    const out = await buildRedactedExport(
+      deps({
+        roster: { loadRoster: async () => roster },
+        reportWriter: {
+          redactedReportContents: async (_c, redact) => ({ ...contents, markdown: redact(C2_TEXT) }),
+        },
+      }),
+      "c1",
+      DEFAULT_REDACTED_EXPORT_OPTIONS,
+    );
+    expect(reportMd(out.zip)).toBe(C2_TEXT);
+  });
+
+  it("still masks that bare name when the case's own hosts name it", async () => {
+    const state = fakeState();
+    const own = {
+      ...state,
+      forensicTimeline: [{ ...state.forensicTimeline[0], asset: "c2-node1", description: "c2-node1 ran" }],
+    } as InvestigationState;
+    const out = await buildRedactedExport(
+      deps({
+        stateStore: { load: async () => own } as unknown as RedactedExportDeps["stateStore"],
+        roster: { loadRoster: async () => pasteRoster("beacon to c2-node1.example.com") },
+        reportWriter: {
+          redactedReportContents: async (_c, redact) => ({ ...contents, markdown: redact(C2_TEXT) }),
+        },
+      }),
+      "c1",
+      DEFAULT_REDACTED_EXPORT_OPTIONS,
+    );
+    expect(reportMd(out.zip)).toMatch(/ANON_HOST_\d+ resolved/);
   });
 
   it("isVictimSideHost matches deriveKnownEntities' rule", () => {

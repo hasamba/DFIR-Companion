@@ -261,7 +261,8 @@ const explicitUsers = (e: ForensicEvent): string[] => [
   ...commandAccounts(e.commandLine),
 ];
 
-const IP_LIKE = /^\d{1,3}(?:\.\d{1,3}){3}$|:/;
+/** An IPv4 literal, or any name with a colon (IPv6): it never gives a short label. */
+export const IP_LIKE = /^\d{1,3}(?:\.\d{1,3}){3}$|:/;
 
 /** A host field's FQDN gives its short label too (FILESRV.acme.com → FILESRV), as forensic assets do. */
 function withShortLabel(host: string | undefined): string[] {

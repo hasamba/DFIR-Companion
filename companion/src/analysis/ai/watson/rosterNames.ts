@@ -2,7 +2,7 @@ import { isVictimSideHost } from "../../anonymize.js";
 import type { PromptEntities } from "../maskRequest.js";
 import type { RawNamesSource } from "../providerCallContext.js";
 import { promptEntities } from "./pasteEntities.js";
-import type { WatsonMaskRoster } from "./superRoster.js";
+import { IP_LIKE, type WatsonMaskRoster } from "./superRoster.js";
 import type { WatsonChat } from "./types.js";
 
 // Final review H3: the raw-only names Watson's super-timeline searches showed (the chat's masking
@@ -22,25 +22,27 @@ export function rosterEntities(chat: Pick<WatsonChat, "maskRoster">): PromptEnti
   return promptEntities("", r.hosts, r.users);
 }
 
-const IP_LIKE = /^\d{1,3}(?:\.\d{1,3}){3}$|:/;
-
 // The redacted export keeps adversary infrastructure readable (deriveKnownEntities, user decision
 // 2026-11-15). Since F7 the roster also holds the domains of paste and history excerpts, public ones
-// included. So a roster FQDN that is not victim-side is dropped BEFORE the short labels are made: the
-// C2 domain and its short label both stay readable. Bare host names and every user name are kept.
-const keptForExport = (host: string, internalDomains: readonly string[]): boolean => {
-  const h = host.trim().toLowerCase();
-  return !h.includes(".") || IP_LIKE.test(h) || isVictimSideHost(h, internalDomains);
-};
+// included, AND their short labels (excerptRoster stores promptEntities' output: c2-node1.x.com and
+// c2-node1). So the export drops each FQDN that is not victim-side, then every bare roster name that
+// is the first label of a dropped FQDN. The C2 domain and its label both stay readable. A real victim
+// host of that name stays masked through the export's own derivation (the case's known hosts), and a
+// kept victim-side FQDN gives its label again in rosterEntities. Other bare names and users are kept.
+const isAttackerFqdn = (h: string, internalDomains: readonly string[]): boolean =>
+  h.includes(".") && !IP_LIKE.test(h) && !isVictimSideHost(h, internalDomains);
 
-/** The roster as masking entities for the redacted export: only victim-side FQDNs are masked. */
+/** The roster as masking entities for the redacted export: attacker domains and their labels stay out. */
 export function exportRosterEntities(
   roster: WatsonMaskRoster | undefined,
   internalDomains: readonly string[],
 ): PromptEntities {
   if (!roster) return { hosts: [], usernames: [] };
   const domains = internalDomains.map((d) => d.toLowerCase());
-  const hosts = roster.hosts.filter((h) => keptForExport(h, domains));
+  const names = roster.hosts.map((h) => h.trim().toLowerCase());
+  const dropped = new Set(names.filter((h) => isAttackerFqdn(h, domains)));
+  const labels = new Set([...dropped].map((h) => h.slice(0, h.indexOf("."))));
+  const hosts = names.filter((h) => !dropped.has(h) && !labels.has(h));
   return rosterEntities({ maskRoster: { ...roster, hosts } });
 }
 
