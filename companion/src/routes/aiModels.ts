@@ -1,5 +1,11 @@
 import type { Express, Request, Response } from "express";
-import { type AiRoleId, resolveRoleSetting, roleOwnSetting } from "../config/aiEnv.js";
+import {
+  AI_ROLE_SOURCES,
+  type AiRoleId,
+  resolveAiRoleSetting,
+  resolveRoleSetting,
+  roleOwnSetting,
+} from "../config/aiEnv.js";
 import {
   listProviderModels,
   ModelCatalogError,
@@ -78,19 +84,23 @@ function parseRequest(value: unknown): ModelListRequest | string {
 // The saved key and base URL go through the same resolver the running roles use, keyed on the
 // provider the picker asked about, so a role switched to another provider lists that provider's
 // models.
+// On the provider the role runs on, use exactly what the role sends: a blank Watson or synthesis-fallback
+// key then inherits the synthesis key, as it does at run time.
+function savedSetting(
+  role: ModelRole,
+  provider: ModelCatalogProvider,
+  setting: "KEY" | "BASE_URL",
+): string | undefined {
+  const runsOn = AI_ROLE_SOURCES[role].provider(process.env)?.trim().toLowerCase();
+  if (runsOn === provider) return resolveAiRoleSetting(process.env, role, setting);
+  return resolveRoleSetting(process.env, provider, setting, roleOwnSetting(process.env, role, setting));
+}
+
 function savedCredentials(
   role: ModelRole,
   provider: ModelCatalogProvider,
 ): { apiKey?: string; baseUrl?: string } {
-  return {
-    apiKey: resolveRoleSetting(process.env, provider, "KEY", roleOwnSetting(process.env, role, "KEY")),
-    baseUrl: resolveRoleSetting(
-      process.env,
-      provider,
-      "BASE_URL",
-      roleOwnSetting(process.env, role, "BASE_URL"),
-    ),
-  };
+  return { apiKey: savedSetting(role, provider, "KEY"), baseUrl: savedSetting(role, provider, "BASE_URL") };
 }
 
 export function registerAiModelRoutes(app: Express, ctx: RouteContext): void {

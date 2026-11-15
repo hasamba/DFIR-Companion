@@ -22,6 +22,8 @@ async function harness() {
 afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.DFIR_AI_WATSON_KEY;
+  delete process.env.DFIR_AI_WATSON_PROVIDER;
+  delete process.env.DFIR_AI_SYNTH_PROVIDER;
   if (originalSynthKey === undefined) delete process.env.DFIR_AI_SYNTH_KEY;
   else process.env.DFIR_AI_SYNTH_KEY = originalSynthKey;
   if (originalReconcileKey === undefined) delete process.env.DFIR_AI_RECONCILE_KEY;
@@ -91,6 +93,21 @@ describe("POST /settings/ai-models", () => {
     expect(res.body.models).toEqual(["gpt-6-sol"]);
     expect((fetchFn.mock.calls[0][1]?.headers as Record<string, string>).authorization).toBe(
       "Bearer saved-watson-secret", // trufflehog:ignore
+    );
+  });
+
+  it("a blank Watson key on the synthesis provider lists models with the saved synthesis key", async () => {
+    process.env.DFIR_AI_SYNTH_PROVIDER = "openai";
+    process.env.DFIR_AI_SYNTH_KEY = "saved-synth-secret"; // trufflehog:ignore
+    const fetchFn = fetchMock(async () => jsonResponse({ data: [{ id: "gpt-6-sol" }] }));
+    vi.stubGlobal("fetch", fetchFn);
+    const app = await harness();
+
+    const res = await request(app).post("/settings/ai-models").send({ provider: "openai", role: "watson" });
+
+    expect(res.status).toBe(200);
+    expect((fetchFn.mock.calls[0][1]?.headers as Record<string, string>).authorization).toBe(
+      "Bearer saved-synth-secret", // trufflehog:ignore
     );
   });
 
