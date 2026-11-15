@@ -76,9 +76,8 @@ describe("Best Practice artifacts on Watson's safe list", () => {
 
 // Codex branch review #1 (controller ruling 2026-11-15): a Best Practice artifact is safe only in its
 // default run, `Artifact.<Name>()` with no arguments. Any argument makes the query RISKY (the analyst
-// can still approve it; Auto never launches it). An argument that can swap the tool, file or command
-// (Tool_*, *filename*, *hash*, *url*, *archive*, *module*, *binary*, *exe*, *command*, *path*) is RISKY
-// on every artifact, the six reviewed ones included.
+// can still approve it; Auto never launches it). On the six reviewed artifacts (none fetches a tool),
+// only a Tool_* override is RISKY (amended ruling); their other arguments keep their old rules.
 const auto = (vql: string) =>
   checkLaunch({ vql, mode: "collection", hostname: "wks-alpha" }, { ...ctx, allowRisky: true });
 
@@ -126,11 +125,17 @@ describe("Best Practice artifacts: only the default run is safe", () => {
   it.each([
     "SELECT * FROM Artifact.Windows.EventLogs.EvtxHunter(Tool_X_URL='x')",
     "SELECT * FROM Artifact.Generic.Client.Info(tool_thing='x')",
-    "SELECT * FROM Artifact.Windows.Search.FileFinder(SearchFilesGlob='C:/x', ModuleName='m')",
-    "SELECT * FROM Artifact.Windows.System.Pslist(CommandLine='x')",
-  ])("a tool or file override on a reviewed artifact is risky: %s", (vql) => {
+    "SELECT * FROM Artifact.Windows.Search.FileFinder(SearchFilesGlob='C:/x', TOOL_Yara_URL='m')",
+  ])("a Tool_ override on a reviewed artifact is risky: %s", (vql) => {
     const reasons = expectRiskyOnly(vql);
     expect(reasons.some((r) => /can change the tool, file or command/.test(r))).toBe(true);
+  });
+
+  it.each([
+    "SELECT * FROM Artifact.Windows.EventLogs.EvtxHunter(PathRegex='Security', IdRegex='^4624$')",
+    "SELECT * FROM Artifact.Windows.Search.FileFinder(SearchFilesGlob='C:/x/*', Calculate_Hash='Y', ExcludePathRegex='tmp')",
+  ])("ordinary arguments on a reviewed artifact stay safe: %s", (vql) => {
+    expect(vqlAllowed(vql)).toEqual({ ok: true });
   });
 
   it("keeps the upload refusal on a Best Practice artifact, beside the default-run reason", () => {
@@ -142,5 +147,17 @@ describe("Best Practice artifacts: only the default run is safe", () => {
   it("a path argument on a plain file read is not affected", () => {
     expect(vqlAllowed("SELECT * FROM glob(globs='C:/x/*', root='C:/x')")).toEqual({ ok: true });
     expect(vqlAllowed("SELECT * FROM read_file(filenames='C:/x/a.txt')")).toEqual({ ok: true });
+  });
+});
+
+describe("Watson's Velociraptor rules: Best Practice artifacts", () => {
+  it("tells Watson to call a Best Practice artifact with no arguments", async () => {
+    const { veloRulesText } = await import("../../../../src/analysis/ai/watson/velo/veloPrompt.js");
+    const text = veloRulesText();
+    expect(text).toContain("Call a Best Practice artifact");
+    expect(text).toContain("with no arguments, as Artifact.<Name>(): its default run is the only safe form.");
+    expect(text).toContain("makes the query risky, so the analyst must approve it.");
+    expect(text).toContain("Tool_ is risky");
+    expect(text).not.toContain("still apply to them");
   });
 });

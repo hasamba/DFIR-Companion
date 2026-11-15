@@ -91,10 +91,11 @@ export function isDefaultRunOnly(name: string): boolean {
 }
 
 /**
- * Artifact argument names that can change the tool, file or command an artifact runs (Tool_* overrides,
- * tool archives, modules, command lines, paths). Risky on every artifact, the reviewed ones included.
+ * A Tool_* override (Velociraptor's tool name, file name, hash or URL): it can change the tool an
+ * artifact runs. Risky on every artifact, the reviewed ones included (amended ruling 2026-11-15); the
+ * reviewed six fetch no tool, so their other arguments keep their usual rules.
  */
-export const TOOL_OVERRIDE_ARG = /^tool_|filename|hash|url|archive|module|binary|exe|command|path/i;
+export const TOOL_OVERRIDE_ARG = /^tool_/i;
 
 /**
  * Local accessors an `accessor=` argument may name. Network accessors (smb, s3, …) are refused, and
