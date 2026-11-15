@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Watson with no case** — sending or pasting with no case open now says so and keeps the text; the toolbar button shows a minimize icon while the panel is open; the Velociraptor chip no longer wraps
+- **Watson with no case** — sending or pasting with no case open now says so and keeps the text; the toolbar button shows a minimize icon while the panel is open; the Velociraptor chip no longer wraps; the note after an import says what to do next, and no longer asks to approve 0 rows
 - **Watson names in exports** — the redacted export and the support bundle now mask the names Watson masked for the AI.
 - **Watson masks hosts in raw row text** — a host named only in a raw row or paste description is masked.
 - **Watson rechecks before every send** — the AI switch and the case-closed state are checked right before each Watson AI call, so a switch-off or a close stops the next send.

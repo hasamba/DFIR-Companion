@@ -18,10 +18,19 @@ export const isTextIngest = (i: WatsonPasteIngest): i is { kind: "text"; reason:
 /** The row count the import log records for the paste. */
 export const ingestRows = (i: WatsonPasteIngest): number => (isTextIngest(i) ? 0 : i.rows);
 
+const SEARCHABLE =
+  "All the rows stay in the super-timeline, and Watson can search them when you ask a question.";
+
+// What the analyst must do next: apply the held-rows cards, or nothing when no row went above Info.
+function heldText(held: number): string {
+  if (held === 0) return "The tagger graded no row above Info, so nothing waits for your approval.";
+  if (held === 1)
+    return "The tagger graded 1 of them above Info. To add it to the forensic timeline, apply the held-rows card below.";
+  return `The tagger graded ${held} of them above Info. To add them to the forensic timeline, apply the held-rows cards below.`;
+}
+
 function systemText(paste: WatsonPaste, kind: string, rows: number, held: number): string {
-  const lead =
-    `Watson read ${rows} rows from ${paste.filename} (${kind}). ` +
-    `The tagger graded ${held} rows above Info. These rows wait for your approval.`;
+  const lead = `Watson read ${rows} rows from ${paste.filename} (${kind}). ${heldText(held)} ${SEARCHABLE}`;
   if (held <= HELD_MAX) return lead;
   return `${lead} Watson proposes only the first ${HELD_MAX}. The other ${held - HELD_MAX} stay in the super-timeline.`;
 }

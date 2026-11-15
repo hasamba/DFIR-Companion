@@ -174,7 +174,7 @@ If Watson cannot read a stored paste at once, the paste stays in the case. Watso
 
 ### Pasted files in a known format
 
-When a paste is in a format that a built-in importer reads (for example SIEM or EDR JSON, or a known event log export), Watson parses it into rows. The rows are graded like a normal import. The chat shows a line such as: "Watson read 2 rows from events.json (siem). The tagger graded 1 rows above Info. These rows wait for your approval."
+When a paste is in a format that a built-in importer reads (for example SIEM or EDR JSON, or a known event log export), Watson parses it into rows. The rows are graded like a normal import. The chat shows a line such as: "Watson read 2 rows from events.json (siem). The tagger graded 1 of them above Info. To add it to the forensic timeline, apply the held-rows card below. All the rows stay in the super-timeline, and Watson can search them when you ask a question." When no row is above Info (a Velociraptor process list often has none), the line says that nothing waits for your approval. To use those rows, ask Watson about them, for example "What do the process list rows show?".
 
 - The content tagger may raise some rows above Info (for example a `ntdsutil` command line). **Watson holds those promotions.** The rows stay in the super-timeline, and the raised copies wait as a **held rows** proposal. Choose **Apply** to put them in the forensic timeline, or **Reject** to leave them out. Large batches are split, 25 rows per proposal, and the chat says if more than 200 rows were cut.
 - Only the tagger's promotions are held. Other grading works as in a normal import. For example, a pasted account-creation row that resembles a case account is raised to High, the same as in a normal import.
