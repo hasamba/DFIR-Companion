@@ -218,6 +218,7 @@
     // Watson chat
     toggleWatsonPanel: (el) => toggleWatsonPanel(),
     watsonStatusShow: (el) => watsonStatusShow(el),
+    watsonBestPractice: () => watsonBestPractice(),
     watsonAct: (el) => watsonAct(el),
     noSubmit: (el, e) => e.preventDefault(),
   };

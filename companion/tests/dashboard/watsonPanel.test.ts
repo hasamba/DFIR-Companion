@@ -115,6 +115,7 @@ function setup(
       "dashboard-watson-view.js",
       "dashboard-watson-mode.js",
       "dashboard-watson-run.js",
+      "dashboard-watson-status.js",
       "dashboard-watson-velo.js",
     ],
     {

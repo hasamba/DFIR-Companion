@@ -6,6 +6,7 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 type Status = { state: string; pill: string; bar: string; pid: string };
 type Api = {
+  watsonEmptyCaseHtml(chat: unknown): string;
   watsonStatusOf(chat: unknown, localBusy: boolean): Status;
   watsonStatusSync(chat: unknown, localBusy: boolean): void;
 };
@@ -51,6 +52,17 @@ const launch = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("Watson status", () => {
+  it("an empty case suggests the Best Practice bundle when Velociraptor is connected", () => {
+    const { api } = setup();
+    const withVelo = api.watsonEmptyCaseHtml({ veloConnected: true });
+    expect(withVelo).toContain("This case has no forensic-timeline events or findings.");
+    expect(withVelo).toContain("Run the Best Practice bundle");
+    expect(withVelo).toContain('data-act="watsonBestPractice"');
+    const noVelo = api.watsonEmptyCaseHtml({ veloConnected: false });
+    expect(noVelo).toContain("Import evidence first.");
+    expect(noVelo).not.toContain("watsonBestPractice");
+  });
+
   it("is empty with no case open", () => {
     const { api } = setup();
     expect(api.watsonStatusOf(null, false).state).toBe("none");

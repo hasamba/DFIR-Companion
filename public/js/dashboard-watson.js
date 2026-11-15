@@ -48,7 +48,7 @@
     const hint = wChat.turns.length
       ? ""
       : wEmpty
-        ? `<div class="watson-empty">This case has no forensic-timeline events or findings. Import evidence first. Until then, Watson has no data for an answer.</div>`
+        ? watsonEmptyCaseHtml(wChat) // dashboard-watson-status.js: suggests the Best Practice bundle
         : `<div class="watson-empty">Ask Watson about this case, or paste evidence.</div>`;
     const warn = wNotice ? `<div class="watson-turn watson-warn"><div class="watson-text">${esc(wNotice.text)}</div></div>` : "";
     const thinking = watsonWorkingHtml(wChat, wBusy.has(currentCase()));

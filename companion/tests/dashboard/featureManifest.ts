@@ -1963,8 +1963,14 @@ export const FEATURES: Feature[] = [
     // Watson's status pill, the bar above the message box and the rail dot. dashboard-watson-run.js
     // calls watsonStatusSync on every render. "Show card" runs through data-act.
     file: "dashboard-watson-status.js",
-    publish: ["watsonStatusOf", "watsonStatusSync", "watsonStatusShow"],
-    private: ["LABEL", "pending", "watching", "nameOf", "btn"],
+    publish: [
+      "watsonStatusOf",
+      "watsonStatusSync",
+      "watsonStatusShow",
+      "watsonEmptyCaseHtml",
+      "watsonBestPractice",
+    ],
+    private: ["LABEL", "pending", "watching", "nameOf", "btn", "EMPTY_TEXT", "BUNDLE_ID"],
   },
   {
     // Watson's running state: the working line, the stop icon, the stop call and the per-send idempotency

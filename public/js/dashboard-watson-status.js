@@ -79,7 +79,29 @@
     setTimeout(() => card.classList.remove("watson-flash"), 1600);
   }
 
+  // A case with no events or findings gives Watson nothing to work with. With a Velociraptor server,
+  // the Best Practice bundle collects a detection base; the button opens its run form in the
+  // Velociraptor panel (dashboard-velo-collect.js), so the analyst picks the OS and labels and runs it.
+  const EMPTY_TEXT = "This case has no forensic-timeline events or findings. Until it has some, Watson has no data for an answer.";
+  const BUNDLE_ID = "best-practice";
+  function watsonEmptyCaseHtml(chat) {
+    if (!chat || !chat.veloConnected) return `<div class="watson-empty">${EMPTY_TEXT} Import evidence first.</div>`;
+    return (
+      `<div class="watson-empty">${EMPTY_TEXT} To get a detection base, run the Best Practice bundle on your endpoints, or import evidence.` +
+      ` <button type="button" class="watson-mini" data-act="watsonBestPractice">Run the Best Practice bundle</button></div>`
+    );
+  }
+  function watsonBestPractice() {
+    if (typeof toggleVeloRunForm !== "function") return;
+    const form = document.querySelector(`.velo-run-form[data-id="${BUNDLE_ID}"]`);
+    if (form && form.style.display !== "block") toggleVeloRunForm(BUNDLE_ID);
+    const target = form || document.querySelector(".velo-run-form");
+    if (target && target.scrollIntoView) target.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
   window.watsonStatusOf = watsonStatusOf;
   window.watsonStatusSync = watsonStatusSync;
   window.watsonStatusShow = watsonStatusShow;
+  window.watsonEmptyCaseHtml = watsonEmptyCaseHtml;
+  window.watsonBestPractice = watsonBestPractice;
 })();
