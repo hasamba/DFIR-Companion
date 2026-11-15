@@ -111,31 +111,52 @@
   // model's text), shown on its own line so the analyst sees everything Watson read (#452).
   const fmt = (n) => Number(n).toLocaleString("en-US");
 
-  // The raw super-timeline search: the count may be a floor, and the size limit may have hidden rows.
-  function superLookedUpHtml(l, shown, matched) {
-    const of = l.matchedIsFloor ? "at least " : "";
-    const what = l.what ? ` (${esc(String(l.what))})` : "";
-    const evicted = Number(l.capEvicted);
-    const cap =
-      Number.isFinite(evicted) && evicted > 0
-        ? `<div class="watson-cov">⚠ The super-timeline removed ${esc(fmt(evicted))} old rows because of its size limit. ` +
-          `This search can miss rows. Import the artifact again to search them.</div>`
-        : "";
-    return (
-      `<div class="watson-cov watson-lookup">Watson searched the super-timeline. It shows ${esc(fmt(shown))} of ${of}${esc(fmt(matched))} raw rows that match${what}</div>` +
-      cap
-    );
-  }
+  // One wording per lookup kind, for old and new turns (a turn from before tool mode has one `lookedUp`).
+  // Every string comes from the server and goes through esc(). The match count of a super-timeline
+  // search may be a floor, and its size limit may have hidden rows.
+  const LOOKUP_WHERE = new Map([
+    ["supertimeline", ["Watson searched the super-timeline:", "raw row"]],
+    ["paste", ["Watson searched the pasted file:", "line"]],
+    ["history", ["Watson searched the chat history:", "line"]],
+  ]);
 
-  function lookedUpHtml(l) {
+  function lookupHtml(l) {
     if (!l) return "";
     const shown = Number(l.shown);
     const matched = Number(l.matched);
     if (!Number.isFinite(shown) || !Number.isFinite(matched)) return "";
-    if (l.source === "supertimeline") return superLookedUpHtml(l, shown, matched);
-    const count = matched > shown ? `${shown} of ${matched}` : String(shown);
+    const floor = l.matchedIsFloor ? "at least " : "";
+    const count = matched > shown || l.matchedIsFloor ? `${fmt(shown)} of ${floor}${fmt(matched)}` : fmt(shown);
     const what = l.what ? ` (${esc(String(l.what))})` : "";
-    return `<div class="watson-cov watson-lookup">Watson looked up ${esc(count)} forensic-timeline events that match${what}</div>`;
+    const where = LOOKUP_WHERE.get(l.source);
+    const noun = (n) => (shown === 1 && matched <= 1 ? n : n + "s");
+    if (!where) {
+      const head = l.source ? "Watson searched another source:" : "Watson looked up";
+      const tail = l.source ? ` matching ${noun("event")}` : ` forensic-timeline ${noun("event")}`;
+      return `<div class="watson-cov watson-lookup">${head} ${esc(count)}${tail}${what}</div>`;
+    }
+    const evicted = Number(l.capEvicted);
+    const cap =
+      l.source === "supertimeline" && Number.isFinite(evicted) && evicted > 0
+        ? `<div class="watson-cov">⚠ The super-timeline removed ${esc(fmt(evicted))} old rows because of its size limit. ` +
+          `This search can miss rows. Import the artifact again to search them.</div>`
+        : "";
+    return (
+      `<div class="watson-cov watson-lookup">${where[0]} ${esc(count)} matching ${noun(where[1])}${what}</div>` +
+      cap
+    );
+  }
+
+  const lookupsHtml = (list) => (Array.isArray(list) ? list.map(lookupHtml).join("") : "");
+  const lookupsOf = (t) =>
+    Array.isArray(t.lookups) && t.lookups.length ? lookupsHtml(t.lookups) : lookupHtml(t.lookedUp);
+
+  // R2: the question asked for a super-timeline search past the limit. The server sends the limit.
+  function superCapHtml(t) {
+    if (t.superCapHit !== true) return "";
+    const n = Number(t.superCapLimit);
+    const limit = Number.isFinite(n) && n > 0 ? `${fmt(n)} ` : "";
+    return `<div class="watson-cov watson-lookup">Watson reached its limit of ${esc(limit)}super-timeline searches for this question.</div>`;
   }
 
   // #2468: no forensic-timeline events and no findings yet, so an answer would have nothing to read.
@@ -185,7 +206,8 @@
       (autoList(t) || textHtml(t)) +
       answerHtml(t, readOnly, ctx) +
       coverageHtml(t.coverage) +
-      lookedUpHtml(t.lookedUp) +
+      lookupsOf(t) +
+      superCapHtml(t) +
       (t.learned ? `<div class="watson-meta"><b>Learned:</b> ${esc(t.learned)}</div>` : "") +
       requestHtml(t.request) +
       props +

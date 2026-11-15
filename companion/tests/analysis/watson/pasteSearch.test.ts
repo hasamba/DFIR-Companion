@@ -30,7 +30,12 @@ describe("searchPaste", () => {
     expect(r.matchedLines).toBe(2);
   });
   it("returns empty for no terms or no match", () => {
-    expect(searchPaste("abc", [])).toEqual({ excerpt: "", matchedLines: 0, truncated: false });
+    expect(searchPaste("abc", [])).toEqual({
+      excerpt: "",
+      matchedLines: 0,
+      truncated: false,
+      emittedMatchLines: [],
+    });
     expect(searchPaste("abc", ["zzz"]).matchedLines).toBe(0);
   });
   it("caps the excerpt at 24000 chars", () => {
@@ -90,5 +95,23 @@ describe("pasteHead", () => {
   });
   it("exports the 50 MB cap", () => {
     expect(WATSON_PASTE_MAX_BYTES).toBe(52_428_800);
+  });
+});
+
+describe("searchPaste: emittedMatchLines (honest counts)", () => {
+  it("emittedMatchLines excludes context lines and lines past the cap", () => {
+    const r = searchPaste("a\nhit\nb\nc\nd\nhit\ne", ["hit"]);
+    expect(r.excerpt).toBe("1: a\n2: hit\n3: b\n5: d\n6: hit\n7: e");
+    expect(r.emittedMatchLines).toEqual([2, 6]);
+    const capped = searchPaste("hit\nx\nhit\nx\nhit", ["hit"], { maxLines: 3 });
+    expect(capped.matchedLines).toBe(3);
+    expect(capped.emittedMatchLines).toEqual([1, 3]);
+    expect(capped.truncated).toBe(true);
+  });
+  it("a clipped long matching line still counts as emitted; no match gives an empty list", () => {
+    const r = searchPaste(`${"z".repeat(5000)} hit`, ["hit"]);
+    expect(r.emittedMatchLines).toEqual([1]);
+    expect(searchPaste("nothing", ["hit"]).emittedMatchLines).toEqual([]);
+    expect(searchPaste("", ["hit"]).emittedMatchLines).toEqual([]);
   });
 });

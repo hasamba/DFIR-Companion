@@ -58,6 +58,10 @@ export type WatsonRoundContext = AiCallContext & {
   tokenLimit?: number;
   /** The case's AI on/off switch (the route passes getControl(caseId).enabled). */
   isAiEnabled(caseId: string): Promise<boolean>;
+  /** Tool calls per analyst question (DFIR_AI_WATSON_MAX_TOOL_CALLS, phase 5). Absent or 0: the one-step hop. */
+  maxToolCalls?: number;
+  /** Checked before every model call (D5): AI off, a closed or archived case, or null. Absent: isAiEnabled. */
+  canContinue?(caseId: string): Promise<"off" | "frozen" | null>;
   mainSourceStore?: CaseMainSourceStore;
   /** Host-identity sources, so Watson names hosts the way synthesis does. */
   assetOverridesStore?: AssetOverridesStore;
@@ -83,6 +87,14 @@ export class WatsonAiOff extends Error {
   constructor() {
     super("AI is off for this case. Turn it on to talk to Watson.");
     this.name = "WatsonAiOff";
+  }
+}
+
+/** Thrown before a model call when the case was closed or archived during the round (D5). */
+export class WatsonCaseFrozen extends Error {
+  constructor() {
+    super("The case was closed or archived, so Watson stopped.");
+    this.name = "WatsonCaseFrozen";
   }
 }
 

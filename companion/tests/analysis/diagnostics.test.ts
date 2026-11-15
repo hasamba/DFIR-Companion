@@ -222,6 +222,7 @@ function sampleReport(): DiagnosticsReport {
       maxTokens: 16000,
       contextTokens: 128000,
       anonymizeDefault: true,
+      watson: null,
       local: false,
       recentErrors: [],
       errorCounts: { billing: 1 },

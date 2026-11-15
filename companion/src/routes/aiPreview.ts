@@ -22,7 +22,7 @@ type Prepared = (() => Promise<unknown>) | string;
 interface ResolvedAction {
   readonly label: string;
   readonly multiRequest?: string;
-  readonly needs: "ai" | "jev";
+  readonly needs: "ai" | "jev" | "watson";
   prepare(caseId: string, params: Record<string, unknown>): Promise<Prepared>;
 }
 
@@ -68,7 +68,12 @@ export function registerAiPreviewRoutes(app: Express, ctx: RouteContext): void {
     const action = resolveAction(ctx, key);
     if (!action) return res.status(400).json({ error: `unknown AI action "${key.slice(0, 60)}"` });
     // A decision-model request needs Jev, not the chat model; its prepare names a missing setup.
-    if (action.needs === "ai" && (!options.pipeline || !options.pipeline.hasSynthesisProvider()))
+    // Watson may run on its own provider (phase 5): it needs that one, not the synthesis provider.
+    const noProvider =
+      action.needs === "watson"
+        ? !options.pipeline || !options.watsonProvider?.()
+        : action.needs === "ai" && (!options.pipeline || !options.pipeline.hasSynthesisProvider());
+    if (noProvider)
       return res
         .status(501)
         .json({ error: "AI provider not configured — there is no AI request to preview" });

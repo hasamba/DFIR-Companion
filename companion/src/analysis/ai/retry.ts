@@ -1,4 +1,9 @@
 import { ProviderError, type ProviderErrorKind } from "../../providers/provider.js";
+import {
+  ThinkingBindingError,
+  ToolsUnsupportedError,
+  TurnBindingError,
+} from "../../providers/toolCalling.js";
 import { PresidioApprovalRequired, PresidioScanError } from "../presidio.js";
 import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 import { OcrRedactionError } from "../ocrRedact.js";
@@ -51,6 +56,12 @@ export function isRetryableError(err: unknown): boolean {
   if (err instanceof PresidioScanError) return false;
   // OCR that could not read a screenshot fails the same way on the same bytes (#1952).
   if (err instanceof OcrRedactionError) return false;
+  // A model without tool support refuses the same tool request every time.
+  if (err instanceof ToolsUnsupportedError) return false;
+  // A transcript refused for its thinking blocks fails the same way with the same body.
+  if (err instanceof ThinkingBindingError) return false;
+  // A transcript refused for its signatures or turn order (Gemini) fails the same way too.
+  if (err instanceof TurnBindingError) return false;
   return !(err instanceof ProviderError && NON_RETRYABLE_KINDS.has(err.kind));
 }
 

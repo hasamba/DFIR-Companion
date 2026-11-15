@@ -12,7 +12,7 @@ import { watsonRoundDeps } from "./watsonDeps.js";
  */
 export const watsonPreviewAction: RouteAiPreviewAction = {
   label: "Watson message",
-  needs: "ai",
+  needs: "watson",
   prepare: async (ctx, caseId, params) => {
     const text = typeof params.text === "string" ? params.text.trim() : "";
     if (!text) return "text is required";

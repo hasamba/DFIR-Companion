@@ -24,6 +24,7 @@ import type { RouteContext } from "../../src/routes/context.js";
 import type { Logger } from "../../src/logging/logger.js";
 import { ReadOnlyScopeWriteError } from "../../src/storage/readOnlyScope.js";
 import type { PresidioClient } from "../../src/analysis/presidio.js";
+import type { AiCallContext } from "../../src/analysis/ai/aiContext.js";
 
 // #2491 — "Preview what the AI will see" must show EXACTLY what the provider receives. For every
 // covered action this runs the preview first (no provider call, no file in the case changes), then the
@@ -328,5 +329,40 @@ describe("AI preview — storage upkeep is never run by a preview (#2491)", () =
     expect(h.provider.sent).toHaveLength(0);
     expect(preview.outcome).toBe("error");
     expect((preview as { error: unknown }).error).toBeInstanceOf(ReadOnlyScopeWriteError);
+  });
+});
+
+describe("AI preview — Watson tool mode (phase 5)", () => {
+  it("the tool-mode preview's maskedPrompt equals the first real send's userPrompt", async () => {
+    const h = await harness();
+    const sent: Array<{ userPrompt: string; systemPrompt: string }> = [];
+    const tools: AIProvider = {
+      name: "tools",
+      model: "tools-model",
+      supportsTools: true,
+      analyze: async () => ({ rawText: "{}" }),
+      converse: async (r) => {
+        sent.push({ userPrompt: r.userPrompt, systemPrompt: r.systemPrompt });
+        return { text: "{}", calls: [] };
+      },
+    };
+    const ctx = (h.pipeline as unknown as { aiCtx: AiCallContext }).aiCtx;
+    const state = seedState(h.caseId);
+    const req = {
+      systemPrompt: "sys",
+      userPrompt: `What did ${USER} do on ${HOST}?`,
+      transcript: [],
+      tools: [],
+      toolChoice: "auto" as const,
+    };
+    const ask = () => ctx.converseRestored!(h.caseId, state, tools, req, { pairs: [] }, "watson");
+    const preview = await runAiPreview(ask);
+    expect(preview.outcome).toBe("captured");
+    expect(sent).toHaveLength(0);
+    await ask();
+    const call = (preview as { call: AiPreviewCapture }).call;
+    expect(call.maskedPrompt).toBe(sent[0].userPrompt);
+    expect(call.systemPrompt).toBe(sent[0].systemPrompt);
+    expect(call.maskedPrompt).not.toContain(HOST);
   });
 });

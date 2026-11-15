@@ -118,8 +118,8 @@ From Slack, Teams or Telegram, `/dfir ask <question>` sends the question to Wats
 
 The forensic timeline holds the events that were graded Low or higher. The super-timeline holds the raw rows, including the Info rows that were cut. When the forensic timeline cannot answer your question, Watson can search the super-timeline.
 
-- Watson makes one search for each question you ask. A search names text (3 characters or more), a hash, a host or a time window of 7 days or less. It can combine these.
-- Watson sees at most 100 rows from a search. It does not read the whole super-timeline.
+- When Watson makes several lookups for one question (see [Several lookups for one question](#several-lookups-for-one-question)), it can make up to two searches. Otherwise it makes one search for each question, and none in its own reactions. A search names text (3 characters or more), a hash, a host or a time window of 7 days or less. It can combine these.
+- Watson sees at most 100 rows from a search, so at most 200 rows for one question. It does not read the whole super-timeline.
 - Watson does not search in its own reactions to imports, notes or stars. Only a question or message you send starts a search.
 - If the super-timeline has removed old rows because of its size limit, the answer carries a warning that the search can miss rows. Import the artifact again to get them back.
 
@@ -134,6 +134,29 @@ Undo of a promotion is refused while a finding, next step, report text, key ques
 Raw rows can show host and account names that the case does not know yet. Watson keeps a list of these names for the case. When anonymization is on, these names are masked in every AI request on the case, synthesis included. Watson never removes a name from the list. When anonymization is on and the list already holds 500 hosts or 500 accounts, a search that would need a new name does not run for that message, and Watson tells you why. When anonymization is off, the search runs as usual and the list still records the names, so they are masked if you turn anonymization on later.
 
 Synthesis and the deep pass never read the super-timeline.
+
+## Several lookups for one question
+
+When Watson runs on an API provider (OpenAI, OpenRouter, Gemini, Anthropic or Ollama) it can make several lookups before it answers one question. It asks for each lookup with a native tool call. There are four lookups:
+
+- the forensic timeline
+- the super-timeline
+- a pasted file
+- the chat history
+
+Set the limit with `DFIR_AI_WATSON_MAX_TOOL_CALLS` (**Settings → AI**, "Watson lookups per question"). The default is 4. The highest value is 10. 0 means one lookup, as before. Watson can search the super-timeline two times for each question.
+
+Each lookup is read-only. Every result is masked like the rest of the request, and Presidio checks it before it goes to the model. When Presidio finds a new value, Watson stops and holds the message until you approve the value.
+
+Before each call to the provider, Watson checks the Watson cost limit and token limit. When a limit is reached, Watson stops at once and says so. The answer card lists every lookup Watson made for the answer.
+
+Some cases stay on one lookup:
+
+- Claude Code, Codex and LiteLLM always make one lookup.
+- A model that refuses tools makes one lookup. Watson remembers this until the server restarts.
+- Watson's own reactions to imports, notes and stars always make one lookup only.
+
+If no Watson cost or token limit is set, Settings shows a warning, because each question can cost more than one call. Set a limit to control cost. The AI preview shows the first request only. It says how many lookups Watson can make.
 
 ## Giving Watson evidence
 
@@ -219,7 +242,7 @@ Any analyst with write access to the case can switch the mode. Switching to Auto
 
 In Auto, Watson:
 
-- applies its own case writes, from every round (a reaction to an import still changes Key Questions only, as before)
+- applies its own case writes, from every round (a reaction to an import still changes Key Questions only, as before), but not the writes that rest on raw rows (see below)
 - applies the tagger's promotions from the results of its own single-host collections, and from a file you paste in that round
 - launches single-host collections from messages you type or files you paste in the dashboard's Watson panel, any number of them
 
@@ -230,6 +253,8 @@ In Auto, Watson never:
 - launches from a round it started itself, such as a reaction or a round that reads its own results
 - launches from a `/dfir ask` sent through a chat bot, or from any round that did not start from the Watson panel
 - acts on a case that was closed or archived while the round ran
+
+In Auto, a case write waits for you when it rests on rows that Watson saw in the super-timeline or in a paste. This applies to findings, next steps, report text and key-question answers or new questions, from every round. The chat lists each one with the note *Waits for you: it rests on rows Watson saw in the super-timeline or in a paste.* A write that cites only forensic-timeline events still applies on its own. Promotions do not wait: the rows Watson promotes from the super-timeline or from a paste are evidence, with the Watson badge and Undo.
 
 Every Auto action is listed in the chat with the exact VQL, and is logged as **Watson (Auto)** with who switched Auto on and when. Switching back to Approve stops the rest of the actions.
 
@@ -287,6 +312,7 @@ Set these under **Settings → AI**. See the [Settings Reference](settings.md) f
 | `DFIR_AI_WATSON_MODEL` | The model Watson uses. Blank means the synthesis model. |
 | `DFIR_AI_WATSON_COST_LIMIT_USD` | A dollar limit per case. It applies only when the provider reports a price. |
 | `DFIR_AI_WATSON_TOKEN_LIMIT` | A token limit per case. It always applies. |
+| `DFIR_AI_WATSON_MAX_TOOL_CALLS` | The most lookups Watson makes for one question. Default 4, highest 10, 0 = one lookup. |
 | `DFIR_AI_WATSON_REACT_DELAY_SEC` | Seconds of quiet before Watson reacts to case changes. Default 60. 0 = no reactions. |
 
 The footer of the Watson panel shows how many calls Watson made on the case, and the cost in dollars or the tokens used, depending on what the provider reports.

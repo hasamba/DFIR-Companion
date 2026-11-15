@@ -1,3 +1,5 @@
+import type { ConverseRequest, ConverseResult } from "./toolCalling.js";
+
 export interface AnalyzeImage {
   base64: string;
   mimeType: string; // e.g. "image/webp"
@@ -97,12 +99,26 @@ export function outputLimitError(
 }
 
 export class ProviderError extends Error {
+  /** The usage of a billed response this error was raised after (cut off, refused): it still costs. */
+  usage?: ProviderUsage;
+  /** The vendor says this is about auth, quota, input size or region, not the tool request (F3). */
+  notAboutTools?: boolean;
   constructor(
     message: string,
     readonly kind: ProviderErrorKind,
   ) {
     super(message);
     this.name = "ProviderError";
+  }
+}
+
+/** Run checks on a billed response; a ProviderError they throw carries that response's usage. */
+export function billedChecks<T>(usage: ProviderUsage | undefined, run: () => T): T {
+  try {
+    return run();
+  } catch (err) {
+    if (usage && err instanceof ProviderError && !err.usage) err.usage = usage;
+    throw err;
   }
 }
 
@@ -164,6 +180,15 @@ export interface AIProvider {
   // claude-code (`--effort` tier). Unset/false means the 🧠 deep-reasoning toggle is a no-op here,
   // and the dashboard says so instead of silently accepting the click.
   readonly supportsThinking?: boolean;
+  // True on a provider that implements `converse()` (native tool calling, Watson phase 5).
+  readonly supportsTools?: boolean;
+  // The provider's base URL, for diagnostics. Never a secret.
+  readonly endpoint?: string;
+  // One tool-calling turn: send the transcript once, return tool calls or final text.
+  converse?(req: ConverseRequest): Promise<ConverseResult>;
+  // The readable signed reasoning converse(req) would echo, after the adapter's own drops and the
+  // caller's `withhold`. Pure: builds the body the same way and sends nothing.
+  echoedReadableText?(req: ConverseRequest): string[];
   analyze(req: AnalyzeRequest): Promise<AnalyzeResult>;
 }
 

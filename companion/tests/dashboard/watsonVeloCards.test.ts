@@ -180,6 +180,9 @@ describe("card dispatch and Auto", () => {
     expect(
       velo().watsonVeloAutoListHtml("More Auto actions:\n- Applied new finding: x").match(/<li>/g),
     ).toHaveLength(1);
+    const held =
+      "Watson left these actions for you in Auto mode. Dana set Auto mode.\n- Watson left this for an analyst: x";
+    expect(velo().watsonVeloAutoListHtml(held).match(/<li>/g)).toHaveLength(1);
     expect(velo().watsonVeloAutoListHtml("Watson did something else")).toBe("");
   });
 

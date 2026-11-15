@@ -8,6 +8,13 @@
 // hash-chained audit record of every run; a restore rewinds state, and rewinding the ledger would
 // erase the record of the very run being rolled back. It travels with the case in .dfircase
 // archives instead, which walk the whole case directory.
+//
+// Two Watson files are also deliberately NOT listed (R6, NEVER_SNAPSHOT_STATE_FILES below):
+// - watson-history.jsonl is append-only across a restore. A restore rewinds watson-chat.json, but
+//   the history keeps every turn it ever had, including turns the restored chat no longer holds. It
+//   is a record, like the analysis-runs/ ledger.
+// - hunt-fingerprints.json is never rewound. A restore must not make a hunt that already ran look
+//   un-run, because that would let a duplicate launch through the re-run check.
 export const SNAPSHOT_STATE_FILES = [
   "investigation.json", // legacy pre-SQLite core; retained in snapshots while a case still has one
   "false-positive.json", // analyst false-positive / known-good markers
@@ -41,3 +48,7 @@ export const SNAPSHOT_STATE_FILES = [
 // Binary state is copied beside the JSON backup manifest rather than base64-encoded into it. A
 // multi-gigabyte SQLite case must never be turned into one V8 string merely to make a backup.
 export const SNAPSHOT_BINARY_STATE_FILES = ["investigation.sqlite"] as const;
+
+// State files a restore must never touch. Not in SNAPSHOT_STATE_FILES, so the backup never reads them
+// and the restore never writes them. They still travel with a case export, which walks the folder.
+export const NEVER_SNAPSHOT_STATE_FILES = ["watson-history.jsonl", "hunt-fingerprints.json"] as const;

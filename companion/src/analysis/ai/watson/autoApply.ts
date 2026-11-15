@@ -3,6 +3,7 @@ import type { AiControl } from "../../aiControl.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WatsonLaunchUncertain } from "./proposalErrors.js";
 import { applyWatsonProposal } from "./proposals.js";
+import { rawEvidenceOf } from "./rawEvidence.js";
 import { newWatsonId } from "./roundProposals.js";
 import { watsonRunMode } from "./runMode.js";
 import type { WatsonCaseEvent, WatsonChat, WatsonProposal, WatsonTurn } from "./types.js";
@@ -19,6 +20,10 @@ import type { WriterDeps } from "./writers/writerTypes.js";
 //
 // The eligible set is the round's Watson-turn proposals, plus held promotions the round carried
 // (its shown result events, its paste). Nothing else, ever: no sweep of older pending proposals.
+//
+// U5 (phase 5): a case write that rests on rows Watson saw in the super-timeline or in a paste waits
+// for an analyst, from every round source. Promotions stay automatic: they are evidence, badged and
+// undoable. Only the conclusions that cite raw rows are held.
 
 export const WATSON_AUTO_ACTOR = "Watson (Auto)";
 
@@ -62,14 +67,32 @@ const isHeldPromotion = (p: WatsonProposal): boolean => p.kind === "event_promot
 const isRoundPromotion = (p: WatsonProposal): boolean =>
   p.kind === "event_promote" && p.source === "supertimeline";
 
+/** U5: a write resting on super-timeline rows (rawEvidenceIds) or on cited paste lines. */
+export const isRawCited = (p: WatsonProposal): boolean =>
+  rawEvidenceOf(p).length > 0 ||
+  ((p.kind === "finding_new" || p.kind === "finding_update") && (p.pasteLineEvents?.length ?? 0) > 0);
+
+export const RAW_CITED_WAIT =
+  "Waits for you: it rests on rows Watson saw in the super-timeline or in a paste.";
+
+const ownIds = (chat: WatsonChat, round: WatsonAutoRound): Set<string> =>
+  new Set(chat.turns.find((t) => t.id === round.turnId && t.role === "watson")?.proposalIds ?? []);
+
+/** The round's own pending writes that Auto holds because they cite raw rows (U5), in chat order. */
+export function rawCitedHeld(chat: WatsonChat, round: WatsonAutoRound): WatsonProposal[] {
+  const own = ownIds(chat, round);
+  return chat.proposals.filter(
+    (p) => p.status === "pending" && own.has(p.id) && p.turnId === round.turnId && isRawCited(p),
+  );
+}
+
 /** The round's eligible proposals, in chat order. */
 export function eligibleProposals(chat: WatsonChat, round: WatsonAutoRound): WatsonProposal[] {
-  const turn = chat.turns.find((t) => t.id === round.turnId && t.role === "watson");
-  const own = new Set(turn?.proposalIds ?? []);
+  const own = ownIds(chat, round);
   const held = new Set(round.heldIds ?? []);
   const pasted = new Set(round.paste?.proposalIds ?? []);
   return chat.proposals.filter((p) => {
-    if (p.status !== "pending" || isRoundPromotion(p)) return false;
+    if (p.status !== "pending" || isRoundPromotion(p) || isRawCited(p)) return false;
     if (own.has(p.id) && p.turnId === round.turnId) return true;
     if (held.has(p.id)) return isHeldPromotion(p);
     const pasteId = "pasteId" in p ? p.pasteId : undefined;
@@ -135,8 +158,12 @@ const vqlOf = (p: WatsonProposal): string | undefined => (p.kind === "velo_launc
  * The listing as one or more system-turn texts, each within the turn cap, so no action is ever cut
  * off the end. A VQL too long for a turn of its own is pointed at, never cut.
  */
-export function listingTurns(by: string, listed: readonly Listed[]): string[] {
-  const head = `Watson did these actions in Auto mode. ${by.slice(0, 200)} set Auto mode.`;
+export function listingTurns(by: string, listed: readonly Listed[], allLeft = false): string[] {
+  // F8: a listing where Watson applied nothing says so in its heading.
+  const lead = allLeft
+    ? "Watson left these actions for you in Auto mode."
+    : "Watson did these actions in Auto mode.";
+  const head = `${lead} ${by.slice(0, 200)} set Auto mode.`;
   const more = "More Auto actions:";
   const turns: string[][] = [[head]];
   let used = head.length;
@@ -212,10 +239,14 @@ export async function autoApply(
   const chat = await deps.chatStore.load(caseId);
   if (!autoOn(control)) return chat;
   const todo = eligibleProposals(chat, round);
-  if (!todo.length) return chat;
+  const rawHeld = rawCitedHeld(chat, round);
+  if (!todo.length && !rawHeld.length) return chat;
   const suffix = autoDetail(control);
-  const lines: Listed[] = [];
+  const lines: Listed[] = rawHeld.map((p) => ({
+    line: `- Watson left this for an analyst: ${what(p)}. ${RAW_CITED_WAIT}`,
+  }));
   let stateChanged = false;
+  let tried = false;
   let stopped = false;
   let stopReason = "Auto mode is no longer on for this case.";
   for (const p of todo) {
@@ -233,6 +264,7 @@ export async function autoApply(
       });
       continue;
     }
+    tried = true;
     const r = await applyOne(deps, caseId, p, suffix);
     lines.push({ line: r.line, ...(r.vql !== undefined ? { vql: r.vql } : {}) });
     stateChanged ||= r.state;
@@ -240,7 +272,7 @@ export async function autoApply(
   if (stateChanged) deps.onStateChanged?.(caseId);
   const by = control.watsonAutoBy?.name ?? "an analyst";
   const at = new Date().toISOString();
-  const turns: WatsonTurn[] = listingTurns(by, lines).map((text) => ({
+  const turns: WatsonTurn[] = listingTurns(by, lines, !tried).map((text) => ({
     id: newWatsonId("wt"),
     at,
     role: "system",

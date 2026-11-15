@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RAW_CITED_WAIT } from "../../../src/analysis/ai/watson/autoApply.js";
 import { applyWatsonProposal, WatsonProposalConflict } from "../../../src/analysis/ai/watson/proposals.js";
 import { withCitedPromotion } from "../../../src/analysis/ai/watson/roundPromote.js";
 import type { Outcome } from "../../../src/analysis/ai/watson/roundOutcome.js";
@@ -93,7 +94,7 @@ describe("Watson promotes the super-timeline rows it cites", () => {
     expect(stored.proposals.filter((p) => "rawEvidenceIds" in p && p.rawEvidenceIds)).toHaveLength(3);
   });
 
-  it("promotes in Approve and in Auto; Auto never re-applies the applied promotion", async () => {
+  it("promotes in Approve and in Auto; Auto never re-applies the promotion and holds the raw-cited finding (U5)", async () => {
     for (const mode of ["approve", "auto"] as const) {
       const h = await harness([reply(superLookup()), reply(writes({ findings: [finding(["raw1"])] }))], {
         mode,
@@ -107,7 +108,9 @@ describe("Watson promotes the super-timeline rows it cites", () => {
         mode,
       ).toEqual([["watson.apply", "Watson"]]);
       const f = ofKind(chat.proposals, "finding_new");
-      expect(f?.status, mode).toBe(mode === "auto" ? "applied" : "pending");
+      expect(f?.status, mode).toBe("pending");
+      const held = chat.turns.some((t) => t.role === "system" && t.text.includes(RAW_CITED_WAIT));
+      expect(held, mode).toBe(mode === "auto");
     }
   });
 

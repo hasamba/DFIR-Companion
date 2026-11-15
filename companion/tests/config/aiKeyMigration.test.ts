@@ -214,6 +214,33 @@ describe("planAiKeyMigration", () => {
     expect(planAiKeyMigration(once)).toEqual({ moves: [], conflicts: [], updates: {} });
   });
 
+  it("key migration treats the watson role like the other roles", () => {
+    // Watson on its own provider moves its own key into that provider's slot.
+    const own = {
+      DFIR_AI_SYNTH_PROVIDER: "claude-code",
+      DFIR_AI_VELO_PROVIDER: "claude-code",
+      DFIR_AI_WATSON_PROVIDER: "anthropic",
+      DFIR_AI_WATSON_MODEL: "claude-sonnet-5",
+      DFIR_AI_WATSON_KEY: "w-key",
+    };
+    const plan = planAiKeyMigration(own);
+    expect(plan.updates).toEqual({ DFIR_AI_KEY_ANTHROPIC: "w-key", DFIR_AI_WATSON_KEY: "" });
+    expect(plan.moves.map((m) => m.role)).toEqual(["watson"]);
+    expectNoModelChanged(own);
+    // Watson on the synthesis provider borrows the synthesis key; the move keeps it the same.
+    const borrowed = {
+      DFIR_AI_SYNTH_PROVIDER: "gemini",
+      DFIR_AI_SYNTH_KEY: "g-key",
+      DFIR_AI_VELO_PROVIDER: "claude-code",
+    };
+    expect(effectiveRoleSetting(borrowed, "watson", "KEY")).toBe("g-key");
+    expect(planAiKeyMigration(borrowed).conflicts).toEqual([]);
+    expectNoModelChanged(borrowed);
+    // Watson on another provider with no model is off, so it sends nothing and borrows nothing.
+    const off = { ...borrowed, DFIR_AI_WATSON_PROVIDER: "openai" };
+    expect(effectiveRoleSetting(off, "watson", "KEY")).toBeUndefined();
+  });
+
   it("never puts a secret value in the public plan", () => {
     const secret = "sk-do-not-leak";
     const env = {

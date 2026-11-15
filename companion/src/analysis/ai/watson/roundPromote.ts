@@ -211,7 +211,7 @@ async function promote(
   }
   const landed = landedIn(result.state, plan);
   const saved = await recordApplied(ctx, caseId, result.proposal);
-  await sideEffects(ctx, caseId, saved);
+  const effectNote = await sideEffects(ctx, caseId, saved);
   const promotion: WatsonRoundPromotion = {
     proposalId: intent.id,
     keep: keepFor(saved),
@@ -220,7 +220,7 @@ async function promote(
     folded: plan.folded,
   };
   const note = saved ? undefined : recordNote(result.proposal.createdEventIds?.length ?? 0);
-  return settled(outcome, plan, landed, note, promotion);
+  return settled(outcome, plan, landed, joinNotes(note, effectNote), promotion);
 }
 
 const keepFor = (saved: WatsonEventPromoteProposal | null): WatsonProposalStatus[] =>
@@ -250,32 +250,64 @@ async function recordApplied(
   }
 }
 
-/** D9 step 4: never a promotion failure. The activity entry is the one an analyst's apply writes. */
+/** R5: a side effect that failed twice is told on Watson's turn, never only logged. */
+const SIDE_EFFECT_NOTE = {
+  log: "(Watson promoted the rows. It could not write the activity log entry. The rows are in the forensic timeline.)",
+  outOfDate:
+    "(Watson promoted the rows. It could not mark the conclusions out of date. Run synthesis again to update them.)",
+};
+
+/** Run a step; on failure run it again up to `tries` times in all. Returns true when a try worked. */
+async function twice(ctx: WatsonRoundContext, caseId: string, what: string, run: () => unknown, tries = 2) {
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    try {
+      await run();
+      return true;
+    } catch (err) {
+      ctx.log?.warn(
+        `Watson promoted rows but could not ${what} (try ${attempt} of ${tries}): ${errText(err)}`,
+        {
+          caseId,
+        },
+      );
+    }
+  }
+  return false;
+}
+
+/**
+ * D9 step 4: never a promotion failure. The activity entry is the one an analyst's apply writes. The
+ * out-of-date mark is retried once (R5); the activity entry is not (a retry could duplicate it). The
+ * notes name the steps that still failed.
+ */
 async function sideEffects(
   ctx: WatsonRoundContext,
   caseId: string,
   saved: WatsonEventPromoteProposal | null,
-): Promise<void> {
+): Promise<string | undefined> {
   const writer = (ctx.rawSearch as NonNullable<WatsonRoundContext["rawSearch"]>).writer;
-  const steps: [string, () => unknown][] = [
-    ["mark the conclusions out of date", () => writer.markConclusionsOutOfDate(caseId, OUT_OF_DATE)],
-    ...(saved
-      ? [
-          [
-            "log the promotion",
-            () => recordWatsonActivity(writer, caseId, "apply", saved, WATSON_PROMOTION_ACTOR),
-          ] as [string, () => unknown],
-        ]
-      : []),
-    ["tell the dashboard", () => ctx.onStateChanged?.(caseId)],
-  ];
-  for (const [what, run] of steps) {
-    try {
-      await run();
-    } catch (err) {
-      ctx.log?.warn(`Watson promoted rows but could not ${what}: ${errText(err)}`, { caseId });
-    }
+  const notes: string[] = [];
+  const marked = await twice(ctx, caseId, "mark the conclusions out of date", () =>
+    writer.markConclusionsOutOfDate(caseId, OUT_OF_DATE),
+  );
+  if (!marked) notes.push(SIDE_EFFECT_NOTE.outOfDate);
+  if (saved) {
+    // One try only: a write that threw after it landed would give a duplicate entry on a retry.
+    const logged = await twice(
+      ctx,
+      caseId,
+      "log the promotion",
+      () => recordWatsonActivity(writer, caseId, "apply", saved, WATSON_PROMOTION_ACTOR),
+      1,
+    );
+    if (!logged) notes.push(SIDE_EFFECT_NOTE.log);
   }
+  try {
+    ctx.onStateChanged?.(caseId);
+  } catch (err) {
+    ctx.log?.warn(`Watson promoted rows but could not tell the dashboard: ${errText(err)}`, { caseId });
+  }
+  return joinNotes(...notes);
 }
 
 /**
@@ -303,8 +335,8 @@ async function promotionFailed(
     return settled(outcome, plan, plan.folded, failedNote(plan.cited.length, err));
   }
   // The case changed: say so, and still tell the conclusions and the dashboard (review I3).
-  await sideEffects(ctx, caseId, null);
-  const s = settled(outcome, plan, plan.folded, stuckNote(landed));
+  const effectNote = await sideEffects(ctx, caseId, null);
+  const s = settled(outcome, plan, plan.folded, joinNotes(stuckNote(landed), effectNote));
   return { ...s, extraProposalIds: [intent.id] };
 }
 

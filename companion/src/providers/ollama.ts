@@ -1,5 +1,4 @@
-import { OpenAIProvider, type OpenAIOptions } from "./openai.js";
-import type { AnalyzeRequest } from "./provider.js";
+import { OpenAIProvider, type OpenAIOptions, type ReasoningRequest } from "./openai.js";
 
 // The smallest thinking budget that means the 🧠 deep-reasoning toggle is on — the same threshold
 // OpenRouter uses.
@@ -17,7 +16,7 @@ export class OllamaCloudProvider extends OpenAIProvider {
   // it. Deep reasoning on → "high". Off → "low", not omitted: a reasoning model (GLM) left at its
   // default can spend the whole output limit thinking and return no answer. Never "none": GLM then
   // writes its reasoning into `content` and the JSON answer breaks.
-  protected override reasoningBody(req: AnalyzeRequest): Record<string, unknown> {
+  protected override reasoningBody(req: ReasoningRequest): Record<string, unknown> {
     const deep = (req.thinkingTokens ?? 0) >= MIN_THINKING_TOKENS;
     return { reasoning_effort: deep ? "high" : "low" };
   }

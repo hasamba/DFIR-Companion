@@ -30,7 +30,8 @@ regexes = [
   # `other.local` is the SECOND fake realm in companion/tests/analysis/kerberoastChain.test.ts,
   # there only to prove that a same-named service account in another realm is another account.
   # `victim.local` is the fake victim-side IOC domain in companion/tests/analysis/anonymize.test.ts (#2056).
-  '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|northstar|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme|eval|other|victim)\.local\b''',
+  # `watson.local` / `w.local` are the Watson diagnostics `local` flag (watsonDiagnostics.ts, dashboard-diagnostics.js).
+  '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|northstar|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme|eval|other|victim|watson|w)\.local\b''',
   '''(?i)\b(?:client01|other)\.lan\b''',
   # `entry.internal` is os.networkInterfaces()'s loopback flag (companion/src/http/tlsMaterial.ts, #2285).
   '''(?i)\b(?:docker|m|s|hash|misp|api|entry)\.internal\b''',

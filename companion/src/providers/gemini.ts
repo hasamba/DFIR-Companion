@@ -1,5 +1,6 @@
 import {
   type AIProvider,
+  billedChecks,
   type AnalyzeRequest,
   type AnalyzeResult,
   type ProviderUsage,
@@ -10,8 +11,16 @@ import {
   requestSignal,
   safetyStopError,
 } from "./provider.js";
-import { validateBaseUrl } from "./urlValidation.js";
+import { safeEndpoint, validateBaseUrl } from "./urlValidation.js";
 import { readBoundedJson, readBoundedText, RESPONSE_SIZE_LIMITS } from "./boundedResponse.js";
+import {
+  type ConverseRequest,
+  type ConverseResult,
+  isToolsRejection,
+  ToolsUnsupportedError,
+} from "./toolCalling.js";
+import { geminiKeepsKind, geminiToolError } from "./geminiErrors.js";
+import { type GeminiPart, geminiEchoedText, geminiToolBody, parseGeminiTurn } from "./geminiTools.js";
 
 type FetchFn = typeof fetch;
 
@@ -27,12 +36,16 @@ export interface GeminiOptions {
 export class GeminiProvider implements AIProvider {
   readonly name = "gemini";
   readonly model: string;
+  // Native tool calling (Watson phase 5): converse() sends one tool turn.
+  readonly supportsTools = true;
+  readonly endpoint: string;
   private readonly fetchFn: FetchFn;
   private readonly baseUrl: string;
   constructor(private readonly opts: GeminiOptions) {
     this.model = opts.model;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.baseUrl = opts.baseUrl ?? "https://generativelanguage.googleapis.com/v1beta";
+    this.endpoint = safeEndpoint(this.baseUrl);
     const urlErr = validateBaseUrl(this.baseUrl);
     if (urlErr) throw new ProviderError(urlErr, "transport");
   }
@@ -42,9 +55,46 @@ export class GeminiProvider implements AIProvider {
     for (const img of req.images) {
       parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
     }
-    // The key goes in a header, never the query string: a URL is written into the request line, so
-    // ?key=... lands in the access log of every proxy or gateway on the path — and baseUrl is
-    // operator-configurable, so that path is not always one they control. Google supports both.
+    const body = {
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        ...(this.opts.maxTokens ? { maxOutputTokens: this.opts.maxTokens } : {}),
+      },
+    };
+    const json = await this.send(body, req.signal, false);
+    const text = replyText(json, req, this.opts.maxTokens, `Gemini (${this.opts.model})`);
+    const usage = parseUsage(json.usageMetadata);
+    return { rawText: text, ...(usage ? { usage } : {}) };
+  }
+
+  // One tool-calling turn (Watson phase 5). A model without function calling raises
+  // ToolsUnsupportedError, so the caller falls back to the one-step lookup.
+  echoedReadableText(req: ConverseRequest): string[] {
+    return geminiEchoedText(geminiToolBody(req, this.opts.model, this.opts.maxTokens));
+  }
+
+  async converse(req: ConverseRequest): Promise<ConverseResult> {
+    const json = await this.send(geminiToolBody(req, this.opts.model, this.opts.maxTokens), req.signal, true);
+    const usage = parseUsage(json.usageMetadata);
+    const turn = billedChecks(usage, () => {
+      const parts = toolTurnParts(json, this.opts.maxTokens, `Gemini (${this.opts.model})`);
+      const t = parseGeminiTurn(parts, this.opts.model, req.idSalt);
+      if (!t.text && t.calls.length === 0) throw new ProviderError("Gemini returned no content", "other");
+      return t;
+    });
+    return { ...turn, ...(usage ? { usage } : {}) };
+  }
+
+  // POST one generateContent request: transport and HTTP errors mapped to ProviderError kinds, and a
+  // bounded JSON read. The key goes in a header, never the query string: a URL is written into the
+  // request line, so ?key=... lands in the access log of every proxy or gateway on the path — and
+  // baseUrl is operator-configurable, so that path is not always one they control.
+  private async send(
+    body: unknown,
+    signal: AbortSignal | undefined,
+    tools: boolean,
+  ): Promise<GeminiResponse> {
     const url = `${this.baseUrl}/models/${this.opts.model}:generateContent`;
     const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
@@ -52,14 +102,8 @@ export class GeminiProvider implements AIProvider {
       res = await this.fetchFn(url, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": this.opts.apiKey },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            ...(this.opts.maxTokens ? { maxOutputTokens: this.opts.maxTokens } : {}),
-          },
-        }),
-        signal: requestSignal(timeoutMs, req.signal),
+        body: JSON.stringify(body),
+        signal: requestSignal(timeoutMs, signal),
       });
     } catch (err) {
       const msg =
@@ -69,19 +113,19 @@ export class GeminiProvider implements AIProvider {
       throw new ProviderError(msg, "transport");
     }
     if (!res.ok) {
-      const body = await readBoundedText(res, {
+      const text = await readBoundedText(res, {
         maxBytes: RESPONSE_SIZE_LIMITS.text,
         context: "Gemini",
       }).catch(() => "");
-      throw new ProviderError(httpErrorMessage("Gemini", res.status, body), httpErrorKind(res.status));
+      const message = httpErrorMessage("Gemini", res.status, text);
+      if (tools && isToolsRejection(res.status, text)) throw new ToolsUnsupportedError(message);
+      const toolError = tools ? geminiToolError(res.status, text, message) : undefined;
+      if (toolError) throw toolError;
+      const err = new ProviderError(message, httpErrorKind(res.status));
+      if (tools && geminiKeepsKind(res.status, text)) err.notAboutTools = true;
+      throw err;
     }
-    const json = await readBoundedJson<GeminiResponse>(res, {
-      maxBytes: RESPONSE_SIZE_LIMITS.json,
-      context: "Gemini",
-    });
-    const text = replyText(json, req, this.opts.maxTokens, `Gemini (${this.opts.model})`);
-    const usage = parseUsage(json.usageMetadata);
-    return { rawText: text, ...(usage ? { usage } : {}) };
+    return readBoundedJson<GeminiResponse>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "Gemini" });
   }
 }
 
@@ -90,7 +134,7 @@ export class GeminiProvider implements AIProvider {
 const SAFETY_FINISH_REASONS = new Set(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "IMAGE_SAFETY"]);
 
 type GeminiResponse = {
-  candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+  candidates?: { content?: { parts?: GeminiPart[] }; finishReason?: string }[];
   promptFeedback?: { blockReason?: string };
   usageMetadata?: {
     promptTokenCount?: number;
@@ -124,6 +168,22 @@ function replyText(
   }
   if (!text) throw new ProviderError("Gemini returned no content", "other");
   return text;
+}
+
+// The parts of a tool-turn reply, or a thrown error: a safety block, a cut-off (a partial call is
+// never run), or a function call the model wrote malformed.
+function toolTurnParts(json: GeminiResponse, maxTokens: number | undefined, label: string): GeminiPart[] {
+  const blocked = json.promptFeedback?.blockReason;
+  if (blocked) throw safetyStopError(label, `Prompt blocked: ${blocked}.`);
+  const candidate = json.candidates?.[0];
+  const finish = candidate?.finishReason;
+  if (finish && SAFETY_FINISH_REASONS.has(finish)) throw safetyStopError(label, `Finish reason: ${finish}.`);
+  if (finish === "MAX_TOKENS")
+    throw outputLimitError("Gemini", maxTokens, json.usageMetadata?.thoughtsTokenCount);
+  if (finish === "MALFORMED_FUNCTION_CALL") {
+    throw new ProviderError(`${label} wrote a malformed tool call (finish reason ${finish})`, "other");
+  }
+  return candidate?.content?.parts ?? [];
 }
 
 // Google's Generative Language response includes usageMetadata (promptTokenCount,

@@ -20,6 +20,10 @@ export interface WatsonRoundDeps {
   cases: CaseStore;
   provider: AIProvider;
   isAiEnabled(caseId: string): Promise<boolean>;
+  /** Tool calls per analyst question (DFIR_AI_WATSON_MAX_TOOL_CALLS); absent or 0: the one-step hop. */
+  maxToolCalls?: number;
+  /** Checked before every model call (D5): AI off, a closed or archived case, or null. */
+  canContinue?(caseId: string): Promise<"off" | "frozen" | null>;
   costLimitUSD?: number;
   tokenLimit?: number;
   /** The report details (ReportMetaStore), for report-text proposals. */

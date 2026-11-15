@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RAW_CITED_WAIT } from "../../../src/analysis/ai/watson/autoApply.js";
 import { applyWatsonProposal, WatsonProposalConflict } from "../../../src/analysis/ai/watson/proposals.js";
 import type { WatsonChat, WatsonProposal } from "../../../src/analysis/ai/watson/types.js";
 import {
@@ -125,13 +126,15 @@ describe("a raw id before ':' or '.'+digit is a mention", () => {
     expect(chat.proposals.some((p) => p.kind === "next_step_new")).toBe(false);
   });
 
-  it('Auto: "Timeline raw1:4624 shows it" is applied only with raw1 promoted', async () => {
+  it('Auto: "Timeline raw1:4624 shows it" is held for the analyst, with raw1 promoted (U5)', async () => {
     const body = writes({ report: [{ field: "conclusions", text: "Timeline raw1:4624 shows it" }] });
     const h = await harness([reply(superLookup()), reply(body)], { mode: "auto" });
     const chat = await h.run();
     const r = chat.proposals.find((p) => p.kind === "report_text");
-    expect(r?.status).toBe("applied");
+    expect(r?.status).toBe("pending");
     expect(evidence(r)).toEqual(["raw1"]);
+    expect(promotionOf(chat)?.status).toBe("applied");
     expect((await h.row("raw1"))?.promotedAt).toBeTruthy();
+    expect(chat.turns.some((t) => t.role === "system" && t.text.includes(RAW_CITED_WAIT))).toBe(true);
   });
 });

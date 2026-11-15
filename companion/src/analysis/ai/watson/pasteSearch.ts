@@ -14,6 +14,8 @@ export interface PasteSearchResult {
   excerpt: string;
   matchedLines: number;
   truncated: boolean;
+  /** 1-based numbers of the matching lines written to the excerpt (context lines not counted). */
+  emittedMatchLines: number[];
 }
 
 interface Span {
@@ -29,7 +31,7 @@ export function searchPaste(
 ): PasteSearchResult {
   const needles = terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length > 0);
   if (needles.length === 0 || text.length === 0) {
-    return { excerpt: "", matchedLines: 0, truncated: false };
+    return { excerpt: "", matchedLines: 0, truncated: false, emittedMatchLines: [] };
   }
   const maxLines = Math.max(1, Math.floor(opts.maxLines ?? DEFAULT_MAX_LINES));
   const context = Math.max(0, Math.floor(opts.context ?? DEFAULT_CONTEXT));
@@ -39,13 +41,15 @@ export function searchPaste(
   let closed = false; // line or char cap reached
   let truncated = false;
   let matchedLines = 0;
+  const emittedMatchLines: number[] = [];
   let afterLeft = 0;
   const before: Span[] = []; // sliding window of unemitted preceding lines
 
-  const emit = (s: Span): void => {
+  /** Writes one row; false when a cap stopped it. */
+  const emit = (s: Span): boolean => {
     if (closed) {
       truncated = true;
-      return;
+      return false;
     }
     let body = text.slice(s.start, s.end);
     if (body.length > LINE_MAX_CHARS) {
@@ -56,10 +60,11 @@ export function searchPaste(
     if (out.length >= maxLines || chars + row.length + 1 > EXCERPT_MAX_CHARS) {
       closed = true;
       truncated = true;
-      return;
+      return false;
     }
     out.push(row);
     chars += row.length + 1;
+    return true;
   };
 
   let pos = 0;
@@ -75,7 +80,7 @@ export function searchPaste(
       matchedLines++;
       if (!closed) {
         for (const b of before) emit(b);
-        emit(span);
+        if (emit(span)) emittedMatchLines.push(n);
       } else {
         truncated = true;
       }
@@ -90,7 +95,7 @@ export function searchPaste(
     }
     pos = end + 1;
   }
-  return { excerpt: out.join("\n"), matchedLines, truncated };
+  return { excerpt: out.join("\n"), matchedLines, truncated, emittedMatchLines };
 }
 
 /** A LINE_MAX_CHARS window centred on the line's first match, marked on each side it cuts. */

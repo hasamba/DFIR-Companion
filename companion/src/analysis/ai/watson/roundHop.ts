@@ -38,6 +38,12 @@ export interface HopInput {
   rest: Omit<Outcome, "reply">;
   /** An automatic reaction round: it never searches the super-timeline (D6). */
   reaction?: boolean;
+  /** After a tool-mode fallback: super-timeline searches the question may still run (R2). */
+  superLeft?: number;
+  /** Tool mode: provider calls the question may still make (R1, cap + 1 in all). 0 or less: no hop. */
+  callsLeft?: () => number;
+  /** After a tool-mode fallback: lookups the question may still run (F2). 0 or less: no hop. */
+  lookupsLeft?: number;
 }
 
 type HopKind = "paste" | "lookup" | "super";
@@ -60,8 +66,12 @@ const failed = (kind: HopKind, err: unknown): string => oneLine(`(${FAILED[kind]
 const dropped = (why: string): string =>
   oneLine(`(Watson did not do its timeline lookup, because the lookup is not valid: ${why}.)`);
 /** D6, the analyst's decision: the raw record is searched only when the analyst asks something. */
-const REACTION_WHY = "Watson searches the raw record only when you ask it a question";
-const UNWIRED_WHY = "the super-timeline is not available on this server";
+export const REACTION_WHY = "Watson searches the raw record only when you ask it a question";
+export const UNWIRED_WHY = "the super-timeline is not available on this server";
+/** R1: tool mode makes at most cap + 1 provider calls per question, the hop included (STE). */
+export const LIMIT_NOTE = "(Watson reached its lookup limit for this question.)";
+/** R2: a question makes at most two super-timeline searches, a fallback hop included. */
+export const SUPER_CAP_WHY = "it used both super-timeline searches for this question";
 /** H5: no name is ever sent unmasked, so a full roster refuses the search (STE). */
 export const ROSTER_FULL_NOTE =
   "(Watson cannot search the super-timeline now. The list of masked names is full.)";
@@ -93,6 +103,11 @@ export async function secondHop(h: HopInput): Promise<Outcome> {
   // No I/O before these two: neither a reaction nor a server without the seam ever searches raw rows.
   if (kind === "super" && h.reaction) return withNote(kept, skipped(kind, REACTION_WHY));
   if (kind === "super" && !h.ctx.rawSearch) return withNote(kept, skipped(kind, UNWIRED_WHY));
+  if (h.callsLeft && h.callsLeft() <= 0) return withNote(kept, LIMIT_NOTE);
+  if (h.lookupsLeft !== undefined && h.lookupsLeft <= 0) return withNote(kept, LIMIT_NOTE);
+  if (kind === "super" && h.superLeft !== undefined && h.superLeft <= 0) {
+    return { ...withNote(kept, skipped(kind, SUPER_CAP_WHY)), superCapHit: true };
+  }
   try {
     const now = await h.spent().catch(() => null);
     if (!now) return withNote(kept, skipped(kind, "it could not check its cost"));
@@ -131,7 +146,7 @@ async function lookupHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promi
 }
 
 /** Whether the AI-call gate masks for this case. Fails closed: a store that cannot be read counts as on. */
-async function maskingOn(ctx: WatsonRoundContext, caseId: string): Promise<boolean> {
+export async function maskingOn(ctx: WatsonRoundContext, caseId: string): Promise<boolean> {
   const store = ctx.opts.anonStore;
   if (!store) return false; // no store: the gate does not anonymize either
   return store.load(caseId).then(

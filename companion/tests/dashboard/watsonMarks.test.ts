@@ -348,12 +348,12 @@ describe("super-timeline search and promotion cards", () => {
       answer({ source: "supertimeline", shown: 40, matched: 312, what: 'rows with the text "rclone"' }),
       [],
     );
-    expect(h).toContain("Watson searched the super-timeline. It shows 40 of 312 raw rows that match");
+    expect(h).toContain("Watson searched the super-timeline: 40 of 312 matching raw rows");
     const floor = v.watsonTurnHtml(
       answer({ source: "supertimeline", shown: 3, matched: 3, matchedIsFloor: true, what: "w" }),
       [],
     );
-    expect(floor).toContain("3 of at least 3 raw rows that match");
+    expect(floor).toContain("3 of at least 3 matching raw rows");
     expect(floor).not.toContain("size limit");
   });
 
@@ -376,7 +376,7 @@ describe("super-timeline search and promotion cards", () => {
 
   it("keeps the forensic-lookup line and the held-paste card unchanged", () => {
     const h = view().watsonTurnHtml(answer({ shown: 5, matched: 9, what: "w" }), []);
-    expect(h).toContain("Watson looked up 5 of 9 forensic-timeline events that match (w)");
+    expect(h).toContain("Watson looked up 5 of 9 forensic-timeline events (w)");
     const held = cards().watsonCardHtml(
       prop("event_promote", "pending", { events: [{ severity: "High", description: "d" }], pasteId: "pp1" }),
     );

@@ -137,3 +137,20 @@ describe("fixed Watson chat notes stay within the ASD-STE100 sentence limit", ()
     expect(offenders).toEqual([]);
   });
 });
+
+describe("the Watson card strings in public/js stay within the ASD-STE100 sentence limit", () => {
+  const view = join(SRC, "../../public/js/dashboard-watson-view.js");
+
+  it("every prose sentence in the card builders has 25 words or fewer", () => {
+    const offenders = literals(view)
+      .filter(isProse)
+      .flatMap((s) => longSentences(s));
+    expect(offenders).toEqual([]);
+  });
+
+  it("the new lookup lines were read", () => {
+    const all = literals(view).join("\n");
+    expect(all).toContain("Watson searched the pasted file:");
+    expect(all).toContain("super-timeline searches for this question.");
+  });
+});

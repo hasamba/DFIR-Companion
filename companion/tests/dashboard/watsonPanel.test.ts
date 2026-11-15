@@ -808,7 +808,7 @@ describe("a free-form answer in the Watson log", () => {
       chatWith([answerTurn({ lookedUp: { shown: 12, matched: 12, what: "on host <b>WS-01</b>" } })]),
     );
     expect(log.innerHTML).toContain(
-      "Watson looked up 12 forensic-timeline events that match (on host &lt;b&gt;WS-01&lt;/b&gt;)",
+      "Watson looked up 12 forensic-timeline events (on host &lt;b&gt;WS-01&lt;/b&gt;)",
     );
     api.renderWatson(
       chatWith([
@@ -819,11 +819,85 @@ describe("a free-form answer in the Watson log", () => {
       ]),
     );
     expect(log.innerHTML).toContain("Watson used 120 of 5000 in-scope events");
-    expect(log.innerHTML).toContain(
-      "Watson looked up 200 of 450 forensic-timeline events that match (from a to b)",
-    );
+    expect(log.innerHTML).toContain("Watson looked up 200 of 450 forensic-timeline events (from a to b)");
     api.renderWatson(chatWith([answerTurn()]));
     expect(log.innerHTML).not.toContain("looked up");
+  });
+
+  it("labels a paste search and a chat-history search as searches of lines, not events", () => {
+    const { api, log } = setup();
+    const paste = { source: "paste", shown: 3, matched: 9, what: "the paste <i>a.log</i>" };
+    api.renderWatson(chatWith([answerTurn({ lookedUp: paste })]));
+    expect(log.innerHTML).toContain(
+      "Watson searched the pasted file: 3 of 9 matching lines (the paste &lt;i&gt;a.log&lt;/i&gt;)",
+    );
+    expect(log.innerHTML).not.toContain("forensic-timeline events");
+    const history = { source: "history", shown: 2, matched: 2, what: "x" };
+    api.renderWatson(chatWith([answerTurn({ lookedUp: history })]));
+    expect(log.innerHTML).toContain("Watson searched the chat history: 2 matching lines (x)");
+  });
+
+  it("the card lists every lookup, escaped, one line each", () => {
+    const { api, log } = setup();
+    api.renderWatson(
+      chatWith([
+        answerTurn({
+          lookups: [
+            { shown: 3, matched: 3, what: "on host <b>x</b>" },
+            { source: "supertimeline", shown: 40, matched: 312, what: 'containing "rclone"' },
+            { source: "paste", shown: 5, matched: 9, what: "auth.log: sshd" },
+            { source: "history", shown: 2, matched: 2, what: "mimikatz" },
+          ],
+        }),
+      ]),
+    );
+    const html = log.innerHTML;
+    expect(html).toContain("Watson looked up 3 forensic-timeline events");
+    expect(html).toContain("Watson searched the super-timeline: 40 of 312 matching raw rows");
+    expect(html).toContain("Watson searched the pasted file: 5 of 9 matching lines (auth.log: sshd)");
+    expect(html).toContain("Watson searched the chat history: 2 matching lines (mimikatz)");
+    expect(html).not.toContain("<b>x</b>");
+    expect(html.match(/watson-lookup/g)).toHaveLength(4);
+  });
+
+  it("an error turn lists its lookups; lookups win over the single lookedUp", () => {
+    const { api, log } = setup();
+    api.renderWatson(
+      chatWith([
+        {
+          id: "e1",
+          at: "x",
+          role: "system",
+          error: true,
+          text: "stopped",
+          lookups: [{ source: "history", shown: 1, matched: 1, what: "z" }],
+          lookedUp: { shown: 9, matched: 9, what: "old" },
+        },
+      ]),
+    );
+    expect(log.innerHTML).toContain("Watson searched the chat history: 1 matching line (z)");
+    expect(log.innerHTML).not.toContain("old");
+  });
+
+  it("the card shows the 2-search limit line when superCapHit is set (R2)", () => {
+    const { api, log } = setup();
+    api.renderWatson(chatWith([answerTurn({ superCapHit: true, superCapLimit: 2 })]));
+    expect(log.innerHTML).toContain(
+      "Watson reached its limit of 2 super-timeline searches for this question.",
+    );
+    api.renderWatson(chatWith([answerTurn({ superCapHit: true, superCapLimit: 3 })]));
+    expect(log.innerHTML).toContain("limit of 3 super-timeline searches");
+    api.renderWatson(chatWith([answerTurn()]));
+    expect(log.innerHTML).not.toContain("super-timeline searches");
+  });
+
+  it("an unknown lookup source gets a generic line, never 'undefined'", () => {
+    const { api, log } = setup();
+    api.renderWatson(
+      chatWith([answerTurn({ lookups: [{ source: "constructor", shown: 2, matched: 2, what: "w" }] })]),
+    );
+    expect(log.innerHTML).toContain("Watson searched another source: 2 matching events (w)");
+    expect(log.innerHTML).not.toContain("undefined");
   });
 
   it("discloses trimmed case decisions and a trimmed case summary on their own lines", () => {

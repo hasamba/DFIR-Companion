@@ -89,3 +89,17 @@ describe("validateBaseUrl", () => {
     expect(validateBaseUrl("http://")).not.toBeNull();
   });
 });
+
+describe("validateBaseUrl error text never shows credentials or a query string", () => {
+  it.each([
+    "http://alice:hunter2@203.0.113.9/v1?key=SECRET123#frag", // trufflehog:ignore
+    "ftp://alice:hunter2@example.com/v1?key=SECRET123", // trufflehog:ignore
+    "not a url key=SECRET123 hunter2",
+  ])("%s", (url) => {
+    const err = validateBaseUrl(url);
+    expect(err).toBeTruthy();
+    expect(err).not.toContain("hunter2");
+    expect(err).not.toContain("SECRET123");
+    expect(err).not.toContain("alice");
+  });
+});

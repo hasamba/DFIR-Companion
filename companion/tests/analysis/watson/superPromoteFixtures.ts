@@ -125,6 +125,8 @@ export interface HarnessFlags {
   frozen: boolean;
   activityThrows: boolean;
   markThrows: boolean;
+  activityFailsOnce?: boolean;
+  markFailsOnce?: boolean;
 }
 
 export interface HarnessOpts {
@@ -175,6 +177,10 @@ export async function harness(replies: string[], opts: HarnessOpts = {}) {
     activity: {
       add: async (_c: string, e: NewActivityEntry) => {
         if (flags.activityThrows) throw new Error("activity log is read-only");
+        if (flags.activityFailsOnce) {
+          flags.activityFailsOnce = false;
+          throw new Error("activity log is busy");
+        }
         entries.push(e);
         return e;
       },
@@ -183,6 +189,10 @@ export async function harness(replies: string[], opts: HarnessOpts = {}) {
     reportText,
     markConclusionsOutOfDate: async (_c, why) => {
       if (flags.markThrows) throw new Error("report meta is locked");
+      if (flags.markFailsOnce) {
+        flags.markFailsOnce = false;
+        throw new Error("report meta is busy");
+      }
       outOfDate.push(why);
     },
     promoteEvents: opts.promote ? opts.promote(real) : real,
