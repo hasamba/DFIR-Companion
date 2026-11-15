@@ -7,7 +7,8 @@ import { searchExcerpt } from "./requestBuild.js";
 import { limitReached, type WatsonRoundContext, type WatsonSpend } from "./roundContext.js";
 import type { Outcome } from "./roundOutcome.js";
 import { isSuperLookup } from "./lookupSchema.js";
-import { maskRosterFull } from "./superRoster.js";
+import { excerptRoster } from "./rowTextHosts.js";
+import { maskRosterFull, mergeMaskRoster } from "./superRoster.js";
 import { searchSuperTimeline, type WatsonRawSearchDeps } from "./superTimelineSearch.js";
 import { lookupTimeline } from "./timelineLookup.js";
 import type { WatsonChat, WatsonLookup } from "./types.js";
@@ -128,11 +129,19 @@ async function searchHop(
 ): Promise<Outcome> {
   const excerpt = await searchExcerpt(h.ctx, h.caseId, h.chat, search);
   if (!excerpt) return kept;
-  const second = await h.ask({ ...h.base, pasteExcerpt: excerpt });
+  // Codex #6: the excerpt's names ride on the outcome BEFORE the call, so a failed call keeps them.
+  const names = excerptRoster(excerpt.text);
+  const rostered: Outcome = names ? { ...kept, superRoster: mergeMaskRoster(kept.superRoster, names) } : kept;
+  let second: WatsonReply;
+  try {
+    second = await h.ask({ ...h.base, pasteExcerpt: excerpt });
+  } catch (error) {
+    return failedOutcome(rostered, "paste", error);
+  }
   // A paste read through a search counts as read; the history is not a paste.
   const readId = excerpt.pasteId === WATSON_HISTORY_ID ? [] : [excerpt.pasteId];
   return {
-    ...kept,
+    ...rostered,
     reply: { ...second, search: null, lookup: null },
     readPasteIds: [...(kept.readPasteIds ?? []), ...readId],
   };

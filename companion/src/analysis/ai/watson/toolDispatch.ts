@@ -1,10 +1,10 @@
 import type { ToolCall } from "../../../providers/toolCalling.js";
 import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { isSuperLookup, parseLookup } from "./lookupSchema.js";
-import { promptEntities } from "./pasteEntities.js";
 import { lookupBlock, pasteBlock, superBlock } from "./promptBuilder.js";
 import type { WatsonRoundContext } from "./roundContext.js";
 import { maskingOn, REACTION_WHY, UNWIRED_WHY } from "./roundHop.js";
+import { excerptRoster } from "./rowTextHosts.js";
 import { maskRosterFull, type WatsonMaskRoster } from "./superRoster.js";
 import { searchSuperTimeline, type WatsonRawSearchDeps } from "./superTimelineSearch.js";
 import { lookupTimeline } from "./timelineLookup.js";
@@ -104,15 +104,6 @@ export async function runWatsonTool(
     const failed = failedRun(ctx, caseId, name, error);
     return name === WATSON_TOOL.super ? { ...failed, superQueried: true } : failed;
   }
-}
-
-/**
- * F7: the hosts and accounts a paste or history excerpt showed, by the same rule the send masks with.
- * They join the chat's roster like a super search's names, so a later question masks them too.
- */
-function excerptRoster(text: string): WatsonMaskRoster | undefined {
-  const { hosts, usernames } = promptEntities(text);
-  return hosts.length || usernames.length ? { hosts: [...hosts], users: [...usernames], ips: [] } : undefined;
 }
 
 function pasteRun(run: PasteToolRun | { why: string }): ToolRun {

@@ -300,7 +300,8 @@ When Presidio finds a new value in Watson's message, it holds the message until 
 
 Known limits:
 
-- A short hostname or username that appears alone, without its full name, may not be masked.
+- Watson also masks a host name in the text of a raw row or a paste. It finds a name after a label such as Workstation Name or Computer, or a name in capitals with a hyphen and a digit, such as WS-PC01.
+- A host name in lowercase or without a hyphen, such as dc01, may still go to the AI when no field of the case names it.
 - With the anonymizer on, Watson masks all domains in its message. This includes attacker domains, which the other AI features leave readable.
 
 ## Settings and cost

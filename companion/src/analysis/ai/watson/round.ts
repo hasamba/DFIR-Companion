@@ -17,7 +17,8 @@ import {
   type WatsonSpend,
 } from "./roundContext.js";
 import { guardedCall, spentNow } from "./guardedCall.js";
-import { mergeMaskRoster } from "./superRoster.js";
+import { excerptRoster } from "./rowTextHosts.js";
+import { mergeMaskRoster, type WatsonMaskRoster } from "./superRoster.js";
 import { runToolLoop, ToolModeFallback, type ToolLoopInput } from "./toolLoop.js";
 import { markToolsRejected, watsonToolCap } from "./toolMode.js";
 import {
@@ -200,6 +201,8 @@ async function converse(
   let ceiling: number | undefined;
   // F1: rows the tool loop showed before it fell back. The hop's reply may cite them, so they promote.
   let loopShown: ReadonlySet<string> = new Set();
+  // The paste head's names: masked on every send of the round, and saved on every return.
+  let headNames: WatsonMaskRoster | undefined;
   try {
     // The board and the Key Questions section show the seeded questions now, whatever the round does.
     if (await seedStandardQuestions(ctx, caseId)) ctx.onStateChanged?.(caseId);
@@ -238,6 +241,8 @@ async function converse(
           return undefined;
         })
       : undefined;
+    headNames = excerptRoster(excerpt?.text);
+    if (headNames) base = { ...base, rawRoster: mergeMaskRoster(base.rawRoster, headNames) };
     const cap = watsonToolCap(ctx, attach.reaction);
     if (cap > 0) {
       // R1, controller ruling on review I1: cap + 1 provider calls per question, the hop's included.
@@ -260,8 +265,10 @@ async function converse(
         ask,
       };
       fallback = await toolRound({ ...loop, reaction: attach.reaction });
-      if (!(fallback instanceof ToolModeFallback)) return fallback;
-      if (fallback.carried.superRoster) base = { ...base, rawRoster: fallback.carried.superRoster };
+      if (!(fallback instanceof ToolModeFallback)) return withNames(fallback, headNames);
+      if (fallback.carried.superRoster) {
+        base = { ...base, rawRoster: mergeMaskRoster(base.rawRoster, fallback.carried.superRoster) };
+      }
       loopShown = new Set((fallback.carried.superShown ?? []).map((e) => e.id));
     }
     first = await ask(excerpt ? { ...base, pasteExcerpt: excerpt } : base);
@@ -278,7 +285,8 @@ async function converse(
       ...(giveUp ? { readPasteIds: [giveUp.id], unreadable: giveUp } : {}),
     };
     // A fallback hop that fails still keeps what the tool loop read: those rows were sent.
-    return fallback instanceof ToolModeFallback ? withCarried(failed, fallback.carried) : failed;
+    const kept = fallback instanceof ToolModeFallback ? withCarried(failed, fallback.carried) : failed;
+    return withNames(kept, headNames);
   }
   const read = readOf(newPaste, headFailed, cover);
   // At most one search or lookup hop per round (roundHop.ts); its failure never loses this reply.
@@ -299,8 +307,15 @@ async function converse(
       : {}),
     ...(ceiling !== undefined ? { callsLeft: callsLeftOf(counter, ceiling) } : {}),
   });
-  return fallback instanceof ToolModeFallback ? withCarried(hop, fallback.carried) : hop;
+  return withNames(
+    fallback instanceof ToolModeFallback ? withCarried(hop, fallback.carried) : hop,
+    headNames,
+  );
 }
+
+/** The outcome with the paste head's names on its roster: the head was sent, so they are kept. */
+const withNames = (o: Outcome, names: WatsonMaskRoster | undefined): Outcome =>
+  names ? { ...o, superRoster: mergeMaskRoster(o.superRoster, names) } : o;
 
 const callsLeftOf = (counter: { calls: number }, ceiling: number) => (): number => ceiling - counter.calls;
 

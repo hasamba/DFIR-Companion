@@ -3,7 +3,7 @@ import { collectUsernames, shortHostLabels } from "../../anonUsernames.js";
 import { extractAccounts } from "../../assetGraph.js";
 import { extractDomains } from "../../textDomains.js";
 import type { PromptEntities } from "../maskRequest.js";
-import { IP_LIKE } from "./superRoster.js";
+import { IP_LIKE } from "./hostLabel.js";
 
 // Every hostname and username in a Watson prompt (spec §8). The case anonymizer only knows entities
 // derived from state, so a hostname that arrives in an analyst paste, that Watson repeats from one, or

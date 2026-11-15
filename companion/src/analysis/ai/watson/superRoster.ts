@@ -1,4 +1,6 @@
 import type { ForensicEvent } from "../../stateTypes.js";
+import { COMMON_WORDS, withShortLabel } from "./hostLabel.js";
+import { descriptionHostNames } from "./rowTextHosts.js";
 
 // The masking roster for Watson's super-timeline rows (D2d). These rows are raw-only, so the case
 // anonymizer has never seen their names: every name superRow prints in clear must be listed here so
@@ -94,29 +96,6 @@ const WELL_KNOWN = new Set([
 ]);
 /** Registry hive names: dropped when a pattern only inferred them, kept from an explicit account. */
 const HIVE_NAMES = new Set(["sam", "security", "software"]);
-
-/** Words a multi-word profile name is not split into. */
-const COMMON_WORDS = new Set([
-  "the",
-  "and",
-  "for",
-  "admin",
-  "user",
-  "users",
-  "local",
-  "default",
-  "public",
-  "test",
-  "temp",
-  "new",
-  "old",
-  "backup",
-  "service",
-  "system",
-  "owner",
-  "guest",
-  "home",
-]);
 
 const groups = (text: string, re: RegExp): string[] =>
   [...text.matchAll(re)].map((m) => (m[1] ?? m[2] ?? "").trim()).filter(Boolean);
@@ -261,18 +240,7 @@ const explicitUsers = (e: ForensicEvent): string[] => [
   ...commandAccounts(e.commandLine),
 ];
 
-/** An IPv4 literal, or any name with a colon (IPv6): it never gives a short label. */
-export const IP_LIKE = /^\d{1,3}(?:\.\d{1,3}){3}$|:/;
-
-/** A host field's FQDN gives its short label too (FILESRV.acme.com → FILESRV), as forensic assets do. */
-function withShortLabel(host: string | undefined): string[] {
-  const h = host?.trim();
-  if (!h) return [];
-  const label = h.split(".")[0];
-  const named =
-    h.includes(".") && !IP_LIKE.test(h) && label.length >= 3 && !COMMON_WORDS.has(label.toLowerCase());
-  return named ? [h, label] : [h];
-}
+export { IP_LIKE } from "./hostLabel.js";
 
 /**
  * Hosts the row states in a host field. The case's own machines (asset, asset record) give their short
@@ -300,6 +268,7 @@ export function rosterOf(shown: readonly ForensicEvent[]): WatsonMaskRoster {
         ...explicitHosts(e),
         ...accountFields(e).flatMap((f) => f.domains),
         ...uncHosts(e),
+        ...descriptionHostNames(e.description),
       ]),
     ),
     users: distinct([

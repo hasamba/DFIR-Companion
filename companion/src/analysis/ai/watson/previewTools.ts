@@ -3,6 +3,7 @@ import type { WatsonPromptInput } from "./promptBuilder.js";
 import { promptEntities } from "./pasteEntities.js";
 import { veloHostNames } from "./requestBuild.js";
 import type { WatsonReply } from "./replySchema.js";
+import { excerptRoster } from "./rowTextHosts.js";
 import type { WatsonRoundContext } from "./roundContext.js";
 import { mergeMaskRoster } from "./superRoster.js";
 import { toolRequestParts } from "./toolLoop.js";
@@ -28,7 +29,12 @@ export async function previewToolRequest(
     reaction: false,
     cap,
   });
-  const roster = mergeMaskRoster(chat.maskRoster, base.rawRoster);
+  // The paste head rides in base.pasteExcerpt (preview.ts) and the loop's first send masks its names
+  // through base.rawRoster (round.ts converse), so the preview merges them the same way.
+  const roster = mergeMaskRoster(
+    mergeMaskRoster(chat.maskRoster, base.rawRoster),
+    excerptRoster(base.pasteExcerpt?.text),
+  );
   await ctx.converseRestored!(
     caseId,
     state,

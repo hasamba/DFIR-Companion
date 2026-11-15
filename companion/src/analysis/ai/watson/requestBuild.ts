@@ -18,6 +18,7 @@ import {
 import { shownVeloHosts } from "./velo/veloPrompt.js";
 import { loadVeloFleet } from "./velo/veloFleet.js";
 import { ensureStandardQuestions } from "./standardQuestions.js";
+import { excerptRoster } from "./rowTextHosts.js";
 import { mergeMaskRoster } from "./superRoster.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
 
@@ -174,8 +175,13 @@ export const veloHostNames = (input: Pick<WatsonPromptInput, "velo">): string[] 
 /**
  * The raw-only names masking must know: this call's super-timeline rows plus every name an earlier
  * search showed (the chat's persisted roster), on EVERY call — the round's, a hop's and the preview's.
+ * The paste excerpt's free-text host names join them (rowTextHosts.ts).
  */
-const maskNames = (input: WatsonPromptInput) => mergeMaskRoster(input.chat.maskRoster, input.rawRoster);
+const maskNames = (input: WatsonPromptInput) =>
+  mergeMaskRoster(
+    mergeMaskRoster(input.chat.maskRoster, input.rawRoster),
+    excerptRoster(input.pasteExcerpt?.text),
+  );
 
 /** One Watson model call: the user prompt and its entities, through callAiJson (anonymizer, Presidio). */
 export function callWatson(

@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Watson names in exports** — the redacted export and the support bundle now mask the names Watson masked for the AI.
+- **Watson masks hosts in raw row text** — a host named only in a raw row or paste description is masked.
 
 ## [0.46.0] - 2026-11-13
 
