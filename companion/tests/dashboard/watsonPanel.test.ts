@@ -1117,6 +1117,36 @@ describe("a free-form answer in the Watson log", () => {
     }
   });
 
+  it("each pending card's Apply button says what it adds, and the card says nothing changes on the host", () => {
+    const { api, log } = setup();
+    api.renderWatson(
+      chatWith([{ id: "t1", at: "x", role: "watson", text: "a", proposalIds: ["p1", "p2", "p3"] }], {
+        proposals: [
+          {
+            id: "p1",
+            turnId: "t1",
+            kind: "finding_new",
+            status: "pending",
+            title: "SSH keys",
+            severity: "Medium",
+          },
+          { id: "p2", turnId: "t1", kind: "next_step_new", status: "pending", title: "Collect logs" },
+          {
+            id: "p3",
+            turnId: "t1",
+            kind: "question_new",
+            status: "pending",
+            after: { question: "Who logged on?", status: "unknown" },
+          },
+        ],
+      }),
+    );
+    expect(log.innerHTML).toContain('data-w-verb="apply" data-pid="p1">Add finding</button>');
+    expect(log.innerHTML).toContain('data-w-verb="apply" data-pid="p2">Add next step</button>');
+    expect(log.innerHTML).toContain('data-w-verb="apply" data-pid="p3">Add question</button>');
+    expect(log.innerHTML).toContain("This adds it to the case. Nothing changes on the host.");
+  });
+
   it("the Watson badge and its Undo button share one height", () => {
     const css = readFileSync(
       new URL("../../../public/css/dashboard-watson.css", import.meta.url),

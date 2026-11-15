@@ -46,13 +46,14 @@
     const a = p.after || {};
     const verbs =
       p.status === "pending"
-        ? btn(p.id, "apply", "Apply") + btn(p.id, "reject", "Reject")
+        ? `<div class="watson-meta">This adds it to the case. Nothing changes on the host.</div>` +
+          btn(p.id, "apply", watsonApplyLabel(p.kind)) + btn(p.id, "reject", "Reject")
         : p.status === "applied"
           ? btn(p.id, "undo", "Undo")
           : "";
     const title = p.kind === "question_new" ? "New question" : "Question update";
     return (
-      `<div class="watson-prop" data-pid="${escAttr(p.id)}">` +
+      `<div class="watson-prop watson-prop-${escAttr(p.kind)} watson-prop-${escAttr(p.status)}" data-pid="${escAttr(p.id)}">` +
       `<div class="watson-lbl">${esc(title)} · ${esc(p.status)}</div>` +
       `<div><strong>${esc(a.question)}</strong></div>` +
       `<div>${statusBadge(a.status)} ${esc(a.answer || "")}</div>` +

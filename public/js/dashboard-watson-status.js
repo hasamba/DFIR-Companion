@@ -17,7 +17,10 @@
     (chat.proposals || []).find(
       (p) => p.kind === "velo_launch" && ((p.launched && p.watch && p.watch.state === "watching") || (!p.launched && p.launching)),
     );
-  const nameOf = (p) => String(p.title || p.question || p.text || p.summary || "this card");
+  const nameOf = (p) => {
+    const a = p.after || {};
+    return String(p.title || a.question || a.title || a.text || p.question || p.text || p.summary || "this card");
+  };
 
   function workingBar(run) {
     return run && run.kind === "reaction" ? "Watson is working on the new case events." : "Watson is working on an answer.";
@@ -29,13 +32,16 @@
     `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="${verb}" data-pid="${escAttr(pid)}">${label}</button> `;
   function actionsOf(p) {
     if (p.kind === "velo_launch") return p.risk ? "" : btn(p.id, "apply", "Launch") + btn(p.id, "reject", "Reject");
-    if (p.kind === "event_promote" && p.source === "supertimeline") return btn(p.id, "apply", "Apply");
-    return btn(p.id, "apply", "Apply") + btn(p.id, "reject", "Reject");
+    if (p.kind === "event_promote" && p.source === "supertimeline") return btn(p.id, "apply", watsonApplyLabel(p.kind));
+    return btn(p.id, "apply", watsonApplyLabel(p.kind)) + btn(p.id, "reject", "Reject");
   }
 
   function youBar(cards) {
     const first = cards[0];
-    const action = first.kind === "velo_launch" ? `Launch "${esc(nameOf(first))}".` : `Apply or reject "${esc(nameOf(first))}".`;
+    const action =
+      first.kind === "velo_launch"
+        ? `Launch "${esc(nameOf(first))}".`
+        : `Add ${watsonApplyNoun(first.kind)} "${esc(nameOf(first))}" to the case, or reject it.`;
     const more = cards.length - 1;
     const tail = more === 0 ? "" : more === 1 ? " 1 more card waits for you." : ` ${more} more cards wait for you.`;
     const show = `<button type="button" class="watson-mini watson-status-show" data-act="watsonStatusShow" data-w-status-show="${escAttr(first.id)}">Show card</button>`;

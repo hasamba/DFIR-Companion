@@ -23,11 +23,25 @@
   const btn = (pid, verb, label) =>
     `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="${verb}" data-pid="${escAttr(pid)}">${label}</button> `;
 
+  // What Apply does, per kind: the button names it, so the analyst knows Apply writes to the case only.
+  const APPLY = {
+    finding_new: ["Add finding", "the finding"],
+    finding_update: ["Update finding", "the finding update"],
+    next_step_new: ["Add next step", "the next step"],
+    question_new: ["Add question", "the question"],
+    question_update: ["Update question", "the question update"],
+    report_text: ["Add to report", "the report text"],
+    event_promote: ["Add rows", "the rows"],
+  };
+  const applyLabel = (kind) => (APPLY[kind] ? APPLY[kind][0] : "Apply");
+  const applyNoun = (kind) => (APPLY[kind] ? APPLY[kind][1] : "this card");
+  const HOST_SAFE = `<div class="watson-meta">This adds it to the case. Nothing changes on the host.</div>`;
+
   // Pending: Apply / Reject. Applied: Undo. A promotion that was undone can be applied again.
   // A pending super-timeline promotion is an unfinished one: Apply only (the server refuses Reject).
   function verbsHtml(p) {
-    if (p.kind === "event_promote" && p.source === "supertimeline" && p.status === "pending") return btn(p.id, "apply", "Apply");
-    if (p.status === "pending") return btn(p.id, "apply", "Apply") + btn(p.id, "reject", "Reject");
+    if (p.kind === "event_promote" && p.source === "supertimeline" && p.status === "pending") return HOST_SAFE + btn(p.id, "apply", applyLabel(p.kind));
+    if (p.status === "pending") return HOST_SAFE + btn(p.id, "apply", applyLabel(p.kind)) + btn(p.id, "reject", "Reject");
     if (p.status === "applied") return btn(p.id, "undo", "Undo");
     return p.kind === "event_promote" && p.status === "undone" ? btn(p.id, "apply", "Apply again") : "";
   }
@@ -153,6 +167,8 @@
   }
 
   window.watsonCardHtml = watsonCardHtml;
+  window.watsonApplyLabel = applyLabel;
+  window.watsonApplyNoun = applyNoun;
   window.watsonWroteHtml = watsonWroteHtml;
   window.watsonPausedHtml = watsonPausedHtml;
 })();

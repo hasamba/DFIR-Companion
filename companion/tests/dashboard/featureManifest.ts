@@ -1934,8 +1934,19 @@ export const FEATURES: Feature[] = [
   {
     // Watson's proposal cards, the "Wrote:" line and the paused-reactions banner. Pure builders.
     file: "dashboard-watson-cards.js",
-    publish: ["watsonCardHtml", "watsonWroteHtml", "watsonPausedHtml"],
-    private: ["HELD_SHOWN", "FIELD_LABEL", "PAUSED", "TITLE", "BODY", "btn"],
+    publish: ["watsonCardHtml", "watsonWroteHtml", "watsonPausedHtml", "watsonApplyLabel", "watsonApplyNoun"],
+    private: [
+      "HELD_SHOWN",
+      "FIELD_LABEL",
+      "PAUSED",
+      "TITLE",
+      "BODY",
+      "btn",
+      "APPLY",
+      "applyLabel",
+      "applyNoun",
+      "HOST_SAFE",
+    ],
   },
   {
     // Watson's markup builders, split from dashboard-watson.js to keep both under 400 lines. Pure:

@@ -31,7 +31,11 @@ function setup() {
       if (t === "click") clicks.push(cb);
     },
   };
-  const api = loadDashboardModule<Api>("dashboard-watson-status.js", ["dashboard-escape.js"], { document });
+  const api = loadDashboardModule<Api>(
+    "dashboard-watson-status.js",
+    ["dashboard-escape.js", "dashboard-watson-cards.js"],
+    { document },
+  );
   return { api, slots, clicks };
 }
 
@@ -137,16 +141,16 @@ describe("Watson status", () => {
       chat([{ id: "wp-4", kind: "finding_new", status: "pending", title: "x" }]),
       false,
     );
-    expect(other.bar).toContain('data-w-verb="apply" data-pid="wp-4">Apply</button>');
+    expect(other.bar).toContain('data-w-verb="apply" data-pid="wp-4">Add finding</button>');
   });
 
-  it("names Apply or Reject for a card that is not a launch", () => {
+  it("names what Apply does for a card that is not a launch", () => {
     const { api } = setup();
     const s = api.watsonStatusOf(
       chat([{ id: "wp-3", kind: "finding_new", status: "pending", title: "Rundll32 from Temp" }]),
       false,
     );
-    expect(s.bar).toContain('Apply or reject "Rundll32 from Temp".');
+    expect(s.bar).toContain('Add the finding "Rundll32 from Temp" to the case, or reject it.');
   });
 
   it("escapes a title that came from the model", () => {
