@@ -7,7 +7,10 @@
 // resend after a lost answer is not run twice. The key is kept per case, and only until the next
 // readable answer (any HTTP status): a new send then gets a new key.
 (function () {
+  const REFETCH_MS = 15000; // while a run shows, re-read the chat: a watson_changed ping may be missed
   const wPendingKey = new Map(); // case id -> { text, key }
+  const wStopping = new Set(); // case ids with a stop request in flight
+  let wPoll = null; // { caseId, timer } while a run shows
 
   const newKey = () =>
     typeof crypto !== "undefined" && crypto && typeof crypto.randomUUID === "function"
@@ -21,24 +24,46 @@
     if (run && run.kind === "reaction") text = "Watson is working on the new case events.";
     else if (run && run.actor) text = `Watson is working on a message from ${esc(String(run.actor))}.`;
     const queued = run ? Number(run.queued) || 0 : 0;
-    if (queued > 0) text += ` ${queued} more messages wait.`;
+    if (queued > 0) text += queued === 1 ? " 1 more message waits." : ` ${queued} more messages wait.`;
     return `<div class="watson-empty watson-working" role="status">${text}</div>`;
   }
 
+  // The stop icon follows the run. While the server reports a run, the chat is re-read on a timer, so a
+  // missed ping cannot leave the icon and the line stuck. The timer ends when the run ends or the case changes.
+  const pollSync = (running) => {
+    const caseId = String((document.getElementById("caseId") || {}).value || "").trim();
+    if (wPoll && (!running || wPoll.caseId !== caseId)) {
+      clearInterval(wPoll.timer);
+      wPoll = null;
+    }
+    if (!running || wPoll || !caseId || typeof setInterval !== "function") return;
+    const timer = setInterval(() => { if (typeof loadWatson === "function") loadWatson(caseId); }, REFETCH_MS);
+    wPoll = { caseId, timer };
+  };
+
   function watsonStopSync(chat, localBusy) {
-    const show = !!(localBusy || (chat && chat.running));
-    Array.from(document.querySelectorAll('[data-w="stop"]')).forEach((el) => { el.hidden = !show; });
+    const running = !!(chat && chat.running);
+    Array.from(document.querySelectorAll('[data-w="stop"]')).forEach((el) => { el.hidden = !(localBusy || running); });
+    pollSync(running);
   }
 
-  // POST the stop. Returns null on success, else the text to show the analyst.
+  // POST the stop, then re-read the chat. Returns null on success, else the text to show the analyst.
+  // A repeat click while the request is in flight is ignored.
   async function watsonStop(caseId) {
+    if (wStopping.has(caseId)) return null;
+    wStopping.add(caseId);
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/watson/cancel`, { method: "POST" });
-      if (r.ok) return null;
+      if (r.ok) {
+        if (typeof loadWatson === "function") loadWatson(caseId);
+        return null;
+      }
       const body = await r.json().catch(() => ({}));
       return body && body.error ? String(body.error) : `Watson could not stop (HTTP ${r.status}).`;
     } catch {
       return "Watson could not stop: network error.";
+    } finally {
+      wStopping.delete(caseId);
     }
   }
 

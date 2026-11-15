@@ -8,11 +8,12 @@ interface Api {
   renderWatson(chat: unknown): void;
   watsonAct(el: unknown): unknown;
   watsonSendKey(caseId: string, text: string): string;
+  loadWatson(caseId: string): Promise<void>;
 }
 
 class FakeEl {
   innerHTML = "";
-  hidden = true;
+  hidden = false; // visible until the code under test hides it
   classList = { toggle: () => true, contains: () => false };
   setAttribute() {}
 }
@@ -44,6 +45,8 @@ function setup(answers: (call: Call) => Answer | Promise<Answer>) {
   const byW: Record<string, FakeEl[]> = { log: [log], stop: [stop] };
   const caseInput = { value: "c1" };
   const calls: Call[] = [];
+  const timers = new Map<number, () => void>();
+  let nextTimer = 1;
   const document = {
     body: new FakeEl(),
     documentElement: { style: { setProperty: () => {} } },
@@ -79,6 +82,11 @@ function setup(answers: (call: Call) => Answer | Promise<Answer>) {
       localStorage: { getItem: () => null, setItem: () => {} },
       addEventListener: () => {},
       fetch: fetchSpy,
+      setInterval: (cb: () => void) => {
+        timers.set(nextTimer, cb);
+        return nextTimer++;
+      },
+      clearInterval: (id: number) => timers.delete(id),
     },
   );
   const input = { value: "" };
@@ -89,7 +97,7 @@ function setup(answers: (call: Call) => Answer | Promise<Answer>) {
   };
   const messageCalls = () => calls.filter((c) => c.url.endsWith("/message"));
   const keys = () => messageCalls().map((c) => c.headers["Idempotency-Key"]);
-  return { api, log, stop, caseInput, calls, input, send, keys };
+  return { api, log, stop, caseInput, calls, input, send, keys, timers };
 }
 
 const running = (extra: Record<string, unknown> = {}) => ({
@@ -98,6 +106,11 @@ const running = (extra: Record<string, unknown> = {}) => ({
   queued: 0,
   ...extra,
 });
+
+const runningGet = (c: Call) =>
+  c.url === "/cases/c1/watson"
+    ? { ok: true, status: 200, json: async () => chatWith([], { running: running() }) }
+    : new Promise(() => {});
 
 describe("the working line and the stop icon", () => {
   it("another viewer's running round shows the working line with the escaped actor, and the stop icon", () => {
@@ -115,12 +128,68 @@ describe("the working line and the stop icon", () => {
     expect(stop.hidden).toBe(true);
   });
 
+  it("a run that ends on the same panel clears the working line and hides the stop icon", () => {
+    const { api, log, stop } = setup(() => okChat);
+    api.renderWatson(chatWith([], { running: running() }));
+    expect(stop.hidden).toBe(false);
+    expect(log.innerHTML).toContain("watson-working");
+    api.renderWatson(chatWith([], { running: null }));
+    expect(stop.hidden).toBe(true);
+    expect(log.innerHTML).not.toContain("watson-working");
+  });
+
+  it("a case switch clears the line and the icon at once, even when the new case's GET never answers", async () => {
+    const { api, log, stop, caseInput } = setup(runningGet);
+    await api.loadWatson("c1"); // c1 is open and shows its run
+    expect(stop.hidden).toBe(false);
+    caseInput.value = "c2";
+    void api.loadWatson("c2");
+    expect(stop.hidden).toBe(true);
+    expect(log.innerHTML).not.toContain("watson-working");
+  });
+
+  it("while a run shows, the chat is re-read on a timer; the timer ends with the run", () => {
+    const { api, calls, timers } = setup(() => okChat);
+    api.renderWatson(chatWith([], { running: running() }));
+    api.renderWatson(chatWith([], { running: running() }));
+    expect(timers.size).toBe(1); // one timer, however many renders
+    [...timers.values()][0]();
+    expect(calls.at(-1)?.url).toBe("/cases/c1/watson");
+    api.renderWatson(chatWith([], { running: null }));
+    expect(timers.size).toBe(0);
+  });
+
+  it("the timer ends on a case switch", async () => {
+    const { api, timers, caseInput } = setup(runningGet);
+    await api.loadWatson("c1");
+    expect(timers.size).toBe(1);
+    caseInput.value = "c2";
+    void api.loadWatson("c2");
+    expect(timers.size).toBe(0);
+  });
+
+  it("a stop that succeeds re-reads the chat", async () => {
+    const { api, calls } = setup((c) => (c.url.endsWith("/cancel") ? { ok: true, status: 200 } : okChat));
+    await api.watsonAct({ dataset: { wVerb: "stop" } });
+    expect(calls.map((c) => c.url)).toContain("/cases/c1/watson");
+  });
+
+  it("a repeat click on stop is ignored until the request settles", async () => {
+    const { api, calls } = setup(() => new Promise(() => {}));
+    void api.watsonAct({ dataset: { wVerb: "stop" } });
+    void api.watsonAct({ dataset: { wVerb: "stop" } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.filter((c) => c.url.endsWith("/cancel")).length).toBe(1);
+  });
+
   it("names a reaction round, the plain case and the queue", () => {
     const { api, log } = setup(() => okChat);
     api.renderWatson(chatWith([], { running: running({ kind: "reaction" }) }));
     expect(log.innerHTML).toContain("Watson is working on the new case events.");
     api.renderWatson(chatWith([], { running: running({ queued: 2 }) }));
     expect(log.innerHTML).toContain("Watson is working on an answer. 2 more messages wait.");
+    api.renderWatson(chatWith([], { running: running({ queued: 1 }) }));
+    expect(log.innerHTML).toContain("1 more message waits.");
   });
 
   it("the stop verb POSTs /cancel even while this tab's send is in flight", async () => {

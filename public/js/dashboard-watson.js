@@ -147,11 +147,10 @@
     if (!id) return Promise.resolve();
     if (onlyIfNew && wCase === id) return Promise.resolve();
     if (wCase !== id) {
-      wCase = id;
-      wChat = null;
-      wEarlier = [];
-      wMore = null;
-      wSeen = 0;
+      const stale = !!(wCase && wChat);
+      wCase = id; wChat = null;
+      if (stale) renderWatson(); // the old case's run line and stop icon go now, not when the GET returns
+      wEarlier = []; wMore = null; wSeen = 0;
       wNotice = null;
       wCardErr.clear();
       watsonCaseReset(); // the chip and the mode wait for this case's GET (G15, G19)

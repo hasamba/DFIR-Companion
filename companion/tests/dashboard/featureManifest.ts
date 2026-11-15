@@ -1964,7 +1964,7 @@ export const FEATURES: Feature[] = [
     // key. dashboard-watson.js calls them by name. No initializer.
     file: "dashboard-watson-run.js",
     publish: ["watsonWorkingHtml", "watsonStopSync", "watsonStop", "watsonSendKey", "watsonSendSettled"],
-    private: ["wPendingKey", "newKey"],
+    private: ["REFETCH_MS", "wPendingKey", "wStopping", "wPoll", "newKey", "pollSync"],
   },
   {
     // Two Settings warnings for Watson (lookups without a cost or token limit; provider without model or
