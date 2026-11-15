@@ -97,6 +97,7 @@
   let refresh = newRefresh();
   let noticeSeen = 0; // highest notice version heard on this socket
   let noticeApplied = 0; // highest notice version a state read has already covered
+  let stateReadGaveUp = false; // a read gave up and the unavailable notice is showing
 
   // The connection line shares #status with synthesis results, report paths and import warnings. A
   // reconnect can happen at any moment, so it only replaces text that is itself about the
@@ -249,6 +250,7 @@
         statePushes++;
         liveOnMessage({ type: "state", state });
       }
+      if (state) recoverStateStatus(sock, caseId);
       if (r.pending) {
         r.pending = false;
         readStateForNotice(ws, liveCaseId, r);
@@ -263,10 +265,19 @@
       .catch(() => settle(null, true));
   }
 
+  // A read that lands after a give-up clears the notice it left behind. The line is repainted only
+  // while this socket is the open, current one, so a late read cannot overwrite "disconnected".
+  function recoverStateStatus(sock, caseId) {
+    if (!stateReadGaveUp || !stillCurrent(sock, caseId) || sock.readyState !== WebSocket.OPEN) return;
+    stateReadGaveUp = false;
+    setConnStatus("connected (live)");
+  }
+
   // The notice stays owed until a read covers it: retry with backoff while this session lasts.
   function onStateReadFailed(sock, caseId, r) {
     r.attempts++;
     if (r.attempts >= STATE_READ_MAX_ATTEMPTS) {
+      stateReadGaveUp = true;
       setConnStatus("live updates unavailable — the case state could not be refreshed");
       r.pending = false;
       return; // the next notice (or a reconnect's catch-up) tries again
@@ -301,7 +312,10 @@
           fetchCaseState(caseId)
             .then((state) => {
               if (pushesAtStart !== statePushes) return; // a newer state already arrived by push
-              if (state) send({ type: "state", state });
+              if (state) {
+                send({ type: "state", state });
+                recoverStateStatus(sock, caseId);
+              }
             })
             .catch(() => {}),
       ],
@@ -416,6 +430,7 @@
     ws = sock;
     // Notice numbers count per server process, so a new socket (maybe a restarted server) starts over.
     noticeSeen = noticeApplied = 0;
+    stateReadGaveUp = false;
     retireRefresh();
     connectTimer = setTimeout(() => {
       if (sock !== ws || sock.readyState !== WebSocket.CONNECTING) return;
