@@ -31,17 +31,28 @@ const ROSTER = (hosts: string[]) => JSON.stringify({ hosts, users: [], ips: [] }
 
 type FakeFs = RosterFs & { reads: number; bump(path: string): void };
 
-function fakeFs(files: Record<string, string>, hold?: Promise<void>): FakeFs {
+// The reader joins paths with node:path, so on Windows it asks for "\\c\\watson-chat.json".
+const slash = (p: string): string => p.replace(/\\/g, "/");
+
+function fakeFs(raw: Record<string, string>, hold?: Promise<void>): FakeFs {
+  const files: Record<string, string> = Object.fromEntries(
+    Object.entries(raw).map(([k, v]) => [slash(k), v]),
+  );
   const mtimes = new Map<string, number>(Object.keys(files).map((p) => [p, 1]));
   const enoent = () => Object.assign(new Error("ENOENT"), { code: "ENOENT" });
   const fs: FakeFs = {
     reads: 0,
-    bump: (p) => mtimes.set(p, (mtimes.get(p) ?? 0) + 1),
-    stat: async (p) => {
+    bump: (raw) => {
+      const p = slash(raw);
+      mtimes.set(p, (mtimes.get(p) ?? 0) + 1);
+    },
+    stat: async (raw) => {
+      const p = slash(raw);
       if (!(p in files)) throw enoent();
       return { mtimeMs: mtimes.get(p) ?? 1, size: files[p].length, ino: 7 };
     },
-    readFile: async (p) => {
+    readFile: async (raw) => {
+      const p = slash(raw);
       fs.reads++;
       if (hold) await hold;
       if (!(p in files)) throw enoent();
