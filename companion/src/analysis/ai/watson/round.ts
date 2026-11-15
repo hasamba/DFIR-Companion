@@ -26,6 +26,7 @@ import type { Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
 import { withCitedPromotion } from "./roundPromote.js";
 import { commitCheck } from "./roundCancel.js";
+import { dispositionOf, reportedRound, type WatsonDisposition } from "./roundDisposition.js";
 import { logRoundEnd, saveRound } from "./roundSave.js";
 import { earlierShownIds } from "./rawReferences.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
@@ -41,6 +42,7 @@ export {
   type WatsonRoundContext,
 } from "./roundContext.js";
 export { WATSON_REACTION_PROMPT } from "./reactionState.js";
+export type { WatsonDisposition } from "./roundDisposition.js";
 
 // One Watson round: the analyst's message in, Watson's turn and pending proposals out.
 //
@@ -80,8 +82,6 @@ export interface WatsonRoundInput {
   onDisposition?(disposition: WatsonDisposition): void;
 }
 
-export type WatsonDisposition = "answered" | "cancelled" | "failed";
-
 const chains = new Map<string, Promise<unknown>>();
 
 export function runWatsonRound(
@@ -96,7 +96,11 @@ export function runWatsonRound(
   announce(ctx, caseId); // a failing notifier never leaks the run: it cannot throw here
   const runCtx = handle ? { ...ctx, signal: handle.signal } : ctx;
   const run = prev
-    .then(() => reportedRound(withRoundInventory(runCtx), caseId, input)) // one inventory read (G16)
+    .then(() =>
+      reportedRound(input.onDisposition, (report) =>
+        runRound(withRoundInventory(runCtx), caseId, input, report),
+      ),
+    ) // one inventory read (G16)
     .finally(() => {
       handle?.end();
       announce(ctx, caseId);
@@ -124,26 +128,6 @@ function announce(ctx: WatsonRoundContext, caseId: string): void {
 }
 
 const chatSpend = (c: WatsonChat): WatsonSpend => ({ usd: c.costUSD, tokens: c.tokens });
-
-/** The round, with its disposition reported once on every exit (a throw before the save: failed). */
-async function reportedRound(ctx: WatsonRoundContext, caseId: string, input: WatsonRoundInput) {
-  let disposition: WatsonDisposition = "failed";
-  try {
-    return await runRound(ctx, caseId, input, (d) => (disposition = d));
-  } catch (err) {
-    if (err instanceof WatsonCancelled) disposition = "cancelled";
-    throw err;
-  } finally {
-    input.onDisposition?.(disposition);
-  }
-}
-
-/** What the save kept: a Presidio hold is thrown, so it is failed even when a first reply was kept. */
-export function dispositionOf(outcome: Outcome, failure: unknown): WatsonDisposition {
-  if (failure instanceof PresidioApprovalRequired) return "failed";
-  if (outcome.reply) return "answered";
-  return outcome.error instanceof WatsonCancelled ? "cancelled" : "failed";
-}
 
 async function runRound(
   ctx: WatsonRoundContext,
@@ -206,7 +190,7 @@ async function runRound(
   }
   const failure = outcome.error ?? outcome.rethrow;
   logRoundEnd(ctx, caseId, failure);
-  report(dispositionOf(outcome, failure)); // a stop after the commit point keeps the reply: answered
+  report(dispositionOf(outcome)); // before a hold is thrown: a saved reply is answered
   if (failure instanceof PresidioApprovalRequired) throw failure;
   if (input.reaction && failure instanceof WatsonCostLimitReached) throw failure;
   // Auto mode acts only on a round that produced Watson's turn; a launch is not a model call.

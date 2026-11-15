@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PresidioApprovalRequired } from "../../../src/analysis/presidio.js";
-import {
-  dispositionOf,
-  WATSON_CANCELLED_TEXT,
-  WatsonCancelled,
-  type WatsonDisposition,
-} from "../../../src/analysis/ai/watson/round.js";
+import { WATSON_CANCELLED_TEXT, WatsonCancelled } from "../../../src/analysis/ai/watson/round.js";
+import { dispositionOf, type WatsonDisposition } from "../../../src/analysis/ai/watson/roundDisposition.js";
 import type { Outcome } from "../../../src/analysis/ai/watson/roundOutcome.js";
 import { WatsonRunRegistry } from "../../../src/analysis/ai/watson/runRegistry.js";
 import { ProviderError } from "../../../src/providers/provider.js";
@@ -20,36 +16,34 @@ const promotion = { proposalId: "wp-x", keep: [], unsettled: answeredReply, refs
 const base: Outcome = { reply: null, shownEvents: [], questions: [] };
 
 describe("dispositionOf", () => {
-  it.each<[string, Outcome, unknown, WatsonDisposition]>([
-    ["a saved reply", { ...base, reply: answeredReply }, undefined, "answered"],
+  it.each<[string, Outcome, WatsonDisposition]>([
+    ["a saved reply", { ...base, reply: answeredReply }, "answered"],
     [
       "a stop after the commit point (the reply was saved)",
       { ...base, reply: answeredReply, stoppedAfterCommit: true },
-      undefined,
       "answered",
     ],
-    [
-      "a stop before the commit point",
-      { ...base, error: new WatsonCancelled() },
-      new WatsonCancelled(),
-      "cancelled",
-    ],
+    ["a stop before the commit point", { ...base, error: new WatsonCancelled() }, "cancelled"],
     [
       // Not marked stoppedAfterCommit: the stop note is saved, the promotion stays. It replays.
       "a post-promotion round that carries a WatsonCancelled error",
       { ...base, error: new WatsonCancelled(), promotion: promotion },
-      new WatsonCancelled(),
       "cancelled",
     ],
-    ["a provider failure", { ...base, error: new Error("x") }, new Error("x"), "failed"],
+    ["a provider failure", { ...base, error: new Error("x") }, "failed"],
     [
-      "a Presidio hold, even after a first reply was kept",
+      // The reply, its cost and its promotion are committed before the hold is thrown: it replays.
+      "a Presidio hold on a later hop, after the first reply was saved",
       { ...base, reply: answeredReply, rethrow: new PresidioApprovalRequired([]) },
-      new PresidioApprovalRequired([]),
+      "answered",
+    ],
+    [
+      "a Presidio hold on the first call (nothing answered)",
+      { ...base, error: new PresidioApprovalRequired([]) },
       "failed",
     ],
-  ])("%s", (_name, outcome, failure, expected) => {
-    expect(dispositionOf(outcome, failure)).toBe(expected);
+  ])("%s", (_name, outcome, expected) => {
+    expect(dispositionOf(outcome)).toBe(expected);
   });
 });
 

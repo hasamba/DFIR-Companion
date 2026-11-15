@@ -30,7 +30,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 
 let caseCounter = 0;
 
-const reply = (): string =>
+const reply = (over: Record<string, unknown> = {}): string =>
   JSON.stringify({
     message: "I looked at the case.",
     workingOn: "initial access",
@@ -40,6 +40,7 @@ const reply = (): string =>
     request: null,
     search: null,
     memory: "memory v1",
+    ...over,
   });
 
 type Mode = "answer" | "block" | Error;
@@ -50,9 +51,14 @@ class Gate implements AIProvider {
   readonly model = "fake-model";
   readonly sent: AnalyzeRequest[] = [];
   mode: Mode = "answer";
+  /** Steps used before `mode`, one per call: a raw reply text or an error to throw. */
+  script: Array<string | Error> = [];
   private waiting: Array<() => void> = [];
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.sent.push(req);
+    const step = this.script.shift();
+    if (step instanceof Error) throw step;
+    if (step !== undefined) return { rawText: step, usage: { costUSD: 0.01 } };
     const mode = this.mode;
     if (mode instanceof Error) throw mode;
     if (mode === "block") await this.blocked(req.signal);
@@ -85,7 +91,9 @@ class HookedState extends StateStore {
   }
 }
 
-async function harness(opts: { aiOn?: boolean } = {}) {
+type Harness = Awaited<ReturnType<typeof harness>>;
+
+async function harness(opts: { aiOn?: boolean; chatStore?: boolean } = {}) {
   const CASE = `cancel-c${++caseCounter}`;
   const root = await mkdtemp(join(tmpdir(), "dfir-watson-cancel-"));
   const store = new CaseStore(root);
@@ -113,7 +121,7 @@ async function harness(opts: { aiOn?: boolean } = {}) {
     pipeline,
     aiCostStore,
     activityLogStore: new ActivityLogStore(store),
-    watsonChatStore: new WatsonChatStore(store),
+    ...(opts.chatStore === false ? {} : { watsonChatStore: new WatsonChatStore(store) }),
     watsonProvider: () => provider,
     onWatson: () => broadcasts.push("watson_changed"),
   });
@@ -172,6 +180,19 @@ describe("Watson stop and running state", () => {
     expect(stop.body).toEqual({ cancelled: 0 });
   });
 
+  it("POST /cancel without a chat store is 501", async () => {
+    const h = await harness({ chatStore: false });
+    const stop = await h.cancel();
+    expect(stop.status).toBe(501);
+    expect(stop.body.error).toBe("Watson is not configured");
+  });
+
+  it("a bad key is refused before any work: no watson_changed broadcast", async () => {
+    const h = await harness();
+    expect((await h.post("short", "hi")).status).toBe(400);
+    expect(h.broadcasts).toEqual([]);
+  });
+
   it("POST /cancel on a missing case is 404", async () => {
     const h = await harness();
     expect((await request(h.app).post("/cases/no-such-case/watson/cancel").send({})).status).toBe(404);
@@ -209,24 +230,33 @@ describe("Watson message dedupe (Idempotency-Key)", () => {
     expect(other.body.error).toBe("This request key belongs to a different message. Send the message again.");
   });
 
-  const failures: Record<string, (h: Awaited<ReturnType<typeof harness>>) => () => void> = {
-    aiOffDuringPrep: (h) => {
-      h.stateStore.onLoad = async () => {
-        await h.aiSwitch(false);
-      };
-      return () => void 0; // cleared below by switching AI on
+  type Failure = { status: number; calls: number; arrange: (h: Harness) => void };
+  // Each failure ends "failed" with a known first status and provider call count; AI goes back on
+  // and the provider answers again before the resend.
+  const failures: Record<string, Failure> = {
+    aiOffDuringPrep: {
+      status: 200, // the error turn is saved; the provider is never reached
+      calls: 0,
+      arrange: (h) => {
+        h.stateStore.onLoad = async () => {
+          await h.aiSwitch(false);
+        };
+      },
     },
-    providerAuth: (h) => {
-      h.provider.mode = new ProviderError("Fake auth", "auth");
-      return () => (h.provider.mode = "answer");
+    providerAuth: {
+      status: 200,
+      calls: 1,
+      arrange: (h) => void (h.provider.script = [new ProviderError("Fake auth", "auth")]),
     },
-    providerTransport: (h) => {
-      h.provider.mode = new ProviderError("Fake transport error", "transport");
-      return () => (h.provider.mode = "answer");
+    providerTransport: {
+      status: 200,
+      calls: 1,
+      arrange: (h) => void (h.provider.script = [new ProviderError("Fake transport error", "transport")]),
     },
-    presidioHold: (h) => {
-      h.provider.mode = new PresidioApprovalRequired([]);
-      return () => (h.provider.mode = "answer");
+    presidioHoldOnFirstCall: {
+      status: 409, // a hold before any reply: nothing was answered or paid
+      calls: 1,
+      arrange: (h) => void (h.provider.script = [new PresidioApprovalRequired([])]),
     },
   };
 
@@ -234,20 +264,37 @@ describe("Watson message dedupe (Idempotency-Key)", () => {
     "%s: a later resend with the same key runs a new round (Codex #7)",
     async (kind) => {
       const h = await harness();
-      const clear = failures[kind](h);
+      const f = failures[kind];
+      f.arrange(h);
       const k = "key-fake-0004"; // trufflehog:ignore
       const first = await h.post(k, "hi");
-      expect([200, 409]).toContain(first.status);
-      const callsAfterFirst = h.provider.sent.length;
-      expect(callsAfterFirst).toBeLessThanOrEqual(1);
-      clear();
+      expect(first.status).toBe(f.status);
+      expect(h.provider.sent).toHaveLength(f.calls);
       await h.aiSwitch(true);
       const again = await h.post(k, "hi");
       expect(again.status).toBe(200);
-      expect(h.provider.sent.length).toBe(callsAfterFirst + 1);
+      expect(h.provider.sent).toHaveLength(f.calls + 1);
       expect(lastTurn(again.body).role).toBe("watson");
     },
   );
+
+  it("a Presidio hold on the second hop, after the first reply was saved, replays: no second paid round", async () => {
+    const h = await harness();
+    h.provider.script = [
+      reply({ lookup: { source: "forensic", text: "rclone" } }),
+      new PresidioApprovalRequired([]),
+    ];
+    const k = "key-fake-0008"; // trufflehog:ignore
+    const first = await h.post(k, "hi");
+    expect(first.status).toBe(409);
+    expect(h.provider.sent).toHaveLength(2);
+    const again = await h.post(k, "hi");
+    expect(again.status).toBe(200);
+    expect(h.provider.sent).toHaveLength(2); // no new round, so no new promotion either
+    const turns = again.body.turns as Turn[];
+    expect(turns.filter((t) => t.role === "analyst")).toHaveLength(1);
+    expect(lastTurn(again.body).role).toBe("watson");
+  });
 
   it("concurrent waiters on a failed first round get the same answer", async () => {
     const h = await harness();
@@ -268,6 +315,14 @@ describe("Watson message dedupe (Idempotency-Key)", () => {
     const b = await h.post(k, "hi");
     expect(b.status).toBe(200);
     expect(lastTurn(b.body)).toEqual(lastTurn(a.body));
+    expect(h.provider.sent).toHaveLength(1);
+  });
+
+  it("a replay makes no model call, so it does not spend the case's AI budget (20 a minute)", async () => {
+    const h = await harness();
+    const k = "key-fake-0009"; // trufflehog:ignore
+    expect((await h.post(k, "hi")).status).toBe(200);
+    for (let i = 0; i < 25; i++) expect((await h.post(k, "hi")).status).toBe(200);
     expect(h.provider.sent).toHaveLength(1);
   });
 
