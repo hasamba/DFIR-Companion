@@ -6,7 +6,9 @@ import { COMMON_WORDS } from "./hostLabel.js";
 
 /**
  * Words a labelled value can be that are not a host: a blank field's next label ("Source Network
- * Address"), a yes/no answer, an article, or a placeholder.
+ * Address"), a yes/no answer, an article, a placeholder, or a vendor, OS or service word (final
+ * review F1: "Computer: Microsoft", "Host: www"). Any other plain word is a host ("Workstation Name:
+ * fakepc" in a 4624 event).
  */
 const NOT_A_HOST_VALUE: ReadonlySet<string> = new Set([
   ...COMMON_WORDS,
@@ -47,6 +49,29 @@ const NOT_A_HOST_VALUE: ReadonlySet<string> = new Set([
   "caller",
   "subject",
   "security",
+  "microsoft",
+  "windows",
+  "linux",
+  "unix",
+  "macos",
+  "apple",
+  "google",
+  "amazon",
+  "azure",
+  "aws",
+  "gcp",
+  "cloud",
+  "login",
+  "www",
+  "mail",
+  "api",
+  "cdn",
+  "ftp",
+  "smtp",
+  "unavailable",
+  "undefined",
+  "anonymous",
+  "redacted",
 ]);
 
 /** Whether a rule-1 value is a placeholder or a plain word, not a host name. */

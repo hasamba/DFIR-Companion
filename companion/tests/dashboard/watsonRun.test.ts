@@ -8,7 +8,7 @@ interface Api {
   renderWatson(chat: unknown): void;
   watsonAct(el: unknown): unknown;
   watsonSendKey(caseId: string, text: string): string;
-  loadWatson(caseId: string): Promise<void>;
+  loadWatson(caseId: string, onlyIfNew?: boolean): Promise<void>;
 }
 
 class FakeEl {
@@ -265,6 +265,39 @@ describe("a stop or a refresh never moves the panel to another case (final revie
     });
     await loading;
     expect(log.innerHTML).not.toContain("fake-c1-actor");
+  });
+
+  it("a case open loads the new case: the picker holds it before the socket's first state push", async () => {
+    const { api, calls, log, caseInput } = setup((c) =>
+      c.url === "/cases/c2/watson"
+        ? {
+            ok: true,
+            status: 200,
+            json: async () => chatWith([], { running: running({ actor: "fake-c2-actor" }) }),
+          }
+        : okChat,
+    );
+    await api.loadWatson("c1");
+    caseInput.value = "c2"; // proceedConnect -> commitLoadedCase writes #caseId first
+    await api.loadWatson("c2", true); // then handleCaseMessage("state") calls loadWatson(caseId, true)
+    expect(getsFor(calls, "c2")).toBe(1);
+    expect(log.innerHTML).toContain("fake-c2-actor");
+  });
+
+  it("every case open writes #caseId before the case socket opens (source order)", () => {
+    const src = readFileSync(
+      new URL("../../../public/js/dashboard-case-connect.js", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    const body = src.slice(
+      src.indexOf("function proceedConnect("),
+      src.indexOf("function handleCaseMessage("),
+    );
+    const commit = body.indexOf("commitLoadedCase(caseId)");
+    expect(commit).toBeGreaterThan(-1);
+    expect(body.indexOf('document.getElementById("caseId").value = caseId')).toBeGreaterThan(-1);
+    expect(body.indexOf("openCaseSocket(caseId")).toBeGreaterThan(commit);
+    expect(body).not.toMatch(/loadWatson\(/); // the only case-open load runs from a socket push
   });
 
   it("the poll timer of c1 does not re-read c1 once c2 is selected", async () => {

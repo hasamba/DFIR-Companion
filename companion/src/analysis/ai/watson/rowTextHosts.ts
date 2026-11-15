@@ -66,15 +66,12 @@ export const NOT_A_HOST = new RegExp(
 
 // A value followed by ":" (not a port number) is the next field's label, so the field was blank.
 const NEXT_LABEL = /^:(?!\d)/;
-// A labelled value with no digit, hyphen or dot is a plain word (Microsoft, Windows), not a host name.
-const HOST_SHAPED = /[\d.-]/;
-
-/** Rule 1: each labelled host-shaped value, cleaned; only an internal FQDN gives its short label. */
+/** Rule 1: each labelled value, cleaned, minus the stop words; only an internal FQDN gives its short label. */
 function labelledHosts(text: string): string[] {
   const values = [...text.matchAll(HOST_LABEL)]
     .filter((m) => !NEXT_LABEL.test(text.slice(m.index + m[0].length)))
     .map((m) => (m[1] ?? "").replace(TRAILING_PUNCT, ""))
-    .filter((v) => v.length >= 2 && HOST_SHAPED.test(v) && !EMPTY_VALUE.test(v) && !isNonHostValue(v));
+    .filter((v) => v.length >= 2 && !EMPTY_VALUE.test(v) && !isNonHostValue(v));
   return storableHosts(values);
 }
 

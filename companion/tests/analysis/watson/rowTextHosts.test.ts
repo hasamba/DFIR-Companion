@@ -29,6 +29,7 @@ describe("descriptionHostNames", () => {
       ["WS-FAKE01"],
     ],
     ["Logon from WS-FAKE01 to SRV-FAKE-02.", ["WS-FAKE01", "SRV-FAKE-02"]],
+    ["Workstation Name: fakepc", ["fakepc"]],
     ["Workstation Name: fake-pc", ["fake-pc"]],
     ["Workstation Name: fakepc7", ["fakepc7"]],
     ['Computer="ws-fake03.example.com"', ["ws-fake03.example.com"]],
@@ -67,10 +68,14 @@ describe("descriptionHostNames", () => {
     "Workstation Name: Source: 192.0.2.1",
     "Computer Name: no",
     "Host: ab",
-    // Final review F1: a single plain word is no host, and COVID-19 is no machine name.
+    // Final review F1: a vendor, OS or placeholder word is no host, and COVID-19 is no machine name.
     "Computer: Microsoft",
     "Host Name: Windows",
-    "Workstation Name: fakepc",
+    "Computer: Linux",
+    "Host: www",
+    "Server Name: Azure",
+    "Device Name: Unknown",
+    "Computer: True",
     "Cases of COVID-19 rose",
     // Review I2: crypto, encoding, protocol and platform identifiers stay readable.
     "Ticket encryption RC4-HMAC requested",

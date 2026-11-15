@@ -303,9 +303,9 @@ When Presidio finds a new value in Watson's message, it holds the message until 
 Known limits:
 
 - Watson also masks a host name in the text of a raw row or a paste. It finds a name after a label such as Workstation Name or Computer, or a name in capitals with a hyphen and a digit, such as WS-PC01.
-- After a label, Watson takes a name only when it has a digit, a hyphen or a dot. A plain word such as fakepc or Windows is not taken.
+- After a label, Watson takes any name, also a plain word such as fakepc. It does not take a vendor, system or placeholder word, such as Microsoft, Windows, Unknown or Yes.
 - For a domain after a label or in a paste, Watson keeps the full domain on its list. It keeps the first label alone only for an internal domain, such as files in files.corp.local. Common words such as www and login are not masked.
-- A host name in lowercase or without a hyphen, such as dc01, may still go to the AI when no field of the case names it.
+- A host name with no label before it, in lowercase or without a hyphen, such as dc01, may still go to the AI when no field of the case names it.
 - With the anonymizer on, Watson masks all domains in its message. This includes attacker domains, which the other AI features leave readable.
 
 Recovery from an unreadable chat file:
