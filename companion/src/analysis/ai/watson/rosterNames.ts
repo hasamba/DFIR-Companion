@@ -1,6 +1,7 @@
 import type { PromptEntities } from "../maskRequest.js";
 import type { RawNamesSource } from "../providerCallContext.js";
 import { promptEntities } from "./pasteEntities.js";
+import type { WatsonMaskRoster } from "./superRoster.js";
 import type { WatsonChat } from "./types.js";
 
 // Final review H3: the raw-only names Watson's super-timeline searches showed (the chat's masking
@@ -9,7 +10,9 @@ import type { WatsonChat } from "./types.js";
 // Jev later send; the case anonymizer never saw it, because it comes from no forensic row. The names
 // get the same short-label rule as Watson's own calls (pasteEntities.ts), so both mask alike.
 
-type ChatLoader = { load(caseId: string): Promise<Pick<WatsonChat, "maskRoster">> };
+// The roster comes from WatsonChatStore.loadRoster: the chat's and the durable sidecar's, merged, read
+// through a shared cache. It throws WatsonRosterUnreadable when a file cannot be read, so the call fails.
+type ChatLoader = { loadRoster(caseId: string): Promise<WatsonMaskRoster | undefined> };
 
 /** The chat's roster as masking entities. An absent or empty roster gives none. */
 export function rosterEntities(chat: Pick<WatsonChat, "maskRoster">): PromptEntities {
@@ -23,6 +26,7 @@ export class WatsonRosterNames implements RawNamesSource {
   constructor(private readonly chats: ChatLoader) {}
 
   async load(caseId: string): Promise<PromptEntities> {
-    return rosterEntities(await this.chats.load(caseId));
+    const maskRoster = await this.chats.loadRoster(caseId);
+    return rosterEntities(maskRoster ? { maskRoster } : {});
   }
 }

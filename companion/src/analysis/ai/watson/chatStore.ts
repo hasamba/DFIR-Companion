@@ -5,7 +5,8 @@ import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
 import { WatsonHistoryStore } from "./historyStore.js";
 import { proposalSchema } from "./proposalSchema.js";
-import { mergeMaskRoster } from "./superRoster.js";
+import { keepRosterDurable, maskRosterOf, watsonRosterReader } from "./rosterRead.js";
+import type { WatsonMaskRoster } from "./superRoster.js";
 import { turnSchema } from "./turnSchema.js";
 import {
   emptyWatsonChat,
@@ -18,7 +19,11 @@ import {
 
 // Per-case persistence for the Watson chat (state/watson-chat.json). A side file like
 // hunt-outcomes.json: not part of InvestigationState, in SNAPSHOT_STATE_FILES so the chat travels
-// with an exported case. Every writer goes through update(), which serializes per case.
+// with an exported case. Every writer goes through update(), which serializes per case. Every save
+// also folds the chat's mask roster into the durable sidecar (rosterRead.ts), which a restore never
+// rewinds.
+
+export { maskRosterOf };
 
 export const WATSON_MAX_TURNS = 400;
 export const WATSON_TURN_TEXT_MAX = 8000;
@@ -92,6 +97,7 @@ function parseChat(raw: unknown): WatsonChat {
   const o = raw as Record<string, unknown>;
   const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
   const turns = lenientList<WatsonTurn>(o.turns, turnSchema);
+  const maskRoster = maskRosterOf(o.maskRoster);
   return {
     turns,
     proposals: lenientList<WatsonProposal>(o.proposals, proposalSchema),
@@ -104,20 +110,9 @@ function parseChat(raw: unknown): WatsonChat {
     tokens: num(o.tokens),
     calls: num(o.calls),
     ...(typeof o.threadStartAt === "string" && o.threadStartAt ? { threadStartAt: o.threadStartAt } : {}),
-    ...maskRosterField(o.maskRoster),
+    // The persisted mask roster, read leniently (an older chat has none). No host or user is dropped (H5).
+    ...(maskRoster ? { maskRoster } : {}),
   };
-}
-
-/** The persisted mask roster, read leniently (an older chat has none). No host or user is dropped (H5). */
-function maskRosterField(raw: unknown): Pick<WatsonChat, "maskRoster"> {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
-  const r = raw as Record<string, unknown>;
-  const roster = mergeMaskRoster(undefined, {
-    hosts: strings(r.hosts),
-    users: strings(r.users),
-    ips: strings(r.ips),
-  });
-  return roster.hosts.length || roster.users.length || roster.ips.length ? { maskRoster: roster } : {};
 }
 
 // A decided-against proposal (rejected, undone) whose turn left the chat is dropped; every pending and
@@ -176,8 +171,24 @@ export class WatsonChatStore {
     await copyFile(this.path(caseId), `${this.path(caseId)}.corrupt-${stamp}`);
   }
 
+  /**
+   * The case's mask roster: the chat's and the durable sidecar's, merged. Cheap (one shared, stat-
+   * validated cache) and fail closed: an unreadable file throws WatsonRosterUnreadable. load() stays
+   * lenient, for chat rendering.
+   */
+  loadRoster(caseId: string): Promise<WatsonMaskRoster | undefined> {
+    return watsonRosterReader.read(this.cases.stateDir(caseId));
+  }
+
+  // The sidecar is written first, so it stays a superset of every roster the chat file ever held.
   async save(caseId: string, chat: WatsonChat): Promise<void> {
-    await atomicWrite(this.path(caseId), JSON.stringify(normalize(chat), null, 2));
+    const dir = this.cases.stateDir(caseId);
+    try {
+      await keepRosterDurable(dir, chat.maskRoster);
+      await atomicWrite(this.path(caseId), JSON.stringify(normalize(chat), null, 2));
+    } finally {
+      watsonRosterReader.forget(dir);
+    }
   }
 
   // Every turn the update added goes to the history file first, so a failed append fails the update
