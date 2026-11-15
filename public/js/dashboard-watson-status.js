@@ -1,6 +1,6 @@
 // Watson's status: one pill in the panel header, one bar above the message box and a dot on the rail.
-// They say what Watson does now. The first state that applies wins: working on an answer, waiting for
-// Velociraptor (a launched collection whose result has not come back), waiting for the analyst (cards
+// They say what Watson does now. The first state that applies wins: working on an answer, a launch that
+// needs recovery (uncertain or stalled: waiting for the analyst), waiting for Velociraptor (a launched collection whose result has not come back), waiting for the analyst (cards
 // that need Apply, Reject or Launch), or ready. dashboard-watson-run.js calls watsonStatusSync on every
 // render. "Show card" scrolls the log to the first card that waits. Every model string goes through esc().
 (function () {
@@ -13,9 +13,16 @@
 
   const pending = (chat) =>
     (chat.proposals || []).filter((p) => p.status === "pending" && !p.stalled && !(p.kind === "velo_launch" && p.launching));
+  // A launch whose outcome is unknown (uncertain), or one no live request owns (launching + stalled),
+  // waits for the analyst's Mark as launched or Try again on its card. It is never "in flight".
+  const needsRecovery = (p) => p.kind === "velo_launch" && (p.status === "uncertain" || (p.status === "launching" && !!p.stalled));
+  const recovery = (chat) => (chat.proposals || []).filter(needsRecovery);
   const watching = (chat) =>
     (chat.proposals || []).find(
-      (p) => p.kind === "velo_launch" && ((p.launched && p.watch && p.watch.state === "watching") || (!p.launched && p.launching)),
+      (p) =>
+        p.kind === "velo_launch" &&
+        !needsRecovery(p) &&
+        ((p.launched && p.watch && p.watch.state === "watching") || (!p.launched && p.launching)),
     );
   const nameOf = (p) => {
     const a = p.after || {};
@@ -38,14 +45,16 @@
 
   function youBar(cards) {
     const first = cards[0];
-    const action =
-      first.kind === "velo_launch"
+    const stuck = needsRecovery(first);
+    const action = stuck
+      ? `Check "${esc(nameOf(first))}": mark it as launched or try again.`
+      : first.kind === "velo_launch"
         ? `Launch "${esc(nameOf(first))}".`
         : `Add ${watsonApplyNoun(first.kind)} "${esc(nameOf(first))}" to the case, or reject it.`;
     const more = cards.length - 1;
     const tail = more === 0 ? "" : more === 1 ? " 1 more card waits for you." : ` ${more} more cards wait for you.`;
     const show = `<button type="button" class="watson-mini watson-status-show" data-act="watsonStatusShow" data-w-status-show="${escAttr(first.id)}">Show card</button>`;
-    return `${action}${tail} <span class="watson-status-actions">${actionsOf(first)}${show}</span>`;
+    return `${action}${tail} <span class="watson-status-actions">${stuck ? "" : actionsOf(first)}${show}</span>`;
   }
 
   function watsonStatusOf(chat, localBusy) {
@@ -53,13 +62,16 @@
     const pill = (state, extra) =>
       `<span class="watson-status watson-status-${state}" role="status">${LABEL[state]}${extra || ""}</span>`;
     if (chat.running || localBusy) return { state: "working", pill: pill("working"), bar: workingBar(chat.running), pid: "" };
+    const youOf = (cards) => ({ state: "you", pill: pill("you", ` · ${cards.length}`), bar: youBar(cards), pid: cards[0].id });
+    const stuck = recovery(chat);
+    if (stuck.length) return youOf([...stuck, ...pending(chat)]);
     const out = watching(chat);
     if (out) {
       const bar = `Velociraptor collects "${esc(nameOf(out))}". Watson reads the result when it arrives.`;
       return { state: "velo", pill: pill("velo"), bar, pid: out.id };
     }
     const cards = pending(chat);
-    if (cards.length) return { state: "you", pill: pill("you", ` · ${cards.length}`), bar: youBar(cards), pid: cards[0].id };
+    if (cards.length) return youOf(cards);
     return { state: "ready", pill: pill("ready"), bar: "", pid: "" };
   }
 

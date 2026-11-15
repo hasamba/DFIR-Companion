@@ -185,3 +185,44 @@ describe("Watson status", () => {
     expect(run).toContain("watsonStatusSync(chat, localBusy)");
   });
 });
+
+// Codex branch review #3: a launch whose outcome is unknown (uncertain), or a launch no live request
+// owns (launching + stalled), needs the analyst. It is never "Ready" or "Waiting for Velociraptor".
+describe("Watson status: launches that need recovery", () => {
+  const intent = { at: "t", by: "fake.user", fingerprint: "f", reserved: [] };
+
+  it.each([
+    ["uncertain", { status: "uncertain", launching: intent }],
+    ["stalled launching", { status: "launching", launching: intent, stalled: true }],
+  ])("a %s launch waits for the analyst, with a recovery line and Show card", (_name, over) => {
+    const { api } = setup();
+    const s = api.watsonStatusOf(chat([launch(over)]), false);
+    expect(s.state).toBe("you");
+    expect(s.pid).toBe("wp-1");
+    expect(s.pill).toContain("Waiting for you · 1");
+    expect(s.bar).toContain('Check "Network connections on WS-FAKE01": mark it as launched or try again.');
+    expect(s.bar).toContain('data-w-status-show="wp-1"');
+    expect(s.bar).not.toContain('data-w-verb="apply"');
+  });
+
+  it("comes before a collection Velociraptor still runs, and counts with the other waiting cards", () => {
+    const { api } = setup();
+    const out = launch({
+      id: "wp-9",
+      status: "applied",
+      launched: { at: "t", by: "u" },
+      watch: { deadline: "t", state: "watching" },
+    });
+    const stuck = launch({ id: "wp-2", status: "uncertain", launching: intent });
+    const s = api.watsonStatusOf(chat([out, stuck, launch({ id: "wp-3" })]), false);
+    expect(s.state).toBe("you");
+    expect(s.pid).toBe("wp-2");
+    expect(s.pill).toContain("· 2");
+  });
+
+  it("a launching request that is still live is Waiting for Velociraptor", () => {
+    const { api } = setup();
+    const s = api.watsonStatusOf(chat([launch({ status: "launching", launching: intent })]), false);
+    expect(s.state).toBe("velo");
+  });
+});
