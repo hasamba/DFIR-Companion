@@ -71,4 +71,30 @@ describe("team authentication UI", () => {
     expect(account).toContain("' can edit'");
     expect(account).toContain("<th>Scope</th>");
   });
+
+  it("lets a global administrator edit a person: name, role and (local only) password", async () => {
+    const account = await loadPublic("admin.html");
+    expect(account).toContain("data-edit-user=");
+    expect(account).toContain("data-edit-form=");
+    expect(account).toContain('<option value="member"');
+    expect(account).toContain("u.kind === 'local'");
+    expect(account).toContain("New password (optional)");
+    expect(account).toContain("{method:'PATCH', body:JSON.stringify(patch)}");
+    expect(account).toContain("patch.displayName = name");
+    expect(account).toContain("patch.globalRole");
+    expect(account).toContain("if (user.kind === 'local' && password) patch.password");
+    expect(account).toContain("esc(u.displayName)");
+    expect(account).toContain("say(e.message)");
+  });
+
+  it("keeps the open case across the account page (?return=<caseId> to /dashboard?caseId=)", async () => {
+    const [dashboard, account] = await Promise.all([loadPublic("dashboard.html"), loadPublic("admin.html")]);
+    expect(dashboard).toContain('id="profileAccountLink" href="/admin"');
+    expect(dashboard).toContain("'/admin?return=' + encodeURIComponent(id)");
+    expect(dashboard).toContain("/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/");
+    expect(account).toContain('id="backToDashboard" href="/dashboard"');
+    expect(account).toContain("get('return')");
+    expect(account).toContain("'/dashboard?caseId=' + encodeURIComponent(id)");
+    expect(account).toContain("/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/");
+  });
 });
