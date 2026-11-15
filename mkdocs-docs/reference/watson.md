@@ -83,6 +83,8 @@ Each time you send a message, Watson answers with three parts:
 
 Watson asks for one request at a time so that you always know the next step.
 
+While Watson works on an answer, every analyst who has the case open sees "Watson is working" in the panel. To stop the answer, select the stop icon in the Watson header. The lookups that Watson made stay in the chat, and their cost stays counted. Watson does not propose changes after you stop it. Rows that Watson promoted before the stop stay promoted. If you send the same message again because the network failed, Watson does not answer it two times.
+
 ## Asking Watson a question
 
 Watson replaced the **Ask the LLM** panel. Type any question about the case in the chat, for example "Was data exfiltrated?" or "When did the attacker first reach the domain controller?". Watson answers it as part of the round, with:

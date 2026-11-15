@@ -8,6 +8,7 @@ import type { RouteContext } from "./context.js";
 import { caseVeloConnected, watsonVeloLaunchDeps } from "./watsonVeloLaunch.js";
 import { isFrozenCase } from "./importCaseGuard.js";
 import { WATSON_MAX_TOOL_CALLS_CEILING } from "../analysis/ai/watson/toolMode.js";
+import { watsonRuns } from "../analysis/ai/watson/runRegistry.js";
 
 /** A positive finite number from a setting, else undefined: blank, junk, zero and negatives mean "no limit". */
 export function positiveLimit(raw: string | undefined): number | undefined {
@@ -123,5 +124,7 @@ export function watsonRoundDeps(ctx: RouteContext): WatsonRoundDeps | undefined 
     matchClient,
     ...(auto ? { auto } : {}),
     ...(rawSearch ? { rawSearch } : {}),
+    runs: watsonRuns, // the stop and "Watson is working" (routes/watsonMessage.ts)
+    onRunChange: (id) => options.onWatson?.(id),
   };
 }

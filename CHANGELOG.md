@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Stop Watson** — a stop icon ends a running answer; all viewers see when Watson works; a resent message is not paid twice
 - **Watson tool calling** — several lookups (up to 10) per question with native tool calls, each masked, cost-checked and listed on the card
 - **Watson Auto holds raw-cited writes** — writes that rest on super-timeline or paste rows wait for approval
 - **Watson searches the super-timeline** — one targeted search per round; cited raw rows are promoted with the Watson badge and Undo
