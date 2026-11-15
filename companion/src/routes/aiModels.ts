@@ -93,7 +93,10 @@ function savedSetting(
 ): string | undefined {
   const runsOn = AI_ROLE_SOURCES[role].provider(process.env)?.trim().toLowerCase();
   if (runsOn === provider) return resolveAiRoleSetting(process.env, role, setting);
-  return resolveRoleSetting(process.env, provider, setting, roleOwnSetting(process.env, role, setting));
+  // Another provider: a role saved on a known provider keeps its own key for that provider only, so
+  // the key is never sent to the provider the picker asked about. With no saved provider it is used.
+  const own = runsOn ? undefined : roleOwnSetting(process.env, role, setting);
+  return resolveRoleSetting(process.env, provider, setting, own);
 }
 
 function savedCredentials(

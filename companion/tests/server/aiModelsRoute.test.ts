@@ -81,6 +81,20 @@ describe("POST /settings/ai-models", () => {
     );
   });
 
+  it("never sends a role's saved key to a provider the role does not run on", async () => {
+    process.env.DFIR_AI_SYNTH_PROVIDER = "anthropic";
+    process.env.DFIR_AI_WATSON_KEY = "saved-watson-anthropic-secret"; // trufflehog:ignore
+    const fetchFn = fetchMock(async () => jsonResponse({ data: [{ id: "gpt-6-sol" }] }));
+    vi.stubGlobal("fetch", fetchFn);
+    const app = await harness();
+
+    await request(app).post("/settings/ai-models").send({ provider: "openai", role: "watson" });
+
+    const auth =
+      (fetchFn.mock.calls[0]?.[1]?.headers as Record<string, string> | undefined)?.authorization ?? "";
+    expect(auth).not.toContain("saved-watson-anthropic-secret");
+  });
+
   it("lists models for the Watson role with its own saved key", async () => {
     process.env.DFIR_AI_WATSON_KEY = "saved-watson-secret"; // trufflehog:ignore
     const fetchFn = fetchMock(async () => jsonResponse({ data: [{ id: "gpt-6-sol" }] }));
