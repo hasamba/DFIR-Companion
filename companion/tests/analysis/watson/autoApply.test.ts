@@ -10,7 +10,9 @@ import {
   WATSON_AUTO_ACTOR,
   WatsonAutoListingUnsaved,
 } from "../../../src/analysis/ai/watson/autoApply.js";
+import { WATSON_AUTO_CHAIN_MAX } from "../../../src/analysis/ai/watson/autoChain.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
+import { engaged } from "../../../src/analysis/ai/watson/reactionState.js";
 import {
   applyWatsonProposal,
   WatsonProposalStateError,
@@ -41,7 +43,8 @@ import { matchClient } from "../../../src/integrations/velociraptor/clientInvent
 import { CaseStore } from "../../../src/storage/caseStore.js";
 
 // Auto mode (phase 3, P1/P3): after a round, Watson applies its own proposals of that round. Host
-// collections launch only from a round an analyst started; fleet hunts always wait; case writes apply
+// collections launch from a round an analyst started, and from Watson's own rounds up to a short chain
+// (WATSON_AUTO_CHAIN_MAX since the analyst's last message); fleet hunts always wait; case writes apply
 // from every round. Every action is audited as "Watson (Auto)" and listed in one system turn.
 
 const CASE = "c1";
@@ -290,16 +293,17 @@ describe("autoApply", () => {
     );
   });
 
-  it("a reaction round (the one reading its own result) launches nothing but still applies its writes", async () => {
+  it("a reaction round with no chain yet: Watson launches the safe collection by itself and applies its writes", async () => {
     await seed([
       findingNew("wp-f", TURN, "f-watson-0a1b2c3d", "Phish"),
       launch("wp-c", TURN, "collection", NETSTAT, HOST_A),
     ]);
     const chat = await autoApply(deps(), CASE, { turnId: TURN, reaction: true }, AUTO_ON);
-    expect(await status("wp-c")).toBe("pending");
+    expect(await status("wp-c")).toBe("applied");
     expect(await status("wp-f")).toBe("applied");
-    expect(launches).toHaveLength(0);
-    expect(lastTurn(chat).text).toMatch(/does not launch from a round that it started itself/);
+    expect(launches).toEqual([expect.objectContaining({ mode: "collection", hostname: HOST_A })]);
+    expect(lastTurn(chat).text).toContain("Watson launched this follow-up by itself (1 of 3 in a row)");
+    expect((await new WatsonChatStore(cases).load(CASE)).autoChainLaunches).toBe(1);
   });
 
   it("two collections in one analyst round both launch (no cap), and the turn lists each exact VQL", async () => {
@@ -596,5 +600,104 @@ describe("Auto on a case closed mid-round (final review G4)", () => {
     expect(launches.map((l) => l.hostname)).toEqual([HOST_A]);
     expect(await status("wp-b")).toBe("pending");
     expect(lastTurn(chat).text).toMatch(/Someone closed or archived the case\./);
+  });
+});
+
+describe("Auto chain: follow-up collections from Watson's own rounds", () => {
+  const CHAIN_FULL = `Watson launched ${WATSON_AUTO_CHAIN_MAX} collections in a row without a message from you.`;
+  const setCount = (n: unknown) => chatStore.update(CASE, (c) => ({ ...c, autoChainLaunches: n as number }));
+  const count = async () => (await new WatsonChatStore(cases).load(CASE)).autoChainLaunches ?? 0;
+  const reaction = { turnId: TURN, reaction: true };
+
+  it("the cap is 3", () => {
+    expect(WATSON_AUTO_CHAIN_MAX).toBe(3);
+  });
+
+  it("at the cap, the collection is left for the analyst with the chain note", async () => {
+    await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+    await setCount(WATSON_AUTO_CHAIN_MAX);
+    const chat = await autoApply(deps(), CASE, reaction, AUTO_ON);
+    expect(await status("wp-c")).toBe("pending");
+    expect(launches).toHaveLength(0);
+    expect(lastTurn(chat).text).toContain(CHAIN_FULL);
+    expect(lastTurn(chat).text).toContain("Launch this one, or send a message to let Watson continue.");
+    expect(await count()).toBe(WATSON_AUTO_CHAIN_MAX);
+  });
+
+  it("with 2 in the chain, the first of two collections launches and the second waits", async () => {
+    await seed([
+      launch("wp-a", TURN, "collection", PSLIST, HOST_A),
+      launch("wp-b", TURN, "collection", NETSTAT, HOST_B),
+    ]);
+    await setCount(2);
+    const chat = await autoApply(deps(), CASE, reaction, AUTO_ON);
+    expect(launches.map((l) => l.hostname)).toEqual([HOST_A]);
+    expect(await status("wp-b")).toBe("pending");
+    expect(lastTurn(chat).text).toContain("(3 of 3 in a row)");
+    expect(lastTurn(chat).text).toContain(CHAIN_FULL);
+    expect(await count()).toBe(3);
+  });
+
+  it("a risky collection from a reaction round waits and uses no place in the chain", async () => {
+    const risky = {
+      ...launch("wp-r", TURN, "collection", "SELECT * FROM execve(argv=['calc'])", HOST_A),
+      risk: { reasons: ["runs a program"], checks: ["execve"], display: ["The query runs a program."] },
+    };
+    await seed([risky]);
+    const chat = await autoApply(deps(), CASE, reaction, AUTO_ON);
+    expect(await status("wp-r")).toBe("pending");
+    expect(launches).toHaveLength(0);
+    expect(lastTurn(chat).text).toContain("because the query is risky");
+    expect(await count()).toBe(0);
+  });
+
+  it("a fleet-wide hunt from a reaction round waits and uses no place in the chain", async () => {
+    await seed([launch("wp-h", TURN, "hunt", PSLIST)]);
+    const chat = await autoApply(deps(), CASE, reaction, AUTO_ON);
+    expect(await status("wp-h")).toBe("pending");
+    expect(launches).toHaveLength(0);
+    expect(lastTurn(chat).text).toMatch(/A fleet-wide hunt always waits for an analyst\./);
+    expect(await count()).toBe(0);
+  });
+
+  it("a refused launch gives its place in the chain back", async () => {
+    await seed([launch("wp-c", TURN, "collection", NETSTAT, "ghost.example.com")]);
+    await autoApply(deps(), CASE, reaction, AUTO_ON);
+    expect(await status("wp-c")).toBe("pending");
+    expect(launches).toHaveLength(0);
+    expect(await count()).toBe(0);
+  });
+
+  it("a launch Watson cannot confirm keeps its place in the chain (fail closed)", async () => {
+    launchResult = async () => {
+      throw new Error("socket hang up");
+    };
+    await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+    await autoApply(deps(), CASE, reaction, AUTO_ON);
+    expect(await status("wp-c")).toBe("uncertain");
+    expect(await count()).toBe(1);
+  });
+
+  it("an unreadable stored count is read as the cap: Watson does not launch (fail closed)", async () => {
+    await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+    await setCount("lots");
+    const chat = await autoApply(deps(), CASE, reaction, AUTO_ON);
+    expect(launches).toHaveLength(0);
+    expect(lastTurn(chat).text).toContain(CHAIN_FULL);
+  });
+
+  it("an analyst round launches without a cap and does not add to the chain", async () => {
+    await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+    await setCount(WATSON_AUTO_CHAIN_MAX);
+    await autoApply(deps(), CASE, { turnId: TURN, reaction: false, source: "dashboard" }, AUTO_ON);
+    expect(await status("wp-c")).toBe("applied");
+    expect(await count()).toBe(WATSON_AUTO_CHAIN_MAX);
+  });
+
+  it("an analyst message resets the chain", async () => {
+    await setCount(WATSON_AUTO_CHAIN_MAX);
+    const chat = await chatStore.update(CASE, engaged);
+    expect(chat.autoChainLaunches).toBeUndefined();
+    expect(await count()).toBe(0);
   });
 });

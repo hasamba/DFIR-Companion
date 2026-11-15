@@ -247,13 +247,14 @@ In Auto, Watson:
 - applies its own case writes, from every round (a reaction to an import still changes Key Questions only, as before), but not the writes that rest on raw rows (see below)
 - applies the tagger's promotions from the results of its own single-host collections, and from a file you paste in that round
 - launches single-host collections from messages you type or files you paste in the dashboard's Watson panel, any number of them
+- launches follow-up single-host collections from a round it started itself (for example the round that reads a collection's result), at most **3 in a row** after your last message. Each one is listed in the chat as *Watson launched this follow-up by itself (1 of 3 in a row)*. Your next message starts the count again. After 3, Watson leaves the next collection for you with the note *Watson launched 3 collections in a row without a message from you. Launch this one, or send a message to let Watson continue.*
 
 In Auto, Watson never:
 
 - starts a fleet-wide hunt (those always ask)
 - launches a risky query (those always wait for an analyst)
-- launches from a round it started itself, such as a reaction or a round that reads its own results
-- launches from a `/dfir ask` sent through a chat bot, or from any round that did not start from the Watson panel
+- launches more than 3 collections in a row from rounds it started itself, without a message from you
+- launches from a `/dfir ask` sent through a chat bot, or from any other round that did not start from the Watson panel (except the follow-up chain above)
 - acts on a case that was closed or archived while the round ran
 
 In Auto, a case write waits for you when it rests on rows that Watson saw in the super-timeline or in a paste. This applies to findings, next steps, report text and key-question answers or new questions, from every round. The chat lists each one with the note *Waits for you: it rests on rows Watson saw in the super-timeline or in a paste.* A write that cites only forensic-timeline events still applies on its own. Promotions do not wait: the rows Watson promotes from the super-timeline or from a paste are evidence, with the Watson badge and Undo.
