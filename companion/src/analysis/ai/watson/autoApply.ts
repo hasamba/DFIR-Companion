@@ -391,6 +391,14 @@ async function continueIfAsked(
   if (round.continue === undefined && !(await hasOpenQuestion(auto, caseId))) {
     return note(auto, caseId, "Watson stops here: every Key Question is answered or not answerable.");
   }
+  // No-progress guard (user report of 2026-11-16: 14 steps repeating one paste search). Watson's own
+  // rounds that produce nothing in a row stop Auto, whatever the chain limit.
+  if (
+    round.reaction &&
+    (await idleRounds(auto, caseId, ownIds(chat, round).size > 0)) >= WATSON_AUTO_IDLE_MAX
+  ) {
+    return note(auto, caseId, idleStopText());
+  }
   const r = await reserveChainPlace(auto.writer.chatStore, caseId);
   if ("place" in r) {
     const of = r.max === 0 ? `step ${r.place}` : `step ${r.place} of ${r.max}`;
@@ -398,6 +406,28 @@ async function continueIfAsked(
     return chat;
   }
   return note(auto, caseId, continueRefusedText(r));
+}
+
+/** Watson's own rounds in a row with no card and no launch after which Auto stops. */
+export const WATSON_AUTO_IDLE_MAX = 2;
+
+const idleStopText = (): string =>
+  `Watson made no progress in its last ${WATSON_AUTO_IDLE_MAX} rounds (no new card, collection or step change), so Auto stops here. ` +
+  "Send a message to guide Watson, for example which source to collect next.";
+
+/** Counts this round as idle (or resets the count on progress) and returns the count. Unreadable: the limit. */
+async function idleRounds(auto: WatsonAutoDeps, caseId: string, progress: boolean): Promise<number> {
+  let idle = WATSON_AUTO_IDLE_MAX;
+  try {
+    await auto.writer.chatStore.update(caseId, (c) => {
+      idle = progress ? 0 : (c.autoIdleRounds ?? 0) + 1;
+      const { autoIdleRounds: _old, ...rest } = c;
+      return idle ? { ...rest, autoIdleRounds: idle } : rest;
+    });
+  } catch {
+    return WATSON_AUTO_IDLE_MAX; // fail closed: no endless loop on a store that cannot be written
+  }
+  return idle;
 }
 
 /** A Key Question is open while its status is unknown or partial. A state that cannot be read: open. */
