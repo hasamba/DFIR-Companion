@@ -53,6 +53,11 @@ export interface Outcome {
   lookups?: WatsonLookedUp[];
   /** Tool mode: the question asked for a super-timeline search past its limit (R2). */
   superCapHit?: boolean;
+  /**
+   * The hop's answer asked for another search or lookup, which one round cannot run. Auto treats it
+   * as "continue" (its next round can run it); the turn says so, so Watson's promise is never silent.
+   */
+  wantsMore?: boolean;
   /** The id Watson's turn gets (round.ts sets it, so Auto knows which proposals are this round's). */
   turnId?: string;
   /** The raw rows the round's super-timeline search showed Watson (for promotion of what it cites). */

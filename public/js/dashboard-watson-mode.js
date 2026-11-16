@@ -59,7 +59,8 @@
     return (
       `<label class="watson-chain-label" title="How many steps Watson may take in a row by itself (its own collections and follow-up rounds) before it waits for you. 0 = no limit.">` +
       `Auto chain <input type="number" class="watson-chain-max" min="0" max="${CHAIN_MAX}" step="1" value="${escAttr(String(c.max))}" ` +
-      `data-act="watsonChainSet" data-act-on="change" aria-label="Auto chain limit (0 = no limit)"></label>` +
+      `data-act="watsonChainSet" data-act-on="change" aria-label="Auto chain limit (0 = no limit)">` +
+      `<span class="watson-chain-hint">steps in a row (0 = no limit)</span></label>` +
       state +
       `<button type="button" class="watson-mini watson-chain-stop" data-act="watsonChainStop"${c.stopped ? " disabled" : ""} ` +
       `title="Watson takes no more steps by itself until your next message. Auto stays on.">Stop chain</button>`

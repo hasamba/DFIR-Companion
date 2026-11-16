@@ -201,3 +201,10 @@ describe("the jump-to-latest arrow", () => {
     );
   });
 });
+
+describe("the Auto chain bar", () => {
+  it("says next to the box that 0 means no limit", () => {
+    const mode = read("../../../public/js/dashboard-watson-mode.js");
+    expect(mode).toContain('<span class="watson-chain-hint">steps in a row (0 = no limit)</span>');
+  });
+});

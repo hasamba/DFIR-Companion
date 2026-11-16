@@ -335,3 +335,42 @@ describe("Auto launches only from a dashboard round (final review G12 / G20)", (
     expect(h.loads.n).toBe(2);
   });
 });
+
+describe("Auto keeps going from a round (user decisions of 2026-11-16)", () => {
+  afterEach(() => {
+    replyText = reply;
+  });
+  const withSpy = (h: Awaited<ReturnType<typeof harness>>) => {
+    const continued: string[] = [];
+    h.ctx.auto = { ...h.ctx.auto!, continueLater: (_id, text) => void continued.push(text) };
+    return continued;
+  };
+
+  it("a reply that says it can continue, with no request, starts Watson's next round", async () => {
+    replyText = JSON.stringify({ ...JSON.parse(reply), continue: true });
+    const h = await harness(() => AUTO);
+    const continued = withSpy(h);
+    await runWatsonRound(h.ctx, CASE, { text: "continue" });
+    expect(continued).toEqual(["Watson continues with its next step by itself (Auto chain step 1 of 3)."]);
+  });
+
+  it("a reply that asked for something (a request) waits for it instead", async () => {
+    const request = { kind: "import", what: "the Sysmon log", why: "to see the process tree" };
+    replyText = JSON.stringify({ ...JSON.parse(reply), continue: true, request });
+    const h = await harness(() => AUTO);
+    const continued = withSpy(h);
+    await runWatsonRound(h.ctx, CASE, { text: "continue" });
+    expect(continued).toEqual([]);
+  });
+
+  it("an answer that asks for a second search (one per round) starts the next round, with no 'continue' flag", async () => {
+    replyText = JSON.stringify({ ...JSON.parse(reply), search: { pasteId: "history", terms: ["parsed"] } });
+    const h = await harness(() => AUTO);
+    await h.seed([]);
+    const continued = withSpy(h);
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "continue" });
+    const turn = chat.turns.find((t) => t.role === "watson");
+    expect(turn?.text).toContain("one round runs only one");
+    expect(continued).toHaveLength(1);
+  });
+});
