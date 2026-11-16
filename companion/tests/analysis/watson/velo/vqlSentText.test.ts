@@ -93,10 +93,13 @@ describe("the prompt tells the truth about approval in both modes (G9)", () => {
 
   it("describes the Auto chain from Watson's own rounds and the risky wait", async () => {
     const { veloRulesText } = await import("../../../../src/analysis/ai/watson/velo/veloPrompt.js");
-    const { WATSON_AUTO_CHAIN_MAX } = await import("../../../../src/analysis/ai/watson/autoChain.js");
+    const { WATSON_AUTO_CHAIN_DEFAULT } = await import("../../../../src/analysis/ai/watson/autoChain.js");
     const t = veloRulesText();
     expect(t).not.toContain("the analyst sent this message from the Watson panel");
-    expect(t).toContain(`up to ${WATSON_AUTO_CHAIN_MAX} safe single-host collections in a row`);
+    expect(t).toContain(
+      `chain limit for the case (${WATSON_AUTO_CHAIN_DEFAULT} unless the analyst changed it)`,
+    );
+    expect(t).toContain("when the analyst stops the chain, the next one waits for the analyst");
     expect(t).toContain("since the analyst's last message");
     expect(t).toContain("Auto mode never launches it");
     expect(t).toContain("Windows.Hayabusa.Rules");

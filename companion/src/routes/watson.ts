@@ -31,6 +31,7 @@ import {
 } from "./watsonMessage.js";
 import { watsonRuns } from "../analysis/ai/watson/runRegistry.js";
 import { parseApplyBody, registerWatsonVeloLaunchRoutes } from "./watsonVeloLaunch.js";
+import { registerWatsonAutoChainRoutes } from "./watsonAutoChain.js";
 import { logActivity, logActivityWithWarning } from "../analysis/activityLog.js";
 import {
   isWatsonRunMode,
@@ -55,6 +56,8 @@ import { ingestRows, withPasteIngest } from "../analysis/ai/watson/pasteIngestCh
  *   POST /watson/turns/:tid/add-question add a turn's free-form answer to the open questions (no model call)
  *   POST /watson/new-thread              start a fresh chat thread; Watson's memory stays (no model call)
  *   POST /watson/mode {mode}             switch the case's run mode, approve | auto → { mode } (no model call)
+ *   POST /watson/auto-chain {max}        the case's Auto chain limit; /auto-chain/stop stops the chain
+ *                                        (routes/watsonAutoChain.ts, no model call)
  *
  * A paste is stored as evidence and, in a format a built-in importer reads, parsed into rows whose
  * tagger promotions wait as Watson proposals (routes/watsonPasteIngest.ts). It never starts a
@@ -92,6 +95,7 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
   /** The model Watson uses and the limits, read per request so a Settings change applies at once. */
   const roundDeps = (): WatsonRoundDeps | undefined => watsonRoundDeps(ctx);
   registerWatsonVeloLaunchRoutes(app, ctx, sendWatsonError); // before /proposals/:pid/:action
+  registerWatsonAutoChainRoutes(app, ctx, sendWatsonError);
 
   /** What applying a proposal (or adding an answer as a question) needs; undefined when not wired. */
   const proposalDeps = (): WriterDeps | undefined => watsonProposalDeps(ctx);

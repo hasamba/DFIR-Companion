@@ -31,10 +31,16 @@ export function reactionTurn(chat: WatsonChat): WatsonTurn {
 
 /**
  * The chat after an analyst message: Watson is in use here, any reactions pause is lifted, and the
- * Auto chain count starts again (autoChain.ts).
+ * Auto chain count and any Stop chain clear (autoChain.ts). The chain limit stays.
  */
 export function engaged(chat: WatsonChat): WatsonChat {
-  const { reactionsPaused: _paused, reactionFailures: _failures, autoChainLaunches: _chain, ...rest } = chat;
+  const {
+    reactionsPaused: _paused,
+    reactionFailures: _failures,
+    autoChainLaunches: _chain,
+    autoChainStopped: _stopped,
+    ...rest
+  } = chat;
   return { ...rest, analystEngaged: true };
 }
 

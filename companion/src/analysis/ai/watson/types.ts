@@ -353,9 +353,13 @@ export interface WatsonChat {
   analystEngaged?: boolean;
   /**
    * Collections Auto launched from Watson's own rounds since the analyst's last message (autoChain.ts).
-   * Cleared by an analyst message; at WATSON_AUTO_CHAIN_MAX, reaction rounds launch nothing more.
+   * Cleared by an analyst message; at the chain limit, reaction rounds launch nothing more.
    */
   autoChainLaunches?: number;
+  /** The case's Auto chain limit, set in the Watson panel: 0..50, 0 = no limit (default 3). Kept. */
+  autoChainMax?: number;
+  /** The analyst pressed Stop chain: no chained launch until the analyst's next message. */
+  autoChainStopped?: boolean;
   costUSD: number;
   /** Input + output tokens Watson used on this case: the limit for providers that report no cost. */
   tokens: number;

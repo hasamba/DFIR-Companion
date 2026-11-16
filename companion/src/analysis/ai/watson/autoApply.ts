@@ -1,12 +1,6 @@
 import { runWithoutIdentity } from "../../../auth/identityContext.js";
 import type { AiControl } from "../../aiControl.js";
-import {
-  CHAIN_FULL_WAIT,
-  isChainLaunch,
-  releaseChainPlace,
-  reserveChainPlace,
-  WATSON_AUTO_CHAIN_MAX,
-} from "./autoChain.js";
+import { type ChainPlace, isChainLaunch, releaseChainPlace, reserveChainPlace } from "./autoChain.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WatsonLaunchUncertain } from "./proposalErrors.js";
 import { applyWatsonProposal } from "./proposals.js";
@@ -23,7 +17,8 @@ import type { WriterDeps } from "./writers/writerTypes.js";
 //   - Case writes apply from every round, reaction rounds included (P3).
 //   - A single-host collection launches from a round an analyst started (P1, no cap). From a
 //     reaction round (Watson's own, for example the one reading its own result) it launches only as
-//     a short chain: at most WATSON_AUTO_CHAIN_MAX since the analyst's last message (autoChain.ts).
+//     a short chain: at most the case's chain limit since the analyst's last message, unless the
+//     analyst stopped the chain (autoChain.ts).
 //   - A fleet-wide hunt always waits for an analyst, and so does a risky query (Task 9).
 //
 // The eligible set is the round's Watson-turn proposals, plus held promotions the round carried
@@ -220,7 +215,7 @@ async function applyOne(
   caseId: string,
   p: WatsonProposal,
   detailSuffix: string,
-  chainPlace?: number,
+  chainPlace?: ChainPlace,
 ): Promise<Listed & { state: boolean }> {
   const vql = vqlOf(p);
   const listed = (line: string, state = false) => ({ line, state, ...(vql !== undefined ? { vql } : {}) });
@@ -232,7 +227,10 @@ async function applyOne(
       }),
     );
     if (chainPlace !== undefined) {
-      const place = `${chainPlace} of ${WATSON_AUTO_CHAIN_MAX} in a row`;
+      const place =
+        chainPlace.max === 0
+          ? `${chainPlace.place} in a row`
+          : `${chainPlace.place} of ${chainPlace.max} in a row`;
       return listed(`- Watson launched this follow-up by itself (${place}): ${what(p)}`, !!r.state);
     }
     const verb = p.kind === "velo_launch" ? "Launched" : "Applied";
@@ -285,8 +283,9 @@ export async function autoApply(
     }
     let wait = stopped ? stopReason : waitReason(p, round);
     const chained = !wait && isChainLaunch(p, round.reaction);
-    const place = chained ? await reserveChainPlace(deps.chatStore, caseId) : null;
-    if (chained && place === null) wait = CHAIN_FULL_WAIT;
+    const reserved = chained ? await reserveChainPlace(deps.chatStore, caseId) : null;
+    if (reserved && "wait" in reserved) wait = reserved.wait;
+    const place = reserved && "place" in reserved ? reserved : null;
     if (wait) {
       lines.push(leftLine(p, wait));
       continue;
