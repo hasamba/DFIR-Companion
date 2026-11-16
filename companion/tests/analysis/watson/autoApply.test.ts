@@ -829,7 +829,7 @@ describe("Auto works until nothing is open or only a person can help (user goal 
   });
   const run = async (r: Record<string, unknown>) => {
     const saved = await new WatsonChatStore(cases).load(CASE);
-    return autoAfterRound(autoDeps(), CASE, { turnId: TURN, reaction: true, ...r } as never, saved, () => {});
+    return autoAfterRound(autoDeps(), CASE, { turnId: TURN, reaction: true, ...r }, saved, () => {});
   };
   const questions = async (statuses: string[]) => {
     const st = await stateStore.load(CASE);
