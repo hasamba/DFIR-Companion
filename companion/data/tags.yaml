@@ -1197,11 +1197,25 @@ cloud_gcp_external_member_added:
 # with incident links. Licensed CC-BY-4.0 (attribution required; see NOTICE). Changes: only the
 # operation names, the used-in-the-wild flag and the technique ids are used; the grades, the grouping
 # and the conditions below are this project's, not TrailDiscover's.
-# TrailDiscover upstream commit: 78156accdf5b6c325100ddb64c5300586f67079c (2026-10-04)
-# That is the newest upstream commit touching events/ when the port was made (2026-11-06). The weekly
+# TrailDiscover upstream commit: c03df041ad2601e58b50bf55eeb11baeb5d57c48 (2026-11-10)
+# That is the newest upstream commit touching events/ at the last re-port (#2646, 2026-11-16); the
+# first port (#2345, 2026-11-06) was made from 78156accdf5b6c325100ddb64c5300586f67079c (2026-10-04). The weekly
 # .github/workflows/upstream-rules-check.yml compares the event files (usedInWild and techniques) from
 # this commit to upstream's newest and opens an issue when they changed (#2343). A re-port moves this
 # SHA and date forward in the same PR.
+#
+# RE-PORT #2646 (78156ac → c03df04: 16 events added, 2 flipped to used-in-the-wild), same judgment:
+# - 12 tag-only: apigateway GetRestApis, cognito-idp GetUser / ListUserPools, glue GetDatabases, kms
+#   GetKeyPolicy / ListAliases / ListKeys (discovery); logs FilterLogEvents (collection); cognito-idp
+#   InitiateAuth / RespondToAuthChallenge / SignUp (persistence, beside GetTokensFromRefreshToken);
+#   ssm GetParameter (credential access). The importer grades only a DECRYPTED GetParameter read by a
+#   user or a session (awsAuthSignals.ts, #2604); an ordinary read is not covered, so the tag is added
+#   and never changes that grade. Cognito GetUser is keyed on its source, so IAM GetUser never matches
+#   it. These match the API names only: Cognito managed-login events (login_POST, signup_POST,
+#   selectChallenge_POST) are not covered.
+# - left out: kms DescribeKey and sns ListTopics (bundled Suzaku rules already tag both); bedrock
+#   Converse (model-invocation data plane, like InvokeModel*); billing GetCredits, ec2 CopyVolumes and
+#   ram AssociateResourceShare (not used in the wild). No new graded rule.
 #
 # HOW THE 305 IN-THE-WILD OPERATIONS WERE PORTED (same judgment as #2306):
 # - 61 are left out because something already grades or tags them: the CloudTrail importer
@@ -1412,14 +1426,16 @@ td_aws_root_password_recovery:
 # IAM, Identity Center, WorkMail and Transfer Family). Lambda operations carry an API-version suffix
 # in CloudTrail (CreateFunction20150331), so the suffix is optional there.
 td_aws_discovery:
-  description: AWS API call TrailDiscover lists as used in the wild — discovery (147 operations, tag only)
+  description: AWS API call TrailDiscover lists as used in the wild — discovery (154 operations, tag only)
   any:
     - { field: description, regex: '^AWS (?:SearchAgreements) \(agreement-marketplace\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:ListAccessPolicies|ListCollections) \(aoss\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetRestApis) \(apigateway\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:GetQueryResults) \(athena\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:GetFoundationModelAvailability|GetKnowledgeBase|GetModelInvocationLoggingConfiguration|GetUseCaseForModelAccess|ListAgents|ListCustomModels|ListFoundationModelAgreementOffers|ListFoundationModels|ListInferenceProfiles|ListKnowledgeBases|ListModelInvocationJobs|ListProvisionedModelThroughputs) \(bedrock\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:GetCostAndUsage|GetCostForecast) \(ce\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:LookupEvents) \(cloudtrail\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetUser|ListUserPools) \(cognito-idp\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:GetListingView) \(discovery-marketplace\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:DescribeAccountAttributes|DescribeAvailabilityZones|DescribeBundleTasks|DescribeCarrierGateways|DescribeClientVpnRoutes|DescribeDhcpOptions|DescribeFlowLogs|DescribeHosts|DescribeImages|DescribeInstanceAttribute|DescribeInstanceStatus|DescribeInstanceTypes|DescribeInstances|DescribeInternetGateways|DescribeKeyPairs|DescribeLaunchTemplates|DescribeNetworkInterfaces|DescribeRegions) \(ec2\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:DescribeRouteTables|DescribeSecurityGroups|DescribeSnapshotAttribute|DescribeSnapshotTierStatus|DescribeSnapshots|DescribeSubnets|DescribeTags|DescribeTransitGatewayMulticastDomains|DescribeVolumeStatus|DescribeVolumes|DescribeVolumesModifications|DescribeVpcEndpointConnectionNotifications|DescribeVpcs|GetConsoleScreenshot|GetEbsDefaultKmsKeyId|GetEbsEncryptionByDefault) \(ec2\)', flags: 'i' }
@@ -1428,9 +1444,11 @@ td_aws_discovery:
     - { field: description, regex: '^AWS (?:DescribeTasks|ListClusters|ListTaskDefinitions|ListTasks) \(ecs\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:DescribeCluster|ListClusters) \(eks\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:ListVaults) \(glacier\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetDatabases) \(glue\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:GetDetector|GetFindings|ListDetectors|ListFindings) \(guardduty\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:DescribeEventAggregates|DescribeEvents) \(health\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:GetUser|ListAccessKeys|ListAccountAliases|ListAttachedRolePolicies|ListAttachedUserPolicies|ListGroups|ListGroupsForUser|ListInstanceProfiles|ListOpenIDConnectProviders|ListRolePolicies|ListRoles|ListSAMLProviders|ListSSHPublicKeys|ListServiceSpecificCredentials|ListSigningCertificates|ListUserPolicies|ListUsers|SimulatePrincipalPolicy) \(iam\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetKeyPolicy|ListAliases|ListKeys) \(kms\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:GetFunction|GetFunctionConfiguration|ListFunctions)(?:\d{8}(?:v\d+)?)? \(lambda\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:DescribeLogGroups|DescribeLogStreams|DescribeSubscriptionFilters|GetLogRecord) \(logs\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:DescribeAlarms|DescribeAlarmsForMetric) \(monitoring\)', flags: 'i' }
@@ -1450,19 +1468,20 @@ td_aws_discovery:
   view: 'TrailDiscover (AWS in the wild)'
 
 td_aws_credential_access:
-  description: AWS API call TrailDiscover lists as used in the wild — credential access (3 operations, tag only)
+  description: AWS API call TrailDiscover lists as used in the wild — credential access (4 operations, tag only)
   any:
     - { field: description, regex: '^AWS (?:GetPasswordData) \(ec2\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:DescribeSecret|ListSecrets) \(secretsmanager\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetParameter) \(ssm\)', flags: 'i' }
   tags: ['traildiscover', 'credential_access']
   view: 'TrailDiscover (AWS in the wild)'
 
 td_aws_persistence:
-  description: AWS API call TrailDiscover lists as used in the wild — persistence (18 operations, tag only)
+  description: AWS API call TrailDiscover lists as used in the wild — persistence (21 operations, tag only)
   any:
     - { field: description, regex: '^AWS (?:AcceptAgreementRequest|CreateAgreementRequest) \(agreement-marketplace\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:CreateApi|CreateIntegration|CreateStage) \(apigateway\)', flags: 'i' }
-    - { field: description, regex: '^AWS (?:GetTokensFromRefreshToken) \(cognito-idp\)', flags: 'i' }
+    - { field: description, regex: '^AWS (?:GetTokensFromRefreshToken|InitiateAuth|RespondToAuthChallenge|SignUp) \(cognito-idp\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:CreateDefaultVpc|CreateKeyPair|StartInstances) \(ec2\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:PutTargets) \(events\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:CreateServiceLinkedRole) \(iam\)', flags: 'i' }
@@ -1509,8 +1528,9 @@ td_aws_execution:
   view: 'TrailDiscover (AWS in the wild)'
 
 td_aws_collection:
-  description: AWS API call TrailDiscover lists as used in the wild — collection (1 operation, tag only)
+  description: AWS API call TrailDiscover lists as used in the wild — collection (2 operations, tag only)
   any:
+    - { field: description, regex: '^AWS (?:FilterLogEvents) \(logs\)', flags: 'i' }
     - { field: description, regex: '^AWS (?:ExecuteStatement) \(redshift-data\)', flags: 'i' }
   tags: ['traildiscover', 'collection']
   view: 'TrailDiscover (AWS in the wild)'

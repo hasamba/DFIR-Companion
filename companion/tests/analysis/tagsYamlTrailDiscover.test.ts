@@ -11,6 +11,9 @@ import { runTagger } from "../../src/analysis/tagger.js";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
 import { readRecordedCommit } from "../../scripts/upstreamRulesDiff.mjs";
+import { bundledSigmaDir, loadSigmaRuleDir } from "../../src/analysis/sigmaBundledRules.js";
+import { bundledSuzakuDir } from "../../src/analysis/sigmaSuzakuRules.js";
+import { matchSigmaRecord } from "../../src/analysis/sigmaRuleSet.js";
 
 const YAML = readFileSync(fileURLToPath(new URL("../../data/tags.yaml", import.meta.url)), "utf8");
 const RULES = compileText(YAML);
@@ -312,6 +315,19 @@ describe("TrailDiscover AWS rules — tag-only (#2345)", () => {
     ["td_aws_exfiltration", "rds.amazonaws.com", "ModifyDBSnapshotAttribute", false],
     ["td_aws_impact", "route53.amazonaws.com", "ChangeResourceRecordSets", false],
     ["td_aws_resource_development", "route53domains.amazonaws.com", "RegisterDomain", false],
+    // #2646 re-port (TrailDiscover 78156ac → c03df04).
+    ["td_aws_discovery", "apigateway.amazonaws.com", "GetRestApis", true],
+    ["td_aws_discovery", "cognito-idp.amazonaws.com", "GetUser", true],
+    ["td_aws_discovery", "cognito-idp.amazonaws.com", "ListUserPools", true],
+    ["td_aws_discovery", "glue.amazonaws.com", "GetDatabases", true],
+    ["td_aws_discovery", "kms.amazonaws.com", "GetKeyPolicy", true],
+    ["td_aws_discovery", "kms.amazonaws.com", "ListAliases", true],
+    ["td_aws_discovery", "kms.amazonaws.com", "ListKeys", true],
+    ["td_aws_collection", "logs.amazonaws.com", "FilterLogEvents", true],
+    ["td_aws_persistence", "cognito-idp.amazonaws.com", "InitiateAuth", false],
+    ["td_aws_persistence", "cognito-idp.amazonaws.com", "RespondToAuthChallenge", false],
+    ["td_aws_persistence", "cognito-idp.amazonaws.com", "SignUp", false],
+    ["td_aws_credential_access", "ssm.amazonaws.com", "GetParameter", true],
   ];
   for (const [rule, source, name, readOnly] of TAG_ONLY) {
     it(`${rule}: ${name} is tagged and keeps the importer's grade`, () => {
@@ -334,6 +350,69 @@ describe("TrailDiscover AWS rules — tag-only (#2345)", () => {
       "td_aws_discovery",
     ]);
   });
+
+  it("#2646: keeps Cognito and IAM GetUser apart, and singular GetParameter apart from its neighbours", () => {
+    expect(tdRules(run("iam.amazonaws.com", "GetUser", { readOnly: true }))).toEqual(["td_aws_discovery"]);
+    expect(tdRules(run("cognito-idp.amazonaws.com", "GetUser", { readOnly: true }))).toEqual([
+      "td_aws_discovery",
+    ]);
+    expect(tdRules(run("cognito-idp.amazonaws.com", "GetUserPoolMfaConfig", { readOnly: true }))).toEqual([]);
+    expect(tdRules(run("ssm.amazonaws.com", "GetParameters", { readOnly: true }))).toEqual([
+      "td_aws_discovery",
+    ]);
+    expect(tdRules(run("ssm.amazonaws.com", "GetParametersByPath", { readOnly: true }))).toEqual([]);
+    expect(tdRules(run("ssm.amazonaws.com", "GetParameterHistory", { readOnly: true }))).toEqual([]);
+    expect(tdRules(run("kms.amazonaws.com", "ListKeyPolicies", { readOnly: true }))).toEqual([]);
+    expect(tdRules(run("logs.amazonaws.com", "FilterLogEventsExample", { readOnly: true }))).toEqual([]);
+  });
+
+  it("#2646: leaves out Bedrock Converse (model-invocation data plane, like InvokeModel)", () => {
+    expect(tdRules(run("bedrock.amazonaws.com", "Converse", {}))).toEqual([]);
+    expect(tdRules(run("bedrock.amazonaws.com", "ConverseStream", {}))).toEqual([]);
+  });
+
+  it("#2646: the tag on ssm GetParameter adds no grade — the importer's decrypted-read grade stands", () => {
+    const decrypted = {
+      readOnly: true,
+      requestParameters: { name: "/prod/db/password", withDecryption: true },
+    };
+    const eligible = run("ssm.amazonaws.com", "GetParameter", decrypted);
+    expect(tdRules(eligible)).toEqual(["td_aws_credential_access"]);
+    expect(eligible.importer).toBe("Medium");
+    expect(eligible.final).toBe("Medium");
+
+    const plain = run("ssm.amazonaws.com", "GetParameter", {
+      readOnly: true,
+      requestParameters: { name: "/prod/app/region" },
+    });
+    expect(tdRules(plain)).toEqual(["td_aws_credential_access"]);
+    expect(RANK[plain.importer]).toBeLessThanOrEqual(RANK.Low);
+    expect(plain.final).toBe(plain.importer);
+
+    const service = run("ssm.amazonaws.com", "GetParameter", {
+      ...decrypted,
+      userIdentity: SERVICE_ROLE,
+      sourceIPAddress: "application-autoscaling.amazonaws.com",
+    });
+    expect(RANK[service.importer]).toBeLessThanOrEqual(RANK.Low);
+    expect(service.final).toBe(service.importer);
+  });
+});
+
+describe("TrailDiscover AWS rules — entries a bundled Suzaku rule already covers (#2646)", () => {
+  const SIGMA = loadSigmaRuleDir(bundledSigmaDir() as string, {}, bundledSuzakuDir());
+  const COVERED: [string, string, string][] = [
+    ["kms.amazonaws.com", "DescribeKey", "AWS KMS DescribeKey"],
+    ["sns.amazonaws.com", "ListTopics", "AWS SNS ListTopics"],
+  ];
+  for (const [source, name, title] of COVERED) {
+    it(`${name} (${source}) is matched by Suzaku's "${title}" and gets no td_aws_ rule`, () => {
+      const rec = record(source, name, { readOnly: true });
+      const titles = matchSigmaRecord(SIGMA, "aws-cloudtrail", rec).matches.map((m) => m.ref.title);
+      expect(titles).toContain(title);
+      expect(tdRules(run(source, name, { readOnly: true }))).toEqual([]);
+    });
+  }
 });
 
 describe("TrailDiscover AWS rules — the ruleset (#2345)", () => {
