@@ -605,7 +605,7 @@ describe("Auto on a case closed mid-round (final review G4)", () => {
 });
 
 describe("Auto chain: follow-up collections from Watson's own rounds", () => {
-  const CHAIN_FULL = `Watson launched ${WATSON_AUTO_CHAIN_DEFAULT} collections in a row without a message from you.`;
+  const CHAIN_FULL = `Watson took ${WATSON_AUTO_CHAIN_DEFAULT} steps in a row without a message from you.`;
   const setCount = (n: unknown) => chatStore.update(CASE, (c) => ({ ...c, autoChainLaunches: n as number }));
   const count = async () => (await new WatsonChatStore(cases).load(CASE)).autoChainLaunches ?? 0;
   const reaction = { turnId: TURN, reaction: true };
@@ -707,9 +707,7 @@ describe("Auto chain: follow-up collections from Watson's own rounds", () => {
     const chat = await autoApply(deps(), CASE, reaction, AUTO_ON);
     expect(launches.map((l) => l.hostname)).toEqual([HOST_A]);
     expect(lastTurn(chat).text).toContain("(1 of 1 in a row)");
-    expect(lastTurn(chat).text).toContain(
-      "Watson launched 1 collection in a row without a message from you.",
-    );
+    expect(lastTurn(chat).text).toContain("Watson took 1 step in a row without a message from you.");
   });
 
   it("a case limit of 0 means no limit", async () => {
@@ -774,5 +772,50 @@ describe("Auto chain: follow-up collections from Watson's own rounds", () => {
     const chat = await chatStore.update(CASE, engaged);
     expect(chat.autoChainLaunches).toBeUndefined();
     expect(await count()).toBe(0);
+  });
+});
+
+describe("Auto keeps going (user decision of 2026-11-16)", () => {
+  const continued: string[] = [];
+  const autoDeps = (control = AUTO_ON) => ({
+    control: async () => control,
+    writer: deps(),
+    continueLater: (_id: string, text: string) => void continued.push(text),
+  });
+  const round = { turnId: TURN, reaction: true, continue: true };
+  const run = async (control = AUTO_ON, r: Record<string, unknown> = round) => {
+    const saved = await new WatsonChatStore(cases).load(CASE);
+    return autoAfterRound(autoDeps(control), CASE, r as never, saved, () => {});
+  };
+  beforeEach(() => void (continued.length = 0));
+
+  it("starts Watson's next round when it said it can continue, taking a chain place", async () => {
+    await run();
+    expect(continued).toEqual(["Watson continues with its next step by itself (Auto chain step 1 of 3)."]);
+    expect((await new WatsonChatStore(cases).load(CASE)).autoChainLaunches).toBe(1);
+  });
+
+  it("with no limit it keeps counting", async () => {
+    await chatStore.update(CASE, (c) => ({ ...c, autoChainMax: 0, autoChainLaunches: 7 }));
+    await run();
+    expect(continued).toEqual(["Watson continues with its next step by itself (Auto chain step 8)."]);
+  });
+
+  it("at the limit, or after Stop chain, it does not continue and says why in the chat", async () => {
+    await chatStore.update(CASE, (c) => ({ ...c, autoChainLaunches: 3 }));
+    const full = await run();
+    expect(continued).toEqual([]);
+    expect(lastTurn(full).text).toContain("it reached the Auto chain limit");
+    await chatStore.update(CASE, (c) => ({ ...c, autoChainStopped: true }));
+    const stopped = await run();
+    expect(continued).toEqual([]);
+    expect(lastTurn(stopped).text).toContain("you stopped the Auto chain");
+  });
+
+  it("does nothing in Approve mode, or when Watson did not ask to continue", async () => {
+    await run({ ...AUTO_ON, watsonRunMode: "approve" } as unknown as typeof AUTO_ON);
+    await run(AUTO_ON, { turnId: TURN, reaction: true });
+    expect(continued).toEqual([]);
+    expect((await new WatsonChatStore(cases).load(CASE)).autoChainLaunches).toBeUndefined();
   });
 });

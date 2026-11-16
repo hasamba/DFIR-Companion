@@ -84,6 +84,8 @@ export const watsonReplySchema = z.object({
     .catch(null),
   lookup: lookupFieldSchema,
   memory: str,
+  /** Watson can take its next step itself (no request): Auto may start its next round. */
+  continue: z.boolean().optional().catch(undefined),
   answer: answerSchema,
   writes: writesSchema,
 });
@@ -99,6 +101,8 @@ export interface WatsonReply {
   /** A forensic-timeline lookup (Task 11), checked, or why it was dropped. One hop: search wins. */
   lookup?: WatsonLookupAsk | null;
   memory: string;
+  /** Watson can take its next step itself: Auto may start its next round (never with a request). */
+  continue?: boolean;
   /** Set only when the analyst asked a question about the case. */
   answer: WatsonAnswer | null;
   /** Findings, next steps and report text Watson proposes; each becomes a pending proposal. */

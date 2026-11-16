@@ -52,17 +52,17 @@
   };
 
   function chainHtml(c) {
-    const used = c.max === 0 ? `${c.used} launched (no limit)` : `${c.used} of ${c.max} launched`;
+    const used = c.max === 0 ? `${c.used} steps taken (no limit)` : `${c.used} of ${c.max} steps taken`;
     const state = c.stopped
       ? `<span class="watson-chain-state">Stopped until your next message</span>`
       : `<span class="watson-chain-state">${esc(used)}</span>`;
     return (
-      `<label class="watson-chain-label" title="How many collections Watson may launch in a row from its own rounds, before it waits for you. 0 = no limit.">` +
+      `<label class="watson-chain-label" title="How many steps Watson may take in a row by itself (its own collections and follow-up rounds) before it waits for you. 0 = no limit.">` +
       `Auto chain <input type="number" class="watson-chain-max" min="0" max="${CHAIN_MAX}" step="1" value="${escAttr(String(c.max))}" ` +
       `data-act="watsonChainSet" data-act-on="change" aria-label="Auto chain limit (0 = no limit)"></label>` +
       state +
       `<button type="button" class="watson-mini watson-chain-stop" data-act="watsonChainStop"${c.stopped ? " disabled" : ""} ` +
-      `title="Watson launches nothing more by itself until your next message. Auto stays on.">Stop chain</button>`
+      `title="Watson takes no more steps by itself until your next message. Auto stays on.">Stop chain</button>`
     );
   }
 

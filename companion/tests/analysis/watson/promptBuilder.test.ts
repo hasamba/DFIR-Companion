@@ -433,3 +433,42 @@ describe("WATSON_PROMPT: the super-timeline search rule", () => {
     );
   });
 });
+
+describe("the NEXT STEPS block (user decision of 2026-11-16)", () => {
+  it("lists the case's next steps most urgent first, with the target, and (none) when there are none", () => {
+    const state = {
+      keyQuestions: [],
+      nextSteps: [
+        { id: "n1", priority: "low", action: "Pull Defender logs", rationale: "", pointer: "" },
+        {
+          id: "n2",
+          priority: "critical",
+          action: "Collect Sysmon EID 1",
+          rationale: "",
+          pointer: "WS-FAKE01",
+        },
+        { id: "n3", priority: "medium", action: "Confirm with the lab owner", rationale: "", pointer: "" },
+        { id: "n4", priority: "high", action: "Hash the staging folder", rationale: "", pointer: "" },
+      ],
+    } as unknown as InvestigationState;
+    const out = buildWatsonUserPrompt({
+      state,
+      chat: emptyWatsonChat(),
+      analystText: "",
+      caseContext: "",
+      mainLanguages: [],
+    });
+    const block = out.slice(out.indexOf("NEXT STEPS (most urgent first)"));
+    const order = [
+      "Collect Sysmon EID 1",
+      "Hash the staging folder",
+      "Confirm with the lab owner",
+      "Pull Defender logs",
+    ];
+    const at = order.map((t) => block.indexOf(t));
+    expect(at.every((i) => i > 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(block).toContain("- (critical) Collect Sysmon EID 1 — on: WS-FAKE01");
+    expect(build()).toContain("NEXT STEPS (most urgent first)\n(none)");
+  });
+});

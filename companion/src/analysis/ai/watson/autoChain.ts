@@ -2,8 +2,9 @@ import type { WatsonChat, WatsonProposal } from "./types.js";
 import type { WriterDeps } from "./writers/writerTypes.js";
 
 // The short Auto chain (user decisions of 2026-11-15 and 2026-11-16). In Auto mode Watson may launch a
-// follow-up single-host collection from a round it started itself (a reaction round), up to the
-// case's chain limit since the analyst's last message. The analyst sets the limit per case in the
+// follow-up single-host collection from a round it started itself (a reaction round), and start its
+// own next round when it says it can continue by itself ('continue' in its reply). Both take a place
+// in the chain: up to the case's chain limit of steps since the analyst's last message. The analyst sets the limit per case in the
 // Watson panel (default WATSON_AUTO_CHAIN_DEFAULT; 0 = no limit) and can stop the chain at any time:
 // Stop chain keeps Auto on but launches nothing more from Watson's own rounds until the analyst's next
 // message. The count, the limit and the stop are saved in the chat, so they survive a restart; any
@@ -35,8 +36,14 @@ export const chainLimitText = (max: number): string => (max === 0 ? "no limit" :
 
 /** Why a chained launch waits when the chain is full. */
 export const chainFullWait = (max: number): string =>
-  `Watson launched ${max} collection${max === 1 ? "" : "s"} in a row without a message from you. ` +
+  `Watson took ${max} step${max === 1 ? "" : "s"} in a row without a message from you. ` +
   "Launch this one, or send a message to let Watson continue.";
+
+/** Why Watson does not start its own next round (user decision of 2026-11-16: Auto keeps going). */
+export const continueRefusedText = (r: ChainRefusal): string =>
+  r.wait.startsWith("You stopped")
+    ? "Watson has a next step, but you stopped the Auto chain. Send a message to let Watson continue."
+    : "Watson has a next step, but it reached the Auto chain limit. Send a message to let Watson continue, or raise the limit.";
 
 export const CHAIN_STOPPED_WAIT =
   "You stopped the Auto chain. Launch this one, or send a message to let Watson continue.";

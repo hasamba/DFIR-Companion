@@ -220,6 +220,8 @@ async function runRound(
     heldIds: mayWrite ? carriedHeldIds(reaction, input.heldProposalIds, outcome.shownEvents) : [],
     ...(pasteId ? { paste: { pasteId, proposalIds: input.pasteProposalIds ?? [] } } : {}),
     ...(ctx.signal ? { signal: ctx.signal } : {}),
+    // Auto keeps going only when Watson asked for nothing (a request waits for its result).
+    ...(outcome.reply.continue === true && !outcome.reply.request ? { continue: true } : {}),
   };
   return autoAfterRound(ctx.auto, caseId, round, saved, (line) => ctx.log?.warn(line, { caseId }));
 }
