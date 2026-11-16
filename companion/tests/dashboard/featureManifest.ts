@@ -1984,7 +1984,14 @@ export const FEATURES: Feature[] = [
     // The Watson panel width (drag handle, saved per browser) and the full-screen board's Next steps
     // column. initDataAct calls initWatsonLayout once at load.
     file: "dashboard-watson-layout.js",
-    publish: ["watsonSetWidth", "watsonNextStepsHtml", "initWatsonLayout", "watsonJumpSync", "watsonJumpEnd", "watsonSetInputHeight"],
+    publish: [
+      "watsonSetWidth",
+      "watsonNextStepsHtml",
+      "initWatsonLayout",
+      "watsonJumpSync",
+      "watsonJumpEnd",
+      "watsonSetInputHeight",
+    ],
     private: [
       "WIDTH_KEY",
       "SEC_KEY",
@@ -2019,7 +2026,19 @@ export const FEATURES: Feature[] = [
       "watsonBestPractice",
       "watsonModelFoot",
     ],
-    private: ["LABEL", "pending", "watching", "nameOf", "btn", "EMPTY_TEXT", "BUNDLE_ID", "NAME_MAX", "footModel"],
+    private: [
+      "LABEL",
+      "pending",
+      "watching",
+      "nameOf",
+      "btn",
+      "EMPTY_TEXT",
+      "BUNDLE_ID",
+      "NAME_MAX",
+      "footModel",
+      "lastMode",
+      "AUTO_DONE",
+    ],
   },
   {
     // Watson's running state: the working line, the stop icon, the stop call and the per-send idempotency

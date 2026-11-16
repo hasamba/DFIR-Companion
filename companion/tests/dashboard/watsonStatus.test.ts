@@ -138,6 +138,26 @@ describe("Watson status", () => {
     }
   });
 
+  it("a due reaction shows Working with the reason; a finished Auto cycle says so", () => {
+    const { api } = setup();
+    const due = api.watsonStatusOf(
+      { ...chat([]), reactionDue: { at: "t", waitingForSynthesis: false } },
+      false,
+    );
+    expect(due.state).toBe("working");
+    expect(due.bar).toContain("Watson reads the new case events in a moment.");
+    const synth = api.watsonStatusOf(
+      { ...chat([]), reactionDue: { at: "t", waitingForSynthesis: true } },
+      false,
+    );
+    expect(synth.bar).toContain("after the synthesis finishes");
+    const done = api.watsonStatusOf({ ...chat([]), runMode: "auto" }, false);
+    expect(done.state).toBe("ready");
+    expect(done.bar).toContain("Watson finished. Auto mode has nothing more to run now.");
+    const approve = api.watsonStatusOf({ ...chat([]), runMode: "approve" }, false);
+    expect(approve.bar).toBe("");
+  });
+
   it("says Waiting for you with the count, and names the first card's action in the bar", () => {
     const { api } = setup();
     const s = api.watsonStatusOf(

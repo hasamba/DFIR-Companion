@@ -66,11 +66,27 @@
     return `${action}${tail} <span class="watson-status-actions">${stuck ? "" : actionsOf(first)}${show}</span>`;
   }
 
+  // A reaction round that is due (the server's quiet window after a case event, or a wait for a
+  // synthesis): Watson is working from the event on, not only once the round starts. The GET carries
+  // it; a POST reply does not, and an analyst's message reads the events itself.
+  function dueBar(due) {
+    return due.waitingForSynthesis
+      ? "Watson reads the new case events after the synthesis finishes."
+      : "Watson reads the new case events in a moment.";
+  }
+
+  // The run mode the GET last sent (a POST reply has none): in Auto mode a finished cycle says so.
+  let lastMode = "";
+  const AUTO_DONE =
+    "Watson finished. Auto mode has nothing more to run now. It starts again when new evidence comes in or when you send a message.";
+
   function watsonStatusOf(chat, localBusy) {
     if (!chat) return { state: "none", pill: "", bar: "", pid: "" };
+    if (typeof chat.runMode === "string") lastMode = chat.runMode;
     const pill = (state, extra) =>
       `<span class="watson-status watson-status-${state}" role="status">${LABEL[state]}${extra || ""}</span>`;
     if (chat.running || localBusy) return { state: "working", pill: pill("working"), bar: workingBar(chat.running), pid: "" };
+    if (chat.reactionDue) return { state: "working", pill: pill("working"), bar: dueBar(chat.reactionDue), pid: "" };
     const youOf = (cards) => ({ state: "you", pill: pill("you", ` · ${cards.length}`), bar: youBar(cards), pid: cards[0].id });
     const stuck = recovery(chat);
     if (stuck.length) return youOf([...stuck, ...pending(chat)]);
@@ -81,7 +97,7 @@
     }
     const cards = pending(chat);
     if (cards.length) return youOf(cards);
-    return { state: "ready", pill: pill("ready"), bar: "", pid: "" };
+    return { state: "ready", pill: pill("ready"), bar: lastMode === "auto" ? AUTO_DONE : "", pid: "" };
   }
 
   function watsonStatusSync(chat, localBusy) {

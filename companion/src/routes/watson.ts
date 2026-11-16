@@ -30,6 +30,7 @@ import {
   type WatsonRun,
 } from "./watsonMessage.js";
 import { watsonRuns } from "../analysis/ai/watson/runRegistry.js";
+import type { WatsonReactor } from "../analysis/ai/watson/reactor.js";
 import { parseApplyBody, registerWatsonVeloLaunchRoutes } from "./watsonVeloLaunch.js";
 import { registerWatsonAutoChainRoutes } from "./watsonAutoChain.js";
 import { logActivity, logActivityWithWarning } from "../analysis/activityLog.js";
@@ -143,6 +144,8 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
         runMode,
         veloConnected,
         watsonModel: model ? { provider: model.name, model: model.model } : null,
+        // A reaction round that is due (its quiet window runs): the panel shows Watson as working.
+        reactionDue: (app.locals.watsonReactor as WatsonReactor | undefined)?.due(req.params.id) ?? null,
         running: watsonRuns.status(req.params.id), // memory only: null after a restart
       });
     } catch (err) {

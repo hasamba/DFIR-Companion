@@ -67,11 +67,9 @@ export function registerWatsonAutoChainRoutes(
   app.post("/cases/:id/watson/auto-chain", (req: Request, res: Response) => {
     const max = parseChainMax(req.body?.max);
     if (max === null) {
-      return res
-        .status(400)
-        .json({
-          error: `The chain limit must be a whole number from 0 to ${WATSON_AUTO_CHAIN_LIMIT_MAX} (0 = no limit).`,
-        });
+      return res.status(400).json({
+        error: `The chain limit must be a whole number from 0 to ${WATSON_AUTO_CHAIN_LIMIT_MAX} (0 = no limit).`,
+      });
     }
     return change(req, res, `Set the Auto chain limit to ${chainLimitText(max)}`, (c) =>
       withChainMax(c, max),

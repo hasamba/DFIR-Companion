@@ -54,7 +54,7 @@
   function watsonStopSync(chat, localBusy) {
     const running = !!(chat && chat.running);
     Array.from(document.querySelectorAll('[data-w="stop"]')).forEach((el) => { el.hidden = !(localBusy || running); });
-    pollSync(running);
+    pollSync(running || !!(chat && chat.reactionDue)); // a due reaction: re-read until its round shows
     if (typeof watsonStatusSync === "function") watsonStatusSync(chat, localBusy); // dashboard-watson-status.js
   }
 
