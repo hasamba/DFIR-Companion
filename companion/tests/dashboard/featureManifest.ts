@@ -2051,8 +2051,9 @@ export const FEATURES: Feature[] = [
       "watsonSendKey",
       "watsonSendSettled",
       "watsonNoCaseHtml",
+      "watsonSendHeaders",
     ],
-    private: ["REFETCH_MS", "wPendingKey", "wStopping", "wPoll", "newKey", "pollSync"],
+    private: ["REFETCH_MS", "wPendingKey", "wStopping", "wPoll", "pollSync", "KEY_BYTES"],
   },
   {
     // Two Settings warnings for Watson (lookups without a cost or token limit; provider without model or

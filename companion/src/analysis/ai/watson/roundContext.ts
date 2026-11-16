@@ -96,9 +96,40 @@ export const WATSON_CANCELLED_TEXT =
 
 /** An analyst stopped the round (run registry cancel). Never retried: it extends SendStopped. */
 export class WatsonCancelled extends SendStopped {
-  constructor() {
-    super(WATSON_CANCELLED_TEXT);
+  constructor(text: string = WATSON_CANCELLED_TEXT) {
+    super(text);
     this.name = "WatsonCancelled";
+  }
+}
+
+/**
+ * #2639: a round has a wall-clock limit, so a provider that accepts the connection and never answers
+ * cannot hold the round, its Idempotency-Key entry and every resend forever. The limit is
+ * WATSON_ROUND_TIMEOUT_FACTOR times the AI request timeout (DFIR_AI_TIMEOUT_MS, default 15 minutes),
+ * so it follows the setting the analyst already has. It is cooperative: it aborts the round's signal,
+ * which every provider request and every Watson check observes. It is a stop like an analyst's
+ * (before the commit point the reply is dropped; after it the saved work stays), but it counts as a
+ * failed reaction, so repeated hangs pause the automatic reactions.
+ */
+export const WATSON_ROUND_TIMEOUT_FACTOR = 2;
+const AI_TIMEOUT_DEFAULT_MS = 900_000;
+/** setTimeout fires at once for a delay above 2^31-1 ms. */
+const TIMER_MAX_MS = 2_147_483_647;
+
+export function watsonRoundMaxMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.DFIR_AI_TIMEOUT_MS);
+  const request = Number.isFinite(raw) && raw > 0 ? raw : AI_TIMEOUT_DEFAULT_MS;
+  return Math.min(TIMER_MAX_MS, Math.round(request * WATSON_ROUND_TIMEOUT_FACTOR));
+}
+
+export class WatsonRoundTimedOut extends WatsonCancelled {
+  constructor(maxMs: number) {
+    const minutes = Math.max(1, Math.round(maxMs / 60_000));
+    super(
+      `Watson stopped this answer after ${minutes} minute${minutes === 1 ? "" : "s"}, because the round did not finish in time. ` +
+        "The AI provider may not answer. Check the provider in Settings, then send your message again.",
+    );
+    this.name = "WatsonRoundTimedOut";
   }
 }
 

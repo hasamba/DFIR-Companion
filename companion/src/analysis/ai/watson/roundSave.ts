@@ -4,6 +4,7 @@ import {
   NO_SPEND,
   spendDelta,
   WatsonCancelled,
+  WatsonRoundTimedOut,
   watsonSpend,
   type WatsonRoundContext,
   type WatsonSpend,
@@ -51,8 +52,9 @@ export async function saveRound(
     // D9b: an undo of the promotion while the round ran drops what rested on it before it is added.
     const checked = revalidatePromotion(fresh, final);
     const merged = mergeOutcome(fresh, { ...checked, turnId: i.turnId }, spent, i.calls);
-    // A stopped reaction neither counts as a failure nor resets the count.
-    if (!i.reaction || final.error instanceof WatsonCancelled) return merged;
+    // A stopped reaction neither counts as a failure nor resets the count; a timed-out one counts (#2639).
+    const stopped = final.error instanceof WatsonCancelled && !(final.error instanceof WatsonRoundTimedOut);
+    if (!i.reaction || stopped) return merged;
     return withReactionResult(merged, reactionFailed(final.reply, final.error));
   });
   const late = ctx.signal?.aborted === true && !(final.error instanceof WatsonCancelled);

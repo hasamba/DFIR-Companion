@@ -10,6 +10,8 @@ import {
   seedStandardQuestions,
   WatsonAiOff,
   WatsonCancelled,
+  WatsonRoundTimedOut,
+  watsonRoundMaxMs,
   WatsonCostLimitReached,
   watsonSpend,
   type WatsonRoundContext,
@@ -101,13 +103,21 @@ export function runWatsonRound(
   });
   announce(ctx, caseId); // a failing notifier never leaks the run: it cannot throw here
   const runCtx = handle ? { ...ctx, signal: handle.signal } : ctx;
+  let limit: ReturnType<typeof setTimeout> | undefined;
   const run = prev
-    .then(() =>
-      reportedRound(input.onDisposition, (report) =>
+    .then(() => {
+      // #2639: the clock starts when the round runs, not while it waits behind another round.
+      if (handle) {
+        const maxMs = watsonRoundMaxMs();
+        limit = setTimeout(() => handle.expire(new WatsonRoundTimedOut(maxMs)), maxMs);
+        limit.unref?.();
+      }
+      return reportedRound(input.onDisposition, (report) =>
         runRound(withRoundInventory(runCtx), caseId, input, report),
-      ),
-    ) // one inventory read (G16)
+      ); // one inventory read (G16)
+    })
     .finally(() => {
+      if (limit) clearTimeout(limit);
       handle?.end();
       announce(ctx, caseId);
     });
