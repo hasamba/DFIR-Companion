@@ -98,6 +98,7 @@ function reactionFields(
   | "autoChainStopped"
   | "autoIdleRounds"
   | "autoSearchesRun"
+  | "autoIdleFocus"
   | "autoSetAside"
 > {
   const failures = o.reactionFailures;
@@ -120,6 +121,7 @@ function reactionFields(
       : {}),
     ...idList("autoSearchesRun", o.autoSearchesRun, WATSON_AUTO_SEARCHES_KEPT),
     ...idList("autoSetAside", o.autoSetAside, WATSON_AUTO_SET_ASIDE_MAX),
+    ...idList("autoIdleFocus", o.autoIdleFocus, WATSON_AUTO_SET_ASIDE_MAX),
   };
 }
 

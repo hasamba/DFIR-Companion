@@ -66,14 +66,14 @@ describe("autoProgress", () => {
 
   it("searches count as progress only up to the per-chain cap, so Auto always ends", () => {
     const full = Array.from({ length: WATSON_AUTO_SEARCHES_KEPT }, (_, i) => `k${i}`);
-    const chat = { ...emptyWatsonChat(), autoSearchesRun: full, autoIdleRounds: 1 };
+    const chat = { ...emptyWatsonChat(), autoSearchesRun: full, autoIdleRounds: 1, autoIdleFocus: ["n1"] };
     const r = judgeRound(chat, state(), work({ ranSearches: ["new"], focusIds: ["n1"] }));
     expect(r.verdict.kind).toBe("moveOn");
     expect(r.chat.autoSearchesRun).toHaveLength(WATSON_AUTO_SEARCHES_KEPT);
   });
 
   it("the last open item set aside ends Auto with every open item listed", () => {
-    const chat = { ...emptyWatsonChat(), autoSetAside: ["q1"], autoIdleRounds: 1 };
+    const chat = { ...emptyWatsonChat(), autoSetAside: ["q1"], autoIdleRounds: 1, autoIdleFocus: ["n1"] };
     const r = judgeRound(chat, state(), work({ focusIds: ["n1"] }));
     expect(r.verdict).toEqual({ kind: "done", left: openItems(state()) });
   });
@@ -106,5 +106,35 @@ describe("autoProgress", () => {
       .map((i) => i.id);
     expect(ids).toHaveLength(15);
     expect(ids).not.toContain("s0");
+  });
+
+  it("the idle count is per item: one idle round each on two items sets neither aside", () => {
+    let chat = emptyWatsonChat();
+    const step = (w: Partial<WatsonRoundWork>) => {
+      const r = judgeRound(chat, state(), work(w));
+      chat = r.chat;
+      return r.verdict.kind;
+    };
+    expect(step({ focusIds: ["q1"] })).toBe("go");
+    expect(step({ focusIds: ["n1"] })).toBe("go");
+    expect(chat.autoSetAside).toBeUndefined();
+    expect(chat.autoIdleFocus).toEqual(["n1"]);
+    expect(step({ focusIds: ["n1"] })).toBe("moveOn");
+    expect(chat.autoSetAside).toEqual(["n1"]);
+  });
+
+  it("a round on two items, then one of them, sets aside only the one worked twice", () => {
+    const st = {
+      ...state(),
+      keyQuestions: [
+        ...state().keyQuestions,
+        { id: "q4", question: "Q4?", status: "unknown" as const, answer: "", pointer: "" },
+      ],
+    };
+    let chat = emptyWatsonChat();
+    chat = judgeRound(chat, st, work({ focusIds: ["q1", "n1"] })).chat;
+    const r = judgeRound(chat, st, work({ focusIds: ["n1"] }));
+    expect(r.verdict).toMatchObject({ kind: "moveOn" });
+    expect(r.chat.autoSetAside).toEqual(["n1"]);
   });
 });
