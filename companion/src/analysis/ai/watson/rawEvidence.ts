@@ -21,6 +21,7 @@ const KIND_WORDS: Partial<Record<WatsonProposal["kind"], string>> = {
   finding_new: "finding",
   finding_update: "finding",
   next_step_new: "next step",
+  next_step_update: "next step change",
   report_text: "report text",
 };
 

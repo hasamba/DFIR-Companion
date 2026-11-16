@@ -11,6 +11,7 @@ import {
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WatsonChainStopped, WatsonLaunchUncertain } from "./proposalErrors.js";
 import { applyWatsonProposal } from "./proposals.js";
+import { stepChange } from "./writers/nextStepUpdateWriter.js";
 import { rawEvidenceOf } from "./rawEvidence.js";
 import { newWatsonId } from "./roundProposals.js";
 import { watsonRunMode } from "./runMode.js";
@@ -157,6 +158,8 @@ function what(p: WatsonProposal): string {
       return `finding update: ${p.after.title}`;
     case "next_step_new":
       return `next step: ${p.after.action}`;
+    case "next_step_update":
+      return `${stepChange(p)} (${p.why})`;
     case "report_text":
       return `report text (${p.field === "conclusions" ? "Conclusions" : "Investigation limitations"}): ${p.after}`;
     case "event_promote":

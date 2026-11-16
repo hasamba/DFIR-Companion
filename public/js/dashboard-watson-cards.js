@@ -16,6 +16,7 @@
     finding_new: "New finding",
     finding_update: "Finding update",
     next_step_new: "Next step",
+    next_step_update: "Next step change",
     report_text: "Report text",
     event_promote: "Held events",
   };
@@ -28,6 +29,7 @@
     finding_new: ["Add finding", "the finding"],
     finding_update: ["Update finding", "the finding update"],
     next_step_new: ["Add next step", "the next step"],
+    next_step_update: ["Change next step", "the next step change"],
     question_new: ["Add question", "the question"],
     question_update: ["Update question", "the question update"],
     report_text: ["Add to report", "the report text"],
@@ -80,6 +82,19 @@
     );
   }
 
+  // A change to a step already in the case: done (it leaves the list) or a new priority, with Watson's why.
+  function stepUpdateBody(p) {
+    const s = p.before || {};
+    const change = p.after
+      ? `Priority ${esc(String(s.priority || "").toUpperCase())} → ${esc(String(p.after.priority || "").toUpperCase())}`
+      : "Done: it leaves the next steps";
+    return (
+      `<div><strong>${esc(s.action)}</strong></div>` +
+      `<div class="watson-step-change">${change}</div>` +
+      (p.why ? `<div class="watson-why">${esc(p.why)}</div>` : "")
+    );
+  }
+
   function reportBody(p) {
     return `<div class="watson-lbl">${esc(FIELD_LABEL[p.field] || p.field)}</div><div class="watson-text">${esc(p.after)}</div>`;
   }
@@ -119,7 +134,7 @@
 
   const eventBody = (p) => (p.source === "supertimeline" ? promotedBody(p) : heldBody(p));
 
-  const BODY = { finding_new: findingBody, finding_update: findingBody, next_step_new: stepBody, report_text: reportBody, event_promote: eventBody };
+  const BODY = { finding_new: findingBody, finding_update: findingBody, next_step_new: stepBody, next_step_update: stepUpdateBody, report_text: reportBody, event_promote: eventBody };
 
   // The title follows the source: a super-timeline promotion is not a held paste.
   const titleOf = (p) => (p.kind === "event_promote" && p.source === "supertimeline" ? "Promoted events" : TITLE[p.kind] || "Proposal");

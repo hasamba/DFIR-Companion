@@ -277,7 +277,7 @@ async function converse(
       questions: new Set(state.keyQuestions.map((q) => q.id)),
       pastes: new Set(chat.pastes.map((p) => p.id)),
       events: new Set([...state.forensicTimeline.map((e) => e.id), ...earlierShownIds(chat)]),
-      citations: citationSets(chat.pastes, state.findings),
+      citations: citationSets(chat.pastes, state.findings, state.nextSteps ?? []),
     };
     const veloOn = base.velo !== undefined;
     // Only a super-timeline hop's call passes `extra`: the raw rows it showed may be cited there alone.

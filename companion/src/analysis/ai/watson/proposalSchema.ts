@@ -60,6 +60,17 @@ const nextStepProposal = z.object({
   after: step,
 });
 
+const nextStepUpdateProposal = z.object({
+  ...common,
+  ...rawEvidence,
+  kind: z.literal("next_step_update"),
+  targetId: z.string(),
+  before: step,
+  after: step.nullable(),
+  why: z.string().catch(""),
+  index: z.number().int().nonnegative().catch(0),
+});
+
 const reportTextProposal = z.object({
   ...common,
   ...rawEvidence,
@@ -161,6 +172,7 @@ export const proposalSchema: z.ZodType<WatsonProposal, z.ZodTypeDef, unknown> = 
   questionProposal,
   findingProposal,
   nextStepProposal,
+  nextStepUpdateProposal,
   reportTextProposal,
   eventPromoteProposal,
   veloLaunchProposal,

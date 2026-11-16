@@ -20,6 +20,7 @@ import type { WatsonFindingDraft } from "../../../src/analysis/ai/watson/writesS
 import type {
   WatsonFindingProposal,
   WatsonNextStepProposal,
+  WatsonNextStepUpdateProposal,
   WatsonPaste,
   WatsonReportTextProposal,
 } from "../../../src/analysis/ai/watson/types.js";
@@ -288,6 +289,43 @@ describe("Watson writes from the reply", () => {
     expect(starred.proposals.map((p) => p.kind)).toContain("next_step_new");
   });
 
+  it("stepUpdates: a step in the case can be marked done or get a new priority; unknown ids and no-ops are dropped", async () => {
+    const h = await harness([
+      reply({
+        findings: [],
+        nextSteps: [],
+        report: [],
+        stepUpdates: [
+          { stepId: "ns-a", done: true, why: "the Sysmon collection showed the parent" },
+          { stepId: "ns-b", done: false, priority: "low", why: "echo-only" },
+          { stepId: "ns-b", done: true, why: "a second change to the same step" },
+          { stepId: "ns-c", done: false, priority: "medium", why: "same priority" },
+          { stepId: "ns-missing", done: true, why: "not in the case" },
+        ],
+      }),
+    ]);
+    const st = await h.ctx.stateStore.load(CASE);
+    const mk = (id: string, priority: "critical" | "high" | "medium" | "low") => ({
+      id,
+      priority,
+      action: `Step ${id}`,
+      rationale: "r",
+      pointer: "p",
+    });
+    await h.ctx.stateStore.save({
+      ...st,
+      nextSteps: [mk("ns-a", "critical"), mk("ns-b", "high"), mk("ns-c", "medium")],
+    });
+    const chat = await runWatsonRound(h.ctx, CASE, { text: "What changed?" });
+    const ups = ofKind(chat, "next_step_update") as WatsonNextStepUpdateProposal[];
+    expect(ups.map((u) => [u.targetId, u.after?.priority ?? "done", u.index])).toEqual([
+      ["ns-a", "done", 0],
+      ["ns-b", "low", 1],
+    ]);
+    expect(ups[0].before.action).toBe("Step ns-a");
+    expect(ups[0].why).toBe("the Sysmon collection showed the parent");
+  });
+
   it("an updateId naming a Watson finding → finding_update; one naming a synthesis finding is dropped", async () => {
     const h = await harness([
       reply({
@@ -330,6 +368,37 @@ describe("Watson writes from the reply", () => {
       (prefix) => `${prefix}-0000000${n++}`,
     );
     expect(out).toEqual([]);
+  });
+
+  it("a step change is dropped when the step was edited after Watson saw it (Codex review)", () => {
+    const seen = {
+      id: "ns1",
+      priority: "critical" as const,
+      action: "Collect Sysmon",
+      rationale: "r",
+      pointer: "p",
+    };
+    const inputs = {
+      findings: new Map(),
+      pastes: new Map(),
+      lines: new Map(),
+      steps: new Map([["ns1", { step: { ...seen, action: "Edited by the analyst" }, index: 0 }]]),
+    };
+    let n = 0;
+    const id = (prefix: string) => `${prefix}-0000000${n++}`;
+    const writes = (upd: object) => ({
+      findings: [],
+      nextSteps: [],
+      report: [],
+      stepUpdates: [upd as never],
+    });
+    expect(
+      buildWriteProposals(writes({ stepId: "ns1", done: true, why: "w", seen }), inputs, "t1", id),
+    ).toEqual([]);
+    const same = { ...inputs, steps: new Map([["ns1", { step: seen, index: 0 }]]) };
+    expect(
+      buildWriteProposals(writes({ stepId: "ns1", done: true, why: "w", seen }), same, "t1", id),
+    ).toHaveLength(1);
   });
 
   it("next steps and report text become pending proposals; the executive summary is never written", async () => {
@@ -448,7 +517,7 @@ describe("sanitizeWatsonReply writes", () => {
   });
 
   it("a reply with no writes, or without the citation sets, proposes no finding", () => {
-    expect(sanitize(undefined)).toEqual({ findings: [], nextSteps: [], report: [] });
+    expect(sanitize(undefined)).toEqual({ findings: [], nextSteps: [], report: [], stepUpdates: [] });
     const noSets = sanitizeWatsonReply(
       watsonReplySchema.parse({
         writes: { findings: [findingDraft({ eventIds: [], pasteLines: [{ pasteId: "wf-1", line: 1 }] })] },

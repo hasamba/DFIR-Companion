@@ -468,7 +468,7 @@ describe("the NEXT STEPS block (user decision of 2026-11-16)", () => {
     const at = order.map((t) => block.indexOf(t));
     expect(at.every((i) => i > 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
-    expect(block).toContain("- (critical) Collect Sysmon EID 1 — on: WS-FAKE01");
+    expect(block).toContain("- [n2] (critical) Collect Sysmon EID 1 — on: WS-FAKE01"); // the id: stepUpdates name it
     expect(block).toMatch(/^NEXT STEPS \(most urgent first\)\n<<<STEPS>>>/);
     expect(build()).toMatch(/NEXT STEPS \(most urgent first\)\n<<<STEPS>>>\n?\(none\)/);
   });

@@ -52,7 +52,8 @@ async function freshCase(seed: number): Promise<void> {
 }
 
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
+  // Windows can hold the SQLite file a moment after the store is done with it (#2644).
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 // A small deterministic PRNG so a failing seed can be replayed.
@@ -152,32 +153,45 @@ async function roundTrip(seed: number, o: Opts): Promise<void> {
 // timed-out run then surfaced as a misleading ImportJournalLostError (#1897). Keep every seed —
 // the random coverage is the point — and give these tests their own ceiling.
 const PROPERTY_TIMEOUT_MS = 60_000;
+/** Seeds per property test (#2644): small enough for the slower Windows runner. */
+const SEEDS_PER_TEST = 10;
 
 describe("IOC journal: diff and undo equal the whole-list algorithms (#1874)", () => {
-  it("string values, unique ids", { timeout: PROPERTY_TIMEOUT_MS }, async () => {
-    for (let seed = 1; seed <= 60; seed++) {
+  // #2644: each seed range runs in chunks of SEEDS_PER_TEST, each with its own ceiling. One test for
+  // all 60 seeds timed out on the slower Windows runner. Every seed still runs.
+  const chunks = (from: number, to: number): [number, number][] => {
+    const out: [number, number][] = [];
+    for (let a = from; a <= to; a += SEEDS_PER_TEST) out.push([a, Math.min(to, a + SEEDS_PER_TEST - 1)]);
+    return out;
+  };
+  const run = async (from: number, to: number, opts: Parameters<typeof roundTrip>[1]) => {
+    for (let seed = from; seed <= to; seed++) {
       await freshCase(seed);
-      await roundTrip(seed, {});
+      await roundTrip(seed, opts);
     }
-  });
+  };
 
-  it(
-    "non-string values, missing / empty / duplicate / numeric ids",
-    { timeout: PROPERTY_TIMEOUT_MS },
-    async () => {
-      for (let seed = 100; seed <= 160; seed++) {
-        await freshCase(seed);
-        await roundTrip(seed, { weirdIds: true, weirdValues: true });
-      }
-    },
-  );
+  for (const [from, to] of chunks(1, 60)) {
+    it(`string values, unique ids (seeds ${from}-${to})`, { timeout: PROPERTY_TIMEOUT_MS }, () =>
+      run(from, to, {}),
+    );
+  }
 
-  it("an object value anywhere takes the whole lists", { timeout: PROPERTY_TIMEOUT_MS }, async () => {
-    for (let seed = 200; seed <= 230; seed++) {
-      await freshCase(seed);
-      await roundTrip(seed, { objects: true, weirdValues: true });
-    }
-  });
+  for (const [from, to] of chunks(100, 160)) {
+    it(
+      `non-string values, missing / empty / duplicate / numeric ids (seeds ${from}-${to})`,
+      { timeout: PROPERTY_TIMEOUT_MS },
+      () => run(from, to, { weirdIds: true, weirdValues: true }),
+    );
+  }
+
+  for (const [from, to] of chunks(200, 230)) {
+    it(
+      `an object value anywhere takes the whole lists (seeds ${from}-${to})`,
+      { timeout: PROPERTY_TIMEOUT_MS },
+      () => run(from, to, { objects: true, weirdValues: true }),
+    );
+  }
 
   it("an untouched object-valued IOC is still reported as the old diff did", async () => {
     await store.save({

@@ -14,6 +14,7 @@ export type RefItem =
   | { kind: "newQuestion"; index: number }
   | { kind: "finding"; index: number }
   | { kind: "nextStep"; index: number }
+  | { kind: "stepUpdate"; index: number }
   | { kind: "report"; index: number };
 
 export interface RawRefs {
@@ -106,6 +107,8 @@ export function collectRawRefs(reply: WatsonReply, raw: ReadonlySet<string>): Ra
       raw,
     ),
     ...listRefs(w.nextSteps, "nextStep", (st) => ({ texts: [st.action, st.rationale, st.pointer] }), raw),
+    // A step change resting on raw rows waits for an analyst in Auto mode, like any other write.
+    ...listRefs(w.stepUpdates ?? [], "stepUpdate", (u) => ({ texts: [u.why] }), raw),
     ...listRefs(w.report, "report", (r) => ({ texts: [r.text] }), raw),
   ];
 }
@@ -192,15 +195,21 @@ export function settleRawRefs(
     eventIds: rewriteIds(d.eventIds, ids, landed),
   }));
   const steps = settleList(w.nextSteps, "nextStep", byKey, landed);
+  const stepUpdates = settleList(w.stepUpdates ?? [], "stepUpdate", byKey, landed);
   const report = settleList(w.report, "report", byKey, landed);
-  const lists = [updates, questions, findings, steps, report];
+  const lists = [updates, questions, findings, steps, stepUpdates, report];
   return {
     reply: {
       ...reply,
       answer: ans.answer,
       questionUpdates: updates.kept,
       newQuestions: questions.kept,
-      writes: { findings: findings.kept, nextSteps: steps.kept, report: report.kept },
+      writes: {
+        findings: findings.kept,
+        nextSteps: steps.kept,
+        report: report.kept,
+        ...(w.stepUpdates ? { stepUpdates: stepUpdates.kept } : {}),
+      },
     },
     dropped: lists.reduce((n, l) => n + l.dropped, 0),
     evidence: new Map([...ans.evidence, ...lists.flatMap((l) => l.evidence)]),
