@@ -97,7 +97,7 @@ describe("team authentication UI", () => {
     expect(act).toContain('"/admin?return=" + encodeURIComponent(id)');
     expect(act).toContain("/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/");
     expect(account).toContain('id="backToDashboard" href="/dashboard"');
-    expect(account).toContain("get('return')");
+    expect(account).toContain("/[?&]return=([^&#]*)/.exec(");
     expect(account).toContain("'/dashboard?caseId=' + encodeURIComponent(id)");
     expect(account).toContain("/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/");
   });

@@ -280,7 +280,9 @@
       });
       // Return to the case the dashboard had open (?return=<caseId>); the id is validated and encoded.
       (function () {
-        var id = new URLSearchParams(location.search).get('return') || '';
+        // A plain match, no URLSearchParams: an allowed id has no characters that need decoding.
+        var m = /[?&]return=([^&#]*)/.exec(String(location.search || ''));
+        var id = m ? m[1] : '';
         if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(id) && id.indexOf('..') < 0) {
           document.getElementById('backToDashboard').setAttribute('href', '/dashboard?caseId=' + encodeURIComponent(id));
         }
