@@ -1,7 +1,7 @@
 import { PresidioApprovalRequired } from "../../presidio.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_CASE_EVENTS_MAX } from "./promptBuilder.js";
-import { WatsonCancelled, WatsonCostLimitReached } from "./roundContext.js";
+import { WatsonCancelled, WatsonCostLimitReached, WatsonRoundTimedOut } from "./roundContext.js";
 import { newWatsonId } from "./roundProposals.js";
 import type { WatsonChat, WatsonReactionsPaused, WatsonTurn } from "./types.js";
 
@@ -56,6 +56,8 @@ export function pausedReactions(chat: WatsonChat, why: WatsonReactionsPaused, te
  */
 export function reactionFailed(reply: unknown, error: unknown): boolean {
   if (reply) return false;
+  // A round that ran out of time is a failure (#2639): repeated hangs pause the reactions.
+  if (error instanceof WatsonRoundTimedOut) return true;
   return !(
     error instanceof PresidioApprovalRequired ||
     error instanceof WatsonCostLimitReached ||
