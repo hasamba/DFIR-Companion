@@ -1,3 +1,4 @@
+import { WANTS_MORE_NOTE } from "../../../src/analysis/ai/watson/roundHop.js";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -249,7 +250,7 @@ describe("runWatsonRound", () => {
     expect(h.provider.sent).toHaveLength(2);
     expect(h.provider.sent[0].userPrompt).toContain("line 0 tcp"); // the head of a new paste
     expect(h.provider.sent[1].userPrompt).toContain("2501: line 2500 tcp 10.0.0.1:4444");
-    expect(chat.turns.at(-1)?.text).toBe("Found it.");
+    expect(chat.turns.at(-1)?.text).toBe(`Found it.\n\n${WANTS_MORE_NOTE}`); // not run, but never silent
     expect(chat.turns[0].pasteId).toBe("p1");
     expect(chat.calls).toBe(2);
     expect(chat.costUSD).toBeCloseTo(0.2);

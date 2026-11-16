@@ -74,8 +74,14 @@ export interface WatsonAutoRound {
   paste?: { pasteId: string; proposalIds: readonly string[] };
   /** The round's stop signal: once aborted, Auto applies nothing more (an action running finishes). */
   signal?: AbortSignal;
-  /** Watson said it can take its next step itself and asked for nothing: Auto may start its next round. */
+  /**
+   * Auto keeps going (user goal of 2026-11-16: with no limit, Watson works until no question is open
+   * or every remaining step needs a person). true: continue. false: Watson waits (a request, or what it
+   * needs from a person, in `waitingFor`). Absent: continue while any Key Question is still open.
+   */
   continue?: boolean;
+  /** Only with continue false: what Watson needs, and from whom. Shown on a system turn. */
+  waitingFor?: string;
 }
 
 const ANALYST_STOP_WHY = "An analyst stopped Watson.";
@@ -372,19 +378,39 @@ async function continueIfAsked(
   round: WatsonAutoRound,
   chat: WatsonChat,
 ): Promise<WatsonChat> {
-  if (!round.continue || !auto.continueLater || round.signal?.aborted) return chat;
+  if (!auto.continueLater || round.signal?.aborted) return chat;
   if (!autoOn(await auto.control(caseId).catch(() => null))) return chat;
+  if (round.continue === false) {
+    return round.waitingFor
+      ? note(auto, caseId, `Watson stops here and waits for you: ${round.waitingFor}`)
+      : chat;
+  }
+  if (round.continue === undefined && !(await hasOpenQuestion(auto, caseId))) {
+    return note(auto, caseId, "Watson stops here: every Key Question is answered or not answerable.");
+  }
   const r = await reserveChainPlace(auto.writer.chatStore, caseId);
   if ("place" in r) {
     const of = r.max === 0 ? `step ${r.place}` : `step ${r.place} of ${r.max}`;
     auto.continueLater(caseId, `Watson continues with its next step by itself (Auto chain ${of}).`);
     return chat;
   }
+  return note(auto, caseId, continueRefusedText(r));
+}
+
+/** A Key Question is open while its status is unknown or partial. A state that cannot be read: open. */
+async function hasOpenQuestion(auto: WatsonAutoDeps, caseId: string): Promise<boolean> {
+  const state = await auto.writer.stateStore.load(caseId).catch(() => null);
+  if (!state) return true;
+  return (state.keyQuestions ?? []).some((q) => q.status !== "answered" && q.status !== "unanswerable");
+}
+
+/** One system turn on the chat (text cut to the turn limit). */
+function note(auto: WatsonAutoDeps, caseId: string, text: string): Promise<WatsonChat> {
   const turn: WatsonTurn = {
     id: newWatsonId("wt"),
     at: new Date().toISOString(),
     role: "system",
-    text: continueRefusedText(r),
+    text: text.slice(0, WATSON_TURN_TEXT_MAX),
   };
   return auto.writer.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, turn] }));
 }

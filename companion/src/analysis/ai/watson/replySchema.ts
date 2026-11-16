@@ -86,6 +86,8 @@ export const watsonReplySchema = z.object({
   memory: str,
   /** Watson can take its next step itself (no request): Auto may start its next round. */
   continue: z.boolean().optional().catch(undefined),
+  /** Why Watson stops in Auto mode: what it needs, and from whom (shown on the turn). */
+  waitingFor: str.optional().catch(undefined),
   answer: answerSchema,
   writes: writesSchema,
 });
@@ -103,6 +105,8 @@ export interface WatsonReply {
   memory: string;
   /** Watson can take its next step itself: Auto may start its next round (never with a request). */
   continue?: boolean;
+  /** Only with continue false: what Watson needs, and from whom. */
+  waitingFor?: string;
   /** Set only when the analyst asked a question about the case. */
   answer: WatsonAnswer | null;
   /** Findings, next steps and report text Watson proposes; each becomes a pending proposal. */

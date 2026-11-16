@@ -86,6 +86,17 @@ const withNote = (o: Outcome, note: string | undefined): Outcome => {
   return all ? { ...o, note: all } : o;
 };
 
+/** Shown on the turn when the hop's answer asked for another search or lookup (user report 2026-11-16). */
+export const WANTS_MORE_NOTE =
+  'Watson asked for another search or lookup, but one round runs only one. In Auto mode Watson runs it in its next round. In Approve mode, send "continue".';
+
+/** The hop's answer as the round's reply: its own search or lookup ask cannot run in this round. */
+function settleSecond(o: Outcome, second: WatsonReply): Outcome {
+  const wants = !!second.search || second.lookup?.ok === true;
+  const reply = { ...second, search: null, lookup: null };
+  return wants ? { ...withNote(o, WANTS_MORE_NOTE), reply, wantsMore: true } : { ...o, reply };
+}
+
 const failedOutcome = (kept: Outcome, kind: HopKind, error: unknown): Outcome => ({
   ...withNote(kept, failed(kind, error)),
   rethrow: error,
@@ -143,18 +154,14 @@ async function searchHop(
   }
   // A paste read through a search counts as read; the history is not a paste.
   const readId = excerpt.pasteId === WATSON_HISTORY_ID ? [] : [excerpt.pasteId];
-  return {
-    ...rostered,
-    reply: { ...second, search: null, lookup: null },
-    readPasteIds: [...(kept.readPasteIds ?? []), ...readId],
-  };
+  return { ...settleSecond(rostered, second), readPasteIds: [...(kept.readPasteIds ?? []), ...readId] };
 }
 
 async function lookupHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promise<Outcome> {
   const { excerpt, lookedUp } = await lookupTimeline(h.ctx, h.caseId, h.state, query);
   const input = { ...h.base, ...(h.head ? { pasteExcerpt: h.head } : {}), lookupExcerpt: excerpt };
   const second = await h.ask(input);
-  return { ...kept, reply: { ...second, search: null, lookup: null }, lookedUp };
+  return { ...settleSecond(kept, second), lookedUp };
 }
 
 /** Whether the AI-call gate masks for this case. Fails closed: a store that cannot be read counts as on. */
@@ -200,9 +207,5 @@ async function superHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promis
   } catch (error) {
     return failedOutcome(rostered, "super", error);
   }
-  return {
-    ...rostered,
-    reply: { ...second, search: null, lookup: null },
-    superShown: found.shown,
-  };
+  return { ...settleSecond(rostered, second), superShown: found.shown };
 }

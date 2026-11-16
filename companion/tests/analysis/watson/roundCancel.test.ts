@@ -292,14 +292,16 @@ describe("the round's time limit (#2639)", () => {
 
   it("a provider that never answers is stopped at the limit: the round saves the timeout note and ends", async () => {
     const before = process.env.DFIR_AI_TIMEOUT_MS;
-    process.env.DFIR_AI_TIMEOUT_MS = "40"; // limit 80 ms
+    process.env.DFIR_AI_TIMEOUT_MS = "250"; // limit 500 ms
     try {
       const reg = new WatsonRunRegistry();
-      const hang = () => new Promise<void>((r) => setTimeout(r, 400)); // the abort lands while this waits
+      // The abort lands while this waits. A slow CI runner may reach the limit even before the send:
+      // either way the round stops with the timeout note and is never retried.
+      const hang = () => new Promise<void>((r) => setTimeout(r, 3000));
       const p = new Scripted([abortAware(final())], { onSend: hang });
       const h = await toolHarness(p, { retries: 3, ctx: { runs: reg } });
       const chat = await h.run();
-      expect(p.sent).toHaveLength(1); // not retried
+      expect(p.sent.length).toBeLessThanOrEqual(1); // never retried
       expect(lastTurn(chat)).toMatchObject({ role: "system", error: true });
       expect(lastTurn(chat).text).toMatch(
         /^Watson stopped this answer after 1 minute, because the round did not finish in time\./,

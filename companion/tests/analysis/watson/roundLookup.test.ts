@@ -1,3 +1,4 @@
+import { WANTS_MORE_NOTE } from "../../../src/analysis/ai/watson/roundHop.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -139,7 +140,7 @@ describe("Watson's timeline lookup hop", () => {
     expect(second).toContain("<<<LOOKUP>>>");
     expect(second).toMatch(/\[e2\] 2026-01-01T15:56:00Z \[Low\] rar\.exe a loot\.rar/);
     const turn = chat.turns.at(-1)!;
-    expect(turn.text).toBe("Now I see them.");
+    expect(turn.text).toBe(`Now I see them.\n\n${WANTS_MORE_NOTE}`); // not run, but never silent
     expect(turn.lookedUp).toMatchObject({ shown: 1, matched: 1 });
     expect(turn.lookedUp?.what).toContain("f6");
     expect(chat.calls).toBe(2);

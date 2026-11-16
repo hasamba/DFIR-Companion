@@ -203,6 +203,7 @@ body.watson-resizing { cursor: col-resize; user-select: none; }
 .watson-chainbar[hidden] { display: none; }
 .watson-chainbar input.watson-chain-max { width: 56px; flex: 0 0 auto; margin-left: 4px; padding: 2px 4px; }
 .watson-chain-label { display: inline-flex; align-items: center; white-space: nowrap; }
+.watson-chain-hint { margin-left: 6px; color: var(--text-muted); }
 .watson-chain-state { flex: 1; }
 .watson-step-pri { font-size: 10.5px; font-weight: 700; }
 .watson-step-high, .watson-step-critical { color: var(--sev-high, #f97316); }
