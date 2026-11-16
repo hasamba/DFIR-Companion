@@ -13,6 +13,7 @@ import {
 import { WATSON_AUTO_CHAIN_DEFAULT } from "../../../src/analysis/ai/watson/autoChain.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
 import { engaged } from "../../../src/analysis/ai/watson/reactionState.js";
+import { WatsonChainStopped } from "../../../src/analysis/ai/watson/proposalErrors.js";
 import {
   applyWatsonProposal,
   WatsonProposalStateError,
@@ -740,6 +741,22 @@ describe("Auto chain: follow-up collections from Watson's own rounds", () => {
     await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
     await setChain({ autoChainStopped: true });
     await autoApply(deps(), CASE, { turnId: TURN, reaction: false, source: "dashboard" }, AUTO_ON);
+    expect(await status("wp-c")).toBe("applied");
+  });
+
+  it("a chained launch re-checks Stop chain under the lock that saves its intent (a stop after the place was taken)", async () => {
+    await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+    await setChain({ autoChainStopped: true });
+    await expect(
+      applyWatsonProposal(deps(), CASE, "wp-c", "apply", "Watson (Auto)", {
+        pendingOnly: true,
+        chained: true,
+      }),
+    ).rejects.toBeInstanceOf(WatsonChainStopped);
+    expect(await status("wp-c")).toBe("pending");
+    expect(launches).toHaveLength(0);
+    // An analyst's own Launch is never a chained launch: it runs.
+    await applyWatsonProposal(deps(), CASE, "wp-c", "apply", "fake.user");
     expect(await status("wp-c")).toBe("applied");
   });
 

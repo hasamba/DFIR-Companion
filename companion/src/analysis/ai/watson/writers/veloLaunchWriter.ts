@@ -1,4 +1,5 @@
 import {
+  WatsonChainStopped,
   WatsonLaunchUncertain,
   WatsonProposalConflict,
   WatsonProposalNotFoundError,
@@ -133,6 +134,7 @@ async function saveLaunching(
   id: string,
   by: string,
   acceptRisk: boolean,
+  chained = false,
 ) {
   let saved: WatsonVeloLaunchProposal | undefined;
   let marked = false;
@@ -140,6 +142,8 @@ async function saveLaunching(
     await deps.chatStore.update(caseId, async (c) => {
       const p = findLaunch(c, id);
       if (p.status !== "pending") throw new WatsonProposalStateError("apply", p.status);
+      // An Auto chain launch checks Stop chain under the same lock that saves the intent (autoChain.ts).
+      if (chained && c.autoChainStopped) throw new WatsonChainStopped();
       if (p.risk && !acceptRisk) throw new WatsonRiskNotAccepted(p.risk.reasons, p.risk.display);
       if (sameLaunchLive(c, p)) throw new WatsonProposalConflict("the same launch already ran or runs now");
       const planned = await recheck(v, caseId, p, acceptRisk);
@@ -171,9 +175,9 @@ async function saveIntent(
   v: VeloLaunchDeps,
   caseId: string,
   id: string,
-  who: { by: string; acceptRisk: boolean },
+  who: { by: string; acceptRisk: boolean; chained?: boolean },
 ) {
-  const launching = await saveLaunching(deps, v, caseId, id, who.by, who.acceptRisk);
+  const launching = await saveLaunching(deps, v, caseId, id, who.by, who.acceptRisk, who.chained === true);
   const planned = launching.launching?.planned ?? [];
   let added: string[] = [];
   try {
@@ -303,11 +307,11 @@ export async function applyVeloLaunch(
   caseId: string,
   proposalId: string,
   actor = "analyst",
-  opts: { auditSuffix?: string; acceptRisk?: boolean } = {},
+  opts: { auditSuffix?: string; acceptRisk?: boolean; chained?: boolean } = {},
 ): Promise<{ chat: WatsonChat }> {
   const v = deps.veloLaunch;
   if (!v) throw new WatsonProposalConflict("Velociraptor launches are not set up on this server");
-  const who = { by: actor, acceptRisk: opts.acceptRisk === true };
+  const who = { by: actor, acceptRisk: opts.acceptRisk === true, chained: opts.chained === true };
   const { added, proposal: p } = await saveIntent(deps, v, caseId, proposalId, who); // marks it in flight
   const auditSuffix = (opts.auditSuffix ?? "") + riskAcceptedNote(p);
   try {

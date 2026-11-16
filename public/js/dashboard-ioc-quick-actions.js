@@ -110,11 +110,14 @@
     const scrollY = window.scrollY + (document.body.scrollTop || 0);
     const scrollX = window.scrollX + (document.body.scrollLeft || 0);
     const top = r.bottom + scrollY + 4;
-    const maxLeft =
-      scrollX +
-      document.documentElement.clientWidth -
-      tray.offsetWidth * z -
-      8;
+    // The visible width: the window, or with Watson open the body's own area left of the panel.
+    const bodyCs = getComputedStyle(document.body);
+    const bodyBox = document.body.getBoundingClientRect();
+    const visibleRight = Math.min(
+      document.documentElement.clientWidth,
+      bodyBox.left + document.body.clientWidth - (parseFloat(bodyCs.paddingRight) || 0),
+    );
+    const maxLeft = scrollX + visibleRight - tray.offsetWidth * z - 8;
     const left = Math.max(
       scrollX + 8,
       Math.min(r.left + scrollX, maxLeft),

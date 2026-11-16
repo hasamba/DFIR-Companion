@@ -71,9 +71,9 @@
       const on = wMode === "auto";
       el.hidden = !on;
       if (!on) return void (el.innerHTML = "");
-      // Do not repaint the number box while the analyst types in it.
-      const typing = document.activeElement && el.contains(document.activeElement);
-      if (!typing) el.innerHTML = chainHtml(wChain);
+      // Do not repaint while the analyst types in the number box (a focused button repaints).
+      const box = el.querySelector(".watson-chain-max");
+      if (!(box && document.activeElement === box)) el.innerHTML = chainHtml(wChain);
     });
   }
 

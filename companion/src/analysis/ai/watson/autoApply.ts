@@ -1,8 +1,14 @@
 import { runWithoutIdentity } from "../../../auth/identityContext.js";
 import type { AiControl } from "../../aiControl.js";
-import { type ChainPlace, isChainLaunch, releaseChainPlace, reserveChainPlace } from "./autoChain.js";
+import {
+  CHAIN_STOPPED_WAIT,
+  type ChainPlace,
+  isChainLaunch,
+  releaseChainPlace,
+  reserveChainPlace,
+} from "./autoChain.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
-import { WatsonLaunchUncertain } from "./proposalErrors.js";
+import { WatsonChainStopped, WatsonLaunchUncertain } from "./proposalErrors.js";
 import { applyWatsonProposal } from "./proposals.js";
 import { rawEvidenceOf } from "./rawEvidence.js";
 import { newWatsonId } from "./roundProposals.js";
@@ -224,6 +230,7 @@ async function applyOne(
       applyWatsonProposal(deps, caseId, p.id, "apply", WATSON_AUTO_ACTOR, {
         detailSuffix,
         pendingOnly: true,
+        ...(chainPlace !== undefined ? { chained: true } : {}),
       }),
     );
     if (chainPlace !== undefined) {
@@ -236,6 +243,8 @@ async function applyOne(
     const verb = p.kind === "velo_launch" ? "Launched" : "Applied";
     return listed(`- ${verb} ${what(p)}`, !!r.state);
   } catch (err) {
+    if (err instanceof WatsonChainStopped)
+      return listed(`- Watson left this for an analyst: ${what(p)}. ${CHAIN_STOPPED_WAIT}`);
     if (err instanceof WatsonLaunchUncertain) {
       return listed(
         `- Watson could not confirm the launch of ${what(p)}. Check Velociraptor. Then mark it as launched or try again.`,
