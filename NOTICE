@@ -110,7 +110,7 @@ used in the wild. Its data is licensed under the Creative Commons Attribution 4.
 International licence (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/).
 
 Material used: from events/<Service>/<Event>.json at upstream commit
-78156accdf5b6c325100ddb64c5300586f67079c, the event names and sources, the
+c03df041ad2601e58b50bf55eeb11baeb5d57c48, the event names and sources, the
 "usedInWild" flag and the ATT&CK technique identifiers. Changes made: the events
 were filtered (only those used in the wild, and only those no other rule in this
 program already grades), grouped into tagger rules, and given severities and
