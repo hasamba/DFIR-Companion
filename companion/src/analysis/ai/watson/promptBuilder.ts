@@ -199,6 +199,15 @@ export function pasteBlock(excerpt: NonNullable<WatsonPromptInput["pasteExcerpt"
   return `${label} (${name})${note}\n${fence(label, text, ` id=${safeId(excerpt.pasteId)}`)}`;
 }
 
+/** The items Auto set aside (autoProgress.ts): Watson moves on from them unless new evidence came in. */
+function setAsideBlock(ids: readonly string[]): string {
+  const list = ids.map((id) => `- [${line(id, ID_CHARS)}]`).join("\n");
+  return (
+    "SET ASIDE IN AUTO (your rounds on these brought nothing new. Do not work them again unless CASE CHANGES " +
+    `shows new evidence for them. Work the next open Key Question or next step instead)\n${list}`
+  );
+}
+
 export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
   const { state, chat, analystText, caseContext, mainLanguages, pasteExcerpt, historyTurns, velo } = input;
   const { lookupExcerpt } = input;
@@ -235,6 +244,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     `STORED PASTES (ask for a 'search' by id to read one)\n${pastesBlock(chat, historyTurns ?? 0)}`,
     `RECENT CHAT\n${fence("CHAT", recent.join("\n") || "(none)")}`,
   ];
+  if (chat.autoSetAside?.length) blocks.push(setAsideBlock(chat.autoSetAside));
   if (velo) blocks.push(veloBlock(velo, chat));
   if (pasteExcerpt) blocks.push(pasteBlock(pasteExcerpt));
   if (lookupExcerpt) blocks.push(lookupBlock(lookupExcerpt, true));

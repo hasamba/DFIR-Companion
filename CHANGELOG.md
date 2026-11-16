@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **"Ask the LLM" retired** — Watson answers free-form case questions; `/dfir ask` and the AI preview now go to Watson
 
 ### Fixed
+- **Watson Auto moves on instead of stopping** — two rounds with nothing new set that question or step aside and Watson works the next open one; Auto stops only when every open item needs new evidence or the client, and lists what each needs
 
 - **Watson with no case** — sending or pasting with no case open now says so and keeps the text; the toolbar button shows a minimize icon while the panel is open; the Velociraptor chip no longer wraps; the note after an import says what to do next, and no longer asks to approve 0 rows
 - **Watson names in exports** — the redacted export and the support bundle now mask the names Watson masked for the AI.

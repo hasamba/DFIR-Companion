@@ -40,6 +40,8 @@ export function engaged(chat: WatsonChat): WatsonChat {
     autoChainLaunches: _chain,
     autoChainStopped: _stopped,
     autoIdleRounds: _idle,
+    autoSearchesRun: _searches,
+    autoSetAside: _aside,
     ...rest
   } = chat;
   return { ...rest, analystEngaged: true };

@@ -224,8 +224,19 @@ async function runRound(
     // a Velociraptor result that wakes Watson by itself). A search the hop's answer asked for counts as
     // "continue"; otherwise Watson's own flag decides, and with no flag the open questions do.
     ...continueOf(outcome),
+    ...progressOf(outcome),
   };
   return autoAfterRound(ctx.auto, caseId, round, saved, (line) => ctx.log?.warn(line, { caseId }));
+}
+
+/** What the round worked on and ran, for Auto's progress check (autoProgress.ts). */
+function progressOf(outcome: Outcome): { ranSearches: string[]; focusIds: string[]; workingOn: string } {
+  const toolRuns = (outcome.lookups ?? []).map((l) => `tool:${l.source ?? "forensic"}:${l.what}`);
+  return {
+    ranSearches: [...(outcome.ranSearches ?? []), ...toolRuns],
+    focusIds: outcome.reply?.focusIds ?? [],
+    workingOn: outcome.reply?.workingOn ?? "",
+  };
 }
 
 /** The round's say on Auto continuing: true, false (with why), or nothing (the open questions decide). */
