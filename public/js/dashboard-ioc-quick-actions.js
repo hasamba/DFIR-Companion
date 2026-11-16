@@ -106,15 +106,21 @@
     document.body.appendChild(tray);
     const z = window.pageZoom ? window.pageZoom() : 1; // text-size zoom (js/dashboard-theme.js)
     const r = anchor.getBoundingClientRect();
-    const top = r.bottom + window.scrollY + 4;
-    const maxLeft =
-      window.scrollX +
-      document.documentElement.clientWidth -
-      tray.offsetWidth * z -
-      8;
+    // The page scrolls the window, or (with Watson open beside it) the body: count both.
+    const scrollY = window.scrollY + (document.body.scrollTop || 0);
+    const scrollX = window.scrollX + (document.body.scrollLeft || 0);
+    const top = r.bottom + scrollY + 4;
+    // The visible width: the window, or with Watson open the body's own area left of the panel.
+    const bodyCs = getComputedStyle(document.body);
+    const bodyBox = document.body.getBoundingClientRect();
+    const visibleRight = Math.min(
+      document.documentElement.clientWidth,
+      bodyBox.left + document.body.clientWidth - (parseFloat(bodyCs.paddingRight) || 0),
+    );
+    const maxLeft = scrollX + visibleRight - tray.offsetWidth * z - 8;
     const left = Math.max(
-      window.scrollX + 8,
-      Math.min(r.left + window.scrollX, maxLeft),
+      scrollX + 8,
+      Math.min(r.left + scrollX, maxLeft),
     );
     tray.style.left = left / z + "px";
     tray.style.top = top / z + "px";

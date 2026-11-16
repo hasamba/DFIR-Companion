@@ -1,7 +1,7 @@
 import { PresidioApprovalRequired } from "../../presidio.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_CASE_EVENTS_MAX } from "./promptBuilder.js";
-import { WatsonCancelled, WatsonCostLimitReached } from "./roundContext.js";
+import { WatsonCancelled, WatsonCostLimitReached, WatsonRoundTimedOut } from "./roundContext.js";
 import { newWatsonId } from "./roundProposals.js";
 import type { WatsonChat, WatsonReactionsPaused, WatsonTurn } from "./types.js";
 
@@ -31,10 +31,16 @@ export function reactionTurn(chat: WatsonChat): WatsonTurn {
 
 /**
  * The chat after an analyst message: Watson is in use here, any reactions pause is lifted, and the
- * Auto chain count starts again (autoChain.ts).
+ * Auto chain count and any Stop chain clear (autoChain.ts). The chain limit stays.
  */
 export function engaged(chat: WatsonChat): WatsonChat {
-  const { reactionsPaused: _paused, reactionFailures: _failures, autoChainLaunches: _chain, ...rest } = chat;
+  const {
+    reactionsPaused: _paused,
+    reactionFailures: _failures,
+    autoChainLaunches: _chain,
+    autoChainStopped: _stopped,
+    ...rest
+  } = chat;
   return { ...rest, analystEngaged: true };
 }
 
@@ -50,6 +56,8 @@ export function pausedReactions(chat: WatsonChat, why: WatsonReactionsPaused, te
  */
 export function reactionFailed(reply: unknown, error: unknown): boolean {
   if (reply) return false;
+  // A round that ran out of time is a failure (#2639): repeated hangs pause the reactions.
+  if (error instanceof WatsonRoundTimedOut) return true;
   return !(
     error instanceof PresidioApprovalRequired ||
     error instanceof WatsonCostLimitReached ||

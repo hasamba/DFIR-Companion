@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { reactionFailed } from "../../../src/analysis/ai/watson/reactionState.js";
+import {
+  reactionFailed,
+  WATSON_REACTION_FAILURES_MAX,
+  withReactionResult,
+} from "../../../src/analysis/ai/watson/reactionState.js";
+import { WatsonRoundTimedOut } from "../../../src/analysis/ai/watson/roundContext.js";
+import { emptyWatsonChat, type WatsonChat } from "../../../src/analysis/ai/watson/types.js";
 import { WatsonCancelled } from "../../../src/analysis/ai/watson/roundContext.js";
 import { isRetryableError } from "../../../src/analysis/ai/retry.js";
 import { WatsonRunRegistry } from "../../../src/analysis/ai/watson/runRegistry.js";
@@ -47,6 +53,17 @@ describe("WatsonRunRegistry", () => {
 
   it("a cancelled reaction is not a reaction failure", () => {
     expect(reactionFailed(null, new WatsonCancelled())).toBe(false);
+  });
+
+  it("a timed-out reaction is a failure: it adds to the count, and repeated timeouts pause reactions (#2639)", () => {
+    const timedOut = new WatsonRoundTimedOut(60_000);
+    expect(reactionFailed(null, timedOut)).toBe(true);
+    let chat: WatsonChat = { ...emptyWatsonChat(), reactionFailures: 1 };
+    chat = withReactionResult(chat, reactionFailed(null, timedOut));
+    expect(chat.reactionFailures).toBe(2);
+    for (let i = 0; i < WATSON_REACTION_FAILURES_MAX; i++)
+      chat = withReactionResult(chat, reactionFailed(null, timedOut));
+    expect(chat.reactionsPaused).toBe("errors");
   });
 
   it("a stop is never retried", () => {

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { WATSON_CANCELLED_TEXT, runWatsonRound } from "../../../src/analysis/ai/watson/round.js";
-import type { WatsonRoundContext } from "../../../src/analysis/ai/watson/roundContext.js";
+import {
+  WatsonCancelled,
+  WatsonRoundTimedOut,
+  watsonRoundMaxMs,
+  type WatsonRoundContext,
+} from "../../../src/analysis/ai/watson/roundContext.js";
 import { WatsonRunRegistry } from "../../../src/analysis/ai/watson/runRegistry.js";
 import { ProviderError } from "../../../src/providers/provider.js";
 import type { ConverseRequest, ConverseResult } from "../../../src/providers/toolCalling.js";
@@ -273,5 +278,49 @@ describe("a stop in one-step mode", () => {
     const chat = await h.run("", { reaction: true });
     expect(lastTurn(chat).text).toBe(WATSON_CANCELLED_TEXT);
     expect(chat.reactionFailures).toBe(1);
+  });
+});
+
+describe("the round's time limit (#2639)", () => {
+  it("is twice the AI request timeout, read defensively, and safe for a timer", () => {
+    expect(watsonRoundMaxMs({})).toBe(1_800_000);
+    expect(watsonRoundMaxMs({ DFIR_AI_TIMEOUT_MS: "60000" })).toBe(120_000);
+    for (const bad of ["", "abc", "-5", "0", "NaN"])
+      expect(watsonRoundMaxMs({ DFIR_AI_TIMEOUT_MS: bad })).toBe(1_800_000);
+    expect(watsonRoundMaxMs({ DFIR_AI_TIMEOUT_MS: "9e15" })).toBe(2_147_483_647);
+  });
+
+  it("a provider that never answers is stopped at the limit: the round saves the timeout note and ends", async () => {
+    const before = process.env.DFIR_AI_TIMEOUT_MS;
+    process.env.DFIR_AI_TIMEOUT_MS = "40"; // limit 80 ms
+    try {
+      const reg = new WatsonRunRegistry();
+      const hang = () => new Promise<void>((r) => setTimeout(r, 400)); // the abort lands while this waits
+      const p = new Scripted([abortAware(final())], { onSend: hang });
+      const h = await toolHarness(p, { retries: 3, ctx: { runs: reg } });
+      const chat = await h.run();
+      expect(p.sent).toHaveLength(1); // not retried
+      expect(lastTurn(chat)).toMatchObject({ role: "system", error: true });
+      expect(lastTurn(chat).text).toMatch(
+        /^Watson stopped this answer after 1 minute, because the round did not finish in time\./,
+      );
+      expect(reg.status(CASE)).toBeNull();
+    } finally {
+      if (before === undefined) delete process.env.DFIR_AI_TIMEOUT_MS;
+      else process.env.DFIR_AI_TIMEOUT_MS = before;
+    }
+  });
+
+  it("an analyst's stop wins over a later time limit, and an ended run cannot expire", () => {
+    const reg = new WatsonRunRegistry();
+    const a = reg.begin(CASE, { kind: "analyst" });
+    reg.cancel(CASE);
+    a.expire(new WatsonRoundTimedOut(60_000));
+    expect(a.signal.reason).toBeInstanceOf(WatsonCancelled);
+    expect(a.signal.reason).not.toBeInstanceOf(WatsonRoundTimedOut);
+    const b = reg.begin(CASE, { kind: "analyst" });
+    b.end();
+    b.expire(new WatsonRoundTimedOut(60_000));
+    expect(b.signal.aborted).toBe(false);
   });
 });

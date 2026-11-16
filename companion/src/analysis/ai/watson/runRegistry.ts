@@ -21,6 +21,8 @@ export interface WatsonRunHandle {
   readonly signal: AbortSignal;
   /** Removes the run from the registry. Idempotent. */
   end(): void;
+  /** Aborts this run with `reason` (the round's time limit, #2639). No-op once stopped or ended. */
+  expire(reason: WatsonCancelled): void;
 }
 
 /** A message admitted on a case whose round has not begun yet. */
@@ -64,6 +66,9 @@ export class WatsonRunRegistry {
         if (ended) return;
         ended = true;
         this.remove(caseId, entry);
+      },
+      expire: (reason) => {
+        if (!ended && !entry.controller.signal.aborted) entry.controller.abort(reason);
       },
     };
   }

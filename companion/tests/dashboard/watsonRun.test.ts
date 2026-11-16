@@ -1,3 +1,4 @@
+import { webcrypto } from "node:crypto";
 // Task 7: Watson's running state in the dashboard: the working line for every viewer, the stop icon,
 // and the per-send Idempotency-Key. Runs the real modules in a vm context with a small fake DOM.
 import { readFileSync } from "node:fs";
@@ -39,7 +40,13 @@ const chatWith = (turns: unknown[] = [], extra: Record<string, unknown> = {}) =>
 const okChat = { ok: true, status: 200, json: async () => chatWith() };
 const httpAnswer = (status: number, error = "x") => ({ ok: false, status, json: async () => ({ error }) });
 
-function setup(answers: (call: Call) => Answer | Promise<Answer>) {
+// A browser on plain http: crypto.getRandomValues, but no crypto.randomUUID (#2640).
+const insecureCrypto = { getRandomValues: <T extends Uint8Array>(a: T): T => webcrypto.getRandomValues(a) };
+
+function setup(
+  answers: (call: Call) => Answer | Promise<Answer>,
+  globals: Record<string, unknown> = { crypto: insecureCrypto }, // btoa comes from the helper
+) {
   const log = new FakeEl();
   const stop = new FakeEl();
   const byW: Record<string, FakeEl[]> = { log: [log], stop: [stop] };
@@ -87,6 +94,7 @@ function setup(answers: (call: Call) => Answer | Promise<Answer>) {
         return nextTimer++;
       },
       clearInterval: (id: number) => timers.delete(id),
+      ...globals,
     },
   );
   const input = { value: "" };
@@ -97,7 +105,7 @@ function setup(answers: (call: Call) => Answer | Promise<Answer>) {
   };
   const messageCalls = () => calls.filter((c) => c.url.endsWith("/message"));
   const keys = () => messageCalls().map((c) => c.headers["Idempotency-Key"]);
-  return { api, log, stop, caseInput, calls, input, send, keys, timers };
+  return { api, log, stop, caseInput, calls, input, send, keys, timers, messageCalls };
 }
 
 const running = (extra: Record<string, unknown> = {}) => ({
@@ -384,9 +392,32 @@ describe("the Idempotency-Key", () => {
     expect(keys()[1]).not.toBe(keys()[0]);
   });
 
-  it("the fallback key (no crypto.randomUUID) matches the server's pattern", () => {
-    const { api } = setup(() => okChat);
-    expect(api.watsonSendKey("c9", "t")).toMatch(SHAPE);
+  it("the fallback key (no crypto.randomUUID) comes from getRandomValues and matches the server's pattern", () => {
+    let asked = 0;
+    const counting = {
+      getRandomValues: <T extends Uint8Array>(a: T): T => {
+        asked++;
+        return webcrypto.getRandomValues(a);
+      },
+    };
+    const { api } = setup(() => okChat, { crypto: counting });
+    const key = api.watsonSendKey("c9", "t");
+    expect(key).toMatch(SHAPE);
+    expect(key).toHaveLength(22);
+    expect(asked).toBe(1);
+  });
+
+  it("with no crypto at all the send goes out with no Idempotency-Key header (never an empty or shared one)", async () => {
+    const { send, messageCalls } = setup(() => okChat, {});
+    await send("hello");
+    await send("hello again");
+    expect(messageCalls()).toHaveLength(2);
+    for (const c of messageCalls()) expect(Object.keys(c.headers)).not.toContain("Idempotency-Key");
+  });
+
+  it("the module has no Math.random key", () => {
+    const src = readFileSync(new URL("../../../public/js/dashboard-watson-run.js", import.meta.url), "utf8");
+    expect(src).not.toContain("Math.random");
   });
 });
 

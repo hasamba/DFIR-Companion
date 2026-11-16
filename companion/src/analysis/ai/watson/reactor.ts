@@ -21,6 +21,12 @@ export interface WatsonReactorDeps {
   /** A synthesis (or a Second Look that re-synthesizes) is running, queued or scheduled. */
   isSynthesisBusy(caseId: string): boolean;
   isFrozen(caseId: string): Promise<boolean>;
+  /**
+   * Watson's own next round (a "continue" event) may still run: Auto mode on and the chain not
+   * stopped. Checked when the window ends, so a Stop chain or a switch to Approve during the wait
+   * drops it (other case events still get their reaction).
+   */
+  continueAllowed?(caseId: string, chat: WatsonChat): Promise<boolean>;
   /** The quiet window, read on every event; 0 turns reactions off. */
   delayMs(): number;
   now?(): number;
@@ -33,6 +39,19 @@ export interface WatsonReactorDeps {
 interface Armed {
   timer: ReturnType<typeof setTimeout>;
   rearms: number;
+  /** When the window ends (ms since the epoch). */
+  fireAt: number;
+}
+
+/**
+ * A reaction that is due: the dashboard shows Watson as working from the event on, not only once the
+ * round starts (user report of 2026-11-16: "Ready" for the length of the quiet window).
+ */
+export interface WatsonReactionDue {
+  /** When the quiet window ends (ISO time). */
+  at: string;
+  /** The window ended while a synthesis ran: Watson reacts once it finishes. */
+  waitingForSynthesis: boolean;
 }
 
 const PRESIDIO_REASON = "Presidio found values that you must approve before they go to the AI";
@@ -57,16 +76,29 @@ export class WatsonReactor {
 
   /** Note one case event and (re)start the case's quiet window. */
   note(caseId: string, event: WatsonCaseEventNote): void {
-    const at = new Date(this.deps.now?.() ?? Date.now()).toISOString();
+    const at = new Date(this.now()).toISOString();
     void this.deps.chatStore
       .update(caseId, (chat) => withCaseEvent(chat, event, at))
-      .catch((err: unknown) => this.warn(caseId, "could not note a case event", err));
+      .catch((err: unknown) => this.warn(caseId, "could not note a case event", err))
+      .finally(() => this.deps.onChanged?.(caseId)); // the dashboards show the reaction as due
     this.arm(caseId, 0);
   }
 
   /** (Re)start the quiet window for an event the caller has already saved on the chat itself. */
   wake(caseId: string): void {
     this.arm(caseId, 0);
+    this.deps.onChanged?.(caseId);
+  }
+
+  /** The case's reaction that is due (a quiet window running), or null. Memory only. */
+  due(caseId: string): WatsonReactionDue | null {
+    const a = this.armed.get(caseId);
+    if (!a) return null;
+    return { at: new Date(a.fireAt).toISOString(), waitingForSynthesis: a.rearms > 0 };
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
   }
 
   /** Cancel every window (server shutdown); later events are only noted. */
@@ -90,7 +122,7 @@ export class WatsonReactor {
     const set = this.deps.setTimer ?? setTimeout;
     const timer = set(() => this.fire(caseId, rearms), delay);
     timer.unref?.();
-    this.armed.set(caseId, { timer, rearms });
+    this.armed.set(caseId, { timer, rearms, fireAt: this.now() + delay });
   }
 
   private fire(caseId: string, rearms: number): void {
@@ -114,13 +146,17 @@ export class WatsonReactor {
   }
 
   private async react(caseId: string, rearms: number): Promise<void> {
-    const chat = await this.deps.chatStore.load(caseId);
+    const chat = await this.withoutRefusedContinue(caseId, await this.deps.chatStore.load(caseId));
     const decision = await this.decide(caseId, chat, rearms);
     if (decision === "wait") {
       if (!this.armed.has(caseId)) this.arm(caseId, rearms + 1); // a new event re-armed it already
+      this.deps.onChanged?.(caseId); // the dashboards say Watson waits for the synthesis
       return;
     }
-    if (decision === "skip") return;
+    if (decision === "skip") {
+      this.deps.onChanged?.(caseId); // the reaction is no longer due
+      return;
+    }
     const allowWrites = !chat.pendingCaseEvents.some((e) => e.kind === "import");
     const held = chat.pendingCaseEvents.flatMap((e) => (e.kind === "hunt" ? (e.proposalIds ?? []) : []));
     const input = {
@@ -138,6 +174,19 @@ export class WatsonReactor {
     } finally {
       this.deps.onChanged?.(caseId);
     }
+  }
+
+  /** Drops Watson's own "continue" events when Auto or the chain no longer allows them. */
+  private async withoutRefusedContinue(caseId: string, chat: WatsonChat): Promise<WatsonChat> {
+    if (!chat.pendingCaseEvents.some((e) => e.kind === "continue")) return chat;
+    const allowed = this.deps.continueAllowed
+      ? await this.deps.continueAllowed(caseId, chat).catch(() => false)
+      : false;
+    if (allowed) return chat;
+    return this.deps.chatStore.update(caseId, (c) => ({
+      ...c,
+      pendingCaseEvents: c.pendingCaseEvents.filter((e) => e.kind !== "continue"),
+    }));
   }
 
   private async pause(caseId: string, why: WatsonReactionsPaused, reason: string): Promise<void> {

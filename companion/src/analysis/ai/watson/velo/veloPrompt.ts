@@ -1,5 +1,5 @@
 import { MAX_VQL_BYTES } from "../../../vqlInput.js";
-import { WATSON_AUTO_CHAIN_MAX } from "../autoChain.js";
+import { WATSON_AUTO_CHAIN_DEFAULT } from "../autoChain.js";
 import { ALLOWED_ARTIFACTS, ALLOWED_CALLS, ALLOWED_ACCESSORS, WMI_CLASSES } from "./vqlAllowlist.js";
 
 // The VELOCIRAPTOR block's fixed text (the host list is added by promptBuilder.ts, which defangs it).
@@ -16,10 +16,9 @@ export function veloRulesText(): string {
     '{ "kind": "velociraptor", "mode": "collection" or "hunt", "hostname": "(collection only)", "title": "...", "vql": "...", "why": "..." }.',
     "A fleet hunt always waits for the analyst's approval. A single-host collection waits for approval too, unless the",
     "case is in Auto mode. In Auto mode a safe single-host collection launches when the analyst's message came from the",
-    "Watson panel, and from your own follow-up rounds Auto launches up to " +
-      WATSON_AUTO_CHAIN_MAX +
-      " safe single-host collections in a row",
-    "since the analyst's last message; after that, the next one waits for the analyst. Rules:",
+    "Watson panel, and from your own follow-up rounds Auto launches safe single-host collections in a row, up to the",
+    `analyst's chain limit for the case (${WATSON_AUTO_CHAIN_DEFAULT} unless the analyst changed it), since the analyst's last message;`,
+    "after that, or when the analyst stops the chain, the next one waits for the analyst. Rules:",
     '- Prefer a single-host collection (mode "collection", one hostname from the list below) when one host matters.',
     '  Use a fleet hunt (mode "hunt", no hostname) only when the question spans hosts. Never repeat a hunt that already ran.',
     "- Prefer read-only VQL that passes every rule below. If a riskier query is truly needed (a call or artifact not",

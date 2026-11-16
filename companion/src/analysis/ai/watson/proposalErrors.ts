@@ -47,6 +47,14 @@ export class WatsonProposalConflict extends Error {
 }
 
 /** A Velociraptor launch whose outcome is unknown: the proposal is now `uncertain` (route → 409). */
+/** An Auto chain launch found the chain stopped while it saved its intent: it stays pending. */
+export class WatsonChainStopped extends Error {
+  constructor() {
+    super("The analyst stopped the Auto chain.");
+    this.name = "WatsonChainStopped";
+  }
+}
+
 export class WatsonLaunchUncertain extends WatsonProposalConflict {
   constructor(message: string) {
     super(message);

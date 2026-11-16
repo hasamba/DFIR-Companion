@@ -60,7 +60,7 @@
     const calls = Number(wChat.calls) || 0;
     const usd = Number(wChat.costUSD) || 0;
     const tail = usd === 0 && calls > 0 ? `${Number(wChat.tokens) || 0} tokens` : `$${usd.toFixed(2)}`;
-    return `This case: ${calls} calls · ${tail}`;
+    return `This case: ${calls} calls · ${tail}` + (typeof watsonModelFoot === "function" ? watsonModelFoot(wChat) : ""); // the model (dashboard-watson-status.js)
   }
 
   function setHtml(sel, html) {
@@ -233,7 +233,7 @@
     const caseId = currentCase();
     if (!text || wBusy.has(caseId)) return;
     input.value = "";
-    return post(caseId, "/message", { text }, "message", { "Idempotency-Key": watsonSendKey(caseId, text) }).then((r) => {
+    return post(caseId, "/message", { text }, "message", watsonSendHeaders(caseId, text)).then((r) => {
       watsonSendSettled(caseId, r.transport === "lost");
       // a failed send keeps what the analyst typed, in the case they typed it for
       if (!r.ok && !input.value && (live(caseId) || !caseId)) input.value = text;

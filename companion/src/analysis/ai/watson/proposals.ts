@@ -70,6 +70,8 @@ export interface WatsonApplyOptions {
   pendingOnly?: boolean;
   /** The analyst read a risky launch and accepts its risk (Task 9). Auto never sets it. */
   acceptRisk?: boolean;
+  /** An Auto chain launch: refused under the chat lock once the analyst stopped the chain. */
+  chained?: boolean;
 }
 
 const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {
@@ -169,6 +171,7 @@ export async function applyWatsonProposal(
       return applyVeloLaunch(deps, caseId, proposalId, actor, {
         ...(opts.detailSuffix ? { auditSuffix: opts.detailSuffix } : {}),
         acceptRisk: opts.acceptRisk === true,
+        chained: opts.chained === true,
       });
   }
   let state: InvestigationState | undefined;

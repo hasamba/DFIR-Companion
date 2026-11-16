@@ -1,14 +1,15 @@
 import { runWithoutIdentity } from "../../../auth/identityContext.js";
 import type { AiControl } from "../../aiControl.js";
 import {
-  CHAIN_FULL_WAIT,
+  CHAIN_STOPPED_WAIT,
+  continueRefusedText,
+  type ChainPlace,
   isChainLaunch,
   releaseChainPlace,
   reserveChainPlace,
-  WATSON_AUTO_CHAIN_MAX,
 } from "./autoChain.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
-import { WatsonLaunchUncertain } from "./proposalErrors.js";
+import { WatsonChainStopped, WatsonLaunchUncertain } from "./proposalErrors.js";
 import { applyWatsonProposal } from "./proposals.js";
 import { rawEvidenceOf } from "./rawEvidence.js";
 import { newWatsonId } from "./roundProposals.js";
@@ -23,7 +24,8 @@ import type { WriterDeps } from "./writers/writerTypes.js";
 //   - Case writes apply from every round, reaction rounds included (P3).
 //   - A single-host collection launches from a round an analyst started (P1, no cap). From a
 //     reaction round (Watson's own, for example the one reading its own result) it launches only as
-//     a short chain: at most WATSON_AUTO_CHAIN_MAX since the analyst's last message (autoChain.ts).
+//     a short chain: at most the case's chain limit since the analyst's last message, unless the
+//     analyst stopped the chain (autoChain.ts).
 //   - A fleet-wide hunt always waits for an analyst, and so does a risky query (Task 9).
 //
 // The eligible set is the round's Watson-turn proposals, plus held promotions the round carried
@@ -55,6 +57,8 @@ export interface WatsonAutoDeps {
   control(caseId: string): Promise<WatsonAutoControl>;
   writer: WriterDeps;
   onStateChanged?(caseId: string): void;
+  /** Start Watson's own next round (a "continue" case event, re-checked by the reactor before it runs). */
+  continueLater?(caseId: string, text: string): void;
 }
 
 export interface WatsonAutoRound {
@@ -70,6 +74,8 @@ export interface WatsonAutoRound {
   paste?: { pasteId: string; proposalIds: readonly string[] };
   /** The round's stop signal: once aborted, Auto applies nothing more (an action running finishes). */
   signal?: AbortSignal;
+  /** Watson said it can take its next step itself and asked for nothing: Auto may start its next round. */
+  continue?: boolean;
 }
 
 const ANALYST_STOP_WHY = "An analyst stopped Watson.";
@@ -220,7 +226,7 @@ async function applyOne(
   caseId: string,
   p: WatsonProposal,
   detailSuffix: string,
-  chainPlace?: number,
+  chainPlace?: ChainPlace,
 ): Promise<Listed & { state: boolean }> {
   const vql = vqlOf(p);
   const listed = (line: string, state = false) => ({ line, state, ...(vql !== undefined ? { vql } : {}) });
@@ -229,15 +235,21 @@ async function applyOne(
       applyWatsonProposal(deps, caseId, p.id, "apply", WATSON_AUTO_ACTOR, {
         detailSuffix,
         pendingOnly: true,
+        ...(chainPlace !== undefined ? { chained: true } : {}),
       }),
     );
     if (chainPlace !== undefined) {
-      const place = `${chainPlace} of ${WATSON_AUTO_CHAIN_MAX} in a row`;
+      const place =
+        chainPlace.max === 0
+          ? `${chainPlace.place} in a row`
+          : `${chainPlace.place} of ${chainPlace.max} in a row`;
       return listed(`- Watson launched this follow-up by itself (${place}): ${what(p)}`, !!r.state);
     }
     const verb = p.kind === "velo_launch" ? "Launched" : "Applied";
     return listed(`- ${verb} ${what(p)}`, !!r.state);
   } catch (err) {
+    if (err instanceof WatsonChainStopped)
+      return listed(`- Watson left this for an analyst: ${what(p)}. ${CHAIN_STOPPED_WAIT}`);
     if (err instanceof WatsonLaunchUncertain) {
       return listed(
         `- Watson could not confirm the launch of ${what(p)}. Check Velociraptor. Then mark it as launched or try again.`,
@@ -285,8 +297,9 @@ export async function autoApply(
     }
     let wait = stopped ? stopReason : waitReason(p, round);
     const chained = !wait && isChainLaunch(p, round.reaction);
-    const place = chained ? await reserveChainPlace(deps.chatStore, caseId) : null;
-    if (chained && place === null) wait = CHAIN_FULL_WAIT;
+    const reserved = chained ? await reserveChainPlace(deps.chatStore, caseId) : null;
+    if (reserved && "wait" in reserved) wait = reserved.wait;
+    const place = reserved && "place" in reserved ? reserved : null;
     if (wait) {
       lines.push(leftLine(p, wait));
       continue;
@@ -348,6 +361,34 @@ async function flushUnsaved(store: WriterDeps["chatStore"], caseId: string): Pro
   return saveListing(store, caseId, []);
 }
 
+/**
+ * Auto keeps going (user decision of 2026-11-16): when Watson said it can take its next step itself,
+ * start its next round, taking a place in the chain. A full or stopped chain leaves a note instead, so
+ * the analyst knows why Watson waits. A recheck of the mode and the stop signal comes first.
+ */
+async function continueIfAsked(
+  auto: WatsonAutoDeps,
+  caseId: string,
+  round: WatsonAutoRound,
+  chat: WatsonChat,
+): Promise<WatsonChat> {
+  if (!round.continue || !auto.continueLater || round.signal?.aborted) return chat;
+  if (!autoOn(await auto.control(caseId).catch(() => null))) return chat;
+  const r = await reserveChainPlace(auto.writer.chatStore, caseId);
+  if ("place" in r) {
+    const of = r.max === 0 ? `step ${r.place}` : `step ${r.place} of ${r.max}`;
+    auto.continueLater(caseId, `Watson continues with its next step by itself (Auto chain ${of}).`);
+    return chat;
+  }
+  const turn: WatsonTurn = {
+    id: newWatsonId("wt"),
+    at: new Date().toISOString(),
+    role: "system",
+    text: continueRefusedText(r),
+  };
+  return auto.writer.chatStore.update(caseId, (c) => ({ ...c, turns: [...c.turns, turn] }));
+}
+
 /** The held promotions a reaction carries: ids the reactor passed AND the result events it showed. */
 export function carriedHeldIds(
   reaction: boolean,
@@ -375,7 +416,8 @@ export async function autoAfterRound(
     const control = await auto.control(caseId);
     if (round.signal?.aborted || !autoOn(control)) return flushed ?? saved;
     const deps = { ...auto.writer, onStateChanged: auto.onStateChanged, recheck: () => auto.control(caseId) };
-    return await autoApply(deps, caseId, round, control);
+    const applied = await autoApply(deps, caseId, round, control);
+    return await continueIfAsked(auto, caseId, round, applied);
   } catch (err) {
     warn(`Watson Auto mode could not act: ${errText(err)}`);
     return saved;

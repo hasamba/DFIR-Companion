@@ -219,6 +219,9 @@
     toggleWatsonPanel: (el) => toggleWatsonPanel(),
     watsonStatusShow: (el) => watsonStatusShow(el),
     watsonBestPractice: () => watsonBestPractice(),
+    watsonChainSet: (el) => watsonChainSet(el),
+    watsonChainStop: () => watsonChainStop(),
+    watsonJumpEnd: (el) => watsonJumpEnd(el),
     // Leaving for the account page must not drop the open case: the link carries its id, so the
     // page's Dashboard link can reopen it. Same charset as the server's case ids.
     accountLink: (el) => {

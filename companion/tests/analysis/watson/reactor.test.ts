@@ -103,6 +103,53 @@ afterEach(() => {
 });
 
 describe("WatsonReactor", () => {
+  it("Watson's own next round is re-checked when the window ends: a Stop chain or Approve drops it", async () => {
+    let allowed = true;
+    const s = setup({ continueAllowed: async () => allowed });
+    s.reactor.note(CASE, { kind: "continue", text: "Watson continues with its next step by itself" });
+    allowed = false; // the analyst pressed Stop chain during the wait
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(0);
+    expect((await s.chats.drain()).pendingCaseEvents).toEqual([]);
+  });
+
+  it("a dropped continue still lets a real case event react, and an allowed continue runs", async () => {
+    const s = setup({ continueAllowed: async () => false });
+    s.reactor.note(CASE, { kind: "continue", text: "Watson continues" });
+    s.reactor.note(CASE, { kind: "hunt", text: "A collection finished" });
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(1);
+    const ok = setup({ continueAllowed: async () => true });
+    ok.reactor.note(CASE, { kind: "continue", text: "Watson continues" });
+    await advance(ok, DELAY);
+    expect(ok.rounds).toHaveLength(1);
+  });
+
+  it("reports a due reaction from the event on, tells the dashboards, and clears it once the round runs", async () => {
+    let t = Date.parse("2026-11-16T10:00:00Z");
+    const changed: string[] = [];
+    const s = setup({ now: () => t, onChanged: (id) => changed.push(id) });
+    expect(s.reactor.due(CASE)).toBeNull();
+    s.reactor.note(CASE, { kind: "hunt", text: "A collection finished" });
+    await s.chats.drain();
+    expect(s.reactor.due(CASE)).toEqual({ at: "2026-11-16T10:01:00.000Z", waitingForSynthesis: false });
+    expect(changed).toContain(CASE);
+    t += DELAY;
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(1);
+    expect(s.reactor.due(CASE)).toBeNull();
+  });
+
+  it("a due reaction waiting for a synthesis says so", async () => {
+    const s = setup();
+    s.busy.value = true;
+    s.reactor.note(CASE, { kind: "import", text: "An import finished" });
+    await s.chats.drain();
+    expect(s.reactor.due(CASE)?.waitingForSynthesis).toBe(false);
+    await advance(s, DELAY);
+    expect(s.reactor.due(CASE)?.waitingForSynthesis).toBe(true);
+  });
+
   it("40 imports one second apart → one round after the quiet window, with no writes", async () => {
     const s = setup();
     for (let i = 0; i < 40; i++) {

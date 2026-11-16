@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
-import { chainCountOf } from "./autoChain.js";
+import { chainCountOf, chainMaxOf } from "./autoChain.js";
 import { WatsonHistoryStore } from "./historyStore.js";
 import { proposalSchema } from "./proposalSchema.js";
 import {
@@ -53,7 +53,7 @@ const pasteSchema = z.object({
 });
 
 const caseEventSchema = z.object({
-  kind: z.enum(["import", "notebook", "star", "hunt", "other"]).catch("other"),
+  kind: z.enum(["import", "notebook", "star", "hunt", "other", "continue"]).catch("other"),
   text: z.string(),
   at: z.string().catch(""),
   proposalIds: z.array(z.string()).optional().catch(undefined),
@@ -87,7 +87,15 @@ const PAUSES: readonly string[] = ["presidio", "limit", "errors"];
 function reactionFields(
   o: Record<string, unknown>,
   turns: readonly WatsonTurn[],
-): Pick<WatsonChat, "reactionsPaused" | "reactionFailures" | "analystEngaged" | "autoChainLaunches"> {
+): Pick<
+  WatsonChat,
+  | "reactionsPaused"
+  | "reactionFailures"
+  | "analystEngaged"
+  | "autoChainLaunches"
+  | "autoChainMax"
+  | "autoChainStopped"
+> {
   const failures = o.reactionFailures;
   const chain = chainCountOf(o.autoChainLaunches);
   return {
@@ -100,6 +108,9 @@ function reactionFields(
     ...(o.analystEngaged === true || turns.some((t) => t.role === "analyst") ? { analystEngaged: true } : {}),
     // The Auto chain count, read fail-closed: a malformed value reads as the cap (autoChain.ts).
     ...(chain !== undefined ? { autoChainLaunches: chain } : {}),
+    // The analyst's chain limit (a bad value reads as the default) and Stop chain.
+    ...(o.autoChainMax !== undefined ? { autoChainMax: chainMaxOf(o.autoChainMax) } : {}),
+    ...(o.autoChainStopped === true ? { autoChainStopped: true } : {}),
   };
 }
 

@@ -1967,14 +1967,31 @@ export const FEATURES: Feature[] = [
     // Watson's Approve / Auto switch. dashboard-watson.js calls watsonModeSync on every render and routes
     // the "setMode" verb to watsonModeSwitch; the mode itself is private here. No initializer.
     file: "dashboard-watson-mode.js",
-    publish: ["watsonModeSync", "watsonModeSwitch"],
-    private: ["AUTO_CONFIRM", "MODES", "LABEL", "TIP", "wMode"],
+    publish: ["watsonModeSync", "watsonModeSwitch", "watsonChainSet", "watsonChainStop"],
+    private: [
+      "AUTO_CONFIRM",
+      "MODES",
+      "LABEL",
+      "TIP",
+      "wMode",
+      "CHAIN_DEFAULT",
+      "CHAIN_MAX",
+      "wChain",
+      "chainOf",
+    ],
   },
   {
     // The Watson panel width (drag handle, saved per browser) and the full-screen board's Next steps
     // column. initDataAct calls initWatsonLayout once at load.
     file: "dashboard-watson-layout.js",
-    publish: ["watsonSetWidth", "watsonNextStepsHtml", "initWatsonLayout"],
+    publish: [
+      "watsonSetWidth",
+      "watsonNextStepsHtml",
+      "initWatsonLayout",
+      "watsonJumpSync",
+      "watsonJumpEnd",
+      "watsonSetInputHeight",
+    ],
     private: [
       "WIDTH_KEY",
       "SEC_KEY",
@@ -1986,6 +2003,15 @@ export const FEATURES: Feature[] = [
       "maxWidth",
       "currentWidth",
       "onHandle",
+      "each",
+      "countText",
+      "JUMP_SLACK",
+      "atEnd",
+      "INPUT_KEY",
+      "INPUT_MIN",
+      "INPUT_MAX_SHARE",
+      "inputs",
+      "onGrip",
     ],
   },
   {
@@ -1998,8 +2024,21 @@ export const FEATURES: Feature[] = [
       "watsonStatusShow",
       "watsonEmptyCaseHtml",
       "watsonBestPractice",
+      "watsonModelFoot",
     ],
-    private: ["LABEL", "pending", "watching", "nameOf", "btn", "EMPTY_TEXT", "BUNDLE_ID"],
+    private: [
+      "LABEL",
+      "pending",
+      "watching",
+      "nameOf",
+      "btn",
+      "EMPTY_TEXT",
+      "BUNDLE_ID",
+      "NAME_MAX",
+      "footModel",
+      "lastMode",
+      "AUTO_DONE",
+    ],
   },
   {
     // Watson's running state: the working line, the stop icon, the stop call and the per-send idempotency
@@ -2012,8 +2051,9 @@ export const FEATURES: Feature[] = [
       "watsonSendKey",
       "watsonSendSettled",
       "watsonNoCaseHtml",
+      "watsonSendHeaders",
     ],
-    private: ["REFETCH_MS", "wPendingKey", "wStopping", "wPoll", "newKey", "pollSync"],
+    private: ["REFETCH_MS", "wPendingKey", "wStopping", "wPoll", "pollSync", "KEY_BYTES"],
   },
   {
     // Two Settings warnings for Watson (lookups without a cost or token limit; provider without model or

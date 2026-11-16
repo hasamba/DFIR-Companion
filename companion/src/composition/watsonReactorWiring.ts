@@ -1,7 +1,8 @@
 import { WatsonReactor } from "../analysis/ai/watson/reactor.js";
+import { watsonRunMode } from "../analysis/ai/watson/runMode.js";
 import { frozenCaseRefusal } from "../routes/importCaseGuard.js";
 import type { RouteContext } from "../routes/context.js";
-import { watsonRoundDeps } from "../routes/watsonDeps.js";
+import { bindWatsonReactor, watsonRoundDeps } from "../routes/watsonDeps.js";
 import { warnLine } from "../logging/serverLogger.js";
 
 /** D4: reactions on by default, after a 60-second quiet window. */
@@ -27,7 +28,7 @@ export function createAppWatsonReactor(
   const { options, store } = ctx;
   const chatStore = options.watsonChatStore;
   if (!chatStore) return undefined;
-  return new WatsonReactor({
+  const reactor = new WatsonReactor({
     chatStore,
     // No model or no pipeline counts as "AI off" for a reaction: it skips without a word.
     isAiEnabled: async (caseId) => {
@@ -41,8 +42,13 @@ export function createAppWatsonReactor(
     },
     isSynthesisBusy,
     isFrozen: async (caseId) => (await frozenCaseRefusal(store, caseId)) !== null,
+    // Watson's own next round runs only while Auto is on and the chain is not stopped (autoApply.ts).
+    continueAllowed: async (caseId, chat) =>
+      !chat.autoChainStopped && watsonRunMode(await ctx.getControl(caseId)) === "auto",
     delayMs: () => watsonReactDelayMs(process.env),
     onChanged: (caseId) => options.onWatson?.(caseId),
     log: warnLine,
   });
+  bindWatsonReactor(ctx, reactor); // Auto keeps going through this scheduler (routes/watsonDeps.ts)
+  return reactor;
 }

@@ -14,10 +14,18 @@
 
   const selectedCase = () => String((document.getElementById("caseId") || {}).value || "").trim();
 
-  const newKey = () =>
-    typeof crypto !== "undefined" && crypto && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+  // #2640: crypto.randomUUID exists only in secure contexts (https, localhost). Over plain http to a
+  // private host the key comes from crypto.getRandomValues (16 bytes, base64url: 22 characters that
+  // match the server's [A-Za-z0-9_-]{8,64}). With neither, there is no key and the send goes unkeyed
+  // (no duplicate protection after a lost answer) rather than with a weak key.
+  const KEY_BYTES = 16;
+  function newKey() {
+    const c = typeof crypto !== "undefined" ? crypto : null;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+    if (!c || typeof c.getRandomValues !== "function") return null;
+    const bytes = c.getRandomValues(new Uint8Array(KEY_BYTES));
+    return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
 
   // With no case open there is no chat: the log shows the hint and, after a send, why nothing went out.
   function watsonNoCaseHtml(notice) {
@@ -54,7 +62,7 @@
   function watsonStopSync(chat, localBusy) {
     const running = !!(chat && chat.running);
     Array.from(document.querySelectorAll('[data-w="stop"]')).forEach((el) => { el.hidden = !(localBusy || running); });
-    pollSync(running);
+    pollSync(running || !!(chat && chat.reactionDue)); // a due reaction: re-read until its round shows
     if (typeof watsonStatusSync === "function") watsonStatusSync(chat, localBusy); // dashboard-watson-status.js
   }
 
@@ -89,8 +97,15 @@
     const held = wPendingKey.get(caseId);
     if (held && held.text === text) return held.key;
     const key = newKey();
-    wPendingKey.set(caseId, { text, key });
+    if (key) wPendingKey.set(caseId, { text, key });
     return key;
+  }
+
+  // The send's headers: the Idempotency-Key, or none at all when no key could be made (#2640). An
+  // empty or "undefined" header would be one shared key for every send.
+  function watsonSendHeaders(caseId, text) {
+    const key = watsonSendKey(caseId, text);
+    return key ? { "Idempotency-Key": key } : {};
   }
 
   // Keep the key only after a lost answer: the resend must be the same request.
@@ -103,5 +118,6 @@
   window.watsonStopSync = watsonStopSync;
   window.watsonStop = watsonStop;
   window.watsonSendKey = watsonSendKey;
+  window.watsonSendHeaders = watsonSendHeaders;
   window.watsonSendSettled = watsonSendSettled;
 })();
