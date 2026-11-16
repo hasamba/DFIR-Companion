@@ -11,16 +11,15 @@ import {
 import { emptyWatsonChat } from "../../../src/analysis/ai/watson/types.js";
 import { emptyState, type InvestigationState } from "../../../src/analysis/stateTypes.js";
 
-const state = (): InvestigationState =>
-  ({
-    ...emptyState("c"),
-    keyQuestions: [
-      { id: "q1", question: "Q1?", status: "partial", answer: "", pointer: "p1" },
-      { id: "q2", question: "Q2?", status: "answered", answer: "a", pointer: "" },
-      { id: "q3", question: "Q3?", status: "unanswerable", answer: "", pointer: "" },
-    ],
-    nextSteps: [{ id: "n1", priority: "high", action: "Do it", rationale: "r", pointer: "host" }],
-  }) as InvestigationState;
+const state = (): InvestigationState => ({
+  ...emptyState("c"),
+  keyQuestions: [
+    { id: "q1", question: "Q1?", status: "partial", answer: "", pointer: "p1" },
+    { id: "q2", question: "Q2?", status: "answered", answer: "a", pointer: "" },
+    { id: "q3", question: "Q3?", status: "unanswerable", answer: "", pointer: "" },
+  ],
+  nextSteps: [{ id: "n1", priority: "high", action: "Do it", rationale: "r", pointer: "host" }],
+});
 
 const work = (w: Partial<WatsonRoundWork> = {}): WatsonRoundWork => ({
   reaction: true,
@@ -77,5 +76,35 @@ describe("autoProgress", () => {
     const chat = { ...emptyWatsonChat(), autoSetAside: ["q1"], autoIdleRounds: 1 };
     const r = judgeRound(chat, state(), work({ focusIds: ["n1"] }));
     expect(r.verdict).toEqual({ kind: "done", left: openItems(state()) });
+  });
+
+  it("a request for a person sets its item aside at once, with no idle rounds", () => {
+    const r = judgeRound(emptyWatsonChat(), state(), work({ focusIds: ["q1"], asked: "the file x" }));
+    expect(r.verdict).toMatchObject({ kind: "moveOn", asked: true });
+    expect(r.chat.autoSetAside).toEqual(["q1"]);
+  });
+
+  it("new evidence (an import) clears the set-aside items and counts as progress", () => {
+    const chat = { ...emptyWatsonChat(), autoSetAside: ["q1"], autoIdleRounds: 1 };
+    const r = judgeRound(chat, state(), work({ newEvidence: true }));
+    expect(r.verdict.kind).toBe("go");
+    expect(r.chat.autoSetAside).toBeUndefined();
+    expect(r.chat.autoIdleRounds).toBeUndefined();
+  });
+
+  it("open steps are only the ones the prompt shows (the 15 most urgent)", () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({
+      id: `s${i}`,
+      priority: i < 5 ? "low" : "high",
+      action: "a",
+      rationale: "r",
+      pointer: "",
+    }));
+    const st = { ...state(), nextSteps: many } as InvestigationState;
+    const ids = openItems(st)
+      .filter((i) => i.kind === "step")
+      .map((i) => i.id);
+    expect(ids).toHaveLength(15);
+    expect(ids).not.toContain("s0");
   });
 });

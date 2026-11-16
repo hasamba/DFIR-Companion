@@ -23,7 +23,7 @@ import { mergeMaskRoster, type WatsonMaskRoster } from "./superRoster.js";
 import { runToolLoop, ToolModeFallback, type ToolLoopInput } from "./toolLoop.js";
 import { markToolsRejected, watsonToolCap } from "./toolMode.js";
 import { engaged, reactionTurn, WATSON_REACTION_PROMPT } from "./reactionState.js";
-import { autoAfterRound, carriedHeldIds, type WatsonRoundSource } from "./autoApply.js";
+import { autoAfterRound, carriedHeldIds, type WatsonAutoRound, type WatsonRoundSource } from "./autoApply.js";
 import type { Outcome } from "./roundOutcome.js";
 import { newWatsonId } from "./roundProposals.js";
 import { withCitedPromotion } from "./roundPromote.js";
@@ -34,7 +34,7 @@ import { earlierShownIds } from "./rawReferences.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
 import { withVeloLaunch } from "./velo/veloLaunchProposals.js";
 import { withRoundInventory } from "./velo/veloFleet.js";
-import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonTurn } from "./types.js";
+import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonRequest, WatsonTurn } from "./types.js";
 
 export {
   WATSON_CANCELLED_TEXT,
@@ -230,13 +230,26 @@ async function runRound(
 }
 
 /** What the round worked on and ran, for Auto's progress check (autoProgress.ts). */
-function progressOf(outcome: Outcome): { ranSearches: string[]; focusIds: string[]; workingOn: string } {
+function progressOf(
+  outcome: Outcome,
+): Pick<WatsonAutoRound, "ranSearches" | "focusIds" | "workingOn" | "askedFor" | "newEvidence"> {
   const toolRuns = (outcome.lookups ?? []).map((l) => `tool:${l.source ?? "forensic"}:${l.what}`);
+  const request = outcome.reply?.request;
   return {
     ranSearches: [...(outcome.ranSearches ?? []), ...toolRuns],
     focusIds: outcome.reply?.focusIds ?? [],
     workingOn: outcome.reply?.workingOn ?? "",
+    ...(request ? { askedFor: askedOf(request) } : {}),
+    // An import the round showed is new evidence: Auto may work set-aside items again.
+    ...(outcome.shownEvents.some((e) => e.kind === "import") ? { newEvidence: true } : {}),
   };
+}
+
+/** A request in words, and whether it is a Velociraptor run (whose result wakes Watson once it runs). */
+function askedOf(r: WatsonRequest): { text: string; velo: boolean } {
+  if (r.kind === "import") return { text: `the file ${r.what}`, velo: false };
+  if (r.kind === "query") return { text: `the result of a ${r.language} query (${r.why})`, velo: false };
+  return { text: `an approved Velociraptor ${r.mode}: ${r.title}`, velo: true };
 }
 
 /** The round's say on Auto continuing: true, false (with why), or nothing (the open questions decide). */

@@ -973,6 +973,28 @@ describe("Auto keeps working: no progress sets an item aside and moves on (user 
     expect(chat.autoSetAside).toBeUndefined();
   });
 
+  it("a request a person must answer sets its item aside and Watson moves on", async () => {
+    await seed([]);
+    await run({
+      continue: false,
+      focusIds: ["q_access"],
+      askedFor: { text: "the file mail.log", velo: false },
+    });
+    expect(continued).toHaveLength(1);
+    const stored = await new WatsonChatStore(cases).load(CASE);
+    expect(stored.autoSetAside).toEqual(["q_access"]);
+    expect(
+      stored.turns.some((t) => t.text.includes("needs this from you for q_access: the file mail.log")),
+    ).toBe(true);
+  });
+
+  it("a Velociraptor launch that runs keeps waiting for its result", async () => {
+    await seed([{ ...launch("wp-r", TURN, "collection", NETSTAT, HOST_A), status: "applied" }]);
+    await run({ continue: false, focusIds: ["n2"], askedFor: { text: "a collection", velo: true } });
+    expect(continued).toEqual([]);
+    expect((await new WatsonChatStore(cases).load(CASE)).autoSetAside).toBeUndefined();
+  });
+
   it("an analyst-asked round never counts as idle", async () => {
     await seed([]);
     await run({ reaction: false, source: "dashboard" });

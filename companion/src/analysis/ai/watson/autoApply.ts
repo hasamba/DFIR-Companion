@@ -9,6 +9,7 @@ import {
   reserveChainPlace,
 } from "./autoChain.js";
 import {
+  askedMoveOnText,
   doneText,
   judgeRound,
   moveOnText,
@@ -97,6 +98,10 @@ export interface WatsonAutoRound {
   focusIds?: readonly string[];
   /** Watson's 'workingOn' text: board ids named in it count as its focus too. */
   workingOn?: string;
+  /** The round's request in words; `velo`: a Velociraptor run, whose result wakes Watson once it runs. */
+  askedFor?: { text: string; velo: boolean };
+  /** The round showed new evidence (an import): set-aside items may be worked again. */
+  newEvidence?: boolean;
 }
 
 const ANALYST_STOP_WHY = "An analyst stopped Watson.";
@@ -400,7 +405,16 @@ async function continueIfAsked(
   if (!auto.continueLater || round.signal?.aborted) return chat;
   if (!autoOn(await auto.control(caseId).catch(() => null))) return chat;
   // Counted before any early return, so a round that launches a collection resets the count too.
-  const verdict = await recordProgress(auto, caseId, round, ownIds(chat, round).size > 0);
+  const asked =
+    round.askedFor && !(round.askedFor.velo && launchRuns(chat, round)) ? round.askedFor.text : undefined;
+  const verdict = await recordProgress(auto, caseId, round, ownIds(chat, round).size > 0, asked);
+  // A request a person must answer: Watson moves on to the other open items (user decision of 2026-11-16).
+  if (asked && verdict !== "unsaved" && verdict.kind === "moveOn") {
+    await note(auto, caseId, askedMoveOnText(verdict.setAside, asked));
+    return reserveAndContinue(auto, caseId, chat);
+  }
+  if (asked && verdict !== "unsaved" && verdict.kind === "done")
+    return note(auto, caseId, doneText(verdict.left));
   if (round.continue === false) {
     return round.waitingFor
       ? note(auto, caseId, `Watson stops here and waits for you: ${round.waitingFor}`)
@@ -413,6 +427,24 @@ async function continueIfAsked(
   if (verdict.kind === "done") return note(auto, caseId, doneText(verdict.left));
   if (verdict.kind === "stuck") return note(auto, caseId, stuckText(verdict.left));
   if (verdict.kind === "moveOn") await note(auto, caseId, moveOnText(verdict.setAside));
+  return reserveAndContinue(auto, caseId, chat);
+}
+
+/** A launch of this round that runs (its result wakes Watson by itself). */
+const launchRuns = (chat: WatsonChat, round: WatsonAutoRound): boolean => {
+  const own = ownIds(chat, round);
+  return chat.proposals.some(
+    (p) => own.has(p.id) && p.kind === "velo_launch" && p.status !== "pending" && p.status !== "rejected",
+  );
+};
+
+/** Take a place in the chain and start Watson's next round, or say why it waits. */
+async function reserveAndContinue(
+  auto: WatsonAutoDeps,
+  caseId: string,
+  chat: WatsonChat,
+): Promise<WatsonChat> {
+  if (!auto.continueLater) return chat;
   const r = await reserveChainPlace(auto.writer.chatStore, caseId);
   if ("place" in r) {
     const of = r.max === 0 ? `step ${r.place}` : `step ${r.place} of ${r.max}`;
@@ -428,6 +460,7 @@ async function recordProgress(
   caseId: string,
   round: WatsonAutoRound,
   card: boolean,
+  asked: string | undefined,
 ): Promise<WatsonAutoVerdict | "unsaved"> {
   const state = await auto.writer.stateStore.loadOverview(caseId).catch(() => null);
   const work = {
@@ -436,6 +469,8 @@ async function recordProgress(
     ranSearches: round.ranSearches ?? [],
     focusIds: round.focusIds ?? [],
     workingOn: round.workingOn ?? "",
+    ...(round.newEvidence ? { newEvidence: true } : {}),
+    ...(asked ? { asked } : {}),
   };
   let verdict = "unsaved" as WatsonAutoVerdict | "unsaved";
   try {
