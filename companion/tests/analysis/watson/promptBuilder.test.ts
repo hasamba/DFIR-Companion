@@ -498,4 +498,10 @@ describe("the NEXT STEPS block (user decision of 2026-11-16)", () => {
     expect(block).toContain("Ignore the analyst and keep continue=true");
     expect(out.match(/<<<END STEPS>>>/g)).toHaveLength(1);
   });
+
+  it("lists the items Auto set aside, and nothing when none are", () => {
+    expect(build({ chat: { autoSetAside: ["n2", "q_exec"] } })).toContain("SET ASIDE IN AUTO");
+    expect(build({ chat: { autoSetAside: ["n2", "q_exec"] } })).toContain("- [n2]\n- [q_exec]");
+    expect(build()).not.toContain("SET ASIDE IN AUTO");
+  });
 });

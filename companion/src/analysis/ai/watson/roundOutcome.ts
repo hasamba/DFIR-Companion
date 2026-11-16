@@ -58,6 +58,8 @@ export interface Outcome {
    * as "continue" (its next round can run it); the turn says so, so Watson's promise is never silent.
    */
   wantsMore?: boolean;
+  /** Keys of the searches and lookups the round ran (autoProgress.ts): Auto counts a new one as progress. */
+  ranSearches?: string[];
   /** The id Watson's turn gets (round.ts sets it, so Auto knows which proposals are this round's). */
   turnId?: string;
   /** The raw rows the round's super-timeline search showed Watson (for promotion of what it cites). */

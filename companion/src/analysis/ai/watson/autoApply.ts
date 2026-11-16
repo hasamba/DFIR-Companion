@@ -8,6 +8,15 @@ import {
   releaseChainPlace,
   reserveChainPlace,
 } from "./autoChain.js";
+import {
+  askedMoveOnText,
+  doneText,
+  judgeRound,
+  moveOnText,
+  stuckText,
+  UNSAVED_PROGRESS_TEXT,
+  type WatsonAutoVerdict,
+} from "./autoProgress.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WatsonChainStopped, WatsonLaunchUncertain } from "./proposalErrors.js";
 import { applyWatsonProposal } from "./proposals.js";
@@ -83,6 +92,16 @@ export interface WatsonAutoRound {
   continue?: boolean;
   /** Only with continue false: what Watson needs, and from whom. Shown on a system turn. */
   waitingFor?: string;
+  /** Keys of the searches and lookups the round ran (autoProgress.ts): a new one is progress. */
+  ranSearches?: readonly string[];
+  /** The Key Question and next-step ids Watson said it worked on ('focusIds'). */
+  focusIds?: readonly string[];
+  /** Watson's 'workingOn' text: board ids named in it count as its focus too. */
+  workingOn?: string;
+  /** The round's request in words; `velo`: a Velociraptor run, whose result wakes Watson once it runs. */
+  askedFor?: { text: string; velo: boolean };
+  /** The round showed new evidence (an import): set-aside items may be worked again. */
+  newEvidence?: boolean;
 }
 
 const ANALYST_STOP_WHY = "An analyst stopped Watson.";
@@ -371,9 +390,11 @@ async function flushUnsaved(store: WriterDeps["chatStore"], caseId: string): Pro
 }
 
 /**
- * Auto keeps going (user decision of 2026-11-16): when Watson said it can take its next step itself,
- * start its next round, taking a place in the chain. A full or stopped chain leaves a note instead, so
- * the analyst knows why Watson waits. A recheck of the mode and the stop signal comes first.
+ * Auto keeps going (user decisions of 2026-11-16): when Watson said it can take its next step itself,
+ * start its next round, taking a place in the chain. Rounds without progress set the item Watson worked
+ * on aside and Watson moves to the next open item (autoProgress.ts); Auto stops when every open item is
+ * set aside. A full or stopped chain leaves a note instead, so the analyst knows why Watson waits. A
+ * recheck of the mode and the stop signal comes first.
  */
 async function continueIfAsked(
   auto: WatsonAutoDeps,
@@ -383,6 +404,17 @@ async function continueIfAsked(
 ): Promise<WatsonChat> {
   if (!auto.continueLater || round.signal?.aborted) return chat;
   if (!autoOn(await auto.control(caseId).catch(() => null))) return chat;
+  // Counted before any early return, so a round that launches a collection resets the count too.
+  const asked =
+    round.askedFor && !(round.askedFor.velo && launchRuns(chat, round)) ? round.askedFor.text : undefined;
+  const verdict = await recordProgress(auto, caseId, round, ownIds(chat, round).size > 0, asked);
+  // A request a person must answer: Watson moves on to the other open items (user decision of 2026-11-16).
+  if (asked && verdict !== "unsaved" && verdict.kind === "moveOn") {
+    await note(auto, caseId, askedMoveOnText(verdict.setAside, asked));
+    return reserveAndContinue(auto, caseId, chat);
+  }
+  if (asked && verdict !== "unsaved" && verdict.kind === "done")
+    return note(auto, caseId, doneText(verdict.left));
   if (round.continue === false) {
     return round.waitingFor
       ? note(auto, caseId, `Watson stops here and waits for you: ${round.waitingFor}`)
@@ -391,14 +423,28 @@ async function continueIfAsked(
   if (round.continue === undefined && !(await hasOpenQuestion(auto, caseId))) {
     return note(auto, caseId, "Watson stops here: every Key Question is answered or not answerable.");
   }
-  // No-progress guard (user report of 2026-11-16: 14 steps repeating one paste search). Watson's own
-  // rounds that produce nothing in a row stop Auto, whatever the chain limit.
-  if (
-    round.reaction &&
-    (await idleRounds(auto, caseId, ownIds(chat, round).size > 0)) >= WATSON_AUTO_IDLE_MAX
-  ) {
-    return note(auto, caseId, idleStopText());
-  }
+  if (verdict === "unsaved") return note(auto, caseId, UNSAVED_PROGRESS_TEXT);
+  if (verdict.kind === "done") return note(auto, caseId, doneText(verdict.left));
+  if (verdict.kind === "stuck") return note(auto, caseId, stuckText(verdict.left));
+  if (verdict.kind === "moveOn") await note(auto, caseId, moveOnText(verdict.setAside));
+  return reserveAndContinue(auto, caseId, chat);
+}
+
+/** A launch of this round that runs (its result wakes Watson by itself). */
+const launchRuns = (chat: WatsonChat, round: WatsonAutoRound): boolean => {
+  const own = ownIds(chat, round);
+  return chat.proposals.some(
+    (p) => own.has(p.id) && p.kind === "velo_launch" && p.status !== "pending" && p.status !== "rejected",
+  );
+};
+
+/** Take a place in the chain and start Watson's next round, or say why it waits. */
+async function reserveAndContinue(
+  auto: WatsonAutoDeps,
+  caseId: string,
+  chat: WatsonChat,
+): Promise<WatsonChat> {
+  if (!auto.continueLater) return chat;
   const r = await reserveChainPlace(auto.writer.chatStore, caseId);
   if ("place" in r) {
     const of = r.max === 0 ? `step ${r.place}` : `step ${r.place} of ${r.max}`;
@@ -408,26 +454,35 @@ async function continueIfAsked(
   return note(auto, caseId, continueRefusedText(r));
 }
 
-/** Watson's own rounds in a row with no card and no launch after which Auto stops. */
-export const WATSON_AUTO_IDLE_MAX = 2;
-
-const idleStopText = (): string =>
-  `Watson made no progress in its last ${WATSON_AUTO_IDLE_MAX} rounds (no new card, collection or step change), so Auto stops here. ` +
-  "Send a message to guide Watson, for example which source to collect next.";
-
-/** Counts this round as idle (or resets the count on progress) and returns the count. Unreadable: the limit. */
-async function idleRounds(auto: WatsonAutoDeps, caseId: string, progress: boolean): Promise<number> {
-  let idle = WATSON_AUTO_IDLE_MAX;
+/** Count the round's progress in one chat update. A store that cannot be written: "unsaved" (stop). */
+async function recordProgress(
+  auto: WatsonAutoDeps,
+  caseId: string,
+  round: WatsonAutoRound,
+  card: boolean,
+  asked: string | undefined,
+): Promise<WatsonAutoVerdict | "unsaved"> {
+  const state = await auto.writer.stateStore.loadOverview(caseId).catch(() => null);
+  const work = {
+    reaction: round.reaction,
+    card,
+    ranSearches: round.ranSearches ?? [],
+    focusIds: round.focusIds ?? [],
+    workingOn: round.workingOn ?? "",
+    ...(round.newEvidence ? { newEvidence: true } : {}),
+    ...(asked ? { asked } : {}),
+  };
+  let verdict = "unsaved" as WatsonAutoVerdict | "unsaved";
   try {
     await auto.writer.chatStore.update(caseId, (c) => {
-      idle = progress ? 0 : (c.autoIdleRounds ?? 0) + 1;
-      const { autoIdleRounds: _old, ...rest } = c;
-      return idle ? { ...rest, autoIdleRounds: idle } : rest;
+      const judged = judgeRound(c, state, work);
+      verdict = judged.verdict;
+      return judged.chat;
     });
   } catch {
-    return WATSON_AUTO_IDLE_MAX; // fail closed: no endless loop on a store that cannot be written
+    return "unsaved"; // fail closed: no endless loop on a store that cannot be written
   }
-  return idle;
+  return verdict;
 }
 
 /** A Key Question is open while its status is unknown or partial. A state that cannot be read: open. */

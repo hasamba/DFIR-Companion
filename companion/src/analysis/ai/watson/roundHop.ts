@@ -1,5 +1,6 @@
 import { toAnonPolicy } from "../../anonControl.js";
 import type { InvestigationState } from "../../stateTypes.js";
+import { lookupKey, searchKey } from "./autoProgress.js";
 import { WATSON_HISTORY_ID } from "./historyStore.js";
 import type { WatsonPromptInput } from "./promptBuilder.js";
 import type { WatsonReply } from "./replySchema.js";
@@ -178,6 +179,7 @@ async function searchHop(
   return {
     ...settleSecond(rostered, second, search),
     readPasteIds: [...(kept.readPasteIds ?? []), ...readId],
+    ranSearches: [...(kept.ranSearches ?? []), searchKey(search.pasteId, search.terms)],
   };
 }
 
@@ -185,7 +187,11 @@ async function lookupHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promi
   const { excerpt, lookedUp } = await lookupTimeline(h.ctx, h.caseId, h.state, query);
   const input = { ...h.base, ...(h.head ? { pasteExcerpt: h.head } : {}), lookupExcerpt: excerpt };
   const second = await h.ask(input);
-  return { ...settleSecond(kept, second), lookedUp };
+  return {
+    ...settleSecond(kept, second),
+    lookedUp,
+    ranSearches: [...(kept.ranSearches ?? []), lookupKey(query)],
+  };
 }
 
 /** Whether the AI-call gate masks for this case. Fails closed: a store that cannot be read counts as on. */
@@ -231,5 +237,9 @@ async function superHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promis
   } catch (error) {
     return failedOutcome(rostered, "super", error);
   }
-  return { ...settleSecond(rostered, second), superShown: found.shown };
+  return {
+    ...settleSecond(rostered, second),
+    superShown: found.shown,
+    ranSearches: [...(kept.ranSearches ?? []), lookupKey(query)],
+  };
 }

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
 import { chainCountOf, chainMaxOf } from "./autoChain.js";
+import { WATSON_AUTO_SEARCHES_KEPT, WATSON_AUTO_SET_ASIDE_MAX } from "./autoProgress.js";
 import { WatsonHistoryStore } from "./historyStore.js";
 import { proposalSchema } from "./proposalSchema.js";
 import {
@@ -96,6 +97,8 @@ function reactionFields(
   | "autoChainMax"
   | "autoChainStopped"
   | "autoIdleRounds"
+  | "autoSearchesRun"
+  | "autoSetAside"
 > {
   const failures = o.reactionFailures;
   const chain = chainCountOf(o.autoChainLaunches);
@@ -115,7 +118,16 @@ function reactionFields(
     ...(typeof o.autoIdleRounds === "number" && Number.isInteger(o.autoIdleRounds) && o.autoIdleRounds > 0
       ? { autoIdleRounds: o.autoIdleRounds }
       : {}),
+    ...idList("autoSearchesRun", o.autoSearchesRun, WATSON_AUTO_SEARCHES_KEPT),
+    ...idList("autoSetAside", o.autoSetAside, WATSON_AUTO_SET_ASIDE_MAX),
   };
+}
+
+/** A saved list of strings, cut to its cap; anything else reads as absent (autoProgress.ts). */
+function idList<K extends string>(key: K, raw: unknown, max: number): Partial<Record<K, string[]>> {
+  if (!Array.isArray(raw)) return {};
+  const list = raw.filter((x): x is string => typeof x === "string").slice(0, max);
+  return list.length ? ({ [key]: list } as Partial<Record<K, string[]>>) : {};
 }
 
 function parseChat(raw: unknown): WatsonChat {

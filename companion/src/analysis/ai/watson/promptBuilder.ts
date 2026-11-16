@@ -1,4 +1,6 @@
 import type { InvestigationState } from "../../stateTypes.js";
+import { shownSteps } from "./shownSteps.js";
+export { WATSON_NEXT_STEPS_MAX } from "./shownSteps.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WATSON_HISTORY_ID, WATSON_HISTORY_NAME } from "./historyStore.js";
 import type { WatsonMaskRoster } from "./superRoster.js";
@@ -19,10 +21,7 @@ export const WATSON_CASE_EVENTS_MAX = 50;
 export const WATSON_CASE_EVENT_CHARS = 300;
 export const WATSON_ANALYST_PROMPT_MAX = WATSON_TURN_TEXT_MAX;
 export const WATSON_QUESTIONS_MAX = 60;
-/** NEXT STEPS block: the most urgent steps first, at most this many, each line cut. */
-export const WATSON_NEXT_STEPS_MAX = 15;
 const WATSON_STEP_CHARS = 400;
-const STEP_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 export const WATSON_QUESTION_CHARS = 500;
 export const WATSON_ANSWER_CHARS = 1500;
 export const WATSON_PASTES_LISTED = 20;
@@ -199,6 +198,15 @@ export function pasteBlock(excerpt: NonNullable<WatsonPromptInput["pasteExcerpt"
   return `${label} (${name})${note}\n${fence(label, text, ` id=${safeId(excerpt.pasteId)}`)}`;
 }
 
+/** The items Auto set aside (autoProgress.ts): Watson moves on from them unless new evidence came in. */
+function setAsideBlock(ids: readonly string[]): string {
+  const list = ids.map((id) => `- [${line(id, ID_CHARS)}]`).join("\n");
+  return (
+    "SET ASIDE IN AUTO (your rounds on these brought nothing new. Do not work them again unless CASE CHANGES " +
+    `shows new evidence for them. Work the next open Key Question or next step instead)\n${list}`
+  );
+}
+
 export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
   const { state, chat, analystText, caseContext, mainLanguages, pasteExcerpt, historyTurns, velo } = input;
   const { lookupExcerpt } = input;
@@ -209,13 +217,10 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
         `- [${line(q.id, ID_CHARS)}] (${q.status}) ${line(q.question, WATSON_QUESTION_CHARS)}${q.answer ? ` — answer: ${line(q.answer, WATSON_ANSWER_CHARS)}` : ""}`,
     );
   // The case's next steps, most urgent first (a stable sort keeps the case's own order within a rank).
-  const steps = [...(state.nextSteps ?? [])]
-    .sort((a, b) => (STEP_RANK[a.priority] ?? 4) - (STEP_RANK[b.priority] ?? 4))
-    .slice(0, WATSON_NEXT_STEPS_MAX)
-    .map(
-      (s) =>
-        `- [${line(s.id, ID_CHARS)}] (${line(String(s.priority), 10)}) ${line(s.action, WATSON_STEP_CHARS)}${s.pointer ? ` — on: ${line(s.pointer, WATSON_STEP_CHARS)}` : ""}`,
-    );
+  const steps = shownSteps(state).map(
+    (s) =>
+      `- [${line(s.id, ID_CHARS)}] (${line(String(s.priority), 10)}) ${line(s.action, WATSON_STEP_CHARS)}${s.pointer ? ` — on: ${line(s.pointer, WATSON_STEP_CHARS)}` : ""}`,
+  );
   // "New thread": only turns at or after the boundary are chat. Memory and the case context stay.
   const start = chat.threadStartAt;
   const recent = (start ? chat.turns.filter((t) => t.at >= start) : chat.turns)
@@ -235,6 +240,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     `STORED PASTES (ask for a 'search' by id to read one)\n${pastesBlock(chat, historyTurns ?? 0)}`,
     `RECENT CHAT\n${fence("CHAT", recent.join("\n") || "(none)")}`,
   ];
+  if (chat.autoSetAside?.length) blocks.push(setAsideBlock(chat.autoSetAside));
   if (velo) blocks.push(veloBlock(velo, chat));
   if (pasteExcerpt) blocks.push(pasteBlock(pasteExcerpt));
   if (lookupExcerpt) blocks.push(lookupBlock(lookupExcerpt, true));

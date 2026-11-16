@@ -866,7 +866,7 @@ describe("Auto works until nothing is open or only a person can help (user goal 
   });
 });
 
-describe("the no-progress guard (user report of 2026-11-16: 14 rounds repeating one search)", () => {
+describe("Auto keeps working: no progress sets an item aside and moves on (user report of 2026-11-16)", () => {
   const continued: string[] = [];
   const autoDeps = () => ({
     control: async () => AUTO_ON,
@@ -883,31 +883,116 @@ describe("the no-progress guard (user report of 2026-11-16: 14 rounds repeating 
       () => {},
     );
   };
+  const board = async () => {
+    const st = await stateStore.load(CASE);
+    const keyQuestions = [
+      { id: "q_exec", question: "What ran?", status: "partial", answer: "", pointer: "Sysmon EID 1" },
+      {
+        id: "q_access",
+        question: "How did they get in?",
+        status: "unknown",
+        answer: "",
+        pointer: "mail logs",
+      },
+    ];
+    const nextSteps = [
+      {
+        id: "n2",
+        priority: "high",
+        action: "Hash the drop folder",
+        rationale: "r",
+        pointer: "C:/Users/Public",
+      },
+    ];
+    await stateStore.save({ ...st, keyQuestions, nextSteps } as typeof st);
+  };
   beforeEach(async () => {
     continued.length = 0;
     await chatStore.update(CASE, (c) => ({ ...c, autoChainMax: 0 }));
+    await board();
   });
 
-  it("two of Watson's own rounds in a row with nothing new stop Auto, even with no chain limit, and say why", async () => {
+  it("two idle rounds on one item set it aside and Watson continues with the next open item", async () => {
     await seed([]);
-    await run();
-    expect(continued).toHaveLength(1);
-    const chat = await run();
-    expect(continued).toHaveLength(1);
-    expect(lastTurn(chat).text).toContain("Watson made no progress in its last 2 rounds");
+    await run({ focusIds: ["n2"] });
+    await run({ workingOn: "n2 (high): hash the drop folder" });
+    expect(continued).toHaveLength(2);
+    const stored = await new WatsonChatStore(cases).load(CASE);
+    expect(stored.turns.some((t) => t.text.includes("rounds on n2 brought nothing new"))).toBe(true);
+    expect(stored.autoSetAside).toEqual(["n2"]);
   });
 
-  it("a round with a card resets the count; an analyst message clears it", async () => {
+  it("a round that runs a new search is progress; the same search again is not", async () => {
     await seed([]);
-    await run();
-    await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
-    await run();
+    await run({ ranSearches: ["paste:p1:onenote"], focusIds: ["n2"] });
+    await run({ ranSearches: ["paste:p1:quick assist"], focusIds: ["n2"] });
     expect((await new WatsonChatStore(cases).load(CASE)).autoIdleRounds).toBeUndefined();
+    await run({ ranSearches: ["paste:p1:onenote"], focusIds: ["n2"] });
+    expect((await new WatsonChatStore(cases).load(CASE)).autoIdleRounds).toBe(1);
+  });
+
+  it("when every open item is set aside, Auto stops and lists what each one needs", async () => {
+    await seed([]);
+    await run({ focusIds: ["n2"] });
+    await run({ focusIds: ["n2"] });
+    await run({ focusIds: ["q_exec"] });
+    await run({ focusIds: ["q_exec"] });
+    await run({ focusIds: ["q_access"] });
+    const chat = await run({ focusIds: ["q_access"] });
+    expect(continued).toHaveLength(5);
+    const last = lastTurn(chat).text;
+    expect(last).toContain("Watson worked every open Key Question and next step");
+    expect(last).toContain("[q_access] How did they get in? (needs: mail logs)");
+    expect(last).toContain("[n2] Hash the drop folder (needs: C:/Users/Public)");
+  });
+
+  it("an idle round that names no new open item stops Auto and lists the open items", async () => {
     await seed([]);
     await run();
-    expect((await new WatsonChatStore(cases).load(CASE)).autoIdleRounds).toBe(1);
+    const chat = await run({ workingOn: "something without an id" });
+    expect(continued).toHaveLength(1);
+    expect(lastTurn(chat).text).toContain("did not name a new open item");
+  });
+
+  it("a round that launches a collection resets the count before it stops for the result", async () => {
+    await seed([]);
+    await run({ focusIds: ["n2"] });
+    await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+    await run({ continue: false });
+    expect((await new WatsonChatStore(cases).load(CASE)).autoIdleRounds).toBeUndefined();
+  });
+
+  it("an analyst message clears the count, the searches and the set-aside items", async () => {
+    await seed([]);
+    await run({ focusIds: ["n2"], ranSearches: ["paste:p1:x"] });
+    await run({ focusIds: ["n2"] });
+    await run({ focusIds: ["n2"] });
     const chat = await chatStore.update(CASE, engaged);
     expect(chat.autoIdleRounds).toBeUndefined();
+    expect(chat.autoSearchesRun).toBeUndefined();
+    expect(chat.autoSetAside).toBeUndefined();
+  });
+
+  it("a request a person must answer sets its item aside and Watson moves on", async () => {
+    await seed([]);
+    await run({
+      continue: false,
+      focusIds: ["q_access"],
+      askedFor: { text: "the file mail.log", velo: false },
+    });
+    expect(continued).toHaveLength(1);
+    const stored = await new WatsonChatStore(cases).load(CASE);
+    expect(stored.autoSetAside).toEqual(["q_access"]);
+    expect(
+      stored.turns.some((t) => t.text.includes("needs this from you for q_access: the file mail.log")),
+    ).toBe(true);
+  });
+
+  it("a Velociraptor launch that runs keeps waiting for its result", async () => {
+    await seed([{ ...launch("wp-r", TURN, "collection", NETSTAT, HOST_A), status: "applied" }]);
+    await run({ continue: false, focusIds: ["n2"], askedFor: { text: "a collection", velo: true } });
+    expect(continued).toEqual([]);
+    expect((await new WatsonChatStore(cases).load(CASE)).autoSetAside).toBeUndefined();
   });
 
   it("an analyst-asked round never counts as idle", async () => {
