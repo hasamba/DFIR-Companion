@@ -103,6 +103,28 @@ afterEach(() => {
 });
 
 describe("WatsonReactor", () => {
+  it("Watson's own next round is re-checked when the window ends: a Stop chain or Approve drops it", async () => {
+    let allowed = true;
+    const s = setup({ continueAllowed: async () => allowed });
+    s.reactor.note(CASE, { kind: "continue", text: "Watson continues with its next step by itself" });
+    allowed = false; // the analyst pressed Stop chain during the wait
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(0);
+    expect((await s.chats.drain()).pendingCaseEvents).toEqual([]);
+  });
+
+  it("a dropped continue still lets a real case event react, and an allowed continue runs", async () => {
+    const s = setup({ continueAllowed: async () => false });
+    s.reactor.note(CASE, { kind: "continue", text: "Watson continues" });
+    s.reactor.note(CASE, { kind: "hunt", text: "A collection finished" });
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(1);
+    const ok = setup({ continueAllowed: async () => true });
+    ok.reactor.note(CASE, { kind: "continue", text: "Watson continues" });
+    await advance(ok, DELAY);
+    expect(ok.rounds).toHaveLength(1);
+  });
+
   it("reports a due reaction from the event on, tells the dashboards, and clears it once the round runs", async () => {
     let t = Date.parse("2026-11-16T10:00:00Z");
     const changed: string[] = [];

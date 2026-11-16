@@ -57,7 +57,7 @@ export interface WatsonAutoDeps {
   control(caseId: string): Promise<WatsonAutoControl>;
   writer: WriterDeps;
   onStateChanged?(caseId: string): void;
-  /** Start Watson's own next round (a reaction after the quiet window): Auto keeps going. */
+  /** Start Watson's own next round (a "continue" case event, re-checked by the reactor before it runs). */
   continueLater?(caseId: string, text: string): void;
 }
 

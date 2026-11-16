@@ -327,7 +327,8 @@ export interface WatsonPaste {
 
 /** Something that changed in the case since Watson's last round (spec §4.6). */
 export interface WatsonCaseEvent {
-  kind: "import" | "notebook" | "star" | "hunt" | "other";
+  /** "continue": Watson's own next round in Auto mode (autoApply.ts), re-checked before it runs. */
+  kind: "import" | "notebook" | "star" | "hunt" | "other" | "continue";
   text: string;
   at: string;
   /** A `hunt` event: the held-promotion proposals its result created (Auto may apply them). */

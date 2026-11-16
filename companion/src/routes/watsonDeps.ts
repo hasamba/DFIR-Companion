@@ -75,11 +75,11 @@ export function watsonProposalDeps(ctx: RouteContext): WriterDeps | undefined {
  */
 const reactors = new WeakMap<
   RouteContext,
-  { note(caseId: string, e: { kind: "other"; text: string }): void }
+  { note(caseId: string, e: { kind: "continue"; text: string }): void }
 >();
 export function bindWatsonReactor(
   ctx: RouteContext,
-  reactor: { note(caseId: string, e: { kind: "other"; text: string }): void },
+  reactor: { note(caseId: string, e: { kind: "continue"; text: string }): void },
 ): void {
   reactors.set(ctx, reactor);
 }
@@ -93,7 +93,7 @@ function watsonAutoDeps(ctx: RouteContext): WatsonAutoDeps | undefined {
     control: async (id) => ({ ...(await ctx.getControl(id)), frozen: await isFrozenCase(ctx.store, id) }),
     writer,
     onStateChanged: (id) => ctx.options.onStateChanged?.(id),
-    continueLater: (id, text) => reactors.get(ctx)?.note(id, { kind: "other", text }),
+    continueLater: (id, text) => reactors.get(ctx)?.note(id, { kind: "continue", text }),
   };
 }
 

@@ -53,7 +53,7 @@ const pasteSchema = z.object({
 });
 
 const caseEventSchema = z.object({
-  kind: z.enum(["import", "notebook", "star", "hunt", "other"]).catch("other"),
+  kind: z.enum(["import", "notebook", "star", "hunt", "other", "continue"]).catch("other"),
   text: z.string(),
   at: z.string().catch(""),
   proposalIds: z.array(z.string()).optional().catch(undefined),

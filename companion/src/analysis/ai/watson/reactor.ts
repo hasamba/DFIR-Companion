@@ -21,6 +21,12 @@ export interface WatsonReactorDeps {
   /** A synthesis (or a Second Look that re-synthesizes) is running, queued or scheduled. */
   isSynthesisBusy(caseId: string): boolean;
   isFrozen(caseId: string): Promise<boolean>;
+  /**
+   * Watson's own next round (a "continue" event) may still run: Auto mode on and the chain not
+   * stopped. Checked when the window ends, so a Stop chain or a switch to Approve during the wait
+   * drops it (other case events still get their reaction).
+   */
+  continueAllowed?(caseId: string, chat: WatsonChat): Promise<boolean>;
   /** The quiet window, read on every event; 0 turns reactions off. */
   delayMs(): number;
   now?(): number;
@@ -140,7 +146,7 @@ export class WatsonReactor {
   }
 
   private async react(caseId: string, rearms: number): Promise<void> {
-    const chat = await this.deps.chatStore.load(caseId);
+    const chat = await this.withoutRefusedContinue(caseId, await this.deps.chatStore.load(caseId));
     const decision = await this.decide(caseId, chat, rearms);
     if (decision === "wait") {
       if (!this.armed.has(caseId)) this.arm(caseId, rearms + 1); // a new event re-armed it already
@@ -168,6 +174,19 @@ export class WatsonReactor {
     } finally {
       this.deps.onChanged?.(caseId);
     }
+  }
+
+  /** Drops Watson's own "continue" events when Auto or the chain no longer allows them. */
+  private async withoutRefusedContinue(caseId: string, chat: WatsonChat): Promise<WatsonChat> {
+    if (!chat.pendingCaseEvents.some((e) => e.kind === "continue")) return chat;
+    const allowed = this.deps.continueAllowed
+      ? await this.deps.continueAllowed(caseId, chat).catch(() => false)
+      : false;
+    if (allowed) return chat;
+    return this.deps.chatStore.update(caseId, (c) => ({
+      ...c,
+      pendingCaseEvents: c.pendingCaseEvents.filter((e) => e.kind !== "continue"),
+    }));
   }
 
   private async pause(caseId: string, why: WatsonReactionsPaused, reason: string): Promise<void> {

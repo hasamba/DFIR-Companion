@@ -1,4 +1,5 @@
 import { WatsonReactor } from "../analysis/ai/watson/reactor.js";
+import { watsonRunMode } from "../analysis/ai/watson/runMode.js";
 import { frozenCaseRefusal } from "../routes/importCaseGuard.js";
 import type { RouteContext } from "../routes/context.js";
 import { bindWatsonReactor, watsonRoundDeps } from "../routes/watsonDeps.js";
@@ -41,6 +42,9 @@ export function createAppWatsonReactor(
     },
     isSynthesisBusy,
     isFrozen: async (caseId) => (await frozenCaseRefusal(store, caseId)) !== null,
+    // Watson's own next round runs only while Auto is on and the chain is not stopped (autoApply.ts).
+    continueAllowed: async (caseId, chat) =>
+      !chat.autoChainStopped && watsonRunMode(await ctx.getControl(caseId)) === "auto",
     delayMs: () => watsonReactDelayMs(process.env),
     onChanged: (caseId) => options.onWatson?.(caseId),
     log: warnLine,
