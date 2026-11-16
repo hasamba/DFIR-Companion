@@ -117,51 +117,82 @@ export function judgeRound(
   const fresh = [...new Set(work.ranSearches)].filter((k) => !tried.includes(k)).slice(0, room);
   const searches = [...tried, ...fresh];
   const progress = work.card || fresh.length > 0 || work.newEvidence === true;
-  const idle = progress ? 0 : (chat.autoIdleRounds ?? 0) + (work.reaction ? 1 : 0);
   const aside = work.newEvidence ? [] : (chat.autoSetAside ?? []);
+  const open = openItems(state);
+  const focus = focusOf(work, open)
+    .map((i) => i.id)
+    .filter((id) => !aside.includes(id));
+  const keep = { searches, aside };
   // A request for a person (a file, a query, a launch waiting for approval) sets its item aside at
   // once: its answer will not wake Watson, and the other open items still can move.
-  if (work.asked) return setAside(chat, state, work, 0, searches, aside, true);
-  if (idle < WATSON_AUTO_IDLE_MAX) {
-    return { chat: withProgress(chat, idle, searches, aside), verdict: { kind: "go" } };
+  if (work.asked) return setAside(chat, open, focus, keep, true);
+  if (progress || !work.reaction) {
+    const streak = progress
+      ? { idle: 0, on: [] }
+      : { idle: chat.autoIdleRounds ?? 0, on: chat.autoIdleFocus ?? [] };
+    return { chat: withProgress(chat, streak, keep), verdict: { kind: "go" } };
   }
-  return setAside(chat, state, work, idle, searches, aside, false);
+  const streak = idleStreak(chat, focus);
+  if (streak.idle < WATSON_AUTO_IDLE_MAX) {
+    return { chat: withProgress(chat, streak, keep), verdict: { kind: "go" } };
+  }
+  return setAside(chat, open, streak.on, keep, false, streak.idle);
 }
 
-/** Set Watson's focus aside: move on while open items are left, else done. */
+/**
+ * The idle streak after one more idle round of Watson's own. It counts per item: a round on another
+ * item starts a new streak, so an item is set aside only after WATSON_AUTO_IDLE_MAX idle rounds on it
+ * (Codex stop review of #2648). Rounds that name no open item keep counting together, and end "stuck".
+ */
+function idleStreak(chat: WatsonChat, focus: readonly string[]): Streak {
+  const idle = chat.autoIdleRounds ?? 0;
+  const before = chat.autoIdleFocus ?? [];
+  if (idle === 0) return { idle: 1, on: [...focus] };
+  if (before.length === 0 && focus.length === 0) return { idle: idle + 1, on: [] };
+  const same = focus.filter((id) => before.includes(id));
+  return same.length ? { idle: idle + 1, on: same } : { idle: 1, on: [...focus] };
+}
+
+interface Streak {
+  idle: number;
+  /** The items every round of the streak worked on. */
+  on: readonly string[];
+}
+
+interface Kept {
+  searches: readonly string[];
+  aside: readonly string[];
+}
+
+/** Set the given items aside: move on while open items are left, else done; none: stuck. */
 function setAside(
   chat: WatsonChat,
-  state: InvestigationState | null,
-  work: WatsonRoundWork,
-  idle: number,
-  searches: readonly string[],
-  aside: readonly string[],
+  open: readonly WatsonOpenItem[],
+  ids: readonly string[],
+  keep: Kept,
   asked: boolean,
+  idle = 0,
 ): { chat: WatsonChat; verdict: WatsonAutoVerdict } {
-  const open = openItems(state);
-  const newly = focusOf(work, open).filter((item) => !aside.includes(item.id));
+  const newly = open.filter((item) => ids.includes(item.id) && !keep.aside.includes(item.id));
   if (newly.length === 0) {
-    return { chat: withProgress(chat, idle, searches, aside), verdict: { kind: "stuck", left: open } };
+    const streak = { idle, on: [] };
+    return { chat: withProgress(chat, streak, keep), verdict: { kind: "stuck", left: [...open] } };
   }
-  const nextAside = [...aside, ...newly.map((i) => i.id)].slice(0, WATSON_AUTO_SET_ASIDE_MAX);
-  const saved = withProgress(chat, 0, searches, nextAside);
+  const nextAside = [...keep.aside, ...newly.map((i) => i.id)].slice(0, WATSON_AUTO_SET_ASIDE_MAX);
+  const saved = withProgress(chat, { idle: 0, on: [] }, { ...keep, aside: nextAside });
   const left = open.filter((item) => !nextAside.includes(item.id));
-  if (left.length === 0) return { chat: saved, verdict: { kind: "done", left: open } };
+  if (left.length === 0) return { chat: saved, verdict: { kind: "done", left: [...open] } };
   return { chat: saved, verdict: { kind: "moveOn", setAside: newly, ...(asked ? { asked: true } : {}) } };
 }
 
-function withProgress(
-  chat: WatsonChat,
-  idle: number,
-  searches: readonly string[],
-  aside: readonly string[],
-): WatsonChat {
-  const { autoIdleRounds: _i, autoSearchesRun: _s, autoSetAside: _a, ...rest } = chat;
+function withProgress(chat: WatsonChat, streak: Streak, keep: Kept): WatsonChat {
+  const { autoIdleRounds: _i, autoIdleFocus: _f, autoSearchesRun: _s, autoSetAside: _a, ...rest } = chat;
   return {
     ...rest,
-    ...(idle > 0 ? { autoIdleRounds: idle } : {}),
-    ...(searches.length ? { autoSearchesRun: [...searches] } : {}),
-    ...(aside.length ? { autoSetAside: [...aside] } : {}),
+    ...(streak.idle > 0 ? { autoIdleRounds: streak.idle } : {}),
+    ...(streak.idle > 0 && streak.on.length ? { autoIdleFocus: [...streak.on] } : {}),
+    ...(keep.searches.length ? { autoSearchesRun: [...keep.searches] } : {}),
+    ...(keep.aside.length ? { autoSetAside: [...keep.aside] } : {}),
   };
 }
 

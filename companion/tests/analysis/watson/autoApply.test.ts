@@ -962,6 +962,14 @@ describe("Auto keeps working: no progress sets an item aside and moves on (user 
     expect((await new WatsonChatStore(cases).load(CASE)).autoIdleRounds).toBeUndefined();
   });
 
+  it("one idle round on one item and one on another sets nothing aside", async () => {
+    await seed([]);
+    await run({ focusIds: ["n2"] });
+    await run({ focusIds: ["q_exec"] });
+    expect(continued).toHaveLength(2);
+    expect((await new WatsonChatStore(cases).load(CASE)).autoSetAside).toBeUndefined();
+  });
+
   it("an analyst message clears the count, the searches and the set-aside items", async () => {
     await seed([]);
     await run({ focusIds: ["n2"], ranSearches: ["paste:p1:x"] });
@@ -971,6 +979,7 @@ describe("Auto keeps working: no progress sets an item aside and moves on (user 
     expect(chat.autoIdleRounds).toBeUndefined();
     expect(chat.autoSearchesRun).toBeUndefined();
     expect(chat.autoSetAside).toBeUndefined();
+    expect(chat.autoIdleFocus).toBeUndefined();
   });
 
   it("a request a person must answer sets its item aside and Watson moves on", async () => {

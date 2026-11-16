@@ -380,6 +380,8 @@ export interface WatsonChat {
   autoIdleRounds?: number;
   /** Keys of the searches and lookups Watson ran since the analyst's last message (autoProgress.ts). */
   autoSearchesRun?: string[];
+  /** The items the current idle streak worked on: a round on another item starts a new streak. */
+  autoIdleFocus?: string[];
   /** Key Question and next-step ids Auto set aside since the analyst's last message (autoProgress.ts). */
   autoSetAside?: string[];
   costUSD: number;

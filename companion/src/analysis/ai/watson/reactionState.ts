@@ -42,6 +42,7 @@ export function engaged(chat: WatsonChat): WatsonChat {
     autoIdleRounds: _idle,
     autoSearchesRun: _searches,
     autoSetAside: _aside,
+    autoIdleFocus: _idleFocus,
     ...rest
   } = chat;
   return { ...rest, analystEngaged: true };
