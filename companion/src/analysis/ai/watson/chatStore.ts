@@ -95,6 +95,7 @@ function reactionFields(
   | "autoChainLaunches"
   | "autoChainMax"
   | "autoChainStopped"
+  | "autoIdleRounds"
 > {
   const failures = o.reactionFailures;
   const chain = chainCountOf(o.autoChainLaunches);
@@ -111,6 +112,9 @@ function reactionFields(
     // The analyst's chain limit (a bad value reads as the default) and Stop chain.
     ...(o.autoChainMax !== undefined ? { autoChainMax: chainMaxOf(o.autoChainMax) } : {}),
     ...(o.autoChainStopped === true ? { autoChainStopped: true } : {}),
+    ...(typeof o.autoIdleRounds === "number" && Number.isInteger(o.autoIdleRounds) && o.autoIdleRounds > 0
+      ? { autoIdleRounds: o.autoIdleRounds }
+      : {}),
   };
 }
 

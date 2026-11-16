@@ -806,7 +806,7 @@ describe("Auto keeps going (user decision of 2026-11-16)", () => {
     const full = await run();
     expect(continued).toEqual([]);
     expect(lastTurn(full).text).toContain("it reached the Auto chain limit");
-    await chatStore.update(CASE, (c) => ({ ...c, autoChainStopped: true }));
+    await chatStore.update(CASE, (c) => ({ ...c, autoChainStopped: true, autoIdleRounds: undefined }));
     const stopped = await run();
     expect(continued).toEqual([]);
     expect(lastTurn(stopped).text).toContain("you stopped the Auto chain");
@@ -863,5 +863,58 @@ describe("Auto works until nothing is open or only a person can help (user goal 
     expect(lastTurn(chat).text).toBe(
       "Watson stops here and waits for you: the client's firewall logs for 2026-11-16",
     );
+  });
+});
+
+describe("the no-progress guard (user report of 2026-11-16: 14 rounds repeating one search)", () => {
+  const continued: string[] = [];
+  const autoDeps = () => ({
+    control: async () => AUTO_ON,
+    writer: deps(),
+    continueLater: (_id: string, text: string) => void continued.push(text),
+  });
+  const run = async (r: Record<string, unknown> = {}) => {
+    const saved = await new WatsonChatStore(cases).load(CASE);
+    return autoAfterRound(
+      autoDeps(),
+      CASE,
+      { turnId: TURN, reaction: true, continue: true, ...r },
+      saved,
+      () => {},
+    );
+  };
+  beforeEach(async () => {
+    continued.length = 0;
+    await chatStore.update(CASE, (c) => ({ ...c, autoChainMax: 0 }));
+  });
+
+  it("two of Watson's own rounds in a row with nothing new stop Auto, even with no chain limit, and say why", async () => {
+    await seed([]);
+    await run();
+    expect(continued).toHaveLength(1);
+    const chat = await run();
+    expect(continued).toHaveLength(1);
+    expect(lastTurn(chat).text).toContain("Watson made no progress in its last 2 rounds");
+  });
+
+  it("a round with a card resets the count; an analyst message clears it", async () => {
+    await seed([]);
+    await run();
+    await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+    await run();
+    expect((await new WatsonChatStore(cases).load(CASE)).autoIdleRounds).toBeUndefined();
+    await seed([]);
+    await run();
+    expect((await new WatsonChatStore(cases).load(CASE)).autoIdleRounds).toBe(1);
+    const chat = await chatStore.update(CASE, engaged);
+    expect(chat.autoIdleRounds).toBeUndefined();
+  });
+
+  it("an analyst-asked round never counts as idle", async () => {
+    await seed([]);
+    await run({ reaction: false, source: "dashboard" });
+    await run({ reaction: false, source: "dashboard" });
+    await run({ reaction: false, source: "dashboard" });
+    expect(continued).toHaveLength(3);
   });
 });

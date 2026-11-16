@@ -39,6 +39,7 @@ export function engaged(chat: WatsonChat): WatsonChat {
     reactionFailures: _failures,
     autoChainLaunches: _chain,
     autoChainStopped: _stopped,
+    autoIdleRounds: _idle,
     ...rest
   } = chat;
   return { ...rest, analystEngaged: true };

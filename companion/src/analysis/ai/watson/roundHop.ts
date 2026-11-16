@@ -91,9 +91,30 @@ export const WANTS_MORE_NOTE =
   'Watson asked for another search or lookup, but one round runs only one. In Auto mode Watson runs it in its next round. In Approve mode, send "continue".';
 
 /** The hop's answer as the round's reply: its own search or lookup ask cannot run in this round. */
-function settleSecond(o: Outcome, second: WatsonReply): Outcome {
-  const wants = !!second.search || second.lookup?.ok === true;
+/** Shown when the hop's answer asks for the very search this round just ran (no follow-up for it). */
+export const SAME_SEARCH_NOTE =
+  "Watson asked for the same search again. It already ran in this round, so Watson does not run it again.";
+
+const sameTerms = (a: readonly string[], b: readonly string[]): boolean => {
+  const norm = (t: readonly string[]) =>
+    [...new Set(t.map((x) => x.trim().toLowerCase()))].sort().join("\u0000");
+  return norm(a) === norm(b);
+};
+
+/**
+ * The hop's answer as the round's reply: its own search or lookup ask cannot run in this round. A new
+ * ask becomes Watson's next round in Auto mode; a repeat of the search just run never does (2026-11-16:
+ * a loop of 14 rounds repeating one clipped paste search).
+ */
+function settleSecond(o: Outcome, second: WatsonReply, ran?: NonNullable<WatsonReply["search"]>): Outcome {
   const reply = { ...second, search: null, lookup: null };
+  const repeat =
+    !!ran &&
+    !!second.search &&
+    second.search.pasteId === ran.pasteId &&
+    sameTerms(second.search.terms, ran.terms);
+  if (repeat) return { ...withNote(o, SAME_SEARCH_NOTE), reply };
+  const wants = !!second.search || second.lookup?.ok === true;
   return wants ? { ...withNote(o, WANTS_MORE_NOTE), reply, wantsMore: true } : { ...o, reply };
 }
 
@@ -154,7 +175,10 @@ async function searchHop(
   }
   // A paste read through a search counts as read; the history is not a paste.
   const readId = excerpt.pasteId === WATSON_HISTORY_ID ? [] : [excerpt.pasteId];
-  return { ...settleSecond(rostered, second), readPasteIds: [...(kept.readPasteIds ?? []), ...readId] };
+  return {
+    ...settleSecond(rostered, second, search),
+    readPasteIds: [...(kept.readPasteIds ?? []), ...readId],
+  };
 }
 
 async function lookupHop(h: HopInput, kept: Outcome, query: WatsonLookup): Promise<Outcome> {

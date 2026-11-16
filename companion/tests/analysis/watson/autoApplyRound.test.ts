@@ -365,7 +365,18 @@ describe("Auto keeps going from a round (user decisions of 2026-11-16)", () => {
 
   it("an answer that asks for a second search (one per round) starts the next round, with no 'continue' flag", async () => {
     replyText = JSON.stringify({ ...JSON.parse(reply), search: { pasteId: "history", terms: ["parsed"] } });
-    const h = await harness(() => AUTO);
+    let calls = 0;
+    // The hop's answer asks for a NEW search (a repeat of the one just run is never a follow-up).
+    const h = await harness(
+      () => AUTO,
+      () => {
+        if (++calls === 2)
+          replyText = JSON.stringify({
+            ...JSON.parse(reply),
+            search: { pasteId: "history", terms: ["other"] },
+          });
+      },
+    );
     await h.seed([]);
     const continued = withSpy(h);
     const chat = await runWatsonRound(h.ctx, CASE, { text: "continue" });
