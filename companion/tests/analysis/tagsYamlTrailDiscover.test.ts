@@ -400,7 +400,7 @@ describe("TrailDiscover AWS rules — tag-only (#2345)", () => {
 });
 
 describe("TrailDiscover AWS rules — entries a bundled Suzaku rule already covers (#2646)", () => {
-  const SIGMA = loadSigmaRuleDir(bundledSigmaDir() as string, {}, bundledSuzakuDir() as string);
+  const SIGMA = loadSigmaRuleDir(bundledSigmaDir() as string, {}, bundledSuzakuDir());
   const COVERED: [string, string, string][] = [
     ["kms.amazonaws.com", "DescribeKey", "AWS KMS DescribeKey"],
     ["sns.amazonaws.com", "ListTopics", "AWS SNS ListTopics"],
