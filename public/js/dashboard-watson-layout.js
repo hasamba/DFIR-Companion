@@ -3,8 +3,10 @@
 // Width: the analyst drags the panel's left edge (or uses the arrow keys on it). The width is kept
 // between MIN_WIDTH and MAX_SHARE of the window, saved in this browser, and set as --watson-width,
 // which the panel and the page padding read (dashboard-watson.css). A double click resets it.
-// Board: in full screen, Key questions and Next steps are two <details> columns; each can be
-// collapsed, and the choice is saved. Next steps come from the case state (most important first).
+// Board: in full screen, Key questions and Next steps are two <details> columns on the left. A closed
+// column is a thin book spine with its title and count (closed is the default); the choice is saved.
+// Next steps come from the case state (most important first).
+// Jump: when the chat is not scrolled to its end, an arrow at the bottom centre scrolls to the latest.
 // initDataAct (dashboard-data-act.js) calls initWatsonLayout once at load.
 (function () {
   const WIDTH_KEY = "dfir.watson.width";
@@ -56,10 +58,33 @@
       .join("");
   }
 
+  const each = (sel, fn) => Array.from(document.querySelectorAll(sel)).forEach(fn);
+  const countText = (n) => ` (${n})`;
+
   function paintSteps(st) {
     const steps = st && Array.isArray(st.nextSteps) ? st.nextSteps : [];
-    Array.from(document.querySelectorAll('[data-w="boardnext"]')).forEach((el) => { el.innerHTML = watsonNextStepsHtml(steps); });
-    Array.from(document.querySelectorAll('[data-w="boardnextcount"]')).forEach((el) => { el.textContent = steps.length ? ` (${steps.length})` : ""; });
+    const questions = st && Array.isArray(st.keyQuestions) ? st.keyQuestions : [];
+    each('[data-w="boardnext"]', (el) => { el.innerHTML = watsonNextStepsHtml(steps); });
+    each('[data-w="boardnextcount"]', (el) => { el.textContent = countText(steps.length); });
+    each('[data-w="boardqcount"]', (el) => { el.textContent = countText(questions.length); });
+  }
+
+  // The jump arrow shows when the log is more than JUMP_SLACK px above its end.
+  const JUMP_SLACK = 40;
+  const atEnd = (log) => log.scrollHeight - log.scrollTop - log.clientHeight <= JUMP_SLACK;
+  function watsonJumpSync() {
+    each(".watson-logwrap", (wrap) => {
+      const log = wrap.querySelector(".watson-log");
+      const btn = wrap.querySelector(".watson-jump");
+      if (log && btn) btn.hidden = atEnd(log);
+    });
+  }
+  function watsonJumpEnd(btn) {
+    const log = btn.closest(".watson-logwrap") && btn.closest(".watson-logwrap").querySelector(".watson-log");
+    if (!log) return;
+    if (typeof log.scrollTo === "function") log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
+    else log.scrollTop = log.scrollHeight;
+    btn.hidden = true;
   }
 
   // Drag the left edge: the width is the distance from the pointer to the window's right edge.
@@ -85,12 +110,45 @@
 
   const onHandle = (e) => !!(e.target && e.target.closest && e.target.closest(".watson-resize"));
 
+  // The message box's height: dragged from the handle on its top edge (up = taller), kept between
+  // INPUT_MIN and INPUT_MAX_SHARE of the window, saved in this browser. A double click resets it.
+  const INPUT_KEY = "dfir.watson.inputHeight";
+  const INPUT_MIN = 48;
+  const INPUT_MAX_SHARE = 0.6;
+  const inputs = () => Array.from(document.querySelectorAll(".watson-input"));
+  function watsonSetInputHeight(px) {
+    const max = Math.max(INPUT_MIN, Math.floor((Number(window.innerHeight) || 800) * INPUT_MAX_SHARE));
+    const h = px === null ? null : Math.min(max, Math.max(INPUT_MIN, Math.round(Number(px) || INPUT_MIN)));
+    inputs().forEach((ta) => { ta.style.height = h === null ? "" : h + "px"; });
+    store.set(INPUT_KEY, h === null ? "" : String(h));
+    return h;
+  }
+  const onGrip = (e) => !!(e.target && e.target.closest && e.target.closest(".watson-input-grip"));
+  function startInputDrag(e) {
+    e.preventDefault();
+    const ta = e.target.closest(".watson-composer") && e.target.closest(".watson-composer").querySelector(".watson-input");
+    if (!ta) return;
+    const startY = e.clientY;
+    const startH = ta.offsetHeight;
+    const move = (ev) => watsonSetInputHeight(startH + (startY - ev.clientY));
+    const stop = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", stop);
+      document.body.classList.remove("watson-resizing-input");
+    };
+    document.body.classList.add("watson-resizing-input");
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", stop);
+  }
+
   function initWatsonLayout() {
     const saved = Number(store.get(WIDTH_KEY));
     if (saved) applyWidth(saved);
     if (typeof window.addEventListener === "function") window.addEventListener("resize", onResize);
-    document.addEventListener("pointerdown", (e) => { if (onHandle(e)) startDrag(e); });
-    document.addEventListener("dblclick", (e) => { if (onHandle(e)) watsonSetWidth(DEFAULT_WIDTH); });
+    document.addEventListener("pointerdown", (e) => { if (onHandle(e)) startDrag(e); else if (onGrip(e)) startInputDrag(e); });
+    document.addEventListener("dblclick", (e) => { if (onHandle(e)) watsonSetWidth(DEFAULT_WIDTH); else if (onGrip(e)) watsonSetInputHeight(null); });
+    const savedInput = Number(store.get(INPUT_KEY));
+    if (savedInput) watsonSetInputHeight(savedInput);
     document.addEventListener("keydown", (e) => { if (onHandle(e)) onKey(e); });
     // A column's open or closed state is saved per browser.
     document.addEventListener(
@@ -101,13 +159,22 @@
       },
       true,
     );
-    Array.from(document.querySelectorAll("[data-w-sec]")).forEach((d) => {
-      if (store.get(SEC_KEY + d.dataset.wSec) === "closed") d.open = false;
+    each("[data-w-sec]", (d) => {
+      if (store.get(SEC_KEY + d.dataset.wSec) === "open") d.open = true;
     });
+    // Scroll events do not bubble: listen in the capture phase for the chat logs.
+    document.addEventListener(
+      "scroll",
+      (e) => { if (e.target && e.target.classList && e.target.classList.contains("watson-log")) watsonJumpSync(); },
+      true,
+    );
     if (typeof DfirState !== "undefined" && DfirState.onLastStateChange) DfirState.onLastStateChange(paintSteps);
   }
 
   window.watsonSetWidth = watsonSetWidth;
   window.watsonNextStepsHtml = watsonNextStepsHtml;
   window.initWatsonLayout = initWatsonLayout;
+  window.watsonJumpSync = watsonJumpSync;
+  window.watsonSetInputHeight = watsonSetInputHeight;
+  window.watsonJumpEnd = watsonJumpEnd;
 })();

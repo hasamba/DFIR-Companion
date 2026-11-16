@@ -243,6 +243,7 @@
   function composerHtml() {
     return (
       `<div class="watson-composer">` +
+      `<div class="watson-input-grip" role="separator" aria-orientation="horizontal" aria-label="Resize the message box" title="Drag up or down to resize the message box. Double-click to reset."></div>` +
       `<textarea class="watson-input" rows="2" placeholder="Ask Watson… (Enter sends. Ctrl+Enter starts a new line.)" aria-label="Message Watson"></textarea>` +
       `<div class="watson-paste-box"><textarea class="watson-paste-text" rows="5" placeholder="Paste evidence text here" aria-label="Paste evidence"></textarea>` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="pasteSend">Send paste</button></div>` +
@@ -270,25 +271,34 @@
     paste: svg("M9 4h6v3H9zM8 5H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2M9 12h6M9 16h4"),
     attach: svg("M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"),
     thread: svg("M12 5v14M5 12h14"),
+    down: svg("M12 5v14M5 12l7 7 7-7"),
   };
+
+  // Watson's logo (static markup): a magnifying glass with a W in its lens, white on the teal badge.
+  const LOGO =
+    `<svg class="watson-logo-svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
+    `<circle cx="10" cy="10" r="7"/><path d="M15.2 15.2L21 21"/><path d="M6.6 8l1.4 4.4 2-3 2 3 1.4-4.4" stroke-width="1.6"/></svg>`;
 
   // One shell for all three states; the panel's classes decide what shows (see dashboard-watson.css).
   function panelHtml() {
     return (
       `<button type="button" class="watson-rail" data-act="watsonAct" data-w-verb="open" aria-expanded="false" aria-label="Open Watson" title="Open Watson">` +
       `<span class="watson-rail-expand" aria-hidden="true">${ICON.expand}</span>` +
-      `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span><span data-w="railmode"></span><span data-w="railstatus"></span></button>` +
+      `<span class="watson-rail-icon watson-logo" title="Watson">${LOGO}</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span><span data-w="railmode"></span><span data-w="railstatus"></span></button>` +
       `<div class="watson-resize" role="separator" aria-orientation="vertical" aria-label="Resize Watson" title="Drag to resize. Double-click to reset." tabindex="0"></div>` +
-      `<div class="watson-root watson-body"><div class="watson-head"><strong>Watson</strong><span data-w="status"></span><span class="watson-mode" data-w="mode"></span><span data-w="velo"></span>` +
+      `<div class="watson-root watson-body"><div class="watson-head"><span class="watson-logo" aria-hidden="true">${LOGO}</span><strong>Watson</strong><span data-w="status"></span><span class="watson-mode" data-w="mode"></span><span data-w="velo"></span>` +
       `<button type="button" class="watson-icon-btn watson-stop" data-w="stop" data-act="watsonAct" data-w-verb="stop" aria-label="Stop Watson" title="Stop Watson" hidden>${ICON.stop}</button>` +
       `<button type="button" class="watson-icon-btn watson-only-open" data-act="watsonAct" data-w-verb="fullScreen" aria-expanded="false" aria-label="Full screen" title="Full screen">${ICON.full}</button>` +
       `<button type="button" class="watson-icon-btn watson-only-full" data-act="watsonAct" data-w-verb="exitFullScreen" aria-expanded="true" aria-label="Exit full screen" title="Exit full screen">${ICON.exitFull}</button>` +
       `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson" title="Collapse Watson">${ICON.collapse}</button></div>` +
+      `<div class="watson-chainbar" data-w="chain" hidden></div>` +
+      // Full screen: two columns on the left that fold into book spines (dashboard-watson-layout.js).
       `<div class="watson-main"><div class="watson-board">` +
-      `<details class="watson-board-sec" data-w-sec="questions" open><summary>Key questions</summary><div data-w="board"></div></details>` +
-      `<details class="watson-board-sec" data-w-sec="steps" open><summary>Next steps<span data-w="boardnextcount"></span></summary><div data-w="boardnext"></div></details>` +
+      `<details class="watson-board-sec" data-w-sec="questions"><summary title="Show or hide the key questions">Key questions<span data-w="boardqcount"></span></summary><div data-w="board"></div></details>` +
+      `<details class="watson-board-sec" data-w-sec="steps"><summary title="Show or hide the next steps">Next steps<span data-w="boardnextcount"></span></summary><div data-w="boardnext"></div></details>` +
       `</div>` +
-      `<div class="watson-chat"><div class="watson-log" data-w="log"></div>` +
+      `<div class="watson-chat"><div class="watson-logwrap"><div class="watson-log" data-w="log"></div>` +
+      `<button type="button" class="watson-jump" data-act="watsonJumpEnd" aria-label="Jump to the latest message" title="Jump to the latest message" hidden>${ICON.down}</button></div>` +
       `<div class="watson-statusbar" data-w="statusbar" hidden></div>` +
       composerHtml() +
       `<div class="watson-foot" data-w="foot"></div></div></div></div>`

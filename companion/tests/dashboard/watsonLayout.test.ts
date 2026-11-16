@@ -97,12 +97,107 @@ describe("the full-screen board", () => {
     expect(api.watsonNextStepsHtml([])).toContain("There are no next steps.");
   });
 
-  it("has two collapsible columns: Key questions and Next steps", () => {
+  it("has two columns, Key questions and Next steps, closed by default as book spines with counts", () => {
+    const view = read("../../../public/js/dashboard-watson-view.js");
+    expect(view).toContain('<details class="watson-board-sec" data-w-sec="questions"><summary');
+    expect(view).toContain('<details class="watson-board-sec" data-w-sec="steps"><summary');
+    expect(view).toContain('Key questions<span data-w="boardqcount"></span>');
+    expect(view).toContain('Next steps<span data-w="boardnextcount"></span>');
+    expect(view).toContain('data-w="boardnext"');
+    const css = read("../../../public/css/dashboard-watson.css");
+    expect(css).toContain(
+      ".watson-board-sec:not([open]) > summary { list-style: none; writing-mode: vertical-rl;",
+    );
+  });
+
+  it("restores a column the analyst opened, and counts both columns from the case state", () => {
+    const sections = [
+      { dataset: { wSec: "questions" }, open: false },
+      { dataset: { wSec: "steps" }, open: false },
+    ];
+    const counts: Record<string, { textContent: string; innerHTML?: string }> = {
+      boardqcount: { textContent: "" },
+      boardnextcount: { textContent: "" },
+      boardnext: { textContent: "", innerHTML: "" },
+    };
+    let onState: ((st: unknown) => void) | null = null;
+    const document = {
+      documentElement: { style: { setProperty: () => {} } },
+      querySelector: () => null,
+      querySelectorAll: (sel: string) => {
+        if (sel === "[data-w-sec]") return sections;
+        const m = /data-w="(\w+)"/.exec(sel);
+        return m && counts[m[1]] ? [counts[m[1]]] : [];
+      },
+      addEventListener: () => {},
+    };
+    const api = loadDashboardModule<Api>("dashboard-watson-layout.js", ["dashboard-escape.js"], {
+      document,
+      addEventListener: () => {},
+      innerWidth: 1600,
+      localStorage: {
+        getItem: (k: string) => (k === "dfir.watson.board.steps" ? "open" : null),
+        setItem: () => {},
+      },
+      DfirState: { onLastStateChange: (fn: (st: unknown) => void) => (onState = fn) },
+    });
+    api.initWatsonLayout();
+    expect(sections.map((d) => d.open)).toEqual([false, true]);
+    onState!({ keyQuestions: [{}, {}, {}], nextSteps: [{ action: "a", priority: "high" }] });
+    expect(counts.boardqcount.textContent).toBe(" (3)");
+    expect(counts.boardnextcount.textContent).toBe(" (1)");
+  });
+});
+
+describe("the jump-to-latest arrow", () => {
+  it("shows when the chat is scrolled up, hides at the end, and scrolls to the end", () => {
+    const log = {
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTop: 100,
+      scrollTo(o: { top: number }) {
+        this.scrollTop = o.top;
+      },
+    };
+    const btn = { hidden: true, closest: () => wrap };
+    const wrap = { querySelector: (sel: string) => (sel === ".watson-log" ? log : btn) };
+    const document = {
+      documentElement: { style: { setProperty: () => {} } },
+      querySelector: () => null,
+      querySelectorAll: (sel: string) => (sel === ".watson-logwrap" ? [wrap] : []),
+      addEventListener: () => {},
+    };
+    const api = loadDashboardModule<Api & { watsonJumpSync(): void; watsonJumpEnd(b: unknown): void }>(
+      "dashboard-watson-layout.js",
+      ["dashboard-escape.js"],
+      {
+        document,
+        addEventListener: () => {},
+        innerWidth: 1600,
+        localStorage: { getItem: () => null, setItem: () => {} },
+      },
+    );
+    api.watsonJumpSync();
+    expect(btn.hidden).toBe(false);
+    api.watsonJumpEnd(btn);
+    expect(log.scrollTop).toBe(1000);
+    expect(btn.hidden).toBe(true);
+    log.scrollTop = 690; // within 40 px of the end
+    api.watsonJumpSync();
+    expect(btn.hidden).toBe(true);
+  });
+
+  it("sits at the bottom centre of the chat log", () => {
     const view = read("../../../public/js/dashboard-watson-view.js");
     expect(view).toContain(
-      '<details class="watson-board-sec" data-w-sec="questions" open><summary>Key questions',
+      'class="watson-jump" data-act="watsonJumpEnd" aria-label="Jump to the latest message"',
     );
-    expect(view).toContain('<details class="watson-board-sec" data-w-sec="steps" open><summary>Next steps');
-    expect(view).toContain('data-w="boardnext"');
+    expect(read("../../../public/js/dashboard-data-act.js")).toContain(
+      "watsonJumpEnd: (el) => watsonJumpEnd(el)",
+    );
+    const css = read("../../../public/css/dashboard-watson.css");
+    expect(css).toContain(
+      ".watson-jump { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);",
+    );
   });
 });

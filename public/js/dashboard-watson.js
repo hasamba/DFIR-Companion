@@ -60,7 +60,7 @@
     const calls = Number(wChat.calls) || 0;
     const usd = Number(wChat.costUSD) || 0;
     const tail = usd === 0 && calls > 0 ? `${Number(wChat.tokens) || 0} tokens` : `$${usd.toFixed(2)}`;
-    return `This case: ${calls} calls · ${tail}`;
+    return `This case: ${calls} calls · ${tail}` + (typeof watsonModelFoot === "function" ? watsonModelFoot(wChat) : ""); // the model (dashboard-watson-status.js)
   }
 
   function setHtml(sel, html) {

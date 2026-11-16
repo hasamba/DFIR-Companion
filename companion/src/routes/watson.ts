@@ -135,11 +135,14 @@ export function registerWatsonRoutes(app: Express, ctx: RouteContext): void {
       const chat = await options.watsonChatStore.load(req.params.id);
       const runMode = watsonRunMode(await ctx.getControl(req.params.id));
       const veloConnected = caseVeloConnected(ctx, req.params.id);
+      // The footer names the model Watson talks to (read per request, like the round itself).
+      const model = options.watsonProvider?.();
       return res.status(200).json({
         ...withStalledLaunches(req.params.id, chat),
         providerConfigured: !!roundDeps() && !!options.pipeline,
         runMode,
         veloConnected,
+        watsonModel: model ? { provider: model.name, model: model.model } : null,
         running: watsonRuns.status(req.params.id), // memory only: null after a restart
       });
     } catch (err) {

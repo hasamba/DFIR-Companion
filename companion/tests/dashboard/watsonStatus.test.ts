@@ -115,6 +115,29 @@ describe("Watson status", () => {
     expect(api.watsonStatusOf(chat([done]), false).state).toBe("ready");
   });
 
+  it("names a card by its own words: a next step's action, a finding's title, a report text; never 'this card'", () => {
+    const { api } = setup();
+    const bar = (p: Record<string, unknown>) =>
+      api.watsonStatusOf(chat([{ id: "wp-2", status: "pending", ...p }]), false).bar;
+    expect(
+      bar({
+        kind: "next_step_new",
+        after: { action: "Collect the OpenSSH file timestamps", priority: "high" },
+      }),
+    ).toContain('Add the next step "Collect the OpenSSH file timestamps" to the case, or reject it.');
+    expect(bar({ kind: "finding_new", after: { title: "Renamed tool chain on WS-FAKE01" } })).toContain(
+      '"Renamed tool chain on WS-FAKE01"',
+    );
+    expect(
+      bar({ kind: "report_text", field: "limitations", after: "The System log was not collected." }),
+    ).toContain('"The System log was not collected."');
+    const long = bar({ kind: "next_step_new", after: { action: "x".repeat(200) } });
+    expect(long).toContain("x".repeat(89) + "…");
+    for (const kind of ["next_step_new", "finding_new", "question_new", "report_text"]) {
+      expect(bar({ kind, after: { action: "a", title: "t", question: "q" } })).not.toContain("this card");
+    }
+  });
+
   it("says Waiting for you with the count, and names the first card's action in the bar", () => {
     const { api } = setup();
     const s = api.watsonStatusOf(
@@ -123,7 +146,7 @@ describe("Watson status", () => {
     );
     expect(s.state).toBe("you");
     expect(s.pill).toContain("Waiting for you · 2");
-    expect(s.bar).toContain('Launch "Network connections on WS-FAKE01".');
+    expect(s.bar).toContain('Launch "Network connections on WS-FAKE01", or reject it.');
     expect(s.bar).toContain("1 more card waits for you.");
     expect(s.bar).toContain('data-w-status-show="wp-1"');
     expect(s.pid).toBe("wp-1");
@@ -136,6 +159,8 @@ describe("Watson status", () => {
     expect(s.bar).toContain('data-w-verb="reject" data-pid="wp-1">Reject</button>');
     const risky = api.watsonStatusOf(chat([launch({ risk: { reasons: ["r"], checks: ["c"] } })]), false);
     expect(risky.bar).not.toContain('data-w-verb="apply"');
+    expect(risky.bar).toContain('data-w-verb="reject" data-pid="wp-1">Reject</button>');
+    expect(risky.bar).toContain("Review the risky launch");
     expect(risky.bar).toContain("Show card");
     const other = api.watsonStatusOf(
       chat([{ id: "wp-4", kind: "finding_new", status: "pending", title: "x" }]),

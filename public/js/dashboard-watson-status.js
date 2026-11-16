@@ -24,9 +24,15 @@
         !needsRecovery(p) &&
         ((p.launched && p.watch && p.watch.state === "watching") || (!p.launched && p.launching)),
     );
+  // The card's own words: a next step's action, a finding's title, a question, a report text. A long
+  // one is cut at NAME_MAX characters (the card has all of it).
+  const NAME_MAX = 90;
   const nameOf = (p) => {
-    const a = p.after || {};
-    return String(p.title || a.question || a.title || a.text || p.question || p.text || p.summary || "this card");
+    const a = p.after && typeof p.after === "object" ? p.after : {};
+    const text = typeof p.after === "string" ? p.after : "";
+    const rows = p.kind === "event_promote" && Array.isArray(p.events) ? `${p.events.length} row${p.events.length === 1 ? "" : "s"}` : "";
+    const name = String(p.title || a.action || a.question || a.title || a.text || text || rows || p.summary || "the card").trim();
+    return name.length > NAME_MAX ? name.slice(0, NAME_MAX - 1) + "…" : name;
   };
 
   function workingBar(run) {
@@ -34,11 +40,12 @@
   }
 
   // The first waiting card's own buttons, so the analyst acts without scrolling. A risky launch keeps
-  // its risk review on the card; a round's super-timeline promotion has Apply only (as on the card).
+  // its Launch (and its risk review) on the card, but Reject is safe from here; a round's
+  // super-timeline promotion has Apply only (as on the card).
   const btn = (pid, verb, label) =>
     `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="${verb}" data-pid="${escAttr(pid)}">${label}</button> `;
   function actionsOf(p) {
-    if (p.kind === "velo_launch") return p.risk ? "" : btn(p.id, "apply", "Launch") + btn(p.id, "reject", "Reject");
+    if (p.kind === "velo_launch") return (p.risk ? "" : btn(p.id, "apply", "Launch")) + btn(p.id, "reject", "Reject");
     if (p.kind === "event_promote" && p.source === "supertimeline") return btn(p.id, "apply", watsonApplyLabel(p.kind));
     return btn(p.id, "apply", watsonApplyLabel(p.kind)) + btn(p.id, "reject", "Reject");
   }
@@ -48,8 +55,10 @@
     const stuck = needsRecovery(first);
     const action = stuck
       ? `Check "${esc(nameOf(first))}": mark it as launched or try again.`
-      : first.kind === "velo_launch"
-        ? `Launch "${esc(nameOf(first))}".`
+      : first.kind === "velo_launch" && first.risk
+        ? `Review the risky launch "${esc(nameOf(first))}" on its card, or reject it.`
+        : first.kind === "velo_launch"
+        ? `Launch "${esc(nameOf(first))}", or reject it.`
         : `Add ${watsonApplyNoun(first.kind)} "${esc(nameOf(first))}" to the case, or reject it.`;
     const more = cards.length - 1;
     const tail = more === 0 ? "" : more === 1 ? " 1 more card waits for you." : ` ${more} more cards wait for you.`;
@@ -84,6 +93,7 @@
       el.hidden = !s.bar;
     });
     each("railstatus", (el) => { el.className = s.state === "none" ? "" : `watson-status-dot watson-status-${s.state}`; });
+    if (typeof watsonJumpSync === "function") watsonJumpSync(); // the jump-to-latest arrow (dashboard-watson-layout.js)
   }
 
   // "Show card" (data-act="watsonStatusShow", dashboard-data-act.js): scroll the log to the card and flash it.
@@ -159,7 +169,18 @@
     return text;
   }
 
+  // The footer's model: "· Model: claude-… (anthropic)". The GET carries it; a POST reply does not,
+  // so the last one the GET sent is kept. The text is escaped: it comes from Settings.
+  let footModel = null;
+  function watsonModelFoot(chat) {
+    if (chat && Object.prototype.hasOwnProperty.call(chat, "watsonModel")) footModel = chat.watsonModel || null;
+    if (!footModel || !footModel.model) return "";
+    const who = footModel.provider ? ` (${esc(String(footModel.provider))})` : "";
+    return ` · Model: ${esc(String(footModel.model))}${who}`;
+  }
+
   window.watsonStatusOf = watsonStatusOf;
+  window.watsonModelFoot = watsonModelFoot;
   window.watsonStatusSync = watsonStatusSync;
   window.watsonStatusShow = watsonStatusShow;
   window.watsonEmptyCaseHtml = watsonEmptyCaseHtml;
