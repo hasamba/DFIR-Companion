@@ -137,6 +137,21 @@ describe("earlierShownIds", () => {
 });
 
 describe("collectRawRefs", () => {
+  it("a next-step change whose reason cites a raw row is collected, so Auto holds it", () => {
+    const step = { id: "ns1", priority: "high" as const, action: "a", rationale: "r", pointer: "p" };
+    const r = reply({
+      writes: {
+        findings: [],
+        nextSteps: [],
+        report: [],
+        stepUpdates: [{ stepId: "ns1", done: true, why: "raw1 shows it ran", seen: step }],
+      },
+    });
+    expect(collectRawRefs(r, new Set(["raw1"])).map((x) => x.item)).toEqual([
+      { kind: "stepUpdate", index: 0 },
+    ]);
+  });
+
   it("finds ids in every case-bound field, not in message, learned or memory", () => {
     const raw = new Set(["raw1"]);
     const r = reply({

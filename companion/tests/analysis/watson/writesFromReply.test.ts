@@ -370,6 +370,37 @@ describe("Watson writes from the reply", () => {
     expect(out).toEqual([]);
   });
 
+  it("a step change is dropped when the step was edited after Watson saw it (Codex review)", () => {
+    const seen = {
+      id: "ns1",
+      priority: "critical" as const,
+      action: "Collect Sysmon",
+      rationale: "r",
+      pointer: "p",
+    };
+    const inputs = {
+      findings: new Map(),
+      pastes: new Map(),
+      lines: new Map(),
+      steps: new Map([["ns1", { step: { ...seen, action: "Edited by the analyst" }, index: 0 }]]),
+    };
+    let n = 0;
+    const id = (prefix: string) => `${prefix}-0000000${n++}`;
+    const writes = (upd: object) => ({
+      findings: [],
+      nextSteps: [],
+      report: [],
+      stepUpdates: [upd as never],
+    });
+    expect(
+      buildWriteProposals(writes({ stepId: "ns1", done: true, why: "w", seen }), inputs, "t1", id),
+    ).toEqual([]);
+    const same = { ...inputs, steps: new Map([["ns1", { step: seen, index: 0 }]]) };
+    expect(
+      buildWriteProposals(writes({ stepId: "ns1", done: true, why: "w", seen }), same, "t1", id),
+    ).toHaveLength(1);
+  });
+
   it("next steps and report text become pending proposals; the executive summary is never written", async () => {
     const h = await harness([
       reply({

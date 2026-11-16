@@ -40,7 +40,7 @@ export function citationSets(
   return {
     pasteLines: new Map(pastes.map((p) => [p.id, p.lines] as const)),
     watsonFindingIds: new Set(findings.filter(isWatsonFinding).map((f) => f.id)),
-    stepIds: new Set(steps.map((s) => s.id)),
+    steps: new Map(steps.map((s) => [s.id, s] as const)),
   };
 }
 

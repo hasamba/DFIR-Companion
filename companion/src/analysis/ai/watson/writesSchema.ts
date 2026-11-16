@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Severity, StepPriority } from "../../stateTypes.js";
+import type { NextStep, Severity, StepPriority } from "../../stateTypes.js";
 import type { WatsonReportField } from "./writers/writerTypes.js";
 
 // The writes the model proposes in its reply: findings, next steps and report text. Untrusted like
@@ -46,6 +46,8 @@ export interface WatsonStepUpdateDraft {
   done: boolean;
   priority?: StepPriority;
   why: string;
+  /** The step as Watson was shown it (set by sanitizeWrites): a step edited since then is not changed. */
+  seen?: NextStep;
 }
 
 export interface WatsonWrites {
@@ -60,8 +62,8 @@ export interface WatsonWrites {
 export interface WatsonCitationSets {
   pasteLines: ReadonlyMap<string, number>;
   watsonFindingIds: ReadonlySet<string>;
-  /** The case's next-step ids now: a step update for any other id is dropped. */
-  stepIds?: ReadonlySet<string>;
+  /** The case's next steps as the prompt showed them, by id: a step update for any other id is dropped. */
+  steps?: ReadonlyMap<string, NextStep>;
 }
 
 export const emptyWrites = (): Required<WatsonWrites> => ({
@@ -194,7 +196,7 @@ export function sanitizeWrites(
     .slice(0, MAX_REPORT)
     .map((r) => ({ field: r.field, text: r.text.slice(0, REPORT_TEXT_MAX) }));
   // A step update names a step in the case now, once, and changes something (done or a priority).
-  const known = sets.stepIds ?? new Set<string>();
+  const known = sets.steps ?? new Map<string, NextStep>();
   const seen = new Set<string>();
   const stepUpdates = (w.stepUpdates ?? [])
     .filter((u) => {
@@ -208,6 +210,7 @@ export function sanitizeWrites(
       done: u.done,
       ...(u.done || !u.priority ? {} : { priority: u.priority }),
       why: u.why.slice(0, RATIONALE_MAX),
+      seen: known.get(u.stepId)!,
     }));
   return { findings, nextSteps, report, stepUpdates };
 }

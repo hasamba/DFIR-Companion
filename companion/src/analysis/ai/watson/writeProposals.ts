@@ -9,6 +9,7 @@ import type {
 import { pasteLineKey, type WatsonWriteInputs } from "./roundWrites.js";
 import type { WatsonFindingProposal, WatsonProposal } from "./types.js";
 import { pasteLineEvent } from "./writers/pasteLineEvents.js";
+import { sameStep } from "./writers/nextStepUpdateWriter.js";
 
 // A reply's sanitized writes as PENDING proposals. Pure: everything read from disk arrives in
 // `inputs`. A finding's paste-line events are built now, so the analyst sees the exact rows that will
@@ -103,6 +104,8 @@ function stepUpdateProposal(
   const found = inputs.steps?.get(u.stepId);
   if (!found) return null;
   const { step, index } = found;
+  // Someone edited the step while Watson thought: its decision was about the old step (Codex review).
+  if (u.seen && !sameStep(step, u.seen)) return null;
   if (!u.done && (!u.priority || u.priority === step.priority)) return null;
   const after = u.done ? null : { ...step, priority: u.priority! };
   return {

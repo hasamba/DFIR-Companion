@@ -11,7 +11,7 @@ import type { WatsonWriter, WriterDeps } from "./writerTypes.js";
 const OUT_OF_DATE = "Watson changed a next step";
 
 /** The fields a step change compares. */
-function sameStep(a: NextStep, b: NextStep): boolean {
+export function sameStep(a: NextStep, b: NextStep): boolean {
   return (
     a.priority === b.priority &&
     a.action === b.action &&
