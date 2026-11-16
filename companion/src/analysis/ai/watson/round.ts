@@ -220,13 +220,22 @@ async function runRound(
     heldIds: mayWrite ? carriedHeldIds(reaction, input.heldProposalIds, outcome.shownEvents) : [],
     ...(pasteId ? { paste: { pasteId, proposalIds: input.pasteProposalIds ?? [] } } : {}),
     ...(ctx.signal ? { signal: ctx.signal } : {}),
-    // Auto keeps going only when Watson asked for nothing (a request waits for its result).
-    // A search or lookup the hop's answer asked for (one per round) counts as "continue" too.
-    ...((outcome.reply.continue === true || outcome.wantsMore === true) && !outcome.reply.request
-      ? { continue: true }
-      : {}),
+    // Auto keeps going (autoApply.ts continueIfAsked). A request waits for its result (a file, a query,
+    // a Velociraptor result that wakes Watson by itself). A search the hop's answer asked for counts as
+    // "continue"; otherwise Watson's own flag decides, and with no flag the open questions do.
+    ...continueOf(outcome),
   };
   return autoAfterRound(ctx.auto, caseId, round, saved, (line) => ctx.log?.warn(line, { caseId }));
+}
+
+/** The round's say on Auto continuing: true, false (with why), or nothing (the open questions decide). */
+function continueOf(outcome: Outcome): { continue?: boolean; waitingFor?: string } {
+  const reply = outcome.reply;
+  if (!reply || reply.request) return { continue: false };
+  if (outcome.wantsMore) return { continue: true };
+  if (reply.continue === false)
+    return { continue: false, ...(reply.waitingFor?.trim() ? { waitingFor: reply.waitingFor.trim() } : {}) };
+  return reply.continue === true ? { continue: true } : {};
 }
 
 async function converse(

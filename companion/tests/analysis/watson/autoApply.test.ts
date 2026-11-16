@@ -819,3 +819,49 @@ describe("Auto keeps going (user decision of 2026-11-16)", () => {
     expect((await new WatsonChatStore(cases).load(CASE)).autoChainLaunches).toBeUndefined();
   });
 });
+
+describe("Auto works until nothing is open or only a person can help (user goal of 2026-11-16)", () => {
+  const continued: string[] = [];
+  const autoDeps = () => ({
+    control: async () => AUTO_ON,
+    writer: deps(),
+    continueLater: (_id: string, text: string) => void continued.push(text),
+  });
+  const run = async (r: Record<string, unknown>) => {
+    const saved = await new WatsonChatStore(cases).load(CASE);
+    return autoAfterRound(autoDeps(), CASE, { turnId: TURN, reaction: true, ...r } as never, saved, () => {});
+  };
+  const questions = async (statuses: string[]) => {
+    const st = await stateStore.load(CASE);
+    const keyQuestions = statuses.map((status, i) => ({
+      id: `q${i}`,
+      question: `Question ${i}?`,
+      status,
+      answer: "",
+    }));
+    await stateStore.save({ ...st, keyQuestions } as typeof st);
+  };
+  beforeEach(() => void (continued.length = 0));
+
+  it("with no word from Watson, it keeps going while a Key Question is open", async () => {
+    await questions(["answered", "partial"]);
+    await run({});
+    expect(continued).toHaveLength(1);
+  });
+
+  it("with no word from Watson and every question answered or not answerable, it stops and says so", async () => {
+    await questions(["answered", "unanswerable"]);
+    const chat = await run({});
+    expect(continued).toEqual([]);
+    expect(lastTurn(chat).text).toBe("Watson stops here: every Key Question is answered or not answerable.");
+  });
+
+  it("when Watson says only a person can help, it stops and shows what it needs", async () => {
+    await questions(["unknown"]);
+    const chat = await run({ continue: false, waitingFor: "the client's firewall logs for 2026-11-16" });
+    expect(continued).toEqual([]);
+    expect(lastTurn(chat).text).toBe(
+      "Watson stops here and waits for you: the client's firewall logs for 2026-11-16",
+    );
+  });
+});
