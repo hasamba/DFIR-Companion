@@ -1934,8 +1934,19 @@ export const FEATURES: Feature[] = [
   {
     // Watson's proposal cards, the "Wrote:" line and the paused-reactions banner. Pure builders.
     file: "dashboard-watson-cards.js",
-    publish: ["watsonCardHtml", "watsonWroteHtml", "watsonPausedHtml"],
-    private: ["HELD_SHOWN", "FIELD_LABEL", "PAUSED", "TITLE", "BODY", "btn"],
+    publish: ["watsonCardHtml", "watsonWroteHtml", "watsonPausedHtml", "watsonApplyLabel", "watsonApplyNoun"],
+    private: [
+      "HELD_SHOWN",
+      "FIELD_LABEL",
+      "PAUSED",
+      "TITLE",
+      "BODY",
+      "btn",
+      "APPLY",
+      "applyLabel",
+      "applyNoun",
+      "HOST_SAFE",
+    ],
   },
   {
     // Watson's markup builders, split from dashboard-watson.js to keep both under 400 lines. Pure:
@@ -1960,10 +1971,48 @@ export const FEATURES: Feature[] = [
     private: ["AUTO_CONFIRM", "MODES", "LABEL", "TIP", "wMode"],
   },
   {
+    // The Watson panel width (drag handle, saved per browser) and the full-screen board's Next steps
+    // column. initDataAct calls initWatsonLayout once at load.
+    file: "dashboard-watson-layout.js",
+    publish: ["watsonSetWidth", "watsonNextStepsHtml", "initWatsonLayout"],
+    private: [
+      "WIDTH_KEY",
+      "SEC_KEY",
+      "DEFAULT_WIDTH",
+      "MIN_WIDTH",
+      "MAX_SHARE",
+      "KEY_STEP",
+      "store",
+      "maxWidth",
+      "currentWidth",
+      "onHandle",
+    ],
+  },
+  {
+    // Watson's status pill, the bar above the message box and the rail dot. dashboard-watson-run.js
+    // calls watsonStatusSync on every render. "Show card" runs through data-act.
+    file: "dashboard-watson-status.js",
+    publish: [
+      "watsonStatusOf",
+      "watsonStatusSync",
+      "watsonStatusShow",
+      "watsonEmptyCaseHtml",
+      "watsonBestPractice",
+    ],
+    private: ["LABEL", "pending", "watching", "nameOf", "btn", "EMPTY_TEXT", "BUNDLE_ID"],
+  },
+  {
     // Watson's running state: the working line, the stop icon, the stop call and the per-send idempotency
     // key. dashboard-watson.js calls them by name. No initializer.
     file: "dashboard-watson-run.js",
-    publish: ["watsonWorkingHtml", "watsonStopSync", "watsonStop", "watsonSendKey", "watsonSendSettled"],
+    publish: [
+      "watsonWorkingHtml",
+      "watsonStopSync",
+      "watsonStop",
+      "watsonSendKey",
+      "watsonSendSettled",
+      "watsonNoCaseHtml",
+    ],
     private: ["REFETCH_MS", "wPendingKey", "wStopping", "wPoll", "newKey", "pollSync"],
   },
   {

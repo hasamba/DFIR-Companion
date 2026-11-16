@@ -46,13 +46,14 @@
     const a = p.after || {};
     const verbs =
       p.status === "pending"
-        ? btn(p.id, "apply", "Apply") + btn(p.id, "reject", "Reject")
+        ? `<div class="watson-meta">This adds it to the case. Nothing changes on the host.</div>` +
+          btn(p.id, "apply", watsonApplyLabel(p.kind)) + btn(p.id, "reject", "Reject")
         : p.status === "applied"
           ? btn(p.id, "undo", "Undo")
           : "";
     const title = p.kind === "question_new" ? "New question" : "Question update";
     return (
-      `<div class="watson-prop" data-pid="${escAttr(p.id)}">` +
+      `<div class="watson-prop watson-prop-${escAttr(p.kind)} watson-prop-${escAttr(p.status)}" data-pid="${escAttr(p.id)}">` +
       `<div class="watson-lbl">${esc(title)} · ${esc(p.status)}</div>` +
       `<div><strong>${esc(a.question)}</strong></div>` +
       `<div>${statusBadge(a.status)} ${esc(a.answer || "")}</div>` +
@@ -246,10 +247,11 @@
       `<div class="watson-paste-box"><textarea class="watson-paste-text" rows="5" placeholder="Paste evidence text here" aria-label="Paste evidence"></textarea>` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="pasteSend">Send paste</button></div>` +
       `<div class="watson-actions">` +
-      `<button type="button" data-act="watsonAct" data-w-verb="send">Send</button> ` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="pasteToggle">Paste evidence</button> ` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="attachPick">Attach file</button> ` +
-      `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="newThread" title="Start a new thread. Watson keeps its case memory. The earlier chat stays in the history.">↺ New thread</button>` +
+      `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="pasteToggle" aria-label="Paste evidence" title="Paste evidence">${ICON.paste}</button>` +
+      `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="attachPick" aria-label="Attach a file" title="Attach a file (text, JSON, XML, CSV, TSV or log)">${ICON.attach}</button>` +
+      `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="newThread" aria-label="New thread" title="New thread. Watson keeps its case memory. The earlier chat stays in the history.">${ICON.thread}</button>` +
+      `<span class="watson-actions-gap"></span>` +
+      `<button type="button" class="watson-icon-btn watson-send" data-act="watsonAct" data-w-verb="send" aria-label="Send" title="Send (Enter)">${ICON.send}</button>` +
       `<input type="file" class="watson-file" data-act="watsonAct" data-act-on="change" data-w-verb="file" accept=".txt,.log,.csv,.tsv,.json,.xml,text/*,application/json,application/xml" />` +
       `</div></div>`
     );
@@ -264,6 +266,10 @@
     full: svg("M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"),
     exitFull: svg("M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"),
     stop: svg("M6 6h12v12H6z"),
+    send: svg("M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"),
+    paste: svg("M9 4h6v3H9zM8 5H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2M9 12h6M9 16h4"),
+    attach: svg("M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 7"),
+    thread: svg("M12 5v14M5 12h14"),
   };
 
   // One shell for all three states; the panel's classes decide what shows (see dashboard-watson.css).
@@ -271,14 +277,19 @@
     return (
       `<button type="button" class="watson-rail" data-act="watsonAct" data-w-verb="open" aria-expanded="false" aria-label="Open Watson" title="Open Watson">` +
       `<span class="watson-rail-expand" aria-hidden="true">${ICON.expand}</span>` +
-      `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span><span data-w="railmode"></span></button>` +
-      `<div class="watson-root watson-body"><div class="watson-head"><strong>Watson</strong><span class="watson-mode" data-w="mode"></span><span data-w="velo"></span>` +
+      `<span class="watson-rail-icon">W</span><span class="watson-dot" data-w="dot"></span><span class="watson-count" data-w="count"></span><span data-w="railmode"></span><span data-w="railstatus"></span></button>` +
+      `<div class="watson-resize" role="separator" aria-orientation="vertical" aria-label="Resize Watson" title="Drag to resize. Double-click to reset." tabindex="0"></div>` +
+      `<div class="watson-root watson-body"><div class="watson-head"><strong>Watson</strong><span data-w="status"></span><span class="watson-mode" data-w="mode"></span><span data-w="velo"></span>` +
       `<button type="button" class="watson-icon-btn watson-stop" data-w="stop" data-act="watsonAct" data-w-verb="stop" aria-label="Stop Watson" title="Stop Watson" hidden>${ICON.stop}</button>` +
       `<button type="button" class="watson-icon-btn watson-only-open" data-act="watsonAct" data-w-verb="fullScreen" aria-expanded="false" aria-label="Full screen" title="Full screen">${ICON.full}</button>` +
       `<button type="button" class="watson-icon-btn watson-only-full" data-act="watsonAct" data-w-verb="exitFullScreen" aria-expanded="true" aria-label="Exit full screen" title="Exit full screen">${ICON.exitFull}</button>` +
       `<button type="button" class="watson-icon-btn" data-act="watsonAct" data-w-verb="collapse" aria-expanded="true" aria-label="Collapse Watson" title="Collapse Watson">${ICON.collapse}</button></div>` +
-      `<div class="watson-main"><div class="watson-board" data-w="board"></div>` +
+      `<div class="watson-main"><div class="watson-board">` +
+      `<details class="watson-board-sec" data-w-sec="questions" open><summary>Key questions</summary><div data-w="board"></div></details>` +
+      `<details class="watson-board-sec" data-w-sec="steps" open><summary>Next steps<span data-w="boardnextcount"></span></summary><div data-w="boardnext"></div></details>` +
+      `</div>` +
       `<div class="watson-chat"><div class="watson-log" data-w="log"></div>` +
+      `<div class="watson-statusbar" data-w="statusbar" hidden></div>` +
       composerHtml() +
       `<div class="watson-foot" data-w="foot"></div></div></div></div>`
     );

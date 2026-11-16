@@ -227,7 +227,7 @@ describe("Watson paste ingest", () => {
     expect(chat.pastes[0].parsed).toMatchObject({ kind: "siem", rows: 2, held: 1 });
     const system = chat.turns.find((t) => t.role === "system");
     expect(system?.text).toBe(
-      "Watson read 2 rows from events.json (siem). The tagger graded 1 rows above Info. These rows wait for your approval.",
+      "Watson read 2 rows from events.json (siem). The tagger graded 1 of them above Info. To add it to the forensic timeline, apply the held-rows card below. All the rows stay in the super-timeline, and Watson can search them when you ask a question.",
     );
     expect(system?.proposalIds).toEqual([held[0].id]);
     // The system turn comes before the round's analyst turn.
@@ -382,13 +382,29 @@ describe("held tagger and the chat it builds", () => {
     expect(new Set(tags.map((t) => t.targetId))).toEqual(new Set(["e-info", "e-low"]));
   });
 
+  it("with no row above Info, says the rows stay in the super-timeline and that the analyst can ask about them", () => {
+    const paste = {
+      id: "wf-8",
+      storedName: "0008_x.json",
+      filename: "velo-flow.json",
+      bytes: 1,
+      lines: 1,
+      at: "t",
+    };
+    const chat = withPasteIngest(emptyWatsonChat(), paste, { kind: "velociraptor", rows: 94, held: [] });
+    expect(chat.proposals).toHaveLength(0);
+    expect(chat.turns[0].text).toBe(
+      "Watson read 94 rows from velo-flow.json (velociraptor). The tagger graded no row above Info, so nothing waits for your approval. All the rows stay in the super-timeline, and Watson can search them when you ask a question.",
+    );
+  });
+
   it("splits held rows 25 per proposal and states the cut past 200", () => {
     const paste = { id: "wf-9", storedName: "0009_x.json", filename: "x.json", bytes: 1, lines: 1, at: "t" };
     const many = Array.from({ length: 230 }, (_, i) => ev(`e${i}`, "High"));
     const chat = withPasteIngest(emptyWatsonChat(), paste, { kind: "siem", rows: 500, held: many });
     expect(chat.proposals).toHaveLength(8);
     expect(chat.proposals.every((p) => p.kind === "event_promote" && p.events.length === 25)).toBe(true);
-    expect(chat.turns[0].text).toContain("The tagger graded 230 rows above Info");
+    expect(chat.turns[0].text).toContain("The tagger graded 230 of them above Info");
     expect(chat.turns[0].text).toContain(
       "Watson proposes only the first 200. The other 30 stay in the super-timeline.",
     );

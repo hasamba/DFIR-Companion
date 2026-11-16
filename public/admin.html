@@ -42,7 +42,7 @@
   <header>
     <img src="/dfir-companion-logo.jpg" alt="" />
     <h1>Account &amp; team</h1>
-    <a href="/dashboard">Dashboard</a>
+    <a id="backToDashboard" href="/dashboard">Dashboard</a>
     <button id="logout" class="danger">Sign out</button>
   </header>
   <main>
@@ -99,6 +99,7 @@
     (function () {
       var csrf = '';
       var users = [];
+      var editingUser = '';
       var cases = [];
       var message = document.getElementById('message');
       function esc(value) {
@@ -137,9 +138,18 @@
         document.getElementById('caseId').innerHTML = caseOptions;
         document.getElementById('tokenCaseId').innerHTML = caseOptions;
         document.getElementById('users').innerHTML = users.map(function (u) {
-          return '<tr><td>' + esc(u.displayName) + '</td><td><code>' + esc(u.id) + '</code><br>' + esc(u.kind) + '</td><td>' + esc(u.globalRole) +
+          var base = '<tr><td>' + esc(u.displayName) + '</td><td><code>' + esc(u.id) + '</code><br>' + esc(u.kind) + '</td><td>' + esc(u.globalRole) +
             '</td><td>' + (u.disabled ? 'Disabled' : 'Active') + '</td><td><button data-user="' + esc(u.id) + '" data-disabled="' + (!u.disabled) + '">' +
-            (u.disabled ? 'Enable' : 'Disable') + '</button></td></tr>';
+            (u.disabled ? 'Enable' : 'Disable') + '</button> <button data-edit-user="' + esc(u.id) + '">Edit</button></td></tr>';
+          if (editingUser !== u.id) return base;
+          var pw = u.kind === 'local'
+            ? '<label>New password (optional)<input name="password" type="password" minlength="6" autocomplete="new-password" /></label> '
+            : '';
+          return base + '<tr class="edit-row"><td colspan="5"><form data-edit-form="' + esc(u.id) + '">' +
+            '<label>Display name<input name="displayName" value="' + esc(u.displayName) + '" required /></label> ' +
+            '<label>Global role<select name="globalRole"><option value="member"' + (u.globalRole === 'member' ? ' selected' : '') + '>Member</option>' +
+            '<option value="administrator"' + (u.globalRole === 'administrator' ? ' selected' : '') + '>Administrator</option></select></label> ' +
+            pw + '<button type="submit">Save</button> <button type="button" data-edit-cancel="1">Cancel</button></form></td></tr>';
         }).join('');
         var roleLists = (await Promise.all(cases.map(function (c) {
           return api('/auth/cases/' + encodeURIComponent(c.caseId) + '/roles')
@@ -227,8 +237,32 @@
           form.reset(); return load();
         }).then(function () { say('Service token created', true); }).catch(function (e) { say(e.message); });
       });
+      // Edit user: PATCH only the fields that changed; the server's answer (e.g. last-administrator refusal) is shown as-is.
+      function editPatch(form, user) {
+        var f = new FormData(form); var patch = {};
+        var name = String(f.get('displayName') || '').trim();
+        if (name && name !== user.displayName) patch.displayName = name;
+        if (f.get('globalRole') !== user.globalRole) patch.globalRole = f.get('globalRole');
+        var password = f.get('password');
+        if (user.kind === 'local' && password) patch.password = String(password);
+        return patch;
+      }
+      document.addEventListener('submit', function (event) {
+        var form = event.target.closest('form[data-edit-form]'); if (!form) return;
+        event.preventDefault();
+        var id = form.dataset.editForm;
+        var user = users.find(function (u) { return u.id === id; }); if (!user) return;
+        var patch = editPatch(form, user);
+        if (!Object.keys(patch).length) { editingUser = ''; load().then(function () { say('No changes'); }).catch(function (e) { say(e.message); }); return; }
+        api('/auth/users/' + encodeURIComponent(id), {method:'PATCH', body:JSON.stringify(patch)})
+          .then(function () { editingUser = ''; return load(); }).then(function () { say('Saved', true); }).catch(function (e) { say(e.message); });
+      });
       document.addEventListener('click', function (event) {
         var button = event.target.closest('button'); if (!button) return;
+        if (button.dataset.editUser || button.dataset.editCancel) {
+          editingUser = button.dataset.editUser || '';
+          load().catch(function (e) { say(e.message); }); return;
+        }
         var action;
         if (button.dataset.user) action = api('/auth/users/' + encodeURIComponent(button.dataset.user),
           {method:'PATCH', body:JSON.stringify({disabled:button.dataset.disabled === 'true'})});
@@ -244,6 +278,15 @@
       document.getElementById('logout').addEventListener('click', function () {
         api('/auth/logout', {method:'POST'}).then(function () { location.assign('/login'); }).catch(function (e) { say(e.message); });
       });
+      // Return to the case the dashboard had open (?return=<caseId>); the id is validated and encoded.
+      (function () {
+        // A plain match, no URLSearchParams: an allowed id has no characters that need decoding.
+        var m = /[?&]return=([^&#]*)/.exec(String(location.search || ''));
+        var id = m ? m[1] : '';
+        if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(id) && id.indexOf('..') < 0) {
+          document.getElementById('backToDashboard').setAttribute('href', '/dashboard?caseId=' + encodeURIComponent(id));
+        }
+      })();
       load().catch(function (error) { say(error.message); });
     })();
   </script>

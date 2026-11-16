@@ -465,6 +465,8 @@
   <script src="/js/dashboard-watson-mode.js"></script>
   <script src="/js/dashboard-watson-limit-warn.js"></script>
   <script src="/js/dashboard-watson-run.js"></script>
+  <script src="/js/dashboard-watson-status.js"></script>
+  <script src="/js/dashboard-watson-layout.js"></script>
   <script src="/js/dashboard-watson.js"></script>
   <script src="/js/dashboard-presidio.js"></script>
   <script src="/js/dashboard-hypotheses.js"></script>
@@ -662,7 +664,7 @@
       <button id="profileMenuBtn" type="button" title="Account menu" aria-label="Account menu" aria-haspopup="menu" aria-expanded="false"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></button>
       <span id="profileMenu" class="profile-menu" role="menu" hidden>
         <span id="profileIdentityName" class="profile-menu-identity"></span>
-        <a href="/admin" role="menuitem">Account &amp; team</a>
+        <a id="profileAccountLink" href="/admin" role="menuitem" data-act="accountLink">Account &amp; team</a>
         <button id="profileSignOut" type="button" role="menuitem">Sign out</button>
       </span>
     </span>
@@ -1925,7 +1927,7 @@
           <div class="sfield"><label for="env-DFIR_AI_CAPTURE_SAFETY_STOPS">Save safety-stopped prompts<span class="sfield-hint">DFIR_AI_CAPTURE_SAFETY_STOPS — when a model's safety filter stops an answer, save the exact prompt it was sent (with the AI step, provider, model and time) in the case folder under state/safety-stops, so it can be replayed later. The file holds case evidence (masked when anonymisation is on). Restart after changing</span></label><select id="env-DFIR_AI_CAPTURE_SAFETY_STOPS"><option value="">off (default)</option><option value="1">on</option></select></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_AI_WATSON_MODEL">Watson model<span class="sfield-hint">DFIR_AI_WATSON_MODEL — the model Watson (the per-case investigation chat) talks to. Blank = the synthesis model, when Watson uses the synthesis provider</span></label><input id="env-DFIR_AI_WATSON_MODEL" placeholder="blank = synthesis model" /></div>
+          <div class="sfield"><label>Watson model<span class="sfield-hint">DFIR_AI_WATSON_MODEL — the model Watson (the per-case investigation chat) talks to. Blank = the synthesis model, when Watson uses the synthesis provider</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-watson" aria-label="Available Watson models" aria-describedby="ai-model-status-watson" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_WATSON_MODEL" aria-label="Manually entered Watson model ID" aria-describedby="ai-model-status-watson" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="blank = synthesis model" /><button type="button" id="load-ai-models-watson" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-watson" class="sfield-hint" role="status"></span></div>
           <div class="sfield">
             <label for="env-DFIR_AI_WATSON_PROVIDER">Watson provider<span class="sfield-hint">DFIR_AI_WATSON_PROVIDER — Blank = the synthesis provider. Set the Watson model too when you choose a different provider</span></label>
             <select id="env-DFIR_AI_WATSON_PROVIDER">

@@ -351,6 +351,11 @@ export interface WatsonChat {
   reactionFailures?: number;
   /** An analyst has messaged Watson on this case; survives the turn cap (reactions need it). */
   analystEngaged?: boolean;
+  /**
+   * Collections Auto launched from Watson's own rounds since the analyst's last message (autoChain.ts).
+   * Cleared by an analyst message; at WATSON_AUTO_CHAIN_MAX, reaction rounds launch nothing more.
+   */
+  autoChainLaunches?: number;
   costUSD: number;
   /** Input + output tokens Watson used on this case: the limit for providers that report no cost. */
   tokens: number;

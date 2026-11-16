@@ -115,6 +115,7 @@ function setup(
       "dashboard-watson-view.js",
       "dashboard-watson-mode.js",
       "dashboard-watson-run.js",
+      "dashboard-watson-status.js",
       "dashboard-watson-velo.js",
     ],
     {
@@ -533,6 +534,79 @@ describe("rail button, failed sends and paste limits", () => {
     const input = { value: "keep me" };
     await api.watsonAct({ dataset: { wVerb: "send" }, closest: () => ({ querySelector: () => input }) });
     expect(input.value).toBe("keep me");
+  });
+
+  it("loads the chat when a case opens, with no live-socket push (a quiet case)", async () => {
+    const urls: string[] = [];
+    const fetch = async (u: string) => {
+      urls.push(String(u));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => chatWith([{ id: "t1", at: "x", role: "watson", text: "earlier answer" }]),
+      };
+    };
+    const { api, log, fireState } = setup({ fetch });
+    api.initWatson();
+    urls.length = 0;
+    fireState({ keyQuestions: [], forensicTimeline: [] }); // the case's first render, from the GET /state
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(urls.filter((u) => u.endsWith("/cases/c1/watson"))).toHaveLength(1);
+    expect(log.innerHTML).toContain("earlier answer");
+    fireState({ keyQuestions: [], forensicTimeline: [] }); // a later render of the same case does not reload
+    await new Promise((r) => setTimeout(r, 0));
+    expect(urls.filter((u) => u.endsWith("/cases/c1/watson"))).toHaveLength(1);
+  });
+
+  it("warns that no case is open when the analyst sends with no case, keeps the text and posts nothing", async () => {
+    let posted = false;
+    const fetch = async () => {
+      posted = true;
+      return { ok: true, status: 200, json: async () => chatWith([]) };
+    };
+    const { api, log, caseInput } = setup({ fetch });
+    caseInput.value = "";
+    const input = { value: "who logged in?" };
+    await api.watsonAct({ dataset: { wVerb: "send" }, closest: () => ({ querySelector: () => input }) });
+    expect(posted).toBe(false);
+    expect(input.value).toBe("who logged in?");
+    expect(log.innerHTML).toContain("No case is open. Open a case first.");
+  });
+
+  it("warns that no case is open for a paste with no case, and keeps the pasted text", async () => {
+    let posted = false;
+    const fetch = async () => {
+      posted = true;
+      return { ok: true, status: 200, json: async () => chatWith([]) };
+    };
+    const { api, log, caseInput } = setup({ fetch });
+    caseInput.value = "";
+    const area = { value: "4624 logon WS-FAKE01" };
+    const box = { classList: { remove() {} } };
+    const root = { querySelector: (s: string) => (s.includes("text") ? area : box) };
+    await api.watsonAct({ dataset: { wVerb: "pasteSend" }, closest: () => root });
+    expect(posted).toBe(false);
+    expect(area.value).toBe("4624 logon WS-FAKE01");
+    expect(log.innerHTML).toContain("No case is open. Open a case first.");
+  });
+
+  it("the Velociraptor chip in the panel header stays on one line", () => {
+    const css = readFileSync(
+      new URL("../../../public/css/dashboard-watson.css", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    expect(css).toMatch(/\.watson-velo-chip \{[^}]*white-space: nowrap/);
+  });
+
+  it("the toolbar Watson button shows a minimize icon while the panel is open or full", () => {
+    const css = readFileSync(
+      new URL("../../../public/css/dashboard-watson.css", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    expect(css).toMatch(
+      /body\.watson-panel-open #watsonToggle::before,\s*body\.watson-full-open #watsonToggle::before\s*\{[^}]*background-image/,
+    );
   });
 
   it("refuses a paste over 50 MB without posting", async () => {
@@ -998,6 +1072,87 @@ describe("a free-form answer in the Watson log", () => {
     await api.watsonAct({ dataset: { wVerb: "newThread" } });
     expect(calls).toEqual(["POST /cases/c1/watson/new-thread"]);
     expect(log.innerHTML).toContain("New thread — Watson starts");
+  });
+
+  it("the composer buttons are labelled icons, with Send as the main one", () => {
+    const view = readFileSync(
+      new URL("../../../public/js/dashboard-watson-view.js", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    for (const [verb, label] of [
+      ["send", "Send"],
+      ["pasteToggle", "Paste evidence"],
+      ["attachPick", "Attach a file"],
+      ["newThread", "New thread"],
+    ]) {
+      expect(view).toMatch(
+        new RegExp(
+          `class="watson-icon-btn[^"]*" data-act="watsonAct" data-w-verb="${verb}" aria-label="${label}[^"]*" title="${label}`,
+        ),
+      );
+    }
+    expect(view).toContain('class="watson-icon-btn watson-send"');
+  });
+
+  it("a card carries its kind and status, so the chat can colour each kind", () => {
+    const cards = readFileSync(
+      new URL("../../../public/js/dashboard-watson-cards.js", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    expect(cards).toContain(
+      'class="watson-prop watson-prop-${escAttr(p.kind)} watson-prop-${escAttr(p.status)}"',
+    );
+    const css = readFileSync(
+      new URL("../../../public/css/dashboard-watson.css", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    for (const cls of [
+      "watson-prop-next_step",
+      "watson-prop-question_new",
+      "watson-prop-finding_new",
+      "watson-prop-pending",
+      "watson-velo",
+    ]) {
+      expect(css).toContain(`.${cls}`);
+    }
+  });
+
+  it("each pending card's Apply button says what it adds, and the card says nothing changes on the host", () => {
+    const { api, log } = setup();
+    api.renderWatson(
+      chatWith([{ id: "t1", at: "x", role: "watson", text: "a", proposalIds: ["p1", "p2", "p3"] }], {
+        proposals: [
+          {
+            id: "p1",
+            turnId: "t1",
+            kind: "finding_new",
+            status: "pending",
+            title: "SSH keys",
+            severity: "Medium",
+          },
+          { id: "p2", turnId: "t1", kind: "next_step_new", status: "pending", title: "Collect logs" },
+          {
+            id: "p3",
+            turnId: "t1",
+            kind: "question_new",
+            status: "pending",
+            after: { question: "Who logged on?", status: "unknown" },
+          },
+        ],
+      }),
+    );
+    expect(log.innerHTML).toContain('data-w-verb="apply" data-pid="p1">Add finding</button>');
+    expect(log.innerHTML).toContain('data-w-verb="apply" data-pid="p2">Add next step</button>');
+    expect(log.innerHTML).toContain('data-w-verb="apply" data-pid="p3">Add question</button>');
+    expect(log.innerHTML).toContain("This adds it to the case. Nothing changes on the host.");
+  });
+
+  it("the Watson badge and its Undo button share one height", () => {
+    const css = readFileSync(
+      new URL("../../../public/css/dashboard-watson.css", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    expect(css).toMatch(/\.watson-mark,\s*\.watson-undo \{[^}]*height: 20px/);
   });
 
   it("has a New thread button in the composer", () => {

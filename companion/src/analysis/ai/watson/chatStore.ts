@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../../../storage/caseStore.js";
 import { atomicWrite } from "../../../storage/atomicWrite.js";
+import { chainCountOf } from "./autoChain.js";
 import { WatsonHistoryStore } from "./historyStore.js";
 import { proposalSchema } from "./proposalSchema.js";
 import {
@@ -86,8 +87,9 @@ const PAUSES: readonly string[] = ["presidio", "limit", "errors"];
 function reactionFields(
   o: Record<string, unknown>,
   turns: readonly WatsonTurn[],
-): Pick<WatsonChat, "reactionsPaused" | "reactionFailures" | "analystEngaged"> {
+): Pick<WatsonChat, "reactionsPaused" | "reactionFailures" | "analystEngaged" | "autoChainLaunches"> {
   const failures = o.reactionFailures;
+  const chain = chainCountOf(o.autoChainLaunches);
   return {
     ...(typeof o.reactionsPaused === "string" && PAUSES.includes(o.reactionsPaused)
       ? { reactionsPaused: o.reactionsPaused as WatsonReactionsPaused }
@@ -96,6 +98,8 @@ function reactionFields(
       ? { reactionFailures: failures }
       : {}),
     ...(o.analystEngaged === true || turns.some((t) => t.role === "analyst") ? { analystEngaged: true } : {}),
+    // The Auto chain count, read fail-closed: a malformed value reads as the cap (autoChain.ts).
+    ...(chain !== undefined ? { autoChainLaunches: chain } : {}),
   };
 }
 

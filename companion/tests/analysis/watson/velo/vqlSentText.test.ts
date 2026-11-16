@@ -88,7 +88,19 @@ describe("the prompt tells the truth about approval in both modes (G9)", () => {
     const t = veloRulesText();
     expect(t).not.toContain("The analyst approves it first.");
     expect(t).toContain("A fleet hunt always waits for the analyst's approval");
-    expect(t).toContain("unless the\ncase is in Auto mode");
+    expect(t).toContain("case is in Auto mode");
+  });
+
+  it("describes the Auto chain from Watson's own rounds and the risky wait", async () => {
+    const { veloRulesText } = await import("../../../../src/analysis/ai/watson/velo/veloPrompt.js");
+    const { WATSON_AUTO_CHAIN_MAX } = await import("../../../../src/analysis/ai/watson/autoChain.js");
+    const t = veloRulesText();
+    expect(t).not.toContain("the analyst sent this message from the Watson panel");
+    expect(t).toContain(`up to ${WATSON_AUTO_CHAIN_MAX} safe single-host collections in a row`);
+    expect(t).toContain("since the analyst's last message");
+    expect(t).toContain("Auto mode never launches it");
+    expect(t).toContain("Windows.Hayabusa.Rules");
+    expect(t).not.toContain("DetectRaptor.Windows.Detection.MFT");
   });
 });
 

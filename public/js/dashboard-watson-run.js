@@ -19,6 +19,12 @@
       ? crypto.randomUUID()
       : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
 
+  // With no case open there is no chat: the log shows the hint and, after a send, why nothing went out.
+  function watsonNoCaseHtml(notice) {
+    const warn = notice ? `<div class="watson-turn watson-warn"><div class="watson-text">${esc(String(notice.text))}</div></div>` : "";
+    return `<div class="watson-empty">Open a case to talk to Watson.</div>` + warn;
+  }
+
   function watsonWorkingHtml(chat, localBusy) {
     const run = chat && chat.running ? chat.running : null;
     if (!run && !localBusy) return "";
@@ -49,6 +55,7 @@
     const running = !!(chat && chat.running);
     Array.from(document.querySelectorAll('[data-w="stop"]')).forEach((el) => { el.hidden = !(localBusy || running); });
     pollSync(running);
+    if (typeof watsonStatusSync === "function") watsonStatusSync(chat, localBusy); // dashboard-watson-status.js
   }
 
   // POST the stop, then re-read the chat. Returns null on success, else the text to show the analyst.
@@ -92,6 +99,7 @@
   }
 
   window.watsonWorkingHtml = watsonWorkingHtml;
+  window.watsonNoCaseHtml = watsonNoCaseHtml;
   window.watsonStopSync = watsonStopSync;
   window.watsonStop = watsonStop;
   window.watsonSendKey = watsonSendKey;

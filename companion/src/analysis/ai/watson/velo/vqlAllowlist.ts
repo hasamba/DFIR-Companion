@@ -7,6 +7,8 @@
 // (an argument that uploads, runs, or evaluates a string disqualifies it), and add a test.
 // Names are compared case-insensitively.
 
+import { BUILT_IN_BUNDLES } from "../../../artifactBundleStore.js";
+
 /** Read-only VQL plugins and functions. */
 export const ALLOWED_CALLS: readonly string[] = [
   // endpoint state (read-only)
@@ -51,8 +53,8 @@ export const ALLOWED_CALLS: readonly string[] = [
   "enumerate",
 ];
 
-/** Read-only artifacts Watson may call as `Artifact.<Name>(…)`. */
-export const ALLOWED_ARTIFACTS: readonly string[] = [
+/** The individually reviewed read-only artifacts. */
+const REVIEWED_ARTIFACTS: readonly string[] = [
   "Windows.System.Pslist",
   "Windows.Network.Netstat",
   "Windows.EventLogs.EvtxHunter",
@@ -60,6 +62,40 @@ export const ALLOWED_ARTIFACTS: readonly string[] = [
   "Generic.Client.Info",
   "Linux.Sys.Pslist",
 ];
+
+/**
+ * The built-in bundle whose artifacts are safe for Watson (user decision of 2026-11-15). This is a
+ * product decision, not a per-artifact review: some of these run a bundled tool on the endpoint
+ * (Hayabusa, Autoruns). Read from the shipped bundle, so the two lists cannot drift. An analyst's edit of that bundle does not change
+ * this list. The "best-practice-big-hogs" bundle (slow full-disk scans) is deliberately not included.
+ * Many of these fetch and run a tool and take tool overrides, so one of them is safe ONLY in its default
+ * run, `Artifact.<Name>()` with no arguments (controller ruling of 2026-11-15, Codex review #1). Any
+ * argument makes the query risky: the analyst can approve it, and Auto never launches it.
+ */
+export const SAFE_BUNDLE_ID = "best-practice";
+
+const bundleArtifacts = (id: string): readonly string[] =>
+  BUILT_IN_BUNDLES.find((b) => b.id === id)?.artifacts ?? [];
+
+/** Read-only artifacts Watson may call as `Artifact.<Name>(…)`. */
+export const ALLOWED_ARTIFACTS: readonly string[] = [
+  ...new Set([...REVIEWED_ARTIFACTS, ...bundleArtifacts(SAFE_BUNDLE_ID)]),
+];
+
+const REVIEWED_LC = new Set(REVIEWED_ARTIFACTS.map((a) => a.toLowerCase()));
+
+/** True for an allowed artifact that is safe only with no arguments (Best Practice, not individually reviewed). */
+export function isDefaultRunOnly(name: string): boolean {
+  const n = name.toLowerCase();
+  return !REVIEWED_LC.has(n) && bundleArtifacts(SAFE_BUNDLE_ID).some((a) => a.toLowerCase() === n);
+}
+
+/**
+ * A Tool_* override (Velociraptor's tool name, file name, hash or URL): it can change the tool an
+ * artifact runs. Risky on every artifact, the reviewed ones included (amended ruling 2026-11-15); the
+ * reviewed six fetch no tool, so their other arguments keep their usual rules.
+ */
+export const TOOL_OVERRIDE_ARG = /^tool_/i;
 
 /**
  * Local accessors an `accessor=` argument may name. Network accessors (smb, s3, …) are refused, and

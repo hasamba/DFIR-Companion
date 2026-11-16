@@ -1,4 +1,5 @@
 import { MAX_VQL_BYTES } from "../../../vqlInput.js";
+import { WATSON_AUTO_CHAIN_MAX } from "../autoChain.js";
 import { ALLOWED_ARTIFACTS, ALLOWED_CALLS, ALLOWED_ACCESSORS, WMI_CLASSES } from "./vqlAllowlist.js";
 
 // The VELOCIRAPTOR block's fixed text (the host list is added by promptBuilder.ts, which defangs it).
@@ -14,12 +15,20 @@ export function veloRulesText(): string {
     "You may ask to run VQL on this case's Velociraptor server: set 'request' to",
     '{ "kind": "velociraptor", "mode": "collection" or "hunt", "hostname": "(collection only)", "title": "...", "vql": "...", "why": "..." }.',
     "A fleet hunt always waits for the analyst's approval. A single-host collection waits for approval too, unless the",
-    "case is in Auto mode and the analyst sent this message from the Watson panel. Rules:",
+    "case is in Auto mode. In Auto mode a safe single-host collection launches when the analyst's message came from the",
+    "Watson panel, and from your own follow-up rounds Auto launches up to " +
+      WATSON_AUTO_CHAIN_MAX +
+      " safe single-host collections in a row",
+    "since the analyst's last message; after that, the next one waits for the analyst. Rules:",
     '- Prefer a single-host collection (mode "collection", one hostname from the list below) when one host matters.',
     '  Use a fleet hunt (mode "hunt", no hostname) only when the question spans hosts. Never repeat a hunt that already ran.',
     "- Prefer read-only VQL that passes every rule below. If a riskier query is truly needed (a call or artifact not",
     "  listed below), you may propose it with a clear 'why': it is marked risky and waits for the analyst to read and",
     "  approve it; Auto mode never launches it. The VQL is at most " + MAX_VQL_BYTES + " bytes.",
+    "- The allowed artifacts include every artifact of the built-in Best Practice bundle. Call a Best Practice artifact",
+    "  with no arguments, as Artifact.<Name>(): its default run is the only safe form. Any argument on one of them",
+    "  makes the query risky, so the analyst must approve it. On every artifact, an argument whose name starts with",
+    "  Tool_ is risky, and any argument named like upload, dump or lambda is refused.",
     "- Comments, triple-quoted strings and hidden or control characters are always refused, with nothing to approve.",
     "- Every argument is name=value (no positional arguments).",
     "- No comments of any kind (no --, //, /* */), no triple-quoted strings (three single quotes in a row), no carriage",

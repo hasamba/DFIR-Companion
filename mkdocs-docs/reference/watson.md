@@ -174,7 +174,7 @@ If Watson cannot read a stored paste at once, the paste stays in the case. Watso
 
 ### Pasted files in a known format
 
-When a paste is in a format that a built-in importer reads (for example SIEM or EDR JSON, or a known event log export), Watson parses it into rows. The rows are graded like a normal import. The chat shows a line such as: "Watson read 2 rows from events.json (siem). The tagger graded 1 rows above Info. These rows wait for your approval."
+When a paste is in a format that a built-in importer reads (for example SIEM or EDR JSON, or a known event log export), Watson parses it into rows. The rows are graded like a normal import. The chat shows a line such as: "Watson read 2 rows from events.json (siem). The tagger graded 1 of them above Info. To add it to the forensic timeline, apply the held-rows card below. All the rows stay in the super-timeline, and Watson can search them when you ask a question." When no row is above Info (a Velociraptor process list often has none), the line says that nothing waits for your approval. To use those rows, ask Watson about them, for example "What do the process list rows show?".
 
 - The content tagger may raise some rows above Info (for example a `ntdsutil` command line). **Watson holds those promotions.** The rows stay in the super-timeline, and the raised copies wait as a **held rows** proposal. Choose **Apply** to put them in the forensic timeline, or **Reject** to leave them out. Large batches are split, 25 rows per proposal, and the chat says if more than 200 rows were cut.
 - Only the tagger's promotions are held. Other grading works as in a normal import. For example, a pasted account-creation row that resembles a case account is raised to High, the same as in a normal import.
@@ -185,7 +185,7 @@ See [Importing Data](importing.md#chat-pastes-watson) for the import side.
 
 ## Running Velociraptor
 
-When the case's server set includes a Velociraptor server, the panel header shows a **Velociraptor connected** chip, and Watson can ask to run VQL on it. There are two kinds of run:
+When the case's server set includes a Velociraptor server, the panel header shows a **Velociraptor** chip with a green dot (its tooltip says "Velociraptor connected"), and Watson can ask to run VQL on it. There are two kinds of run:
 
 - **A single-host collection** on one host that belongs to the case's fleet.
 - **A fleet-wide hunt** across the fleet.
@@ -206,6 +206,8 @@ A launch you marked as launched has no hunt or flow id that Watson knows. Its ca
 ### What VQL Watson may use
 
 Watson prefers a reviewed, read-only list of plugins, functions, artifacts and WMI classes. VQL that stays on that list gets a normal card.
+
+Every artifact in the built-in **Best Practice** bundle is on the safe list too, for example `Windows.Hayabusa.Rules`. The list comes from the bundle as it ships, so your edits to that bundle do not change it. The **Best Practice - Big Hogs** bundle (slow full-disk scans) is not on the list. Many of these artifacts fetch and run a tool on the endpoint, such as Autoruns or Chainsaw, and their arguments can change that tool. So a Best Practice artifact is safe only in its default run, `Artifact.<Name>()` with no arguments. Any argument on one of them makes the query risky: you can read it and approve it, and Auto mode never launches it. On every artifact, the six reviewed ones too, an argument whose name starts with *Tool_* (a tool override) makes the query risky. The other arguments of the six reviewed artifacts, such as `IdRegex` or `Calculate_Hash`, keep their usual rules. The other rules still apply: an argument named like *upload*, *dump* or *lambda* makes the query risky, and so does an accessor or a path that is not on the list. In Auto mode, a safe query on one host can launch without a click (see the follow-up chain below).
 
 ### Risky queries
 
@@ -247,13 +249,14 @@ In Auto, Watson:
 - applies its own case writes, from every round (a reaction to an import still changes Key Questions only, as before), but not the writes that rest on raw rows (see below)
 - applies the tagger's promotions from the results of its own single-host collections, and from a file you paste in that round
 - launches single-host collections from messages you type or files you paste in the dashboard's Watson panel, any number of them
+- launches follow-up single-host collections from a round it started itself (for example the round that reads a collection's result), at most **3 in a row** after your last message. Each one is listed in the chat as *Watson launched this follow-up by itself (1 of 3 in a row)*. Your next message starts the count again. After 3, Watson leaves the next collection for you with the note *Watson launched 3 collections in a row without a message from you. Launch this one, or send a message to let Watson continue.*
 
 In Auto, Watson never:
 
 - starts a fleet-wide hunt (those always ask)
 - launches a risky query (those always wait for an analyst)
-- launches from a round it started itself, such as a reaction or a round that reads its own results
-- launches from a `/dfir ask` sent through a chat bot, or from any round that did not start from the Watson panel
+- launches more than 3 collections in a row from rounds it started itself, without a message from you
+- launches from a `/dfir ask` sent through a chat bot, or from any other round that did not start from the Watson panel (except the follow-up chain above)
 - acts on a case that was closed or archived while the round ran
 
 In Auto, a case write waits for you when it rests on rows that Watson saw in the super-timeline or in a paste. This applies to findings, next steps, report text and key-question answers or new questions, from every round. The chat lists each one with the note *Waits for you: it rests on rows Watson saw in the super-timeline or in a paste.* A write that cites only forensic-timeline events still applies on its own. Promotions do not wait: the rows Watson promotes from the super-timeline or from a paste are evidence, with the Watson badge and Undo.

@@ -66,6 +66,8 @@ export const SAMPLES: Array<[string, string, "hard" | "risky"]> = [
   ["SELECT * FROM wmi(query='SELECT * FROM Win32_Evil')", "wmi class", "risky"],
   ["SELECT * FROM wmi(query=1)", "wmi needs one quoted", "risky"],
   ["SELECT * FROM Artifact.Generic.Client.Info(x=format(a=1))", "artifact argument", "risky"],
+  ["SELECT * FROM Artifact.Windows.Hayabusa.Rules(RuleLevel='High')", "only its default run", "risky"],
+  ["SELECT * FROM Artifact.Generic.Client.Info(Tool_X_HASH='x')", "can change the tool", "risky"],
   ["SELECT * FROM yara(rules=format(a=1), files='/x')", "yara rules must be", "risky"],
   ["SELECT * FROM yara(rules='include \"x\"', files='/x')", "may not include", "risky"],
   ["SELECT * FROM read_file(filename=format(a=1))", "plain quoted path", "risky"],
