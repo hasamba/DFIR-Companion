@@ -376,8 +376,12 @@ export interface WatsonChat {
   autoChainMax?: number;
   /** The analyst pressed Stop chain: no chained launch until the analyst's next message. */
   autoChainStopped?: boolean;
-  /** Watson's own rounds in a row that produced nothing (no card, no launch): Auto stops at the limit. */
+  /** Watson's own rounds in a row with no progress: at the limit, Auto sets the item aside (autoProgress.ts). */
   autoIdleRounds?: number;
+  /** Keys of the searches and lookups Watson ran since the analyst's last message (autoProgress.ts). */
+  autoSearchesRun?: string[];
+  /** Key Question and next-step ids Auto set aside since the analyst's last message (autoProgress.ts). */
+  autoSetAside?: string[];
   costUSD: number;
   /** Input + output tokens Watson used on this case: the limit for providers that report no cost. */
   tokens: number;

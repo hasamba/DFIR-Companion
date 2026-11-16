@@ -384,4 +384,40 @@ describe("Auto keeps going from a round (user decisions of 2026-11-16)", () => {
     expect(turn?.text).toContain("one round runs only one");
     expect(continued).toHaveLength(1);
   });
+
+  it("a round's paste search and its focusIds reach Auto's progress check (the real round path)", async () => {
+    replyText = JSON.stringify({
+      ...JSON.parse(reply),
+      continue: true,
+      focusIds: ["q-one"],
+      search: { pasteId: "history", terms: ["Parsed"] },
+    });
+    const h = await harness(() => AUTO);
+    await h.seed([]);
+    withSpy(h);
+    await runWatsonRound(h.ctx, CASE, { text: "continue" });
+    const chat = await h.chatStore.load(CASE);
+    expect(chat.autoSearchesRun).toEqual(["paste:history:parsed"]);
+  });
+
+  it("a request for a file sets the item Watson named aside and Watson continues with another", async () => {
+    const st = h0State();
+    const request = { kind: "import", what: "the mail log", why: "to see delivery" };
+    replyText = JSON.stringify({ ...JSON.parse(reply), request, focusIds: ["q-one"] });
+    const h = await harness(() => AUTO);
+    await h.ctx.stateStore.save({ ...(await h.ctx.stateStore.load(CASE)), ...st });
+    const continued = withSpy(h);
+    await runWatsonRound(h.ctx, CASE, { text: "continue" });
+    expect(continued).toHaveLength(1);
+    expect((await h.chatStore.load(CASE)).autoSetAside).toEqual(["q-one"]);
+  });
 });
+
+function h0State() {
+  return {
+    keyQuestions: [
+      { id: "q-one", question: "How in?", status: "unknown" as const, answer: "", pointer: "mail logs" },
+      { id: "q-two", question: "What ran?", status: "partial" as const, answer: "", pointer: "Sysmon" },
+    ],
+  };
+}
