@@ -131,6 +131,13 @@ describe("Watson status", () => {
     expect(
       bar({ kind: "report_text", field: "limitations", after: "The System log was not collected." }),
     ).toContain('"The System log was not collected."');
+    expect(
+      bar({
+        kind: "next_step_update",
+        before: { action: "Collect Sysmon EID 1", priority: "critical" },
+        after: null,
+      }),
+    ).toContain('"Collect Sysmon EID 1"');
     const long = bar({ kind: "next_step_new", after: { action: "x".repeat(200) } });
     expect(long).toContain("x".repeat(89) + "…");
     for (const kind of ["next_step_new", "finding_new", "question_new", "report_text"]) {

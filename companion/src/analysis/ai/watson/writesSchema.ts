@@ -9,6 +9,8 @@ import type { WatsonReportField } from "./writers/writerTypes.js";
 
 const MAX_FINDINGS = 3;
 const MAX_STEPS = 3;
+/** Step updates per reply: enough to close what one result answered. */
+const MAX_STEP_UPDATES = 5;
 const MAX_REPORT = 2;
 const TITLE_MAX = 200;
 const DESCRIPTION_MAX = 4000;
@@ -38,19 +40,36 @@ export interface WatsonStepDraft {
   pointer: string;
 }
 
+/** A change to a next step already in the case: mark it done (it leaves the list) or change its priority. */
+export interface WatsonStepUpdateDraft {
+  stepId: string;
+  done: boolean;
+  priority?: StepPriority;
+  why: string;
+}
+
 export interface WatsonWrites {
   findings: WatsonFindingDraft[];
   nextSteps: WatsonStepDraft[];
   report: { field: WatsonReportField; text: string }[];
+  /** Changes to next steps already in the case (done, or a new priority). Absent: none. */
+  stepUpdates?: WatsonStepUpdateDraft[];
 }
 
 /** What a finding draft may cite: each stored paste's line count, and the Watson-authored finding ids. */
 export interface WatsonCitationSets {
   pasteLines: ReadonlyMap<string, number>;
   watsonFindingIds: ReadonlySet<string>;
+  /** The case's next-step ids now: a step update for any other id is dropped. */
+  stepIds?: ReadonlySet<string>;
 }
 
-export const emptyWrites = (): WatsonWrites => ({ findings: [], nextSteps: [], report: [] });
+export const emptyWrites = (): Required<WatsonWrites> => ({
+  findings: [],
+  nextSteps: [],
+  report: [],
+  stepUpdates: [],
+});
 
 const str = z.string().catch("");
 
@@ -77,6 +96,13 @@ const findingDraftSchema = z.object({
   pasteLines: lenientArray(z.object({ pasteId: z.string(), line: z.number() })),
 });
 
+const stepUpdateSchema = z.object({
+  stepId: z.string(),
+  done: z.boolean().catch(false),
+  priority: z.enum(["critical", "high", "medium", "low"]).optional().catch(undefined),
+  why: str,
+});
+
 const stepDraftSchema = z.object({
   priority: z.enum(["critical", "high", "medium", "low"]).catch("medium"),
   action: str,
@@ -88,6 +114,7 @@ export const writesSchema = z
   .object({
     findings: lenientArray(findingDraftSchema),
     nextSteps: lenientArray(stepDraftSchema),
+    stepUpdates: lenientArray(stepUpdateSchema),
     report: lenientArray(
       z.object({ field: z.enum(["conclusions", "investigationLimitations"]), text: z.string() }),
     ),
@@ -166,5 +193,21 @@ export function sanitizeWrites(
     })
     .slice(0, MAX_REPORT)
     .map((r) => ({ field: r.field, text: r.text.slice(0, REPORT_TEXT_MAX) }));
-  return { findings, nextSteps, report };
+  // A step update names a step in the case now, once, and changes something (done or a priority).
+  const known = sets.stepIds ?? new Set<string>();
+  const seen = new Set<string>();
+  const stepUpdates = (w.stepUpdates ?? [])
+    .filter((u) => {
+      if (!known.has(u.stepId) || seen.has(u.stepId) || (!u.done && !u.priority)) return false;
+      seen.add(u.stepId);
+      return true;
+    })
+    .slice(0, MAX_STEP_UPDATES)
+    .map((u) => ({
+      stepId: u.stepId,
+      done: u.done,
+      ...(u.done || !u.priority ? {} : { priority: u.priority }),
+      why: u.why.slice(0, RATIONALE_MAX),
+    }));
+  return { findings, nextSteps, report, stepUpdates };
 }

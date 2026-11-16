@@ -148,7 +148,7 @@ body.watson-full-open #watsonToggle::before { background-image: url("data:image/
 .watson-analyst .watson-who { color: #93c5fd; }
 .watson-watson .watson-who { color: var(--brand-teal, #2dd4bf); }
 .watson-prop { border-style: solid; border-left-width: 3px; background: rgba(255, 255, 255, 0.02); }
-.watson-prop-next_step_new { border-left-color: #60a5fa; }
+.watson-prop-next_step_new, .watson-prop-next_step_update { border-left-color: #60a5fa; }
 .watson-prop-question_new, .watson-prop-question_update { border-left-color: #a78bfa; }
 .watson-prop-finding_new, .watson-prop-finding_update { border-left-color: #f87171; }
 .watson-prop-event_promote { border-left-color: #34d399; }
@@ -209,3 +209,6 @@ body.watson-resizing { cursor: col-resize; user-select: none; }
 .watson-step-high, .watson-step-critical { color: var(--sev-high, #f97316); }
 .watson-step-medium { color: var(--sev-medium, #eab308); }
 .watson-step-low { color: var(--text-muted); }
+
+/* A next-step change card: what changes (done, or the new priority). */
+.watson-step-change { font-size: 12px; font-weight: 600; color: var(--accent, #60a5fa); margin-top: 2px; }

@@ -1,6 +1,11 @@
 import type { Finding, ForensicEvent, NextStep } from "../../stateTypes.js";
 import { WATSON_FINDING_ID_PREFIX } from "../../responseSchema.js";
-import type { WatsonFindingDraft, WatsonStepDraft, WatsonWrites } from "./writesSchema.js";
+import type {
+  WatsonFindingDraft,
+  WatsonStepDraft,
+  WatsonStepUpdateDraft,
+  WatsonWrites,
+} from "./writesSchema.js";
 import { pasteLineKey, type WatsonWriteInputs } from "./roundWrites.js";
 import type { WatsonFindingProposal, WatsonProposal } from "./types.js";
 import { pasteLineEvent } from "./writers/pasteLineEvents.js";
@@ -88,6 +93,31 @@ function stepProposal(s: WatsonStepDraft, turnId: string, newId: NewId): WatsonP
   return { id: newId("wp"), turnId, kind: "next_step_new", targetId: id, after, status: "pending" };
 }
 
+/** A step change for a step in the case now; none when it changes nothing. `before` is the step as read. */
+function stepUpdateProposal(
+  u: WatsonStepUpdateDraft,
+  inputs: WatsonWriteInputs,
+  turnId: string,
+  newId: NewId,
+): WatsonProposal | null {
+  const found = inputs.steps?.get(u.stepId);
+  if (!found) return null;
+  const { step, index } = found;
+  if (!u.done && (!u.priority || u.priority === step.priority)) return null;
+  const after = u.done ? null : { ...step, priority: u.priority! };
+  return {
+    id: newId("wp"),
+    turnId,
+    kind: "next_step_update",
+    targetId: step.id,
+    before: step,
+    after,
+    why: u.why,
+    index,
+    status: "pending",
+  };
+}
+
 /** One proposal per report field whose neutralised text differs from the report's text now. */
 function reportProposals(
   writes: WatsonWrites,
@@ -145,5 +175,9 @@ export function buildWriteProposals(
   const steps = writes.nextSteps.map((s, i) =>
     stamped(stepProposal(s, turnId, newId), evidence, "nextStep", i),
   );
-  return [...findings, ...steps, ...reportProposals(writes, inputs, turnId, newId, evidence)];
+  const updates = (writes.stepUpdates ?? []).flatMap((u, i) => {
+    const p = stepUpdateProposal(u, inputs, turnId, newId);
+    return p ? [stamped(p, evidence, "stepUpdate", i)] : [];
+  });
+  return [...findings, ...steps, ...updates, ...reportProposals(writes, inputs, turnId, newId, evidence)];
 }

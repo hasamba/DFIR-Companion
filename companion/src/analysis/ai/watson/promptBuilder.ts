@@ -214,7 +214,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     .slice(0, WATSON_NEXT_STEPS_MAX)
     .map(
       (s) =>
-        `- (${line(String(s.priority), 10)}) ${line(s.action, WATSON_STEP_CHARS)}${s.pointer ? ` — on: ${line(s.pointer, WATSON_STEP_CHARS)}` : ""}`,
+        `- [${line(s.id, ID_CHARS)}] (${line(String(s.priority), 10)}) ${line(s.action, WATSON_STEP_CHARS)}${s.pointer ? ` — on: ${line(s.pointer, WATSON_STEP_CHARS)}` : ""}`,
     );
   // "New thread": only turns at or after the boundary are chat. Memory and the case context stay.
   const start = chat.threadStartAt;

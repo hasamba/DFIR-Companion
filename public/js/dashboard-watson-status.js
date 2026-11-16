@@ -28,7 +28,7 @@
   // one is cut at NAME_MAX characters (the card has all of it).
   const NAME_MAX = 90;
   const nameOf = (p) => {
-    const a = p.after && typeof p.after === "object" ? p.after : {};
+    const a = p.after && typeof p.after === "object" ? p.after : p.before && typeof p.before === "object" ? p.before : {};
     const text = typeof p.after === "string" ? p.after : "";
     const rows = p.kind === "event_promote" && Array.isArray(p.events) ? `${p.events.length} row${p.events.length === 1 ? "" : "s"}` : "";
     const name = String(p.title || a.action || a.question || a.title || a.text || text || rows || p.summary || "the card").trim();

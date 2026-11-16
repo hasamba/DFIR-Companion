@@ -200,7 +200,12 @@ export function settleRawRefs(
       answer: ans.answer,
       questionUpdates: updates.kept,
       newQuestions: questions.kept,
-      writes: { findings: findings.kept, nextSteps: steps.kept, report: report.kept },
+      writes: {
+        findings: findings.kept,
+        nextSteps: steps.kept,
+        report: report.kept,
+        stepUpdates: reply.writes.stepUpdates,
+      },
     },
     dropped: lists.reduce((n, l) => n + l.dropped, 0),
     evidence: new Map([...ans.evidence, ...lists.flatMap((l) => l.evidence)]),

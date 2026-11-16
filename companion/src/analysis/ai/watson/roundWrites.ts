@@ -1,4 +1,4 @@
-import type { Finding } from "../../stateTypes.js";
+import type { Finding, NextStep } from "../../stateTypes.js";
 import { isWatsonItem } from "../../timeline/watsonItems.js";
 import type { WatsonReply } from "./replySchema.js";
 import type { Outcome } from "./roundOutcome.js";
@@ -16,6 +16,8 @@ import type { WatsonReportFields } from "./writers/writerTypes.js";
 export interface WatsonWriteInputs {
   /** Watson-authored findings by id: the `before` of a finding_update. */
   findings: ReadonlyMap<string, Finding>;
+  /** The case's next steps by id, with their place in the list: the `before` of a step update. */
+  steps?: ReadonlyMap<string, { step: NextStep; index: number }>;
   pastes: ReadonlyMap<string, WatsonPaste>;
   /** Cited paste lines that read, keyed `pasteId:line`. */
   lines: ReadonlyMap<string, string>;
@@ -33,10 +35,12 @@ const isWatsonFinding = (f: Finding): boolean => isWatsonItem(f) && f.id.startsW
 export function citationSets(
   pastes: readonly WatsonPaste[],
   findings: readonly Finding[],
+  steps: readonly NextStep[] = [],
 ): WatsonCitationSets {
   return {
     pasteLines: new Map(pastes.map((p) => [p.id, p.lines] as const)),
     watsonFindingIds: new Set(findings.filter(isWatsonFinding).map((f) => f.id)),
+    stepIds: new Set(steps.map((s) => s.id)),
   };
 }
 
@@ -67,13 +71,14 @@ async function resolve(
 ): Promise<WatsonWriteInputs> {
   const { pastes } = await ctx.chatStore.load(caseId);
   const byId = new Map(pastes.map((p) => [p.id, p] as const));
-  const { findings } = await ctx.stateStore.loadOverview(caseId);
+  const { findings, nextSteps } = await ctx.stateStore.loadOverview(caseId);
   const report =
     reply.writes.report.length && ctx.reportBlockText
       ? await ctx.reportText?.load(caseId).catch(() => undefined)
       : undefined;
   return {
     findings: new Map(findings.filter(isWatsonFinding).map((f) => [f.id, f] as const)),
+    steps: new Map((nextSteps ?? []).map((step, index) => [step.id, { step, index }] as const)),
     pastes: byId,
     lines: await readCitedLines(ctx, caseId, reply, byId),
     ...(report
@@ -89,7 +94,11 @@ async function resolve(
 }
 
 const hasWrites = (r: WatsonReply): boolean =>
-  r.writes.findings.length + r.writes.nextSteps.length + r.writes.report.length > 0;
+  r.writes.findings.length +
+    r.writes.nextSteps.length +
+    r.writes.report.length +
+    (r.writes.stepUpdates?.length ?? 0) >
+  0;
 
 /**
  * The outcome with what its writes need (spec §4.4: with `allowWrites` false the writes are dropped,

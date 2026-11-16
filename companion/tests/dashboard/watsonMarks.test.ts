@@ -166,6 +166,27 @@ describe("proposal cards", () => {
   const cards = () =>
     loadDashboardModule<Cards>("dashboard-watson-cards.js", ["dashboard-escape.js"], globals);
 
+  it("renders a next-step change: the step, what changes (done or the new priority), Watson's why, escaped", () => {
+    const step = { id: "ns1", priority: "critical", action: HOSTILE, rationale: "r", pointer: "WS-FAKE01" };
+    const base = {
+      id: "wp-9",
+      turnId: "t1",
+      kind: "next_step_update",
+      targetId: "ns1",
+      before: step,
+      why: HOSTILE,
+      index: 0,
+    };
+    const done = cards().watsonCardHtml({ ...base, after: null, status: "pending" });
+    expect(done).toContain("Next step change");
+    expect(done).toContain("Done: it leaves the next steps");
+    expect(done).toContain(">Change next step</button>");
+    expect(done).not.toContain("<img");
+    const prio = cards().watsonCardHtml({ ...base, after: { ...step, priority: "low" }, status: "applied" });
+    expect(prio).toContain("Priority CRITICAL → LOW");
+    expect(prio).toContain('data-w-verb="undo"');
+  });
+
   it("renders a finding with its severity, citations and paste lines verbatim in a pre, escaped", () => {
     const html = cards().watsonCardHtml(
       fprop("pending", {

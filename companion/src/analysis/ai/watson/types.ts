@@ -176,6 +176,20 @@ export interface WatsonNextStepProposal extends WatsonProposalCommon, WatsonRawE
   after: NextStep;
 }
 
+/**
+ * A change to a next step already in the case (user decision of 2026-11-16). `after` null marks it
+ * done: it leaves the list, and undo puts `before` back at `index`. Otherwise `after` is the step with
+ * the new priority. Apply and undo refuse when someone changed the step in between.
+ */
+export interface WatsonNextStepUpdateProposal extends WatsonProposalCommon, WatsonRawEvidence {
+  kind: "next_step_update";
+  targetId: string;
+  before: NextStep;
+  after: NextStep | null;
+  why: string;
+  index: number;
+}
+
 export interface WatsonReportTextProposal extends WatsonProposalCommon, WatsonRawEvidence {
   kind: "report_text";
   targetId: string;
@@ -298,6 +312,7 @@ export type WatsonProposal =
   | WatsonQuestionProposal
   | WatsonFindingProposal
   | WatsonNextStepProposal
+  | WatsonNextStepUpdateProposal
   | WatsonReportTextProposal
   | WatsonEventPromoteProposal
   | WatsonVeloLaunchProposal;
