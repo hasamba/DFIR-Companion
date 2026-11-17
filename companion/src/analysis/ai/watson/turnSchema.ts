@@ -53,6 +53,8 @@ export const turnSchema = z.object({
   pasteId: z.string().optional(),
   error: z.boolean().optional(),
   costUSD: z.number().optional(),
+  inputTokens: z.number().nonnegative().optional().catch(undefined),
+  cacheReadTokens: z.number().nonnegative().optional().catch(undefined),
   coverage: z
     .object({
       usedEvents: z.number(),

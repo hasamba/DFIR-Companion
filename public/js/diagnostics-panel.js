@@ -35,16 +35,27 @@ function diagFmtCost(usd) {
   if (usd == null || !isFinite(usd)) return "n/a";
   return "$" + usd.toFixed(usd < 1 ? 4 : 2);
 }
+// #2663: with cache figures, "in" is ALL input the model read (uncached plus cache reads and writes),
+// so the cached share has a fair denominator. They count only calls made since `cacheSince`.
+function diagCacheText(prompt, cached) {
+  const p = Number(prompt) || 0;
+  const c = Number(cached) || 0;
+  const pct = p > 0 ? Math.round((Math.min(c, p) / p) * 100) : 0;
+  return `${p.toLocaleString()} in (${c.toLocaleString()} from cache, ${pct}%)`;
+}
+function diagTokText(t, out) {
+  if (!t.hasTokens) return "n/a";
+  const inText = t.hasCache ? diagCacheText(t.promptTokens, t.cacheReadTokens) : `${t.totalInputTokens.toLocaleString()} in`;
+  return `${inText} / ${out.toLocaleString()} out`;
+}
 function diagAiCostBucketRow(label, bucket) {
   const costText = bucket.hasCost ? diagFmtCost(bucket.totalCostUSD) : "n/a";
-  const tokText = bucket.hasTokens
-    ? `${bucket.totalInputTokens.toLocaleString()} in / ${bucket.totalOutputTokens.toLocaleString()} out`
-    : "n/a";
+  const tokText = diagTokText(bucket, bucket.totalOutputTokens);
   const models = Object.entries(bucket.byModel);
   const modelRows = models.length
     ? `<details data-safe-style="margin:2px 0 4px 12px"><summary data-safe-style="cursor:pointer;color:#6aa9ff;font-size:11.5px">${models.length} model(s)</summary>` +
       models.map(([key, m]) => `<div data-safe-style="font-size:11.5px;color:#9aa4b2;margin:2px 0 2px 8px;font-family:var(--font-code)">
-        ${esc(key)} — ${m.calls} call(s), ${m.hasCost ? diagFmtCost(m.costUSD) : "n/a"}, ${m.hasTokens ? `${m.inputTokens.toLocaleString()}/${m.outputTokens.toLocaleString()} tok` : "n/a tok"}
+        ${esc(key)} — ${m.calls} call(s), ${m.hasCost ? diagFmtCost(m.costUSD) : "n/a"}, ${m.hasTokens ? (m.hasCache ? `${diagCacheText(m.promptTokens, m.cacheReadTokens)} / ${m.outputTokens.toLocaleString()} out` : `${m.inputTokens.toLocaleString()}/${m.outputTokens.toLocaleString()} tok`) : "n/a tok"}
       </div>`).join("") + `</details>`
     : "";
   return diagRow(esc(label), `${bucket.totalCalls} call(s) · ${costText} · ${tokText}`) + modelRows;
@@ -63,8 +74,12 @@ function renderAiCostCard(cost) {
     totalInputTokens: sum("totalInputTokens"),
     totalOutputTokens: sum("totalOutputTokens"),
     hasTokens: buckets.some(b => b.hasTokens),
+    promptTokens: buckets.reduce((n, b) => n + (Number(b.promptTokens) || 0), 0),
+    cacheReadTokens: buckets.reduce((n, b) => n + (Number(b.cacheReadTokens) || 0), 0),
+    hasCache: buckets.some(b => b.hasCache),
     byModel: {},
   };
+  const since = buckets.map(b => b.cacheSince).filter(Boolean).sort()[0];
   // A bucket that never reported cost/tokens makes the total "partial", not wrong —
   // say so rather than silently under-reporting real spend as a clean $ total.
   // Only buckets that actually made calls count toward this check — an unused bucket
@@ -76,8 +91,12 @@ function renderAiCostCard(cost) {
     ? `<div data-safe-style="font-size:11px;color:#7e8aa0;margin-top:2px">partial — not every bucket's provider reports cost</div>` : "";
   const rows = named.map(([label, b]) => diagAiCostBucketRow(label, b)).join("")
     + `<div data-safe-style="border-top:1px solid var(--border-color);margin-top:6px;padding-top:6px">`
-    + diagRow("Total", `${total.totalCalls} call(s) · ${total.hasCost ? diagFmtCost(total.totalCostUSD) : "n/a"} · ${total.hasTokens ? `${total.totalInputTokens.toLocaleString()} in / ${total.totalOutputTokens.toLocaleString()} out` : "n/a"}`)
-    + totalNote + `</div>`;
+    + diagRow("Total", `${total.totalCalls} call(s) · ${total.hasCost ? diagFmtCost(total.totalCostUSD) : "n/a"} · ${diagTokText(total, total.totalOutputTokens)}`)
+    + totalNote
+    + (total.hasCache && since
+      ? `<div data-safe-style="font-size:11px;color:#7e8aa0;margin-top:2px">input and cache figures count calls since ${esc(String(since).slice(0, 10))}</div>`
+      : "")
+    + `</div>`;
   return diagCard("AI cost — this case", rows);
 }
 const DIAG_LEVEL_COLOR = { none: "#5ad17a", warning: "#ffce8a", danger: "#ffb05a", critical: "#ff5a5a" };
@@ -150,6 +169,8 @@ function renderPerImporterHealth(im) {
   return html;
 }
 export {
+  diagCacheText,
+  diagTokText,
   diagFmtBytes,
   diagFmtAge,
   diagFmtCost,
@@ -181,6 +202,8 @@ if (typeof window !== "undefined") {
     diagFmtBytes,
     diagFmtAge,
     diagFmtCost,
+    diagCacheText,
+    diagTokText,
     diagAiCostBucketRow,
     renderAiCostCard,
     diagCard,

@@ -210,7 +210,7 @@ describe("GeminiProvider.converse — thought signatures", () => {
     const r = await provider.converse(req());
     expect(r.text).toBe('{"answer":"ok"}');
     expect(r.opaqueText).toEqual(["I will search."]);
-    expect(r.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
+    expect(r.usage).toEqual({ inputTokens: 10, outputTokens: 5, inputIncludesCache: true });
   });
 });
 

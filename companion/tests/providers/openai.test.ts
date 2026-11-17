@@ -166,7 +166,24 @@ describe("OpenAIProvider", () => {
     );
     const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
     const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
-    expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 45 });
+    expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 45, inputIncludesCache: true });
+  });
+
+  it("#2663: reads the cached part of the prompt when the endpoint reports it", async () => {
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({
+        choices: [{ message: { content: "{}" } }],
+        usage: { prompt_tokens: 1000, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 800 } },
+      }),
+    );
+    const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
+    const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
+    expect(result.usage).toEqual({
+      inputTokens: 1000,
+      outputTokens: 5,
+      inputIncludesCache: true,
+      cacheReadTokens: 800,
+    });
   });
 
   it("does not populate costUSD for the plain openai provider name, even if the response has it", async () => {

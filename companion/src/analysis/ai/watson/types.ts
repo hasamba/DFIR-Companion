@@ -92,6 +92,9 @@ export interface WatsonTurn {
   pasteId?: string;
   error?: boolean;
   costUSD?: number;
+  /** #2663: all input this round's model calls read, and how much of it came from the provider's cache. */
+  inputTokens?: number;
+  cacheReadTokens?: number;
   coverage?: WatsonCoverage;
   answer?: WatsonAnswer;
   /** The proposal made when the analyst added this turn's answer to the open questions. */

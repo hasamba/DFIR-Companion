@@ -97,6 +97,18 @@
     );
   }
 
+  // #2663: what the round's model calls read, and how much of it the provider served from its cache.
+  // Shown only when a provider reported a cache read; a number that never came back is never guessed.
+  function usageHtml(t) {
+    const input = Number(t.inputTokens);
+    const cached = Number(t.cacheReadTokens);
+    if (!Number.isFinite(input) || input <= 0 || !Number.isFinite(cached) || cached <= 0) return "";
+    const pct = Math.round((Math.min(cached, input) / input) * 100);
+    return `<div class="watson-meta watson-usage">Input ${esc(input.toLocaleString("en-US"))} tokens · ${esc(
+      cached.toLocaleString("en-US"),
+    )} from cache (${pct}%)</div>`;
+  }
+
   // What the round could not carry whole. Shown to the analyst, not only told to the model (#452).
   function coverageHtml(c) {
     if (!c) return "";
@@ -213,6 +225,7 @@
       (autoList(t) || textHtml(t)) +
       answerHtml(t, readOnly, ctx) +
       coverageHtml(t.coverage) +
+      usageHtml(t) +
       lookupsOf(t) +
       superCapHtml(t) +
       (t.learned ? `<div class="watson-meta"><b>Learned:</b> ${esc(t.learned)}</div>` : "") +

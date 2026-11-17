@@ -28,6 +28,33 @@ export function bucketForLabel(label: string): AiCostBucketName {
   return "other";
 }
 
+/**
+ * All input the model read on one call (#2663): uncached input plus cache reads and writes. Providers
+ * differ — Gemini and OpenAI-compatible counts already include the cached part (`inputIncludesCache`);
+ * the Anthropic API and Claude Code report it apart.
+ */
+export function promptTokensOf(u: ProviderUsage): number {
+  const input = u.inputTokens ?? 0;
+  if (u.inputIncludesCache) return input;
+  return input + (u.cacheReadTokens ?? 0) + (u.cacheCreationTokens ?? 0);
+}
+
+/** The input this call read from the provider's cache. */
+export const cacheReadOf = (u: ProviderUsage): number => u.cacheReadTokens ?? 0;
+
+/** The provider said something about its cache on this call (an explicit 0 counts). */
+const reportsCache = (u: ProviderUsage): boolean =>
+  u.cacheReadTokens !== undefined || u.cacheCreationTokens !== undefined;
+
+// #2663: cache counters. A file written before them reads as zero, and they count only calls made
+// since (`cacheSince`), so the panel says from when — `totalInputTokens` keeps its lifetime meaning.
+const cacheFields = {
+  promptTokens: z.number().catch(0),
+  cacheReadTokens: z.number().catch(0),
+  cacheWriteTokens: z.number().catch(0),
+  hasCache: z.boolean().catch(false),
+};
+
 const modelSchema = z.object({
   calls: z.number().catch(0),
   costUSD: z.number().catch(0),
@@ -35,6 +62,7 @@ const modelSchema = z.object({
   inputTokens: z.number().catch(0),
   outputTokens: z.number().catch(0),
   hasTokens: z.boolean().catch(false),
+  ...cacheFields,
 });
 export type AiCostModel = z.infer<typeof modelSchema>;
 
@@ -45,6 +73,9 @@ const bucketSchema = z.object({
   totalInputTokens: z.number().catch(0),
   totalOutputTokens: z.number().catch(0),
   hasTokens: z.boolean().catch(false),
+  ...cacheFields,
+  /** When this bucket first counted cache figures (ISO); absent before any. */
+  cacheSince: z.string().optional().catch(undefined),
   byModel: z.record(z.string(), modelSchema).catch(() => ({})),
 });
 export type AiCostBucket = z.infer<typeof bucketSchema>;
@@ -65,8 +96,22 @@ function emptyBucket(): AiCostBucket {
     totalInputTokens: 0,
     totalOutputTokens: 0,
     hasTokens: false,
+    ...emptyCache(),
     byModel: {},
   };
+}
+
+function emptyCache() {
+  return { promptTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, hasCache: false };
+}
+
+/** Add one call's prompt and cache figures to a bucket or model total. */
+function addCache(t: ReturnType<typeof emptyCache>, u: ProviderUsage): void {
+  t.promptTokens += promptTokensOf(u);
+  if (!reportsCache(u)) return;
+  t.cacheReadTokens += u.cacheReadTokens ?? 0;
+  t.cacheWriteTokens += u.cacheCreationTokens ?? 0;
+  t.hasCache = true;
 }
 
 function emptyState(): AiCostState {
@@ -74,7 +119,15 @@ function emptyState(): AiCostState {
 }
 
 function emptyModel(): AiCostModel {
-  return { calls: 0, costUSD: 0, hasCost: false, inputTokens: 0, outputTokens: 0, hasTokens: false };
+  return {
+    calls: 0,
+    costUSD: 0,
+    hasCost: false,
+    inputTokens: 0,
+    outputTokens: 0,
+    hasTokens: false,
+    ...emptyCache(),
+  };
 }
 
 export class AiCostStore {
@@ -125,6 +178,9 @@ export class AiCostStore {
       b.totalInputTokens += usage.inputTokens ?? 0;
       b.totalOutputTokens += usage.outputTokens ?? 0;
       b.hasTokens = true;
+      addCache(m, usage);
+      addCache(b, usage);
+      b.cacheSince ??= new Date().toISOString();
     }
     b.byModel[key] = m;
     await atomicWrite(this.path(caseId), JSON.stringify(state, null, 2));

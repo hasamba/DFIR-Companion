@@ -32,6 +32,8 @@ export const final = (text = reply()): ConverseResult => ({ text, calls: [] });
 export interface ScriptOpts {
   /** Input tokens each send reports. */
   tokens?: number;
+  /** Cache-read tokens each send reports (#2663). */
+  cacheRead?: number;
   model?: string;
   endpoint?: string;
   /** Replies for the hop's analyze() calls. */
@@ -62,7 +64,8 @@ export class Scripted implements AIProvider {
     const next = typeof raw === "function" ? raw(req) : raw;
     if (!next) throw new Error("no scripted reply");
     if (next instanceof Error) throw next;
-    return { ...next, usage: { inputTokens: this.o.tokens ?? 10, outputTokens: 0 } };
+    const cache = this.o.cacheRead !== undefined ? { cacheReadTokens: this.o.cacheRead } : {};
+    return { ...next, usage: { inputTokens: this.o.tokens ?? 10, outputTokens: 0, ...cache } };
   }
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
     this.analyzed.push(req);

@@ -63,8 +63,11 @@ export class GeminiProvider implements AIProvider {
       },
     };
     const json = await this.send(body, req.signal, false);
-    const text = replyText(json, req, this.opts.maxTokens, `Gemini (${this.opts.model})`);
+    // #2663: usage first — a blocked or cut-off reply was still billed, and the error carries it.
     const usage = parseUsage(json.usageMetadata);
+    const text = billedChecks(usage, () =>
+      replyText(json, req, this.opts.maxTokens, `Gemini (${this.opts.model})`),
+    );
     return { rawText: text, ...(usage ? { usage } : {}) };
   }
 
@@ -196,6 +199,7 @@ function parseUsage(u: GeminiResponse["usageMetadata"]): ProviderUsage | undefin
       ...(u.promptTokenCount !== undefined ? { inputTokens: u.promptTokenCount } : {}),
       ...(u.candidatesTokenCount !== undefined ? { outputTokens: u.candidatesTokenCount } : {}),
       ...(u.cachedContentTokenCount !== undefined ? { cacheReadTokens: u.cachedContentTokenCount } : {}),
+      ...(u.promptTokenCount !== undefined ? { inputIncludesCache: true as const } : {}),
     }
   );
 }

@@ -38,6 +38,9 @@ export interface ProviderUsage {
   outputTokens?: number;
   cacheCreationTokens?: number; // input tokens written to the cache on this call
   cacheReadTokens?: number; // input tokens served from the cache on this call
+  // #2663: inputTokens ALREADY contains the cached part (Gemini promptTokenCount, OpenAI prompt_tokens).
+  // Absent: inputTokens excludes cache reads and writes (Anthropic API, Claude Code).
+  inputIncludesCache?: true;
   costUSD?: number; // real dollar cost, when the provider reports one (OpenRouter only today)
   // The concrete model id the provider actually served the request with, when it differs from (or
   // resolves) the configured DFIR_*_MODEL — e.g. an alias like "sonnet" resolving to

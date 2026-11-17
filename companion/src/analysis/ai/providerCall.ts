@@ -1,7 +1,13 @@
+import { noteUsage } from "./usageScope.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 
-import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../providers/provider.js";
+import {
+  ProviderError,
+  type AIProvider,
+  type AnalyzeRequest,
+  type AnalyzeResult,
+} from "../../providers/provider.js";
 import {
   isMaskableIpv4,
   isInternalIp,
@@ -85,6 +91,7 @@ export async function recordAiCost(
   provider: AIProvider,
   result: Pick<AnalyzeResult, "usage">,
 ): Promise<void> {
+  noteUsage(result.usage); // #2663: the round that made this call counts it exactly (usageScope.ts)
   if (!ctx.opts.aiCostStore) return;
   try {
     await ctx.opts.aiCostStore.record(
@@ -479,6 +486,12 @@ async function sendPrepared(
     const req = prepared.req;
     result = await withCallMetrics(ctx, provider, label, req.signal, () => provider.analyze(req));
   } catch (err) {
+    // #2663: a response that was billed and then refused or cut off still counts, as converseRestored does.
+    const billed = err instanceof ProviderError ? err.usage : undefined;
+    if (billed) {
+      logAiUsage(ctx, caseId, label, provider, { usage: billed });
+      await recordAiCost(ctx, caseId, label, provider, { usage: billed });
+    }
     // #2083: opt-in, best-effort save of the exact (as-sent) prompt a safety filter refused.
     const sent = { req: prepared.req, anonymized: prepared.anon !== null };
     await captureIfSafetyStop(ctx.opts.safetyStopCapture, ctx.log, caseId, provider, sent, label, err);
