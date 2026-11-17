@@ -856,6 +856,35 @@ describe("Auto works until nothing is open or only a person can help (user goal 
     expect(lastTurn(chat).text).toBe("Watson stops here: every Key Question is answered or not answerable.");
   });
 
+  it("when Watson stops for a person on one item, Auto sets that item aside and moves on (user report of 2026-11-17)", async () => {
+    await chatStore.update(CASE, (c) => ({ ...c, autoSetAside: undefined }));
+    await questions(["unknown", "partial", "unknown"]);
+    await run({ continue: false, waitingFor: "the exercise owner must confirm q0", workingOn: "q1" });
+    expect(continued).toHaveLength(1);
+    const notes = (await chatStore.load(CASE)).turns.map((t) => t.text).join("\n");
+    expect(notes).toContain("Watson needs this from you for q0: the exercise owner must confirm q0.");
+    expect(notes).not.toContain("Watson stops here and waits for you");
+  });
+
+  it("when Watson stops for a person and that was the last open item, Auto stops and lists what is left", async () => {
+    await chatStore.update(CASE, (c) => ({ ...c, autoSetAside: undefined }));
+    await questions(["unknown"]);
+    const chat = await run({ continue: false, waitingFor: "the client must answer q0" });
+    expect(continued).toEqual([]);
+    expect(lastTurn(chat).text).toContain("Watson needs this from you: the client must answer q0.");
+    expect(lastTurn(chat).text).toContain("Auto stops here");
+    expect(lastTurn(chat).text).toContain("[q0]");
+  });
+
+  it("shows a long note from Watson in full when it moves on", async () => {
+    await chatStore.update(CASE, (c) => ({ ...c, autoSetAside: undefined }));
+    await questions(["unknown", "unknown"]);
+    const need = `The exercise owner must confirm q0. ${"The analyst should also re-import the tagged events. ".repeat(5)}End.`;
+    await run({ continue: false, waitingFor: need });
+    const notes = (await chatStore.load(CASE)).turns.map((t) => t.text).join("\n");
+    expect(notes).toContain(need);
+  });
+
   it("when Watson says only a person can help, it stops and shows what it needs", async () => {
     await questions(["unknown"]);
     const chat = await run({ continue: false, waitingFor: "the client's firewall logs for 2026-11-16" });

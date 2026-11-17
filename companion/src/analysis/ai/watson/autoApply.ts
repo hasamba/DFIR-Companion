@@ -9,6 +9,7 @@ import {
   reserveChainPlace,
 } from "./autoChain.js";
 import {
+  askedDoneText,
   askedMoveOnText,
   doneText,
   judgeRound,
@@ -405,8 +406,11 @@ async function continueIfAsked(
   if (!auto.continueLater || round.signal?.aborted) return chat;
   if (!autoOn(await auto.control(caseId).catch(() => null))) return chat;
   // Counted before any early return, so a round that launches a collection resets the count too.
-  const asked =
+  // Watson saying it waits for a person counts as a request too: Auto sets those items aside and
+  // moves on, and stops only when nothing else is open (user report of 2026-11-17).
+  const request =
     round.askedFor && !(round.askedFor.velo && launchRuns(chat, round)) ? round.askedFor.text : undefined;
+  const asked = request ?? (round.continue === false ? round.waitingFor : undefined);
   const verdict = await recordProgress(auto, caseId, round, ownIds(chat, round).size > 0, asked);
   // A request a person must answer: Watson moves on to the other open items (user decision of 2026-11-16).
   if (asked && verdict !== "unsaved" && verdict.kind === "moveOn") {
@@ -414,7 +418,7 @@ async function continueIfAsked(
     return reserveAndContinue(auto, caseId, chat);
   }
   if (asked && verdict !== "unsaved" && verdict.kind === "done")
-    return note(auto, caseId, doneText(verdict.left));
+    return note(auto, caseId, askedDoneText(verdict.left, asked));
   if (round.continue === false) {
     return round.waitingFor
       ? note(auto, caseId, `Watson stops here and waits for you: ${round.waitingFor}`)

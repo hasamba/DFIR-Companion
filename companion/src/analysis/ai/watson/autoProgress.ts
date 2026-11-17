@@ -96,14 +96,13 @@ export function openItems(state: InvestigationState | null): WatsonOpenItem[] {
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const namesId = (text: string, id: string): boolean =>
+  new RegExp(`(^|[^A-Za-z0-9_-])${escapeRe(id)}($|[^A-Za-z0-9_-])`).test(text);
+
 /** The open items Watson worked on: its focusIds, and board ids named as whole words in workingOn. */
 export function focusOf(work: WatsonRoundWork, open: readonly WatsonOpenItem[]): WatsonOpenItem[] {
   const named = new Set(work.focusIds.map((id) => id.trim()));
-  return open.filter(
-    (item) =>
-      named.has(item.id) ||
-      new RegExp(`(^|[^A-Za-z0-9_-])${escapeRe(item.id)}($|[^A-Za-z0-9_-])`).test(work.workingOn),
-  );
+  return open.filter((item) => named.has(item.id) || namesId(work.workingOn, item.id));
 }
 
 /** The chat after the round's progress bookkeeping, and what Auto does next. Pure. */
@@ -123,9 +122,14 @@ export function judgeRound(
     .map((i) => i.id)
     .filter((id) => !aside.includes(id));
   const keep = { searches, aside };
-  // A request for a person (a file, a query, a launch waiting for approval) sets its item aside at
-  // once: its answer will not wake Watson, and the other open items still can move.
-  if (work.asked) return setAside(chat, open, focus, keep, true);
+  // A request for a person (a file, a query, a launch waiting for approval, or Watson saying it waits
+  // for someone) sets its items aside at once: the items the request names by id, else the items
+  // Watson worked on. Its answer will not wake Watson, and the other open items still can move.
+  if (work.asked) {
+    const asked = work.asked;
+    const named = open.filter((i) => namesId(asked, i.id) && !aside.includes(i.id)).map((i) => i.id);
+    return setAside(chat, open, named.length ? named : focus, keep, true);
+  }
   if (progress || !work.reaction) {
     const streak = progress
       ? { idle: 0, on: [] }
@@ -205,9 +209,16 @@ export const moveOnText = (items: readonly WatsonOpenItem[]): string =>
   `Watson's last ${WATSON_AUTO_IDLE_MAX} rounds on ${items.map((i) => i.id).join(", ")} brought nothing new, ` +
   "so Watson sets them aside and moves to the next open Key Question or next step.";
 
+const ASKED_CHARS = 1000; // what Watson needs is shown in full, as the old stop note did
+const clipAsked = (s: string): string => (s.length > ASKED_CHARS ? `${s.slice(0, ASKED_CHARS)}…` : s);
+
 export const askedMoveOnText = (items: readonly WatsonOpenItem[], asked: string): string =>
-  `Watson needs this from you for ${items.map((i) => i.id).join(", ")}: ${clip(asked)}. ` +
+  `Watson needs this from you for ${items.map((i) => i.id).join(", ")}: ${clipAsked(asked)}. ` +
   "Watson sets it aside and moves to the next open Key Question or next step.";
+
+/** The stop note when a request for a person set the last open item aside: what it needs, then what is left. */
+export const askedDoneText = (left: readonly WatsonOpenItem[], asked: string): string =>
+  `Watson needs this from you: ${clipAsked(asked)}.\n${doneText(left)}`;
 
 export const doneText = (left: readonly WatsonOpenItem[]): string =>
   [
