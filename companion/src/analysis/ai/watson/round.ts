@@ -233,10 +233,10 @@ async function runRound(
 function progressOf(
   outcome: Outcome,
 ): Pick<WatsonAutoRound, "ranSearches" | "focusIds" | "workingOn" | "askedFor" | "newEvidence"> {
-  const toolRuns = (outcome.lookups ?? []).map((l) => `tool:${l.source ?? "forensic"}:${l.what}`);
   const request = outcome.reply?.request;
   return {
-    ranSearches: [...(outcome.ranSearches ?? []), ...toolRuns],
+    // Tool mode and the hop both record one structured key per search that ran (#2652).
+    ranSearches: outcome.ranSearches ?? [],
     focusIds: outcome.reply?.focusIds ?? [],
     workingOn: outcome.reply?.workingOn ?? "",
     ...(request ? { askedFor: askedOf(request) } : {}),
@@ -429,6 +429,7 @@ async function toolRound(i: ToolLoopInput): Promise<Outcome | ToolModeFallback> 
  */
 function withCarried(o: Outcome, c: ToolModeFallback["carried"]): Outcome {
   const read = [...(o.readPasteIds ?? []), ...(c.readPasteIds ?? [])];
+  const ran = [...(c.ranSearches ?? []), ...(o.ranSearches ?? [])];
   const lookups = [...(c.lookups ?? []), ...(o.lookedUp ? [o.lookedUp] : [])];
   const seen = new Set((o.superShown ?? []).map((e) => e.id));
   const shown = [...(o.superShown ?? []), ...(c.superShown ?? []).filter((e) => !seen.has(e.id))];
@@ -438,5 +439,6 @@ function withCarried(o: Outcome, c: ToolModeFallback["carried"]): Outcome {
     ...(shown.length ? { superShown: shown } : {}),
     ...(c.superRoster || o.superRoster ? { superRoster: mergeMaskRoster(c.superRoster, o.superRoster) } : {}),
     ...(read.length ? { readPasteIds: [...new Set(read)] } : {}),
+    ...(ran.length ? { ranSearches: ran } : {}),
   };
 }

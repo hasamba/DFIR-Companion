@@ -36,6 +36,8 @@ export interface LoopState {
   superShown: ForensicEvent[];
   roster?: WatsonMaskRoster;
   readPasteIds: string[];
+  /** Auto's progress-ledger keys of the searches that ran (autoProgress.ts), one per search. */
+  ranSearches: string[];
   /** Tool calls that ran (D3): the cap counts these. */
   executed: number;
   superUsed: number;
@@ -50,6 +52,7 @@ export const emptyLoop = (): LoopState => ({
   lookups: [],
   superShown: [],
   readPasteIds: [],
+  ranSearches: [],
   executed: 0,
   superUsed: 0,
   superCapHit: false,
@@ -195,6 +198,7 @@ function fold(s: LoopState, run: ToolRun): LoopState {
     superShown: [...s.superShown, ...(run.superShown ?? []).filter((e) => !known.has(e.id))],
     ...(run.roster ? { roster: mergeMaskRoster(s.roster, run.roster) } : {}),
     readPasteIds: run.readPasteId ? [...s.readPasteIds, run.readPasteId] : s.readPasteIds,
+    ranSearches: run.key ? [...s.ranSearches, run.key] : s.ranSearches,
   };
 }
 

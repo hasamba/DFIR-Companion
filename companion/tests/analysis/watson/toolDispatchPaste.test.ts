@@ -1,6 +1,8 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { searchKey } from "../../../src/analysis/ai/watson/autoProgress.js";
+import { WATSON_HISTORY_ID } from "../../../src/analysis/ai/watson/historyStore.js";
 import { runWatsonTool } from "../../../src/analysis/ai/watson/toolDispatch.js";
 import { clipRows } from "../../../src/analysis/ai/watson/toolPaste.js";
 import { WATSON_TOOL } from "../../../src/analysis/ai/watson/toolSpecs.js";
@@ -25,6 +27,7 @@ describe("runWatsonTool: paste_search and history_search", () => {
     );
     expect(unknown.result).toMatchObject({ isError: true, content: expect.stringMatching(NOT_RUN) });
     expect(unknown.lookedUp).toBeUndefined();
+    expect(unknown.key).toBeUndefined(); // #2652: a search that did not run is not progress
 
     const known = await runWatsonTool(
       h.ctx,
@@ -39,6 +42,7 @@ describe("runWatsonTool: paste_search and history_search", () => {
     expect(known.result.content).toContain("2: rclone here");
     expect(known.readPasteId).toBe("p1");
     expect(known.lookedUp).toMatchObject({ source: "paste", shown: 1, matched: 1 });
+    expect(known.key).toBe(searchKey("p1", ["rclone"])); // #2652: the hop's key for the same search
 
     await h.chatStore.history.append(CASE, [turn("we saw rclone on HOST-A", "2026-11-01T00:00:00Z")]);
     const hist = await runWatsonTool(
@@ -54,6 +58,7 @@ describe("runWatsonTool: paste_search and history_search", () => {
     expect(hist.result.content).toContain("rclone on HOST-A");
     expect(hist.readPasteId).toBeUndefined();
     expect(hist.lookedUp).toMatchObject({ source: "history", shown: 1, matched: 1 });
+    expect(hist.key).toBe(searchKey(WATSON_HISTORY_ID, ["rclone"]));
   });
 
   it("the server checks the arguments: bad terms, the history id and unknown keys are not run", async () => {

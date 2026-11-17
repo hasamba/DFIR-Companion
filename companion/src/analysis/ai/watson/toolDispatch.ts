@@ -1,5 +1,6 @@
 import type { ToolCall } from "../../../providers/toolCalling.js";
 import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
+import { lookupKey } from "./autoProgress.js";
 import { isSuperLookup, parseLookup } from "./lookupSchema.js";
 import { lookupBlock, pasteBlock, superBlock } from "./promptBuilder.js";
 import type { WatsonRoundContext } from "./roundContext.js";
@@ -28,6 +29,8 @@ export interface ToolRun {
   readPasteId?: string;
   /** The super-timeline store was read, even if nothing was shown: the call counts toward R2's cap. */
   superQueried?: boolean;
+  /** A search that ran: Auto's progress-ledger key, the same one the one-step hop records (#2652). */
+  key?: string;
 }
 
 export interface ToolRunOptions {
@@ -98,7 +101,7 @@ export async function runWatsonTool(
     if ("why" in query) return notRun(query.why);
     if (name === WATSON_TOOL.super) return await superRun(ctx, caseId, chat, state, query);
     const { excerpt, lookedUp } = await lookupTimeline(ctx, caseId, state, query);
-    return { result: { content: lookupBlock(excerpt, false) }, lookedUp };
+    return { result: { content: lookupBlock(excerpt, false) }, lookedUp, key: lookupKey(query) };
   } catch (error) {
     // A super call reaches the store before anything can fail after it: count it as run (M2).
     const failed = failedRun(ctx, caseId, name, error);
@@ -112,6 +115,7 @@ function pasteRun(run: PasteToolRun | { why: string }): ToolRun {
   return {
     result: { content: pasteBlock(run.excerpt) },
     lookedUp: run.lookedUp,
+    key: run.key,
     ...(run.readPasteId ? { readPasteId: run.readPasteId } : {}),
     ...(roster ? { roster } : {}),
   };
@@ -137,5 +141,6 @@ async function superRun(
     superShown: found.shown,
     roster: found.roster,
     superQueried: true,
+    key: lookupKey(query),
   };
 }

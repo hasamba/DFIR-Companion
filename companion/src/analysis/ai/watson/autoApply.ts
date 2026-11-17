@@ -157,6 +157,8 @@ function waitReason(p: WatsonProposal, round: WatsonAutoRound): string | null {
   // Task 9: a risky query waits for an analyst in every mode and from every round source.
   if (p.risk) return riskyWait(p.risk);
   if (p.mode !== "collection") return "A fleet-wide hunt always waits for an analyst.";
+  // A reaction collection that gets null here still reserves a place in the chain before it launches:
+  // autoApply reserves on `reaction` alone (isChainLaunch), with or without a source (#2651).
   if (round.reaction && round.source === undefined) return null; // the chain decides (autoChain.ts)
   if (round.source === "slash")
     return "Watson does not launch from a chat-bot command. Approve it in the Watson panel.";
