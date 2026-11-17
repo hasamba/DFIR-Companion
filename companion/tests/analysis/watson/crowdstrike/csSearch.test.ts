@@ -140,6 +140,7 @@ let stateStore: StateStore;
 let started: Array<{ req: CsSearchRequest; proposalId: string }>;
 let startFails: boolean;
 let repository: string;
+let priorJob: { jobId: string; status: "running" | "interrupted" } | undefined;
 
 beforeEach(async () => {
   cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-watson-cs-")));
@@ -151,6 +152,7 @@ beforeEach(async () => {
   started = [];
   startFails = false;
   repository = "search-all";
+  priorJob = undefined;
 });
 
 function deps(): WriterDeps {
@@ -168,6 +170,7 @@ function deps(): WriterDeps {
         return { jobId: `job-${started.length}` };
       },
       fingerprints: fingerprintStoreFor(cases),
+      jobFor: () => priorJob,
     },
   };
 }
@@ -290,6 +293,20 @@ describe("applying a cs_search card", () => {
     expect((await fingerprintStoreFor(cases).load(CASE)).has(card().targetId)).toBe(false);
   });
 
+  it("a card whose job already started (its save was lost) records that job and starts no second search", async () => {
+    priorJob = { jobId: "job-earlier", status: "interrupted" };
+    await seed([card()]);
+    const { chat } = await applyWatsonProposal(deps(), CASE, "wp-cs", "apply", "Dana");
+    expect(started).toHaveLength(0);
+    const p = chat.proposals[0] as WatsonCsSearchProposal;
+    expect(p).toMatchObject({
+      status: "applied",
+      launched: { jobId: "job-earlier" },
+      watch: { state: "failed" },
+    });
+    expect(p.watch?.text).toContain("ended as interrupted");
+  });
+
   it("cannot be undone", async () => {
     await seed([card()]);
     await applyWatsonProposal(deps(), CASE, "wp-cs", "apply");
@@ -324,6 +341,17 @@ describe("withCsResult: the result event", () => {
       notified: true,
     });
     expect(withCsResult(r.chat, "wp-cs", outcome, START).sent).toBe(false);
+  });
+
+  it("a result for a card left pending (lost save) is kept: the card turns applied, one event", () => {
+    const chat = { ...emptyWatsonChat(), proposals: [card()] };
+    const outcome = { title: "t", rows: 2, events: 2, added: 1, truncated: false, timedOut: false };
+    const r = withCsResult(chat, "wp-cs", outcome, START);
+    expect(r.sent).toBe(true);
+    expect(r.chat.proposals[0]).toMatchObject({
+      status: "applied",
+      watch: { state: "finished", notified: true },
+    });
   });
 
   it("a capped search says the row cap cut the rest", () => {

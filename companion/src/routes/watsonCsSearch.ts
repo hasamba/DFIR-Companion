@@ -49,11 +49,19 @@ export function watsonCsSearchDeps(ctx: RouteContext): CsSearchDeps {
         ctx,
         prepared.spec,
         (outcome) => noteCsSearchResult(ctx, caseId, proposalId, outcome),
-        { parameters: { proposalId } },
+        { parameters: { proposalId }, idempotencyKey: `watson-cs:${caseId}:${proposalId}` },
       );
       return { jobId };
     },
     fingerprints: fingerprintStoreFor(ctx.store),
     isFrozen: (caseId) => isFrozenCase(ctx.store, caseId),
+    jobFor: (caseId, proposalId) => {
+      const job = ctx.options.jobManager
+        ?.list(caseId)
+        .find((j) => j.kind === "siem-search" && j.parameters?.proposalId === proposalId);
+      return job
+        ? { jobId: job.id, status: job.status, ...(job.detail ? { detail: job.detail } : {}) }
+        : undefined;
+    },
   };
 }

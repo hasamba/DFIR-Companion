@@ -134,7 +134,7 @@ export async function startSiemSearch(
   ctx: RouteContext,
   spec: SiemSearchSpec,
   onDone?: SiemDone,
-  extra: { parameters?: Record<string, string> } = {},
+  extra: { parameters?: Record<string, string>; idempotencyKey?: string } = {},
 ): Promise<string> {
   const jm = ctx.options.jobManager;
   const job = jm?.register({
@@ -144,6 +144,7 @@ export async function startSiemSearch(
     detail: "waiting for the case",
     cancellable: true,
     resumable: false,
+    ...(extra.idempotencyKey ? { idempotencyKey: extra.idempotencyKey } : {}),
     parameters: {
       repository: spec.repository,
       start: new Date(spec.startMs).toISOString(),
@@ -153,6 +154,8 @@ export async function startSiemSearch(
   });
   await job?.durable;
   const jobId = job?.jobId ?? "";
+  // The same card registered twice (a retry after a lost save): the first job is the search.
+  if (job?.reused) return jobId;
   // The search is remembered on the case (Watson's duplicate check): idempotent, never refuses.
   const key = csSearchKey(spec.query, spec.repository, iso(spec.startMs), iso(spec.endMs));
   await fingerprintStoreFor(ctx.store)

@@ -33,6 +33,27 @@ export interface CsSearchDeps {
   fingerprints: Pick<HuntFingerprintStore, "load" | "reserve" | "release">;
   /** The case is closed or archived: nothing is searched. */
   isFrozen?(caseId: string): Promise<boolean>;
+  /**
+   * The search job a card already started, from the durable job ledger: a save that failed after the
+   * job started, or a restart in between, left the card pending. Its job is the truth.
+   */
+  jobFor?(caseId: string, proposalId: string): CsSearchJob | undefined;
+}
+
+export interface CsSearchJob {
+  jobId: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
+  detail?: string;
+}
+
+/** The watch a card gets from a job that already exists. */
+function watchOfJob(job: CsSearchJob): WatsonCsSearchProposal["watch"] {
+  if (job.status === "queued" || job.status === "running") return { state: "running" };
+  if (job.status === "succeeded") return { state: "finished", ...(job.detail ? { text: job.detail } : {}) };
+  return {
+    state: "failed",
+    text: `The search job ended as ${job.status} before Watson saved its result. Check the Jobs panel and the activity log.`,
+  };
 }
 
 export const CS_UNDO_REFUSED = "you cannot undo a search that ran. Use Undo import for its rows";
@@ -93,6 +114,20 @@ export async function applyCsSearch(
   const chat = await deps.chatStore.update(caseId, async (c) => {
     const p = find(c, proposalId);
     if (p.status !== "pending") throw new WatsonProposalStateError("apply", p.status);
+    const at = new Date().toISOString();
+    // A job this card already started (its save was lost): record it, never start a second search.
+    const prior = cs.jobFor?.(caseId, p.id);
+    if (prior) {
+      done = {
+        ...p,
+        status: "applied",
+        launched: { jobId: prior.jobId, at, by: actor },
+        watch: watchOfJob(prior),
+        appliedAt: at,
+        appliedBy: actor,
+      };
+      return replace(c, done);
+    }
     await recheck(cs, caseId, p);
     const reserved = await cs.fingerprints.reserve(caseId, [p.targetId]);
     if (!reserved.ok) throw new WatsonProposalConflict(`Watson will not run this. ${CS_ALREADY_RAN}`);
@@ -104,7 +139,6 @@ export async function applyCsSearch(
       await cs.fingerprints.release(caseId, reserved.added).catch(() => undefined);
       throw new WatsonProposalConflict(`The search did not start: ${(err as Error).message}`);
     }
-    const at = new Date().toISOString();
     done = {
       ...p,
       status: "applied",
