@@ -9,6 +9,7 @@ import {
   reserveChainPlace,
 } from "./autoChain.js";
 import {
+  askedDoneText,
   askedMoveOnText,
   doneText,
   judgeRound,
@@ -405,17 +406,23 @@ async function continueIfAsked(
   if (!auto.continueLater || round.signal?.aborted) return chat;
   if (!autoOn(await auto.control(caseId).catch(() => null))) return chat;
   // Counted before any early return, so a round that launches a collection resets the count too.
-  const asked =
+  // Watson saying it waits for a person counts as a request too: Auto sets those items aside and
+  // moves on, and stops only when nothing else is open (user report of 2026-11-17).
+  const request =
     round.askedFor && !(round.askedFor.velo && launchRuns(chat, round)) ? round.askedFor.text : undefined;
-  const verdict = await recordProgress(auto, caseId, round, ownIds(chat, round).size > 0, asked);
+  const waited = request ? undefined : round.continue === false ? round.waitingFor : undefined;
+  const asked = request ?? waited;
+  const verdict = await recordProgress(auto, caseId, round, ownIds(chat, round).size > 0, asked, !!waited);
   // A request a person must answer: Watson moves on to the other open items (user decision of 2026-11-16).
-  if (asked && verdict !== "unsaved" && verdict.kind === "moveOn") {
+  if (asked && verdict !== "unsaved" && verdict.kind === "moveOn" && verdict.asked) {
     await note(auto, caseId, askedMoveOnText(verdict.setAside, asked));
     return reserveAndContinue(auto, caseId, chat);
   }
   if (asked && verdict !== "unsaved" && verdict.kind === "done")
-    return note(auto, caseId, doneText(verdict.left));
-  if (round.continue === false) {
+    return note(auto, caseId, askedDoneText(verdict.left, asked));
+  // A waiting note whose items were already set aside keeps going (or moves on after idle rounds).
+  const goOn = !!waited && verdict !== "unsaved" && (verdict.kind === "go" || verdict.kind === "moveOn");
+  if (round.continue === false && !goOn) {
     return round.waitingFor
       ? note(auto, caseId, `Watson stops here and waits for you: ${round.waitingFor}`)
       : chat;
@@ -461,6 +468,7 @@ async function recordProgress(
   round: WatsonAutoRound,
   card: boolean,
   asked: string | undefined,
+  waiting: boolean,
 ): Promise<WatsonAutoVerdict | "unsaved"> {
   const state = await auto.writer.stateStore.loadOverview(caseId).catch(() => null);
   const work = {
@@ -471,6 +479,7 @@ async function recordProgress(
     workingOn: round.workingOn ?? "",
     ...(round.newEvidence ? { newEvidence: true } : {}),
     ...(asked ? { asked } : {}),
+    ...(waiting ? { waiting: true } : {}),
   };
   let verdict = "unsaved" as WatsonAutoVerdict | "unsaved";
   try {

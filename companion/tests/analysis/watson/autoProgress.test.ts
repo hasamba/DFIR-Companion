@@ -84,6 +84,36 @@ describe("autoProgress", () => {
     expect(r.chat.autoSetAside).toEqual(["q1"]);
   });
 
+  it("a request for a person also sets aside the items it names by id (user report of 2026-11-17)", () => {
+    const r = judgeRound(
+      emptyWatsonChat(),
+      state(),
+      work({ workingOn: "", asked: "the owner must confirm step n1" }),
+    );
+    expect(r.verdict).toMatchObject({ kind: "moveOn", asked: true });
+    expect(r.chat.autoSetAside).toEqual(["n1"]);
+  });
+
+  it("a request that names an item sets aside only that item, not the one Watson worked on", () => {
+    const r = judgeRound(
+      emptyWatsonChat(),
+      state(),
+      work({ focusIds: ["q1"], asked: "the owner must confirm n1" }),
+    );
+    expect(r.chat.autoSetAside).toEqual(["n1"]);
+  });
+
+  it("a repeated waiting note for an item already set aside sets nothing else aside (Codex stop review)", () => {
+    const chat = { ...emptyWatsonChat(), autoSetAside: ["n1"] };
+    const r = judgeRound(
+      chat,
+      state(),
+      work({ focusIds: ["q1"], asked: "the owner must confirm n1", waiting: true }),
+    );
+    expect(r.verdict.kind).toBe("go");
+    expect(r.chat.autoSetAside).toEqual(["n1"]);
+  });
+
   it("new evidence (an import) clears the set-aside items and counts as progress", () => {
     const chat = { ...emptyWatsonChat(), autoSetAside: ["q1"], autoIdleRounds: 1 };
     const r = judgeRound(chat, state(), work({ newEvidence: true }));
