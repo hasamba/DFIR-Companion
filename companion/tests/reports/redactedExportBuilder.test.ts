@@ -82,6 +82,10 @@ describe("buildRedactedExport", () => {
     // both screenshots included + redacted by the injected redactor
     expect(byPath.get("screenshots/shot-001.png")!.toString("utf8")).toBe("REDACTED:raw-shot-001.png");
     expect(byPath.has("screenshots/shot-002.png")).toBe(true);
+    // #2657: the case's masking map holds real values and never travels in the redacted package; the
+    // notes name it as withheld.
+    expect(entries.some((e) => e.path.includes("anon-map"))).toBe(false);
+    expect(byPath.get("REDACTION-NOTES.txt")!.toString("utf8")).toContain("state/anon-map.json");
 
     expect(summary.screenshotCount).toBe(2);
     expect(summary.screenshotsBlurred).toBe(2);

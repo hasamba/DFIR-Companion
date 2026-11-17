@@ -1,3 +1,4 @@
+import type { AnonMapStore } from "../anonMap.js";
 import type { Logger } from "../../logging/logger.js";
 import type { AnonControlStore } from "../anonControl.js";
 import type { CustomEntitiesStore } from "../anonEntities.js";
@@ -25,6 +26,8 @@ export interface ProviderCallContext {
     anonStore?: AnonControlStore;
     customEntitiesStore?: CustomEntitiesStore;
     discoveredStore?: DiscoveredEntitiesStore;
+    /** The case's saved masking map (#2657): which token a masked value gets. Absent → fresh tokens per call. */
+    anonMapStore?: AnonMapStore;
     /** Watson's masking roster (H3). Absent → only state-derived, custom and discovered entities. */
     rawNamesStore?: RawNamesSource;
     ocrRunner?: OcrRunner;

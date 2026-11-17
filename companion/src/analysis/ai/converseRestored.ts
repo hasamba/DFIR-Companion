@@ -12,7 +12,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import { previewCall } from "./aiPreviewCall.js";
 import { activeAiPreview } from "./aiPreviewScope.js";
 import { withCallMetrics } from "./callMetrics.js";
-import { maskRequest, type PromptEntities } from "./maskRequest.js";
+import { maskRequest, withSendMasking, type PromptEntities } from "./maskRequest.js";
 import { authoredFor, reportAnswer, reportGate } from "./presidioAuthoredText.js";
 import { presidioEnabledFor } from "./presidioScan.js";
 import { AiAnswerParseError, logAiUsage, parseAnswer, presidioGate, recordAiCost } from "./providerCall.js";
@@ -104,18 +104,23 @@ async function prepareSend(
 ): Promise<PreparedSend> {
   // The per-call entities hold real values: they stop here and never reach the provider.
   const { promptEntities, withhold: _ignored, beforeSend: _check, ...base } = gated;
-  const m = await maskRequest(ctx, caseId, state, {
-    userPrompt: gated.userPrompt,
-    promptEntities,
-    anonSeed: seed,
+  // The prompt AND the transcript are masked under the masking-map lock: both can mint tokens (#2657).
+  const { m, transcript } = await withSendMasking(ctx, caseId, async (identity) => {
+    const masked = await maskRequest(ctx, caseId, state, {
+      userPrompt: gated.userPrompt,
+      promptEntities,
+      anonSeed: seed,
+      anonIdentity: identity,
+    });
+    const a = masked.anon;
+    const turns = a ? base.transcript.map((t) => maskTurn((x) => a.apply(x), t)) : base.transcript;
+    return { anon: a, result: { m: masked, transcript: turns } };
   });
   if (!m.anon || !m.known) {
     reportGate(false); // the model sees clear text: its answer may not be recorded as AI text
     return { req: { ...base, userPrompt: m.plainPrompt }, anon: null };
   }
   const anon = m.anon;
-  const mask = (t: string): string => anon.apply(t);
-  const transcript = base.transcript.map((t) => maskTurn(mask, t));
   assertSeedKept(anon, seed);
   // Signed reasoning is never changed. The adapter drops a stale block (the controller ruling) and
   // reports the readable text it will really echo; only that text is gated.

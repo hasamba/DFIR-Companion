@@ -143,13 +143,17 @@ export async function caseMasker(
   state: InvestigationState,
   extra?: PromptEntities,
   seed?: readonly AnonPair[], // Watson D6: an earlier send's pairs, so its tokens keep their meaning
+  identity?: readonly AnonPair[], // #2657: the case's saved map, as read under its lock by a send
 ): Promise<CaseMasker> {
   const control = ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null;
   const policy = toAnonPolicy(control);
   // Off: no entity list is read at all, and Presidio (which needs `known`) does not run either.
   if (!policy.enabled) return { control, policy, known: null, anon: null, mask: (t) => t };
   const known = withSeedEntities(await knownEntitiesFor(ctx, caseId, state, extra), seed);
-  const anon = createAnonymizer(policy, known, seed);
+  // The saved map picks WHICH token a masked value gets, never whether it is masked (#2657). A reader
+  // with no lock (preview, Jev, the import pre-scan) reuses the saved tokens; its new ones are its own.
+  const saved = identity ?? (ctx.opts.anonMapStore ? (await ctx.opts.anonMapStore.load(caseId)).pairs : []);
+  const anon = createAnonymizer(policy, known, seed, saved);
   return { control, policy, known, anon, mask: (t) => anon.apply(t) };
 }
 
@@ -158,9 +162,12 @@ export async function maskRequest(
   ctx: ProviderCallContext,
   caseId: string,
   state: InvestigationState,
-  req: Pick<GatedAnalyzeRequest, "userPrompt" | "promptEntities"> & { anonSeed?: readonly AnonPair[] },
+  req: Pick<GatedAnalyzeRequest, "userPrompt" | "promptEntities"> & {
+    anonSeed?: readonly AnonPair[];
+    anonIdentity?: readonly AnonPair[];
+  },
 ): Promise<MaskedRequest> {
-  const m = await caseMasker(ctx, caseId, state, req.promptEntities, req.anonSeed);
+  const m = await caseMasker(ctx, caseId, state, req.promptEntities, req.anonSeed, req.anonIdentity);
   const { control, policy, known, anon, mask } = m;
   // The AI-field markers (aiSpan.ts) come out first, whatever happens next: nothing is sent with them.
   const segments = splitAiSpans(req.userPrompt);
@@ -171,4 +178,19 @@ export async function maskRequest(
   // username, email, SID or secret — only what our own detectors could not find.
   const { masked, spans } = maskSegments(segments, mask);
   return { control, policy, plainPrompt, maskedPrompt: masked, spans, known, anon };
+}
+
+/**
+ * A real send's masking (#2657): under the case's masking-map lock when the map is wired, so the tokens
+ * this send mints are saved before any other call can mint, and the token sent is the token saved. The
+ * preview and the pre-scans call maskRequest directly and write nothing.
+ */
+export function withSendMasking<T>(
+  ctx: ProviderCallContext,
+  caseId: string,
+  mask: (identity: readonly AnonPair[] | undefined) => Promise<{ anon: Anonymizer | null; result: T }>,
+): Promise<T> {
+  const store = ctx.opts.anonMapStore;
+  if (!store) return mask(undefined).then((r) => r.result);
+  return store.withAnonMap(caseId, (identity) => mask(identity));
 }
