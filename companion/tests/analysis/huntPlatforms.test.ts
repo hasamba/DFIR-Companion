@@ -54,10 +54,11 @@ describe("resolveHuntPlatforms — DFIR_HUNT_PLATFORMS allowlist", () => {
     expect(normalizeHuntPlatform("logscale")).toBe("crowdstrike");
   });
 
-  it("offers all eight platforms when unset, with crowdstrike appended last so the display order is stable", () => {
+  it("offers every platform when unset, with crowdstrike (#2558) and then the #2667 tools appended so the display order is stable", () => {
     const all = resolveHuntPlatforms("");
-    expect(all).toHaveLength(8);
-    expect(all[all.length - 1]).toBe("crowdstrike");
+    expect(all).toHaveLength(13);
+    expect(all[7]).toBe("crowdstrike");
+    expect(all.slice(8)).toEqual(["carbonblack", "wazuh", "sentinelone", "cortex", "qradar"]);
     expect(all.slice(0, 7)).toEqual([
       "velociraptor",
       "defender",

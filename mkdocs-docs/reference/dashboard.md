@@ -830,8 +830,13 @@ Type a plain-English description of what you want to hunt for. Select the output
 | **YARA** | File/memory |
 | **Suricata** | Network IDS |
 | **CQL** | CrowdStrike Falcon LogScale / Next-Gen SIEM (Advanced Event Search) |
+| **Carbon Black Cloud search** | Carbon Black Cloud (Enterprise EDR) process search |
+| **Wazuh dashboard search** | DQL in the Wazuh dashboard search bar over the alerts index |
+| **SentinelOne PowerQuery** | Singularity Data Lake |
+| **XQL** | Cortex XDR |
+| **AQL** | IBM QRadar |
 
-The languages offered follow the **Hunt platforms** setting (`DFIR_HUNT_PLATFORMS`). Leave it blank to offer all eight; set it to a comma-separated list to offer only those.
+The languages offered follow the **Hunt platforms** setting (`DFIR_HUNT_PLATFORMS`). Leave it blank to offer all thirteen; set it to a comma-separated list to offer only those. The keys are `velociraptor`, `defender`, `elastic`, `splunk`, `sigma`, `yara`, `suricata`, `crowdstrike`, `carbonblack`, `wazuh`, `sentinelone`, `cortex` and `qradar`.
 
 ---
 
@@ -918,23 +923,35 @@ Languages by source:
 | Microsoft 365 / Entra ID | KQL on `SigninLogs`, `AuditLogs`, `OfficeActivity` | No: copy |
 | Elastic | ES\|QL | No: copy |
 | Splunk | SPL | No: copy |
+| Carbon Black | Carbon Black Cloud search (`process_name:…`) | No: copy |
+| Wazuh | Wazuh dashboard search (DQL over the alerts index) | No: copy |
+| SentinelOne | PowerQuery (Singularity Data Lake) | No: copy |
+| Cortex XDR | XQL (`dataset = xdr_data | …`) | No: copy |
+| IBM QRadar | AQL (`SELECT … FROM events …`) | No: copy |
 | Host tools with no query language (Hayabusa, THOR, KAPE …) | Velociraptor VQL, with a note | Yes |
 | Other cloud logs (AWS, GCP, Azure, Okta, Google Workspace) | No hunt card. A note points to the Query Translator | — |
+
+Carbon Black queries use Carbon Black Cloud field names. Rows from the older CB Response (EDR) also
+read as Carbon Black, but its search uses other field names, so adapt the query there. Wazuh queries
+use the Wazuh 4.x alert fields (`agent.name`, `rule.level`, `data.win.eventdata.*`).
 
 If `DFIR_HUNT_PLATFORMS` disables a language, the panel shows Velociraptor VQL instead, with a note.
 The playbook's per-task hunts follow the same rules and show under their tasks.
 The playbook's hunt button names the language: **✨ Suggest Falcon queries**, **✨ Suggest KQL
-queries**, **✨ Suggest ES|QL queries**, **✨ Suggest SPL queries**, or **✨ Suggest Velociraptor
-hunts**. On a Mixed case, or on other cloud logs, it reads **✨ Suggest hunts** and its tooltip says
+queries**, **✨ Suggest ES|QL queries**, **✨ Suggest SPL queries**, **✨ Suggest Carbon Black
+queries**, **✨ Suggest Wazuh queries**, **✨ Suggest SentinelOne queries**, **✨ Suggest XQL
+queries**, **✨ Suggest AQL queries**, or **✨ Suggest Velociraptor hunts**. On a Mixed case, or on other cloud logs, it reads **✨ Suggest hunts** and its tooltip says
 what it does. The main source can also be set when the case is created, in the New case dialog.
 
 Which playbook steps get a query: a Velociraptor VQL hunt is offered only for a step that needs
-collection from an endpoint, because VQL collects from hosts. For CQL, KQL, ES|QL or SPL, every open
+collection from an endpoint, because VQL collects from hosts. For every other language, every open
 step is considered, and the AI leaves out a step that no search can serve (for example *notify
 legal*). So not every step gets a query, and one press can stop at the suggestion cap.
 
 The panel title names the language too: **Suggested Falcon hunts**, **Suggested KQL hunts**,
-**Suggested ES|QL hunts**, **Suggested SPL hunts**, or **Suggested Fleet Hunts** for Velociraptor,
+**Suggested ES|QL hunts**, **Suggested SPL hunts**, **Suggested Carbon Black hunts**, **Suggested
+Wazuh hunts**, **Suggested SentinelOne hunts**, **Suggested XQL hunts**, **Suggested AQL hunts**, or
+**Suggested Fleet Hunts** for Velociraptor,
 Mixed and other cloud logs.
 
 **Settings → Server sets** shows the same main source for the open case, with a **Change** list.

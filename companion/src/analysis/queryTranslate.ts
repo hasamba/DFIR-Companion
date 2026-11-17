@@ -5,7 +5,8 @@ import { HUNT_PLATFORMS, normalizeHuntPlatform, type HuntPlatform } from "./hunt
 // Natural-language → hunting-query translator (issue #100). The analyst types intent in plain
 // English — "PowerShell downloading a file and then executing it", "outbound RDP from this host" —
 // and the AI translates it into a runnable query for each requested platform (Velociraptor VQL,
-// Defender/Sentinel KQL, Elastic ES|QL, Splunk SPL, Sigma, YARA, Suricata), grounded in that
+// Defender/Sentinel KQL, Elastic ES|QL, Splunk SPL, Sigma, YARA, Suricata, CrowdStrike CQL, and since
+// #2667 Carbon Black Cloud, Wazuh, SentinelOne, Cortex XDR and QRadar), grounded in that
 // platform's REAL schema. This is the inverse of the entity-driven 🔍 pivot generator in the
 // dashboard (which builds deterministic templates FROM a specific IOC/event); here the input is
 // free-text intent and the mapping requires a model.
@@ -73,6 +74,11 @@ export const PLATFORM_LABELS: Readonly<Record<HuntPlatform, string>> = {
   yara: "YARA rule",
   suricata: "Suricata rules (network)",
   crowdstrike: "CrowdStrike Falcon LogScale / NG-SIEM (CQL)",
+  carbonblack: "Carbon Black Cloud (process search)",
+  wazuh: "Wazuh dashboard search (DQL)",
+  sentinelone: "SentinelOne Data Lake (PowerQuery)",
+  cortex: "Cortex XDR (XQL)",
+  qradar: "IBM QRadar (AQL)",
 };
 
 // Per-platform schema reference fed to the model so it grounds each query in REAL tables / plugins /
@@ -118,6 +124,63 @@ export const PLATFORM_SCHEMA_HINTS: Readonly<Record<HuntPlatform, string>> = {
     "(RemoteAddressIP4, RemotePort, LocalAddressIP4), DnsRequest (DomainName), *Written e.g. PeFileWritten (TargetFileName). " +
     'ComputerName for the host. Filters: field="value" (`*` is an unescapable wildcard), field=/regex/i, ' +
     'in(field=F, values=["a","b"], ignoreCase=true).',
+  // #2667. Fields checked against
+  // https://developer.carbonblack.com/reference/carbon-black-cloud/platform/latest/platform-search-fields/
+  // Targets Carbon Black Cloud (Enterprise EDR / Investigate); CB Response uses other field names.
+  carbonblack:
+    "Carbon Black Cloud (Enterprise EDR / Investigate) process search — Lucene-style `field:value` terms joined with " +
+    "AND / OR / NOT (or a leading `-`), parentheses, `*` wildcards, quotes for values with spaces. NO pipes, NO " +
+    "SELECT/FROM. Fields: process_name, process_cmdline, process_username, process_hash (MD5 or SHA-256), " +
+    "parent_name, childproc_name, netconn_ipv4, netconn_port, netconn_domain, regmod_name, filemod_name, " +
+    "modload_name, device_name. Example: `process_name:powershell.exe AND process_cmdline:*-enc*`. " +
+    "This is Carbon Black Cloud syntax; CB Response (EDR) uses different field names.",
+  // #2667. The Wazuh dashboard's search bars over indexer data use OpenSearch syntax —
+  // https://documentation.wazuh.com/current/user-manual/wazuh-dashboard/queries.html — written here as
+  // OpenSearch Dashboards Query Language: https://docs.opensearch.org/latest/dashboards/dql/
+  // Alert fields (agent.*, rule.*, data.win.*, syscheck.*, full_log) follow the Wazuh 4.x alert document
+  // (wazuh-alerts-*); Wazuh 5 renames them to its common schema, which this hint does not cover yet.
+  wazuh:
+    "Wazuh dashboard search bar over the wazuh-alerts-* index, in OpenSearch DQL (NOT Wazuh rule XML, NOT WQL): " +
+    "`field:value` terms joined with and / or / not, parentheses, `*` wildcards, quotes for phrases, ranges like " +
+    "`rule.level >= 10`. NO pipes. Fields: agent.name, agent.ip, rule.id, rule.level, rule.description, " +
+    "rule.groups, rule.mitre.id, decoder.name, location, full_log, syscheck.path (FIM); Windows eventchannel " +
+    "data under data.win.system.* (eventID, computer, channel) and data.win.eventdata.* with camelCase " +
+    "names (image, commandLine, parentImage, targetFilename, destinationIp, destinationPort, queryName, " +
+    "targetUserName, logonType). Example: `data.win.eventdata.image:*powershell.exe and data.win.system.eventID:1`.",
+  // #2667. Singularity Data Lake dotted field names (the same raw names the Cloud Funnel export carries:
+  // endpoint.name, event.type, src.process.cmdline, src.process.name, tgt.process.name, tgt.file.path),
+  // seen in https://www.elastic.co/guide/en/integrations/current/sentinel_one_cloud_funnel.html and the
+  // S1QL 2.0 examples at https://github.com/SentineLabs/S1QL-Queries. dst.ip.address / dst.port.number /
+  // event.dns.request are the S1QL 2.0 names; SentinelOne's own field reference is behind a login.
+  sentinelone:
+    "SentinelOne Singularity Data Lake PowerQuery (S1QL 2.0 field names, NOT the legacy SrcProcName style). A " +
+    "filter of `field operator value` terms (=, !=, contains, contains:anycase, in:anycase(...), matches) joined " +
+    "with and / or / not, then optional pipes: `| columns a, b`, `| group count() by x`, `| sort -x`, `| limit N`. " +
+    "Fields: event.type ('Process Creation', 'File Creation', 'IP Connect', 'DNS Resolved', 'Registry Value " +
+    "Modified'), endpoint.name, src.process.name, src.process.cmdline, src.process.user, src.process.image.path, " +
+    "tgt.process.name, tgt.process.cmdline, tgt.file.path, tgt.file.sha256, dst.ip.address, dst.port.number, " +
+    "event.dns.request, registry.keyPath. Example: `event.type = 'Process Creation' and src.process.cmdline " +
+    "contains:anycase '-enc' | columns endpoint.name, src.process.cmdline`.",
+  // #2667. Fields checked against
+  // https://cortex-docs.paloaltonetworks.com/xql-schema-reference/xdr-data-fields and
+  // https://cortex-docs.paloaltonetworks.com/xql-schema-reference/xdr-data-fields-by-actor/action-actor
+  cortex:
+    "Cortex XDR XQL. Start with `dataset = xdr_data` (or a preset such as `preset = xdr_process`), then pipe " +
+    "stages: `| filter …`, `| fields …`, `| comp count() by …`, `| sort desc _time`, `| limit N`. Operators =, !=, " +
+    "~= (regex), contains, in (...); combine with and / or. Fields: event_type (ENUM.PROCESS, ENUM.NETWORK, " +
+    "ENUM.FILE, ENUM.REGISTRY), event_sub_type, agent_hostname, actor_process_image_name, " +
+    "actor_process_command_line, action_process_image_name, action_process_image_command_line, " +
+    "action_process_image_sha256, action_remote_ip, action_remote_port, action_external_hostname, " +
+    "dns_query_name, action_file_path, action_file_sha256, action_registry_key_name, action_registry_value_name.",
+  // #2667. Functions and time clauses checked against
+  // https://www.ibm.com/docs/en/SS42VS_7.5/com.ibm.qradar.doc/r_aql_data_functions.html
+  qradar:
+    "IBM QRadar AQL (Ariel Query Language) — QRadar's own SQL-like language, so here a SELECT statement IS the " +
+    "right answer: `SELECT … FROM events WHERE … LAST 7 DAYS` (or FROM flows; time with LAST n MINUTES/HOURS/DAYS " +
+    "or START '…' STOP '…'). Fields: starttime, devicetime, sourceip, destinationip, sourceport, destinationport, " +
+    "username, qid, category, logsourceid, eventcount; functions QIDNAME(qid), LOGSOURCENAME(logsourceid), " +
+    "CATEGORYNAME(category). Match text with ILIKE '%x%' or MATCHES; custom event properties are double-quoted, " +
+    'e.g. "Process CommandLine", "Process Name". Group with GROUP BY, order with ORDER BY, cap with LIMIT.',
 };
 
 /**

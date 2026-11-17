@@ -4,8 +4,9 @@
 // - Velociraptor, no evidence, or a host tool with no query language (Hayabusa, THOR, KAPE …) → VQL,
 //   the existing hunt path, deployable. The host-tool case carries a note.
 // - CrowdStrike → CQL; Defender/Sentinel → KQL on the Device* tables; Microsoft 365 / Entra → KQL on
-//   the sign-in, directory-audit and Office activity tables; Elastic → ES|QL; Splunk → SPL. These are
-//   copy-ready only — never deployed.
+//   the sign-in, directory-audit and Office activity tables; Elastic → ES|QL; Splunk → SPL; and
+//   (#2667) Carbon Black → Carbon Black Cloud search, Wazuh → dashboard search (DQL), SentinelOne →
+//   PowerQuery, Cortex XDR → XQL, QRadar → AQL. These are copy-ready only — never deployed.
 // - Other cloud logs (AWS, GCP, Azure, Okta, Google Workspace) → no language yet: no hunt at all, a
 //   note pointing to the Query Translator. Never VQL — a tenant log case has no endpoint to run it on.
 // - A language whose platform the server disabled falls back to VQL, with a note.
@@ -16,7 +17,20 @@ import { FAMILY_LABELS, type MainSourceResult, type SourceFamily } from "./caseM
 import { resolveHuntPlatforms, type HuntPlatform } from "./huntPlatforms.js";
 import { PLATFORM_SCHEMA_HINTS } from "./queryTranslate.js";
 
-export const HUNT_LANGUAGES = ["vql", "cql", "kql-device", "kql-cloud", "esql", "spl"] as const;
+export const HUNT_LANGUAGES = [
+  "vql",
+  "cql",
+  "kql-device",
+  "kql-cloud",
+  "esql",
+  "spl",
+  // #2667: appended so VQL stays first and the existing group order holds.
+  "cbc",
+  "wazuh-dql",
+  "s1-pq",
+  "xql",
+  "aql",
+] as const;
 export type HuntLanguage = (typeof HUNT_LANGUAGES)[number];
 /** The non-VQL languages: written by the language-hunt path, copy-ready, never deployed. */
 export type CopyHuntLanguage = Exclude<HuntLanguage, "vql">;
@@ -29,6 +43,11 @@ export const LANGUAGE_PLATFORM: Readonly<Record<HuntLanguage, HuntPlatform>> = {
   "kql-cloud": "defender",
   esql: "elastic",
   spl: "splunk",
+  cbc: "carbonblack",
+  "wazuh-dql": "wazuh",
+  "s1-pq": "sentinelone",
+  xql: "cortex",
+  aql: "qradar",
 };
 
 export const LANGUAGE_LABELS: Readonly<Record<HuntLanguage, string>> = {
@@ -38,6 +57,11 @@ export const LANGUAGE_LABELS: Readonly<Record<HuntLanguage, string>> = {
   "kql-cloud": "Sentinel KQL (sign-in and audit logs)",
   esql: "Elastic ES|QL",
   spl: "Splunk SPL",
+  cbc: "Carbon Black Cloud search",
+  "wazuh-dql": "Wazuh dashboard search",
+  "s1-pq": "SentinelOne PowerQuery",
+  xql: "Cortex XDR XQL",
+  aql: "QRadar AQL",
 };
 
 const KQL_CLOUD_HINT =
@@ -56,6 +80,11 @@ export const LANGUAGE_SCHEMA_HINTS: Readonly<Record<CopyHuntLanguage, string>> =
   "kql-cloud": KQL_CLOUD_HINT,
   esql: PLATFORM_SCHEMA_HINTS.elastic,
   spl: PLATFORM_SCHEMA_HINTS.splunk,
+  cbc: PLATFORM_SCHEMA_HINTS.carbonblack,
+  "wazuh-dql": PLATFORM_SCHEMA_HINTS.wazuh,
+  "s1-pq": PLATFORM_SCHEMA_HINTS.sentinelone,
+  xql: PLATFORM_SCHEMA_HINTS.cortex,
+  aql: PLATFORM_SCHEMA_HINTS.qradar,
 };
 
 const FAMILY_LANGUAGE: Readonly<Record<SourceFamily, HuntLanguage | null>> = {
@@ -65,6 +94,11 @@ const FAMILY_LANGUAGE: Readonly<Record<SourceFamily, HuntLanguage | null>> = {
   m365: "kql-cloud",
   elastic: "esql",
   splunk: "spl",
+  carbonblack: "cbc",
+  wazuh: "wazuh-dql",
+  sentinelone: "s1-pq",
+  cortex: "xql",
+  qradar: "aql",
   "cloud-other": null,
   "host-other": "vql",
 };

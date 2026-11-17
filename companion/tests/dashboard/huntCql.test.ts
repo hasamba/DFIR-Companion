@@ -147,12 +147,12 @@ describe("wiring — the eighth platform reaches the modal and the translator", 
     expect(STATIC_ASSETS["/js/dashboard-hunt-cql.js"]).toMatch(/javascript/);
   });
 
-  it("a blank DFIR_HUNT_PLATFORMS default set on the page holds all eight keys", () => {
+  it("a blank DFIR_HUNT_PLATFORMS default set on the page holds every hunt platform key", () => {
     const m = html.match(/let enabledHuntPlatforms = new Set\(\[([^\]]*)\]\)/);
     expect(m).not.toBeNull();
     const keys = [...(m?.[1] ?? "").matchAll(/"([a-z]+)"/g)].map((x) => x[1]);
     expect(keys).toEqual([...HUNT_PLATFORMS]);
-    expect(keys).toHaveLength(8);
+    expect(keys).toHaveLength(HUNT_PLATFORMS.length);
   });
 
   it("the hunt modal has a crowdstrike card built by huntCql", () => {

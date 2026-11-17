@@ -19,6 +19,12 @@
     "kql-cloud": "Sentinel KQL (sign-in and audit logs)",
     esql: "Elastic ES|QL",
     spl: "Splunk SPL",
+    // #2667
+    cbc: "Carbon Black Cloud search",
+    "wazuh-dql": "Wazuh dashboard search",
+    "s1-pq": "SentinelOne PowerQuery",
+    xql: "Cortex XDR XQL",
+    aql: "QRadar AQL",
   };
 
   let msState = null; // the last GET /cases/:id/main-source answer
@@ -70,7 +76,19 @@
     title:
       "Ask the AI to suggest a Velociraptor hunt for each endpoint-related task — a fleet hunt, or a single-endpoint collection when the task is tied to one host (review the VQL before deploying)",
   };
-  const BUTTON_WORDS = { cql: "Falcon", "kql-device": "KQL", "kql-cloud": "KQL", esql: "ES|QL", spl: "SPL" };
+  const BUTTON_WORDS = {
+    cql: "Falcon",
+    "kql-device": "KQL",
+    "kql-cloud": "KQL",
+    esql: "ES|QL",
+    spl: "SPL",
+    // #2667: the product name where the language has no short name analysts use, as "Falcon" for CQL.
+    cbc: "Carbon Black",
+    "wazuh-dql": "Wazuh",
+    "s1-pq": "SentinelOne",
+    xql: "XQL",
+    aql: "AQL",
+  };
 
   function playbookHuntButton(ms) {
     const lang = ms && ms.language && ms.language.language;
