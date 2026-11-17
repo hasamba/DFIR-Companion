@@ -42,12 +42,18 @@ function fitCount(rows: readonly string[], budget: number): number {
   return rows.length;
 }
 
+interface Fitted {
+  rows: string[];
+  /** The one row was cut down: its burst members are not shown, so they are not covered. */
+  clipped: boolean;
+}
+
 /** Re-select by priority until the rendered rows fit. Each pass shows strictly fewer rows. */
-function fitSelection(t: TimelineSelection, budget: number): string[] {
+function fitSelection(t: TimelineSelection, budget: number): Fitted {
   let rows = t.promptEvents.map((e) => rowOf(t, e));
   for (;;) {
     const fits = fitCount(rows, budget);
-    if (fits >= rows.length) return rows;
+    if (fits >= rows.length) return { rows, clipped: false };
     // Zero fit: keep the single most significant row rather than an empty timeline.
     t.fitTo(Math.max(1, fits));
     const next = t.promptEvents.map((e) => rowOf(t, e));
@@ -56,17 +62,29 @@ function fitSelection(t: TimelineSelection, budget: number): string[] {
   }
 }
 
-/** The one remaining row, without its group detail, clipped to the budget. */
-function clipOne(t: TimelineSelection, budget: number): string[] {
+/**
+ * The one remaining row, cut down to the budget. A burst keeps a short note of its size in place of
+ * its member detail, so Watson still knows the row stands for more events than it shows.
+ */
+function clipOne(t: TimelineSelection, budget: number): Fitted {
   const e = t.promptEvents[0];
-  if (!e) return [];
-  const row = rowOf(t, e, false);
+  if (!e) return { rows: [], clipped: false };
+  const g = t.grouping.groupById.get(e.id);
+  const tail = g ? ` ⟨grouped: ${g.count}× — member detail left out to fit⟩` : "";
   const room = Math.max(0, budget - 1);
-  return [row.length <= room ? row : row.slice(0, Math.max(0, room - CLIP_MARK.length)) + CLIP_MARK];
+  const head = rowOf(t, e, false);
+  if (head.length + tail.length <= room) return { rows: [head + tail], clipped: true };
+  const keep = Math.max(0, room - tail.length - CLIP_MARK.length);
+  const row =
+    keep > 0 ? head.slice(0, keep) + CLIP_MARK + tail : head.slice(0, Math.max(0, room - 1)) + CLIP_MARK;
+  return { rows: [row], clipped: true };
 }
 
-const covered = (t: TimelineSelection): number =>
-  t.promptEvents.reduce((n, e) => n + (t.grouping.memberIdsByRepresentative.get(e.id)?.length ?? 1), 0);
+/** In-scope events the shown rows cover; a cut-down burst covers only the row itself. */
+const covered = (t: TimelineSelection, clipped: boolean): number =>
+  clipped
+    ? 1
+    : t.promptEvents.reduce((n, e) => n + (t.grouping.memberIdsByRepresentative.get(e.id)?.length ?? 1), 0);
 
 /**
  * The FORENSIC TIMELINE block of Watson's case context, at most `budget` characters (title and the
@@ -83,8 +101,8 @@ export function watsonTimelineBlock(
   const reserve = partialNote(scoped.length, scoped.length).length + NO_ROWS.length;
   const room = Math.max(0, budget - title.length - reserve);
   const t = createTimelineSelection(state, scoped, aliasIndex);
-  const rows = t.promptEvents.length ? fitSelection(t, room) : [];
-  const used = rows.length ? covered(t) : 0;
+  const { rows, clipped } = t.promptEvents.length ? fitSelection(t, room) : { rows: [], clipped: false };
+  const used = rows.length ? covered(t, clipped) : 0;
   const note = used < scoped.length ? partialNote(used, scoped.length) : "";
   return { text: title + (rows.join("\n") || NO_ROWS) + note, used };
 }

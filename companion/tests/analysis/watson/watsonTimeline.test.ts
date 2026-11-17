@@ -105,4 +105,21 @@ describe("Watson's timeline block keeps the most significant events (#2656)", ()
     expect(out.text).toContain("grouped: 30×");
     expect(out.used).toBe(30);
   });
+
+  it("a burst too big to show whole is cut down, counts as one event, and the note stays", () => {
+    const burst = Array.from({ length: 14 }, (_, i) =>
+      ev(`b${i}`, {
+        timestamp: new Date(Date.UTC(2026, 0, 1, 2, i)).toISOString(),
+        description: `Velociraptor [Windows.Detection.Sigma] Sigma: Encoded PowerShell - Computer: ws-01`,
+        severity: "High",
+        commandLine: `powershell -enc ${word(i).repeat(20)} ${"a".repeat(360)}`,
+      }),
+    );
+    const out = block(burst, 4000);
+    expect(out.text.length).toBeLessThanOrEqual(4000);
+    expect(idsIn(out.text)).toHaveLength(1);
+    expect(out.used).toBe(1);
+    expect(out.text).toContain("(showing 1 of 14 in-scope events");
+    expect(out.text).toContain("grouped: 14×");
+  });
 });
