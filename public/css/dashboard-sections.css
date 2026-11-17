@@ -428,6 +428,16 @@
   #sec-velohunts .vhs-regen,#sec-playbook .vhs-regen{background:var(--border-color);border:1px solid var(--border-strong);color:var(--text-primary);border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
   #sec-velohunts .vhs-regen:disabled,#sec-playbook .vhs-regen:disabled{opacity:.6;cursor:default}
   #sec-velohunts .vhs-res,#sec-playbook .vhs-res{margin-top:6px}
+  /* #2666 Run a CQL hunt on CrowdStrike Next-Gen SIEM: the button (with its ::before icon, CLAUDE.md §8) and the confirm step. */
+  #sec-velohunts .msh-siem-run,#sec-playbook .msh-siem-run{background:var(--success);border:0;color:#fff;border-radius:5px;padding:2px 10px;font-size:11px;cursor:pointer}
+  #sec-velohunts .msh-siem-run::before,#sec-playbook .msh-siem-run::before{content:"";display:inline-block;width:12px;height:12px;vertical-align:middle;margin-right:4px;background:no-repeat center / contain;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='10' cy='10' r='6'/><path d='M14.5 14.5 20 20'/><path d='M8.5 7.5l3.5 2.5-3.5 2.5z' fill='%23ffffff'/></svg>")}
+  #sec-velohunts .msh-siem-run:disabled,#sec-playbook .msh-siem-run:disabled{opacity:.6;cursor:default}
+  #sec-velohunts .siem-confirm,#sec-playbook .siem-confirm{margin-top:8px;padding:8px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);font-size:12px}
+  #sec-velohunts .siem-confirm-head,#sec-playbook .siem-confirm-head{font-weight:bold;color:var(--text-bright);margin-bottom:4px}
+  #sec-velohunts .siem-query,#sec-playbook .siem-query{white-space:pre-wrap;word-break:break-word;font-family:var(--font-code);font-size:11px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:4px;padding:6px;margin:4px 0;max-height:200px;overflow:auto}
+  #sec-velohunts .siem-range,#sec-playbook .siem-range{display:flex;gap:10px;flex-wrap:wrap;margin:4px 0}
+  #sec-velohunts .siem-caps,#sec-playbook .siem-caps{color:var(--text-muted);margin:4px 0}
+  #sec-velohunts .siem-status,#sec-playbook .siem-status{margin-top:4px;color:var(--text-primary)}
   #sec-huntprofile .hp-empty{color:var(--text-muted);font-size:12px}
   #sec-huntprofile .hp-tally{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;font-size:12px;color:var(--text-primary)}
   #sec-huntprofile .hp-tally b{color:var(--text-bright)}

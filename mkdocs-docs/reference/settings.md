@@ -197,6 +197,30 @@ Lists all 13 enrichment providers. Each shows:
 
 ---
 
+### CrowdStrike Next-Gen SIEM search
+
+Turns on **Run in Falcon** for CrowdStrike CQL hunts ([how it works](threat-hunting.md#run-crowdstrike-cql-hunts-on-next-gen-siem)). It uses its **own** Falcon API client, separate from the CrowdStrike threat-intelligence client. Each feature switches on and off by itself, and each client has only the scopes it needs.
+
+The API client needs two scopes:
+
+- **NGSIEM: Write** — needed to **start** a search. The Companion only starts, polls and cancels search jobs. It never changes data in Falcon, but CrowdStrike puts "start a search" under the Write scope.
+- **NGSIEM: Read** — needed to read a search's results.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `DFIR_CROWDSTRIKE_SIEM_CLIENT_ID` | not set | The feature is off unless both the ID and the secret are set |
+| `DFIR_CROWDSTRIKE_SIEM_CLIENT_SECRET` | not set | Stored masked; never shown again or written to a log |
+| `DFIR_CROWDSTRIKE_SIEM_CLOUD` | `DFIR_CROWDSTRIKE_CLOUD`, then `us-1` | `us-1`, `us-2`, `eu-1`, `gov-us-1` or `gov-us-2` |
+| `DFIR_CROWDSTRIKE_SIEM_BASE_URL` | not set | An explicit API base; wins over the cloud |
+| `DFIR_CROWDSTRIKE_SIEM_REPOSITORY` | `search-all` | The NG-SIEM repository or view to search |
+| `DFIR_CROWDSTRIKE_SIEM_MAX_WINDOW_DAYS` | `7` | The longest time range one search may cover. A wider search is refused, not cut |
+| `DFIR_CROWDSTRIKE_SIEM_MAX_ROWS` | `10000` | The most rows one search imports |
+| `DFIR_CROWDSTRIKE_SIEM_TIMEOUT_MS` | `300000` | After this, the search is cancelled and the rows already read are imported, marked truncated |
+
+A save applies at once; no restart is needed. A 403 from Falcon means the API client is missing one of the two scopes, and the job says so.
+
+---
+
 ## Exposure
 
 Customer exposure check configuration:

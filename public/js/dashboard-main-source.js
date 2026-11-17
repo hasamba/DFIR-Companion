@@ -8,7 +8,9 @@
 //     dropdown. Changing it clears the shown hunts so the next press uses the new language;
 //   - the language cards (fleet hunts and per-task playbook hunts): the AI-written query, Copy and
 //     Regenerate. There is NO deploy button — only Velociraptor VQL is deployable, and VQL hunts keep
-//     their own cards in dashboard-hunts-jumps.js / dashboard-playbook.js, unchanged.
+//     their own cards in dashboard-hunts-jumps.js / dashboard-playbook.js, unchanged. A CQL card also
+//     gets "Run in Falcon" when the server has the Next-Gen SIEM search set up (#2666,
+//     dashboard-siem-search.js).
 // Everything the server or the model sent is rendered through esc()/escAttr().
 (function () {
   "use strict";
@@ -172,6 +174,7 @@
   }
 
   function loadMainSource() {
+    if (typeof loadSiemSearch === "function") loadSiemSearch(); // #2666: is the CQL Run button on?
     const caseId = caseIdOf();
     if (caseId !== msCaseId) {
       // A case switch: never show the old case's value while the new one loads.
@@ -231,16 +234,18 @@
     const techs = (h.mitreTechniques || []).map((t) => `<span class="vhs-tech">${esc(t)}</span>`).join("");
     const cites = typeof citeFindings === "function" ? citeFindings(h.relatedFindingIds || []) : "";
     const label = LANGUAGE_LABELS[h.language] || h.language;
+    const run = typeof siemRunButtonHtml === "function" ? siemRunButtonHtml(h) : ""; // #2666
+    const badge = (typeof siemBadge === "function" && siemBadge(h)) || "copy-ready";
     return (
       `<div class="vhs-card msh-card" data-scope="${escAttr(scope)}" data-idx="${idx}">` +
       `<div class="vhs-head"><span class="vhs-title">${esc(h.title)}</span>` +
       `<span class="vhs-sev" data-safe-style="background:${sevColor}22;color:${sevColor};border:1px solid ${sevColor}55">${esc(sev)}</span>` +
-      `<span class="vhs-tech" title="Copy-ready: run it in that tool yourself — it is never deployed">${esc(label)} · copy-ready</span></div>` +
+      `<span class="vhs-tech" title="${badge === "runnable" ? "Run it on CrowdStrike Next-Gen SIEM from here, or copy it" : "Copy-ready: run it in that tool yourself — it is never deployed"}">${esc(label)} · ${esc(badge)}</span></div>` +
       (h.rationale ? `<div class="vhs-rationale">${esc(h.rationale)}</div>` : "") +
       (cites ? `<div class="vhs-rationale" data-safe-style="color:var(--text-muted)">Cites: ${cites}</div>` : "") +
       (techs ? `<div class="vhs-techs">${techs}</div>` : "") +
       `<textarea class="vhs-vql msh-query" spellcheck="false" aria-label="${escAttr(label)} query">${esc(h.query)}</textarea>` +
-      `<div class="vhs-actions"><button type="button" class="msh-copy">Copy query</button>` +
+      `<div class="vhs-actions"><button type="button" class="msh-copy">Copy query</button>${run}` +
       `<button type="button" class="msh-regen" title="Ask the AI for a different ${escAttr(label)} hunt">↻ Regenerate</button></div>` +
       `</div>`
     );
@@ -251,6 +256,7 @@
   }
 
   function wireCopy(root) {
+    if (typeof wireSiemRun === "function") wireSiemRun(root); // #2666: the CQL Run button
     root.querySelectorAll(".msh-copy").forEach((b) => {
       b.onclick = (e) => {
         e.stopPropagation();

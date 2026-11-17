@@ -425,6 +425,7 @@
   <script src="/js/dashboard-render.js"></script>
   <script src="/js/dashboard-facet-filters.js"></script>
   <script src="/js/dashboard-hunts-jumps.js"></script>
+  <script src="/js/dashboard-siem-search.js"></script>
   <script src="/js/dashboard-main-source.js"></script>
   <script src="/js/dashboard-timeline-controls.js"></script>
   <!-- "Story so far" rendering + the brief. cockpitStoryHtml is called by renderCockpit at paint time. -->
@@ -2235,6 +2236,7 @@
           <div class="sfield" data-essential><label for="env-DFIR_ROCKYRACCOON_KEY">RockyRaccoon key<span class="sfield-hint">DFIR_ROCKYRACCOON_KEY</span></label><input id="env-DFIR_ROCKYRACCOON_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
         </div>
         <div class="settings-group-head" data-essential>CrowdStrike Falcon Intelligence</div>
+        <p data-essential data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">Threat-intelligence lookups only. Next-Gen SIEM search uses its own API client (below).</p>
         <div class="sfield-row3" data-essential>
           <div class="sfield" data-essential><label for="env-DFIR_CROWDSTRIKE_CLIENT_ID">Client ID<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_ID</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_ID" placeholder="(not set)" /></div>
           <div class="sfield" data-essential><label for="env-DFIR_CROWDSTRIKE_CLIENT_SECRET">Client secret<span class="sfield-hint">DFIR_CROWDSTRIKE_CLIENT_SECRET</span></label><input id="env-DFIR_CROWDSTRIKE_CLIENT_SECRET" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
@@ -2245,6 +2247,25 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_CROWDSTRIKE_BASE_URL">Base URL override<span class="sfield-hint">DFIR_CROWDSTRIKE_BASE_URL — leave blank to derive from Cloud</span></label><input id="env-DFIR_CROWDSTRIKE_BASE_URL" placeholder="(optional)" /></div>
+        </div>
+        <div class="settings-group-head" data-essential>CrowdStrike Next-Gen SIEM search</div>
+        <p data-essential data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 8px">Runs CQL hunts on your Falcon Next-Gen SIEM and imports the rows as evidence (a Run button on CrowdStrike CQL hunts, and Watson's search cards). Use a <strong>separate</strong> Falcon API client from the threat-intelligence one above. It needs two scopes: <strong>NGSIEM: Read</strong> and <strong>NGSIEM: Write</strong> — Write is required to <em>start</em> a search, even though the Companion only starts, polls and cancels searches and never changes data in Falcon. Off until both the client ID and secret are set.</p>
+        <div class="sfield-row3" data-essential>
+          <div class="sfield" data-essential><label for="env-DFIR_CROWDSTRIKE_SIEM_CLIENT_ID">Client ID<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_CLIENT_ID — scopes NGSIEM: Read + Write</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_CLIENT_ID" placeholder="(not set)" /></div>
+          <div class="sfield" data-essential><label for="env-DFIR_CROWDSTRIKE_SIEM_CLIENT_SECRET">Client secret<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_CLIENT_SECRET</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_CLIENT_SECRET" type="password" placeholder="(not set)" autocomplete="new-password" /></div>
+          <div class="sfield">
+            <label for="env-DFIR_CROWDSTRIKE_SIEM_CLOUD">Cloud<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_CLOUD — blank uses DFIR_CROWDSTRIKE_CLOUD, then us-1</span></label>
+            <select id="env-DFIR_CROWDSTRIKE_SIEM_CLOUD"><option value="">— same as threat intel (else us-1) —</option><option value="us-1">us-1</option><option value="us-2">us-2</option><option value="eu-1">eu-1</option><option value="gov-us-1">gov-us-1</option><option value="gov-us-2">gov-us-2</option></select>
+          </div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_CROWDSTRIKE_SIEM_BASE_URL">Base URL override<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_BASE_URL — leave blank to derive from Cloud</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_BASE_URL" placeholder="(optional)" /></div>
+          <div class="sfield"><label for="env-DFIR_CROWDSTRIKE_SIEM_REPOSITORY">Repository<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_REPOSITORY — default search-all</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_REPOSITORY" placeholder="search-all" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label for="env-DFIR_CROWDSTRIKE_SIEM_MAX_WINDOW_DAYS">Max time range (days)<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_MAX_WINDOW_DAYS — a wider search is refused, not clipped (default 7)</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_MAX_WINDOW_DAYS" placeholder="7" /></div>
+          <div class="sfield"><label for="env-DFIR_CROWDSTRIKE_SIEM_MAX_ROWS">Max rows per search<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_MAX_ROWS — rows imported per search (default 10000)</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_MAX_ROWS" placeholder="10000" /></div>
+          <div class="sfield"><label for="env-DFIR_CROWDSTRIKE_SIEM_TIMEOUT_MS">Timeout (ms)<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_TIMEOUT_MS — the search is cancelled; rows already read are imported (default 300000)</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_TIMEOUT_MS" placeholder="300000" /></div>
         </div>
         <div class="settings-group-head" data-essential>MISP</div>
         <div class="sfield-row" data-essential>

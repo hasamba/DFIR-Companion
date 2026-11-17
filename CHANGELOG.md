@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Run CQL hunts on CrowdStrike Next-Gen SIEM** — a Run in Falcon button on CQL hunt cards imports the rows as evidence, with time, row and timeout caps (part of #2666)
 - **Stop Watson** — a stop icon ends a running answer; all viewers see when Watson works; a resent message is not paid twice
 - **Watson model dropdown** — Settings lists the provider's models for Watson, like the other AI roles
 - **Watson tool calling** — several lookups (up to 10) per question with native tool calls, each masked, cost-checked and listed on the card

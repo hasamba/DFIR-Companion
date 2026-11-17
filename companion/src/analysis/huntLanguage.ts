@@ -6,6 +6,8 @@
 // - CrowdStrike → CQL; Defender/Sentinel → KQL on the Device* tables; Microsoft 365 / Entra → KQL on
 //   the sign-in, directory-audit and Office activity tables; Elastic → ES|QL; Splunk → SPL. These are
 //   copy-ready only — never deployed.
+//   (#2666: CQL hunts can also be RUN on CrowdStrike Next-Gen SIEM when its search client is set up —
+//   routes/crowdstrikeSiemSearch.ts. The language choice here is unchanged.)
 // - Other cloud logs (AWS, GCP, Azure, Okta, Google Workspace) → no language yet: no hunt at all, a
 //   note pointing to the Query Translator. Never VQL — a tenant log case has no endpoint to run it on.
 // - A language whose platform the server disabled falls back to VQL, with a note.

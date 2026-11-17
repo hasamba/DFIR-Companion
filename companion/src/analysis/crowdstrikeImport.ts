@@ -45,6 +45,18 @@ export interface CrowdstrikeImportOptions {
   sourceText?: string;
   // With sourceText: each row's record index in that original file, so evidence locators point there.
   recordIndexes?: readonly number[];
+  // A second provenance label appended AFTER "CrowdStrike Falcon" on every row (#2666: "CrowdStrike
+  // NG-SIEM" for rows an analyst-approved search brought in). Appended, so the origin facet and the
+  // main-source family (caseMainSource.ts) still read CrowdStrike Falcon.
+  extraSource?: string;
+}
+
+function withExtraSource<T extends { sources?: string[] }>(events: T[], extra: string | undefined): T[] {
+  if (!extra) return events;
+  return events.map((e) => {
+    const sources = e.sources?.length ? e.sources : [CROWDSTRIKE_SOURCE];
+    return sources.includes(extra) ? e : { ...e, sources: [...sources, extra] };
+  });
 }
 
 /** A Falcon sensor row: an event name AND the sensor's host identity (`aid` or `ComputerName`). */
@@ -156,7 +168,7 @@ export function parseCrowdstrikeExport(text: string, opts: CrowdstrikeImportOpti
   recordAggregation(opts.debug, mapped.length, groups, events.length);
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
-    events: stampSourceArtifactHash(events, opts.sourceText ?? text),
+    events: stampSourceArtifactHash(withExtraSource(events, opts.extraSource), opts.sourceText ?? text),
     iocs: [...sink.values()].slice(0, opts.maxIocs ?? 5000),
     total: records.length,
     kept: events.length,

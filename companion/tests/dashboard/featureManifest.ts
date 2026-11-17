@@ -1414,6 +1414,13 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Run a CQL hunt on CrowdStrike Next-Gen SIEM (#2666): the card's Run button, the confirm step
+    // and following the search job. The rows are imported by the server.
+    file: "dashboard-siem-search.js",
+    publish: ["loadSiemSearch", "siemRunButtonHtml", "siemBadge", "wireSiemRun"],
+    private: ["siem", "siemCase"],
+  },
+  {
     // The case's main evidence source line + override, and the copy-ready hunt cards in that
     // source's query language (#2559). VQL cards stay in dashboard-hunts-jumps.js / -playbook.js.
     file: "dashboard-main-source.js",
