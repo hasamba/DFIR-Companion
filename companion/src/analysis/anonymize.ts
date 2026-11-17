@@ -345,7 +345,8 @@ export function createAnonymizer(
   const keyOf = (p: AnonPair) => `${p.category}:${p.value.toLowerCase()}`;
   const toToken = new Map(seed.map((p) => [keyOf(p), p.token])); // CAT:real
   const toReal = new Map(seed.map((p) => [p.token, p.value])); // token (UPPER) -> real value
-  const saved = new Map(identity.map((p) => [keyOf(p), p.token]));
+  const savedByKey = new Map(identity.map((p) => [keyOf(p), p.token]));
+  const saved = new Set(identity.map((p) => p.token));
   const counters: Record<string, number> = {};
   for (const p of [...seed, ...identity])
     counters[p.category] = Math.max(counters[p.category] ?? 0, +p.token.split("_")[2]);
@@ -365,7 +366,7 @@ export function createAnonymizer(
     const key = `${category}:${real.toLowerCase()}`;
     const existing = toToken.get(key);
     if (existing) return existing;
-    const kept = saved.get(key);
+    const kept = savedByKey.get(key);
     if (kept && !toReal.has(kept)) return (toToken.set(key, kept), toReal.set(kept, real), kept);
     let token: string;
     do {
@@ -613,7 +614,8 @@ export function createAnonymizer(
     // A forged sentinel in attacker-influenced text must not turn into a placeholder at the end.
     let t = text.replace(SECRET_SENTINEL_RE, "");
     // A literal token in the input is never minted later, and one minted already is escaped (#2569).
-    const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok));
+    // A literal equal to a SAVED token is escaped too (#2657), or the saved value could adopt it.
+    const scan = scanTokenLiterals(t, TOKEN_RE.source, (tok) => toReal.has(tok) || saved.has(tok));
     for (const lit of scan.literals) reserved.add(lit);
     t = scan.text;
     // Reserve IPv6 literals FIRST — before anonCustom or any other pass — so nothing can
