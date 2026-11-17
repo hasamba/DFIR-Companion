@@ -610,6 +610,12 @@ describe("rail button, failed sends and paste limits", () => {
     );
   });
 
+  it("the toolbar Watson button collapses to its icon with the rest of the icons-only toolbar", () => {
+    const css = readFileSync(new URL("../../../public/css/dashboard-watson.css", import.meta.url), "utf8");
+    // dashboard-toolbar.css hides every label under .icons-only; an override here kept "Watson" showing.
+    expect(css).not.toMatch(/\.icons-only #watsonToggle/);
+  });
+
   it("refuses a paste over 50 MB without posting", async () => {
     let posted = false;
     const fetch = async () => {
