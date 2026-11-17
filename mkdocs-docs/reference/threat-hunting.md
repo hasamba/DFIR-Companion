@@ -13,6 +13,32 @@ After synthesis, the dashboard surfaces four types of hunt suggestions:
 
 Each suggestion card shows the VQL query with a **Deploy hunt** button (requires Velociraptor connection). A **↻ Regenerate** button refreshes the VQL if it won't compile.
 
+### Run CrowdStrike CQL hunts on Next-Gen SIEM
+
+When the case's main evidence is CrowdStrike Falcon, the hunt cards are written in CrowdStrike Falcon CQL. They are copy-ready by default. If an administrator sets up the [Next-Gen SIEM search client](settings.md#crowdstrike-next-gen-siem-search), each CQL card also gets a **Run in Falcon** button:
+
+1. Press **Run in Falcon**. A confirm step opens inside the card. It shows the exact query that will run, the repository, the time range and the caps.
+2. Check or change the time range. It starts with the case's scope window. With no scope window, it starts with the span of the case's High and Critical events (one day added on each side). With neither, it starts with the last 7 days. A range wider than the limit (7 days by default) is refused with a message. It is never cut silently.
+3. Press **Run search**. The search runs as a job: it shows in the Jobs panel, waits for the case's other job to finish, and you can cancel it. The card shows what the job is doing and then its result.
+
+What happens to the result:
+
+- The rows Falcon returns are stored first as an evidence file (`NNNN_crowdstrike-ngsiem_<time>.ndjson`, one returned row per line, fields unchanged) and are written to the chain of custody.
+- The rows are then imported through the CrowdStrike Falcon importer, like an uploaded Falcon export. Every row goes to the super-timeline. The content tagger grades the rows, and only rows graded above Info stay in the forensic timeline. Each row carries the sources `CrowdStrike Falcon` and `CrowdStrike NG-SIEM`.
+- A `table([...])` result keeps only the fields it lists, so its rows often have no event name. When the query filters on one event type (for example `#event_simpleName=ProcessRollup2`) and does not aggregate, the importer reads each row as that event. Rows that are not events (for example `groupBy` totals) stay in the evidence file only. The result message says how many.
+- The activity log records the query, the repository, the time range, the row counts, any truncation and who pressed Run.
+- **Undo import** takes the rows back out, like any import.
+
+Limits (Settings → Enrichment → CrowdStrike Next-Gen SIEM search):
+
+| Limit | Default | When it is hit |
+|---|---|---|
+| Time range | 7 days | The search is refused before anything is sent |
+| Rows per search | 10,000 | The first 10,000 rows are imported, and the message says "imported the first N rows (the row cap cut the rest)" |
+| Timeout | 5 minutes | The search is cancelled in Falcon, and the rows already read are imported and marked truncated |
+
+Cost: every search runs in your Next-Gen SIEM and counts against its query use. A filter query returns about 200 events per Falcon query job, so a long result is read page by page, and each page is another query job. A `table()` returns at most 200 rows unless the query sets `limit=`.
+
 ---
 
 ## Manual VQL Hunts

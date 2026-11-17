@@ -81,6 +81,7 @@ import { registerDeepPassRoutes } from "../routes/deepPass.js";
 import { registerJevReviewRoutes } from "../routes/jevReview.js";
 import { registerJevPromoteRoutes } from "../routes/jevPromote.js";
 import { registerContainmentCheckRoutes } from "../routes/containmentCheck.js";
+import { registerCrowdstrikeSiemRoutes } from "../routes/crowdstrikeSiemSearch.js";
 import { registerSecondLookRoutes } from "../routes/secondLook.js";
 import { registerIncidentTypeRoutes } from "../routes/incidentTypes.js";
 import { registerCollectionPlanRoutes } from "../routes/collectionPlan.js";
@@ -232,6 +233,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerJevReviewRoutes(app, ctx);
   registerJevPromoteRoutes(app, ctx);
   registerContainmentCheckRoutes(app, ctx);
+  registerCrowdstrikeSiemRoutes(app, ctx); // #2666: Run a CQL hunt on CrowdStrike Next-Gen SIEM
   registerSecondLookRoutes(app, ctx);
   // MUST precede registerReportsExportRoutes: that file's `GET /cases/:id/report/:file` matches
   // `/report/interactive` too, and answers unknown names with 400 rather than calling next(), so

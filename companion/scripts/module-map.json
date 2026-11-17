@@ -872,6 +872,7 @@
     "shadowArtifacts.ts": "analysis/detect",
     "siemBuildProgress.ts": "analysis/ingest",
     "siemDnsConnJoin.ts": "analysis/ingest",
+    "siemSearch.ts": "analysis/workflow",
     "siemImport.ts": "analysis/ingest",
     "securityRegistryWrite.ts": "analysis/ingest",
     "concatenatedJson.ts": "analysis/ingest",

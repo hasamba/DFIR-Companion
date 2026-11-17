@@ -161,6 +161,9 @@ export interface AiStatusEvent {
 
 export interface AppOptions {
   pipeline?: AnalysisPipeline;
+  // #2666: the fetch the CrowdStrike Next-Gen SIEM search client uses. Unset in production (the
+  // global fetch); tests inject a fake Falcon so no search ever reaches the network.
+  crowdstrikeSiemFetch?: typeof fetch;
   teamAuth?: TeamAuth;
   // Per-case mutex serializing load->save critical sections so concurrent state writes
   // (manual adds vs background enrichment/synthesis) cannot clobber each other.

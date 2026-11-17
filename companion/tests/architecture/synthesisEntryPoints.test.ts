@@ -37,6 +37,7 @@ const RESYNTHESIZE_IN_BACKGROUND: Sites = {
   "routes/importRecovery.ts": 1,
   "routes/reportsExport.ts": 1, // IRIS import
   "routes/analysisRuns.ts": 1, // import replay
+  "routes/crowdstrikeSiemImport.ts": 1, // #2666 a CrowdStrike NG-SIEM search's rows imported as evidence
   // 2. the /synthesize slash command
   "routes/slashCommand.ts": 1,
   // 4. the last duplicate-host pair

@@ -8,6 +8,11 @@ import {
   type Verdict,
 } from "./provider.js";
 import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
+import {
+  FalconAuthError,
+  FalconTokenSource,
+  resolveFalconBase,
+} from "../integrations/crowdstrike/falconAuth.js";
 
 export interface CrowdStrikeOptions {
   clientId: string;
@@ -18,43 +23,10 @@ export interface CrowdStrikeOptions {
   timeoutMs?: number;
 }
 
-// CrowdStrike Falcon regional API bases. The tenant's cloud determines which one to hit.
-const API_BASE: Record<string, string> = {
-  "us-1": "https://api.crowdstrike.com",
-  "us-2": "https://api.us-2.crowdstrike.com",
-  "eu-1": "https://api.eu-1.crowdstrike.com",
-  "gov-us-1": "https://api.laggar.gcw.crowdstrike.com",
-  "gov-us-2": "https://api.us-gov-2.crowdstrike.mil",
-};
-const CLOUD_ALIAS: Record<string, string> = {
-  us1: "us-1",
-  us: "us-1",
-  "us-1": "us-1",
-  us2: "us-2",
-  "us-2": "us-2",
-  eu1: "eu-1",
-  eu: "eu-1",
-  "eu-1": "eu-1",
-  gov: "gov-us-1",
-  gov1: "gov-us-1",
-  govus1: "gov-us-1",
-  "gov-us-1": "gov-us-1",
-  usgov1: "gov-us-1",
-  gov2: "gov-us-2",
-  govus2: "gov-us-2",
-  "gov-us-2": "gov-us-2",
-  usgov2: "gov-us-2",
-};
-
-function resolveBase(opts: CrowdStrikeOptions): string {
-  if (opts.baseUrl) return opts.baseUrl.replace(/\/+$/, "");
-  const key = CLOUD_ALIAS[(opts.cloud ?? "us-1").trim().toLowerCase()] ?? "us-1";
-  return API_BASE[key];
-}
-
 // Raised on a credential / missing-scope failure (401/403) so the provider can surface ONE
-// actionable message and still return whatever the other back-end produced.
-class CsAuthError extends Error {}
+// actionable message and still return whatever the other back-end produced. The sign-in itself
+// (cloud -> base, OAuth2 token) is shared with the NG-SIEM search client: integrations/crowdstrike.
+class CsAuthError extends FalconAuthError {}
 
 function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
@@ -96,46 +68,30 @@ export class CrowdStrikeProvider implements EnrichmentProvider {
   private readonly fetchFn: FetchFn;
   private readonly base: string;
   private readonly timeoutMs: number;
-  private token = "";
-  private tokenExpiresAt = 0; // epoch ms; refresh before this
+  private readonly tokens: FalconTokenSource;
 
   constructor(private readonly opts: CrowdStrikeOptions) {
     this.fetchFn = opts.fetchFn ?? fetch;
-    this.base = resolveBase(opts);
+    this.base = resolveFalconBase(opts);
     this.timeoutMs = opts.timeoutMs ?? 20_000;
+    this.tokens = new FalconTokenSource({
+      clientId: opts.clientId,
+      clientSecret: opts.clientSecret,
+      base: this.base,
+      fetchFn: this.fetchFn,
+      timeoutMs: this.timeoutMs,
+      authFailedMessage:
+        "CrowdStrike auth failed — check DFIR_CROWDSTRIKE_CLIENT_ID / _SECRET and the cloud region",
+      label: "CrowdStrike",
+    });
   }
 
   supports(kind: IocKind): boolean {
     return kind === "hash" || kind === "ip" || kind === "domain" || kind === "url";
   }
 
-  // OAuth2 client-credentials. CrowdStrike returns 201 with { access_token, expires_in }.
-  private async ensureToken(force = false): Promise<string> {
-    if (!force && this.token && Date.now() < this.tokenExpiresAt) return this.token;
-    const body = new URLSearchParams({
-      client_id: this.opts.clientId,
-      client_secret: this.opts.clientSecret,
-    });
-    const res = await this.fetchFn(`${this.base}/oauth2/token`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-      body: body.toString(),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
-    if (res.status === 400 || res.status === 401 || res.status === 403) {
-      throw new CsAuthError(
-        "CrowdStrike auth failed — check DFIR_CROWDSTRIKE_CLIENT_ID / _SECRET and the cloud region",
-      );
-    }
-    if (!res.ok) throw new Error(`CrowdStrike token HTTP ${res.status}`);
-    const json = await readBoundedJson<{ access_token?: string; expires_in?: number }>(res, {
-      maxBytes: RESPONSE_SIZE_LIMITS.json,
-      context: "CrowdStrike",
-    });
-    if (!json.access_token) throw new CsAuthError("CrowdStrike token response missing access_token");
-    this.token = json.access_token;
-    this.tokenExpiresAt = Date.now() + Math.max(0, (json.expires_in ?? 1799) - 60) * 1000; // 60s safety margin
-    return this.token;
+  private ensureToken(force = false): Promise<string> {
+    return this.tokens.get(force);
   }
 
   // GET with bearer auth; refreshes the token once on a 401. 403 → missing scope (actionable).
@@ -230,7 +186,7 @@ export class CrowdStrikeProvider implements EnrichmentProvider {
       const r = await this.intelLookup(value);
       if (r) results.push(r);
     } catch (e) {
-      if (e instanceof CsAuthError) authFailed = true;
+      if (e instanceof FalconAuthError) authFailed = true;
       else otherError = true;
     }
 
@@ -239,7 +195,7 @@ export class CrowdStrikeProvider implements EnrichmentProvider {
         const r = await this.malqueryLookup(value);
         if (r) results.push(r);
       } catch (e) {
-        if (e instanceof CsAuthError) authFailed = true;
+        if (e instanceof FalconAuthError) authFailed = true;
         else otherError = true;
       }
     }

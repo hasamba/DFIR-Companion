@@ -96,6 +96,28 @@ describe("time, host, source", () => {
       expect(familyOfEvent(asEvent(e))).toBe("crowdstrike");
     }
   });
+  it("an NG-SIEM search import appends its label after CrowdStrike Falcon; the family stays crowdstrike (#2666)", () => {
+    // API-shaped rows: @timestamp as a JSON number, @id, #repo — what a queryjobs poll returns.
+    const api = { "@timestamp": 1731399999000, "@id": "abc_1_2", "#repo": "base_sensor" };
+    const r = parseCrowdstrikeExport(ndjson(ev("ProcessRollup2", { ...PROC, ...api })), {
+      extraSource: "CrowdStrike NG-SIEM",
+    });
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].sources).toEqual([CROWDSTRIKE_SOURCE, "CrowdStrike NG-SIEM"]);
+    expect(familyOfEvent(asEvent(r.events[0]))).toBe("crowdstrike");
+  });
+  it("a table() row stamped with its event name and only @timestamp is dated and read (#2666)", () => {
+    const row = {
+      "#event_simpleName": "ProcessRollup2",
+      "@timestamp": 1731399999000,
+      ComputerName: "WS-02",
+      ...PROC,
+    };
+    const r = parseCrowdstrikeExport(ndjson(row));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].timestamp).toBe(new Date(1731399999000).toISOString());
+    expect(r.events[0].asset).toBe("WS-02");
+  });
   it("blank #event_simpleName falls through to event_simpleName", () => {
     const r = parse({
       "#event_simpleName": "",
