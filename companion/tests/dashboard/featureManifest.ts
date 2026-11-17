@@ -1953,18 +1953,7 @@ export const FEATURES: Feature[] = [
     // unseen (per case, in this browser), and the card body that marks what changed.
     file: "dashboard-watson-qchange.js",
     publish: ["watsonQChangeSync", "watsonQChangeIsNew", "watsonQChangeSeen", "watsonQChangeBody"],
-    private: [
-      "AUTO_ACTOR",
-      "KEY_PREFIX",
-      "KEEP",
-      "memory",
-      "caseId",
-      "readStored",
-      "writeStored",
-      "watched",
-      "norm",
-      "mark",
-    ],
+    private: ["AUTO_ACTOR", "KEY_PREFIX", "KEEP", "memory", "caseId", "watched", "norm", "mark"],
   },
   {
     // Watson's markup builders, split from dashboard-watson.js to keep both under 400 lines. Pure:
