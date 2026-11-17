@@ -870,6 +870,16 @@ describe("a free-form answer in the Watson log", () => {
     expect(log.innerHTML).not.toContain("addQuestion");
   });
 
+  it("#2663: shows the round's input and its cached share only when the provider reported a cache read", () => {
+    const { api, log } = setup();
+    api.renderWatson(chatWith([answerTurn({ inputTokens: 41200, cacheReadTokens: 25500 })]));
+    expect(log.innerHTML).toContain("Input 41,200 tokens · 25,500 from cache (62%)");
+    api.renderWatson(chatWith([answerTurn({ inputTokens: 41200, cacheReadTokens: 0 })]));
+    expect(log.innerHTML).not.toContain("from cache");
+    api.renderWatson(chatWith([answerTurn({})]));
+    expect(log.innerHTML).not.toContain("from cache");
+  });
+
   it("shows the coverage line only when the timeline was trimmed", () => {
     const { api, log } = setup();
     api.renderWatson(chatWith([answerTurn({ coverage: { usedEvents: 120, eventCount: 5000 } })]));

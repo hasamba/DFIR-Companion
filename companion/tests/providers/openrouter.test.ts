@@ -42,7 +42,12 @@ describe("OpenRouterProvider — reasoning / Chain-of-Thought (#121)", () => {
     const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
     expect(body.usage).toEqual({ include: true });
-    expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 80, costUSD: 0.0123 });
+    expect(result.usage).toEqual({
+      inputTokens: 200,
+      outputTokens: 80,
+      inputIncludesCache: true,
+      costUSD: 0.0123,
+    });
   });
 
   it("has no costUSD when OpenRouter's response omits cost", async () => {
@@ -54,7 +59,7 @@ describe("OpenRouterProvider — reasoning / Chain-of-Thought (#121)", () => {
     );
     const p = new OpenRouterProvider({ apiKey: "k", model: "m", fetchFn });
     const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
-    expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 80 });
+    expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 80, inputIncludesCache: true });
   });
 });
 

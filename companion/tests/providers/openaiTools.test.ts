@@ -73,7 +73,7 @@ describe("OpenAIProvider.converse — reply parsing", () => {
       { id: "c2", name: "forensic_lookup", input: {} },
     ]);
     expect(r.text).toBe("");
-    expect(r.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
+    expect(r.usage).toEqual({ inputTokens: 10, outputTokens: 5, inputIncludesCache: true });
   });
 
   it("a final answer returns text and no calls", async () => {

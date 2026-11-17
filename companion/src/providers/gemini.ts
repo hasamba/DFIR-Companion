@@ -196,6 +196,7 @@ function parseUsage(u: GeminiResponse["usageMetadata"]): ProviderUsage | undefin
       ...(u.promptTokenCount !== undefined ? { inputTokens: u.promptTokenCount } : {}),
       ...(u.candidatesTokenCount !== undefined ? { outputTokens: u.candidatesTokenCount } : {}),
       ...(u.cachedContentTokenCount !== undefined ? { cacheReadTokens: u.cachedContentTokenCount } : {}),
+      ...(u.promptTokenCount !== undefined ? { inputIncludesCache: true as const } : {}),
     }
   );
 }

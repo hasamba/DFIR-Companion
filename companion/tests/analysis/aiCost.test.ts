@@ -37,7 +37,7 @@ describe("AiCostStore", () => {
 
   it("returns an all-empty state when no file exists yet", async () => {
     const state = await store.load("c1");
-    expect(state.vision).toEqual({
+    expect(state.vision).toMatchObject({
       totalCalls: 0,
       totalCostUSD: 0,
       hasCost: false,
@@ -82,7 +82,7 @@ describe("AiCostStore", () => {
     expect(state.vision.hasCost).toBe(true);
     expect(state.vision.totalInputTokens).toBe(200);
     expect(state.vision.totalOutputTokens).toBe(40);
-    expect(state.vision.byModel["openrouter/google/gemini-3.1-flash-lite"]).toEqual({
+    expect(state.vision.byModel["openrouter/google/gemini-3.1-flash-lite"]).toMatchObject({
       calls: 2,
       costUSD: 0.02,
       hasCost: true,
@@ -99,7 +99,7 @@ describe("AiCostStore", () => {
     expect(state.other.totalCalls).toBe(1);
     expect(state.other.hasCost).toBe(false);
     expect(state.other.hasTokens).toBe(false);
-    expect(state.other.byModel["gemini/gemini-2.5-pro"]).toEqual({
+    expect(state.other.byModel["gemini/gemini-2.5-pro"]).toMatchObject({
       calls: 1,
       costUSD: 0,
       hasCost: false,

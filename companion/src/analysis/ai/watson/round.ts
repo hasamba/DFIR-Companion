@@ -1,3 +1,4 @@
+import { inUsageScope, newUsageTally } from "../usageScope.js";
 import { PresidioApprovalRequired } from "../../presidio.js";
 import type { InvestigationState } from "../../stateTypes.js";
 import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
@@ -179,15 +180,19 @@ async function runRound(
   });
 
   const counter = { calls: 0 };
+  const usage = newUsageTally(); // #2663: this round's model calls, counted as they happen
   const turnId = newWatsonId("wt"); // Watson's turn: Auto applies only its proposals
   let outcome: Outcome = { reply: null, shownEvents: [], questions: [] };
   let before: WatsonSpend | null = null;
   let saved: WatsonChat;
   let mayWrite = false; // the door rule's verdict: Auto applies no carried rows when writes are off
   try {
-    before = await watsonSpend(ctx, caseId);
+    const spentBefore = await watsonSpend(ctx, caseId);
+    before = spentBefore;
     const attach = { paste: newPaste, auto, reaction: input.reaction === true };
-    outcome = await converse(ctx, caseId, chat, promptTurn, attach, counter, before);
+    outcome = await inUsageScope(usage, () =>
+      converse(ctx, caseId, chat, promptTurn, attach, counter, spentBefore),
+    );
     outcome = commitCheck(ctx, outcome); // a stop drops the reply: nothing below proposes anything
     // Spec §4.4: a reaction to an import writes nothing, judged on the events the prompt showed.
     const importShown = input.reaction === true && outcome.shownEvents.some((e) => e.kind === "import");
@@ -201,7 +206,7 @@ async function runRound(
     outcome = { ...outcome, reply: null, error };
   } finally {
     // Every exit is saved; the stop check in saveRound is the commit point (roundSave.ts).
-    const save = { turnId, reaction: input.reaction === true, before, calls: counter.calls };
+    const save = { turnId, reaction: input.reaction === true, before, calls: counter.calls, usage };
     ({ saved, outcome } = await saveRound(ctx, caseId, outcome, save));
   }
   const failure = outcome.error ?? outcome.rethrow;

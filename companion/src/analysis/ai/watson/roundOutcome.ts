@@ -1,3 +1,4 @@
+import type { UsageTally } from "../usageScope.js";
 import { PresidioApprovalRequired } from "../../presidio.js";
 import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { AiReplyUnreadableError } from "../aiReplyUnreadable.js";
@@ -140,8 +141,13 @@ export function mergeOutcome(
   outcome: Outcome,
   spent: WatsonSpend,
   calls: number,
+  usage?: UsageTally,
 ): WatsonChat {
   const at = new Date().toISOString();
+  // #2663: what the round's calls read, counted as they happened (usageScope.ts).
+  const read = usage?.reported
+    ? { inputTokens: usage.promptTokens, cacheReadTokens: usage.cacheReadTokens }
+    : {};
   const charged = {
     ...withRoster(fresh, outcome.superRoster),
     costUSD: fresh.costUSD + spent.usd,
@@ -157,6 +163,7 @@ export function mergeOutcome(
       text: errorText(outcome.error),
       error: true,
       costUSD: spent.usd,
+      ...read,
       ...savedLookups(outcome),
     };
     return withUnreadable({ ...charged, turns: [...charged.turns, turn] }, outcome, at);
@@ -186,6 +193,7 @@ export function mergeOutcome(
     ...savedLookups(outcome),
     ...(proposalIds.length ? { proposalIds } : {}),
     costUSD: spent.usd,
+    ...read,
   };
   return withUnreadable(
     {

@@ -163,6 +163,25 @@ describe("renderAiCostCard", () => {
     expect(html).toContain("12 call(s)"); // 4 buckets x 3 calls
   });
 
+  it("#2663: with cache figures, shows all input read and the share from cache, and since when", () => {
+    const cached = bucket({
+      promptTokens: 1000,
+      cacheReadTokens: 900,
+      cacheWriteTokens: 0,
+      hasCache: true,
+      cacheSince: "2026-11-17T10:00:00Z",
+    });
+    const html = renderAiCostCard({ ...cost(), watson: cached });
+    expect(html).toContain("1,000 in (900 from cache, 90%)");
+    expect(html).toContain("count calls since 2026-11-17");
+  });
+
+  it("#2663: without cache figures, the row reads exactly as before", () => {
+    const html = diagAiCostBucketRow("synthesis", bucket());
+    expect(html).toContain("1,000 in / 200 out");
+    expect(html).not.toContain("from cache");
+  });
+
   it("renders nothing at all when there is no cost report", () => {
     expect(renderAiCostCard(null)).toBe("");
   });

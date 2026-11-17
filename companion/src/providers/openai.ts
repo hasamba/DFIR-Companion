@@ -60,6 +60,7 @@ interface ChatCompletion {
     completion_tokens?: number;
     cost?: number;
     completion_tokens_details?: { reasoning_tokens?: number };
+    prompt_tokens_details?: { cached_tokens?: number };
   };
 }
 
@@ -263,7 +264,13 @@ export class OpenAIProvider implements AIProvider {
   private usageOf(u: ChatCompletion["usage"]): ProviderUsage | undefined {
     return (
       u && {
-        ...(u.prompt_tokens !== undefined ? { inputTokens: u.prompt_tokens } : {}),
+        ...(u.prompt_tokens !== undefined
+          ? { inputTokens: u.prompt_tokens, inputIncludesCache: true as const }
+          : {}),
+        // #2663: the cached part of prompt_tokens, when the endpoint reports it.
+        ...(typeof u.prompt_tokens_details?.cached_tokens === "number"
+          ? { cacheReadTokens: u.prompt_tokens_details.cached_tokens }
+          : {}),
         ...(u.completion_tokens !== undefined ? { outputTokens: u.completion_tokens } : {}),
         // Only OpenRouter (this.name === "openrouter") ever sends `usage.cost` — it's populated by
         // the `usage: { include: true }` request flag above, which only that branch sends. A plain

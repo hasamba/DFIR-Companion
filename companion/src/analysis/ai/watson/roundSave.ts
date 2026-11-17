@@ -1,3 +1,4 @@
+import type { UsageTally } from "../usageScope.js";
 import { revalidatePromotion } from "./roundPromote.js";
 import { commitCheck } from "./roundCancel.js";
 import {
@@ -30,6 +31,8 @@ export interface RoundSaveInput {
   reaction: boolean;
   before: WatsonSpend | null;
   calls: number;
+  /** #2663: the round's own usage tally (usageScope.ts). */
+  usage?: UsageTally;
 }
 
 /** The saved chat and the outcome as saved (a stop before the commit point cancels it). */
@@ -51,7 +54,7 @@ export async function saveRound(
     final = commitCheck(ctx, outcome);
     // D9b: an undo of the promotion while the round ran drops what rested on it before it is added.
     const checked = revalidatePromotion(fresh, final);
-    const merged = mergeOutcome(fresh, { ...checked, turnId: i.turnId }, spent, i.calls);
+    const merged = mergeOutcome(fresh, { ...checked, turnId: i.turnId }, spent, i.calls, i.usage);
     // A stopped reaction neither counts as a failure nor resets the count; a timed-out one counts (#2639).
     const stopped = final.error instanceof WatsonCancelled && !(final.error instanceof WatsonRoundTimedOut);
     if (!i.reaction || stopped) return merged;
