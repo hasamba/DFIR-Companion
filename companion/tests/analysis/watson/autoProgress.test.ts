@@ -103,6 +103,17 @@ describe("autoProgress", () => {
     expect(r.chat.autoSetAside).toEqual(["n1"]);
   });
 
+  it("a repeated waiting note for an item already set aside sets nothing else aside (Codex stop review)", () => {
+    const chat = { ...emptyWatsonChat(), autoSetAside: ["n1"] };
+    const r = judgeRound(
+      chat,
+      state(),
+      work({ focusIds: ["q1"], asked: "the owner must confirm n1", waiting: true }),
+    );
+    expect(r.verdict.kind).toBe("go");
+    expect(r.chat.autoSetAside).toEqual(["n1"]);
+  });
+
   it("new evidence (an import) clears the set-aside items and counts as progress", () => {
     const chat = { ...emptyWatsonChat(), autoSetAside: ["q1"], autoIdleRounds: 1 };
     const r = judgeRound(chat, state(), work({ newEvidence: true }));

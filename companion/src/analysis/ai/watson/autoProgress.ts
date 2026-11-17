@@ -44,6 +44,8 @@ export interface WatsonRoundWork {
   newEvidence?: boolean;
   /** What Watson asked a person for, when that answer will not wake Watson by itself. */
   asked?: string;
+  /** `asked` is Watson's own "I wait for a person" note, not a request card. */
+  waiting?: boolean;
 }
 
 export type WatsonAutoVerdict =
@@ -127,8 +129,12 @@ export function judgeRound(
   // Watson worked on. Its answer will not wake Watson, and the other open items still can move.
   if (work.asked) {
     const asked = work.asked;
-    const named = open.filter((i) => namesId(asked, i.id) && !aside.includes(i.id)).map((i) => i.id);
-    return setAside(chat, open, named.length ? named : focus, keep, true);
+    const namedAll = open.filter((i) => namesId(asked, i.id)).map((i) => i.id);
+    const named = namedAll.filter((id) => !aside.includes(id));
+    if (named.length) return setAside(chat, open, named, keep, true);
+    // A repeated waiting note: every item it names is already set aside. Nothing else is set aside,
+    // and the round is judged like any other (idle rounds on one item still set it aside).
+    if (!(work.waiting && namedAll.length)) return setAside(chat, open, focus, keep, true);
   }
   if (progress || !work.reaction) {
     const streak = progress

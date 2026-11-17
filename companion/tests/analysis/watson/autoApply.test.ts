@@ -876,6 +876,16 @@ describe("Auto works until nothing is open or only a person can help (user goal 
     expect(lastTurn(chat).text).toContain("[q0]");
   });
 
+  it("a repeated waiting note for an item already set aside keeps Auto going (Codex stop review)", async () => {
+    await chatStore.update(CASE, (c) => ({ ...c, autoSetAside: ["q0"] }));
+    await questions(["unknown", "unknown", "unknown"]);
+    await run({ continue: false, waitingFor: "the exercise owner must confirm q0", workingOn: "q1" });
+    expect(continued).toHaveLength(1);
+    const saved = await chatStore.load(CASE);
+    expect(saved.autoSetAside).toEqual(["q0"]);
+    expect(saved.turns.map((t) => t.text).join("\n")).not.toContain("Watson stops here");
+  });
+
   it("shows a long note from Watson in full when it moves on", async () => {
     await chatStore.update(CASE, (c) => ({ ...c, autoSetAside: undefined }));
     await questions(["unknown", "unknown"]);
