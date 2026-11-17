@@ -48,7 +48,10 @@ export class ToolModeFallback extends Error {
     /** The model cannot call tools: round.ts marks its capability key (D12). */
     readonly remember: boolean,
     /** What the loop read: `superShown` lets the hop's reply cite and promote those rows (F1). */
-    readonly carried: Pick<Outcome, "lookups" | "superRoster" | "readPasteIds" | "superShown">,
+    readonly carried: Pick<
+      Outcome,
+      "lookups" | "superRoster" | "readPasteIds" | "superShown" | "ranSearches"
+    >,
     /** Super-timeline searches the question may still run: the hop respects it (R2). */
     readonly superLeft: number,
     /** Lookups the question may still run (cap minus those that ran): the hop respects it (F2). */
@@ -94,6 +97,7 @@ function carried(i: ToolLoopInput, s: LoopState): Partial<Outcome> {
     ...(s.roster ? { superRoster: s.roster } : {}),
     ...(read.length ? { readPasteIds: [...new Set(read)] } : {}),
     ...(s.superCapHit ? { superCapHit: true } : {}),
+    ...(s.ranSearches.length ? { ranSearches: s.ranSearches } : {}),
   };
 }
 
@@ -112,6 +116,7 @@ function failure(i: ToolLoopInput, s: LoopState, raw: unknown): Outcome {
         ...(keep.superRoster ? { superRoster: keep.superRoster } : {}),
         ...(s.readPasteIds.length ? { readPasteIds: s.readPasteIds } : {}),
         ...(s.superShown.length ? { superShown: s.superShown } : {}),
+        ...(s.ranSearches.length ? { ranSearches: s.ranSearches } : {}),
       },
       Math.max(0, WATSON_MAX_SUPER_SEARCHES - s.superUsed),
       Math.max(0, i.cap - s.executed),

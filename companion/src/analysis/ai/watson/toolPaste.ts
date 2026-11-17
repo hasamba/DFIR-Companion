@@ -1,3 +1,4 @@
+import { searchKey } from "./autoProgress.js";
 import { WATSON_HISTORY_ID } from "./historyStore.js";
 import { WATSON_LOOKUP_LIMITS } from "./lookupSchema.js";
 import { WATSON_PASTE_PROMPT_MAX } from "./promptBuilder.js";
@@ -18,6 +19,8 @@ export interface PasteToolRun {
   excerpt: PasteExcerpt;
   lookedUp: WatsonLookedUp;
   readPasteId?: string;
+  /** Auto's progress-ledger key: the same one the one-step hop records (autoProgress.ts searchKey). */
+  key: string;
 }
 
 /** The checked terms, or why they cannot be used. */
@@ -90,7 +93,8 @@ async function runSearch(
     `${history ? "the chat history" : `the paste ${excerpt.filename}`} for ${quoted(terms)}`,
   );
   const lookedUp: WatsonLookedUp = { source: history ? "history" : "paste", shown, matched, what };
-  return history ? { excerpt, lookedUp } : { excerpt, lookedUp, readPasteId: excerpt.pasteId };
+  const key = searchKey(pasteId, terms);
+  return history ? { excerpt, lookedUp, key } : { excerpt, lookedUp, readPasteId: excerpt.pasteId, key };
 }
 
 /** paste_search: a checked paste id and terms, then the search. */

@@ -735,6 +735,39 @@ describe("Auto chain: follow-up collections from Watson's own rounds", () => {
     expect(await count()).toBe(0);
   });
 
+  // #2651: a reaction round that carries a source still goes through the chain: the place is reserved
+  // on `reaction` alone (autoChain.ts isChainLaunch), whatever waitReason returned.
+  describe("a reaction round with source 'dashboard' is still a chained launch (#2651)", () => {
+    const sourced = { turnId: TURN, reaction: true, source: "dashboard" as const };
+
+    it("under the limit it launches and takes a place in the chain", async () => {
+      await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+      await autoApply(deps(), CASE, sourced, AUTO_ON);
+      expect(await status("wp-c")).toBe("applied");
+      expect(await count()).toBe(1);
+    });
+
+    it("at the limit it waits with the chain note and takes no place", async () => {
+      await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+      await setCount(WATSON_AUTO_CHAIN_DEFAULT);
+      const chat = await autoApply(deps(), CASE, sourced, AUTO_ON);
+      expect(await status("wp-c")).toBe("pending");
+      expect(launches).toHaveLength(0);
+      expect(lastTurn(chat).text).toContain(CHAIN_FULL);
+      expect(await count()).toBe(WATSON_AUTO_CHAIN_DEFAULT);
+    });
+
+    it("with Stop chain pressed and no limit it waits and takes no place", async () => {
+      await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
+      await setChain({ autoChainMax: 0, autoChainStopped: true });
+      const chat = await autoApply(deps(), CASE, sourced, AUTO_ON);
+      expect(await status("wp-c")).toBe("pending");
+      expect(launches).toHaveLength(0);
+      expect(lastTurn(chat).text).toContain("You stopped the Auto chain.");
+      expect(await count()).toBe(0);
+    });
+  });
+
   it("Stop chain does not stop an analyst round's launch or Auto's case writes", async () => {
     await seed([launch("wp-c", TURN, "collection", NETSTAT, HOST_A)]);
     await setChain({ autoChainStopped: true });
