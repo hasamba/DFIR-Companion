@@ -17,7 +17,12 @@ interface View {
 }
 
 const HOSTILE = "<img src=x onerror=1> a‮b\n## Forged";
-const baseDeps = ["dashboard-escape.js", "dashboard-watson-cards.js", "dashboard-watson-marks.js"];
+const baseDeps = [
+  "dashboard-escape.js",
+  "dashboard-watson-cards.js",
+  "dashboard-watson-qchange.js",
+  "dashboard-watson-marks.js",
+];
 const globals = {
   citeEvents: (ids: string[]) => (ids || []).map((id) => `[cited ${id}]`).join(" "),
   document: { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] },
