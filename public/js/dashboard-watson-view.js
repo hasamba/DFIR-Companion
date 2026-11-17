@@ -52,12 +52,18 @@
           ? btn(p.id, "undo", "Undo")
           : "";
     const title = p.kind === "question_new" ? "New question" : "Question update";
+    // A change Watson made on its own stays marked until the analyst clicks the card or its tag
+    // (dashboard-watson-qchange.js); the changed parts and the old value show on every update card.
+    const isNew = watsonQChangeIsNew(p);
+    const seen = isNew ? ` data-act="watsonAct" data-w-verb="qSeen" title="Click to mark this change as seen"` : "";
+    const tag = isNew
+      ? ` <button type="button" class="watson-qnew-tag" data-act="watsonAct" data-w-verb="qSeen" data-pid="${escAttr(p.id)}">● New change</button>`
+      : "";
     return (
-      `<div class="watson-prop watson-prop-${escAttr(p.kind)} watson-prop-${escAttr(p.status)}" data-pid="${escAttr(p.id)}">` +
-      `<div class="watson-lbl">${esc(title)} · ${esc(p.status)}</div>` +
+      `<div class="watson-prop watson-prop-${escAttr(p.kind)} watson-prop-${escAttr(p.status)}${isNew ? " watson-qnew" : ""}" data-pid="${escAttr(p.id)}"${seen}>` +
+      `<div class="watson-lbl">${esc(title)} · ${esc(p.status)}${tag}</div>` +
       `<div><strong>${esc(a.question)}</strong></div>` +
-      `<div>${statusBadge(a.status)} ${esc(a.answer || "")}</div>` +
-      (a.pointer ? `<div class="watson-why">→ ${esc(a.pointer)}</div>` : "") +
+      watsonQChangeBody(p, statusBadge) +
       `<div>${verbs}</div></div>`
     );
   }

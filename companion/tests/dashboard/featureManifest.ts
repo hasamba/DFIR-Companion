@@ -1949,6 +1949,24 @@ export const FEATURES: Feature[] = [
     ],
   },
   {
+    // Watson's question-change highlight: which question updates Watson applied on its own are still
+    // unseen (per case, in this browser), and the card body that marks what changed.
+    file: "dashboard-watson-qchange.js",
+    publish: ["watsonQChangeSync", "watsonQChangeIsNew", "watsonQChangeSeen", "watsonQChangeBody"],
+    private: [
+      "AUTO_ACTOR",
+      "KEY_PREFIX",
+      "KEEP",
+      "memory",
+      "caseId",
+      "readStored",
+      "writeStored",
+      "watched",
+      "norm",
+      "mark",
+    ],
+  },
+  {
     // Watson's markup builders, split from dashboard-watson.js to keep both under 400 lines. Pure:
     // no state, no initializer; dashboard-watson.js calls the builders (and watsonCaseIsEmpty) by name.
     file: "dashboard-watson-view.js",

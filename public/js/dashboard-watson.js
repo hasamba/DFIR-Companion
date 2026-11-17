@@ -69,6 +69,7 @@
 
   function renderWatson(next) {
     if (next) wChat = next;
+    if (wChat && wCase) watsonQChangeSync(wCase, wChat.proposals); // which Watson question changes are still unseen (dashboard-watson-qchange.js)
     watsonMarksSet(wChat ? wChat.proposals : []); // the sections' "Watson" badges follow the applied proposals
     const grew = wChat && wChat.turns.length > wSeen;
     setHtml('[data-w="log"]', logHtml());
@@ -345,9 +346,8 @@
     pasteSend: sendPaste,
     attachPick: (el) => el.closest(".watson-root").querySelector(".watson-file").click(),
     file: attach,
-    apply: (el) => proposal(el, "apply"),
-    reject: (el) => proposal(el, "reject"),
-    undo: (el) => proposal(el, "undo"),
+    apply: (el) => proposal(el, "apply"), reject: (el) => proposal(el, "reject"), undo: (el) => proposal(el, "undo"),
+    qSeen: (el) => { if (watsonQChangeSeen(el)) renderWatson(); },
     // A "Wrote:" link: leave the full view first (it covers the sections), then scroll and flash.
     jump: (el) => {
       if (panelState() === "full") setWatsonPanelState("open");
