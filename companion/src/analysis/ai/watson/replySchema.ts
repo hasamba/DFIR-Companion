@@ -37,7 +37,22 @@ const MAX_VELO_VQL_CHARS = MAX_VQL_BYTES * 4;
 const MAX_VELO_TITLE = 200;
 const MAX_VELO_WHY = 1000;
 const MAX_VELO_HOST = 255;
-const LANGUAGES = ["vql", "kql", "spl", "cql", "esql", "sql", "other"];
+// #2667 adds the main-source languages of Carbon Black, Wazuh, SentinelOne, Cortex XDR and QRadar;
+// "sql" stays for replies written before them.
+const LANGUAGES = [
+  "vql",
+  "kql",
+  "spl",
+  "cql",
+  "esql",
+  "cbc",
+  "wazuh-dql",
+  "s1-pq",
+  "xql",
+  "aql",
+  "sql",
+  "other",
+];
 
 const str = z.string().catch("");
 

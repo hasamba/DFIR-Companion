@@ -109,7 +109,7 @@ export const WATSON_PROMPT = [
   '  "learned": "what the latest result taught you, or empty",',
   '  "questionUpdates": [{ "questionId": "...", "status": "answered|partial|unknown|unanswerable", "answer": "...", "pointer": "where to look next" }],',
   '  "newQuestions": [{ "question": "...", "why": "..." }],',
-  '  "request": { "kind": "query", "language": "vql|kql|spl|cql|esql|sql|other", "query": "...", "why": "..." }',
+  '  "request": { "kind": "query", "language": "vql|kql|spl|cql|esql|cbc|wazuh-dql|s1-pq|xql|aql|sql|other", "query": "...", "why": "..." }',
   '             | { "kind": "import", "what": "the file to bring", "why": "..." }',
   '             | { "kind": "velociraptor", "mode": "collection|hunt", "hostname": "host (collection only)", "title": "...", "vql": "...", "why": "..." } | null,',
   '  "search": { "pasteId": "...", "terms": ["literal term"] } | null,',

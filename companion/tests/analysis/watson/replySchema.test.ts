@@ -116,6 +116,18 @@ describe("sanitizeWatsonReply", () => {
     expect(mk("Esql")).toMatchObject({ language: "esql" });
     expect(mk("powershell")).toMatchObject({ language: "other" });
   });
+  it("accepts the five main-source languages of #2667, and still sql and other", () => {
+    const mk = (language: string) =>
+      sanitizeWatsonReply(
+        parse({ request: { kind: "query", language, query: "q", why: "w" } }),
+        qs,
+        ps,
+        new Set(),
+      ).request;
+    for (const id of ["cbc", "wazuh-dql", "s1-pq", "xql", "aql", "sql", "other"])
+      expect(mk(id)).toMatchObject({ language: id });
+    expect(mk(" AQL ")).toMatchObject({ language: "aql" });
+  });
   it("does not mutate its input", () => {
     const r = parse({ questionUpdates: [{ questionId: "zz" }] });
     sanitizeWatsonReply(r, qs, ps, new Set());
