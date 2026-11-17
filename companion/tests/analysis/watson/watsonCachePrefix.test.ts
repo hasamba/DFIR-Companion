@@ -6,10 +6,12 @@ import {
   type WatsonPromptInput,
 } from "../../../src/analysis/ai/watson/promptBuilder.js";
 import {
+  watsonLaterSendReserve,
   watsonTimelineBudget,
-  WATSON_SECOND_CALL_RESERVE,
   WATSON_TIMELINE_MIN,
 } from "../../../src/analysis/ai/watson/watsonBudget.js";
+import { WATSON_TRANSCRIPT_BUDGET_CHARS } from "../../../src/analysis/ai/watson/toolMode.js";
+import { WATSON_PASTE_PROMPT_MAX } from "../../../src/analysis/ai/watson/promptBuilder.js";
 import { inputTokenBudget } from "../../../src/analysis/promptBudget.js";
 import { emptyWatsonChat as emptyChat } from "../../../src/analysis/ai/watson/types.js";
 
@@ -63,7 +65,7 @@ describe("Watson's timeline budget (#2658)", () => {
     delete process.env.DFIR_AI_CONTEXT_TOKENS;
     const budget = watsonTimelineBudget(20_000, 40_000);
     expect(budget).toBeGreaterThan(60_000);
-    expect(budget + 20_000 + 40_000 + WATSON_SECOND_CALL_RESERVE).toBeLessThanOrEqual(inputTokenBudget() * 4);
+    expect(budget + 20_000 + 40_000 + watsonLaterSendReserve(0)).toBeLessThanOrEqual(inputTokenBudget() * 4);
   });
 
   it("the measured rest of the prompt comes out of it, character for character", () => {
@@ -74,5 +76,20 @@ describe("Watson's timeline budget (#2658)", () => {
   it("a small window falls back to the minimum, never below", () => {
     process.env.DFIR_AI_CONTEXT_TOKENS = "32000";
     expect(watsonTimelineBudget(20_000, 40_000)).toBe(WATSON_TIMELINE_MIN);
+  });
+
+  it("tool mode keeps room for its biggest batch: older results plus a whole newest batch of cap results", () => {
+    delete process.env.DFIR_AI_CONTEXT_TOKENS;
+    for (const cap of [1, 4, 10]) {
+      const reserve = watsonLaterSendReserve(cap);
+      // A paste head, the trimmed older results, and `cap` near-limit paste-search results in one batch.
+      expect(reserve).toBeGreaterThanOrEqual(
+        WATSON_PASTE_PROMPT_MAX + WATSON_TRANSCRIPT_BUDGET_CHARS + cap * WATSON_PASTE_PROMPT_MAX,
+      );
+      const budget = watsonTimelineBudget(20_000, 40_000, cap);
+      if (budget > WATSON_TIMELINE_MIN)
+        expect(budget + 20_000 + 40_000 + reserve).toBeLessThanOrEqual(inputTokenBudget() * 4);
+    }
+    expect(watsonTimelineBudget(20_000, 40_000, 10)).toBeLessThan(watsonTimelineBudget(20_000, 40_000, 0));
   });
 });

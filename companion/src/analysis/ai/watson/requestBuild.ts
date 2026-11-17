@@ -142,6 +142,7 @@ export async function watsonBaseInput(
   chat: WatsonChat,
   analystText: string,
   analystSaved = false,
+  toolCap = 0, // #2658: tool mode reserves room for its biggest batch of results (watsonBudget.ts)
 ): Promise<{ base: WatsonPromptInput; cover: WatsonCoverage | undefined }> {
   const head = await buildWatsonCaseHead(ctx, caseId, state);
   const rest: WatsonPromptInput = {
@@ -155,7 +156,7 @@ export async function watsonBaseInput(
   };
   // #2658: the timeline takes what the model's window leaves once the system prompt and the rest of
   // THIS prompt are measured (watsonBudget.ts), and it goes first so a provider can cache it.
-  const budget = watsonTimelineBudget(getWatsonPrompt().length, buildWatsonUserPrompt(rest).length);
+  const budget = watsonTimelineBudget(getWatsonPrompt().length, buildWatsonUserPrompt(rest).length, toolCap);
   const timeline = watsonTimelineBlock(state, head.scoped, budget, head.aliasIndex);
   return { base: { ...rest, caseTimeline: timeline.text }, cover: coverageOf(head, timeline) };
 }

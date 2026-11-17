@@ -39,12 +39,21 @@ export async function previewWatsonRound(
   if (reached) throw new WatsonCostLimitReached(reached);
   const { newPaste } = choosePaste(chat, undefined);
   const state = withStandardQuestions(await ctx.stateStore.load(caseId));
-  const { base } = await watsonBaseInput(ctx, caseId, state, chat, draft.slice(0, WATSON_TURN_TEXT_MAX));
+  const toolCap = watsonToolCap(ctx, false);
+  const { base } = await watsonBaseInput(
+    ctx,
+    caseId,
+    state,
+    chat,
+    draft.slice(0, WATSON_TURN_TEXT_MAX),
+    false,
+    toolCap,
+  );
   // A paste whose stored file cannot be read is left out, as the round leaves it out.
   const excerpt = newPaste ? await headExcerpt(ctx, caseId, newPaste).catch(() => undefined) : undefined;
   const one: WatsonRoundContext = { ...ctx, opts: { ...ctx.opts, retries: 0 } };
   const input = excerpt ? { ...base, pasteExcerpt: excerpt } : base;
-  const cap = watsonToolCap(ctx, false);
+  const cap = toolCap;
   noteAiPreview(
     cap > 0
       ? `Watson can make up to ${cap} lookups before it answers. This preview shows the first request only. Each later request is masked in the same way.`

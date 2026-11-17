@@ -294,7 +294,8 @@ async function converse(
     questions = state.keyQuestions;
     // The analyst's message is the ANALYST block; it is not repeated as recent chat.
     const others = { ...chat, turns: chat.turns.filter((t) => t.id !== analystTurn.id) };
-    ({ base, cover } = await watsonBaseInput(ctx, caseId, state, others, analystTurn.text, true));
+    const cap0 = watsonToolCap(ctx, attach.reaction);
+    ({ base, cover } = await watsonBaseInput(ctx, caseId, state, others, analystTurn.text, true, cap0));
     // Option B: ids an EARLIER super-timeline search showed pass the sanitizer too, so the
     // promotion step (roundPromote.ts) sees them and drops whole any item resting on one.
     const known = {
