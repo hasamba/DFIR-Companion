@@ -1,3 +1,4 @@
+import { API_CACHE, cachedUserContent } from "./cachedUserContent.js";
 import {
   type AIProvider,
   billedChecks,
@@ -83,7 +84,7 @@ export class AnthropicProvider implements AIProvider {
   }
 
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
-    const content: unknown[] = [{ type: "text", text: req.userPrompt }];
+    const content: unknown[] = cachedUserContent(req.userPrompt, req.cachePrefix, API_CACHE);
     for (const img of req.images) {
       content.push({
         type: "image",
@@ -94,13 +95,13 @@ export class AnthropicProvider implements AIProvider {
     const json = await this.send(
       {
         ...params,
-        // Prompt caching (GA — no beta header). Mark ONLY the static system prompt as the
-        // cacheable prefix: extraction reuses it across many screenshot batches, so the
-        // prefix is billed once and read cheaply thereafter. The case content (user message
-        // + screenshots) follows this breakpoint and is NEVER cached — OPSEC: only the
-        // static instructions are retained provider-side for the (5-min) cache TTL, never
-        // forensic evidence. A prefix under the model's minimum (1024 tokens; 2048 on Haiku)
-        // silently no-ops — confirm via usage.cache_* below (DFIR_AI_DEBUG_USAGE), don't assume.
+        // Prompt caching (GA — no beta header). The static system prompt is always a cacheable
+        // prefix: extraction reuses it across many screenshot batches. Case content is cached ONLY
+        // through `req.cachePrefix` (#2658), which the masking gate sets solely when anonymization is
+        // on — so evidence is retained provider-side (5-min TTL) only in masked form, by the analyst's
+        // rule. Without it the user message follows the breakpoint uncached, as before. A prefix
+        // under the model's minimum (1024 tokens; 2048 on Haiku) silently no-ops — confirm via
+        // usage.cache_* below (DFIR_AI_DEBUG_USAGE), don't assume.
         system: [{ type: "text", text: req.systemPrompt, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content }],
       },

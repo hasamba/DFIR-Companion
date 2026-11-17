@@ -21,6 +21,13 @@ export interface AnalyzeRequest {
   // repair then hands the schema a stub that fails with a misleading "field missing" error.
   // Other callers leave it unset and keep salvaging partial output.
   rejectTruncated?: boolean;
+  /**
+   * The leading part of userPrompt a provider may cache (#2658). On a request a PROVIDER receives it is
+   * always MASKED text and userPrompt starts with it; the masking gate sets it only when anonymization is
+   * on (the analyst's rule: case data is cached at the provider only when masked). Providers that cannot
+   * mark a cache boundary ignore it — userPrompt is always the whole prompt.
+   */
+  cachePrefix?: string;
 }
 
 // Token accounting a provider reports back, when it does. All optional — most providers

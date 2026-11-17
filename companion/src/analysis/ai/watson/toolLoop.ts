@@ -1,7 +1,7 @@
 import type { InvestigationState } from "../../stateTypes.js";
 import { toReadableAiError } from "../aiReplyUnreadable.js";
 import { getWatsonPrompt } from "../prompts/index.js";
-import { buildWatsonUserPrompt, type WatsonPromptInput } from "./promptBuilder.js";
+import { buildWatsonUserPrompt, watsonCachePrefix, type WatsonPromptInput } from "./promptBuilder.js";
 import { sanitizeWatsonReply, type WatsonReply } from "./replySchema.js";
 import { secondHop, type HopInput } from "./roundHop.js";
 import type { WatsonRoundContext, WatsonSpend } from "./roundContext.js";
@@ -65,7 +65,7 @@ export class ToolModeFallback extends Error {
 /** The system prompt (with the tools addendum), user prompt and tool list of a tool-mode question. */
 export function toolRequestParts(
   i: Pick<ToolLoopInput, "base" | "head" | "reaction" | "ctx" | "cap">,
-): Pick<StepEnv, "system" | "userPrompt" | "tools"> {
+): Pick<StepEnv, "system" | "userPrompt" | "cachePrefix" | "tools"> {
   const tools = watsonTools({
     super: !i.reaction && !!i.ctx.rawSearch,
     history: (i.base.historyTurns ?? 0) > 0,
@@ -77,6 +77,7 @@ export function toolRequestParts(
   return {
     system: `${getWatsonPrompt()}\n\n${addendum}`,
     userPrompt: buildWatsonUserPrompt(i.head ? { ...i.base, pasteExcerpt: i.head } : i.base),
+    cachePrefix: watsonCachePrefix(i.base), // #2658: the timeline, cached between sends and rounds
     tools,
   };
 }

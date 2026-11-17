@@ -6,10 +6,12 @@ import { assertCanContinue } from "./guardedCall.js";
 import { WATSON_HISTORY_ID, WATSON_HISTORY_NAME } from "./historyStore.js";
 import { promptEntities } from "./pasteEntities.js";
 import { pasteHead, searchPaste } from "./pasteSearch.js";
-import { buildWatsonUserPrompt, type WatsonPromptInput } from "./promptBuilder.js";
+import { buildWatsonUserPrompt, watsonCachePrefix, type WatsonPromptInput } from "./promptBuilder.js";
+import { watsonTimelineBudget } from "./watsonBudget.js";
+import { watsonTimelineBlock } from "./watsonTimeline.js";
 import { watsonReplySchema, type WatsonReply } from "./replySchema.js";
 import {
-  buildWatsonCaseContext,
+  buildWatsonCaseHead,
   coverageOf,
   hasStandardQuestions,
   mainLanguages,
@@ -141,19 +143,21 @@ export async function watsonBaseInput(
   analystText: string,
   analystSaved = false,
 ): Promise<{ base: WatsonPromptInput; cover: WatsonCoverage | undefined }> {
-  const cc = await buildWatsonCaseContext(ctx, caseId, state);
-  return {
-    base: {
-      state,
-      chat,
-      analystText,
-      caseContext: cc.text,
-      mainLanguages: await mainLanguages(ctx, caseId, state),
-      historyTurns: await historyTurnCount(ctx, caseId, chat, analystSaved),
-      ...(await loadVeloFleet(ctx, caseId).then((f) => (f ? { velo: f.prompt } : {}))),
-    },
-    cover: coverageOf(cc),
+  const head = await buildWatsonCaseHead(ctx, caseId, state);
+  const rest: WatsonPromptInput = {
+    state,
+    chat,
+    analystText,
+    caseContext: head.text,
+    mainLanguages: await mainLanguages(ctx, caseId, state),
+    historyTurns: await historyTurnCount(ctx, caseId, chat, analystSaved),
+    ...(await loadVeloFleet(ctx, caseId).then((f) => (f ? { velo: f.prompt } : {}))),
   };
+  // #2658: the timeline takes what the model's window leaves once the system prompt and the rest of
+  // THIS prompt are measured (watsonBudget.ts), and it goes first so a provider can cache it.
+  const budget = watsonTimelineBudget(getWatsonPrompt().length, buildWatsonUserPrompt(rest).length);
+  const timeline = watsonTimelineBlock(state, head.scoped, budget, head.aliasIndex);
+  return { base: { ...rest, caseTimeline: timeline.text }, cover: coverageOf(head, timeline) };
 }
 
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
@@ -205,6 +209,7 @@ export function callWatson(
     (r) => watsonReplySchema.parse(r),
     {
       promptEntities: promptEntities(prompt, [...veloHostNames(input), ...roster.hosts], roster.users),
+      cachePrefix: watsonCachePrefix(input), // #2658: the timeline block, cached between calls
       beforeSend: () => assertCanContinue(ctx, caseId),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
     },

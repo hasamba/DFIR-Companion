@@ -382,7 +382,8 @@ async function prepareCall(
     const masked = await maskRequest(ctx, caseId, state, { ...gated, anonIdentity: identity });
     return { anon: masked.anon, result: masked };
   });
-  const { promptEntities: _entities, beforeSend: _check, ...req } = gated;
+  // The clear cache prefix never leaves here (#2658): only the masked one, when masking verified it.
+  const { promptEntities: _entities, beforeSend: _check, cachePrefix: _clear, ...req } = gated;
   ctx.log.debug(
     `AI call [${label}] provider=${provider.name} images=${req.images.length} promptChars=${m.plainPrompt.length} ` +
       `anonymize=${m.policy.enabled ? "on" : "off"}`,
@@ -414,7 +415,8 @@ async function prepareCall(
     );
   // Protected only when the gate ran on THIS call: an import pre-scan's coverage is not a synthesis.
   reportGate(!skipPresidioGate && Boolean(ctx.opts.presidio) && presidioEnabledFor(m.control));
-  return { req: { ...req, userPrompt: m.maskedPrompt, images }, anon: m.anon };
+  const cached = m.maskedCachePrefix ? { cachePrefix: m.maskedCachePrefix } : {};
+  return { req: { ...req, userPrompt: m.maskedPrompt, images, ...cached }, anon: m.anon };
 }
 
 // Apply per-case prompt/image anonymization in memory, then restore parsed JSON before schema
