@@ -1,6 +1,7 @@
 // The case's MAIN EVIDENCE SOURCE (#2559): which tool most of the case's evidence came from, so hunts
 // and the automatic "collect X to settle this" next steps can speak that tool's language (VQL, CQL,
-// KQL, ES|QL, SPL) instead of always Velociraptor's.
+// KQL, ES|QL, SPL, and since #2667 Carbon Black Cloud search, Wazuh DQL, SentinelOne PowerQuery,
+// Cortex XQL and QRadar AQL) instead of always Velociraptor's.
 //
 // Derived data, computed on read from the FORENSIC timeline only (never the super-timeline, §7): no
 // migration, no new import history, retroactive for every existing case. Only the analyst's override
@@ -36,6 +37,12 @@ export const SOURCE_FAMILIES = [
   "m365",
   "elastic",
   "splunk",
+  // #2667: tools the importer already labels; after the first six so their tie-break order holds.
+  "carbonblack",
+  "wazuh",
+  "sentinelone",
+  "cortex",
+  "qradar",
   "cloud-other",
   "host-other",
 ] as const;
@@ -52,6 +59,12 @@ export const FAMILY_LABELS: Readonly<Record<SourceFamily, string>> = {
   m365: "Microsoft 365 / Entra ID",
   elastic: "Elastic",
   splunk: "Splunk",
+  // "Carbon Black", not "Carbon Black Cloud": the importer gives CB Response rows the same label.
+  carbonblack: "Carbon Black",
+  wazuh: "Wazuh",
+  sentinelone: "SentinelOne",
+  cortex: "Cortex XDR",
+  qradar: "IBM QRadar",
   "cloud-other": "Other cloud logs (AWS, GCP, Azure, Okta, Google Workspace)",
   "host-other": "Host tools with no query language",
 };
@@ -75,6 +88,11 @@ const LABEL_FAMILY: ReadonlyMap<string, SourceFamily> = new Map<string, SourceFa
   ["microsoft defender xdr (advanced hunting)", "defender"],
   ["elastic", "elastic"],
   ["splunk", "splunk"],
+  ["carbon black", "carbonblack"],
+  ["wazuh", "wazuh"],
+  ["sentinelone", "sentinelone"],
+  ["cortex xdr", "cortex"],
+  ["qradar", "qradar"],
 ]);
 
 // A generic "SIEM import" row keeps its vendor only in the description prefix (siemImport.ts:
@@ -84,14 +102,29 @@ const DESCRIPTION_VENDOR: ReadonlyArray<[RegExp, SourceFamily]> = [
   [/^Microsoft Defender:/, "defender"],
   [/^Elastic:/, "elastic"],
   [/^Splunk:/, "splunk"],
+  [/^Carbon Black:/, "carbonblack"],
+  [/^Wazuh:/, "wazuh"],
+  [/^SentinelOne:/, "sentinelone"],
+  [/^Cortex XDR:/, "cortex"],
+  [/^QRadar:/, "qradar"],
 ];
 
 // A SIEM/EDR export of cloud logs keeps its tool: the analyst queries those rows in Splunk, Elastic or
-// Falcon, so that is the hunt language. Defender/Sentinel exports of tenant logs read as Microsoft 365.
-const TOOLS_OVER_CLOUD: ReadonlySet<SourceFamily> = new Set(["crowdstrike", "elastic", "splunk"]);
+// Falcon (or any #2667 tool), so that is the hunt language. Defender/Sentinel exports of tenant logs
+// read as Microsoft 365.
+const TOOLS_OVER_CLOUD: ReadonlySet<SourceFamily> = new Set([
+  "crowdstrike",
+  "elastic",
+  "splunk",
+  "carbonblack",
+  "wazuh",
+  "sentinelone",
+  "cortex",
+  "qradar",
+]);
 
 /**
- * The evidence family one forensic row belongs to. Precedence: a CrowdStrike / Elastic / Splunk label
+ * The evidence family one forensic row belongs to. Precedence: a SIEM/EDR tool label
  * (or SIEM vendor prefix) → that tool, even for cloud rows; then cloud provenance (read through
  * cloudOnlyCase.ts) → Microsoft 365 / Entra or other cloud; then any other tool label; else host-other.
  */

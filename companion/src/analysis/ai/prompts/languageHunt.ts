@@ -1,7 +1,8 @@
 /**
  * Prompts for AI-written behaviour hunts in the case's MAIN-SOURCE language (#2559): CrowdStrike
  * Falcon CQL, Defender/Sentinel KQL, Sentinel KQL over the Microsoft 365 / Entra tables, Elastic
- * ES|QL and Splunk SPL. The Velociraptor VQL prompts in hunt.ts are untouched — a VQL case still uses
+ * ES|QL, Splunk SPL, and (#2667) Carbon Black Cloud search, Wazuh DQL, SentinelOne PowerQuery, Cortex
+ * XQL and QRadar AQL. The Velociraptor VQL prompts in hunt.ts are untouched — a VQL case still uses
  * them byte for byte.
  *
  * Built-in only: these are NOT resolvePrompt() names, so there is no DFIR_AI_*_PROMPT override for
@@ -17,7 +18,8 @@ export const LANGUAGE_HUNT_PROMPT = [
   "",
   "Rules:",
   "- Write every query in the TARGET LANGUAGE only, grounded in the tables / events / fields its SCHEMA lists.",
-  "  Do NOT write Velociraptor VQL, SQL, or any other language. Do NOT invent tables or fields.",
+  "  Do NOT write Velociraptor VQL, SQL, or any other language (QRadar AQL is SQL-like: write SELECT only",
+  "  when the TARGET LANGUAGE is QRadar AQL). Do NOT invent tables or fields.",
   "- Hunt the BEHAVIOUR (the parent→child chain, the persistence mechanism, the C2 pattern, the technique),",
   "  not only one indicator. Where the case has a real indicator, pivot on its EXACT value.",
   "- Use ONLY the case's real indicators shown below. Do NOT invent hashes, paths, hosts, accounts or IPs.",
@@ -58,7 +60,8 @@ export const PLAYBOOK_LANGUAGE_HUNT_PROMPT = [
   "",
   "Rules:",
   "- Write every query in the TARGET LANGUAGE only, grounded in the tables / events / fields its SCHEMA lists.",
-  "  Do NOT write Velociraptor VQL, SQL, or any other language. Do NOT invent tables or fields.",
+  "  Do NOT write Velociraptor VQL, SQL, or any other language (QRadar AQL is SQL-like: write SELECT only",
+  "  when the TARGET LANGUAGE is QRadar AQL). Do NOT invent tables or fields.",
   "- Set `relevant` true only for a task such a query genuinely serves, and SKIP the rest (notify legal,",
   "  draft a report, rotate credentials, block at the firewall). Returning fewer suggestions than tasks is fine.",
   "- `taskId` MUST be the exact [bracketed] id of the task the query is for.",

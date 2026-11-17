@@ -164,7 +164,7 @@ identities, emergency access, and the one-writer deployment model.
 
 **Screenshot/vision provider** — `DFIR_VISION_PROVIDER`/`_MODEL`/`_KEY`/`_BASE_URL`/`_IMAGE_DETAIL` configure the screenshot-OCR-only model, renamed from `DFIR_AI_*` (legacy names still work as a fallback). Text-only AI features run off the synthesis provider and never need a vision provider configured.
 
-**Light-task model** — `DFIR_AI_LIGHT_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` choose a cheaper model for small, well-scoped calls: hunts in CrowdStrike CQL, KQL, ES|QL and SPL, and **query translation**. VQL hunts use the Velociraptor hunt model first, then the light-task model, then the synthesis model. Synthesis, deep passes, reports and imports always use the synthesis model. Leave `_MODEL` blank and these calls use the synthesis model, as before. The other three fall back to the vision provider settings when blank. A small model can write weaker queries in some languages, so review each query before you run it. The **Diagnostics** view names the model each of these tasks uses. Restart after you change these values.
+**Light-task model** — `DFIR_AI_LIGHT_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` choose a cheaper model for small, well-scoped calls: hunts in CrowdStrike CQL, KQL, ES|QL, SPL and the other copy-ready languages, and **query translation**. VQL hunts use the Velociraptor hunt model first, then the light-task model, then the synthesis model. Synthesis, deep passes, reports and imports always use the synthesis model. Leave `_MODEL` blank and these calls use the synthesis model, as before. The other three fall back to the vision provider settings when blank. A small model can write weaker queries in some languages, so review each query before you run it. The **Diagnostics** view names the model each of these tasks uses. Restart after you change these values.
 
 **Second opinion** — `DFIR_AI_SECOND_OPINION_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` configure model B, the rival model behind the **2nd opinion** button. Setting `_MODEL` turns the feature on; the other three fall back to the vision provider settings when blank.
 
@@ -305,6 +305,15 @@ The `DFIR_IRIS_*`, `DFIR_TIMESKETCH_*`, `DFIR_VELOCIRAPTOR_API_CONFIG`, `DFIR_VE
 and `DFIR_VELOCIRAPTOR_GUI_URL` values in `.env` are read once, on the first start after the
 upgrade, to make the **Default** set. After that, edit the sets here. The setup wizard's
 DFIR-IRIS, Timesketch and Velociraptor steps also save into the default set, not into `.env`.
+
+### Hunt platforms
+
+**Hunt platforms** (`DFIR_HUNT_PLATFORMS`, in the Velociraptor group) chooses which query languages
+the Companion writes: the 🔍 hunt cards, the Query Translator, Watson's queries and the hunts in the
+case's main evidence source language. Leave it blank for all of them, or list the keys you use:
+`velociraptor`, `defender`, `elastic`, `splunk`, `sigma`, `yara`, `suricata`, `crowdstrike`,
+`carbonblack`, `wazuh`, `sentinelone`, `cortex`, `qradar`. When a case's main source is turned off
+here, its hunts are written in Velociraptor VQL, with a note.
 
 ### Cloud accounts
 

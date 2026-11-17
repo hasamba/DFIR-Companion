@@ -1,6 +1,7 @@
 // Which hunt-query platforms the dashboard's 🔍 generator offers. The generator emits a card per
 // platform (Velociraptor VQL, Defender/Sentinel KQL, Elastic ES|QL, Splunk SPL, Sigma, YARA,
-// Suricata, CrowdStrike Falcon CQL). On a given team only some of those tools exist, so the analyst can trim the modal via
+// Suricata, CrowdStrike Falcon CQL, and since #2667 Carbon Black Cloud, Wazuh, SentinelOne, Cortex XDR
+// and QRadar). On a given team only some of those tools exist, so the analyst can trim the modal via
 // the DFIR_HUNT_PLATFORMS allowlist env var (e.g. `velociraptor` to show only Velociraptor).
 //
 // This is a server-side config: startServer resolves the env var and exposes the enabled list on
@@ -18,6 +19,12 @@ export const HUNT_PLATFORMS = [
   "suricata",
   // #2558: appended last so the existing display order stays stable.
   "crowdstrike",
+  // #2667: appended last for the same reason.
+  "carbonblack",
+  "wazuh",
+  "sentinelone",
+  "cortex",
+  "qradar",
 ] as const;
 
 export type HuntPlatform = (typeof HUNT_PLATFORMS)[number];
@@ -53,6 +60,27 @@ const ALIASES: Readonly<Record<string, HuntPlatform>> = {
   cql: "crowdstrike",
   logscale: "crowdstrike",
   humio: "crowdstrike",
+  // #2667. The hunt-language ids (cbc, wazuh-dql, s1-pq, xql, aql) are aliases too: the language-hunt
+  // prompt asks the model to echo the target language key, and an echo that does not map to the
+  // language's platform is dropped.
+  carbonblack: "carbonblack",
+  cb: "carbonblack",
+  cbc: "carbonblack",
+  vmwarecb: "carbonblack",
+  wazuh: "wazuh",
+  "wazuh-dql": "wazuh",
+  dql: "wazuh",
+  sentinelone: "sentinelone",
+  s1: "sentinelone",
+  "s1-pq": "sentinelone",
+  powerquery: "sentinelone",
+  s1ql: "sentinelone",
+  cortex: "cortex",
+  cortexxdr: "cortex",
+  xdr: "cortex",
+  xql: "cortex",
+  qradar: "qradar",
+  aql: "qradar",
 };
 
 /**

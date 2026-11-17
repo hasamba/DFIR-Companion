@@ -21,6 +21,11 @@
     yara: "YARA rule",
     suricata: "Suricata (network)",
     crowdstrike: "CrowdStrike Falcon (CQL)",
+    carbonblack: "Carbon Black Cloud (search)",
+    wazuh: "Wazuh (dashboard search)",
+    sentinelone: "SentinelOne (PowerQuery)",
+    cortex: "Cortex XDR (XQL)",
+    qradar: "QRadar (AQL)",
   };
   const NLQ_PLATFORM_ORDER = [
     "velociraptor",
@@ -31,6 +36,12 @@
     "yara",
     "suricata",
     "crowdstrike",
+    // #2667
+    "carbonblack",
+    "wazuh",
+    "sentinelone",
+    "cortex",
+    "qradar",
   ];
 
   // Render the platform picker from the server's enabled-platforms allowlist (set from /health).

@@ -1040,6 +1040,11 @@
           <option value="m365">Microsoft 365 / Entra ID</option>
           <option value="elastic">Elastic</option>
           <option value="splunk">Splunk</option>
+          <option value="carbonblack">Carbon Black</option>
+          <option value="wazuh">Wazuh</option>
+          <option value="sentinelone">SentinelOne</option>
+          <option value="cortex">Cortex XDR</option>
+          <option value="qradar">IBM QRadar</option>
           <option value="cloud-other">Other cloud logs (AWS, GCP, Azure, Okta, Google Workspace)</option>
           <option value="host-other">Host tools with no query language</option>
           <option value="mixed">Mixed (per finding)</option>
@@ -4318,7 +4323,7 @@
         </details>
       </div>
     </section>
-    <section id="sec-velohunts" data-safe-style="grid-column: 1 / -1"><h2><span id="veloHuntsTitle">Suggested Fleet Hunts</span><span class="ev-sub">AI-proposed hunts from the findings, in the query language of the case's main evidence source — sweep the estate for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive hunts in the case's main evidence source language — Velociraptor VQL (deployable to all enrolled endpoints), or CrowdStrike CQL, KQL, ES|QL or SPL to copy into that tool. Review each query before running it" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="mainSourceLine"></div><div id="veloHuntSuggest">—</div></section>
+    <section id="sec-velohunts" data-safe-style="grid-column: 1 / -1"><h2><span id="veloHuntsTitle">Suggested Fleet Hunts</span><span class="ev-sub">AI-proposed hunts from the findings, in the query language of the case's main evidence source — sweep the estate for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive hunts in the case's main evidence source language — Velociraptor VQL (deployable to all enrolled endpoints), or CrowdStrike CQL, KQL, ES|QL, SPL, Carbon Black, Wazuh, SentinelOne PowerQuery, Cortex XQL or QRadar AQL to copy into that tool. Review each query before running it" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="mainSourceLine"></div><div id="veloHuntSuggest">—</div></section>
     <section id="sec-false-positive" data-safe-style="grid-column: 1 / -1"><h2>False Positives (excluded from analysis)<span id="fpCount" title="Total false-positive markers in scope; updates in real time"></span>
       <select id="fpReasonFilterSel" title="Show only false-positive markers with this reason" data-safe-style="font-size:12px;margin-left:10px;vertical-align:middle;background:var(--bg-tertiary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:4px;padding:2px 4px">
         <option value="">All reasons</option>
@@ -4979,7 +4984,7 @@
     // Same story as veloEnabled directly above: a /health capability set a few hundred lines below
     // and read by two extracted modules (sigma-hunt, query-translator) by bare name. Moved out of
     // the "Bulk finding operations" banner, where it had nothing to do with bulk findings.
-    let enabledHuntPlatforms = new Set(["velociraptor", "defender", "elastic", "splunk", "sigma", "yara", "suricata", "crowdstrike"]);
+    let enabledHuntPlatforms = new Set(["velociraptor", "defender", "elastic", "splunk", "sigma", "yara", "suricata", "crowdstrike", "carbonblack", "wazuh", "sentinelone", "cortex", "qradar"]);
     // The investigation scope window moved to js/dashboard-scope.js (#415, tier 2) — it is
     // server-persisted state with three different refresh paths, so it owns them rather than
     // sharing a generic setter. Read it through DfirScope.

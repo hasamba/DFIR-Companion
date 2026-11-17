@@ -56,7 +56,7 @@ const MAX_QUERY_LEN = 4000;
 const MAX_TITLE_LEN = 200;
 const MAX_RATIONALE_LEN = 2000;
 
-const SQL_SELECT_RE = /^\s*SELECT\b/i; // VQL (or SQL) — never right for these languages
+const SQL_SELECT_RE = /^\s*SELECT\b/i; // VQL (or SQL) — never right for these languages, except AQL
 const KQL_LET_RE = /^\s*let\s+[^;]*;\s*/i;
 const KQL_FIRST_TABLE_RE = /^\s*([A-Za-z_][A-Za-z0-9_]*)\b/;
 const KQL_DEVICE_TABLE_RE =
@@ -68,7 +68,25 @@ const KQL_CLOUD_TABLE_RE =
 const KQL_SHAPE_RE = /^\s*[A-Za-z_][A-Za-z0-9_]*\s*\|\s*(where|project|extend|summarize|take)\b/i;
 const ESQL_START_RE = /^\s*FROM\s+\S/i;
 const CQL_EVENT_RE = /#event_simpleName\s*=|#repo\s*=|\bevent_simpleName\s*=/;
-const CQL_FOREIGN_RE = /^\s*(FROM\s|index\s*=|sourcetype\s*=)/i;
+// #2667: XQL starts with `dataset =` / `preset =`, optionally after `config … |` stages.
+const XQL_START_RE = /^\s*(?:config\b[^|\n]*\|\s*)*(?:dataset|preset)\s*=\s*\S/i;
+const CQL_FOREIGN_RE = /^\s*(FROM\s|index\s*=|sourcetype\s*=|dataset\s*=|preset\s*=|config\s)/i;
+// AQL: SELECT … FROM events | flows, never a VQL plugin call `FROM events(`.
+const AQL_FROM_RE = /\bFROM\s+(events|flows)\b(?!\s*\()/i;
+// Carbon Black Cloud: an underscored search field followed by `:`.
+const CBC_FIELD_RE =
+  /(?:^|[\s(\-!])(?:process|parent|childproc|netconn|regmod|filemod|modload|crossproc|scriptload|fileless|device|event|alert|watchlist|ingress|backend|sensor)_[a-z0-9_]*\s*:/i;
+const DOTTED_FIELD_COLON_RE = /\b[A-Za-z_][\w-]*(?:\.[\w-]+)+\s*:/;
+// Wazuh alert index fields: a dotted field under a Wazuh root, or a standalone full_log / location.
+const WAZUH_FIELD_RE =
+  /(?:^|[\s(!])(?:(?:agent|rule|data|syscheck|decoder|manager|predecoder|cluster|GeoLocation)(?:\.[\w-]+)+|full_log|location)\s*(?::|>=|<=|>|<)/;
+// SentinelOne PowerQuery / S1QL 2.0 dotted fields.
+const S1_FIELD_RE = /\b(?:src|tgt|event|endpoint|dst|indicator|registry|os|site|cmdScript)\.[A-Za-z][\w.]*/;
+const S1_FOREIGN_START_RE = /^\s*(FROM\s|index\s*=|sourcetype\s*=|#event_simpleName|#repo)/i;
+const WAZUH_ROOT_RE =
+  /\b(?:data\.win\.|syscheck\.|rule\.(?:id|level|description|groups|mitre)\b|agent\.name\b)/;
+// Quoted strings removed, so a pipe or colon inside a value does not count as syntax.
+const unquoted = (q: string): string => q.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
 
 // Leading `//` comment lines are valid in KQL, ES|QL and CQL; the shape is read after them.
 const LEADING_COMMENTS_RE = /^(\s*\/\/[^\n]*\n)+/;
@@ -83,7 +101,9 @@ function kqlFirstTable(query: string): string {
 /** A cheap shape check: does the query look like the language it was asked for? */
 export function isPlausibleHuntQuery(language: CopyHuntLanguage, raw: string): boolean {
   const query = language === "spl" ? raw : withoutLeadingComments(raw);
-  if (!query.trim() || SQL_SELECT_RE.test(query)) return false;
+  if (!query.trim()) return false;
+  if (language === "aql") return SQL_SELECT_RE.test(query) && AQL_FROM_RE.test(query);
+  if (SQL_SELECT_RE.test(query)) return false;
   switch (language) {
     case "kql-device":
       return KQL_DEVICE_TABLE_RE.test(kqlFirstTable(query));
@@ -92,9 +112,43 @@ export function isPlausibleHuntQuery(language: CopyHuntLanguage, raw: string): b
     case "esql":
       return ESQL_START_RE.test(query);
     case "spl":
-      return !KQL_SHAPE_RE.test(query) && !ESQL_START_RE.test(query) && !CQL_EVENT_RE.test(query);
+      return (
+        !KQL_SHAPE_RE.test(query) &&
+        !ESQL_START_RE.test(query) &&
+        !CQL_EVENT_RE.test(query) &&
+        !XQL_START_RE.test(query)
+      );
     case "cql":
       return CQL_EVENT_RE.test(query) && !CQL_FOREIGN_RE.test(query);
+    default:
+      return isPlausibleNewToolQuery(language, query);
+  }
+}
+
+/** #2667: the five main-source languages added after the first six. */
+function isPlausibleNewToolQuery(language: "cbc" | "wazuh-dql" | "s1-pq" | "xql", query: string): boolean {
+  const bare = unquoted(query);
+  switch (language) {
+    case "cbc":
+      return (
+        CBC_FIELD_RE.test(bare) &&
+        !bare.includes("|") &&
+        !DOTTED_FIELD_COLON_RE.test(bare) &&
+        !XQL_START_RE.test(bare)
+      );
+    case "wazuh-dql":
+      return WAZUH_FIELD_RE.test(bare) && !bare.includes("|") && !CBC_FIELD_RE.test(bare);
+    case "s1-pq":
+      return (
+        S1_FIELD_RE.test(bare) &&
+        !XQL_START_RE.test(bare) &&
+        !S1_FOREIGN_START_RE.test(bare) &&
+        !KQL_SHAPE_RE.test(bare) &&
+        !WAZUH_ROOT_RE.test(bare) &&
+        !DOTTED_FIELD_COLON_RE.test(bare.replace(/\b(contains|in|matches)\s*:\s*anycase\b/gi, "$1"))
+      );
+    case "xql":
+      return XQL_START_RE.test(query);
   }
 }
 
