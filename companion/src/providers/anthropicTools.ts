@@ -1,6 +1,7 @@
 // Anthropic Messages API mapping for one tool-calling turn: the request body built from a
 // ConverseRequest, and the reply parsed into a ConverseResult. The echo rules for earlier assistant
 // turns (block order, dropped thinking after a masked change) live in anthropicEcho.ts.
+import { API_CACHE, cachedUserContent } from "./cachedUserContent.js";
 import type { ProviderUsage } from "./provider.js";
 import type { ConverseRequest, ConverseResult, ToolCall, ToolTurn } from "./toolCalling.js";
 import { syntheticId } from "./toolCalling.js";
@@ -56,9 +57,11 @@ export function anthropicToolBody(
     description: t.description,
     input_schema: t.parameters,
   }));
-  // Prompt caching: the breakpoint sits on the static system prompt only (see analyze).
+  // Prompt caching: the static system prompt, plus the masked cache prefix when the gate set one (#2658).
   const system = [{ type: "text", text: req.systemPrompt, cache_control: { type: "ephemeral" } }];
-  const messages: unknown[] = [{ role: "user", content: [{ type: "text", text: req.userPrompt }] }];
+  const messages: unknown[] = [
+    { role: "user", content: cachedUserContent(req.userPrompt, req.cachePrefix, API_CACHE) },
+  ];
   const binding = { model: base.model, thinking: base.thinking, output_config: base.output_config };
   const fingerprint = () => prefixFingerprint(binding, system, tools, messages);
   for (const turn of req.transcript) {

@@ -72,6 +72,8 @@ export interface StepEnv {
   spent(): Promise<WatsonSpend>;
   system: string;
   userPrompt: string;
+  /** The clear leading part of userPrompt that may be cached (#2658); the gate masks or drops it. */
+  cachePrefix: string;
   tools: ToolSpec[];
   /** No attempt starts once counter.calls reaches this (cap + 1 sends in all, R1). */
   ceiling: number;
@@ -147,6 +149,7 @@ export async function sendStep(env: StepEnv, s: LoopState, finalize = false): Pr
     const req = {
       systemPrompt: finalize ? `${env.system}\n\n${WATSON_FINALIZE_LINE}` : env.system,
       userPrompt: env.userPrompt,
+      cachePrefix: env.cachePrefix,
       transcript: s.transcript,
       tools: env.tools,
       toolChoice: none ? ("none" as const) : ("auto" as const),

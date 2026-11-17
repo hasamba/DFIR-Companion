@@ -103,7 +103,8 @@ async function prepareSend(
   label: string,
 ): Promise<PreparedSend> {
   // The per-call entities hold real values: they stop here and never reach the provider.
-  const { promptEntities, withhold: _ignored, beforeSend: _check, ...base } = gated;
+  // The clear cache prefix never leaves here (#2658): only the masked one, when masking verified it.
+  const { promptEntities, withhold: _ignored, beforeSend: _check, cachePrefix: clearPrefix, ...base } = gated;
   // The prompt AND the transcript are masked under the masking-map lock: both can mint tokens (#2657).
   const { m, transcript } = await withSendMasking(ctx, caseId, async (identity) => {
     const masked = await maskRequest(ctx, caseId, state, {
@@ -111,6 +112,7 @@ async function prepareSend(
       promptEntities,
       anonSeed: seed,
       anonIdentity: identity,
+      ...(clearPrefix ? { cachePrefix: clearPrefix } : {}),
     });
     const a = masked.anon;
     const turns = a ? base.transcript.map((t) => maskTurn((x) => a.apply(x), t)) : base.transcript;
@@ -126,7 +128,8 @@ async function prepareSend(
   // reports the readable text it will really echo; only that text is gated.
   const withhold = staleReadable(m.policy, m.known, anon);
   const echoed = provider.echoedReadableText?.bind(provider);
-  const req = { ...base, userPrompt: m.maskedPrompt, transcript, ...(echoed ? { withhold } : {}) };
+  const cached = m.maskedCachePrefix ? { cachePrefix: m.maskedCachePrefix } : {};
+  const req = { ...base, userPrompt: m.maskedPrompt, transcript, ...cached, ...(echoed ? { withhold } : {}) };
   if (!echoed) assertNothingStale(transcript, withhold);
   const texts = outboundTexts(req, echoed?.(req));
   assertNoSeedInClear(seed, texts);

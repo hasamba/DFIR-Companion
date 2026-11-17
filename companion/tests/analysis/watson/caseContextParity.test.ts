@@ -152,7 +152,8 @@ describe("Watson reads the case context Ask did", () => {
     expect(first).toContain("excel.exe → powershell.exe on WS01");
     expect(first).toContain("203.0.113.9:443");
     expect(first).not.toContain("check the proxy logs");
-    const order = ["ATTACK GRAPH", "ATTACKER PATH:", "FINDINGS:", "ANALYST HYPOTHESES", "FORENSIC TIMELINE"];
+    // #2658: the forensic timeline leads (its own, cacheable block), then the case context.
+    const order = ["FORENSIC TIMELINE", "ATTACK GRAPH", "ATTACKER PATH:", "FINDINGS:", "ANALYST HYPOTHESES"];
     const at = order.map((h) => first.indexOf(h));
     expect(at.every((p) => p >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
@@ -254,8 +255,10 @@ describe("Watson bounds the analyst-decision context", () => {
     const body = prompt.slice(prompt.indexOf("<<<CONTEXT>>>") + 13, prompt.indexOf("<<<END CONTEXT>>>"));
     expect(body.length).toBeLessThanOrEqual(WATSON_CASE_CONTEXT_PROMPT_MAX + 2);
     expect(body).toContain("analyst decisions trimmed to fit the prompt");
-    expect(body).toContain("[e1]");
-    expect(body).toContain("FORENSIC TIMELINE");
+    // #2658: the timeline rows are their own block, ahead of the case context, not cut by its cap.
+    const rows = prompt.slice(prompt.indexOf("<<<TIMELINE>>>"), prompt.indexOf("<<<END TIMELINE>>>"));
+    expect(rows).toContain("FORENSIC TIMELINE");
+    expect(rows).toContain("[e1]");
     const turn = chat.turns.find((t) => t.role === "watson");
     expect(turn?.coverage).toMatchObject({ decisionsTrimmed: true, usedEvents: 3, eventCount: 3 });
   });

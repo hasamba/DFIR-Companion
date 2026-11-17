@@ -1,3 +1,4 @@
+import { CLI_CACHE, cachedUserContent } from "./cachedUserContent.js";
 import {
   type AIProvider,
   type AnalyzeRequest,
@@ -151,7 +152,7 @@ export class ClaudeCodeProvider implements AIProvider {
   }
 
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
-    const content: unknown[] = [{ type: "text", text: req.userPrompt }];
+    const content: unknown[] = cachedUserContent(req.userPrompt, req.cachePrefix, CLI_CACHE);
     for (const img of req.images) {
       content.push({ type: "image", source: { type: "base64", media_type: img.mimeType, data: img.base64 } });
     }

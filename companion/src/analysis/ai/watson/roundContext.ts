@@ -12,7 +12,7 @@ import { enabledHuntPlatforms, huntLanguageFor } from "../../huntLanguage.js";
 import type { StateLock } from "../../stateLock.js";
 import { SendStopped } from "../sendStop.js";
 import type { StateStore } from "../../stateStore.js";
-import type { InvestigationState } from "../../stateTypes.js";
+import type { ForensicEvent, InvestigationState } from "../../stateTypes.js";
 import { buildSynthesisContext } from "../../synthSelect.js";
 import { loadCtxAliasIndex, loadScopedEvents, type AiCallContext } from "../aiContext.js";
 import { analystDecisionBlocks, graphMaxEdges, type AnalystDecisionStores } from "../analystContext.js";
@@ -26,7 +26,6 @@ import type { WatsonChatStore } from "./chatStore.js";
 import { WATSON_PASTE_MAX_BYTES } from "./pasteSearch.js";
 import { WATSON_CASE_CONTEXT_PROMPT_MAX } from "./promptBuilder.js";
 import { ensureStandardQuestions } from "./standardQuestions.js";
-import { watsonTimelineBlock } from "./watsonTimeline.js";
 import type { WatsonCoverage, WatsonPaste } from "./types.js";
 import type { LaunchContext } from "./velo/launchCheck.js";
 import type { WatsonAutoDeps } from "./autoApply.js";
@@ -227,21 +226,20 @@ export async function mainLanguages(
 
 const MAX_FINDINGS = 150;
 
-/** The case block of Watson's prompt, and how much of it was carried whole. */
-export interface WatsonCaseContext {
+/** The case block of Watson's prompt (everything but the timeline), and what the timeline is built from. */
+export interface WatsonCaseHead {
   text: string;
-  usedEvents: number;
-  eventCount: number;
   /** The analyst-decision section was cut to its share of the budget. */
   decisionsTrimmed: boolean;
-  /** The synthesis/graph/findings head was cut so the timeline keeps room. */
+  /** The synthesis/graph/findings head was cut to fit. */
   headTrimmed: boolean;
+  /** The in-scope forensic timeline (scope and false-positive marks applied). */
+  scoped: ForensicEvent[];
+  aliasIndex: Awaited<ReturnType<typeof loadCtxAliasIndex>>;
 }
 
 /** The decision section may take at most this share of the case-context budget. */
 export const WATSON_DECISION_SHARE = 0.4;
-/** Characters always left for the timeline rows after the head. */
-const TIMELINE_RESERVE = 4000;
 const trimNote = (what: string): string => `\n(${what} trimmed to fit the prompt)\n\n`;
 
 // Cut at a line boundary so no half-line survives, and say so in the text the model reads.
@@ -253,27 +251,28 @@ function clipTo(text: string, max: number, what: string): { text: string; trimme
 }
 
 /** What the turn stores so the panel can disclose a trim: null when nothing was trimmed. */
-export function coverageOf(cc: WatsonCaseContext): WatsonCoverage | undefined {
-  if (cc.usedEvents >= cc.eventCount && !cc.decisionsTrimmed && !cc.headTrimmed) return undefined;
+export function coverageOf(head: WatsonCaseHead, timeline: { used: number }): WatsonCoverage | undefined {
+  const eventCount = head.scoped.length;
+  if (timeline.used >= eventCount && !head.decisionsTrimmed && !head.headTrimmed) return undefined;
   return {
-    usedEvents: cc.usedEvents,
-    eventCount: cc.eventCount,
-    ...(cc.decisionsTrimmed ? { decisionsTrimmed: true } : {}),
-    ...(cc.headTrimmed ? { headTrimmed: true } : {}),
+    usedEvents: timeline.used,
+    eventCount,
+    ...(head.decisionsTrimmed ? { decisionsTrimmed: true } : {}),
+    ...(head.headTrimmed ? { headTrimmed: true } : {}),
   };
 }
 
 /**
- * The case block of Watson's prompt — what Ask carried: synthesis context, the evidence-chain graph,
- * path, findings and the analyst's own decisions — then forensic-timeline rows to fit the budget.
- * The chat is Watson's own, so no Q&A history block. The whole block never exceeds
- * WATSON_CASE_CONTEXT_PROMPT_MAX, so the prompt builder's own clip never cuts anything.
+ * The CASE CONTEXT block of Watson's prompt — what Ask carried: synthesis context, the evidence-chain
+ * graph, path, findings and the analyst's own decisions — at most WATSON_CASE_CONTEXT_PROMPT_MAX, so the
+ * prompt builder's own clip never cuts anything. The forensic timeline is its own block (#2658), sized
+ * from the model's window once the rest of the prompt is measured (requestBuild.ts).
  */
-export async function buildWatsonCaseContext(
+export async function buildWatsonCaseHead(
   ctx: WatsonRoundContext,
   caseId: string,
   state: InvestigationState,
-): Promise<WatsonCaseContext> {
+): Promise<WatsonCaseHead> {
   const { scoped } = await loadScopedEvents(ctx, caseId, state);
   const aliasIndex = await loadCtxAliasIndex(ctx, caseId);
   const rawHead =
@@ -292,15 +291,13 @@ export async function buildWatsonCaseContext(
     Math.floor(max * WATSON_DECISION_SHARE),
     "analyst decisions",
   );
-  const head = clipTo(rawHead, max - decisions.text.length - TIMELINE_RESERVE, "case context");
-  const lead = head.text + decisions.text;
-  const timeline = watsonTimelineBlock(state, scoped, max - lead.length, aliasIndex);
+  const head = clipTo(rawHead, max - decisions.text.length, "case context");
   return {
-    text: lead + timeline.text,
-    usedEvents: timeline.used,
-    eventCount: scoped.length,
+    text: head.text + decisions.text,
     decisionsTrimmed: decisions.trimmed,
     headTrimmed: head.trimmed,
+    scoped,
+    aliasIndex,
   };
 }
 

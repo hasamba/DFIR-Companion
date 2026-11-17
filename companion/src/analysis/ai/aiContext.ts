@@ -149,6 +149,7 @@ export async function callAiJson<T>(
         images: [],
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.promptEntities ? { promptEntities: options.promptEntities } : {}),
+        ...(options.cachePrefix ? { cachePrefix: options.cachePrefix } : {}),
         ...(options.beforeSend ? { beforeSend: options.beforeSend } : {}),
       },
       kind,
@@ -186,6 +187,8 @@ export interface AiCallOptions {
   signal?: AbortSignal;
   /** Entities in this prompt the case state does not know yet; masked for this call only. */
   promptEntities?: PromptEntities;
+  /** The clear leading part of userPrompt that may be cached (#2658); the gate masks it or drops it. */
+  cachePrefix?: string;
   /** Run after masking and Presidio, immediately before the send; a throw stops the send. */
   beforeSend?: () => Promise<void>;
 }

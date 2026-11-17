@@ -39,6 +39,8 @@ export interface MaskedRequest {
   /** null when anonymization is off for the case. */
   readonly known: KnownEntities | null;
   readonly anon: Anonymizer | null;
+  /** The masked cache prefix (#2658): set only when anonymization is on and maskedPrompt starts with it. */
+  readonly maskedCachePrefix?: string;
 }
 
 /**
@@ -162,7 +164,7 @@ export async function maskRequest(
   ctx: ProviderCallContext,
   caseId: string,
   state: InvestigationState,
-  req: Pick<GatedAnalyzeRequest, "userPrompt" | "promptEntities"> & {
+  req: Pick<GatedAnalyzeRequest, "userPrompt" | "promptEntities" | "cachePrefix"> & {
     anonSeed?: readonly AnonPair[];
     anonIdentity?: readonly AnonPair[];
   },
@@ -174,10 +176,15 @@ export async function maskRequest(
   const plainPrompt = segments.map((sg) => sg.text).join("");
   if (!known || !anon)
     return { control, policy, plainPrompt, maskedPrompt: plainPrompt, spans: [], known: null, anon: null };
+  // #2658: the cacheable prefix is masked FIRST, with this same anonymizer, so the full prompt below gives
+  // its leading text the very same tokens. It is kept only when the masked prompt really starts with it.
+  const prefix = req.cachePrefix && req.userPrompt.startsWith(req.cachePrefix) ? req.cachePrefix : "";
+  const maskedPrefix = prefix ? maskSegments(splitAiSpans(prefix), mask).masked : "";
   // Mask FIRST, then let Presidio look at the result. It never sees a real hostname, IP,
   // username, email, SID or secret — only what our own detectors could not find.
   const { masked, spans } = maskSegments(segments, mask);
-  return { control, policy, plainPrompt, maskedPrompt: masked, spans, known, anon };
+  const cached = maskedPrefix && masked.startsWith(maskedPrefix) ? { maskedCachePrefix: maskedPrefix } : {};
+  return { control, policy, plainPrompt, maskedPrompt: masked, spans, known, anon, ...cached };
 }
 
 /**

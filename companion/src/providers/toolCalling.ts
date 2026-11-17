@@ -43,6 +43,14 @@ export interface ConverseRequest {
   idSalt?: string;
   signal?: AbortSignal;
   /**
+   * The leading part of userPrompt a provider may cache (#2658). On a request a PROVIDER receives it is
+   * always MASKED text and userPrompt starts with it; the masking gate sets it only when anonymization is
+   * on (the analyst's rule: case data is cached at the provider only when masked). Providers that cannot
+   * mark a cache boundary ignore it — userPrompt is always the whole prompt.
+   */
+  cachePrefix?: string;
+
+  /**
    * Readable signed reasoning the caller will not send (it holds a value the masking now hides).
    * The adapter drops such a block exactly as it drops a block whose prefix changed.
    */
