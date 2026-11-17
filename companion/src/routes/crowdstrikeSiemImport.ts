@@ -104,6 +104,9 @@ async function importAndSettle(
   });
   try {
     const baseline: ImportBaseline | null = section.baseline;
+    // No snapshot means no settle: importing anyway would leave raw Info rows in the forensic
+    // timeline, untagged and undemoted (CLAUDE.md §7). Refuse before the case changes.
+    if (!baseline) throw new Error("the case could not be snapshotted, so nothing was imported");
     await pipeline.importCrowdstrike(spec.caseId, forImport.text, {
       label: saved.storedName,
       idPrefix: `ngsiem${saved.seq}-`,
@@ -114,7 +117,6 @@ async function importAndSettle(
         extraSource: NGSIEM_SOURCE_LABEL,
       },
     });
-    if (!baseline) return 0;
     const settled = await settleForensicImport(settle, spec.caseId, baseline, saved.storedName);
     const { timelineDiff: diff, iocsDiff } = settled;
     if (options.importMetaStore) {
@@ -150,6 +152,8 @@ export async function landSearchResult(
   ctx: RouteContext,
   spec: SiemSearchSpec,
   result: NgsiemRunResult,
+  /** Closes the job's Cancel and says whether a cancel already landed — called before the first write. */
+  closeCancel: () => boolean = () => false,
 ): Promise<SiemSearchOutcome & { storedName?: string }> {
   const base: SiemSearchOutcome = {
     title: spec.title,
@@ -161,7 +165,20 @@ export async function landSearchResult(
     timeoutMs: spec.timeoutMs,
     ...(result.error ? { error: result.error } : {}),
   };
-  if (!result.rows.length) return base;
+  if (!result.rows.length) {
+    // A search that stopped before any row is incomplete, never "found nothing".
+    if (result.timedOut) {
+      return {
+        ...base,
+        failed: `it timed out after ${Math.round(spec.timeoutMs / 60_000)} minutes before Falcon returned any rows`,
+      };
+    }
+    if (result.aggregate && !result.finished) return { ...base, failed: "the search did not finish" };
+    return base;
+  }
+  // The first write: from here the search cannot be cancelled, and a cancel that already landed
+  // stops it with nothing written (the same order as routes/importCommitJob.ts closeCancel).
+  if (closeCancel()) throw new DOMException("The search was cancelled", "AbortError");
   const saved = await saveEvidence(ctx, spec, result.rows);
   const forImport = importRows(result.rows, spec.query, result);
   if (!forImport.events) return { ...base, storedName: saved.storedName };

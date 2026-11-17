@@ -186,7 +186,7 @@ describe("CrowdStrike NG-SIEM search route (#2666)", () => {
     });
     expect(job.status, JSON.stringify(job)).toBe("succeeded");
     expect(job.kind).toBe("siem-search");
-    expect(job.cancellable).toBe(true);
+    expect(job.cancellable).toBe(false); // cancellable while searching, closed at the first write
 
     // Only start / poll / cancel queryjobs (plus the sign-in).
     for (const p of f.paths.filter((x) => !x.endsWith("/oauth2/token"))) {

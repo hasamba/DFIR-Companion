@@ -137,6 +137,8 @@ const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" 
 export function siemSearchText(o: SiemSearchOutcome): string {
   const name = `CrowdStrike NG-SIEM search ${o.title}`;
   if (o.failed) return `${name} did not complete: ${o.failed}`;
+  if (o.rows === 0 && o.timedOut) return `${name} timed out before Falcon returned any rows`;
+  if (o.rows === 0 && o.error) return `${name} did not complete: ${o.error}`;
   if (o.rows === 0 && !o.added) return `${name} found nothing`;
   const added = `added ${plural(o.added, "new event")}`;
   let text: string;

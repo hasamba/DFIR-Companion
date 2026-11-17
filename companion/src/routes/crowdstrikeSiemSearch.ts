@@ -88,6 +88,7 @@ async function runSearch(
   spec: SiemSearchSpec,
   signal: AbortSignal | undefined,
   progress: (rows: number) => void,
+  closeCancel: () => boolean,
 ): Promise<{ outcome: SiemSearchOutcome & { storedName?: string }; warnings: string[] }> {
   if (await isFrozenCase(ctx.store, spec.caseId)) {
     return { outcome: failed(spec, "the case is closed or archived. Nothing was searched."), warnings: [] };
@@ -114,7 +115,7 @@ async function runSearch(
     if ((err as { name?: string })?.name === "AbortError") throw err;
     return { outcome: failed(spec, (err as Error).message), warnings: [] };
   }
-  return { outcome: await landSearchResult(ctx, spec, result), warnings: result.warnings };
+  return { outcome: await landSearchResult(ctx, spec, result, closeCancel), warnings: result.warnings };
 }
 
 function failed(spec: SiemSearchSpec, why: string): SiemSearchOutcome {
@@ -154,7 +155,12 @@ export async function startSiemSearch(
       void jm
         ?.checkpoint(jobId, { done: rows, total: spec.maxRows, detail: `${rows} rows read` })
         .catch(() => undefined);
-    const { outcome, warnings } = await runSearch(ctx, spec, job?.signal, progress);
+    const closeCancel = (): boolean => {
+      // No await between these two lines: that is what makes them atomic with a cancel.
+      if (jm && jobId) jm.setCancellable(jobId, false);
+      return job?.signal?.aborted === true;
+    };
+    const { outcome, warnings } = await runSearch(ctx, spec, job?.signal, progress, closeCancel);
     const text = siemSearchText(outcome);
     await logActivity(ctx.options.activityLogStore, ctx.options.onActivity, spec.caseId, {
       actor: spec.actor,
