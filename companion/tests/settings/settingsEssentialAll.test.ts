@@ -62,6 +62,9 @@ const ESSENTIAL_ENV_KEYS: Record<string, string[]> = {
     "DFIR_ROCKYRACCOON_KEY",
     "DFIR_CROWDSTRIKE_CLIENT_ID",
     "DFIR_CROWDSTRIKE_CLIENT_SECRET",
+    // #2666: the NG-SIEM search is dead without its own API client; its caps and region default.
+    "DFIR_CROWDSTRIKE_SIEM_CLIENT_ID",
+    "DFIR_CROWDSTRIKE_SIEM_CLIENT_SECRET",
     "DFIR_MISP_URL",
     "DFIR_MISP_KEY",
     "DFIR_MISP_INSECURE",
