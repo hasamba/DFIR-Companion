@@ -39,6 +39,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-state.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-marks.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-velo.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-watson-cs.js": "application/javascript; charset=utf-8", // #2666 Watson's CrowdStrike search card
   "/js/dashboard-watson-cards.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-qchange.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-view.js": "application/javascript; charset=utf-8",

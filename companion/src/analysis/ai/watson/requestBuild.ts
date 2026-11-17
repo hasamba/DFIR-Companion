@@ -1,3 +1,4 @@
+import { readSiemLimits, siemConfigured } from "../../siemSearch.js";
 import type { AIProvider } from "../../../providers/provider.js";
 import type { InvestigationState } from "../../stateTypes.js";
 import { callAiJson } from "../aiContext.js";
@@ -153,6 +154,7 @@ export async function watsonBaseInput(
     mainLanguages: await mainLanguages(ctx, caseId, state),
     historyTurns: await historyTurnCount(ctx, caseId, chat, analystSaved),
     ...(await loadVeloFleet(ctx, caseId).then((f) => (f ? { velo: f.prompt } : {}))),
+    ...(siemConfigured(process.env) ? { crowdstrike: readSiemLimits(process.env) } : {}), // #2666
   };
   // #2658: the timeline takes what the model's window leaves once the system prompt and the rest of
   // THIS prompt are measured (watsonBudget.ts), and it goes first so a provider can cache it.

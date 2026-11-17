@@ -68,6 +68,14 @@ const requestSchema = z
       vql: str,
       why: str,
     }),
+    z.object({
+      kind: z.literal("crowdstrike_search"),
+      title: str,
+      query: str,
+      start: z.string().optional().catch(undefined),
+      end: z.string().optional().catch(undefined),
+      why: str,
+    }),
   ])
   .nullable()
   .catch(null);
@@ -132,9 +140,36 @@ export interface WatsonReply {
   writes: WatsonWrites;
 }
 
-function sanitizeRequest(req: WatsonRequest | null, veloConnected: boolean): WatsonRequest | null {
+const MAX_CS_TIME = 40;
+
+/** #2666: a CrowdStrike search; with no SIEM client set up, the same CQL is a copy-ready query. */
+function sanitizeCsRequest(
+  req: Extract<WatsonRequest, { kind: "crowdstrike_search" }>,
+  csOn: boolean,
+): WatsonRequest {
+  const why = req.why.slice(0, MAX_VELO_WHY);
+  if (!csOn) return { kind: "query", language: "cql", query: req.query.slice(0, MAX_QUERY_CHARS), why };
+  const start = req.start?.trim().slice(0, MAX_CS_TIME);
+  const end = req.end?.trim().slice(0, MAX_CS_TIME);
+  return {
+    kind: "crowdstrike_search",
+    title: req.title.slice(0, MAX_VELO_TITLE),
+    // One past the cap: the launch check sees an over-long query and refuses it; it is never cut into a card.
+    query: req.query.slice(0, MAX_QUERY_CHARS + 1),
+    ...(start ? { start } : {}),
+    ...(end ? { end } : {}),
+    why,
+  };
+}
+
+function sanitizeRequest(
+  req: WatsonRequest | null,
+  veloConnected: boolean,
+  csOn = false,
+): WatsonRequest | null {
   if (!req) return null;
   if (req.kind === "import") return req;
+  if (req.kind === "crowdstrike_search") return sanitizeCsRequest(req, csOn);
   if (req.kind === "velociraptor") {
     const why = req.why.slice(0, MAX_VELO_WHY);
     // No Velociraptor on the case: the same VQL is a copy-ready query for the analyst to run.
@@ -190,6 +225,8 @@ export function sanitizeWatsonReply(
   knownEventIds: ReadonlySet<string>,
   citations?: WatsonCitationSets,
   veloConnected = false,
+  /** #2666: the CrowdStrike Next-Gen SIEM search client is set up. */
+  csOn = false,
 ): WatsonReply {
   const search =
     reply.search && (reply.search.pasteId === WATSON_HISTORY_ID || knownPasteIds.has(reply.search.pasteId))
@@ -213,7 +250,7 @@ export function sanitizeWatsonReply(
     memory: reply.memory.slice(0, MAX_MEMORY_CHARS),
     questionUpdates: reply.questionUpdates.filter((u) => knownQuestionIds.has(u.questionId)),
     newQuestions: reply.newQuestions.filter((q) => q.question.trim() !== "").slice(0, MAX_NEW_QUESTIONS),
-    request: sanitizeRequest(reply.request, veloConnected),
+    request: sanitizeRequest(reply.request, veloConnected, csOn),
     search,
     answer: sanitizeAnswer(reply.answer, knownEventIds, knownQuestionIds),
     writes: sanitizeWrites(reply.writes, knownEventIds, citations),

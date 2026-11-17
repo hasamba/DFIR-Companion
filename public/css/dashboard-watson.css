@@ -152,6 +152,7 @@ body.watson-full-open #watsonToggle::before { background-image: url("data:image/
 .watson-prop-event_promote { border-left-color: #34d399; }
 .watson-prop-report_text { border-left-color: #94a3b8; }
 .watson-velo { border-left-color: #fbbf24; }
+.watson-cs { border-left-color: #ef4444; } /* #2666 CrowdStrike Next-Gen SIEM search card */
 .watson-prop.watson-prop-pending { border-color: rgba(251, 146, 60, 0.7); border-left-color: #fb923c; background: rgba(251, 146, 60, 0.06); }
 .watson-prop.watson-prop-applied, .watson-prop.watson-prop-rejected, .watson-prop.watson-prop-undone { opacity: 0.8; }
 /* A question change Watson made on its own: outlined and not dimmed until the analyst clicks it. The

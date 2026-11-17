@@ -5,6 +5,7 @@ import type { CaseStore } from "../../../../storage/caseStore.js";
 import type { WatsonProposalDeps } from "../proposalErrors.js";
 import type { WatsonProposal } from "../types.js";
 import type { VeloLaunchDeps } from "../velo/launchTypes.js";
+import type { CsSearchDeps } from "./csSearchWriter.js";
 
 // One writer per proposal kind. The dispatcher (proposals.ts) runs the status check inside
 // chatStore.update() and then calls the writer: under the state lock it holds itself, or, for a
@@ -38,6 +39,8 @@ export interface WatsonReportText {
 export interface WriterDeps extends WatsonProposalDeps {
   /** Velociraptor launch seams (route-built). Without them, a velo_launch proposal cannot be applied. */
   veloLaunch?: VeloLaunchDeps;
+  /** #2666 CrowdStrike Next-Gen SIEM search seams (route-built). Without them a cs_search cannot run. */
+  csSearch?: CsSearchDeps;
   /** The report details. Without it, a report-text proposal cannot be applied. */
   reportText?: WatsonReportText;
   /** Reads stored pastes. Without it, a cited paste line counts as unreadable. */

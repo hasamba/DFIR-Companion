@@ -153,6 +153,14 @@ const riskyWait = (risk: { reasons: readonly string[]; display?: readonly string
 
 /** Why Auto leaves a proposal for an analyst, in full sentences; null when Auto applies it. */
 function waitReason(p: WatsonProposal, round: WatsonAutoRound): string | null {
+  // #2666: a CrowdStrike search passed its launch check and only reads the customer's SIEM. Auto runs
+  // it from an analyst's message in the Watson panel, like a safe collection; never from a reaction or
+  // a chat-bot command (it has no follow-up chain).
+  if (p.kind === "cs_search") {
+    return round.source === "dashboard" && !round.reaction
+      ? null
+      : "Watson starts a CrowdStrike search on its own only from a message in the Watson panel. Approve it there.";
+  }
   if (p.kind !== "velo_launch") return null;
   // Task 9: a risky query waits for an analyst in every mode and from every round source.
   if (p.risk) return riskyWait(p.risk);
@@ -192,6 +200,8 @@ function what(p: WatsonProposal): string {
       return p.mode === "collection"
         ? `Velociraptor collection on ${p.hostname ?? "?"}: ${p.title}`
         : `Velociraptor fleet-wide hunt: ${p.title}`;
+    case "cs_search":
+      return `CrowdStrike NG-SIEM search: ${p.title}`;
   }
 }
 
@@ -276,7 +286,7 @@ async function applyOne(
           : `${chainPlace.place} of ${chainPlace.max} in a row`;
       return listed(`- Watson launched this follow-up by itself (${place}): ${what(p)}`, !!r.state);
     }
-    const verb = p.kind === "velo_launch" ? "Launched" : "Applied";
+    const verb = p.kind === "velo_launch" ? "Launched" : p.kind === "cs_search" ? "Started" : "Applied";
     return listed(`- ${verb} ${what(p)}`, !!r.state);
   } catch (err) {
     if (err instanceof WatsonChainStopped)
@@ -443,7 +453,11 @@ async function continueIfAsked(
 const launchRuns = (chat: WatsonChat, round: WatsonAutoRound): boolean => {
   const own = ownIds(chat, round);
   return chat.proposals.some(
-    (p) => own.has(p.id) && p.kind === "velo_launch" && p.status !== "pending" && p.status !== "rejected",
+    (p) =>
+      own.has(p.id) &&
+      (p.kind === "velo_launch" || p.kind === "cs_search") &&
+      p.status !== "pending" &&
+      p.status !== "rejected",
   );
 };
 

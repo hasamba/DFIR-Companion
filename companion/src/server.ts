@@ -391,6 +391,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     dropPendingLogged: () => drops.pendingLogged,
     veloHuntTimers: () => hunts.veloHuntTimers,
     watsonFlowWatcher: () => app.locals.watsonFlowWatcher, // Task 5: an applied collection's result watch
+    watsonWake: (id: string) => app.locals.watsonReactor?.wake(id), // #2666: a CrowdStrike search result
   };
   // Every registerXRoutes call, in order, plus the AI rate-limit gate and the custody hook that are
   // interleaved with them. See composition/routeRegistry.ts — the order there is load-bearing.

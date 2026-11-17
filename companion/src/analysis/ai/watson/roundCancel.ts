@@ -18,6 +18,8 @@ export function cancelledOutcome(o: Outcome, err: WatsonCancelled): Outcome {
     writeInputs: _writes,
     veloProposal: _velo,
     veloNote: _veloNote,
+    csProposal: _cs,
+    csNote: _csNote,
     note: _note,
     unreadable: _unreadable,
     ...rest

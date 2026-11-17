@@ -34,6 +34,7 @@ import { logRoundEnd, saveRound } from "./roundSave.js";
 import { earlierShownIds } from "./rawReferences.js";
 import { citationSets, withWriteInputs } from "./roundWrites.js";
 import { withVeloLaunch } from "./velo/veloLaunchProposals.js";
+import { withCsSearch } from "./crowdstrike/csSearchProposals.js";
 import { withRoundInventory } from "./velo/veloFleet.js";
 import type { WatsonChat, WatsonCoverage, WatsonPaste, WatsonRequest, WatsonTurn } from "./types.js";
 
@@ -202,6 +203,7 @@ async function runRound(
     outcome = commitCheck(ctx, await withCitedPromotion(ctx, caseId, outcome, mayWrite, turnId, chat));
     // A stop after the promotion started keeps the settled reply, but launches nothing.
     if (!ctx.signal?.aborted) outcome = await withVeloLaunch(ctx, caseId, outcome, mayWrite);
+    if (!ctx.signal?.aborted) outcome = await withCsSearch(ctx, caseId, outcome, mayWrite); // #2666
   } catch (error) {
     outcome = { ...outcome, reply: null, error };
   } finally {
@@ -254,6 +256,9 @@ function progressOf(
 function askedOf(r: WatsonRequest): { text: string; velo: boolean } {
   if (r.kind === "import") return { text: `the file ${r.what}`, velo: false };
   if (r.kind === "query") return { text: `the result of a ${r.language} query (${r.why})`, velo: false };
+  // A CrowdStrike search's result wakes Watson by itself too (crowdstrike/csSearchWatch.ts).
+  if (r.kind === "crowdstrike_search")
+    return { text: `an approved CrowdStrike NG-SIEM search: ${r.title}`, velo: true };
   return { text: `an approved Velociraptor ${r.mode}: ${r.title}`, velo: true };
 }
 
@@ -310,6 +315,7 @@ async function converse(
       citations: citationSets(chat.pastes, state.findings, state.nextSteps ?? []),
     };
     const veloOn = base.velo !== undefined;
+    const csOn = base.crowdstrike !== undefined; // #2666
     // Only a super-timeline hop's call passes `extra`: the raw rows it showed may be cited there alone.
     ask = async (input, extra) => {
       const raw = await guardedCall(
@@ -322,7 +328,7 @@ async function converse(
       );
       const more = [...loopShown, ...(extra ?? [])];
       const events = more.length ? new Set([...known.events, ...more]) : known.events;
-      return sanitizeWatsonReply(raw, known.questions, known.pastes, events, known.citations, veloOn);
+      return sanitizeWatsonReply(raw, known.questions, known.pastes, events, known.citations, veloOn, csOn);
     };
     // A stored file that is gone or unreadable never fails the round: Watson answers without it.
     excerpt = newPaste

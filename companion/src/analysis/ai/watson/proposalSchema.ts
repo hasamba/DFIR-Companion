@@ -168,6 +168,30 @@ const veloLaunchProposal = z.object({
     .catch(undefined),
 });
 
+// #2666: a CrowdStrike Next-Gen SIEM search card. A malformed watch drops to undefined.
+const csSearchProposal = z.object({
+  ...common,
+  kind: z.literal("cs_search"),
+  targetId: z.string(),
+  title: z.string(),
+  query: z.string(),
+  start: z.string(),
+  end: z.string(),
+  repository: z.string(),
+  launched: z.object({ jobId: z.string(), at: z.string(), by: z.string() }).optional().catch(undefined),
+  watch: z
+    .object({
+      state: z.enum(["running", "finished", "failed"]),
+      rows: z.number().optional().catch(undefined),
+      added: z.number().optional().catch(undefined),
+      truncated: z.literal(true).optional().catch(undefined),
+      text: z.string().optional().catch(undefined),
+      notified: z.literal(true).optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+});
+
 export const proposalSchema: z.ZodType<WatsonProposal, z.ZodTypeDef, unknown> = z.union([
   questionProposal,
   findingProposal,
@@ -176,4 +200,5 @@ export const proposalSchema: z.ZodType<WatsonProposal, z.ZodTypeDef, unknown> = 
   reportTextProposal,
   eventPromoteProposal,
   veloLaunchProposal,
+  csSearchProposal,
 ]);

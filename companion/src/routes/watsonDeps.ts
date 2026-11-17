@@ -6,6 +6,7 @@ import type { WriterDeps } from "../analysis/ai/watson/proposals.js";
 import type { WatsonRawSearchDeps } from "../analysis/ai/watson/superTimelineSearch.js";
 import type { RouteContext } from "./context.js";
 import { caseVeloConnected, watsonVeloLaunchDeps } from "./watsonVeloLaunch.js";
+import { watsonCsSearchDeps } from "./watsonCsSearch.js";
 import { isFrozenCase } from "./importCaseGuard.js";
 import { WATSON_MAX_TOOL_CALLS_CEILING } from "../analysis/ai/watson/toolMode.js";
 import { watsonRuns } from "../analysis/ai/watson/runRegistry.js";
@@ -65,6 +66,7 @@ export function watsonProposalDeps(ctx: RouteContext): WriterDeps | undefined {
     reportText: options.reportMetaStore,
     ...(options.pipeline ? { promoteEvents: promoteVia(options.pipeline) } : {}),
     veloLaunch: watsonVeloLaunchDeps(ctx),
+    csSearch: watsonCsSearchDeps(ctx), // #2666
   };
 }
 

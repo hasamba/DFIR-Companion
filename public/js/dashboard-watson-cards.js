@@ -34,6 +34,7 @@
     question_update: ["Update question", "the question update"],
     report_text: ["Add to report", "the report text"],
     event_promote: ["Add rows", "the rows"],
+    cs_search: ["Run search", "the search"], // #2666
   };
   const applyLabel = (kind) => (APPLY[kind] ? APPLY[kind][0] : "Apply");
   const applyNoun = (kind) => (APPLY[kind] ? APPLY[kind][1] : "this card");
@@ -142,6 +143,7 @@
   // uiError: the server's message when this card's action was refused (a 409 on undo).
   function watsonCardHtml(p) {
     if (p.kind === "velo_launch" && typeof watsonVeloCardHtml === "function") return watsonVeloCardHtml(p);
+    if (p.kind === "cs_search" && typeof watsonCsCardHtml === "function") return watsonCsCardHtml(p); // #2666
     const body = Object.prototype.hasOwnProperty.call(BODY, p.kind) ? BODY[p.kind](p) : "";
     return (
       `<div class="watson-prop watson-prop-${escAttr(p.kind)} watson-prop-${escAttr(p.status)}" data-pid="${escAttr(p.id)}">` +

@@ -22,6 +22,16 @@ export type WatsonRequest =
       title: string;
       vql: string;
       why: string;
+    }
+  /** #2666: run a CQL search on the case's CrowdStrike Next-Gen SIEM (only when its client is set up). */
+  | {
+      kind: "crowdstrike_search";
+      title: string;
+      query: string;
+      /** ISO 8601; both absent = the last N days (the window cap). */
+      start?: string;
+      end?: string;
+      why: string;
     };
 
 /** How much of the in-scope forensic timeline a round carried; stored only when it was trimmed. */
@@ -311,6 +321,37 @@ export interface WatsonLaunchIntent {
   riskAccepted?: WatsonRiskAccepted;
 }
 
+/**
+ * #2666: a CrowdStrike Next-Gen SIEM search Watson wants to run. Built only after its launch check
+ * passed (crowdstrike/csLaunchCheck.ts). Running it starts the same `siem-search` job as the
+ * analyst's Run on a CQL hunt; the rows are imported as evidence. The search ran, so no undo.
+ */
+export interface WatsonCsSearchProposal extends WatsonProposalCommon {
+  kind: "cs_search";
+  /** The fingerprint key (query + repository + range): a repeat is refused. */
+  targetId: string;
+  title: string;
+  /** Run byte-for-byte as shown on the card. */
+  query: string;
+  start: string;
+  end: string;
+  /** The repository the check used; the run is refused when Settings changed it since. */
+  repository: string;
+  launched?: { jobId: string; at: string; by: string };
+  /** The search's outcome, saved with its case event (`notified` is set once). */
+  watch?: WatsonCsSearchWatch;
+}
+
+export interface WatsonCsSearchWatch {
+  state: "running" | "finished" | "failed";
+  rows?: number;
+  added?: number;
+  truncated?: true;
+  /** The outcome sentence (analysis/siemSearch.ts siemSearchText). */
+  text?: string;
+  notified?: true;
+}
+
 export type WatsonProposal =
   | WatsonQuestionProposal
   | WatsonFindingProposal
@@ -318,7 +359,8 @@ export type WatsonProposal =
   | WatsonNextStepUpdateProposal
   | WatsonReportTextProposal
   | WatsonEventPromoteProposal
-  | WatsonVeloLaunchProposal;
+  | WatsonVeloLaunchProposal
+  | WatsonCsSearchProposal;
 
 export type WatsonProposalKind = WatsonProposal["kind"];
 
