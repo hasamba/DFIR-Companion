@@ -274,6 +274,18 @@ If the collection returned nothing, Watson reports that it found nothing. If the
 
 Watson watches a collection for 30 minutes. If the companion restarts during that time, the watch resumes.
 
+## Running CrowdStrike Next-Gen SIEM searches
+
+When an administrator sets up the [Next-Gen SIEM search client](settings.md#crowdstrike-next-gen-siem-search), Watson can ask to run a CrowdStrike CQL search on your Falcon Next-Gen SIEM. Without that client, Watson never hears about this tool, and any CQL it writes stays a copy-ready query.
+
+- Watson's request becomes a **CrowdStrike NG-SIEM search** card. The card shows the exact query that will run, the repository and the time range.
+- Before the card is made, Watson checks the request. The query must be CrowdStrike CQL, the time range must fit the limit (7 days by default), and the same query over the same range in the same repository must not have run on the case before — from Watson or from **Run in Falcon** on a hunt card. If a check fails, there is no card, and Watson's turn says there is nothing to approve.
+- Press **Run search** to run it. It runs as the same search job as **Run in Falcon** ([how the rows are imported](threat-hunting.md#run-crowdstrike-cql-hunts-on-next-gen-siem)): the rows are kept as evidence, graded, and only rows above Info reach the forensic timeline. The search runs exactly as the card shows it.
+- In **Auto** mode, Watson runs a card that passed its check when your message came from the Watson panel. It never runs one from its own follow-up rounds or from a chat-bot command; those wait for you.
+- When the search ends, the card shows the result ("found 12 rows and added 3 new events", "imported the first 10000 rows (the row cap cut the rest)", or why it did not complete), and Watson hears about it in its next round.
+- A search that ran cannot be undone on the card. Use **Undo import** to take its rows back out.
+- If Settings changes the repository after Watson made the card, the card is refused. Ask Watson again.
+
 ## Watson and synthesis
 
 A synthesis run keeps the answers Watson gave, and it keeps Watson's findings and next steps with their badge. If a new synthesis reaches a different conclusion, the board shows **Synthesis does not agree** next to the question. Synthesis does not overwrite Watson's work. You decide which one to keep.
@@ -339,6 +351,6 @@ Watson's chat history stays out of state backups, so restoring a state backup do
 
 Watson does not yet:
 
-- run queries on any platform other than Velociraptor
+- run queries on any platform other than Velociraptor and CrowdStrike Next-Gen SIEM
 - start fleet-wide hunts on its own
 - parse a generic CSV or log into timeline rows

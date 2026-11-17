@@ -1905,6 +1905,12 @@ export const FEATURES: Feature[] = [
     ],
   },
   {
+    // Watson's CrowdStrike Next-Gen SIEM search card (#2666).
+    file: "dashboard-watson-cs.js",
+    publish: ["watsonCsCardHtml"],
+    private: [],
+  },
+  {
     // Watson's Velociraptor launch card, "connected" chip, Auto listing and the uncertain-launch answer.
     file: "dashboard-watson-velo.js",
     publish: [

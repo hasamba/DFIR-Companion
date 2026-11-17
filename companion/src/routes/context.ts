@@ -431,4 +431,6 @@ export interface RouteContext {
   veloHuntTimers(): { set(caseId: string, timer: NodeJS.Timeout, huntId: string): unknown };
   /** Watson's result watcher (Task 5), read live: an applied collection starts its watch here. */
   watsonFlowWatcher?(): WatsonFlowWatch | undefined;
+  /** #2666: start Watson's quiet window for a `hunt` event already saved on the chat (a search result). */
+  watsonWake?(caseId: string): void;
 }

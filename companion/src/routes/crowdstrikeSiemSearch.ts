@@ -27,6 +27,10 @@ import { NgsiemSearchClient } from "../integrations/crowdstrike/ngsiemSearch.js"
 import type { RouteContext } from "./context.js";
 import { activityDetail, landSearchResult, type SiemSearchSpec } from "./crowdstrikeSiemImport.js";
 import { isFrozenCase } from "./importCaseGuard.js";
+import { csSearchKey } from "../analysis/ai/watson/crowdstrike/csLaunchCheck.js";
+import { fingerprintStoreFor } from "../analysis/ai/watson/velo/fingerprintIndex.js";
+
+const iso = (ms: number): string => new Date(ms).toISOString();
 
 const QUERY_MAX = 20_000;
 const TITLE_MAX = 200;
@@ -149,6 +153,13 @@ export async function startSiemSearch(
   });
   await job?.durable;
   const jobId = job?.jobId ?? "";
+  // The search is remembered on the case (Watson's duplicate check): idempotent, never refuses.
+  const key = csSearchKey(spec.query, spec.repository, iso(spec.startMs), iso(spec.endMs));
+  await fingerprintStoreFor(ctx.store)
+    .add(spec.caseId, [key])
+    .catch((err: unknown) =>
+      ctx.serverLogger.warn(`[crowdstrike-siem] could not record the search key: ${(err as Error).message}`),
+    );
   const work = async (): Promise<void> => {
     await job?.ready;
     const progress = (rows: number) =>
@@ -180,7 +191,11 @@ export async function startSiemSearch(
     await onDone?.(outcome);
   };
   void work().catch(async (err: unknown) => {
-    if ((err as { name?: string })?.name === "AbortError") return; // the job row is already cancelled
+    if ((err as { name?: string })?.name === "AbortError") {
+      // The job row is already cancelled; a waiting card (Watson's) hears it too.
+      await Promise.resolve(onDone?.(failed(spec, "the search was cancelled"))).catch(() => undefined);
+      return;
+    }
     ctx.serverLogger.warn(`[crowdstrike-siem] ${spec.caseId}: search failed — ${(err as Error).message}`);
     if (jm && jobId) await jm.fail(jobId, err, { code: "siem-search" }).catch(() => undefined);
     await Promise.resolve(onDone?.(failed(spec, (err as Error).message))).catch(() => undefined);

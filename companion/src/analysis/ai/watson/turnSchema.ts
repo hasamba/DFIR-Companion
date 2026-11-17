@@ -19,6 +19,14 @@ const requestSchema = z.union([
     vql: z.string().catch(""),
     why: z.string().catch(""),
   }),
+  z.object({
+    kind: z.literal("crowdstrike_search"),
+    title: z.string().catch(""),
+    query: z.string().catch(""),
+    start: z.string().optional().catch(undefined),
+    end: z.string().optional().catch(undefined),
+    why: z.string().catch(""),
+  }),
 ]);
 
 const answerSchema = z.object({

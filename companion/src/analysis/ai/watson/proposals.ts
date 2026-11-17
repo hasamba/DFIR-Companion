@@ -14,6 +14,7 @@ import { nextStepUpdateWriter, stepChange } from "./writers/nextStepUpdateWriter
 import { questionWriter } from "./writers/questionWriter.js";
 import { reportTextWriter } from "./writers/reportTextWriter.js";
 import { applyVeloLaunch, veloLaunchWriter } from "./writers/veloLaunchWriter.js";
+import { applyCsSearch, csSearchWriter } from "./writers/csSearchWriter.js";
 import type { WatsonTargetType, WatsonWriter, WriterDeps, WriterResult } from "./writers/writerTypes.js";
 
 export {
@@ -54,6 +55,7 @@ const WRITERS: Partial<Record<WatsonProposalKind, WatsonWriter<WatsonProposal>>>
   report_text: reportTextWriter,
   event_promote: eventPromoteWriter,
   velo_launch: veloLaunchWriter,
+  cs_search: csSearchWriter,
 };
 
 // The pasted file stays the evidence, so held rows an analyst undid may be applied again.
@@ -86,6 +88,7 @@ const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {
   report_text: "report",
   event_promote: "event",
   velo_launch: "hunt",
+  cs_search: "hunt",
 };
 
 function describe(p: WatsonProposal): string {
@@ -110,6 +113,8 @@ function describe(p: WatsonProposal): string {
         : `promotion of ${p.events.length} pasted row(s)`;
     case "velo_launch":
       return `Velociraptor ${p.mode}: ${p.title}`;
+    case "cs_search":
+      return `CrowdStrike NG-SIEM search: ${p.title}`;
   }
 }
 
@@ -177,6 +182,10 @@ export async function applyWatsonProposal(
         ...(opts.detailSuffix ? { auditSuffix: opts.detailSuffix } : {}),
         acceptRisk: opts.acceptRisk === true,
         chained: opts.chained === true,
+      });
+    if (found?.kind === "cs_search")
+      return applyCsSearch(deps, caseId, proposalId, actor, {
+        ...(opts.detailSuffix ? { auditSuffix: opts.detailSuffix } : {}),
       });
   }
   let state: InvestigationState | undefined;

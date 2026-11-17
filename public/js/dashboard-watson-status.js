@@ -59,6 +59,8 @@
         ? `Review the risky launch "${esc(nameOf(first))}" on its card, or reject it.`
         : first.kind === "velo_launch"
         ? `Launch "${esc(nameOf(first))}", or reject it.`
+        : first.kind === "cs_search"
+        ? `Run the CrowdStrike search "${esc(nameOf(first))}", or reject it.`
         : `Add ${watsonApplyNoun(first.kind)} "${esc(nameOf(first))}" to the case, or reject it.`;
     const more = cards.length - 1;
     const tail = more === 0 ? "" : more === 1 ? " 1 more card waits for you." : ` ${more} more cards wait for you.`;

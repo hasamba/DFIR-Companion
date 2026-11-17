@@ -671,6 +671,7 @@
     "ROUTE GET /js/dashboard-state.js",
     "ROUTE GET /js/dashboard-watson-marks.js",
     "ROUTE GET /js/dashboard-watson-velo.js",
+    "ROUTE GET /js/dashboard-watson-cs.js",
     "ROUTE GET /js/dashboard-watson-cards.js",
     "ROUTE GET /js/dashboard-watson-qchange.js",
     "ROUTE GET /js/dashboard-watson-view.js",

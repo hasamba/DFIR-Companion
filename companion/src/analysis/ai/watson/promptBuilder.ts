@@ -6,6 +6,7 @@ import { WATSON_HISTORY_ID, WATSON_HISTORY_NAME } from "./historyStore.js";
 import type { WatsonMaskRoster } from "./superRoster.js";
 import type { WatsonChat, WatsonTurn } from "./types.js";
 import { shownVeloHosts, veloRulesText } from "./velo/veloPrompt.js";
+import { csRulesText, type WatsonCsPrompt } from "./crowdstrike/csPrompt.js";
 
 // Pure builder for Watson's per-round user prompt. Every block is bounded. Every untrusted body
 // (case context, memory, chat, paste, analyst text) sits inside a fence the text cannot forge, and
@@ -43,6 +44,8 @@ export interface WatsonPromptInput {
   historyTurns?: number;
   /** Set only when the case has a Velociraptor server: its enrolled hosts, for the VELOCIRAPTOR block. */
   velo?: { hostCount: number; hosts: { hostname: string; fqdn: string }[] };
+  /** #2666: set only when the CrowdStrike Next-Gen SIEM search client is set up: the CROWDSTRIKE block. */
+  crowdstrike?: WatsonCsPrompt;
   /** A paste excerpt, or (pasteId "history") the lines a history search found. */
   pasteExcerpt?: { pasteId: string; filename: string; text: string; truncated: boolean };
   /** The forensic-timeline rows Watson's lookup found (Task 11), and the lookup in plain words. */
@@ -98,6 +101,10 @@ function recentTurn(t: WatsonTurn): string {
   if (r?.kind === "query") {
     rows.push(
       line(`asked for: ${r.language} query: ${clip(r.query, WATSON_REQUEST_CHARS)}`, WATSON_TURN_PROMPT_MAX),
+    );
+  } else if (r?.kind === "crowdstrike_search") {
+    rows.push(
+      line(`asked for: crowdstrike search: ${clip(r.title, WATSON_REQUEST_CHARS)}`, WATSON_TURN_PROMPT_MAX),
     );
   } else if (r?.kind === "velociraptor") {
     rows.push(
@@ -264,6 +271,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
   ];
   if (chat.autoSetAside?.length) blocks.push(setAsideBlock(chat.autoSetAside));
   if (velo) blocks.push(veloBlock(velo, chat));
+  if (input.crowdstrike) blocks.push(csRulesText(input.crowdstrike, chat)); // #2666, only when set up
   if (pasteExcerpt) blocks.push(pasteBlock(pasteExcerpt));
   if (lookupExcerpt) blocks.push(lookupBlock(lookupExcerpt, true));
   if (input.superExcerpt) blocks.push(superBlock(input.superExcerpt, true));

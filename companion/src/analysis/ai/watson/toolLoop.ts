@@ -133,7 +133,16 @@ async function finish(i: ToolLoopInput, env: StepEnv, s: LoopState, reply: Watso
   const { known } = i;
   const events = new Set([...known.events, ...s.superShown.map((e) => e.id)]);
   const veloOn = i.base.velo !== undefined;
-  const clean = sanitizeWatsonReply(reply, known.questions, known.pastes, events, known.citations, veloOn);
+  const csOn = i.base.crowdstrike !== undefined; // #2666
+  const clean = sanitizeWatsonReply(
+    reply,
+    known.questions,
+    known.pastes,
+    events,
+    known.citations,
+    veloOn,
+    csOn,
+  );
   const rest = { ...i.rest, ...carried(i, s), ...(s.superShown.length ? { superShown: s.superShown } : {}) };
   if (s.executed === 0 && (clean.search || clean.lookup)) {
     const spent = i.spent;

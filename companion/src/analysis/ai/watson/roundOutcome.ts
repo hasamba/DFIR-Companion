@@ -20,6 +20,7 @@ import type {
   WatsonRequest,
   WatsonTurn,
   WatsonVeloLaunchProposal,
+  WatsonCsSearchProposal,
 } from "./types.js";
 import { vqlSizeProblem } from "../../vqlInput.js";
 
@@ -46,6 +47,10 @@ export interface Outcome {
   veloProposal?: Omit<WatsonVeloLaunchProposal, "turnId">;
   /** Why a Velociraptor request became no proposal (blocked VQL, a re-run, an unknown host). */
   veloNote?: string;
+  /** #2666: the card Watson's CrowdStrike search request became (crowdstrike/csSearchProposals.ts). */
+  csProposal?: Omit<WatsonCsSearchProposal, "turnId">;
+  /** Why a CrowdStrike search request became no card (not CQL, out of window, a repeat). */
+  csNote?: string;
   /** What the reply's writes need from disk (roundWrites.ts); without it no write is proposed. */
   writeInputs?: WatsonWriteInputs;
   /** The forensic-timeline events the round's lookup showed Watson (Task 11), for the card. */
@@ -172,10 +177,11 @@ export function mergeOutcome(
   const proposals = [
     ...buildProposals(reply, outcome.questions, turnId, outcome.writeInputs, outcome.rawEvidence),
     ...(outcome.veloProposal ? [{ ...outcome.veloProposal, turnId }] : []),
+    ...(outcome.csProposal ? [{ ...outcome.csProposal, turnId }] : []),
   ];
   // The round's promotion record is already in the chat: the turn lists it, it is not added again.
   const proposalIds = [...proposals.map((p) => p.id), ...(outcome.extraProposalIds ?? [])];
-  const notes = [outcome.note, outcome.veloNote].filter((n): n is string => !!n);
+  const notes = [outcome.note, outcome.veloNote, outcome.csNote].filter((n): n is string => !!n);
   const text = notes.length ? [reply.message, ...notes].join("\n\n").trim() : reply.message;
   const turn: WatsonTurn = {
     id: turnId,
