@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Best Practice artifacts are safe for Watson** — every artifact of the built-in Best Practice bundle (not Big Hogs) is on Watson's safe list, so Auto can launch it
 - **Watson Auto follow-up chain** — in Auto, Watson may launch up to 3 safe single-host collections in a row from its own rounds; your next message resets the count
 - **Watson Auto holds raw-cited writes** — writes that rest on super-timeline or paste rows wait for approval
+- **Watson question changes stand out** — a change Watson makes on its own stays marked in the chat until you click it; changed parts are marked in yellow with the old value on one line
 - **Watson searches the super-timeline** — one targeted search per round; cited raw rows are promoted with the Watson badge and Undo
 - **Watson writes in ASD-STE100** — the chat, its cards and notes use Simplified Technical English
 - **Watson case agent** — per-case investigation chat with a Key Questions board
