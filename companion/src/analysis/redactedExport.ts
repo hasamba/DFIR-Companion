@@ -262,7 +262,7 @@ export const EXCLUDED_FROM_EXPORT: readonly string[] = [
   ".env / environment variables (AI provider keys, enrichment API keys)",
   "state/ai-control.json (AI model + provider configuration)",
   "state/enrich-control.json (enabled threat-intel providers)",
-  "state/anon-control.json, state/anon-entities.json, state/anon-discovered.json",
+  "state/anon-control.json, state/anon-entities.json, state/anon-discovered.json, state/anon-map.json",
   "metadata/captures.jsonl, metadata/imports.jsonl (raw capture/import audit logs)",
   "case.json (raw case metadata)",
 ];

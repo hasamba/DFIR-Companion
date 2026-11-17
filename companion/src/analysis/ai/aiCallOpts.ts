@@ -60,6 +60,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get discoveredStore() {
       return opts.discoveredStore;
     },
+    get anonMapStore() {
+      return opts.anonMapStore;
+    },
     get rawNamesStore() {
       return opts.rawNamesStore;
     },

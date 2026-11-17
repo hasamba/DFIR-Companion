@@ -1,3 +1,4 @@
+import { israeliIdValid, luhnValid } from "./anonChecksums.js";
 import { isIP } from "node:net";
 import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
@@ -130,6 +131,7 @@ export interface AnonPair {
 }
 
 export { SECRET_PLACEHOLDER };
+export { israeliIdValid, luhnValid } from "./anonChecksums.js";
 
 // Exact-match tokenizing of a KNOWN value (hostname, internal domain, analyst-added or
 // Presidio-approved custom entity) needs a word boundary so "DC01" doesn't fire inside "DC01X"
@@ -334,47 +336,19 @@ const PHONE_NANP = /\(?\b\d{3}\)?[-. ]\d{3}[-. ]\d{4}\b/g;
 // preceding label with `_` is just as likely to glue a trailing qualifier on with `_` the same way.
 const NATID_RE = /(?<![\d._-])\d{9}(?![\d._-])/g;
 
-/** Israeli Teudat Zehut check digit: digits at odd indices are doubled, the decimal digits of
- *  each product are summed, and the total must be divisible by 10. Exported for the tests. */
-export function israeliIdValid(id: string): boolean {
-  if (!/^\d{9}$/.test(id)) return false;
-  let sum = 0;
-  for (let i = 0; i < 9; i++) {
-    let d = id.charCodeAt(i) - 48;
-    if (i % 2 === 1) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-  }
-  return sum % 10 === 0;
-}
-
-/** Luhn checksum. Exported for the detector table tests. */
-export function luhnValid(digits: string): boolean {
-  let sum = 0;
-  let double = false;
-  for (let i = digits.length - 1; i >= 0; i--) {
-    let d = digits.charCodeAt(i) - 48;
-    if (double) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-    double = !double;
-  }
-  return sum % 10 === 0;
-}
-
 export function createAnonymizer(
   policy: AnonPolicy,
   known: KnownEntities,
   seed: readonly AnonPair[] = [], // Watson D6: earlier sends' pairs keep their tokens; new ones number above
+  identity: readonly AnonPair[] = [], // #2657: the case's saved map — which token, never whether to mask
 ): Anonymizer {
-  const toToken = new Map(seed.map((p) => [`${p.category}:${p.value.toLowerCase()}`, p.token])); // CAT:real
+  const keyOf = (p: AnonPair) => `${p.category}:${p.value.toLowerCase()}`;
+  const toToken = new Map(seed.map((p) => [keyOf(p), p.token])); // CAT:real
   const toReal = new Map(seed.map((p) => [p.token, p.value])); // token (UPPER) -> real value
+  const saved = new Map(identity.map((p) => [keyOf(p), p.token]));
   const counters: Record<string, number> = {};
-  for (const p of seed) counters[p.category] = Math.max(counters[p.category] ?? 0, +p.token.split("_")[2]);
+  for (const p of [...seed, ...identity])
+    counters[p.category] = Math.max(counters[p.category] ?? 0, +p.token.split("_")[2]);
   const reserved = new Set<string>(); // token-shaped literals seen in the input — never minted (#2569)
   // Values the analyst removed from auto-discovery — never tokenize them (leave as-is), even when
   // a pattern matches. The check sits in assign(), the single point every matcher funnels through.
@@ -391,6 +365,8 @@ export function createAnonymizer(
     const key = `${category}:${real.toLowerCase()}`;
     const existing = toToken.get(key);
     if (existing) return existing;
+    const kept = saved.get(key);
+    if (kept && !toReal.has(kept)) return (toToken.set(key, kept), toReal.set(kept, real), kept);
     let token: string;
     do {
       counters[category] = (counters[category] ?? 0) + 1;

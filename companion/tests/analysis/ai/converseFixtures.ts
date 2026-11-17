@@ -1,3 +1,4 @@
+import { AnonMapStore } from "../../../src/analysis/anonMap.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,7 +76,9 @@ function state(caseId: string): InvestigationState {
 }
 
 let caseSeq = 0;
-export async function setup(o: { presidio?: PresidioClient; anonOff?: boolean; roster?: string[] } = {}) {
+export async function setup(
+  o: { presidio?: PresidioClient; anonOff?: boolean; roster?: string[]; anonMap?: boolean } = {},
+) {
   const caseId = `cv${++caseSeq}-${Date.now()}`;
   const root = await mkdtemp(join(tmpdir(), "dfir-converse-"));
   const cases = new CaseStore(root);
@@ -91,11 +94,12 @@ export async function setup(o: { presidio?: PresidioClient; anonOff?: boolean; r
       discoveredStore: new DiscoveredEntitiesStore(cases),
       presidioPendingStore: new PresidioPendingStore(cases),
       aiCostStore: cost as unknown as AiCostStore,
+      ...(o.anonMap ? { anonMapStore: new AnonMapStore(cases) } : {}),
       ...(o.roster ? { rawNamesStore: { load: async () => ({ hosts: o.roster!, usernames: [] }) } } : {}),
       ...(o.presidio ? { presidio: { client: o.presidio, url: "http://presidio.test", minScore: 0.5 } } : {}),
     },
   };
-  return { caseId, ctx, cost, anonStore, st: state(caseId) };
+  return { caseId, ctx, cost, anonStore, cases, st: state(caseId) };
 }
 
 export const req = (transcript: ToolTurn[] = [], userPrompt = `What happened on ${HOST}?`) => ({

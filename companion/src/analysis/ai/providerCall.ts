@@ -20,7 +20,7 @@ import { withCallMetrics } from "./callMetrics.js";
 import { AnonymizationChangedError, anonRevision } from "../anonRevision.js";
 import { captureIfSafetyStop } from "./safetyStopCapture.js";
 import type { ProviderCallContext } from "./providerCallContext.js";
-import { maskRequest, type GatedAnalyzeRequest } from "./maskRequest.js";
+import { maskRequest, withSendMasking, type GatedAnalyzeRequest } from "./maskRequest.js";
 import {
   alreadyApproved,
   capScanLength,
@@ -378,7 +378,10 @@ async function prepareCall(
   // The text the provider receives comes from maskRequest — the one function the AI preview also
   // uses (#2491), so the preview can never show a safer prompt than this send. The per-call entities
   // stop here: they hold real values, and neither the provider nor a safety-stop capture gets them.
-  const m = await maskRequest(ctx, caseId, state, gated);
+  const m = await withSendMasking(ctx, caseId, async (identity) => {
+    const masked = await maskRequest(ctx, caseId, state, { ...gated, anonIdentity: identity });
+    return { anon: masked.anon, result: masked };
+  });
   const { promptEntities: _entities, beforeSend: _check, ...req } = gated;
   ctx.log.debug(
     `AI call [${label}] provider=${provider.name} images=${req.images.length} promptChars=${m.plainPrompt.length} ` +

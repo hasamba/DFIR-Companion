@@ -3,6 +3,7 @@ import { anonRevision } from "../analysis/anonRevision.js";
 import { AnonControlStore } from "../analysis/anonControl.js";
 import { CustomEntitiesStore } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
+import { AnonMapStore } from "../analysis/anonMap.js";
 import { WatsonChatStore } from "../analysis/ai/watson/chatStore.js";
 import { WatsonRosterNames } from "../analysis/ai/watson/rosterNames.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
@@ -30,6 +31,9 @@ export function jevAnonStores(store: CaseStore) {
     anonStore: new AnonControlStore(store),
     customEntitiesStore: new CustomEntitiesStore(store),
     discoveredStore: new DiscoveredEntitiesStore(store),
+    // #2657: Jev reuses the case's saved tokens. It does not save its own: its masker is used lazily
+    // across many batches, so it cannot hold the map's lock, and its new tokens stay in that review.
+    anonMapStore: new AnonMapStore(store),
     rawNamesStore: new WatsonRosterNames(new WatsonChatStore(store)), // Watson's roster (H3)
   };
 }

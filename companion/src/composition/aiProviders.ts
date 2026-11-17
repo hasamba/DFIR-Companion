@@ -36,6 +36,7 @@ import { ScopeStore } from "../analysis/scope.js";
 import { AnonControlStore } from "../analysis/anonControl.js";
 import { CustomEntitiesStore } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
+import { AnonMapStore } from "../analysis/anonMap.js";
 import { WatsonChatStore } from "../analysis/ai/watson/chatStore.js";
 import { WatsonRosterNames } from "../analysis/ai/watson/rosterNames.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
@@ -390,6 +391,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     anonStore: new AnonControlStore(params.store),
     customEntitiesStore: new CustomEntitiesStore(params.store),
     discoveredStore: new DiscoveredEntitiesStore(params.store),
+    anonMapStore: new AnonMapStore(params.store), // #2657
     rawNamesStore: new WatsonRosterNames(new WatsonChatStore(params.store)), // H3: Watson's roster
     synthMetaStore: new SynthMetaStore(params.store),
     findingSeverityRestoreStore: new FindingSeverityRestoreStore(params.store), // #1973
