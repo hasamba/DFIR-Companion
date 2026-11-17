@@ -50,3 +50,37 @@ describe("a billed failure on the one-step path (#2663)", () => {
     expect(tally).toEqual({ promptTokens: 1000, cacheReadTokens: 700, reported: true });
   });
 });
+
+describe("real one-step providers attach a billed failure's usage (#2663)", () => {
+  it("OpenAI: an empty, cut-off reply throws with its usage", async () => {
+    const { OpenAIProvider } = await import("../../../src/providers/openai.js");
+    const { fetchMock, jsonResponse } = await import("../../helpers/fetchMock.js");
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({
+        choices: [{ message: { content: "" }, finish_reason: "length" }],
+        usage: { prompt_tokens: 500, completion_tokens: 64, prompt_tokens_details: { cached_tokens: 400 } },
+      }),
+    );
+    const err = await new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn })
+      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).usage).toMatchObject({ inputTokens: 500, cacheReadTokens: 400 });
+  });
+
+  it("Gemini: a blocked reply throws with its usage", async () => {
+    const { GeminiProvider } = await import("../../../src/providers/gemini.js");
+    const { fetchMock, jsonResponse } = await import("../../helpers/fetchMock.js");
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({
+        candidates: [{ finishReason: "SAFETY", content: { parts: [] } }],
+        usageMetadata: { promptTokenCount: 800, candidatesTokenCount: 0, cachedContentTokenCount: 600 },
+      }),
+    );
+    const err = await new GeminiProvider({ apiKey: "k", model: "gemini-2.5-pro", fetchFn })
+      .analyze({ systemPrompt: "s", userPrompt: "u", images: [] })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).usage).toMatchObject({ inputTokens: 800, cacheReadTokens: 600 });
+  });
+});

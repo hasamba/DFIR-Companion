@@ -141,8 +141,9 @@ export class OpenAIProvider implements AIProvider {
       ],
     };
     const json = await this.send(body, req.signal, false);
-    const text = this.answerText(json, req, maxTokens);
+    // #2663: usage first — a refused or cut-off reply was still billed, and the error carries it.
     const usage = this.usageOf(json.usage);
+    const text = billedChecks(usage, () => this.answerText(json, req, maxTokens));
     return { rawText: text, ...(usage ? { usage } : {}) };
   }
 
