@@ -112,6 +112,7 @@ function setup(
       "dashboard-escape.js",
       "dashboard-watson-marks.js",
       "dashboard-watson-cards.js",
+      "dashboard-watson-qchange.js",
       "dashboard-watson-view.js",
       "dashboard-watson-mode.js",
       "dashboard-watson-run.js",

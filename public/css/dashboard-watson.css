@@ -156,6 +156,15 @@ body.watson-full-open #watsonToggle::before { background-image: url("data:image/
 .watson-velo { border-left-color: #fbbf24; }
 .watson-prop.watson-prop-pending { border-color: rgba(251, 146, 60, 0.7); border-left-color: #fb923c; background: rgba(251, 146, 60, 0.06); }
 .watson-prop.watson-prop-applied, .watson-prop.watson-prop-rejected, .watson-prop.watson-prop-undone { opacity: 0.8; }
+/* A question change Watson made on its own: outlined and not dimmed until the analyst clicks it. The
+   changed parts of any question-update card get a yellow mark; the old value sits on one muted line. */
+.watson-prop.watson-qnew { opacity: 1; cursor: pointer; outline: 2px solid var(--accent, #60a5fa); outline-offset: 1px;
+  border-left-color: var(--accent, #60a5fa); background: color-mix(in srgb, var(--accent, #60a5fa) 12%, transparent); }
+.watson-qnew-tag { margin-left: 6px; padding: 0 6px; border: 0; border-radius: 9px; cursor: pointer; font: inherit;
+  font-size: 10.5px; font-weight: 700; color: var(--accent, #60a5fa); background: none; }
+.watson-qnew-tag:hover, .watson-qnew-tag:focus-visible { text-decoration: underline; }
+.watson-chg { background: rgba(234, 179, 8, 0.28); border-radius: 2px; padding: 0 2px; }
+.watson-was { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 
 /* The Watson badge and its Undo button: one height, one shape. */
 .watson-mark, .watson-undo { display: inline-flex; align-items: center; box-sizing: border-box; height: 20px; padding: 0 8px;
