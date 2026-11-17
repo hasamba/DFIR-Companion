@@ -163,8 +163,10 @@ describe("Watson reads the case context Ask did", () => {
   });
 
   it("stores coverage on the Watson turn when the timeline was trimmed, and not otherwise", async () => {
+    // Distinct patterns, so synthesis's burst grouping (#2656) does not fold them into one row.
+    const word = (i: number) => i.toString(36).replace(/\d/g, (d) => "qwrtyuiopz"[Number(d)]);
     const many = Array.from({ length: 2000 }, (_, i) =>
-      ev(`e${i}`, { description: `process created with a long command line number ${i} `.repeat(4) }),
+      ev(`e${i}`, { description: `process ${word(i)} created with command ${word(i * 7 + 3)} `.repeat(4) }),
     );
     const big = await make(many);
     const chat = await runWatsonRound(big.ctx, CASE, { text: "Summarise" });

@@ -149,8 +149,13 @@ describe("Watson's timeline lookup hop", () => {
   });
 
   it("fetches an event the trimmed packet did not carry, and Watson may cite it", async () => {
+    // Distinct patterns, so synthesis's burst grouping (#2656) does not fold them into one row.
+    const word = (i: number) => i.toString(36).replace(/\d/g, (d) => "qwrtyuiopz"[Number(d)]);
     const filler = Array.from({ length: 2000 }, (_, i) =>
-      ev(`f${i}`, i % 60, { severity: "High", description: `noisy high event ${i} `.repeat(6) }),
+      ev(`f${i}`, i % 60, {
+        severity: "High",
+        description: `noisy ${word(i)} high ${word(i * 7 + 3)} `.repeat(6),
+      }),
     );
     const late = ev("late1", 59, { description: "robocopy staging to share" });
     const h = await harness(
