@@ -2002,7 +2002,7 @@ export const FEATURES: Feature[] = [
   },
   {
     // The Watson panel width (drag handle, saved per browser) and the full-screen board's Next steps
-    // column. initDataAct calls initWatsonLayout once at load.
+    // column, and the board's status / priority filter chips. initDataAct calls initWatsonLayout once at load.
     file: "dashboard-watson-layout.js",
     publish: [
       "watsonSetWidth",
@@ -2011,6 +2011,10 @@ export const FEATURES: Feature[] = [
       "watsonJumpSync",
       "watsonJumpEnd",
       "watsonSetInputHeight",
+      "watsonBoardFilterBar",
+      "watsonBoardFiltered",
+      "watsonBoardCountText",
+      "watsonSetBoardFilter",
     ],
     private: [
       "WIDTH_KEY",
@@ -2024,7 +2028,12 @@ export const FEATURES: Feature[] = [
       "currentWidth",
       "onHandle",
       "each",
-      "countText",
+      "FILTER_KEY",
+      "FILTERS",
+      "knownValue",
+      "itemValue",
+      "filterValue",
+      "lastState",
       "JUMP_SLACK",
       "atEnd",
       "INPUT_KEY",
