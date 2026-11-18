@@ -57,7 +57,7 @@ export function anthropicToolBody(
     description: t.description,
     input_schema: t.parameters,
   }));
-  // Prompt caching: the static system prompt, plus the masked cache prefix when the gate set one (#2658).
+  // Prompt caching: the static system prompt, plus the cache prefix when the gate set one (#2658, #2675).
   const system = [{ type: "text", text: req.systemPrompt, cache_control: { type: "ephemeral" } }];
   const messages: unknown[] = [
     { role: "user", content: cachedUserContent(req.userPrompt, req.cachePrefix, API_CACHE) },

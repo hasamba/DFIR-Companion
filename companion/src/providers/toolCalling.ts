@@ -44,8 +44,8 @@ export interface ConverseRequest {
   signal?: AbortSignal;
   /**
    * The leading part of userPrompt a provider may cache (#2658). On a request a PROVIDER receives it is
-   * always MASKED text and userPrompt starts with it; the masking gate sets it only when anonymization is
-   * on (the analyst's rule: case data is cached at the provider only when masked). Providers that cannot
+   * set by the masking gate and userPrompt starts with it: masked when anonymization is on, the clear text
+   * when it is off (#2675 — the prompt is clear then anyway). Providers that cannot
    * mark a cache boundary ignore it — userPrompt is always the whole prompt.
    */
   cachePrefix?: string;

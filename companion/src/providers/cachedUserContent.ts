@@ -1,6 +1,6 @@
 // #2658: the user prompt as content blocks, with a cache breakpoint after its stable leading part.
-// `cachePrefix` reaches a provider only as MASKED text that userPrompt starts with (the masking gate
-// sets it, and only when anonymization is on). Anything else sends the prompt as one block, as before.
+// `cachePrefix` reaches a provider only as text userPrompt starts with, set by the masking gate: masked
+// when anonymization is on, clear when it is off (#2675). Anything else sends the prompt as one block.
 
 export type CacheControl = { type: "ephemeral"; ttl?: "1h" };
 

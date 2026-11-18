@@ -39,8 +39,11 @@ export interface MaskedRequest {
   /** null when anonymization is off for the case. */
   readonly known: KnownEntities | null;
   readonly anon: Anonymizer | null;
-  /** The masked cache prefix (#2658): set only when anonymization is on and maskedPrompt starts with it. */
-  readonly maskedCachePrefix?: string;
+  /**
+   * The cache prefix as the provider receives it, set only when maskedPrompt starts with it: masked with
+   * anonymization on (#2658), the clear prefix with markers removed when it is off (#2675).
+   */
+  readonly sentCachePrefix?: string;
 }
 
 /**
@@ -174,16 +177,33 @@ export async function maskRequest(
   // The AI-field markers (aiSpan.ts) come out first, whatever happens next: nothing is sent with them.
   const segments = splitAiSpans(req.userPrompt);
   const plainPrompt = segments.map((sg) => sg.text).join("");
-  if (!known || !anon)
-    return { control, policy, plainPrompt, maskedPrompt: plainPrompt, spans: [], known: null, anon: null };
+  const prefix = req.cachePrefix && req.userPrompt.startsWith(req.cachePrefix) ? req.cachePrefix : "";
+  if (!known || !anon) {
+    // #2675: off, the provider gets clear text anyway, so the clear prefix (markers removed) is cached.
+    const clearPrefix = prefix
+      ? splitAiSpans(prefix)
+          .map((sg) => sg.text)
+          .join("")
+      : "";
+    const cached = clearPrefix && plainPrompt.startsWith(clearPrefix) ? { sentCachePrefix: clearPrefix } : {};
+    return {
+      control,
+      policy,
+      plainPrompt,
+      maskedPrompt: plainPrompt,
+      spans: [],
+      known: null,
+      anon: null,
+      ...cached,
+    };
+  }
   // #2658: the cacheable prefix is masked FIRST, with this same anonymizer, so the full prompt below gives
   // its leading text the very same tokens. It is kept only when the masked prompt really starts with it.
-  const prefix = req.cachePrefix && req.userPrompt.startsWith(req.cachePrefix) ? req.cachePrefix : "";
   const maskedPrefix = prefix ? maskSegments(splitAiSpans(prefix), mask).masked : "";
   // Mask FIRST, then let Presidio look at the result. It never sees a real hostname, IP,
   // username, email, SID or secret — only what our own detectors could not find.
   const { masked, spans } = maskSegments(segments, mask);
-  const cached = maskedPrefix && masked.startsWith(maskedPrefix) ? { maskedCachePrefix: maskedPrefix } : {};
+  const cached = maskedPrefix && masked.startsWith(maskedPrefix) ? { sentCachePrefix: maskedPrefix } : {};
   return { control, policy, plainPrompt, maskedPrompt: masked, spans, known, anon, ...cached };
 }
 
