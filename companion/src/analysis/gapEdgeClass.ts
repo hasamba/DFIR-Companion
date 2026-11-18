@@ -176,16 +176,8 @@ function gradeCompleteGap(
 ): CompleteGapGrade {
   const reboot = (before !== undefined && isRebootRow(before)) || (after !== undefined && isRebootRow(after));
   const boundary = reboot ? null : scopeBoundaryLabel(before, after);
-  const loggingStopped =
-    before !== undefined && (isAntiForensicRow(before) || isStoppedLogServiceRow(before));
-  if (!reboot && boundary === null && after !== undefined && isCollectionRow(after) && !loggingStopped) {
-    return {
-      severity: "Info",
-      corroborated: false,
-      collectionEdge: true,
-      collectionEdgeEventId: after.id,
-      collectionEdgeLabel: collectionEdgeLabel(after),
-    };
+  if (boundary === null && after !== undefined && collectionClosesSilence(before, after)) {
+    return collectionEdgeGrade(after);
   }
   const corroborated =
     !reboot && boundary === null && (antiForensic || atLeastMedium(before) || atLeastMedium(after));
@@ -194,6 +186,36 @@ function gradeCompleteGap(
     corroborated,
     ...(reboot ? { rebootEdge: true } : {}),
     ...(boundary !== null ? { scopeBoundary: true, scopeBoundaryLabel: boundary } : {}),
+  };
+}
+
+// The #2684 rule in one place (#2688): the silence ends on the collection's own row, no reboot sits
+// at either edge, and the edge that opens it records no log clear, audit-policy change or stopped
+// logging service. Used for a complete gap inside one wave (gradeCompleteGap), for a wait of 6h or
+// more that separates two waves (classifyGapEdges), and by activityWaves.ts, which stops counting
+// such an interval as attacker activity — the after-wave is the scanner's own verdicts, dated when
+// it looked. A cross-scope boundary is checked by each caller first; it wins over this reading.
+export function collectionClosesSilence(
+  before: ForensicEvent | undefined,
+  after: ForensicEvent | undefined,
+): boolean {
+  if (after === undefined || !isCollectionRow(after)) return false;
+  if (isRebootRow(after)) return false;
+  if (before === undefined) return true;
+  return !isRebootRow(before) && !isAntiForensicRow(before) && !isStoppedLogServiceRow(before);
+}
+
+type CollectionEdgeGrade = Pick<
+  TimelineGap,
+  "severity" | "corroborated" | "collectionEdge" | "collectionEdgeEventId" | "collectionEdgeLabel"
+>;
+function collectionEdgeGrade(after: ForensicEvent): CollectionEdgeGrade {
+  return {
+    severity: "Info",
+    corroborated: false,
+    collectionEdge: true,
+    collectionEdgeEventId: after.id,
+    collectionEdgeLabel: collectionEdgeLabel(after),
   };
 }
 
@@ -206,10 +228,12 @@ function gradeCompleteGap(
 //     Two High waves around two idle edge rows are still two visits: attackerEdges wins, so the
 //     dwell finding and the waves finding never disagree about the same window.
 //   • `severity` / `corroborated` / `rebootEdge` / `scopeBoundary` — on a complete, non-wave gap
-//     (#1942, #2606); see gradeCompleteGap. Partial gaps and dwell intervals keep their grade,
-//     except a `betweenWaves` gap whose interval activityWaves.ts marks crossScope (#2610): it gets
-//     `scopeBoundary` + label and Low, the same as a boundary gap outside a wave, so the panel, the
-//     report and the AI gap prompt label it the way the (withheld) finding reads it. Never T1070.
+//     (#1942, #2606); see gradeCompleteGap. `collectionEdge` (#2684) on any complete gap, wave
+//     boundary included (#2688), that collectionClosesSilence reads as the wait before collection.
+//     Partial gaps and dwell intervals keep their grade, except a `betweenWaves` gap whose interval
+//     activityWaves.ts marks crossScope (#2610): it gets `scopeBoundary` + label and Low, the same
+//     as a boundary gap outside a wave, so the panel, the report and the AI gap prompt label it the
+//     way the (withheld) finding reads it. Never T1070.
 export function classifyGapEdges(
   gaps: readonly TimelineGap[],
   events: readonly ForensicEvent[],
@@ -245,6 +269,9 @@ export function classifyGapEdges(
         scopeBoundaryLabel: crossLabel,
       };
       Object.assign(next, boundary);
+    } else if (after && g.betweenWaves && g.complete && collectionClosesSilence(before, after)) {
+      // A wait of 6h or more before collection (#2688): the same reading as inside one wave.
+      Object.assign(next, collectionEdgeGrade(after));
     }
     if (reasonBefore && reasonAfter && !next.attackerEdges) {
       next.provisioningEdges = true;

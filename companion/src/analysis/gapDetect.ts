@@ -78,10 +78,11 @@ export interface TimelineGap {
   //     ("AWS account A → AWS account B") is charset-restricted but still escaped on every surface.
   scopeBoundary?: boolean;
   scopeBoundaryLabel?: string;
-  //   • `collectionEdge` (#2684) — on a complete, non-wave gap: the row that closes it is the
-  //     collection's own (a collector process, or a THOR row dated at the scan time), so the silence
-  //     is the wait before collection. Always Info, never a finding, never T1070. The label names
-  //     the closing row by source, id and time — never by its description — and is escaped anyway.
+  //   • `collectionEdge` (#2684) — on a complete gap, a wave boundary included (#2688): the row
+  //     that closes it is the collection's own (a collector process, or a THOR row dated at the
+  //     scan time), so the silence is the wait before collection. Always Info, never a finding,
+  //     never T1070. The label names the closing row by source, id and time — never by its
+  //     description — and is escaped anyway.
   collectionEdge?: boolean;
   collectionEdgeEventId?: string;
   collectionEdgeLabel?: string;
@@ -153,9 +154,10 @@ export function gapKindLabel(g: TimelineGap): string {
       ? "wave boundary, separate accounts/tenants"
       : "complete silence, separate accounts/tenants";
   }
+  // A wait before collection reads the same inside one wave or across a wave boundary (#2688).
+  if (g.collectionEdge) return "quiet period before collection";
   if (g.betweenWaves) return "dwell interval";
   if (!g.complete) return "partial";
-  if (g.collectionEdge) return "quiet period before collection";
   return g.rebootEdge ? "complete silence, reboot at edge" : "complete silence";
 }
 
@@ -493,9 +495,9 @@ export function backfillSilenceGapFindings(
     // A dwell interval earns a finding only between two attacker-graded waves (#1503). Two benign
     // bursts around a quiet stretch — a lab box between sessions, admin work months apart — are a
     // fact for the coverage panel, not a Medium finding with a "returning operator" brief.
+    if (gap.collectionEdge) continue; // the wait before collection (#2684, #2688): a panel row, not a lead
     if (gap.betweenWaves && !gap.attackerEdges) continue;
     if (gap.provisioningEdges || gap.hostHistory) continue; // idle time / the host's own history
-    if (gap.collectionEdge) continue; // the wait before collection (#2684): a panel row, not a lead
     if (heldGapCount + newFindings.length >= cap) break;
     // Idempotency key derived from the bounding events — stable across synthesis runs over the same
     // gap (so re-synthesis refreshes rather than duplicates), and unique per distinct gap.
