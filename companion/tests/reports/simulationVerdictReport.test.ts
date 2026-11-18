@@ -81,18 +81,21 @@ describe("simulation verdict in the exports (#1595)", () => {
 
   it("the findings CSV carries the live-intrusion severity and the label", () => {
     const rows = findingsCsv(simulatedCase()).trim().split("\n");
-    expect(rows[0]).toMatch(/,status,liveIntrusionSeverity,simulation$/);
+    // #2691: the five Watson change columns follow the simulation pair.
+    const watsonCols = "watsonChange,severityBeforeWatson,watsonApprovedBy,watsonReason,watsonCitedEvents";
+    expect(rows[0]).toMatch(new RegExp(`,status,liveIntrusionSeverity,simulation,${watsonCols}$`));
     const f1 = rows.find((r) => r.startsWith('"f1"'))!;
     expect(f1).toMatch(/^"f1","Medium",/);
     expect(f1).toMatch(
-      /,"Critical","simulated — pending owner confirmation; live-intrusion severity: Critical"$/,
+      /,"open","Critical","simulated — pending owner confirmation; live-intrusion severity: Critical","","","","",""$/,
     );
   });
 
-  it("an untouched finding leaves both new CSV columns empty", () => {
+  it("an untouched finding leaves both simulation CSV columns empty", () => {
     const s = emptyState("c1");
     s.findings = [finding("f9", "High", "Mimikatz executed")];
-    expect(findingsCsv(s).trim().split("\n")[1]).toMatch(/,"",""$/);
+    // status, the two simulation cells, then the five empty Watson cells (#2691).
+    expect(findingsCsv(s).trim().split("\n")[1]).toMatch(/,"open","","","","","","",""$/);
   });
 
   it("the interactive HTML card carries the label beside the severity", () => {

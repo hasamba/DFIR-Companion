@@ -13,6 +13,12 @@ import { remapAbsorbedEventIds } from "../absorbedCitations.js";
 import { concurrentRejections } from "../rejectedTechniques.js";
 import { keepWatsonAnswers } from "../timeline/watsonQuestions.js";
 import { keepWatsonItems } from "../timeline/watsonItems.js";
+import {
+  applyWatsonVerdicts,
+  orphanedVerdictNotice,
+  orphanedVerdicts,
+  withVerdicts,
+} from "../timeline/watsonVerdicts.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -72,20 +78,29 @@ export async function persistSynthesis(
     // LAST before the save: a Watson apply or undo that landed while the model was thinking wins
     // over this run's copy of that question (the fold protected the rest).
     // The same for Watson findings, next steps and Watson-marked events: the store's copy wins.
-    const merged = {
-      ...keepWatsonItems(reconciled, latest),
-      keyQuestions: keepWatsonAnswers(
-        reconciled.keyQuestions,
-        latest.keyQuestions,
-        input.loaded.keyQuestions,
+    // Watson's verdicts on synthesis findings as stored now (#2682), applied to this run's findings.
+    const merged = applyWatsonVerdicts(
+      withVerdicts(
+        {
+          ...keepWatsonItems(reconciled, latest),
+          keyQuestions: keepWatsonAnswers(
+            reconciled.keyQuestions,
+            latest.keyQuestions,
+            input.loaded.keyQuestions,
+          ),
+        },
+        latest.watsonFindingVerdicts,
       ),
-    };
+    );
     // Record THIS synthesis run as a durable, cross-session Investigation-Log line (#165) — imports
     // already log via timelineNote; synthesis didn't. Final merged counts; one entry per real run.
-    persisted = {
-      ...merged,
-      timeline: [...merged.timeline, buildSynthesisLogEntry(merged, input.findingsDiff, input.logNote)],
-    };
+    const runLine = buildSynthesisLogEntry(merged, input.findingsDiff, input.logNote);
+    // A verdict this run left without a finding gets one line (#2693); the verdict stays stored.
+    const orphanLines = orphanedVerdicts(latest, merged).map((v) => ({
+      ...runLine,
+      description: orphanedVerdictNotice(v),
+    }));
+    persisted = { ...merged, timeline: [...merged.timeline, runLine, ...orphanLines] };
     await ctx.opts.stateStore.save(persisted);
   };
   if (ctx.opts.stateLock) await ctx.opts.stateLock.runExclusive(caseId, write);

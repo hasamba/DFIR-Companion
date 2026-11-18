@@ -164,6 +164,14 @@ export function findingIocsMd(f: Finding): string[] {
   return out;
 }
 
+/** The mark on a system-made coverage-check key question (#2681): not a finding, not an analyst's. */
+export const SYSTEM_CHECK_LABEL = "[System coverage check]";
+
+/** A key question's text for a report row: marked when it is a system coverage check (#2681). */
+export function reportQuestionText(q: { question: string; coverageGap?: unknown }): string {
+  return (q.coverageGap ? `${SYSTEM_CHECK_LABEL} ` : "") + displayQuestionText(q.question);
+}
+
 /**
  * A key question as a reader should see it. The "[type-seed]" prefix is internal bookkeeping on the
  * STORED question (merge-mode dedup matches the exact stored text), so reports, hand-offs and

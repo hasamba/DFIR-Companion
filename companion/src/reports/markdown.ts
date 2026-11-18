@@ -23,12 +23,13 @@ import {
   blockMd,
   cellMd,
   displayQuestionText,
+  reportQuestionText,
   eventCellMd,
   findingIocsMd,
   oneLineMd,
   sessionCommandsMd,
 } from "./mdText.js";
-import { watsonApprovalLine } from "./watsonFindingMd.js";
+import { watsonFindingLines } from "./watsonFindingMd.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
@@ -243,10 +244,10 @@ function investigationGoals(state: InvestigationState, meta: ReportMeta, lines: 
     lines.push(meta.investigationGoals.trim(), "");
     return;
   }
-  if (state.keyQuestions.length > 0) {
+  const goals = state.keyQuestions.filter((q) => !q.coverageGap);
+  if (goals.length > 0) {
     lines.push("Derived from the investigation's key questions:", "");
-    for (const q of state.keyQuestions)
-      lines.push(`- ${blockMd(oneLineMd(displayQuestionText(q.question)))}`);
+    for (const q of goals) lines.push(`- ${blockMd(oneLineMd(displayQuestionText(q.question)))}`);
     lines.push("");
     return;
   }
@@ -795,7 +796,7 @@ function investigation(
       const caution = findingCautionLine(f);
       if (caution) lines.push(caution);
       lines.push(blockMd(f.description) || "_no description_", ...sessionCommandsMd(f, eventById));
-      if (f.author === "watson") lines.push(watsonApprovalLine(f));
+      lines.push(...watsonFindingLines(f)); // Watson's approval, or its demotion/dismissal (#2682)
       lines.push(...findingIocsMd(f));
       if (f.mitreTechniques.length)
         lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
@@ -864,7 +865,7 @@ function investigation(
       // for an open question — it names the exact host + log source to collect to answer it.
       const where = collectSummary(q.collect) || q.pointer || "—";
       lines.push(
-        `| ${mark(q.status)} | ${cellMd(displayQuestionText(q.question))} | ${cellMd(answerCell)} | ${cellMd(where)} |`,
+        `| ${mark(q.status)} | ${cellMd(reportQuestionText(q))} | ${cellMd(answerCell)} | ${cellMd(where)} |`,
       );
     }
     lines.push("");

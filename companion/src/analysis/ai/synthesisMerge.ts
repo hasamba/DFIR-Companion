@@ -1,4 +1,5 @@
 import { flagContradictedAnswers } from "../answerContradiction.js";
+import { applyBurstGapQuestions } from "../burstGapQuestions.js";
 import type { CollectionInventory } from "../collectionInventory.js";
 import type { MainSourceResult } from "../caseMainSource.js";
 import { withCloudSeedQuestions } from "../cloudKeyQuestions.js";
@@ -277,6 +278,15 @@ export async function foldSynthesisDelta(
   } = await preservePinnedQuestions(ctx, caseId, netted.state);
   const pinned = preserveAcceptedTechniques(state, withCloudSeedQuestions(pinnedQs, !!input.cloudOnly));
   let next = correctKeyQuestions(pinned, state, scopedEvents);
+  // A grouped row that hid distinct command lines gets a system-made Key Question (#2681).
+  next = {
+    ...next,
+    keyQuestions: applyBurstGapQuestions(next.keyQuestions, {
+      membersOf,
+      events: next.forensicTimeline,
+      findings: next.findings,
+    }),
+  };
   // The techniques the timeline CARRIES are deliberately not folded in here (#893). This used to
   // union the scoped events' ids into the table so the ones the model didn't echo — especially the
   // Info/Low discovery phase (whoami/net group/findstr password/cat .env) tagged by the importers —

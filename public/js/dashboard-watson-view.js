@@ -12,6 +12,13 @@
     return `<span class="q-status q-status-${st}">${esc(QSTATUS[st])}</span>`;
   }
 
+  // #2681: a system-made coverage-check question, marked so it never reads as an analyst's question.
+  function systemBadge(q) {
+    return q.coverageGap
+      ? ` <span class="q-system" title="Made by DFIR Companion, not by an analyst or the AI: a grouped burst hid command lines the synthesis never read. It marks a coverage gap, not a finding.">System check</span>`
+      : "";
+  }
+
   function requestHtml(r) {
     if (!r) return "";
     if (r.kind === "query") {
@@ -254,7 +261,7 @@
             `</div>`
           : "";
         return (
-          `<div class="watson-q">${statusBadge(q.status)} <strong>${esc(q.question)}</strong>` +
+          `<div class="watson-q">${statusBadge(q.status)}${systemBadge(q)} <strong>${esc(q.question)}</strong>` +
           `<div>${esc(q.answer || "unknown")}</div>` +
           (q.pointer ? `<div class="watson-why">→ ${esc(q.pointer)}</div>` : "") +
           dis +

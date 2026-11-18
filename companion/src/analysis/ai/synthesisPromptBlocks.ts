@@ -24,6 +24,7 @@ import { buildSynthesisContext } from "../synthSelect.js";
 import { buildCurrentKeyQuestionsBlock } from "./currentKeyQuestionsBlock.js";
 import { buildWatsonFindingsBlock } from "./watsonFindingsBlock.js";
 import { isWatsonItem } from "../timeline/watsonItems.js";
+import { withoutReview } from "../timeline/watsonVerdicts.js";
 import { capDisclosure } from "../synthCaps.js";
 import { promptDescription } from "./promptDescription.js";
 import { aiSpan } from "./aiSpan.js";
@@ -256,7 +257,10 @@ function detailedFindingIds(findings: readonly Finding[]): Set<string> {
 
 // A finding capped by the simulation verdict (#1595) keeps its live-intrusion rank here, so the cap
 // never starves it of detail in the next run's prompt.
-const echoRank = (f: Finding): Finding["severity"] => f.simulation?.originalSeverity ?? f.severity;
+// A Watson demotion (#2682) is echoed at the severity synthesis gave: the save applies the verdict again,
+// so the model never adopts it as its own grade and the finding keeps Watson's mark and Undo.
+const echoRank = (f: Finding): Finding["severity"] =>
+  f.simulation?.originalSeverity ?? (f.watsonReview ? withoutReview(f).severity : f.severity);
 
 function findingDetail(f: Finding): string {
   const said = oneLine(f.description ?? "");

@@ -434,6 +434,15 @@ describe("WATSON_PROMPT: the super-timeline search rule", () => {
   });
 });
 
+describe("WATSON_PROMPT: finding reviews (#2682)", () => {
+  it("lets Watson demote or dismiss a synthesis finding with cited events, never its own or upward", () => {
+    expect(WATSON_PROMPT).toContain('"findingReviews": [{ "findingId"');
+    expect(WATSON_PROMPT).toMatch(/'findingReviews'.*must not start with \\?"f-watson-/s);
+    expect(WATSON_PROMPT).toMatch(/never raise a severity/);
+    expect(WATSON_PROMPT).toMatch(/cite\s+them in 'eventIds'/);
+  });
+});
+
 describe("the NEXT STEPS block (user decision of 2026-11-16)", () => {
   it("lists the case's next steps most urgent first, with the target, and (none) when there are none", () => {
     const state = {

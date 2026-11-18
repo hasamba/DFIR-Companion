@@ -3,7 +3,7 @@ import type { HostRenameRecord } from "./hostRenameRecord.js";
 import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 import type { EventRevisionFields } from "./eventRevisionTypes.js";
 import type { EventTimeBasisFields, SourceRecords } from "./eventSourceTypes.js";
-import type { WatsonFindingMarks, WatsonItemMark } from "./watsonItemTypes.js";
+import type { WatsonFindingMarks, WatsonItemMark, WatsonStateMarks } from "./watsonItemTypes.js";
 
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 
@@ -686,6 +686,16 @@ export interface InvestigationQuestion {
   // is neutralized NOW and this badges "stale — press Re-synthesize" until the next real synthesis
   // recomputes the authoritative answer (which clears the flag). Absent = current.
   staleReSynth?: boolean;
+  // System coverage check (#2681) on lines a grouped row hid: burstGapQuestions.ts, never the model.
+  coverageGap?: BurstCoverageGap;
+}
+export interface BurstCoverageGap {
+  kind: "burst-hidden-lines";
+  representativeId: string;
+  memberCount: number;
+  hiddenCount: number; // every hidden distinct line, not just the listed ones
+  coveredCount?: number; // hidden lines live findings cite (absent on a question saved before #2681's fix)
+  hiddenEventIds: string[]; // still-uncited hidden lines, one event each, capped at the lookup limit
 }
 export type StepPriority = "critical" | "high" | "medium" | "low";
 
@@ -722,7 +732,7 @@ export interface Uncertainty {
   gap: string; // what is missing to raise the status (the collection/analysis needed)
 }
 
-export interface InvestigationState {
+export interface InvestigationState extends WatsonStateMarks {
   caseId: string;
   findings: Finding[];
   iocs: IOC[];

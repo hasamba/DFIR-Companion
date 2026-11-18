@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Burst coverage question** — when a grouped burst hides command lines behind "+N more", a system-marked Key Question lists them so Watson Auto reads them; it closes when findings cite them all (closes #2681)
+- **Watson demotes or dismisses disproved findings** — Watson can propose lowering or dismissing a synthesis finding its evidence disproves, with reason and Undo; in Auto, High/Critical changes wait for approval (closes #2682)
 - **NG-SIEM connection Test and real failure reasons** — Settings Test checks sign-in, NGSIEM Write and Read step by step; a failed search names DNS, network, TLS (with the certificate issuer) or the base URL; new DFIR_CROWDSTRIKE_SIEM_CA; Open in Falcon link on CQL and Watson search cards (closes #2685)
 - **Watson CrowdStrike search cards** — Watson proposes a CQL search on Next-Gen SIEM; Run (or Auto) imports the rows as evidence and tells Watson the result (closes #2666)
 - **Run CQL hunts on CrowdStrike Next-Gen SIEM** — a Run in Falcon button on CQL hunt cards imports the rows as evidence, with time, row and timeout caps (part of #2666)
@@ -49,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Watson changes in the CSV report** — the findings CSV shows Watson's change, the grade before it, who approved it, the reason and cited events (closes #2691)
+- **Notice when a Watson verdict stops matching** — the Investigation Log says when a reworded or vanished finding no longer gets Watson's verdict (closes #2693)
 - **Quiet period before collection** — a silent gap that ends on the collector's own row (or a THOR scan-time row) is Info, with no "log tampering" finding (closes #2684)
 - **Long waits before collection** — a wait of 6h or more before collection no longer raises a dwell or waves finding (closes #2688)
 - **Hypothesize gaps on collection gaps** — the prompt calls a collection-closed gap a quiet period, not complete silence (closes #2687)

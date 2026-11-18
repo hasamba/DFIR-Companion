@@ -19,7 +19,7 @@ describe("watsonReplySchema", () => {
       lookup: null,
       memory: "",
       answer: null,
-      writes: { findings: [], nextSteps: [], report: [], stepUpdates: [] },
+      writes: { findings: [], nextSteps: [], report: [], stepUpdates: [], findingReviews: [] },
     });
   });
   it("falls back per field on junk", () => {

@@ -1,5 +1,10 @@
 import { z } from "zod";
-import type { NextStep, Severity, StepPriority } from "../../stateTypes.js";
+import type { Finding, NextStep, Severity, StepPriority } from "../../stateTypes.js";
+import {
+  findingReviewDraftSchema,
+  sanitizeFindingReviews,
+  type WatsonFindingReviewDraft,
+} from "./findingReviewSchema.js";
 import type { WatsonReportField } from "./writers/writerTypes.js";
 
 // The writes the model proposes in its reply: findings, next steps and report text. Untrusted like
@@ -56,6 +61,8 @@ export interface WatsonWrites {
   report: { field: WatsonReportField; text: string }[];
   /** Changes to next steps already in the case (done, or a new priority). Absent: none. */
   stepUpdates?: WatsonStepUpdateDraft[];
+  /** #2682: demote or dismiss a synthesis finding its evidence disproves. Absent: none. */
+  findingReviews?: WatsonFindingReviewDraft[];
 }
 
 /** What a finding draft may cite: each stored paste's line count, and the Watson-authored finding ids. */
@@ -64,6 +71,8 @@ export interface WatsonCitationSets {
   watsonFindingIds: ReadonlySet<string>;
   /** The case's next steps as the prompt showed them, by id: a step update for any other id is dropped. */
   steps?: ReadonlyMap<string, NextStep>;
+  /** #2682: the synthesis findings (not Watson's) by id: a review for any other id is dropped. */
+  reviewableFindings?: ReadonlyMap<string, Finding>;
 }
 
 export const emptyWrites = (): Required<WatsonWrites> => ({
@@ -71,6 +80,7 @@ export const emptyWrites = (): Required<WatsonWrites> => ({
   nextSteps: [],
   report: [],
   stepUpdates: [],
+  findingReviews: [],
 });
 
 const str = z.string().catch("");
@@ -117,6 +127,7 @@ export const writesSchema = z
     findings: lenientArray(findingDraftSchema),
     nextSteps: lenientArray(stepDraftSchema),
     stepUpdates: lenientArray(stepUpdateSchema),
+    findingReviews: lenientArray(findingReviewDraftSchema),
     report: lenientArray(
       z.object({ field: z.enum(["conclusions", "investigationLimitations"]), text: z.string() }),
     ),
@@ -212,5 +223,10 @@ export function sanitizeWrites(
       why: u.why.slice(0, RATIONALE_MAX),
       seen: known.get(u.stepId)!,
     }));
-  return { findings, nextSteps, report, stepUpdates };
+  const findingReviews = sanitizeFindingReviews(
+    w.findingReviews ?? [],
+    knownEventIds,
+    sets.reviewableFindings,
+  );
+  return { findings, nextSteps, report, stepUpdates, findingReviews };
 }

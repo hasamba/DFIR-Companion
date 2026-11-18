@@ -282,7 +282,7 @@ export async function buildWatsonCaseHead(
     `FINDINGS:\n${
       state.findings
         .slice(0, MAX_FINDINGS)
-        .map((f) => `[${f.id}] [${f.severity}] ${f.title}`)
+        .map((f) => `[${f.id}] [${f.severity}]${f.status === "dismissed" ? " (dismissed)" : ""} ${f.title}`)
         .join("\n") || "(none)"
     }\n\n`;
   const max = WATSON_CASE_CONTEXT_PROMPT_MAX;

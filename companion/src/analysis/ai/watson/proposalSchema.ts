@@ -71,6 +71,21 @@ const nextStepUpdateProposal = z.object({
   index: z.number().int().nonnegative().catch(0),
 });
 
+// #2682: a malformed severity drops to undefined; the writer then refuses a demotion (fail closed).
+const findingReviewProposal = z.object({
+  ...common,
+  ...rawEvidence,
+  kind: z.literal("finding_review"),
+  targetId: z.string(),
+  action: z.enum(["demote", "dismiss"]),
+  severity: z.enum(["Critical", "High", "Medium", "Low", "Info"]).optional().catch(undefined),
+  why: z.string().catch(""),
+  eventIds: z.array(z.string()).catch([]),
+  before: finding,
+  seenEventIds: z.array(z.string()).optional().catch(undefined),
+  key: z.string().optional().catch(undefined),
+});
+
 const reportTextProposal = z.object({
   ...common,
   ...rawEvidence,
@@ -197,6 +212,7 @@ export const proposalSchema: z.ZodType<WatsonProposal, z.ZodTypeDef, unknown> = 
   findingProposal,
   nextStepProposal,
   nextStepUpdateProposal,
+  findingReviewProposal,
   reportTextProposal,
   eventPromoteProposal,
   veloLaunchProposal,

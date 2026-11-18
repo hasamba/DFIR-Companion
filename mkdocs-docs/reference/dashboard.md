@@ -800,6 +800,9 @@ Has its own report section ("Compliance Impact") — see [Reports & Exports](rep
 
 Open questions the AI thinks you should be pursuing based on the current evidence — gaps, unknowns, and unexplained events.
 
+A question with a **System check** badge was made by DFIR Companion, not by you and not by the AI. It is a
+coverage gap, not a finding. See [Hidden lines in a grouped burst](advanced.md#hidden-lines-in-a-grouped-burst).
+
 ---
 
 ## Recommended Next Steps

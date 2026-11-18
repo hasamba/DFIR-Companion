@@ -5,7 +5,9 @@ import type {
   InvestigationQuestion,
   NextStep,
   QuestionStatus,
+  Severity,
 } from "../../stateTypes.js";
+import type { WatsonReviewAction } from "../../watsonItemTypes.js";
 
 // Watson: the per-case AI investigation chat agent. These types describe the persisted chat
 // (state/watson-chat.json). Chat text and pasted content may carry adversary-controlled strings,
@@ -203,6 +205,31 @@ export interface WatsonNextStepUpdateProposal extends WatsonProposalCommon, Wats
   index: number;
 }
 
+/**
+ * #2682: Watson's verdict on a finding synthesis wrote (never one Watson or the analyst wrote): a
+ * lower severity, or dismissed, with the reason and the forensic events that disprove it. `before`
+ * is the finding as Watson read it; apply refuses when it changed. On apply the case keeps the
+ * verdict under `key`, so later synthesis runs apply it again (timeline/watsonVerdicts.ts).
+ */
+export interface WatsonFindingReviewProposal extends WatsonProposalCommon, WatsonRawEvidence {
+  kind: "finding_review";
+  targetId: string;
+  action: WatsonReviewAction;
+  /** demote only: the lower severity. */
+  severity?: Severity;
+  why: string;
+  eventIds: string[];
+  before: Finding;
+  /**
+   * The finding's cited event ids as Watson was shown them: the evidence its verdict considered. A
+   * finding that cites anything else at apply time changed since the proposal and is not changed.
+   * Absent on a proposal stored before this field: `before.relatedEventIds` stands in.
+   */
+  seenEventIds?: string[];
+  /** Set on apply: the verdict's key in the case. */
+  key?: string;
+}
+
 export interface WatsonReportTextProposal extends WatsonProposalCommon, WatsonRawEvidence {
   kind: "report_text";
   targetId: string;
@@ -357,6 +384,7 @@ export type WatsonProposal =
   | WatsonFindingProposal
   | WatsonNextStepProposal
   | WatsonNextStepUpdateProposal
+  | WatsonFindingReviewProposal
   | WatsonReportTextProposal
   | WatsonEventPromoteProposal
   | WatsonVeloLaunchProposal

@@ -33,7 +33,9 @@
       const state = await fetch(
         `/cases/${encodeURIComponent(caseId)}/state`,
       ).then((r) => (r.ok ? r.json() : null));
+      // A system coverage check (#2681) belongs to this case's evidence, not to a template.
       const initialKeyQuestions = (state?.keyQuestions ?? [])
+        .filter((q) => !q.coverageGap)
         .map((q) => q.question)
         .filter(Boolean);
       const res = await fetch("/templates", {

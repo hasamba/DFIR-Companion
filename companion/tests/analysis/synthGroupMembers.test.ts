@@ -53,7 +53,7 @@ describe("groupMemberLines", () => {
 
   it("returns nothing for an identical burst — the row renders exactly as before", () => {
     const same = [0, 1, 2, 3].map((i) => proc(`s${i}`, i, "/c whoami"));
-    expect(groupMemberLines(same)).toEqual({ lines: [], distinct: 1, more: 0 });
+    expect(groupMemberLines(same)).toEqual({ lines: [], distinct: 1, more: 0, hiddenIds: [] });
   });
 
   it("dedups on the arguments — image quoting and whitespace runs do not split a command", () => {
@@ -104,7 +104,7 @@ describe("groupMemberLines", () => {
     const bare = [0, 1, 2].map((i) =>
       proc(`n${i}`, i, "", { commandLine: undefined, description: "Sigma: something fired" }),
     );
-    expect(groupMemberLines(bare)).toEqual({ lines: [], distinct: 0, more: 0 });
+    expect(groupMemberLines(bare)).toEqual({ lines: [], distinct: 0, more: 0, hiddenIds: [] });
   });
 
   it("caps the list and reports the remainder", () => {
@@ -114,6 +114,20 @@ describe("groupMemberLines", () => {
     expect(lines).toHaveLength(DEFAULT_MAX_MEMBER_LINES);
     expect(more).toBe(20 - 1 - DEFAULT_MAX_MEMBER_LINES);
     expect(groupMemberLines(many, 3).lines).toHaveLength(3);
+  });
+
+  it("returns the id of each hidden distinct line, one per counted command (#2681)", () => {
+    const many = Array.from({ length: 20 }, (_, i) => proc(`m${i}`, i, `/c cmd${i}`));
+    // a repeat of a hidden command adds no id; a repeat of a shown one adds none either
+    const withRepeats = [...many, proc("r1", 40, "/c cmd19"), proc("r2", 41, "/c cmd1")];
+    const { more, hiddenIds } = groupMemberLines(withRepeats);
+    expect(hiddenIds).toHaveLength(more);
+    expect(hiddenIds).toEqual(["m13", "m14", "m15", "m16", "m17", "m18", "m19"]);
+  });
+
+  it("hides nothing when every member repeats one command (#2681)", () => {
+    const same = Array.from({ length: 30 }, (_, i) => proc(`s${i}`, i, "/c whoami"));
+    expect(groupMemberLines(same).hiddenIds).toEqual([]);
   });
 
   it("keeps the tail of a long command line — the target sits at the end", () => {

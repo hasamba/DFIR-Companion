@@ -9,7 +9,8 @@
 //
 // One seat still stands for the burst — that is what grouping is for — but the row now names each
 // member whose command differs, with its id, time and host, so the model can cite `14e80` directly.
-// Pure and prompt-only: derived on read, nothing in the case is touched.
+// Pure and prompt-only: derived on read, nothing in the case is touched. The ids of the lines past the
+// cap are returned too (#2681), for the Key Question the synthesis fold asks about them.
 
 import type { ForensicEvent } from "./stateTypes.js";
 import { eventCommandLine } from "./chainSignature.js";
@@ -30,6 +31,11 @@ export interface GroupMemberLines {
   distinct: number;
   /** Distinct member commands beyond the cap, counted rather than shown. */
   more: number;
+  /**
+   * The first member of each counted-not-shown command, member order: `hiddenIds.length === more`
+   * (#2681). The prompt does not print them; burstGapQuestions.ts asks a Key Question about them.
+   */
+  hiddenIds: string[];
 }
 
 // The arguments of a member's command line as the analyst would read them: the structured field
@@ -76,23 +82,27 @@ export function groupMemberLines(
 ): GroupMemberLines {
   const seen = new Set<string>();
   const lines: string[] = [];
-  let more = 0;
+  const hiddenIds: string[] = [];
   members.forEach((e, index) => {
     const identity = memberArgs(e);
     if (!identity || seen.has(identity)) return;
     seen.add(identity);
     if (index === 0) return; // the representative's own command is already on its row
     if (lines.length >= max) {
-      more += 1;
+      hiddenIds.push(e.id);
       return;
     }
     lines.push(`${memberTag(e)} ${capLine(memberArgs(e))}`);
   });
-  return { lines, distinct: seen.size, more };
+  return { lines, distinct: seen.size, more: hiddenIds.length, hiddenIds };
 }
 
 /** The suffix fragment a grouped row appends when its members differ; empty when they do not. */
-export function renderGroupMembers({ lines, distinct, more }: GroupMemberLines): string {
+export function renderGroupMembers({
+  lines,
+  distinct,
+  more,
+}: Pick<GroupMemberLines, "lines" | "distinct" | "more">): string {
   if (!lines.length) return "";
   const rest = more > 0 ? `; +${more} more` : "";
   return `; ${distinct} distinct command lines — ${lines.join("; ")}${rest}`;
