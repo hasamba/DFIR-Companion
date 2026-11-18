@@ -129,11 +129,17 @@ function pickResolvedModel(modelUsage: ClaudeResultEvent["modelUsage"]): string 
 }
 
 // Isolation flags: replace the default system prompt, load NO settings/hooks/CLAUDE.md, no MCP,
-// and NO tools. The empty tool allowlist also strips tool schemas that otherwise cost ~15k input
-// tokens per call, and guarantees a single-turn call can't hang on a tool-permission prompt.
+// and NO tools. `--tools ""` is what removes them (#2676): `--allowed-tools ""` alone only stops
+// auto-approval, so the CLI still OFFERED ~30 tools, the model called some, each was refused and the
+// CLI asked again — 2–4 model requests per call, each re-reading the whole prompt. No tools also
+// drops ~15k tokens of tool schemas per request. The empty allowlist stays as a second guard.
 // A side effect of `--setting-sources ""`: the user's own `effort` setting never loads either, so
 // deep reasoning (#1468) must arrive as an explicit `--effort` flag — see claudeEffort.ts.
-const ISOLATION_ARGS = ["--strict-mcp-config", "--setting-sources", "", "--allowed-tools", ""];
+const ISOLATION_ARGS = ["--strict-mcp-config", "--setting-sources", "", "--tools", "", "--allowed-tools", ""];
+
+// The CLI's own diagnostic when it predates `--tools` (#2676): exact option name, so a prompt mentioning
+// it cannot match — stderr carries only the CLI's own messages.
+const TOOLS_FLAG_UNKNOWN = /unknown option '--tools'/;
 
 export class ClaudeCodeProvider implements AIProvider {
   readonly name = "claude-code";
@@ -231,6 +237,13 @@ export class ClaudeCodeProvider implements AIProvider {
     // or an error, and only safety_stop keeps the retry loop from resending the same evidence.
     if (safetyStopped) throw safetyStopError(`Claude Code (${this.model || "default model"})`);
 
+    if (!resultEvent && run.code !== 0 && TOOLS_FLAG_UNKNOWN.test(run.stderr)) {
+      throw new ProviderError(
+        `This Claude Code CLI is too old: it does not know --tools, which keeps Watson and synthesis to a ` +
+          `single request. Update it (\`claude update\`) and try again.`,
+        "other",
+      );
+    }
     if (!resultEvent) {
       const snip = (run.stderr || run.stdout).replace(/\s+/g, " ").trim().slice(0, 200);
       const kind: ProviderErrorKind = rateLimited ? "rate_limit" : "transport";

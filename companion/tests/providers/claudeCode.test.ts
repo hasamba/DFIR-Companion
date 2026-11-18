@@ -52,6 +52,10 @@ describe("ClaudeCodeProvider", () => {
     expect(a).toEqual(
       expect.arrayContaining(["--strict-mcp-config", "--setting-sources", "", "--allowed-tools", ""]),
     );
+    // #2676: no tool is even OFFERED (--allowed-tools only stops auto-approval), so the model cannot
+    // spend extra requests on tool calls that are refused.
+    expect(a[a.indexOf("--tools") + 1]).toBe("");
+    expect(a[a.indexOf("--allowed-tools") + 1]).toBe("");
     // stdin message
     const msg = JSON.parse(captured!.stdin.trim());
     expect(msg.type).toBe("user");
@@ -378,5 +382,24 @@ describe("ClaudeCodeProvider — safety-classifier stop (#1734)", () => {
       resultLine({ result: answer }),
     ]);
     expect(out.rawText).toBe(answer);
+  });
+});
+
+describe("ClaudeCodeProvider — no tools offered (#2676)", () => {
+  it("a CLI too old for --tools gets an actionable update error, not a silent fallback (#2676)", async () => {
+    const runner = fakeRunner({ code: 1, stderr: "error: unknown option '--tools'\n" });
+    const p = new ClaudeCodeProvider({ model: "sonnet", runner });
+    await expect(p.analyze({ systemPrompt: "S", userPrompt: "U", images: [] })).rejects.toThrow(
+      /too old.*update/i,
+    );
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+
+  it("another failure without a result keeps today's error", async () => {
+    const runner = fakeRunner({ code: 1, stderr: "something else broke" });
+    const p = new ClaudeCodeProvider({ model: "sonnet", runner });
+    await expect(p.analyze({ systemPrompt: "S", userPrompt: "U", images: [] })).rejects.toThrow(
+      /produced no result.*something else broke/,
+    );
   });
 });
