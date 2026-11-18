@@ -175,14 +175,15 @@ command lines:
 
 - The question says how many lines were hidden, and which program and host ran them. It does not copy
   the command text.
-- It lists the hidden events by id, up to 50, so Watson (or you) can open them. Watson reads them from
+- It lists the hidden events that no finding cites yet by id, up to 50, so Watson (or you) can open
+  them. After each synthesis it lists the next ones that are still not cited. Watson reads them from
   the forensic timeline, not from the super-timeline.
 - It is pinned and has a **System check** badge in the Key Questions panel and on Watson's board. In the
   Markdown report, the shift hand-off and the IRIS and Notion exports it starts with **[System coverage check]**. It is not listed as
   an investigation goal, and **Save as template** leaves it out.
 - **Watson Auto** works it like any other open Key Question.
-- It is marked **answered** when findings cite every listed hidden event, and **partial** when they cite
-  some. Automatic findings and dismissed findings do not count. An answer that you applied from Watson
+- It is marked **answered** only when findings cite every hidden event of the burst, also when there
+  are more than 50. It is **partial** when they cite some. Automatic findings and dismissed findings do not count. An answer that you applied from Watson
   stays.
 - It is removed when a later synthesis no longer hides lines for that burst, unless you applied an
   answer to it from Watson. An applied answer stays.

@@ -181,14 +181,28 @@ describe("applyBurstGapQuestions", () => {
     expect(later.map((q) => q.id)).toContain(`${BURST_GAP_ID_PREFIX}a0`);
   });
 
-  it("lists at most Watson's lookup limit of ids and closes against the listed ones", () => {
+  it("lists at most Watson's lookup limit of ids, and counts every hidden line", () => {
     expect(BURST_GAP_LISTED_IDS).toBe(WATSON_LOOKUP_LIMITS.eventIds);
     const g = burst("z", 13 + 60);
     const [q] = gapQs(run([], [g]));
     expect(q.coverageGap?.hiddenCount).toBe(60);
+    expect(q.coverageGap?.coveredCount).toBe(0);
     expect(q.coverageGap?.hiddenEventIds).toHaveLength(BURST_GAP_LISTED_IDS);
-    const cited = q.coverageGap!.hiddenEventIds;
-    expect(gapQs(run([], [g], [finding("f1", cited)]))[0].status).toBe("answered");
+  });
+
+  it("stays partial until findings cite every hidden line, listing the still-uncovered ones", () => {
+    const g = burst("z", 13 + 70);
+    const hidden = g.slice(13).map((e) => e.id);
+    const half = gapQs(run([], [g], [finding("f1", hidden.slice(0, 50))]))[0];
+    expect(half.status).toBe("partial");
+    expect(half.answer).toContain("50 of 70");
+    expect(half.coverageGap).toMatchObject({ hiddenCount: 70, coveredCount: 50 });
+    expect(half.coverageGap?.hiddenEventIds).toEqual(hidden.slice(50));
+    expect(half.pointer).toContain(hidden.slice(50).join(", "));
+    expect(half.pointer).not.toContain(`${hidden[0]},`);
+    const all = gapQs(run([], [g], [finding("f1", hidden.slice(0, 50)), finding("f2", hidden.slice(50))]))[0];
+    expect(all.status).toBe("answered");
+    expect(all.coverageGap).toMatchObject({ hiddenCount: 70, coveredCount: 70, hiddenEventIds: [] });
   });
 
   it("keeps command text out of the question and cleans the host and image it names", () => {

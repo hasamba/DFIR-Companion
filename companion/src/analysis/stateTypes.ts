@@ -686,16 +686,16 @@ export interface InvestigationQuestion {
   // is neutralized NOW and this badges "stale — press Re-synthesize" until the next real synthesis
   // recomputes the authoritative answer (which clears the flag). Absent = current.
   staleReSynth?: boolean;
-  // System-made coverage check (#2681): a grouped synthesis row counted command lines it never showed.
-  // Re-derived by the synthesis fold (burstGapQuestions.ts), never by the model; marked in UI/reports.
+  // System coverage check (#2681) on lines a grouped row hid: burstGapQuestions.ts, never the model.
   coverageGap?: BurstCoverageGap;
 }
 export interface BurstCoverageGap {
   kind: "burst-hidden-lines";
   representativeId: string;
   memberCount: number;
-  hiddenCount: number;
-  hiddenEventIds: string[]; // one forensic-timeline event per hidden line, capped at the lookup limit
+  hiddenCount: number; // every hidden distinct line, not just the listed ones
+  coveredCount?: number; // hidden lines live findings cite (absent on a question saved before #2681's fix)
+  hiddenEventIds: string[]; // still-uncited hidden lines, one event each, capped at the lookup limit
 }
 export type StepPriority = "critical" | "high" | "medium" | "low";
 

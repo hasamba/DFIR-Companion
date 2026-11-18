@@ -10,8 +10,11 @@
 // Key Questions, and reads the rows with a lookup by event id from the FORENSIC timeline — this module
 // reads only the events it is handed by id and never the super-timeline.
 //
-// Lifecycle, re-derived on every synthesis: answered when live, non-automatic findings cite every listed
-// hidden id (partial when they cite some); dropped when the group no longer hides lines; at most
+// Lifecycle, re-derived on every synthesis: answered only when live, non-automatic findings cite EVERY
+// hidden id, not just the listed ones (partial when they cite some). The question lists at most
+// BURST_GAP_LISTED_IDS ids, the ones still uncited, so each run hands Watson the next batch. Only the
+// counts and that list are stored: the full id set is re-derived from the run's grouping, so the
+// state stays small however big the burst. Dropped when the group no longer hides lines; at most
 // MAX_BURST_GAP_QUESTIONS per case, largest gap first, questions already asked keeping their seat. An
 // answer the analyst applied from Watson is never overwritten. Pure.
 
@@ -54,7 +57,11 @@ function imageName(e: ForensicEvent): string {
   return cleanName(path ? path.split(/[\\/]/).pop() : e.processName);
 }
 
-interface Gap extends BurstCoverageGap {
+interface Gap {
+  representativeId: string;
+  memberCount: number;
+  /** Every hidden distinct line's event id, unlisted ones included. */
+  hiddenIds: string[];
   host: string;
   image: string;
 }
@@ -68,17 +75,15 @@ function gapsOf(input: BurstGapInput, membersOf: ReadonlyMap<string, readonly st
     const { hiddenIds } = groupMemberLines(members);
     if (!hiddenIds.length) continue;
     gaps.push({
-      kind: "burst-hidden-lines",
       representativeId,
       memberCount: members.length,
-      hiddenCount: hiddenIds.length,
-      hiddenEventIds: hiddenIds.slice(0, BURST_GAP_LISTED_IDS),
+      hiddenIds,
       host: cleanName(members[0].asset),
       image: imageName(members[0]),
     });
   }
   return gaps.sort(
-    (a, b) => b.hiddenCount - a.hiddenCount || a.representativeId.localeCompare(b.representativeId),
+    (a, b) => b.hiddenIds.length - a.hiddenIds.length || a.representativeId.localeCompare(b.representativeId),
   );
 }
 
@@ -92,52 +97,82 @@ function selectGaps(gaps: Gap[], askedIds: ReadonlySet<string>): Gap[] {
 function questionText(g: Gap): string {
   const from = g.image ? ` from ${g.image}` : "";
   const on = g.host ? ` on ${g.host}` : "";
-  const lines = g.hiddenCount === 1 ? "1 distinct command line" : `${g.hiddenCount} distinct command lines`;
+  const n = g.hiddenIds.length;
+  const lines = n === 1 ? "1 distinct command line" : `${n} distinct command lines`;
   return `A grouped burst of ${g.memberCount} events${from}${on} hid ${lines} that synthesis counted but never read. What did they run?`;
 }
 
-function pointerText(g: Gap): string {
-  const listed = g.hiddenEventIds.length;
-  const part = g.hiddenCount > listed ? ` (the first ${listed} of ${g.hiddenCount})` : "";
-  return `Read these forensic-timeline events by id${part}: ${g.hiddenEventIds.join(", ")}`;
+/** Which hidden ids live findings cite themselves, and which findings cite them. */
+interface Coverage {
+  uncited: string[];
+  coveredCount: number;
+  covering: string[];
 }
 
 // The live findings that cite each hidden id themselves — an automatic backfill finding or a dismissed
 // one is not a reading of the line, and a citation of the representative alone covers nothing here.
-function answerState(
-  g: Gap,
-  findings: BurstGapInput["findings"],
-): Pick<InvestigationQuestion, "status" | "answer"> & { relatedFindingIds?: string[] } {
+function coverageOf(g: Gap, findings: BurstGapInput["findings"]): Coverage {
   const readers = findings.filter(
     (f) => !f.id.startsWith(AUTO_FINDING_ID_PREFIX) && f.status !== "dismissed",
   );
+  const hidden = new Set(g.hiddenIds);
   const covering = new Set<string>();
   const cited = new Set<string>();
   for (const f of readers)
-    for (const id of g.hiddenEventIds)
-      if ((f.relatedEventIds ?? []).includes(id)) {
+    for (const id of f.relatedEventIds ?? [])
+      if (hidden.has(id)) {
         cited.add(id);
         covering.add(f.id);
       }
-  const total = g.hiddenEventIds.length;
-  if (!cited.size) return { status: "unknown", answer: "" };
-  const ids = [...covering];
-  if (cited.size === total)
+  return {
+    uncited: g.hiddenIds.filter((id) => !cited.has(id)),
+    coveredCount: cited.size,
+    covering: [...covering],
+  };
+}
+
+function pointerText(g: Gap, c: Coverage): string {
+  if (!c.uncited.length) return "Findings cite every hidden line of this burst.";
+  const listed = Math.min(c.uncited.length, BURST_GAP_LISTED_IDS);
+  const total = g.hiddenIds.length;
+  const part =
+    c.uncited.length > listed
+      ? ` (the first ${listed} of ${c.uncited.length} still uncited, of ${total} hidden)`
+      : c.coveredCount
+        ? ` (the ${listed} of ${total} hidden still uncited)`
+        : "";
+  return `Read these forensic-timeline events by id${part}: ${c.uncited.slice(0, listed).join(", ")}`;
+}
+
+function answerState(
+  g: Gap,
+  c: Coverage,
+): Pick<InvestigationQuestion, "status" | "answer"> & { relatedFindingIds?: string[] } {
+  const total = g.hiddenIds.length;
+  if (!c.coveredCount) return { status: "unknown", answer: "" };
+  const ids = c.covering;
+  if (!c.uncited.length)
     return {
       status: "answered",
-      answer: `Findings ${ids.join(", ")} cite every listed hidden line.`,
+      answer: `Findings ${ids.join(", ")} cite every hidden line.`,
       relatedFindingIds: ids,
     };
   return {
     status: "partial",
-    answer: `Findings ${ids.join(", ")} cite ${cited.size} of ${total} listed hidden lines.`,
+    answer: `Findings ${ids.join(", ")} cite ${c.coveredCount} of ${total} hidden lines.`,
     relatedFindingIds: ids,
   };
 }
 
-function gapField(g: Gap): BurstCoverageGap {
-  const { host: _h, image: _i, ...field } = g;
-  return field;
+function gapField(g: Gap, c: Coverage): BurstCoverageGap {
+  return {
+    kind: "burst-hidden-lines",
+    representativeId: g.representativeId,
+    memberCount: g.memberCount,
+    hiddenCount: g.hiddenIds.length,
+    coveredCount: c.coveredCount,
+    hiddenEventIds: c.uncited.slice(0, BURST_GAP_LISTED_IDS),
+  };
 }
 
 function buildQuestion(
@@ -145,15 +180,16 @@ function buildQuestion(
   existing: InvestigationQuestion | undefined,
   findings: BurstGapInput["findings"],
 ): InvestigationQuestion {
+  const c = coverageOf(g, findings);
   // An answer the analyst applied from Watson stands; only the gap data is refreshed.
-  if (existing && isProtectedWatson(existing)) return { ...existing, coverageGap: gapField(g) };
+  if (existing && isProtectedWatson(existing)) return { ...existing, coverageGap: gapField(g, c) };
   return {
     id: gapId(g.representativeId),
     question: questionText(g),
-    pointer: pointerText(g),
-    ...answerState(g, findings),
+    pointer: pointerText(g, c),
+    ...answerState(g, c),
     pinned: true,
-    coverageGap: gapField(g),
+    coverageGap: gapField(g, c),
     // An unanswered question Watson touched keeps Watson's mark, so no merge drops it.
     ...(existing?.author === "watson" ? { author: "watson" as const } : {}),
   };
