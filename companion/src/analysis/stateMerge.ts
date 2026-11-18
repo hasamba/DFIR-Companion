@@ -363,6 +363,7 @@ export function upsertForensicEvents(
         ...(incoming.dstIp ? { dstIp: incoming.dstIp } : {}),
         ...(incoming.port !== undefined ? { port: incoming.port } : {}),
         ...(incoming.origin ? { origin: incoming.origin } : {}),
+        ...(incoming.timeBasis ? { timeBasis: incoming.timeBasis } : {}), // #2684
         ...(incoming.sharingMarking ? { sharingMarking: incoming.sharingMarking } : {}),
       };
       forensicTimeline.push(created);

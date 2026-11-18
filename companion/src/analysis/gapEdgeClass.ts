@@ -120,6 +120,32 @@ export function isRebootRow(e: ForensicEvent): boolean {
   return REBOOT_EID_RE.test(text) || REBOOT_TEXT_RE.test(text);
 }
 
+// A logging service that stopped (#2684): EID 1100 (the event logging service shut down), or a
+// 7036 / 7034-style record naming Sysmon, the Windows Event Log service or auditd as stopped. Narrow
+// on purpose; a false match only keeps the stricter grade. 6006 is a reboot and handled above.
+const LOG_SERVICE_DOWN_EID_RE = eidRe("1100");
+const LOG_SERVICE_STOP_RE =
+  /\b(?:sysmon(?:64)?|eventlog|windows event log|auditd)\b[^\n]{0,80}?\b(?:entered the stopped state|terminated unexpectedly|stopped)\b/i;
+
+export function isStoppedLogServiceRow(e: ForensicEvent): boolean {
+  const text = rowText(e);
+  return LOG_SERVICE_DOWN_EID_RE.test(text) || LOG_SERVICE_STOP_RE.test(text);
+}
+
+// The collection's own row (#2684): a row the import attributed to the case's collector, or one
+// whose timestamp is the scanner's time rather than the artifact's (`timeBasis: "scan"`). Both are
+// structured marks set by importers — never a name list read from event content an intruder writes.
+export function isCollectionRow(e: ForensicEvent): boolean {
+  return e.origin === "collector" || e.timeBasis === "scan";
+}
+
+// How a panel or report names the closing row: source, id and time. Never the description — it is
+// adversary-influenced text, and this label rides into the dashboard and the report.
+function collectionEdgeLabel(e: ForensicEvent): string {
+  const source = e.sources?.[0] ?? (e.origin === "collector" ? "collector" : "scan");
+  return `${source} row ${e.id} at ${e.timestamp}`;
+}
+
 const atLeastMedium = (e: ForensicEvent | undefined): boolean =>
   e !== undefined && SEVERITY_RANK[e.severity] <= SEVERITY_RANK.Medium;
 
@@ -128,13 +154,39 @@ const atLeastMedium = (e: ForensicEvent | undefined): boolean =>
 // whose two edges sit in separate cloud accounts/tenants (#2606): a hole between two independent
 // log sources cannot be cleared logs or a stopped collector, and a log clear in one account says
 // nothing about it, so the case-wide anti-forensic flag does not lift it either.
+// A gap that closes on the collection's own row (#2684) is the wait before collection: Info, and the
+// case-wide flag does not lift it — only a log clear or a stopped logging service at the edge that
+// opens the silence keeps today's grade. A Medium+ grade on the closing row is the scanner's verdict
+// on something it found, dated when it looked, so it corroborates nothing about the silence.
+type CompleteGapGrade = Pick<
+  TimelineGap,
+  | "severity"
+  | "corroborated"
+  | "rebootEdge"
+  | "scopeBoundary"
+  | "scopeBoundaryLabel"
+  | "collectionEdge"
+  | "collectionEdgeEventId"
+  | "collectionEdgeLabel"
+>;
 function gradeCompleteGap(
   before: ForensicEvent | undefined,
   after: ForensicEvent | undefined,
   antiForensic: boolean,
-): Pick<TimelineGap, "severity" | "corroborated" | "rebootEdge" | "scopeBoundary" | "scopeBoundaryLabel"> {
+): CompleteGapGrade {
   const reboot = (before !== undefined && isRebootRow(before)) || (after !== undefined && isRebootRow(after));
   const boundary = reboot ? null : scopeBoundaryLabel(before, after);
+  const loggingStopped =
+    before !== undefined && (isAntiForensicRow(before) || isStoppedLogServiceRow(before));
+  if (!reboot && boundary === null && after !== undefined && isCollectionRow(after) && !loggingStopped) {
+    return {
+      severity: "Info",
+      corroborated: false,
+      collectionEdge: true,
+      collectionEdgeEventId: after.id,
+      collectionEdgeLabel: collectionEdgeLabel(after),
+    };
+  }
   const corroborated =
     !reboot && boundary === null && (antiForensic || atLeastMedium(before) || atLeastMedium(after));
   return {

@@ -2,6 +2,7 @@ import type { ExcludedIocRef, IocExcludeRule } from "./iocExclude.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 import type { EventRevisionFields } from "./eventRevisionTypes.js";
+import type { EventTimeBasisFields, SourceRecords } from "./eventSourceTypes.js";
 import type { WatsonFindingMarks, WatsonItemMark } from "./watsonItemTypes.js";
 
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
@@ -452,22 +453,11 @@ export interface TimelineEntry {
   sourceScreenshots: string[];
 }
 
-// Where an aggregated cloud event came from (#2301). `group` keys its member records in the case's
-// provenance relation (analysis/cloudRecordStore.ts; GET /cases/:id/source-records/:group pages them);
-// `refs` is a bounded sample of record identities and `count` all of them. `conflict`: a member
-// shared its record id with a DIFFERENT payload already imported. `hashIdentified`: a member had no
-// provider id and is identified by its content hash.
-export interface SourceRecords {
-  group: string;
-  count: number;
-  refs: string[];
-  conflict?: boolean;
-  hashIdentified?: boolean;
-}
+export type { SourceRecords } from "./eventSourceTypes.js"; // #2301
 
 // A real-world event reconstructed from the evidence (e.g. a process execution, logon, file write) with the
 // time it actually happened — the chronological attack story. `revisions`: eventRevision.ts (#2141).
-export interface ForensicEvent extends EventRevisionFields {
+export interface ForensicEvent extends EventRevisionFields, EventTimeBasisFields {
   id: string;
   timestamp: string; // the event's real time as observed in the artifact (best effort)
   description: string;

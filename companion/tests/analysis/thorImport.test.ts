@@ -268,3 +268,43 @@ describe("THOR duplicate collapse keeps the highest grade", () => {
     expect(r.events[0].description).toMatch(/^THOR Alert/);
   });
 });
+
+// #2684: a row with no artifact time of its own is dated by THOR's scan time. That is marked, so a
+// coverage gap that closes on it reads as the wait before the collection, not a hole in the logs.
+describe("parseThorReport — scan-time rows (#2684)", () => {
+  const LOG_HIT = {
+    time: "2026-06-03T11:10:48Z",
+    hostname: "WIN11",
+    level: "Warning",
+    module: "LogScan",
+    message: "Suspicious log entry",
+    entry: "powershell -enc AAAA",
+  };
+
+  it("marks a row dated only by the scan time, and leaves artifact-dated rows unmarked", () => {
+    const r = parseThorReport(jsonl(LOG_HIT, PROC_ALERT, FILE_WARN));
+    const log = r.events.find((e) => e.description.includes("LogScan"))!;
+    expect(log.timestamp).toBe("2026-06-03T11:10:48Z");
+    expect(log.timeBasis).toBe("scan");
+    for (const e of r.events.filter((x) => x !== log)) expect(e.timeBasis).toBeUndefined();
+  });
+
+  it("does not mark a row dated by log_created or log_modified", () => {
+    for (const key of ["log_created", "log_modified"]) {
+      const r = parseThorReport(jsonl({ ...LOG_HIT, [key]: "2026-06-03T09:00:00Z" }));
+      expect(r.events[0].timeBasis, key).toBeUndefined();
+    }
+  });
+
+  it("lets the flag follow the timestamp an aggregated finding keeps", () => {
+    const artifactDated = { ...LOG_HIT, time: "2026-06-03T11:20:00Z", log_created: "2026-06-03T09:00:00Z" };
+    const scanFirst = parseThorReport(jsonl(LOG_HIT, artifactDated));
+    expect(scanFirst.events).toHaveLength(1);
+    expect(scanFirst.events[0].timestamp).toBe("2026-06-03T09:00:00Z");
+    expect(scanFirst.events[0].timeBasis).toBeUndefined();
+    const laterScan = { ...LOG_HIT, time: "2026-06-03T08:00:00Z" };
+    const artifactFirst = parseThorReport(jsonl(artifactDated, laterScan));
+    expect(artifactFirst.events[0].timestamp).toBe("2026-06-03T08:00:00Z");
+    expect(artifactFirst.events[0].timeBasis).toBe("scan");
+  });
+});
