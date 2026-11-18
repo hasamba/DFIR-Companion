@@ -9,6 +9,7 @@ import { deadEvidenceIds, rawEvidenceOf } from "./rawEvidence.js";
 import { proposalTargetId, type WatsonChat, type WatsonProposal, type WatsonProposalKind } from "./types.js";
 import { eventPromoteWriter } from "./writers/eventPromoteWriter.js";
 import { findingWriter } from "./writers/findingWriter.js";
+import { findingReviewWriter, reviewChange } from "./writers/findingReviewWriter.js";
 import { nextStepWriter } from "./writers/nextStepWriter.js";
 import { nextStepUpdateWriter, stepChange } from "./writers/nextStepUpdateWriter.js";
 import { questionWriter } from "./writers/questionWriter.js";
@@ -52,6 +53,7 @@ const WRITERS: Partial<Record<WatsonProposalKind, WatsonWriter<WatsonProposal>>>
   finding_update: findingWriter,
   next_step_new: nextStepWriter,
   next_step_update: nextStepUpdateWriter,
+  finding_review: findingReviewWriter,
   report_text: reportTextWriter,
   event_promote: eventPromoteWriter,
   velo_launch: veloLaunchWriter,
@@ -85,6 +87,7 @@ const TARGET_TYPE: Record<WatsonProposalKind, WatsonTargetType> = {
   finding_update: "finding",
   next_step_new: "next_step",
   next_step_update: "next_step",
+  finding_review: "finding",
   report_text: "report",
   event_promote: "event",
   velo_launch: "hunt",
@@ -105,6 +108,8 @@ function describe(p: WatsonProposal): string {
       return `next step: ${p.after.action}`;
     case "next_step_update":
       return stepChange(p);
+    case "finding_review":
+      return reviewChange(p);
     case "report_text":
       return `report text (${p.field})`;
     case "event_promote":

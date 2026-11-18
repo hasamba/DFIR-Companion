@@ -16,6 +16,7 @@ import { detectionRulesHtml } from "./detectionRules.js";
 import { caseDomains, defangIndicators } from "./defang.js";
 import { buildMatrixEmbed, MATRIX_SECTION_HTML, MATRIX_STYLES } from "./interactiveHtmlMatrix.js";
 import { MATRIX_SCRIPT } from "./interactiveHtmlMatrixScript.js";
+import { watsonReviewText } from "./watsonFindingMd.js";
 
 // A self-contained, interactive HTML report (#233). Unlike the canonical print-oriented HTML
 // report (html.ts), this is a single-page app: all case data is embedded as a JSON blob inside a
@@ -75,6 +76,8 @@ export interface FindingCard {
   status: FindingStatus;
   /** "Other commands in this session" (#1594), one defanged line each. */
   sessionCommands?: string[];
+  /** #2682: Watson demoted or dismissed this synthesis finding (or a new run reopened it). */
+  watsonNote?: string;
 }
 
 export interface InteractiveCaseData {
@@ -140,6 +143,7 @@ function toTimelineRow(e: ForensicEvent, domains: string[]): TimelineRow {
 // values at all, by design (see the header). So the prose fields are the whole exposure here.
 function toFindingCard(f: Finding, domains: string[], keptIds: ReadonlySet<string>): FindingCard {
   const notes = sessionCommandLines(f, domains, keptIds);
+  const watsonNote = watsonReviewText(f); // #2682: rendered as a text node, never markup
   return {
     id: f.id,
     severity: f.severity,
@@ -154,6 +158,7 @@ function toFindingCard(f: Finding, domains: string[], keptIds: ReadonlySet<strin
     firstSeen: f.firstSeen,
     status: f.status,
     ...(notes.length ? { sessionCommands: notes } : {}),
+    ...(watsonNote ? { watsonNote: defangIndicators(watsonNote, domains) } : {}),
   };
 }
 
@@ -407,6 +412,7 @@ const SCRIPT = `
         el("p", null, [el("b", { text: "ID: " }), el("span", { text: f.id })]),
         el("p", null, [el("b", { text: "First seen: " }), el("span", { text: f.firstSeen || "—" })]),
         el("p", null, [el("b", { text: "Status: " }), el("span", { text: f.status })]),
+        f.watsonNote ? el("p", null, [el("b", { text: "Watson: " }), el("span", { text: f.watsonNote })]) : null,
         el("p", { text: f.description }),
         f.sessionCommands && f.sessionCommands.length ? el("p", null, [el("b", { text: "Other commands in this session: " }), el("span", { text: f.sessionCommands.join(" | ") })]) : null,
         f.confidenceReason ? el("p", null, [el("b", { text: "Confidence reason: " }), el("span", { text: f.confidenceReason })]) : null,

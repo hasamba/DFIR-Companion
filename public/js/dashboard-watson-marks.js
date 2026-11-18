@@ -23,6 +23,7 @@
   const REPORT_FIELDS = ["conclusions", "investigationLimitations"];
 
   let applied = []; // applied Watson proposals that write into a section
+  let appliedReviews = []; // applied finding reviews (#2682), found by the finding's mark
   let signature = "";
   let lastReportMeta = null;
 
@@ -57,7 +58,29 @@
   // "" unless an applied Watson proposal targets the item (or the item itself says Watson wrote it).
   // item (optional): the finding / step / event / report meta being drawn, for what the proposal
   // list cannot say (synthesis notes, a proposal that has left the capped chat).
+  // #2682: a synthesis finding Watson demoted or dismissed. The mark is on the finding itself (a
+  // re-synthesis gives the finding a new id), so Undo finds the proposal by the mark's proposal id.
+  function reviewMarkHtml(r) {
+    const p = appliedReviews.find((x) => x.id === r.proposalId);
+    const auto = r.approvedBy === "Watson (Auto)";
+    const who = auto ? "Watson (Auto) did this. It did not ask first" : `${r.approvedBy || "an analyst"} approved it`;
+    const what = r.action === "dismiss" ? "Watson dismissed this" : `Watson demoted this from ${r.fromSeverity} to ${r.severity}`;
+    const cited = Array.isArray(r.eventIds) && r.eventIds.length ? ` Cited events: ${r.eventIds.join(", ")}.` : "";
+    let lead = "";
+    if (Array.isArray(r.newEventIds) && r.newEventIds.length) lead = `Not applied: this synthesis cites new evidence (${r.newEventIds.join(", ")}). Earlier: `;
+    else if (r.autoHeld) lead = "Not applied: Auto mode never changes a High or Critical finding. Earlier: ";
+    const undoTitle = "Undo Watson's change to this finding";
+    return (
+      `<span class="watson-mark" title="${escAttr(`${what}. ${who}.`)}">Watson</span>` +
+      (p
+        ? `<button type="button" class="watson-mini watson-undo" data-act="watsonAct" data-w-verb="undo" data-pid="${escAttr(p.id)}" title="${escAttr(undoTitle)}" aria-label="${escAttr(undoTitle)}">Undo</button>`
+        : "") +
+      `<span class="watson-note">${esc(`${lead}${what} (${who}): ${r.reason}.${cited}`)}</span>`
+    );
+  }
+
   function watsonMarkHtml(kind, id, item) {
+    if (kind === "finding" && item && item.watsonReview && item.author !== "watson") return reviewMarkHtml(item.watsonReview);
     const p = proposalFor(kind, id);
     if (!p && !isWatsonItem(kind, item)) return "";
     const who = (p && p.appliedBy) || (item && item.approvedBy) || "an analyst";
@@ -91,7 +114,8 @@
   // once, when what is marked has changed (the signature stops a render -> chat -> render loop).
   function watsonMarksSet(proposals) {
     applied = (proposals || []).filter((p) => p.status === "applied" && KIND_OF[p.kind]);
-    const next = applied.map((p) => `${p.id}:${p.appliedBy || ""}`).sort().join("|");
+    appliedReviews = (proposals || []).filter((p) => p.status === "applied" && p.kind === "finding_review");
+    const next = [...applied, ...appliedReviews].map((p) => `${p.id}:${p.appliedBy || ""}`).sort().join("|");
     const changed = next !== signature;
     signature = next;
     fillReportSlots();

@@ -332,8 +332,12 @@ function partitionUncovered(
 }
 
 // A re-minted auto finding keeps the analyst's earlier dismissal (#2092).
+// A Watson dismissal is not carried here: its verdict is applied again at the save (#2682).
 function carryDismissal(built: Finding, prior: ReadonlyMap<string, Finding>): Finding {
-  return prior.get(built.id)?.status === "dismissed" ? { ...built, status: "dismissed" } : built;
+  const p = prior.get(built.id);
+  const r = p?.watsonReview;
+  const review = r && !r.newEventIds && !r.autoHeld ? r : undefined;
+  return (review ? review.fromStatus : p?.status) === "dismissed" ? { ...built, status: "dismissed" } : built;
 }
 
 function groupByTitle(events: ForensicEvent[]): Map<string, ForensicEvent[]> {

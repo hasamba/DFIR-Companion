@@ -517,7 +517,13 @@ describe("sanitizeWatsonReply writes", () => {
   });
 
   it("a reply with no writes, or without the citation sets, proposes no finding", () => {
-    expect(sanitize(undefined)).toEqual({ findings: [], nextSteps: [], report: [], stepUpdates: [] });
+    expect(sanitize(undefined)).toEqual({
+      findings: [],
+      nextSteps: [],
+      report: [],
+      stepUpdates: [],
+      findingReviews: [],
+    });
     const noSets = sanitizeWatsonReply(
       watsonReplySchema.parse({
         writes: { findings: [findingDraft({ eventIds: [], pasteLines: [{ pasteId: "wf-1", line: 1 }] })] },

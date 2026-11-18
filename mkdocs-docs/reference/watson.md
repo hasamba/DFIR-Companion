@@ -46,11 +46,14 @@ Watson can propose these changes. Each one appears in the chat as a proposal, an
 | --- | --- |
 | **Key question** | Adds a question to the board, or changes a question or its status. |
 | **Finding** | Adds a finding, or updates a finding that Watson wrote before. The finding cites timeline events, or lines of a paste you gave Watson. |
+| **Finding change** | Demotes (lowers the severity of) or dismisses a finding that a synthesis run wrote, with Watson's reason and the timeline events that disprove it. |
 | **Next step** | Adds a step to the Next Steps list. |
 | **Report text** | Writes the **Conclusions** or **Investigation limitations** text of the report. |
 | **Held rows** | Raises rows from a pasted file into the forensic timeline. See [Pasted files in a known format](#pasted-files-in-a-known-format). |
 
-A finding that cites a line of a paste adds that line to the forensic timeline when you apply it, so the citation points at a real event. Watson never edits a finding that you or a synthesis run wrote. It updates only its own.
+A finding that cites a line of a paste adds that line to the forensic timeline when you apply it, so the citation points at a real event. Watson never edits a finding that you wrote.
+
+Watson can propose to demote or dismiss a finding that a synthesis run wrote (the AI or the automatic rules), when the timeline events it cites disprove that finding. It never raises a severity. The finding then shows a **Watson** badge, the reason, the cited events, who approved it, and **Undo**. The report shows the same line. A later synthesis run keeps the change, even though it gives the finding a new id. The finding opens again only when a new synthesis run cites events that Watson's change did not consider. Then the finding shows that Watson's change no longer applies. In Auto mode, Watson applies this change by itself only to a Low or Medium finding. For a High or Critical finding it always waits for you to apply or reject it.
 
 Watson does not change the super-timeline. It searches it only when you ask (see Searching the super-timeline).
 
@@ -258,6 +261,7 @@ In Auto, Watson never:
 - launches more than 3 collections in a row from rounds it started itself, without a message from you
 - launches from a `/dfir ask` sent through a chat bot, or from any other round that did not start from the Watson panel (except the follow-up chain above)
 - acts on a case that was closed or archived while the round ran
+- demotes or dismisses a High or Critical finding (those wait with the note *Waits for you: Watson changes a High or Critical finding only when you approve it.*)
 
 In Auto, a case write waits for you when it rests on rows that Watson saw in the super-timeline or in a paste. This applies to findings, next steps, report text and key-question answers or new questions, from every round. The chat lists each one with the note *Waits for you: it rests on rows Watson saw in the super-timeline or in a paste.* A write that cites only forensic-timeline events still applies on its own. Promotions do not wait: the rows Watson promotes from the super-timeline or from a paste are evidence, with the Watson badge and Undo.
 

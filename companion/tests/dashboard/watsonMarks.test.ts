@@ -482,3 +482,57 @@ describe("super-timeline search and promotion cards", () => {
     expect(html).not.toContain("watson-prop");
   });
 });
+
+describe("#2682: a synthesis finding Watson demoted or dismissed", () => {
+  const review = {
+    action: "dismiss",
+    reason: HOSTILE,
+    eventIds: ["e2"],
+    proposalId: "wp-r1",
+    approvedBy: "Dana",
+    at: "t",
+    fromSeverity: "High",
+    fromStatus: "open",
+  };
+  const synth = (over: Record<string, unknown> = {}) =>
+    finding({ id: "f-model-9", status: "dismissed", watsonReview: review, ...over });
+
+  it("shows the badge, the escaped reason and an Undo bound to the proposal, under any finding id", () => {
+    const api = marks();
+    api.watsonMarksSet([prop("finding_review", "applied", { id: "wp-r1", targetId: "f-model-1" })]);
+    const html = api.watsonMarkHtml("finding", "f-model-9", synth());
+    expect(html).toContain("Watson dismissed this");
+    expect(html).toContain('data-pid="wp-r1"');
+    expect(html).not.toContain("<img");
+    expect(html).toContain("e2");
+  });
+
+  it("says when a new run reopened it, and has no Undo once the proposal left the chat", () => {
+    const api = marks();
+    api.watsonMarksSet([]);
+    const html = api.watsonMarkHtml(
+      "finding",
+      "f-model-9",
+      synth({ watsonReview: { ...review, newEventIds: ["e7"] } }),
+    );
+    expect(html).toContain("Not applied: this synthesis cites new evidence (e7)");
+    expect(html).not.toContain("watson-undo");
+  });
+
+  it("the proposal card names the change and the High/Critical approval rule", () => {
+    const api = loadDashboardModule<Cards>("dashboard-watson-cards.js", baseDeps, globals);
+    const html = api.watsonCardHtml(
+      prop("finding_review", "pending", {
+        action: "demote",
+        severity: "Low",
+        why: HOSTILE,
+        eventIds: ["e2"],
+        before: finding({ id: "f-model-1" }),
+      }),
+    );
+    expect(html).toContain("Severity High → Low");
+    expect(html).toContain("Change finding");
+    expect(html).toContain("only when you approve");
+    expect(html).not.toContain("<img");
+  });
+});

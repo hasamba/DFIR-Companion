@@ -3,7 +3,7 @@ import type { HostRenameRecord } from "./hostRenameRecord.js";
 import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 import type { EventRevisionFields } from "./eventRevisionTypes.js";
 import type { EventTimeBasisFields, SourceRecords } from "./eventSourceTypes.js";
-import type { WatsonFindingMarks, WatsonItemMark } from "./watsonItemTypes.js";
+import type { WatsonFindingMarks, WatsonItemMark, WatsonStateMarks } from "./watsonItemTypes.js";
 
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
 
@@ -732,7 +732,7 @@ export interface Uncertainty {
   gap: string; // what is missing to raise the status (the collection/analysis needed)
 }
 
-export interface InvestigationState {
+export interface InvestigationState extends WatsonStateMarks {
   caseId: string;
   findings: Finding[];
   iocs: IOC[];

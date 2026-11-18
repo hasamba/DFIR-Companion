@@ -18,6 +18,8 @@ export interface WatsonWriteInputs {
   findings: ReadonlyMap<string, Finding>;
   /** The case's next steps by id, with their place in the list: the `before` of a step update. */
   steps?: ReadonlyMap<string, { step: NextStep; index: number }>;
+  /** #2682: the synthesis findings by id, as stored now: the `before` of a finding review. */
+  reviewable?: ReadonlyMap<string, Finding>;
   pastes: ReadonlyMap<string, WatsonPaste>;
   /** Cited paste lines that read, keyed `pasteId:line`. */
   lines: ReadonlyMap<string, string>;
@@ -41,8 +43,13 @@ export function citationSets(
     pasteLines: new Map(pastes.map((p) => [p.id, p.lines] as const)),
     watsonFindingIds: new Set(findings.filter(isWatsonFinding).map((f) => f.id)),
     steps: new Map(steps.map((s) => [s.id, s] as const)),
+    reviewableFindings: reviewableById(findings),
   };
 }
+
+/** #2682: the findings Watson may propose to demote or dismiss: every finding Watson did not write. */
+const reviewableById = (findings: readonly Finding[]): Map<string, Finding> =>
+  new Map(findings.filter((f) => !isWatsonItem(f)).map((f) => [f.id, f] as const));
 
 async function readCitedLines(
   ctx: WatsonRoundContext,
@@ -79,6 +86,7 @@ async function resolve(
   return {
     findings: new Map(findings.filter(isWatsonFinding).map((f) => [f.id, f] as const)),
     steps: new Map((nextSteps ?? []).map((step, index) => [step.id, { step, index }] as const)),
+    reviewable: reviewableById(findings),
     pastes: byId,
     lines: await readCitedLines(ctx, caseId, reply, byId),
     ...(report
@@ -97,7 +105,8 @@ const hasWrites = (r: WatsonReply): boolean =>
   r.writes.findings.length +
     r.writes.nextSteps.length +
     r.writes.report.length +
-    (r.writes.stepUpdates?.length ?? 0) >
+    (r.writes.stepUpdates?.length ?? 0) +
+    (r.writes.findingReviews?.length ?? 0) >
   0;
 
 /**

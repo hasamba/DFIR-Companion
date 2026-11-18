@@ -6,6 +6,8 @@ import type {
   WatsonStepUpdateDraft,
   WatsonWrites,
 } from "./writesSchema.js";
+import { isWatsonItem } from "../../timeline/watsonItems.js";
+import { isDemotion, type WatsonFindingReviewDraft } from "./findingReviewSchema.js";
 import { pasteLineKey, type WatsonWriteInputs } from "./roundWrites.js";
 import type { WatsonFindingProposal, WatsonProposal } from "./types.js";
 import { pasteLineEvent } from "./writers/pasteLineEvents.js";
@@ -121,6 +123,39 @@ function stepUpdateProposal(
   };
 }
 
+/**
+ * #2682: a demotion or dismissal of a synthesis finding as stored now; none when the finding is gone,
+ * is Watson's, changed since Watson read it, or the demotion no longer lowers it.
+ */
+function reviewProposal(
+  r: WatsonFindingReviewDraft,
+  inputs: WatsonWriteInputs,
+  turnId: string,
+  newId: NewId,
+): WatsonProposal | null {
+  const found = inputs.reviewable?.get(r.findingId);
+  if (!found || isWatsonItem(found) || found.watsonReview || found.status === "dismissed") return null;
+  const seen = r.seen;
+  if (
+    seen &&
+    (seen.severity !== found.severity || seen.status !== found.status || seen.title !== found.title)
+  )
+    return null;
+  if (r.action === "demote" && !isDemotion(found.severity, r.severity)) return null;
+  return {
+    id: newId("wp"),
+    turnId,
+    kind: "finding_review",
+    targetId: found.id,
+    action: r.action,
+    ...(r.action === "demote" ? { severity: r.severity } : {}),
+    why: r.why,
+    eventIds: [...r.eventIds],
+    before: found,
+    status: "pending",
+  };
+}
+
 /** One proposal per report field whose neutralised text differs from the report's text now. */
 function reportProposals(
   writes: WatsonWrites,
@@ -182,5 +217,15 @@ export function buildWriteProposals(
     const p = stepUpdateProposal(u, inputs, turnId, newId);
     return p ? [stamped(p, evidence, "stepUpdate", i)] : [];
   });
-  return [...findings, ...steps, ...updates, ...reportProposals(writes, inputs, turnId, newId, evidence)];
+  const reviews = (writes.findingReviews ?? []).flatMap((r, i) => {
+    const p = reviewProposal(r, inputs, turnId, newId);
+    return p ? [stamped(p, evidence, "findingReview", i)] : [];
+  });
+  return [
+    ...findings,
+    ...steps,
+    ...updates,
+    ...reviews,
+    ...reportProposals(writes, inputs, turnId, newId, evidence),
+  ];
 }

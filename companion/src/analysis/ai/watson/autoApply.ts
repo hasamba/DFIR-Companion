@@ -22,11 +22,12 @@ import { WATSON_TURN_TEXT_MAX } from "./chatStore.js";
 import { WatsonChainStopped, WatsonLaunchUncertain } from "./proposalErrors.js";
 import { applyWatsonProposal } from "./proposals.js";
 import { stepChange } from "./writers/nextStepUpdateWriter.js";
+import { reviewChange } from "./writers/findingReviewWriter.js";
 import { rawEvidenceOf } from "./rawEvidence.js";
 import { newWatsonId } from "./roundProposals.js";
 import { watsonRunMode } from "./runMode.js";
 import type { WatsonCaseEvent, WatsonChat, WatsonProposal, WatsonTurn } from "./types.js";
-import type { WriterDeps } from "./writers/writerTypes.js";
+import { WATSON_AUTO_ACTOR, type WriterDeps } from "./writers/writerTypes.js";
 
 // Auto mode (phase 3, user decisions P1/P3). After a round is saved, Watson applies its own
 // proposals of THAT round, through the same applyWatsonProposal an analyst's click uses (so the
@@ -46,7 +47,7 @@ import type { WriterDeps } from "./writers/writerTypes.js";
 // for an analyst, from every round source. Promotions stay automatic: they are evidence, badged and
 // undoable. Only the conclusions that cite raw rows are held.
 
-export const WATSON_AUTO_ACTOR = "Watson (Auto)";
+export { WATSON_AUTO_ACTOR };
 
 /** Where a round came from. Explicit: an unknown source never launches in Auto mode (G12). */
 export type WatsonRoundSource = "dashboard" | "slash";
@@ -145,6 +146,10 @@ export function eligibleProposals(chat: WatsonChat, round: WatsonAutoRound): Wat
   });
 }
 
+const HELD_SEVERITIES: ReadonlySet<string> = new Set(["Critical", "High"]);
+export const HIGH_FINDING_WAIT =
+  "Waits for you: Watson changes a High or Critical finding only when you approve it.";
+
 /** A risky launch waits, in STE; a proposal saved before Task 10 has no display copy. */
 const riskyWait = (risk: { reasons: readonly string[]; display?: readonly string[] }): string =>
   risk.display?.length
@@ -153,6 +158,9 @@ const riskyWait = (risk: { reasons: readonly string[]; display?: readonly string
 
 /** Why Auto leaves a proposal for an analyst, in full sentences; null when Auto applies it. */
 function waitReason(p: WatsonProposal, round: WatsonAutoRound): string | null {
+  // #2682 (user decision): Auto demotes or dismisses only a Low or Medium finding, judged on the
+  // severity stored when Watson proposed it; the writer refuses when that changed.
+  if (p.kind === "finding_review") return HELD_SEVERITIES.has(p.before.severity) ? HIGH_FINDING_WAIT : null;
   // #2666: a CrowdStrike search passed its launch check and only reads the customer's SIEM. Auto runs
   // it from an analyst's message in the Watson panel, like a safe collection; never from a reaction or
   // a chat-bot command (it has no follow-up chain).
@@ -190,6 +198,8 @@ function what(p: WatsonProposal): string {
       return `next step: ${p.after.action}`;
     case "next_step_update":
       return `${stepChange(p)} (${p.why})`;
+    case "finding_review":
+      return `${reviewChange(p)} (${p.why})`;
     case "report_text":
       return `report text (${p.field === "conclusions" ? "Conclusions" : "Investigation limitations"}): ${p.after}`;
     case "event_promote":

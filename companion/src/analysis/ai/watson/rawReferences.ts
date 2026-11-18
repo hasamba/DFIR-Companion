@@ -15,6 +15,7 @@ export type RefItem =
   | { kind: "finding"; index: number }
   | { kind: "nextStep"; index: number }
   | { kind: "stepUpdate"; index: number }
+  | { kind: "findingReview"; index: number }
   | { kind: "report"; index: number };
 
 export interface RawRefs {
@@ -109,6 +110,13 @@ export function collectRawRefs(reply: WatsonReply, raw: ReadonlySet<string>): Ra
     ...listRefs(w.nextSteps, "nextStep", (st) => ({ texts: [st.action, st.rationale, st.pointer] }), raw),
     // A step change resting on raw rows waits for an analyst in Auto mode, like any other write.
     ...listRefs(w.stepUpdates ?? [], "stepUpdate", (u) => ({ texts: [u.why] }), raw),
+    // #2682: a finding review cites events like a finding does; a raw one must land first.
+    ...listRefs(
+      w.findingReviews ?? [],
+      "findingReview",
+      (r) => ({ structured: r.eventIds, texts: [r.why] }),
+      raw,
+    ),
     ...listRefs(w.report, "report", (r) => ({ texts: [r.text] }), raw),
   ];
 }
@@ -196,8 +204,12 @@ export function settleRawRefs(
   }));
   const steps = settleList(w.nextSteps, "nextStep", byKey, landed);
   const stepUpdates = settleList(w.stepUpdates ?? [], "stepUpdate", byKey, landed);
+  const reviews = settleList(w.findingReviews ?? [], "findingReview", byKey, landed, (r, ids) => ({
+    ...r,
+    eventIds: rewriteIds(r.eventIds, ids, landed),
+  }));
   const report = settleList(w.report, "report", byKey, landed);
-  const lists = [updates, questions, findings, steps, stepUpdates, report];
+  const lists = [updates, questions, findings, steps, stepUpdates, reviews, report];
   return {
     reply: {
       ...reply,
@@ -209,6 +221,7 @@ export function settleRawRefs(
         nextSteps: steps.kept,
         report: report.kept,
         ...(w.stepUpdates ? { stepUpdates: stepUpdates.kept } : {}),
+        ...(w.findingReviews ? { findingReviews: reviews.kept } : {}),
       },
     },
     dropped: lists.reduce((n, l) => n + l.dropped, 0),

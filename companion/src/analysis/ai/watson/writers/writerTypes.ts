@@ -15,6 +15,9 @@ import type { CsSearchDeps } from "./csSearchWriter.js";
 
 export type WatsonReportField = "conclusions" | "investigationLimitations";
 
+/** The actor Auto mode applies as (autoApply.ts re-exports it); a writer may read it (#2682). */
+export const WATSON_AUTO_ACTOR = "Watson (Auto)";
+
 /** The report details as Watson sees them: the two fields it may write and its marks. */
 export interface WatsonReportFields {
   conclusions: string;

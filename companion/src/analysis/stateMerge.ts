@@ -19,6 +19,7 @@ import { remapAbsorbedEventIds } from "./absorbedCitations.js";
 import { toUtcIso } from "./timeUtc.js";
 import { mergeKeyQuestions } from "./timeline/watsonQuestions.js";
 import { keepWatsonItems, watsonItemsOf } from "./timeline/watsonItems.js";
+import { applyWatsonVerdicts } from "./timeline/watsonVerdicts.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import {
   firstMatchIndex,
@@ -604,6 +605,7 @@ export function assembleMerge(
   const excludedRefsFor = parts.excludedRefsFor ?? ((): ExcludedIocRef[] => []);
   const correlatedOnly = parts.forensicTimeline;
   const findings: Finding[] = state.findings.map((f) => ({ ...f }));
+  const reviewed: string[] = []; // findings the delta re-graded that carried a Watson verdict mark
 
   for (const incoming of delta.findings) {
     const existing = findings.find((f) => f.id === incoming.id);
@@ -614,6 +616,8 @@ export function assembleMerge(
       existing.title = incoming.title;
       existing.description = incoming.description;
       existing.status = incoming.status;
+      if (existing.watsonReview) reviewed.push(existing.id); // the verdict is applied again below (#2682)
+      delete existing.watsonReview;
       existing.relatedIocs = uniq([...existing.relatedIocs, ...remapIocRefs(incoming.relatedIocs)]);
       const excluded = excludedRefsFor(incoming.relatedIocs);
       if (excluded.length) existing.excludedIocRefs = unionExcludedRefs(existing.excludedIocRefs, excluded);
@@ -780,10 +784,12 @@ export function assembleMerge(
     ...(state.eventAliases ? { eventAliases: state.eventAliases } : {}),
     // The analyst's technique removals (#1742): a decision, not evidence — every merge keeps it.
     ...(state.rejectedTechniques?.length ? { rejectedTechniques: state.rejectedTechniques } : {}),
+    ...(state.watsonFindingVerdicts?.length ? { watsonFindingVerdicts: state.watsonFindingVerdicts } : {}), // #2682
     updatedAt: ctx.timestamp,
   };
   // Every citation of an event correlation folded away follows it to the survivor (#1714); Watson's kept.
-  return remapAbsorbedEventIds(keepWatsonItems(merged, watsonItemsOf(state)), absorbedInto);
+  const kept = applyWatsonVerdicts(keepWatsonItems(merged, watsonItemsOf(state)), reviewed);
+  return remapAbsorbedEventIds(kept, absorbedInto);
 }
 
 function uniqCaseless(names: readonly string[]): string[] {
