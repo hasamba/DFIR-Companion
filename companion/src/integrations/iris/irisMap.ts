@@ -17,7 +17,7 @@ import type {
 } from "../../analysis/stateTypes.js";
 import type { GraphAsset } from "../../analysis/assetGraph.js";
 import type { ReportMeta } from "../../reports/reportMeta.js";
-import { displayQuestionText, oneLineMd } from "../../reports/mdText.js";
+import { oneLineMd, reportQuestionText } from "../../reports/mdText.js";
 import type { IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody } from "./irisClient.js";
 import type { PlaybookTask, PlaybookStatus } from "../../analysis/playbook.js";
 import { tacticForTechniques } from "../../analysis/mitreTactics.js";
@@ -399,7 +399,7 @@ function questionsNote(qs: readonly InvestigationQuestion[]): string {
   return qs
     .map(
       (q) =>
-        `### ${oneLineMd(displayQuestionText(q.question))}\n\n- **Status:** ${q.status}\n- **Answer:** ${oneLineMd(q.answer) || "—"}\n- **Pointer:** ${oneLineMd(q.pointer) || "—"}`,
+        `### ${oneLineMd(reportQuestionText(q))}\n\n- **Status:** ${q.status}\n- **Answer:** ${oneLineMd(q.answer) || "—"}\n- **Pointer:** ${oneLineMd(q.pointer) || "—"}`,
     )
     .join("\n\n");
 }

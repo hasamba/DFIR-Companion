@@ -25,6 +25,8 @@ export const WATSON_QUESTIONS_MAX = 60;
 const WATSON_STEP_CHARS = 400;
 export const WATSON_QUESTION_CHARS = 500;
 export const WATSON_ANSWER_CHARS = 1500;
+// A system coverage-check question (#2681) lists up to 50 hidden event ids; Watson never sees a pointer.
+const WATSON_GAP_IDS_CHARS = 1500;
 export const WATSON_PASTES_LISTED = 20;
 export const WATSON_REQUEST_CHARS = 300;
 const FILENAME_CHARS = 200;
@@ -235,6 +237,13 @@ export function watsonCachePrefix(input: Pick<WatsonPromptInput, "caseTimeline">
   return cachedBlocks(input.caseTimeline ?? "").join(BLOCK_SEPARATOR) + BLOCK_SEPARATOR;
 }
 
+// A system coverage-check question names the forensic-timeline events to read (#2681), by id only.
+function gapIds(q: InvestigationState["keyQuestions"][number]): string {
+  const ids = q.coverageGap?.hiddenEventIds ?? [];
+  if (!ids.length) return "";
+  return ` — system coverage check, look up these event ids: ${line(ids.join(", "), WATSON_GAP_IDS_CHARS)}`;
+}
+
 export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
   const { state, chat, analystText, caseContext, mainLanguages, pasteExcerpt, historyTurns, velo } = input;
   const caseTimeline = input.caseTimeline ?? "";
@@ -243,7 +252,7 @@ export function buildWatsonUserPrompt(input: WatsonPromptInput): string {
     .slice(0, WATSON_QUESTIONS_MAX)
     .map(
       (q) =>
-        `- [${line(q.id, ID_CHARS)}] (${q.status}) ${line(q.question, WATSON_QUESTION_CHARS)}${q.answer ? ` — answer: ${line(q.answer, WATSON_ANSWER_CHARS)}` : ""}`,
+        `- [${line(q.id, ID_CHARS)}] (${q.status}) ${line(q.question, WATSON_QUESTION_CHARS)}${q.answer ? ` — answer: ${line(q.answer, WATSON_ANSWER_CHARS)}` : ""}${gapIds(q)}`,
     );
   // The case's next steps, most urgent first (a stable sort keeps the case's own order within a rank).
   const steps = shownSteps(state).map(

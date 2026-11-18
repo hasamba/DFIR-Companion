@@ -247,6 +247,7 @@
     "buildTimeMerge.ts": "analysis/timeline",
     "buildTimeWindow.ts": "analysis/detect",
     "burstDetect.ts": "analysis/detect",
+    "burstGapQuestions.ts": "analysis/ai",
     "emulationAgentContext.ts": "analysis/detect",
     "initialAccessCandidates.ts": "analysis/detect",
     "hostSpikeLeads.ts": "analysis/detect",

@@ -162,6 +162,10 @@
               (q.pinned
                 ? ` <span class="icon-pinned" title="Pinned">${ICON_PIN}</span>`
                 : "") +
+              // #2681: a system-made coverage check is marked, so it never reads as an analyst's question.
+              (q.coverageGap
+                ? ` <span class="q-system" title="Made by DFIR Companion, not by an analyst or the AI: a grouped burst hid command lines the synthesis never read. It marks a coverage gap, not a finding.">System check</span>`
+                : "") +
               ` <span class="q-status q-status-${st}">${QSTATUS[st]}</span> <strong>${esc(q.question)}</strong>` +
               // Immediate FP cascade (#12): a finding that backed this answer was just marked false
               // positive; the answer was neutralized now and the next Re-synthesize recomputes it (#1599).

@@ -164,6 +164,33 @@ How the AI synthesis prompt decides which events earn one of its limited row sea
 
 See also [Deep Pass](dashboard.md#deep-pass) for the analyst-triggered batched run that reads every graded event regardless of this per-call budget.
 
+### Hidden lines in a grouped burst
+
+When one program runs many different commands in a short time (for example a renamed `cmd.exe`), the
+burst becomes one grouped row in the synthesis prompt. That row shows at most 12 of the different command
+lines and counts the rest as "+N more". The AI does not see the counted lines.
+
+So that these lines are not forgotten, synthesis adds a Key Question for each burst that hid different
+command lines:
+
+- The question says how many lines were hidden, and which program and host ran them. It does not copy
+  the command text.
+- It lists the hidden events by id, up to 50, so Watson (or you) can open them. Watson reads them from
+  the forensic timeline, not from the super-timeline.
+- It is pinned and has a **System check** badge in the Key Questions panel and on Watson's board. In the
+  Markdown report, the shift hand-off and the IRIS and Notion exports it starts with **[System coverage check]**. It is not listed as
+  an investigation goal, and **Save as template** leaves it out.
+- **Watson Auto** works it like any other open Key Question.
+- It is marked **answered** when findings cite every listed hidden event, and **partial** when they cite
+  some. Automatic findings and dismissed findings do not count. An answer that you applied from Watson
+  stays.
+- It is removed when a later synthesis no longer hides lines for that burst, unless you applied an
+  answer to it from Watson. An applied answer stays.
+- A case gets at most 3 of these questions. The bursts with the most hidden lines come first, and a
+  question that is already on the board keeps its place.
+
+A burst that repeats one command gets no question, because no different lines are hidden.
+
 ---
 
 ## State Backups & Restore

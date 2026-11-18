@@ -54,7 +54,8 @@ export interface HandoffBrief {
     inProgress: number;
     unassigned: number;
   };
-  questions: { question: string; status: string; pointer: string }[];
+  /** `system`: a system-made coverage check (#2681), not an analyst's question. */
+  questions: { question: string; status: string; pointer: string; system?: true }[];
   questionsNotShown: number;
   hypotheses: { title: string }[];
   hypothesesNotShown: number;
@@ -102,7 +103,12 @@ export function buildHandoffBrief(state: InvestigationState, extras: HandoffExtr
   const questions = take(
     state.keyQuestions
       .filter((q) => q.status === "unknown" || q.status === "partial")
-      .map((q) => ({ question: clip(q.question), status: q.status, pointer: clip(q.pointer) })),
+      .map((q) => ({
+        question: clip(q.question),
+        status: q.status,
+        pointer: clip(q.pointer),
+        ...(q.coverageGap ? { system: true as const } : {}),
+      })),
   );
   const hypotheses = take(
     (extras.hypotheses ?? []).filter((h) => h.status === "open").map((h) => ({ title: clip(h.title) })),
