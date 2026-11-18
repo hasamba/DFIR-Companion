@@ -101,7 +101,13 @@ export function renderGapForPrompt(
   before: readonly ForensicEvent[],
   after: readonly ForensicEvent[],
 ): string {
-  const kind = gap.complete ? "complete silence (every source dark)" : "partial (one source quiet)";
+  // #2687: a gap that ends on the collection's own row is graded the wait before collection (#2684),
+  // not complete silence — keyed on the flag alone, so it holds whatever else the gap is.
+  const kind = gap.collectionEdge
+    ? "quiet period before collection"
+    : gap.complete
+      ? "complete silence (every source dark)"
+      : "partial (one source quiet)";
   const silent = gap.silentSources.length ? gap.silentSources.join(", ") : "all sources";
   const active = gap.activeSources.length ? gap.activeSources.join(", ") : "—";
   const beforeText = before.length ? before.map(renderEventLine).join("\n") : "(no events recorded before)";
@@ -115,10 +121,18 @@ export function renderGapForPrompt(
           `cleared logs or attacker dwell.`,
       ]
     : [];
+  // The label is source/id/time only (gapEdgeClass), never the event description.
+  const collection = gap.collectionEdge
+    ? [
+        `Collection: the silence ends on the collection's own row (${gap.collectionEdgeLabel ?? "the collector's first row"}) ` +
+          `— the wait before collection, not evidence of cleared logs or attacker dwell.`,
+      ]
+    : [];
   return [
     `### ${gap.id} [${gap.severity}] ${kind} — ${gap.durationLabel} of silence`,
     `Window: ${gap.startTimestamp} → ${gap.endTimestamp}`,
     ...boundary,
+    ...collection,
     `Silent sources: ${silent} | Still active during the gap: ${active}`,
     `EVENTS BEFORE THE SILENCE:`,
     beforeText,

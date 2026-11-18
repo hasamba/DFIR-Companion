@@ -136,6 +136,40 @@ describe("renderGapForPrompt / renderGapsForPrompt", () => {
     expect(renderGapForPrompt(gap({ betweenWaves: true }), [], [])).not.toContain("Boundary:");
   });
 
+  // #2687: a gap that closes on the collection's own row is the wait before collection (#2684),
+  // not complete silence; the prompt says so, so the AI does not hypothesise cleared logs for it.
+  it("names a collection-closed gap as the wait before collection, not complete silence (#2687)", () => {
+    const g = gap({
+      severity: "Info",
+      collectionEdge: true,
+      collectionEdgeEventId: "b0",
+      collectionEdgeLabel: "collector row b0 at 2026-01-01T02:00:00.000Z",
+    });
+    const text = renderGapForPrompt(g, [], []);
+    expect(text.split("\n")[0]).toContain("quiet period before collection");
+    expect(text).not.toContain("complete silence");
+    const line = text.split("\n").find((l) => l.startsWith("Collection:")) ?? "";
+    expect(line).toContain("collector row b0 at 2026-01-01T02:00:00.000Z");
+    expect(line).toMatch(/not evidence of cleared logs/);
+  });
+
+  it("falls back to a generic collector label when a collection-closed gap has none", () => {
+    const line =
+      renderGapForPrompt(gap({ collectionEdge: true }), [], [])
+        .split("\n")
+        .find((l) => l.startsWith("Collection:")) ?? "";
+    expect(line).toContain("the collector's first row");
+  });
+
+  it("keeps today's wording and adds no collection line for other gaps", () => {
+    const complete = renderGapForPrompt(gap(), [], []);
+    expect(complete.split("\n")[0]).toContain("complete silence (every source dark)");
+    expect(complete).not.toContain("Collection:");
+    const partial = renderGapForPrompt(gap({ complete: false }), [], []);
+    expect(partial.split("\n")[0]).toContain("partial (one source quiet)");
+    expect(partial).not.toContain("Collection:");
+  });
+
   it("renders a placeholder for no gaps", () => {
     expect(renderGapsForPrompt([], new Map())).toBe("(no gaps)");
   });
