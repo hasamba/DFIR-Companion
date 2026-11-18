@@ -24,6 +24,7 @@ const ENV_KEYS = [
   "DFIR_CROWDSTRIKE_SIEM_BASE_URL",
   "DFIR_CROWDSTRIKE_SIEM_MAX_WINDOW_DAYS",
   "DFIR_CROWDSTRIKE_SIEM_REPOSITORY",
+  "DFIR_CROWDSTRIKE_SIEM_CA",
   "DFIR_CROWDSTRIKE_CLIENT_ID",
   "DFIR_CROWDSTRIKE_CLIENT_SECRET",
 ];
@@ -309,5 +310,36 @@ describe("CrowdStrike NG-SIEM search route (#2666)", () => {
     expect(JSON.stringify(job)).toContain("NGSIEM: Write");
     const files = await readdir(store.importsDir("c1")).catch(() => []);
     expect(files.some((n) => n.includes("crowdstrike-ngsiem"))).toBe(false);
+  });
+  it("a bad base URL is refused with the Settings sentence before any call to Falcon (#2685)", async () => {
+    configure();
+    process.env.DFIR_CROWDSTRIKE_SIEM_BASE_URL = "https://falcon.crowdstrike.com/";
+    const f = fakeFalcon(ROWS);
+    const { app } = await makeApp(f.fetchFn);
+    const post = await request(app)
+      .post("/cases/c1/crowdstrike/siem/search")
+      .send({ query: QUERY, ...recent() });
+    expect(post.status).toBe(400);
+    expect(post.body.error).toMatch(/console/);
+    expect(f.paths).toEqual([]);
+  });
+
+  it("Settings Test: off -> configured:false; on -> each step, the job cancelled, no case touched (#2685)", async () => {
+    const f = fakeFalcon([]);
+    const { app, store } = await makeApp(f.fetchFn);
+    const off = await request(app).post("/crowdstrike/siem/test");
+    expect(off.status).toBe(200);
+    expect(off.body).toMatchObject({ configured: false, ok: false });
+    expect(f.paths).toEqual([]);
+
+    configure();
+    const before = JSON.stringify(await store.getCaseMeta("c1"));
+    const on = await request(app).post("/crowdstrike/siem/test");
+    expect(on.status).toBe(200);
+    expect(on.body.ok).toBe(true);
+    expect(on.body.steps.map((s: { id: string }) => s.id)).toEqual(["reach", "signin", "write", "read"]);
+    expect(f.paths.at(-1)).toBe("DELETE /humio/api/v1/repositories/search-all/queryjobs/job1");
+    expect(JSON.stringify(on.body)).not.toContain(SECRET);
+    expect(JSON.stringify(await store.getCaseMeta("c1"))).toBe(before);
   });
 });

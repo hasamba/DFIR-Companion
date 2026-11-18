@@ -22,8 +22,9 @@ import {
   type SiemSearchOutcome,
 } from "../analysis/siemSearch.js";
 import { requestAuthentication } from "../auth/types.js";
-import { ngsiemCredentialsFromEnv } from "../integrations/crowdstrike/ngsiemConfig.js";
+import { ngsiemCredentialsFromEnv, ngsiemSettingsError } from "../integrations/crowdstrike/ngsiemConfig.js";
 import { NgsiemSearchClient } from "../integrations/crowdstrike/ngsiemSearch.js";
+import { falconConsoleOrigin } from "../integrations/crowdstrike/falconConsole.js";
 import type { RouteContext } from "./context.js";
 import { activityDetail, landSearchResult, type SiemSearchSpec } from "./crowdstrikeSiemImport.js";
 import { isFrozenCase } from "./importCaseGuard.js";
@@ -61,6 +62,8 @@ export function prepareSiemSearch(
   now = Date.now(),
 ): { ok: true; spec: SiemSearchSpec } | { ok: false; status: number; error: string } {
   if (!ngsiemCredentialsFromEnv(env)) return { ok: false, status: 409, error: SIEM_NOT_CONFIGURED };
+  const settingsError = ngsiemSettingsError(env);
+  if (settingsError) return { ok: false, status: 400, error: settingsError };
   const query = typeof body.query === "string" ? body.query : "";
   if (!query.trim()) return { ok: false, status: 400, error: "The search needs a CQL query." };
   if (query.length > QUERY_MAX) {
@@ -99,13 +102,15 @@ async function runSearch(
   }
   const creds = ngsiemCredentialsFromEnv(process.env);
   if (!creds) return { outcome: failed(spec, SIEM_NOT_CONFIGURED), warnings: [] };
-  const client = new NgsiemSearchClient({
-    ...creds,
-    repository: spec.repository,
-    ...(ctx.options.crowdstrikeSiemFetch ? { fetchFn: ctx.options.crowdstrikeSiemFetch } : {}),
-  });
   let result;
   try {
+    // Built inside the try: a bad base URL or CA bundle is a Settings sentence, not a crash (#2685).
+    const client = new NgsiemSearchClient({
+      ...creds,
+      repository: spec.repository,
+      ...(ctx.options.crowdstrikeSiemFetch ? { fetchFn: ctx.options.crowdstrikeSiemFetch } : {}),
+      log: (line) => ctx.serverLogger.warn(`[crowdstrike-siem] ${spec.caseId}: ${line}`),
+    });
     result = await client.run({
       query: spec.query,
       startMs: spec.startMs,
@@ -244,14 +249,19 @@ async function defaultRange(ctx: RouteContext, caseId: string, maxDays: number) 
 
 export function registerCrowdstrikeSiemRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/crowdstrike/siem", async (req: Request, res: Response) => {
-    if (!ngsiemCredentialsFromEnv(process.env)) return res.status(200).json({ configured: false });
+    const creds = ngsiemCredentialsFromEnv(process.env);
+    if (!creds) return res.status(200).json({ configured: false });
     if ((await ctx.store.getCaseMeta(req.params.id).catch(() => null)) === null) {
       return res.status(404).json({ error: "case not found" });
     }
     const limits = readSiemLimits(process.env);
+    // The console origin for "Open in Falcon" (#2685): a plain link, never a credential.
+    const consoleUrl = falconConsoleOrigin(creds);
     try {
       const range = await defaultRange(ctx, req.params.id, limits.maxWindowDays);
-      return res.status(200).json({ configured: true, ...limits, defaultRange: range });
+      return res
+        .status(200)
+        .json({ configured: true, ...limits, defaultRange: range, ...(consoleUrl ? { consoleUrl } : {}) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

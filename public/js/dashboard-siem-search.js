@@ -51,6 +51,40 @@
     );
   }
 
+  // "Open in Falcon" (#2685): a plain link to Next-Gen SIEM Advanced event search on the console,
+  // query and time range filled in. The format — /investigate/search?query=…&repo=all&start=<ms>&end=<ms>
+  // — is the one CrowdStrike's own logscale-community-content dashboards and community tools link
+  // with. The UI names the search-all repository "all"; another repository is left to the console's
+  // own choice rather than guessed. No API call, no credential: the analyst's own Falcon session.
+  const toMs = (iso) => {
+    const t = Date.parse(String(iso || ""));
+    return Number.isFinite(t) ? String(t) : "";
+  };
+
+  /** The Advanced event search URL for a query, or "" when the console host is not known. */
+  function falconSearchUrl(query, startIso, endIso, repository) {
+    const origin = siem && siem.configured && typeof siem.consoleUrl === "string" ? siem.consoleUrl : "";
+    if (!origin || !/^https:\/\/falcon\.[a-z0-9.-]+\.(com|mil)$/i.test(origin) || !String(query || "").trim()) return "";
+    const params = [`query=${encodeURIComponent(query)}`];
+    if ((repository || siem.repository) === "search-all") params.push("repo=all");
+    const start = toMs(startIso);
+    const end = toMs(endIso);
+    if (start && end) params.push(`start=${start}`, `end=${end}`);
+    return `${origin}/investigate/search?${params.join("&")}`;
+  }
+
+  /** The Open in Falcon link for a CQL card, or "". */
+  function falconOpenLinkHtml(hunt) {
+    if (!runnable(hunt)) return "";
+    const r = siem.defaultRange || {};
+    const url = falconSearchUrl(hunt.query, r.start, r.end);
+    if (!url) return "";
+    return (
+      `<a class="msh-siem-open" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" ` +
+      `title="Open this query in Falcon Next-Gen SIEM Advanced event search, in a new tab. Nothing runs here.">Open in Falcon</a>`
+    );
+  }
+
   /** The badge text a CQL card shows: runnable here when the search is set up. */
   const siemBadge = (hunt) => (runnable(hunt) ? "runnable" : "");
 
@@ -153,6 +187,18 @@
 
   /** Wire every Run button inside `root` (called wherever the language cards are wired). */
   function wireSiemRun(root) {
+    // An edited query opens as edited: the link is rebuilt from the card's query box on use.
+    root.querySelectorAll(".msh-siem-open").forEach((a) => {
+      const refresh = () => {
+        const card = a.closest(".msh-card");
+        const q = card && card.querySelector(".msh-query");
+        const r = (siem && siem.defaultRange) || {};
+        const url = q ? falconSearchUrl(q.value, r.start, r.end) : "";
+        if (url) a.href = url;
+      };
+      a.addEventListener("mousedown", refresh);
+      a.addEventListener("keydown", refresh);
+    });
     root.querySelectorAll(".msh-siem-run").forEach((b) => {
       b.onclick = (e) => {
         e.stopPropagation();
@@ -164,6 +210,8 @@
 
   window.loadSiemSearch = loadSiemSearch;
   window.siemRunButtonHtml = siemRunButtonHtml;
+  window.falconSearchUrl = falconSearchUrl;
+  window.falconOpenLinkHtml = falconOpenLinkHtml;
   window.siemBadge = siemBadge;
   window.wireSiemRun = wireSiemRun;
 })();

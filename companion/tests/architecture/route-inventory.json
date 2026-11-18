@@ -485,6 +485,7 @@
     "ROUTE POST /cases/:id/findings/:findingId/containment-check/playbook",
     "ROUTE GET /cases/:id/crowdstrike/siem",
     "ROUTE POST /cases/:id/crowdstrike/siem/search",
+    "ROUTE POST /crowdstrike/siem/test",
     "ROUTE GET /cases/:id/second-look/preview",
     "ROUTE POST /cases/:id/second-look",
     "ROUTE GET /cases/:id/report/interactive",

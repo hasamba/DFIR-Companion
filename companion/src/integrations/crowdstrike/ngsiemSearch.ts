@@ -14,8 +14,11 @@
 // or is aborted. Errors are analyst sentences; the secret and the token never appear in one.
 
 import { readBoundedJson, readBoundedText, RESPONSE_SIZE_LIMITS } from "../../providers/boundedResponse.js";
-import { FalconAuthError, FalconTokenSource, resolveFalconBase, type FalconFetch } from "./falconAuth.js";
-import type { NgsiemCredentials } from "./ngsiemConfig.js";
+import { FalconAuthError, FalconTokenSource, type FalconFetch } from "./falconAuth.js";
+import { classifyFailure, describeFetchFailure, fetchFailureLogLine } from "./fetchFailure.js";
+import { hostLabel, ngsiemBase, type NgsiemCredentials } from "./ngsiemConfig.js";
+import { ngsiemFetchFor } from "./ngsiemTransport.js";
+import { peerIssuer, type PeerIssuerFn } from "./tlsPeerIssuer.js";
 
 export type NgsiemRow = Record<string, unknown>;
 
@@ -58,6 +61,10 @@ export interface NgsiemClientOptions extends NgsiemCredentials {
   now?: () => number;
   requestTimeoutMs?: number;
   cancelTimeoutMs?: number;
+  /** Hears the full (redacted) error of every failure that had no HTTP answer — the server log. */
+  log?: (line: string) => void;
+  /** Who issued the certificate a check connection is shown (trust failures only). */
+  peerIssuer?: PeerIssuerFn;
 }
 
 export interface NgsiemRunRequest {
@@ -149,6 +156,31 @@ function anchorOf(row: NgsiemRow | undefined): { eventId: string; timestamp: num
   return typeof id === "string" && id && Number.isFinite(ts) ? { eventId: id, timestamp: ts } : null;
 }
 
+/** The NG-SIEM label every connection sentence starts with. */
+export const NGSIEM_LABEL = "CrowdStrike NG-SIEM";
+
+/**
+ * The analyst sentence for a request that got no HTTP answer, naming what to check (#2685). A
+ * certificate-trust failure also asks who issued the certificate this server is shown.
+ */
+export async function describeNgsiemFailure(
+  err: unknown,
+  base: string,
+  issuerFn: PeerIssuerFn = peerIssuer,
+): Promise<string> {
+  const host = hostLabel(base);
+  let issuer: string | undefined;
+  if (classifyFailure(err).kind === "trust") {
+    try {
+      const url = new URL(base);
+      issuer = await issuerFn(url.hostname, Number(url.port) || 443);
+    } catch {
+      issuer = undefined;
+    }
+  }
+  return describeFetchFailure(err, { host, label: NGSIEM_LABEL, ...(issuer ? { issuer } : {}) });
+}
+
 export class NgsiemSearchClient {
   private readonly base: string;
   private readonly fetchFn: FalconFetch;
@@ -159,8 +191,10 @@ export class NgsiemSearchClient {
   private readonly tokens: FalconTokenSource;
 
   constructor(private readonly opts: NgsiemClientOptions) {
-    this.base = resolveFalconBase(opts);
-    this.fetchFn = opts.fetchFn ?? fetch;
+    const base = ngsiemBase(opts);
+    if (!base.ok) throw new NgsiemError(base.error);
+    this.base = base.base;
+    this.fetchFn = opts.fetchFn ?? ngsiemFetchFor(opts.ca);
     this.sleep = opts.sleep ?? defaultSleep;
     this.now = opts.now ?? Date.now;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 20_000;
@@ -260,19 +294,30 @@ export class NgsiemSearchClient {
       }
     } catch (err) {
       if (req.signal?.aborted) throw abortError();
-      if (deadline - this.now() <= 0) return { ...out, timedOut: true };
-      return { ...out, error: this.describe(err) };
+      if (deadline - this.now() <= 0) {
+        this.logFailure(err);
+        return { ...out, timedOut: true };
+      }
+      return { ...out, error: await this.describe(err) };
     } finally {
       if (id) await this.cancel(id, warnings);
     }
   }
 
-  private describe(err: unknown): string {
+  private async describe(err: unknown): Promise<string> {
     if (err instanceof NgsiemError || err instanceof FalconAuthError) return err.message;
+    this.logFailure(err);
     const name = (err as { name?: string })?.name;
     if (name === "TimeoutError" || name === "AbortError")
-      return "CrowdStrike NG-SIEM did not answer in time.";
-    return "Could not reach CrowdStrike NG-SIEM.";
+      return `${NGSIEM_LABEL} (${hostLabel(this.base)}) did not answer in time.`;
+    return describeNgsiemFailure(err, this.base, this.opts.peerIssuer);
+  }
+
+  /** The full error for the server log; the secret, the ID and any token are redacted. */
+  private logFailure(err: unknown): void {
+    if (err instanceof NgsiemError || err instanceof FalconAuthError) return;
+    const secrets = [this.opts.clientSecret, this.opts.clientId];
+    this.opts.log?.(`${hostLabel(this.base)}: ${fetchFailureLogLine(err, secrets)}`);
   }
 
   private async start(req: NgsiemRunRequest, deadline: number, around?: Around): Promise<string> {

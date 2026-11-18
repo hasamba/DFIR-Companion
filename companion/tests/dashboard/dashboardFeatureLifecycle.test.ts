@@ -29,11 +29,12 @@ describe("initTicketIntegrations", () => {
   // fourteen and passed. Naming them also catches the opposite mistake — a duplicate registration,
   // which a `>` can only ever read as more evidence of success.
   const WIRED = [
-    // The nine Settings connection tests (six on Integrations; MISP, YETI and OpenCTI on
-    // Enrichment). They arrived together, from one table, so the list is where a dropped entry
+    // The ten Settings connection tests (six on Integrations; MISP, YETI, OpenCTI and CrowdStrike
+    // NG-SIEM (#2685) on Enrichment). They arrived together, from one table, so the list is where a dropped entry
     // shows up: a table this feature iterates cannot fail loudly if an id stops matching the
     // markup — getElementById returns null and the loop skips it.
     "clickupReconnectBtn:onclick",
+    "crowdstrikeSiemTestBtn:onclick",
     "irisReconnectBtn:onclick",
     "jiraTestBtn:onclick",
     "mispReconnectBtn:onclick",
