@@ -600,13 +600,17 @@ describe("rail button, failed sends and paste limits", () => {
     expect(css).toMatch(/\.watson-velo-chip \{[^}]*white-space: nowrap/);
   });
 
-  it("the toolbar Watson button shows a minimize icon while the panel is open or full", () => {
+  it("the toolbar Watson button shows Watson's logo and looks pressed while the panel is open or full", () => {
     const css = readFileSync(
       new URL("../../../public/css/dashboard-watson.css", import.meta.url),
       "utf8",
     ).replace(/\r\n/g, "\n");
+    // The logo: a magnifier lens with a W in it, the same mark as the panel header.
+    expect(css).toMatch(/#watsonToggle::before \{[^}]*background-image:[^}]*circle cx='10' cy='10' r='7'/);
+    // The icon never swaps; the open state is a pressed button instead.
+    expect(css).not.toMatch(/watson-(panel|full)-open #watsonToggle::before/);
     expect(css).toMatch(
-      /body\.watson-panel-open #watsonToggle::before,\s*body\.watson-full-open #watsonToggle::before\s*\{[^}]*background-image/,
+      /body\.watson-panel-open #watsonToggle,\s*body\.watson-full-open #watsonToggle\s*\{[^}]*box-shadow/,
     );
   });
 
