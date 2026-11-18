@@ -239,6 +239,9 @@ async function defaultRange(ctx: RouteContext, caseId: string, maxDays: number) 
 export function registerCrowdstrikeSiemRoutes(app: Express, ctx: RouteContext): void {
   app.get("/cases/:id/crowdstrike/siem", async (req: Request, res: Response) => {
     if (!ngsiemCredentialsFromEnv(process.env)) return res.status(200).json({ configured: false });
+    if ((await ctx.store.getCaseMeta(req.params.id).catch(() => null)) === null) {
+      return res.status(404).json({ error: "case not found" });
+    }
     const limits = readSiemLimits(process.env);
     try {
       const range = await defaultRange(ctx, req.params.id, limits.maxWindowDays);

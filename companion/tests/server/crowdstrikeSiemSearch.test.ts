@@ -153,6 +153,19 @@ describe("CrowdStrike NG-SIEM search route (#2666)", () => {
     expect(JSON.stringify(res.body)).not.toContain(SECRET);
   });
 
+  it("GET refuses an unknown case with 404, like the POST, once the search is set up (#2673)", async () => {
+    const { app: offApp } = await makeApp(fakeFalcon([]).fetchFn);
+    const off = await request(offApp).get("/cases/nope/crowdstrike/siem");
+    expect(off.status).toBe(200);
+    expect(off.body).toEqual({ configured: false });
+
+    configure();
+    const { app } = await makeApp(fakeFalcon([]).fetchFn);
+    const res = await request(app).get("/cases/nope/crowdstrike/siem");
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "case not found" });
+  });
+
   it("refuses a range wider than the limit before any call to Falcon", async () => {
     configure();
     const f = fakeFalcon(ROWS);
