@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Quiet period before collection** — a silent gap that ends on the collector's own row (or a THOR scan-time row) is Info, with no "log tampering" finding (closes #2684)
+- **Long waits before collection** — a wait of 6h or more before collection no longer raises a dwell or waves finding (closes #2688)
+- **Hypothesize gaps on collection gaps** — the prompt calls a collection-closed gap a quiet period, not complete silence (closes #2687)
+- **SIEM settings check the case** — the search card's settings request returns 404 for an unknown case, like the search itself (closes #2673)
+- **Faster SIEM search card** — the default search range reads only High and Critical events, not the whole forensic timeline (closes #2672)
 - **Watson Auto moves on instead of stopping** — two rounds with nothing new set that question or step aside and Watson works the next open one; Auto stops only when every open item needs new evidence or the client, and lists what each needs
 - **Watson Auto does not stop for one blocked item** — when Watson says it waits for a person, Auto sets that item aside and works the next open one
 - **Watson with no case** — sending or pasting with no case open now says so and keeps the text; the toolbar button shows a minimize icon while the panel is open; the Velociraptor chip no longer wraps; the note after an import says what to do next, and no longer asks to approve 0 rows
