@@ -151,6 +151,8 @@ const OUTSIDE_GATE: Record<string, string> = {
   "post /velociraptor/hunt-results": "global: reads hunt rows from the server; no case write",
   "post /velociraptor/clients/refresh": "global: one set's fleet inventory file beside the cases root",
   "post /velociraptor/reconnect": "global: client reconnect",
+  "post /crowdstrike/siem/test":
+    "global: Settings test of the NG-SIEM client; starts and cancels one Falcon job, no case read or write",
   "post /velociraptor/collect-host": "global: launches a server collection; no case write",
   "post /velociraptor/collect-results": "global: reads collection rows; no case write",
   "post /velociraptor/bundles/:id/time-scope-preview": "global: preview only",

@@ -382,6 +382,12 @@
         missing: "not configured — set the OpenCTI URL + token above and reconnect",
       },
       {
+        // #2685: answers per-step results (reached → signed in → NGSIEM Write → NGSIEM Read), so
+        // the analyst sees WHICH part of the SIEM client is wrong; rendered by stepsText below.
+        btn: "crowdstrikeSiemTestBtn", msg: "crowdstrikeSiemTestMsg", url: "/crowdstrike/siem/test", save: true,
+        missing: "not configured — set the SIEM client ID + secret above and test again",
+      },
+      {
         btn: "jiraTestBtn", msg: "jiraTestMsg", url: "/jira/test", save: false,
         missing: "not configured — set DFIR_JIRA_URL, DFIR_JIRA_USER and DFIR_JIRA_TOKEN in .env, then restart",
         onOk: () => document.body.classList.add("has-jira"),
@@ -392,6 +398,15 @@
         onOk: () => document.body.classList.add("has-servicenow"),
       },
     ];
+    // A test that answers `steps` (CrowdStrike NG-SIEM, #2685) is shown one step at a time, so a
+    // pass up to sign-in and a missing scope after it read differently. Plain text only: the
+    // detail can quote Falcon. Warnings (an unconfirmed cancel) are appended, never hidden.
+    function stepsText(res) {
+      const parts = res.steps.map((s) => (s.ok ? "✓ " : "✗ ") + s.label +
+        (s.ok && s.id === "reach" && s.detail ? " " + s.detail : "") + (!s.ok && s.detail ? ": " + s.detail : ""));
+      const warn = Array.isArray(res.warnings) && res.warnings.length ? " — warning: " + res.warnings.join(" ") : "";
+      return parts.join(" → ") + warn;
+    }
     for (const t of INTEGRATION_TESTS) {
       const btn = document.getElementById(t.btn);
       if (!btn) continue;
@@ -413,7 +428,10 @@
         fetch(t.url, { method: "POST" })
           .then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ("HTTP " + r.status)); return j; })
           .then((res) => {
-            if (res.ok) {
+            if (res.configured && Array.isArray(res.steps) && res.steps.length) {
+              msg.style.color = res.ok ? "var(--badge-success-text)" : "var(--danger-bg)";
+              msg.textContent = stepsText(res);
+            } else if (res.ok) {
               msg.style.color = "var(--badge-success-text)";
               msg.textContent = "✓ connected" +
                 (res.baseUrl ? " to " + res.baseUrl : "") + (res.user ? " as " + res.user : "");

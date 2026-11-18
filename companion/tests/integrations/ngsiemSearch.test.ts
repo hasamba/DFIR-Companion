@@ -354,3 +354,83 @@ describe("NgsiemSearchClient.run", () => {
     expect(r.warnings[0]).toContain("did not confirm the cancel");
   });
 });
+
+// #2685: a failure with no HTTP answer names what to check, is logged in full, never carries the secret.
+describe("NgsiemSearchClient connection failures (#2685)", () => {
+  const failing = (code: string) =>
+    (async () => {
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error(`connect ${code} for ${SECRET}`), { code }),
+      });
+    }) as unknown as typeof fetch;
+  const build = (fetchFn: typeof fetch, extra: Record<string, unknown> = {}) => {
+    const logs: string[] = [];
+    let t = 1_000_000;
+    const c = new NgsiemSearchClient({
+      clientId: "id",
+      clientSecret: SECRET,
+      baseUrl: "https://falcon.test",
+      repository: "search-all",
+      fetchFn,
+      now: () => t,
+      sleep: async (ms) => void (t += ms),
+      log: (l) => logs.push(l),
+      ...extra,
+    });
+    return { c, logs };
+  };
+  const reason = (c: NgsiemSearchClient) =>
+    run(c).then(
+      () => "no rejection",
+      (e: unknown) => (e as Error).message,
+    );
+
+  it("a DNS failure says so, names the host, and the server log has the code", async () => {
+    const { c, logs } = build(failing("ENOTFOUND"));
+    const m = await reason(c);
+    expect(m).toContain("could not resolve falcon.test");
+    expect(m).not.toContain("Could not reach CrowdStrike NG-SIEM.");
+    expect(logs.join("\n")).toContain("ENOTFOUND");
+    expect(logs.join("\n")).not.toContain(SECRET);
+    expect(m).not.toContain(SECRET);
+  });
+
+  it("a certificate-trust failure names the issuer a check connection saw and the CA setting", async () => {
+    const seen: Array<[string, number]> = [];
+    const { c } = build(failing("UNABLE_TO_GET_ISSUER_CERT_LOCALLY"), {
+      peerIssuer: async (h: string, p: number) => {
+        seen.push([h, p]);
+        return "O=CrowdStrike, CN=Falcon ROOT CA Proxy";
+      },
+    });
+    const m = await reason(c);
+    expect(m).toContain('issued by "O=CrowdStrike, CN=Falcon ROOT CA Proxy"');
+    expect(m).toContain("DFIR_CROWDSTRIKE_SIEM_CA");
+    expect(seen).toEqual([["falcon.test", 443]]);
+  });
+
+  it("a non-certificate failure never opens the check connection", async () => {
+    let asked = false;
+    const { c } = build(failing("ECONNREFUSED"), {
+      peerIssuer: async () => {
+        asked = true;
+        return "x";
+      },
+    });
+    expect(await reason(c)).toMatch(/firewall or proxy/);
+    expect(asked).toBe(false);
+  });
+
+  it("a bad base URL refuses at construction with the Settings sentence", () => {
+    expect(
+      () =>
+        new NgsiemSearchClient({
+          clientId: "id",
+          clientSecret: SECRET,
+          baseUrl: "https://falcon.crowdstrike.com",
+          repository: "search-all",
+          fetchFn: failing("X"),
+        }),
+    ).toThrow(/console/);
+  });
+});
