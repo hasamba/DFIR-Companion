@@ -97,9 +97,8 @@ export class AnthropicProvider implements AIProvider {
         ...params,
         // Prompt caching (GA — no beta header). The static system prompt is always a cacheable
         // prefix: extraction reuses it across many screenshot batches. Case content is cached ONLY
-        // through `req.cachePrefix` (#2658), which the masking gate sets solely when anonymization is
-        // on — so evidence is retained provider-side (5-min TTL) only in masked form, by the analyst's
-        // rule. Without it the user message follows the breakpoint uncached, as before. A prefix
+        // through `req.cachePrefix` (#2658), which the masking gate sets: masked when anonymization is
+        // on, clear when it is off (#2675 — the same text is sent uncached then anyway). Without it the user message follows the breakpoint uncached, as before. A prefix
         // under the model's minimum (1024 tokens; 2048 on Haiku) silently no-ops — confirm via
         // usage.cache_* below (DFIR_AI_DEBUG_USAGE), don't assume.
         system: [{ type: "text", text: req.systemPrompt, cache_control: { type: "ephemeral" } }],

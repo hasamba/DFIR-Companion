@@ -103,7 +103,8 @@ async function prepareSend(
   label: string,
 ): Promise<PreparedSend> {
   // The per-call entities hold real values: they stop here and never reach the provider.
-  // The clear cache prefix never leaves here (#2658): only the masked one, when masking verified it.
+  // The caller's cache prefix never leaves here (#2658): only maskRequest's verified one — masked when
+  // anonymization is on, the clear one only when it is off (#2675).
   const { promptEntities, withhold: _ignored, beforeSend: _check, cachePrefix: clearPrefix, ...base } = gated;
   // The prompt AND the transcript are masked under the masking-map lock: both can mint tokens (#2657).
   const { m, transcript } = await withSendMasking(ctx, caseId, async (identity) => {
@@ -118,9 +119,10 @@ async function prepareSend(
     const turns = a ? base.transcript.map((t) => maskTurn((x) => a.apply(x), t)) : base.transcript;
     return { anon: a, result: { m: masked, transcript: turns } };
   });
+  const cached = m.sentCachePrefix ? { cachePrefix: m.sentCachePrefix } : {};
   if (!m.anon || !m.known) {
     reportGate(false); // the model sees clear text: its answer may not be recorded as AI text
-    return { req: { ...base, userPrompt: m.plainPrompt }, anon: null };
+    return { req: { ...base, userPrompt: m.plainPrompt, ...cached }, anon: null };
   }
   const anon = m.anon;
   assertSeedKept(anon, seed);
@@ -128,7 +130,6 @@ async function prepareSend(
   // reports the readable text it will really echo; only that text is gated.
   const withhold = staleReadable(m.policy, m.known, anon);
   const echoed = provider.echoedReadableText?.bind(provider);
-  const cached = m.maskedCachePrefix ? { cachePrefix: m.maskedCachePrefix } : {};
   const req = { ...base, userPrompt: m.maskedPrompt, transcript, ...cached, ...(echoed ? { withhold } : {}) };
   if (!echoed) assertNothingStale(transcript, withhold);
   const texts = outboundTexts(req, echoed?.(req));
