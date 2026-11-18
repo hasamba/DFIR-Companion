@@ -13,7 +13,12 @@ import { remapAbsorbedEventIds } from "../absorbedCitations.js";
 import { concurrentRejections } from "../rejectedTechniques.js";
 import { keepWatsonAnswers } from "../timeline/watsonQuestions.js";
 import { keepWatsonItems } from "../timeline/watsonItems.js";
-import { applyWatsonVerdicts, withVerdicts } from "../timeline/watsonVerdicts.js";
+import {
+  applyWatsonVerdicts,
+  orphanedVerdictNotice,
+  orphanedVerdicts,
+  withVerdicts,
+} from "../timeline/watsonVerdicts.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -89,10 +94,13 @@ export async function persistSynthesis(
     );
     // Record THIS synthesis run as a durable, cross-session Investigation-Log line (#165) — imports
     // already log via timelineNote; synthesis didn't. Final merged counts; one entry per real run.
-    persisted = {
-      ...merged,
-      timeline: [...merged.timeline, buildSynthesisLogEntry(merged, input.findingsDiff, input.logNote)],
-    };
+    const runLine = buildSynthesisLogEntry(merged, input.findingsDiff, input.logNote);
+    // A verdict this run left without a finding gets one line (#2693); the verdict stays stored.
+    const orphanLines = orphanedVerdicts(latest, merged).map((v) => ({
+      ...runLine,
+      description: orphanedVerdictNotice(v),
+    }));
+    persisted = { ...merged, timeline: [...merged.timeline, runLine, ...orphanLines] };
     await ctx.opts.stateStore.save(persisted);
   };
   if (ctx.opts.stateLock) await ctx.opts.stateLock.runExclusive(caseId, write);

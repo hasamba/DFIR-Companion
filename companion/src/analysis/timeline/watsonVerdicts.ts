@@ -95,3 +95,51 @@ export function withVerdicts(
   const { watsonFindingVerdicts: _old, ...rest } = state;
   return verdicts?.length ? { ...rest, watsonFindingVerdicts: [...verdicts] } : rest;
 }
+
+/** The verdict keys the synthesis findings in `state` answer to (Watson's own findings excluded). */
+function findingKeys(state: InvestigationState): Set<string> {
+  return new Set(
+    state.findings.filter((f) => !isWatsonItem(f)).map((f) => findingVerdictKey(withoutReview(f))),
+  );
+}
+
+/**
+ * The stored verdicts a full synthesis run left without a finding (#2693): matched a finding in
+ * `before`, match none in `after`. Only the change is reported, so a verdict that was already dormant
+ * before the run is not reported again. Never call it for a partial re-grade (`only`): there a missing
+ * finding means "not in this slice".
+ */
+export function orphanedVerdicts(
+  before: InvestigationState,
+  after: InvestigationState,
+): WatsonFindingVerdict[] {
+  const verdicts = after.watsonFindingVerdicts ?? [];
+  if (!verdicts.length) return [];
+  const was = findingKeys(before);
+  const now = findingKeys(after);
+  return verdicts.filter((v) => was.has(v.key) && !now.has(v.key));
+}
+
+/** How much of a verdict's title or approver the log line keeps. */
+const MAX_LOG_TEXT = 160;
+
+/** Adversary-influenced text made safe for one log line: one line, no double quotes, clipped. */
+function logText(s: string): string {
+  const flat = s
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/"/g, "'")
+    .trim();
+  return flat.length > MAX_LOG_TEXT ? `${flat.slice(0, MAX_LOG_TEXT - 1)}…` : flat;
+}
+
+/** The Investigation-Log line for a verdict that no longer matches a finding. */
+export function orphanedVerdictNotice(v: WatsonFindingVerdict): string {
+  const change = v.action === "dismiss" ? "dismissed" : `demoted to ${v.severity ?? "a lower severity"}`;
+  return (
+    `Watson's change to "${logText(v.title)}" (${change}, approved by ${logText(v.approvedBy)}) no longer ` +
+    `matches a finding: synthesis reworded the finding, or it is no longer raised. The change is kept and ` +
+    `applies again if the finding comes back in the same words. Undo on its proposal card in the Watson ` +
+    `chat still works.`
+  );
+}
