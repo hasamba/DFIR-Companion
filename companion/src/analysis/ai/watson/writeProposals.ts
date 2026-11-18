@@ -7,7 +7,7 @@ import type {
   WatsonWrites,
 } from "./writesSchema.js";
 import { isWatsonItem } from "../../timeline/watsonItems.js";
-import { isDemotion, type WatsonFindingReviewDraft } from "./findingReviewSchema.js";
+import { gainedEvidence, isDemotion, type WatsonFindingReviewDraft } from "./findingReviewSchema.js";
 import { pasteLineKey, type WatsonWriteInputs } from "./roundWrites.js";
 import type { WatsonFindingProposal, WatsonProposal } from "./types.js";
 import { pasteLineEvent } from "./writers/pasteLineEvents.js";
@@ -125,7 +125,8 @@ function stepUpdateProposal(
 
 /**
  * #2682: a demotion or dismissal of a synthesis finding as stored now; none when the finding is gone,
- * is Watson's, changed since Watson read it, or the demotion no longer lowers it.
+ * is Watson's, changed since Watson read it (title, severity, status or new citations), or the
+ * demotion no longer lowers it.
  */
 function reviewProposal(
   r: WatsonFindingReviewDraft,
@@ -141,6 +142,10 @@ function reviewProposal(
     (seen.severity !== found.severity || seen.status !== found.status || seen.title !== found.title)
   )
     return null;
+  // The citations Watson was shown are the evidence its verdict considers. A finding that gained
+  // evidence while Watson thought is about more than Watson read: nothing is proposed.
+  const seenEventIds = [...((seen ?? found).relatedEventIds ?? [])];
+  if (gainedEvidence(found, seenEventIds)) return null;
   if (r.action === "demote" && !isDemotion(found.severity, r.severity)) return null;
   return {
     id: newId("wp"),
@@ -152,6 +157,7 @@ function reviewProposal(
     why: r.why,
     eventIds: [...r.eventIds],
     before: found,
+    seenEventIds,
     status: "pending",
   };
 }

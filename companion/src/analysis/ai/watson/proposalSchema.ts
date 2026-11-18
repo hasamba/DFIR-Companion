@@ -82,6 +82,7 @@ const findingReviewProposal = z.object({
   why: z.string().catch(""),
   eventIds: z.array(z.string()).catch([]),
   before: finding,
+  seenEventIds: z.array(z.string()).optional().catch(undefined),
   key: z.string().optional().catch(undefined),
 });
 

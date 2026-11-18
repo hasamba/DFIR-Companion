@@ -42,6 +42,15 @@ export function isDemotion(from: Severity, to: Severity | undefined): to is Seve
   );
 }
 
+/**
+ * True when `now` cites an event that is not in `seenIds`, the citations Watson was shown: an import
+ * or a delta added evidence Watson never read, so its verdict no longer covers the finding.
+ */
+export function gainedEvidence(now: Finding, seenIds: readonly string[]): boolean {
+  const seen = new Set(seenIds);
+  return (now.relatedEventIds ?? []).some((id) => !seen.has(id));
+}
+
 function sanitizeOne(
   r: WatsonFindingReviewDraft,
   knownEventIds: ReadonlySet<string>,

@@ -220,6 +220,12 @@ export interface WatsonFindingReviewProposal extends WatsonProposalCommon, Watso
   why: string;
   eventIds: string[];
   before: Finding;
+  /**
+   * The finding's cited event ids as Watson was shown them: the evidence its verdict considered. A
+   * finding that cites anything else at apply time changed since the proposal and is not changed.
+   * Absent on a proposal stored before this field: `before.relatedEventIds` stands in.
+   */
+  seenEventIds?: string[];
   /** Set on apply: the verdict's key in the case. */
   key?: string;
 }

@@ -2,16 +2,16 @@ import type { Finding, InvestigationState } from "../../../stateTypes.js";
 import { isWatsonItem } from "../../../timeline/watsonItems.js";
 import { findingVerdictKey, reviewFinding, withoutReview } from "../../../timeline/watsonVerdicts.js";
 import type { WatsonFindingVerdict } from "../../../watsonItemTypes.js";
-import { isDemotion } from "../findingReviewSchema.js";
+import { gainedEvidence, isDemotion } from "../findingReviewSchema.js";
 import { WatsonProposalConflict } from "../proposalErrors.js";
 import type { WatsonFindingReviewProposal } from "../types.js";
 import { WATSON_AUTO_ACTOR, type WatsonWriter, type WriterDeps } from "./writerTypes.js";
 
 // #2682: Watson's demotion or dismissal of a finding synthesis wrote. Apply re-reads the finding and
 // refuses when it is gone, is Watson's (the analyst's), already carries a verdict, or changed since
-// Watson read it. It stores the verdict in the case (so later synthesis runs apply it again) and
-// marks the finding. Undo removes the verdict and puts back what the mark changed, wherever the
-// finding is now (a re-synthesis gives it a new id; the mark carries the proposal id).
+// Watson read it (title, severity, status, or a citation Watson was not shown). It stores the
+// verdict in the case (so later synthesis runs apply it again) and marks the finding. Undo removes
+// the verdict and puts back what the mark changed, wherever the finding is now (a re-synthesis gives it a new id; the mark carries the proposal id).
 
 const OUT_OF_DATE = "Watson changed a synthesis finding";
 const asWritten = (id: string): string => id;
@@ -28,10 +28,21 @@ export function reviewChange(p: WatsonFindingReviewProposal): string {
 const same = (a: Finding, b: Finding): boolean =>
   a.severity === b.severity && a.status === b.status && a.title === b.title;
 
+/** The finding's citations Watson was shown; an older proposal has only the finding as proposed. */
+const seenEvidence = (p: WatsonFindingReviewProposal): string[] =>
+  p.seenEventIds ?? p.before.relatedEventIds ?? [];
+
 function checkTarget(stored: Finding | undefined, p: WatsonFindingReviewProposal): Finding {
-  if (!stored || !same(stored, p.before)) {
+  if (!stored) {
     throw new WatsonProposalConflict(
-      `Finding ${p.targetId} changed or left the case after Watson proposed this. Watson changed nothing`,
+      `Finding ${p.targetId} left the case after Watson proposed this. Watson changed nothing`,
+    );
+  }
+  // New citations count as a change: the verdict would mark evidence Watson never read as considered,
+  // and that evidence could then never reopen the finding.
+  if (!same(stored, p.before) || gainedEvidence(stored, seenEvidence(p))) {
+    throw new WatsonProposalConflict(
+      `The finding changed since Watson proposed this (${p.targetId}). Watson changed nothing`,
     );
   }
   if (isWatsonItem(stored)) {
@@ -55,7 +66,7 @@ function verdictFor(stored: Finding, p: WatsonFindingReviewProposal, actor?: str
     ...(p.action === "demote" && p.severity ? { severity: p.severity } : {}),
     reason: p.why,
     eventIds: [...p.eventIds],
-    consideredEventIds: [...new Set([...(stored.relatedEventIds ?? []), ...p.eventIds])],
+    consideredEventIds: [...new Set([...seenEvidence(p), ...p.eventIds])],
     proposalId: p.id,
     approvedBy: actor || "an analyst",
     at: new Date().toISOString(),
