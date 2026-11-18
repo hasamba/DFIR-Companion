@@ -53,3 +53,13 @@ export function partlyReadArtifactOf(events: readonly ForensicEvent[]): string |
   const stamped = [...new Set(events.map((e) => e.partlyReadArtifact).filter((a): a is string => !!a))];
   return stamped.find((a) => !events.some((e) => !e.partlyReadArtifact && fromArtifact(e.artifactName, a)));
 }
+
+/**
+ * The time basis a merge group keeps (#2684): "scan" only when every member dated at the kept
+ * timestamp was dated by a scanner. An artifact-dated member at that time wins, so a merged row never
+ * claims scan time for a timestamp some record actually wrote — that would mute a gap's grade.
+ */
+export function timeBasisOf(events: readonly ForensicEvent[], timestamp: string): "scan" | undefined {
+  const atTime = events.filter((e) => e.timestamp === timestamp);
+  return atTime.length > 0 && atTime.every((e) => e.timeBasis === "scan") ? "scan" : undefined;
+}

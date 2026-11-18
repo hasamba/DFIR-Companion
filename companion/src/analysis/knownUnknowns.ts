@@ -366,8 +366,9 @@ export function buildKnownUnknownItems(
   //    already owns the shadow-artifact deploy UI.
   // A dwell interval between two benign bursts is a panel row, not an unknown to chase (#1503):
   // listed here it reads "collection gap or cleared logs?" straight into the synthesis prompt.
+  // The wait before collection (#2684) is not an unknown either: the silence ends on our own row.
   const gaps = detectGapsWithWaves(scopedEvents, opts.gapOptions).gaps.filter(
-    (g) => !g.betweenWaves || g.attackerEdges,
+    (g) => (!g.betweenWaves || g.attackerEdges) && !g.collectionEdge,
   );
   const maxGaps = Math.max(0, opts.maxGaps ?? DEFAULT_MAX_GAPS);
   const orderedGaps = [...gaps.filter((g) => g.complete), ...gaps.filter((g) => !g.complete)].slice(

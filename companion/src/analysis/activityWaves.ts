@@ -9,7 +9,12 @@ import {
   type GapOptions,
   type TimelineGap,
 } from "./gapDetect.js";
-import { attackerGradedInterval, classifyGapEdges, severeAssetsOf } from "./gapEdgeClass.js";
+import {
+  attackerGradedInterval,
+  classifyGapEdges,
+  collectionClosesSilence,
+  severeAssetsOf,
+} from "./gapEdgeClass.js";
 import { hostHistoryIds } from "./gapHostHistory.js";
 import { crossScopeInterval, scopeSetBoundaryLabel, severeCloudScopesOf } from "./gapScope.js";
 
@@ -187,6 +192,7 @@ export function detectActivityWaves(
   });
 
   const severe = segments.map(severeAssetsOf);
+  const eventById = new Map(segments.flat().map((e) => [e.id, e]));
   const cloudScopes = segments.map(severeCloudScopesOf);
   const intervals: WaveInterval[] = [];
   for (let i = 1; i < waves.length; i++) {
@@ -202,7 +208,12 @@ export function detectActivityWaves(
       toWave: waves[i].index,
       durationSeconds,
       durationLabel: formatDuration(durationSeconds),
-      attackerGraded: !crossScope && attackerGradedInterval(severe[i - 1], severe[i]),
+      // A wave that opens on the collection's own row (#2688) is the scanner's verdicts, dated at
+      // the scan time — not a returning operator, so the wait before it is not attacker dwell.
+      attackerGraded:
+        !crossScope &&
+        !collectionClosesSilence(eventById.get(waves[i - 1].lastEventId), segments[i][0]) &&
+        attackerGradedInterval(severe[i - 1], severe[i]),
       crossScope,
       ...(crossScope && scopesBefore && scopesAfter
         ? { crossScopeLabel: scopeSetBoundaryLabel(scopesBefore, scopesAfter) }

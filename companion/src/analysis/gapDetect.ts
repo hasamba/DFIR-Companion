@@ -78,6 +78,14 @@ export interface TimelineGap {
   //     ("AWS account A → AWS account B") is charset-restricted but still escaped on every surface.
   scopeBoundary?: boolean;
   scopeBoundaryLabel?: string;
+  //   • `collectionEdge` (#2684) — on a complete gap, a wave boundary included (#2688): the row
+  //     that closes it is the collection's own (a collector process, or a THOR row dated at the
+  //     scan time), so the silence is the wait before collection. Always Info, never a finding,
+  //     never T1070. The label names the closing row by source, id and time — never by its
+  //     description — and is escaped anyway.
+  collectionEdge?: boolean;
+  collectionEdgeEventId?: string;
+  collectionEdgeLabel?: string;
   silentSources: string[]; // sources that produced no events during the window (sorted)
   activeSources: string[]; // sources that DID keep logging during the window (sorted; empty when complete)
   beforeEventId: string; // forensic-event id bounding the start of the gap (last activity before)
@@ -135,7 +143,7 @@ export const GAP_CAVEAT_LEAD =
   "A coverage gap is a lead, not proof of tampering — an analyst may have collected logs for a limited window, or activity genuinely paused; confirm against the collection scope and host clocks before concluding.";
 // The panel and report banner: how a complete gap is graded (#1942).
 export const GAP_BANNER =
-  "A coverage gap is a lead, not proof of tampering — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where every source went silent is High only when a Medium-or-higher row sits at its edge or the case records a log clear (EID 1102/104) or an audit-policy change (EID 4719); otherwise it is Low. A reboot or shutdown at the gap edge explains the silence. Confirm against the collection scope and host clocks.";
+  "A coverage gap is a lead, not proof of tampering — an analyst may have collected logs for a limited window, or activity genuinely paused. A gap where every source went silent is High only when a Medium-or-higher row sits at its edge or the case records a log clear (EID 1102/104) or an audit-policy change (EID 4719); otherwise it is Low. A reboot or shutdown at the gap edge explains the silence, and a silence that ends on the collection's own first row is the wait before collection (Info). Confirm against the collection scope and host clocks.";
 
 // The report's one-phrase gap kind. A wave boundary is dwell time; a reboot at the edge is named.
 export function gapKindLabel(g: TimelineGap): string {
@@ -146,6 +154,8 @@ export function gapKindLabel(g: TimelineGap): string {
       ? "wave boundary, separate accounts/tenants"
       : "complete silence, separate accounts/tenants";
   }
+  // A wait before collection reads the same inside one wave or across a wave boundary (#2688).
+  if (g.collectionEdge) return "quiet period before collection";
   if (g.betweenWaves) return "dwell interval";
   if (!g.complete) return "partial";
   return g.rebootEdge ? "complete silence, reboot at edge" : "complete silence";
@@ -485,6 +495,7 @@ export function backfillSilenceGapFindings(
     // A dwell interval earns a finding only between two attacker-graded waves (#1503). Two benign
     // bursts around a quiet stretch — a lab box between sessions, admin work months apart — are a
     // fact for the coverage panel, not a Medium finding with a "returning operator" brief.
+    if (gap.collectionEdge) continue; // the wait before collection (#2684, #2688): a panel row, not a lead
     if (gap.betweenWaves && !gap.attackerEdges) continue;
     if (gap.provisioningEdges || gap.hostHistory) continue; // idle time / the host's own history
     if (heldGapCount + newFindings.length >= cap) break;

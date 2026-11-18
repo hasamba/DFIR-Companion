@@ -396,7 +396,9 @@ function timelineCoverage(state: InvestigationState, lines: string[]): void {
   for (const g of gaps) {
     // A wave boundary is accounted-for dwell time, not suspected missing data — the same wording
     // the finding for this window uses, so the two surfaces never disagree.
-    const kind = gapKindLabel(g);
+    // A quiet period before collection names the row that closed it (#2684), escaped like any cell.
+    const closedBy = g.collectionEdgeLabel ? `, closed by ${g.collectionEdgeLabel}` : "";
+    const kind = cellMd(`${gapKindLabel(g)}${closedBy}`);
     const silent = g.silentSources.length ? g.silentSources.join(", ") : "all sources";
     const active = g.activeSources.length ? g.activeSources.join(", ") : "—";
     lines.push(

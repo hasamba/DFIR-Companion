@@ -59,6 +59,7 @@ export interface ThorEvent {
   sources?: string[];
   processName?: string; // for parent→child chain validation (ProcessCheck rows)
   parentName?: string;
+  timeBasis?: "scan"; // `timestamp` is the THOR scan time, not the artifact's own time (#2684)
 }
 
 export interface ThorIoc {
@@ -103,6 +104,9 @@ function pickTimestamp(row: Row): string {
 function timestampKey(row: Row): string {
   return TIME_KEYS.find((k) => str(row[k]).trim()) ?? "";
 }
+// The scan-time key (#2684): a row dated by it says when THOR looked, not when anything happened, so
+// a coverage gap that closes on it is the wait before the collection, not a hole in the logs.
+const SCAN_TIME_KEY = "time";
 
 // Pull MITRE technique ids out of THOR tag/class fields (e.g. "ATTACK.T1059").
 function pickTechniques(row: Row): string[] {
@@ -247,6 +251,7 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
 
     let severity = LEVEL_SEVERITY[level] ?? "Medium";
     const timestamp = pickTimestamp(row);
+    const scanTime = timestampKey(row) === SCAN_TIME_KEY;
     // Content vs name (#1966): graded before the self-scan demote below, so that demote still wins.
     const mismatch = contentMismatch(row, severity);
     if (mismatch) severity = mismatch.severity;
@@ -304,7 +309,15 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
       existing.count = (existing.count ?? 1) + 1;
       if (timestamp && (!existing.endTimestamp || timestamp > existing.endTimestamp))
         existing.endTimestamp = timestamp;
-      if (timestamp && timestamp < existing.timestamp) existing.timestamp = timestamp;
+      if (timestamp && timestamp < existing.timestamp) {
+        // The flag describes the timestamp that is kept, so it follows the copy that set it.
+        existing.timestamp = timestamp;
+        if (scanTime) existing.timeBasis = "scan";
+        else delete existing.timeBasis;
+      } else if (timestamp && timestamp === existing.timestamp && !scanTime) {
+        // Artifact evidence at the kept time wins in either input order; it is never re-marked.
+        delete existing.timeBasis;
+      }
       if (!existing.asset && host) existing.asset = host;
       // The level is not in the signature, so the same finding can repeat at a higher grade: the
       // merged event takes the most severe copy's grade and its description (which names the level).
@@ -326,6 +339,7 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
         ...(host ? { asset: host } : {}),
         ...(processName ? { processName } : {}),
         ...(parentName ? { parentName } : {}),
+        ...(scanTime ? { timeBasis: "scan" as const } : {}),
         sources: ["THOR"],
       });
       order.push(sig);

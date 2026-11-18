@@ -211,10 +211,13 @@ export async function startSiemSearch(
   return jobId;
 }
 
+const SEVERE = ["High", "Critical"] as const;
+
 /**
- * The span of the case's High/Critical forensic events, streamed — the same window
- * incidentWindowFromTimeline (linuxPersistImport.ts) takes, without loading the timeline. Fewer than
- * two such events: no span. Forensic timeline only (CLAUDE.md §7).
+ * The span of the case's High/Critical forensic events — the same window
+ * incidentWindowFromTimeline (linuxPersistImport.ts) takes, without loading the timeline. Each
+ * severity is read through the indexed severity filter, so only the severe rows are read, never the
+ * whole timeline (#2672). Fewer than two such events: no span. Forensic timeline only (CLAUDE.md §7).
  */
 async function severeSpan(ctx: RouteContext, caseId: string) {
   const store = ctx.options.stateStore;
@@ -222,14 +225,17 @@ async function severeSpan(ctx: RouteContext, caseId: string) {
   let lo = Infinity;
   let hi = -Infinity;
   let count = 0;
-  for await (const batch of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) {
-    for (const e of batch) {
-      if (e.severity !== "High" && e.severity !== "Critical") continue;
-      const t = Date.parse(e.timestamp ?? "");
-      if (!Number.isFinite(t)) continue;
-      count++;
-      lo = Math.min(lo, t);
-      hi = Math.max(hi, t);
+  for (const severity of SEVERE) {
+    for await (const batch of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS, severity })) {
+      for (const e of batch) {
+        // The store interface does not promise to honour the filter; keep the check as a guard.
+        if (e.severity !== severity) continue;
+        const t = Date.parse(e.timestamp ?? "");
+        if (!Number.isFinite(t)) continue;
+        count++;
+        lo = Math.min(lo, t);
+        hi = Math.max(hi, t);
+      }
     }
   }
   return count < 2 ? undefined : { start: new Date(lo).toISOString(), end: new Date(hi).toISOString() };
@@ -245,6 +251,9 @@ export function registerCrowdstrikeSiemRoutes(app: Express, ctx: RouteContext): 
   app.get("/cases/:id/crowdstrike/siem", async (req: Request, res: Response) => {
     const creds = ngsiemCredentialsFromEnv(process.env);
     if (!creds) return res.status(200).json({ configured: false });
+    if ((await ctx.store.getCaseMeta(req.params.id).catch(() => null)) === null) {
+      return res.status(404).json({ error: "case not found" });
+    }
     const limits = readSiemLimits(process.env);
     // The console origin for "Open in Falcon" (#2685): a plain link, never a credential.
     const consoleUrl = falconConsoleOrigin(creds);

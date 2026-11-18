@@ -120,6 +120,32 @@ export function isRebootRow(e: ForensicEvent): boolean {
   return REBOOT_EID_RE.test(text) || REBOOT_TEXT_RE.test(text);
 }
 
+// A logging service that stopped (#2684): EID 1100 (the event logging service shut down), or a
+// 7036 / 7034-style record naming Sysmon, the Windows Event Log service or auditd as stopped. Narrow
+// on purpose; a false match only keeps the stricter grade. 6006 is a reboot and handled above.
+const LOG_SERVICE_DOWN_EID_RE = eidRe("1100");
+const LOG_SERVICE_STOP_RE =
+  /\b(?:sysmon(?:64)?|eventlog|windows event log|auditd)\b[^\n]{0,80}?\b(?:entered the stopped state|terminated unexpectedly|stopped)\b/i;
+
+export function isStoppedLogServiceRow(e: ForensicEvent): boolean {
+  const text = rowText(e);
+  return LOG_SERVICE_DOWN_EID_RE.test(text) || LOG_SERVICE_STOP_RE.test(text);
+}
+
+// The collection's own row (#2684): a row the import attributed to the case's collector, or one
+// whose timestamp is the scanner's time rather than the artifact's (`timeBasis: "scan"`). Both are
+// structured marks set by importers — never a name list read from event content an intruder writes.
+export function isCollectionRow(e: ForensicEvent): boolean {
+  return e.origin === "collector" || e.timeBasis === "scan";
+}
+
+// How a panel or report names the closing row: source, id and time. Never the description — it is
+// adversary-influenced text, and this label rides into the dashboard and the report.
+function collectionEdgeLabel(e: ForensicEvent): string {
+  const source = e.sources?.[0] ?? (e.origin === "collector" ? "collector" : "scan");
+  return `${source} row ${e.id} at ${e.timestamp}`;
+}
+
 const atLeastMedium = (e: ForensicEvent | undefined): boolean =>
   e !== undefined && SEVERITY_RANK[e.severity] <= SEVERITY_RANK.Medium;
 
@@ -128,13 +154,31 @@ const atLeastMedium = (e: ForensicEvent | undefined): boolean =>
 // whose two edges sit in separate cloud accounts/tenants (#2606): a hole between two independent
 // log sources cannot be cleared logs or a stopped collector, and a log clear in one account says
 // nothing about it, so the case-wide anti-forensic flag does not lift it either.
+// A gap that closes on the collection's own row (#2684) is the wait before collection: Info, and the
+// case-wide flag does not lift it — only a log clear or a stopped logging service at the edge that
+// opens the silence keeps today's grade. A Medium+ grade on the closing row is the scanner's verdict
+// on something it found, dated when it looked, so it corroborates nothing about the silence.
+type CompleteGapGrade = Pick<
+  TimelineGap,
+  | "severity"
+  | "corroborated"
+  | "rebootEdge"
+  | "scopeBoundary"
+  | "scopeBoundaryLabel"
+  | "collectionEdge"
+  | "collectionEdgeEventId"
+  | "collectionEdgeLabel"
+>;
 function gradeCompleteGap(
   before: ForensicEvent | undefined,
   after: ForensicEvent | undefined,
   antiForensic: boolean,
-): Pick<TimelineGap, "severity" | "corroborated" | "rebootEdge" | "scopeBoundary" | "scopeBoundaryLabel"> {
+): CompleteGapGrade {
   const reboot = (before !== undefined && isRebootRow(before)) || (after !== undefined && isRebootRow(after));
   const boundary = reboot ? null : scopeBoundaryLabel(before, after);
+  if (boundary === null && after !== undefined && collectionClosesSilence(before, after)) {
+    return collectionEdgeGrade(after);
+  }
   const corroborated =
     !reboot && boundary === null && (antiForensic || atLeastMedium(before) || atLeastMedium(after));
   return {
@@ -142,6 +186,36 @@ function gradeCompleteGap(
     corroborated,
     ...(reboot ? { rebootEdge: true } : {}),
     ...(boundary !== null ? { scopeBoundary: true, scopeBoundaryLabel: boundary } : {}),
+  };
+}
+
+// The #2684 rule in one place (#2688): the silence ends on the collection's own row, no reboot sits
+// at either edge, and the edge that opens it records no log clear, audit-policy change or stopped
+// logging service. Used for a complete gap inside one wave (gradeCompleteGap), for a wait of 6h or
+// more that separates two waves (classifyGapEdges), and by activityWaves.ts, which stops counting
+// such an interval as attacker activity — the after-wave is the scanner's own verdicts, dated when
+// it looked. A cross-scope boundary is checked by each caller first; it wins over this reading.
+export function collectionClosesSilence(
+  before: ForensicEvent | undefined,
+  after: ForensicEvent | undefined,
+): boolean {
+  if (after === undefined || !isCollectionRow(after)) return false;
+  if (isRebootRow(after)) return false;
+  if (before === undefined) return true;
+  return !isRebootRow(before) && !isAntiForensicRow(before) && !isStoppedLogServiceRow(before);
+}
+
+type CollectionEdgeGrade = Pick<
+  TimelineGap,
+  "severity" | "corroborated" | "collectionEdge" | "collectionEdgeEventId" | "collectionEdgeLabel"
+>;
+function collectionEdgeGrade(after: ForensicEvent): CollectionEdgeGrade {
+  return {
+    severity: "Info",
+    corroborated: false,
+    collectionEdge: true,
+    collectionEdgeEventId: after.id,
+    collectionEdgeLabel: collectionEdgeLabel(after),
   };
 }
 
@@ -154,10 +228,12 @@ function gradeCompleteGap(
 //     Two High waves around two idle edge rows are still two visits: attackerEdges wins, so the
 //     dwell finding and the waves finding never disagree about the same window.
 //   • `severity` / `corroborated` / `rebootEdge` / `scopeBoundary` — on a complete, non-wave gap
-//     (#1942, #2606); see gradeCompleteGap. Partial gaps and dwell intervals keep their grade,
-//     except a `betweenWaves` gap whose interval activityWaves.ts marks crossScope (#2610): it gets
-//     `scopeBoundary` + label and Low, the same as a boundary gap outside a wave, so the panel, the
-//     report and the AI gap prompt label it the way the (withheld) finding reads it. Never T1070.
+//     (#1942, #2606); see gradeCompleteGap. `collectionEdge` (#2684) on any complete gap, wave
+//     boundary included (#2688), that collectionClosesSilence reads as the wait before collection.
+//     Partial gaps and dwell intervals keep their grade, except a `betweenWaves` gap whose interval
+//     activityWaves.ts marks crossScope (#2610): it gets `scopeBoundary` + label and Low, the same
+//     as a boundary gap outside a wave, so the panel, the report and the AI gap prompt label it the
+//     way the (withheld) finding reads it. Never T1070.
 export function classifyGapEdges(
   gaps: readonly TimelineGap[],
   events: readonly ForensicEvent[],
@@ -193,6 +269,9 @@ export function classifyGapEdges(
         scopeBoundaryLabel: crossLabel,
       };
       Object.assign(next, boundary);
+    } else if (after && g.betweenWaves && g.complete && collectionClosesSilence(before, after)) {
+      // A wait of 6h or more before collection (#2688): the same reading as inside one wave.
+      Object.assign(next, collectionEdgeGrade(after));
     }
     if (reasonBefore && reasonAfter && !next.attackerEdges) {
       next.provisioningEdges = true;

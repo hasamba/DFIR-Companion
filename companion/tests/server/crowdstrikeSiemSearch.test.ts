@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,6 +98,17 @@ async function makeApp(fetchFn: typeof fetch) {
   return { app, store, stateStore, superTimelineStore, activityLogStore, jobManager };
 }
 
+const DAY = 24 * HOUR;
+const event = (id: string, ms: number, severity: ForensicEvent["severity"]): ForensicEvent => ({
+  id,
+  timestamp: new Date(ms).toISOString(),
+  description: `synthetic ${severity} event ${id}`,
+  severity,
+  mitreTechniques: [],
+  relatedFindingIds: [],
+  sourceScreenshots: [],
+});
+
 const recent = () => {
   const end = Date.now() - HOUR;
   return { start: new Date(end - 24 * HOUR).toISOString(), end: new Date(end).toISOString() };
@@ -152,6 +163,59 @@ describe("CrowdStrike NG-SIEM search route (#2666)", () => {
       Date.parse(res.body.defaultRange.end) - Date.parse(res.body.defaultRange.start),
     ).toBeLessThanOrEqual(7 * 24 * HOUR);
     expect(JSON.stringify(res.body)).not.toContain(SECRET);
+  });
+
+  it("GET reads only High and Critical rows for the default range, through the indexed filter (#2672)", async () => {
+    configure();
+    const { app, stateStore } = await makeApp(fakeFalcon([]).fetchFn);
+    const now = Date.now();
+    await stateStore.appendForensicEvents("c1", [
+      event("low-wide", now - 6.5 * DAY, "Low"),
+      event("med-wide", now - HOUR, "Medium"),
+      event("high-1", now - 4 * DAY, "High"),
+      event("high-2", now - 3.5 * DAY, "High"),
+      event("crit-1", now - 3 * DAY, "Critical"),
+    ]);
+    const spy = vi.spyOn(stateStore, "forensicTimelineBatches");
+    const res = await request(app).get("/cases/c1/crowdstrike/siem");
+    expect(res.status).toBe(200);
+    expect(spy).toHaveBeenCalled();
+    for (const [, query] of spy.mock.calls) expect(["High", "Critical"]).toContain(query?.severity);
+    // The severe window (4 to 3 days ago) plus a day either side; the Low/Medium spread is ignored.
+    expect(res.body.defaultRange).toEqual({
+      start: new Date(now - 5 * DAY).toISOString(),
+      end: new Date(now - 2 * DAY).toISOString(),
+    });
+  });
+
+  it("GET falls back to the last maxWindowDays when fewer than two severe events exist (#2672)", async () => {
+    configure();
+    const { app, stateStore } = await makeApp(fakeFalcon([]).fetchFn);
+    const now = Date.now();
+    await stateStore.appendForensicEvents("c1", [
+      event("high-only", now - 3 * DAY, "High"),
+      event("low-1", now - 2 * DAY, "Low"),
+      event("med-1", now - DAY, "Medium"),
+    ]);
+    const before = Date.now();
+    const res = await request(app).get("/cases/c1/crowdstrike/siem");
+    const end = Date.parse(res.body.defaultRange.end);
+    expect(end).toBeGreaterThanOrEqual(before);
+    expect(end).toBeLessThanOrEqual(Date.now());
+    expect(end - Date.parse(res.body.defaultRange.start)).toBe(7 * DAY);
+  });
+
+  it("GET refuses an unknown case with 404, like the POST, once the search is set up (#2673)", async () => {
+    const { app: offApp } = await makeApp(fakeFalcon([]).fetchFn);
+    const off = await request(offApp).get("/cases/nope/crowdstrike/siem");
+    expect(off.status).toBe(200);
+    expect(off.body).toEqual({ configured: false });
+
+    configure();
+    const { app } = await makeApp(fakeFalcon([]).fetchFn);
+    const res = await request(app).get("/cases/nope/crowdstrike/siem");
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "case not found" });
   });
 
   it("refuses a range wider than the limit before any call to Falcon", async () => {

@@ -210,6 +210,8 @@ export const deltaSchema = z.object({
         // Evidence origin (#932 item 5). Promotion parses through this schema; without the field
         // a promoted lab row would arrive in the forensic timeline as a host observation.
         origin: z.enum(["lab", "collector"]).optional().catch(undefined),
+        // Importer-only (#2684): the timestamp is the scanner's time, not the artifact's own.
+        timeBasis: z.literal("scan").optional().catch(undefined),
         // The name the record wrote (#1495); importer-only provenance, stripped from a model response.
         assetRecord: z.string().optional().catch(undefined),
         // Event's real time as shown in the artifact. A model that returns a NAIVE stamp (no "Z", no
@@ -646,8 +648,9 @@ export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
     // `partlyReadArtifact` (#1651) likewise: a model claiming a read was incomplete would trigger
     // collection steps; one clearing it cannot happen, because the merge never clears it on absence.
     // `sourceRecords` (#2301) is provenance too: a model must never point an event at source records.
+    // `timeBasis` (#2684) likewise: a model claiming "scan time" would mute a gap's tampering grade.
     forensicEvents: (delta.forensicEvents ?? []).map(
-      ({ origin, assetRecord, partlyReadArtifact, sourceRecords, ...rest }) => rest,
+      ({ origin, assetRecord, partlyReadArtifact, sourceRecords, timeBasis, ...rest }) => rest,
     ),
   };
 }

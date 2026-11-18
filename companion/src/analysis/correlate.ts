@@ -29,7 +29,7 @@ import { mergeGroupCanonical } from "./canonicalMerge.js";
 import { DERIVED_NOTE_NAMES } from "./derivedNote.js";
 import { mergeDerivedNotes } from "./buildTimeMerge.js";
 import { collectorRecordGrade } from "./collectorMerge.js";
-import { partlyReadArtifactOf, promotionMarks } from "./promotionMerge.js";
+import { partlyReadArtifactOf, promotionMarks, timeBasisOf } from "./promotionMerge.js";
 import { scannedText } from "./correlateSpans.js";
 
 export interface CorrelateOptions {
@@ -394,6 +394,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     message: primary.message ?? events.find((e) => e.message)?.message,
     veloUrl: primary.veloUrl ?? events.find((e) => e.veloUrl)?.veloUrl,
     partlyReadArtifact: partlyReadArtifactOf(events), // every member, not the primary (#1651)
+    timeBasis: timeBasisOf(events, times[0] ?? primary.timestamp), // follows the kept time (#2684)
     sha256: events.find((e) => e.sha256)?.sha256,
     md5: events.find((e) => e.md5)?.md5,
     path: primary.path ?? events.find((e) => e.path)?.path,
