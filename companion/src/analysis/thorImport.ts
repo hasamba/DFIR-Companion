@@ -314,6 +314,9 @@ export function parseThorReport(jsonText: string, opts: ThorImportOptions = {}):
         existing.timestamp = timestamp;
         if (scanTime) existing.timeBasis = "scan";
         else delete existing.timeBasis;
+      } else if (timestamp && timestamp === existing.timestamp && !scanTime) {
+        // Artifact evidence at the kept time wins in either input order; it is never re-marked.
+        delete existing.timeBasis;
       }
       if (!existing.asset && host) existing.asset = host;
       // The level is not in the signature, so the same finding can repeat at a higher grade: the

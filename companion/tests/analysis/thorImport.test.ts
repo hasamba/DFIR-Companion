@@ -307,4 +307,17 @@ describe("parseThorReport — scan-time rows (#2684)", () => {
     expect(artifactFirst.events[0].timestamp).toBe("2026-06-03T08:00:00Z");
     expect(artifactFirst.events[0].timeBasis).toBe("scan");
   });
+
+  it("clears the flag when an artifact-dated copy shares the kept timestamp, in either order", () => {
+    const artifactSameTime = { ...LOG_HIT, time: "2026-06-03T12:00:00Z", log_created: LOG_HIT.time };
+    for (const [label, rows] of [
+      ["scan first", [LOG_HIT, artifactSameTime]],
+      ["artifact first", [artifactSameTime, LOG_HIT]],
+    ] as const) {
+      const r = parseThorReport(jsonl(...rows));
+      expect(r.events, label).toHaveLength(1);
+      expect(r.events[0].timestamp, label).toBe(LOG_HIT.time);
+      expect(r.events[0].timeBasis, label).toBeUndefined();
+    }
+  });
 });
