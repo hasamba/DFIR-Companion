@@ -29,6 +29,8 @@ What happens to the result:
 - The activity log records the query, the repository, the time range, the row counts, any truncation and who pressed Run.
 - **Undo import** takes the rows back out, like any import.
 
+**Open in Falcon.** Next to **Run in Falcon**, each CQL card (and each Watson search card) has an **Open in Falcon** link. It opens Next-Gen SIEM **Advanced event search** in your Falcon console, in a new tab, with the card's query and time range filled in. It is a plain link: nothing runs in the Companion, nothing is imported, and Falcon uses your own console sign-in. The console address follows the SIEM client's cloud (us-1, us-2, eu-1 or gov-us-1). There is no link for gov-us-2. The search-all repository opens as "all"; for another repository, choose it in Falcon.
+
 Limits (Settings → Enrichment → CrowdStrike Next-Gen SIEM search):
 
 | Limit | Default | When it is hit |

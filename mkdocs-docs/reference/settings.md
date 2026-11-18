@@ -211,13 +211,42 @@ The API client needs two scopes:
 | `DFIR_CROWDSTRIKE_SIEM_CLIENT_ID` | not set | The feature is off unless both the ID and the secret are set |
 | `DFIR_CROWDSTRIKE_SIEM_CLIENT_SECRET` | not set | Stored masked; never shown again or written to a log |
 | `DFIR_CROWDSTRIKE_SIEM_CLOUD` | `DFIR_CROWDSTRIKE_CLOUD`, then `us-1` | `us-1`, `us-2`, `eu-1`, `gov-us-1` or `gov-us-2` |
-| `DFIR_CROWDSTRIKE_SIEM_BASE_URL` | not set | An explicit API base; wins over the cloud |
+| `DFIR_CROWDSTRIKE_SIEM_BASE_URL` | not set | An explicit API base; wins over the cloud. It must be `https://` plus the API host (for example `https://api.us-2.crowdstrike.com`). The Falcon console address (`falcon.…`) is refused |
+| `DFIR_CROWDSTRIKE_SIEM_CA` | not set | A PEM file with the root CA of a proxy that inspects TLS on your network. It is trusted **in addition to** the normal roots, and certificate checks stay on. There is no option to turn verification off |
 | `DFIR_CROWDSTRIKE_SIEM_REPOSITORY` | `search-all` | The NG-SIEM repository or view to search |
 | `DFIR_CROWDSTRIKE_SIEM_MAX_WINDOW_DAYS` | `7` | The longest time range one search may cover. A wider search is refused, not cut |
 | `DFIR_CROWDSTRIKE_SIEM_MAX_ROWS` | `10000` | The most rows one search imports |
 | `DFIR_CROWDSTRIKE_SIEM_TIMEOUT_MS` | `300000` | After this, the search is cancelled and the rows already read are imported, marked truncated |
 
 A save applies at once; no restart is needed. A 403 from Falcon means the API client is missing one of the two scopes, and the job says so.
+
+#### Test the connection
+
+The **Test** button under the NG-SIEM settings saves your edits and checks the API client one step at a time:
+
+1. **Reached** — the API host answered (DNS, network and TLS are fine).
+2. **Signed in** — Falcon accepted the client ID, secret and cloud.
+3. **NGSIEM: Write (job started)** — a tiny `count()` search over the last 5 minutes started in your repository.
+4. **NGSIEM: Read (job polled)** — the Companion read that search once.
+
+The test then cancels its search. It imports nothing and does not touch any case. It stops at the first step that fails and says why. If Falcon does not confirm the cancel, a warning says so; the search expires in Falcon by itself after about 90 seconds.
+
+#### If a search cannot connect
+
+A search or a test that gets no answer from Falcon now says why:
+
+| Message says | Check |
+|---|---|
+| Could not resolve the host | The cloud or base URL setting, and this server's DNS |
+| The connection failed (refused, reset or timed out) | The firewall or proxy between this server and CrowdStrike |
+| The TLS certificate was rejected, issued by … | Your network inspects TLS. Put the proxy's root CA (the issuer named in the message) in a PEM file and set `DFIR_CROWDSTRIKE_SIEM_CA` |
+| The certificate is outside its validity dates | This server's clock |
+| The certificate is for a different host | The base URL, or TLS interception on the network |
+| The base URL is not valid | `DFIR_CROWDSTRIKE_SIEM_BASE_URL`: `https://` plus the API host, or leave it blank |
+| Sign-in failed (401/403 at sign-in) | The client ID, the secret and the cloud region |
+| Missing NGSIEM: Write or NGSIEM: Read | The scopes of the API client in Falcon |
+
+The full error goes to the server log. The secret is never written to a message or to the log.
 
 ---
 

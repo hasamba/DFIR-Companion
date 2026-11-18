@@ -34,6 +34,17 @@
     return p.status === "pending" ? btn(p.id, "apply", "Run search") + btn(p.id, "reject", "Reject") : "";
   }
 
+  // "Open in Falcon" (#2685): the card's query and range in Next-Gen SIEM Advanced event search, a
+  // plain link built by dashboard-siem-search.js (no API call, no credential). Absent when that
+  // module does not know the console host.
+  function openInFalcon(p) {
+    const url = typeof falconSearchUrl === "function" ? falconSearchUrl(p.query, p.start, p.end, p.repository) : "";
+    return url
+      ? `<a class="watson-mini watson-falcon-open" href="${escAttr(url)}" target="_blank" rel="noopener noreferrer" ` +
+          `title="Open this query in Falcon Next-Gen SIEM Advanced event search, in a new tab. Nothing runs here.">Open in Falcon</a> `
+      : "";
+  }
+
   function csCardHtml(p) {
     const grey = p.status === "rejected" ? " watson-rejected" : "";
     return (
@@ -43,6 +54,7 @@
       `<div class="watson-why">Repository ${esc(p.repository)} · ${timeHtml(p.start)} to ${timeHtml(p.end)}</div>` +
       `<pre class="watson-pre">${esc(p.query)}</pre>` +
       `<button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="copy">Copy</button>` +
+      openInFalcon(p) +
       (p.status === "pending"
         ? `<div class="watson-meta">Runs this query on your Next-Gen SIEM and imports the rows into the case as evidence. It changes nothing in Falcon.</div>`
         : "") +

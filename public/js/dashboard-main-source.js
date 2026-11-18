@@ -253,6 +253,7 @@
     const cites = typeof citeFindings === "function" ? citeFindings(h.relatedFindingIds || []) : "";
     const label = LANGUAGE_LABELS[h.language] || h.language;
     const run = typeof siemRunButtonHtml === "function" ? siemRunButtonHtml(h) : ""; // #2666
+    const open = typeof falconOpenLinkHtml === "function" ? falconOpenLinkHtml(h) : ""; // #2685
     const badge = (typeof siemBadge === "function" && siemBadge(h)) || "copy-ready";
     return (
       `<div class="vhs-card msh-card" data-scope="${escAttr(scope)}" data-idx="${idx}">` +
@@ -263,7 +264,7 @@
       (cites ? `<div class="vhs-rationale" data-safe-style="color:var(--text-muted)">Cites: ${cites}</div>` : "") +
       (techs ? `<div class="vhs-techs">${techs}</div>` : "") +
       `<textarea class="vhs-vql msh-query" spellcheck="false" aria-label="${escAttr(label)} query">${esc(h.query)}</textarea>` +
-      `<div class="vhs-actions"><button type="button" class="msh-copy">Copy query</button>${run}` +
+      `<div class="vhs-actions"><button type="button" class="msh-copy">Copy query</button>${run}${open}` +
       `<button type="button" class="msh-regen" title="Ask the AI for a different ${escAttr(label)} hunt">↻ Regenerate</button></div>` +
       `</div>`
     );

@@ -1417,7 +1417,14 @@ export const FEATURES: Feature[] = [
     // Run a CQL hunt on CrowdStrike Next-Gen SIEM (#2666): the card's Run button, the confirm step
     // and following the search job. The rows are imported by the server.
     file: "dashboard-siem-search.js",
-    publish: ["loadSiemSearch", "siemRunButtonHtml", "siemBadge", "wireSiemRun"],
+    publish: [
+      "loadSiemSearch",
+      "siemRunButtonHtml",
+      "siemBadge",
+      "wireSiemRun",
+      "falconSearchUrl", // #2685 Open in Falcon
+      "falconOpenLinkHtml",
+    ],
     private: ["siem", "siemCase"],
   },
   {

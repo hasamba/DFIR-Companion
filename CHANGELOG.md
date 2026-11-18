@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **NG-SIEM connection Test and real failure reasons** — Settings Test checks sign-in, NGSIEM Write and Read step by step; a failed search names DNS, network, TLS (with the certificate issuer) or the base URL; new DFIR_CROWDSTRIKE_SIEM_CA; Open in Falcon link on CQL and Watson search cards (closes #2685)
 - **Watson CrowdStrike search cards** — Watson proposes a CQL search on Next-Gen SIEM; Run (or Auto) imports the rows as evidence and tells Watson the result (closes #2666)
 - **Run CQL hunts on CrowdStrike Next-Gen SIEM** — a Run in Falcon button on CQL hunt cards imports the rows as evidence, with time, row and timeout caps (part of #2666)
 - **Five more main evidence sources** — Carbon Black, Wazuh, SentinelOne, Cortex XDR and QRadar cases get hunts, playbook queries, translator output and Watson queries in their own language (closes #2667)

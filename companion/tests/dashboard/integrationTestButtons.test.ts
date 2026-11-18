@@ -73,6 +73,13 @@ const INTEGRATIONS = [
     msg: "openctiReconnectMsg",
     url: "/enrichment/opencti/reconnect",
   },
+  {
+    id: "crowdstrike-siem",
+    pane: "enrichment",
+    button: "crowdstrikeSiemTestBtn",
+    msg: "crowdstrikeSiemTestMsg",
+    url: "/crowdstrike/siem/test",
+  },
 ] as const;
 
 // Where each settings pane starts and ends in the markup, so "is the button on the right tab?" is
@@ -117,5 +124,19 @@ describe("Settings connection tests", () => {
     // excluded because their fields are read-only here (.env + restart), so there is nothing to save.
     const wiring = client.slice(client.indexOf("INTEGRATION_TESTS"));
     expect(wiring).toMatch(/save\s*:\s*true/);
+  });
+});
+
+describe("CrowdStrike NG-SIEM Test (#2685)", () => {
+  it("renders each step and any warning as plain text", () => {
+    const wiring = client.slice(client.indexOf("function stepsText"));
+    expect(wiring).toContain("res.warnings");
+    expect(wiring).toContain("msg.textContent = stepsText(res)");
+    expect(wiring.slice(0, 600)).not.toContain("innerHTML");
+  });
+
+  it("has a CA bundle field and no skip-verify field", () => {
+    expect(html).toContain('id="env-DFIR_CROWDSTRIKE_SIEM_CA"');
+    expect(html).not.toContain("DFIR_CROWDSTRIKE_SIEM_INSECURE");
   });
 });

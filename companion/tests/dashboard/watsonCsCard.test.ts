@@ -52,3 +52,21 @@ describe("Watson's CrowdStrike search card (#2666)", () => {
     expect(html).not.toContain("<script>");
   });
 });
+
+describe("Open in Falcon on Watson's search card (#2685)", () => {
+  it("links the card's query and range when the console host is known, and not otherwise", () => {
+    const calls: unknown[][] = [];
+    const withUrl = loadDashboardModule<Api>("dashboard-watson-cs.js", ["dashboard-escape.js"], {
+      falconSearchUrl: (...a: unknown[]) => {
+        calls.push(a);
+        return "https://falcon.crowdstrike.com/investigate/search?query=x&repo=all";
+      },
+    });
+    const html = withUrl.watsonCsCardHtml(card());
+    expect(html).toContain("Open in Falcon");
+    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).toContain("https://falcon.crowdstrike.com/investigate/search?query=x&amp;repo=all");
+    expect(calls[0]).toEqual([card().query, card().start, card().end, "search-all"]);
+    expect(api().watsonCsCardHtml(card())).not.toContain("Open in Falcon");
+  });
+});

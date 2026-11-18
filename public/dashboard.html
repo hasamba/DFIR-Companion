@@ -2273,6 +2273,13 @@
           <div class="sfield"><label for="env-DFIR_CROWDSTRIKE_SIEM_MAX_ROWS">Max rows per search<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_MAX_ROWS — rows imported per search (default 10000)</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_MAX_ROWS" placeholder="10000" /></div>
           <div class="sfield"><label for="env-DFIR_CROWDSTRIKE_SIEM_TIMEOUT_MS">Timeout (ms)<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_TIMEOUT_MS — the search is cancelled; rows already read are imported (default 300000)</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_TIMEOUT_MS" placeholder="300000" /></div>
         </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_CROWDSTRIKE_SIEM_CA">CA bundle<span class="sfield-hint">DFIR_CROWDSTRIKE_SIEM_CA — PEM file of a TLS-inspecting proxy's root CA, trusted in addition to the default roots; verification stays on</span></label><input id="env-DFIR_CROWDSTRIKE_SIEM_CA" placeholder="path/to/ca.pem" /></div>
+        </div>
+        <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
+          <button id="crowdstrikeSiemTestBtn" type="button" data-tip="Saves any edits above, then checks the SIEM API client step by step: reaches the API host, signs in, starts a tiny count() job over the last 5 minutes (NGSIEM: Write), polls it once (NGSIEM: Read) and cancels it. Imports nothing and touches no case.">Test</button>
+          <span id="crowdstrikeSiemTestMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
+        </div>
         <div class="settings-group-head" data-essential>MISP</div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label for="env-DFIR_MISP_URL">MISP URL<span class="sfield-hint">DFIR_MISP_URL</span></label><input id="env-DFIR_MISP_URL" placeholder="https://misp.example.org" /></div>
