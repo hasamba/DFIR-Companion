@@ -217,6 +217,13 @@ body.watson-resizing { cursor: col-resize; user-select: none; }
 .watson-step-high, .watson-step-critical { color: var(--sev-high, #f97316); }
 .watson-step-medium { color: var(--sev-medium, #eab308); }
 .watson-step-low { color: var(--text-muted); }
+/* Board filters: a chip row on top of Key questions (status) and Next steps (priority). */
+.watson-filter { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 6px; }
+.watson-filter-chip { font-size: 10.5px; padding: 1px 7px; border-radius: 10px; cursor: pointer; line-height: 1.5;
+  border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-muted); }
+.watson-filter-chip:hover:not([disabled]), .watson-filter-chip:focus-visible { border-color: var(--accent, #2563eb); }
+.watson-filter-chip[aria-pressed="true"] { border-color: var(--accent, #2563eb); color: var(--text-primary, inherit); font-weight: 700; }
+.watson-filter-chip[disabled] { opacity: .45; cursor: default; }
 
 /* A next-step change card: what changes (done, or the new priority). */
 .watson-step-change { font-size: 12px; font-weight: 600; color: var(--accent, #60a5fa); margin-top: 2px; }

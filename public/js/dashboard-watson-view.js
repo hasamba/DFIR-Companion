@@ -239,9 +239,14 @@
     return `<div class="watson-earlier"><button type="button" class="watson-mini" data-act="watsonAct" data-w-verb="loadEarlier">Load earlier messages</button></div>`;
   }
 
+  // The Key questions column; the status filter chips and their state live in dashboard-watson-layout.js.
   function boardHtml(questions) {
     if (!questions.length) return `<div class="watson-empty">There are no key questions.</div>`;
-    return questions
+    const hasFilter = typeof watsonBoardFiltered === "function" && typeof watsonBoardFilterBar === "function";
+    const shown = hasFilter ? watsonBoardFiltered("questions", questions) : questions;
+    const bar = hasFilter ? watsonBoardFilterBar("questions", questions) : "";
+    if (!shown.length) return bar + `<div class="watson-empty">No key questions match this filter.</div>`;
+    return bar + shown
       .map((q) => {
         const dis = q.synthesisDisagrees
           ? `<div class="q-contradicted">Synthesis does not agree: ${esc(q.synthesisDisagrees.status)}` +

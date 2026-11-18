@@ -5,7 +5,8 @@
 // which the panel and the page padding read (dashboard-watson.css). A double click resets it.
 // Board: in full screen, Key questions and Next steps are two <details> columns on the left. A closed
 // column is a thin book spine with its title and count (closed is the default); the choice is saved.
-// Next steps come from the case state (most important first).
+// Next steps come from the case state (most important first). Each column has a filter chip row:
+// Key questions by status, Next steps by priority (saved per browser).
 // Jump: when the chat is not scrolled to its end, an arrow at the bottom centre scrolls to the latest.
 // initDataAct (dashboard-data-act.js) calls initWatsonLayout once at load.
 (function () {
@@ -43,30 +44,97 @@
     if (saved || applied) applyWidth(saved || applied);
   }
 
+  // Board filters: Key questions by status, Next steps by priority. One chip row on top of each
+  // column with a count per chip; "all" is the default and the choice is saved per browser. A
+  // question status the board does not know counts as Unknown, the same as its badge.
+  const FILTER_KEY = "dfir.watson.filter.";
+  const FILTERS = {
+    questions: {
+      field: "status",
+      fallback: "unknown",
+      values: [["answered", "Answered"], ["partial", "Partial"], ["unknown", "Unknown"], ["unanswerable", "Not answerable"]],
+    },
+    steps: {
+      field: "priority",
+      fallback: "",
+      values: [["critical", "Critical"], ["high", "High"], ["medium", "Medium"], ["low", "Low"]],
+    },
+  };
+  const knownValue = (f, v) => f.values.some(([k]) => k === v);
+  const itemValue = (f, item) => {
+    const v = String((item && item[f.field]) || "").toLowerCase();
+    return knownValue(f, v) ? v : f.fallback;
+  };
+  function filterValue(kind) {
+    const f = FILTERS[kind];
+    const v = f ? store.get(FILTER_KEY + kind) : null;
+    return f && knownValue(f, v) ? v : "all";
+  }
+
+  function watsonBoardFiltered(kind, items) {
+    const list = Array.isArray(items) ? items : [];
+    const v = filterValue(kind);
+    return v === "all" ? list : list.filter((it) => itemValue(FILTERS[kind], it) === v);
+  }
+
+  function watsonBoardCountText(kind, items) {
+    const total = Array.isArray(items) ? items.length : 0;
+    const shown = watsonBoardFiltered(kind, items).length;
+    return shown === total ? ` (${total})` : ` (${shown} of ${total})`;
+  }
+
+  function watsonBoardFilterBar(kind, items) {
+    const f = FILTERS[kind];
+    const list = Array.isArray(items) ? items : [];
+    if (!f || !list.length) return "";
+    const cur = filterValue(kind);
+    const chip = (val, label, n) =>
+      `<button type="button" class="watson-filter-chip watson-filter-${escAttr(val)}" data-act="watsonBoardFilter" ` +
+      `data-w-filter-kind="${escAttr(kind)}" data-w-filter-val="${escAttr(val)}" aria-pressed="${cur === val}"` +
+      (n === 0 && cur !== val ? " disabled" : "") +
+      `>${esc(label)} ${n}</button>`;
+    const chips = f.values.map(([val, label]) => chip(val, label, list.filter((it) => itemValue(f, it) === val).length));
+    return `<div class="watson-filter" role="group" aria-label="Filter">${chip("all", "All", list.length)}${chips.join("")}</div>`;
+  }
+
+  let lastState = null;
+  function watsonSetBoardFilter(btn) {
+    const d = (btn && btn.dataset) || {};
+    const f = FILTERS[d.wFilterKind];
+    if (!f) return;
+    store.set(FILTER_KEY + d.wFilterKind, knownValue(f, d.wFilterVal) ? d.wFilterVal : "all");
+    paintSteps(lastState);
+    if (typeof renderWatson === "function") renderWatson(); // repaints the Key questions column
+  }
+
   function watsonNextStepsHtml(steps) {
     const list = Array.isArray(steps) ? steps : [];
     if (!list.length) return `<div class="watson-empty">There are no next steps.</div>`;
-    return list
-      .map(
-        (s) =>
-          `<div class="watson-q"><span class="watson-step-pri watson-step-${escAttr(String(s.priority || ""))}">${esc(String(s.priority || "").toUpperCase())}</span> ` +
-          `<strong>${esc(s.action)}</strong>` +
-          (s.rationale ? `<div>${esc(s.rationale)}</div>` : "") +
-          (s.pointer ? `<div class="watson-why">→ ${esc(s.pointer)}</div>` : "") +
-          `</div>`,
-      )
-      .join("");
+    const shown = watsonBoardFiltered("steps", list);
+    const body = shown.length
+      ? shown
+          .map(
+            (s) =>
+              `<div class="watson-q"><span class="watson-step-pri watson-step-${escAttr(String(s.priority || ""))}">${esc(String(s.priority || "").toUpperCase())}</span> ` +
+              `<strong>${esc(s.action)}</strong>` +
+              (s.rationale ? `<div>${esc(s.rationale)}</div>` : "") +
+              (s.pointer ? `<div class="watson-why">→ ${esc(s.pointer)}</div>` : "") +
+              `</div>`,
+          )
+          .join("")
+      : `<div class="watson-empty">No next steps match this filter.</div>`;
+    return watsonBoardFilterBar("steps", list) + body;
   }
 
   const each = (sel, fn) => Array.from(document.querySelectorAll(sel)).forEach(fn);
-  const countText = (n) => ` (${n})`;
 
   function paintSteps(st) {
+    lastState = st || null;
     const steps = st && Array.isArray(st.nextSteps) ? st.nextSteps : [];
     const questions = st && Array.isArray(st.keyQuestions) ? st.keyQuestions : [];
     each('[data-w="boardnext"]', (el) => { el.innerHTML = watsonNextStepsHtml(steps); });
-    each('[data-w="boardnextcount"]', (el) => { el.textContent = countText(steps.length); });
-    each('[data-w="boardqcount"]', (el) => { el.textContent = countText(questions.length); });
+    each('[data-w="boardnextcount"]', (el) => { el.textContent = watsonBoardCountText("steps", steps); });
+    each('[data-w="boardqcount"]', (el) => { el.textContent = watsonBoardCountText("questions", questions); });
   }
 
   // The jump arrow shows when the log is more than JUMP_SLACK px above its end.
@@ -173,6 +241,10 @@
 
   window.watsonSetWidth = watsonSetWidth;
   window.watsonNextStepsHtml = watsonNextStepsHtml;
+  window.watsonBoardFilterBar = watsonBoardFilterBar;
+  window.watsonBoardFiltered = watsonBoardFiltered;
+  window.watsonBoardCountText = watsonBoardCountText;
+  window.watsonSetBoardFilter = watsonSetBoardFilter;
   window.initWatsonLayout = initWatsonLayout;
   window.watsonJumpSync = watsonJumpSync;
   window.watsonSetInputHeight = watsonSetInputHeight;
