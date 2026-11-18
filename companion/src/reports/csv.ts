@@ -1,4 +1,4 @@
-import { getEffectiveSeverity, type InvestigationState } from "../analysis/stateTypes.js";
+import { getEffectiveSeverity, type Finding, type InvestigationState } from "../analysis/stateTypes.js";
 import { simulationSeverityLabel } from "../analysis/simulationVerdict.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
@@ -24,14 +24,35 @@ function numberCell(value: number): string {
   return Number.isFinite(value) ? `"${String(value)}"` : cell(String(value));
 }
 
+// #2691: what a Watson verdict did to a synthesis finding. A verdict reopened by new evidence or
+// held from Auto (High/Critical) changed nothing, so it must never read as applied
+// (timeline/watsonVerdicts.ts isApplied).
+function watsonChangeLabel(f: Finding): string {
+  const r = f.watsonReview;
+  if (!r) return "";
+  if (r.newEventIds?.length) return "not applied (new evidence)";
+  if (r.autoHeld) return "not applied (Auto, High/Critical)";
+  return r.action === "dismiss" ? "dismissed" : "demoted";
+}
+
+// The five Watson cells, empty on a finding no verdict touched. `severityBeforeWatson` keeps the
+// original grade a demotion overwrote in `severity`. The reason (model text) and the approver
+// (analyst-typed) go through cell()'s formula-injection guard like every other column.
+function watsonCells(f: Finding): string[] {
+  const r = f.watsonReview;
+  if (!r) return ["", "", "", "", ""];
+  return [watsonChangeLabel(f), r.fromSeverity, r.approvedBy, r.reason, r.eventIds.join("|")];
+}
+
 export function findingsCsv(state: InvestigationState): string {
   // effectiveSeverity lets a spreadsheet sort/filter without a dismissed Critical (e.g. a confirmed
   // false positive) outranking genuine open findings — `severity` stays the original, unmodified
   // claim as an audit trail; `effectiveSeverity` is "Info" once status is "dismissed".
   // #1595: a simulation verdict may cap `severity`; `liveIntrusionSeverity` keeps the severity before
   // the cap and `simulation` names what the verdict did. Both empty on a finding it did not touch.
+  // #2691: the Watson change columns follow, empty on a finding Watson did not review.
   const header =
-    "id,severity,effectiveSeverity,confidence,title,description,relatedIocs,mitreTechniques,sourceScreenshots,firstSeen,lastUpdated,status,liveIntrusionSeverity,simulation";
+    "id,severity,effectiveSeverity,confidence,title,description,relatedIocs,mitreTechniques,sourceScreenshots,firstSeen,lastUpdated,status,liveIntrusionSeverity,simulation,watsonChange,severityBeforeWatson,watsonApprovedBy,watsonReason,watsonCitedEvents";
   const rows = state.findings.map((f) =>
     row([
       f.id,
@@ -48,6 +69,7 @@ export function findingsCsv(state: InvestigationState): string {
       f.status,
       f.simulation?.originalSeverity ?? "",
       simulationSeverityLabel(f).replace(/^\[|\]$/g, ""),
+      ...watsonCells(f),
     ]),
   );
   return [header, ...rows].join("\n") + "\n";

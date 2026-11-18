@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv, geoMapCsv } from "../../src/reports/csv.js";
-import { emptyState } from "../../src/analysis/stateTypes.js";
+import { emptyState, type Finding } from "../../src/analysis/stateTypes.js";
+import type { WatsonFindingReview } from "../../src/analysis/watsonItemTypes.js";
 import type { GeoMapData } from "../../src/analysis/geoMap.js";
 
 describe("CSV renderers", () => {
@@ -496,5 +497,85 @@ describe("CSV cells and NUL bytes (#9)", () => {
     expect(csv).not.toContain("\u0000");
     expect(csv).toContain('"A\u2400B"');
     expect(csv).toContain('"line1\rline2"');
+  });
+});
+
+describe("findingsCsv Watson change columns (#2691)", () => {
+  const base = (id: string, over: Partial<Finding> = {}): Finding => ({
+    id,
+    severity: "Low",
+    title: "t",
+    description: "d",
+    relatedIocs: [],
+    mitreTechniques: [],
+    sourceScreenshots: [],
+    firstSeen: "t0",
+    lastUpdated: "t1",
+    status: "open",
+    ...over,
+  });
+  const review = (over: Partial<WatsonFindingReview> = {}): WatsonFindingReview => ({
+    action: "demote",
+    severity: "Low",
+    reason: '=HYPERLINK("http://x")',
+    eventIds: ["e1", "e2"],
+    proposalId: "p1",
+    approvedBy: "+analyst",
+    at: "t2",
+    fromSeverity: "High",
+    fromStatus: "open",
+    ...over,
+  });
+  const rowsOf = (...findings: Finding[]): string[] => {
+    const s = emptyState("c1");
+    s.findings = findings;
+    return findingsCsv(s).trim().split("\n");
+  };
+  const NEW_COLS = "watsonChange,severityBeforeWatson,watsonApprovedBy,watsonReason,watsonCitedEvents";
+
+  it("appends the Watson columns after the existing ones, in order", () => {
+    expect(rowsOf()[0]).toBe(
+      `id,severity,effectiveSeverity,confidence,title,description,relatedIocs,mitreTechniques,sourceScreenshots,firstSeen,lastUpdated,status,liveIntrusionSeverity,simulation,${NEW_COLS}`,
+    );
+  });
+
+  it("a demoted finding carries the action, original severity, approver, reason and cited ids, formula-guarded", () => {
+    const [, demoted] = rowsOf(base("f1", { watsonReview: review() }));
+    expect(demoted).toMatch(/^"f1","Low",/);
+    expect(demoted).toMatch(/,"demoted","High","'\+analyst","'=HYPERLINK\(""http:\/\/x""\)","e1\|e2"$/);
+  });
+
+  it("a dismissed finding names Watson in Auto mode", () => {
+    const [, row] = rowsOf(
+      base("f2", {
+        severity: "Medium",
+        status: "dismissed",
+        watsonReview: review({
+          action: "dismiss",
+          severity: undefined,
+          fromSeverity: "Medium",
+          approvedBy: "Watson (Auto)",
+          reason: "benign",
+          eventIds: ["e3"],
+        }),
+      }),
+    );
+    expect(row).toMatch(/,"dismissed","Medium","Watson \(Auto\)","benign","e3"$/);
+  });
+
+  it("a verdict reopened by new evidence or held from Auto never reads as applied", () => {
+    const [, reopened, held] = rowsOf(
+      base("f3", { severity: "High", watsonReview: review({ newEventIds: ["e9"] }) }),
+      base("f4", { severity: "High", watsonReview: review({ autoHeld: true, approvedBy: "Watson (Auto)" }) }),
+    );
+    expect(reopened).toMatch(/,"not applied \(new evidence\)","High",/);
+    expect(held).toMatch(/,"not applied \(Auto, High\/Critical\)","High",/);
+    expect(reopened).not.toContain('"demoted"');
+    expect(held).not.toContain('"demoted"');
+  });
+
+  it("an unchanged finding leaves the five Watson cells empty and is otherwise unchanged", () => {
+    const [, plain] = rowsOf(base("f5"));
+    expect(plain).toBe('"f5","Low","Low","","t","d","","","","t0","t1","open","","","","","","",""');
   });
 });
