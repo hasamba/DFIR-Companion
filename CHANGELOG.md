@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Velociraptor settings follow the open case's server set** — the label and Reconnect on the Velociraptor tab now use the open case's set, not the default set
 - **Watson changes in the CSV report** — the findings CSV shows Watson's change, the grade before it, who approved it, the reason and cited events (closes #2691)
 - **Notice when a Watson verdict stops matching** — the Investigation Log says when a reworded or vanished finding no longer gets Watson's verdict (closes #2693)
 - **Quiet period before collection** — a silent gap that ends on the collector's own row (or a THOR scan-time row) is Info, with no "log tampering" finding (closes #2684)

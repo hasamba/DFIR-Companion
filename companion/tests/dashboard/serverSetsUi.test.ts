@@ -88,6 +88,12 @@ function serverSetMarkup(doc: FakeDocument): void {
   label.dataset.serverSetDefault = "";
   label.id = "veloDefaultLabel";
   doc.body.appendChild(label);
+  // The Velociraptor card's label follows the open case (its client list and Reconnect do too).
+  const veloLabel = doc.createElement("span");
+  veloLabel.dataset.serverSetDefault = "";
+  veloLabel.dataset.serverSetFollowsCase = "";
+  veloLabel.id = "veloCaseLabel";
+  doc.body.appendChild(veloLabel);
 }
 
 function caseServerMarkup(doc: FakeDocument): void {
@@ -393,6 +399,67 @@ describe("case header", () => {
     expect(el("serverSetsList").textContent).toContain(evil);
     expect(el("veloDefaultLabel").textContent).toBe(`Using server set: ${evil}`);
     expect(doc.htmlWrites()).toEqual([]);
+  });
+});
+
+describe("the Velociraptor card's set label follows the open case", () => {
+  it("names the open case's set, while the default-set label keeps the default", async () => {
+    const { api, el } = loadCaseServers({
+      "GET /cases/C1/server-set": { body: { setId: "a", name: "Alpha", tools: ["velociraptor"] } },
+    });
+    await api.loadServerSets();
+    await api.refreshCaseServers("C1");
+    expect(el("veloCaseLabel").textContent).toBe("Using server set: Alpha (this case)");
+    expect(el("veloDefaultLabel").textContent).toBe("Using server set: Beta");
+    await api.loadServerSets(); // a later list reload must not paint the default over it
+    expect(el("veloCaseLabel").textContent).toBe("Using server set: Alpha (this case)");
+  });
+
+  it("falls back to the default set when no case is open", async () => {
+    const { api, el } = loadCaseServers({
+      "GET /cases/C1/server-set": { body: { setId: "a", name: "Alpha", tools: [] } },
+    });
+    await api.refreshCaseServers("C1");
+    await api.refreshCaseServers("");
+    await api.loadServerSets();
+    expect(el("veloCaseLabel").textContent).toBe("Using server set: Beta");
+  });
+
+  it("says so when the open case has no usable set", async () => {
+    const { api, el } = loadCaseServers({
+      "GET /cases/C1/server-set": { body: unresolved("no set") },
+    });
+    await api.loadServerSets();
+    await api.refreshCaseServers("C1");
+    expect(el("veloCaseLabel").textContent).toBe("Using server set: none usable for this case");
+  });
+
+  it("writes an <img onerror> set name as text", async () => {
+    const evil = '<img src=x onerror="alert(1)">';
+    const { api, el, doc } = loadCaseServers({
+      "GET /cases/C1/server-set": { body: { setId: "a", name: evil, tools: [] } },
+    });
+    await api.refreshCaseServers("C1");
+    expect(el("veloCaseLabel").textContent).toBe(`Using server set: ${evil} (this case)`);
+    expect(doc.htmlWrites()).toEqual([]);
+  });
+});
+
+describe("which labels in dashboard.html follow the open case", () => {
+  const html = readFileSync(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+  // The label is the span after a control; capture it with the control's id.
+  const labelAfter = (id: string): string => {
+    const at = html.indexOf(`id="${id}"`);
+    expect(at, `${id} is in dashboard.html`).toBeGreaterThan(-1);
+    const span = html.slice(at).match(/<span data-server-set-default[^>]*>/);
+    expect(span, `a set label follows ${id}`).not.toBeNull();
+    return span![0];
+  };
+
+  it("both Velociraptor labels follow the case; the IRIS/Timesketch label keeps the default", () => {
+    expect(labelAfter("veloClientsMsg")).toContain("data-server-set-follows-case");
+    expect(labelAfter("veloSettingsReconnectMsg")).toContain("data-server-set-follows-case");
+    expect(labelAfter("timesketchReconnectMsg")).not.toContain("data-server-set-follows-case");
   });
 });
 

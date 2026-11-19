@@ -25,6 +25,7 @@
   let current = { caseId: "", setId: "", tools: null };
   let defaults = { velociraptor: false, iris: false, timesketch: false }; // the /health flags
   let pendingSetId = ""; // the set the confirm dialog will attach
+  let caseLabel = null; // the open case's line for the [data-server-set-follows-case] labels; null with no case
 
   const byId = (id) => document.getElementById(id);
 
@@ -47,6 +48,16 @@
   function caseToolEnabled(tool, fallback) {
     if (current.caseId) return Array.isArray(current.tools) && current.tools.includes(tool);
     return fallback === undefined ? !!defaults[tool] : !!fallback;
+  }
+
+  /** The open case's set label for the Velociraptor controls, or null when no case is open. */
+  function caseServerSetLabel() {
+    return caseLabel;
+  }
+
+  function setCaseLabel(text) {
+    caseLabel = text;
+    if (typeof repaintServerSetLabels === "function") repaintServerSetLabels();
   }
 
   /** The default set's tool flags, from /health. Used only while no case is open. */
@@ -128,11 +139,13 @@
       if (change) change.hidden = true;
       const row = byId("caseServersRow");
       if (row) row.hidden = true;
+      setCaseLabel(null);
       applyCaseTools();
       return;
     }
     applyCaseTools(); // hide the tools until the case's own answer arrives
     paintChange("Server set: … \u2014 click to change", false);
+    setCaseLabel("Using server set: … (this case)");
     if (change) change.hidden = !canAdministerCase(id);
     let res;
     let body;
@@ -149,10 +162,12 @@
     if (res.ok && !body.problem) {
       current = { caseId: id, setId: body.setId || "", tools: Array.isArray(body.tools) ? body.tools : [] };
       paintChange(`Server set: ${body.name || ""} \u2014 click to change`, false);
+      setCaseLabel(`Using server set: ${body.name || ""} (this case)`);
     } else {
       current = { caseId: id, setId: "", tools: [] };
       const why = body.problem || body.error || `HTTP ${res.status}`;
       paintChange(`No usable server set: ${why} \u2014 click to choose one`, true);
+      setCaseLabel("Using server set: none usable for this case");
     }
     applyCaseTools();
   }
@@ -313,5 +328,6 @@
   window.initCaseServers = initCaseServers;
   window.refreshCaseServers = refreshCaseServers;
   window.caseToolEnabled = caseToolEnabled;
+  window.caseServerSetLabel = caseServerSetLabel;
   window.setDefaultServerTools = setDefaultServerTools;
 })();
