@@ -1222,7 +1222,9 @@ export function loadVelociraptorConfig(env: NodeJS.ProcessEnv = process.env): Ve
     timeoutMs: Number(env.DFIR_VELOCIRAPTOR_TIMEOUT_MS) || 60_000,
     maxRows: Number(env.DFIR_VELOCIRAPTOR_MAX_ROWS) || 1000,
     maxOutputBytes: Number(env.DFIR_VELOCIRAPTOR_MAX_OUTPUT) || 50 * 1024 * 1024,
-    collectMaxOutputBytes: Number(env.DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT) || 256 * 1024 * 1024,
+    // 400 MB: below Node's ~512 MB max string length (the bytes decode into one string), with
+    // headroom for the parsed rows that sit in memory beside it.
+    collectMaxOutputBytes: Number(env.DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT) || 400 * 1024 * 1024,
     collectMaxRows: Number(env.DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS) || 100_000,
     guiUrl: env.DFIR_VELOCIRAPTOR_GUI_URL?.trim() || undefined,
     guiOrg: env.DFIR_VELOCIRAPTOR_ORG?.trim() || "root",
