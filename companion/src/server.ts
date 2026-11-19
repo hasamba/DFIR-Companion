@@ -33,6 +33,7 @@ import {
 import { readPublicAsset, isSeaRuntime } from "./serverAssets.js";
 import type { PreflightReport } from "./analysis/preflight.js";
 import { logLine, warnLine, getServerLogger } from "./logging/serverLogger.js";
+import { buildStartupBanner } from "./logging/startupBanner.js";
 import { withFingerprintIndex, fingerprintStoreFor } from "./analysis/ai/watson/velo/fingerprintIndex.js";
 import { recoverWatsonLaunches } from "./composition/watsonVeloRecovery.js";
 import { createAppWatsonFlowWatcher } from "./composition/watsonVeloResultsWiring.js";
@@ -602,6 +603,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const onListening = () => {
     const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
     const boundTo = isLoopbackBinding(host) ? "" : ` (bound to ${host})`;
+    for (const line of buildStartupBanner(`${scheme}://${shownHost}:${port}/dashboard`)) logLine(line);
     logLine(`DFIR companion on ${scheme}://${shownHost}:${port}${boundTo} (dashboard at /dashboard)`);
     // An accepted unauthenticated-remote opt-out is an assertion the server cannot verify (#2161).
     const exposure = describeUnauthenticatedExposure(host, resolveTeamAuthConfig(process.env));
