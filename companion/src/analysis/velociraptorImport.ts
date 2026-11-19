@@ -98,6 +98,7 @@ import { readStream } from "./ntfsStreams.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
 import { rdpLateralSignal } from "./rdpLateralDetect.js";
 import { mapHijackLib } from "./hijackLibImport.js";
+import { isWebhistoryRow, mapWebhistory } from "./webhistoryDetection.js";
 import { decodeHitContext } from "./yaraHitContext.js";
 import { amcacheMasquerade } from "./amcacheMasquerade.js";
 import { MAX_TIME_MS, MIN_TIME_MS, pickTime, usDateTime, vrTime } from "./veloRowTime.js";
@@ -364,6 +365,7 @@ type Kind =
   | "amcacheFile"
   | "lnk"
   | "hijacklib"
+  | "webhistory"
   | "generic";
 
 function artifactName(row: Row): string {
@@ -383,9 +385,8 @@ function classify(row: Row, artifact: string): Kind {
   if (/persistencesniper/i.test(a)) return "persistenceSniper";
   if (/binaryrename/i.test(a)) return "binaryRename";
   if (/condensedaccountusage/i.test(a)) return "accountUsage";
-  // Both prefetch artifacts by name: Windows.Forensics.Prefetch AND Windows.Timeline.Prefetch.
-  // Improved, whose per-run-time rows do not always carry the Executable+RunCount pair the
-  // column fallback below looks for — so half the execution evidence reached the generic mapper.
+  // Both prefetch artifacts by name: Windows.Forensics.Prefetch AND Windows.Timeline.Prefetch.Improved,
+  // whose per-run rows may lack the Executable+RunCount pair the column fallback below looks for.
   // Excludes a DETECTION pack's own prefetch rules (DetectRaptor.…Detection.Prefetch): those rows
   // carry a verdict, and the verdict must lead — the fast paths here all run before rowVerdict().
   if (/prefetch/i.test(a) && !isDetectionArtifact(a)) return "prefetch";
@@ -394,10 +395,9 @@ function classify(row: Row, artifact: string): Kind {
   // Data"). Its browsing sources carry the same visited-URL columns Chrome/Edge.History does, so
   // route them to the same mapper instead of letting a visit render as a key=value dump.
   if (/sqlitehunter/i.test(a) && /histor|webcache|visit|urls?\b/i.test(a)) return "browser";
-  // DetectRaptor.Windows.Detection.HijackLibsMFT: a hijackable DLL located on disk. Distinctive
-  // `HijackLibInfo` shape, no `Detection` verdict — so rowVerdict skips it and, before this, it fell
-  // to the generic mapper (a flat file dump graded Medium by the detection floor, no T1574 mapping).
+  // DetectRaptor HijackLibsMFT / Webhistory rows have no rule Name, so rowVerdict skips them: own mappers.
   if (isObject(getCI(row, "HijackLibInfo"))) return "hijacklib";
+  if (isWebhistoryRow(row)) return "webhistory";
 
   const rule = getCI(row, "Rule");
   if (
@@ -1544,8 +1544,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = [mapUsn(row, artifact, host)];
     } else if (kind === "mft") {
       ms = mapMft(row, artifact, host);
-    } else if (kind === "hijacklib") {
-      ms = [mapHijackLib(row, artifact, host, rowSink)];
+    } else if (kind === "hijacklib" || kind === "webhistory") {
+      ms = [(kind === "webhistory" ? mapWebhistory : mapHijackLib)(row, artifact, host, rowSink)];
     } else if (kind === "browser") {
       ms = [mapBrowserHistory(row, artifact, host, rowSink)];
     } else if (kind === "prefetch") {
