@@ -221,7 +221,7 @@
   window.loadSiemSearch = loadSiemSearch;
   window.siemRunButtonHtml = siemRunButtonHtml;
   window.falconSearchUrl = falconSearchUrl;
-  window.FALCON_CONSOLE_ORIGINS = FALCON_CONSOLE_ORIGINS;
+  window.falconConsoleOrigins = () => [...FALCON_CONSOLE_ORIGINS];
   window.falconOpenLinkHtml = falconOpenLinkHtml;
   window.siemBadge = siemBadge;
   window.wireSiemRun = wireSiemRun;

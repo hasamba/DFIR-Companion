@@ -116,8 +116,8 @@ describe("Open in Falcon (#2685)", () => {
   });
 
   it("accepts exactly the console origins the server can emit — lookalikes get no link (#2696)", async () => {
-    const api = loadUrl(CONFIGURED) as UrlApi & { FALCON_CONSOLE_ORIGINS: string[] };
-    expect([...api.FALCON_CONSOLE_ORIGINS].sort()).toEqual([...FALCON_CONSOLE_ORIGINS].sort());
+    const api = loadUrl(CONFIGURED) as UrlApi & { falconConsoleOrigins: () => string[] };
+    expect(api.falconConsoleOrigins().sort()).toEqual([...FALCON_CONSOLE_ORIGINS].sort());
     for (const consoleUrl of [
       "https://falcon.example.com",
       "https://falcon.crowdstrike.com.evil.com",

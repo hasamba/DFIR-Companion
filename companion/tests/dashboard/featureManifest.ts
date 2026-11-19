@@ -1424,6 +1424,7 @@ export const FEATURES: Feature[] = [
       "wireSiemRun",
       "falconSearchUrl", // #2685 Open in Falcon
       "falconOpenLinkHtml",
+      "falconConsoleOrigins", // #2696 pinned to falconConsole.ts by siemSearchRun.test.ts
     ],
     private: ["siem", "siemCase"],
   },
