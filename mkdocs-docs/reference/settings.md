@@ -121,7 +121,8 @@ from the dashboard. Set them in `.env` or the deployment's secret store and rest
 - `DFIR_AUTH_MODE` — `single-user` (default) or `team`; stop the server, change this value, and
   restart to switch modes. Team identities and roles remain stored while single-user mode is active.
 - `DFIR_AUTH_COOKIE_SECURE` — secure cookies; defaults on in team mode
-- `DFIR_AUTH_SESSION_HOURS` — browser-session lifetime, default 12 hours
+- `DFIR_AUTH_SESSION_HOURS` — how long an idle browser session stays valid, default 12 hours; activity in the dashboard extends it
+- `DFIR_AUTH_SESSION_MAX_HOURS` — hard limit since sign-in that activity can never extend past, default 168 hours (7 days), at most 720; never shorter than the idle lifetime. Lowering it does not shorten sessions already signed in, and a session signed in before an upgrade keeps its original cookie deadline until the next sign-in
 - `DFIR_AUTH_BOOTSTRAP_TOKEN` — protects first-administrator setup; required in team mode while no identity exists, on any bind address. At least 32 characters, or the server refuses to start. Wrong guesses are rate-limited and audited.
 - `DFIR_AUTH_DATA_DIR` — optional identity/session database location
 - `DFIR_HTTPS` — built-in HTTPS: `auto` (default; on in team mode), `on` or `off`. See

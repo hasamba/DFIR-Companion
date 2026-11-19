@@ -440,8 +440,20 @@ export class AuthStore {
     };
   }
 
-  touchSession(id: string, lastSeenAt: string): void {
-    this.db.prepare("UPDATE auth_sessions SET last_seen_at=? WHERE id=?").run(lastSeenAt, id);
+  /**
+   * Record activity. With `expiresAt`, also move the session's expiry FORWARD to it (#2717). The
+   * guard is in SQL so a stale caller can never shorten a session; the cap is the caller's job.
+   */
+  touchSession(id: string, lastSeenAt: string, expiresAt?: string): void {
+    if (expiresAt === undefined) {
+      this.db.prepare("UPDATE auth_sessions SET last_seen_at=? WHERE id=?").run(lastSeenAt, id);
+      return;
+    }
+    this.db
+      .prepare(
+        "UPDATE auth_sessions SET last_seen_at=?, expires_at=CASE WHEN expires_at<? THEN ? ELSE expires_at END WHERE id=?",
+      )
+      .run(lastSeenAt, expiresAt, expiresAt, id);
   }
 
   deleteSessionByToken(token: string): void {

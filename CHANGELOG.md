@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sliding sign-in** — activity extends a team-mode session up to a hard limit (`DFIR_AUTH_SESSION_MAX_HOURS`, default 7 days); idle sessions still expire (closes #2717)
 - **Watson Telegram mirror** — opt-in per chat with `/dfir mirror on`; Watson's case chat is mirrored to a bound Telegram chat and allowlisted users can ask Watson from Telegram (closes #2647)
 
 ## [0.47.0] - 2026-11-19

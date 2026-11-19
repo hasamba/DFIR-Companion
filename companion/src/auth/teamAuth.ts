@@ -15,6 +15,7 @@ import {
   setRequestAuthentication,
   type AuthIdentity,
   type RequestAuthentication,
+  type SessionRecord,
 } from "./types.js";
 import type { OidcClient } from "./oidcClient.js";
 import {
@@ -36,6 +37,8 @@ export interface TeamAuthOptions {
   bootstrapToken?: string;
   cookieSecure: boolean;
   sessionTtlMs: number;
+  /** Hard cap since sign-in; omitted means a session is never extended (#2717). */
+  sessionMaxMs?: number;
   oidcClient?: OidcClient;
 }
 
@@ -61,6 +64,7 @@ export class TeamAuth {
   readonly bootstrapToken?: string;
   readonly cookieSecure: boolean;
   readonly sessionTtlMs: number;
+  readonly sessionMaxMs?: number;
   readonly oidcClient?: OidcClient;
   private readonly accessListeners = new Set<() => void>();
 
@@ -69,6 +73,7 @@ export class TeamAuth {
     this.bootstrapToken = options.bootstrapToken;
     this.cookieSecure = options.cookieSecure;
     this.sessionTtlMs = options.sessionTtlMs;
+    this.sessionMaxMs = options.sessionMaxMs;
     this.oidcClient = options.oidcClient;
   }
 
@@ -79,7 +84,8 @@ export class TeamAuth {
       "HttpOnly",
       "SameSite=Strict",
       this.cookieSecure ? "Secure" : "",
-      `Max-Age=${Math.floor(this.sessionTtlMs / 1_000)}`,
+      // The server is the authority on expiry; the cookie must outlive any extension (#2717).
+      `Max-Age=${Math.floor(Math.max(this.sessionTtlMs, this.sessionMaxMs ?? 0) / 1_000)}`,
     ]
       .filter(Boolean)
       .join("; ");
@@ -145,13 +151,35 @@ export class TeamAuth {
       : this.authenticateCookieHeader(req.headers.cookie);
     if (auth?.kind === "session") {
       const seen = Date.parse(auth.session.lastSeenAt);
-      if (!Number.isFinite(seen) || Date.now() - seen >= TOUCH_INTERVAL_MS) {
-        const now = new Date().toISOString();
-        this.store.touchSession(auth.session.id, now);
-        auth.session = { ...auth.session, lastSeenAt: now };
+      // A quarter of the idle lifetime, so a short lifetime is not lost to a coarse throttle.
+      const interval = Math.min(TOUCH_INTERVAL_MS, this.sessionTtlMs / 4);
+      if (!Number.isFinite(seen) || Date.now() - seen >= interval) {
+        const nowMs = Date.now();
+        const now = new Date(nowMs).toISOString();
+        const extended = this.extendedExpiry(auth.session, nowMs);
+        this.store.touchSession(auth.session.id, now, extended);
+        auth.session = {
+          ...auth.session,
+          lastSeenAt: now,
+          ...(extended ? { expiresAt: extended } : {}),
+        };
       }
     }
     return auth;
+  }
+
+  /**
+   * The sliding expiry for a session that was just used (#2717): `now + idle lifetime`, never past
+   * `signed-in + hard cap`, and only when that is later than the current expiry. Undefined when
+   * there is nothing to extend (no cap configured, or already at the cap).
+   */
+  private extendedExpiry(session: SessionRecord, nowMs: number): string | undefined {
+    if (this.sessionMaxMs === undefined) return undefined;
+    const created = Date.parse(session.createdAt);
+    const current = Date.parse(session.expiresAt);
+    if (!Number.isFinite(created) || !Number.isFinite(current)) return undefined;
+    const next = Math.min(nowMs + this.sessionTtlMs, created + this.sessionMaxMs);
+    return next > current ? new Date(next).toISOString() : undefined;
   }
 
   private sessionCaseAllowed(
