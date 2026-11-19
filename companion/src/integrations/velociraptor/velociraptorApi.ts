@@ -523,8 +523,10 @@ export class VelociraptorClient {
     private readonly runner: VqlRunner = spawnVqlRunner(config),
   ) {}
 
-  private cap(rows: unknown[], max: number = this.config.maxRows): VelociraptorRunResult {
-    return { rows: rows.slice(0, max), total: rows.length, truncated: rows.length > max };
+  // `diagnostics` (#2700): the read's VQL log errors — rows plus an error is not a complete read.
+  private cap(rows: unknown[], max: number = this.config.maxRows, diagnostics = ""): NewestRun {
+    const run = { rows: rows.slice(0, max), total: rows.length, truncated: rows.length > max };
+    return diagnostics ? { ...run, diagnostics } : run;
   }
 
   // Deep link to a hunt in the Velociraptor GUI. The `?org_id=…` MUST come before the `#` fragment
@@ -698,7 +700,7 @@ export class VelociraptorClient {
     sources: string[] = [],
     where?: string,
     collect = false, // ingestion read: use the collection row cap, not the dashboard's view cap
-  ): Promise<VelociraptorRunResult> {
+  ): Promise<NewestRun> {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
     const refs = artifactRefs(artifact, sources);
@@ -706,7 +708,8 @@ export class VelociraptorClient {
     const at = `client_id='${clientId}', flow_id='${flowId}'`;
     const froms = refs.map((ref) => `source(${at}, artifact='${ref}')`);
     const program = cappedReadProgram(froms, sanitizeWhere(where), limit);
-    return this.cap(await this.runRaw(program, this.collectCap()), limit - 1);
+    const { rows, reason } = await this.runRawLogged(program, this.collectCap());
+    return this.cap(rows, limit - 1, reason);
   }
 
   // The terminal STATE + error of a collection flow (issue #70). A flow can launch fine (a flow id is
@@ -862,7 +865,7 @@ export class VelociraptorClient {
     const program = cappedReadProgram(froms, sanitizeWhere(where), limit, order);
     const timeout = order ? sortedReadTimeout(this.config.timeoutMs) : this.config.timeoutMs; // sort = full read
     const { rows, reason } = await this.runRawLogged(program, this.collectCap(), timeout);
-    return order ? sortNewest(rows, limit - 1, reason) : this.cap(rows, limit - 1); // cut after the merge
+    return order ? sortNewest(rows, limit - 1, reason) : this.cap(rows, limit - 1, reason); // cut after the merge
   }
 
   // Read one hunt artifact's rows, recovering the multi-source case — artifactRefs.ts explains what

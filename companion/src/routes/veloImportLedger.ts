@@ -20,7 +20,7 @@ const entrySchema = z.object({
   // pending = the run started this artifact and did not finish it (an ingest failed, a crash).
   status: z.enum(["pending", "complete", "partial", "failed"]),
   rows: z.number().int().nonnegative(),
-  gaps: z.array(z.enum(["truncated", "unread"])).optional(),
+  gaps: z.array(z.enum(["truncated", "unread", "error"])).optional(),
   fingerprint: z.string().optional(),
   superOnly: z.boolean(),
   minSeverity: z.string(),
@@ -46,6 +46,18 @@ export function veloLedgerKey(namespace: string, ref: LedgerRef): string {
 }
 
 const pathOf = (store: LedgerStore, caseId: string): string => join(store.metadataDir(caseId), LEDGER_FILE);
+
+// Undo clears the ledger while an import may still be finishing (its ingest released the import lock,
+// its "complete" write has not run yet). Each clear bumps the case's generation SYNCHRONOUSLY, and a
+// write carries the generation its run started under: a write from a run that predates the clear is
+// dropped, so an undone artifact can never be written back as "complete". In memory on purpose — a
+// run never survives a restart, so neither can the race.
+const generations = new Map<string, number>();
+
+/** The case's current ledger generation; a run captures it before it reads anything. */
+export function ledgerGeneration(store: LedgerStore, caseId: string): number {
+  return generations.get(pathOf(store, caseId)) ?? 0;
+}
 
 // One writer per ledger file: every read-modify-write and delete queues behind the previous one.
 const queues = new Map<string, Promise<unknown>>();
@@ -87,16 +99,18 @@ export async function readVeloLedger(
   return { ...(file.sources[key] ?? {}) };
 }
 
-/** Upsert one artifact's entry. */
+/** Upsert one artifact's entry; skipped when `generation` is given and a clear has happened since. */
 export function recordVeloArtifact(
   store: LedgerStore,
   caseId: string,
   key: string,
   artifact: string,
   entry: LedgerEntry,
+  generation?: number,
 ): Promise<void> {
   const path = pathOf(store, caseId);
   return enqueue(path, async () => {
+    if (generation !== undefined && generation !== (generations.get(path) ?? 0)) return;
     const file = await load(path);
     const next: LedgerFile = {
       version: 1,
@@ -110,6 +124,7 @@ export function recordVeloArtifact(
 /** Forget every source of the case (Undo, or a failed ledger write). */
 export function clearVeloImportLedger(store: LedgerStore, caseId: string): Promise<void> {
   const path = pathOf(store, caseId);
+  generations.set(path, (generations.get(path) ?? 0) + 1); // before queueing: see `generations`
   return enqueue(path, async () => {
     try {
       await unlink(path);

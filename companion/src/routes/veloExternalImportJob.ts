@@ -59,7 +59,7 @@ export interface ExternalImportDeps {
 export interface ArtifactDone {
   status: "complete" | "partial" | "failed";
   rows: number;
-  gaps?: ("truncated" | "unread")[];
+  gaps?: ("truncated" | "unread" | "error")[];
 }
 
 /**
@@ -85,6 +85,8 @@ export interface ExternalArtifactRead {
   truncated?: boolean;
   total?: number;
   sourcesUnknown?: true;
+  /** The read's VQL log errors (#2700): rows came back, but some part of the read failed. */
+  diagnostics?: string;
 }
 
 /**
@@ -178,9 +180,15 @@ export async function importArtifactsUnderJob(
             `raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and import again.`,
         );
       }
-      const gaps = [read.truncated && "truncated", read.sourcesUnknown && "unread"].filter(
-        (g): g is "truncated" | "unread" => !!g,
-      );
+      if (read.diagnostics)
+        deps.logLine(
+          `[velociraptor] ${what}: artifact ${artifact} read reported errors: ${read.diagnostics}`,
+        );
+      const gaps = [
+        read.truncated && "truncated",
+        read.sourcesUnknown && "unread",
+        read.diagnostics && "error",
+      ].filter((g): g is "truncated" | "unread" | "error" => !!g);
       const done: ArtifactDone = gaps.length
         ? { status: "partial", rows: rows.length, gaps }
         : { status: "complete", rows: rows.length };

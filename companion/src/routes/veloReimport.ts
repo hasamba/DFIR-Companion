@@ -17,6 +17,7 @@ import { fingerprintArtifacts } from "../integrations/velociraptor/veloArtifactF
 import type { ArtifactDone, ArtifactHooks } from "./veloExternalImportJob.js";
 import {
   clearVeloImportLedger,
+  ledgerGeneration,
   readVeloLedger,
   recordVeloArtifact,
   veloLedgerKey,
@@ -47,7 +48,8 @@ function reasonFor(
 ): ReimportReason | null {
   if (!e) return "no-record";
   if (e.status === "pending" || e.status === "failed") return "failed";
-  if (e.status === "partial") return e.gaps?.[0] ?? "truncated";
+  if (e.status === "partial" && e.gaps?.includes("error")) return "failed"; // a read that reported errors
+  if (e.status === "partial") return e.gaps?.[0] === "unread" ? "unread" : "truncated";
   if (e.superOnly !== s.superOnly || e.minSeverity !== s.minSeverity) return "settings";
   if (!fp || !e.fingerprint) return "unknown";
   if (fp.live) return "live";
@@ -85,6 +87,7 @@ export function ledgerTracker(
   logLine: (msg: string) => void,
 ): ArtifactHooks {
   let broken = false;
+  const generation = ledgerGeneration(store, caseId); // writes after an Undo's clear are dropped
   const write = async (artifact: string, body: EntryBody): Promise<void> => {
     if (broken) return;
     const fingerprint = fps?.[artifact]?.hash;
@@ -95,7 +98,7 @@ export function ledgerTracker(
       ...settings,
     };
     try {
-      await recordVeloArtifact(store, caseId, key, artifact, entry);
+      await recordVeloArtifact(store, caseId, key, artifact, entry, generation);
     } catch (err) {
       broken = true;
       logLine(`[velociraptor] re-import ledger write failed (${(err as Error).message}); forgetting it`);

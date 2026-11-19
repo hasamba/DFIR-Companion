@@ -256,3 +256,69 @@ describe("externalImportFields (#1645)", () => {
     });
   });
 });
+
+// #2700: the per-artifact hooks the re-import ledger records through.
+describe("importArtifactsUnderJob hooks (#2700)", () => {
+  const ingestOk = async () => ({ addedEvents: 1, addedIocs: 0 });
+
+  it("marks each artifact before its read and reports how it settled", async () => {
+    const calls: string[] = [];
+    const reads: Record<string, unknown> = {
+      Full: { rows: [{}], total: 1 },
+      Cut: { rows: [{}], total: 9, truncated: true },
+      Erred: { rows: [{}], total: 1, diagnostics: "permission denied on one source" },
+      Empty: { rows: [], total: 0 },
+    };
+    const lines: string[] = [];
+    await importArtifactsUnderJob(
+      deps(lines),
+      "c1",
+      "hunt H.1",
+      ["Full", "Cut", "Erred", "Empty", "Gone"],
+      async (a) => {
+        if (a === "Gone") throw new Error("timed out");
+        return reads[a] as { rows: unknown[] };
+      },
+      ingestOk,
+      {
+        onStart: async (a) => void calls.push(`start ${a}`),
+        onDone: async (a, d) =>
+          void calls.push(`done ${a} ${d.status} ${d.rows} ${(d.gaps ?? []).join(",")}`),
+      },
+    );
+    expect(calls).toEqual([
+      "start Full",
+      "done Full complete 1 ",
+      "start Cut",
+      "done Cut partial 1 truncated",
+      "start Erred",
+      "done Erred partial 1 error",
+      "start Empty",
+      "done Empty complete 0 ",
+      "start Gone",
+      "done Gone failed 0 ",
+    ]);
+    expect(lines.some((l) => l.includes("Erred read reported errors"))).toBe(true);
+  });
+
+  it("an ingest that throws leaves the artifact without an outcome (its pending mark stands)", async () => {
+    const calls: string[] = [];
+    await expect(
+      importArtifactsUnderJob(
+        deps([]),
+        "c1",
+        "hunt H.1",
+        ["A"],
+        async () => ({ rows: [{}] }),
+        async () => {
+          throw new Error("disk full");
+        },
+        {
+          onStart: async (a) => void calls.push(`start ${a}`),
+          onDone: async (a) => void calls.push(`done ${a}`),
+        },
+      ),
+    ).rejects.toThrow("disk full");
+    expect(calls).toEqual(["start A"]);
+  });
+});

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { planVeloReimport, ledgerTracker, veloReimportGate } from "../../src/routes/veloReimport.js";
 import {
+  clearVeloImportLedger,
   readVeloLedger,
   recordVeloArtifact,
   veloLedgerKey,
@@ -54,6 +55,12 @@ describe("planVeloReimport", () => {
       { A: entry({ status: "partial", gaps: ["unread"] }) },
       { A: fp("h1") },
       "unread",
+    ],
+    [
+      "a read that reported errors",
+      { A: entry({ status: "partial", gaps: ["truncated", "error"] }) },
+      { A: fp("h1") },
+      "failed",
     ],
     ["an unknown server state", { A: entry() }, undefined, "unknown"],
     ["an entry with no fingerprint", { A: entry({ fingerprint: undefined }) }, { A: fp("h1") }, "unknown"],
@@ -301,5 +308,13 @@ describe("ledgerTracker", () => {
     await expect(t.onStart?.("A")).resolves.toBeUndefined();
     await expect(t.onDone?.("A", { status: "complete", rows: 1 })).resolves.toBeUndefined();
     expect(logLine).toHaveBeenCalled();
+  });
+
+  it("a write that lands after an Undo cleared the ledger is dropped, never written back as complete", async () => {
+    const { store, t } = await tracker({ A: fp("h9") });
+    await t.onStart?.("A");
+    await clearVeloImportLedger(store, "c1"); // Undo, while the artifact's ingest is finishing
+    await t.onDone?.("A", { status: "complete", rows: 3 });
+    expect(await readVeloLedger(store, "c1", "k")).toEqual({});
   });
 });
