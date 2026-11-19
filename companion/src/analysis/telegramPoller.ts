@@ -24,10 +24,15 @@ export interface TelegramUpdate {
 }
 
 export interface TelegramMessage {
-  chat?: { id?: number | string };
+  /** #2647: the Watson mirror dedups inbound updates by (chat, message_id) and reads replies by it. */
+  message_id?: number;
+  chat?: { id?: number | string; type?: string };
   from?: { id?: number | string };
   text?: string;
   caption?: string;
+  /** #2647: a group question counts only when it mentions the bot or replies to a mirrored message. */
+  entities?: Array<{ type?: string; offset?: number; length?: number }>;
+  reply_to_message?: { message_id?: number };
 }
 
 /**

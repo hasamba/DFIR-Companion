@@ -86,6 +86,8 @@ export async function clearStateOutlivingCase(
     ["unlink server set", () => options.serverSetStore?.unlinkCase(id)],
     // A chat channel bound to the deleted case must not become bound to a same-id successor (#1866).
     ["unbind chat channels", async () => void (await options.slashCommandChannelStore?.unbindCase(id))],
+    // #2647: and no Telegram chat keeps mirroring it (a same-id successor starts with none).
+    ["stop Telegram mirroring", async () => void (await options.watsonMirrorStore?.disableCase(id))],
     // The SIEM export position lives outside the case folder; a same-id successor must start at line
     // 0, or its first records count as already sent and never reach the SIEM (#1868).
     ["reset audit export positions", () => options.auditExportCursors?.clearCase(id)],

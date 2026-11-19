@@ -18,6 +18,7 @@ This is the inbound counterpart to [Notifications](../reference/settings.md): no
 /dfir synthesize             trigger a re-synthesis
 /dfir hunt T1059.001         note a technique to hunt
 /dfir unbind                 clear the binding
+/dfir mirror on | off        Telegram: send this chat every new Watson turn
 /dfir help                   usage
 ```
 
@@ -245,6 +246,44 @@ Reading a case (`status`, `findings`, `finding`, `iocs`) stays open to the chann
     Anyone who can post in the channel can pull case content — finding titles, IOC values, descriptions — into a third-party chat service. Treat a bound channel as a copy of the case. Password-protected cases are refused over chat entirely: a chat message carries no unlock, so the bot will not serve them at all.
 
 Every command is written to the case's activity log with the platform and user id that sent it, including refusals — so the audit trail shows who asked for what, and who was turned away.
+
+---
+
+## Mirror the Watson chat to Telegram
+
+A Telegram chat that is bound to a case can follow the case's [Watson](watson.md) chat as it happens: questions asked in the dashboard, Watson's answers, its reactions, Auto rounds and next-step changes. You can also ask Watson by typing a plain message, with no `/dfir ask`.
+
+Mirroring is **off by default**, and each chat turns it on for itself:
+
+```
+/dfir bind IR-2026-014
+/dfir mirror on
+```
+
+`/dfir mirror off` stops it. The Watson panel in the dashboard shows the chats that mirror the case under **Mirrored to Telegram**, each with an **Off** button. The panel cannot turn a chat on: that must come from inside the chat.
+
+**Who can turn it on.** Mirroring sends case content to Telegram without anyone asking each time, so it needs the Telegram user allowlist:
+
+- `DFIR_TELEGRAM_ACTION_USERS` must be set (in `.env`, then restart). With no list, `/dfir mirror on` is refused and the reply says what to set.
+- Only a listed user may turn it on, and only a listed user may ask Watson by plain message.
+- `DFIR_TELEGRAM_BOT_TOKEN` must be set, also in webhook mode: the mirror sends through the Bot API.
+
+**What is sent.** Each new turn, as the dashboard shows it: the question and who asked it, Watson's message, the answer's status line, the answer and its **Next:** line, what Watson learned, and one line for each proposal ("Watson proposes: new finding: …"). Cards and result tables are one line each. Every message ends with a link to the case when `DFIR_PUBLIC_URL` is set, and with "Open case … in the dashboard" when it is not. Nothing from before `/dfir mirror on` is sent.
+
+**When it is sent.** An analyst's question and Watson's answer to it go out at once. Turns that come in while nobody waits for an answer (reactions, Auto rounds) are collected and sent together, at most once a minute per chat. Nothing is dropped: a long batch is split into several messages, in order. Messages are never edited.
+
+**Asking from the chat.** In a private chat with the bot, any plain message from a listed user is a question for the bound case. In a group, only a message that **replies to a message the mirror sent** or **mentions the bot** (`@YourBot what ran on WS-01?`) is a question. Everything else in the group is ignored and never reaches the AI. A group bot with privacy mode on sees only mentions and replies, which is all the mirror needs. The chat gets "Asking Watson…", then the answer arrives once, through the mirror. Your question is not sent back to the chat it came from. `/dfir ask` in a mirroring chat works the same way.
+
+**Privacy.**
+
+- **Anonymization on for the case:** each message is masked again with the case's anonymization list before it is sent, because the saved chat holds the real values. When masking fails, or names wait for approval in the Anonymization panel, nothing is sent. The chat gets "Held: open the dashboard to review", and later turns wait until the hold clears.
+- **Always:** the paths of your workstation (the cases folder, the Companion's install and data folders) are replaced with `<case>` and `<companion>`. Evidence paths from the artifacts, such as `C:\Windows\Temp\x.ps1`, are investigation content and are sent as they are.
+- **Link previews are always off**, so Telegram never opens a URL from an answer. A preview of attacker infrastructure would tell the attacker that someone looked.
+
+**When it stops by itself.** Mirroring switches off for a chat, and the case's activity log says why, when: the chat is unbound or bound to another case, the case is deleted or gets a password (turn it on again from the chat after you unlock the case), the user who turned it on is removed from the allowlist, or the bot is removed from the chat. While a case is archived, nothing is sent. A message that is already on its way to Telegram can still arrive.
+
+!!! warning "OPSEC"
+    A mirroring chat is a live copy of the Watson chat on a third-party service. Mirror only to chats whose members may read the whole case.
 
 ---
 
