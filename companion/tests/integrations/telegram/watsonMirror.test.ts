@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  GAP_TEXT,
   HELD_TEXT,
   WatsonMirror,
   type MirrorLiveness,
@@ -26,6 +27,8 @@ interface Harness {
   audits: string[];
   live: WatsonTurn[];
   history: WatsonTurn[];
+  /** How many of the newest history turns loadHistory returns (the wiring reads 5,000). */
+  historyLimit: { value: number };
   clock: { now: number };
   outcomes: MirrorSendOutcome[];
   liveness: { value: MirrorLiveness };
@@ -49,6 +52,7 @@ async function harness(): Promise<Harness> {
     audits: [],
     live: [],
     history: [],
+    historyLimit: { value: Infinity },
     clock,
     outcomes: [],
     liveness: { value: { ok: true } },
@@ -63,7 +67,10 @@ async function harness(): Promise<Harness> {
     new WatsonMirror({
       store,
       loadChat: async () => ({ ...emptyWatsonChat(), turns: h.live.slice(-3) }), // a small live window
-      loadHistory: async () => h.history,
+      loadHistory: async () => ({
+        turns: h.history.slice(-h.historyLimit.value),
+        more: h.history.length > h.historyLimit.value,
+      }),
       liveness: async () => h.liveness.value,
       masking: async (_caseId, raw) => {
         const m = h.masking.value;
@@ -290,6 +297,66 @@ describe("WatsonMirror", () => {
       .join("\n");
     expect(out.match(/before crash/g)?.length).toBe(1);
     for (let i = 0; i < 5; i++) expect(out).toContain(`down ${i}`);
+  });
+
+  describe("a gap older than the history window (#2710)", () => {
+    const outage = async (downTurns: number, limit: number) => {
+      await enable(h);
+      h.addTurn({ role: "analyst", text: "before outage" });
+      await h.mirror.notify("c1");
+      await h.advance(0);
+      h.mirror.stop();
+      for (let i = 0; i < downTurns; i++) h.addTurn({ role: "watson", text: `down ${i}` });
+      h.historyLimit.value = limit;
+      h.mirror = h.newMirror();
+      await h.mirror.start();
+      await h.advance(61_000); // past the batch window: these turns are not urgent
+    };
+    const notices = () => h.sends.filter((s) => s.text.startsWith(GAP_TEXT));
+
+    it("posts one notice before the window's turns, and only once", async () => {
+      await outage(8, 5);
+      expect(notices()).toHaveLength(1);
+      const at = h.sends.findIndex((s) => s.text.startsWith(GAP_TEXT));
+      const rest = h.sends
+        .slice(at + 1)
+        .map((s) => s.text)
+        .join("\n");
+      for (let i = 3; i < 8; i++) expect(rest).toContain(`down ${i}`);
+      expect(h.audits.filter((a) => a.startsWith("watson-mirror-gap"))).toHaveLength(1);
+      h.addTurn({ role: "analyst", text: "later" });
+      await h.mirror.notify("c1");
+      await h.advance(120_000);
+      expect(notices()).toHaveLength(1);
+      expect(h.sends.at(-1)?.text).toContain("later");
+    });
+
+    it("posts no notice when the cursor is inside the window", async () => {
+      await outage(8, 20);
+      expect(notices()).toHaveLength(0);
+      const out = h.sends.map((s) => s.text).join("\n");
+      for (let i = 0; i < 8; i++) expect(out).toContain(`down ${i}`);
+    });
+
+    it("posts no notice for an unknown cursor when the window reaches back past turning on", async () => {
+      for (let i = 0; i < 6; i++) h.addTurn({ role: "watson", text: `old ${i}` });
+      h.clock.now += 1_000;
+      await h.store.enable("100", {
+        caseId: "c1",
+        chatType: "private",
+        by: "42",
+        boundAt: "b1",
+        at: iso(h.clock.now),
+        cursor: "wt-unknown",
+      });
+      h.clock.now += 1_000;
+      h.addTurn({ role: "analyst", text: "new q" });
+      h.historyLimit.value = 5;
+      await h.mirror.notify("c1");
+      await h.advance(1_000);
+      expect(notices()).toHaveLength(0);
+      expect(h.sends.map((s) => s.text).join("\n")).toContain("new q");
+    });
   });
 
   describe("revocation in the middle of a split batch", () => {

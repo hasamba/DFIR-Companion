@@ -27,7 +27,8 @@ import {
 
 /**
  * How far back the mirror reads the append-only history when its cursor rotated out of the live chat
- * (400 turns): turns written while the server was down. A gap larger than this is not resent.
+ * (400 turns): turns written while the server was down. A gap larger than this is not resent; the
+ * chat gets a one-line notice instead (#2710).
  */
 const MIRROR_HISTORY_TURNS = 5000;
 
@@ -122,8 +123,7 @@ export function createAppWatsonMirror(ctx: RouteContext): WatsonMirror | undefin
   return new WatsonMirror({
     store: mirrorStore,
     loadChat: (caseId) => chatStore.load(caseId),
-    loadHistory: async (caseId) =>
-      (await chatStore.history.page(caseId, { limit: MIRROR_HISTORY_TURNS })).turns,
+    loadHistory: (caseId) => chatStore.history.page(caseId, { limit: MIRROR_HISTORY_TURNS }),
     liveness: (entry) => liveness(ctx, entry),
     masking: (caseId, raw) => mirrorMaskText(ctx, caseId, raw),
     send: (chatId, text) =>
