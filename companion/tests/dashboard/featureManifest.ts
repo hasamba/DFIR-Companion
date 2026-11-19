@@ -1934,7 +1934,7 @@ export const FEATURES: Feature[] = [
     // Watson panel's "Mirrored to Telegram" list with its Off button (#2647).
     file: "dashboard-watson-mirror.js",
     publish: ["watsonMirrorListHtml", "watsonMirrorRefresh", "watsonMirrorOff"],
-    private: ["wMirrors", "seq", "currentCase", "api", "OFF_TIP", "label", "paint"],
+    private: ["wMirrors", "wMirrorSeq", "currentCase", "api", "OFF_TIP"],
   },
   {
     // Watson's Velociraptor launch card, "connected" chip, Auto listing and the uncertain-launch answer.

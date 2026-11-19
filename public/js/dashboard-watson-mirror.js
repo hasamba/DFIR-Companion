@@ -5,7 +5,7 @@
 // "mirrorOff" verb here. Every server string goes through esc()/escAttr(); the CSP bans inline handlers.
 (function () {
   let wMirrors = [];
-  let seq = 0;
+  let wMirrorSeq = 0;
 
   const currentCase = () => String((document.getElementById("caseId") || {}).value || "").trim();
   const api = (caseId, path) => `/cases/${encodeURIComponent(caseId)}/watson/mirrors${path}`;
@@ -35,7 +35,7 @@
 
   function watsonMirrorRefresh(caseId) {
     const id = caseId || currentCase();
-    const s = ++seq;
+    const s = ++wMirrorSeq;
     if (!id) {
       wMirrors = [];
       paint();
@@ -44,7 +44,7 @@
     return fetch(api(id, ""))
       .then((r) => (r.ok ? r.json() : null))
       .then((b) => {
-        if (s !== seq || id !== currentCase()) return;
+        if (s !== wMirrorSeq || id !== currentCase()) return;
         wMirrors = b && Array.isArray(b.mirrors) ? b.mirrors : [];
         paint();
       })
