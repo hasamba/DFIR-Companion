@@ -17,10 +17,21 @@ import type { Finding, InvestigationState, Severity } from "./stateTypes.js";
 //   /dfir synthesize [caseId]              → async (re-synthesis)
 //   /dfir bind <caseId>                    → bind this channel to a default case
 //   /dfir unbind                           → clear the channel binding
+//   /dfir mirror on|off                    → Telegram: mirror the bound case's Watson chat (#2647)
 //   /dfir help                             → usage
 
 export type SlashCommandName =
-  "ask" | "findings" | "finding" | "iocs" | "hunt" | "status" | "synthesize" | "bind" | "unbind" | "help";
+  | "ask"
+  | "findings"
+  | "finding"
+  | "iocs"
+  | "hunt"
+  | "status"
+  | "synthesize"
+  | "bind"
+  | "unbind"
+  | "help"
+  | "mirror";
 
 export interface ParsedSlashCommand {
   name: SlashCommandName;
@@ -43,6 +54,7 @@ export const SLASH_COMMAND_NAMES: readonly SlashCommandName[] = [
   "bind",
   "unbind",
   "help",
+  "mirror",
 ];
 
 // Parse a slash-command text string into a command name + its argument tokens. Tolerant of extra
@@ -117,6 +129,11 @@ export function resolveCommand(
 
   if (name === "help" || name === "unbind") return { ...base, caseId: "" };
   if (name === "bind") return { ...base, caseId: (tokens[0] ?? "").trim() };
+  // #2647: mirroring acts on the chat's bound case only; "on"/"off" is never a case id.
+  if (name === "mirror") {
+    const arg = (tokens[0] ?? "").toLowerCase();
+    return { ...base, caseId: binding?.caseId ?? "", arg, usedBinding: !!binding };
+  }
 
   // Does the first token name the case, whether or not that case turns out to exist?
   const first = tokens[0];
@@ -275,6 +292,7 @@ export function formatHelpCommand(): SlashCommandResponse {
       "/dfir synthesize [caseId] — trigger re-synthesis (async)",
       "/dfir bind <caseId> — bind this channel to a default case",
       "/dfir unbind — clear the channel binding",
+      "/dfir mirror on|off — Telegram: send this chat every new Watson turn of the bound case",
       "When a channel is bound, the caseId can be omitted from any command.",
     ],
   };
@@ -299,7 +317,13 @@ export const READ_ONLY_COMMANDS: readonly SlashCommandName[] = [
   "unbind",
 ];
 
-export const PRIVILEGED_COMMANDS: readonly SlashCommandName[] = ["ask", "hunt", "synthesize", "bind"];
+export const PRIVILEGED_COMMANDS: readonly SlashCommandName[] = [
+  "ask",
+  "hunt",
+  "synthesize",
+  "bind",
+  "mirror",
+];
 
 export const ASYNC_COMMANDS: readonly SlashCommandName[] = ["ask", "hunt", "synthesize"];
 

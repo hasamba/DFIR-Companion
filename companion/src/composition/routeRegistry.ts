@@ -68,6 +68,9 @@ import { registerPlaybookHuntsRoutes } from "../routes/playbookHunts.js";
 import { registerPlaybookMatchRoutes } from "../routes/playbookMatch.js";
 import { registerAiSynthesisRoutes } from "../routes/aiSynthesis.js";
 import { registerWatsonRoutes } from "../routes/watson.js";
+import { registerWatsonMirrorRoutes } from "../routes/watsonMirror.js";
+import { startAppWatsonMirror } from "./watsonMirrorWiring.js";
+import type { WatsonMirror } from "../integrations/telegram/watsonMirror.js";
 import { registerAiPreviewRoutes } from "../routes/aiPreview.js";
 import { registerHypothesisEvidenceRoutes } from "../routes/hypothesisEvidence.js";
 import { registerFindingsDisplayRoutes } from "../routes/findingsDisplay.js";
@@ -123,6 +126,8 @@ import { registerCrossCaseRoutes } from "../routes/crossCase.js";
 export interface OutboundTransports {
   telegramPoller?: ReturnType<typeof startTelegramPolling>;
   slackSocketMode?: ReturnType<typeof startSlackSocketMode>;
+  /** #2647: the Telegram mirror of the Watson chat; undefined in demo mode or without a bot. */
+  watsonMirror?: WatsonMirror;
 }
 
 export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTransports {
@@ -231,6 +236,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerPlaybookMatchRoutes(app, ctx);
   registerAiSynthesisRoutes(app, ctx);
   registerWatsonRoutes(app, ctx); // per-case AI investigation chat
+  registerWatsonMirrorRoutes(app, ctx); // #2647: the Telegram mirror list (off only)
   registerAiPreviewRoutes(app, ctx); // #2491: preview what the AI will see
   registerHypothesisEvidenceRoutes(app, ctx);
   registerFindingsDisplayRoutes(app, ctx);
@@ -285,5 +291,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   // serve, but handed back so the caller can park them on app.locals for shutdown.
   if (options.telegramPolling) transports.telegramPoller = startTelegramPolling(ctx);
   if (options.slackSocketMode) transports.slackSocketMode = startSlackSocketMode(ctx);
+  const watsonMirror = startAppWatsonMirror(ctx);
+  if (watsonMirror) transports.watsonMirror = watsonMirror;
   return transports;
 }

@@ -121,6 +121,8 @@ To see exactly what Watson would send for a message, use **Preview what the AI w
 
 From Slack, Teams or Telegram, `/dfir ask <question>` sends the question to Watson in the same shared chat. See [War-Room Bot](war-room-bot.md).
 
+A Telegram chat can also mirror the Watson chat: after `/dfir mirror on` it gets every new turn, and plain messages become questions. The panel lists those chats under **Mirrored to Telegram**, each with an **Off** button. See [Mirror the Watson chat to Telegram](war-room-bot.md#mirror-the-watson-chat-to-telegram).
+
 ## Searching the super-timeline
 
 The forensic timeline holds the events that were graded Low or higher. The super-timeline holds the raw rows, including the Info rows that were cut. When the forensic timeline cannot answer your question, Watson can search the super-timeline.

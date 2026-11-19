@@ -332,6 +332,7 @@
       `<button type="button" class="watson-jump" data-act="watsonJumpEnd" aria-label="Jump to the latest message" title="Jump to the latest message" hidden>${ICON.down}</button></div>` +
       `<div class="watson-statusbar" data-w="statusbar" hidden></div>` +
       composerHtml() +
+      `<div class="watson-mirrors" data-w="mirrors" hidden></div>` + // #2647 (dashboard-watson-mirror.js)
       `<div class="watson-foot" data-w="foot"></div></div></div></div>`
     );
   }

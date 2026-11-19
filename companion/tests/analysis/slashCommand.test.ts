@@ -84,9 +84,26 @@ describe("parseSlashCommand", () => {
       "bind",
       "unbind",
       "help",
+      "mirror",
     ]) {
       expect(parseSlashCommand(`/dfir ${name} c1`).name, name).toBe(name);
     }
+  });
+});
+
+// #2647: `/dfir mirror on|off` acts on the chat's bound case; its word is never a case id.
+describe("resolveCommand for mirror", () => {
+  const bound: ChannelBinding = { caseId: "case-42", boundAt: "2026-07-25T00:00:00Z" };
+  it("takes the bound case and the on/off word", () => {
+    const cmd = resolveCommand(parseSlashCommand("/dfir mirror ON"), bound, true);
+    expect(cmd).toMatchObject({ name: "mirror", caseId: "case-42", arg: "on", usedBinding: true });
+  });
+  it("has no case without a binding", () => {
+    expect(resolveCommand(parseSlashCommand("/dfir mirror on"), undefined, true).caseId).toBe("");
+  });
+  it("is privileged and synchronous", () => {
+    expect(isPrivilegedCommand("mirror")).toBe(true);
+    expect(isAsyncCommand("mirror")).toBe(false);
   });
 });
 

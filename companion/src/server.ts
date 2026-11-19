@@ -393,13 +393,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     veloHuntTimers: () => hunts.veloHuntTimers,
     watsonFlowWatcher: () => app.locals.watsonFlowWatcher, // Task 5: an applied collection's result watch
     watsonWake: (id: string) => app.locals.watsonReactor?.wake(id), // #2666: a CrowdStrike search result
+    watsonMirror: () => app.locals.watsonMirror, // #2647: the Telegram mirror
   };
   // Every registerXRoutes call, in order, plus the AI rate-limit gate and the custody hook that are
   // interleaved with them. See composition/routeRegistry.ts — the order there is load-bearing.
-  const transports = registerAllRoutes(app, ctx);
-  // app.locals is how the host reaches the outbound transports to stop them on shutdown.
-  if (transports.telegramPoller) app.locals.telegramPoller = transports.telegramPoller;
-  if (transports.slackSocketMode) app.locals.slackSocketMode = transports.slackSocketMode;
+  // app.locals is how the host reaches the outbound transports (and the Telegram mirror) to stop them.
+  Object.assign(app.locals, registerAllRoutes(app, ctx));
   app.locals.captureAnalysis = analysis; // shutdown cancels its pending host-duplicate checks (#2584)
   app.locals.watsonReactor = createAppWatsonReactor(ctx, analysis.synthesisBusy); // spec §4.6, one per app
   if (app.locals.watsonReactor) options.onWatsonReactorReady?.(app.locals.watsonReactor);
@@ -720,6 +719,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
       app.locals.captureAnalysis?.dispose();
       app.locals.watsonReactor?.stop();
       app.locals.watsonFlowWatcher?.stop();
+      app.locals.watsonMirror?.stop();
       await app.locals.telegramPoller?.stop();
       await app.locals.slackSocketMode?.stop();
     },
