@@ -45,11 +45,6 @@ export function createSweepRecorder(d: SweepRecorderDeps): SweepRecorder {
       pendingRawInputs: [...tally.pendingRawInputs],
       warned: [...tally.warned],
     };
-    logged = {
-      imported: logged.imported + imported.length,
-      submitted: logged.submitted + submittedAll.length,
-      failed: logged.failed + failed.length,
-    };
     if (d.statusStore) {
       try {
         await d.statusStore.record(d.caseId, {
@@ -76,13 +71,23 @@ export function createSweepRecorder(d: SweepRecorderDeps): SweepRecorder {
       },
       loggedPending,
     );
+    if (entries.length > 0) {
+      try {
+        await appendDropLog(d.dropDir, formatDropLogLines(entries, new Date().toISOString()));
+      } catch (e) {
+        // Cursors stay put, so the next flush retries these lines: the files are already moved
+        // out of drop/ and no later sweep could rebuild their history.
+        d.log(`[drop] log append failed: ${(e as Error).message}`);
+        return;
+      }
+    }
+    logged = {
+      imported: logged.imported + imported.length,
+      submitted: logged.submitted + submittedAll.length,
+      failed: logged.failed + failed.length,
+    };
     loggedPending = nextLoggedPending;
     d.setLoggedPending(nextLoggedPending);
-    if (entries.length > 0) {
-      await appendDropLog(d.dropDir, formatDropLogLines(entries, new Date().toISOString())).catch((e) =>
-        d.log(`[drop] log append failed: ${(e as Error).message}`),
-      );
-    }
   }
 
   return {

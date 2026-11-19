@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { DropStatusStore } from "../../src/analysis/dropStatus.js";
+import * as dropLog from "../../src/analysis/dropLog.js";
 import { createDropFolder, dropDirOf } from "../../src/composition/dropFolder.js";
 
 // #2715: the drop log and status are written as each file finishes, so a server that stops
@@ -85,5 +86,18 @@ describe("drop log and status are written per file (#2715)", () => {
     expect((await dropStatusStore.load("c1")).failed).toEqual([
       expect.objectContaining({ relpath: "a.csv", reason: "boom" }),
     ]);
+  });
+
+  it("retries a log line whose append failed, and logs every file exactly once", async () => {
+    const { dropDir, drops } = await seed(async () => ok);
+    const real = dropLog.appendDropLog;
+    const spy = vi.spyOn(dropLog, "appendDropLog").mockRejectedValueOnce(new Error("disk busy"));
+    spy.mockImplementation(real);
+    await writeFile(join(dropDir, "a.csv"), "h\n1\n", "utf8");
+    await drops.scanCaseDrops("c1");
+    await drops.scanCaseDrops("c1");
+    spy.mockRestore();
+    const log = await readLog(dropDir);
+    expect(log.match(/IMPORTED\s+a\.csv/g)).toHaveLength(1);
   });
 });
