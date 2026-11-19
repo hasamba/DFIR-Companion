@@ -42,7 +42,8 @@ export type MirrorLiveness =
   | { ok: false; action: "pause"; reason: string }
   | { ok: false; action: "disable"; reason: string };
 
-export type MirrorMasking = { ok: true; mask: (text: string) => string } | { ok: false; reason: string };
+/** The text masked with the case's anonymization list, or why it may not be sent (the chat is held). */
+export type MirrorMasking = { ok: true; text: string } | { ok: false; reason: string };
 
 export interface WatsonMirrorDeps {
   store: WatsonMirrorStore;
@@ -50,8 +51,8 @@ export interface WatsonMirrorDeps {
   loadHistory: (caseId: string) => Promise<readonly WatsonTurn[]>;
   /** Bound, mirroring, case present and unlocked, the enabling user still allowed. */
   liveness: (entry: WatsonMirrorEntry) => Promise<MirrorLiveness>;
-  /** Re-mask with the case's anonymization list; not ok when masking fails or names await approval. */
-  masking: (caseId: string) => Promise<MirrorMasking>;
+  /** Re-mask `raw` with the case's anonymization list; not ok when masking fails or names await approval. */
+  masking: (caseId: string, raw: string) => Promise<MirrorMasking>;
   send: (chatId: string, text: string) => Promise<MirrorSendOutcome>;
   audit: (caseId: string, action: string, detail: string, outcome?: "error") => void;
   roots: readonly WorkstationRoot[];
@@ -217,15 +218,14 @@ export class WatsonMirror {
     if (!urgent && Number.isFinite(lastBatch) && lastBatch + this.windowMs > now) {
       return this.schedule(chatId, lastBatch + this.windowMs - now);
     }
-    const masking = await this.deps.masking(caseId);
+    const raw = turns.map((t) => turnPlainText(t, chat.proposals)).join("\n\n");
+    const masking = await this.deps.masking(caseId, replaceWorkstationRoots(raw, this.deps.roots));
     if (!masking.ok) return this.hold(entry, masking.reason);
     if (entry.held) {
       await this.deps.store.patch(chatId, { held: false });
       this.deps.audit(caseId, "watson-mirror-hold-cleared", `Telegram chat ${chatId}: mirroring resumed`);
     }
-    const raw = turns.map((t) => turnPlainText(t, chat.proposals)).join("\n\n");
-    const text = masking.mask(replaceWorkstationRoots(raw, this.deps.roots));
-    const messages = buildMirrorMessages(text, mirrorFooter(caseId, this.deps.publicUrl()));
+    const messages = buildMirrorMessages(masking.text, mirrorFooter(caseId, this.deps.publicUrl()));
     const ids = await this.sendAll(entry, messages);
     if (!ids) return;
     await this.deps.store.markSent(

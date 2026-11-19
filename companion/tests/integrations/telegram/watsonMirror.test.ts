@@ -29,7 +29,7 @@ interface Harness {
   clock: { now: number };
   outcomes: MirrorSendOutcome[];
   liveness: { value: MirrorLiveness };
-  masking: { value: MirrorMasking };
+  masking: { value: MirrorMasking | ((raw: string) => MirrorMasking) };
   advance: (ms: number) => Promise<void>;
   addTurn: (t: Partial<WatsonTurn> & { role: WatsonTurn["role"] }) => WatsonTurn;
   newMirror: () => WatsonMirror;
@@ -53,7 +53,7 @@ async function harness(): Promise<Harness> {
     outcomes: [],
     liveness: { value: { ok: true } },
     onSleep: {},
-    masking: { value: { ok: true, mask: (t: string) => t.replace(/HOST-REAL/g, "HOST_1") } },
+    masking: { value: (t: string) => ({ ok: true, text: t.replace(/HOST-REAL/g, "HOST_1") }) },
   } as unknown as Harness;
   const settle = async () => {
     await new Promise((r) => setImmediate(r));
@@ -65,7 +65,10 @@ async function harness(): Promise<Harness> {
       loadChat: async () => ({ ...emptyWatsonChat(), turns: h.live.slice(-3) }), // a small live window
       loadHistory: async () => h.history,
       liveness: async () => h.liveness.value,
-      masking: async () => h.masking.value,
+      masking: async (_caseId, raw) => {
+        const m = h.masking.value;
+        return typeof m === "function" ? m(raw) : m;
+      },
       send: async (chatId, text) => {
         h.sends.push({ chatId, text, at: clock.now });
         return h.outcomes.shift() ?? { kind: "sent", messageId: 1000 + h.sends.length };
@@ -188,7 +191,7 @@ describe("WatsonMirror", () => {
     await h.advance(120_000);
     expect(h.sends.map((s) => s.text.split("\n")[0])).toEqual([HELD_TEXT]);
     expect(h.audits.some((a) => a.startsWith("watson-mirror-held"))).toBe(true);
-    h.masking.value = { ok: true, mask: (t) => t };
+    h.masking.value = (t) => ({ ok: true, text: t });
     await h.advance(60_000);
     expect(h.sends.length).toBe(2);
     expect(h.sends[1].text).toContain("q1");
