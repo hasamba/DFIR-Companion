@@ -37,6 +37,7 @@ import {
   translateVelociraptorError,
   vqlLogErrors,
 } from "../../src/integrations/velociraptor/vqlDiagnostics.js";
+import { constants } from "node:buffer";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1894,6 +1895,12 @@ describe("loadVelociraptorConfig / buildVelociraptorClient", () => {
     expect(c).toMatchObject({ apiConfigPath: "/x/api.yaml", binary: "velociraptor" });
     expect(c!.timeoutMs).toBeGreaterThan(0);
     expect(c!.maxRows).toBeGreaterThan(0);
+  });
+  it("defaults the collection output cap to 400 MB, below Node's max string length", () => {
+    const c = loadVelociraptorConfig({ DFIR_VELOCIRAPTOR_API_CONFIG: "/x/api.yaml" });
+    expect(c!.collectMaxOutputBytes).toBe(400 * 1024 * 1024);
+    // The collected bytes decode into ONE string; past this limit the decode throws.
+    expect(c!.collectMaxOutputBytes).toBeLessThan(constants.MAX_STRING_LENGTH);
   });
   it("honors binary/timeout/row overrides", () => {
     const c = loadVelociraptorConfig({
