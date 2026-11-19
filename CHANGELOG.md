@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Watson Telegram mirror** — opt-in per chat with `/dfir mirror on`; Watson's case chat is mirrored to a bound Telegram chat and allowlisted users can ask Watson from Telegram (closes #2647)
 
+### Fixed
+
+- **Drop log and status per file** — each dropped file's log line and status entry are written as it finishes, so a stop mid-sweep loses nothing (closes #2715)
+
 ## [0.47.0] - 2026-11-19
 
 ### Added

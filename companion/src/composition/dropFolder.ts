@@ -62,7 +62,7 @@ import {
   type DropFileStat,
   type StuckDropFile,
 } from "../analysis/dropScan.js";
-import { formatDropLogLines, appendDropLog, buildSweepLogEntries } from "../analysis/dropLog.js";
+import { createSweepRecorder } from "./dropIncremental.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
@@ -644,7 +644,16 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       const runCache = createToolRunCache();
       // Sorted by relpath, small same-importer files batched (#2540, composition/dropBatch.ts).
       let processed = 0;
-      const { imported, submitted, failed, warned, pendingRawInputs } = await runDropSweep(ready, {
+      const recorder = createSweepRecorder({
+        caseId,
+        dropDir,
+        ...(options.dropStatusStore ? { statusStore: options.dropStatusStore } : {}),
+        loggedPending: pendingLogged.get(caseId) ?? new Set<string>(),
+        setLoggedPending: (next) => pendingLogged.set(caseId, next),
+        ...(options.onDropStatus ? { onDropStatus: options.onDropStatus } : {}),
+        log: logLine,
+      });
+      const tally = await runDropSweep(ready, {
         caseId,
         dropDir,
         processFile: (file) => processDropFile(caseId, dropDir, file, runCache, modelCall),
@@ -659,46 +668,13 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         resolveImportKind,
         recordImportFailure: (name, err, debug) => recordImportFailure(caseId, "drop", name, err, debug),
         ...(dropBatch ? { dropBatch } : {}),
+        onRecorded: recorder.flush,
       });
+      const { imported, failed, pendingRawInputs } = tally;
       if (job) await options.jobManager?.finish(job.jobId);
       if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;
-
-      if (options.dropStatusStore) {
-        try {
-          await options.dropStatusStore.record(caseId, {
-            dropPath: dropDir,
-            imported,
-            failed,
-            pendingRawInputs,
-            warnings: warned,
-          });
-          options.onDropStatus?.(caseId);
-        } catch (e) {
-          logLine(`[drop] status record failed: ${(e as Error).message}`);
-        }
-      }
-
-      // Folder-visible history (drop/drop-log.txt): every imported/failed file gets a line; a pending
-      // raw-tool file gets ONE PENDING line the first time it's seen (pendingLogged dedups it across
-      // the ~10s poll interval until it resolves).
-      const { entries: logEntries, nextLoggedPending } = buildSweepLogEntries(
-        // `imported` minus the async handoffs — those get a SUBMITTED line instead, so a file is
-        // never claimed as imported before its verdicts actually land.
-        {
-          imported: imported.filter((r) => !submitted.some((s) => s.relpath === r)),
-          submitted,
-          failed,
-          pendingRawInputs,
-          warned,
-        },
-        pendingLogged.get(caseId) ?? new Set<string>(),
-      );
-      pendingLogged.set(caseId, nextLoggedPending);
-      if (logEntries.length > 0) {
-        await appendDropLog(dropDir, formatDropLogLines(logEntries, new Date().toISOString())).catch((e) =>
-          logLine(`[drop] log append failed: ${(e as Error).message}`),
-        );
-      }
+      // Per-file writes already happened in the sweep; this settles anything left (a pending file).
+      await recorder.flush(tally);
 
       logLine(`[drop] ${caseId}: ${imported.length} imported, ${failed.length} failed`);
       if (failed.length > 0) {
