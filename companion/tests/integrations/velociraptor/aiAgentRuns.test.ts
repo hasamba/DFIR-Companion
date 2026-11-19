@@ -17,6 +17,7 @@ import {
   type AiAgentForensicsDeps,
 } from "../../../src/integrations/velociraptor/aiAgentRuns.js";
 import { isAnalystCase, SWEEP_RETENTION } from "../../../src/storage/sweepCase.js";
+import { withSilentEndpoints } from "../../../src/integrations/velociraptor/aiAgentRuns.js";
 import type { VelociraptorClient } from "../../../src/integrations/velociraptor/velociraptorApi.js";
 import type { ServerSetStore } from "../../../src/integrations/serverSets/serverSetStore.js";
 
@@ -74,6 +75,8 @@ function makeDeps(
     store,
     serverClients: {
       forCase: () => ({ ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: velo } }),
+      forSet: () => ({ ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: velo } }),
+      forDefault: () => ({ ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: velo } }),
     } as unknown as AiAgentForensicsDeps["serverClients"],
     serverSetStore: sets,
     veloHuntStore: new VeloHuntStore(store),
@@ -129,6 +132,27 @@ describe("AI Agent Forensics: outside a case", () => {
     expect((await listSweeps(deps)).map((s) => s.caseId)).toEqual([caseId]);
   });
 
+  it("leaves no hidden case behind when the launch fails", async () => {
+    const velo = fakeVelo();
+    const failing = {
+      ...velo,
+      runProgram: async (p: string) =>
+        p.includes("hunt(")
+          ? { rows: [], reason: "PermissionDenied" }
+          : (velo as unknown as { runProgram(p: string): Promise<unknown> }).runProgram(p),
+    } as unknown as VelociraptorClient;
+    const servers = { ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: failing } };
+    const deps = makeDeps({
+      serverClients: {
+        forCase: () => servers,
+        forSet: () => servers,
+        forDefault: () => servers,
+      } as unknown as AiAgentForensicsDeps["serverClients"],
+    });
+    await expect(startAiAgentRun(deps, { clientIds: ["C.w1"] })).rejects.toThrow(/START_HUNT/);
+    expect(await store.listCases()).toEqual([]);
+  });
+
   it("refuses an empty selection before creating anything", async () => {
     const deps = makeDeps();
     await expect(startAiAgentRun(deps, { clientIds: [] })).rejects.toThrow(/never targets the fleet/);
@@ -167,6 +191,7 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     const deps = makeDeps();
     const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
     const updated = await refreshAiAgentRun(deps, caseId, run.runId);
+    expect(deps.startVeloHuntCollect).toHaveBeenCalledWith(caseId, "H.AI1"); // the timeline catches up too
     expect(updated.report?.hits[0]).toMatchObject({
       rule: "Agent_Memory_Hidden_Instruction_Concealment",
       severity: "High",
@@ -193,5 +218,34 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     await expect(addSweepToCase(deps, "case-1", run.runId, caseId)).rejects.toThrow(
       /not an AI Agent Forensics sweep/,
     );
+  });
+});
+
+describe("AI Agent Forensics: an endpoint with no rows yet", () => {
+  it("is listed as 'no results yet', never dropped from the report", () => {
+    const report = {
+      builtAt: "",
+      ruleSetVersion: "v",
+      endpoints: [
+        {
+          host: "dev-ws-014.corp.example",
+          tools: [],
+          mcpServers: [],
+          credentialStores: 0,
+          hits: 0,
+          coverage: [],
+        },
+      ],
+      hits: [],
+      notRun: [],
+      unreadableRows: 0,
+      provisionalGrades: true as const,
+    };
+    const out = withSilentEndpoints(report, [
+      { clientId: "C.w1", hostname: "DEV-WS-014" },
+      { clientId: "C.w2", hostname: "BUILD-01" },
+    ]);
+    expect(out.endpoints.map((e) => e.host)).toEqual(["dev-ws-014.corp.example", "BUILD-01"]);
+    expect(out.endpoints[1].coverage[0].status).toBe("no results yet");
   });
 });

@@ -116,3 +116,20 @@ describe("AI Agent Forensics routes", () => {
     expect(md.text).toContain('=HYPERLINK("http://evil") \\| <img'); // the cell stays one cell
   });
 });
+
+describe("AI Agent Forensics routes: a case named in the body", () => {
+  it("refuses a run into a closed case, and an unknown one", async () => {
+    await store.createCase({ caseId: "closed-1", name: "A", investigator: "y", aiProvider: null });
+    await store.updateCaseMeta("closed-1", { status: "closed" });
+    const { VeloHuntStore } = await import("../../src/analysis/veloHuntStore.js");
+    const wired = createApp(store, { veloHuntStore: new VeloHuntStore(store) });
+    const unknown = await request(wired)
+      .post("/ai-agent/runs")
+      .send({ caseId: "nope", clientIds: ["C.1"] });
+    expect(unknown.status).toBe(404);
+    const closed = await request(wired)
+      .post("/ai-agent/runs")
+      .send({ caseId: "closed-1", clientIds: ["C.1"] });
+    expect(closed.status).toBe(423);
+  });
+});

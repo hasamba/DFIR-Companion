@@ -17,6 +17,9 @@
 
   const byId = (id) => document.getElementById(id);
   let rules = null;
+  // Each render of a box bumps its generation; an older render that finishes late paints nothing, so a
+  // slow load can never show (or Run against) the previous case.
+  const renderGens = new Map();
 
   function el(tag, text, cls) {
     const node = document.createElement(tag);
@@ -80,8 +83,12 @@
         msg.textContent = r.ok ? (r.body.status === "current" ? `Up to date (${r.body.version}).` : r.body.message || "No pack.") : r.body.error || `Failed (HTTP ${r.status}).`;
         return;
       }
-      const d = r.body.diff || { added: [], removed: [], changedFiles: [] };
-      msg.textContent = `${r.body.version}: +${d.added.length} rule(s), -${d.removed.length}, ${d.changedFiles.length} changed file(s). `;
+      const d = r.body.diff || {};
+      const list = (label, xs) => (xs && xs.length ? `${label}: ${xs.join(", ")}. ` : "");
+      msg.textContent =
+        `${r.body.version} — ` +
+        (list("Rules added", d.added) + list("Rules removed", d.removed) + list("Files changed", d.changedFiles) +
+          list("Files added", d.addedFiles) + list("Files removed", d.removedFiles) || "no change in any file. ");
       const install = el("button", `Install ${r.body.version}`);
       install.type = "button";
       install.addEventListener("click", async () => done(await post("/ai-agent/pack/install", { version: r.body.version }), "Installed — the next run uses it. Reopen the panel to see the version."));
@@ -168,6 +175,10 @@
       const clientIds = picker.selected();
       if (!clientIds.length) {
         msg.textContent = "Pick at least one endpoint.";
+        return;
+      }
+      if (caseId && caseId !== caseNow()) {
+        msg.textContent = "The open case changed — reopen the panel before running.";
         return;
       }
       run.disabled = true;
@@ -300,6 +311,9 @@
 
   async function renderPanel(box, caseId) {
     if (!box) return;
+    const gen = (renderGens.get(box.id) || 0) + 1;
+    renderGens.set(box.id, gen);
+    const stale = () => renderGens.get(box.id) !== gen || (caseId && caseId !== caseNow());
     box.replaceChildren(el("p", "Loading…", "aa-note"));
     if (!rules) {
       const r = await call("/ai-agent/rules");
@@ -316,6 +330,7 @@
       if (!r.ok) parts.push(el("p", r.body.error || `Sweeps are not available (HTTP ${r.status}).`, "aa-warn"));
       for (const s of (r.ok && r.body.sweeps) || []) if (s.run) parts.push(runCard(s.caseId, s.run, true, again));
     }
+    if (stale()) return;
     box.replaceChildren(...parts);
   }
 

@@ -4,6 +4,6 @@
 # folder and the NOTICE entry at the repository root). They are never edited here: a re-sync copies
 # the upstream files again, moves the commit line below forward, and assigns any new rule file a
 # scope and grade in scope-map.yaml. paths.yaml is derived (not copied) from the toolkit's
-# collectors/targets.yaml, which is under the same Apache-2.0 licence.
+# collectors/targets.yaml, whose credential entries come from its CC BY 4.0 catalogue (see NOTICE).
 #
 # ai-dfir-toolkit upstream commit: 5960308d7d8e9bbf838f31ca0e783373fc8a2ae7 (2026-11-18)

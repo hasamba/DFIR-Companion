@@ -118,6 +118,8 @@ describe("AI-agent pack: stage, install, roll back", () => {
     const diff = diffAiAgentRuleSets(loadAiAgentRuleSet(), staged);
     expect(diff.removed).toContain("yara:Pickle_Dangerous_Imports");
     expect(diff.added).toEqual([]);
+    expect(diff.removedFiles).toContain("yara/03-model-supply-chain/pickle_malicious_opcodes.yar");
+    expect(diff.changedFiles).toContain("UPSTREAM");
     await store.install("aiagent-rules-2026.11.20");
     expect(activeAiAgentRuleSet().version).toBe("ai-dfir-toolkit @ aaaaaaa (2026-11-18)");
     expect(await store.pointer()).toEqual({ active: "aiagent-rules-2026.11.20", previous: null });
@@ -184,7 +186,13 @@ describe("AI-agent pack: check against GitHub (mocked)", () => {
     const { fetchFn, fetchAsset } = github();
     const out = await new AiAgentPackStore(root, "0.47.0").check(fetchFn, fetchAsset);
     expect(out).toMatchObject({ status: "found", version: "aiagent-rules-2026.11.20" });
-    expect(out.diff).toEqual({ added: [], removed: [], changedFiles: [] });
+    expect(out.diff).toEqual({
+      added: [],
+      removed: [],
+      changedFiles: ["disabled.yml"],
+      addedFiles: [],
+      removedFiles: [],
+    });
   });
 
   it("refuses a pack that needs a newer app, and says so", async () => {

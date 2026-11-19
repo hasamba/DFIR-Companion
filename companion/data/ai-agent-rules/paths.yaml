@@ -1,8 +1,10 @@
 # AI Agent Forensics — inventory and credential locations on Windows (#2690).
 #
-# Derived from depalmar/ai-dfir-toolkit `collectors/targets.yaml` (Apache-2.0, same upstream commit as
-# UPSTREAM) and rewritten as Velociraptor globs. Not a verbatim copy, so it is edited here; a re-sync
-# re-derives it.
+# Derived from depalmar/ai-dfir-toolkit `collectors/targets.yaml` (same upstream commit as UPSTREAM),
+# whose credential and artifact entries are generated from the toolkit's catalogue:
+#   AI agent artifact catalog, Raymond DePalma, CC BY 4.0 — https://github.com/depalmar/ai-dfir-toolkit
+# Changes: Windows locations only, rewritten as Velociraptor globs. Not a verbatim copy, so it is
+# edited here; a re-sync re-derives it. See NOTICE.
 schema: 1
 
 # Which AI tools are present: a tool counts as present when any of its globs matches. Presence only —

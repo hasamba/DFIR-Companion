@@ -51,9 +51,10 @@ export const HUNT_UPLOAD_MANIFEST_VQL =
 export function externalRetentionProbe(
   target: { huntId: string } | { clientId: string; flowId: string },
 ): string {
+  // The same row shapes getHuntArtifacts() and flowStatus() read; the whole row is checked.
   return "huntId" in target
-    ? `SELECT artifacts, start_request FROM hunts() WHERE hunt_id='${target.huntId}'`
-    : `SELECT request FROM flows(client_id='${target.clientId}', flow_id='${target.flowId}')`;
+    ? `SELECT * FROM hunts() WHERE hunt_id='${target.huntId}' LIMIT 1`
+    : `SELECT * FROM flows(client_id='${target.clientId}') WHERE session_id='${target.flowId}' LIMIT 1`;
 }
 
 /** True when a probe's rows name an AI Agent Forensics artifact. */
@@ -62,9 +63,11 @@ export function isExternalRetentionRun(rows: readonly unknown[]): boolean {
 }
 
 export class ExternalRetentionError extends Error {
-  constructor() {
+  constructor(unconfirmed = "") {
     super(
-      "this is an AI Agent Forensics run: its collected files stay in Velociraptor and are never imported (manifest only)",
+      unconfirmed
+        ? `could not confirm this is not an AI Agent Forensics run, so its uploads were not read (${unconfirmed})`
+        : "this is an AI Agent Forensics run: its collected files stay in Velociraptor and are never imported (manifest only)",
     );
     this.name = "ExternalRetentionError";
   }

@@ -1156,9 +1156,10 @@ export class VelociraptorClient {
   }
 
   // An AI Agent Forensics run's uploads are never read, whatever the caller or the override VQL (#2690).
-  // A probe that fails is not proof either way; the per-job policy in veloHunts is the other guard.
+  // Fail closed: a probe that cannot run is no proof the run is not one.
   private async refuseExternalRetention(target: Parameters<typeof up.externalRetentionProbe>[0]) {
-    const probe = await this.runRawLogged(up.externalRetentionProbe(target)).catch(() => ({ rows: [] }));
+    const probe = await this.runRawLogged(up.externalRetentionProbe(target)).catch((e: Error) => e);
+    if (probe instanceof Error) throw new up.ExternalRetentionError(probe.message);
     if (up.isExternalRetentionRun(probe.rows)) throw new up.ExternalRetentionError();
   }
 

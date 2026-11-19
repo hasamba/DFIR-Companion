@@ -5,7 +5,7 @@
   "analysis/seedDemoCase.ts": 2700,
   "analysis/siemImport.ts": 1445,
   "analysis/velociraptorImport.ts": 1772,
-  "integrations/velociraptor/velociraptorApi.ts": 1233,
+  "integrations/velociraptor/velociraptorApi.ts": 1234,
   "public/dashboard.html#inline-js": 1909,
   "reports/markdown.ts": 1469,
   "reports/reportWriter.ts": 827,

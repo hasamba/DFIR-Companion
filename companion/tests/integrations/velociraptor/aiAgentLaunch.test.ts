@@ -80,6 +80,7 @@ describe("AI Agent Forensics launch", () => {
     expect(sets).toHaveLength(bundle.parts.length + bundle.artifacts.length);
     const hunt = programs.find((p) => p.includes("hunt("))!;
     expect(hunt).toContain("pause=TRUE");
+    expect(hunt).toContain("timeout=7200");
     expect(hunt).toContain("`Windows.Triage.Targets`=dict(AICodingAgents='Y', MaxFileSize='52428800')");
     expect(hunt).not.toContain("include_labels");
     expect(programs.indexOf(hunt)).toBeGreaterThan(programs.indexOf(sets[sets.length - 1]));
@@ -194,6 +195,16 @@ describe("AI Agent Forensics: manifest-only uploads", () => {
   it("refuses the single-collection (flow) variant", async () => {
     const c = new VelociraptorClient(cfg, aiRunner);
     await expect(c.flowUploads("C.aaa", "F.123.H")).rejects.toBeInstanceOf(ExternalRetentionError);
+  });
+
+  it("fails closed when it cannot tell whether the hunt is an AI Agent Forensics run", async () => {
+    const runner: VqlRunner = async (q) => {
+      if (/FROM hunts\(\)/.test(q[0])) throw new Error("hunts() unavailable");
+      throw new Error("upload CONTENT was read");
+    };
+    await expect(new VelociraptorClient(cfg, runner).huntUploads("H.X1")).rejects.toThrow(
+      /could not confirm/,
+    );
   });
 
   it("still reads uploads for any other hunt", async () => {

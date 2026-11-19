@@ -13,7 +13,8 @@
 //     version they ran with, and existing case events are never regraded.
 
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, normalize, sep } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, normalize, relative, sep } from "node:path";
 import { parseReleaseAssets } from "./velociraptorRelease.js";
 import { DEFAULT_UPDATE_REPO } from "./updateCheck.js";
 import { downloadVerifiedAsset, sha256Hex, type ReleaseAssetFetch } from "./githubReleaseDownload.js";
@@ -155,9 +156,11 @@ export async function listAiPackReleases(
 }
 
 export interface AiPackDiff {
-  added: string[];
-  removed: string[];
-  changedFiles: string[];
+  added: string[]; // rules new in the pack ("yara:<name>" / "sigma:<title>")
+  removed: string[]; // rules the pack no longer has
+  changedFiles: string[]; // any file whose content differs: rules, grades/scopes, paths, disabled list
+  addedFiles: string[];
+  removedFiles: string[];
 }
 
 function ruleNames(set: AiAgentRuleSet): Set<string> {
@@ -167,17 +170,40 @@ function ruleNames(set: AiAgentRuleSet): Set<string> {
   ]);
 }
 
-/** What installing `incoming` changes against the rule set in use: rules added/removed, files changed. */
+/** Every file of a rule folder (path → LF text). */
+function folderFiles(dir: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (d: string): void => {
+    for (const name of readdirSync(d).sort()) {
+      const full = join(d, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else
+        out.set(relative(dir, full).split(sep).join("/"), readFileSync(full, "utf8").replace(/\r\n/g, "\n"));
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+/**
+ * What installing `incoming` changes against the rule set in use: rules added and removed, and every
+ * file added, removed or changed — so a re-sync that only moves a grade, a scope, a path or the
+ * disabled list still shows up in the review.
+ */
 export function diffAiAgentRuleSets(current: AiAgentRuleSet, incoming: AiAgentRuleSet): AiPackDiff {
   const a = ruleNames(current);
   const b = ruleNames(incoming);
-  const texts = (s: AiAgentRuleSet) => new Map(s.yara.map((f) => [`yara/${f.path}`, f.text]));
-  const ta = texts(current);
-  const changedFiles = [...texts(incoming)].filter(([p, t]) => ta.has(p) && ta.get(p) !== t).map(([p]) => p);
+  const fa = folderFiles(current.dir);
+  const fb = folderFiles(incoming.dir);
   return {
     added: [...b].filter((x) => !a.has(x)).sort(),
     removed: [...a].filter((x) => !b.has(x)).sort(),
-    changedFiles: changedFiles.sort(),
+    changedFiles: [...fb]
+      .filter(([p, t]) => fa.has(p) && fa.get(p) !== t)
+      .map(([p]) => p)
+      .sort(),
+    addedFiles: [...fb.keys()].filter((p) => !fa.has(p)).sort(),
+    removedFiles: [...fa.keys()].filter((p) => !fb.has(p)).sort(),
   };
 }
 

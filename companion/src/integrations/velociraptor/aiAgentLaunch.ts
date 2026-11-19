@@ -18,6 +18,8 @@ export const TRIAGE_ARTIFACT = "Windows.Triage.Targets";
 export const TRIAGE_RULE = "AICodingAgents";
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;
 export const AI_AGENT_HUNT_EXPIRY_SECONDS = 7 * 86_400;
+/** Per-endpoint collection timeout: YARA over the agent scopes plus the triage copy (as Big Hogs). */
+export const AI_AGENT_COLLECTION_TIMEOUT_SECONDS = 7200;
 
 export interface AiAgentLaunchClient {
   runProgram(program: string): Promise<{ rows: unknown[]; reason: string }>;
@@ -62,7 +64,7 @@ export function huntProgram(input: AiAgentLaunchInput, artifacts: string[]): str
     : "";
   return (
     `SELECT hunt(description='DFIR Companion: ${vqlText(input.description)}', artifacts=[${list}]${spec}, ` +
-    `pause=TRUE, expires=now() + ${expires}) AS Hunt FROM scope()`
+    `timeout=${AI_AGENT_COLLECTION_TIMEOUT_SECONDS}, pause=TRUE, expires=now() + ${expires}) AS Hunt FROM scope()`
   );
 }
 

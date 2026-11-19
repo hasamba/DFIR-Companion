@@ -183,12 +183,21 @@ The YARA (.yar) and Sigma (.yml) rules in the folders above are copied verbatim 
 depalmar/ai-dfir-toolkit (https://github.com/depalmar/ai-dfir-toolkit) at upstream
 commit 5960308d7d8e9bbf838f31ca0e783373fc8a2ae7 (2026-11-18). They are licensed under
 the Apache License, Version 2.0; the licence text ships beside them as
-companion/data/ai-agent-rules/LICENSE. paths.yaml is derived from the toolkit's
-collectors/targets.yaml (same licence and commit) and rewritten as Velociraptor
-globs; selfscan-hashes.yaml lists content hashes of the toolkit's test fixtures.
-Every hit the program records names the rule, its author and a link to the rule
-at that commit. The toolkit's CC BY 4.0 catalogue data (artifacts/) is not used.
-The toolkit's author does not endorse this program.
+companion/data/ai-agent-rules/LICENSE. selfscan-hashes.yaml lists content
+hashes of the toolkit's test fixtures. Every hit the program records names the
+rule, its author and a link to the rule at that commit. The toolkit's author does
+not endorse this program.
+
+The credential-store and MCP configuration locations in paths.yaml come from the
+toolkit's collectors/targets.yaml, whose credential and artifact entries are
+generated from its catalogue, licensed CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/):
+
+    AI agent artifact catalog, Raymond DePalma, CC BY 4.0
+    https://github.com/depalmar/ai-dfir-toolkit
+
+Changes made: the Windows locations only, rewritten as Velociraptor globs, with
+MCP configuration files listed separately from credential stores.
 
 
 ================================================================================

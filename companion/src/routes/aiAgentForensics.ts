@@ -13,6 +13,7 @@
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
 import { isValidCaseId } from "../storage/caseStore.js";
+import { frozenCaseRefusal } from "./importCaseGuard.js";
 import { activeAiAgentRuleSet, activeAiAgentRulesProblem } from "../analysis/aiAgentActiveRules.js";
 import { groupNotRun } from "../analysis/aiAgentReport.js";
 import { AiAgentRunStore, type AiAgentRun } from "../analysis/aiAgentRunStore.js";
@@ -42,7 +43,7 @@ function fail(res: Response, err: unknown): Response {
   return res.status(502).json({ error: e.message });
 }
 
-function deps(ctx: RouteContext, runStore: AiAgentRunStore): AiAgentForensicsDeps | null {
+function deps(ctx: RouteContext, runStore: AiAgentRunStore, req?: Request): AiAgentForensicsDeps | null {
   const { options } = ctx;
   if (!options.veloHuntStore) return null;
   const log = (line: string): void => ctx.serverLogger.info(line);
@@ -53,6 +54,9 @@ function deps(ctx: RouteContext, runStore: AiAgentRunStore): AiAgentForensicsDep
     veloHuntStore: options.veloHuntStore,
     runStore,
     disableAi: (caseId) => ctx.setControl(caseId, { enabled: false }),
+    onSweepCreated: (caseId) => {
+      if (req) options.teamAuth?.grantCreator(req, caseId);
+    },
     startVeloHuntCollect: (caseId, huntId) => ctx.startVeloHuntCollect(caseId, huntId),
     armCollectTimer: (caseId, huntId, waitMinutes) => {
       const timer = setTimeout(() => ctx.startVeloHuntCollect(caseId, huntId), waitMinutes * 60_000);
@@ -65,6 +69,35 @@ function deps(ctx: RouteContext, runStore: AiAgentRunStore): AiAgentForensicsDep
     onChange: (caseId) => options.onVeloHunt?.(caseId),
     log,
   };
+}
+
+/**
+ * A case named in the BODY (not the path) gets the checks the /cases/:id gates give a path case: it
+ * exists, the requester may see it, it is not closed or archived, and it is unlocked. Sends the
+ * refusal and returns false when one fails.
+ */
+async function writableBodyCase(
+  ctx: RouteContext,
+  req: Request,
+  res: Response,
+  caseId: string,
+): Promise<boolean> {
+  const meta = await ctx.store.getCaseMeta(caseId).catch(() => null);
+  const visible = ctx.options.teamAuth?.visibleCaseIds(req);
+  if (!meta || (visible && !visible.has(caseId))) {
+    res.status(404).json({ error: "case not found" });
+    return false;
+  }
+  const frozen = await frozenCaseRefusal(ctx.store, caseId);
+  if (frozen) {
+    res.status(423).json({ error: frozen });
+    return false;
+  }
+  if (meta.password && !ctx.readUnlockState(req, caseId, meta.password.salt).unlocked) {
+    res.status(403).json({ error: "this case is locked — unlock it first" });
+    return false;
+  }
+  return true;
 }
 
 const NOT_WIRED = { error: "Velociraptor hunts are not configured on this server" };
@@ -88,11 +121,12 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
     }
   });
 
-  app.get("/ai-agent/sweeps", async (_req: Request, res: Response) => {
+  app.get("/ai-agent/sweeps", async (req: Request, res: Response) => {
     const d = deps(ctx, runStore);
     if (!d) return res.status(501).json(NOT_WIRED);
     try {
-      const sweeps = await listSweeps(d);
+      const visible = ctx.options.teamAuth?.visibleCaseIds(req);
+      const sweeps = (await listSweeps(d)).filter((s) => !visible || visible.has(s.caseId));
       return res.status(200).json({
         sweeps: sweeps.map((s) => ({ caseId: s.caseId, run: s.run ? publicRun(s.run) : null })),
       });
@@ -102,14 +136,13 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
   });
 
   app.post("/ai-agent/runs", async (req: Request, res: Response) => {
-    const d = deps(ctx, runStore);
+    const d = deps(ctx, runStore, req);
     if (!d) return res.status(501).json(NOT_WIRED);
     const body = (req.body ?? {}) as Record<string, unknown>;
     const caseId = typeof body.caseId === "string" && body.caseId.trim() ? body.caseId.trim() : undefined;
     if (caseId && !isValidCaseId(caseId))
       return res.status(400).json({ error: "caseId must be a valid case id" });
-    const visible = ctx.options.teamAuth?.visibleCaseIds(req);
-    if (caseId && visible && !visible.has(caseId)) return res.status(404).json({ error: "case not found" });
+    if (caseId && !(await writableBodyCase(ctx, req, res, caseId))) return;
     try {
       const out = await startAiAgentRun(d, {
         caseId,
@@ -156,8 +189,7 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
     const target = String(req.body?.targetCaseId ?? "").trim();
     if (!isValidCaseId(target))
       return res.status(400).json({ error: "targetCaseId must be a valid case id" });
-    const visible = ctx.options.teamAuth?.visibleCaseIds(req);
-    if (visible && !visible.has(target)) return res.status(404).json({ error: "case not found" });
+    if (!(await writableBodyCase(ctx, req, res, target))) return;
     try {
       return res.status(200).json(await addSweepToCase(d, req.params.id, req.params.runId, target));
     } catch (err) {

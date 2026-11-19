@@ -59,6 +59,8 @@ export interface AiAgentForensicsDeps {
   runStore: AiAgentRunStore;
   /** Turn AI analysis off for a new sweep case (routes pass ctx.setControl). */
   disableAi?(caseId: string): Promise<unknown>;
+  /** A new sweep case was made for this request (routes grant the requester access to it). */
+  onSweepCreated?(caseId: string): void;
   startVeloHuntCollect(caseId: string, huntId: string): unknown;
   armCollectTimer(caseId: string, huntId: string, waitMinutes: number): void;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
@@ -118,12 +120,24 @@ function validClientIds(raw: unknown): string[] {
   return ids;
 }
 
-async function createSweepCase(deps: AiAgentForensicsDeps, serverSetId?: string): Promise<string> {
-  const caseId = newSweepCaseId();
+/** The set a sweep runs on: the one asked for, else the default. Resolved BEFORE any case is made. */
+function sweepSet(
+  deps: AiAgentForensicsDeps,
+  serverSetId?: string,
+): { setId?: string; client: VelociraptorClient } {
   const sets = deps.serverSetStore;
   const setId = serverSetId?.trim() || sets?.defaultId();
   if (sets && (!setId || !sets.has(setId)))
     throw new AiAgentRunError("no Velociraptor server set to run on — pick one or set a default", 409);
+  const r = setId ? deps.serverClients.forSet(setId) : deps.serverClients.forDefault();
+  if (!r.ok) throw new AiAgentRunError(r.error, r.status);
+  if (!r.servers.velociraptor)
+    throw new AiAgentRunError(`Velociraptor is not configured in server set '${r.servers.setName}'`, 501);
+  return { setId, client: r.servers.velociraptor };
+}
+
+async function createSweepCase(deps: AiAgentForensicsDeps, setId?: string): Promise<string> {
+  const caseId = newSweepCaseId();
   await deps.store.createCase({
     caseId,
     name: `AI Agent Forensics sweep ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
@@ -131,10 +145,18 @@ async function createSweepCase(deps: AiAgentForensicsDeps, serverSetId?: string)
     aiProvider: null,
     kind: SWEEP_CASE_KIND,
   });
-  if (sets && setId) sets.linkCase(caseId, setId);
+  if (deps.serverSetStore && setId) deps.serverSetStore.linkCase(caseId, setId);
   // A sweep is a results-only check: no AI analysis runs on it (the analyst files hits into a case).
   await deps.disableAi?.(caseId);
+  deps.onSweepCreated?.(caseId);
   return caseId;
+}
+
+/** Undo a sweep case whose launch failed, so no hidden case is left without a run. */
+async function discardSweepCase(deps: AiAgentForensicsDeps, caseId: string): Promise<void> {
+  await deps.store
+    .deleteCaseFolder(caseId, { afterDelete: async () => deps.serverSetStore?.unlinkCase(caseId) })
+    .catch((e: Error) => deps.log(`[ai-agent] could not remove the failed sweep ${caseId}: ${e.message}`));
 }
 
 /** Remove the Companion copy of sweeps beyond the retention window. Never touches Velociraptor. */
@@ -170,20 +192,28 @@ export async function startAiAgentRun(
   const set = activeAiAgentRuleSet();
   const uploadMaxBytes = Math.max(0, Math.floor(input.uploadMaxBytes ?? AI_AGENT_DEFAULT_UPLOAD_MAX_BYTES));
   const bundle = buildAiAgentArtifact(set, { scopes: input.scopes, uploadMaxBytes }); // option errors before any case is made
-  const caseId = input.caseId ?? (await createSweepCase(deps, input.serverSetId));
-  const client = veloFor(deps, caseId);
+  const target = input.caseId ? { client: veloFor(deps, input.caseId) } : sweepSet(deps, input.serverSetId);
+  const client = target.client;
   const endpoints = await readEndpoints(client, clientIds);
   const pre = await preflightAiAgentRun(endpoints, () =>
     client.listClientArtifacts("client", { refresh: true }),
   );
   if (pre.error) throw new AiAgentRunError(pre.error);
-  const launch = await launchAiAgentRun(client, {
-    bundle,
-    clientIds: pre.clientIds,
-    preserve: pre.preserve,
-    uploadMaxBytes,
-    description: BUNDLE_NAME,
-  });
+  // The sweep case is made only now, right before the launch, and removed again if the launch fails.
+  const caseId = input.caseId ?? (await createSweepCase(deps, "setId" in target ? target.setId : undefined));
+  let launch: Awaited<ReturnType<typeof launchAiAgentRun>>;
+  try {
+    launch = await launchAiAgentRun(client, {
+      bundle,
+      clientIds: pre.clientIds,
+      preserve: pre.preserve,
+      uploadMaxBytes,
+      description: BUNDLE_NAME,
+    });
+  } catch (e) {
+    if (sweep) await discardSweepCase(deps, caseId);
+    throw e;
+  }
   const runId = newAiAgentRunId();
   const now = new Date();
   const waitMinutes = Math.min(24 * 60, Math.max(5, Math.floor(input.waitMinutes ?? DEFAULT_WAIT_MINUTES)));
@@ -232,6 +262,29 @@ export async function startAiAgentRun(
   return { caseId, run, sweep };
 }
 
+const shortHost = (h: string): string => h.trim().toLowerCase().split(".")[0];
+
+/** A launched endpoint that returned no row yet is listed as such — never silently absent. */
+export function withSilentEndpoints(
+  report: ReturnType<typeof buildAiAgentReport>,
+  endpoints: { clientId: string; hostname: string }[],
+): ReturnType<typeof buildAiAgentReport> {
+  const seen = new Set(report.endpoints.map((e) => shortHost(e.host)));
+  const silent = endpoints
+    .filter((e) => !seen.has(shortHost(e.hostname)) && !seen.has(shortHost(e.clientId)))
+    .map((e) => ({
+      host: e.hostname || e.clientId,
+      tools: [],
+      mcpServers: [],
+      credentialStores: 0,
+      hits: 0,
+      coverage: [
+        { source: "run", status: "no results yet", detail: `client ${e.clientId} has returned no rows` },
+      ],
+    }));
+  return silent.length ? { ...report, endpoints: [...report.endpoints, ...silent] } : report;
+}
+
 /** Re-read the run's results from Velociraptor and rebuild its report + upload manifest. */
 export async function refreshAiAgentRun(
   deps: AiAgentForensicsDeps,
@@ -241,6 +294,9 @@ export async function refreshAiAgentRun(
   const run = await deps.runStore.get(caseId, runId);
   if (!run) throw new AiAgentRunError("run not found", 404);
   const client = veloFor(deps, caseId);
+  // Bring the timeline in step with the report: the paused hunt never reads "finished", so without
+  // this only the fixed-delay collect would ever import its hits.
+  deps.startVeloHuntCollect(caseId, run.huntId);
   const rows: Record<string, unknown>[] = [];
   const problems: string[] = [];
   for (const artifact of run.artifacts.filter((a) => a.startsWith("Custom.DFIRCompanion."))) {
@@ -252,7 +308,7 @@ export async function refreshAiAgentRun(
       problems.push(`${artifact}: ${(e as Error).message}`);
     }
   }
-  const report = buildAiAgentReport(rows, activeAiAgentRuleSet());
+  const report = withSilentEndpoints(buildAiAgentReport(rows, activeAiAgentRuleSet()), run.endpoints);
   const manifest = await readUploadManifest(client, run.huntId).catch((e: Error) => {
     problems.push(`upload manifest: ${e.message}`);
     return null;
