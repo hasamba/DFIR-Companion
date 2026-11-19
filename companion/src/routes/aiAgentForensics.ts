@@ -14,6 +14,7 @@ import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { frozenCaseRefusal } from "./importCaseGuard.js";
+import { runInCaseScope } from "../storage/caseIncarnation.js";
 import { activeAiAgentRuleSet, activeAiAgentRulesProblem } from "../analysis/aiAgentActiveRules.js";
 import { groupNotRun } from "../analysis/aiAgentReport.js";
 import { AiAgentRunStore, type AiAgentRun } from "../analysis/aiAgentRunStore.js";
@@ -73,7 +74,7 @@ function deps(ctx: RouteContext, runStore: AiAgentRunStore, req?: Request): AiAg
 
 /**
  * A case named in the BODY (not the path) gets the checks the /cases/:id gates give a path case: it
- * exists, the requester may see it, it is not closed or archived, and it is unlocked. Sends the
+ * exists, the requester may see it AND write to it, it is not closed or archived, and it is unlocked. Sends the
  * refusal and returns false when one fails.
  */
 async function writableBodyCase(
@@ -86,6 +87,12 @@ async function writableBodyCase(
   const visible = ctx.options.teamAuth?.visibleCaseIds(req);
   if (!meta || (visible && !visible.has(caseId))) {
     res.status(404).json({ error: "case not found" });
+    return false;
+  }
+  if (ctx.options.teamAuth && !ctx.options.teamAuth.canWriteCase(req, caseId)) {
+    res
+      .status(403)
+      .json({ error: "you need write access to this case to run or file AI Agent Forensics results in it" });
     return false;
   }
   const frozen = await frozenCaseRefusal(ctx.store, caseId);
@@ -144,16 +151,19 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
       return res.status(400).json({ error: "caseId must be a valid case id" });
     if (caseId && !(await writableBodyCase(ctx, req, res, caseId))) return;
     try {
-      const out = await startAiAgentRun(d, {
-        caseId,
-        serverSetId: typeof body.serverSetId === "string" ? body.serverSetId : undefined,
-        clientIds: Array.isArray(body.clientIds) ? body.clientIds.map(String) : [],
-        scopes: Array.isArray(body.scopes) ? body.scopes.map(String) : undefined,
-        uploadMaxBytes: Number.isFinite(Number(body.uploadMaxBytes))
-          ? Number(body.uploadMaxBytes)
-          : undefined,
-        waitMinutes: Number.isFinite(Number(body.waitMinutes)) ? Number(body.waitMinutes) : undefined,
-      });
+      const start = () =>
+        startAiAgentRun(d, {
+          caseId,
+          serverSetId: typeof body.serverSetId === "string" ? body.serverSetId : undefined,
+          clientIds: Array.isArray(body.clientIds) ? body.clientIds.map(String) : [],
+          scopes: Array.isArray(body.scopes) ? body.scopes.map(String) : undefined,
+          uploadMaxBytes: Number.isFinite(Number(body.uploadMaxBytes))
+            ? Number(body.uploadMaxBytes)
+            : undefined,
+          waitMinutes: Number.isFinite(Number(body.waitMinutes)) ? Number(body.waitMinutes) : undefined,
+        });
+      // A run into a case writes under that case: in its scope (#1866). A sweep makes its own case.
+      const out = await (caseId ? runInCaseScope(ctx.store.casesRoot, caseId, start) : start());
       return res.status(202).json({ caseId: out.caseId, sweep: out.sweep, run: publicRun(out.run) });
     } catch (err) {
       ctx.serverLogger.info(`[ai-agent] run ERROR: ${(err as Error).message}`);
