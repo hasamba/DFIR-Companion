@@ -23,7 +23,8 @@ export type MirrorInbound =
   | { kind: "command" }
   /** Group chatter or a replayed update: no reply, no AI call, no rate-limit spend. */
   | { kind: "ignore" }
-  | { kind: "question"; caseId: string; text: string };
+  /** `seenKey` is committed only once the question is accepted (after the rate limit), see askFromMirror. */
+  | { kind: "question"; caseId: string; text: string; seenKey?: string };
 
 const usernames = new Map<string, Promise<string | undefined>>();
 
@@ -83,22 +84,28 @@ export async function classifyMirrorInbound(
     question = withoutSpans(text, spans);
     if (!question) return { kind: "ignore" };
   }
-  // Dedup a poll replay or a webhook retry, persisted before anything answers.
-  if (typeof message.message_id === "number" && !(await store.markInbound(`${chatId}:${message.message_id}`)))
-    return { kind: "ignore" };
-  return { kind: "question", caseId: entry.caseId, text: question };
+  // A replay of an update already accepted is ignored here, before any rate limit. It is NOT marked
+  // seen yet: a question the rate limit refuses must still run when Telegram delivers it again.
+  const seenKey = typeof message.message_id === "number" ? `${chatId}:${message.message_id}` : undefined;
+  if (seenKey && (await store.hasInbound(seenKey))) return { kind: "ignore" };
+  return { kind: "question", caseId: entry.caseId, text: question, ...(seenKey ? { seenKey } : {}) };
 }
 
 const card = (title: string): SlashCommandResponse => ({ title, lines: [] });
 const flat = (r: SlashCommandResponse): string =>
   [r.title, ...r.lines.filter(Boolean).map((l) => `• ${l}`)].join("\n");
 
-/** Run a plain-text question: "Asking Watson…" now, the answer later through the mirror. */
+/**
+ * Run a plain-text question: "Asking Watson…" now, the answer later through the mirror. Called after
+ * the rate limit accepted it; the update is marked seen first (persisted), so a replay runs no second
+ * round. undefined = that replay: answer nothing.
+ */
 export async function askFromMirror(
   input: DispatchInput,
-  q: { caseId: string; text: string },
-): Promise<DispatchResult> {
+  q: { caseId: string; text: string; seenKey?: string },
+): Promise<DispatchResult | undefined> {
   const { ctx, channelId, userId, channelStore } = input;
+  if (q.seenKey && !(await ctx.options.watsonMirrorStore?.markInbound(q.seenKey))) return undefined;
   const refuse = (title: string): DispatchResult => ({ reply: card(title), ephemeral: true });
   const allow = telegramAllowlist();
   if (allow.length === 0 || !allow.includes(userId)) {

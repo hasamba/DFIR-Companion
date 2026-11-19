@@ -241,7 +241,10 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
       ctx,
       chatType: message.chat?.type,
     };
-    await answer(res, input, inbound.kind === "question" ? await askFromMirror(input, inbound) : undefined);
+    if (inbound.kind !== "question") return void (await answer(res, input));
+    const asked = await askFromMirror(input, inbound);
+    if (!asked) return void res.status(200).json({}); // a replay of an accepted question
+    await answer(res, input, asked);
   });
 }
 
@@ -312,6 +315,7 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
       };
       const result =
         inbound.kind === "question" ? await askFromMirror(input, inbound) : await dispatchSlashCommand(input);
+      if (!result) return; // a replay of an accepted question
       await sendTelegramMessage({
         botToken,
         apiBase,

@@ -8,7 +8,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { AiControlStore } from "../../src/analysis/aiControl.js";
 import { SlashCommandChannelStore } from "../../src/analysis/slashCommandStore.js";
-import { resetLimiters } from "../../src/http/rateLimiter.js";
+import { getAiLimiter, resetLimiters } from "../../src/http/rateLimiter.js";
 import { createApp } from "../../src/server.js";
 import { WatsonChatStore } from "../../src/analysis/ai/watson/chatStore.js";
 import type { WatsonChat } from "../../src/analysis/ai/watson/types.js";
@@ -214,6 +214,34 @@ describe("plain-text questions", () => {
     await vi.waitFor(() => expect(asked).toHaveLength(1));
     await settle();
     expect(asked).toHaveLength(1);
+  });
+
+  it("runs a question whose first delivery was rate-limited when Telegram retries it", async () => {
+    await mirrorOn();
+    while (getAiLimiter().tryAcquire(`telegram:${PRIVATE}`));
+    const body = {
+      update_id: 77,
+      message: {
+        message_id: 77,
+        chat: { id: PRIVATE, type: "private" },
+        from: { id: 555 },
+        text: "retry me",
+      },
+    };
+    const post = () =>
+      request(app)
+        .post("/integrations/telegram/command")
+        .set("x-telegram-bot-api-secret-token", SECRET)
+        .send(body);
+    expect((await post()).status).toBe(429);
+    const later = Date.now() + 61_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(later);
+    try {
+      expect((await post()).body.text).toBe("Asking Watson…");
+    } finally {
+      clock.mockRestore();
+    }
+    await vi.waitFor(() => expect(asked).toEqual([{ caseId: "c1", text: "retry me" }]));
   });
 
   it("gives /dfir ask in a mirroring chat the short ack and one answer through the mirror", async () => {

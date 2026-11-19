@@ -206,6 +206,11 @@ export class WatsonMirrorStore {
     });
   }
 
+  /** Has this inbound update been accepted already? Read-only: a replay is ignored before any rate limit. */
+  async hasInbound(key: string): Promise<boolean> {
+    return (await this.read()).seen.includes(key);
+  }
+
   /** Inbound dedup by `<chat>:<message_id>`: true the first time, false for a replay. Persisted. */
   markInbound(key: string): Promise<boolean> {
     return this.mutate((f) => {
