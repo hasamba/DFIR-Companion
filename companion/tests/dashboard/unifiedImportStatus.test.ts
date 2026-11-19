@@ -209,7 +209,7 @@ describe("import status while the host prompt waits (#1772)", () => {
     });
     await h.pick([csv("sysmon-triage.csv")]);
     expect(h.status.textContent).toContain("sysmon-triage.csv: skipped by you");
-    expect(h.progress[h.progress.length - 1]).toBe("hide");
+    expect(["hide", "cancel"]).toContain(h.progress.at(-1)); // stopped, not animating
   });
 
   it("a file that does not need the prompt is not asked about", async () => {
@@ -218,5 +218,44 @@ describe("import status while the host prompt waits (#1772)", () => {
     await h.pick([csv("a.csv")]);
     expect(askImportAssetHost).not.toHaveBeenCalled();
     expect(h.status.textContent).toMatch(/imported csv/);
+  });
+});
+
+// A batch the server refused outright started no background job, so no "idle" AI-status event
+// ever comes to stop the working strip — it slid along the top until the page was reloaded.
+describe("the progress strip stops when nothing in the batch was accepted", () => {
+  it("a single refused file stops the strip", async () => {
+    const h = harness({ fetch: vi.fn(async () => reply(413, { error: TOO_BIG })) });
+    await h.pick([csv("big.json")]);
+    expect(h.progress.at(-1)).toBe("cancel");
+  });
+
+  it("a batch where every file failed stops the strip", async () => {
+    const h = harness({
+      fetch: vi.fn(async () => {
+        throw new Error("Failed to fetch");
+      }),
+    });
+    await h.pick([csv("a.csv"), csv("b.csv")]);
+    expect(h.progress.at(-1)).toBe("cancel");
+  });
+
+  it("a batch with one accepted file leaves the strip to the AI-status events", async () => {
+    const fetch = vi.fn(async (_url: string, init: { body: string }) =>
+      JSON.parse(init.body).filename === "bad.csv"
+        ? reply(413, { error: TOO_BIG })
+        : reply(202, { kind: "csv" }),
+    );
+    const h = harness({ fetch });
+    await h.pick([csv("good.csv"), csv("bad.csv")]);
+    expect(h.progress).not.toContain("cancel");
+  });
+
+  it("an AI-off save counts as accepted — its idle event stops the strip", async () => {
+    const h = harness({
+      fetch: vi.fn(async () => reply(202, { kind: "csv", analyzed: false, reason: "ai-off" })),
+    });
+    await h.pick([csv("a.csv")]);
+    expect(h.progress).not.toContain("cancel");
   });
 });

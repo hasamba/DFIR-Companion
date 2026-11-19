@@ -239,6 +239,9 @@
           }
         }
         if (!data.length) hideImportProgress(); // images-only batch: nothing to track
+        // Every data file was refused or failed: no background job started, so no "idle" AI-status
+        // event will ever come to stop the strip — stop it here, or it slides until a reload.
+        else if (!Object.keys(kinds).length && !aiOffSkipped) cancelImportProgress();
 
         // Image files → screenshot ingest (stored as evidence, analyzed when AI is on).
         let imgOk = 0,
