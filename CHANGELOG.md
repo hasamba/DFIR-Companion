@@ -13,39 +13,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-11-19
+
 ### Added
 
-- **Large Velociraptor JSON Lines imports** — notebook exports detect as Velociraptor, and JSON Lines files past the in-memory limit stream from disk instead of being refused (part of #2705)
-- **Velociraptor re-import reads only what changed** — pasting a hunt or flow again lists the artifacts that were cut short, failed or gained rows since, and Import those reads only them (closes #2700)
-- **Burst coverage question** — when a grouped burst hides command lines behind "+N more", a system-marked Key Question lists them so Watson Auto reads them; it closes when findings cite them all (closes #2681)
-- **Watson demotes or dismisses disproved findings** — Watson can propose lowering or dismissing a synthesis finding its evidence disproves, with reason and Undo; in Auto, High/Critical changes wait for approval (closes #2682)
-- **NG-SIEM connection Test and real failure reasons** — Settings Test checks sign-in, NGSIEM Write and Read step by step; a failed search names DNS, network, TLS (with the certificate issuer) or the base URL; new DFIR_CROWDSTRIKE_SIEM_CA; Open in Falcon link on CQL and Watson search cards (closes #2685)
-- **Watson CrowdStrike search cards** — Watson proposes a CQL search on Next-Gen SIEM; Run (or Auto) imports the rows as evidence and tells Watson the result (closes #2666)
-- **Run CQL hunts on CrowdStrike Next-Gen SIEM** — a Run in Falcon button on CQL hunt cards imports the rows as evidence, with time, row and timeout caps (part of #2666)
-- **Five more main evidence sources** — Carbon Black, Wazuh, SentinelOne, Cortex XDR and QRadar cases get hunts, playbook queries, translator output and Watson queries in their own language (closes #2667)
-- **Stop Watson** — a stop icon ends a running answer; all viewers see when Watson works; a resent message is not paid twice
-- **Watson model dropdown** — Settings lists the provider's models for Watson, like the other AI roles
-- **Watson tool calling** — several lookups (up to 10) per question with native tool calls, each masked, cost-checked and listed on the card
-- **Best Practice artifacts are safe for Watson** — every artifact of the built-in Best Practice bundle (not Big Hogs) is on Watson's safe list, so Auto can launch it
-- **Watson Auto follow-up chain** — in Auto, Watson may launch up to 3 safe single-host collections in a row from its own rounds; your next message resets the count
-- **Watson Auto holds raw-cited writes** — writes that rest on super-timeline or paste rows wait for approval
-- **Watson question changes stand out** — a change Watson makes on its own stays marked in the chat until you click it; changed parts are marked in yellow with the old value on one line
-- **Watson searches the super-timeline** — one targeted search per round; cited raw rows are promoted with the Watson badge and Undo
-- **Watson writes in ASD-STE100** — the chat, its cards and notes use Simplified Technical English
-- **Watson case agent** — per-case investigation chat with a Key Questions board
-- **Watson answers free-form questions** — cited answers with Add to open questions and New thread; its full chat history is kept and searchable
-- **Watson writes findings, next steps and report text** — Conclusions and Investigation limitations wait for Apply, carry a Watson badge and the approver's name, and each has Undo
-- **Watson reads pasted files in known formats** — rows are graded like an import, the tagger's promotions wait for your approval; generic CSV and log stay searchable text
-- **Watson reacts to your work** — after a quiet window it reviews imports, notebook edits and new stars (`DFIR_AI_WATSON_REACT_DELAY_SEC`, 0 = off) and pauses after a Presidio hold, a cost limit or two errors
-- **Watson runs Velociraptor** — asks to launch single-host collections or fleet hunts as VQL cards (Launch / Reject), VQL checked against a reviewed read-only list, results come back into the case
-- **Risky Watson queries need your approval** — a query outside the reviewed list shows a red warning and a second confirm; Auto never launches it
-- **Watson Approve and Auto modes** — per-case switch, audited by analyst; Auto applies Watson's writes and launches single-host collections from dashboard messages, never fleet hunts
+- **Watson case agent** — per-case investigation chat pinned beside every view, with a Key Questions board
+- **Watson answers free-form questions** — cited answers, Add to open questions, New thread; full chat history kept and searchable
+- **Watson writes findings, next steps and report text** — each waits for Apply, carries a Watson badge and the approver, and has Undo
+- **Watson demotes or dismisses disproved findings** — with reason and Undo; in Auto, High/Critical changes wait for approval (closes #2682)
+- **Watson manages next steps** — marks a step done or changes its priority (#2643)
+- **Watson Approve and Auto modes** — per-case, audited; Auto applies writes and launches single-host collections, never fleet hunts
+- **Watson Auto follow-up chain** — up to 3 safe single-host collections in a row; your next message resets the count
+- **Watson Auto holds raw-cited writes** — writes resting on super-timeline or paste rows wait for approval
+- **Watson runs Velociraptor** — VQL cards (Launch / Reject) for collections and fleet hunts, checked against a reviewed read-only list
+- **Risky Watson queries need your approval** — a red warning and a second confirm; Auto never launches them
+- **Best Practice artifacts are safe for Watson** — the built-in Best Practice bundle (not Big Hogs) is on Watson's safe list
+- **Watson CrowdStrike search cards** — Watson proposes CQL searches on Next-Gen SIEM; Run or Auto imports the rows (closes #2666)
+- **Watson searches the super-timeline** — one targeted search per round; cited rows are promoted with the Watson badge and Undo
+- **Watson looks up forensic-timeline events** — up to 200 by finding, event, time, host or text, never the super-timeline
+- **Watson tool calling** — up to 10 lookups per question, each masked, cost-checked and listed on the card
+- **Watson reads pasted files in known formats** — graded like an import; tagger promotions wait for approval
+- **Watson reacts to your work** — reviews imports, notebook edits and stars after a quiet window (`DFIR_AI_WATSON_REACT_DELAY_SEC`)
+- **Watson writes in ASD-STE100** — chat, cards and notes use Simplified Technical English
+- **Watson question changes stand out** — changes it made on its own stay marked in yellow until you click them
+- **Filter Watson's boards** — Key Questions by status, Next steps by priority, saved per browser (#2677)
+- **Stop Watson** — a stop icon ends a running answer; all viewers see when Watson works; a resend is not paid twice
+- **Watson model dropdown** — Settings lists the provider's models for Watson
 - **Watson pinned to the right of the dashboard** — rail, open or full screen on every view
-- **Watson looks up forensic-timeline events** — when an event it needs is not in its case packet it fetches up to 200 (by finding, event, time, host or text), never the super-timeline; the card says what it read
+- **Watson logo on the toolbar button** — Watson's own mark; an open panel shows as a pressed button (#2680)
+- **Watson timeline sent first and cached** — sized from the model window and prompt-cached across rounds (closes #2675)
+- **One masking map per case** — a masked token means the same value in every AI call of the case (#2662)
+- **Prompt-cache savings shown** — in Diagnostics and on each Watson reply (#2665)
+- **Burst coverage question** — a system Key Question lists command lines hidden behind "+N more" until findings cite them (closes #2681)
+- **Run CQL hunts on CrowdStrike Next-Gen SIEM** — Run in Falcon imports the rows as evidence, with time, row and timeout caps (part of #2666)
+- **NG-SIEM connection Test** — step-by-step sign-in/Write/Read check, named failure reasons, `DFIR_CROWDSTRIKE_SIEM_CA`, Open in Falcon (closes #2685)
+- **Five more main evidence sources** — Carbon Black, Wazuh, SentinelOne, Cortex XDR and QRadar get hunts in their own language (closes #2667)
+- **Velociraptor re-import reads only what changed** — Import those reads only cut-short, failed or grown artifacts (closes #2700)
+- **Large Velociraptor JSON Lines imports** — notebook exports detect as Velociraptor and large files stream from disk (part of #2705)
+- **Server-ready banner** — an ASCII banner with the dashboard URL marks when the server is listening (#2698)
+- **TrailDiscover re-port** — 12 new AWS CloudTrail operations as tag-only rules (#2650)
 
 ### Changed
 
-- **Velociraptor hunts refuse hidden characters** — control, zero-width and text-direction characters are refused in any launched VQL, including hand-written hunts
+- **Velociraptor hunts refuse hidden characters** — control, zero-width and text-direction characters are refused in any launched VQL
+- **Velociraptor collection output limit raised to 400 MB** — new `DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT` default (#2701)
+- **NG-SIEM Test capped, Open in Falcon pinned** — 5 Tests per minute; Falcon links go only to real console hosts (closes #2695, closes #2696)
 
 ### Removed
 
@@ -53,24 +65,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Velociraptor settings follow the open case's server set** — the label and Reconnect on the Velociraptor tab now use the open case's set, not the default set
-- **Watson changes in the CSV report** — the findings CSV shows Watson's change, the grade before it, who approved it, the reason and cited events (closes #2691)
-- **Notice when a Watson verdict stops matching** — the Investigation Log says when a reworded or vanished finding no longer gets Watson's verdict (closes #2693)
-- **Quiet period before collection** — a silent gap that ends on the collector's own row (or a THOR scan-time row) is Info, with no "log tampering" finding (closes #2684)
-- **Long waits before collection** — a wait of 6h or more before collection no longer raises a dwell or waves finding (closes #2688)
-- **Hypothesize gaps on collection gaps** — the prompt calls a collection-closed gap a quiet period, not complete silence (closes #2687)
-- **SIEM settings check the case** — the search card's settings request returns 404 for an unknown case, like the search itself (closes #2673)
-- **Faster SIEM search card** — the default search range reads only High and Critical events, not the whole forensic timeline (closes #2672)
-- **Watson Auto moves on instead of stopping** — two rounds with nothing new set that question or step aside and Watson works the next open one; Auto stops only when every open item needs new evidence or the client, and lists what each needs
-- **Watson Auto does not stop for one blocked item** — when Watson says it waits for a person, Auto sets that item aside and works the next open one
-- **Watson with no case** — sending or pasting with no case open now says so and keeps the text; the toolbar button shows a minimize icon while the panel is open; the Velociraptor chip no longer wraps; the note after an import says what to do next, and no longer asks to approve 0 rows
-- **Watson names in exports** — the redacted export and the support bundle now mask the names Watson masked for the AI.
-- **Watson masks hosts in raw row text** — a host named only in a raw row or paste description is masked.
-- **Watson rechecks before every send** — the AI switch and the case-closed state are checked right before each Watson AI call, so a switch-off or a close stops the next send.
-- **Watson fail-closed note is accurate** — when its citations cannot be checked, the note no longer claims a citation count (closes #2634)
+- **Watson Auto moves on instead of stopping** — an item idle for two rounds or waiting for a person is set aside; Auto stops only when all need new evidence
+- **Watson Auto counts each search once** — no double-counting, and a search is never repeated (#2655)
+- **Watson keeps the most significant events** — a full case view cuts the least significant rows, not the latest (#2660)
+- **Watson toolbar button collapses to its icon** — in the icons-only toolbar, like the other buttons (#2661)
+- **Watson with no case** — sending or pasting says so and keeps the text; the post-import note no longer asks to approve 0 rows
+- **Watson names in exports** — the redacted export and the support bundle mask the names Watson masked
+- **Watson masks hosts in raw row text** — a host named only in a raw row or paste is masked
+- **Watson rechecks before every send** — the AI switch and the case-closed state are checked before each call
+- **Watson fail-closed note is accurate** — it no longer claims a citation count it could not check (closes #2634)
+- **Watson changes in the CSV report** — the findings CSV shows the change, prior grade, approver, reason and cited events (closes #2691)
+- **Notice when a Watson verdict stops matching** — the Investigation Log notes a reworded or vanished finding (closes #2693)
+- **Claude Code CLI makes one request per call** — it is offered no tools, so a Watson call no longer costs 2–4 requests (closes #2676)
+- **Quiet period before collection** — a gap ending on the collector's own row is Info, with no "log tampering" finding (closes #2684)
+- **Long waits before collection** — a 6h+ wait before collection no longer raises a dwell or waves finding (closes #2688)
+- **Hypothesize gaps on collection gaps** — the prompt calls a collection-closed gap a quiet period (closes #2687)
+- **DetectRaptor Webhistory hits** — each event names the category and domain, with URL, title, user and browser (#2703)
+- **Velociraptor settings follow the open case's server set** — the label and Reconnect use the open case's set
+- **Import progress strip stops** — when every file in a batch is refused (#2704)
+- **SIEM settings check the case** — returns 404 for an unknown case, like the search itself (closes #2673)
+- **Faster SIEM search card** — the default range reads only High and Critical events (closes #2672)
 - **Stale connection banner clears** — "live updates unavailable" goes away once a state read recovers (closes #2630)
-- **Live notice counters are released** — a case's notice counter is forgotten with its last subscriber, so it no longer grows for the process's life (closes #2631)
-- **AWS SDK and @smithy/core bumped** — moved past the two-week wait to the current clean releases (closes #2341)
+- **Live notice counters are released** — forgotten with a case's last subscriber (closes #2631)
+- **AWS SDK and @smithy/core bumped** — to the current clean releases (closes #2341)
 
 ## [0.46.0] - 2026-11-13
 
@@ -1820,7 +1837,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Localhost companion server; evidence-first ingest; two-phase AI analysis; provider abstraction; investigation scope; CSV (Velociraptor/EDR) import.
 
-[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/hasamba/DFIR-Companion/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/hasamba/DFIR-Companion/compare/v0.43.0...v0.44.0

@@ -38,6 +38,8 @@ The six standard incident questions appear after your first message to Watson on
 
 Watson may want to add a question, change one, or change a status. It does not do this by itself. Each change appears as a **proposal**. You choose **Apply** or **Reject**. After you apply a proposal, you can choose **Undo**.
 
+In full screen, a row of chips is on top of each board column. Use them to filter **Key questions** by status and **Next steps** by priority. Each chip shows a count. While a filter is on, the column header shows "n of total". The browser keeps your choice.
+
 ## What Watson can write
 
 Watson can propose these changes. Each one appears in the chat as a proposal, and nothing is written until you choose **Apply**.
@@ -346,6 +348,8 @@ Set these under **Settings → AI**. See the [Settings Reference](settings.md) f
 | `DFIR_AI_WATSON_REACT_DELAY_SEC` | Seconds of quiet before Watson reacts to case changes. Default 60. 0 = no reactions. |
 
 The footer of the Watson panel shows how many calls Watson made on the case, and the cost in dollars or the tokens used, depending on what the provider reports.
+
+Watson sends the forensic timeline first in its prompt, so later rounds can read it from the provider's prompt cache. One masking map per case keeps each masked token the same in every call, so the masked prompt stays cacheable. When the provider reports cache reads, each Watson reply shows the tokens read from cache and the percentage, and **Settings → Diagnostics** shows the input tokens and the part that came from cache.
 
 ## Backups and export
 

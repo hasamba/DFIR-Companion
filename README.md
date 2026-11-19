@@ -375,6 +375,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Cited AI answers** - findings, Watson answers, Explain Event, and AI-suggested hunts (playbook + fleet) show numbered, clickable citations to the supporting forensic events/findings, in both the dashboard and the exported report
 - **Explain This Event** - 💡 per-row AI button explains any forensic event in context: what happened, why it matters, normal-vs-suspicious, ATT&CK mapping, 1–3 runnable pivot queries (VQL/KQL/SPL), evidence for/against; ephemeral overlay
 - **Watson case chat (GraphRAG)** - free-form questions answered from the timeline + deterministic evidence-chain graph and your own decisions, with a status, a collection pointer and cited events; replaces "Ask the LLM"
+- **Watson case agent** - per-case chat pinned to the dashboard with a Key Questions board; writes findings, next steps and report text (each with Apply and Undo), runs Velociraptor collections and CrowdStrike Next-Gen SIEM searches, and searches the super-timeline with evidence-first promotion; Approve or Auto mode per case
+- **Prompt caching for Watson** - the forensic timeline goes first and is cached, and one masking map per case keeps masked tokens stable across calls; savings show in Diagnostics and on each reply
 - **Hypothesis-driven mode** - status-tracked hypotheses with evidence links and ACH-style ranking; open ones steer synthesis, and they survive synthesis and archives
 - **On-demand hypothesis falsification review** - a "Review" button runs a focused for/against pass over open hypotheses without re-running full synthesis
 - **Distinguishing evidence** - every observation says whether it separates a hypothesis from its alternatives or fits them all; a frozen judgment whose footing changes is flagged for review
@@ -417,7 +419,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **IOC list pagination** - pages client-side like the timelines, default 100/page
 - **Exclude filter** - chip-list control (beside the toolbar search) hides timeline events / IOCs / findings matching any of several exclude terms; per-browser
 - **Hunt-pivot generator** - one-click emits Velociraptor VQL, CrowdStrike CQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries, with evidence values escaped per language
-- **Hunts in the case's own query language** - the case's main evidence source (set when the case is created or in Settings) picks the language for AI-written hunts and next steps: CQL, KQL, ES|QL, SPL or VQL
+- **Hunts in the case's own query language** - the case's main evidence source (set when the case is created or in Settings) picks the language for AI-written hunts and next steps: CQL, KQL, ES|QL, SPL, VQL, Carbon Black Cloud search, Wazuh DQL, SentinelOne PowerQuery, Cortex XDR XQL or QRadar AQL
+- **Run CQL hunts on CrowdStrike Next-Gen SIEM** - Run in Falcon on a CQL hunt card imports the rows as evidence, with time, row and timeout caps
 - **Sigma → VQL hunts** - paste a Sigma rule, compile it deterministically (one fixed template per logsource category, every unsupported line refused by name), launch it as a recorded fleet hunt; `process_creation` rules also hunt Sysmon / 4688 history
 - **Query Translator** - plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
 - **Internal Hunt Workbench** - typed field queries with Boolean logic, ranges, regex, grouping, saved hunts and entity pivots over the forensic or super-timeline; each saved hunt lists its past runs; raw hits stay out of AI until promoted
