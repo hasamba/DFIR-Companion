@@ -221,3 +221,36 @@ describe("drop folder crash-loop guard (#2713)", () => {
     }
   });
 });
+
+describe("runImportAttempt (#2713)", () => {
+  it("counts one start for the sections the attempt takes while it runs", async () => {
+    const { runImportAttempt } = await import("../../src/analysis/importAttempt.js");
+    const lock = new ImportLock();
+    const starts: string[] = [];
+    await runImportAttempt(
+      async () => void starts.push("start"),
+      async () => {
+        await lock.runExclusive("c1", async () => {});
+        await lock.runExclusive("c1", async () => {});
+      },
+    );
+    expect(starts).toEqual(["start"]);
+  });
+
+  it("counts no section taken after the attempt returned (an HTTP tool hand-off finishing later)", async () => {
+    const { runImportAttempt } = await import("../../src/analysis/importAttempt.js");
+    const lock = new ImportLock();
+    const starts: string[] = [];
+    let late: Promise<void> | undefined;
+    await runImportAttempt(
+      async () => void starts.push("start"),
+      async () => {
+        late = new Promise<void>((done) => setTimeout(done, 20)).then(() =>
+          lock.runExclusive("c1", async () => {}),
+        );
+      },
+    );
+    await late;
+    expect(starts).toEqual([]);
+  });
+});

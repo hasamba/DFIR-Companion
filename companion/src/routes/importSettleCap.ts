@@ -45,8 +45,8 @@ export async function capBuildTimeScoped(
   const seen: Array<Pick<ForensicEvent, "id" | "asset" | "timestamp"> & { marked: boolean }> = [];
   const read = (batch: readonly ForensicEvent[]): void => {
     for (const e of batch) {
-      // Window discovery reads only rows on a rename chain (#2713): keeping the rest held a copy of
-      // every machine-account or hard-signal row of the case for nothing.
+      // Window discovery reads only rows on a rename chain (#2713): on a scan-all settle the rest of
+      // the case's build-marker and hard-signal rows were collected for nothing.
       if (onBuildChain(chains, e) && (buildMarkerKind(e) || hardAttackerSignal(e))) discovery.push(e);
       seen.push({ id: e.id, asset: e.asset, timestamp: e.timestamp, marked: hasBuildTimeMark(e) });
     }

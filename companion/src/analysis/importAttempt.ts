@@ -13,20 +13,27 @@ import { AsyncLocalStorage } from "node:async_hooks";
  */
 interface Attempt {
   started: boolean;
+  /** Set once `fn` settled: work it left running (a tool hand-off) takes sections after the attempt. */
+  closed: boolean;
   onStart: () => Promise<void>;
 }
 
 const attempts = new AsyncLocalStorage<Attempt>();
 
 /** Run `fn` as one import attempt; `onStart` runs once, when its first import section is granted. */
-export function runImportAttempt<T>(onStart: () => Promise<void>, fn: () => Promise<T>): Promise<T> {
-  return attempts.run({ started: false, onStart }, fn);
+export async function runImportAttempt<T>(onStart: () => Promise<void>, fn: () => Promise<T>): Promise<T> {
+  const attempt: Attempt = { started: false, closed: false, onStart };
+  try {
+    return await attempts.run(attempt, fn);
+  } finally {
+    attempt.closed = true;
+  }
 }
 
 /** Called by the import lock once a section is granted, before the import does anything. */
 export async function noteImportSectionStart(): Promise<void> {
   const attempt = attempts.getStore();
-  if (!attempt || attempt.started) return;
+  if (!attempt || attempt.started || attempt.closed) return;
   attempt.started = true;
   await attempt.onStart();
 }
