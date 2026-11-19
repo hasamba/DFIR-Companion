@@ -34,6 +34,9 @@ export interface AiAgentRun {
   /** Always true: preservation may have copied credential files into Velociraptor (§14.3). */
   sensitive: true;
   report?: AiAgentReport;
+  /** The run's raw result rows (capped) — what "Add to case" files. Carries the unredacted snippet:
+   *  never served to the dashboard and never AI input (routes strip it). */
+  rows?: Record<string, unknown>[];
   reportError?: string;
   manifest?: { fetchedAt: string; total: number; totalBytes: number; files: UploadManifestEntry[] };
   /** Cases this sweep's hits were filed into with "Add to case". */

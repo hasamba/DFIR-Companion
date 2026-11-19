@@ -1,3 +1,4 @@
+import { isAnalystCase } from "../storage/sweepCase.js";
 import { stat } from "node:fs/promises";
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
@@ -196,6 +197,7 @@ export function registerCrossCaseRoutes(app: Express, ctx: RouteContext): void {
     }
     const visible = options.teamAuth?.visibleCaseIds(req); // null = global administrator
     return listed.filter((meta) => {
+      if (!isAnalystCase(meta)) return false; // a hidden sweep case is not an investigation (#2690)
       if (visible && !visible.has(meta.caseId)) return false;
       if (!meta.password) return true;
       return ctx.readUnlockState(req, meta.caseId, meta.password.salt).unlocked;

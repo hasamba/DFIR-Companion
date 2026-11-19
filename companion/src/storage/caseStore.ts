@@ -56,6 +56,7 @@ export interface CreateCaseInput {
    * the claim is undone and the create fails.
    */
   onClaimed?: () => void | Promise<void>;
+  kind?: CaseMeta["kind"]; // "sweep": a hidden AI Agent Forensics sweep case (storage/sweepCase.ts)
 }
 
 export function isValidCaseId(caseId: string): boolean {
@@ -448,6 +449,7 @@ export class CaseStore {
       createdAt: new Date().toISOString(),
       investigator: input.investigator,
       aiProvider: input.aiProvider,
+      ...(input.kind ? { kind: input.kind } : {}),
     };
     // Resolved once: caseDir() is existsSync-based, so re-resolving it after the mkdir below would
     // answer a different question than the one the claim is made against.

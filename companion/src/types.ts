@@ -38,6 +38,9 @@ export interface CaseMeta {
   // Which incarnation of the case id this is (#1855): a random id written at create, seed and
   // whole-case import. Absent on cases created before it (read as "legacy"). Never patched.
   generation?: string;
+  // "sweep" (#2690): a hidden case an outside-a-case AI Agent Forensics run created. Never shown in the
+  // analyst's case lists; see storage/sweepCase.ts.
+  kind?: "sweep";
 }
 
 // Audit record for an uploaded CSV result set (e.g. a Velociraptor export),
