@@ -115,10 +115,17 @@ function tg(message: Record<string, unknown>, opts: { chat?: number; type?: stri
     });
 }
 
+// #2709: "Mirroring started" goes out through the Bot API (its id is recorded, so a group reply to it
+// is a question); the webhook itself gets an empty ack, so the chat sees it once.
 async function mirrorOn(chat = PRIVATE, caseId = "c1") {
   await tg({ text: `/dfir bind ${caseId}` }, { chat });
+  const before = sent.length;
   const res = await tg({ text: "/dfir mirror on" }, { chat });
-  expect(res.body.text).toMatch(/Mirroring started for case c1/);
+  expect(res.body).toEqual({});
+  const started = sent.slice(before).filter((s) => s.chat_id === String(chat));
+  expect(started).toHaveLength(1);
+  expect(started[0].text).toMatch(/Mirroring started for case c1/);
+  return started[0];
 }
 
 const toChat = (chat: number) => sent.filter((s) => s.chat_id === String(chat));
@@ -179,17 +186,36 @@ describe("plain-text questions", () => {
 
   it("answers a group mention and a reply to a mirrored message", async () => {
     await mirrorOn(GROUP);
+    const before = toChat(GROUP).length;
     await tg(
       { text: "@DfirBot who logged on?", entities: [{ type: "mention", offset: 0, length: 8 }] },
       { chat: GROUP },
     );
-    await vi.waitFor(() => expect(toChat(GROUP).length).toBe(1));
+    await vi.waitFor(() => expect(toChat(GROUP).length).toBe(before + 1));
     expect(asked[0]).toEqual({ caseId: "c1", text: "who logged on?" });
-    await tg(
-      { text: "and then?", reply_to_message: { message_id: toChat(GROUP)[0].message_id } },
-      { chat: GROUP },
-    );
+    const answer = toChat(GROUP)[before];
+    expect(answer.text).toContain("answer about c1");
+    await tg({ text: "and then?", reply_to_message: { message_id: answer.message_id } }, { chat: GROUP });
     await vi.waitFor(() => expect(asked).toHaveLength(2));
+  });
+
+  it("answers a group reply to the 'Mirroring started' message (#2709)", async () => {
+    const started = await mirrorOn(GROUP);
+    expect((await mirrors.get(String(GROUP)))?.messageIds).toContain(started.message_id);
+    await tg({ text: "what now?", reply_to_message: { message_id: started.message_id } }, { chat: GROUP });
+    await vi.waitFor(() => expect(asked).toEqual([{ caseId: "c1", text: "what now?" }]));
+  });
+
+  it("falls back to the webhook reply when sending 'Mirroring started' fails (#2709)", async () => {
+    await tg({ text: "/dfir bind c1" }, { chat: GROUP });
+    vi.stubGlobal("fetch", async (url: string) =>
+      url.endsWith("/getMe")
+        ? Response.json({ ok: true, result: { username: "DfirBot" } })
+        : Response.json({ ok: false, description: "Internal" }, { status: 500 }),
+    );
+    const res = await tg({ text: "/dfir mirror on" }, { chat: GROUP });
+    expect(res.body.text).toMatch(/Mirroring started for case c1/);
+    expect((await mirrors.get(String(GROUP)))?.messageIds).toEqual([]);
   });
 
   it("refuses an unlisted user and a password-protected case with the existing sentences (AC6)", async () => {
@@ -277,5 +303,56 @@ describe("the Watson panel list", () => {
     expect((await request(app).post(`/cases/c1/watson/mirrors/${PRIVATE}/on`)).status).toBe(404);
     expect((await request(app).post(`/cases/c1/watson/mirrors/${PRIVATE}/off`)).status).toBe(200);
     expect(await mirrors.get(String(PRIVATE))).toBeUndefined();
+  });
+});
+
+describe("long polling (#2709)", () => {
+  it("sends 'Mirroring started' once and records its id", async () => {
+    await bindings.bind(`telegram:${GROUP}`, "c1");
+    let delivered = false;
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (url.endsWith("/getMe")) return Response.json({ ok: true, result: { username: "DfirBot" } });
+      if (url.includes("/getUpdates")) {
+        await new Promise((r) => setTimeout(r, 10));
+        const result = delivered
+          ? []
+          : [
+              {
+                update_id: 1,
+                message: {
+                  message_id: 1,
+                  chat: { id: GROUP, type: "supergroup" },
+                  from: { id: 555 },
+                  text: "/dfir mirror on",
+                },
+              },
+            ];
+        delivered = true;
+        return Response.json({ ok: true, result });
+      }
+      const body = JSON.parse(init?.body ?? "{}");
+      const message_id = 9000 + sent.length;
+      sent.push({ chat_id: String(body.chat_id), text: String(body.text), message_id });
+      return Response.json({ ok: true, result: { message_id } });
+    });
+    app.locals.watsonMirror?.stop();
+    const polled = createApp(store, {
+      stateStore: new StateStore(store),
+      activityLogStore: new ActivityLogStore(store),
+      slashCommandChannelStore: bindings,
+      watsonMirrorStore: mirrors,
+      watsonChatStore: chatStore,
+      telegramPolling: true,
+    });
+    try {
+      await vi.waitFor(async () => expect((await mirrors.get(String(GROUP)))?.messageIds).toHaveLength(1));
+      await settle();
+      const started = toChat(GROUP).filter((s) => /Mirroring started/.test(s.text));
+      expect(started).toHaveLength(1);
+      expect((await mirrors.get(String(GROUP)))?.messageIds).toEqual([started[0].message_id]);
+    } finally {
+      polled.locals.watsonMirror?.stop();
+      await polled.locals.telegramPoller?.stop();
+    }
   });
 });
