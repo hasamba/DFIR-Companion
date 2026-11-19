@@ -560,6 +560,7 @@
     "highSeverityFindings.ts": "analysis/findings",
     "dismissedClusterFold.ts": "analysis/findings",
     "hijackLibImport.ts": "analysis/ingest",
+    "webhistoryDetection.ts": "analysis/ingest",
     "hindsightImport.ts": "analysis/ingest",
     "hostAlias.ts": "analysis/timeline",
     "hostIdentity.ts": "analysis/ingest",
