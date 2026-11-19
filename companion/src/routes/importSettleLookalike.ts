@@ -7,7 +7,7 @@ import {
   lookalikeCandidateName,
   LOOKALIKE_ACCOUNT_MARKER,
 } from "../analysis/lookalikeCaseAccount.js";
-import { rewriteRows } from "./importSettleRows.js";
+import { rewriteByIdInPages } from "./importSettlePaged.js";
 
 /**
  * Case-account look-alikes (#1971) over this import's new accounts and group members. It runs after
@@ -38,10 +38,8 @@ export async function flagCaseLookalikesScoped(
     if (match) hits.set(id, { name, match });
   }
   if (!hits.size) return 0;
-  const rows = await store.forensicRowsById(caseId, [...hits.keys()]);
-  const written = await rewriteRows(store, caseId, rows, (e) => {
+  return rewriteByIdInPages(store, caseId, [...hits.keys()], (e) => {
     const hit = hits.get(e.id);
     return hit ? flagCaseLookalikeRow(e, hit.name, hit.match) : e;
   });
-  return written.length;
 }

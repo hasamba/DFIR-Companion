@@ -48,6 +48,7 @@ import type { IngestDiskFile } from "./importIngestDisk.js";
 import type { DiskBatchIngest } from "./importIngestBatch.js";
 import { runDropSweep } from "./dropBatch.js";
 import { createDropStreamer, isGzipMagic, streamGzipDropFile } from "./dropStreamed.js";
+import { createDropInFlight } from "./dropInFlight.js";
 import {
   selectReadyFiles,
   excludeStuck,
@@ -198,6 +199,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   const pendingLogged = new CaseKeyedMap<Set<string>>(() => store.casesRoot);
   const stuckFiles = createDropStuckTracker(() => store.casesRoot);
   const stuck = stuckFiles.stuck;
+  const inFlight = createDropInFlight(store); // crash-loop guard (#2713)
 
   // One admitted write (#1855): a tick for a case deleted meanwhile never recreates its folder.
   function ensureDropFolders(caseId: string): Promise<void> {
@@ -659,6 +661,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         resolveImportKind,
         recordImportFailure: (name, err, debug) => recordImportFailure(caseId, "drop", name, err, debug),
         ...(dropBatch ? { dropBatch } : {}),
+        inFlight, // #2713
       });
       if (job) await options.jobManager?.finish(job.jobId);
       if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;

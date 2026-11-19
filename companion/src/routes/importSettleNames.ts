@@ -9,7 +9,7 @@
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { principalNameCarrier } from "../analysis/principalNameCarry.js";
-import { rewriteRows } from "./importSettleRows.js";
+import { rewriteByIdInPages } from "./importSettlePaged.js";
 
 export async function nameCallersScoped(
   store: ForensicRowStore,
@@ -28,6 +28,5 @@ export async function nameCallersScoped(
   }
   if (!ids.size) return 0;
   // Re-read under the caller's lock: a candidate may be stale, or gone after demote.
-  const rows = await store.forensicRowsById(caseId, [...ids]);
-  return (await rewriteRows(store, caseId, rows, carry)).length;
+  return rewriteByIdInPages(store, caseId, [...ids], carry);
 }

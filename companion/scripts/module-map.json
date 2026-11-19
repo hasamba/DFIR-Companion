@@ -613,6 +613,7 @@
     "flatWindowsEvent.ts": "analysis/ingest",
     "importDetect.ts": "analysis/ingest",
     "importDetectSources.ts": "analysis/ingest",
+    "importAttempt.ts": "analysis/ingest",
     "importLock.ts": "analysis/ingest",
     "importMemoryGuard.ts": "analysis/ingest",
     "importMeta.ts": "analysis/ingest",

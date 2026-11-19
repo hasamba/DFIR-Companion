@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Watson Telegram mirror** — opt-in per chat with `/dfir mirror on`; Watson's case chat is mirrored to a bound Telegram chat and allowlisted users can ask Watson from Telegram (closes #2647)
 
+### Fixed
+
+- **Large Velociraptor imports no longer exhaust memory in the settle step** — rows are settled in pages, and a drop file that crashed the server twice moves to `_failed/` (closes #2713)
+
 ## [0.47.0] - 2026-11-19
 
 ### Added
