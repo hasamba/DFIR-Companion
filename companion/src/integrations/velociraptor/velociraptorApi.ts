@@ -767,8 +767,7 @@ export class VelociraptorClient {
     return parseReachedClients(await this.runRaw(reachedClientsVql(huntId), this.collectCap()));
   }
 
-  // #2700: per-flow change metadata (veloArtifactFingerprint.ts). A VQL error that logs and returns
-  // no rows must read as unknown, never as "no flows", so the logged reason voids the read.
+  // #2700: per-flow change metadata (a logged VQL error reads as unknown) and the ledger namespace.
   async huntFlowMeta(huntId: string): Promise<fpv.FlowMeta[] | undefined> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     const r = await this.runRawLogged(fpv.huntFlowMetaVql(huntId), this.collectCap());
@@ -779,7 +778,6 @@ export class VelociraptorClient {
     const r = await this.runRawLogged(fpv.flowMetaVql(clientId, flowId));
     return r.reason ? undefined : fpv.parseFlowMeta(r.rows);
   }
-  /** Which server and org this client reads — namespaces the re-import ledger (#2700). */
   sourceNamespace = (): string => `${this.config.apiConfigPath}|${this.config.guiOrg?.trim() || "root"}`;
 
   // The artifacts an EXTERNAL hunt collected — so the Companion can read the results of a hunt it did
