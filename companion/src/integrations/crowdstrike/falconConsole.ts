@@ -17,6 +17,9 @@ const CONSOLE_BY_API_HOST: Readonly<Record<string, string>> = {
   "api.laggar.gcw.crowdstrike.com": "https://falcon.laggar.gcw.crowdstrike.com",
 };
 
+/** Every console origin this server can emit; the dashboard allows exactly these (#2696). */
+export const FALCON_CONSOLE_ORIGINS: readonly string[] = Object.freeze(Object.values(CONSOLE_BY_API_HOST));
+
 const hostOf = (url: string): string => {
   try {
     return new URL(url).hostname.toLowerCase();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
+import { FALCON_CONSOLE_ORIGINS } from "../../src/integrations/crowdstrike/falconConsole.js";
 
 // #2666 — the "Run in Falcon" button on CQL hunt cards: shown only when the server has the
 // Next-Gen SIEM search set up, and only on CQL cards.
@@ -111,6 +112,26 @@ describe("Open in Falcon (#2685)", () => {
       const api = loadUrl(siem);
       await api.loadSiemSearch();
       expect(api.falconSearchUrl("x")).toBe("");
+    }
+  });
+
+  it("accepts exactly the console origins the server can emit — lookalikes get no link (#2696)", async () => {
+    const api = loadUrl(CONFIGURED) as UrlApi & { FALCON_CONSOLE_ORIGINS: string[] };
+    expect([...api.FALCON_CONSOLE_ORIGINS].sort()).toEqual([...FALCON_CONSOLE_ORIGINS].sort());
+    for (const consoleUrl of [
+      "https://falcon.example.com",
+      "https://falcon.crowdstrike.com.evil.com",
+      "https://falcon.evil-crowdstrike.com",
+      "https://falcon.us-2.crowdstrike.mil",
+      "https://falcon.eu-9.crowdstrike.com",
+      "http://falcon.crowdstrike.com",
+      "https://falcon.crowdstrike.com/",
+      "https://falcon.crowdstrike.com/x",
+      "https://FALCON.crowdstrike.com",
+    ]) {
+      const bad = loadUrl({ ...CONFIGURED, consoleUrl });
+      await bad.loadSiemSearch();
+      expect(bad.falconSearchUrl("x"), consoleUrl).toBe("");
     }
   });
 

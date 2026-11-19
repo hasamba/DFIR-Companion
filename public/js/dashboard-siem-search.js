@@ -61,10 +61,20 @@
     return Number.isFinite(t) ? String(t) : "";
   };
 
+  // The console origins the server can emit (falconConsole.ts, CONSOLE_BY_API_HOST) — exact strings,
+  // not a pattern, so an href is only ever built on a real CrowdStrike console (#2696). A test pins
+  // this list to the server's.
+  const FALCON_CONSOLE_ORIGINS = Object.freeze([
+    "https://falcon.crowdstrike.com",
+    "https://falcon.us-2.crowdstrike.com",
+    "https://falcon.eu-1.crowdstrike.com",
+    "https://falcon.laggar.gcw.crowdstrike.com",
+  ]);
+
   /** The Advanced event search URL for a query, or "" when the console host is not known. */
   function falconSearchUrl(query, startIso, endIso, repository) {
     const origin = siem && siem.configured && typeof siem.consoleUrl === "string" ? siem.consoleUrl : "";
-    if (!origin || !/^https:\/\/falcon\.[a-z0-9.-]+\.(com|mil)$/i.test(origin) || !String(query || "").trim()) return "";
+    if (!FALCON_CONSOLE_ORIGINS.includes(origin) || !String(query || "").trim()) return "";
     const params = [`query=${encodeURIComponent(query)}`];
     if ((repository || siem.repository) === "search-all") params.push("repo=all");
     const start = toMs(startIso);
@@ -211,6 +221,7 @@
   window.loadSiemSearch = loadSiemSearch;
   window.siemRunButtonHtml = siemRunButtonHtml;
   window.falconSearchUrl = falconSearchUrl;
+  window.FALCON_CONSOLE_ORIGINS = FALCON_CONSOLE_ORIGINS;
   window.falconOpenLinkHtml = falconOpenLinkHtml;
   window.siemBadge = siemBadge;
   window.wireSiemRun = wireSiemRun;

@@ -342,4 +342,69 @@ describe("CrowdStrike NG-SIEM search route (#2666)", () => {
     expect(JSON.stringify(on.body)).not.toContain(SECRET);
     expect(JSON.stringify(await store.getCaseMeta("c1"))).toBe(before);
   });
+
+  describe("Settings Test cap (#2695)", () => {
+    const tokenCalls = (paths: string[]) => paths.filter((p) => p === "POST /oauth2/token").length;
+    afterEach(() => vi.restoreAllMocks());
+
+    it("five probes a minute; the sixth is a 429 with Retry-After and never reaches Falcon", async () => {
+      const f = fakeFalcon([]);
+      const { app } = await makeApp(f.fetchFn);
+      configure();
+      for (let i = 0; i < 5; i++)
+        expect((await request(app).post("/crowdstrike/siem/test")).status).toBe(200);
+      const before = f.paths.length;
+      const sixth = await request(app).post("/crowdstrike/siem/test");
+      expect(sixth.status).toBe(429);
+      expect(Number(sixth.headers["retry-after"])).toBeGreaterThanOrEqual(1);
+      expect(sixth.body.retryAfterMs).toBeGreaterThan(0);
+      expect(sixth.body.error).toMatch(/wait \d+s/);
+      expect(f.paths.length).toBe(before);
+    });
+
+    it("overlapping requests start at most five probes", async () => {
+      const f = fakeFalcon([]);
+      const { app } = await makeApp(f.fetchFn);
+      configure();
+      const all = await Promise.all(
+        Array.from({ length: 6 }, () => request(app).post("/crowdstrike/siem/test")),
+      );
+      expect(all.filter((r) => r.status === 429)).toHaveLength(1);
+      expect(tokenCalls(f.paths)).toBe(5);
+    });
+
+    it("a failed probe uses its slot; the window frees up after a minute", async () => {
+      let now = Date.parse("2026-11-19T10:00:00.000Z");
+      vi.spyOn(Date, "now").mockImplementation(() => now);
+      const fetchFn = (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch;
+      const { app } = await makeApp(fetchFn);
+      configure();
+      for (let i = 0; i < 5; i++) {
+        const r = await request(app).post("/crowdstrike/siem/test");
+        expect(r.status).toBe(200);
+        expect(r.body.ok).toBe(false);
+      }
+      expect((await request(app).post("/crowdstrike/siem/test")).status).toBe(429);
+      now += 30_000;
+      expect((await request(app).post("/crowdstrike/siem/test")).status).toBe(429);
+      now += 30_001;
+      expect((await request(app).post("/crowdstrike/siem/test")).status).toBe(200);
+    });
+
+    it("not-configured answers are never counted or refused; each server has its own allowance", async () => {
+      const f = fakeFalcon([]);
+      const { app } = await makeApp(f.fetchFn);
+      for (let i = 0; i < 7; i++)
+        expect((await request(app).post("/crowdstrike/siem/test")).body).toMatchObject({ configured: false });
+      configure();
+      for (let i = 0; i < 5; i++)
+        expect((await request(app).post("/crowdstrike/siem/test")).status).toBe(200);
+      expect((await request(app).post("/crowdstrike/siem/test")).status).toBe(429);
+      const other = await makeApp(fakeFalcon([]).fetchFn);
+      expect((await request(other.app).post("/crowdstrike/siem/test")).status).toBe(200);
+      for (const k of ["DFIR_CROWDSTRIKE_SIEM_CLIENT_ID", "DFIR_CROWDSTRIKE_SIEM_CLIENT_SECRET"])
+        delete process.env[k];
+      expect((await request(app).post("/crowdstrike/siem/test")).body).toMatchObject({ configured: false });
+    });
+  });
 });
