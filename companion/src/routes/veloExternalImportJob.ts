@@ -55,6 +55,22 @@ export interface ExternalImportDeps {
   ) => void;
 }
 
+/** One artifact's outcome, for the re-import ledger (#2700). */
+export interface ArtifactDone {
+  status: "complete" | "partial" | "failed";
+  rows: number;
+  gaps?: ("truncated" | "unread")[];
+}
+
+/**
+ * Per-artifact callbacks (#2700): `onStart` before the read, `onDone` once the artifact is settled.
+ * An ingest that throws gets no `onDone`, so its `pending` mark stands. They must not throw.
+ */
+export interface ArtifactHooks {
+  onStart?(artifact: string): Promise<void>;
+  onDone?(artifact: string, done: ArtifactDone): Promise<void>;
+}
+
 export interface ArtifactIngestResult {
   addedEvents: number;
   addedIocs: number;
@@ -106,6 +122,7 @@ export async function importArtifactsUnderJob(
     rows: unknown[],
     read: { partlyRead: boolean; debug: ImportDebugRecorder },
   ) => Promise<ArtifactIngestResult>,
+  hooks: ArtifactHooks = {},
 ): Promise<ExternalImportOutcome> {
   const label = `velociraptor: ${what}`;
   const startedAt = performance.now();
@@ -138,12 +155,14 @@ export async function importArtifactsUnderJob(
       // timeline never holds half an artifact — and surfaced as the request's error.
       if (job?.signal?.aborted)
         throw Object.assign(new Error("import cancelled by the analyst"), { name: "AbortError" });
+      await hooks.onStart?.(artifact);
       let read: ExternalArtifactRead;
       try {
         read = await readRows(artifact);
       } catch (e) {
         deps.logLine(`[velociraptor] ${what}: artifact ${artifact} read failed: ${(e as Error).message}`);
         failed.push({ name: artifact, error: (e as Error).message });
+        await hooks.onDone?.(artifact, { status: "failed", rows: 0 });
         continue;
       }
       let rows = read.rows;
@@ -159,7 +178,16 @@ export async function importArtifactsUnderJob(
             `raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and import again.`,
         );
       }
-      if (!rows.length) continue;
+      const gaps = [read.truncated && "truncated", read.sourcesUnknown && "unread"].filter(
+        (g): g is "truncated" | "unread" => !!g,
+      );
+      const done: ArtifactDone = gaps.length
+        ? { status: "partial", rows: rows.length, gaps }
+        : { status: "complete", rows: rows.length };
+      if (!rows.length) {
+        await hooks.onDone?.(artifact, done);
+        continue;
+      }
       const step = `artifact ${index + 1}/${total} · ${artifact} (${rows.length} rows)`;
       report(index, step);
       deps.logLine(`[velociraptor] ${what}: importing ${step}`);
@@ -174,6 +202,7 @@ export async function importArtifactsUnderJob(
       inFlight = undefined;
       rows = []; // release before the next artifact is read
       imported.push(artifact);
+      await hooks.onDone?.(artifact, done);
       addedEvents += one.addedEvents;
       addedIocs += one.addedIocs;
     }

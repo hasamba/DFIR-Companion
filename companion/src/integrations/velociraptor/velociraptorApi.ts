@@ -26,6 +26,7 @@ import { parseHuntClientCounts, type HuntClientCounts } from "./huntClientCounts
 export type { HuntClientCounts } from "./huntClientCounts.js";
 import { parseReachedClients, reachedClientsVql, type HuntReachedClient } from "./huntReachedClients.js";
 export type { HuntReachedClient } from "./huntReachedClients.js";
+import * as fpv from "./veloArtifactFingerprint.js"; // #2700 re-import change detection
 export { HuntSpecError } from "./huntSpec.js"; // the route answers it 400: the bundle, not the server
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
 import { cappedReadProgram, sortNewest, sortedReadTimeout } from "./veloNewestRead.js";
@@ -762,6 +763,21 @@ export class VelociraptorClient {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
     return parseReachedClients(await this.runRaw(reachedClientsVql(huntId), this.collectCap()));
   }
+
+  // #2700: per-flow change metadata (veloArtifactFingerprint.ts). A VQL error that logs and returns
+  // no rows must read as unknown, never as "no flows", so the logged reason voids the read.
+  async huntFlowMeta(huntId: string): Promise<fpv.FlowMeta[] | undefined> {
+    if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
+    const r = await this.runRawLogged(fpv.huntFlowMetaVql(huntId), this.collectCap());
+    return r.reason ? undefined : fpv.parseHuntFlowMeta(r.rows);
+  }
+  async flowMeta(clientId: string, flowId: string): Promise<fpv.FlowMeta[] | undefined> {
+    if (!CLIENT_RE.test(clientId) || !FLOW_RE.test(flowId)) throw new Error("invalid client or flow id");
+    const r = await this.runRawLogged(fpv.flowMetaVql(clientId, flowId));
+    return r.reason ? undefined : fpv.parseFlowMeta(r.rows);
+  }
+  /** Which server and org this client reads — namespaces the re-import ledger (#2700). */
+  sourceNamespace = (): string => `${this.config.apiConfigPath}|${this.config.guiOrg?.trim() || "root"}`;
 
   // The artifacts an EXTERNAL hunt collected — so the Companion can read the results of a hunt it did
   // NOT launch (a Companion-launched hunt already stores its own artifact list). `start_request.artifacts`

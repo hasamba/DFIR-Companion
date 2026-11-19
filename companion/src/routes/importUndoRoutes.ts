@@ -20,6 +20,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import { rehomeSuperTimeline, type SuperRehomeStore } from "./importSettleRehomeSuper.js";
 import type { RouteContext } from "./context.js";
 import { frozenCaseRefusal } from "./importCaseGuard.js";
+import { clearVeloImportLedger } from "./veloImportLedger.js";
 
 /** The case was closed or archived while this step waited for its locks (#2404). */
 class FrozenWhileWaiting extends Error {}
@@ -61,6 +62,7 @@ export function registerImportUndoRoutes(app: Express, ctx: RouteContext): void 
         superTimeline: options.superTimelineStore,
         rehomeSuper: superRehomer(options.superTimelineStore),
         cloudRecords: options.cloudRecordStore, // #2301: Undo forgets / Redo remembers the import's records
+        invalidateVeloLedger: (id) => clearVeloImportLedger(ctx.store, id), // #2700
       };
       const { summary, next, superChanged } = await runUndoStep(deps, caseId, step);
       if (!summary) return res.status(400).json({ error: nothing });

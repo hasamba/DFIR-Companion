@@ -886,8 +886,13 @@ The case-scoped half of Velociraptor. Everything on this panel lands in the conn
   list shows the running hunt, with **Collect now** to pull early.
 - **Import external hunt/flow** — paste a hunt id, a flow id or a Velociraptor GUI URL to import a
   collection launched outside the Companion. If the hunt or flow is already in the case, the panel
-  says when it was pulled in and imports nothing. Choose **Re-import anyway** to read every row
-  again, for example when a running hunt has collected more since.
+  says when it was pulled in and imports nothing yet. It lists the artifacts that need importing
+  and why: cut short at the row cap, failed, only partly read, new rows on the server since (a hunt
+  that was still running), a host still collecting, or imported with a different destination or
+  severity floor. **Import those** reads only those artifacts; the rest are skipped without reading
+  their rows. **Re-read everything** reads every artifact again. When the Companion cannot tell
+  whether an artifact changed, it counts it as needing an import. Undoing an import makes the next
+  re-import read everything again.
 - **Live Monitoring** — start, stop and watch the CLIENT_EVENT monitors streaming into this case
   (see [Live Monitoring](live-monitoring.md)). The toolbar's **🔴 LIVE** badge jumps here.
 

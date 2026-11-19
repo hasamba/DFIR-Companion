@@ -567,6 +567,38 @@ describe("super-timeline rows on a checkpoint (#2220)", () => {
       expect(rehome).toHaveBeenLastCalledWith("c1", after);
     });
 
+    // #2700: an undone Velociraptor artifact must never be skipped as "up to date" on a re-import.
+    it("clears the Velociraptor re-import ledger on undo, before the state is saved, and not on redo", async () => {
+      const order: string[] = [];
+      const invalidateVeloLedger = vi.fn(async () => {
+        order.push("ledger");
+      });
+      const d = deps();
+      const save = d.stateStore.save;
+      const withLedger = {
+        ...d,
+        invalidateVeloLedger,
+        stateStore: {
+          ...d.stateStore,
+          save: async (s: InvestigationState) => {
+            order.push("save");
+            await save(s);
+          },
+        },
+      };
+      await runUndoStep(withLedger, "c1", applyUndo);
+      expect(order).toEqual(["ledger", "save"]);
+      await runUndoStep(withLedger, "c1", applyRedo);
+      expect(invalidateVeloLedger).toHaveBeenCalledTimes(1);
+    });
+
+    it("a ledger that cannot be cleared aborts the undo", async () => {
+      const failing = { ...deps(), invalidateVeloLedger: async () => Promise.reject(new Error("locked")) };
+      await expect(runUndoStep(failing, "c1", applyUndo)).rejects.toThrow("locked");
+      expect(state.forensicTimeline).toHaveLength(S1.forensicTimeline.length);
+      expect((await undoStore.load("c1")).undo).toHaveLength(1);
+    });
+
     it("a failed stack write puts the super rows back as well as the state", async () => {
       const saveStack = undoStore.save.bind(undoStore);
       undoStore.save = async () => {

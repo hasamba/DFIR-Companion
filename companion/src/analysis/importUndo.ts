@@ -461,6 +461,12 @@ export interface UndoStepDeps {
   rehomeSuper?: (caseId: string, ledger: RenameLedger) => Promise<number>;
   /** The cloud-record ledger (#2301), typed by the one method a step uses. Absent: ledger untouched. */
   cloudRecords?: { setBatchesActive(caseId: string, batches: string[], active: boolean): Promise<void> };
+  /**
+   * Forgets the case's per-artifact Velociraptor import ledger (#2700) on Undo, before the state drops
+   * the events: an undone artifact must never be skipped as "up to date". Clearing is always safe —
+   * it only causes a full re-read — so it is not rolled back, and a failure aborts the Undo.
+   */
+  invalidateVeloLedger?: (caseId: string) => Promise<void>;
 }
 
 // One undo or redo step, for the routes. The restored state is saved verbatim — findings, IOCs,
@@ -509,6 +515,7 @@ export async function runUndoStep(
           // them back. A crash between any two writes then leaves the ledger forgetting records the
           // case still holds — a re-import duplicates them (recoverable) — and never remembering
           // records the case lost, which would make a re-import skip them (evidence loss).
+          if (step === applyUndo) await deps.invalidateVeloLedger?.(caseId);
           const cloud = deps.cloudRecords && result.cloudBatches;
           if (cloud && !cloud.active) await flipBatches(cloud);
           await stateStore.save(saved);

@@ -103,10 +103,12 @@ describe("the Settings bundle library", () => {
 // only a literal `true` may ask for the re-import.
 describe("import external: already pulled into this case", () => {
   const reimportBtn = { onclick: null as null | (() => void) };
+  const changedBtn = { onclick: null as null | (() => void) };
   const extMsg = {
     textContent: "",
     innerHTML: "",
-    querySelector: (sel: string) => (sel === ".velo-reimport-btn" ? reimportBtn : null),
+    querySelector: (sel: string) =>
+      sel === ".velo-reimport-btn" ? reimportBtn : sel === ".velo-reimport-changed-btn" ? changedBtn : null,
   };
   const extEls: Record<string, unknown> = {
     veloExtMsg: extMsg,
@@ -145,6 +147,7 @@ describe("import external: already pulled into this case", () => {
   beforeEach(() => {
     bodies.length = 0;
     reimportBtn.onclick = null;
+    changedBtn.onclick = null;
     extMsg.innerHTML = "";
     extMsg.textContent = "";
     ext.activeCaseId = "c1";
@@ -185,5 +188,77 @@ describe("import external: already pulled into this case", () => {
     await settle();
     expect(extMsg.innerHTML).not.toContain("<i>");
     expect(extMsg.innerHTML).toContain("&lt;i&gt;");
+  });
+
+  // #2700: the 409 says which artifacts need importing and why; "Import those" reads only them.
+  const PLANNED = {
+    alreadyImported: {
+      ...PRIOR.alreadyImported,
+      requested: ["Windows.NTFS.MFT", "Windows.System.Pslist", "Windows.Hayabusa.Rules"],
+      toImport: [
+        { name: "Windows.Hayabusa.Rules", reason: "failed" },
+        { name: "Windows.System.Pslist", reason: "truncated" },
+      ],
+      upToDate: ["Windows.NTFS.MFT"],
+    },
+  };
+
+  it("lists what needs importing with a reason each, and Import those sends reimport 'changed'", async () => {
+    answer = { status: 409, json: PLANNED };
+    ext.veloImportExternal();
+    await settle();
+    expect(extMsg.innerHTML).toContain("2 of 3 artifact(s) need importing");
+    expect(extMsg.innerHTML).toContain("Windows.System.Pslist");
+    expect(extMsg.innerHTML).toContain("cut short at the row cap");
+    expect(extMsg.innerHTML).toContain("failed or did not finish");
+    expect(extMsg.innerHTML).toContain("Import those (2)");
+    expect(extMsg.innerHTML).toContain("Re-read everything");
+    answer = {
+      status: 200,
+      json: { kind: "hunt", huntId: "H.ABC", artifacts: [], upToDate: ["Windows.NTFS.MFT"] },
+    };
+    changedBtn.onclick?.();
+    await settle();
+    expect(bodies[1]).toMatchObject({ ref: "H.ABC", reimport: "changed" });
+    reimportBtn.onclick?.();
+    await settle();
+    expect(bodies[2]).toMatchObject({ ref: "H.ABC", reimport: true });
+  });
+
+  it("says when every artifact is up to date, and offers only the full re-read", async () => {
+    answer = {
+      status: 409,
+      json: {
+        alreadyImported: {
+          ...PLANNED.alreadyImported,
+          toImport: [],
+          upToDate: PLANNED.alreadyImported.requested,
+        },
+      },
+    };
+    ext.veloImportExternal();
+    await settle();
+    expect(extMsg.innerHTML).toContain("All 3 artifact(s) are up to date");
+    expect(extMsg.innerHTML).not.toContain("velo-reimport-changed-btn");
+    expect(extMsg.innerHTML).toContain("Re-read everything");
+  });
+
+  it("escapes artifact names in the plan", async () => {
+    answer = {
+      status: 409,
+      json: {
+        alreadyImported: { ...PLANNED.alreadyImported, toImport: [{ name: "<b>x</b>", reason: "changed" }] },
+      },
+    };
+    ext.veloImportExternal();
+    await settle();
+    expect(extMsg.innerHTML).not.toContain("<b>");
+  });
+
+  it("only true and 'changed' are passed through as reimport", async () => {
+    answer = { status: 200, json: { kind: "hunt", huntId: "H.ABC", artifacts: [] } };
+    ext.veloImportExternal("yes");
+    await settle();
+    expect(bodies[0].reimport).toBe(false);
   });
 });

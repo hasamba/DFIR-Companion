@@ -36,7 +36,8 @@ import {
 } from "./veloServers.js";
 import { errorStatusOf, externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
 import { uploadOutcomeFields } from "./veloUploadFields.js";
-import { NOTEBOOK_URL_ERROR, priorVeloImportToWarn } from "./veloPriorImport.js";
+import { NOTEBOOK_URL_ERROR } from "./veloPriorImport.js";
+import { flowReimportGate, huntReimportGate } from "./veloReimport.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
 /**
@@ -607,10 +608,9 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     }
     const client = vc.client;
     const importJobDeps = { jobManager: options.jobManager, onAiStatus: options.onAiStatus, logLine };
+    // Already in this case? The gate answers 409 with what needs importing, never reads rows (#2700).
+    const gate = { store: ctx.store, caseId, reimport: req.body?.reimport, superOnly, minSeverity, logLine };
     try {
-      // Already pulled into this case? Answer before any Velociraptor call (#1965); "Re-import anyway" skips it.
-      const prior = await priorVeloImportToWarn(ctx.store, caseId, ref, req.body?.reimport);
-      if (prior) return res.status(409).json({ alreadyImported: prior });
       if (ref.kind === "hunt") {
         if (ref.isUploadsUrl) {
           const uploads = await client.huntUploads(ref.huntId);
@@ -643,18 +643,15 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
               : {}),
           });
         }
-        const arts = await client.getHuntArtifacts(ref.huntId);
-        if (!arts.length)
-          return res
-            .status(404)
-            .json({ error: `hunt ${ref.huntId} not found on the server, or it collected no artifacts` });
+        const g = await huntReimportGate(gate, client, ref);
+        if ("answer" in g) return res.status(g.answer.status).json(g.answer.body);
         // STREAMED, not buffered, one artifact at a time under the case's import job (#1428) — see
         // veloExternalImportJob.ts. This read is ingestion, so it uses the 100,000-row collection cap.
         const out = await importArtifactsUnderJob(
           importJobDeps,
           caseId,
           `hunt ${ref.huntId} (external import)`,
-          arts,
+          g.artifacts,
           // The whole read, not just `.rows`: it says which artifacts were not read in full (#1645).
           (art) => client.huntArtifactRows(ref.huntId, art, [], undefined, true),
           (art, rows, read) =>
@@ -669,6 +666,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
               minSeverity,
               veloUrl: client.huntGuiUrlFor(ref.huntId),
             }),
+          g.hooks,
         );
         if (out.imported.length) options.onVeloHunt?.(caseId);
         return res.status(200).json({
@@ -677,7 +675,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           addedEvents: out.addedEvents,
           addedIocs: out.addedIocs,
           superTimelineOnly: superOnly,
-          ...externalImportFields(out, arts, "the hunt returned no rows yet"),
+          ...g.extra,
+          ...externalImportFields(out, g.requested, "the hunt returned no rows yet"),
         });
       }
       if (ref.isUploadsUrl) {
@@ -713,17 +712,15 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
             : {}),
         });
       }
-      const info = await client.getFlowInfo(ref.clientId, ref.flowId);
-      if (!info.artifacts.length)
-        return res
-          .status(404)
-          .json({ error: `flow ${ref.flowId} on ${ref.clientId} not found, or it collected no artifacts` });
+      const fg = await flowReimportGate(gate, client, ref);
+      if ("answer" in fg) return res.status(fg.answer.status).json(fg.answer.body);
+      const info = fg.listed;
       // Streamed one artifact at a time under the case's import job, like the hunt branch (#1428).
       const flowOut = await importArtifactsUnderJob(
         importJobDeps,
         caseId,
         `flow ${ref.flowId} on ${info.hostname || ref.clientId} (external import)`,
-        info.artifacts,
+        fg.artifacts,
         (art) => client.collectionResults(ref.clientId, ref.flowId, art, [], undefined, true),
         (art, rows, read) =>
           ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
@@ -736,6 +733,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
             hostFallback: info.hostname,
             veloUrl: client.flowGuiUrlFor(ref.clientId, ref.flowId),
           }),
+        fg.hooks,
       );
       if (flowOut.imported.length) options.onVeloHunt?.(caseId);
       return res.status(200).json({
@@ -746,7 +744,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         addedEvents: flowOut.addedEvents,
         addedIocs: flowOut.addedIocs,
         superTimelineOnly: superOnly,
-        ...externalImportFields(flowOut, info.artifacts, "the flow returned no rows"),
+        ...fg.extra,
+        ...externalImportFields(flowOut, fg.requested, "the flow returned no rows"),
       });
     } catch (err) {
       logLine(`[velociraptor] import-external ERROR: ${(err as Error).message}`);
