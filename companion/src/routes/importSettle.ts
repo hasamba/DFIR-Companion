@@ -8,7 +8,7 @@ import type { ForensicRowStore } from "../analysis/forensicRows.js";
 import { settleIocsDiff, settleTimelineDiff } from "./importSettleDiff.js";
 import { toImportBaseline, type ImportBaseline } from "../analysis/importBaseline.js";
 import { capBuildTimeScoped, capLabSetupScoped, stampEngineBootScoped } from "./importSettleCap.js";
-import { flagCaseLookalikesScoped } from "./importSettleLookalike.js";
+import { flagLookalikeCandidates } from "./importSettleLookalike.js";
 import { nameCallersScoped } from "./importSettleNames.js";
 import { principalLedgerChanged } from "../analysis/principalNames.js";
 import { runUnlocked, settleScope, type RunExclusive } from "./importSettleRows.js";
@@ -197,7 +197,7 @@ export async function settleForensicImport(
   }
   // Case-account look-alikes (#1971): after the tagger, before the caps. Scans only when this import
   // added a new account or group member.
-  const lookalikes = await lock(caseId, () => flagCaseLookalikesScoped(store, caseId, candidates.lookalike));
+  const lookalikes = await lock(caseId, () => flagLookalikeCandidates(store, caseId, candidates.lookalike));
   changed ||= lookalikes > 0;
   // Merge-all → tagger → CAP → demote (#1529). The tagger has had its one promotion window above;
   // now the rows inside a corroborated provisioning window are capped at Low with a stated reason,
@@ -209,7 +209,7 @@ export async function settleForensicImport(
   changed ||= capped > 0;
   // Lab setup (#1946): a file copied in through a hypervisor drag-and-drop folder is capped at Medium.
   const labCapped = await lock(caseId, () =>
-    capLabSetupScoped(store, caseId, { scanAll, candidates: candidates.labSetup }),
+    capLabSetupScoped(store, caseId, { scanAll, candidateIds: candidates.labSetupIds }),
   );
   changed ||= labCapped > 0;
   // Defender engine start-up (#2084): the Info start-up rows are still here; demote is next.
@@ -222,7 +222,7 @@ export async function settleForensicImport(
   const named = await lock(caseId, () =>
     nameCallersScoped(store, caseId, ledger, {
       scanAll: namesChanged || !scope.touchedKnown,
-      candidates: candidates.names,
+      candidateIds: candidates.nameIds,
     }),
   );
   changed ||= named > 0;

@@ -2,21 +2,28 @@ import { randomUUID } from "node:crypto";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
 import { mergeEvictions } from "../analysis/superTimelineStore.js";
-import { SCAN_PAGE_ROWS, type ForensicRow, type ForensicRowStore } from "../analysis/forensicRows.js";
+import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { hostRenameCarrier, rehomeEvents } from "../analysis/hostRenameCarry.js";
 import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
 import { downgradeGenericSysmonRegistry } from "../analysis/genericSysmonRegistry.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
-import { hasLabSetupMark, labSetupFolder, labSetupPaths } from "../analysis/labSetupTransfer.js";
+import { labSetupPaths } from "../analysis/labSetupTransfer.js";
 import {
   isAttackerDefenderTouch,
   isDefenderEngineWrite,
   isStartupRow,
 } from "../analysis/defenderEngineBoot.js";
-import { LOOKALIKE_ACCOUNT_MARKER, lookalikeCandidateName } from "../analysis/lookalikeCaseAccount.js";
+import { lookalikeCandidate } from "./importSettleLookalike.js";
+import { labSetupCandidate } from "./importSettleCap.js";
 import { principalNameCarrier } from "../analysis/principalNameCarry.js";
 import { getServerLogger } from "../logging/serverLogger.js";
-import { isForeignToImport, rewriteRows, type RunExclusive, type SettleScope } from "./importSettleRows.js";
+import {
+  isForeignToImport,
+  rewriteRows,
+  rowPages,
+  type RunExclusive,
+  type SettleScope,
+} from "./importSettleRows.js";
 
 /**
  * The settle's row passes in pages (#2713). The settle used to read every row the import added into
@@ -36,18 +43,21 @@ import { isForeignToImport, rewriteRows, type RunExclusive, type SettleScope } f
  * per-batch contract the streamed cloud import and the bulk Velociraptor batches already have.
  */
 
-/** What each later settle step reads of this import's added and touched rows. */
+/**
+ * What each later settle step reads of this import's added and touched rows — ids or compact facts,
+ * not events, except the Defender rows the engine-boot pass reads across rows (rare by nature).
+ */
 export interface SettleCandidates {
-  /** Case-account look-alikes (#1971): new accounts and group members not yet noted. */
-  lookalike: ForensicEvent[];
+  /** Case-account look-alikes (#1971): row id → the new account or group member it names. */
+  lookalike: Map<string, string>;
   /** Build-time cap (#1529): rows that already carry a cap mark. */
   buildTimeIds: string[];
   /** Lab-setup cap (#1946): rows in a lab folder or carrying its mark. */
-  labSetup: ForensicEvent[];
+  labSetupIds: string[];
   /** Defender engine start-up (#2084): start-up anchors, attacker-touch vetoes, engine writes. */
   engineBoot: ForensicEvent[];
   /** Caller names (#2490): rows the principal ledger renames. */
-  names: ForensicEvent[];
+  nameIds: string[];
 }
 
 export interface StampedImport {
@@ -58,38 +68,12 @@ export interface StampedImport {
 }
 
 export const emptyCandidates = (): SettleCandidates => ({
-  lookalike: [],
+  lookalike: new Map(),
   buildTimeIds: [],
-  labSetup: [],
+  labSetupIds: [],
   engineBoot: [],
-  names: [],
+  nameIds: [],
 });
-
-/** Read `ids` a page at a time, in pages of SCAN_PAGE_ROWS. */
-async function* rowPages(
-  store: ForensicRowStore,
-  caseId: string,
-  ids: readonly string[],
-): AsyncGenerator<ForensicRow[]> {
-  for (let i = 0; i < ids.length; i += SCAN_PAGE_ROWS) {
-    const page = await store.forensicRowsById(caseId, ids.slice(i, i + SCAN_PAGE_ROWS));
-    if (page.length) yield page;
-  }
-}
-
-/** rewriteRows over rows read by id, a page at a time. Returns how many rows it wrote. */
-export async function rewriteByIdInPages(
-  store: ForensicRowStore,
-  caseId: string,
-  ids: readonly string[],
-  transform: (e: ForensicEvent) => ForensicEvent,
-): Promise<number> {
-  let written = 0;
-  for await (const rows of rowPages(store, caseId, ids)) {
-    written += (await rewriteRows(store, caseId, rows, transform)).length;
-  }
-  return written;
-}
 
 /**
  * Add `e` to every candidate list whose step would read it — each test is the one that step applies
@@ -102,12 +86,12 @@ function collector(
   const paths = labSetupPaths();
   const names = principalNameCarrier(ledger);
   return (c, e, added) => {
-    if (added && !(e.description ?? "").includes(LOOKALIKE_ACCOUNT_MARKER) && lookalikeCandidateName(e))
-      c.lookalike.push(e);
+    const account = added ? lookalikeCandidate(e) : "";
+    if (account) c.lookalike.set(e.id, account);
     if (hasBuildTimeMark(e)) c.buildTimeIds.push(e.id);
-    if (hasLabSetupMark(e) || labSetupFolder(e, paths)) c.labSetup.push(e);
+    if (labSetupCandidate(e, paths)) c.labSetupIds.push(e.id);
     if (isStartupRow(e) || isAttackerDefenderTouch(e) || isDefenderEngineWrite(e)) c.engineBoot.push(e);
-    if (names(e) !== e) c.names.push(e);
+    if (names(e) !== e) c.nameIds.push(e.id);
   };
 }
 

@@ -10,7 +10,7 @@ import {
   windowFor,
 } from "../analysis/buildTimeWindow.js";
 import { hostBuildMarkers } from "../analysis/gapHostHistory.js";
-import { rewriteByIdInPages } from "./importSettlePaged.js";
+import { rewriteByIdInPages } from "./importSettleRows.js";
 import {
   capLabSetupRow,
   hasLabSetupMark,
@@ -78,19 +78,24 @@ export async function capBuildTimeScoped(
 export async function capLabSetupScoped(
   store: ForensicRowStore,
   caseId: string,
-  opts: { scanAll: boolean; candidates: readonly ForensicEvent[] },
+  opts: { scanAll: boolean; candidateIds: readonly string[] },
 ): Promise<number> {
   const paths = labSetupPaths();
-  const ids = new Set<string>();
+  // The candidates come pre-picked with labSetupCandidate (the paged settle keeps ids, #2713).
+  const ids = new Set<string>(opts.candidateIds);
   const read = (batch: readonly ForensicEvent[]): void => {
-    for (const e of batch) if (hasLabSetupMark(e) || labSetupFolder(e, paths)) ids.add(e.id);
+    for (const e of batch) if (labSetupCandidate(e, paths)) ids.add(e.id);
   };
-  read(opts.candidates);
   if (opts.scanAll) {
     for await (const batch of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) read(batch);
   }
   if (!ids.size) return 0;
   return rewriteByIdInPages(store, caseId, [...ids], (e) => capLabSetupRow(e, paths));
+}
+
+/** Whether the lab-setup cap reads this row: in a lab folder, or already carrying its mark. */
+export function labSetupCandidate(e: ForensicEvent, paths: readonly string[]): boolean {
+  return hasLabSetupMark(e) || !!labSetupFolder(e, paths);
 }
 
 /**

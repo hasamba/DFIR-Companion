@@ -9,20 +9,20 @@
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { principalNameCarrier } from "../analysis/principalNameCarry.js";
-import { rewriteByIdInPages } from "./importSettlePaged.js";
+import { rewriteByIdInPages } from "./importSettleRows.js";
 
 export async function nameCallersScoped(
   store: ForensicRowStore,
   caseId: string,
   ledger: Pick<InvestigationState, "principalNames">,
-  opts: { scanAll: boolean; candidates: readonly ForensicEvent[] },
+  // candidateIds: this import's rows the carrier rewrites, picked by the paged settle (#2713).
+  opts: { scanAll: boolean; candidateIds: readonly string[] },
 ): Promise<number> {
   const carry = principalNameCarrier(ledger);
-  const ids = new Set<string>();
+  const ids = new Set<string>(opts.candidateIds);
   const read = (batch: readonly ForensicEvent[]): void => {
     for (const e of batch) if (carry(e) !== e) ids.add(e.id);
   };
-  read(opts.candidates);
   if (opts.scanAll) {
     for await (const batch of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) read(batch);
   }

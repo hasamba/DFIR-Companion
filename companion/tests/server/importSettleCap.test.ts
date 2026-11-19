@@ -4,12 +4,14 @@ import {
   capBuildTimeScoped,
   capLabSetupScoped,
   stampEngineBootScoped,
+  labSetupCandidate,
 } from "../../src/routes/importSettleCap.js";
 import { settleForensicImport } from "../../src/routes/importSettle.js";
 import { engineBootOf } from "../../src/analysis/defenderEngineBoot.js";
 import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { HostRenameRecord } from "../../src/analysis/hostRenameRecord.js";
 import { memoryRowStore } from "../helpers/memoryRowStore.js";
+import { labSetupPaths } from "../../src/analysis/labSetupTransfer.js";
 
 // #1874: the build-time cap over the rows it can change must give exactly what capBuildTimeRows
 // gives over the whole case — windows from the chain hosts' rows, the rule applied to rows inside a
@@ -111,9 +113,11 @@ describe("capLabSetupScoped (#1946)", () => {
   it("caps the import's own drag-and-drop row and leaves the rest", async () => {
     const state = labState();
     const store = memoryRowStore(state);
-    expect(await capLabSetupScoped(store, "c1", { scanAll: false, candidates: state.forensicTimeline })).toBe(
-      1,
-    );
+    // The settle hands over the rows labSetupCandidate picked (#2713): only the drag-and-drop row.
+    const paths = labSetupPaths();
+    const candidateIds = state.forensicTimeline.filter((e) => labSetupCandidate(e, paths)).map((e) => e.id);
+    expect(candidateIds).toEqual(["dnd"]);
+    expect(await capLabSetupScoped(store, "c1", { scanAll: false, candidateIds })).toBe(1);
     const rows = (await store.load()).forensicTimeline;
     expect(rows.find((e) => e.id === "dnd")?.severity).toBe("Medium");
     expect(rows.find((e) => e.id === "docs")?.severity).toBe("High");
@@ -122,8 +126,8 @@ describe("capLabSetupScoped (#1946)", () => {
   it("finds old rows only on a scan-all settle", async () => {
     const state = labState();
     const store = memoryRowStore(state);
-    expect(await capLabSetupScoped(store, "c1", { scanAll: false, candidates: [] })).toBe(0);
-    expect(await capLabSetupScoped(store, "c1", { scanAll: true, candidates: [] })).toBe(1);
+    expect(await capLabSetupScoped(store, "c1", { scanAll: false, candidateIds: [] })).toBe(0);
+    expect(await capLabSetupScoped(store, "c1", { scanAll: true, candidateIds: [] })).toBe(1);
   });
 });
 
