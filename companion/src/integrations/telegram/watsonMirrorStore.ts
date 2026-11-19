@@ -37,6 +37,8 @@ const chatSchema = z.object({
   /** When the last batch went out (the 60 s Auto window). */
   lastBatchAt: z.string().optional().catch(undefined),
   retry: retrySchema.optional().catch(undefined),
+  /** #2710: turns beyond the history window were skipped; the one-line notice is still owed. */
+  gapPending: z.boolean().optional().catch(undefined),
 });
 
 export type WatsonMirrorChat = z.infer<typeof chatSchema>;
@@ -68,7 +70,9 @@ function parseFile(raw: unknown): MirrorFile {
 const tail = <T>(list: readonly T[], max: number): T[] => list.slice(Math.max(0, list.length - max));
 
 /** What patch() may change; the queue, sets and identity go through their own methods. */
-export type WatsonMirrorPatch = Partial<Pick<WatsonMirrorChat, "held" | "lastBatchAt" | "retry">>;
+export type WatsonMirrorPatch = Partial<
+  Pick<WatsonMirrorChat, "held" | "lastBatchAt" | "retry" | "gapPending">
+>;
 
 export class WatsonMirrorStore {
   private readonly lock = new StateLock();

@@ -165,8 +165,8 @@ export class WatsonMirror {
         );
         if (skip.length) await this.deps.store.markSent(entry.chatId, skip, []);
       }
-      if (gap) await this.gapNotice(entry);
-      if (entry.pending.length || unseen.length) this.schedule(entry.chatId, 0);
+      if (gap) await this.recordGap(entry);
+      if (gap || entry.pending.length || unseen.length) this.schedule(entry.chatId, 0);
     }
   }
 
@@ -203,7 +203,7 @@ export class WatsonMirror {
   private async flushOnce(chatId: string): Promise<void> {
     if (this.stopped) return;
     const entry = await this.deps.store.get(chatId);
-    if (!entry || entry.pending.length === 0) return;
+    if (!entry || (entry.pending.length === 0 && !entry.gapPending)) return;
     if (!(await this.stillLive(entry))) return;
     const now = this.now();
     const retryAt = entry.retry ? Date.parse(entry.retry.nextAt) : NaN;
@@ -222,7 +222,7 @@ export class WatsonMirror {
     }
     const { turns, urgent, missing } = found;
     if (missing.length) await this.deps.store.markSent(chatId, missing, []); // gone from chat and history
-    if (turns.length === 0) return;
+    if (turns.length === 0 && !entry.gapPending) return;
     const lastBatch = entry.lastBatchAt ? Date.parse(entry.lastBatchAt) : NaN;
     if (!urgent && Number.isFinite(lastBatch) && lastBatch + this.windowMs > now) {
       return this.schedule(chatId, lastBatch + this.windowMs - now);
@@ -234,6 +234,8 @@ export class WatsonMirror {
       await this.deps.store.patch(chatId, { held: false });
       this.deps.audit(caseId, "watson-mirror-hold-cleared", `Telegram chat ${chatId}: mirroring resumed`);
     }
+    if (entry.gapPending && !(await this.sendGapNotice(entry))) return;
+    if (turns.length === 0) return;
     const messages = buildMirrorMessages(masking.text, mirrorFooter(caseId, this.deps.publicUrl()));
     const ids = await this.sendAll(entry, messages);
     if (!ids) return;
@@ -282,23 +284,35 @@ export class WatsonMirror {
   }
 
   /**
-   * #2710: one line telling the chat that turns older than the history window were never mirrored.
-   * Once per gap: the enqueue before it moved the cursor into the window. Skipped while held; a
-   * failed send is logged and never blocks the turns that follow.
+   * #2710: turns older than the history window were never mirrored. The notice is owed (persisted)
+   * BEFORE the send is tried: the enqueue before this moved the cursor past the gap, so no later scan
+   * would see it again. Audited once, here.
    */
-  private async gapNotice(entry: WatsonMirrorEntry): Promise<void> {
-    if (entry.held) return;
+  private async recordGap(entry: WatsonMirrorEntry): Promise<void> {
+    await this.deps.store.patch(entry.chatId, { gapPending: true });
     this.deps.audit(
       entry.caseId,
       "watson-mirror-gap",
       `Telegram chat ${entry.chatId}: older Watson turns were not mirrored (beyond the history window)`,
     );
+  }
+
+  /**
+   * Send the owed gap notice ahead of the batch, once the chat is not held. Cleared only after Telegram
+   * accepted it; a failure retries on the normal backoff (the batch waits behind it, keeping order).
+   * Switching the mirror off drops the entry and the notice with it. true = sent, go on.
+   */
+  private async sendGapNotice(entry: WatsonMirrorEntry): Promise<boolean> {
     const footer = mirrorFooter(entry.caseId, this.deps.publicUrl());
-    const sent = await this.sendOne(entry, buildMirrorMessages(GAP_TEXT, footer)[0]).catch(
-      (err: unknown) => ({ kind: "transient", reason: String(err) }) as const,
-    );
-    if (sent.kind === "sent") await this.deps.store.addMessageIds(entry.chatId, [sent.messageId]);
-    else this.deps.log.warn(`[telegram-mirror] chat ${entry.chatId}: gap notice not sent (${sent.kind})`);
+    const out = await this.sendOne(entry, buildMirrorMessages(GAP_TEXT, footer)[0]);
+    if (out.kind === "revoked") return false;
+    if (out.kind !== "sent") {
+      await this.failed(entry, out);
+      return false;
+    }
+    await this.deps.store.addMessageIds(entry.chatId, [out.messageId]);
+    await this.deps.store.patch(entry.chatId, { gapPending: false, retry: undefined });
+    return true;
   }
 
   /**

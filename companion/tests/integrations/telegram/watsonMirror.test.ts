@@ -300,7 +300,7 @@ describe("WatsonMirror", () => {
   });
 
   describe("a gap older than the history window (#2710)", () => {
-    const outage = async (downTurns: number, limit: number) => {
+    const outage = async (downTurns: number, limit: number, beforeRestart?: () => void) => {
       await enable(h);
       h.addTurn({ role: "analyst", text: "before outage" });
       await h.mirror.notify("c1");
@@ -308,6 +308,7 @@ describe("WatsonMirror", () => {
       h.mirror.stop();
       for (let i = 0; i < downTurns; i++) h.addTurn({ role: "watson", text: `down ${i}` });
       h.historyLimit.value = limit;
+      beforeRestart?.();
       h.mirror = h.newMirror();
       await h.mirror.start();
       await h.advance(61_000); // past the batch window: these turns are not urgent
@@ -329,6 +330,49 @@ describe("WatsonMirror", () => {
       await h.advance(120_000);
       expect(notices()).toHaveLength(1);
       expect(h.sends.at(-1)?.text).toContain("later");
+    });
+
+    it("keeps the notice while the chat is held and posts it once the hold clears", async () => {
+      await outage(8, 5, () => {
+        h.masking.value = { ok: false, reason: "names await approval" };
+      });
+      expect(notices()).toHaveLength(0);
+      expect(h.sends.some((s) => s.text.startsWith(HELD_TEXT))).toBe(true);
+      h.masking.value = (t) => ({ ok: true, text: t });
+      await h.advance(120_000);
+      expect(notices()).toHaveLength(1);
+      const at = h.sends.findIndex((s) => s.text.startsWith(GAP_TEXT));
+      expect(
+        h.sends
+          .slice(at + 1)
+          .map((s) => s.text)
+          .join("\n"),
+      ).toContain("down 7");
+      h.addTurn({ role: "analyst", text: "later" });
+      await h.mirror.notify("c1");
+      await h.advance(120_000);
+      expect(notices()).toHaveLength(1);
+    });
+
+    it("retries a notice whose send failed, on the backoff, and posts it once", async () => {
+      await outage(8, 5, () => {
+        h.outcomes.push({ kind: "transient", reason: "HTTP 502" });
+      });
+      await h.advance(10_000); // past the 5 s backoff
+      // The first attempt failed; the retry after the backoff went out, then the turns.
+      expect(notices()).toHaveLength(2);
+      const delivered = h.sends.lastIndexOf(notices()[1]);
+      expect((await h.store.get("100"))?.messageIds).toContain(1000 + delivered + 1);
+      expect(
+        h.sends
+          .slice(delivered + 1)
+          .map((s) => s.text)
+          .join("\n"),
+      ).toContain("down 7");
+      h.addTurn({ role: "analyst", text: "later" });
+      await h.mirror.notify("c1");
+      await h.advance(120_000);
+      expect(notices()).toHaveLength(2);
     });
 
     it("posts no notice when the cursor is inside the window", async () => {
