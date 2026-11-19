@@ -272,10 +272,29 @@ export class WatsonMirror {
     this.schedule(entry.chatId, MIRROR_HOLD_RECHECK_MS);
   }
 
-  private async sendOne(entry: WatsonMirrorEntry, text: string): Promise<MirrorSendOutcome> {
+  /**
+   * Re-read right before a send (after any throttle wait): the chat must still have the SAME
+   * enablement (not switched off, or off and on again) and still pass the liveness check — bound,
+   * allowlisted, case present and unlocked. A batch never outlives its authorization.
+   */
+  private async stillAuthorized(entry: WatsonMirrorEntry): Promise<boolean> {
+    const cur = await this.deps.store.get(entry.chatId);
+    const same =
+      !!cur &&
+      cur.caseId === entry.caseId &&
+      cur.enabledAt === entry.enabledAt &&
+      cur.enabledBy === entry.enabledBy;
+    return same && (await this.stillLive(cur));
+  }
+
+  private async sendOne(
+    entry: WatsonMirrorEntry,
+    text: string,
+  ): Promise<MirrorSendOutcome | { kind: "revoked" }> {
     const isGroup = entry.chatType !== "private";
     const wait = this.limiter.waitMs(entry.chatId, isGroup, this.now());
     if (wait > 0) await this.sleep(wait);
+    if (this.stopped || !(await this.stillAuthorized(entry))) return { kind: "revoked" };
     this.limiter.record(entry.chatId, isGroup, this.now());
     return this.deps.send(entry.chatId, text);
   }
@@ -293,6 +312,7 @@ export class WatsonMirror {
         ids.push(out.messageId);
         continue;
       }
+      if (out.kind === "revoked") return undefined; // switched off or replaced mid-batch: stop here
       await this.failed(entry, out);
       return undefined;
     }

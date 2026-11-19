@@ -33,6 +33,7 @@ interface Harness {
   advance: (ms: number) => Promise<void>;
   addTurn: (t: Partial<WatsonTurn> & { role: WatsonTurn["role"] }) => WatsonTurn;
   newMirror: () => WatsonMirror;
+  onSleep: { fn?: () => Promise<void> | void };
 }
 
 let n = 0;
@@ -51,6 +52,7 @@ async function harness(): Promise<Harness> {
     clock,
     outcomes: [],
     liveness: { value: { ok: true } },
+    onSleep: {},
     masking: { value: { ok: true, mask: (t: string) => t.replace(/HOST-REAL/g, "HOST_1") } },
   } as unknown as Harness;
   const settle = async () => {
@@ -81,6 +83,9 @@ async function harness(): Promise<Harness> {
         };
       },
       sleep: async (ms) => {
+        const hook = h.onSleep.fn;
+        h.onSleep.fn = undefined;
+        if (hook) await hook();
         clock.now += ms;
       },
     });
@@ -282,5 +287,54 @@ describe("WatsonMirror", () => {
       .join("\n");
     expect(out.match(/before crash/g)?.length).toBe(1);
     for (let i = 0; i < 5; i++) expect(out).toContain(`down ${i}`);
+  });
+
+  describe("revocation in the middle of a split batch", () => {
+    const longTurn = () => h.addTurn({ role: "analyst", text: "x".repeat(10_000) });
+
+    it("stops sending once the chat is switched Off between chunks", async () => {
+      await enable(h);
+      longTurn();
+      h.onSleep.fn = async () => {
+        await h.store.disable("100");
+      };
+      await h.mirror.notify("c1");
+      await h.advance(10_000);
+      expect(h.sends.length).toBe(1);
+    });
+
+    it("stops sending once the chat is unbound between chunks", async () => {
+      await enable(h);
+      longTurn();
+      h.onSleep.fn = () => {
+        h.liveness.value = {
+          ok: false,
+          action: "disable",
+          reason: "the chat is no longer bound to the case",
+        };
+      };
+      await h.mirror.notify("c1");
+      await h.advance(10_000);
+      expect(h.sends.length).toBe(1);
+      expect(await h.store.get("100")).toBeUndefined();
+    });
+
+    it("stops when mirroring was turned off and on again (a new enablement) between chunks", async () => {
+      await enable(h);
+      longTurn();
+      h.onSleep.fn = async () => {
+        await h.store.disable("100");
+        await h.store.enable("100", {
+          caseId: "c1",
+          chatType: "private",
+          by: "43",
+          boundAt: "b2",
+          at: iso(h.clock.now),
+        });
+      };
+      await h.mirror.notify("c1");
+      await h.advance(10_000);
+      expect(h.sends.length).toBe(1);
+    });
   });
 });
