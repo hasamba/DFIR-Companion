@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AI Agent Forensics** — check chosen endpoints for tampered AI coding agents (poisoned instruction files, rogue MCP servers, hooks) with the ai-dfir-toolkit YARA/Sigma rules through Velociraptor; provisional grades, matched text kept away from the AI (closes #2690)
 - **Watson Telegram mirror** — opt-in per chat with `/dfir mirror on`; Watson's case chat is mirrored to a bound Telegram chat and allowlisted users can ask Watson from Telegram (closes #2647)
 
 ## [0.47.0] - 2026-11-19
