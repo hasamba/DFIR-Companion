@@ -1052,6 +1052,7 @@
     "usnLifecycle.ts": "analysis/ingest",
     "veloAggKeys.ts": "analysis/ingest",
     "veloDetectionNoise.ts": "analysis/ingest",
+    "veloHuntLayout.ts": "analysis/case",
     "veloHuntStore.ts": "analysis/case",
     "veloKeptSpan.ts": "analysis/ingest",
     "veloRereadReason.ts": "analysis/case",

@@ -20,7 +20,11 @@ import type { ImportContext } from "./importContext.js";
 
 /** Rows often carry no _Source: the Velociraptor-named file label stands in as the artifact name. */
 export function veloArtifactFromLabel(label: string): string {
-  const raw = label.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
+  // A hunt export's hunt-wide copy is `All <Artifact>.json` (#2714): the artifact is the rest.
+  const raw = label
+    .replace(/^\d+_/, "")
+    .replace(/\.(json|jsonl|ndjson|csv)$/i, "")
+    .replace(/^All[ _](?=[A-Za-z][\w-]*\.)/, "");
   try {
     return decodeURIComponent(raw);
   } catch {

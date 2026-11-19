@@ -48,6 +48,10 @@ import type { IngestDiskFile } from "./importIngestDisk.js";
 import type { DiskBatchIngest } from "./importIngestBatch.js";
 import { runDropSweep } from "./dropBatch.js";
 import { createDropStreamer, isGzipMagic, streamGzipDropFile } from "./dropStreamed.js";
+import { prepareHuntDrops } from "./dropHuntFolder.js";
+import { createHuntZipHandler, isZipCandidate } from "./dropHuntZip.js";
+import { pruneHuntZipLedgers } from "./dropHuntZipLedger.js";
+import { clearStaging } from "./dropHuntExtract.js";
 import {
   selectReadyFiles,
   excludeStuck,
@@ -57,6 +61,7 @@ import {
   dropMaxBytesFromEnv,
   DROP_PROCESSED,
   DROP_FAILED,
+  DROP_SKIPPED,
   DROP_README,
   DROP_README_TEXT,
   type DropFileStat,
@@ -189,6 +194,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     dropMaxBytes,
     veloSinkWired: () => !!options.bulkImportSink, // #2705
   }); // #2336
+  const handleHuntZip = createHuntZipHandler({
+    ...{ dropMaxBytes, resolveImportKind, ingestStreamed, recordImportFailure },
+    streamDropFile,
+    stateDir: (caseId) => store.stateDir(caseId),
+  }); // #2714
   // #1866: keyed by (case id, generation), so a deleted case's sweep state never carries into a
   // same-id successor, and its late `finally` never clears the successor's scanning mark.
   const seen = new CaseKeyedMap<Map<string, { size: number; mtimeMs: number }>>(() => store.casesRoot);
@@ -276,14 +286,14 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     processed?: ProcessedVersion,
   ): Promise<void> {
     return store
-      .withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, relpath, ok))
+      .withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, relpath, ok ? DROP_PROCESSED : DROP_FAILED))
       .catch(async (e: unknown) => {
         await stuckFiles.record(dropDir, relpath, ok, processed);
         throw e;
       });
   }
 
-  async function moveDropFileAdmitted(dropDir: string, relpath: string, ok: boolean): Promise<void> {
+  async function moveDropFileAdmitted(dropDir: string, relpath: string, destFolder: string): Promise<void> {
     // FIRST, before the mkdir below: this is the one function that renames a file, and its relpath
     // is not only the walk's — run-pending feeds it from state/drop-status.json, which an imported
     // archive restores verbatim (#919). The schema drops an escaping entry at load; this is the
@@ -293,7 +303,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       throw new Error(`refused to move a path outside the drop folder (security): ${relpath}`);
     }
     const src = join(dropDir, relpath);
-    const dest = await uniqueDest(join(dropDir, ok ? DROP_PROCESSED : DROP_FAILED, relpath));
+    const dest = await uniqueDest(join(dropDir, destFolder, relpath));
     await mkdir(dirname(dest), { recursive: true });
     try {
       // rename() operates on the directory entry itself, so it cannot follow a planted symlink to
@@ -450,6 +460,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // instead, decompressed on read when it holds a cloud export, refused otherwise (#2336).
       if (head && isGzipMagic(head))
         return streamGzipDropFile(streamDropFile, caseId, full, file.relpath, debug);
+      // A Velociraptor hunt export zip imports its members (#2714); any other zip routes as before.
+      const hunt = isZipCandidate(file.relpath, head)
+        ? await handleHuntZip({ caseId, dropDir, fullPath: full, file, modelCall })
+        : null;
+      if (hunt) return hunt;
 
       // A macOS Background Task Management file (#1013) is the one binary this codebase natively
       // decodes — checked BEFORE the raw-tool-input routing below claims it, even if an operator has
@@ -611,9 +626,18 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       const settled = selectReadyFiles(listing, seen.get(caseId) ?? new Map());
       const nextSeen = settled.nextSeen;
       seen.set(caseId, nextSeen);
-      const { ready, nextStuck } = excludeStuck(settled.ready, listing, stuck.get(caseId) ?? new Map());
+      const unstuck = excludeStuck(settled.ready, listing, stuck.get(caseId) ?? new Map());
+      const nextStuck = unstuck.nextStuck;
       stuck.set(caseId, nextStuck);
       await stuckFiles.retry(dropDir, nextStuck, moveDropFile);
+      // A hunt export imports one copy per artifact; the rest moves to _skipped/ (#2714).
+      await clearStaging(dropDir);
+      await pruneHuntZipLedgers(store.stateDir(caseId), listing).catch(() => undefined);
+      const ready = await prepareHuntDrops({
+        ...{ dropDir, listing, ready: unstuck.ready, stuck: nextStuck },
+        skipMove: (rel) =>
+          store.withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, rel, DROP_SKIPPED)),
+      });
       // A batch a crash interrupted gets its settle before anything else imports (#2540).
       await dropBatch
         ?.recoverDropBatch(caseId)

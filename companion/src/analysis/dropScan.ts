@@ -80,6 +80,8 @@ export function looksBinary(sample: Buffer): boolean {
 // Reserved subfolders the watcher writes to — never re-scanned (moving a file here *is* the dedup).
 export const DROP_PROCESSED = "_processed";
 export const DROP_FAILED = "_failed";
+// Hunt-export copies and metadata that were not imported (#2714) — set aside, never deleted.
+export const DROP_SKIPPED = "_skipped";
 
 // The usage hint dropped into an empty drop/ folder; ignored by the scanner.
 export const DROP_README = "README.txt";
@@ -103,7 +105,7 @@ function firstSegment(relpath: string): string {
 /** True for files in the reserved subtrees, the README, dotfiles, and known OS/sync junk. */
 export function shouldIgnoreDropFile(relpath: string): boolean {
   const seg0 = firstSegment(relpath);
-  if (seg0 === DROP_PROCESSED || seg0 === DROP_FAILED) return true;
+  if (seg0 === DROP_PROCESSED || seg0 === DROP_FAILED || seg0 === DROP_SKIPPED) return true;
   const base = basename(relpath);
   if (!base) return true;
   if (base.startsWith(".")) return true; // dotfiles / partial-download markers
@@ -245,10 +247,12 @@ export const DROP_README_TEXT = [
   "for Windows log exports with no client name inside (a GUI/notebook download); records under",
   "an older machine name are then shown as that host's history.",
   "After processing, files move to _processed/ (success) or _failed/ (error).",
+  "A Velociraptor hunt export (the .zip, or the unzipped folder) imports one copy of each artifact;",
+  "the duplicate copies and collection metadata of an unzipped hunt move to _skipped/.",
   "Failures are reported in the dashboard (📥 Drop banner) and any configured notification channel.",
   "A running history of every file processed (imported/failed/pending, with reasons) is kept in",
   "drop-log.txt in this same folder.",
   "",
-  "This README, drop-log.txt, and the _processed/ and _failed/ subfolders are ignored by the scanner.",
+  "This README, drop-log.txt, and the _processed/, _failed/ and _skipped/ subfolders are ignored by the scanner.",
   "",
 ].join("\n");
