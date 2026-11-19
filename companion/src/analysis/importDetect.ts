@@ -413,6 +413,7 @@ function looksLikeTheHive(s: Row, root: unknown): boolean {
 }
 
 function detectJson(root: unknown, sample: Row): ImportKind {
+  if (getCI(sample, "DFIRCompanionAIAgent") != null) return "velociraptor"; // AI Agent Forensics rows (#2690): own marker, own mapper
   // Intact (trimmed VolWeb) — FIRST: its `{plugins:{…},yara:[…]}` wrapper would fall through to the SIEM catch-all, and its YARA rows carry no field any other signature claims (#776).
   if (isIntactMemoryFile(root, sample)) return "memory";
   // A Volatility run envelope or a bundle of them (#1016): the discriminator decides, never the shape.

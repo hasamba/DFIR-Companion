@@ -8,7 +8,11 @@
 
 /** The source names (ForensicEvent.sources) whose rows carry a vendor's own grade. */
 export const GUARDDUTY_SOURCE = "AWS GuardDuty";
-const VENDOR_GRADED = new Set<string>([GUARDDUTY_SOURCE]);
+// AI Agent Forensics rows (#2690) carry the run's provisional grade, and their text is attacker-
+// planted by design: a tagger rule must not raise a hit on it, nor lift an inventory row (Info, so
+// super-timeline only) into the forensic timeline.
+export const AI_AGENT_FORENSICS_SOURCE = "AI Agent Forensics";
+const VENDOR_GRADED = new Set<string>([GUARDDUTY_SOURCE, AI_AGENT_FORENSICS_SOURCE]);
 
 /** True when the row's severity and MITRE are the vendor's own and no tagger rule may change them. */
 export function keepsVendorGrade(row: { sources?: readonly string[] }): boolean {
