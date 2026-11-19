@@ -4,6 +4,11 @@ import { closeTruncatedJsonArray } from "../analysis/extractJson.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { DEFAULT_MAX_IMPORT_FILE_MB, maxImportFileBytes } from "../analysis/ingest/importFileCap.js";
 import { gunzipBufferHead, isGzipMagic } from "../analysis/cloudStreamReader.js";
+import {
+  decodeFirstLine,
+  MAX_NDJSON_RECORD_BYTES,
+  readFirstLine,
+} from "../analysis/velociraptorFileRowStream.js";
 
 /**
  * The first look POST /cases/:id/import-file takes at a server-local file, and the one bound on
@@ -38,7 +43,26 @@ export async function sniffImportFileHead(fh: FileHandle): Promise<string> {
   const buf = Buffer.alloc(IMPORT_FILE_HEAD_BYTES);
   const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
   const sample = decodeImportedText(buf.subarray(0, bytesRead));
-  return closeTruncatedJsonArray(sample) ?? sample;
+  const whole = bytesRead === buf.length && cutsFirstRecord(sample) ? await wholeFirstRecord(fh) : null;
+  return whole ?? closeTruncatedJsonArray(sample) ?? sample;
+}
+
+// A head that opens a JSON object and holds no newline: JSON Lines whose first record is longer
+// than the sample (a long command line or script block), or one huge object (#2705 review).
+function cutsFirstRecord(sample: string): boolean {
+  const t = sample.trimStart();
+  return t.startsWith("{") && !/[\r\n]/.test(t);
+}
+
+/**
+ * The first record whole, for detection, read on the same handle and never past
+ * MAX_NDJSON_RECORD_BYTES — so a notebook export whose first row exceeds the head is classified by
+ * that row instead of refused as unknown. Null — keep the head sample and its usual completion —
+ * for a record longer than the bound, or a file that ends first (one object, not JSON Lines).
+ */
+async function wholeFirstRecord(fh: FileHandle): Promise<string | null> {
+  const first = await readFirstLine(fh, MAX_NDJSON_RECORD_BYTES);
+  return first?.terminated ? `${decodeFirstLine(first.line)}\n` : null;
 }
 
 /** Compressed bytes read to find the decompressed head of a gzip upload (#2303). */
@@ -85,6 +109,15 @@ const MB = 1024 * 1024;
 export { DEFAULT_MAX_IMPORT_FILE_MB, maxImportFileBytes };
 
 /**
+ * V8's longest string is ~512 MB: a file past it cannot be held whole however high the cap is set,
+ * so the 413 stops suggesting the cap there (#2705).
+ */
+export const STRING_CEILING_BYTES = 512 * MB;
+
+const STREAMING_KINDS =
+  "Plaso super-timelines, cloud audit exports (M365, CloudTrail, GCP/Azure) and Velociraptor JSON Lines stream from disk and are exempt";
+
+/**
  * The 413 message when a file would have to be held whole and is over the cap; null when it may be
  * read. Plaso is exempt: it streams from disk line by line and never becomes one string.
  */
@@ -94,9 +127,15 @@ export function importFileTooLarge(
   maxBytes = maxImportFileBytes(),
 ): string | null {
   if (kind === "plaso" || size <= maxBytes) return null;
+  const head = `file is too large to import as ${kind} (${Math.ceil(size / MB)} MB > ${Math.round(maxBytes / MB)} MB) — `;
+  if (size > STRING_CEILING_BYTES)
+    return (
+      head +
+      "a file this large cannot be held in memory at any setting; split the file" +
+      (kind === "velociraptor" ? ", or export it from Velociraptor as JSON Lines (one row per line)" : "") +
+      `. ${STREAMING_KINDS}`
+    );
   return (
-    `file is too large to import as ${kind} (${Math.ceil(size / MB)} MB > ${Math.round(maxBytes / MB)} MB) — ` +
-    "raise DFIR_MAX_IMPORT_FILE_MB and restart the companion, or split the file; " +
-    "only Plaso super-timelines and cloud audit exports (M365, CloudTrail, GCP/Azure) stream and are exempt"
+    head + `raise DFIR_MAX_IMPORT_FILE_MB and restart the companion, or split the file; ${STREAMING_KINDS}`
   );
 }

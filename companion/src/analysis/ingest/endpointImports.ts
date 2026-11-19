@@ -32,6 +32,7 @@ import {
   mergeAndSaveDelta,
 } from "./importState.js";
 import { bulkPathApplies, importVelociraptorBulk } from "./velociraptorBulk.js";
+import { veloArtifactFromLabel } from "./velociraptorFileImport.js";
 import type { ImportContext } from "./importContext.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import { recordParsedImport } from "./parsedDebug.js";
@@ -188,13 +189,7 @@ export async function importVelociraptor(
 ): Promise<InvestigationState> {
   // Rows often carry no _Source; use the (Velociraptor-named) filename as the fallback artifact
   // label so generic/detection events show their source — e.g. "DetectRaptor.Windows.Detection.NamedPipes".
-  const rawArtifact = opts.label.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
-  let artifact = rawArtifact;
-  try {
-    artifact = decodeURIComponent(rawArtifact);
-  } catch {
-    /* malformed %xx — keep the raw label */
-  }
+  const artifact = veloArtifactFromLabel(opts.label);
   // A large export takes the batched driver when its stores are wired (#1439): rows in batches,
   // tag → gate → append per batch, nothing held for the whole file. It returns null for a shape
   // its row reader cannot stream, and the whole-file path below then runs unchanged.

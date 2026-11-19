@@ -18,6 +18,10 @@ import { safeKind, createImportDebugRecorder } from "../analysis/importDebug.js"
 import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { decodeImportedText } from "../ingest/decodeText.js";
 
+// The kinds whose streamed first run read the stored file from disk: a resume reads it the same way.
+const readsStoredFile = (kind: string): boolean =>
+  kind === "plaso" || kind === "velociraptor" || isStreamKind(kind);
+
 const importParametersSchema = z.object({
   kind: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
   storedName: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/),
@@ -121,8 +125,9 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         );
         try {
           let text: string | undefined;
-          // Plaso and a streamed cloud export (#2303) re-read the stored file from disk, as the first run did.
-          if (parameters.streaming && (parameters.kind === "plaso" || isStreamKind(parameters.kind))) {
+          // Plaso, a streamed cloud export (#2303) and a streamed Velociraptor JSON Lines file (#2705)
+          // re-read the stored file from disk, as the first run did.
+          if (parameters.streaming && readsStoredFile(parameters.kind)) {
             await runDiskImport(ctx, parameters.kind, job.caseId, artifactPath, parameters.storedName, base);
           } else {
             text = decodeImportedText(await readFile(artifactPath)); // BOM-aware, as the first run read it

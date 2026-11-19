@@ -5,7 +5,8 @@
  * path sniffs, and a cloud audit export or Plaso super-timeline is streamed from that same
  * descriptor instead of being read whole or refused. A cloud kind streams whenever the alternative
  * is a refusal — gzip, or over the drop cap — not only past the routes' 32 MB threshold. A gzip of
- * any other kind gets the routes' own GZIP_ONLY_CLOUD refusal.
+ * any other kind gets the routes' own GZIP_ONLY_CLOUD refusal. A Velociraptor JSON Lines export over
+ * the drop cap streams the same way (#2705); any other Velociraptor shape keeps the oversize refusal.
  */
 import { basename } from "node:path";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
@@ -15,6 +16,7 @@ import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { openNoFollow } from "../storage/noFollowRead.js";
 import { sniffImportFileHeadDetail } from "../routes/importFileHead.js";
 import { GZIP_ONLY_CLOUD, readsFromDisk } from "../routes/importCloudStream.js";
+import { decideVeloDiskStream, veloDiskStreamThreshold } from "../routes/importVeloStream.js";
 import type { IngestDiskFile } from "./importIngestDisk.js";
 
 export { isGzipMagic };
@@ -29,6 +31,8 @@ export interface DropStreamerDeps {
   resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
   ingestDiskFile: IngestDiskFile;
   dropMaxBytes: number;
+  /** Whether the batched Velociraptor importer's stores are wired — a large JSON Lines export streams only then (#2705). */
+  veloSinkWired?: () => boolean;
 }
 
 /** Null: not a kind that streams (and not gzip) — the caller takes its usual path. */
@@ -41,6 +45,7 @@ export type StreamDropFile = (
 
 export function createDropStreamer(deps: DropStreamerDeps): StreamDropFile {
   const { resolveImportKind, ingestDiskFile, dropMaxBytes } = deps;
+  const veloSinkWired = deps.veloSinkWired ?? (() => false);
   return async (caseId, fullPath, relpath, debug) => {
     const name = basename(relpath);
     const handle = await openNoFollow(fullPath);
@@ -48,7 +53,15 @@ export function createDropStreamer(deps: DropStreamerDeps): StreamDropFile {
       const { sample, gzip } = await sniffImportFileHeadDetail(handle);
       const kind = resolveImportKind(name.replace(/\.gz$/i, ""), sample, debug);
       const { size } = await handle.stat();
-      const streams = readsFromDisk(kind, size, gzip) || (isStreamKind(kind) && size > dropMaxBytes);
+      // A Velociraptor JSON Lines file streams whenever the alternative is a refusal at the drop cap (#2705).
+      const veloThreshold = Math.min(veloDiskStreamThreshold(), dropMaxBytes);
+      const velo = await decideVeloDiskStream(
+        { kind, handle, size, gzip, sinkWired: veloSinkWired() },
+        veloThreshold,
+      );
+      if (velo.refuse) return { ok: false, reason: velo.refuse };
+      const streams =
+        velo.streams || readsFromDisk(kind, size, gzip) || (isStreamKind(kind) && size > dropMaxBytes);
       if (!streams) return gzip ? { ok: false, reason: GZIP_ONLY_CLOUD } : null;
       const assetHost = assetHostFromDropRelpath(relpath) || undefined;
       const r = await ingestDiskFile(caseId, kind, handle, name, assetHost, debug);

@@ -191,6 +191,18 @@ function isChainsaw(s: Row): boolean {
     (!!getCI(s, "Channel") || isObject(getCI(s, "SystemData")))
   );
 }
+// A Velociraptor notebook export (#2705): no artifact stamp, a NESTED Detection object, EventData
+// flattened beside Channel/EventID. The client id `C.<16 hex>` is Velociraptor's own, but one more
+// Velociraptor column must agree so a SIEM's unrelated `ClientId` column is never claimed.
+const VR_CLIENT_ID = /^C\.[0-9a-f]{16}$/;
+function isVeloNotebookRow(s: Row): boolean {
+  if (VR_CLIENT_ID.test(str(getCI(s, "ClientId")))) {
+    if (/^F\./.test(str(getCI(s, "FlowId")))) return true;
+    if (getCI(s, "Fqdn") != null || getCI(s, "EventTime") != null || getCI(s, "OSPath") != null) return true;
+  }
+  const det = getCI(s, "Detection");
+  return isObject(det) && typeof getCI(det, "Name") === "string" && isObject(getCI(s, "EventData"));
+}
 function isVelociraptor(s: Row, root: unknown): boolean {
   // `_Source` is Velociraptor's stamp: a STRING naming the artifact. Elasticsearch's `_source` is the
   // hit wrapper: an OBJECT holding the document. The case-insensitive lookup cannot tell the keys
@@ -447,6 +459,10 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (looksLikeSysdig(sample)) return "sysdig";
   if (looksLikeJournald(sample)) return "journald";
   if (isThor(sample)) return "thor";
+  // A notebook export carries the hunt's ClientId/FlowId/Fqdn on rows of ANY tool — a Hayabusa or
+  // THOR result keeps its own importer — so this signature claims only what every specific check
+  // above has passed on, and only ahead of the SIEM catch-all (#2705).
+  if (isVeloNotebookRow(sample)) return "velociraptor";
   if (isSiem(sample)) return "siem";
   // Capa-shaped but unsupported (e.g. flavor "dynamic", #1124) — refuse right before the
   // unconditional SIEM fallback, after every specific importer above has had first claim.

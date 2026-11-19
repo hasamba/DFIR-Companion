@@ -94,7 +94,8 @@ function skipValue(text: string, i: number): number {
   return -1;
 }
 
-function unwrapSource(el: unknown): Row | null {
+/** An Elastic hit's `_source` document, or the object itself; null for a non-object. */
+export function unwrapSource(el: unknown): Row | null {
   if (!isObject(el)) return null;
   const src = getCI(el, "_source");
   return isObject(src) ? src : el;

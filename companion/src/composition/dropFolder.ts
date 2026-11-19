@@ -183,7 +183,12 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   const watchEnabled = (process.env.DFIR_DROP_ENABLED ?? "on").trim().toLowerCase() !== "off";
   const dropPollMs = Math.min(600, Math.max(2, Number(process.env.DFIR_DROP_POLL_S) || 10)) * 1000;
   const dropMaxBytes = dropMaxBytesFromEnv();
-  const streamDropFile = createDropStreamer({ resolveImportKind, ingestDiskFile, dropMaxBytes }); // #2336
+  const streamDropFile = createDropStreamer({
+    resolveImportKind,
+    ingestDiskFile,
+    dropMaxBytes,
+    veloSinkWired: () => !!options.bulkImportSink, // #2705
+  }); // #2336
   // #1866: keyed by (case id, generation), so a deleted case's sweep state never carries into a
   // same-id successor, and its late `finally` never clears the successor's scanning mark.
   const seen = new CaseKeyedMap<Map<string, { size: number; mtimeMs: number }>>(() => store.casesRoot);

@@ -300,23 +300,18 @@ export class AnalysisPipeline {
   importThor(...args: ImporterArgs<typeof ingest.importThor>): Promise<InvestigationState> {
     return ingest.importThor(this.importCtx, ...args);
   }
-
   importSiem(...args: ImporterArgs<typeof ingest.importSiem>): Promise<InvestigationState> {
     return ingest.importSiem(this.importCtx, ...args);
   }
-
   importEvtxXml(...args: ImporterArgs<typeof ingest.importEvtxXml>): Promise<InvestigationState> {
     return ingest.importEvtxXml(this.importCtx, ...args);
   }
-
   importBashHistory(...args: ImporterArgs<typeof ingest.importBashHistory>): Promise<InvestigationState> {
     return ingest.importBashHistory(this.importCtx, ...args);
   }
-
   importDeclarative(...args: ImporterArgs<typeof ingest.importDeclarative>): Promise<InvestigationState> {
     return ingest.importDeclarative(this.importCtx, ...args);
   }
-
   promoteSuperTimeline(
     ...args: ImporterArgs<typeof ingest.promoteSuperTimeline>
   ): Promise<InvestigationState> {
@@ -345,6 +340,11 @@ export class AnalysisPipeline {
 
   importVelociraptor(...args: ImporterArgs<typeof ingest.importVelociraptor>): Promise<InvestigationState> {
     return ingest.importVelociraptor(this.importCtx, ...args);
+  }
+  importVelociraptorFile(
+    ...args: ImporterArgs<typeof ingest.importVelociraptorFile>
+  ): Promise<InvestigationState> {
+    return ingest.importVelociraptorFile(this.importCtx, ...args);
   }
   // A pulled Velociraptor artifact: a Hayabusa result takes the Hayabusa importer, as from the drop folder (#1756).
   importVelociraptorArtifact(

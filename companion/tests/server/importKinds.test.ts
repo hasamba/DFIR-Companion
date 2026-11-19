@@ -62,7 +62,12 @@ describe("cancellableByParse — parse-driven cancellability (#2337)", () => {
 
   it("does not key on streaming alone: a streaming Plaso import stays non-cancellable", () => {
     expect(cancellableByParse("plaso", true)).toBe(false);
-    expect(cancellableByParse("velociraptor", true)).toBe(false);
+    expect(cancellableByParse("hayabusa", true)).toBe(false);
+  });
+
+  it("is true for a Velociraptor JSON Lines file streamed from disk, false on its whole-file path (#2705)", () => {
+    expect(cancellableByParse("velociraptor", true)).toBe(true);
+    expect(cancellableByParse("velociraptor", false)).toBe(false);
   });
 
   it("keeps the parse-progress kinds cancellable either way, and the set itself unchanged", () => {
