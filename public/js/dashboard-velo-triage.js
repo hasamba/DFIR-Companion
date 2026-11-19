@@ -479,23 +479,59 @@
       });
   }
 
-  // "Already pulled into this case" (#1965): the server answered 409 before reading anything. Say when,
-  // and offer the re-import — a running hunt can have gained rows since, so this never blocks.
+  // Why an artifact needs importing again (#2700), in the analyst's words.
+  const VELO_REIMPORT_REASONS = {
+    "no-record": "no record from the earlier import",
+    failed: "failed or did not finish last time",
+    truncated: "cut short at the row cap",
+    unread: "only partly read",
+    settings: "imported with a different destination or severity floor",
+    unknown: "can't tell whether it changed",
+    live: "a host is still collecting it",
+    changed: "the server has new rows since",
+  };
+
+  // The 409's per-artifact plan (#2700): what needs importing and why, "Import those" for just them.
+  function veloReimportPlanHtml(prior) {
+    const total = (prior.requested || []).length;
+    const todo = prior.toImport || [];
+    if (!todo.length) return `All ${esc(total)} artifact(s) are up to date. `;
+    const items = todo
+      .map((t) => `<li>${esc(t.name)} — ${esc(VELO_REIMPORT_REASONS[t.reason] || t.reason)}</li>`)
+      .join("");
+    return (
+      `${esc(todo.length)} of ${esc(total)} artifact(s) need importing:<ul>${items}</ul>` +
+      `<button type="button" class="velo-reimport-changed-btn">Import those (${esc(todo.length)})</button> `
+    );
+  }
+
+  // "Already pulled into this case" (#1965): the server answered 409 before reading any row. Say when,
+  // and offer the re-import — a running hunt can have gained rows since, so this never blocks. A server
+  // that sent the per-artifact plan (#2700) gets "Import those" for just the artifacts that need it.
   function veloShowAlreadyImported(msg, prior) {
     const what =
       prior.kind === "flow" ? `Flow ${esc(prior.flowId)}` : `Hunt ${esc(prior.huntId)}`;
     const when = esc(String(prior.lastImportedAt || "").replace("T", " ").slice(0, 16));
-    msg.innerHTML =
-      `${what} was already pulled into this case on ${when} UTC ` +
-      `(${esc((prior.artifacts || []).length)} artifact(s)). Import again? It re-reads every row; ` +
-      `do this if the hunt collected more since. ` +
-      `<button type="button" class="velo-reimport-btn">Re-import anyway</button>`;
+    const head = `${what} was already pulled into this case on ${when} UTC`;
+    if (Array.isArray(prior.toImport)) {
+      msg.innerHTML =
+        `${head}. ${veloReimportPlanHtml(prior)}` +
+        `<button type="button" class="velo-reimport-btn">Re-read everything</button>`;
+      const changed = msg.querySelector(".velo-reimport-changed-btn");
+      if (changed) changed.onclick = () => veloImportExternal("changed");
+    } else {
+      msg.innerHTML =
+        `${head} (${esc((prior.artifacts || []).length)} artifact(s)). Import again? It re-reads every row; ` +
+        `do this if the hunt collected more since. ` +
+        `<button type="button" class="velo-reimport-btn">Re-import anyway</button>`;
+    }
     const btn = msg.querySelector(".velo-reimport-btn");
     if (btn) btn.onclick = () => veloImportExternal(true);
   }
 
   // Import the results of a hunt/flow launched directly in the Velociraptor GUI (paste id or URL).
-  // The Import button passes its click event, so only a literal `true` asks for the re-import.
+  // The Import button passes its click event, so only a literal `true` (everything) or "changed"
+  // (#2700: only what needs it) asks for a re-import.
   function veloImportExternal(reimport) {
     const caseId = veloCaseId();
     const msg = document.getElementById("veloExtMsg");
@@ -516,7 +552,12 @@
     fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/import-external`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ref, minSeverity, superTimelineOnly, reimport: reimport === true }),
+      body: JSON.stringify({
+        ref,
+        minSeverity,
+        superTimelineOnly,
+        reimport: reimport === true || reimport === "changed" ? reimport : false,
+      }),
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
@@ -556,8 +597,9 @@
           { unread: j.unreadArtifacts, truncated: j.truncatedArtifacts, failed: j.failedArtifacts },
           "Import again once the server answers.",
         );
+        const skipped = (j.upToDate || []).length ? `, ${esc(j.upToDate.length)} up to date (not re-read)` : "";
         msg.innerHTML =
-          `${where}${dest} — imported ${(j.artifacts || []).length} artifact(s), ${counts}` +
+          `${where}${dest} — imported ${(j.artifacts || []).length} artifact(s)${skipped}, ${counts}` +
           (j.note ? ` (${esc(j.note)})` : "") +
           gaps;
         loadVeloHuntJobs(caseId);

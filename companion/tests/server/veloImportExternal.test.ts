@@ -8,6 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
+import { ImportUndoStore, emptyUndoStack, pushCheckpoint } from "../../src/analysis/importUndo.js";
 import {
   VelociraptorClient,
   type VelociraptorApiConfig,
@@ -46,7 +47,21 @@ const THOR_LINE = JSON.stringify({
   sha256: "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef",
 });
 
+const FLOW_META = {
+  clientId: "C.123",
+  flowId: "F.XYZ",
+  state: "FINISHED",
+  rows: 1,
+  created: 1,
+  started: 2,
+  active: 3,
+  results: [] as string[],
+};
+
 interface MockVeloClient {
+  sourceNamespace(): string;
+  huntFlowMeta(huntId: string): Promise<(typeof FLOW_META)[] | undefined>;
+  flowMeta(clientId: string, flowId: string): Promise<(typeof FLOW_META)[] | undefined>;
   getHuntArtifacts(huntId: string): Promise<string[]>;
   huntResultsByArtifact(
     huntId: string,
@@ -72,6 +87,8 @@ async function makeApp(
   huntResults: Record<string, unknown[]> = { "Windows.NTFS.MFT": [MFT_ROW] },
   uploads: { name: string; clientId: string; content: string }[] = [],
   sourcesUnknown: string[] = [], // artifacts whose source list the catalog could not give (#1645)
+  truncated: string[] = [], // artifacts whose read hits the row cap (#2700)
+  withUndo = false, // give the app an import undo store (#2700: Undo forgets the re-import ledger)
 ) {
   const root = await mkdtemp(join(tmpdir(), "dfir-velo-ext-"));
   const store = new CaseStore(root);
@@ -85,10 +102,12 @@ async function makeApp(
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
 
+  const undoStore = new ImportUndoStore(store);
   // One import at a time per case — the production setting. The external import is an import
   // like any other, so it takes the case's slot and shows in the Background jobs popover (#1428).
   const jobManager = new JobManager({ perCaseConcurrency: 1 });
   let rowsFetchCalls = 0;
+  let metaRows = 1;
   let lookupCalls = 0; // getHuntArtifacts / getFlowInfo: the first Velociraptor call of a row import
   const client: MockVeloClient = {
     async getHuntArtifacts() {
@@ -103,7 +122,16 @@ async function makeApp(
       rowsFetchCalls++;
       const rows = huntResults[artifact] ?? [];
       const unknown = sourcesUnknown.includes(artifact) ? { sourcesUnknown: true as const } : {};
-      return { rows, total: rows.length, truncated: false, ...unknown };
+      return { rows, total: rows.length, truncated: truncated.includes(artifact), ...unknown };
+    },
+    // #2700: the server's per-flow state — one finished flow listing every artifact, `metaRows` rows.
+    sourceNamespace: () => "test-server|root",
+    async huntFlowMeta() {
+      const results = Object.keys(huntResults);
+      return [{ ...FLOW_META, rows: metaRows, results }];
+    },
+    async flowMeta() {
+      return [{ ...FLOW_META, rows: metaRows, results: ["Windows.NTFS.MFT"] }];
     },
     async getFlowInfo() {
       lookupCalls++;
@@ -134,6 +162,7 @@ async function makeApp(
     superTimelineStore,
     jobManager,
     serverClients: veloServerClients(client),
+    ...(withUndo ? { importUndoStore: undoStore } : {}),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return {
@@ -143,6 +172,10 @@ async function makeApp(
     jobManager,
     getRowsFetchCalls: () => rowsFetchCalls,
     getLookupCalls: () => lookupCalls,
+    undoStore,
+    setServerRows: (n: number) => {
+      metaRows = n;
+    },
   };
 }
 
@@ -740,11 +773,12 @@ describe("POST /cases/:id/velociraptor/import-external — already imported (#19
   const post = (app: App, body: Record<string, unknown>) =>
     request(app).post("/cases/c1/velociraptor/import-external").send(body);
 
-  it("answers 409 for a hunt already in the case, with no Velociraptor call", async () => {
-    const { app, getRowsFetchCalls, getLookupCalls } = await makeApp();
+  // #2700: the 409 now says which artifacts need importing, so it looks the hunt up (metadata only)
+  // — still no row is read.
+  it("answers 409 for a hunt already in the case, with no row read", async () => {
+    const { app, getRowsFetchCalls } = await makeApp();
     expect((await post(app, { ref: "H.ABC" })).status).toBe(200);
     const reads = getRowsFetchCalls();
-    const lookups = getLookupCalls();
 
     const again = await post(app, { ref: "H.ABC" });
     expect(again.status).toBe(409);
@@ -755,7 +789,6 @@ describe("POST /cases/:id/velociraptor/import-external — already imported (#19
     });
     expect(typeof again.body.alreadyImported.firstImportedAt).toBe("string");
     expect(getRowsFetchCalls()).toBe(reads);
-    expect(getLookupCalls()).toBe(lookups);
   });
 
   it("reads and imports as today when the request says reimport: true", async () => {
@@ -775,15 +808,13 @@ describe("POST /cases/:id/velociraptor/import-external — already imported (#19
   });
 
   it("answers 409 for a flow already in the case, and reimport: true reads it again", async () => {
-    const { app, getRowsFetchCalls, getLookupCalls } = await makeApp();
+    const { app, getRowsFetchCalls } = await makeApp();
     expect((await post(app, { ref: "C.123/F.XYZ" })).status).toBe(200);
     const reads = getRowsFetchCalls();
-    const lookups = getLookupCalls();
     const again = await post(app, { ref: "C.123/F.XYZ" });
     expect(again.status).toBe(409);
     expect(again.body.alreadyImported).toMatchObject({ kind: "flow", flowId: "F.XYZ" });
     expect(getRowsFetchCalls()).toBe(reads);
-    expect(getLookupCalls()).toBe(lookups);
     expect((await post(app, { ref: "C.123/F.XYZ", reimport: true })).status).toBe(200);
     expect(getRowsFetchCalls()).toBeGreaterThan(reads);
   });
@@ -822,5 +853,79 @@ describe("POST /cases/:id/velociraptor/import-external — already imported (#19
     });
     expect(res.status).toBe(200);
     expect(res.body.uploadsOnly).toBe(true);
+  });
+});
+
+// #2700: a re-import reads only the artifacts that are new, changed or were not read in full.
+describe("POST /cases/:id/velociraptor/import-external — only what changed (#2700)", () => {
+  type App = Awaited<ReturnType<typeof makeApp>>["app"];
+  const post = (app: App, body: Record<string, unknown>) =>
+    request(app).post("/cases/c1/velociraptor/import-external").send(body);
+  const TWO = { "Windows.NTFS.MFT": [MFT_ROW], "Windows.Detection.Yara": [YARA_ROW] };
+
+  it("the 409 names the cut-short artifact, and 'changed' re-reads only it", async () => {
+    const { app, getRowsFetchCalls } = await makeApp(TWO, [], [], ["Windows.Detection.Yara"]);
+    expect((await post(app, { ref: "H.ABC" })).status).toBe(200);
+    const again = await post(app, { ref: "H.ABC" });
+    expect(again.status).toBe(409);
+    expect(again.body.alreadyImported).toMatchObject({
+      toImport: [{ name: "Windows.Detection.Yara", reason: "truncated" }],
+      upToDate: ["Windows.NTFS.MFT"],
+      requested: ["Windows.NTFS.MFT", "Windows.Detection.Yara"],
+    });
+    const reads = getRowsFetchCalls();
+    const changed = await post(app, { ref: "H.ABC", reimport: "changed" });
+    expect(changed.status).toBe(200);
+    expect(getRowsFetchCalls()).toBe(reads + 1);
+    expect(changed.body.upToDate).toEqual(["Windows.NTFS.MFT"]);
+    expect(changed.body.requestedArtifacts).toEqual(["Windows.NTFS.MFT", "Windows.Detection.Yara"]);
+  });
+
+  it("'changed' with everything up to date reads nothing and says so", async () => {
+    const { app, getRowsFetchCalls } = await makeApp();
+    await post(app, { ref: "H.ABC" });
+    const reads = getRowsFetchCalls();
+    const res = await post(app, { ref: "H.ABC", reimport: "changed" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ kind: "hunt", huntId: "H.ABC", artifacts: [], addedEvents: 0 });
+    expect(res.body.note).toMatch(/up to date/);
+    expect(getRowsFetchCalls()).toBe(reads);
+  });
+
+  it("an artifact the server holds more rows for since is re-read", async () => {
+    const { app, setServerRows } = await makeApp();
+    await post(app, { ref: "H.ABC" });
+    setServerRows(5);
+    const again = await post(app, { ref: "H.ABC" });
+    expect(again.body.alreadyImported.toImport).toEqual([{ name: "Windows.NTFS.MFT", reason: "changed" }]);
+  });
+
+  it("importing to a different destination re-reads the artifact", async () => {
+    const { app } = await makeApp();
+    await post(app, { ref: "H.ABC" });
+    const again = await post(app, { ref: "H.ABC", superTimelineOnly: true });
+    expect(again.body.alreadyImported.toImport).toEqual([{ name: "Windows.NTFS.MFT", reason: "settings" }]);
+  });
+
+  it("a flow re-import tracks its artifacts too", async () => {
+    const { app, getRowsFetchCalls } = await makeApp();
+    await post(app, { ref: "C.123/F.XYZ" });
+    const reads = getRowsFetchCalls();
+    const res = await post(app, { ref: "C.123/F.XYZ", reimport: "changed" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ kind: "flow", flowId: "F.XYZ", hostname: "DESKTOP-01", artifacts: [] });
+    expect(getRowsFetchCalls()).toBe(reads);
+  });
+
+  it("Undo forgets the record, so the next re-import reads the artifact again", async () => {
+    const { app, undoStore, stateStore } = await makeApp(undefined, [], [], [], true);
+    await post(app, { ref: "H.ABC" });
+    // One checkpoint to undo, whatever this app's import path records.
+    const checkpoint = { label: "velo", at: new Date().toISOString(), state: await stateStore.load("c1") };
+    await undoStore.save("c1", pushCheckpoint(emptyUndoStack(), checkpoint, 10, undoStore.byteBudget()));
+    expect((await request(app).post("/cases/c1/import/undo")).status).toBe(200);
+    const again = await post(app, { ref: "H.ABC" });
+    expect(again.status).toBe(409); // the audit log still knows the hunt
+    expect(again.body.alreadyImported.toImport).toEqual([{ name: "Windows.NTFS.MFT", reason: "no-record" }]);
   });
 });

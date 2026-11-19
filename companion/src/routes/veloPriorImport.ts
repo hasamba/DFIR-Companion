@@ -1,17 +1,16 @@
 // "Was this hunt or flow already pulled into this case?" (#1965) — asked by the import-external route
-// BEFORE any Velociraptor call, so a repeat paste does not re-read every row under the case's import
+// BEFORE any row is read, so a repeat paste does not re-read every row under the case's import
 // slot only to dedup to "+0 events". The answer comes from the case's import audit log
 // (metadata/imports.jsonl): every Velociraptor artifact import appends one line whose originalName is
 // `velo-hunt_<huntId>_<artifact>.json` or `velo-flow_<flowId>_<artifact>.json`. A hunt the Companion
 // collected itself ("Collect now") uses the same hunt label, so it counts too — its rows are in the case.
 //
 // The audit line is written before the memory guard can refuse an import, so a "prior import" means
-// "already pulled into this case", not "fully imported". The route only warns; "Re-import anyway"
-// always goes through. Uploads URLs (`velo-hunt-uploads_…`) never reach this log by that label and are
-// out of scope.
+// "already pulled into this case", not "fully imported": whether each artifact was read in full, and
+// whether the server holds more since, is the per-artifact ledger's job (veloReimport.ts, #2700).
+// Uploads URLs (`velo-hunt-uploads_…`) never reach this log by that label and are out of scope.
 
 import { readFile } from "node:fs/promises";
-import type { VeloRef } from "../analysis/veloRef.js";
 
 /** What the 409 answer carries so the dashboard can say when and what. */
 export type PriorVeloImport = (
@@ -25,7 +24,10 @@ export const NOTEBOOK_URL_ERROR =
 // A flow label holds no client id, so a flow is keyed on its flow id alone. Flow ids are random per
 // collection, so a collision across clients is not a practical risk. The trailing `_` keeps H.AB from
 // matching H.ABC.
-const labelPrefix = (ref: VeloRef): string =>
+/** The hunt or flow, by id (a VeloRef narrows to this; so does a ledger key's source). */
+export type PriorRef = { kind: "hunt"; huntId: string } | { kind: "flow"; clientId: string; flowId: string };
+
+const labelPrefix = (ref: PriorRef): string =>
   ref.kind === "hunt" ? `velo-hunt_${ref.huntId}_` : `velo-flow_${ref.flowId}_`;
 
 interface AuditLine {
@@ -57,7 +59,7 @@ async function readAuditLog(path: string): Promise<string> {
 export async function priorVeloImport(
   store: { importsLogPath(caseId: string): string },
   caseId: string,
-  ref: VeloRef,
+  ref: PriorRef,
 ): Promise<PriorVeloImport | null> {
   const prefix = labelPrefix(ref);
   const hits = (await readAuditLog(store.importsLogPath(caseId)))
@@ -72,17 +74,4 @@ export async function priorVeloImport(
       ? { kind: "hunt" as const, huntId: ref.huntId }
       : { kind: "flow" as const, clientId: ref.clientId, flowId: ref.flowId };
   return { ...id, firstImportedAt: dates[0], lastImportedAt: dates[dates.length - 1], artifacts };
-}
-
-/**
- * The prior import the route must warn about, or null to import now. Null for an uploads URL (out of
- * scope) and for "Re-import anyway". Only a literal `true` forces it: a truthy string must not.
- */
-export async function priorVeloImportToWarn(
-  store: { importsLogPath(caseId: string): string },
-  caseId: string,
-  ref: VeloRef,
-  reimport: unknown,
-): Promise<PriorVeloImport | null> {
-  return ref.isUploadsUrl || reimport === true ? null : priorVeloImport(store, caseId, ref);
 }

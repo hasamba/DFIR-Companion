@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Velociraptor re-import reads only what changed** — pasting a hunt or flow again lists the artifacts that were cut short, failed or gained rows since, and Import those reads only them (closes #2700)
 - **Burst coverage question** — when a grouped burst hides command lines behind "+N more", a system-marked Key Question lists them so Watson Auto reads them; it closes when findings cite them all (closes #2681)
 - **Watson demotes or dismisses disproved findings** — Watson can propose lowering or dismissing a synthesis finding its evidence disproves, with reason and Undo; in Auto, High/Critical changes wait for approval (closes #2682)
 - **NG-SIEM connection Test and real failure reasons** — Settings Test checks sign-in, NGSIEM Write and Read step by step; a failed search names DNS, network, TLS (with the certificate issuer) or the base URL; new DFIR_CROWDSTRIKE_SIEM_CA; Open in Falcon link on CQL and Watson search cards (closes #2685)
