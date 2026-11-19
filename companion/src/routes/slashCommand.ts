@@ -31,6 +31,10 @@ import { SlackSocketMode, type SlackCommandPayload } from "../analysis/slackSock
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
 import { runWatsonSlash } from "./watsonSlash.js";
+import { WATSON_TURN_TEXT_MAX } from "../analysis/ai/watson/chatStore.js";
+import { guardCase } from "./slashCaseGuard.js";
+import { chatMirrorsCase, runMirrorCommand, stopMirrorOnRebind } from "./watsonMirrorCommand.js";
+import { askFromMirror, classifyMirrorInbound } from "./watsonMirrorInbound.js";
 
 /** /dfir synthesize is an analyst's "run now" (#1608) — see resynthesizeInBackground. */
 const RUN_NOW = { analyst: true } as const;
@@ -219,11 +223,14 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
       verifyTelegramSecret(presented, expected),
     );
     if (!guess.ok) return void refuse(res, guess);
+    // #2647: a mirroring chat's plain text is a Watson question; group chatter is ignored unanswered.
+    const inbound = await classifyMirrorInbound(ctx, body.message);
+    if (inbound.kind === "ignore") return void res.status(200).json({});
     if (!limiter.tryAcquire(`telegram:${channelId}`)) {
       return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
     }
 
-    await answer(res, {
+    const input: DispatchInput = {
       platform: "telegram",
       channelId,
       userId: String(message.from?.id ?? ""),
@@ -232,7 +239,9 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
       actionAllowlist: envList("DFIR_TELEGRAM_ACTION_USERS"),
       channelStore,
       ctx,
-    });
+      chatType: message.chat?.type,
+    };
+    await answer(res, input, inbound.kind === "question" ? await askFromMirror(input, inbound) : undefined);
   });
 }
 
@@ -274,6 +283,8 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
       const chatId = String(message.chat?.id ?? "");
       const text = String(message.text ?? message.caption ?? "");
       if (!chatId || !text.trim()) return; // a join notice, a photo with no caption — nothing to run
+      const inbound = await classifyMirrorInbound(ctx, update.message); // #2647, as the webhook does
+      if (inbound.kind === "ignore") return;
 
       // Same per-channel cap as the webhook route. Polled commands are authenticated by
       // construction, but a runaway script in one chat can still burn the AI budget.
@@ -288,7 +299,7 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
         return;
       }
 
-      const result = await dispatchSlashCommand({
+      const input: DispatchInput = {
         platform: "telegram",
         channelId: chatId,
         userId: String(message.from?.id ?? ""),
@@ -297,7 +308,10 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
         actionAllowlist: parseHostList(process.env.DFIR_TELEGRAM_ACTION_USERS),
         channelStore,
         ctx,
-      });
+        chatType: message.chat?.type,
+      };
+      const result =
+        inbound.kind === "question" ? await askFromMirror(input, inbound) : await dispatchSlashCommand(input);
       await sendTelegramMessage({
         botToken,
         apiBase,
@@ -368,8 +382,8 @@ export function startSlackSocketMode(ctx: RouteContext): SlackSocketMode | undef
 /** Dispatch a webhook-delivered command and write the answer in the platform's envelope. Any
  *  follow-up work starts only after the answer is on its way, so the platform's ~3s budget is
  *  spent on the ACK and not on an AI call. */
-async function answer(res: Response, input: DispatchInput): Promise<void> {
-  const result = await dispatchSlashCommand(input);
+async function answer(res: Response, input: DispatchInput, ready?: DispatchResult): Promise<void> {
+  const result = ready ?? (await dispatchSlashCommand(input));
   res.status(200).json(chatResponse(input, result.reply, result.ephemeral));
   if (result.background) void result.background();
 }
@@ -383,6 +397,8 @@ export interface DispatchInput {
   actionAllowlist: readonly string[];
   channelStore: SlashCommandChannelStore;
   ctx: RouteContext;
+  /** Telegram's chat.type ("private", "group", …), for the Watson mirror (#2647). */
+  chatType?: string;
 }
 
 /** What a dispatched command produced: the card to answer with, and — for the async commands —
@@ -429,6 +445,7 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
   if (cmd.name === "unbind") {
     const previous = binding?.caseId;
     await channelStore.unbind(bindKey).catch(() => false);
+    await stopMirrorOnRebind(ctx, platform, channelId); // #2647
     if (previous) {
       audit(previous, {
         category: "collaboration",
@@ -447,6 +464,7 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
     await auditDenial(input, cmd, `not permitted to run /dfir ${cmd.name}`);
     return reply(`User ${userId || "(unknown)"} is not permitted to run /dfir ${cmd.name}.`);
   }
+  if (cmd.name === "mirror") return reply(await runMirrorCommand(input, cmd, binding)); // #2647
 
   if (cmd.name === "bind") {
     if (!cmd.caseId || !isValidCaseId(cmd.caseId)) return reply("Usage: /dfir bind <caseId>");
@@ -460,6 +478,7 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
       .catch(() => false);
     if (!bound)
       return reply("Could not save the channel binding — check notifications/slash-command-bindings.json.");
+    await stopMirrorOnRebind(ctx, platform, channelId, cmd.caseId); // #2647: another case stops the mirror
     captureCaseScope(
       store.casesRoot,
       cmd.caseId,
@@ -533,8 +552,10 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
 
   // Async commands: ACK immediately, then run and deliver the result out of band.
   if (isAsyncCommand(cmd.name)) {
+    // #2647: in a chat that mirrors the case, the answer arrives once, through the mirror.
+    const mirrored = cmd.name === "ask" && (await chatMirrorsCase(ctx, platform, channelId, cmd.caseId));
     return {
-      ...reply(`Working on /dfir ${cmd.name} for case ${cmd.caseId}…`),
+      ...reply(mirrored ? "Asking Watson…" : `Working on /dfir ${cmd.name} for case ${cmd.caseId}…`),
       background: () =>
         inCase(() =>
           runActionCommand(cmd, input).catch((err) => {
@@ -550,22 +571,6 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
   }
 
   return reply(formatHelpCommand());
-}
-
-/** Refuse a case the bot must not serve: one that doesn't exist, or one behind a password (chat
- *  carries no unlock — see the module docblock). Returns the message to send, or "" when fine. */
-async function guardCase(ctx: RouteContext, caseId: string): Promise<string> {
-  let meta;
-  try {
-    meta = await ctx.store.getCaseMeta(caseId);
-  } catch {
-    // Fail closed, exactly like the case-lock gate does on an unexpected metadata read failure.
-    return `Case ${caseId} could not be read.`;
-  }
-  if (!meta) return `No such case: ${caseId}.`;
-  if (meta.password)
-    return `Case ${caseId} is password-protected and is not available over chat — use the dashboard.`;
-  return "";
 }
 
 async function auditDenial(input: DispatchInput, cmd: ResolvedSlashCommand, reason: string): Promise<void> {
@@ -614,8 +619,13 @@ async function runActionCommand(cmd: ResolvedSlashCommand, input: DispatchInput)
   if (cmd.name === "ask") {
     if (!cmd.arg.trim()) return void (await send({ title: "Usage: /dfir ask <question>", lines: [] }));
     // A Watson round in the case's shared chat (D2), so the team sees it in the Watson panel.
-    const result = await runWatsonSlash(ctx, cmd.caseId, cmd.arg.trim(), `${userId} via ${platform}`);
-    await send(result.reply, !result.ok);
+    const actor = `${userId} via ${platform}`;
+    const mirror = (await chatMirrorsCase(ctx, platform, input.channelId, cmd.caseId))
+      ? ctx.watsonMirror?.()
+      : undefined;
+    mirror?.expectEcho(input.channelId, cmd.caseId, actor, cmd.arg.trim().slice(0, WATSON_TURN_TEXT_MAX));
+    const result = await runWatsonSlash(ctx, cmd.caseId, cmd.arg.trim(), actor);
+    if (!mirror || !result.ok) await send(result.reply, !result.ok); // the mirror delivers an answer
     audit({
       category: "ai",
       action: "slash-command-ask",

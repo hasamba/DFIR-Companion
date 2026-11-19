@@ -54,6 +54,8 @@ import { createServerClients } from "./serverSetClients.js";
 import { buildProvider } from "./aiProviders.js";
 import { buildWatsonProvider } from "./watsonProvider.js";
 import { createWatsonCaseEvents } from "./watsonCaseEvents.js";
+import { createWatsonMirrorLink, stopMirroringLockedCase } from "./watsonMirrorWiring.js";
+import { logActivity } from "../analysis/activityLog.js";
 import { noteWatsonFleetResult } from "./watsonVeloResults.js";
 import { AiControlStore } from "../analysis/aiControl.js";
 import { spawnToolRunner } from "../integrations/tools/toolRunner.js";
@@ -190,6 +192,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     clickupExportStore,
     notificationStore,
     slashCommandChannelStore,
+    watsonMirrorStore,
     notifier,
     dashboardBaseUrl,
     updateCheckStore,
@@ -201,6 +204,14 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
   } = rt;
   // Case events Watson hears about; createApp attaches the shared reaction scheduler (spec §4.6).
   const watsonEvents = createWatsonCaseEvents(watsonChatStore, tagsStore, new AiControlStore(store));
+  const watsonMirrorLink = createWatsonMirrorLink(); // #2647: createApp attaches the Telegram mirror
+  const mirrorOffAudit = (caseId: string, detail: string): void =>
+    void logActivity(activityLogStore, undefined, caseId, {
+      actor: "telegram-mirror",
+      category: "collaboration",
+      action: "watson-mirror-auto-off",
+      detail,
+    });
   const {
     teamAuth,
     pipeline,
@@ -244,7 +255,10 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     suzakuRuleStore: suzakuRuleStore(),
     rulePackStore,
     onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
-    onCasePasswordChanged: (caseId) => hub.dropCase(caseId),
+    onCasePasswordChanged: (caseId) => {
+      hub.dropCase(caseId);
+      stopMirroringLockedCase(watsonMirrorStore, mirrorOffAudit, caseId); // #2647
+    },
     onCaseLifecycle: () => hub.broadcastAll({ type: "case_lifecycle_changed" }),
     activityLogStore,
     auditExportStore,
@@ -285,7 +299,11 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     watsonChatStore,
     onWatsonReactorReady: watsonEvents.attach,
     watsonProvider: () => buildWatsonProvider(process.env),
-    onWatson: (caseId) => hub.broadcastTo(caseId, { type: "watson_changed" }),
+    onWatsonMirrorReady: watsonMirrorLink.attach,
+    onWatson: (caseId) => {
+      hub.broadcastTo(caseId, { type: "watson_changed" });
+      watsonMirrorLink.notify(caseId); // #2647: the Telegram mirror sends the new turns
+    },
     hypothesisStore,
     onHypotheses: (caseId) => hub.broadcastTo(caseId, { type: "hypotheses_changed" }),
     learnedPatternStore,
@@ -459,6 +477,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     servicenowOptions: servicenowOptions(),
     notificationStore,
     slashCommandChannelStore,
+    watsonMirrorStore,
     telegramPolling: (process.env.DFIR_TELEGRAM_POLL ?? "").trim().toLowerCase() === "on",
     slackSocketMode: (process.env.DFIR_SLACK_SOCKET_MODE ?? "").trim().toLowerCase() === "on",
     notifier,

@@ -31,6 +31,7 @@ import type { NotificationEvent } from "../analysis/notifications.js";
 import type { CombinedLogImportOptions } from "../analysis/combinedLogImport.js";
 import type { CloudBatchHooks } from "../analysis/ingest/cloudStreamImport.js";
 import type { PerCaseMap, PerCaseSet } from "../storage/caseKeyedState.js";
+import type { WatsonMirror } from "../integrations/telegram/watsonMirror.js";
 
 /**
  * Dependencies shared across more than one route domain, built once in createApp and passed to
@@ -433,4 +434,6 @@ export interface RouteContext {
   watsonFlowWatcher?(): WatsonFlowWatch | undefined;
   /** #2666: start Watson's quiet window for a `hunt` event already saved on the chat (a search result). */
   watsonWake?(caseId: string): void;
+  /** #2647: the Telegram mirror, read live (undefined in demo mode or without a bot). */
+  watsonMirror?(): WatsonMirror | undefined;
 }

@@ -468,6 +468,8 @@
     "ROUTE POST /cases/:id/watson/turns/:tid/add-question",
     "ROUTE POST /cases/:id/watson/mode",
     "ROUTE POST /cases/:id/watson/new-thread",
+    "ROUTE GET /cases/:id/watson/mirrors",
+    "ROUTE POST /cases/:id/watson/mirrors/:chatId/off",
     "ROUTE POST /cases/:id/ai-preview",
     "ROUTE GET /cases/:id/hypotheses",
     "ROUTE POST /cases/:id/hypotheses/:hid/exclusions",

@@ -60,6 +60,7 @@ import { createCaseAppliers } from "./composition/caseAppliers.js";
 import { createEnrichmentEngine } from "./composition/enrichment.js";
 import { createCaptureAnalysis } from "./composition/captureAnalysis.js";
 import { createAppWatsonReactor } from "./composition/watsonReactorWiring.js";
+import { createAppWatsonMirror } from "./composition/watsonMirrorWiring.js";
 import { createImportIngest } from "./composition/importIngest.js";
 import { createExternalTools } from "./composition/externalTools.js";
 import { createDropFolder } from "./composition/dropFolder.js";
@@ -393,6 +394,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     veloHuntTimers: () => hunts.veloHuntTimers,
     watsonFlowWatcher: () => app.locals.watsonFlowWatcher, // Task 5: an applied collection's result watch
     watsonWake: (id: string) => app.locals.watsonReactor?.wake(id), // #2666: a CrowdStrike search result
+    watsonMirror: () => app.locals.watsonMirror, // #2647: the Telegram mirror
   };
   // Every registerXRoutes call, in order, plus the AI rate-limit gate and the custody hook that are
   // interleaved with them. See composition/routeRegistry.ts — the order there is load-bearing.
@@ -404,6 +406,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   app.locals.watsonReactor = createAppWatsonReactor(ctx, analysis.synthesisBusy); // spec §4.6, one per app
   if (app.locals.watsonReactor) options.onWatsonReactorReady?.(app.locals.watsonReactor);
   app.locals.watsonFlowWatcher = createAppWatsonFlowWatcher(ctx, (id) => app.locals.watsonReactor?.wake(id));
+  app.locals.watsonMirror = createAppWatsonMirror(ctx); // #2647: undefined in demo mode or without a bot
+  if (app.locals.watsonMirror) {
+    options.onWatsonMirrorReady?.(app.locals.watsonMirror);
+    void app.locals.watsonMirror.start(); // resume: turns written while the server was down go out now
+  }
 
   // Re-arm any persisted live Velociraptor monitors so streaming survives a restart (#84). Fire-and-
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
@@ -720,6 +727,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
       app.locals.captureAnalysis?.dispose();
       app.locals.watsonReactor?.stop();
       app.locals.watsonFlowWatcher?.stop();
+      app.locals.watsonMirror?.stop();
       await app.locals.telegramPoller?.stop();
       await app.locals.slackSocketMode?.stop();
     },

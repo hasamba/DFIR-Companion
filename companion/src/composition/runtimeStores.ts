@@ -71,6 +71,7 @@ import { DEFAULT_UPDATE_REPO } from "../analysis/updateCheck.js";
 import { getAppVersion } from "../version.js";
 import { NotificationConfigStore } from "../analysis/notificationStore.js";
 import { SlashCommandChannelStore } from "../analysis/slashCommandStore.js";
+import { WatsonMirrorStore } from "../integrations/telegram/watsonMirrorStore.js";
 import { createNotifier } from "../integrations/notify/notifyDispatch.js";
 import { AuditExportStore } from "../analysis/auditExportStore.js";
 import { AuditCursorStore } from "../analysis/auditExportCursor.js";
@@ -337,6 +338,10 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
   const slashCommandChannelStore = new SlashCommandChannelStore(
     join(dirname(casesRoot), "notifications", "slash-command-bindings.json"),
   );
+  // #2647: the Telegram mirror's per-chat state, beside the bindings — never under cases/.
+  const watsonMirrorStore = new WatsonMirrorStore(
+    join(dirname(casesRoot), "notifications", "watson-mirror.json"),
+  );
   const notifier = createNotifier({
     store: notificationStore,
     fetchFn: tlsFetchFor("NOTIFY") ?? fetch,
@@ -564,6 +569,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     updateRepo,
     notificationStore,
     slashCommandChannelStore,
+    watsonMirrorStore,
     notifier,
     dashboardBaseUrl,
     veloHuntStore,
