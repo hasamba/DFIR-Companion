@@ -144,3 +144,15 @@ export function stopMirroringLockedCase(
       }),
     );
 }
+
+/**
+ * Build the mirror, hand it to onWatson, and resume: turns written while the server was down go out
+ * now. Called once per app, after the routes (routeRegistry.ts); the host stops it on shutdown.
+ */
+export function startAppWatsonMirror(ctx: RouteContext): WatsonMirror | undefined {
+  const mirror = createAppWatsonMirror(ctx);
+  if (!mirror) return undefined;
+  ctx.options.onWatsonMirrorReady?.(mirror);
+  void mirror.start();
+  return mirror;
+}

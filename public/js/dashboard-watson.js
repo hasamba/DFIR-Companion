@@ -166,6 +166,7 @@
         if (seq !== wSeq || !c || id !== currentCase()) return;
         setNoAi(c.providerConfigured === false);
         renderWatson(c);
+        if (typeof watsonMirrorRefresh === "function") watsonMirrorRefresh(id); // #2647 (dashboard-watson-mirror.js)
       })
       .catch(() => {});
   }
@@ -361,6 +362,7 @@
     riskArm: (el) => watsonVeloRiskArm(el), // a risky launch's inline second confirmation (Task 9)
     riskCancel: (el) => watsonVeloRiskCancel(el),
     applyRisk: (el) => watsonVeloApplyRisk(el),
+    mirrorOff: (el) => watsonMirrorOff(el), // #2647: the Telegram mirror list
   };
   // data-act="watsonAct": a fixed table, never a lookup of a DOM-supplied name on window.
   function watsonAct(el) {

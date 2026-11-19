@@ -60,7 +60,6 @@ import { createCaseAppliers } from "./composition/caseAppliers.js";
 import { createEnrichmentEngine } from "./composition/enrichment.js";
 import { createCaptureAnalysis } from "./composition/captureAnalysis.js";
 import { createAppWatsonReactor } from "./composition/watsonReactorWiring.js";
-import { createAppWatsonMirror } from "./composition/watsonMirrorWiring.js";
 import { createImportIngest } from "./composition/importIngest.js";
 import { createExternalTools } from "./composition/externalTools.js";
 import { createDropFolder } from "./composition/dropFolder.js";
@@ -398,19 +397,12 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   };
   // Every registerXRoutes call, in order, plus the AI rate-limit gate and the custody hook that are
   // interleaved with them. See composition/routeRegistry.ts — the order there is load-bearing.
-  const transports = registerAllRoutes(app, ctx);
-  // app.locals is how the host reaches the outbound transports to stop them on shutdown.
-  if (transports.telegramPoller) app.locals.telegramPoller = transports.telegramPoller;
-  if (transports.slackSocketMode) app.locals.slackSocketMode = transports.slackSocketMode;
+  // app.locals is how the host reaches the outbound transports (and the Telegram mirror) to stop them.
+  Object.assign(app.locals, registerAllRoutes(app, ctx));
   app.locals.captureAnalysis = analysis; // shutdown cancels its pending host-duplicate checks (#2584)
   app.locals.watsonReactor = createAppWatsonReactor(ctx, analysis.synthesisBusy); // spec §4.6, one per app
   if (app.locals.watsonReactor) options.onWatsonReactorReady?.(app.locals.watsonReactor);
   app.locals.watsonFlowWatcher = createAppWatsonFlowWatcher(ctx, (id) => app.locals.watsonReactor?.wake(id));
-  app.locals.watsonMirror = createAppWatsonMirror(ctx); // #2647: undefined in demo mode or without a bot
-  if (app.locals.watsonMirror) {
-    options.onWatsonMirrorReady?.(app.locals.watsonMirror);
-    void app.locals.watsonMirror.start(); // resume: turns written while the server was down go out now
-  }
 
   // Re-arm any persisted live Velociraptor monitors so streaming survives a restart (#84). Fire-and-
   // forget + self-gating (no store/client or no persisted monitors → no-op), so it's a safe no-op for
