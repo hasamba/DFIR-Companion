@@ -3,8 +3,8 @@
 // upload manifest once fetched. The hunt itself is tracked by VeloHuntStore like any bundle hunt; this
 // file holds what only this feature needs. A sweep case (outside-a-case run) holds exactly one run.
 
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
@@ -42,9 +42,13 @@ export interface AiAgentRun {
   /** Always true: preservation may have copied credential files into Velociraptor (§14.3). */
   sensitive: true;
   report?: AiAgentReport;
-  /** The run's raw result rows (capped) — what "Add to case" files. Carries the unredacted snippet:
-   *  never served to the dashboard and never AI input (routes strip it). */
+  /** Legacy: raw rows stored inline by an earlier build. New runs keep them in their own file
+   *  (writeRows/readRows). Carries the unredacted snippet: never served, never AI input. */
   rows?: Record<string, unknown>[];
+  /** How many raw rows the last refresh read and stored (all of them — never capped). */
+  rowCount?: number;
+  /** Artifacts whose read hit the row cap: the stored result set is NOT complete. */
+  readIncomplete?: { artifact: string; rowsRead: number }[];
   reportError?: string;
   manifest?: { fetchedAt: string; total: number; totalBytes: number; files: UploadManifestEntry[] };
   /** Cases this sweep's hits were filed into with "Add to case". */
@@ -68,6 +72,30 @@ export class AiAgentRunStore {
       return Array.isArray(parsed) ? (parsed as AiAgentRun[]) : [];
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+  }
+
+  private rowsPath(caseId: string, runId: string): string {
+    if (!/^aar-[0-9a-f-]{36}$/.test(runId)) throw new Error("invalid run id");
+    return join(this.cases.stateDir(caseId), "ai-agent-rows", `${runId}.json`);
+  }
+
+  /** Store a run's complete raw result set (what "Add to case" files), replacing the previous one. */
+  async writeRows(caseId: string, runId: string, rows: readonly Record<string, unknown>[]): Promise<void> {
+    const path = this.rowsPath(caseId, runId);
+    await mkdir(dirname(path), { recursive: true });
+    await atomicWrite(path, JSON.stringify(rows));
+  }
+
+  /** The run's stored raw rows; [] when none were stored yet. */
+  async readRows(caseId: string, runId: string): Promise<Record<string, unknown>[]> {
+    try {
+      const parsed = JSON.parse(await readFile(this.rowsPath(caseId, runId), "utf8")) as unknown;
+      return Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : [];
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT")
+        return (await this.get(caseId, runId))?.rows ?? [];
       throw err;
     }
   }

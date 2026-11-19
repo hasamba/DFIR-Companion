@@ -32,7 +32,7 @@ import { aiAgentReportCsv, aiAgentReportMarkdown } from "../reports/aiAgentRepor
 /** The run as the dashboard sees it: no raw rows. */
 export function publicRun(run: AiAgentRun): Omit<AiAgentRun, "rows"> & { rowCount: number } {
   const { rows, ...rest } = run;
-  return { ...rest, rowCount: rows?.length ?? 0 };
+  return { ...rest, rowCount: run.rowCount ?? rows?.length ?? 0 };
 }
 
 function fail(res: Response, err: unknown): Response {

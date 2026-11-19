@@ -296,6 +296,10 @@
     actions.appendChild(msg);
     card.appendChild(actions);
     if (run.reportError) card.appendChild(el("p", run.reportError, "aa-warn"));
+    for (const x of run.readIncomplete || [])
+      card.appendChild(
+        el("p", `Not read in full: ${x.artifact} — only ${x.rowsRead} rows were read. Add to case stays refused until a refresh reads everything.`, "aa-warn"),
+      );
     const r = run.report;
     if (!r) {
       card.appendChild(el("p", "Results not read yet.", "aa-note"));

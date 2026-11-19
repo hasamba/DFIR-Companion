@@ -40,7 +40,8 @@ export const AI_AGENT_BUNDLE_ID = "ai-agent-forensics";
 const BUNDLE_NAME = "AI Agent Forensics (sensitive)";
 const DEFAULT_WAIT_MINUTES = 30;
 const MAX_ENDPOINTS = 200;
-const MAX_STORED_ROWS = 20_000;
+/** Rows per evidence-first ingest when a sweep is filed into a case. */
+const ADD_BATCH_ROWS = 10_000;
 
 export class AiAgentRunError extends Error {
   constructor(
@@ -299,15 +300,23 @@ export async function refreshAiAgentRun(
   deps.startVeloHuntCollect(caseId, run.huntId);
   const rows: Record<string, unknown>[] = [];
   const problems: string[] = [];
+  const readIncomplete: { artifact: string; rowsRead: number }[] = [];
   for (const artifact of run.artifacts.filter((a) => a.startsWith("Custom.DFIRCompanion."))) {
     try {
       const read = await client.huntArtifactRows(run.huntId, artifact, [], undefined, true);
       for (const r of read.rows) rows.push(r as Record<string, unknown>);
-      if (read.truncated) problems.push(`${artifact}: only the first ${read.rows.length} rows were read`);
+      if (read.truncated) {
+        readIncomplete.push({ artifact, rowsRead: read.rows.length });
+        problems.push(
+          `${artifact}: only the first ${read.rows.length} rows were read; at least one more was not`,
+        );
+      }
     } catch (e) {
+      readIncomplete.push({ artifact, rowsRead: 0 });
       problems.push(`${artifact}: ${(e as Error).message}`);
     }
   }
+  await deps.runStore.writeRows(caseId, runId, rows); // the complete set read — never capped
   const report = withSilentEndpoints(buildAiAgentReport(rows, activeAiAgentRuleSet()), run.endpoints);
   const manifest = await readUploadManifest(client, run.huntId).catch((e: Error) => {
     problems.push(`upload manifest: ${e.message}`);
@@ -316,7 +325,9 @@ export async function refreshAiAgentRun(
   const updated = await deps.runStore.update(caseId, runId, (r) => ({
     ...r,
     report,
-    rows: rows.slice(0, MAX_STORED_ROWS),
+    rows: undefined,
+    rowCount: rows.length,
+    readIncomplete,
     ...(manifest ? { manifest: capManifest(manifest) } : {}),
     ...(problems.length ? { reportError: problems.join("; ") } : { reportError: undefined }),
   }));
@@ -338,15 +349,42 @@ export async function addSweepToCase(
     throw new AiAgentRunError("pick an existing case to add the hits to", 404);
   const run = await deps.runStore.get(sweepCaseId, runId);
   if (!run) throw new AiAgentRunError("run not found", 404);
-  const rows = run.rows ?? [];
+  if (run.readIncomplete?.length) {
+    const what = run.readIncomplete.map((x) => `${x.artifact}: only ${x.rowsRead} rows were read`).join("; ");
+    throw new AiAgentRunError(
+      `this sweep's results were not read in full (${what}; at least one more row was not read), so adding it would file a partial result — raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS, press Refresh results, then add it`,
+      409,
+    );
+  }
+  const rows = await deps.runStore.readRows(sweepCaseId, runId);
   if (rows.length === 0) throw new AiAgentRunError("this sweep has no results yet — refresh it first", 409);
+  if (run.rowCount !== undefined && rows.length !== run.rowCount)
+    throw new AiAgentRunError(
+      `this sweep's stored results hold ${rows.length} of ${run.rowCount} rows — press Refresh results, then add it`,
+      409,
+    );
   const artifact =
     run.artifacts.find((a) => a.startsWith("Custom.DFIRCompanion.AIAgentForensics.")) ?? "AIAgentForensics";
-  const out = await deps.ingestVeloArtifactMap(targetCaseId, JSON.stringify({ [artifact]: rows }), {
-    label: `ai-agent-forensics_${run.huntId}.json`,
-    idBase: `aiagent-${run.huntId}`,
-    rows: rows.length,
-  });
+  // Bounded batches, each evidence-first under the target case's import lock. A failed batch stops
+  // the filing and says how far it got: a partial filing is never reported as success.
+  const out = { addedEvents: 0, addedIocs: 0 };
+  for (let i = 0, part = 1; i < rows.length; i += ADD_BATCH_ROWS, part++) {
+    const batch = rows.slice(i, i + ADD_BATCH_ROWS);
+    try {
+      const r = await deps.ingestVeloArtifactMap(targetCaseId, JSON.stringify({ [artifact]: batch }), {
+        label: `ai-agent-forensics_${run.huntId}_part${part}.json`,
+        idBase: `aiagent-${run.huntId}-${part}`,
+        rows: batch.length,
+      });
+      out.addedEvents += r.addedEvents;
+      out.addedIocs += r.addedIocs;
+    } catch (e) {
+      throw new AiAgentRunError(
+        `filing stopped after ${i} of ${rows.length} rows (batch ${part} failed: ${(e as Error).message}) — the case holds a partial result`,
+        502,
+      );
+    }
+  }
   const at = new Date().toISOString();
   await deps.runStore.update(sweepCaseId, runId, (r) => ({
     ...r,

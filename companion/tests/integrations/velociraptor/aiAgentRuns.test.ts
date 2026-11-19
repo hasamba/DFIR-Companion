@@ -249,3 +249,54 @@ describe("AI Agent Forensics: an endpoint with no rows yet", () => {
     expect(out.endpoints[1].coverage[0].status).toBe("no results yet");
   });
 });
+
+describe("AI Agent Forensics: Add to case files the complete result set", () => {
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ ...hitRow, FilePath: `C:\\Users\\dev\\proj${i}\\CLAUDE.md` }));
+
+  function depsReading(read: { rows: unknown[]; truncated: boolean }) {
+    const velo = fakeVelo();
+    const reading = {
+      ...velo,
+      huntArtifactRows: async (_h: string, artifact: string) =>
+        artifact.includes(".More")
+          ? { rows: [], total: 0, truncated: false } // the extra Sigma artifacts returned nothing
+          : { ...read, total: read.rows.length },
+    } as unknown as VelociraptorClient;
+    const servers = { ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: reading } };
+    return makeDeps({
+      serverClients: {
+        forCase: () => servers,
+        forSet: () => servers,
+        forDefault: () => servers,
+      } as unknown as AiAgentForensicsDeps["serverClients"],
+    });
+  }
+
+  it("files every row of a large sweep, in bounded batches", async () => {
+    await store.createCase({ caseId: "case-1", name: "c", investigator: "x", aiProvider: null });
+    const deps = depsReading({ rows: many(25_001), truncated: false });
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    const refreshed = await refreshAiAgentRun(deps, caseId, run.runId);
+    expect(refreshed.rowCount).toBe(25_001);
+    expect(refreshed.rows).toBeUndefined(); // the rows live in their own file, not the run record
+    await addSweepToCase(deps, caseId, run.runId, "case-1");
+    const filed = deps.ingested.map(
+      (x) => Object.values(JSON.parse(x.slice("case-1:".length)) as Record<string, unknown[]>)[0].length,
+    );
+    expect(filed.reduce((a, b) => a + b, 0)).toBe(25_001);
+    expect(Math.max(...filed)).toBeLessThanOrEqual(10_000);
+  });
+
+  it("refuses to file a sweep whose results were not read in full, and says how much is missing", async () => {
+    await store.createCase({ caseId: "case-1", name: "c", investigator: "x", aiProvider: null });
+    const deps = depsReading({ rows: many(500), truncated: true });
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    const refreshed = await refreshAiAgentRun(deps, caseId, run.runId);
+    expect(refreshed.readIncomplete?.[0]).toMatchObject({ rowsRead: 500 });
+    await expect(addSweepToCase(deps, caseId, run.runId, "case-1")).rejects.toThrow(
+      /not read in full.*500 rows were read.*at least one more/s,
+    );
+    expect(deps.ingested).toEqual([]);
+  });
+});
