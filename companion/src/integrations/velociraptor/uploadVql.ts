@@ -62,6 +62,30 @@ export function isExternalRetentionRun(rows: readonly unknown[]): boolean {
   return JSON.stringify(rows).includes(AI_AGENT_RUN_ARTIFACT_MARK);
 }
 
+function artifactList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim() !== "") : [];
+}
+
+/**
+ * Read a probe FAIL-CLOSED. Upload contents may be read only when the probe ran with no logged
+ * error, returned the hunt / flow row, and that row carries its artifact list with no AI Agent
+ * Forensics artifact in it. Anything else — no row, a logged permission or query error, a row with no
+ * artifact list — proves nothing and is refused.
+ */
+export function classifyRetentionProbe(
+  rows: readonly unknown[],
+  reason: string,
+): { verdict: "clear" } | { verdict: "ai" } | { verdict: "unknown"; why: string } {
+  if (isExternalRetentionRun(rows)) return { verdict: "ai" };
+  if (reason.trim()) return { verdict: "unknown", why: reason.trim() };
+  const row = rows[0] as Record<string, unknown> | undefined;
+  if (!row || typeof row !== "object") return { verdict: "unknown", why: "the hunt or flow was not found" };
+  const req = (row.request ?? row.start_request ?? {}) as Record<string, unknown>;
+  const names = [...artifactList(row.artifacts), ...artifactList(req.artifacts)];
+  if (names.length === 0) return { verdict: "unknown", why: "its artifact list could not be read" };
+  return { verdict: "clear" };
+}
+
 export class ExternalRetentionError extends Error {
   constructor(unconfirmed = "") {
     super(

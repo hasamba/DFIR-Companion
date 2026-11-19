@@ -207,6 +207,41 @@ describe("AI Agent Forensics: manifest-only uploads", () => {
     );
   });
 
+  // A probe that runs but proves nothing — no row, a logged VQL error, a row without its artifact
+  // list — must never let the content-reading VQL run (fails closed).
+  const contentGuard =
+    (probeRows: unknown[], stderr = ""): VqlRunner =>
+    async (q) => {
+      if (/read_file\(/.test(q[0])) throw new Error("upload CONTENT was read");
+      return { rows: probeRows, raw: "", stderr };
+    };
+  const loggedError = "[ERROR] 2026-11-19T10:00:00Z hunts: PermissionDenied: user lacks READ_RESULTS\n";
+  it.each([
+    ["an empty probe", [], ""],
+    ["a logged permission error", [{ artifacts: ["Generic.Scanner.ThorZIP"] }], loggedError],
+    ["a row without its artifact list", [{ state: "FINISHED" }], ""],
+  ])("refuses the hunt upload read on %s", async (_label, rows, stderr) => {
+    await expect(new VelociraptorClient(cfg, contentGuard(rows, stderr)).huntUploads("H.X2")).rejects.toThrow(
+      ExternalRetentionError,
+    );
+  });
+  it.each([
+    ["an empty probe", [], ""],
+    ["a logged permission error", [{ request: { artifacts: ["Generic.Scanner.ThorZIP"] } }], loggedError],
+    ["a row without its artifact list", [{ state: "FINISHED" }], ""],
+  ])("refuses the flow upload read on %s", async (_label, rows, stderr) => {
+    await expect(
+      new VelociraptorClient(cfg, contentGuard(rows, stderr)).flowUploads("C.aaa", "F.1"),
+    ).rejects.toThrow(ExternalRetentionError);
+  });
+  it("reads a flow's uploads once its artifact list proves it is not an AI Agent Forensics run", async () => {
+    const runner: VqlRunner = async (s) =>
+      /FROM flows\(/.test(s[0])
+        ? { rows: [{ request: { artifacts: ["Generic.Scanner.ThorZIP"] } }], raw: "" }
+        : { rows: [{ Name: "thor.json", ClientId: "C.aaa", Content: "{}" }], raw: "" };
+    expect(await new VelociraptorClient(cfg, runner).flowUploads("C.aaa", "F.1")).toHaveLength(1);
+  });
+
   it("still reads uploads for any other hunt", async () => {
     const runner: VqlRunner = async (s) =>
       /FROM hunts\(\)/.test(s[0])

@@ -1155,12 +1155,12 @@ export class VelociraptorClient {
     return out;
   }
 
-  // An AI Agent Forensics run's uploads are never read, whatever the caller or the override VQL (#2690).
-  // Fail closed: a probe that cannot run is no proof the run is not one.
+  // An AI Agent Forensics run's uploads are never read, whatever the caller or override VQL (#2690). Fail closed.
   private async refuseExternalRetention(target: Parameters<typeof up.externalRetentionProbe>[0]) {
     const probe = await this.runRawLogged(up.externalRetentionProbe(target)).catch((e: Error) => e);
     if (probe instanceof Error) throw new up.ExternalRetentionError(probe.message);
-    if (up.isExternalRetentionRun(probe.rows)) throw new up.ExternalRetentionError();
+    const v = up.classifyRetentionProbe(probe.rows, probe.reason);
+    if (v.verdict !== "clear") throw new up.ExternalRetentionError(v.verdict === "unknown" ? v.why : "");
   }
 
   // Read ONE external flow's uploaded text-report files (content included) — the flow-scoped

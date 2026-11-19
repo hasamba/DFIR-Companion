@@ -545,6 +545,9 @@ describe("Velociraptor triage bundles — routes", () => {
         if (p.includes("hunt(") && p.includes("artifacts=["))
           return { rows: [{ Hunt: { HuntId: "H.UP9", state: "RUNNING" } }], raw: "" };
         if (p.includes("hunt_results(")) return { rows: [], raw: "" }; // no result rows — only the upload matters
+        // The upload reader's probe (#2690): a THOR collection, not an AI Agent Forensics run.
+        if (p.startsWith("SELECT * FROM hunts() WHERE hunt_id="))
+          return { rows: [{ artifacts: ["Generic.Scanner.ThorZIP"] }], raw: "" };
         if (p.includes("hunt_flows(") || p.includes("read_file("))
           return {
             rows: [{ ClientId: "C.1", Path: "thor.json", Name: "thor.json", Content: thorLine }],
