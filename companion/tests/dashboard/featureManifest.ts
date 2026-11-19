@@ -1261,7 +1261,13 @@ export const FEATURES: Feature[] = [
     // and the case header's Change… dialog.
     // No `initializer`: initCaseConnect() runs initServerSets(), not the inline script.
     file: "dashboard-server-sets.js",
-    publish: ["initServerSets", "loadServerSets", "fetchServerSets", "openServerSetEditor"],
+    publish: [
+      "initServerSets",
+      "loadServerSets",
+      "fetchServerSets",
+      "repaintServerSetLabels",
+      "openServerSetEditor",
+    ],
     private: ["lastList", "editing", "editorOpts"],
   },
   {
@@ -1283,8 +1289,14 @@ export const FEATURES: Feature[] = [
     // IRIS / Timesketch / Velociraptor tool flags (caseToolEnabled).
     // No `initializer`: initCaseConnect() runs initCaseServers(), not the inline script.
     file: "dashboard-case-servers.js",
-    publish: ["initCaseServers", "refreshCaseServers", "caseToolEnabled", "setDefaultServerTools"],
-    private: ["current", "defaults", "pendingSetId"],
+    publish: [
+      "initCaseServers",
+      "refreshCaseServers",
+      "caseToolEnabled",
+      "caseServerSetLabel",
+      "setDefaultServerTools",
+    ],
+    private: ["current", "defaults", "pendingSetId", "caseLabel"],
   },
   {
     // Case templates and incident types. Its `_cachedTemplates` was written from

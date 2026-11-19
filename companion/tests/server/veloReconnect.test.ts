@@ -59,8 +59,74 @@ async function makeApp(rebuild: () => VelociraptorClient | undefined) {
     state.armed = true;
     return request(app).post("/velociraptor/reconnect");
   };
-  return { app, reconnect };
+  return { app, reconnect, sets, state };
 }
+
+// A second set "Lab B" whose Velociraptor sees a different fleet, and a case linked to it.
+const labBRunner: VqlRunner = async (statements) => {
+  if (statements[0].includes("clients()"))
+    return {
+      rows: [
+        { client_id: "C.201", os_info: { hostname: "LABB1", fqdn: "labb1.lab" } },
+        { client_id: "C.202", os_info: { hostname: "LABB2", fqdn: "labb2.lab" } },
+      ],
+      raw: "",
+    };
+  return { rows: [], raw: "" };
+};
+async function makeTwoSetApp() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-veloreconnect2-"));
+  const store = new CaseStore(root);
+  const sets = new ServerSetStore(join(root, "server-sets"), deriveServerSetKey(Buffer.alloc(32, 7)));
+  sets.setDefault(sets.create({ name: "Testing", velociraptor: { apiConfigPath: "/x/testing.yaml" } }).id);
+  const labB = sets.create({ name: "Lab B", velociraptor: { apiConfigPath: "/x/lab-b.yaml" } });
+  const noVelo = sets.create({ name: "IRIS only", iris: { url: "https://iris.invalid", apiKey: "k" } });
+  const serverClients = createServerClients(
+    sets,
+    {},
+    {
+      velociraptor: (c: { apiConfigPath: string }) =>
+        new VelociraptorClient(cfg, c.apiConfigPath.includes("lab-b") ? labBRunner : upRunner),
+    },
+  );
+  const app = createApp(store, {
+    serverClients,
+    serverSetStore: sets,
+    clientInventoryFor: setInventories(join(dirname(root), "velociraptor")),
+  });
+  await request(app)
+    .post("/cases")
+    .send({ caseId: "c1", name: "Case c1", investigator: "i", aiProvider: null, serverSetId: labB.id });
+  await request(app)
+    .post("/cases")
+    .send({ caseId: "c2", name: "Case c2", investigator: "i", aiProvider: null, serverSetId: noVelo.id });
+  return { app };
+}
+
+describe("POST /velociraptor/reconnect with an open case", () => {
+  it("reconnects the case's own server set, not the default", async () => {
+    const { app } = await makeTwoSetApp();
+    const res = await request(app).post("/velociraptor/reconnect").send({ caseId: "c1" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ configured: true, ok: true, clients: 2, setName: "Lab B" });
+    const inv = (await request(app).get("/velociraptor/clients?caseId=c1")).body;
+    expect(inv.clients.map((c: { clientId: string }) => c.clientId)).toEqual(
+      expect.arrayContaining(["C.201", "C.202"]),
+    );
+  });
+
+  it("uses the default set and names it when no case is sent", async () => {
+    const { app } = await makeTwoSetApp();
+    const res = await request(app).post("/velociraptor/reconnect").send({});
+    expect(res.body).toMatchObject({ configured: true, ok: true, clients: 1, setName: "Testing" });
+  });
+
+  it("refuses a malformed caseId", async () => {
+    const { app } = await makeTwoSetApp();
+    const res = await request(app).post("/velociraptor/reconnect").send({ caseId: "../x" });
+    expect(res.status).toBe(400);
+  });
+});
 
 describe("POST /velociraptor/reconnect", () => {
   it("rebuilds the set clients + refreshes the default set inventory when the server is up", async () => {
@@ -104,5 +170,13 @@ describe("POST /velociraptor/reconnect", () => {
     status = (await request(app).get("/velociraptor/status")).body;
     expect(status.configured).toBe(true);
     expect(status.clients).toBe(1);
+  });
+
+  it("a case whose set has no Velociraptor is never answered from the default set", async () => {
+    const { app } = await makeTwoSetApp();
+    const res = await request(app).post("/velociraptor/reconnect").send({ caseId: "c2" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ configured: false, ok: false, setName: "IRIS only" });
+    expect(res.body.error).toMatch(/not configured in server set 'IRIS only'/);
   });
 });
