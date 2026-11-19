@@ -425,6 +425,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     pending?: PendingRawInput;
     submitted?: string;
     warning?: string;
+    deferred?: string; // a hunt zip interrupted mid-run stays for the next sweep (#2714)
   }> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);

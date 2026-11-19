@@ -9,7 +9,8 @@ import { decodeImportedText } from "../ingest/decodeText.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { unknownImportHintFor } from "../analysis/importKindHints.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
-import { emitImportDebug } from "../routes/importDebugEmit.js";
+import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
+import { siemFallbackWarning } from "../routes/importNotes.js";
 import { readZipMember, writeZipMember, type ZipFile, type ZipMember } from "../storage/zipMembers.js";
 import { createStagingFile, extractFailedMember, moveStagedToFailed } from "./dropHuntExtract.js";
 import type { MemberOutcome } from "./dropHuntZipLedger.js";
@@ -101,7 +102,8 @@ export async function importHuntMember(deps: HuntMemberDeps, a: HuntMemberArgs):
     );
     if (!r.analyzed)
       return await fail("AI is off — saved as evidence but not analyzed; enable AI and re-import");
-    return { ok: true };
+    logSiemFallback(a.caseId, a.member.name, kind, a.debug); // a guessed SIEM kind still imports (#1824)
+    return { ok: true, ...siemFallbackWarning(kind, a.debug) };
   } catch (err) {
     deps.recordImportFailure(a.caseId, "drop", name, err, a.debug);
     return fail(msg(err));
@@ -125,7 +127,7 @@ async function importStaged(deps: HuntMemberDeps, a: HuntMemberArgs): Promise<Me
     const r = await deps.streamDropFile(a.caseId, staged.path, relpath, a.debug);
     if (r?.ok) {
       await rm(staged.path, { force: true });
-      return { ok: true };
+      return { ok: true, ...(r.warning ? { warning: r.warning } : {}) }; // coverage disclosures travel on
     }
     const mb = Math.round(deps.dropMaxBytes / 1048576);
     reason =

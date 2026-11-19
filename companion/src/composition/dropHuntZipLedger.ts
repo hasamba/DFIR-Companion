@@ -27,11 +27,13 @@ export const HUNT_ZIP_LEDGER_DIR = "drop-zip-progress";
 export interface MemberOutcome {
   ok: boolean;
   reason?: string;
+  /** An imported member's caveat (a guessed format, a streamed import's coverage disclosure). */
+  warning?: string;
 }
 
 export interface HuntZipLedger {
   /** Outcomes already recorded, by member name. */
-  readonly done: ReadonlyMap<string, MemberOutcome>;
+  readonly done: Map<string, MemberOutcome>;
   record(member: string, outcome: MemberOutcome): Promise<void>;
 }
 
@@ -71,7 +73,12 @@ export async function openHuntZipLedger(
   return {
     done,
     record: async (member, outcome) => {
-      await append({ member, ok: outcome.ok, ...(outcome.reason ? { reason: outcome.reason } : {}) });
+      await append({
+        member,
+        ok: outcome.ok,
+        ...(outcome.reason ? { reason: outcome.reason } : {}),
+        ...(outcome.warning ? { warning: outcome.warning } : {}),
+      });
       done.set(member, outcome);
     },
   };
@@ -80,9 +87,13 @@ export async function openHuntZipLedger(
 function parseLine(line: string, done: Map<string, MemberOutcome>): void {
   if (!line.trim()) return;
   try {
-    const v = JSON.parse(line) as { member?: unknown; ok?: unknown; reason?: unknown };
+    const v = JSON.parse(line) as { member?: unknown; ok?: unknown; reason?: unknown; warning?: unknown };
     if (typeof v.member !== "string" || typeof v.ok !== "boolean") return;
-    done.set(v.member, { ok: v.ok, ...(typeof v.reason === "string" ? { reason: v.reason } : {}) });
+    done.set(v.member, {
+      ok: v.ok,
+      ...(typeof v.reason === "string" ? { reason: v.reason } : {}),
+      ...(typeof v.warning === "string" ? { warning: v.warning } : {}),
+    });
   } catch {
     /* a torn last line (crash mid-append) */
   }

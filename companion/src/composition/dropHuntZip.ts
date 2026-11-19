@@ -65,6 +65,9 @@ export type HandleHuntZip = (args: HuntZipArgs) => Promise<DropOutcome | null>;
 
 export function createHuntZipHandler(deps: HuntZipDeps): HandleHuntZip {
   const notHunt = new Set<string>();
+  // Outcomes this process knows but may not have written (a ledger append failed), by archive id:
+  // a retry in the same process never imports such a member twice.
+  const remembered = new Map<string, Map<string, MemberOutcome>>();
   return async (args) => {
     const key = `${args.fullPath}\0${args.file.size}\0${args.file.mtimeMs}`;
     if (notHunt.has(key)) return null;
@@ -84,7 +87,7 @@ export function createHuntZipHandler(deps: HuntZipDeps): HandleHuntZip {
         remember(notHunt, key);
         return null;
       }
-      return await processHunt(deps, args, zip, members, run);
+      return await processHunt(deps, args, zip, members, run, remembered);
     } finally {
       await handle.close().catch(() => undefined); // never zip.close(): it closes this descriptor
     }
@@ -134,6 +137,7 @@ async function processHunt(
   zip: ZipFile,
   members: readonly ZipMember[],
   run: HuntRun,
+  remembered: Map<string, Map<string, MemberOutcome>>,
 ): Promise<DropOutcome> {
   const zipRel = args.file.relpath.replace(/\\/g, "/");
   const imports = run.plans.flatMap((p) => p.imports.map((i) => i.path));
@@ -144,13 +148,26 @@ async function processHunt(
       reason: `hunt export would inflate to ${Math.round(total / 1024 ** 3)} GB (> ${HUNT_ZIP_MAX_TOTAL_BYTES / 1024 ** 3} GB bound) — refused (security); unzip it and drop the per-client folders`,
     };
   }
-  const ledger = await openHuntZipLedger(
-    deps.stateDir(args.caseId),
-    huntZipId(zipRel, args.file.size, members),
-    { relpath: zipRel, size: args.file.size },
-  );
+  const id = huntZipId(zipRel, args.file.size, members);
+  const ledger = await openHuntZipLedger(deps.stateDir(args.caseId), id, {
+    relpath: zipRel,
+    size: args.file.size,
+  });
+  const memo = remembered.get(id) ?? new Map<string, MemberOutcome>();
+  remembered.set(id, memo);
+  for (const [name, o] of memo) if (!ledger.done.has(name)) ledger.done.set(name, o);
   const log: DropLogEntry[] = [];
-  const fresh = await importMembers(deps, args, zip, run, imports, ledger, log, zipRel);
+  const { fresh, interrupted } = await importMembers(
+    deps,
+    args,
+    zip,
+    run,
+    imports,
+    ledger,
+    log,
+    zipRel,
+    memo,
+  );
   for (const r of run.refused) {
     if (ledger.done.has(r.name)) continue;
     log.push({ status: "FAILED", relpath: `${zipRel}!${r.name}`, reason: r.reason });
@@ -169,6 +186,8 @@ async function processHunt(
       logLine(`[drop] log append failed: ${(e as Error).message}`),
     );
   }
+  if (interrupted) return { ok: false, deferred: interrupted }; // stays in drop/; the next sweep resumes
+  remembered.delete(id);
   return outcome(imports, ledger.done, run.refused.length, zipRel);
 }
 
@@ -182,7 +201,8 @@ async function importMembers(
   ledger: HuntZipLedger,
   log: DropLogEntry[],
   zipRel: string,
-): Promise<boolean> {
+  memo: Map<string, MemberOutcome>,
+): Promise<{ fresh: boolean; interrupted?: string }> {
   let fresh = false;
   for (const name of imports) {
     if (ledger.done.has(name)) continue;
@@ -197,21 +217,19 @@ async function importMembers(
       modelCall: args.modelCall,
       debug,
     });
+    memo.set(name, res);
+    if (!res.ok) log.push({ status: "FAILED", relpath: `${zipRel}!${name}`, reason: res.reason });
     try {
       await ledger.record(name, res);
     } catch (e) {
-      // Without a record a resume would import this member again: stop here, the rest waits.
-      logLine(`[drop] ${zipRel}: could not record progress — ${(e as Error).message}; stopping this zip`);
-      log.push({
-        status: "FAILED",
-        relpath: `${zipRel}!${name}`,
-        reason: `progress not recorded (${(e as Error).message}); remaining members not attempted`,
-      });
-      break;
+      // Without a record a restart would import this member again: stop, keep the zip in drop/,
+      // and let the next sweep resume (this process remembers the member meanwhile).
+      const why = `could not record progress (${(e as Error).message}); the rest resumes on the next sweep`;
+      logLine(`[drop] ${zipRel}: ${why}`);
+      return { fresh, interrupted: why };
     }
-    if (!res.ok) log.push({ status: "FAILED", relpath: `${zipRel}!${name}`, reason: res.reason });
   }
-  return fresh;
+  return { fresh };
 }
 
 function outcome(
@@ -223,6 +241,11 @@ function outcome(
   const ok = imports.filter((n) => done.get(n)?.ok).length;
   const failed = imports.length - ok + refused;
   const where = `see drop-log.txt; failed members are in ${failedMembersFolder(zipRel)}/`;
+  const notes = imports.flatMap((n) => {
+    const o = done.get(n);
+    return o?.ok && o.warning ? [`${n}: ${o.warning}`] : [];
+  });
+  const caveat = notes.length ? notes.join(" | ") : undefined;
   if (ok === 0) {
     return {
       ok: false,
@@ -231,10 +254,9 @@ function outcome(
         : `hunt export holds no result file to import (${refused} member(s) refused)`,
     };
   }
-  return failed
-    ? {
-        ok: true,
-        warning: `${ok} of ${imports.length} hunt result file(s) imported, ${failed} failed — ${where}`,
-      }
-    : { ok: true };
+  const summary = failed
+    ? `${ok} of ${imports.length} hunt result file(s) imported, ${failed} failed — ${where}`
+    : undefined;
+  const warning = [summary, caveat].filter(Boolean).join(" | ");
+  return warning ? { ok: true, warning } : { ok: true };
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { join } from "node:path";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, readdir, readFile, writeFile } from "node:fs/promises";
 import { buildZip, expectedRowKeys, huntTree } from "../helpers/huntExportFixture.js";
 import { dropLog, exists, listFiles, makeHarness } from "../helpers/dropHuntHarness.js";
 import { HUNT_ZIP_LEDGER_DIR } from "../../src/composition/dropHuntZipLedger.js";
@@ -120,6 +120,38 @@ describe("drop folder — Velociraptor hunt export zip (#2714)", () => {
     await h.sweep();
     await h.sweep();
     expect(h.calls).toHaveLength(9); // nothing imported twice
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a progress-record failure leaves the zip in drop/ and the next sweep resumes without duplicates",
+    async () => {
+      const h = await makeHarness();
+      await writeFile(join(h.dropDir, "hunt.zip"), await buildZip(huntTree("perClientJson")));
+      const ledgerDir = join(h.store.stateDir("c1"), HUNT_ZIP_LEDGER_DIR);
+      const ledgerFile = async () => join(ledgerDir, (await readdir(ledgerDir))[0]);
+      h.onIngest = async (n) => {
+        if (n === 2) await chmod(await ledgerFile(), 0o444); // the next append fails
+      };
+      await h.sweep();
+      await h.sweep();
+      expect(h.calls).toHaveLength(2); // the second member imported, then its record failed
+      expect(await exists(join(h.dropDir, "hunt.zip"))).toBe(true);
+      await chmod(await ledgerFile(), 0o644);
+      h.onIngest = null;
+      await h.sweep();
+      expect(h.rowKeys()).toEqual(expectedRowKeys("perClientJson"));
+      expect(await listFiles(h.dropDir)).toContain("_processed/hunt.zip");
+    },
+  );
+
+  it("carries a member's import caveat onto the zip's drop-log line", async () => {
+    const tree = {
+      ...huntTree("perClientJson"),
+      "WS-ALPHA-C.0000000000000001/results/notes.json": JSON.stringify([{ foo: "bar", n: 1 }]),
+    };
+    const h = await dropZip(await buildZip(tree));
+    const line = (await dropLog(h.dropDir)).split("\n").find((l) => /IMPORTED\s+hunt\.zip/.test(l)) ?? "";
+    expect(line).toContain("results/notes.json:");
   });
 
   it("prunes a ledger once its zip has left the drop folder", async () => {

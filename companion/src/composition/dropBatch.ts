@@ -39,6 +39,8 @@ export interface DropOutcome {
   pending?: PendingRawInput;
   submitted?: string;
   warning?: string;
+  /** Not finished and safe to retry: the file stays in drop/ and the next sweep runs it again (#2714). */
+  deferred?: string;
 }
 
 export interface SweepTally {
@@ -194,6 +196,12 @@ async function recordOutcome(
     // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
     // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
     tally.pendingRawInputs.push(res.pending);
+    return;
+  }
+  if (res.deferred) {
+    // Interrupted (a hunt zip whose progress could not be recorded): left in place, still tracked,
+    // so the next stable poll resumes it rather than filing it as finished.
+    logLine(`[drop] ${file.relpath} left in drop/ for the next sweep: ${res.deferred}`);
     return;
   }
   // A failed move is named to the analyst, merged into the file's one warning or failure

@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { DropStatusStore } from "../../src/analysis/dropStatus.js";
-import { detectImportWithCustom } from "../../src/analysis/importDecision.js";
+import { detectImportWithCustomEx } from "../../src/analysis/importDecision.js";
 import { createDropFolder, dropDirOf, type DropFolder } from "../../src/composition/dropFolder.js";
 import { rowKeysOf } from "./huntExportFixture.js";
 import { pollFor } from "./poll.js";
@@ -28,6 +28,8 @@ export interface Harness {
   failOn: Set<string>;
   /** After N successful calls, the next ingest never settles — the process "dies" mid-import. */
   hangAfter: number | null;
+  /** Called after each successful ingest call, with the number of calls so far. */
+  onIngest: ((n: number) => Promise<void> | void) | null;
   drops: DropFolder;
   sweep(): Promise<void>;
   /** Start a sweep and abandon it once ingest hangs (the crash), without awaiting it. */
@@ -51,6 +53,7 @@ export async function makeHarness(opts: { dropMaxBytes?: number } = {}): Promise
     calls: [],
     failOn: new Set(),
     hangAfter: null,
+    onIngest: null,
     drops: undefined as unknown as DropFolder,
     sweep: async () => {
       await h.drops.scanCaseDrops("c1");
@@ -85,6 +88,7 @@ function build(h: Harness): DropFolder {
       }
       if (h.failOn.has(name)) throw new Error(`synthetic parse failure in ${name}`);
       h.calls.push({ kind, name, text, host });
+      await h.onIngest?.(h.calls.length);
       return { storedName: "s", addedEvents: 1, addedIocs: 0, analyzed: true };
     },
   );
@@ -98,7 +102,11 @@ function build(h: Harness): DropFolder {
     getControl: refuse,
     recordImportFailure: () => {},
     dispatchNotify: () => {},
-    resolveImportKind: (filename, text) => detectImportWithCustom(filename, text, new Map(), "builtin-first"),
+    resolveImportKind: (filename, text, debug) => {
+      const r = detectImportWithCustomEx(filename, text, new Map(), "builtin-first");
+      debug?.detected(r.kind, { confident: r.confident, decision: r.decision });
+      return r.kind;
+    },
     ingestStreamed,
     ingestMacLoginItemBinary: refuse,
     ingestDiskFile: refuse,
