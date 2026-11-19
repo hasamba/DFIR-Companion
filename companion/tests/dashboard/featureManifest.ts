@@ -1285,6 +1285,13 @@ export const FEATURES: Feature[] = [
     private: ["pollTimer", "pollCase", "renderGen", "rowsBox", "renderedCase"],
   },
   {
+    // The AI Agent Forensics panel, its sweep overlay and its toolbar button (#2690).
+    // No `initializer`: initCaseConnect() runs initAiAgentPanel(), not the inline script.
+    file: "dashboard-ai-agent.js",
+    publish: ["initAiAgentPanel", "loadAiAgentPanel"],
+    private: ["rules"],
+  },
+  {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the
     // IRIS / Timesketch / Velociraptor tool flags (caseToolEnabled).
     // No `initializer`: initCaseConnect() runs initCaseServers(), not the inline script.

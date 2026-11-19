@@ -78,7 +78,7 @@ function makeDeps(
     serverSetStore: sets,
     veloHuntStore: new VeloHuntStore(store),
     runStore: new AiAgentRunStore(store),
-    aiControlStore: new AiControlStore(store),
+    disableAi: (c: string) => new AiControlStore(store).save(c, { enabled: false, lastAnalyzedSeq: 0 }),
     startVeloHuntCollect: vi.fn(),
     armCollectTimer: vi.fn(),
     scheduleVeloHuntStatusPoll: vi.fn(),

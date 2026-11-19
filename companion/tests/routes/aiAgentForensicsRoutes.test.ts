@@ -32,3 +32,87 @@ describe("sweep cases and GET /cases", () => {
     expect(res.body.map((c: { caseId: string }) => c.caseId)).toEqual(["c1"]);
   });
 });
+
+describe("AI Agent Forensics routes", () => {
+  it("serves the rule version, scopes and the rules not run, with grades marked provisional", async () => {
+    const res = await request(app).get("/ai-agent/rules");
+    expect(res.status).toBe(200);
+    expect(res.body.version).toBe("ai-dfir-toolkit @ 5960308 (2026-11-18)");
+    expect(res.body.provisionalGrades).toBe(true);
+    expect(res.body.scopes.filter((s: { default: boolean }) => s.default)).toHaveLength(3);
+    expect(res.body.notRun.length).toBeGreaterThan(0);
+  });
+
+  it("refuses a run with no endpoint, and creates no sweep case", async () => {
+    const res = await request(app).post("/ai-agent/runs").send({ clientIds: [] });
+    expect([400, 501]).toContain(res.status);
+    expect((await store.listCases()).length).toBe(0);
+  });
+
+  it("serves runs without their raw rows, and exports the report escaped", async () => {
+    await store.createCase({ caseId: "c1", name: "A", investigator: "y", aiProvider: null });
+    const { AiAgentRunStore } = await import("../../src/analysis/aiAgentRunStore.js");
+    const hostile = '=HYPERLINK("http://evil") | <img src=x onerror=alert(1)>';
+    await new AiAgentRunStore(store).upsert("c1", {
+      runId: "aar-1",
+      huntId: "H.AI1",
+      launchedAt: "2026-11-19T10:00:00.000Z",
+      endpoints: [],
+      failedEndpoints: [],
+      skippedEndpoints: [],
+      scopes: ["agent-home"],
+      uploadMaxBytes: 1,
+      ruleSetVersion: "v",
+      artifacts: [],
+      preserved: true,
+      warnings: [],
+      sensitive: true,
+      rows: [{ MatchedText: "raw secret snippet" }],
+      report: {
+        builtAt: "2026-11-19T11:00:00.000Z",
+        ruleSetVersion: "v",
+        endpoints: [
+          { host: "DEV|WS", tools: [], mcpServers: [], credentialStores: 1, hits: 1, coverage: [] },
+        ],
+        hits: [
+          {
+            host: "DEV|WS",
+            rule: "R",
+            family: "yara",
+            ruleFile: "",
+            author: "",
+            link: "",
+            atlas: "",
+            scope: "agent-home",
+            severity: "High",
+            selfScan: false,
+            path: hostile,
+            sha256: "",
+            time: "2026-11-12T03:14:00.000Z",
+            timeBasis: "file last modified",
+            timeLabel: "latest time the content could have been planted",
+            scanTime: "",
+            snippet: hostile,
+            preserved: "",
+          },
+        ],
+        notRun: [],
+        unreadableRows: 0,
+        provisionalGrades: true,
+      },
+    });
+    const runs = await request(app).get("/cases/c1/ai-agent/runs");
+    expect(runs.status).toBe(200);
+    expect(JSON.stringify(runs.body)).not.toContain("raw secret snippet");
+    expect(runs.body.runs[0].rowCount).toBe(1);
+
+    const csv = await request(app).get("/cases/c1/ai-agent/runs/aar-1/report.csv");
+    expect(csv.status).toBe(200);
+    expect(csv.text).toContain(`"'=HYPERLINK(""http://evil"")`); // formula guard + quote doubling
+    const md = await request(app).get("/cases/c1/ai-agent/runs/aar-1/report.md");
+    expect(md.text).toContain("DEV\\|WS"); // a pipe cannot break the table
+    expect(md.text).toContain("Grades are provisional");
+    expect(md.text).toContain("Sensitive run");
+    expect(md.text).toContain('=HYPERLINK("http://evil") \\| <img'); // the cell stays one cell
+  });
+});

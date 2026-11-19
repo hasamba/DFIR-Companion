@@ -15,7 +15,6 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { ServerClients } from "../integrations/serverSets/types.js";
 import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
 import type { VeloHuntJob, VeloHuntStore } from "../analysis/veloHuntStore.js";
-import type { AiControlStore } from "../analysis/aiControl.js";
 import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
 import { activeAiAgentRuleSet } from "../analysis/aiAgentActiveRules.js";
 import { buildAiAgentReport } from "../analysis/aiAgentReport.js";
@@ -59,7 +58,8 @@ export interface AiAgentForensicsDeps {
   serverSetStore?: ServerSetStore;
   veloHuntStore: VeloHuntStore;
   runStore: AiAgentRunStore;
-  aiControlStore?: AiControlStore;
+  /** Turn AI analysis off for a new sweep case (routes pass ctx.setControl). */
+  disableAi?(caseId: string): Promise<unknown>;
   startVeloHuntCollect(caseId: string, huntId: string): unknown;
   armCollectTimer(caseId: string, huntId: string, waitMinutes: number): void;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
@@ -134,7 +134,7 @@ async function createSweepCase(deps: AiAgentForensicsDeps, serverSetId?: string)
   });
   if (sets && setId) sets.linkCase(caseId, setId);
   // A sweep is a results-only check: no AI analysis runs on it (the analyst files hits into a case).
-  await deps.aiControlStore?.save(caseId, { enabled: false, lastAnalyzedSeq: 0 });
+  await deps.disableAi?.(caseId);
   return caseId;
 }
 

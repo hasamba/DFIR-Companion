@@ -902,6 +902,55 @@ Bundles themselves are shared across cases, so building and editing them stays u
 
 ---
 
+## AI Agent Forensics
+
+Answers one question: **has an AI coding agent on these endpoints been tampered with?** For example
+a poisoned MCP server, a backdoored rules file, planted agent memory, or an instruction hidden in a
+project's `CLAUDE.md`. The toolbar's **AI agents** button opens it; inside a case it opens this
+section, and with no case open it opens the **sweep** view.
+
+1. Tick the endpoints (from the server set's Velociraptor client inventory). Non-Windows endpoints
+   are left out and named: this version runs on Windows only.
+2. Leave the three default scopes ticked (agent home folders, project instruction files, MCP server
+   installs) or add the two slow ones (local model files, script drop locations).
+3. Press **Run**. Velociraptor runs the [ai-dfir-toolkit](https://github.com/depalmar/ai-dfir-toolkit)
+   YARA rules and Sigma rules **on the endpoint**, lists the AI tools and MCP servers present, and
+   preserves the AI-agent files with `Windows.Triage.Targets` → `AICodingAgents`. A run never targets
+   the whole fleet: only the endpoints you ticked.
+
+The results-only report shows, per endpoint, the AI tools found, the MCP servers configured (name and
+executable only; arguments are counted, never shown, and environment values are never read), the
+number of hits, whether a credential store is present, and what each scope scanned. Below it: the
+hits table (grade, endpoint, rule, file, the **latest time the content could have been planted**,
+the matched text, and the rule's author with a link to the rule), **Rules not run, and why**, the
+rule version, and a link to the collection in Velociraptor. **Report .md** and **Report .csv**
+download the same report.
+
+- **Grades are provisional** until they are measured on real developer profiles. A hit on the
+  toolkit's own test files or rule copies is graded Info, recognised by content hash, never by
+  folder: a poisoned `CLAUDE.md` inside a security checkout still hits at full grade.
+- **The time** is the file's last-modified time (or its creation time, if the file was copied).
+  The content was planted at or before it. Files every agent session rewrites, such as
+  `.claude.json`, are marked as low-information times.
+- **Every run is marked sensitive.** Preservation can copy credential files into Velociraptor's file
+  store. The Companion never reads or imports the collected files; it keeps a list of them (path,
+  size, hash) only. A matched file outside the preserved folders is uploaded on its own, up to the
+  upload cap (50 MB by default).
+- **The AI never reads the matched text.** Inside a case, each hit becomes a forensic-timeline event
+  carrying the rule, the file and the time. The matched text appears only in this panel and in its
+  report downloads. Inventory and credential-store rows go to the super-timeline only.
+- **Outside a case**, each run is kept as a hidden sweep (the newest 20; older ones are removed
+  from the Companion, never from Velociraptor). **Add to case…** files a sweep's results into a real
+  case, as if the run had been made there.
+- **Rules not run** lists every toolkit rule this run cannot use and why: it needs LLM application
+  logs, it is a correlation rule, it reads a cloud log source, it is a Linux rule, it needs
+  file-read auditing, or the compiler refused it. File-change Sigma rules run on the Sysmon log;
+  an endpoint without Sysmon says "not run: no Sysmon".
+
+The panel is in the **Triage**, **Hunt Prep** and **Deep-Dive** view profiles.
+
+---
+
 ## Suggested Fleet Hunts
 
 Turns the case's findings into proposed hunts that sweep the estate for the same tradecraft, in the
