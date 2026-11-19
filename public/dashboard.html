@@ -2532,9 +2532,9 @@
           <div class="sfield"><label for="env-DFIR_VELOCIRAPTOR_SPAWN_RETRIES">Binary spawn retries<span class="sfield-hint">DFIR_VELOCIRAPTOR_SPAWN_RETRIES — retries on transient EPERM/EBUSY lock when spawning the velociraptor binary (default 6)</span></label><input id="env-DFIR_VELOCIRAPTOR_SPAWN_RETRIES" placeholder="6" /></div>
         </div>
         <div data-essential data-safe-style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:4px;">
-          <button id="veloSettingsReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the Velociraptor settings, rebuilds the connection of the DEFAULT server set, and refreshes its client list — applies WITHOUT restarting the server. Same action as the Reconnect button on the Velociraptor tab.">Test / reconnect</button>
+          <button id="veloSettingsReconnectBtn" type="button" data-tip="Saves any edits above, re-reads the Velociraptor settings, rebuilds the connection of the open case's server set (the DEFAULT set when no case is open), and refreshes its client list — applies WITHOUT restarting the server. Same action as the Reconnect button on the Velociraptor tab.">Test / reconnect</button>
           <span id="veloSettingsReconnectMsg" data-safe-style="font-size:12px; color:var(--text-muted);"></span>
-          <span data-server-set-default class="server-set-default-label"></span>
+          <span data-server-set-default data-server-set-follows-case class="server-set-default-label"></span>
         </div>
 
         <!-- Push ingest (#84) -->
@@ -2715,10 +2715,10 @@
         <p data-safe-style="font-size:12px;color:var(--text-muted);margin:0 0 10px">The shared <strong>bundle library</strong> — named sets of Velociraptor CLIENT artifacts, kept once for every case. Build and edit them here. <strong>Running</strong> a bundle, importing a hunt from the Velociraptor GUI and live monitoring all act on the connected case, so they live on the dashboard's <a href="#" data-act="openFleetCollection" data-safe-style="color:var(--accent)">Fleet Collection</a> panel. The connection itself is set on the <strong>Integrations</strong> tab.</p>
         <!-- Client inventory (#70): the host ↔ client_id map a single-endpoint collection resolves against. -->
         <div id="veloClientsCard" data-safe-style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px">
-          <button id="veloReconnectBtn" type="button" title="Re-read the Velociraptor config from .env, rebuild the connection, and refresh the client list. Use this after configuring Velociraptor or when the Velociraptor server was down at startup — no companion restart needed.">🔌 Reconnect</button>
+          <button id="veloReconnectBtn" type="button" title="Re-read the Velociraptor config from .env, rebuild the connection of the open case's server set (the default set when no case is open), and refresh the client list. Use this after configuring Velociraptor or when the Velociraptor server was down at startup — no companion restart needed.">🔌 Reconnect</button>
           <button id="veloRefreshClientsBtn" type="button" title="Snapshot every enrolled Velociraptor client (hostname / FQDN ↔ client id). A single-endpoint playbook collection resolves the host from this inventory instead of a live lookup.">↻ Refresh client list</button>
           <span id="veloClientsMsg" data-safe-style="font-size:12px;color:var(--text-muted)">—</span>
-          <span data-server-set-default class="server-set-default-label"></span>
+          <span data-server-set-default data-server-set-follows-case class="server-set-default-label"></span>
         </div>
         <div id="veloBundleList" data-safe-style="margin-bottom:14px">—</div>
 

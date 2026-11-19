@@ -12,6 +12,7 @@ interface Call {
 interface Api {
   loadVeloClients(): void;
   doRefreshVeloClients(): void;
+  doVeloReconnect(btnId?: string, msgId?: string): Promise<void>;
   veloTimeScopePreview(bundleId: string, form: unknown): void;
   activeCaseId: string | null;
   veloEnabled: boolean;
@@ -29,7 +30,7 @@ const fetch = async (url: string, init?: { body?: string }) => {
 const triage = loadDashboardModule<Api>(
   "dashboard-velo-triage.js",
   ["dashboard-escape.js", "dashboard-values.js", "dashboard-velo-case.js"],
-  { document, fetch, activeCaseId: null, veloEnabled: true },
+  { document, fetch, activeCaseId: null, veloEnabled: true, saveSettings: async () => true },
 );
 
 const form = () => {
@@ -70,5 +71,18 @@ describe("the open case's id rides on the case-less Velociraptor calls", () => {
     expect(calls[0].url).toBe("/velociraptor/clients");
     expect(calls[1].body).toEqual({});
     expect(calls[2].body).toEqual({ preset: "7d" });
+  });
+
+  it("Reconnect names the open case, so it reconnects the case's own server set", async () => {
+    triage.activeCaseId = "case-b";
+    await triage.doVeloReconnect();
+    const call = calls.find((c) => c.url === "/velociraptor/reconnect");
+    expect(call?.body).toEqual({ caseId: "case-b" });
+  });
+
+  it("Reconnect with no case open names no case, so the server reconnects the default set", async () => {
+    await triage.doVeloReconnect();
+    const call = calls.find((c) => c.url === "/velociraptor/reconnect");
+    expect(call?.body).toEqual({});
   });
 });

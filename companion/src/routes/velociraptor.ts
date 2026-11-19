@@ -32,6 +32,7 @@ import {
   namedCaseVeloOrNull,
   namesCase,
   requestVelo,
+  requestServerSet,
   type VeloTarget,
 } from "./veloServers.js";
 import { errorStatusOf, externalImportFields, importArtifactsUnderJob } from "./veloExternalImportJob.js";
@@ -182,39 +183,38 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       .json({ configured: d.ok && !!d.servers.velociraptor, updatedAt, clients: clientCount });
   });
 
-  // Re-read DFIR_VELOCIRAPTOR_* from .env (the binary and limits stay global), DROP the cached server-set
-  // clients so the next lookup rebuilds them, and refresh the default set's client inventory — which
-  // doubles as a reachability probe (`clients()` round-trips to the server). Lets the analyst connect
-  // after the Velociraptor server comes back online WITHOUT the #1-gotcha restart. Also re-arms any
-  // persisted live monitors and hunt status polls. Always 200; the body says configured/reachable.
-  app.post("/velociraptor/reconnect", async (_req: Request, res: Response) => {
+  // Re-read DFIR_VELOCIRAPTOR_* from .env, DROP the cached server-set clients, and refresh the inventory
+  // of the set the request acts on (the named case's set, else the default) — a reachability probe, so
+  // the analyst reconnects without a restart. Re-arms monitors and hunt polls. The body names the set.
+  app.post("/velociraptor/reconnect", async (req: Request, res: Response) => {
     try {
       await reloadEnvPrefix("DFIR_VELOCIRAPTOR_");
       ctx.serverClients.invalidate();
-      const d = ctx.serverClients.forDefault();
-      if (!d.ok || !d.servers.velociraptor) {
-        const error = d.ok ? `Velociraptor is not configured in server set '${d.servers.setName}'` : d.error;
-        return res.status(200).json({ configured: false, ok: false, error });
+      const d = requestServerSet(ctx, req, res);
+      if (!d) return; // a malformed caseId: 400 already sent
+      if (!d.ok) return res.status(200).json({ configured: false, ok: false, error: d.error });
+      const setName = d.servers.setName;
+      if (!d.servers.velociraptor) {
+        const error = `Velociraptor is not configured in server set '${setName}'`;
+        return res.status(200).json({ configured: false, ok: false, error, setName });
       }
       try {
         const count = await ctx.refreshVeloClients(d.servers.setId);
         const inv = (await options.clientInventoryFor?.(d.servers.setId).load()) ?? { updatedAt: "" };
         void ctx.resumeVeloMonitors(); // arm monitors that couldn't start while the client was absent
         void ctx.resumeVeloHuntStatusPolls(); // and any hunt status polling that couldn't start either
-        logLine(`[velociraptor] reconnected — ${count} enrolled client(s)`);
-        return res.status(200).json({ configured: true, ok: true, clients: count, updatedAt: inv.updatedAt });
+        logLine(`[velociraptor] reconnected server set '${setName}' — ${count} enrolled client(s)`);
+        return res
+          .status(200)
+          .json({ configured: true, ok: true, clients: count, updatedAt: inv.updatedAt, setName });
       } catch (err) {
-        return res.status(200).json({ configured: true, ok: false, error: (err as Error).message });
+        return res.status(200).json({ configured: true, ok: false, error: (err as Error).message, setName });
       }
     } catch (err) {
       return res.status(500).json({ configured: false, ok: false, error: (err as Error).message });
     }
   });
 
-  // Launch the VQL as a single-endpoint COLLECTION on ONE host (issue #70 — the playbook-hunt deploy
-  // path for a task tied to exactly one endpoint). Resolves the host → client_id from the persisted
-  // INVENTORY (refreshing it once on a miss), then runs collect_client on that client; returns the
-  // flow + a GUI deep link. 501 when the Velociraptor API is off; 502 when no client matches the host.
   app.post("/velociraptor/collect-host", async (req: Request, res: Response) => {
     const vc = defaultVelo(ctx, res);
     if (!vc) return;

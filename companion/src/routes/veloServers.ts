@@ -70,6 +70,21 @@ export function requestVelo(ctx: RouteContext, req: Request, res: Response) {
 }
 
 /**
+ * The server set a case-less request acts on, unresolved or not: the named case's set (`body.caseId`
+ * or `?caseId=`), else the default set. A malformed caseId is a 400 (sent here, returns undefined).
+ */
+export function requestServerSet(ctx: RouteContext, req: Request, res: Response): ResolveResult | undefined {
+  if (!namesCase(req)) return ctx.serverClients.forDefault();
+  const raw = req.body?.caseId ?? req.query?.caseId;
+  const caseId = typeof raw === "string" ? raw.trim() : "";
+  if (!caseId || !isValidCaseId(caseId)) {
+    res.status(400).json({ error: "caseId must be a valid case id" });
+    return undefined;
+  }
+  return ctx.serverClients.forCase(caseId);
+}
+
+/**
  * For load-time reads that must not log a failed request (#2462): the named case's target, or `null`
  * when that case's set does not resolve or has no Velociraptor. The caller answers an empty 200, and
  * never consults the default set. A malformed caseId is still a 400 (sent here, returns undefined).

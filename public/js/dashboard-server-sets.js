@@ -11,7 +11,10 @@
 //
 // fetchServerSets() is shared: the New Case picker and the case header's Change… dialog list the
 // sets through it. It also paints every [data-server-set-default] label with the default set's name
-// — the case-less actions (the fleet tab, the Settings connection checks) run on that set.
+// — the case-less actions (the Settings connection checks) run on that set. A label that also
+// carries [data-server-set-follows-case] (the Velociraptor controls, whose client list and Reconnect
+// act on the open case's set) names the open case's set instead, from caseServerSetLabel() in
+// js/dashboard-case-servers.js, and falls back to the default set when no case is open.
 (function () {
   "use strict";
 
@@ -91,11 +94,18 @@
   }
 
   function paintDefaultLabels(list) {
-    const def = list.sets.find((s) => s.id === list.defaultId);
-    const text = def ? `Using server set: ${def.name}` : "Using server set: none";
+    const def = list && list.sets.find((s) => s.id === list.defaultId);
+    const defaultText = def ? `Using server set: ${def.name}` : list ? "Using server set: none" : null;
+    const caseText = typeof window.caseServerSetLabel === "function" ? window.caseServerSetLabel() : null;
     document.querySelectorAll("[data-server-set-default]").forEach((node) => {
-      node.textContent = text;
+      const text = caseText && node.dataset && "serverSetFollowsCase" in node.dataset ? caseText : defaultText;
+      if (text !== null) node.textContent = text;
     });
+  }
+
+  /** Repaints the set labels after the open case changes; the default set's name is the last one read. */
+  function repaintServerSetLabels() {
+    paintDefaultLabels(lastList);
   }
 
   function toolsOf(set) {
@@ -362,5 +372,6 @@
   window.initServerSets = initServerSets;
   window.loadServerSets = loadServerSets;
   window.fetchServerSets = fetchServerSets;
+  window.repaintServerSetLabels = repaintServerSetLabels;
   window.openServerSetEditor = openServerSetEditor;
 })();

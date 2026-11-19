@@ -145,10 +145,11 @@
       return;
     }
     if (msg) msg.textContent = "reconnecting to the Velociraptor server…";
+    // With a case open, reconnect that case's own server set — the same set its client list reads.
     fetch("/velociraptor/reconnect", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(veloCaseBody({})),
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
@@ -164,9 +165,11 @@
         veloEnabled = typeof caseToolEnabled === "function" ? caseToolEnabled("velociraptor", !!j.configured) : !!j.configured; // an open case's own set decides
         applyVeloEnabled();
         if (!j.configured) {
+          // The server names the set it checked, which may be the open case's set, not the default.
           if (msg)
-            msg.textContent =
-              "Velociraptor API not configured — set the API config path on the Integrations tab and reconnect";
+            msg.textContent = j.error
+              ? `${j.error} — add it in Settings → Server sets and reconnect`
+              : "Velociraptor API not configured — set the API config path on the Integrations tab and reconnect";
           return;
         }
         if (!j.ok) {
@@ -177,7 +180,7 @@
           return;
         }
         if (msg)
-          msg.textContent = `✓ connected — ${j.clients || 0} enrolled client(s)`;
+          msg.textContent = `✓ connected — ${j.clients || 0} enrolled client(s)${j.setName ? ` in server set '${j.setName}'` : ""}`;
         loadVeloClients();
         _veloMonAutoBrowsed = false; // re-populate the event-artifact picker against the (re)connected server
         loadVeloMonitors(veloCaseId());
