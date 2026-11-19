@@ -440,20 +440,12 @@ export class AuthStore {
     };
   }
 
-  /**
-   * Record activity. With `expiresAt`, also move the session's expiry FORWARD to it (#2717). The
-   * guard is in SQL so a stale caller can never shorten a session; the cap is the caller's job.
-   */
-  touchSession(id: string, lastSeenAt: string, expiresAt?: string): void {
-    if (expiresAt === undefined) {
-      this.db.prepare("UPDATE auth_sessions SET last_seen_at=? WHERE id=?").run(lastSeenAt, id);
-      return;
-    }
+  /** Record activity; a given `expiresAt` only ever moves the expiry forward (#2717). */
+  touchSession(id: string, lastSeenAt: string, expiresAt = ""): void {
+    // ISO-8601 strings sort like times, and "" sorts first, so no expiry leaves expires_at as is.
     this.db
-      .prepare(
-        "UPDATE auth_sessions SET last_seen_at=?, expires_at=CASE WHEN expires_at<? THEN ? ELSE expires_at END WHERE id=?",
-      )
-      .run(lastSeenAt, expiresAt, expiresAt, id);
+      .prepare("UPDATE auth_sessions SET last_seen_at=?, expires_at=MAX(expires_at, ?) WHERE id=?")
+      .run(lastSeenAt, expiresAt, id);
   }
 
   deleteSessionByToken(token: string): void {

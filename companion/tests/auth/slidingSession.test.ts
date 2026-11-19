@@ -62,7 +62,7 @@ describe("sliding session expiry", () => {
       auth.authenticateRequest(reqFor(token));
     }
     const rows = store.listSessions(record.identityId);
-    expect(Date.parse(rows[0]!.expiresAt)).toBe(T0 + 48 * HOUR);
+    expect(Date.parse(rows[0].expiresAt)).toBe(T0 + 48 * HOUR);
     vi.setSystemTime(T0 + 48 * HOUR + 1_000);
     expect(auth.authenticateRequest(reqFor(token))).toBeNull();
   });
@@ -71,7 +71,7 @@ describe("sliding session expiry", () => {
     const { auth, token, record } = setup(12 * HOUR, undefined);
     vi.setSystemTime(T0 + 6 * HOUR);
     auth.authenticateRequest(reqFor(token));
-    expect(Date.parse(store.listSessions(record.identityId)[0]!.expiresAt)).toBe(T0 + 12 * HOUR);
+    expect(Date.parse(store.listSessions(record.identityId)[0].expiresAt)).toBe(T0 + 12 * HOUR);
   });
 
   it("keeps a short lifetime alive across the touch throttle", () => {
@@ -93,7 +93,7 @@ describe("sliding session expiry", () => {
   it("never shortens a session whose expiry is already later", () => {
     const { record } = setup(12 * HOUR, 168 * HOUR);
     store.touchSession(record.id, new Date().toISOString(), new Date(T0 + HOUR).toISOString());
-    expect(Date.parse(store.listSessions(record.identityId)[0]!.expiresAt)).toBe(T0 + 12 * HOUR);
+    expect(Date.parse(store.listSessions(record.identityId)[0].expiresAt)).toBe(T0 + 12 * HOUR);
   });
 
   it("gives the cookie a lifetime that covers every extension", () => {
