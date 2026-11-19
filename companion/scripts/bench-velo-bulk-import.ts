@@ -15,8 +15,9 @@
  * always streams from disk.
  *
  * THE DATA. Synthetic Velociraptor notebook rows: a `--graded` share are DetectRaptor-style detection
- * rows (graded Medium, kept in the forensic timeline), the rest plain process-creation telemetry
- * (Info, super-timeline only). Field-rich and varied — host, user, image, parent, command line and
+ * rows (graded Medium), the rest plain process creations from benign images (the importer may still
+ * grade those Low, so the report prints the import's own "done — forensic +N" line: that is the real
+ * number of rows the forensic timeline kept). Field-rich and varied — host, user, image, parent, command line and
  * hashes change from row to row — with documentation-only names and TEST-NET addresses.
  *
  * WHAT IT REPORTS. Wall time, peak RSS (VmHWM) and, from `--trace-gc`, the main thread's heap per
@@ -296,7 +297,9 @@ function report(r: {
   exit: number | null;
 }): void {
   const peaks = phasePeaks(r.log);
-  console.log(`rows ${r.rows}, graded ${Math.round(r.graded * 100)}%, heap limit ${r.heapMb} MB`);
+  console.log(`rows ${r.rows}, detection rows ${Math.round(r.graded * 100)}%, heap limit ${r.heapMb} MB`);
+  const done = /: done — (forensic [^\n]*)/.exec(r.log)?.[1];
+  if (done) console.log(`import: ${done}`);
   console.log(`wall ${r.seconds.toFixed(0)} s, peak RSS ${r.hwm} MB`);
   console.log(
     "phase".padEnd(26),
