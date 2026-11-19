@@ -43,6 +43,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-watson-cards.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-qchange.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-view.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-watson-mirror.js": "application/javascript; charset=utf-8", // #2647 Telegram mirror list
   "/js/dashboard-watson-mode.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-limit-warn.js": "application/javascript; charset=utf-8",
   "/js/dashboard-watson-run.js": "application/javascript; charset=utf-8",

@@ -141,7 +141,6 @@
     wNoAi = on;
     applyPanel();
   }
-
   // ── Server calls ───────────────────────────────────────────────────────────────────────
   function loadWatson(caseId, onlyIfNew) {
     const id = caseId || currentCase();
@@ -166,7 +165,7 @@
         if (seq !== wSeq || !c || id !== currentCase()) return;
         setNoAi(c.providerConfigured === false);
         renderWatson(c);
-        if (typeof watsonMirrorRefresh === "function") watsonMirrorRefresh(id); // #2647 (dashboard-watson-mirror.js)
+        if (typeof watsonMirrorRefresh === "function") watsonMirrorRefresh(id); // #2647 Telegram mirror
       })
       .catch(() => {});
   }
@@ -334,7 +333,6 @@
     const pre = el.parentElement && el.parentElement.querySelector("pre");
     if (pre && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(pre.textContent).catch(() => {});
   }
-
   const VERBS = {
     send,
     stop: () => watsonStop(currentCase()).then((t) => { if (t) { wNotice = { text: t }; renderWatson(); } }),
@@ -362,7 +360,7 @@
     riskArm: (el) => watsonVeloRiskArm(el), // a risky launch's inline second confirmation (Task 9)
     riskCancel: (el) => watsonVeloRiskCancel(el),
     applyRisk: (el) => watsonVeloApplyRisk(el),
-    mirrorOff: (el) => watsonMirrorOff(el), // #2647: the Telegram mirror list
+    mirrorOff: (el) => watsonMirrorOff(el), // #2647
   };
   // data-act="watsonAct": a fixed table, never a lookup of a DOM-supplied name on window.
   function watsonAct(el) {
