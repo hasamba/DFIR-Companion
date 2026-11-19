@@ -44,7 +44,10 @@ const mirror = (over: Record<string, unknown> = {}) => ({
 describe("Mirrored to Telegram list", () => {
   it("lists each chat with an Off button and no On control", () => {
     const { m } = load({});
-    const html = m.watsonMirrorListHtml([mirror(), mirror({ chatId: "555", chatType: "private", held: true })]);
+    const html = m.watsonMirrorListHtml([
+      mirror(),
+      mirror({ chatId: "555", chatType: "private", held: true }),
+    ]);
     expect(html).toContain("Mirrored to Telegram");
     expect(html.match(/data-w-verb="mirrorOff"/g)?.length).toBe(2);
     expect(html).toContain("Group -100123");

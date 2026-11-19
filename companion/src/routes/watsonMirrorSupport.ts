@@ -19,7 +19,7 @@ export function mirrorAudit(ctx: RouteContext, actor: string) {
       .caseExists(caseId)
       .then((exists) => {
         if (!exists) return;
-        captureCaseScope(
+        void captureCaseScope(
           store.casesRoot,
           caseId,
         )(() =>

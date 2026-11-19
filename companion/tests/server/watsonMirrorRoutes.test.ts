@@ -32,22 +32,23 @@ let bindings: SlashCommandChannelStore;
 let mirrors: WatsonMirrorStore;
 let app: ReturnType<typeof createApp>;
 let asked: Array<{ caseId: string; text: string }>;
-let sent: Array<{ chat_id: string; text: string; message_id: number }>;
+let sent: Array<{ chat_id: string; text: string; message_id: number; preview?: unknown }>;
 let updateId = 0;
 
+const fakeRound = async (caseId: string, input: WatsonRoundInput): Promise<WatsonChat> => {
+  asked.push({ caseId, text: input.text });
+  const at = new Date().toISOString();
+  return chatStore.update(caseId, (c) => ({
+    ...c,
+    turns: [
+      ...c.turns,
+      { id: `wt-a${asked.length}`, at, role: "analyst", text: input.text, actor: input.actor },
+      { id: `wt-w${asked.length}`, at, role: "watson", text: `answer about ${caseId}` },
+    ],
+  }));
+};
 const fakePipeline = {
-  watsonRound: async (caseId: string, input: WatsonRoundInput): Promise<WatsonChat> => {
-    asked.push({ caseId, text: input.text });
-    const at = new Date().toISOString();
-    return chatStore.update(caseId, (c) => ({
-      ...c,
-      turns: [
-        ...c.turns,
-        { id: `wt-a${asked.length}`, at, role: "analyst", text: input.text, actor: input.actor },
-        { id: `wt-w${asked.length}`, at, role: "watson", text: `answer about ${caseId}` },
-      ],
-    }));
-  },
+  watsonRound: fakeRound,
 } as unknown as import("../../src/analysis/pipeline.js").AnalysisPipeline;
 
 beforeEach(async () => {
@@ -66,7 +67,12 @@ beforeEach(async () => {
     if (url.endsWith("/getMe")) return Response.json({ ok: true, result: { username: "DfirBot" } });
     const body = JSON.parse(init?.body ?? "{}");
     const message_id = 9000 + sent.length;
-    sent.push({ chat_id: String(body.chat_id), text: String(body.text), message_id });
+    sent.push({
+      chat_id: String(body.chat_id),
+      text: String(body.text),
+      message_id,
+      preview: body.link_preview_options,
+    });
     return Response.json({ ok: true, result: { message_id } });
   });
   vi.stubEnv("DFIR_TELEGRAM_SECRET_TOKEN", SECRET);
@@ -222,10 +228,14 @@ describe("plain-text questions", () => {
   it("mirrors a dashboard question with link previews off", async () => {
     await mirrorOn();
     const before = sent.length;
-    await fakePipeline.watsonRound("c1", { text: "dashboard q", actor: "ana" } as WatsonRoundInput);
+    await fakeRound("c1", {
+      text: "dashboard q https://evil.example.test",
+      actor: "ana",
+    });
     app.locals.watsonMirror.notify("c1");
     await vi.waitFor(() => expect(sent.length).toBe(before + 1));
     expect(sent[before].text).toContain("dashboard q");
+    expect(sent[before].preview).toEqual({ is_disabled: true });
   });
 });
 

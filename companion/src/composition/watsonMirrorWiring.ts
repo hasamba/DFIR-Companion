@@ -24,6 +24,12 @@ import {
 // watsonReactorWiring.ts builds the reactor. Off in demo mode and whenever the bot, the mirror store
 // or the Watson chat is not configured.
 
+/**
+ * How far back the mirror reads the append-only history when its cursor rotated out of the live chat
+ * (400 turns): turns written while the server was down. A gap larger than this is not resent.
+ */
+const MIRROR_HISTORY_TURNS = 5000;
+
 /** What onWatson needs from the mirror: a "this case's chat changed" signal. */
 export interface WatsonMirrorSink {
   notify(caseId: string): void;
@@ -107,7 +113,7 @@ export function createAppWatsonMirror(ctx: RouteContext): WatsonMirror | undefin
     store: mirrorStore,
     loadChat: (caseId) => chatStore.load(caseId),
     loadHistory: async (caseId) =>
-      (await chatStore.history.page(caseId, { limit: Number.MAX_SAFE_INTEGER })).turns,
+      (await chatStore.history.page(caseId, { limit: MIRROR_HISTORY_TURNS })).turns,
     liveness: (entry) => liveness(ctx, entry),
     masking: (caseId) => masking(ctx, caseId),
     send: (chatId, text) =>
