@@ -6,7 +6,9 @@ import { correlationGroups } from "./correlate.js";
 import { getAppVersion } from "../version.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { MERGE_INDEX_VERSION, MergeCommitUnknown, mergeIncrementally } from "./incrementalMerge.js";
-import { fixedPoints, readBack } from "./incrementalMergeRows.js";
+import { readBack } from "./incrementalMergeRows.js";
+import { fixedPointsYielding } from "./mergeYielding.js";
+import { mapYielding, yieldToEventLoop } from "./yieldToEventLoop.js";
 import { mergeIndexEntry } from "./mergeIndex.js";
 
 /**
@@ -93,17 +95,17 @@ async function indexAfterFullSave(
   // The entries come from `merged`: only while nothing was written since the save do the stored rows
   // read as `merged` does. Otherwise the index stays as it was (the next merge re-reads those rows).
   if (!stale || stale.generation !== saved || stale.rowCount !== rows.length) return;
-  const values = rows.map(readBack);
+  // In slices (#2716): on a large case each step below held the event loop for seconds. The index
+  // write still names `saved`, and the worker refuses it if anything committed in the meantime.
+  const values = await mapYielding(rows, (e) => readBack(e));
   const staleValues = stale.positions.map((p) => values[p]);
-  const clean = fixedPoints(staleValues, at);
+  const clean = await fixedPointsYielding(staleValues, at);
+  await yieldToEventLoop();
   const stable = !correlationGroups(values).some((group) => group.length > 1);
-  await store.mergeIndexWrite(
-    caseId,
-    saved,
-    stale.positions.map((position, i) => ({
-      position,
-      index: { ...mergeIndexEntry(staleValues[i]), clean: clean[i] },
-    })),
-    { stamp, stable },
-  );
+  await yieldToEventLoop();
+  const entries = await mapYielding(stale.positions, (position, i) => ({
+    position,
+    index: { ...mergeIndexEntry(staleValues[i]), clean: clean[i] },
+  }));
+  await store.mergeIndexWrite(caseId, saved, entries, { stamp, stable });
 }

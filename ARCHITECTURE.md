@@ -671,7 +671,7 @@ Every entry is small. Grouped by domain edge, with the shape of the problem:
 |---|---|---|
 | ~~4~~ 0 | `detect -> integrations` | **CLEARED.** Five detectors importing `integrations/iris/mitreTactics.ts` for ATT&CK tactic names — reference data filed under a push client. The predicted fix was the one that worked: the file moved to `analysis/` (intel), and IRIS now imports it downward like any other consumer. |
 | ~~3~~ 0 | `intel -> integrations` | **CLEARED** by the same move — it was the same `mitreTactics.ts` import. |
-| 3 | `timeline -> detect` | `correlate.ts` and `stateMerge.ts` reaching for `chainSignature`, `exfilCorrelate`, `initialAccess` |
+| 3 | `timeline -> detect` | `correlate.ts` and `timelineChain.ts` reaching for `chainSignature`, `exfilCorrelate`, `initialAccess` |
 | 3 | `case -> integrations` | Velociraptor stores importing the API client's types |
 | 3 | `intel -> workflow` | `playbook.ts` and `incidentTypes.ts` importing collection directives and templates |
 | 3 | `workflow -> ai` | type-only back-references from `cockpit.ts` and `priorWork.ts`; see the tier note above |

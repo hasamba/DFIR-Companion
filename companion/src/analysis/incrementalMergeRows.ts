@@ -125,15 +125,24 @@ export async function correlationClosure(
  * left out: the merge reads every row it would move.
  */
 export function fixedPoints(values: readonly ForensicEvent[], at: string): boolean[] {
-  const chained = new Map(
-    runTimelineChain(values, [], at, (events) => [...events], false).map((e) => [e.id, e]),
-  );
-  return values.map((v) => {
-    const after = chained.get(v.id);
-    if (!after) return false;
-    const [again] = correlateEventsTracked([after]).events;
-    return isDeepStrictEqual(again, v);
-  });
+  const chained = byIdLastWins(runTimelineChain(values, [], at, FIXED_POINT_CLAMP, false));
+  return values.map((v) => isFixedPoint(chained, v));
+}
+
+/** fixedPoints' chain runs with no year clamp (the row is copied as is) and no coverage row. */
+export const FIXED_POINT_CLAMP = (events: readonly ForensicEvent[]): ForensicEvent[] => [...events];
+
+/** The chained rows by id; a later row with the same id wins, as a Map built from the array does. */
+export function byIdLastWins(events: readonly ForensicEvent[]): Map<string, ForensicEvent> {
+  return new Map(events.map((e) => [e.id, e]));
+}
+
+/** Whether `v` comes out of the chain (`chained`) and a lone correlation exactly as it went in. */
+export function isFixedPoint(chained: ReadonlyMap<string, ForensicEvent>, v: ForensicEvent): boolean {
+  const after = chained.get(v.id);
+  if (!after) return false;
+  const [again] = correlateEventsTracked([after]).events;
+  return isDeepStrictEqual(again, v);
 }
 
 /**
