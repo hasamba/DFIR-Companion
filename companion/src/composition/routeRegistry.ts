@@ -34,6 +34,7 @@ import { registerToolsRoutes } from "../routes/tools.js";
 import { registerImportRoutes } from "../routes/import.js";
 import { registerVelociraptorRoutes } from "../routes/velociraptor.js";
 import { registerAiAgentForensicsRoutes } from "../routes/aiAgentForensics.js";
+import { registerAiAgentPackRoutes } from "../routes/aiAgentPack.js";
 import { registerThreatIntelRoutes } from "../routes/threatIntel.js";
 import { registerEnrichmentTestRoutes } from "../routes/enrichmentTest.js";
 import { registerAnonymizationRoutes } from "../routes/anonymization.js";
@@ -176,6 +177,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   app.use("/cases/:id/velociraptor", createCaseExistsGate(store));
   registerVelociraptorRoutes(app, ctx);
   registerAiAgentForensicsRoutes(app, ctx); // AI Agent Forensics panel (#2690)
+  registerAiAgentPackRoutes(app, ctx); // its separate rule pack (#2690)
   registerThreatIntelRoutes(app, ctx);
   registerEnrichmentTestRoutes(app, ctx);
   registerAnonymizationRoutes(app, ctx);

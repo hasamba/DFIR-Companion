@@ -1,5 +1,5 @@
 // AI Agent Forensics (#2690): the panel's HTTP surface. Thin — the lifecycle is in
-// composition/aiAgentForensics.ts. The run record is served WITHOUT its raw rows (they carry the
+// integrations/velociraptor/aiAgentRuns.ts. The run record is served WITHOUT its raw rows (they carry the
 // unredacted matched text, which only "Add to case" files back through the evidence-first ingest).
 //
 //   GET  /ai-agent/rules                                 rule version, scopes, rules not run, problem
@@ -23,7 +23,7 @@ import {
   refreshAiAgentRun,
   startAiAgentRun,
   type AiAgentForensicsDeps,
-} from "../composition/aiAgentForensics.js";
+} from "../integrations/velociraptor/aiAgentRuns.js";
 import { AiAgentArtifactError } from "../integrations/velociraptor/aiAgentArtifact.js";
 import { AiAgentLaunchError } from "../integrations/velociraptor/aiAgentLaunch.js";
 import { aiAgentReportCsv, aiAgentReportMarkdown } from "../reports/aiAgentReportExport.js";

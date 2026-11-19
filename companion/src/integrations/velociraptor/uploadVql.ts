@@ -1,3 +1,5 @@
+import type { UploadManifestEntry } from "../../analysis/aiAgentRunStore.js";
+
 // The VQL that reads a hunt's or a flow's UPLOADED files. Lifted out of velociraptorApi.ts (at its
 // size-ledger cap) so the AI Agent Forensics manifest-only reader sits beside the readers it must
 // never fall back to (#2690).
@@ -68,13 +70,7 @@ export class ExternalRetentionError extends Error {
   }
 }
 
-export interface UploadManifestEntry {
-  clientId: string;
-  flowId: string;
-  path: string;
-  size: number;
-  sha256: string;
-}
+export type { UploadManifestEntry };
 
 /** The hunt's uploads as a manifest — path, size, server-side hash. Contents are never fetched. */
 export async function readUploadManifest(

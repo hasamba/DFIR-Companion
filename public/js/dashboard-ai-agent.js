@@ -56,7 +56,40 @@
     box.appendChild(el("p", `Rules: ${rules.version}`, "aa-note"));
     box.appendChild(el("p", "Grades are provisional until measured on real developer profiles.", "aa-note aa-provisional"));
     if (rules.problem) box.appendChild(el("p", rules.problem, "aa-warn"));
+    box.appendChild(packControls());
     return box;
+  }
+
+  // The separate AI-agent rule pack (aiagent-rules-*): check → review the changes → Install, or roll back.
+  function packControls() {
+    const wrap = el("div", null, "aa-actions");
+    const msg = el("span", "", "aa-msg");
+    msg.setAttribute("role", "status");
+    const check = el("button", "Rule pack: check for updates");
+    check.type = "button";
+    const back = el("button", "Use the bundled rules");
+    back.type = "button";
+    const done = (r, text) => {
+      msg.textContent = r.ok ? text : r.body.error || `Failed (HTTP ${r.status}).`;
+      if (r.ok) rules = null; // the next render re-reads the rule version
+    };
+    check.addEventListener("click", async () => {
+      msg.textContent = "Checking…";
+      const r = await post("/ai-agent/pack/check");
+      if (!r.ok || r.body.status !== "found") {
+        msg.textContent = r.ok ? (r.body.status === "current" ? `Up to date (${r.body.version}).` : r.body.message || "No pack.") : r.body.error || `Failed (HTTP ${r.status}).`;
+        return;
+      }
+      const d = r.body.diff || { added: [], removed: [], changedFiles: [] };
+      msg.textContent = `${r.body.version}: +${d.added.length} rule(s), -${d.removed.length}, ${d.changedFiles.length} changed file(s). `;
+      const install = el("button", `Install ${r.body.version}`);
+      install.type = "button";
+      install.addEventListener("click", async () => done(await post("/ai-agent/pack/install", { version: r.body.version }), "Installed — the next run uses it. Reopen the panel to see the version."));
+      msg.appendChild(install);
+    });
+    back.addEventListener("click", async () => done(await post("/ai-agent/pack/rollback", { to: "bundled" }), "Back to the bundled rules for the next run."));
+    wrap.append(check, back, msg);
+    return wrap;
   }
 
   function notRunBlock(groups) {

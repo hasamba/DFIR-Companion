@@ -4,10 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CaseStore } from "../../src/storage/caseStore.js";
-import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
-import { AiControlStore } from "../../src/analysis/aiControl.js";
-import { AiAgentRunStore } from "../../src/analysis/aiAgentRunStore.js";
+import { CaseStore } from "../../../src/storage/caseStore.js";
+import { VeloHuntStore } from "../../../src/analysis/veloHuntStore.js";
+import { AiControlStore } from "../../../src/analysis/aiControl.js";
+import { AiAgentRunStore } from "../../../src/analysis/aiAgentRunStore.js";
 import {
   addSweepToCase,
   enforceSweepRetention,
@@ -15,10 +15,10 @@ import {
   refreshAiAgentRun,
   startAiAgentRun,
   type AiAgentForensicsDeps,
-} from "../../src/composition/aiAgentForensics.js";
-import { isAnalystCase, SWEEP_RETENTION } from "../../src/storage/sweepCase.js";
-import type { VelociraptorClient } from "../../src/integrations/velociraptor/velociraptorApi.js";
-import type { ServerSetStore } from "../../src/integrations/serverSets/serverSetStore.js";
+} from "../../../src/integrations/velociraptor/aiAgentRuns.js";
+import { isAnalystCase, SWEEP_RETENTION } from "../../../src/storage/sweepCase.js";
+import type { VelociraptorClient } from "../../../src/integrations/velociraptor/velociraptorApi.js";
+import type { ServerSetStore } from "../../../src/integrations/serverSets/serverSetStore.js";
 
 let root: string;
 let store: CaseStore;

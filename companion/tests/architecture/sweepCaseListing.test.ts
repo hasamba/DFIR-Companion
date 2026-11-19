@@ -31,7 +31,7 @@ const KEEPS_SWEEPS = new Set([
   "analysis/operationalCapacity.ts",
   "analysis/custodyIntegrity.ts",
   "analysis/jobLedgerStore.ts",
-  "composition/aiAgentForensics.ts", // the panel's own sweep list and retention
+  "integrations/velociraptor/aiAgentRuns.ts", // the panel's own sweep list and retention
 ]);
 const REMOTE = new Set(["integrations/iris/irisImportFetch.ts", "routes/reportsExport.ts"]); // IRIS's cases, not ours
 

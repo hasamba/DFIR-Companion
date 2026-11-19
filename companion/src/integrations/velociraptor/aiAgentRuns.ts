@@ -11,31 +11,30 @@
 //                case's import lock. No re-collection.
 //   retention  — keep the newest SWEEP_RETENTION sweep cases; older ones lose only the Companion copy.
 
-import type { CaseStore } from "../storage/caseStore.js";
-import type { ServerClients } from "../integrations/serverSets/types.js";
-import type { ServerSetStore } from "../integrations/serverSets/serverSetStore.js";
-import type { VeloHuntJob, VeloHuntStore } from "../analysis/veloHuntStore.js";
-import type { VelociraptorClient } from "../integrations/velociraptor/velociraptorApi.js";
-import { activeAiAgentRuleSet } from "../analysis/aiAgentActiveRules.js";
-import { buildAiAgentReport } from "../analysis/aiAgentReport.js";
+import type { CaseStore } from "../../storage/caseStore.js";
+import type { ServerClients } from "../serverSets/types.js";
+import type { ServerSetStore } from "../serverSets/serverSetStore.js";
+import type { VeloHuntJob, VeloHuntStore } from "../../analysis/veloHuntStore.js";
+import type { VelociraptorClient } from "./velociraptorApi.js";
+import { activeAiAgentRuleSet } from "../../analysis/aiAgentActiveRules.js";
+import { buildAiAgentReport } from "../../analysis/aiAgentReport.js";
 import {
   AiAgentRunStore,
   capManifest,
   newAiAgentRunId,
   type AiAgentRun,
-} from "../analysis/aiAgentRunStore.js";
+} from "../../analysis/aiAgentRunStore.js";
+import { AI_AGENT_DEFAULT_UPLOAD_MAX_BYTES, buildAiAgentArtifact } from "./aiAgentArtifact.js";
+import { AI_AGENT_HUNT_EXPIRY_SECONDS, launchAiAgentRun } from "./aiAgentLaunch.js";
+import { preflightAiAgentRun, type AiAgentEndpoint } from "./aiAgentPreflight.js";
+import { readUploadManifest } from "./uploadVql.js";
+import { CLIENT_RE } from "./clientInventory.js";
 import {
-  AI_AGENT_DEFAULT_UPLOAD_MAX_BYTES,
-  buildAiAgentArtifact,
-} from "../integrations/velociraptor/aiAgentArtifact.js";
-import {
-  AI_AGENT_HUNT_EXPIRY_SECONDS,
-  launchAiAgentRun,
-} from "../integrations/velociraptor/aiAgentLaunch.js";
-import { preflightAiAgentRun, type AiAgentEndpoint } from "../integrations/velociraptor/aiAgentPreflight.js";
-import { readUploadManifest } from "../integrations/velociraptor/uploadVql.js";
-import { CLIENT_RE } from "../integrations/velociraptor/clientInventory.js";
-import { SWEEP_CASE_KIND, isSweepCase, newSweepCaseId, sweepsBeyondRetention } from "../storage/sweepCase.js";
+  SWEEP_CASE_KIND,
+  isSweepCase,
+  newSweepCaseId,
+  sweepsBeyondRetention,
+} from "../../storage/sweepCase.js";
 
 export const AI_AGENT_BUNDLE_ID = "ai-agent-forensics";
 const BUNDLE_NAME = "AI Agent Forensics (sensitive)";

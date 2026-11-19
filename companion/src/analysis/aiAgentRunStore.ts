@@ -10,9 +10,17 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import type { AiAgentReport } from "./aiAgentReport.js";
-import type { UploadManifestEntry } from "../integrations/velociraptor/uploadVql.js";
 
 const MAX_RUNS_PER_CASE = 20;
+
+/** One file a run uploaded to Velociraptor, as the manifest records it — never its content. */
+export interface UploadManifestEntry {
+  clientId: string;
+  flowId: string;
+  path: string;
+  size: number;
+  sha256: string;
+}
 const MANIFEST_MAX = 2000;
 const lock = new StateLock();
 
