@@ -29,7 +29,8 @@ export function hasParseProgress(kind: unknown): boolean {
  */
 export function cancellableByParse(kind: unknown, streaming: unknown): boolean {
   if (hasParseProgress(kind)) return true;
-  return streaming === true && typeof kind === "string" && isStreamKind(kind);
+  // A Velociraptor JSON Lines file streamed from disk checks the signal per batch too (#2705).
+  return streaming === true && typeof kind === "string" && (isStreamKind(kind) || kind === "velociraptor");
 }
 
 // CSV/log imports are themselves an LLM call (free-form data the model must interpret), so they

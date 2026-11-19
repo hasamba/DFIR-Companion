@@ -119,6 +119,12 @@ re-joining work within a batch, not across the file. A repeat that straddles a b
 two counted rows; script-block fragments more than a batch apart are not re-joined. Neither affects what
 the tagger sees. Set `DFIR_IMPORT_BULK_MIN_MB=0` to batch every Velociraptor import.
 
+A Velociraptor **JSON Lines** export (one row per line — a notebook download, for example) larger than
+`DFIR_MAX_IMPORT_FILE_MB` or 256 MB, whichever is smaller, is read from disk a row at a time instead of
+being refused, so a file of any size up to the upload limit imports — from the Import button,
+Import-from-path or the drop folder. A top-level JSON array or artifact map that large is still refused;
+export it as JSON Lines, or split it. A UTF-16 file that large is refused too: convert it to UTF-8 first.
+
 Deterministic imports also retain a [versioned canonical event envelope](canonical-events.md) with
 structured identities and field-level provenance. This lets graphs and cross-source correlation use
 the source facts rather than parsing the displayed description back into data.

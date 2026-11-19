@@ -24,3 +24,4 @@ export * from "./platformImports.js";
 export * from "./recoveryImports.js";
 export * from "./sigmaRegradeApply.js";
 export * from "./timelineImports.js";
+export * from "./velociraptorFileImport.js";

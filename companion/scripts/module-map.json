@@ -1066,6 +1066,7 @@
     "velociraptorClientStore.ts": "analysis/case",
     "velociraptorDownload.ts": "analysis/case",
     "velociraptorImport.ts": "analysis/ingest",
+    "velociraptorFileRowStream.ts": "analysis/ingest",
     "velociraptorRowStream.ts": "analysis/ingest",
     "velociraptorRelease.ts": "analysis/case",
     "velociraptorTitle.ts": "analysis/ingest",

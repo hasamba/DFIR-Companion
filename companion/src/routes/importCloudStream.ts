@@ -13,6 +13,7 @@ import type { CompiledRuleset } from "../analysis/taggerRules.js";
 import type { ImportBase, RouteContext } from "./context.js";
 import { emitImportDebug } from "./importDebugEmit.js";
 import { importPlasoFileLogged } from "./importPlasoStream.js";
+import { importVeloFileLogged } from "./importVeloStream.js";
 import { routeSettleDeps, type SettleContext } from "./routeSettleDeps.js";
 
 /**
@@ -128,7 +129,7 @@ async function importCloudFileLogged(
   }
 }
 
-/** Run a stored upload that reads from disk: a Plaso super-timeline, or a streamed cloud export. */
+/** Run a stored upload that reads from disk: Plaso, a streamed cloud export, or large Velociraptor JSON Lines. */
 export function runDiskImport(
   ctx: SettleContext,
   kind: string,
@@ -137,9 +138,9 @@ export function runDiskImport(
   storedName: string,
   base: ImportBase,
 ): Promise<InvestigationState> {
-  return isStreamKind(kind)
-    ? importCloudFileLogged(ctx, caseId, kind, storedPath, storedName, base)
-    : importPlasoFileLogged(ctx, caseId, storedPath, storedName, base);
+  if (isStreamKind(kind)) return importCloudFileLogged(ctx, caseId, kind, storedPath, storedName, base);
+  if (kind === "velociraptor") return importVeloFileLogged(ctx, caseId, storedPath, storedName, base); // #2705
+  return importPlasoFileLogged(ctx, caseId, storedPath, storedName, base);
 }
 
 /**

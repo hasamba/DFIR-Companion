@@ -14,7 +14,12 @@ import { mergeHostRenameRecords, type HostRenameRecord } from "../hostRenameReco
 import { mergeEvictions, type SuperEviction } from "../superTimelineStore.js";
 import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { isCollectorEvidenceRow } from "../collectorChildren.js";
-import { openVelociraptorRowStream, type Row } from "../velociraptorRowStream.js";
+import {
+  openVelociraptorRowStream,
+  type Row,
+  type RowStreamFormat,
+  type RowStreamItem,
+} from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
 import { abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
@@ -207,6 +212,26 @@ export async function rollbackBulkRun(
   }
 }
 
+/**
+ * Where the bulk driver's rows come from (#2705): one string, or a file read a record at a time.
+ * `bytes` sizes the progress estimate and the log line; `open` returns a fresh reader each call (the
+ * driver reads twice — the evidence pass, then the mapping pass), or null for a shape it cannot stream.
+ */
+export interface BulkRowSource {
+  bytes: number;
+  open(): { format: RowStreamFormat; rows: Iterable<RowStreamItem> | AsyncIterable<RowStreamItem> } | null;
+}
+
+/** The in-memory source: the text path, unchanged — `bytes` is the string's length, as it always was. */
+export function textRowSource(text: string): BulkRowSource {
+  return { bytes: text.length, open: () => openVelociraptorRowStream(text) };
+}
+
+const asSource = (input: string | BulkRowSource): BulkRowSource =>
+  typeof input === "string" ? textRowSource(input) : input;
+
+const isAbort = (err: unknown): boolean => (err as Error | null)?.name === "AbortError";
+
 /** True when the sink is wired and the input is big enough to take the bulk path. */
 export function bulkPathApplies(sink: BulkImportSink | undefined, text: string): sink is BulkImportSink {
   return !!sink && text.length >= sink.minBytes;
@@ -363,18 +388,19 @@ function mapBatch(
 export async function runVelociraptorBulk(
   sink: BulkImportSink,
   caseId: string,
-  text: string,
+  input: string | BulkRowSource,
   opts: BulkImportOpts,
   mode: "forensic" | "super-only",
 ): Promise<BulkImportResult | null> {
-  const stream = openVelociraptorRowStream(text);
+  const source = asSource(input);
+  const stream = source.open();
   if (!stream) return null;
   const startedAt = new Date().toISOString();
   // The file's own rename evidence must be complete BEFORE the first batch is attributed and written
   // (#1489): a batch already appended cannot be re-homed when the 6011 row turns up later, so an
   // evidence-only pass streams the rows once more, mapping nothing. This is what keeps the bulk and
   // whole-file drivers byte-for-byte identical on host identity, whatever the row order or batch size.
-  const evidence = openVelociraptorRowStream(text);
+  const evidence = source.open();
   if (!evidence) return null;
   const t0 = performance.now();
   const stamp = { importedAt: opts.importedAt, importBatchId: randomUUID() };
@@ -407,7 +433,7 @@ export async function runVelociraptorBulk(
   };
 
   sink.log(
-    `[import] ${caseId} ${opts.label}: bulk path (${mode}), ${mb(text.length)} MB, ${stream.format}, batches of ${sink.batchRows} rows`,
+    `[import] ${caseId} ${opts.label}: bulk path (${mode}), ${mb(source.bytes)} MB, ${stream.format}, batches of ${sink.batchRows} rows`,
     caseId,
   );
 
@@ -463,7 +489,7 @@ export async function runVelociraptorBulk(
     );
     // Rows done over an estimate of rows total from the bytes consumed so far — refines each batch.
     const estimate =
-      offset > 0 ? Math.max(totals.rows, Math.round((totals.rows * text.length) / offset)) : totals.rows;
+      offset > 0 ? Math.max(totals.rows, Math.round((totals.rows * source.bytes) / offset)) : totals.rows;
     opts.onProgress?.(totals.rows, estimate);
   };
 
@@ -494,18 +520,22 @@ export async function runVelociraptorBulk(
       // claim under the record's own Computer, so a rename learned after a spawn was primed still
       // lets its children meet it.
       const scratch = { ...vrBulkInternals.newVrCtx(vr), aliases: vrCtx.aliases };
-      for (const item of evidence.rows) {
+      for await (const item of evidence.rows) {
         const rows = prepareRows([item.row]);
         vrCtx.aliases.learn(rows);
         for (const row of rows)
           if (isCollectorEvidenceRow(row))
             vrCtx.lineage.prime(row, vrBulkInternals.mapRowToEvents(row, scratch).events);
-        if (++seen % sink.batchRows === 0) await yieldToLoop();
+        if (++seen % sink.batchRows === 0) {
+          abortIfCancelled(opts.signal); // a file's evidence pass is a full read: Cancel stops it (#2705)
+          await yieldToLoop();
+        }
       }
-    } catch {
-      /* reported by the mapping pass */
+    } catch (err) {
+      if (isAbort(err)) throw err; // a cancel is never "reported by the mapping pass"
+      /* anything else is reported by the mapping pass */
     }
-    for (const item of stream.rows) {
+    for await (const item of stream.rows) {
       batch.push(item.row);
       lastOffset = item.offset;
       if (batch.length >= sink.batchRows) {
@@ -531,7 +561,7 @@ export async function runVelociraptorBulk(
       }
     }
     abortIfCancelled(opts.signal);
-    if (batch.length || tail.length) await flush(batch, text.length, tail);
+    if (batch.length || tail.length) await flush(batch, source.bytes, tail);
     if (toolStores && gate) await releaseToolStores(toolStores.release());
   } catch (err) {
     // The batch that failed is the one after the last that flushed; `batch` holds its rows so far.
@@ -607,11 +637,11 @@ export async function importVelociraptorBulk(
   ctx: ImportContext,
   sink: BulkImportSink,
   caseId: string,
-  text: string,
+  input: string | BulkRowSource,
   opts: BulkImportOpts,
 ): Promise<InvestigationState | null> {
   return ctx.withStateLock(caseId, async () => {
-    const result = await runVelociraptorBulk(sink, caseId, text, opts, "forensic");
+    const result = await runVelociraptorBulk(sink, caseId, input, opts, "forensic");
     if (!result) return null;
     const delta = deltaSchema.parse({
       findings: [],

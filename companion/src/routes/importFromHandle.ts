@@ -11,6 +11,7 @@ import { isStringTooLongError } from "../storage/boundedRead.js";
 import type { RouteContext } from "./context.js";
 import { buildImportBase, importJobParameters } from "./importBase.js";
 import { cloudStream } from "./importCloudStream.js";
+import { decideVeloDiskStream, type VeloDiskDecision } from "./importVeloStream.js";
 import { sniffImportFileHeadDetail, readImportFileBounded } from "./importFileHead.js";
 import { cancellableByParse, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
 import { siemFallbackWarning } from "./importNotes.js";
@@ -88,8 +89,17 @@ export async function importFromHandle(
   const hasSynthesisProvider = options.pipeline?.hasSynthesisProvider() === true;
   if (refuseDetectedImport({ kind, caseId, res, hasSynthesisProvider, unknown, debug })) return;
 
-  // Plaso and large/gzip cloud exports stream (#2303); else one string, capped by DFIR_MAX_IMPORT_FILE_MB (#921).
-  const streaming = cloudStream.readsFromDisk(kind, (await handle.stat()).size, gzip);
+  // Plaso, large/gzip cloud exports (#2303) and large Velociraptor JSON Lines (#2705) stream; else one
+  // string, capped by DFIR_MAX_IMPORT_FILE_MB (#921).
+  const size = (await handle.stat()).size;
+  let velo: VeloDiskDecision;
+  try {
+    velo = await decideVeloDiskStream({ kind, handle, size, gzip, sinkWired: !!options.bulkImportSink });
+  } catch (err) {
+    return res.status(400).json({ error: `cannot read file: ${(err as Error).message}` });
+  }
+  if (velo.refuse) return res.status(413).json({ error: velo.refuse });
+  const streaming = velo.streams || cloudStream.readsFromDisk(kind, size, gzip);
   if (gzip && !streaming) return res.status(415).json({ error: cloudStream.GZIP_ONLY_CLOUD });
   let text = "";
   if (!streaming) {
@@ -101,7 +111,7 @@ export async function importFromHandle(
       const m = (err as Error).message;
       if (isStringTooLongError(err)) {
         return res.status(413).json({
-          error: `file is too large to import as ${kind} (exceeds the ~512 MB in-memory limit); only Plaso super-timelines support streaming import — split or convert the file`,
+          error: `file is too large to import as ${kind} (exceeds the ~512 MB in-memory limit) — split the file; Plaso super-timelines, cloud audit exports and Velociraptor JSON Lines stream from disk instead`,
         });
       }
       return res.status(400).json({ error: `cannot read file: ${m}` });
