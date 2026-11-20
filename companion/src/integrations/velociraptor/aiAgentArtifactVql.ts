@@ -47,7 +47,7 @@ export function yaraScopeVql(key: string): { lets: string; hits: string; coverag
     `  if(condition=NOT ${s}.Upload, then="kept by the AICodingAgents preservation collection",`,
     `     else=if(condition=HitSize > cfg.UploadMaxBytes, then="match observed; file not preserved (over the upload cap)",`,
     `     else=if(condition=Up, then=format(format="uploaded (%v bytes)", args=[Up.Size]),`,
-    `     else="match observed; file not preserved (upload failed)"))) AS Preserved`,
+    `     else="match observed; upload result not recorded"))) AS Preserved`,
     `FROM kept_${key}`,
   ].join("\n");
   const coverage = [

@@ -27,7 +27,7 @@ import {
 import { AI_AGENT_DEFAULT_UPLOAD_MAX_BYTES, buildAiAgentArtifact } from "./aiAgentArtifact.js";
 import { AI_AGENT_HUNT_EXPIRY_SECONDS, launchAiAgentRun } from "./aiAgentLaunch.js";
 import { preflightAiAgentRun, type AiAgentEndpoint } from "./aiAgentPreflight.js";
-import { readUploadManifest } from "./uploadVql.js";
+import { readUploadManifestStatus } from "./uploadVql.js";
 import { CLIENT_RE } from "./clientInventory.js";
 import {
   SWEEP_CASE_KIND,
@@ -345,12 +345,16 @@ export async function refreshAiAgentRun(
   await deps.runStore.writeRows(caseId, runId, rows); // the complete set read — never capped
   // The manifest first, uncapped: the report joins each agent-home hit to its preserved copy's hash
   // (#2722). A manifest that could not be read leaves those hashes "not recorded".
-  const manifest = await readUploadManifest(client, run.huntId).catch((e: Error) => {
+  const read = await readUploadManifestStatus(client, run.huntId).catch((e: Error) => {
     problems.push(`upload manifest: ${e.message}`);
     return null;
   });
+  if (read?.problem) problems.push(`upload manifest: ${read.problem}`);
+  const manifest = read?.entries ?? null;
   const report = withSilentEndpoints(
-    buildAiAgentReport(rows, activeAiAgentRuleSet(), new Date(), { manifest }),
+    buildAiAgentReport(rows, activeAiAgentRuleSet(), new Date(), {
+      manifest: read && !read.problem ? read.entries : null,
+    }),
     run.endpoints,
   );
   const updated = await deps.runStore.update(caseId, runId, (r) => ({

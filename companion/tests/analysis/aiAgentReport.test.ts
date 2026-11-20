@@ -187,6 +187,10 @@ describe("AI Agent Forensics report: scan hash and preserved hash", () => {
     expect(check(hitRow({ ...kept, ...path }), null).hashCheck).toBe("not recorded");
     expect(check(hitRow({ ...kept, FilePath: "C:\\Users\\dev\\other.md" })).hashCheck).toBe("not recorded");
     expect(check(hitRow({ ...kept, ...path, ClientId: undefined })).hashCheck).toBe("not recorded");
+    // The artifact could not confirm its own upload: that is not proof the file was not kept.
+    expect(
+      check(hitRow({ Preserved: "match observed; upload result not recorded", ...path }), null).hashCheck,
+    ).toBe("not recorded");
     // An older run's row: uploaded, but no hash column and no manifest.
     expect(check(hitRow({ Preserved: "uploaded (5 bytes)", ...path }), null).hashCheck).toBe("not recorded");
   });

@@ -392,4 +392,51 @@ describe("AI Agent Forensics: activity entries", () => {
     const updated = await refreshAiAgentRun(deps, caseId, run.runId);
     expect(updated.report?.hits[0]).toMatchObject({ preservedSha256: A, hashCheck: "same" });
   });
+  it("keeps the totals of a manifest read that logged an error, but never joins hashes to it", async () => {
+    const A = "a".repeat(64);
+    const velo = fakeVelo();
+    const reading = {
+      ...velo,
+      huntArtifactRows: async () => ({
+        rows: [
+          {
+            ...hitRow,
+            ClientId: "C.w1",
+            FileSha256: A,
+            Preserved: "kept by the AICodingAgents preservation collection",
+          },
+        ],
+        total: 1,
+        truncated: false,
+      }),
+      runProgram: async (p: string) =>
+        p.includes("uploads(")
+          ? {
+              rows: [
+                {
+                  ClientId: "C.w1",
+                  FlowId: "F.1",
+                  Path: "/uploads/auto/C%3A/Users/dev/.claude/CLAUDE.md",
+                  Size: 5,
+                  SHA256: A,
+                },
+              ],
+              reason: "PermissionDenied: partial listing",
+            }
+          : (velo as unknown as { runProgram(p: string): Promise<unknown> }).runProgram(p),
+    } as unknown as VelociraptorClient;
+    const servers = { ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: reading } };
+    const deps = makeDeps({
+      serverClients: {
+        forCase: () => servers,
+        forSet: () => servers,
+        forDefault: () => servers,
+      } as unknown as AiAgentForensicsDeps["serverClients"],
+    });
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    const updated = await refreshAiAgentRun(deps, caseId, run.runId);
+    expect(updated.report?.hits[0]).toMatchObject({ preservedSha256: "", hashCheck: "not recorded" });
+    expect(updated.manifest?.total).toBe(1);
+    expect(updated.reportError).toContain("upload manifest: PermissionDenied: partial listing");
+  });
 });

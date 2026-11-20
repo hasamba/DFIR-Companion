@@ -99,22 +99,33 @@ export class ExternalRetentionError extends Error {
 
 export type { UploadManifestEntry };
 
-/** The hunt's uploads as a manifest — path, size, server-side hash. Contents are never fetched. */
-export async function readUploadManifest(
+/**
+ * The hunt's uploads as a manifest, and whether the list is complete (#2722): a query that logged an
+ * error may have returned only part of it. A partial list still feeds the totals, but never the
+ * per-file hash join, which would read an absent entry as "not preserved".
+ */
+export async function readUploadManifestStatus(
   client: { runProgram(program: string): Promise<{ rows: unknown[]; reason: string }> },
   huntId: string,
-): Promise<UploadManifestEntry[]> {
+): Promise<{ entries: UploadManifestEntry[]; problem: string }> {
   if (!/^H\.[A-Za-z0-9]+$/.test(huntId)) throw new Error("invalid hunt id");
   const { rows, reason } = await client.runProgram(
     HUNT_UPLOAD_MANIFEST_VQL.split("__HUNT_ID__").join(huntId),
   );
-  // A query that logged an error may have returned part of the list: never treat it as complete (#2722).
-  if (reason?.trim()) throw new Error(reason.trim());
-  return (rows as Record<string, unknown>[]).map((r) => ({
+  const entries = (rows as Record<string, unknown>[]).map((r) => ({
     clientId: String(r.ClientId ?? ""),
     flowId: String(r.FlowId ?? ""),
     path: String(r.Path ?? ""),
     size: Number(r.Size) || 0,
     sha256: String(r.SHA256 ?? ""),
   }));
+  return { entries, problem: (reason ?? "").trim() };
+}
+
+/** The hunt's uploads as a manifest — path, size, server-side hash. Contents are never fetched. */
+export async function readUploadManifest(
+  client: { runProgram(program: string): Promise<{ rows: unknown[]; reason: string }> },
+  huntId: string,
+): Promise<UploadManifestEntry[]> {
+  return (await readUploadManifestStatus(client, huntId)).entries;
 }
