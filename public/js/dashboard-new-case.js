@@ -97,34 +97,79 @@
   let serverSetChosen = false;
   let serverSetsReady = Promise.resolve();
   let huntClients = [];
+  // #2735: "New client…" at the end of the box, for the instance administrator only (the create
+  // route is admin-only). Single-user mode has one operator, who is the administrator.
+  const NEW_CLIENT = "__new_client__";
+  let huntClientCreate = false; // the list loaded AND this user may create a client
+  let lastHuntClient = ""; // the pick to fall back to when a create is cancelled or fails
+  function isInstanceAdmin() {
+    const auth = window.dfirAuthState;
+    if (!auth || !auth.enabled) return true;
+    return !!(auth.identity && auth.identity.globalRole === "administrator");
+  }
   function isHuntPick() {
     const p = typeof selectedNewCasePlaybook === "function" ? selectedNewCasePlaybook() : null;
     return !!(p && p.kind === "type" && p.def && p.def.mode === "hunt");
   }
   function syncHuntClientRow() {
     const row = document.getElementById("ncHuntClientRow");
-    if (row) row.hidden = !(isHuntPick() && huntClients.length);
+    if (row) row.hidden = !(isHuntPick() && (huntClients.length || huntClientCreate));
   }
   async function populateHuntClients() {
     const select = document.getElementById("ncHuntClient");
     if (!select) return;
     huntClients = [];
+    huntClientCreate = false;
     try {
       const res = await fetch("/client-profiles"); // 403 on the public demo: no picker
       const list = res.ok ? await res.json() : [];
       huntClients = Array.isArray(list) ? list : [];
+      huntClientCreate = res.ok && isInstanceAdmin();
     } catch {
       huntClients = [];
     }
     select.textContent = "";
-    for (const [value, label] of [["", "No client"], ...huntClients.map((c) => [c.id, c.name])]) {
-      const opt = document.createElement("option");
-      opt.value = value;
-      opt.textContent = label;
-      select.appendChild(opt);
-    }
-    select.value = "";
+    const rows = [["", "No client"], ...huntClients.map((c) => [c.id, c.name])];
+    if (huntClientCreate) rows.push([NEW_CLIENT, "New client…"]);
+    for (const [value, label] of rows) select.appendChild(clientOption(value, label));
+    select.value = lastHuntClient = "";
     syncHuntClientRow();
+  }
+  function clientOption(value, label) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    return opt;
+  }
+  // Ask for a name, create the client, and select it. A new client has no default server set, so
+  // the Servers picker stays as it is. On cancel or failure the previous pick comes back.
+  async function createHuntClient(select) {
+    select.value = lastHuntClient;
+    const name = (window.prompt("Client name (e.g. “Client A”):", "") || "").trim();
+    if (!name) return;
+    const msg = document.getElementById("ncMsg");
+    let error = "";
+    try {
+      const res = await fetch("/client-profiles", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok && body.id) {
+        huntClients = [...huntClients, body];
+        const newOpt = select.options[select.options.length - 1];
+        select.appendChild(clientOption(body.id, body.name || name));
+        select.appendChild(newOpt); // "New client…" stays last
+        select.value = lastHuntClient = body.id;
+        msg.textContent = `Client “${body.name || name}” created.`;
+        return;
+      }
+      error = res.status === 403 ? "only the instance administrator can edit a client profile" : body.error || "HTTP " + res.status;
+    } catch (err) {
+      error = err.message;
+    }
+    msg.textContent = `Client create failed: ${error}`;
   }
   // The picked client's id, only while the picked type is a threat hunt.
   function pickedHuntClient() {
@@ -132,11 +177,14 @@
     return select && select.value && isHuntPick() ? select.value : "";
   }
   async function onHuntClientChange() {
+    const select = document.getElementById("ncHuntClient");
+    if (select.value === NEW_CLIENT) return createHuntClient(select);
+    lastHuntClient = select.value;
     await serverSetsReady; // both lists loaded before the pre-fill
     const client = huntClients.find((c) => c.id === pickedHuntClient());
     const want = client && client.defaultServerSetId;
     const sets = document.getElementById("ncServerSet");
-    if (serverSetChosen || !want || !sets || !sets.options.some((o) => o.value === want)) return;
+    if (serverSetChosen || !want || !sets || ![...sets.options].some((o) => o.value === want)) return;
     sets.value = want;
     lastServerSet = want;
   }
