@@ -15,6 +15,7 @@ import { servedExposureSection } from "./servedExposureSection.js";
 import { kerberoastChainSection } from "./kerberoastChainSection.js";
 import { sensitiveAccessSection } from "./sensitiveAccessSection.js";
 import { cloudWeaknessSection } from "./cloudWeaknessSection.js";
+import { aiAgentSection } from "./aiAgentSection.js";
 import { handoffBriefSection } from "./handoffSection.js";
 import { huntSummarySection, type HuntReportData } from "./huntSummary.js";
 import { byEventTime } from "../analysis/forensicSort.js";
@@ -173,8 +174,7 @@ function revisions(state: InvestigationState, meta: ReportMeta, lines: string[])
 // 1.2 — optional: when no recipients are listed the whole section is omitted.
 function distribution(meta: ReportMeta, lines: string[]): void {
   if (meta.distribution.length === 0) return;
-  lines.push("## 1.2 Distribution list", "");
-  lines.push("| Name | Role | Method |", "| --- | --- | --- |");
+  lines.push("## 1.2 Distribution list", "", "| Name | Role | Method |", "| --- | --- | --- |");
   for (const d of meta.distribution) {
     lines.push(`| ${cellMd(d.name)} | ${cellMd(d.role)} | ${cellMd(d.method)} |`);
   }
@@ -215,8 +215,7 @@ function disclaimer(lines: string[]): void {
 }
 
 function intendedAudience(meta: ReportMeta, lines: string[]): void {
-  lines.push("## 1.4 Intended audience", "");
-  lines.push(humanOr(meta.intendedAudience, DEFAULT_AUDIENCE), "");
+  lines.push("## 1.4 Intended audience", "", humanOr(meta.intendedAudience, DEFAULT_AUDIENCE), "");
 }
 
 function executiveSummary(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
@@ -1454,6 +1453,7 @@ export function renderMarkdownReport(
     kerberoastChain: () => kerberoastChainSection(state, lines),
     sensitiveAccess: () => sensitiveAccessSection(state, lines),
     cloudWeaknesses: () => cloudWeaknessSection(state, lines),
+    aiAgentForensics: () => aiAgentSection(state, lines),
     handoffBrief: () => handoffBriefSection(state, notebookEntries, hypotheses, lines),
     huntSummary: () => huntSummarySection(hunt, state, lines),
   };

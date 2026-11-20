@@ -7,78 +7,23 @@
 import { gradeAiAgentHit, hitTime, AI_AGENT_TIME_LABEL } from "./aiAgentImport.js";
 import { aiAgentRuleLink, type AiAgentNotRun, type AiAgentRuleSet } from "./aiAgentRuleSet.js";
 import { isAiAgentRow, parseAiAgentRow, redactSnippet } from "./aiAgentRows.js";
-import { aiAgentHashCheck, type AiAgentHashCheck } from "./aiAgentHashCheck.js";
+import { aiAgentHashCheck } from "./aiAgentHashCheck.js";
 import type { UploadManifestEntry } from "./aiAgentRunStore.js";
 import type { Severity } from "./stateTypes.js";
+import type {
+  AiAgentReport,
+  AiAgentReportEndpoint,
+  AiAgentReportHit,
+  AiAgentSigmaRule,
+} from "./aiAgentReportTypes.js";
 
-export interface AiAgentReportHit {
-  /** The endpoint's display label (aiAgentEndpointLabels): the host name, plus the client id if shared. */
-  host: string;
-  /** The Velociraptor client the row came from — the endpoint's key. Absent on older reports. */
-  clientId?: string;
-  rule: string;
-  family: "yara" | "sigma";
-  ruleFile: string;
-  author: string;
-  link: string;
-  atlas: string;
-  scope: string;
-  severity: Severity;
-  selfScan: boolean;
-  path: string;
-  /** The file's hash, taken after the YARA scan (not of the bytes YARA read) — the only hash IOC. */
-  sha256: string;
-  /** The preserved copy's hash, when it is known (#2722). Optional: reports stored before it lack it. */
-  preservedSha256?: string;
-  hashCheck?: AiAgentHashCheck;
-  time: string;
-  timeBasis: string;
-  timeLabel: string;
-  scanTime: string;
-  snippet: string; // redacted, length-capped; attacker-controlled — escape on every render
-  preserved: string;
-}
-
-export interface AiAgentReportEndpoint {
-  /** Display label only: the host name, with the client id added when two clients share it. */
-  host: string;
-  /** The Velociraptor client id — what endpoints are keyed by. Absent on older reports. */
-  clientId?: string;
-  /** The host name before the label was made unique. Absent on older reports. */
-  hostname?: string;
-  tools: string[];
-  mcpServers: { name: string; command: string; argCount: number; config: string; tool: string }[];
-  credentialStores: number;
-  hits: number;
-  coverage: { source: string; status: string; detail: string }[];
-  /** One cell per Sigma rule that reported on this endpoint (#2722); a rule with no cell: not recorded. */
-  sigma?: AiAgentSigmaCell[];
-}
-
-export interface AiAgentSigmaCell {
-  rule: string;
-  status: string; // adversary-reachable (an endpoint row) — escape on every render
-  hits: number;
-}
-
-/** A Sigma rule of the rule set, with what it reads (the rows of the rule-by-endpoint table). */
-export interface AiAgentSigmaRule {
-  rule: string;
-  mode: "compiled" | "sysmon";
-  basis: string;
-}
-
-export interface AiAgentReport {
-  builtAt: string;
-  ruleSetVersion: string;
-  endpoints: AiAgentReportEndpoint[];
-  hits: AiAgentReportHit[];
-  /** The rule-by-endpoint Sigma table's rows, from the rule set (#2722). Absent on older reports. */
-  sigmaRules?: AiAgentSigmaRule[];
-  notRun: { reason: string; rules: string[] }[];
-  unreadableRows: number;
-  provisionalGrades: true;
-}
+export type {
+  AiAgentReport,
+  AiAgentReportEndpoint,
+  AiAgentReportHit,
+  AiAgentSigmaCell,
+  AiAgentSigmaRule,
+} from "./aiAgentReportTypes.js";
 
 type Row = Record<string, unknown>;
 

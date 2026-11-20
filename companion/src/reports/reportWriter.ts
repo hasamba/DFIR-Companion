@@ -5,6 +5,7 @@ import type { StateStore } from "../analysis/stateStore.js";
 import { NO_SCOPE, type ScopeStore } from "../analysis/scope.js";
 import { projectScope } from "../analysis/scopeProject.js";
 import { loadFilteredState } from "./filteredState.js";
+import { withAiAgentRuns } from "./aiAgentCaseRuns.js";
 import { CaseLoadCoalescer } from "./stateLoadGate.js";
 import { liteStateCache } from "./reportLiteCache.js";
 import {
@@ -295,7 +296,7 @@ export class ReportWriter {
   // (often-Dropbox-synced) cases/ folder on every report regeneration causes sync churn.
   async docx(caseId: string, signal?: AbortSignal): ReturnType<typeof renderDocxReportChecked> {
     return renderDocxReportChecked(
-      await this.loadFilteredState(caseId, false, signal),
+      await withAiAgentRuns(this.cases, caseId, await this.loadFilteredState(caseId, false, signal)),
       this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta(),
       await this.loadExposure(caseId),
       await this.loadTemplate(caseId),
@@ -512,11 +513,10 @@ export class ReportWriter {
     });
   }
 
-  // Geographic IP map (#133): markers for the case's geo-located IP IOCs (derived on read).
-  // Scope filter + false-positive-EVENT + false-positive-FINDING filters applied, but
-  // false-positive IOCs are KEPT and rendered gray (so whitelisted infra still shows). This
-  // prevents a false-positive Critical/High finding from inflating a whitelisted IP's severity
-  // label on the map.
+  // Geographic IP map (#133): markers for the case's geo-located IP IOCs (derived on read). Scope filter +
+  // false-positive-EVENT + false-positive-FINDING filters applied, but false-positive IOCs are KEPT and
+  // rendered gray (so whitelisted infra still shows). This prevents a false-positive Critical/High finding
+  // from inflating a whitelisted IP's severity label on the map.
   async geoMap(caseId: string): Promise<GeoMapData> {
     const loaded = await this.state.load(caseId);
     const scoped = projectScope(loaded, this.scope ? await this.scope.load(caseId) : NO_SCOPE);
@@ -569,7 +569,7 @@ export class ReportWriter {
 
   async writeAll(caseId: string, opts: { parentRunId?: string } = {}): Promise<ReportPaths> {
     const startedAt = new Date().toISOString();
-    const state = await this.loadFilteredState(caseId);
+    const state = await withAiAgentRuns(this.cases, caseId, await this.loadFilteredState(caseId)); // #2721
     const dir = this.cases.reportsDir(caseId);
     const paths: ReportPaths = {
       markdown: join(dir, "report.md"),

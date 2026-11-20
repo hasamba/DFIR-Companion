@@ -42,6 +42,7 @@
     ["kerberoastChain", "Kerberoast chain (ticket requests, baseline, later use of the exact account)"],
     ["sensitiveAccess", "Sensitive access (declared sensitive locations: object-access rows, candidates, what the rows establish)"],
     ["cloudWeaknesses", "AWS account weaknesses (from CloudTrail records: root use, Object Lock, data-event coverage)"],
+    ["aiAgentForensics", "AI Agent Forensics (endpoint runs: inventory, hits with matched text, hashes, Sigma coverage, rules not run)"],
     ["handoffBrief", "Handoff brief (open items, what to check next, the outgoing analyst's note)"],
     ["remediationChecks", "Remediation checks (analyst-recorded residual risk with the receipt it names)"],
     ["huntSummary", "Threat hunt summary (coverage, verdict within coverage, policy / new / rare items, client confirmations)"],

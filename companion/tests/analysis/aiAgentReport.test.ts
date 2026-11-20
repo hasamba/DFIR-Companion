@@ -376,7 +376,9 @@ describe("AI Agent Forensics report: two clients with the same host name", () =>
   });
 
   it("gives each its own column in report.md and the Sigma coverage CSV", () => {
-    expect(aiAgentReportMarkdown(run)).toContain("| Rule | Basis | WS-01 (C.aaa111) | WS-01 (C.bbb222) |");
+    expect(aiAgentReportMarkdown(run)).toContain(
+      "| Rule | Basis | ` WS-01 (C.aaa111) ` | ` WS-01 (C.bbb222) ` |",
+    );
     expect(aiAgentSigmaCoverageCsv(run).split("\r\n")[0]).toBe(
       `"rule","basis","WS-01 (C.aaa111)","WS-01 (C.bbb222)"`,
     );

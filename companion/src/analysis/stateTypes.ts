@@ -771,9 +771,9 @@ export interface InvestigationState extends WatsonStateMarks {
   remediationBoundaries?: RemediationBoundaryView[];
   rejectedTechniques?: string[]; // #1742: removed by an accepted second-opinion delta (rejectedTechniques.ts)
   servedLocations?: ServedLocationView[]; // READ-TIME projection only (#930 item 4), never saved
-  /** Sensitive locations the analyst declared (#930 item 7), projected for the report. */
-  sensitiveLocations?: SensitiveLocationView[];
+  sensitiveLocations?: SensitiveLocationView[]; // analyst-declared (#930 item 7), for the report
   cloudWeaknesses?: import("./awsAccountWeaknessTypes.js").WeaknessSummary; // read-time only (#2560)
+  aiAgentRuns?: import("./aiAgentReportTypes.js").AiAgentCaseRuns; // report-time only, never saved (#2721)
   updatedAt: string;
 }
 
