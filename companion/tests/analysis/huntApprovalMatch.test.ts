@@ -99,3 +99,39 @@ describe("strict baseline matching (#2670)", () => {
     expect(v.reason).toMatch(/verified signer or an approved hash is missing/);
   });
 });
+
+describe("items with no path can never be approved, and say why (#2747)", () => {
+  const installed = item({ family: "installed", program: "7-zip 23.01 (x64)", pathPattern: "", sha256: [] });
+  const NO_PATH =
+    /cannot be approved: no file path or hash; approve the program's files instead, or mark it Not allowed/;
+
+  it("gives the plain reason before any mark exists", () => {
+    const v = itemVerdict(EMPTY_BASELINE, installed, NOW);
+    expect(v.verdict).toBe("unknown");
+    expect(v.reason).toMatch(NO_PATH);
+    expect(v.reason).not.toMatch(/not in the reviewed baseline/);
+  });
+
+  it("gives the same reason when an old empty-path approval names it, never the hash hint", () => {
+    const old = mark({ family: "installed", program: "7-zip 23.01 (x64)", pathPattern: "", sha256: [] });
+    const v = itemVerdict({ ...EMPTY_BASELINE, marks: [old] }, installed, NOW);
+    expect(v.verdict).toBe("unknown");
+    expect(v.reason).toMatch(NO_PATH);
+    expect(v.reason).not.toMatch(/verified signer or an approved hash is missing/);
+  });
+
+  it("Not allowed with no path still matches an installed item by name", () => {
+    const block = mark({
+      id: "no",
+      verdict: "not-allowed",
+      family: "installed",
+      program: "7-zip 23.01 (x64)",
+      pathPattern: "",
+      sha256: [],
+    });
+    expect(itemVerdict({ ...EMPTY_BASELINE, marks: [block] }, installed, NOW)).toMatchObject({
+      verdict: "not-allowed",
+      markId: "no",
+    });
+  });
+});

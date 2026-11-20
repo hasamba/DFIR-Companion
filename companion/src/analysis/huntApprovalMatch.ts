@@ -1,4 +1,4 @@
-import type { Baseline, BaselineMark, BaselineVerdict } from "./clientProfile.js";
+import { NO_PATH_APPROVAL, type Baseline, type BaselineMark, type BaselineVerdict } from "./clientProfile.js";
 import type { IdentityCoverage } from "./huntItemCoverage.js";
 import { stripVolumePrefix } from "./huntArtifactFields.js";
 
@@ -20,6 +20,8 @@ import { stripVolumePrefix } from "./huntArtifactFields.js";
  *   - A field the approval needs that is missing or unverified gives UNKNOWN, never a weaker match.
  *   - An expired approval no longer applies.
  *   - NOT ALLOWED matches on program (+ path pattern when given) and WINS over any approval.
+ *   - An item with NO path pattern (Amcache installed programs never have one) can never be approved,
+ *     and its reason says so plainly (#2747); Not allowed still matches it by name.
  * Path patterns: segments separated by "\", `*` = exactly one segment, `**` = any number (0+).
  */
 export interface MatchItem extends IdentityCoverage {
@@ -136,9 +138,11 @@ export function itemVerdict(baseline: Baseline, item: MatchItem, now: string): I
     if (r === "match") return { verdict: "approved", markId: m.id, reason: "Approved by client" };
     if (r === "unknown") needs = true;
   }
-  const base = needs
-    ? "an approval names this program, but a verified signer or an approved hash is missing — not covered"
-    : "not in the reviewed baseline";
+  const base = !item.pathPattern
+    ? `cannot be approved: ${NO_PATH_APPROVAL}`
+    : needs
+      ? "an approval names this program, but a verified signer or an approved hash is missing — not covered"
+      : "not in the reviewed baseline";
   return { verdict: "unknown", reason: [base, ...identityNotes(item)].join("; ") };
 }
 

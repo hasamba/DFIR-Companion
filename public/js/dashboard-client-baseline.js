@@ -52,6 +52,7 @@
     ["remote-access", "Remote access"],
   ];
   const DOMAIN_HINT = "One domain per line; subdomains are included.";
+  const NO_PATH_LABEL = "(no path — cannot be approved)";
 
   function button(text) {
     const b = el("button", text, "ev-bulk-btn");
@@ -141,7 +142,8 @@
       const td = el("td");
       td.appendChild(box);
       tr.appendChild(td);
-      for (const v of [c.program, c.pathPattern || "(any)", `${c.hostCount}: ${c.hosts.join(", ")}`, c.evidence.join(", "), c.publishers.join(" | "), c.reason])
+      // No path = nothing an approval can match (#2747); the box stays usable, Not allowed still works.
+      for (const v of [c.program, c.pathPattern || NO_PATH_LABEL,`${c.hostCount}: ${c.hosts.join(", ")}`, c.evidence.join(", "), c.publishers.join(" | "), c.reason])
         tr.appendChild(el("td", v));
       table.appendChild(tr);
     }
@@ -154,10 +156,15 @@
       const b = button(label);
       b.addEventListener("click", async () => {
         if (!picked.size) return void (status.textContent = "Tick at least one item first.");
+        // An approval with no path could never match and the server refuses it (#2747): leave those out and say why.
+        const chosen = verdict === "approved" ? [...picked].filter((c) => c.pathPattern) : [...picked];
+        const left = picked.size - chosen.length;
+        const why = left ? `${left} item(s) have no file path or hash and cannot be approved; mark them Not allowed or approve their files instead.` : "";
+        if (!chosen.length) return void (status.textContent = why);
         const source = askSource();
         if (!source) return;
         // The hashes (SHA-256 and the usable Amcache SHA1) and the verified signer go with the mark, or an approval could never match (#2731).
-        const marks = [...picked].map((c) => ({
+        const marks = chosen.map((c) => ({
           verdict,
           family: c.family,
           program: c.program,
@@ -167,8 +174,8 @@
           ...(c.approvableSigner ? { signer: c.approvableSigner } : {}),
         }));
         const r = await send("POST", profileUrl(pid, "marks"), { marks, source });
-        status.textContent = r.ok ? `Saved as baseline version ${r.body.version}.` : `Save failed: ${failText(r)}`;
-        if (r.ok) loadClientBaseline(caseId);
+        status.textContent = [r.ok ? `Saved as baseline version ${r.body.version}.` : `Save failed: ${failText(r)}`, why].filter(Boolean).join(" ");
+        if (r.ok) loadClientBaseline(caseId, why);
       });
       bar.appendChild(b);
     }
@@ -251,7 +258,8 @@
     return box;
   }
 
-  async function loadClientBaseline(caseId) {
+  /** `note` is shown in the fresh status line, so a message said before a reload is not lost. */
+  async function loadClientBaseline(caseId, note = "") {
     const box = byId("clientBaselinePanel");
     if (!box || !caseId) return;
     const gen = ++baselineRenderGen;
@@ -263,7 +271,7 @@
       box.appendChild(el("p", "Client baselines apply to threat-hunt cases only.", "ev-sub"));
       return;
     }
-    const status = el("p", "", "ev-sub");
+    const status = el("p", note, "ev-sub");
     if (!info || !info.ok) {
       box.appendChild(el("p", `Client baseline unavailable: ${(info && info.body.error) || "error"}`, "ev-sub"));
       return;

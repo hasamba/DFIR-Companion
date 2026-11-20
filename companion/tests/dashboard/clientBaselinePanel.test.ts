@@ -220,6 +220,65 @@ describe("Client Baseline panel layout (#2736)", () => {
     });
   });
 
+  it("labels an item with no path as one that cannot be approved, never as (any) (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const table = h.panel().querySelector(".cb-candidates") as FakeEl;
+    const cells = table.querySelectorAll("td").map((c) => c.textContent);
+    expect(cells).toContain("(no path — cannot be approved)");
+    expect(cells).not.toContain("(any)");
+    // The tick box stays usable: Not allowed must keep working for these items.
+    expect(table.querySelectorAll("input")[0].disabled).not.toBe(true);
+  });
+
+  it("Mark Approved leaves out items with no path and says why; the rest are saved (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const boxes = (p.querySelector(".cb-candidates") as FakeEl).querySelectorAll("input");
+    for (const b of [boxes[0], boxes[1]]) {
+      b.checked = true;
+      b.fire("change");
+    }
+    byText(p, "button", "Mark Approved").click();
+    await flush();
+    const post = h.net.calls.find((c) => c.method === "POST");
+    expect((post?.body as { marks: { program: string }[] }).marks.map((m) => m.program)).toEqual([
+      "updater.exe",
+    ]);
+    expect(p.textContent).toContain(
+      "1 item(s) have no file path or hash and cannot be approved; mark them Not allowed or approve their files instead.",
+    );
+  });
+
+  it("Mark Approved with only no-path items ticked saves nothing and says why (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const box = (p.querySelector(".cb-candidates") as FakeEl).querySelectorAll("input")[0];
+    box.checked = true;
+    box.fire("change");
+    byText(p, "button", "Mark Approved").click();
+    await flush();
+    expect(h.net.calls.find((c) => c.method === "POST")).toBeUndefined();
+    expect(p.textContent).toContain("1 item(s) have no file path or hash and cannot be approved");
+  });
+
+  it("Mark Not allowed still saves an item with no path (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const box = (p.querySelector(".cb-candidates") as FakeEl).querySelectorAll("input")[0];
+    box.checked = true;
+    box.fire("change");
+    byText(p, "button", "Mark Not allowed").click();
+    await flush();
+    const post = h.net.calls.find((c) => c.method === "POST");
+    expect(post?.body).toMatchObject({
+      marks: [{ verdict: "not-allowed", program: "tool.exe", pathPattern: "" }],
+    });
+  });
+
   it("writes nothing through innerHTML", async () => {
     const h = harness();
     await h.render();

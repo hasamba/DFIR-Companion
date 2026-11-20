@@ -102,6 +102,26 @@ describe("the client's confirm list (#2670)", () => {
     expect(r.skipped).toEqual([{ line: 4, reason: "invalid row" }]);
   });
 
+  it("skips an Approved row with no path and says why; a Not-allowed row with no path still imports (#2747)", () => {
+    const csv = [
+      "family,program,path_pattern,sha256,verdict",
+      `"installed","7-Zip 23.01 (x64)","","","Approved"`,
+      `"installed","utorrent","","","Not allowed"`,
+    ].join("\r\n");
+    const r = parseClientCsv(csv);
+    expect(r.marks).toEqual([
+      expect.objectContaining({ verdict: "not-allowed", program: "utorrent", pathPattern: "" }),
+    ]);
+    expect(r.skipped).toEqual([
+      {
+        line: 2,
+        reason: expect.stringMatching(
+          /no file path or hash; approve the program's files instead, or mark it Not allowed/,
+        ),
+      },
+    ]);
+  });
+
   it("refuses a CSV without the key columns", () => {
     expect(parseClientCsv("a,b\n1,2").skipped[0].reason).toMatch(/header must name/);
   });

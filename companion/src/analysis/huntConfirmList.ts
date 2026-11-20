@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { itemVerdict } from "./huntApprovalMatch.js";
 import { answeringHostCount, itemLabel, type HuntInventory, type InventoryItem } from "./huntInventory.js";
 import { markInputSchema, type Baseline, type MarkInput } from "./clientProfile.js";
@@ -196,6 +197,12 @@ export interface ClientCsvResult {
   skipped: { line: number; reason: string }[];
 }
 
+/** An Approved row with no path is refused with the plain reason (#2747); any other bad row stays "invalid row". */
+function rowRefusal(err: z.ZodError | undefined): string {
+  const noPath = err?.issues.find((x) => x.code === "custom" && x.path[0] === "pathPattern");
+  return noPath ? noPath.message : "invalid row";
+}
+
 /** The client's filled confirm list → marks. Rows with no verdict are skipped (still pending). */
 export function parseClientCsv(text: string, maxRows = 20_000): ClientCsvResult {
   const [header, ...rows] = parseCsv(text);
@@ -235,7 +242,11 @@ export function parseClientCsv(text: string, maxRows = 20_000): ClientCsvResult 
       note: at.note >= 0 ? unguard(r[at.note] ?? "") : "",
     });
     if (verdict && parsed.success) out.marks.push(parsed.data);
-    else out.skipped.push({ line: i + 2, reason: verdict ? "invalid row" : `unknown verdict "${raw}"` });
+    else
+      out.skipped.push({
+        line: i + 2,
+        reason: verdict ? rowRefusal(parsed.error) : `unknown verdict "${raw}"`,
+      });
   });
   return out;
 }
