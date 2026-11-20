@@ -22,6 +22,7 @@ import type { HuntOutcomeStore } from "../../huntOutcomeStore.js";
 import type { HypothesisStore } from "../../hypothesisStore.js";
 import type { NotebookStore } from "../../notebookStore.js";
 import type { AiControlStore } from "../../aiControl.js";
+import { loadHuntFramingFor, type HuntFramingStores } from "../../huntFramingLoad.js";
 import type { WatsonChatStore } from "./chatStore.js";
 import { WATSON_PASTE_MAX_BYTES } from "./pasteSearch.js";
 import { WATSON_CASE_CONTEXT_PROMPT_MAX } from "./promptBuilder.js";
@@ -40,14 +41,15 @@ import type { WatsonReportText } from "./writers/writerTypes.js";
 
 export type WatsonRoundContext = AiCallContext & {
   /** The analyst's own decisions Watson reads, as Ask did (carried by the pipeline's AI context). */
-  opts: AnalystDecisionStores & {
-    hypothesisStore?: HypothesisStore;
-    huntOutcomeStore?: HuntOutcomeStore;
-    notebookStore?: NotebookStore;
-    aiControlStore?: AiControlStore;
-    /** The case's anonymization switch (the AI-call gate reads the same store). */
-    anonStore?: AnonControlStore;
-  };
+  opts: AnalystDecisionStores &
+    HuntFramingStores & {
+      hypothesisStore?: HypothesisStore;
+      huntOutcomeStore?: HuntOutcomeStore;
+      notebookStore?: NotebookStore;
+      aiControlStore?: AiControlStore;
+      /** The case's anonymization switch (the AI-call gate reads the same store). */
+      anonStore?: AnonControlStore;
+    };
   chatStore: WatsonChatStore;
   stateStore: StateStore;
   stateLock: StateLock;
@@ -275,7 +277,9 @@ export async function buildWatsonCaseHead(
 ): Promise<WatsonCaseHead> {
   const { scoped } = await loadScopedEvents(ctx, caseId, state);
   const aliasIndex = await loadCtxAliasIndex(ctx, caseId);
+  // #2670: a hunt case leads with the same HUNT MODE block synthesis reads ("" in any other case).
   const rawHead =
+    (await loadHuntFramingFor(ctx.opts, caseId)).block +
     buildSynthesisContext(state, scoped, await ctx.getKevCatalog(), aliasIndex) +
     buildGraphContext({ ...state, forensicTimeline: scoped }, { maxEdges: graphMaxEdges() }) +
     `ATTACKER PATH: ${state.attackerPath || "(not reconstructed)"}\n\n` +

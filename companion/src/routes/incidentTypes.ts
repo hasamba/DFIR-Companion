@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
+import { applyHuntDefaults } from "../analysis/huntCase.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -73,6 +74,8 @@ export function registerIncidentTypeRoutes(app: Express, ctx: RouteContext): voi
       } = applyIncidentTypeToState(state, type, { replace });
       await options.stateStore.save(next);
       const record = await options.incidentTypeStore.saveRecord(req.params.id, typeId);
+      // #2670: a hunt case defaults to the Threat hunt summary report (unless a template was picked).
+      await applyHuntDefaults(options.reportTemplateControlStore, req.params.id, type);
       return res.status(200).json({ record, type, questionsAdded, nextStepsAdded });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

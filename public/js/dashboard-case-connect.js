@@ -412,6 +412,7 @@
       ["cloudCoverage", () => loadCloudCoverage(caseId)],
       ["cloudCollect", () => loadCloudCollect(caseId)], // #2311 live collection jobs
       ["aiAgent", () => typeof loadAiAgentPanel === "function" && loadAiAgentPanel(caseId)], // #2690
+      ["huntCase", () => typeof loadHuntCase === "function" && loadHuntCase(caseId)], // #2670
       ["beacons", () => loadBeacons(caseId)],
       ["anomalies", () => loadAnomalies(caseId)],
       ["sessions", () => loadSessions(caseId)],

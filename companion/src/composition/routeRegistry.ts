@@ -90,6 +90,7 @@ import { registerCrowdstrikeSiemRoutes } from "../routes/crowdstrikeSiemSearch.j
 import { registerCrowdstrikeSiemTestRoutes } from "../routes/crowdstrikeSiemTest.js";
 import { registerSecondLookRoutes } from "../routes/secondLook.js";
 import { registerIncidentTypeRoutes } from "../routes/incidentTypes.js";
+import { registerHuntCaseRoutes } from "../routes/huntCase.js";
 import { registerCollectionPlanRoutes } from "../routes/collectionPlan.js";
 import { registerHostScopeRoutes } from "../routes/hostScope.js";
 import { registerEvidenceAttestationRoutes } from "../routes/evidenceAttestation.js";
@@ -260,6 +261,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerAppShellRoutes(app);
   registerJobRoutes(app, ctx);
   registerIncidentTypeRoutes(app, ctx);
+  registerHuntCaseRoutes(app, ctx); // #2670
   registerCollectionPlanRoutes(app, ctx);
   registerHostScopeRoutes(app, ctx);
   registerEvidenceAttestationRoutes(app, ctx);

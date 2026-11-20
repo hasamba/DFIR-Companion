@@ -82,6 +82,7 @@ import { nodeSmtpConnect } from "../integrations/notify/smtpClient.js";
 import { tlsConnectFor, tlsFetchFor } from "./tlsFetch.js";
 import { createGuardedFetch } from "../routes/outboundGuardedFetch.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
+import { loadHuntReportData } from "../analysis/huntReportLoad.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import { HuntRunSnapshotStore } from "../analysis/huntRunSnapshotStore.js";
 import { VeloMonitorStore } from "../analysis/veloMonitorStore.js";
@@ -503,6 +504,8 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
         },
         caseId,
       ),
+    // #2670: the Threat hunt summary's data (null outside hunt mode).
+    huntReport: (caseId: string) => loadHuntReportData({ incidentTypeStore, veloHuntStore }, caseId),
     falsePositives: new FalsePositiveStore(store),
     reportMeta: reportMetaStore,
     customerExposure: new CustomerExposureStore(store),

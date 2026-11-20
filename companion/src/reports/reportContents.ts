@@ -15,6 +15,7 @@ import type { NotebookEntry } from "../analysis/notebookStore.js";
 import type { PlaybookTask } from "../analysis/playbook.js";
 import type { SynthesisCoverage, ModelPerfSnapshot } from "../analysis/synthMeta.js";
 import { renderMarkdownReport } from "./markdown.js";
+import type { HuntReportData } from "../analysis/huntReport.js";
 import { renderHtmlReport } from "./html.js";
 import { renderScopeSection } from "./scopeSection.js";
 import { taggerRuleSourcesIn, taggerRulesMarkdown, withTaggerRulesHtml } from "./taggerRulesProvenance.js";
@@ -59,6 +60,7 @@ export function renderReportContents(
   custody?: CustodyRecord[],
   hostScope?: HostScopeLedger | null,
   analysisRuns: readonly AnalysisRunManifest[] = [], // #2349: which tagger rules graded the imports
+  hunt?: HuntReportData, // #2670: the Threat hunt summary's data (composition assembles it)
 ): RedactedReportContents {
   const taggerRuleSources = taggerRuleSourcesIn(analysisRuns);
   // Each hypothesis link read on the event it lives on today (#1715), as the dashboard reads it.
@@ -83,6 +85,7 @@ export function renderReportContents(
       modelPerf,
       complianceControl,
       custody,
+      hunt,
     ) +
       scopeSection +
       taggerRulesMarkdown(taggerRuleSources),
@@ -100,6 +103,7 @@ export function renderReportContents(
       linkedHypotheses,
       custody,
       hostScope,
+      hunt,
     ),
     taggerRuleSources,
   );

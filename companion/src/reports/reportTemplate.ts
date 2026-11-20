@@ -107,6 +107,15 @@ export const REPORT_SECTION_DEFS = [
     defaultEnabled: false,
     alwaysOptIn: true,
   },
+  // Opt-in EVERYWHERE (#2670): a hunt summary in an incident report would read as a second verdict.
+  // The built-in "Threat hunt summary" template switches it on, and a hunt case defaults to it.
+  {
+    key: "huntSummary",
+    label:
+      "Threat hunt summary (coverage, verdict within coverage, policy / new / rare items, client confirmations)",
+    defaultEnabled: false,
+    alwaysOptIn: true,
+  },
 ] as const;
 
 export type ReportSectionKey = (typeof REPORT_SECTION_DEFS)[number]["key"];
@@ -256,6 +265,36 @@ export function normalizeReportTemplate(input: unknown): ReportTemplate {
   };
 }
 
+// The template a THREAT HUNT case defaults to (#2670): hunt scope and verdict first, no incident
+// chapters (kill chain, sessions, D3FEND), and the analyst notebook for the hunt's own notes.
+export const HUNT_REPORT_TEMPLATE_ID = "threat-hunt-summary";
+const HUNT_TEMPLATE_ON: ReadonlySet<string> = new Set([
+  "titlePage",
+  "reportMetadata",
+  "executiveSummary",
+  "investigationLimitations",
+  "huntSummary",
+  "investigation",
+  "conclusions",
+  "notebook",
+]);
+
+export const HUNT_REPORT_TEMPLATE: ReportTemplate = normalizeReportTemplate({
+  id: HUNT_REPORT_TEMPLATE_ID,
+  name: "Threat hunt summary",
+  description:
+    "A proactive hunt's deliverable: scope and coverage, the verdict within coverage, policy / new / rare items, and what waits for the client.",
+  accentColor: "#7a4cc2",
+  coverTitle: "Threat Hunt Summary",
+  coverSubtitle: "{{organization}}",
+  footerText: "{{restrictions}}",
+  // The hunt summary sits straight after the executive summary; every other section keeps its place.
+  sections: REPORT_SECTION_DEFS.filter((d) => d.key !== "huntSummary").flatMap((d) => [
+    { key: d.key, enabled: HUNT_TEMPLATE_ON.has(d.key) },
+    ...(d.key === "executiveSummary" ? [{ key: "huntSummary", enabled: true }] : []),
+  ]),
+});
+
 // The built-in shipped templates. The first ("standard") reproduces the historical fixed-format
 // report exactly (all sections, default accent, no header/footer) so an un-templated case is
 // byte-identical to before. The others demonstrate branding + section layout.
@@ -339,6 +378,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "handoffBrief", enabled: true },
     ],
   }),
+  HUNT_REPORT_TEMPLATE,
 ];
 
 // The default template (a fresh copy each call, so callers can't mutate the shared constant).

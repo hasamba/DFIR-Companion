@@ -11,6 +11,8 @@ import { huntSignalsFromOutcomes, renderPriorHuntsBlock } from "../huntOutcomes.
 import type { HypothesisStore } from "../hypothesisStore.js";
 import type { IncidentTypeStore } from "../incidentTypeStore.js";
 import { renderIncidentTypeBlock } from "../incidentTypes.js";
+import { loadHuntFramingFor } from "../huntFramingLoad.js";
+import type { VeloHuntStore } from "../veloHuntStore.js";
 import type { NotebookStore } from "../notebookStore.js";
 import type { PlaybookTask } from "../playbook.js";
 import type { PlaybookStore } from "../playbookStore.js";
@@ -45,6 +47,7 @@ export interface SynthesisInputContext extends HuntContext {
       hypothesisStore?: HypothesisStore;
       playbookStore?: PlaybookStore;
       incidentTypeStore?: IncidentTypeStore;
+      veloHuntStore?: VeloHuntStore; // #2670: hunt coverage for the hunt framing block
     };
 }
 
@@ -58,6 +61,8 @@ export interface SynthesisInputBlocks {
   incidentTypeBlock: string;
   /** #2594: names the main evidence source for next steps; absent/"" when it is Velociraptor anyway. */
   mainSourceBlock?: string;
+  /** #2670: set (true) only in a hunt-mode case — the attack-phase digest is then left out. */
+  huntMode?: boolean;
 }
 
 export interface SynthesisInputs {
@@ -87,6 +92,9 @@ export async function loadSynthesisInputs(
   // Incident-type framing (#236): the one-line hint for the type the analyst picked at case
   // creation, so the model prioritizes ransomware / BEC / exfil techniques.
   const incidentType = ctx.opts.incidentTypeStore ? await ctx.opts.incidentTypeStore.loadType(caseId) : null;
+  // Hunt mode (#2670): the hunt framing rides inside the incident-type block, so it is hashed with it
+  // (a newly collected hunt changes the coverage line and forces a fresh synthesis).
+  const { hunt, block: huntBlock } = await loadHuntFramingFor(ctx.opts, caseId, incidentType);
 
   return {
     playbookTasks,
@@ -97,7 +105,8 @@ export async function loadSynthesisInputs(
       refutedHypothesesBlock: hypotheses.refuted,
       priorHuntsBlock,
       playbookProgressBlock: renderPlaybookProgressBlock(playbookTasks),
-      incidentTypeBlock: renderIncidentTypeBlock(incidentType),
+      incidentTypeBlock: renderIncidentTypeBlock(incidentType) + huntBlock,
+      ...(hunt ? { huntMode: true } : {}),
     },
   };
 }

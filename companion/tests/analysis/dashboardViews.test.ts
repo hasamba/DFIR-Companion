@@ -13,7 +13,7 @@ describe("dashboardViews — seed integrity", () => {
   const sectionIds = new Set(DASHBOARD_SECTION_IDS);
   const templateIds = new Set(builtInReportTemplateIds());
 
-  it("ships the phase cockpit plus the seven existing canonical views with unique ids and names", () => {
+  it("ships the phase cockpit plus the canonical views (the eighth is the #2670 threat hunt) with unique ids and names", () => {
     expect(BUILT_IN_DASHBOARD_VIEWS.map((v) => v.id)).toEqual([
       "now",
       "analyst",
@@ -23,6 +23,7 @@ describe("dashboardViews — seed integrity", () => {
       "report",
       "deep-dive",
       "hunt-prep",
+      "threat-hunt",
     ]);
     const ids = BUILT_IN_DASHBOARD_VIEWS.map((v) => v.id);
     expect(new Set(ids).size).toBe(ids.length);

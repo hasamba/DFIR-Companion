@@ -1292,6 +1292,13 @@ export const FEATURES: Feature[] = [
     private: ["rules"],
   },
   {
+    // The Threat Hunt panel (#2670): coverage, graded hunt items, Convert to incident, Re-grade.
+    // No `initializer`: the case loader in dashboard-case-connect.js runs loadHuntCase per case.
+    file: "dashboard-hunt-case.js",
+    publish: ["loadHuntCase"],
+    private: ["huntCaseRenderGen"],
+  },
+  {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the
     // IRIS / Timesketch / Velociraptor tool flags (caseToolEnabled).
     // No `initializer`: initCaseConnect() runs initCaseServers(), not the inline script.
