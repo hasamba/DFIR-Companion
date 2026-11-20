@@ -9,6 +9,7 @@ import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { AiControlStore } from "../../src/analysis/aiControl.js";
 import { SlashCommandChannelStore } from "../../src/analysis/slashCommandStore.js";
 import { getAiLimiter, resetLimiters } from "../../src/http/rateLimiter.js";
+import { sharedTelegramLimiters } from "../../src/analysis/notify/telegramRateLimiter.js";
 import { createApp } from "../../src/server.js";
 import { WatsonChatStore } from "../../src/analysis/ai/watson/chatStore.js";
 import type { WatsonChat } from "../../src/analysis/ai/watson/types.js";
@@ -79,6 +80,7 @@ beforeEach(async () => {
   vi.stubEnv("DFIR_TELEGRAM_BOT_TOKEN", "1:T");
   vi.stubEnv("DFIR_TELEGRAM_ACTION_USERS", LISTED);
   resetLimiters();
+  sharedTelegramLimiters.reset(); // #2711: each test starts with a fresh view of the bot
   const link = createWatsonMirrorLink();
   app = createApp(store, {
     stateStore: new StateStore(store),
@@ -128,6 +130,9 @@ async function mirrorOn(chat = PRIVATE, caseId = "c1") {
   return started[0];
 }
 
+// #2711: the bot's shared limiter spaces sends to one chat a second apart, so the answer that follows
+// "Mirroring started" (or a reply) in the same chat arrives about a second later.
+const SPACED = { timeout: 3_000 };
 const toChat = (chat: number) => sent.filter((s) => s.chat_id === String(chat));
 const settle = () => new Promise((r) => setTimeout(r, 30));
 
@@ -165,7 +170,7 @@ describe("plain-text questions", () => {
     const before = sent.length;
     const res = await tg({ text: "c2 what ran   on the host?" });
     expect(res.body.text).toBe("Asking Watson…");
-    await vi.waitFor(() => expect(toChat(PRIVATE).length).toBe(before + 1));
+    await vi.waitFor(() => expect(toChat(PRIVATE).length).toBe(before + 1), SPACED);
     await settle();
     expect(asked).toEqual([{ caseId: "c1", text: "c2 what ran   on the host?" }]);
     const out = sent.slice(before);
@@ -191,7 +196,7 @@ describe("plain-text questions", () => {
       { text: "@DfirBot who logged on?", entities: [{ type: "mention", offset: 0, length: 8 }] },
       { chat: GROUP },
     );
-    await vi.waitFor(() => expect(toChat(GROUP).length).toBe(before + 1));
+    await vi.waitFor(() => expect(toChat(GROUP).length).toBe(before + 1), SPACED);
     expect(asked[0]).toEqual({ caseId: "c1", text: "who logged on?" });
     const answer = toChat(GROUP)[before];
     expect(answer.text).toContain("answer about c1");
@@ -274,7 +279,7 @@ describe("plain-text questions", () => {
     await mirrorOn();
     const before = sent.length;
     expect((await tg({ text: "/dfir ask what ran?" })).body.text).toBe("Asking Watson…");
-    await vi.waitFor(() => expect(sent.length).toBe(before + 1));
+    await vi.waitFor(() => expect(sent.length).toBe(before + 1), SPACED);
     await settle();
     expect(sent.slice(before).map((s) => s.text.includes("answer about c1"))).toEqual([true]);
   });
@@ -287,7 +292,7 @@ describe("plain-text questions", () => {
       actor: "ana",
     });
     app.locals.watsonMirror.notify("c1");
-    await vi.waitFor(() => expect(sent.length).toBe(before + 1));
+    await vi.waitFor(() => expect(sent.length).toBe(before + 1), SPACED);
     expect(sent[before].text).toContain("dashboard q");
     expect(sent[before].preview).toEqual({ is_disabled: true });
   });

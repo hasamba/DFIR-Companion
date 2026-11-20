@@ -22,6 +22,23 @@ import { buildRfc822Message, formatEmail } from "./emailFormat.js";
 import { postWebhook } from "./webhookSender.js";
 import { escapeBidiControls } from "../../analysis/bidiControl.js";
 import { sendSmtp, type SmtpConnect } from "./smtpClient.js";
+import {
+  sendWithTelegramLimit,
+  telegramRetryAfterMs,
+  type TelegramLimiters,
+} from "../../analysis/notify/telegramRateLimiter.js";
+
+/**
+ * #2711: how long an alert may wait for the bot's shared limiter. A real alert is dispatched in the
+ * background and may wait out a 429 (retried once when retry_after ≤ 60 s); the Settings "Send test"
+ * button is a live request, so it gives up after 5 s and does not retry.
+ */
+export interface TelegramAlertWait {
+  maxWaitMs: number;
+  maxRetryWaitMs: number;
+}
+export const ALERT_WAIT: TelegramAlertWait = { maxWaitMs: 120_000, maxRetryWaitMs: 60_000 };
+export const TEST_ALERT_WAIT: TelegramAlertWait = { maxWaitMs: 5_000, maxRetryWaitMs: 0 };
 
 // Per-type payload builder for the incoming-webhook channels. They all POST a JSON body to the
 // channel's webhookUrl — only the body shape differs (Slack Block Kit, Teams MessageCard,
@@ -54,6 +71,9 @@ export interface NotifyTransport {
   // property of the network rather than of the bot. Posting to api.telegram.org anyway would fail
   // on a closed network, or slip past the proxy the operator put there on purpose.
   telegramApiBase?: string;
+  // #2711: the per-bot limiter every Telegram sender in the process shares. Absent → no limiting.
+  telegramLimiters?: TelegramLimiters;
+  telegramWait?: TelegramAlertWait; // absent → ALERT_WAIT
   timeoutMs?: number;
   now?: () => string;
 }
@@ -118,8 +138,16 @@ async function sendToChannel(
       // so one bot is addressed one way everywhere.
       const apiBase = (transport.telegramApiBase ?? "").trim() || "https://api.telegram.org";
       const url = `${apiBase.replace(/\/+$/, "")}/bot${botToken}/sendMessage`;
-      const payload = { chat_id: channel.telegram.chatId, ...formatTelegram(event) };
-      const r = await postWebhook(transport.fetchFn, url, payload, transport.timeoutMs);
+      const chatId = channel.telegram.chatId;
+      const payload = { chat_id: chatId, ...formatTelegram(event) };
+      const wait = transport.telegramWait ?? ALERT_WAIT;
+      const r = await sendWithTelegramLimit(
+        transport.telegramLimiters?.forToken(botToken), // the bot this alert is sent from
+        { chatId, lane: "alert", maxWaitMs: wait.maxWaitMs },
+        () => postWebhook(transport.fetchFn, url, payload, transport.timeoutMs),
+        (res) => telegramRetryAfterMs(res.status, res.body),
+        { maxRetryWaitMs: wait.maxRetryWaitMs },
+      );
       return { ...base, ok: r.ok, ...(r.error ? { error: r.error } : {}) };
     }
     // email
@@ -159,6 +187,7 @@ export interface NotifierDeps {
   // two read the same way.
   telegramBotToken?: () => string | undefined;
   telegramApiBase?: () => string | undefined;
+  telegramLimiters?: TelegramLimiters; // see NotifyTransport.telegramLimiters
   timeoutMs?: number;
   log?: (message: string) => void;
 }
@@ -173,12 +202,14 @@ export interface Notifier {
 
 export function createNotifier(deps: NotifierDeps): Notifier {
   // Rebuilt per send so the telegram thunks are re-read rather than captured at startup.
-  const transportNow = (): NotifyTransport => ({
+  const transportNow = (telegramWait: TelegramAlertWait = ALERT_WAIT): NotifyTransport => ({
     fetchFn: deps.fetchFn,
     webhookFetch: deps.webhookFetch,
     smtpConnect: deps.smtpConnect,
     telegramBotToken: deps.telegramBotToken?.(),
     telegramApiBase: deps.telegramApiBase?.(),
+    telegramLimiters: deps.telegramLimiters,
+    telegramWait,
     timeoutMs: deps.timeoutMs,
   });
 
@@ -211,7 +242,7 @@ export function createNotifier(deps: NotifierDeps): Notifier {
     const event = testEvent(at);
     // A test bypasses enable/threshold/kind filters so the analyst can verify a disabled or
     // high-threshold channel directly.
-    const transport = transportNow();
+    const transport = transportNow(TEST_ALERT_WAIT); // a live request: never hold it for a minute
     const results = await Promise.all(channels.map((c) => sendToChannel(c, event, transport)));
     deps.log?.(`[notify] test → ${results.filter((r) => r.ok).length}/${results.length} channel(s) ok`);
     return results;

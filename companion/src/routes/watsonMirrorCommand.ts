@@ -2,6 +2,8 @@ import type { ResolvedSlashCommand } from "../analysis/slashCommand.js";
 import type { ChannelBinding } from "../analysis/slashCommand.js";
 import { escapeMirrorHtml } from "../integrations/telegram/watsonMirrorFormat.js";
 import { sendMirrorMessage } from "../integrations/telegram/watsonMirrorSender.js";
+import { acquireAndCommit, sharedTelegramLimiters } from "../analysis/notify/telegramRateLimiter.js";
+import { resolveToken } from "../analysis/telegramPoller.js";
 import { mirrorAudit, telegramAllowlist, telegramApiBase, telegramBotToken } from "./watsonMirrorSupport.js";
 import type { RouteContext } from "./context.js";
 import { guardCase } from "./slashCaseGuard.js";
@@ -68,20 +70,37 @@ async function mirrorOn(
 }
 
 /**
+ * #2711: how long "Mirroring started" may wait for the bot's shared limiter. The command is answered
+ * inline — the poller handles one update at a time and a webhook delivery waits for its response — so
+ * the wait stays short; past it the text goes back as the reply instead.
+ */
+const STARTED_MAX_WAIT_MS = 3_000;
+
+/**
  * #2709: send "Mirroring started" through the Bot API and record its id, so a group reply to it counts
  * as a question like a reply to any mirrored message. A failed send falls back to the webhook reply.
+ * #2711: it takes its turn in the bot's shared limiter (reply lane), and a 429 pauses the bot.
  */
 async function sendStarted(
   store: NonNullable<RouteContext["options"]["watsonMirrorStore"]>,
   chatId: string,
   text: string,
 ): Promise<MirrorReply> {
+  const token = resolveToken(telegramBotToken); // one bot for the slot and the send
+  const limiter = sharedTelegramLimiters.forToken(token);
+  const slot = await acquireAndCommit(limiter, {
+    chatId,
+    lane: "reply",
+    maxWaitMs: STARTED_MAX_WAIT_MS,
+  }).catch(() => undefined);
+  if (!slot) return text;
   const out = await sendMirrorMessage({
-    botToken: telegramBotToken,
+    botToken: token,
     apiBase: telegramApiBase(),
     chatId,
     text: escapeMirrorHtml(text),
   });
+  if (out.kind === "rate_limited") slot.backOff(out.retryAfterMs);
   if (out.kind !== "sent") return text;
   await store.addMessageIds(chatId, [out.messageId]).catch(() => undefined);
   return { text, quiet: true };

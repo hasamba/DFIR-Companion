@@ -1,4 +1,9 @@
 import type { Logger } from "../logging/logger.js";
+import {
+  sendWithTelegramLimit,
+  telegramRetryAfterMs,
+  type TelegramLimiters,
+} from "./notify/telegramRateLimiter.js";
 
 // Telegram long-poll transport for the war-room slash-command bot (#235).
 //
@@ -267,9 +272,15 @@ export class TelegramApiError extends Error {
   }
 }
 
+/** #2711: a command reply waits at most this long for the bot's shared limiter. */
+const REPLY_MAX_WAIT_MS = 60_000;
+/** …and is sent again once after a 429 only when retry_after is at most this. */
+const REPLY_MAX_RETRY_WAIT_MS = 30_000;
+
 /** Send a chat message through the Bot API. Used for poller replies, where there is no webhook
  *  response to piggyback on. Best-effort: a delivery failure is logged, never thrown at the
- *  command that produced it. */
+ *  command that produced it. With `limiters` (#2711) it waits its turn in the bot's shared
+ *  limiter (reply lane: after alerts, before the Watson mirror) and honours a 429's retry_after. */
 export async function sendTelegramMessage(input: {
   botToken: TokenSource;
   chatId: string;
@@ -277,19 +288,38 @@ export async function sendTelegramMessage(input: {
   apiBase?: string;
   fetchFn?: typeof fetch;
   log: Logger;
+  limiters?: TelegramLimiters;
 }): Promise<void> {
   const base = (input.apiBase ?? "https://api.telegram.org").replace(/\/+$/, "");
   const doFetch = input.fetchFn ?? fetch;
+  // Resolved at send time for the same reason the poll loop resolves per cycle: the poller's
+  // reply closure outlives a rotation, and a reply on the old token after the poll moved to the
+  // new one is the split this whole change exists to close. Resolved ONCE: the limiter that
+  // spaces this send and the bot that sends it are the same.
+  const token = resolveToken(input.botToken);
   try {
-    // Resolved at send time for the same reason the poll loop resolves per cycle: the poller's
-    // reply closure outlives a rotation, and a reply on the old token after the poll moved to the
-    // new one is the split this whole change exists to close.
-    const res = await doFetch(`${base}/bot${resolveToken(input.botToken)}/sendMessage`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: input.chatId, text: input.text }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    const res = await sendWithTelegramLimit(
+      input.limiters?.forToken(token),
+      { chatId: input.chatId, lane: "reply", maxWaitMs: REPLY_MAX_WAIT_MS },
+      () =>
+        doFetch(`${base}/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chat_id: input.chatId, text: input.text }),
+          signal: AbortSignal.timeout(15_000),
+        }),
+      async (r) =>
+        r.status === 429
+          ? telegramRetryAfterMs(
+              429,
+              await r
+                .clone()
+                .text()
+                .catch(() => ""),
+            )
+          : undefined,
+      { maxRetryWaitMs: REPLY_MAX_RETRY_WAIT_MS },
+    );
     if (!res.ok) input.log.warn(`[telegram] sendMessage returned ${res.status}`);
   } catch (err) {
     input.log.warn(`[telegram] sendMessage failed: ${(err as Error).message}`);

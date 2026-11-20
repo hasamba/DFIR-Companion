@@ -73,6 +73,7 @@ import { NotificationConfigStore } from "../analysis/notificationStore.js";
 import { SlashCommandChannelStore } from "../analysis/slashCommandStore.js";
 import { WatsonMirrorStore } from "../integrations/telegram/watsonMirrorStore.js";
 import { createNotifier } from "../integrations/notify/notifyDispatch.js";
+import { sharedTelegramLimiters } from "../analysis/notify/telegramRateLimiter.js";
 import { AuditExportStore } from "../analysis/auditExportStore.js";
 import { AuditCursorStore } from "../analysis/auditExportCursor.js";
 import { createAuditExporter } from "../integrations/audit/auditExporter.js";
@@ -362,6 +363,8 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     // rather than frozen here at startup.
     telegramBotToken: () => process.env.DFIR_TELEGRAM_BOT_TOKEN,
     telegramApiBase: () => process.env.DFIR_TELEGRAM_API_BASE,
+    // #2711: alerts share each bot's budget with command replies and the Watson mirror, and go first.
+    telegramLimiters: sharedTelegramLimiters,
     log: (m) => logLine(m),
   });
   // Deep-link notifications back to the dashboard. Override the host/port guess with DFIR_PUBLIC_URL.

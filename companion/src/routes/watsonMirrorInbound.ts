@@ -2,6 +2,7 @@ import { WATSON_TURN_TEXT_MAX } from "../analysis/ai/watson/chatStore.js";
 import type { SlashCommandResponse } from "../analysis/slashCommand.js";
 import { bindingKey } from "../analysis/slashCommandStore.js";
 import { sendTelegramMessage, type TelegramMessage } from "../analysis/telegramPoller.js";
+import { sharedTelegramLimiters } from "../analysis/notify/telegramRateLimiter.js";
 import { mirrorAudit, telegramAllowlist, telegramApiBase, telegramBotToken } from "./watsonMirrorSupport.js";
 import { fetchBotUsername } from "../integrations/telegram/watsonMirrorSender.js";
 import { resolveToken } from "../analysis/telegramPoller.js";
@@ -140,6 +141,7 @@ export async function askFromMirror(
             chatId: channelId,
             text: flat(result.reply),
             log: ctx.serverLogger,
+            limiters: sharedTelegramLimiters, // #2711
           });
         }
         mirrorAudit(ctx, `telegram:${userId}`)(

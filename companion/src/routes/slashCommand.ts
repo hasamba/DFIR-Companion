@@ -27,6 +27,7 @@ import {
 } from "../analysis/slashCommandAuth.js";
 import { getAiLimiter, getSlashCommandSecretLimiter } from "../http/rateLimiter.js";
 import { TelegramPoller, sendTelegramMessage, type TelegramUpdate } from "../analysis/telegramPoller.js";
+import { sharedTelegramLimiters } from "../analysis/notify/telegramRateLimiter.js";
 import { SlackSocketMode, type SlackCommandPayload } from "../analysis/slackSocketMode.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
@@ -291,13 +292,17 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
 
       // Same per-channel cap as the webhook route. Polled commands are authenticated by
       // construction, but a runaway script in one chat can still burn the AI budget.
+      // Replies are not awaited (#2711): one may wait its turn in the bot's shared limiter, and the
+      // poller handles updates one at a time — every chat's next command would wait behind it. The
+      // queue position is taken at the call, so a chat's replies still go out in order.
       if (!limiter.tryAcquire(`telegram:${chatId}`)) {
-        await sendTelegramMessage({
+        void sendTelegramMessage({
           botToken,
           apiBase,
           chatId,
           text: "Rate limit exceeded — try again in a minute.",
           log: ctx.serverLogger,
+          limiters: sharedTelegramLimiters,
         });
         return;
       }
@@ -317,12 +322,13 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
         inbound.kind === "question" ? await askFromMirror(input, inbound) : await dispatchSlashCommand(input);
       if (!result) return; // a replay of an accepted question
       if (!result.quiet)
-        await sendTelegramMessage({
+        void sendTelegramMessage({
           botToken,
           apiBase,
           chatId,
           text: renderText(result.reply),
           log: ctx.serverLogger,
+          limiters: sharedTelegramLimiters,
         });
       if (result.background) void result.background();
     },
@@ -697,10 +703,13 @@ async function deliverAsyncResult(
       ctx.serverLogger.warn("[slash] telegram result dropped: DFIR_TELEGRAM_BOT_TOKEN is not set");
       return;
     }
-    const base = (process.env.DFIR_TELEGRAM_API_BASE ?? "https://api.telegram.org").replace(/\/+$/, "");
-    await postJson(input, `${base}/bot${token}/sendMessage`, {
-      chat_id: input.channelId,
+    await sendTelegramMessage({
+      botToken: token,
+      apiBase: (process.env.DFIR_TELEGRAM_API_BASE ?? "").trim() || undefined,
+      chatId: input.channelId,
       text: renderText(r),
+      log: ctx.serverLogger,
+      limiters: sharedTelegramLimiters, // #2711: the bot's shared budget, reply lane
     });
     return;
   }

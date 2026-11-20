@@ -7,7 +7,12 @@ import {
   turnPlainText,
   type WorkstationRoot,
 } from "./watsonMirrorFormat.js";
-import { MirrorRateLimiter, mirrorBackoffMs, type MirrorSendOutcome } from "./watsonMirrorSender.js";
+import { mirrorBackoffMs, type MirrorSendOutcome } from "./watsonMirrorSender.js";
+import {
+  TelegramBotLimiter,
+  type TelegramReservation,
+  type TelegramSendRequest,
+} from "../../analysis/notify/telegramRateLimiter.js";
 import type { WatsonMirrorEntry, WatsonMirrorStore } from "./watsonMirrorStore.js";
 import {
   allTurns,
@@ -58,7 +63,13 @@ export interface WatsonMirrorDeps {
   liveness: (entry: WatsonMirrorEntry) => Promise<MirrorLiveness>;
   /** Re-mask `raw` with the case's anonymization list; not ok when masking fails or names await approval. */
   masking: (caseId: string, raw: string) => Promise<MirrorMasking>;
-  send: (chatId: string, text: string) => Promise<MirrorSendOutcome>;
+  /** botToken: the bot the slot was reserved on (#2711) — send from that same bot. */
+  send: (chatId: string, text: string, botToken?: string) => Promise<MirrorSendOutcome>;
+  /**
+   * #2711: the bot's shared limiter (mirror lane: after alerts and command replies). Absent → a
+   * private limiter on this service's clock, which is what the unit tests use.
+   */
+  limiter?: TelegramSendGate;
   audit: (caseId: string, action: string, detail: string, outcome?: "error") => void;
   roots: readonly WorkstationRoot[];
   publicUrl: () => string | undefined;
@@ -68,6 +79,11 @@ export interface WatsonMirrorDeps {
   setTimer?: (fn: () => void, ms: number) => () => void;
   sleep?: (ms: number) => Promise<void>;
   batchWindowMs?: number;
+}
+
+/** A slot in the bot's limiter, and the token of the bot it was reserved on. */
+export interface TelegramSendGate {
+  acquire(req: TelegramSendRequest): Promise<TelegramReservation & { readonly botToken?: string }>;
 }
 
 const realTimer = (fn: () => void, ms: number): (() => void) => {
@@ -82,7 +98,7 @@ export class WatsonMirror {
   private readonly setTimer: (fn: () => void, ms: number) => () => void;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly windowMs: number;
-  private readonly limiter = new MirrorRateLimiter();
+  private readonly limiter: TelegramSendGate;
   private readonly scans = new Map<string, { running: Promise<void>; again: boolean }>();
   private readonly flushes = new Map<string, Promise<void>>();
   private readonly timers = new Map<string, { at: number; cancel: () => void }>();
@@ -94,6 +110,7 @@ export class WatsonMirror {
     this.setTimer = deps.setTimer ?? realTimer;
     this.sleep = deps.sleep ?? realSleep;
     this.windowMs = deps.batchWindowMs ?? MIRROR_BATCH_WINDOW_MS;
+    this.limiter = deps.limiter ?? new TelegramBotLimiter({ now: this.now, sleep: this.sleep });
   }
 
   /** Resume after a restart: scan every case that has a mirroring chat. */
@@ -335,11 +352,19 @@ export class WatsonMirror {
     text: string,
   ): Promise<MirrorSendOutcome | { kind: "revoked" }> {
     const isGroup = entry.chatType !== "private";
-    const wait = this.limiter.waitMs(entry.chatId, isGroup, this.now());
-    if (wait > 0) await this.sleep(wait);
-    if (this.stopped || !(await this.stillAuthorized(entry))) return { kind: "revoked" };
-    this.limiter.record(entry.chatId, isGroup, this.now());
-    return this.deps.send(entry.chatId, text);
+    for (;;) {
+      // Wait for the slot FIRST, then re-check: a send never outlives its authorization, however long
+      // it queued behind alerts and replies.
+      const slot = await this.limiter.acquire({ chatId: entry.chatId, lane: "mirror", isGroup });
+      if (this.stopped || !(await this.stillAuthorized(entry))) {
+        slot.release();
+        return { kind: "revoked" };
+      }
+      if (!slot.commit()) continue; // the slot went while we checked (a 429 pause): queue again
+      const out = await this.deps.send(entry.chatId, text, slot.botToken);
+      if (out.kind === "rate_limited") slot.backOff(out.retryAfterMs); // pauses the whole bot
+      return out;
+    }
   }
 
   /** Send the messages in order. The Telegram ids, or undefined when a failure stopped the batch. */

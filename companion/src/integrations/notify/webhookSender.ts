@@ -10,6 +10,8 @@ export interface WebhookResult {
   ok: boolean;
   status: number;
   error?: string;
+  /** The (bounded) response body of a non-2xx answer — a Telegram 429 carries retry_after in it. */
+  body?: string;
 }
 
 // Best-effort host for the bounded-read context (e.g. an error message reading "webhook
@@ -66,7 +68,7 @@ export async function postWebhook(
       context: safeHost(url),
     }).catch(() => "");
     const detail = body ? `: ${body.slice(0, 200)}` : "";
-    return { ok: false, status: res.status, error: `webhook HTTP ${res.status}${detail}` };
+    return { ok: false, status: res.status, error: `webhook HTTP ${res.status}${detail}`, body };
   }
   return { ok: true, status: res.status };
 }

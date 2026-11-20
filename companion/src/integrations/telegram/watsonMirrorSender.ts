@@ -1,8 +1,8 @@
 import { resolveToken, type TokenSource } from "../../analysis/telegramPoller.js";
 
-// #2647: the Telegram mirror's Bot API calls. Separate from sendTelegramMessage (alerts and command
-// replies stay exactly as they are): this one sends HTML, always turns link previews off, returns the
-// message id, and classifies every failure so the service can decide what to do.
+// #2647: the Telegram mirror's Bot API calls. Separate from sendTelegramMessage: this one sends HTML,
+// always turns link previews off, returns the message id, and classifies every failure so the service
+// can decide what to do.
 //
 // Link previews are off on every mirror send: a Watson answer carries attacker URLs and domains, and a
 // preview makes Telegram's servers fetch them — which tells the attacker someone is looking.
@@ -105,43 +105,5 @@ export function mirrorBackoffMs(attempt: number): number {
   return BACKOFF_MS[attempt] ?? BACKOFF_MAX_MS;
 }
 
-// ── Mirror-only rate limiter ──────────────────────────────────────────────────────────
-
-const PER_CHAT_MS = 1_000;
-const GROUP_WINDOW_MS = 60_000;
-const GROUP_MAX = 20;
-const GLOBAL_WINDOW_MS = 1_000;
-const GLOBAL_MAX = 25;
-
-/**
- * Telegram's limits for one bot, for the mirror's own sends: 1 message a second per chat, 20 a minute
- * per group, 25 a second overall. Alerts and command replies do not go through it (a shared limiter
- * across all of them is a follow-up). In memory: a restart starts clean, and a 429 still waits.
- */
-export class MirrorRateLimiter {
-  private readonly perChat = new Map<string, number[]>();
-  private global: number[] = [];
-
-  /** How long to wait before the next send to this chat may go out (0 = now). */
-  waitMs(chatId: string, isGroup: boolean, now: number): number {
-    const sent = (this.perChat.get(chatId) ?? []).filter((t) => t > now - GROUP_WINDOW_MS);
-    const last = sent.at(-1);
-    const chatWait = last === undefined ? 0 : Math.max(0, last + PER_CHAT_MS - now);
-    const groupWait =
-      isGroup && sent.length >= GROUP_MAX
-        ? Math.max(0, sent[sent.length - GROUP_MAX] + GROUP_WINDOW_MS - now)
-        : 0;
-    const recent = this.global.filter((t) => t > now - GLOBAL_WINDOW_MS);
-    const globalWait =
-      recent.length >= GLOBAL_MAX
-        ? Math.max(0, recent[recent.length - GLOBAL_MAX] + GLOBAL_WINDOW_MS - now)
-        : 0;
-    return Math.max(chatWait, groupWait, globalWait);
-  }
-
-  record(chatId: string, _isGroup: boolean, now: number): void {
-    const kept = (this.perChat.get(chatId) ?? []).filter((t) => t > now - GROUP_WINDOW_MS);
-    this.perChat.set(chatId, [...kept, now]);
-    this.global = [...this.global.filter((t) => t > now - GLOBAL_WINDOW_MS), now];
-  }
-}
+// The mirror's sends are spaced by the bot's shared limiter (#2711, analysis/notify/telegramRateLimiter.ts),
+// together with alerts and command replies.

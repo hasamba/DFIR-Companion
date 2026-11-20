@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  MirrorRateLimiter,
   fetchBotUsername,
   mirrorBackoffMs,
   sendMirrorMessage,
@@ -81,24 +80,6 @@ describe("mirrorBackoffMs", () => {
     expect([0, 1, 2, 3, 4, 9].map(mirrorBackoffMs)).toEqual([
       5_000, 30_000, 120_000, 600_000, 3_600_000, 3_600_000,
     ]);
-  });
-});
-
-describe("MirrorRateLimiter", () => {
-  it("allows one message a second per chat", () => {
-    const l = new MirrorRateLimiter();
-    expect(l.waitMs("1", false, 0)).toBe(0);
-    l.record("1", false, 0);
-    expect(l.waitMs("1", false, 400)).toBe(600);
-    expect(l.waitMs("2", false, 400)).toBe(0);
-    expect(l.waitMs("1", false, 1000)).toBe(0);
-  });
-
-  it("allows 20 messages a minute per group", () => {
-    const l = new MirrorRateLimiter();
-    for (let i = 0; i < 20; i++) l.record("-5", true, i * 1000);
-    expect(l.waitMs("-5", true, 20_000)).toBe(40_000);
-    expect(l.waitMs("-5", true, 60_000)).toBe(0);
   });
 });
 
