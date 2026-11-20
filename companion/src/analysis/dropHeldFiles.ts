@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, readdir, realpath, rename, utimes } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, unlink, utimes } from "node:fs/promises";
 import { dirname, extname, join, relative, sep } from "node:path";
 import { DROP_HELD, DROP_SKIPPED } from "./dropScan.js";
 import { withCaseWrite } from "../storage/caseIncarnation.js";
@@ -83,7 +83,13 @@ export async function moveWithinDrop(dropDir: string, fromRel: string, toRel: st
     // Reserve the name exclusively, then rename over the reservation (never follows a link).
     const handle = await open(target, "wx");
     await handle.close();
-    await rename(from, target);
+    try {
+      await rename(from, target);
+    } catch (err) {
+      // The reservation was created by this call (`wx`), so removing it never touches another file (#2767).
+      await unlink(target).catch(() => undefined);
+      throw err;
+    }
     await utimes(target, st.atime, st.mtime).catch(() => undefined);
     return posix(relative(dropDir, target));
   });
@@ -124,6 +130,17 @@ export async function decideHeldFile(
       await store.decideHunt(caseId, info.huntId, info.artifact, decision);
     return { rel, to };
   } catch (err) {
-    return { rel, error: (err as Error).message };
+    return { rel, error: decisionError(err) };
   }
+}
+
+/**
+ * The refusal for a decision that lost to another one on the same held file (#2767): a plain sentence
+ * without the server's paths. Any other failure keeps its own message.
+ */
+function decisionError(err: unknown): string {
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code === "ENOENT") return "already decided: the file is no longer held";
+  if (code === "EEXIST") return "already being decided by another request";
+  return (err as Error).message;
 }
