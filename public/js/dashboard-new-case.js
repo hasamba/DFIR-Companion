@@ -243,6 +243,10 @@
         // #2594: the case exists even when its picked main source could not be saved — say so.
         if (created.mainSourceError)
           alert(created.mainSourceError.charAt(0).toUpperCase() + created.mainSourceError.slice(1) + ".");
+        // #2772: the case exists even when its template / incident type / server set / drop folder
+        // could not be applied — say what was left out instead of failing the create.
+        if (created.seedError)
+          alert(created.seedError.charAt(0).toUpperCase() + created.seedError.slice(1) + ".");
         if (huntClientId) await linkHuntClient(caseId, huntClientId);
         closeNewCase();
         // A pick; connect() below loads it and only then does #caseId change (#2399).

@@ -6,13 +6,9 @@ import { ZodError } from "zod";
 import { isValidCaseId, CaseAlreadyExistsError, CaseLifecycleError } from "../storage/caseStore.js";
 import { saveCreationMainSource } from "./caseMainSource.js";
 import { validateCaseCreateBody } from "./caseCreateBody.js";
-import { linkNewCase } from "./serverSets.js";
+import { applyCreationSeeds } from "./caseCreationSeeds.js"; // #2772
 import { createCaseListServerSets } from "./caseListServerSets.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
-import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
-import { keepWatsonSteps } from "../analysis/timeline/watsonItems.js";
-import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
-import { applyHuntDefaults } from "../analysis/huntCase.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { registerSeedDemoRoutes } from "./seedDemo.js";
 import { registerCaseIdentityRoutes, clearStateOutlivingCase, stoppingMessage } from "./caseIdentity.js";
@@ -94,7 +90,7 @@ import type { RouteContext } from "./context.js";
  * Shared surface — reuses stable ctx fields (store, options, serverLogger, hasAiProvider), stable helpers
  * (dispatchNotify, markConclusionsOutOfDate, syncPlaybook) and the per-case serverClients resolver, plus
  * the members GRADUATED for this domain (see context.ts):
- *   - ensureDropFolders — create-case makes the drop inbox; the drop watcher (stays) also calls it.
+ *   - ensureDropFolders — create-case makes the drop inbox (via caseCreationSeeds.ts); the drop watcher (stays) also calls it.
  *   - runStateExclusive — the manual-event write serializes on the per-case state mutex the staying
  *     import/enrich/synthesis paths also use.
  *   - reloadImporters + importerPrecedence()/setImporterPrecedence — the importer CRUD routes mutate the
@@ -109,7 +105,6 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     hasAiProvider,
     instanceSecret,
     dispatchNotify,
-    ensureDropFolders,
     runStateExclusive,
     reloadImporters,
   } = ctx;
@@ -159,35 +154,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           options.teamAuth?.store.deleteCaseAccess(caseId, requestAuthentication(req)?.identity),
       });
       options.teamAuth?.grantCreator(req, caseId);
-      linkNewCase(ctx, caseId, { setId: serverSetId ?? undefined }); // no serverSetId → the default set
       const mainSourceError = await saveCreationMainSource(ctx, caseId, mainSource); // #2594 New case picker
-      if (templateId && options.templateStore && options.stateStore) {
-        const template = await options.templateStore.get(String(templateId));
-        if (template && (template.initialKeyQuestions.length || template.initialNextSteps?.length)) {
-          const state = await options.stateStore.load(caseId);
-          if (template.initialKeyQuestions.length) state.keyQuestions = buildInitialQuestions(template);
-          const seeded = template.initialNextSteps?.length ? buildInitialNextSteps(template) : null;
-          if (seeded) state.nextSteps = keepWatsonSteps(seeded, state.nextSteps); // Watson's are kept
-          state.updatedAt = new Date().toISOString();
-          await options.stateStore.save(state);
-        }
-      }
-      // Incident-type auto-configuration (#236): apply the picked type's key questions, next steps and
-      // findings seeds, persist the chosen-type record (the synthesis prompt reads its hint), and give
-      // a hunt type its default report (#2670).
-      //
-      // Runs AFTER the template apply and MERGES: an API caller may send both, and discarding the
-      // questions the template just seeded would lose what it asked for.
-      if (incidentTypeId && options.incidentTypeStore && options.stateStore) {
-        const type = await options.incidentTypeStore.get(String(incidentTypeId));
-        if (type) {
-          const state = await options.stateStore.load(caseId);
-          const { state: next } = applyIncidentTypeToState(state, type);
-          await options.stateStore.save(next);
-          await options.incidentTypeStore.saveRecord(caseId, String(incidentTypeId));
-          await applyHuntDefaults(options.reportTemplateControlStore, caseId, type);
-        }
-      }
+      // #2772: server set, template, incident type, drop folder — a failure is a seedError on the 201.
+      const seedError = await applyCreationSeeds(ctx, caseId, {
+        templateId,
+        incidentTypeId,
+        serverSetId: serverSetId ?? undefined,
+      });
       dispatchNotify(
         milestoneEvent(
           caseId,
@@ -196,13 +169,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           new Date().toISOString(),
         ),
       );
-      // Create the evidence drop folder for every new case (best-effort — never block case creation).
-      await ensureDropFolders(caseId).catch(() => {
-        /* the watcher re-ensures on its next poll */
+      return res.status(201).json({
+        ...sanitizeCaseMeta(meta),
+        ...(mainSourceError ? { mainSourceError } : {}),
+        ...(seedError ? { seedError } : {}),
       });
-      return res
-        .status(201)
-        .json({ ...sanitizeCaseMeta(meta), ...(mainSourceError ? { mainSourceError } : {}) });
     } catch (err) {
       if (err instanceof CaseAlreadyExistsError) return res.status(409).json({ error: err.message });
       return res.status(500).json({ error: (err as Error).message });
