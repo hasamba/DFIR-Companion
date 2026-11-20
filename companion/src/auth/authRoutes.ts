@@ -537,8 +537,14 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
           ...(typeof body.password === "string" ? { password: body.password } : {}),
         },
         session.identity,
+        // A password reset ends the user's sessions; an administrator resetting their own keeps
+        // only the one making this request, as "sign out other sessions" does.
+        session.kind === "session" && session.identity.id === req.params.identityId
+          ? { keepSessionId: session.session.id }
+          : {},
       );
-      // A disable or a demotion can end access; the re-check is cheap and idempotent (#2449).
+      // A disable, a demotion or a password reset can end access; the re-check is cheap and
+      // idempotent (#2449).
       auth.notifyAccessChanged();
       return res.status(200).json(updated);
     } catch (err) {

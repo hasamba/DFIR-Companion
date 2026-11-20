@@ -160,6 +160,18 @@ describe("live sockets lose access with their session (#2449)", () => {
     expect(await closesSoon(client)).toBe(true);
   });
 
+  it("closes every socket of a user whose password an administrator resets", async () => {
+    const first = sessionCookie(member);
+    const second = sessionCookie(member);
+    const firstClient = await openClient(first.cookie);
+    const secondClient = await openClient(second.cookie);
+    await authStore.updateIdentity(member.id, { password: "a brand new sufficiently long password" }, admin);
+    teamAuth.notifyAccessChanged();
+    expect(await closesSoon(firstClient)).toBe(true);
+    expect(await closesSoon(secondClient)).toBe(true);
+    expect((await connect(first.cookie)).outcome).toBe("refused");
+  });
+
   it("closes the socket of a user whose case role is removed", async () => {
     const { cookie } = sessionCookie(member);
     const client = await openClient(cookie);

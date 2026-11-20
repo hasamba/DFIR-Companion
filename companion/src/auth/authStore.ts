@@ -13,7 +13,6 @@ import {
   type ServiceTokenRecord,
   type SessionRecord,
   isCaseRole,
-  isGlobalRole,
   isServicePermission,
 } from "./types.js";
 import {
@@ -28,6 +27,7 @@ import {
   migrateServiceTokenScope,
   serviceTokenFromRow as tokenRecordFromRow,
 } from "./serviceTokenScope.js";
+import { identityFromRow, optionalText, row, sessionFromRow, text } from "./authRows.js";
 
 const DUMMY_PASSWORD_HASH =
   "scrypt-v1$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -69,22 +69,6 @@ interface ServiceTokenCreated {
   token: string;
 }
 
-function row(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("authentication database returned an invalid row");
-  }
-  return value as Record<string, unknown>;
-}
-
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string") throw new Error(`authentication database field ${field} is invalid`);
-  return value;
-}
-
-function optionalText(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 function tokenHash(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
@@ -113,40 +97,6 @@ function normalizeDisplayName(value: string): string {
     throw new Error("displayName must be 1-120 characters");
   }
   return displayName;
-}
-
-function identityFromRow(value: unknown): AuthIdentity {
-  const source = row(value);
-  const kind = text(source.kind, "kind");
-  const globalRole = text(source.global_role, "global_role");
-  if (kind !== "local" && kind !== "oidc" && kind !== "service") {
-    throw new Error("authentication database identity kind is invalid");
-  }
-  if (!isGlobalRole(globalRole)) throw new Error("authentication database global role is invalid");
-  return {
-    id: text(source.id, "id"),
-    kind,
-    ...(optionalText(source.username) ? { username: optionalText(source.username) } : {}),
-    displayName: text(source.display_name, "display_name"),
-    globalRole,
-    disabled: source.disabled === 1,
-    createdAt: text(source.created_at, "created_at"),
-    updatedAt: text(source.updated_at, "updated_at"),
-  };
-}
-
-function sessionFromRow(value: unknown): SessionRecord {
-  const source = row(value);
-  return {
-    id: text(source.session_id ?? source.id, "session_id"),
-    identityId: text(source.identity_id, "identity_id"),
-    csrfToken: text(source.csrf_token, "csrf_token"),
-    createdAt: text(source.session_created_at ?? source.created_at, "session_created_at"),
-    expiresAt: text(source.expires_at, "expires_at"),
-    lastSeenAt: text(source.last_seen_at, "last_seen_at"),
-    ...(optionalText(source.ip) ? { ip: optionalText(source.ip) } : {}),
-    ...(optionalText(source.user_agent) ? { userAgent: optionalText(source.user_agent) } : {}),
-  };
 }
 
 export class AuthStore {
@@ -293,18 +243,25 @@ export class AuthStore {
       .map(identityFromRow);
   }
 
+  /**
+   * A password change ends the identity's sessions, as a disable does. `keepSessionId` spares one
+   * session (an administrator resetting their own password stays signed in on this device); a
+   * disable still ends every session.
+   */
   updateIdentity(
     id: string,
     patch: { displayName?: string; globalRole?: GlobalRole; disabled?: boolean; password?: string },
     actor: AuthIdentity,
+    options: { keepSessionId?: string } = {},
   ): Promise<AuthIdentity> {
-    return this.updateIdentityAsync(id, patch, actor);
+    return this.updateIdentityAsync(id, patch, actor, options.keepSessionId);
   }
 
   private async updateIdentityAsync(
     id: string,
     patch: { displayName?: string; globalRole?: GlobalRole; disabled?: boolean; password?: string },
     actor: AuthIdentity,
+    keepSessionId: string | undefined,
   ): Promise<AuthIdentity> {
     if (!this.getIdentity(id)) throw new Error("identity not found");
     const passwordHash = patch.password === undefined ? undefined : await hashLocalPassword(patch.password);
@@ -339,7 +296,19 @@ export class AuthStore {
         )
         .run(displayName, globalRole, disabled ? 1 : 0, passwordHash ?? null, new Date().toISOString(), id);
       if (disabled) this.db.prepare("DELETE FROM auth_sessions WHERE identity_id=?").run(id);
-      this.addAudit(actor, "identity-updated", id, undefined, `role=${globalRole}; disabled=${disabled}`);
+      else if (passwordHash !== undefined) {
+        this.db
+          .prepare("DELETE FROM auth_sessions WHERE identity_id=? AND id IS NOT ?")
+          .run(id, keepSessionId ?? null);
+      }
+      const passwordNote = passwordHash === undefined ? "" : "; password reset";
+      this.addAudit(
+        actor,
+        "identity-updated",
+        id,
+        undefined,
+        `role=${globalRole}; disabled=${disabled}${passwordNote}`,
+      );
       this.db.exec("COMMIT");
       return this.getIdentity(id) as AuthIdentity;
     } catch (err) {
