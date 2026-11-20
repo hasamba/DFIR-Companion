@@ -99,7 +99,9 @@ Rules that keep an attacker from hiding behind a name:
       **Unknown**, and the list says why.
     - **Autoruns** (`Windows.Sysinternals.Autoruns`) records the image path, the SHA-256 and the
       signature check. Only a signer that Autoruns reports as `(Verified)` counts. `(Not verified)`
-      and the Company name never approve anything.
+      and the Company name never approve anything. An enabled entry with no verified signer is
+      graded Low (persistence, T1547). A verified or disabled entry is Info: it still goes into the
+      hunt inventory and the super-timeline.
     - **Downloads** (Zone.Identifier) carry a SHA-256.
     - Prefetch, UserAssist and ShimCache rows carry no hash. A program item is covered only when
       every host it was seen on also has an Amcache row for the same file and path. An Autoruns

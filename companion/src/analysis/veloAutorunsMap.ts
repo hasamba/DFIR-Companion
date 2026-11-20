@@ -21,8 +21,10 @@ import { demangleUtf16Noise, withHostSuffix } from "./velociraptorTitle.js";
  * "(Not verified) …" records a FAILED check; Company and empty values never count. A signer is
  * endpoint-checked Authenticode, unlike Company text, which anyone can write into a binary.
  *
- * Grading is unchanged from the StartupItems mapper: an enabled entry is Low (T1547), a disabled one
- * Info. The autorunsc `SHA-1` column is a whole-file hash with no recorded size, so it is not used
+ * Grading (#2731, the user's decision "Low, unsigned only"): an enabled entry that is NOT signed by a
+ * verified signer (no Signer, "(Not verified) …", anything else) is Low (T1547); an enabled entry with
+ * a "(Verified) " signer is Info, and so is every disabled entry. Info entries still reach the
+ * super-timeline and the hunt inventory, and the content tagger can still raise one. The autorunsc `SHA-1` column is a whole-file hash with no recorded size, so it is not used
  * as the Amcache SHA1 (fileIdentity.ts); the SHA-256 is.
  */
 type Row = Record<string, unknown>;
@@ -66,6 +68,7 @@ function mapAutoruns(row: Row, artifact: string, host: string, sink: Map<string,
   const sha256 = hexCol(row, "SHA-256", SHA256_RE) ?? hexCol(row, "SHA256", SHA256_RE);
   const md5 = hexCol(row, "MD5", MD5_RE);
   const identity = autorunsSignature(str(getCI(row, "Signer")));
+  const unsigned = enabled && !identity?.signer; // an enabled entry with no verified signer
   if (/^[A-Za-z]:\\/.test(image)) addIoc(sink, "file", image.slice(0, 300));
   if (sha256) addIoc(sink, "hash", sha256);
   else if (md5) addIoc(sink, "hash", md5);
@@ -75,8 +78,8 @@ function mapAutoruns(row: Row, artifact: string, host: string, sink: Map<string,
   return {
     timestamp: pickTime(row),
     description: withHostSuffix(label.slice(0, 600), host).slice(0, 600),
-    severity: enabled ? "Low" : "Info",
-    mitre: enabled ? ["T1547"] : [],
+    severity: unsigned ? "Low" : "Info",
+    mitre: unsigned ? ["T1547"] : [],
     aggKey: startupAggKey(host, entry, `${location}|${image || launch}`),
     sources: ["Velociraptor"],
     ...(image ? { path: image, processName: baseName(image) } : {}),

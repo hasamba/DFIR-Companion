@@ -48,8 +48,26 @@ describe("Autoruns mapper (#2731)", () => {
     expect(e.path).toBe("c:\\program files\\vendor\\updater.exe");
     expect(e.sha256).toBe(SHA);
     expect(e.timestamp).toBe("2026-01-05T10:15:00Z");
-    expect(e.severity).toBe("Low");
-    expect(e.mitreTechniques).toContain("T1547");
+  });
+
+  it("grades an enabled entry with a verified signer Info, an unverified or unsigned one Low (T1547)", () => {
+    const grade = (signer: string, enabled = "enabled") => {
+      const [e] = events([autorunsRow("WS-01", signer, { Enabled: enabled })]);
+      return { severity: e.severity, mitre: e.mitreTechniques };
+    };
+    expect(grade("(Verified) Vendor Inc")).toEqual({ severity: "Info", mitre: [] });
+    expect(grade("(Not verified) Vendor Inc")).toEqual({ severity: "Low", mitre: ["T1547"] });
+    expect(grade("")).toEqual({ severity: "Low", mitre: ["T1547"] });
+    expect(grade("Vendor Inc")).toEqual({ severity: "Low", mitre: ["T1547"] });
+    expect(grade("(Verified) ")).toEqual({ severity: "Low", mitre: ["T1547"] });
+  });
+
+  it("grades a disabled entry Info, signed or not", () => {
+    for (const signer of ["(Verified) Vendor Inc", "(Not verified) Vendor Inc", ""]) {
+      const [e] = events([autorunsRow("WS-01", signer, { Enabled: "disabled" })]);
+      expect(e.severity).toBe("Info");
+      expect(e.mitreTechniques).toEqual([]);
+    }
   });
 
   it("records a signer only from a '(Verified) ' Signer value", () => {
