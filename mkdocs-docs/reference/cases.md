@@ -156,7 +156,12 @@ currently unlocked and has a password set.
 
 **☰ Case lifecycle → 🗑️ Delete…** removes a case's directory for good — this cannot be undone. The
 dialog offers an optional ZIP/encrypted archive taken first, so you can keep an off-disk copy before
-the case is wiped. Guardrails: it refuses to touch a directory that isn't a real case, and it won't
+the case is wiped. With the encrypted archive, a copy of the `.dfircase` file is first saved in the
+cases folder on the server (next to where the ZIP archive goes), and only then is the case deleted —
+so a download that fails or a tab closed too early cannot lose the case. The dialog tells you the
+path of that copy; it is protected by the same password, and you delete it by hand when you no
+longer need it; to get the case back from it, use **Import case → Encrypted case archive (.dfircase)**.
+If the server cannot save that copy, nothing is deleted. Guardrails: it refuses to touch a directory that isn't a real case, and it won't
 delete an already-archived case's live folder out from under its archive. While an archive or an
 encrypted export of the case is still being built, Delete and Restore are refused with "an import or
 an archive in progress — try again" until it finishes.

@@ -78,18 +78,46 @@
       }
       let deleted;
       if (archiveFirst === "encrypted") {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        const cd = res.headers.get("content-disposition") || "";
-        const cdMatch = cd.match(/filename="([^"]*)"/);
-        a.download = cdMatch ? cdMatch[1] : `${caseId}.dfircase`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        // #2759: headers arrive before the body, so read them first. The server keeps its own copy
+        // of the encrypted archive in the cases folder, so a download that fails does not lose the
+        // case — tell the analyst where that copy is either way.
         deleted = res.headers.get("x-case-deleted") === "true";
+        const savedPath = res.headers.get("x-archive-path");
+        const where = savedPath
+          ? "A copy of the encrypted archive is saved on the server at:\n" +
+            decodeURIComponent(savedPath)
+          : "";
+        let downloadError = null;
+        try {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          const cd = res.headers.get("content-disposition") || "";
+          const cdMatch = cd.match(/filename="([^"]*)"/);
+          a.download = cdMatch ? cdMatch[1] : `${caseId}.dfircase`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          downloadError = e;
+        }
+        if (downloadError) {
+          alert(
+            "The download of the encrypted archive failed (" +
+              downloadError.message +
+              ").\n\n" +
+              (where ||
+                "A copy of the encrypted archive is saved in the cases folder on the server.") +
+              "\n\nUse that copy: Import case → Encrypted case archive, with the same password.",
+          );
+        } else if (where) {
+          alert(
+            where +
+              "\n\nIt is protected by the same password. Delete it by hand when you no longer need it.",
+          );
+        }
       } else {
         const body = await res.json();
         deleted = body.deleted;
@@ -114,7 +142,12 @@
         loadCaseList();
       }
     } catch (err) {
-      msg.textContent = "delete failed: " + err.message;
+      msg.textContent =
+        archiveFirst === "encrypted"
+          ? "delete failed: " +
+            err.message +
+            " — the case may already be deleted; if so, a .dfircase copy named after the case is in the cases folder on the server"
+          : "delete failed: " + err.message;
     } finally {
       btn.disabled = false;
       setBusy(false);

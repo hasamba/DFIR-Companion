@@ -32,6 +32,7 @@ import {
   attachmentContentDisposition,
 } from "../analysis/caseExportArchive.js";
 import { registerEncryptedImportRoutes } from "./encryptedImport.js";
+import { sendEncryptedArchiveThenDelete } from "./encryptedDelete.js"; // #2759
 import { registerStateBackupRoutes } from "./stateBackups.js";
 import { registerCasePushRoutes } from "./casePush.js";
 import { registerCaseStateRoutes } from "./caseState.js";
@@ -406,16 +407,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const released = release.report;
 
       if (archiveFirst === "encrypted" && typeof password === "string") {
-        const archive = await exportEncryptedCase(store, id, password, [], {
-          runExclusive: ctx.runStateExclusive, // same lock as /export/encrypted (#2247)
-        });
-        const filename = dfircaseFilename(id, meta.name);
-        const { deleted } = await deleteCaseFolderBestEffort(id, requestAuthentication(req)?.identity);
-        res.type("application/octet-stream");
-        res.setHeader("Content-Disposition", attachmentContentDisposition(filename));
-        res.setHeader("Cache-Control", "private, no-cache");
-        res.setHeader("X-Case-Deleted", String(deleted));
-        return res.send(archive);
+        // #2759: a durable copy is written to the cases root first; a failed write is a 500, no delete.
+        return await sendEncryptedArchiveThenDelete(ctx, res, { id, name: meta.name, password }, () =>
+          deleteCaseFolderBestEffort(id, requestAuthentication(req)?.identity),
+        );
       }
 
       let archiveResult: Awaited<ReturnType<typeof archiveCase>> | undefined;

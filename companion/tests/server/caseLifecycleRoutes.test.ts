@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -396,6 +396,39 @@ describe("POST /cases/:id/delete", () => {
     await expect(stat(join(store.casesRoot, "DEL-4"))).rejects.toThrow();
   });
 
+  // #2759: the case folder may only go once a durable encrypted copy sits in the cases root — a
+  // dropped download must never be the only thing between the analyst and a lost case.
+  it("writes the encrypted archive into the cases root before deleting, and names it in X-Archive-Path", async () => {
+    const { app, store } = await harness();
+    await seedClosedCase(app, "DEL-10", "Case Del Ten");
+    const res = await bufferRequest(
+      request(app).post("/cases/DEL-10/delete").send({ archiveFirst: "encrypted", password: PASSWORD }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers["x-case-deleted"]).toBe("true");
+    const archivePath = decodeURIComponent(String(res.headers["x-archive-path"]));
+    expect(archivePath).toBe(join(store.casesRoot, "DEL-10 - Case Del Ten.dfircase"));
+    const saved = await readFile(archivePath);
+    expect(saved.equals(res.body as Buffer)).toBe(true);
+    const imported = await request(app)
+      .post("/cases/import/encrypted")
+      .send({ data: saved.toString("base64"), password: PASSWORD });
+    expect(imported.status).toBeLessThan(300);
+  });
+
+  it("refuses to delete (500, case kept) when the encrypted copy cannot be written to the cases root", async () => {
+    const { app, store } = await harness();
+    await seedClosedCase(app, "DEL-11", "Case Del Eleven");
+    // A folder squatting on the target name makes the atomic rename fail on every platform.
+    await mkdir(join(store.casesRoot, "DEL-11 - Case Del Eleven.dfircase", "blocker"), { recursive: true });
+    const res = await request(app)
+      .post("/cases/DEL-11/delete")
+      .send({ archiveFirst: "encrypted", password: PASSWORD });
+    expect(res.status).toBe(500);
+    expect((await stat(join(store.casesRoot, "DEL-11"))).isDirectory()).toBe(true);
+    expect((await store.getCaseMeta("DEL-11"))?.status).toBe("closed");
+  });
+
   it("deletes an already-archived case", async () => {
     const { app, store } = await harness();
     await seedClosedCase(app, "DEL-5", "Case Del Five");
@@ -468,6 +501,8 @@ describe("POST /cases/:id/delete", () => {
       expect(res.status).toBe(200);
       expect(res.headers["x-case-deleted"]).toBe("false");
       expect((res.body as Buffer).length).toBeGreaterThan(0);
+      // #2759: the server-side copy is written before the delete is even attempted.
+      expect((await stat(join(store.casesRoot, "DEL-6b - Case Del Six B.dfircase"))).isFile()).toBe(true);
       const s = await stat(join(store.casesRoot, "DEL-6b"));
       expect(s.isDirectory()).toBe(true);
     } finally {

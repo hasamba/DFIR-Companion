@@ -206,6 +206,23 @@ async function defaultScanFiles(dir: string): Promise<string[]> {
   return paths;
 }
 
+/** Write a binary Buffer atomically: a unique temp file renamed over the target. The encrypted
+ * delete path saves its server-side copy with it too (#2759). */
+export async function writeBufferAtomic(p: string, d: Buffer): Promise<void> {
+  const tmp = `${p}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmp, d);
+    await rename(tmp, p);
+  } catch (err) {
+    try {
+      await unlink(tmp);
+    } catch {
+      /* temp may not exist; ignore */
+    }
+    throw err;
+  }
+}
+
 /**
  * Create a ZIP archive of the case directory.
  *
@@ -247,22 +264,7 @@ export async function archiveCase(
   // bytes). Every other write in the data-integrity core (StateStore, BackupManager, CaseStore)
   // already routes through atomicWrite; archiveCase was the outlier — its own JSDoc claimed
   // atomicity the previous default did NOT provide.
-  const write =
-    deps.writeFile ??
-    (async (p: string, d: Buffer) => {
-      const tmp = `${p}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(tmp, d);
-        await rename(tmp, p);
-      } catch (err) {
-        try {
-          await unlink(tmp);
-        } catch {
-          /* temp may not exist; ignore */
-        }
-        throw err;
-      }
-    });
+  const write = deps.writeFile ?? writeBufferAtomic;
 
   const relPaths = await scan(caseDir);
 
