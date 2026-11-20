@@ -14,7 +14,7 @@ import type { TagsStore } from "./tags.js";
 import type { TaggerStore } from "./taggerStore.js";
 import type { StateStore } from "./stateStore.js";
 import { runAndApplyTagger, readTaggerSettings } from "./taggerRun.js";
-import { applyToForensicEvent } from "./tagger.js";
+import { applyToForensicEvent, runTaggerYielding } from "./tagger.js";
 import { rewriteRows } from "./forensicRowRewrite.js";
 import type { AnalysisRunStore } from "./analysisRunStore.js";
 import { hashManifestValue } from "./analysisRunHash.js";
@@ -55,9 +55,10 @@ export async function autoTagNewEvents(
 
     const mutateForensic = settings.scope !== "super" && !!stateStore;
     // Tags first, from the rows handed in; the forensic grade/MITRE change after, below.
+    // The rules run in slices (#2716): over a large import this was minutes of blocked event loop.
     const applied = await runAndApplyTagger({
       caseId,
-      events: added,
+      result: await runTaggerYielding(added, ruleset),
       ruleset,
       forensicTimeline: [],
       tagsStore,
