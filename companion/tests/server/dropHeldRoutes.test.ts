@@ -52,7 +52,7 @@ describe("held hunt file routes (#2746)", () => {
         ],
       });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ updated: 1, ignored: 1 });
+    expect(res.body).toEqual({ updated: 1, ignored: 1, collecting: [] });
     const list = await request(app).get("/cases/c1/drop/held");
     expect(list.body.archives[0].entries[0].decision).toBe("skip");
   });

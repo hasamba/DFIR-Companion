@@ -101,3 +101,48 @@ export function planHolds(imports: readonly SizedHuntImport[], limits: HuntArtif
   }
   return held;
 }
+
+export interface HeldArtifactRows {
+  artifact: string;
+  bytes: number;
+  /** The PC(s) over the per-PC limit (at most 20 named), empty for the across-PCs limit. */
+  hosts: string[];
+  /** The largest one PC's share. */
+  hostBytes: number;
+  reason: "host" | "total";
+  limitMb: number;
+}
+
+const rowField = (row: unknown, key: string): string => {
+  const v = row && typeof row === "object" ? (row as Record<string, unknown>)[key] : undefined;
+  return typeof v === "string" ? v : "";
+};
+
+/**
+ * A bundle hunt's downloaded artifact, all PCs' rows together (#2753): held as a whole when its rows
+ * add up past `totalMb` or one PC's rows pass `hostMb`. Sizes are the rows' UTF-8 JSON bytes. A row
+ * with no ClientId counts toward the total only — unattributed rows are not one PC.
+ */
+export function artifactRowHold(
+  artifact: string,
+  rows: readonly unknown[],
+  limits: HuntArtifactLimits,
+): HeldArtifactRows | undefined {
+  let bytes = 0;
+  const perClient = new Map<string, number>();
+  const names = new Map<string, string>();
+  for (const row of rows) {
+    const n = Buffer.byteLength(JSON.stringify(row) ?? "", "utf8");
+    bytes += n;
+    const client = rowField(row, "ClientId");
+    if (!client) continue;
+    perClient.set(client, (perClient.get(client) ?? 0) + n);
+    if (!names.has(client)) names.set(client, rowField(row, "Fqdn") || client);
+  }
+  const hostBytes = Math.max(0, ...perClient.values());
+  if (limits.totalMb > 0 && bytes > limits.totalMb * MB)
+    return { artifact, bytes, hosts: [], hostBytes, reason: "total", limitMb: limits.totalMb };
+  if (!(limits.hostMb > 0) || hostBytes <= limits.hostMb * MB) return undefined;
+  const over = [...perClient].filter(([, n]) => n > limits.hostMb * MB).map(([c]) => names.get(c) ?? c);
+  return { artifact, bytes, hosts: over.slice(0, 20), hostBytes, reason: "host", limitMb: limits.hostMb };
+}

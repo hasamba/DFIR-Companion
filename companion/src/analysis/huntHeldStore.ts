@@ -46,18 +46,64 @@ const archiveSchema = z.object({
   entries: validEntries,
 });
 
-const fileSchema = z.object({
-  archives: z
+// A bundle hunt's artifact held over a limit (#2753): held as a whole, decided per artifact, and the
+// decision is followed by every later collect of that hunt (a collect re-reads the full results).
+const huntEntrySchema = z.object({
+  artifact: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[^\u0000-\u001f]+$/),
+  bytes: z.number().catch(0),
+  /** The PC(s) whose results crossed the per-PC limit (capped), empty for the across-PCs limit. */
+  hosts: z.array(z.string().max(256)).max(20).catch([]),
+  hostBytes: z.number().catch(0),
+  reason: z.enum(["host", "total"]).catch("total"),
+  limitMb: z.number().catch(0),
+  decision: z.enum(["import", "skip"]).optional().catch(undefined),
+});
+const huntSchema = z.object({
+  huntId: z.string().regex(/^H\.[A-Za-z0-9]{1,64}$/),
+  entries: z
     .array(z.unknown())
     .catch([])
     .transform((list) =>
-      list.flatMap((a) => (archiveSchema.safeParse(a).success ? [archiveSchema.parse(a)] : [])),
+      list.flatMap((e) => (huntEntrySchema.safeParse(e).success ? [huntEntrySchema.parse(e)] : [])),
     ),
+});
+
+const validList = <S extends z.ZodTypeAny>(schema: S) =>
+  z
+    .array(z.unknown())
+    .catch([])
+    .transform((list): z.output<S>[] =>
+      list.flatMap((a) => {
+        const r = schema.safeParse(a);
+        return r.success ? [r.data as z.output<S>] : [];
+      }),
+    );
+
+const fileSchema = z.object({
+  archives: validList(archiveSchema),
+  hunts: validList(huntSchema),
 });
 
 export type HeldEntry = z.infer<typeof entrySchema>;
 export type HeldArchive = z.infer<typeof archiveSchema>;
 export type HeldDecision = "import" | "skip";
+export type HeldHuntEntry = z.infer<typeof huntEntrySchema>;
+export type HeldHunt = z.infer<typeof huntSchema>;
+
+export interface HuntDecisionInput {
+  huntId: string;
+  artifact: string;
+  decision: HeldDecision;
+}
+
+interface HeldFile {
+  archives: HeldArchive[];
+  hunts: HeldHunt[];
+}
 
 export interface DecisionInput {
   archiveId: string;
@@ -76,23 +122,21 @@ export class HuntHeldStore {
     return join(this.stateDir(caseId), HUNT_HELD_FILE);
   }
 
-  private async read(caseId: string): Promise<HeldArchive[]> {
+  private async read(caseId: string): Promise<HeldFile> {
     try {
-      return fileSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8"))).archives;
+      return fileSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8")));
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT" || err instanceof SyntaxError) return [];
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" || err instanceof SyntaxError)
+        return { archives: [], hunts: [] };
       throw err;
     }
   }
 
-  /** Run one read-modify-write for a case after every earlier one; `undefined` from `fn` writes nothing. */
-  private serial<T>(
-    caseId: string,
-    fn: (list: HeldArchive[]) => { next?: HeldArchive[]; result: T },
-  ): Promise<T> {
+  /** One read-modify-write of the whole file for a case, after every earlier one; no `next`, no write. */
+  private serialFile<T>(caseId: string, fn: (file: HeldFile) => { next?: HeldFile; result: T }): Promise<T> {
     const run = (this.queues.get(caseId) ?? Promise.resolve()).then(async () => {
       const { next, result } = fn(await this.read(caseId));
-      if (next) await atomicWrite(this.path(caseId), JSON.stringify({ archives: next }, null, 2));
+      if (next) await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
       return result;
     });
     this.queues.set(
@@ -100,6 +144,76 @@ export class HuntHeldStore {
       run.catch(() => undefined),
     );
     return run;
+  }
+
+  /** The zip records; the hunt records are carried through unchanged. */
+  private serial<T>(
+    caseId: string,
+    fn: (list: HeldArchive[]) => { next?: HeldArchive[]; result: T },
+  ): Promise<T> {
+    return this.serialFile(caseId, (file) => {
+      const { next, result } = fn(file.archives);
+      return next ? { next: { ...file, archives: next }, result } : { result };
+    });
+  }
+
+  /** The hunt records; the zip records are carried through unchanged. */
+  private serialHunts<T>(
+    caseId: string,
+    fn: (list: HeldHunt[]) => { next?: HeldHunt[]; result: T },
+  ): Promise<T> {
+    return this.serialFile(caseId, (file) => {
+      const { next, result } = fn(file.hunts);
+      return next ? { next: { ...file, hunts: next }, result } : { result };
+    });
+  }
+
+  listHunts(caseId: string): Promise<HeldHunt[]> {
+    return this.serialHunts(caseId, (list) => ({ result: list }));
+  }
+
+  /**
+   * Record one collect pass's held artifacts. A held artifact keeps any decision it has; an undecided
+   * entry for an artifact this pass downloaded but did not hold is dropped (it now fits). Entries for
+   * artifacts this pass did not download are kept as they are, and decided entries are never dropped.
+   */
+  putHuntHolds(
+    caseId: string,
+    huntId: string,
+    downloaded: readonly string[],
+    held: readonly HeldHuntEntry[],
+  ): Promise<void> {
+    return this.serialHunts(caseId, (list) => {
+      const prev = list.find((h) => h.huntId === huntId)?.entries ?? [];
+      const heldNames = new Set(held.map((e) => e.artifact));
+      const fetched = new Set(downloaded);
+      const kept = prev.filter((e) => !heldNames.has(e.artifact) && (e.decision || !fetched.has(e.artifact)));
+      const fresh = held.map((e) => {
+        const before = prev.find((p) => p.artifact === e.artifact);
+        return before?.decision ? { ...e, decision: before.decision } : { ...e, decision: undefined };
+      });
+      const entries = [...kept, ...fresh];
+      const rest = list.filter((h) => h.huntId !== huntId);
+      if (!entries.length && rest.length === list.length) return { result: undefined };
+      return { next: entries.length ? [...rest, { huntId, entries }] : rest, result: undefined };
+    });
+  }
+
+  /** Apply decisions to held hunt artifacts that exist; returns the decisions applied. */
+  decideHunts(caseId: string, decisions: readonly HuntDecisionInput[]): Promise<HuntDecisionInput[]> {
+    return this.serialHunts(caseId, (list) => {
+      const applied: HuntDecisionInput[] = [];
+      const next = list.map((h) => ({
+        ...h,
+        entries: h.entries.map((e) => {
+          const d = decisions.find((x) => x.huntId === h.huntId && x.artifact === e.artifact);
+          if (!d) return e;
+          applied.push(d);
+          return { ...e, decision: d.decision };
+        }),
+      }));
+      return applied.length ? { next, result: applied } : { result: [] };
+    });
   }
 
   list(caseId: string): Promise<HeldArchive[]> {

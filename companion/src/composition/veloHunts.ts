@@ -44,6 +44,7 @@ import { ScopeStore } from "../analysis/scope.js";
 import { readInIncidentWindow, readScope } from "../integrations/velociraptor/veloWindowReread.js";
 import type { NewestOrder } from "../integrations/velociraptor/veloNewestRead.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
+import { loadHuntHolds } from "./veloHuntHolds.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import { unavailableServerClients } from "./serverSetClients.js";
 import { createTickVelo, huntPassCurrent } from "./veloCaseClient.js";
@@ -306,24 +307,21 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // artifacts (MFT/USN/Prefetch) whose only purpose is the super-timeline — routing them through the
       // normal Velociraptor importer would flood the forensic timeline + IOC list, defeating the point.
       // So for such a bundle we PARSE the rows (no mergeDelta) and append straight to the super-timeline.
-      const bundle =
-        job.bundleId && options.artifactBundleStore
-          ? await options.artifactBundleStore.get(job.bundleId)
-          : null;
+      const bundle = job.bundleId ? await options.artifactBundleStore?.get(job.bundleId) : null;
       const superOnly = superOnlyHunt(job, bundle?.superTimelineOnly) && !!options.superTimelineStore;
 
-      // 1) Result ROWS → the Velociraptor importer (detections + telemetry). Resilient: an artifact
-      // whose output is too large to fetch is skipped (logged), not fatal — the rest still import, and
-      // its uploaded JSON (if any) is still picked up in step 2.
-      // For a suggested fleet hunt the single Custom.Hunt artifact stores rows under named sources
-      // (Pivot0…); map them so collect reads `artifact/source` (else 0 rows → false "no evidence", #157).
+      // 1) Result ROWS → the Velociraptor importer (detections + telemetry). Resilient: an artifact whose
+      // output is too large to fetch is skipped (logged), not fatal — the rest still import, and its uploaded
+      // JSON (if any) is still picked up in step 2. For a suggested fleet hunt the single Custom.Hunt
+      // artifact stores rows under named sources (Pivot0…); map them so collect reads `artifact/source` (else
+      // 0 rows → false "no evidence", #157).
       //
-      // STREAMED, not buffered: fetching every artifact into one map and JSON.stringify-ing it held a
-      // big hunt's rows twice in the heap and took the server down with no crash trace. So this loops
-      // per artifact (not huntResultsByArtifact(), which returns one map) and writes each artifact's rows
-      // to a scratch file as they arrive — at most one artifact's rows are live at once, here and in step 3.
-      // A cut-short read is re-read once inside the incident window when one is known (#1969), else
-      // newest-first by the artifact's own time (#1983).
+      // STREAMED, not buffered: fetching every artifact into one map and JSON.stringify-ing it held a big
+      // hunt's rows twice in the heap and took the server down with no crash trace. So this loops per
+      // artifact (not huntResultsByArtifact(), which returns one map) and writes each artifact's rows to a
+      // scratch file as they arrive — at most one artifact's rows are live at once, here and in step 3. A
+      // cut-short read is re-read once inside the incident window when one is known (#1969), else newest-
+      // first by the artifact's own time (#1983).
       const caseScope = await new ScopeStore(store).load(caseId).catch(() => null);
       const sourcesByArtifact =
         job.sources?.length && job.artifacts.length === 1 ? { [job.artifacts[0]]: job.sources } : undefined;
@@ -334,6 +332,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const cutShort: ReturnType<typeof truncatedRecord>[] = []; // TruncatedArtifact
       const unread: { name: string; rows: number }[] = []; // source list unknown — never "empty" (#1635)
       let totalRows = 0;
+      const holds = await loadHuntHolds(store, caseId, job.huntId); // size limits (#2753)
       for (const artifact of job.artifacts) {
         const name = String(artifact ?? "").trim();
         let rows: unknown[];
@@ -361,12 +360,13 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         // failure writing the scratch file (e.g. a full disk) is a local persistence bug, a different
         // class of problem — let it fail the whole collect pass instead of silently reporting success on
         // rows that were never actually persisted anywhere.
-        totalRows += rows.length;
+        totalRows += holds.note(name, rows); // rows it imports: a held artifact adds none (#2753)
         snapshotFragments.push(buildHuntRunSnapshot({ [name]: rows })); // small capped key/host strings only — the rows themselves are never retained
         const file = path.join(scratchDir, `${artifactFiles.length}_${name}.json`);
         await writeFile(file, JSON.stringify({ [name]: rows }), "utf8");
         artifactFiles.push({ name, file, rows: rows.length });
       }
+      skipped.push(...(await holds.save())); // held over a size limit: stored, not imported (#2753)
       for (const w of collectWarnings(job.huntId, skipped, cutShort, unread, !!job.timeScope)) logLine(w);
       const done = completeness(skipped, cutShort, unread); // final: on the job BEFORE the seam grades (#2670)
       // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
@@ -456,7 +456,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const reportArtifactProgress = (done: number, detail: string): void => {
         if (importSlot) options.jobManager?.progress(importSlot.jobId, done, artifactFiles.length, detail);
       };
-      for (const [index, stored] of evidence.artifacts.entries()) {
+      for (const [index, stored] of holds.importable(evidence.artifacts).entries()) {
         const { name, file, rows: rowCount, storedName, importedAt, seq, debug } = stored;
         const partly = unread.some((u) => u.name === name) ? name : undefined; // stamps every row (#1651)
         const step = `artifact ${index + 1}/${artifactFiles.length} · ${name} (${rowCount} rows)`;

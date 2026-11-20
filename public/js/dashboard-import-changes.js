@@ -57,17 +57,28 @@
     }, 30000);
   }
   const heldMb = (n) => (Number(n) / 1048576).toFixed(Number(n) < 10485760 ? 1 : 0);
-  function heldWhy(e) {
+  function heldWhy(r) {
+    const e = r.e;
+    const one = r.huntId ? e.hostBytes : e.groupBytes; // a hunt row's largest PC share; a zip PC's sum
     return e.reason === "host"
-      ? `${heldMb(e.groupBytes)} MB on this PC (limit ${e.limitMb} MB per PC)`
-      : `${heldMb(e.groupBytes)} MB across all PCs (limit ${e.limitMb} MB)`;
+      ? `${heldMb(one)} MB from one PC (limit ${e.limitMb} MB per PC)`
+      : `${heldMb(r.huntId ? e.bytes : e.groupBytes)} MB across all PCs (limit ${e.limitMb} MB)`;
+  }
+  function heldWhere(r) {
+    if (!r.huntId) return r.e.host || "all PCs";
+    return r.e.hosts && r.e.hosts.length ? r.e.hosts.join(", ") : "all PCs";
   }
   function renderDropHeld(caseId, d) {
     const el = document.getElementById("dropHeld");
     if (!el) return;
-    const rows = ((d && d.archives) || []).flatMap((a) =>
+    const zipRows = ((d && d.archives) || []).flatMap((a) =>
       (a.entries || []).filter((e) => !e.decision).map((e) => ({ archiveId: a.archiveId, zip: a.relpath, e })),
     );
+    // A bundle hunt's held artifact (#2753): one row per artifact, held as a whole.
+    const huntRows = ((d && d.hunts) || []).flatMap((h) =>
+      (h.entries || []).filter((e) => !e.decision).map((e) => ({ huntId: h.huntId, e })),
+    );
+    const rows = zipRows.concat(huntRows);
     if (!rows.length) {
       el.style.display = "none";
       el.innerHTML = "";
@@ -77,8 +88,8 @@
     const list = rows
       .map(
         (r, i) =>
-          `<div class="rb-files"><b>${esc(r.e.artifact || r.e.member)}</b> — ${esc(r.e.host || "all PCs")}, ` +
-          `${heldMb(r.e.bytes)} MB · ${esc(heldWhy(r.e))} <code>${esc(r.zip)}</code> ` +
+          `<div class="rb-files"><b>${esc(r.e.artifact || r.e.member)}</b> — ${esc(heldWhere(r))}, ` +
+          `${heldMb(r.e.bytes)} MB · ${esc(heldWhy(r))} <code>${esc(r.huntId ? "hunt " + r.huntId : r.zip)}</code> ` +
           `<button class="rb-yes" data-held="${i}" data-held-act="import">Import anyway</button>` +
           `<button class="rb-no" data-held="${i}" data-held-act="skip">Skip</button></div>`,
       )
@@ -93,7 +104,11 @@
       `<button class="rb-yes" id="heldImportAll">Import all anyway</button>` +
       `<button class="rb-no" id="heldSkipAll">Skip all</button>`;
     const send = (picked, decision) => {
-      const all = picked.map((r) => ({ archiveId: r.archiveId, member: r.e.member, decision }));
+      const all = picked.map((r) =>
+        r.huntId
+          ? { huntId: r.huntId, artifact: r.e.artifact, decision }
+          : { archiveId: r.archiveId, member: r.e.member, decision },
+      );
       const chunks = [];
       for (let i = 0; i < all.length; i += 500) chunks.push(all.slice(i, i + 500));
       el.querySelectorAll("button").forEach((b) => (b.disabled = true));
@@ -114,7 +129,7 @@
         .then(() => {
           document.getElementById("status").textContent =
             decision === "import"
-              ? "Held hunt files will import on the next drop sweep"
+              ? "Held hunt results will import on the next drop sweep or hunt collect"
               : "Held hunt files will be skipped on the next drop sweep";
         })
         .catch((e) => {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  artifactRowHold,
   huntArtifactLimitsFromEnv,
   planHolds,
   clientFolderOf,
@@ -63,5 +64,38 @@ describe("hunt artifact size limits (#2746)", () => {
   it("names the client folder a result sits in", () => {
     expect(clientFolderOf("hunt/WS-A-C.1/results/X.json")).toBe("WS-A-C.1");
     expect(clientFolderOf("results/All X.json")).toBe("");
+  });
+});
+
+describe("bundle hunt artifact holds (#2753)", () => {
+  const row = (client: string, pad: number) => ({
+    ClientId: client,
+    Fqdn: `${client}.example.test`,
+    Pad: "x".repeat(pad),
+  });
+
+  it("holds the artifact when one PC's rows pass the per-PC limit, naming that PC", () => {
+    const rows = [row("C.1", 3000), row("C.2", 100)];
+    const h = artifactRowHold("Pstree", rows, { hostMb: 2000 / 1048576, totalMb: 0 });
+    expect(h).toMatchObject({ artifact: "Pstree", reason: "host", hosts: ["C.1.example.test"] });
+  });
+
+  it("holds it as a whole past the across-PCs limit", () => {
+    const rows = [row("C.1", 900), row("C.2", 900)];
+    expect(artifactRowHold("Pstree", rows, { hostMb: 0, totalMb: 1500 / 1048576 })).toMatchObject({
+      reason: "total",
+      hosts: [],
+    });
+  });
+
+  it("counts UTF-8 bytes, and rows with no ClientId toward the total only", () => {
+    const multi = { Pad: "é".repeat(600) }; // 1200 UTF-8 bytes, 600 UTF-16 units
+    expect(artifactRowHold("A", [multi], { hostMb: 0, totalMb: 1000 / 1048576 })?.reason).toBe("total");
+    expect(artifactRowHold("A", [multi, multi], { hostMb: 1000 / 1048576, totalMb: 0 })).toBeUndefined();
+  });
+
+  it("returns nothing under both limits or with both off", () => {
+    expect(artifactRowHold("A", [row("C.1", 10)], { hostMb: 50, totalMb: 200 })).toBeUndefined();
+    expect(artifactRowHold("A", [row("C.1", 99999)], { hostMb: 0, totalMb: 0 })).toBeUndefined();
   });
 });
