@@ -169,7 +169,9 @@ an archive in progress — try again" until it finishes.
 
 ## ZIP Case Archive (Restore)
 
-**Archive to ZIP** writes `<caseId> (no password).zip` into the cases folder. The case must be
+**Archive to ZIP** writes `<caseId> - <case name> (no password).zip` into the cases folder (just
+`<caseId> (no password).zip` when the case has no separate name). A very long case name is
+shortened in the file name only; the case keeps its full name. The case must be
 closed first. The ZIP holds one
 `<caseId>/` folder with every case file, plus `<caseId>/archive-manifest.json`. The manifest lists
 the SHA-256 hash and size of each file. The ZIP has no password.

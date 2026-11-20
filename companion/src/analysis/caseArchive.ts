@@ -5,6 +5,7 @@ import { deflateRawSync } from "node:zlib";
 import { portableZipEntryPath, portableArchivePaths } from "../storage/portableFilename.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
+import { caseNamedFilename } from "./caseFilename.js";
 import { EXPORT_STAGING_DIRNAME, createStagingDir } from "../storage/exportStaging.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import {
@@ -164,21 +165,14 @@ export interface ArchiveDeps {
   writeFile?: (absPath: string, data: Buffer) => Promise<void>;
 }
 
-// Windows-illegal filename characters (also unsafe cross-platform): < > : " / \ | ? * and control
-// chars — the caseId itself is always filesystem-safe (see isValidCaseId), but the case name is
-// free text an analyst typed in.
-const UNSAFE_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
-
 /**
  * The on-disk filename for a case's plain (unencrypted) ZIP archive:
  * `"<caseId> - <name> (no password).zip"`, or just `"<caseId> (no password).zip"` when the case
  * has no distinct name. The "(no password)" marker keeps it visually unambiguous next to an
- * encrypted `.dfircase` archive of the same case.
+ * encrypted `.dfircase` archive of the same case. A long name is shortened to fit (#2769).
  */
 export function zipArchiveFilename(caseId: string, name: string | null | undefined): string {
-  const trimmed = (name ?? "").trim();
-  if (!trimmed || trimmed === caseId) return `${caseId} (no password).zip`;
-  return `${caseId} - ${trimmed.replace(UNSAFE_FILENAME_CHARS, "_")} (no password).zip`;
+  return caseNamedFilename(caseId, name, " (no password).zip");
 }
 
 // Default recursive file scanner for the real filesystem.
