@@ -346,6 +346,7 @@
     "forensicEventInsert.ts": "storage",
     "caseSqliteWorkerSuper.ts": "storage",
     "caseSqliteWorkerSuperQuery.ts": "storage",
+    "caseSqliteWorkerSuperRelink.ts": "storage",
     "caseSqliteWorkerSaveState.ts": "storage",
     "caseSqliteWorkerFacts.ts": "storage",
     "ltHash.ts": "storage",

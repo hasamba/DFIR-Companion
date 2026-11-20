@@ -284,7 +284,7 @@ function storedSuperContentKeys(db, keys) {
   ).all(JSON.stringify(unique)).map((row) => row.content_key));
 }
 
-function writeSuperEvents(db, events, max, protectIds, setAsideMarkers) {
+function writeSuperEvents(db, events, max, protectIds, setAsideMarkers, relinkCandidates) {
   return withTransaction(db, () => {
     const writer = createEntityWriter(db);
     const incoming = events || [];
@@ -308,12 +308,16 @@ function writeSuperEvents(db, events, max, protectIds, setAsideMarkers) {
     let firstRowId = null; // batch rows have the highest row_ids: survivors are one range count
     const seenIds = new Set();
     const seenContent = new Set();
+    const contentDropped = [];
     for (const event of incoming) {
       const id = scalarText(event && event.id);
       const contentKey = superContentKey(event);
-      if ((id && (seenIds.has(id) || existingIds.has(id))) ||
-          seenContent.has(contentKey) || existingContent.has(contentKey) ||
-          (superRecordId(event) && existingBase.has(superBaseContentKey(event)))) continue;
+      if (id && (seenIds.has(id) || existingIds.has(id))) continue;
+      if (seenContent.has(contentKey) || existingContent.has(contentKey) ||
+          (superRecordId(event) && existingBase.has(superBaseContentKey(event)))) {
+        if (relinkCandidates && !seenContent.has(contentKey)) contentDropped.push(event);
+        continue;
+      }
       if (id) seenIds.add(id);
       seenContent.add(contentKey);
       const rowId = writer.insert(entityProjection("superTimeline", event, ordinal++, contentKey), event);
@@ -334,7 +338,7 @@ function writeSuperEvents(db, events, max, protectIds, setAsideMarkers) {
     const evicted = enforceSuperCap(db, max);
     // retained, not inserted: a batch past the cap loses its own head
     const retained = firstRowId === null ? 0 : Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline' AND row_id>=?").get(firstRowId).n);
-    return { retained, evicted };
+    return relinkCandidates ? { retained, evicted, relinkCandidates: superRelinkCandidates(db, contentDropped) } : { retained, evicted };
   });
 }
 
@@ -436,9 +440,10 @@ function migrateSuper(dbPath, eventsPath, labelsPath, tagsPath, excludeAuthorPre
 
 // Returns { retained, evicted } so a caller that reports can have BOTH from one atomic call.
 // SuperTimelineStore.append still hands its callers the retained number and nothing else.
-function appendSuper(dbPath, events, max, setAsideMarkers) {
+// With relinkCandidates (#2619) the result also lists the content-deduped rows a relink may claim.
+function appendSuper(dbPath, events, max, setAsideMarkers, relinkCandidates) {
   const db = openDatabase(dbPath);
-  try { return writeSuperEvents(db, events, max, null, setAsideMarkers); } finally { db.close(); }
+  try { return writeSuperEvents(db, events, max, null, setAsideMarkers, relinkCandidates); } finally { db.close(); }
 }
 
 // Rewrite stored rows in place once the case learned a hostname rename (#1508): the payload, the

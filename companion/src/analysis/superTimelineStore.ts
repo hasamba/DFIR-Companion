@@ -144,6 +144,21 @@ export interface SuperTimelineMeta {
 export interface SuperAppendResult {
   retained: number;
   evicted: SuperEviction;
+  /** Only when asked (#2619): rows content-deduped onto a stored row the forensic timeline lacks. */
+  relinkCandidates?: SuperRelinkCandidate[];
+}
+
+/** An incoming row (`id`) that content-deduped onto a stored row (`storedId`) of another id. */
+export interface SuperRelinkCandidate {
+  id: string;
+  storedId: string;
+}
+
+/** Move the stored row `fromId` onto the forensic id `toId`, taking the forensic row's grade. */
+export interface SuperRelink {
+  fromId: string;
+  toId: string;
+  severity: string;
 }
 
 const NO_EVICTION: SuperEviction = { count: 0, setAside: 0, from: "", to: "" };
@@ -231,8 +246,14 @@ export class SuperTimelineStore {
     return (await this.appendReporting(caseId, events)).retained;
   }
 
-  async appendReporting(caseId: string, events: ForensicEvent[]): Promise<SuperAppendResult> {
-    if (!events.length) return { retained: 0, evicted: { ...NO_EVICTION } };
+  async appendReporting(
+    caseId: string,
+    events: ForensicEvent[],
+    opts: { relinkCandidates?: boolean } = {},
+  ): Promise<SuperAppendResult> {
+    const asked = opts.relinkCandidates === true;
+    if (!events.length)
+      return { retained: 0, evicted: { ...NO_EVICTION }, ...(asked ? { relinkCandidates: [] } : {}) };
     await this.ensureMigrated(caseId);
     const result = await caseSqliteWorker.request<SuperAppendResult>({
       op: "appendSuper",
@@ -240,8 +261,30 @@ export class SuperTimelineStore {
       events: events.map(upgradeForensicEvent),
       max: this.max,
       setAsideMarkers: SET_ASIDE_NOTE_MARKERS,
+      relinkCandidates: asked,
     });
-    return { retained: result?.retained ?? 0, evicted: result?.evicted ?? { ...NO_EVICTION } };
+    return {
+      retained: result?.retained ?? 0,
+      evicted: result?.evicted ?? { ...NO_EVICTION },
+      ...(asked ? { relinkCandidates: result?.relinkCandidates ?? [] } : {}),
+    };
+  }
+
+  /**
+   * #2619 — after an import Undo and a re-import, move each stored row onto the id the forensic
+   * timeline now holds for it, so the raw record shows it as Promoted. The worker re-checks every
+   * link (old id not in the forensic timeline, new id in it and not already stored); the row keeps
+   * its content, and its tags, labels and star move with it. Returns the count rewritten.
+   */
+  async relink(caseId: string, links: readonly SuperRelink[]): Promise<number> {
+    if (!links.length) return 0;
+    await this.ensureMigrated(caseId);
+    return caseSqliteWorker.request<number>({
+      op: "relinkSuper",
+      dbPath: this.databasePath(caseId),
+      links: [...links],
+      setAsideMarkers: SET_ASIDE_NOTE_MARKERS,
+    });
   }
 
   /**
