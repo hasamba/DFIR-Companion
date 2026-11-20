@@ -1066,6 +1066,9 @@
           <option value="">No incident type — blank case</option>
         </select></label>
       <div id="ncTemplateDesc" data-safe-style="color:var(--text-muted); font-size:11px; margin:-4px 0 8px; padding:6px 8px; background:var(--bg-tertiary); border-radius:4px; display:none;"></div>
+      <label id="ncHuntClientRow" hidden data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Client (optional)
+        <select id="ncHuntClient" data-safe-style="width:100%; box-sizing:border-box; padding:5px; margin-top:3px; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid #444;"></select>
+        <span data-safe-style="display:block; color:var(--text-muted); font-size:11px; margin-top:3px;">Links the hunt to the client. The client's default server set fills the Servers box, unless you already chose one.</span></label>
       <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
         <button id="ncCreate">Create case</button>
         <button id="ncCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>

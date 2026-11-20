@@ -19,13 +19,15 @@ In **New Case**, pick the **Threat hunt (proactive)** template. This:
 
 ### 2. Link the case to a client
 
-In the **Client Baseline** panel, pick the client and press **Link case to client**. A client is
-its own record (for example "Client A"). It keeps the client's reviewed baseline across hunt cases.
+Pick the client in **New Case** (the **Client** box appears for the Threat hunt template), or later
+in the **Client Baseline** panel with **Link case to client**. A client is its own record (for
+example "Client A"). It keeps the client's reviewed baseline across hunt cases.
 
 - Only the instance administrator can create or edit a client profile.
 - Linking a case to a client needs case-administrator rights on that case.
-- A profile can name a default Velociraptor server set. It only suggests the set for new hunt
-  cases. It never decides which hosts belong to the client.
+- A profile can name a default Velociraptor server set. Picking the client in **New Case** fills
+  the **Servers** box with it, unless you already chose a set there. It never changes an existing
+  case and never decides which hosts belong to the client.
 
 ### 3. Run the hunt
 
@@ -112,7 +114,7 @@ synthesis.
 
 ### Who sees what (team mode)
 
-- Everyone signed in sees the list of client names.
+- Everyone signed in sees the list of client names. The public demo shows no client profiles.
 - Only the instance administrator sees and edits a full client profile.
 - Earlier hunts of the same client are listed only when you can open them, including their case
   password when they have one.
