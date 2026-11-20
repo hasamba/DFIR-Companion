@@ -22,6 +22,7 @@ import { buildRfc822Message, formatEmail } from "./emailFormat.js";
 import { postWebhook } from "./webhookSender.js";
 import { escapeBidiControls } from "../../analysis/bidiControl.js";
 import { sendSmtp, type SmtpConnect } from "./smtpClient.js";
+import { channelSecrets, redactSecrets } from "./secretRedact.js";
 import {
   sendWithTelegramLimit,
   telegramRetryAfterMs,
@@ -105,10 +106,25 @@ function withVisibleBidi(event: NotificationEvent): NotificationEvent {
   return { ...event, title: escapeBidiControls(event.title), lines: event.lines.map(escapeBidiControls) };
 }
 
+// The error text reaches the dashboard and the server log, and a remote reply can repeat the
+// request back — so every error is masked against the channel's secrets on the way out.
 async function sendToChannel(
   channel: NotificationChannel,
   event: NotificationEvent,
   transport: NotifyTransport,
+): Promise<ChannelResult> {
+  const botToken =
+    channel.type === "telegram" ? resolveTelegramBotToken(channel, transport.telegramBotToken) : "";
+  const secrets = channelSecrets(channel, botToken);
+  const result = await sendUnmasked(channel, event, transport, secrets);
+  return result.error ? { ...result, error: redactSecrets(result.error, secrets) } : result;
+}
+
+async function sendUnmasked(
+  channel: NotificationChannel,
+  event: NotificationEvent,
+  transport: NotifyTransport,
+  secrets: readonly string[],
 ): Promise<ChannelResult> {
   const base = { channelId: channel.id, channel: channel.name, type: channel.type, skipped: false };
   try {
@@ -124,7 +140,7 @@ async function sendToChannel(
         channel.webhookUrl,
         formatter(event),
         transport.timeoutMs,
-        { refuseRedirects: true },
+        { refuseRedirects: true, secrets },
       );
       return { ...base, ok: r.ok, ...(r.error ? { error: r.error } : {}) };
     }
@@ -144,7 +160,7 @@ async function sendToChannel(
       const r = await sendWithTelegramLimit(
         transport.telegramLimiters?.forToken(botToken), // the bot this alert is sent from
         { chatId, lane: "alert", maxWaitMs: wait.maxWaitMs },
-        () => postWebhook(transport.fetchFn, url, payload, transport.timeoutMs),
+        () => postWebhook(transport.fetchFn, url, payload, transport.timeoutMs, { secrets }),
         (res) => telegramRetryAfterMs(res.status, res.body),
         { maxRetryWaitMs: wait.maxRetryWaitMs },
       );

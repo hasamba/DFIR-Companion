@@ -1,6 +1,7 @@
 import type { FetchFn } from "../../enrichment/provider.js";
 import { readBoundedText, RESPONSE_SIZE_LIMITS } from "../../providers/boundedResponse.js";
 import { OutboundUrlBlockedError } from "../../routes/outboundTargetPolicy.js";
+import { redactSecrets } from "./secretRedact.js";
 
 // POST a JSON payload to a Slack/Teams incoming webhook. Injectable `fetchFn` (tests pass a mock —
 // no real network), bounded by a timeout. Slack replies "ok" / Teams replies "1" on success; we
@@ -29,6 +30,9 @@ export interface PostWebhookOptions {
   /** Do not follow a 3xx; report it as the failure (#2146). A 307/308 would re-POST the case
    *  detail to wherever the redirect points, which no check on the first URL covers. */
   refuseRedirects?: boolean;
+  /** Strings never to repeat in `error`/`body` (the bot token, the webhook key). Masked before the
+   *  body is cut, so a secret straddling the cut is not left half-visible. */
+  secrets?: readonly string[];
 }
 
 export async function postWebhook(
@@ -49,8 +53,9 @@ export async function postWebhook(
     });
   } catch (err) {
     // A guard refusal is a policy decision, not a network fault — show it as written.
-    if (err instanceof OutboundUrlBlockedError) return { ok: false, status: 0, error: err.message };
-    return { ok: false, status: 0, error: `network error: ${(err as Error).message}` };
+    const message = redactSecrets((err as Error).message, opts.secrets ?? []);
+    if (err instanceof OutboundUrlBlockedError) return { ok: false, status: 0, error: message };
+    return { ok: false, status: 0, error: `network error: ${message}` };
   }
 
   if (opts.refuseRedirects && res.status >= 300 && res.status < 400) {
@@ -63,10 +68,11 @@ export async function postWebhook(
   }
 
   if (!res.ok) {
-    const body = await readBoundedText(res, {
+    const raw = await readBoundedText(res, {
       maxBytes: RESPONSE_SIZE_LIMITS.text,
       context: safeHost(url),
     }).catch(() => "");
+    const body = redactSecrets(raw, opts.secrets ?? []);
     const detail = body ? `: ${body.slice(0, 200)}` : "";
     return { ok: false, status: res.status, error: `webhook HTTP ${res.status}${detail}`, body };
   }
