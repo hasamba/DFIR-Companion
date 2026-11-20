@@ -100,6 +100,20 @@ jobs:
         working-directory: companion
         run: npm run check:us-map
 
+      # The vendored AI-agent YARA rules are first compiled on the endpoint, by Velociraptor. Compile
+      # each file, then each scan scope's joined set, here instead, so a broken upstream re-sync fails
+      # its PR and not every endpoint scan (#2720). Every PR, no paths filter: a path-filtered check
+      # cannot be required. yara-python is libyara 4.x, the dialect Velociraptor embeds.
+      - name: Set up Python (AI-agent YARA check)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile-check AI-agent YARA rules
+        run: |
+          pip install yara-python==4.5.4 pyyaml==6.0.3
+          python companion/scripts/checkAiAgentYara.py
+
   # The companion suite is 1076 files and ~10 minutes on a single runner, and that WAS the cost of
   # a PR gate: of the 11 minutes this job took, `npm test` was 10 of them. Sharding splits the test
   # FILES across runners (#1536). Free here — the repo is public, so the extra runners are not billed.
