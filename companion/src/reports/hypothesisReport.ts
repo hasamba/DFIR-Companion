@@ -7,7 +7,7 @@ import {
   type EvidenceRow,
   type HypothesisAssessment,
 } from "../analysis/hypothesisDiagnostics.js";
-import { blockMd, oneLineMd } from "./mdText.js";
+import { blockMd, flatLineMd, oneLineMd } from "./mdText.js";
 
 // The Hypotheses report section (#140), with the evidence assessment of #933 item 22: a conclusion
 // names what it rests on — the observations that separate it from a named alternative, the
@@ -28,7 +28,7 @@ const STATUS_LABEL: Record<Hypothesis["status"], string> = {
 const NOT_IN_REPORT = "not in this report's timeline (out of scope or marked false positive)";
 
 function eventLine(row: EvidenceRow | undefined, id: string): string {
-  if (!row || !row.present) return `\`${oneLineMd(id)}\` — observation no longer in the timeline`;
+  if (!row || !row.present) return `\`${flatLineMd(id)}\` — observation no longer in the timeline`;
   const when = row.timestamp ? `${oneLineMd(row.timestamp)} — ` : "";
   const notes = row.uncertainty.length ? ` _[${row.uncertainty.map(oneLineMd).join("; ")}]_` : "";
   return `${when}${oneLineMd(row.description)}${notes}`;
@@ -79,7 +79,7 @@ function assessmentBlock(
     );
   for (const r of a.contradiction.againstEveryAssessed)
     notDistinguishing.push(
-      `\`${oneLineMd(r.eventId)}\` contradicts every one of the ${r.assessedBy} explanations that assessed it; ${r.notAssessedBy} did not assess it — the set of explanations may be incomplete`,
+      `\`${flatLineMd(r.eventId)}\` contradicts every one of the ${r.assessedBy} explanations that assessed it; ${r.notAssessedBy} did not assess it — the set of explanations may be incomplete`,
     );
   const unassessed = a.support.notAssessedElsewhere.length + a.contradiction.notAssessedElsewhere.length;
   if (unassessed)
@@ -104,7 +104,7 @@ function assessmentBlock(
       `${a.notCounted.length} linked observation(s) not counted: ${a.notCounted
         .map(
           (n) =>
-            `\`${oneLineMd(n.eventId)}\` (${n.reason === "not in the timeline" ? NOT_IN_REPORT : n.reason})`,
+            `\`${flatLineMd(n.eventId)}\` (${n.reason === "not in the timeline" ? NOT_IN_REPORT : n.reason})`,
         )
         .join(", ")}`,
     );

@@ -5,6 +5,7 @@ import { deflateRawSync } from "node:zlib";
 import { portableZipEntryPath, portableArchivePaths } from "../storage/portableFilename.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
+import { caseNamedFilename } from "./caseFilename.js";
 import { EXPORT_STAGING_DIRNAME, createStagingDir } from "../storage/exportStaging.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import {
@@ -164,21 +165,14 @@ export interface ArchiveDeps {
   writeFile?: (absPath: string, data: Buffer) => Promise<void>;
 }
 
-// Windows-illegal filename characters (also unsafe cross-platform): < > : " / \ | ? * and control
-// chars — the caseId itself is always filesystem-safe (see isValidCaseId), but the case name is
-// free text an analyst typed in.
-const UNSAFE_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
-
 /**
  * The on-disk filename for a case's plain (unencrypted) ZIP archive:
  * `"<caseId> - <name> (no password).zip"`, or just `"<caseId> (no password).zip"` when the case
  * has no distinct name. The "(no password)" marker keeps it visually unambiguous next to an
- * encrypted `.dfircase` archive of the same case.
+ * encrypted `.dfircase` archive of the same case. A long name is shortened to fit (#2769).
  */
 export function zipArchiveFilename(caseId: string, name: string | null | undefined): string {
-  const trimmed = (name ?? "").trim();
-  if (!trimmed || trimmed === caseId) return `${caseId} (no password).zip`;
-  return `${caseId} - ${trimmed.replace(UNSAFE_FILENAME_CHARS, "_")} (no password).zip`;
+  return caseNamedFilename(caseId, name, " (no password).zip");
 }
 
 // Default recursive file scanner for the real filesystem.
@@ -204,6 +198,23 @@ async function defaultScanFiles(dir: string): Promise<string[]> {
   }
   await walk(dir, "");
   return paths;
+}
+
+/** Write a binary Buffer atomically: a unique temp file renamed over the target. The encrypted
+ * delete path saves its server-side copy with it too (#2759). */
+export async function writeBufferAtomic(p: string, d: Buffer): Promise<void> {
+  const tmp = `${p}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmp, d);
+    await rename(tmp, p);
+  } catch (err) {
+    try {
+      await unlink(tmp);
+    } catch {
+      /* temp may not exist; ignore */
+    }
+    throw err;
+  }
 }
 
 /**
@@ -247,22 +258,7 @@ export async function archiveCase(
   // bytes). Every other write in the data-integrity core (StateStore, BackupManager, CaseStore)
   // already routes through atomicWrite; archiveCase was the outlier — its own JSDoc claimed
   // atomicity the previous default did NOT provide.
-  const write =
-    deps.writeFile ??
-    (async (p: string, d: Buffer) => {
-      const tmp = `${p}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(tmp, d);
-        await rename(tmp, p);
-      } catch (err) {
-        try {
-          await unlink(tmp);
-        } catch {
-          /* temp may not exist; ignore */
-        }
-        throw err;
-      }
-    });
+  const write = deps.writeFile ?? writeBufferAtomic;
 
   const relPaths = await scan(caseDir);
 

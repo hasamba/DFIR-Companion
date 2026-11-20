@@ -105,6 +105,7 @@ import {
   redactCustodyRecords,
   type RedactedReportContents,
 } from "../analysis/redactedExport.js";
+import { redactDerivedKeys } from "../analysis/redactedDerivedKeys.js";
 import type { ReportMeta } from "./reportMeta.js";
 import type { KevStore } from "../analysis/kevStore.js";
 import type { KevCatalog } from "../analysis/kev.js";
@@ -497,7 +498,7 @@ export class ReportWriter {
     const caseMeta = await this.cases.getCaseMeta(caseId);
     const template = await this.loadTemplate(caseId);
     const reportMeta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
-    const ctx = buildBrandingContext(state, reportMeta);
+    const ctx = buildBrandingContext(state, reportMeta, { plain: true });
     const branding: PresentationBranding = {
       title: renderTemplateString(template.coverTitle, ctx).trim() || (caseMeta?.name ?? caseId),
       subtitle: renderTemplateString(template.coverSubtitle, ctx).trim(),
@@ -732,17 +733,16 @@ export class ReportWriter {
     return { ...paths, evidenceSafety: c.evidenceSafety };
   }
 
-  // Render the report artifacts from an ANONYMIZED copy of the case (for the redacted export, #54).
-  // `redact` is the anonymizer's apply(): the loaded state, metadata, and asset overrides are
-  // deep-walked so internal indicators become tokens (the same value -> same token, since one
-  // anonymizer instance is used across all artifacts). The asset/IoC graph is derived from the
-  // already-anonymized state so its labels are tokenized too. The on-disk report is never touched.
+  // Render the report artifacts from an ANONYMIZED copy of the case (redacted export, #54). `redact`
+  // (one anonymizer: same value -> same token) deep-walks state, metadata and asset overrides; keys
+  // derived from titles are then rebuilt from the redacted titles, and the asset graph is built from
+  // the anonymized state so its labels are tokens too. The on-disk report is never touched.
   // The investigating firm's logo (a base64 data URI) is left intact — it is branding, not victim PII.
   async redactedReportContents(
     caseId: string,
     redact: (s: string) => string,
   ): Promise<RedactedReportContents> {
-    const state = applyAnonDeep(await this.loadFilteredState(caseId), redact);
+    const state = redactDerivedKeys(applyAnonDeep(await this.loadFilteredState(caseId), redact));
     const rawMeta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
     // The redacted export is meant for EXTERNAL parties. The anonymizer's apply() only tokenizes
     // structured indicators (IP/email/host/domain/path/account/secret) — it has no detector for

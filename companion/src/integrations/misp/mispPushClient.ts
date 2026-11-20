@@ -212,7 +212,8 @@ export class MispPushClient implements MispPushClientLike {
   }
 
   // Search events by tag to find a prior push's event. Returns the event id or null.
-  // Auth errors (401/403) propagate — only network/parse failures fall back to empty.
+  // EVERY failure propagates (#2776): only a successful empty answer means "no prior event". A
+  // swallowed 500/timeout used to read as "none", so the push created a duplicate event.
   //
   // Uses POST /events/restSearch, NOT GET /events/index?searchTag=. Verified against a live MISP:
   // /events/index IGNORES both `searchTag` and `limit` (it returned the entire 8800-event index) and
@@ -221,16 +222,10 @@ export class MispPushClient implements MispPushClientLike {
   // duplicate copy of the timeline. restSearch honours the tag filter and wraps each hit in `Event`.
   async findEventByTag(tag: string): Promise<string | null> {
     type RestSearchBody = { response?: Array<{ Event?: { id?: string } }> };
-    // Annotated rather than asserted on the `{}` fallback: without a declared type the catch
-    // branch widens the awaited value to `RestSearchBody | {}`, on which `.response` does not
-    // exist. A non-auth failure means "no prior event", which is what the empty object says.
     const body: RestSearchBody | unknown[] = await this.req<RestSearchBody>("POST", "/events/restSearch", {
       returnFormat: "json",
       tags: [tag],
       limit: 1,
-    }).catch((err: unknown) => {
-      if (err instanceof MispApiError && (err.status === 401 || err.status === 403)) throw err;
-      return {};
     });
     // Tolerate either wrapping — restSearch returns {response:[{Event:{...}}]}, but be lenient in
     // case a MISP version hands back the flat array instead.
@@ -268,15 +263,12 @@ export class MispPushClient implements MispPushClientLike {
   }
 
   // List existing attributes from the event (for dedupe on re-push).
-  // Auth errors propagate; other failures fall back to empty (dedupe fails gracefully).
+  // EVERY failure propagates (#2776): an empty list here would make the push re-add everything.
   async listAttributes(eventId: string): Promise<MispAttrRef[]> {
     const data = await this.req<{ Event?: { Attribute?: Array<{ type?: string; value?: string }> } }>(
       "GET",
       `/events/view/${encodeURIComponent(eventId)}`,
-    ).catch((err: unknown) => {
-      if (err instanceof MispApiError && (err.status === 401 || err.status === 403)) throw err;
-      return { Event: { Attribute: [] as Array<{ type?: string; value?: string }> } };
-    });
+    );
     return (data.Event?.Attribute ?? []).map((a) => ({ type: a.type ?? "", value: a.value ?? "" }));
   }
 

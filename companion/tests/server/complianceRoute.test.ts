@@ -227,3 +227,28 @@ describe("/cases/:id/compliance/control", () => {
     expect((await request(bare).patch("/cases/c1/compliance/control").send({})).status).toBe(501);
   });
 });
+
+describe("PATCH /cases/:id/compliance/control — non-object bodies (#2765)", () => {
+  it("answers 400 for a text/plain body instead of a 500 that leaks the TypeError", async () => {
+    const res = await request(app)
+      .patch("/cases/c1/compliance/control")
+      .set("Content-Type", "text/plain")
+      .send("hello");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("request body must be a JSON object");
+    expect(JSON.stringify(res.body)).not.toMatch(/operator/i);
+  });
+
+  it("still accepts a JSON object, and an empty object is a no-change 200", async () => {
+    const ok = await request(app)
+      .patch("/cases/c1/compliance/control")
+      .send({ discoveredAt: "2026-01-02T00:00:00.000Z" });
+    expect(ok.status).toBe(200);
+    expect(ok.body.discoveredAt).toBe("2026-01-02T00:00:00.000Z");
+
+    const empty = await request(app).patch("/cases/c1/compliance/control").send({});
+    expect(empty.status).toBe(200);
+    expect(empty.body.discoveredAt).toBe("2026-01-02T00:00:00.000Z");
+  });
+});

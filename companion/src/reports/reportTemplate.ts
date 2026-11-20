@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { ReportMeta } from "./reportMeta.js";
-import { oneLineMd } from "./mdText.js";
+import { oneLineMd as escapedOneLineMd, flatLineMd } from "./mdText.js";
 import { HUNT_REPORT_TEMPLATE_ID } from "../analysis/huntCase.js";
 
 // A "report template" lets a DFIR team turn the fixed-format incident report into a
@@ -399,7 +399,14 @@ export function defaultReportTemplate(): ReportTemplate {
 
 // The placeholder values available to a branding string. Derived from the human-authored report
 // metadata + the case state. All values are plain strings (joined where multi-valued).
-export function buildBrandingContext(state: InvestigationState, meta: ReportMeta): Record<string, string> {
+// `plain` is for surfaces that are not Markdown (the slide deck HTML-escapes its own text), so the
+// Markdown backslash escapes would show up literally there.
+export function buildBrandingContext(
+  state: InvestigationState,
+  meta: ReportMeta,
+  opts: { plain?: boolean } = {},
+): Record<string, string> {
+  const oneLineMd = opts.plain ? flatLineMd : escapedOneLineMd;
   const investigators = meta.investigators.map(oneLineMd).filter(Boolean);
   // Treat the epoch default (a case with no recorded activity) as "no date".
   const date =

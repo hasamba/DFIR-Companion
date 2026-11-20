@@ -42,7 +42,7 @@ export interface IocBlocklistOptions {
   verdictOnly?: boolean;
   /** IOC ids a recorded retire decision leaves out (#1024) — the builders derive them from the state. */
   excludeIocIds?: ReadonlySet<string>;
-  /** Case name for TXT/CSV header comments. Falls back to caseId when absent. */
+  /** Case name for the TXT header comment (CSV and STIX carry none). Falls back to caseId when absent. */
   caseName?: string;
   /** ISO timestamp for the "Generated:" header line. Defaults to current time when absent. */
   generatedAt?: string;
@@ -240,6 +240,15 @@ const withRetired = (state: InvestigationState, opts: IocBlocklistOptions): IocB
   excludeIocIds: opts.excludeIocIds ?? retiredIocIds(state),
 });
 
+// Every control character (C0, DEL, C1) and the Unicode line/paragraph separators. A block-list
+// reader may split lines on any of them, so none may appear inside a comment line.
+const LINE_BREAKING_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
+
+/** Keep a comment line on one line: header text never becomes a bare, uncommented line. */
+function commentLine(line: string): string {
+  return line.replace(LINE_BREAKING_CHARS, " ");
+}
+
 export function buildIocBlocklistTxt(state: InvestigationState, opts: IocBlocklistOptions = {}): string {
   const resolved = withRetired(state, opts);
   const filtered = filterBlocklistIocs(state.iocs, resolved);
@@ -248,11 +257,13 @@ export function buildIocBlocklistTxt(state: InvestigationState, opts: IocBlockli
   const ts = opts.generatedAt ?? new Date().toISOString();
 
   const lines: string[] = [
-    "# DFIR Companion — IOC Block List",
-    `# Case: ${opts.caseName?.trim() || state.caseId}`,
-    `# Generated: ${ts}`,
-    `# Filters: scope applied, legitimate excluded, client-reported excluded, labelled ours/responder excluded, min severity: ${minSev}${opts.verdictOnly ? ", verdict-confirmed only" : ""}`,
-    ...summaryHeaderLines(summarizeBlocklist(state.iocs, resolved), minSev),
+    ...[
+      "# DFIR Companion — IOC Block List",
+      `# Case: ${opts.caseName?.trim() || state.caseId}`,
+      `# Generated: ${ts}`,
+      `# Filters: scope applied, legitimate excluded, client-reported excluded, labelled ours/responder excluded, min severity: ${minSev}${opts.verdictOnly ? ", verdict-confirmed only" : ""}`,
+      ...summaryHeaderLines(summarizeBlocklist(state.iocs, resolved), minSev),
+    ].map(commentLine),
     "",
   ];
 
@@ -267,7 +278,7 @@ export function buildIocBlocklistTxt(state: InvestigationState, opts: IocBlockli
   for (const t of types) {
     const vals = byType.get(t);
     if (!vals || vals.length === 0) continue;
-    lines.push(`# ${TYPE_LABEL[t]} (${vals.length})`);
+    lines.push(commentLine(`# ${TYPE_LABEL[t]} (${vals.length})`));
     for (const v of vals) lines.push(v);
     lines.push("");
   }

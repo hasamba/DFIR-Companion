@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { moveWithinDrop } from "../analysis/dropHeldFiles.js";
@@ -36,7 +37,10 @@ export async function holdDropFile(
   return heldRel;
 }
 
-/** Write a held file's text atomically (temp + rename, replacing an earlier version of the same file). */
+/**
+ * Write a held file's text atomically (temp + rename, replacing an earlier version of the same file).
+ * The temp name is unique per save, so a leftover from a crash never blocks the next one (#2764).
+ */
 export async function writeHeldText(dropDir: string, heldRel: string, text: string): Promise<void> {
   if (!isSafeDropRelpath(heldRel) || !heldRel.startsWith(`${DROP_HELD}/`))
     throw new Error("unsafe held path");
@@ -45,7 +49,7 @@ export async function writeHeldText(dropDir: string, heldRel: string, text: stri
     await mkdir(dirname(target), { recursive: true });
     const [realDrop, realParent] = await Promise.all([realpath(dropDir), realpath(dirname(target))]);
     if (!realParent.startsWith(realDrop + sep)) throw new Error("refused to write outside drop/ (security)");
-    const tmp = join(dirname(target), `.${basename(target)}.${process.pid}.tmp`);
+    const tmp = join(dirname(target), `.${basename(target)}.${randomUUID()}.tmp`);
     try {
       const h = await open(tmp, "wx");
       try {

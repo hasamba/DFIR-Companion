@@ -16,11 +16,45 @@ import { TYPE_SEED_PREFIX } from "../analysis/incidentTypes.js";
 
 // A whole backslash run with the pipe that may follow it, or a bare pipe.
 const BACKSLASH_RUN_OR_PIPE = /\\+\|?|\|/g;
+// The same, for the HTML-significant characters (`<`, `>`, `&`) with or without the pipe.
+const BACKSLASH_RUN_OR_HTML = /\\+[<>&]?|[<>&]/g;
+const BACKSLASH_RUN_OR_HTML_OR_PIPE = /\\+[|<>&]?|[|<>&]/g;
 
-function escapeRunBeforePipe(match: string): string {
-  if (!match.endsWith("|")) return match;
+// A backslash run directly before an escaped character is doubled first, so every original
+// backslash stays literal and the character itself is still escaped: `\<b>` must not become
+// `\\<b>`, an escaped backslash followed by a LIVE tag. A run before anything else is left alone.
+function escapeRunBeforeChar(match: string): string {
+  const last = match[match.length - 1];
+  if (last === "\\") return match;
   const run = match.slice(0, -1);
-  return `${run}${run}\\|`;
+  return `${run}${run}\\${last}`;
+}
+
+/**
+ * `<`, `>` and `&` from case text, backslash-escaped. A Markdown viewer that renders raw HTML would
+ * otherwise run an `<img onerror>` from a filename; `&lt;` in evidence is the four characters the
+ * attacker typed, not a less-than sign. A backslash escape (not an entity) is used because it is the
+ * form every CommonMark reader shows as the plain character, and marked hands the DOCX export an
+ * escape token carrying that character — an entity would reach the DOCX as literal `&lt;`.
+ */
+function escapeHtmlMd(value: string): string {
+  return value.replace(BACKSLASH_RUN_OR_HTML, escapeRunBeforeChar);
+}
+
+/** Flattens text onto one line, without any escaping: for text placed inside a code span. */
+export function flatLineMd(value: string): string {
+  return mdControlPictures(value.replace(/[\r\n]+/g, " ").trim());
+}
+
+/**
+ * Table-cell structure only — the pipe and newlines — for a cell whose content is already a code
+ * span (codeSpanMd). A GFM cell still honours `\|` inside a code span; any other backslash there
+ * would show as written, so the HTML escape cellMd adds must not run on it.
+ */
+export function cellCodeMd(codeSpan: string): string {
+  return mdControlPictures(
+    codeSpan.replace(BACKSLASH_RUN_OR_PIPE, escapeRunBeforeChar).replace(/[\r\n]+/g, " "),
+  );
 }
 
 /**
@@ -41,10 +75,12 @@ function escapeRunBeforePipe(match: string): string {
  * The match consumes each backslash run exactly once (greedy, with an optional pipe after it), so the
  * scan is linear. An unanchored `(\\*)\|` retried the rest of a pipe-less run from every position —
  * quadratic, and one long hostile evidence field blocked the event loop for seconds.
+ *
+ * `<`, `>` and `&` are escaped the same way (see escapeHtmlMd), in the same single pass.
  */
 export function cellMd(value: string): string {
   return mdControlPictures(
-    value.replace(BACKSLASH_RUN_OR_PIPE, escapeRunBeforePipe).replace(/[\r\n]+/g, " "),
+    value.replace(BACKSLASH_RUN_OR_HTML_OR_PIPE, escapeRunBeforeChar).replace(/[\r\n]+/g, " "),
   );
 }
 
@@ -59,10 +95,12 @@ export function eventCellMd(
  * Text interpolated INTO a line that already has a meaning — a heading, a list item, a bold label.
  * A newline would end that line and let the rest of the value start a construct of its own, so the
  * value is flattened onto the one line it was placed on. Nothing is dropped: the reader still sees
- * the whole string, attributed to the finding or hypothesis that carries it.
+ * the whole string, attributed to the finding or hypothesis that carries it. `<`, `>` and `&` are
+ * escaped (escapeHtmlMd), so a heading cannot carry live HTML. Text going inside a code span uses
+ * flatLineMd instead, because a code span shows backslashes as written.
  */
 export function oneLineMd(value: string): string {
-  return mdControlPictures(value.replace(/[\r\n]+/g, " ").trim());
+  return escapeHtmlMd(flatLineMd(value));
 }
 
 // Indent, then any blockquote and list-item markers: the part of a line before its content. A
@@ -138,12 +176,12 @@ export function sessionCommandsMd(f: Finding, visible: ReadonlyMap<string, unkno
 }
 
 /**
- * Inline code for untrusted text: flattened onto one line (oneLineMd), in a backtick fence longer
+ * Inline code for untrusted text: flattened onto one line (flatLineMd), in a backtick fence longer
  * than any backtick run inside it (CommonMark), so the text can neither open a section nor close the
  * span early and borrow emphasis or link syntax (#1594, #2052).
  */
 export function codeSpanMd(value: string): string {
-  const text = oneLineMd(value);
+  const text = flatLineMd(value);
   const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(longest + 1);
   return `${fence} ${text} ${fence}`;

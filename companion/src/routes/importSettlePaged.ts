@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
-import type { SuperEviction } from "../analysis/superTimelineStore.js";
+import type { SuperEviction, SuperRelinkCandidate } from "../analysis/superTimelineStore.js";
 import { mergeEvictions } from "../analysis/superTimelineStore.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { hostRenameCarrier, rehomeEvents } from "../analysis/hostRenameCarry.js";
@@ -177,7 +177,8 @@ export interface DualWriteDeps {
     appendReporting?(
       caseId: string,
       events: ForensicEvent[],
-    ): Promise<{ retained: number; evicted: SuperEviction }>;
+      opts?: { relinkCandidates?: boolean },
+    ): Promise<{ retained: number; evicted: SuperEviction; relinkCandidates?: SuperRelinkCandidate[] }>;
   };
   onSuperTimeline?: (caseId: string) => void;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
@@ -194,11 +195,13 @@ export async function dualWriteAndTagPaged(
   deps: DualWriteDeps,
   caseId: string,
   addedIds: readonly string[],
-): Promise<{ retained: number; evicted?: SuperEviction }> {
+): Promise<{ retained: number; evicted?: SuperEviction; relinkCandidates: SuperRelinkCandidate[] }> {
   let retained = 0;
   let evicted: SuperEviction | undefined;
+  // #2619: rows the store content-deduped onto an older row the forensic timeline lacks (Undo + re-import).
+  const relinkCandidates: SuperRelinkCandidate[] = [];
   const superStore = deps.superTimelineStore;
-  if (!superStore) return { retained };
+  if (!superStore) return { retained, relinkCandidates };
   for (let i = 0; i < addedIds.length; i += SCAN_PAGE_ROWS) {
     const pageIds = addedIds.slice(i, i + SCAN_PAGE_ROWS);
     const page = await deps.runStateExclusive(caseId, () =>
@@ -208,8 +211,9 @@ export async function dualWriteAndTagPaged(
     if (!events.length) continue;
     try {
       if (superStore.appendReporting) {
-        const result = await superStore.appendReporting(caseId, events);
+        const result = await superStore.appendReporting(caseId, events, { relinkCandidates: true });
         retained += result.retained;
+        relinkCandidates.push(...(result.relinkCandidates ?? []));
         evicted = evicted ? mergeEvictions(evicted, result.evicted) : result.evicted;
       } else {
         retained += await superStore.append(caseId, events);
@@ -220,7 +224,7 @@ export async function dualWriteAndTagPaged(
     }
     await deps.autoTagImported(caseId, events);
   }
-  return { retained, ...(evicted ? { evicted } : {}) };
+  return { retained, relinkCandidates, ...(evicted ? { evicted } : {}) };
 }
 
 /**

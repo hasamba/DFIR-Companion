@@ -81,14 +81,16 @@ export function linkNewCase(
   ctx: RouteContext,
   caseId: string,
   opts: { setId?: string; keepExisting?: boolean } = {},
-): void {
+): boolean {
   const sets = ctx.options.serverSetStore;
-  if (!sets) return;
+  if (!sets) return true;
   try {
     if (opts.setId) sets.linkCase(caseId, opts.setId);
     else sets.linkToDefault(caseId, { keepExisting: opts.keepExisting });
+    return true;
   } catch (err) {
     ctx.serverLogger.error(`[server-sets] could not link case ${caseId}: ${logSafeError(err)}`);
+    return false; // #2772: POST /cases reports it as a seedError
   }
 }
 

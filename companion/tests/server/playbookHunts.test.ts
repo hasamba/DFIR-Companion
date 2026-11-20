@@ -18,6 +18,7 @@ import {
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { VelociraptorClientStore } from "../../src/analysis/velociraptorClientStore.js";
 import { veloServerClients } from "../helpers/serverClientsStub.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // Canned model reply: one endpoint-related hunt for the finding-derived task, scoped to WEB01.
 const cannedPlaybookHunts = JSON.stringify({
@@ -91,6 +92,7 @@ async function makeApp(
   await request(app)
     .post("/cases")
     .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: opts.provider ? "mock" : null });
+  await enableCaseAi(store, "c1");
   return { app, stateStore };
 }
 

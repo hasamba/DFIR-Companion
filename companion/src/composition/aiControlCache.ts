@@ -16,7 +16,8 @@
  * cannot leave the cache ahead of the disk. getControl stays unlocked — free reads are the point.
  */
 import type { CaseStore } from "../storage/caseStore.js";
-import { AiControlStore, type AiControl } from "../analysis/aiControl.js";
+import { AiControlStore, DEFAULT_AI_CONTROL, type AiControl } from "../analysis/aiControl.js";
+import { StateFileCorruptError, corruptNotice } from "../storage/stateFileCorrupt.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import { StateLock } from "../analysis/stateLock.js";
 
@@ -33,20 +34,28 @@ export function createAiControlCache(store: CaseStore): AiControlCache {
   const cache = new CaseKeyedMap<AiControl>(() => store.casesRoot);
   const lock = new StateLock();
 
+  // #2760: a damaged file fails CLOSED — AI held off, with the damage named — and is not cached, so
+  // a file repaired by hand is read on the next call. setControl writes a clean record over it.
   async function getControl(caseId: string): Promise<AiControl> {
-    let c = cache.get(caseId);
-    if (!c) {
-      c = await aiControl.load(caseId);
+    const cached = cache.get(caseId);
+    if (cached) return cached;
+    try {
+      const c = await aiControl.load(caseId);
       cache.set(caseId, c);
+      return c;
+    } catch (err) {
+      if (!(err instanceof StateFileCorruptError)) throw err;
+      console.warn(`[ai-control] ${err.message}`);
+      return { ...DEFAULT_AI_CONTROL, enabled: false, corrupt: corruptNotice(err) };
     }
-    return c;
   }
 
   return {
     getControl,
     setControl(caseId, patch) {
       return lock.runExclusive(caseId, async () => {
-        const next = { ...(await getControl(caseId)), ...patch };
+        const { corrupt: _damaged, ...base } = await getControl(caseId);
+        const next = { ...base, ...patch };
         await aiControl.save(caseId, next);
         cache.set(caseId, next);
         return next;

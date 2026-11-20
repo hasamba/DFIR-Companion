@@ -11,6 +11,7 @@ import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js
 import type { AIProvider, AnalyzeRequest } from "../../src/providers/provider.js";
 import { buildRuntimePipeline, createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #2559: playbook hunts in the case's main-source language (CrowdStrike → CQL), persisted beside the
 // VQL ones, and retired when the main source changes.
@@ -122,6 +123,7 @@ async function makeEchoApp(cql: number, vql = 0) {
     aiConfigured: true,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   const s = emptyState("c1");
   for (let i = 1; i <= cql; i++) {
     s.findings.push(finding(`f${i}`));
@@ -155,6 +157,7 @@ async function makeApp() {
     aiConfigured: true,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   const s = emptyState("c1");
   s.findings.push({
     id: "f1",

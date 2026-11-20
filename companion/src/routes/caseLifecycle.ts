@@ -6,13 +6,9 @@ import { ZodError } from "zod";
 import { isValidCaseId, CaseAlreadyExistsError, CaseLifecycleError } from "../storage/caseStore.js";
 import { saveCreationMainSource } from "./caseMainSource.js";
 import { validateCaseCreateBody } from "./caseCreateBody.js";
-import { linkNewCase } from "./serverSets.js";
+import { applyCreationSeeds } from "./caseCreationSeeds.js"; // #2772
 import { createCaseListServerSets } from "./caseListServerSets.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
-import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
-import { keepWatsonSteps } from "../analysis/timeline/watsonItems.js";
-import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
-import { applyHuntDefaults } from "../analysis/huntCase.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { registerSeedDemoRoutes } from "./seedDemo.js";
 import { registerCaseIdentityRoutes, clearStateOutlivingCase, stoppingMessage } from "./caseIdentity.js";
@@ -32,10 +28,12 @@ import {
   attachmentContentDisposition,
 } from "../analysis/caseExportArchive.js";
 import { registerEncryptedImportRoutes } from "./encryptedImport.js";
+import { sendEncryptedArchiveThenDelete } from "./encryptedDelete.js"; // #2759
 import { registerStateBackupRoutes } from "./stateBackups.js";
 import { registerCasePushRoutes } from "./casePush.js";
 import { registerCaseStateRoutes } from "./caseState.js";
 import { deleteArchivesFirst, refusedWhileArchiving, withArchiveBarrier } from "./archiveImportBarrier.js"; // #1903
+import { archiveStatusRefusal } from "./caseArchiveGuard.js"; // #2758
 import { computeCaseStats } from "../analysis/caseStats.js";
 import { ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
@@ -92,7 +90,7 @@ import type { RouteContext } from "./context.js";
  * Shared surface — reuses stable ctx fields (store, options, serverLogger, hasAiProvider), stable helpers
  * (dispatchNotify, markConclusionsOutOfDate, syncPlaybook) and the per-case serverClients resolver, plus
  * the members GRADUATED for this domain (see context.ts):
- *   - ensureDropFolders — create-case makes the drop inbox; the drop watcher (stays) also calls it.
+ *   - ensureDropFolders — create-case makes the drop inbox (via caseCreationSeeds.ts); the drop watcher (stays) also calls it.
  *   - runStateExclusive — the manual-event write serializes on the per-case state mutex the staying
  *     import/enrich/synthesis paths also use.
  *   - reloadImporters + importerPrecedence()/setImporterPrecedence — the importer CRUD routes mutate the
@@ -107,7 +105,6 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     hasAiProvider,
     instanceSecret,
     dispatchNotify,
-    ensureDropFolders,
     runStateExclusive,
     reloadImporters,
   } = ctx;
@@ -157,35 +154,13 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           options.teamAuth?.store.deleteCaseAccess(caseId, requestAuthentication(req)?.identity),
       });
       options.teamAuth?.grantCreator(req, caseId);
-      linkNewCase(ctx, caseId, { setId: serverSetId ?? undefined }); // no serverSetId → the default set
       const mainSourceError = await saveCreationMainSource(ctx, caseId, mainSource); // #2594 New case picker
-      if (templateId && options.templateStore && options.stateStore) {
-        const template = await options.templateStore.get(String(templateId));
-        if (template && (template.initialKeyQuestions.length || template.initialNextSteps?.length)) {
-          const state = await options.stateStore.load(caseId);
-          if (template.initialKeyQuestions.length) state.keyQuestions = buildInitialQuestions(template);
-          const seeded = template.initialNextSteps?.length ? buildInitialNextSteps(template) : null;
-          if (seeded) state.nextSteps = keepWatsonSteps(seeded, state.nextSteps); // Watson's are kept
-          state.updatedAt = new Date().toISOString();
-          await options.stateStore.save(state);
-        }
-      }
-      // Incident-type auto-configuration (#236): apply the picked type's key questions, next steps and
-      // findings seeds, persist the chosen-type record (the synthesis prompt reads its hint), and give
-      // a hunt type its default report (#2670).
-      //
-      // Runs AFTER the template apply and MERGES: an API caller may send both, and discarding the
-      // questions the template just seeded would lose what it asked for.
-      if (incidentTypeId && options.incidentTypeStore && options.stateStore) {
-        const type = await options.incidentTypeStore.get(String(incidentTypeId));
-        if (type) {
-          const state = await options.stateStore.load(caseId);
-          const { state: next } = applyIncidentTypeToState(state, type);
-          await options.stateStore.save(next);
-          await options.incidentTypeStore.saveRecord(caseId, String(incidentTypeId));
-          await applyHuntDefaults(options.reportTemplateControlStore, caseId, type);
-        }
-      }
+      // #2772: server set, template, incident type, drop folder — a failure is a seedError on the 201.
+      const seedError = await applyCreationSeeds(ctx, caseId, {
+        templateId,
+        incidentTypeId,
+        serverSetId: serverSetId ?? undefined,
+      });
       dispatchNotify(
         milestoneEvent(
           caseId,
@@ -194,13 +169,11 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           new Date().toISOString(),
         ),
       );
-      // Create the evidence drop folder for every new case (best-effort — never block case creation).
-      await ensureDropFolders(caseId).catch(() => {
-        /* the watcher re-ensures on its next poll */
+      return res.status(201).json({
+        ...sanitizeCaseMeta(meta),
+        ...(mainSourceError ? { mainSourceError } : {}),
+        ...(seedError ? { seedError } : {}),
       });
-      return res
-        .status(201)
-        .json({ ...sanitizeCaseMeta(meta), ...(mainSourceError ? { mainSourceError } : {}) });
     } catch (err) {
       if (err instanceof CaseAlreadyExistsError) return res.status(409).json({ error: err.message });
       return res.status(500).json({ error: (err as Error).message });
@@ -278,8 +251,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   const archiveCaseLocked = (id: string, caseName: string | undefined) =>
     ctx.runStateExclusive(id, () => archiveCase(store.casesRoot, id, {}, caseName, store.caseDir(id)));
 
-  // Archive a case to a ZIP file (<casesRoot>/<caseId or name> (no password).zip). Intended for
-  // closed cases. Returns the archive path and a manifest of archived files + checksums. With
+  // Archive a case to a ZIP file (<casesRoot>/<caseId or name> (no password).zip). Only a closed
+  // case: an open one is refused with 409 (#2758). Returns the path and a checksum manifest. With
   // { removeFromList: true }, additionally moves the case folder to _archived/ and sets
   // status: "archived" — non-destructive and reversible via POST /cases/:id/restore.
   const archiveRoute = async (req: Request, res: Response) => {
@@ -288,8 +261,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
-      if (meta.status === "archived")
-        return res.status(400).json({ error: `case ${id} is already archived` });
+      const refusal = archiveStatusRefusal(id, meta, true);
+      if (refusal) return res.status(refusal.code).json({ error: refusal.error });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
       const running = removeFromList ? runningCollectionRefusal(ctx, id) : undefined;
       if (running) return res.status(409).json({ error: running });
@@ -323,10 +296,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   app.post("/cases/:id/archive", withArchiveBarrier(ctx, archiveRoute));
 
   // Restore a case previously archived via the removeFromList option: moves it back from
-  // _archived/ into the active cases root and sets status to "closed". Archiving does not require a
-  // closed case, so this can differ from the status it had before: closed is the conservative
-  // choice for a handed-over record, and every change then goes through an explicit Reopen
-  // (PATCH /cases/:id/status). The dashboard's status line says so (#2466).
+  // _archived/ into the active cases root and sets status to "closed" — also for a legacy case
+  // archived while open, before archiving required a closed case (#2758). Every change then goes
+  // through an explicit Reopen (PATCH /cases/:id/status); the dashboard says so (#2466).
   app.post("/cases/:id/restore", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
@@ -341,6 +313,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       options.onCaseLifecycle?.(id); // #2443
       return res.status(200).json(updated);
     } catch (err) {
+      if (err instanceof CaseLifecycleError) return res.status(err.httpStatus).json({ error: err.message }); // #2771
       errLine(`[restore] error case=${req.params.id}: ${(err as Error).message}`);
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -406,16 +379,10 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const released = release.report;
 
       if (archiveFirst === "encrypted" && typeof password === "string") {
-        const archive = await exportEncryptedCase(store, id, password, [], {
-          runExclusive: ctx.runStateExclusive, // same lock as /export/encrypted (#2247)
-        });
-        const filename = dfircaseFilename(id, meta.name);
-        const { deleted } = await deleteCaseFolderBestEffort(id, requestAuthentication(req)?.identity);
-        res.type("application/octet-stream");
-        res.setHeader("Content-Disposition", attachmentContentDisposition(filename));
-        res.setHeader("Cache-Control", "private, no-cache");
-        res.setHeader("X-Case-Deleted", String(deleted));
-        return res.send(archive);
+        // #2759: a durable copy is written to the cases root first; a failed write is a 500, no delete.
+        return await sendEncryptedArchiveThenDelete(ctx, res, { id, name: meta.name, password }, () =>
+          deleteCaseFolderBestEffort(id, requestAuthentication(req)?.identity),
+        );
       }
 
       let archiveResult: Awaited<ReturnType<typeof archiveCase>> | undefined;
@@ -534,9 +501,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
       }
       const meta = await store.getCaseMeta(id);
-      if (meta?.status === "archived")
-        return res.status(400).json({ error: `case ${id} is already archived` });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
+      const refusal = archiveStatusRefusal(id, meta, removeFromList); // a plain export is no archive
+      if (refusal) return res.status(refusal.code).json({ error: refusal.error });
       const running = removeFromList ? runningCollectionRefusal(ctx, id) : undefined;
       if (running) return res.status(409).json({ error: running });
       // The signed custody manifest travels inside the archive, so the recipient can verify the

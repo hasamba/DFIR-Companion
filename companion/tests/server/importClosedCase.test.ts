@@ -70,6 +70,7 @@ describe("import routes — archived case refuses evidence (#2054)", () => {
     async (route) => {
       const { app, store } = await makeApp();
       await seedCase(app, "c1");
+      await request(app).patch("/cases/c1/status").send({ status: "closed" }); // archive needs a closed case (#2758)
       expect((await request(app).post("/cases/c1/archive").send({ removeFromList: true })).status).toBe(200);
 
       const res = await request(app)

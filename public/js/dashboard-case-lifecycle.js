@@ -180,8 +180,9 @@
       openEncryptedExport();
     });
 
-    // Restore an archived case back to the active list. It always comes back closed — even one that
-    // was open when it was archived — so the status line says so and names the way out (#2466).
+    // Restore an archived case back to the active list. It always comes back closed — archiving needs
+    // a closed case (#2758), and an older case archived while open also returns closed — so the
+    // status line says so and names the way out (#2466).
     restoreCaseBtn.addEventListener("click", async () => {
       menu.style.display = "none";
       const caseId = document.getElementById("caseId").value.trim();

@@ -1,5 +1,5 @@
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
-import type { SuperEviction } from "../analysis/superTimelineStore.js";
+import type { SuperEviction, SuperRelink } from "../analysis/superTimelineStore.js";
 import type { TimelineDiff } from "../analysis/timelineDiff.js";
 import type { IocsDiff } from "../analysis/iocsDiff.js";
 import { getServerLogger } from "../logging/serverLogger.js";
@@ -13,6 +13,7 @@ import { nameCallersScoped } from "./importSettleNames.js";
 import { principalLedgerChanged } from "../analysis/principalNames.js";
 import { runUnlocked, settleScope, type RunExclusive } from "./importSettleRows.js";
 import { carryAndStampPaged, dualWriteAndTagPaged, huntSettlePaged } from "./importSettlePaged.js";
+import { relinkSuperAfterSettle } from "./importSettleRelinkSuper.js";
 import {
   rehomeSuperTimeline,
   renameLedgerChanged,
@@ -70,6 +71,8 @@ export interface SettleDeps {
       caseId: string,
       events: ForensicEvent[],
     ): Promise<{ retained: number; evicted: SuperEviction }>;
+    /** #2619 — move a stored row onto the forensic id it now has (Undo + re-import). */
+    relink?(caseId: string, links: readonly SuperRelink[]): Promise<number>;
   } & Partial<SuperRehomeStore>;
   onSuperTimeline?: (caseId: string) => void;
   /**
@@ -184,10 +187,12 @@ export async function settleForensicImport(
   // Dual-write FIRST, from the pre-demote (now stamped) rows; then the tagger (importSettlePaged.ts).
   let superTimelineAddedCount = 0;
   let superTimelineEvicted: SuperEviction | undefined;
+  let relinkCandidates: Awaited<ReturnType<typeof dualWriteAndTagPaged>>["relinkCandidates"] = [];
   if (deps.superTimelineStore && addedIds.length) {
     const dual = await dualWriteAndTagPaged({ ...deps, runStateExclusive: lock }, caseId, addedIds);
     superTimelineAddedCount = dual.retained;
     superTimelineEvicted = dual.evicted;
+    relinkCandidates = dual.relinkCandidates;
     debug(
       `dual-write superRetained=${superTimelineAddedCount} superEvicted=${superTimelineEvicted?.count ?? 0} ` +
         `taggerOffered=${addedIds.length}`,
@@ -224,6 +229,8 @@ export async function settleForensicImport(
   changed ||= hunt > 0;
   const demoted = await demote(deps, caseId);
   changed ||= demoted.removed > 0;
+  // #2619: after demote, so only rows that stay in the forensic record relink their raw-record copy.
+  await relinkSuperAfterSettle({ ...deps, runStateExclusive: lock }, caseId, relinkCandidates);
   // Caller names (#2490): after demote, so only rows that stay in the forensic record are rewritten.
   const namesChanged = principalLedgerChanged(baseline.overview, ledger);
   const named = await lock(caseId, () =>

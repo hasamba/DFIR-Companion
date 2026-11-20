@@ -22,6 +22,7 @@ import {
   pushFindingsToServiceNow,
 } from "../integrations/servicenow/servicenowPush.js";
 import type { Finding } from "../analysis/stateTypes.js";
+import { createPushGuard, pushBusyError } from "./pushGuard.js";
 
 // Outbound pushes: everything that sends a case OUT of the Companion to a system of record —
 // DFIR-IRIS, Timesketch, MISP, Notion, ClickUp, Jira, ServiceNow — plus the connection-status and
@@ -41,6 +42,15 @@ import type { Finding } from "../analysis/stateTypes.js";
 export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
   const { store, options, serverLogger, syncPlaybook } = ctx;
   const logLine = (msg: string): void => serverLogger.info(msg);
+
+  // One push per case (per finding for tickets) at a time (#2775): find-then-create on the remote is
+  // not atomic, so an overlapping second push would create a duplicate. It gets a 409 instead.
+  const pushGuard = createPushGuard();
+  function holdPush(res: Response, target: string, keys: readonly string[]): (() => void) | null {
+    const release = pushGuard.tryAcquire(keys);
+    if (!release) res.status(409).json(pushBusyError(target));
+    return release;
+  }
 
   // The one answer shape every "Test connection" control in Settings → Integrations reads, so a
   // caller never has to tell a missing credential apart from an unreachable server by parsing prose:
@@ -88,6 +98,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     if (!irisClient)
       return res.status(501).json({ error: "DFIR-IRIS not configured (add IRIS to this case's server set)" });
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    const release = holdPush(res, "DFIR-IRIS", [`iris:${caseId}`]);
+    if (!release) return;
     try {
       // The report projection, not the raw state (#951): scope, clock-skew alignment and the
       // analyst's false-positive markers all apply. IRIS never retracts a pushed timeline row, so a
@@ -138,6 +150,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       logLine(`[iris] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
   // Whether a Timesketch push target is configured in the DEFAULT server set (so the dashboard can
@@ -188,6 +202,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
         .status(501)
         .json({ error: "Timesketch not configured (add Timesketch to this case's server set)" });
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+    const release = holdPush(res, "Timesketch", [`timesketch:${caseId}`]);
+    if (!release) return;
     try {
       const state = await options.reportWriter.filteredState(caseId);
       logLine(`[timesketch] ${caseId} push START`);
@@ -209,6 +225,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       logLine(`[timesketch] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
 
@@ -226,6 +244,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
         .status(501)
         .json({ error: "Timesketch not configured (add Timesketch to this case's server set)" });
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
+    const release = holdPush(res, "Timesketch", [`timesketch:${caseId}`]);
+    if (!release) return;
     try {
       logLine(`[timesketch] ${caseId} super-timeline push START`);
       // Streamed in store batches and uploaded in chunks (#1444) — never the whole timeline at once.
@@ -247,6 +267,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       logLine(`[timesketch] ${caseId} super-timeline push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
 
@@ -290,6 +312,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       return res.status(501).json({ error: "MISP not configured (set DFIR_MISP_URL and DFIR_MISP_KEY)" });
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     const caseId = req.params.id;
+    const release = holdPush(res, "MISP", [`misp:${caseId}`]);
+    if (!release) return;
     try {
       // Same projection the reports and the Timesketch/Notion pushes read (#951) — a false-positive
       // event must never become a MISP attribute, and MISP only ever adds, never retracts.
@@ -309,6 +333,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       logLine(`[misp] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
 
@@ -375,6 +401,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       if (database) target.databaseId = database;
     }
 
+    const release = holdPush(res, "Notion", [`notion:${caseId}`]);
+    if (!release) return;
     try {
       const state = await options.reportWriter.filteredState(caseId);
       const meta = options.reportMetaStore ? await options.reportMetaStore.load(caseId) : undefined;
@@ -402,6 +430,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       if (err instanceof NotionExportIncompleteError)
         return res.status(502).json({ error: err.message, pageId: err.pageId, pageUrl: err.pageUrl ?? "" });
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
 
@@ -446,6 +476,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     if (!options.playbookStore || !options.stateStore)
       return res.status(501).json({ error: "playbook not configured" });
     const caseId = req.params.id;
+    const release = holdPush(res, "ClickUp", [`clickup:${caseId}`]);
+    if (!release) return;
     try {
       const saved = await options.clickupExportStore.load(caseId);
       const requested = typeof req.body?.listId === "string" ? req.body.listId.trim() : "";
@@ -473,6 +505,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       logLine(`[clickup] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
 
@@ -513,6 +547,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     if (!options.jiraExportStore) return res.status(501).json({ error: "jira export store not configured" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
+    const release = holdPush(res, "Jira", [`jira:${caseId}:${String(req.body?.findingId ?? "")}`]);
+    if (!release) return;
     try {
       const state = await options.stateStore.load(caseId);
       const findingId = typeof req.body?.findingId === "string" ? req.body.findingId : "";
@@ -541,6 +577,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       logLine(`[jira] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
 
@@ -561,6 +599,12 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       : [];
     if (!findingIds.length)
       return res.status(400).json({ error: "findingIds is required (a non-empty array of finding ids)" });
+    const release = holdPush(
+      res,
+      "Jira",
+      findingIds.map((fid) => `jira:${caseId}:${fid}`),
+    );
+    if (!release) return;
     try {
       const state = await options.stateStore.load(caseId);
       const byId = new Map(state.findings.map((f) => [f.id, f]));
@@ -596,6 +640,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       logLine(`[jira] ${caseId} bulk push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
 
@@ -636,6 +682,10 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       return res.status(501).json({ error: "servicenow export store not configured" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
+    const release = holdPush(res, "ServiceNow", [
+      `servicenow:${caseId}:${String(req.body?.findingId ?? "")}`,
+    ]);
+    if (!release) return;
     try {
       const state = await options.stateStore.load(caseId);
       const findingId = typeof req.body?.findingId === "string" ? req.body.findingId : "";
@@ -663,6 +713,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       logLine(`[servicenow] ${caseId} push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
 
@@ -685,6 +737,12 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       : [];
     if (!findingIds.length)
       return res.status(400).json({ error: "findingIds is required (a non-empty array of finding ids)" });
+    const release = holdPush(
+      res,
+      "ServiceNow",
+      findingIds.map((fid) => `servicenow:${caseId}:${fid}`),
+    );
+    if (!release) return;
     try {
       const state = await options.stateStore.load(caseId);
       const byId = new Map(state.findings.map((f) => [f.id, f]));
@@ -719,6 +777,8 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     } catch (err) {
       logLine(`[servicenow] ${caseId} bulk push ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
+    } finally {
+      release();
     }
   });
 }

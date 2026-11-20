@@ -6,6 +6,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { getAiLimiter, resetLimiters } from "../../src/http/rateLimiter.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // The AI rate limiter (20 req/min per case) must cover EVERY AI-cost route and NOT throttle
 // the non-AI undo/redo/undo-stack routes under /import (which a prefix mount would swallow).
@@ -25,6 +26,7 @@ beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-ailimit-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: "nosuch", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(cases, "nosuch");
   app = createApp(cases, {});
 });
 

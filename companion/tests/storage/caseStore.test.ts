@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore, CaseAlreadyExistsError } from "../../src/storage/caseStore.js";
 import type { CaptureMetadata, CaseMeta } from "../../src/types.js";
+import { setServerLogger } from "../../src/logging/serverLogger.js";
+import { createConsoleLogger } from "../../src/logging/logger.js";
 
 let root: string;
 beforeEach(async () => {
@@ -529,5 +531,42 @@ describe("CaseStore sequence high-water reuse (#2253)", () => {
     );
     await writeFile(store.capturesLogPath("hw-5"), JSON.stringify(capture("hw-5", 40)) + "\n", "utf8");
     expect(await store.nextSequenceNumber("hw-5")).toBe(41);
+  });
+});
+
+describe("CaseStore.listCases with a damaged case.json (#2768)", () => {
+  afterEach(() => setServerLogger(createConsoleLogger("info")));
+
+  function captureWarnings(): string[] {
+    const warnings: string[] = [];
+    setServerLogger({ ...createConsoleLogger("error"), warn: (m: string) => warnings.push(m) });
+    return warnings;
+  }
+
+  it.each([
+    ["truncated", '{"caseId":"broken","na'],
+    ["empty", ""],
+    ["not an object", "null"],
+  ])("skips a %s case.json and logs which case is damaged, once across polls", async (_l, body) => {
+    const warnings = captureWarnings();
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "good", name: "g", investigator: "i", aiProvider: null });
+    await store.createCase({ caseId: "broken", name: "b", investigator: "i", aiProvider: null });
+    await writeFile(store.caseMetaPath("broken"), body, "utf8");
+
+    expect((await store.listCases()).map((m) => m.caseId)).toEqual(["good"]);
+    expect((await store.listCases()).map((m) => m.caseId)).toEqual(["good"]);
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("broken");
+    expect(warnings[0]).toContain("case.json");
+  });
+
+  it("stays silent for a folder that has no case.json at all", async () => {
+    const warnings = captureWarnings();
+    const store = new CaseStore(root);
+    await mkdir(join(root, "not-a-case"), { recursive: true });
+    expect(await store.listCases()).toEqual([]);
+    expect(warnings).toEqual([]);
   });
 });

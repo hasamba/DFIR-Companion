@@ -15,6 +15,7 @@ import { createApp } from "../../src/server.js";
 import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { CONTAINMENT_QUESTION_IDS } from "../../src/analysis/ai/jev/containmentQuestions.js";
 import { resetLimiters } from "../../src/http/rateLimiter.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // The per-finding containment check (#1925): one Jev call about one finding's cited forensic-timeline
 // events, turned into suggested steps by a fixed rule; and the add route that turns ticked steps
@@ -153,6 +154,7 @@ describe("the containment check routes", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-ccheck-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, "c1");
     const stateStore = new StateStore(cases);
     await stateStore.save({
       ...emptyState("c1"),
@@ -501,6 +503,7 @@ describe("the containment check routes", () => {
       const root = await mkdtemp(join(tmpdir(), "dfir-ccheck-nopb-"));
       const cases = new CaseStore(root);
       await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      await enableCaseAi(cases, "c1");
       const stateStore = new StateStore(cases);
       await stateStore.save({ ...emptyState("c1"), findings: [FINDING] });
       const app = createApp(cases, { stateStore });

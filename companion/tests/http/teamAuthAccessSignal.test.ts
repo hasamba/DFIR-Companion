@@ -106,6 +106,60 @@ describe("auth routes signal access changes (#2449)", () => {
     expect(signal).toHaveBeenCalledTimes(1);
   });
 
+  async function signIn(username: string, password: string): Promise<ReturnType<typeof request.agent>> {
+    const agent = request.agent(app);
+    const res = await agent.post("/auth/local/login").send({ username, password });
+    expect(res.status).toBe(200);
+    return agent;
+  }
+
+  async function isSignedIn(agent: ReturnType<typeof request.agent>): Promise<boolean> {
+    const me = await agent.get("/auth/me");
+    return me.status === 200 && me.body.authenticated === true;
+  }
+
+  it("ends the user's sessions when an administrator resets their password", async () => {
+    const admin = await bootstrap();
+    const member = await createMember(admin, "analyst");
+    const first = await signIn("analyst", PASSWORD);
+    const second = await signIn("analyst", PASSWORD);
+    signal.mockClear();
+    const res = await admin.agent
+      .patch(`/auth/users/${member}`)
+      .set("X-DFIR-CSRF", admin.csrf)
+      .send({ password: "a brand new sufficiently long password" });
+    expect(res.status).toBe(200);
+    expect(signal).toHaveBeenCalledTimes(1);
+    expect(await isSignedIn(first)).toBe(false);
+    expect(await isSignedIn(second)).toBe(false);
+    expect(await isSignedIn(admin.agent)).toBe(true);
+    expect(await isSignedIn(await signIn("analyst", "a brand new sufficiently long password"))).toBe(true);
+  });
+
+  it("keeps only the current session when an administrator resets their own password", async () => {
+    const admin = await bootstrap();
+    const otherDevice = await signIn("admin", "correct horse battery staple");
+    const res = await admin.agent
+      .patch(`/auth/users/${admin.identityId}`)
+      .set("X-DFIR-CSRF", admin.csrf)
+      .send({ password: "a brand new sufficiently long password" });
+    expect(res.status).toBe(200);
+    expect(await isSignedIn(admin.agent)).toBe(true);
+    expect(await isSignedIn(otherDevice)).toBe(false);
+  });
+
+  it("leaves sessions alone on an update that does not change the password", async () => {
+    const admin = await bootstrap();
+    const member = await createMember(admin, "analyst");
+    const agent = await signIn("analyst", PASSWORD);
+    const res = await admin.agent
+      .patch(`/auth/users/${member}`)
+      .set("X-DFIR-CSRF", admin.csrf)
+      .send({ displayName: "Renamed" });
+    expect(res.status).toBe(200);
+    expect(await isSignedIn(agent)).toBe(true);
+  });
+
   it("does not signal when the user update throws (last administrator)", async () => {
     const admin = await bootstrap();
     signal.mockClear();

@@ -24,6 +24,7 @@ import type { CustomerExposureProvider } from "../src/analysis/customerExposure.
 import { JobManager } from "../src/analysis/jobManager.js";
 import { DropStatusStore } from "../src/analysis/dropStatus.js";
 import { pollFor, POLL_TIMEOUT_MS } from "./helpers/poll.js";
+import { enableCaseAi } from "./helpers/enableCaseAi.js";
 import { pollForFinding, pollForForensicEvents, pollForFirstIocEnrichment } from "./helpers/caseWaits.js";
 
 let app: ReturnType<typeof createApp>;
@@ -191,6 +192,7 @@ describe("HTTP server", () => {
     await request(app)
       .post("/cases")
       .send({ caseId: "c-arch", name: "n", investigator: "i", aiProvider: null });
+    await request(app).patch("/cases/c-arch/status").send({ status: "closed" }); // #2758
     await request(app).post("/cases/c-arch/archive").send({ removeFromList: true });
     const res = await request(app)
       .post("/captures")
@@ -2631,6 +2633,7 @@ describe("state and report routes", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    await enableCaseAi(store, "c1");
     // Seed a forensic timeline so synthesize has something to work from.
     const seeded = (await import("../src/analysis/stateTypes.js")).emptyState("c1");
     seeded.forensicTimeline.push({
@@ -2685,6 +2688,7 @@ describe("state and report routes", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-synth-noai-"));
     const store = new CaseStore(root);
     await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(store, "c1");
     const app = createApp(store, {});
     const res = await request(app).post("/cases/c1/synthesize");
     expect(res.status).toBe(501);

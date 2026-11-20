@@ -3552,7 +3552,9 @@ What the batch shares:
   batch (100 files)*. **Undo import** takes back every file of the batch together: their forensic
   rows, IOCs and timeline notes, and their records in the duplicate-record ledger, so dropping the
   same files again imports them again. As with the Import button, Undo does not remove
-  super-timeline rows, tags, Cloud Coverage or account weaknesses. Single files from the drop
+  super-timeline rows, tags, Cloud Coverage or account weaknesses. When you import the same files
+  again after an Undo, the kept super-timeline rows show **Promoted** again for every event that
+  goes back into the forensic timeline, and their tags stay on them. Single files from the drop
   folder still get no Undo step.
 - **One analysis run per batch.** **Analysis Runs** shows one import run for the batch, with one
   artifact per file. **View manifest** lists every file with its SHA-256, and its configuration

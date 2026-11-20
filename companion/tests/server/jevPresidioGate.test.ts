@@ -15,6 +15,7 @@ import type { PresidioClient } from "../../src/analysis/presidio.js";
 import type { AIProvider, AnalyzeResult } from "../../src/providers/provider.js";
 import { resetLimiters } from "../../src/http/rateLimiter.js";
 import { AiCostStore } from "../../src/analysis/aiCost.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #1952: the two Jev routes masked their payload but never ran the Presidio gate, so a name the
 // built-in masking cannot see reached the external model with no scan and no approval hold. They
@@ -112,6 +113,7 @@ describe("the Jev routes run the Presidio gate (#1952)", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-jev-presidio-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, "c1");
     const stateStore = new StateStore(cases);
     await stateStore.save({
       ...emptyState("c1"),
@@ -193,6 +195,7 @@ describe("the Jev routes run the Presidio gate (#1952)", () => {
       const root = await mkdtemp(join(tmpdir(), "dfir-jev-presidio-spend-"));
       const cases = new CaseStore(root);
       await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      await enableCaseAi(cases, "c1");
       const stateStore = new StateStore(cases);
       await stateStore.save(emptyState("c1"));
       const superTimelineStore = new SuperTimelineStore(cases);

@@ -10,6 +10,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // Two guards on the paid Jev review: it never creates a case by being pointed at a typo (#1549),
 // and it never runs twice at once for the same case, each run billing the analyst (#1551).
@@ -56,6 +57,7 @@ async function caseRoot(ids: string[]) {
   const superTimelineStore = new SuperTimelineStore(cases);
   for (const caseId of ids) {
     await cases.createCase({ caseId, name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, caseId);
     await stateStore.save(emptyState(caseId));
     await superTimelineStore.append(caseId, [
       raw(`${caseId}-a`, "certutil -urlcache"),

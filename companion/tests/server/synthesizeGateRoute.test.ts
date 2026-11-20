@@ -22,6 +22,7 @@ import { JobManager } from "../../src/analysis/jobManager.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
 import { createApp, type AiStatusEvent } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 function ev(id: string, asset: string): ForensicEvent {
   return {
@@ -45,6 +46,7 @@ beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-synthgate-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(cases, "c1");
   const stateStore = new StateStore(cases);
   const s = emptyState("c1");
   // The two spellings of one machine — what the gate exists to catch.

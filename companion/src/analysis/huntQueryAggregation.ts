@@ -12,6 +12,8 @@ interface AggregateValue {
     string,
     {
       count: number;
+      /** Values that parsed as a finite number — the divisor for avg; 0 means sum/avg do not apply (#2761). */
+      numericCount: number;
       sum: number;
       min: string | number | null;
       max: string | number | null;
@@ -45,18 +47,29 @@ function comparableStatValue(event: ForensicEvent, statistic: HuntStatistic): st
   return value;
 }
 
+/** A finite number, or a non-blank string that parses to one; anything else is not numeric (#2761). */
+function numericStatValue(raw: string | number): number | null {
+  if (typeof raw === "string" && raw.trim().length === 0) return null;
+  const numeric = Number(raw);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function addStatistic(aggregate: AggregateValue, statistic: HuntStatistic, event: ForensicEvent): void {
   const current = aggregate.statistics.get(statistic.alias) ?? {
     count: 0,
+    numericCount: 0,
     sum: 0,
     min: null,
     max: null,
   };
   const raw = comparableStatValue(event, statistic);
-  const numeric = Number(raw);
   if (raw != null) {
     current.count++;
-    if (Number.isFinite(numeric)) current.sum += numeric;
+    const numeric = numericStatValue(raw);
+    if (numeric != null) {
+      current.numericCount++;
+      current.sum += numeric;
+    }
     if (current.min == null || raw < current.min) current.min = raw;
     if (current.max == null || raw > current.max) current.max = raw;
   }
@@ -170,10 +183,12 @@ export class HuntAggregation {
         const value = aggregate.statistics.get(statistic.alias);
         row[statistic.alias] =
           statistic.fn === "sum"
-            ? (value?.sum ?? 0)
+            ? value?.numericCount
+              ? value.sum
+              : null
             : statistic.fn === "avg"
-              ? value?.count
-                ? value.sum / value.count
+              ? value?.numericCount
+                ? value.sum / value.numericCount
                 : null
               : statistic.fn === "min"
                 ? (value?.min ?? null)

@@ -12,6 +12,7 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { TaggerStore } from "../../src/analysis/taggerStore.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { SuggestOutcome } from "../../src/analysis/taggerRuleSuggest.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 function ev(p: Partial<ForensicEvent> & { id: string }): ForensicEvent {
   return {
@@ -46,6 +47,7 @@ beforeEach(async () => {
   store = new CaseStore(dir);
   setServerLogger(createConsoleLogger("error"));
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(store, "c1");
   stateStore = new StateStore(store);
   tagsStore = new TagsStore(store);
   const defaultPath = join(dir, "default-tags.yaml");

@@ -119,7 +119,7 @@ anchor, so a long review cannot shift the result window between pages.
 | `limit 50` | At most 50 returned rows |
 
 Statistics name their output columns predictably: `count`, `min_destination.port`,
-`max_destination.port`, `sum_count`, and so on. `sum` and `avg` are useful for numeric fields.
+`max_destination.port`, `sum_count`, and so on. `sum` and `avg` count only numeric values; over a field with no numeric values they are empty, not 0.
 
 ## Typed field catalogue
 

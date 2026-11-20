@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { LearnedPatternStore } from "../../src/analysis/learnedPatternStore.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // Captures the last synthesis userPrompt so we can assert the learned-patterns block was injected, and
 // returns a minimal valid delta so synthesize() completes.
@@ -47,6 +48,7 @@ async function makeApp() {
   });
   const app = createApp(store, { pipeline, stateStore, learnedPatternStore, aiConfigured: true });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   return { app, store, stateStore, learnedPatternStore, provider };
 }
 
@@ -75,14 +77,12 @@ describe("learned dismissal patterns (#65)", () => {
 
   it("learns from an event marker's label but skips IOC markers", async () => {
     const { app } = await makeApp();
-    await request(app)
-      .post("/cases/c1/false-positive")
-      .send({
-        kind: "event",
-        ref: "e12",
-        label: "Nessus vulnerability scan burst",
-        reason: "known-good-tool",
-      });
+    await request(app).post("/cases/c1/false-positive").send({
+      kind: "event",
+      ref: "e12",
+      label: "Nessus vulnerability scan burst",
+      reason: "known-good-tool",
+    });
     await request(app)
       .post("/cases/c1/false-positive")
       .send({ kind: "ioc", ref: "10.0.0.9", reason: "known-good-tool" });
@@ -130,6 +130,7 @@ describe("learned dismissal patterns (#65)", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(store, "c2");
     const app = createApp(store, { stateStore, aiConfigured: false });
     expect((await request(app).get("/cases/c2/learned-patterns")).status).toBe(501);
   });

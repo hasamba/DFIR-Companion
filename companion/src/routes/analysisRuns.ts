@@ -19,6 +19,8 @@ import { activeRulesHash, importReceiptOfCase } from "./importRunRecorder.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import { settleForensicImport } from "./importSettle.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
+import { sendAiOff } from "./aiOffRefusal.js";
+import { isAiDependent } from "./importKinds.js";
 
 // The replay-preflight inventory of every builtin importer's own pinned version. Derived from
 // `IMPORT_KINDS` — the SAME single source of truth `importDetect.ts`'s own `ImportKind` union and
@@ -318,6 +320,12 @@ async function replaySynthesis(ctx: RouteContext, run: AnalysisRunManifest): Pro
   }
 }
 
+/** Synthesis, deep-pass and AI-dependent import replays call a model; the other kinds do not. */
+function replayCallsModel(run: AnalysisRunManifest): boolean {
+  if (run.kind === "synthesis" || run.kind === "deep-pass") return true;
+  return run.kind === "import" && isAiDependent(run.versions.importer?.split("/")[0] ?? "");
+}
+
 async function executeReplay(
   ctx: RouteContext,
   run: AnalysisRunManifest,
@@ -420,6 +428,9 @@ export function registerAnalysisRunRoutes(app: Express, ctx: RouteContext): void
     if (!options.analysisRunStore) return res.status(501).json({ error: "analysis runs not configured" });
     const run = await options.analysisRunStore.get(req.params.id, req.params.runId);
     if (!run) return res.status(404).json({ error: "analysis run not found" });
+    // #2757: a replay that calls a model is refused while the case's AI is off. Checked here, not by
+    // the central gate, because only the loaded run says whether it calls one.
+    if (replayCallsModel(run) && !(await ctx.getControl(req.params.id)).enabled) return sendAiOff(res);
     const preflight = checkReplayAvailability(run, await replayEnvironment(ctx, req.params.id, run));
     if (!preflight.ready) return res.status(409).json(preflight);
     // An import replay is an import attempt, so it carries its own recorder (#1736).

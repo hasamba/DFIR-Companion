@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { AiControlStore } from "../../src/analysis/aiControl.js";
+import { StateFileCorruptError } from "../../src/storage/stateFileCorrupt.js";
 
 let cases: CaseStore;
 let control: AiControlStore;
@@ -28,4 +29,19 @@ describe("AiControlStore", () => {
     expect(c.enabled).toBe(false);
     expect(c.lastAnalyzedSeq).toBe(12);
   });
+});
+
+// #2760: a damaged file rejected with a bare SyntaxError that named neither the case nor the file.
+describe("AiControlStore on a damaged file", () => {
+  it.each(["{corrupt", "null", "[1,2]", "42"])(
+    "rejects %s with StateFileCorruptError naming case and file",
+    async (text) => {
+      await writeFile(join(cases.stateDir("c1"), "ai-control.json"), text);
+      const err = await control.load("c1").catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(StateFileCorruptError);
+      expect((err as StateFileCorruptError).file).toBe("ai-control.json");
+      expect((err as Error).message).toContain("c1");
+      expect((err as Error).message).toContain("ai-control.json");
+    },
+  );
 });

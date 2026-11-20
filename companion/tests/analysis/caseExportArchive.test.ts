@@ -841,6 +841,18 @@ describe("dfircaseFilename", () => {
   it("keeps non-ASCII characters in the name", () => {
     expect(dfircaseFilename("INC-1", "GlobalTech — BEC")).toBe("INC-1 - GlobalTech — BEC.dfircase");
   });
+
+  // The delete-with-encrypted-archive path writes this name to disk (#2759), so it gets the same
+  // byte cap as the ZIP name (#2769).
+  it("caps a long name by UTF-8 bytes and keeps the id and the extension", () => {
+    for (const name of ["a".repeat(300), "é".repeat(300), "\u{1F512}".repeat(300)]) {
+      const filename = dfircaseFilename("INC-1", name);
+      expect(Buffer.byteLength(filename, "utf8")).toBeLessThanOrEqual(200);
+      expect(filename.startsWith("INC-1 - ")).toBe(true);
+      expect(filename.endsWith(".dfircase")).toBe(true);
+      expect(Buffer.from(filename, "utf8").toString("utf8")).toBe(filename);
+    }
+  });
 });
 
 describe("attachmentContentDisposition", () => {

@@ -8,6 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 const cannedSuggestions = JSON.stringify({
   suggestions: [
@@ -38,6 +39,7 @@ async function makeApp(provider: MockProvider | undefined) {
   await request(app)
     .post("/cases")
     .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: provider ? "mock" : null });
+  await enableCaseAi(store, "c1");
   return { app, stateStore };
 }
 

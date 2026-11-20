@@ -12,6 +12,7 @@ import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
 import { AnonControlStore } from "../../src/analysis/anonControl.js";
 import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #1934: the missed-evidence review built its mask from the route options, which carry no
 // anonymization store — only the pipeline's options do. So the mask was the identity function and
@@ -76,6 +77,7 @@ describe("the Jev review masks what it sends (#1934)", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-jev-mask-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, "c1");
     const stateStore = new StateStore(cases);
     const state = emptyState("c1");
     state.forensicTimeline = [

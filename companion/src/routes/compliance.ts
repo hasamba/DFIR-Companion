@@ -79,8 +79,13 @@ export function registerComplianceRoutes(app: Express, ctx: RouteContext): void 
     if (!options.complianceControlStore) {
       return res.status(501).json({ error: "compliance control not configured" });
     }
+    const rawBody: unknown = req.body ?? {};
+    // A text/plain body arrives as a string, and `"x" in "hello"` throws (#2765).
+    if (typeof rawBody !== "object" || rawBody === null || Array.isArray(rawBody)) {
+      return res.status(400).json({ error: "request body must be a JSON object" });
+    }
     try {
-      const body = (req.body ?? {}) as { discoveredAt?: unknown; frameworks?: unknown };
+      const body = rawBody as { discoveredAt?: unknown; frameworks?: unknown };
       const patch: { discoveredAt?: string; frameworks?: string[] } = {};
 
       if ("discoveredAt" in body) {

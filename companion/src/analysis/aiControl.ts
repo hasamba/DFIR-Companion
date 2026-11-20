@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
+import { parseStateObject, type StateFileCorruptNotice } from "../storage/stateFileCorrupt.js";
 
 // Per-case AI analysis control. `enabled` gates every call to the model: the live screenshot
 // pipeline, synthesis, and the CSV / log imports (the unified /import and /import-file and the
@@ -31,6 +32,8 @@ export interface AiControl {
   watsonRunMode?: "approve" | "auto";
   watsonAutoSince?: string;
   watsonAutoBy?: { id?: string; name: string };
+  // #2760: set only on a fail-closed read of a damaged file (composition/aiControlCache.ts); never saved.
+  corrupt?: StateFileCorruptNotice;
 }
 
 export interface AnalysisHold {
@@ -81,23 +84,30 @@ export interface SkipHeldResult {
   lastError?: string;
 }
 
-const DEFAULT: AiControl = { enabled: false, lastAnalyzedSeq: 0 };
+export const DEFAULT_AI_CONTROL: AiControl = { enabled: false, lastAnalyzedSeq: 0 };
+const DEFAULT = DEFAULT_AI_CONTROL;
+const AI_CONTROL_FILE = "ai-control.json";
+const AI_CONTROL_CORRUPT_CONSEQUENCE =
+  "AI is held OFF for this case until the switch is set again — setting AI on or off rewrites the file.";
 
 export class AiControlStore {
   constructor(private readonly cases: CaseStore) {}
 
   private path(caseId: string): string {
-    return join(this.cases.stateDir(caseId), "ai-control.json");
+    return join(this.cases.stateDir(caseId), AI_CONTROL_FILE);
   }
 
+  /** Throws StateFileCorruptError (#2760) when the file exists but holds no readable record. */
   async load(caseId: string): Promise<AiControl> {
+    let text: string;
     try {
-      const raw = JSON.parse(await readFile(this.path(caseId), "utf8")) as Partial<AiControl>;
-      return { ...DEFAULT, ...raw };
+      text = await readFile(this.path(caseId), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ...DEFAULT };
       throw err;
     }
+    const raw = parseStateObject(text, caseId, AI_CONTROL_FILE, AI_CONTROL_CORRUPT_CONSEQUENCE);
+    return { ...DEFAULT, ...(raw as Partial<AiControl>) };
   }
 
   async save(caseId: string, control: AiControl): Promise<void> {

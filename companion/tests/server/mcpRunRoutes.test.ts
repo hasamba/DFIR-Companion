@@ -14,6 +14,7 @@ import { AnonControlStore } from "../../src/analysis/anonControl.js";
 import type { TransferRunner } from "../../src/integrations/mcp/mcpDelivery.js";
 import type { ClaudeRunner } from "../../src/providers/claudeRunner.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // Nearly every test here awaits `settle` (one poll budget) and a couple await two. Set the timeout
 // once at the suite level rather than on ~22 individual tests: poll.ts requires the caller's test
@@ -66,6 +67,7 @@ async function harness(opts: { text?: string; anonymised?: boolean } = {}) {
     mcpTransferRunner,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(store, "c1");
   // These suites test the run mechanics, so the case has anonymisation off and needs no
   // acknowledgement. The #1952 suite below turns it on (the shipped default) on purpose.
   if (!opts.anonymised) {

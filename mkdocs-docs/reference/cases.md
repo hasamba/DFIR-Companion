@@ -81,11 +81,13 @@ Each case has a status: **Open** or **Closed**.
 Toolbar **☰ Case lifecycle** menu lets you:
 
 - **Close** a case (marks it inactive)
-- **Archive** a case — packages it as a ZIP with a SHA-256 manifest. When it finishes, the status line
-  shows where the ZIP file was saved (in the cases folder). See [ZIP Case Archive](#zip-case-archive-restore)
-  to bring it back.
+- **Archive** a case — packages it as a ZIP with a SHA-256 manifest. Close the case first: an open
+  case cannot be archived, and the archive is refused with "case … is still open — close it first,
+  then archive it". When it finishes, the status line shows where the ZIP file was saved (in the cases
+  folder). See [ZIP Case Archive](#zip-case-archive-restore) to bring it back.
 - **Restore** an archived case — puts it back in the case list. A restored case always comes back
-  **Closed**, even if it was open when you archived it. Use **Reopen case** to change it.
+  **Closed**. This includes a case that an older version archived while it was open. Use
+  **Reopen case** to change it.
 - **🔒 Password…** — set, change, or remove a password on this case (see below)
 - **🗑️ Delete…** a case — permanently removes the case's directory (see below)
 
@@ -129,7 +131,8 @@ from the same browser; leave it unchecked and the case re-locks the moment you s
 or close the tab.
 
 Enforced server-side — an unlock cookie gates every `/cases/:id/*` route, not just a UI prompt. That
-includes adding evidence: an import into a locked case needs the unlock or the case password.
+includes adding evidence: an import into a locked case needs the unlock or the case password. The
+Jobs list also leaves out a locked case's jobs until this browser has unlocked it.
 
 The capture extension shows a **Case password** field when you pick a locked case. Type the password
 once and press **Check**. The extension keeps it in memory until the browser closes, and screenshots
@@ -144,18 +147,32 @@ that use a push key keep working on a locked case. Setting or changing a passwor
 you're prompted the same as anyone else. Leaving a case you unlocked without "remember" forgets the unlock in this browser only. To shut out every browser that has unlocked the case, including one that saved a copy of the unlock, change the password. Dashboards that already have the case open are disconnected at once. **Remove password** is only available when the case is
 currently unlocked and has a password set.
 
+!!! warning "A damaged case file is not a locked case"
+    If a case's `case.json` is empty or cut short (for example after a crash or a sync conflict),
+    the case is left out of the case list and opening it answers **"case.json is damaged or
+    unreadable"** instead of a password prompt. The server log names the damaged file. Restore
+    `case.json` from a backup or a ZIP case archive; the case's evidence folders are not touched.
+
 ## Permanently Deleting a Case
 
 **☰ Case lifecycle → 🗑️ Delete…** removes a case's directory for good — this cannot be undone. The
 dialog offers an optional ZIP/encrypted archive taken first, so you can keep an off-disk copy before
-the case is wiped. Guardrails: it refuses to touch a directory that isn't a real case, and it won't
+the case is wiped. With the encrypted archive, a copy of the `.dfircase` file is first saved in the
+cases folder on the server (next to where the ZIP archive goes), and only then is the case deleted —
+so a download that fails or a tab closed too early cannot lose the case. The dialog tells you the
+path of that copy; it is protected by the same password, and you delete it by hand when you no
+longer need it; to get the case back from it, use **Import case → Encrypted case archive (.dfircase)**.
+If the server cannot save that copy, nothing is deleted. Guardrails: it refuses to touch a directory that isn't a real case, and it won't
 delete an already-archived case's live folder out from under its archive. While an archive or an
 encrypted export of the case is still being built, Delete and Restore are refused with "an import or
 an archive in progress — try again" until it finishes.
 
 ## ZIP Case Archive (Restore)
 
-**Archive to ZIP** writes `<caseId> (no password).zip` into the cases folder. The ZIP holds one
+**Archive to ZIP** writes `<caseId> - <case name> (no password).zip` into the cases folder (just
+`<caseId> (no password).zip` when the case has no separate name). A very long case name is
+shortened in the file name only; the case keeps its full name. The case must be
+closed first. The ZIP holds one
 `<caseId>/` folder with every case file, plus `<caseId>/archive-manifest.json`. The manifest lists
 the SHA-256 hash and size of each file. The ZIP has no password.
 
@@ -186,6 +203,9 @@ The import keeps the portable name. The `.dfircase` import does the same.
 ## Encrypted Case Archive (Export / Import)
 
 **Export archive:** toolbar → **Export → Export encrypted case archive (.dfircase)**. Enter a password (min 8 characters). Produces a single `.dfircase` file containing the ENTIRE case — findings, timeline, IOCs, MITRE, playbook, analyst notes, tags, AND screenshots/raw evidence — encrypted with AES-256-GCM. Only openable via another DFIR Companion's Import.
+
+You can export an open case. If you also select **Remove this case from the active list**, that is an
+archive, so the case must be closed first.
 
 **Import archive:** toolbar → **Import case → Encrypted case archive (.dfircase)**. Restores as a new case. If the Case ID already exists you get a conflict warning.
 

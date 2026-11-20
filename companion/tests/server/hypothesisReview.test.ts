@@ -10,6 +10,7 @@ import { HypothesisStore } from "../../src/analysis/hypothesisStore.js";
 import { hypothesisAutoKey } from "../../src/analysis/hypothesis.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // Build an app with a case that has one forensic event and, unless `seedHypothesis` is false, one OPEN
 // hypothesis. The MockProvider is constructed AFTER the hypothesis so its canned review can reference the
@@ -22,6 +23,7 @@ async function makeApp(opts: { ai?: boolean; seedHypothesis?: boolean } = {}) {
   const stateStore = new StateStore(store);
   const hypothesisStore = new HypothesisStore(store);
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: ai ? "mock" : null });
+  await enableCaseAi(store, "c1");
 
   const s = emptyState("c1");
   s.forensicTimeline.push({

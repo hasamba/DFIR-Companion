@@ -65,6 +65,18 @@ function short(value: string, max = 80): string {
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
 }
 
+// A failed idempotency lookup stops the push (#2776). Name the step and MISP's own reason, and say
+// that the push stopped so the analyst knows to retry rather than look for a half-written event.
+function lookupFailed(step: string, err: unknown): Error {
+  const reason = err instanceof Error ? err.message : String(err);
+  return new Error(
+    `MISP push stopped: ${step} (${reason}) — nothing more was pushed; retry once MISP is healthy`,
+    {
+      cause: err,
+    },
+  );
+}
+
 // Derive the worst severity across all findings → MISP threat_level_id.
 // MISP: 1=High, 2=Medium, 3=Low, 4=Undefined.
 function worstThreatLevel(state: InvestigationState): string {
@@ -151,7 +163,14 @@ export async function pushCaseToMisp(
 
   // 2. Find-or-create the MISP event via the idempotency tag.
   const caseTag = `${COMPANION_TAG_PREFIX}${input.caseId}`;
-  let eventId = await client.findEventByTag(caseTag);
+  // A failed search is fatal (#2776): treating it as "no prior event" would create a duplicate
+  // event carrying a second copy of the whole timeline.
+  let eventId: string | null;
+  try {
+    eventId = await client.findEventByTag(caseTag);
+  } catch (err) {
+    throw lookupFailed("could not search MISP for this case's earlier event", err);
+  }
   let created = false;
   const eventInfo = `DFIR Companion: ${input.caseId}`;
 
@@ -181,15 +200,16 @@ export async function pushCaseToMisp(
     }
   }
 
-  // 3. List existing attributes for dedupe (non-fatal — a listing failure is recoverable;
-  //    the worst outcome is duplicate attributes on re-push, flagged via a warning).
+  // 3. List existing attributes for dedupe. Fatal on an event that already existed (#2776): an
+  //    empty set would re-add every IOC and timeline attribute. A just-created event has none,
+  //    so there is nothing to duplicate and the push carries on.
   const existingValues = new Set<string>();
   try {
     for (const a of await client.listAttributes(eventId)) {
       existingValues.add(a.value.trim().toLowerCase());
     }
   } catch (err) {
-    warnings.push(`list attributes: ${(err as Error).message} — a re-push may add duplicate attributes`);
+    if (!created) throw lookupFailed(`could not read the attributes already on MISP event ${eventId}`, err);
   }
 
   // 4. Push IOCs as MISP attributes.

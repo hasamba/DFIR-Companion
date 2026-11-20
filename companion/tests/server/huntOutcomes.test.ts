@@ -22,6 +22,7 @@ import {
   type VelociraptorApiConfig,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
 import { veloServerClients, stubServerClients } from "../helpers/serverClientsStub.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 const veloCfg: VelociraptorApiConfig = {
   apiConfigPath: "/x/api.yaml",
@@ -80,6 +81,7 @@ async function makeApp(
   await request(app)
     .post("/cases")
     .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: provider ? "mock" : null });
+  await enableCaseAi(store, "c1");
   return { app, stateStore, store, huntOutcomeStore };
 }
 

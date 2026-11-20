@@ -10,6 +10,7 @@ import { JobManager } from "../../src/analysis/jobManager.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { stopConclusionJobs } from "../../src/routes/caseCloseJobs.js";
 import { pollFor } from "../helpers/poll.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #2437 Part B: a synthesis still running when the case is closed or archived used to land its
 // conclusions in the frozen case. Closing or archiving now cancels the case's running synthesis,
@@ -46,6 +47,7 @@ async function harness() {
   await request(app)
     .post("/cases")
     .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "anthropic" });
+  await enableCaseAi(store, "c1");
   return { app, jobManager, stateStore, calls };
 }
 
@@ -87,15 +89,19 @@ describe("closing or archiving a case stops the analysis running on it (#2437)",
     expect(jobManager.get(imp.jobId)?.status).toBe("succeeded");
   });
 
-  it("archiving an open case with removeFromList cancels its running synthesis", async () => {
+  it("archiving an open case is refused and leaves its synthesis running; close, then archive (#2758)", async () => {
     const { app, jobManager, calls } = await harness();
     const pending = startSynthesis(app);
     const job = await runningSynthesis(jobManager, calls);
+    const refused = await request(app).post("/cases/c1/archive").send({ removeFromList: true });
+    expect(refused.status).toBe(409);
+    expect(jobManager.get(job.id)?.status).toBe("running");
+    expect((await request(app).patch("/cases/c1/status").send({ status: "closed" })).status).toBe(200);
+    expect(jobManager.get(job.id)?.status).toBe("cancelled");
+    expect((await pending).status).toBe(499);
     const res = await request(app).post("/cases/c1/archive").send({ removeFromList: true });
     expect(res.status).toBe(200);
     expect(res.body.removedFromList).toBe(true);
-    expect(jobManager.get(job.id)?.status).toBe("cancelled");
-    expect((await pending).status).toBe(499);
   });
 
   it("leaves non-cancellable and out-of-scope kinds running and never throws", async () => {

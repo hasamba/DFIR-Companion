@@ -419,6 +419,7 @@ describe("POST /cases links the new case", () => {
     await request(app)
       .post("/cases")
       .send({ caseId: "INC-1", name: "One", investigator: "i", aiProvider: null, serverSetId: other.id });
+    await request(app).patch("/cases/INC-1/status").send({ status: "closed" }); // #2758
     const archived = await request(app).post("/cases/INC-1/archive").send({});
     expect(archived.status, archived.text).toBe(200);
     const zip = await readFile(archived.body.archivePath as string);

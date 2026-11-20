@@ -10,7 +10,7 @@ import { ImportLock } from "../../src/analysis/importLock.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
-import { CaseStore } from "../../src/storage/caseStore.js";
+import { CaseLifecycleError, CaseStore } from "../../src/storage/caseStore.js";
 import { withArchiveBarrier } from "../../src/routes/archiveImportBarrier.js";
 import { admitIngest, beginArchive, isCaseArchiving } from "../../src/analysis/caseIngestAdmission.js";
 import { registerImportCaseGuard } from "../../src/routes/importCaseGuard.js";
@@ -79,6 +79,7 @@ describe("archive vs a running import (#1903)", () => {
 
   it("the archive waits for an ingest that holds a reservation, then builds once it drains", async () => {
     const { root, app } = await setup(5_000);
+    await request(app).patch("/cases/c1/status").send({ status: "closed" }); // archive needs a closed case (#2758)
     const releaseIngest = admitIngest(root, "c1"); // e.g. a push storing its raw file
     const settled = setTimeout(releaseIngest, 120);
     const ok = await request(app).post("/cases/c1/archive").send({});
@@ -89,6 +90,7 @@ describe("archive vs a running import (#1903)", () => {
 
   it("POST /archive answers 409 and writes no zip when the import section stays held past the wait", async () => {
     const { root, app, importLock } = await setup();
+    await request(app).patch("/cases/c1/status").send({ status: "closed" }); // archive needs a closed case (#2758)
     const release = await importLock.acquire("c1");
     const refused = await request(app).post("/cases/c1/archive").send({ removeFromList: true });
     expect(refused.status).toBe(409);
@@ -320,5 +322,48 @@ describe("movers vs a building archive or export (#2145)", () => {
     expect((await deleting).status).toBe(200);
     expect((await request(app).post("/cases/c1/archive")).status).toBe(200); // the reservation is released
     expect(walked).toBe(true);
+  });
+});
+
+// #2771: two restores of one archived case both passed the route's "is it archived?" check, then
+// queued on the case lock; the loser renamed a folder that was already gone and answered 500 with a
+// raw ENOENT. The archived state is now re-checked inside the lock, and the loser gets a clean 409.
+describe("parallel restores of one archived case (#2771)", () => {
+  async function archivedCase() {
+    const ctx = await setup();
+    await request(ctx.app).patch("/cases/c1/status").send({ status: "closed" });
+    const archived = await request(ctx.app).post("/cases/c1/archive").send({ removeFromList: true });
+    expect(archived.status).toBe(200);
+    return ctx;
+  }
+
+  it("the store restores once and refuses the second restore with a 409 lifecycle error", async () => {
+    const { store } = await archivedCase();
+    const results = await Promise.allSettled([
+      store.restoreCaseFolder("c1", "closed"),
+      store.restoreCaseFolder("c1", "closed"),
+    ]);
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    const reason = rejected[0].reason as CaseLifecycleError;
+    expect(reason).toBeInstanceOf(CaseLifecycleError);
+    expect(reason.httpStatus).toBe(409);
+    expect(reason.message).not.toMatch(/ENOENT/);
+  });
+
+  it("two simultaneous restore requests give one 200 and one clean 409, never a 500", async () => {
+    const { root, store, app } = await archivedCase();
+    const [a, b] = await Promise.all([
+      request(app).post("/cases/c1/restore").send({}),
+      request(app).post("/cases/c1/restore").send({}),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses[0]).toBe(200);
+    expect([400, 409]).toContain(statuses[1]);
+    for (const r of [a, b]) expect(JSON.stringify(r.body)).not.toMatch(/ENOENT/);
+    expect(existsSync(join(root, "c1"))).toBe(true);
+    expect(existsSync(join(root, "_archived", "c1"))).toBe(false);
+    expect((await store.getCaseMeta("c1"))?.status).toBe("closed");
   });
 });

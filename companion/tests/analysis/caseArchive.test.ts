@@ -552,4 +552,51 @@ describe("zipArchiveFilename", () => {
       "INC-1 - Acme_ _Breach_/Q4 (no password).zip".replace(/[<>:"/\\|?*\x00-\x1f]/g, "_"),
     );
   });
+
+  // A case name has no length limit, but a file name does (255 bytes on ext4/NTFS/APFS). An
+  // uncapped name made archive and delete-with-ZIP fail with ENAMETOOLONG (#2769).
+  describe("caps a long case name (#2769)", () => {
+    const longNames: Array<[string, string]> = [
+      ["ASCII", "a".repeat(300)],
+      ["two-byte", "é".repeat(300)],
+      ["emoji", "\u{1F512}".repeat(300)],
+    ];
+    for (const [label, name] of longNames) {
+      it(`keeps a ${label} name inside the byte budget and keeps id and extension`, () => {
+        const filename = zipArchiveFilename("INC-1", name);
+        // Room is left for the atomic write's ".<uuid>.tmp" suffix on top of the final name.
+        expect(Buffer.byteLength(filename, "utf8")).toBeLessThanOrEqual(200);
+        expect(filename.startsWith("INC-1 - ")).toBe(true);
+        expect(filename.endsWith(" (no password).zip")).toBe(true);
+        expect(filename).not.toContain("�"); // no code point cut in half
+        expect(Buffer.from(filename, "utf8").toString("utf8")).toBe(filename);
+      });
+    }
+
+    it("still fits with the longest valid case id", () => {
+      const id = "A".repeat(80);
+      const filename = zipArchiveFilename(id, "b".repeat(300));
+      expect(Buffer.byteLength(filename, "utf8")).toBeLessThanOrEqual(200);
+      expect(filename.startsWith(`${id} - b`)).toBe(true);
+    });
+
+    it("does not leave a trailing space or dot where the name was cut", () => {
+      const prefixBytes = Buffer.byteLength("INC-1 - ") + Buffer.byteLength(" (no password).zip");
+      const room = 200 - prefixBytes;
+      const filename = zipArchiveFilename("INC-1", `${"a".repeat(room - 3)} . ${"z".repeat(200)}`);
+      expect(filename).toMatch(/a \(no password\)\.zip$/);
+    });
+
+    it("archives a case whose name is 300 characters long", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dfir-archive-longname-"));
+      try {
+        await mkdir(join(dir, "c1"), { recursive: true });
+        await writeFile(join(dir, "c1", "case.json"), '{"caseId":"c1"}');
+        const result = await archiveCase(dir, "c1", {}, "x".repeat(300));
+        expect((await readFile(result.archivePath)).subarray(0, 2).toString("latin1")).toBe("PK");
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });

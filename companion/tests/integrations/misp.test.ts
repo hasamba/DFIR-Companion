@@ -485,3 +485,44 @@ describe("#1471 -- pushCaseToMisp comments a mentioned value, and leaves its to_
     expect(byValue["8.8.8.8"].comment).toBeUndefined();
   });
 });
+
+// #2776: a failed lookup must stop the push, not read as "nothing there yet" — otherwise a MISP
+// outage creates a duplicate event, or re-adds every IOC and timeline attribute to the old one.
+describe("#2776 -- pushCaseToMisp stops when a MISP lookup fails", () => {
+  it("stops with a clear error, creating nothing, when the event search fails", async () => {
+    const m = new MockMispClient();
+    m.findEventByTag = async () => {
+      throw new Error("MISP HTTP 500 on /events/restSearch");
+    };
+    await expect(pushCaseToMisp(m, { caseId: "case-alpha", state: sampleState() })).rejects.toThrow(
+      /could not search MISP for this case's earlier event.*MISP HTTP 500/,
+    );
+    expect(m.createdEvents).toHaveLength(0);
+    expect(m.addedAttributes).toHaveLength(0);
+    expect(m.addedTags).toHaveLength(0);
+  });
+
+  it("stops with a clear error, pushing nothing, when listing an existing event's attributes fails", async () => {
+    const m = new MockMispClient();
+    m.existingEventId = "77";
+    m.listAttributes = async () => {
+      throw new Error("MISP HTTP 500 on /events/view/77");
+    };
+    await expect(pushCaseToMisp(m, { caseId: "case-alpha", state: sampleState() })).rejects.toThrow(
+      /could not read the attributes already on MISP event 77.*MISP HTTP 500/,
+    );
+    expect(m.createdEvents).toHaveLength(0);
+    expect(m.addedAttributes).toHaveLength(0);
+    expect(m.addedTags).toHaveLength(0);
+  });
+
+  it("still pushes into an event it just created when the listing fails (nothing to duplicate)", async () => {
+    const m = new MockMispClient();
+    m.listAttributes = async () => {
+      throw new Error("MISP HTTP 500");
+    };
+    const res = await pushCaseToMisp(m, { caseId: "case-alpha", state: sampleState() });
+    expect(res.created).toBe(true);
+    expect(res.attributes.added).toBe(3);
+  });
+});

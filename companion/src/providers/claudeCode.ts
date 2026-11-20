@@ -6,6 +6,7 @@ import {
   type ProviderUsage,
   type ProviderErrorKind,
   ProviderError,
+  cancelledError,
   safetyStopError,
 } from "./provider.js";
 import { type ClaudeRunner, defaultClaudeRunner } from "./claudeRunner.js";
@@ -200,6 +201,8 @@ export class ClaudeCodeProvider implements AIProvider {
       throw new ProviderError(`Claude Code failed to start: ${run.spawnError.message}`, "transport");
     }
     if (run.timedOut) {
+      // #2779: an analyst Stop kills the CLI the same way the timeout does; report it as a cancel.
+      if (req.signal?.aborted) throw cancelledError("Claude Code");
       throw new ProviderError(`Claude Code timed out after ${this.timeoutMs}ms`, "timeout");
     }
 

@@ -21,7 +21,7 @@ import type { PipelineOptions } from "./ai/pipelineOptions.js";
 import { buildAiCallOpts } from "./ai/aiCallOpts.js";
 export type { PipelineOptions } from "./ai/pipelineOptions.js";
 import { withRetry } from "./ai/retry.js";
-import { isAiPreviewCapture } from "./ai/aiPreviewScope.js";
+import { logAiCallFailure } from "./ai/aiCallFailureLog.js";
 import { buildImportOpts, type ImportContext } from "./ingest/importContext.js";
 
 import type { AiArgs, AiExtractionArgs, ImporterArgs } from "./ai/delegationArgs.js";
@@ -180,14 +180,8 @@ export class AnalysisPipeline {
     backoffMs: number,
   ): Promise<T> {
     return withRetry(fn, retries, backoffMs, (err, attempt, willRetry) => {
-      if (isAiPreviewCapture(err)) return; // a preview stopping at the gate is not a failed call (#2491)
-      const msg = err instanceof Error ? err.message : String(err);
-      const kind = err instanceof ProviderError ? ` kind=${err.kind}` : "";
-      this.log.warn(
-        `AI call [${label}] attempt ${attempt + 1} failed${kind}: ${msg}${willRetry ? " — retrying" : " — giving up"}`,
-        { caseId },
-      );
-      if (willRetry) this.recordRetry(label, err);
+      const failed = logAiCallFailure(this.log, caseId, label, err, attempt, willRetry);
+      if (failed && willRetry) this.recordRetry(label, err);
     });
   }
 

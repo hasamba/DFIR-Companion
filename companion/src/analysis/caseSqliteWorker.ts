@@ -1,6 +1,7 @@
 import { CaseSqliteWorkerPool } from "./caseSqliteWorkerPool.js";
 import { CASE_SQLITE_SCHEMA_SQL } from "./caseSqliteSchema.js";
 import { SUPER_WORKER_SOURCE } from "./caseSqliteWorkerSuper.js";
+import { SUPER_RELINK_WORKER_SOURCE } from "./caseSqliteWorkerSuperRelink.js";
 import { SUPER_QUERY_WORKER_SOURCE } from "./caseSqliteWorkerSuperQuery.js";
 import { TERMS_WORKER_SOURCE } from "./caseSqliteWorkerTerms.js";
 import { SAVE_STATE_WORKER_SOURCE } from "./caseSqliteWorkerSaveState.js";
@@ -607,6 +608,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
 }
 ` +
   SUPER_WORKER_SOURCE +
+  SUPER_RELINK_WORKER_SOURCE +
   SUPER_QUERY_WORKER_SOURCE +
   TERMS_WORKER_SOURCE +
   SAVE_STATE_WORKER_SOURCE +
@@ -738,7 +740,8 @@ async function dispatch(message) {
     case "entityRowIdMark": return entityRowIdMark(message.dbPath);
     case "rollbackImportBatch": return rollbackImportBatch(message.dbPath, message.kinds, message.afterRowId, message.importBatchId);
     case "migrateSuper": return migrateSuper(message.dbPath, message.eventsPath, message.labelsPath, message.tagsPath, message.excludeAuthorPrefix, message.max, message.setAsideMarkers, message.setAsideVersion);
-    case "appendSuper": return appendSuper(message.dbPath, message.events, message.max, message.setAsideMarkers);
+    case "appendSuper": return appendSuper(message.dbPath, message.events, message.max, message.setAsideMarkers, message.relinkCandidates === true);
+    case "relinkSuper": return relinkSuper(message.dbPath, message.links, message.setAsideMarkers);
     case "rehomeSuper": return rehomeSuper(message.dbPath, message.events, message.setAsideMarkers);
     case "dropSummaryRows": return dropSummaryRows(message.dbPath, message.prefix, message.keepIds);
     case "scanSuper": return scanSuper(message.dbPath, message.query || {});

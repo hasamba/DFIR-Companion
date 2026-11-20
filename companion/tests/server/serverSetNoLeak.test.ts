@@ -440,6 +440,7 @@ describe("no key ever leaves the server set store", () => {
     expect(enc.status).toBe(200);
     check("POST export/encrypted (container)", enc);
     found.push(...leaksIn(".dfircase decrypted", await decryptBuffer(bodyOf(enc), "a long enough password")));
+    await request(app).patch("/cases/c1/status").send({ status: "closed" }); // archive needs a closed case (#2758)
     const arch = await request(app).post("/cases/c1/archive").send({});
     expect(arch.status).toBe(200);
     check("POST archive", arch);

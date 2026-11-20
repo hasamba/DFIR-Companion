@@ -48,7 +48,12 @@ export function registerFindingsDisplayRoutes(app: Express, ctx: RouteContext): 
   app.put("/cases/:id/confidence-control", async (req: Request, res: Response) => {
     if (!options.confidenceControlStore)
       return res.status(501).json({ error: "confidence control not configured" });
-    const body = (req.body ?? {}) as Record<string, unknown>;
+    const rawBody: unknown = req.body ?? {};
+    // A text/plain body arrives as a string, and `"x" in "hello"` throws (#2765).
+    if (typeof rawBody !== "object" || rawBody === null || Array.isArray(rawBody)) {
+      return res.status(400).json({ error: "request body must be a JSON object" });
+    }
+    const body = rawBody as Record<string, unknown>;
     // PATCH ONLY THE KEYS THE REQUEST CARRIES. The dashboard writes the floor (debounced, on
     // keystrokes) and the lenses (immediate, on click) from two independent paths, so a PUT naming
     // one must not disturb the others. Reading an ABSENT minConfidence as "clear it" — which is

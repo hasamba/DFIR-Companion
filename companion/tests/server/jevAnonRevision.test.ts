@@ -11,6 +11,7 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
 import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #1840, the Jev path: the missed-evidence review masks every batch with ONE snapshot taken at the
 // start, and sends batches four at a time. A Hide that lands mid-review must stop every batch that
@@ -82,6 +83,7 @@ describe("a Hide during a Jev review (#1840)", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-jev-anonrev-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, "c1");
     const stateStore = new StateStore(cases);
     await stateStore.save(emptyState("c1"));
     const superTimelineStore = new SuperTimelineStore(cases);
@@ -111,6 +113,7 @@ describe("a Hide during a Jev review (#1840)", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-jev-anonrev-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, "c1");
     const stateStore = new StateStore(cases);
     await stateStore.save(emptyState("c1"));
     const superTimelineStore = new SuperTimelineStore(cases);

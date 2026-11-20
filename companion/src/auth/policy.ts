@@ -100,6 +100,27 @@ function collectionPath(path: string): string {
   return (path.length > 1 ? path.replace(/\/+$/, "") : path).toLowerCase();
 }
 
+/**
+ * True when Express would route `rawPath` to `route` (a lowercase path with no trailing slash).
+ * The demo gate's allow rule, so it matches only what the router would actually serve there.
+ */
+export function isRoutedAs(rawPath: string, route: string): boolean {
+  return collectionPath(rawPath) === route;
+}
+
+/**
+ * The demo gate's refuse rule: any spelling of `route` — Express's own, and the percent-decoded
+ * one as well, since refusing a path that would not have routed is harmless.
+ */
+export function isAnySpellingOf(rawPath: string, route: string): boolean {
+  if (isRoutedAs(rawPath, route)) return true;
+  try {
+    return isRoutedAs(decodeURIComponent(rawPath), route);
+  } catch {
+    return false; // undecodable: already checked as sent
+  }
+}
+
 /** True for the /cases/* paths that are not a case (see NON_CASE_PATHS), in Express's spelling. */
 export function isNonCasePath(path: string): boolean {
   return NON_CASE_PATHS.has(collectionPath(path));

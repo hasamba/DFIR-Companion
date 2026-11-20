@@ -1,5 +1,5 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
-import { cellMd } from "./mdText.js";
+import { cellMd, codeSpanMd } from "./mdText.js";
 
 /**
  * "Remediation checks" section (#930 item 9 — #969): per boundary, the analyst's recorded
@@ -23,7 +23,7 @@ export function remediationChecksSection(state: InvestigationState, lines: strin
     "",
   );
   for (const b of boundaries) {
-    lines.push(`### ${cellMd(b.artifact.kind)} \`${cellMd(b.artifact.value)}\` on ${cellMd(b.host)}`, "");
+    lines.push(`### ${cellMd(b.artifact.kind)} ${codeSpanMd(b.artifact.value)} on ${cellMd(b.host)}`, "");
     lines.push(
       `- Remediated at ${cellMd(b.remediatedAt)}; watch window ${b.windowHours} h${b.note ? `; note: ${cellMd(b.note)}` : ""}`,
     );
@@ -43,7 +43,7 @@ export function remediationChecksSection(state: InvestigationState, lines: strin
         receipt.retentionNote ? "super-timeline at its retention cap" : "",
       ].filter(Boolean);
       lines.push(
-        `- Check ${cellMd(receipt.id)} at ${cellMd(receipt.at)}: host spellings ${receipt.spellings.map((s) => `\`${cellMd(s)}\``).join(", ") || "(none held by the case)"}; window ${cellMd(receipt.window.from)} → ${cellMd(receipt.window.to)}; ${receipt.hitTotal} row(s) named the artifact${
+        `- Check ${cellMd(receipt.id)} at ${cellMd(receipt.at)}: host spellings ${receipt.spellings.map((s) => codeSpanMd(s)).join(", ") || "(none held by the case)"}; window ${cellMd(receipt.window.from)} → ${cellMd(receipt.window.to)}; ${receipt.hitTotal} row(s) named the artifact${
           Object.keys(receipt.hitsByClass).length
             ? ` (${Object.entries(receipt.hitsByClass)
                 .map(([k, v]) => `${v} ${cellMd(k)}`)

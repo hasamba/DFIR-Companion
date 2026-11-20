@@ -11,6 +11,7 @@ import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js
 import type { AIProvider, AnalyzeRequest } from "../../src/providers/provider.js";
 import { buildRuntimePipeline, createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #2667: a case whose evidence came from Wazuh gets its hunts in Wazuh dashboard search (DQL), on the
 // fleet route and the playbook route, through the real routes with a mocked model.
@@ -52,6 +53,7 @@ async function makeApp() {
     aiConfigured: true,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   const s = emptyState("c1");
   s.findings.push({
     id: "f1",

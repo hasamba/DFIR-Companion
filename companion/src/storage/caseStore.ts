@@ -19,6 +19,7 @@ import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
+import { readListedCaseMeta } from "./caseMetaListing.js";
 import { copyHandleHashed, CopyContentChangedError } from "./handleCopy.js";
 import {
   ARCHIVED_DIRNAME,
@@ -222,11 +223,12 @@ export class CaseStore {
   }
 
   // Inverse of archiveCaseFolder: moves the case back into the active root, same `status` contract.
-  // Rejects (via rename's ENOENT) if caseId isn't currently archived under _archived/.
+  // Rejects with a 409 if it is no longer archived once the lock is held — a parallel restore won (#2771).
   async restoreCaseFolder(caseId: string, status?: CaseMeta["status"]): Promise<CaseMeta | null> {
     const active = join(this.root, caseId);
     const archived = join(this.root, ARCHIVED_DIRNAME, caseId);
     return this.metaLock.runExclusive(caseId, async () => {
+      if (!this.isInArchive(caseId)) throw new CaseLifecycleError(`case ${caseId} is not archived`, 409);
       await this.whileClosed(caseId, "moved", () => rename(archived, active), ["archived"]);
       return status ? this.relabelAfterMove(caseId, status, active, archived) : null;
     });
@@ -547,11 +549,9 @@ export class CaseStore {
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         if (dir === this.root && entry.name === ARCHIVED_DIRNAME) continue; // not a case — the archived-cases folder itself
-        try {
-          metas.push(JSON.parse(await readFile(this.caseMetaPath(entry.name), "utf8")) as CaseMeta);
-        } catch {
-          // a directory without a valid case.json is not a case — skip it
-        }
+        // No case.json → not a case. A damaged one is skipped too, but logged (#2768).
+        const meta = await readListedCaseMeta(this.caseMetaPath(entry.name), entry.name);
+        if (meta) metas.push(meta);
       }
     }
     metas.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));

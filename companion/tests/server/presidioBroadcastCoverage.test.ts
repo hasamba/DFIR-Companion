@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import type { PresidioClient } from "../../src/analysis/presidio.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 class StubProvider implements AIProvider {
   readonly name = "stub";
@@ -48,6 +49,7 @@ describe("sendPipelineError broadcasts ai_status:blocked for PresidioApprovalReq
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
+    await enableCaseAi(store, "c1");
     const s = emptyState("c1");
     s.forensicTimeline.push({
       id: "ev1",
@@ -107,6 +109,7 @@ describe("sendPipelineError broadcasts ai_status:blocked for PresidioApprovalReq
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
+    await enableCaseAi(store, "c1");
     const s = emptyState("c1");
     s.forensicTimeline.push({
       id: "ev1",
@@ -168,6 +171,7 @@ describe("sendPipelineError broadcasts ai_status:blocked for PresidioApprovalReq
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
+    await enableCaseAi(store, "c1");
     const s = emptyState("c1");
     s.forensicTimeline.push({
       id: "ev1",
@@ -221,6 +225,7 @@ describe("sendPipelineError broadcasts ai_status:blocked for PresidioApprovalReq
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
+    await enableCaseAi(store, "c1");
     const s = emptyState("c1");
     s.forensicTimeline.push({
       id: "ev1",

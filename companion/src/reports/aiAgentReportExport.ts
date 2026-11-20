@@ -13,7 +13,7 @@ import type {
   AiAgentRunView,
 } from "../analysis/aiAgentReportTypes.js";
 import { AI_AGENT_HASH_CAVEAT, hashCheckLabel } from "../analysis/aiAgentHashCheck.js";
-import { cellMd, codeSpanMd, oneLineMd } from "./mdText.js";
+import { cellCodeMd, cellMd, codeSpanMd, oneLineMd } from "./mdText.js";
 import { row } from "./csv.js";
 
 const SENSITIVE_NOTE =
@@ -27,7 +27,7 @@ const PROVISIONAL_NOTE = "Grades are provisional until measured on real develope
  * escaped so the cell stays one cell.
  */
 export function evidenceCellMd(value: string): string {
-  return cellMd(codeSpanMd(value));
+  return cellCodeMd(codeSpanMd(value));
 }
 const ev = evidenceCellMd;
 

@@ -34,6 +34,7 @@ import type { CaseLifecycle } from "../auth/teamAuth.js";
 import type { AppOptions } from "./appOptions.js";
 import { createOriginGuard } from "../http/originGuard.js";
 import { createSecurityHeaders } from "../http/securityHeaders.js";
+import { requestLogTarget } from "../http/requestLogTarget.js";
 import { createOperationalHttpMetrics } from "../analysis/operationalHttpMetrics.js";
 import { createCaseIdGate } from "../analysis/caseIdGate.js";
 import { createCaseLockGate } from "../analysis/caseLockGate.js";
@@ -46,8 +47,10 @@ import {
 import { isTeamAuthRoutePath, registerTeamAuthRoutes } from "../auth/authRoutes.js";
 import {
   CLIENT_DATA_DEMO_REFUSAL,
+  isAnySpellingOf,
   isClientDataRoutePath,
   isCloudRoutePath,
+  isRoutedAs,
   resolveRequestPolicy,
 } from "../auth/policy.js";
 import { setRequestAuthentication } from "../auth/types.js";
@@ -135,7 +138,8 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
       // GET /settings/browse-fs is the one GET that isn't safe to blanket-allow: it walks the
       // server's own filesystem on request, which on the public demo means any visitor could
       // enumerate arbitrary directories the server process can read.
-      if (req.path === "/settings/browse-fs") {
+      // Matched in Express's spelling (any case, optional trailing slash): the router serves them all.
+      if (isAnySpellingOf(req.path, "/settings/browse-fs")) {
         return res
           .status(403)
           .json({ error: "Demo mode: filesystem browsing is disabled on the public demo." });
@@ -154,17 +158,19 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
         return res.status(403).json({ error: CLIENT_DATA_DEMO_REFUSAL, demo: true });
       }
       if (req.method === "GET" || req.method === "OPTIONS") return next();
-      if (req.path === "/cases/seed-demo") return next();
+      if (isRoutedAs(req.path, "/cases/seed-demo")) return next();
       return res
         .status(403)
         .json({ error: "Demo mode: this action is disabled. The demo case resets every hour." });
     });
   }
 
-  // Log each request and its final status (useful for a local single-user tool).
+  // Log each request and its final status (useful for a local single-user tool). The path and the
+  // query parameter NAMES only: values (sign-in codes, return addresses, tokens) stay out of a log
+  // that support bundles copy.
   app.use(function requestLogger(req: Request, res: Response, next: NextFunction) {
     res.on("finish", () => {
-      logLine(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
+      logLine(`[req] ${req.method} ${requestLogTarget(req.url)} -> ${res.statusCode}`);
     });
     next();
   });

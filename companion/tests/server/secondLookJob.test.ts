@@ -13,6 +13,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { pollFor } from "../helpers/poll.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #2407: the second look runs as a job, so its forced re-synthesis takes the case's one job slot
 // instead of running beside another synthesis. Harness copied from secondLookRoute.test.ts.
@@ -48,6 +49,7 @@ async function harness(opts: { withSuperTimeline?: boolean; jobManager?: JobMana
   const withSuper = opts.withSuperTimeline !== false;
   const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-secondlook-route-")));
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   const stateStore = new StateStore(store);
   const seeded = emptyState("c1");
   seeded.forensicTimeline.push(

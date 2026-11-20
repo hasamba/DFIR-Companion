@@ -56,6 +56,7 @@ async function answeredWhileHeld(pending: PromiseLike<request.Response>, holdMs 
 describe("archive routes hold the case state lock (#2247)", () => {
   it("POST /archive waits for the state lock, then builds the zip", async () => {
     const { root, app, stateLock } = await setup();
+    await request(app).patch("/cases/c1/status").send({ status: "closed" }); // archive needs a closed case (#2758)
     const lock = holdStateLock(stateLock, "c1");
     const { answeredEarly, response } = await answeredWhileHeld(
       request(app).post("/cases/c1/archive").send({}),

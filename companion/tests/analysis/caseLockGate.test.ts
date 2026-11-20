@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { setServerLogger } from "../../src/logging/serverLogger.js";
+import { createConsoleLogger } from "../../src/logging/logger.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -154,6 +156,39 @@ describe("createCaseLockGate", () => {
     vi.spyOn(store, "getCaseMeta").mockRejectedValueOnce(new Error("simulated store failure"));
     const res = await request(app).get("/cases/c1/state");
     expect(res.status).toBe(401);
+  });
+
+  describe("a damaged case.json (#2768)", () => {
+    afterEach(() => setServerLogger(createConsoleLogger("info")));
+
+    it.each([
+      ["empty", ""],
+      ["truncated", '{"caseId":"c1","pass'],
+    ])(
+      "answers an %s case.json with a clear error, not a password prompt, and blocks the route",
+      async (_l, body) => {
+        await writeFile(store.caseMetaPath("c1"), body, "utf8");
+        const errors: string[] = [];
+        setServerLogger({ ...createConsoleLogger("error"), error: (m: string) => errors.push(m) });
+
+        const res = await request(app).get("/cases/c1/state");
+        expect(res.status).toBe(500);
+        expect(res.body.error).toBe("case_json_unreadable");
+        expect(res.body.caseId).toBe("c1");
+        expect(res.body.message).toMatch(/case\.json/);
+        const present = await request(app).get("/cases/c1/present");
+        expect(present.status).toBe(500);
+        expect(present.body.error).toBe("case_json_unreadable");
+        expect(errors.some((m) => m.includes("c1") && m.includes("case.json"))).toBe(true);
+      },
+    );
+
+    it("still fails closed as locked on any other unexpected error", async () => {
+      vi.spyOn(store, "getCaseMeta").mockRejectedValueOnce(new Error("EACCES"));
+      const res = await request(app).get("/cases/c1/state");
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe("locked");
+    });
   });
 
   // POST /captures is top-level (not under /cases/:id), so this gate never covers it — the route

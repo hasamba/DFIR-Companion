@@ -6,6 +6,7 @@ import {
   type ProviderUsage,
   type ProviderErrorKind,
   ProviderError,
+  cancelledError,
   safetyStopError,
 } from "./provider.js";
 import { codexFailure } from "./codexErrors.js";
@@ -78,7 +79,11 @@ export class CodexProvider implements AIProvider {
       }
       throw new ProviderError(`Codex failed to start: ${run.spawnError.message}`, "transport");
     }
-    if (run.timedOut) throw new ProviderError(`Codex timed out after ${this.timeoutMs}ms`, "timeout");
+    if (run.timedOut) {
+      // #2779: an analyst Stop kills the CLI the same way the timeout does; report it as a cancel.
+      if (req.signal?.aborted) throw cancelledError("Codex");
+      throw new ProviderError(`Codex timed out after ${this.timeoutMs}ms`, "timeout");
+    }
 
     const parsed = parseCodexOutput(run.stdout);
     const label = `Codex (${this.model || "default model"})`;

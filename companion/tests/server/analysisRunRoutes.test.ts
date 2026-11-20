@@ -14,6 +14,7 @@ import { defaultReportTemplate } from "../../src/reports/reportTemplate.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { ReportVersionStore } from "../../src/reports/reportVersionStore.js";
 import { createApp } from "../../src/server.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 async function harness() {
   const root = await mkdtemp(join(tmpdir(), "dfir-run-routes-"));
@@ -38,6 +39,7 @@ async function harness() {
     investigator: "i",
     aiProvider: null,
   });
+  await enableCaseAi(cases, "c1");
   return { app, analysisRunStore, cases };
 }
 

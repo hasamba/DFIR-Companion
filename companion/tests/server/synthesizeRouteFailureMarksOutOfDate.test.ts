@@ -22,6 +22,7 @@ import { getSynthesisPrompt } from "../../src/analysis/pipeline.js";
 import { HostMergeDecisionRequired } from "../../src/analysis/hostDuplicateGate.js";
 import { createApp } from "../../src/server.js";
 import { pollFor } from "../helpers/poll.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 const CASE_ID = "c1";
 const FAILED_REASON = "last synthesis failed";
@@ -42,6 +43,7 @@ beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-synth-route-fail-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: CASE_ID, name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(cases, CASE_ID);
   stateStore = new StateStore(cases);
   enteredAborted = false;
   const assetOverridesStore = new AssetOverridesStore(cases);

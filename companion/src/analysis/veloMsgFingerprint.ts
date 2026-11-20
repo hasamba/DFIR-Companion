@@ -16,14 +16,19 @@ function hashStr(s: string): string {
 // differing only by PID collapse; two naming different tools (HackTool:Passview vs Mimikatz) or
 // peers stay apart. Hashing (not a prefix) lets a token anywhere in a long boilerplate message
 // separate events and keeps the key a fixed length however many addresses one message names.
+// "Words" are Unicode letters in any script, with their combining marks (Hindi, Thai vowel signs)
+// (#2762): an ASCII-only class turned a Russian or Chinese message into "" and merged distinct
+// localized detections. NFC makes composed and decomposed accents hash alike. On lowercased ASCII
+// the class matches exactly a-z, so English fingerprints are unchanged.
 export function msgFingerprint(msg: string): string {
   const line = oneLine(msg)
     .toLowerCase()
+    .normalize("NFC")
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "");
   const addrs = networkTokens(line);
   const norm = line
     .replace(/\d+/g, "")
-    .replace(/[^a-z]+/g, " ")
+    .replace(/[^\p{L}\p{M}]+/gu, " ")
     .trim();
   const joined = addrs.length ? `${norm} ${addrs.join(" ")}`.trim() : norm;
   return joined ? hashStr(joined) : "";

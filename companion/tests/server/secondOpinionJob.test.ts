@@ -16,6 +16,7 @@ import { JobManager } from "../../src/analysis/jobManager.js";
 import { HostMergeDecisionRequired } from "../../src/analysis/hostDuplicateGate.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 const SYNTH = JSON.stringify({
   findings: [
@@ -105,6 +106,7 @@ async function makeApp(withJobs = true) {
     onAiStatus: (_caseId, evt) => statuses.push(evt.status),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   const state = emptyState("c1");
   state.forensicTimeline.push({
     id: "e1",

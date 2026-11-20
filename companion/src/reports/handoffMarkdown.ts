@@ -4,7 +4,14 @@
 
 import type { Finding, Severity } from "../analysis/stateTypes.js";
 import type { HandoffBrief } from "../analysis/handoffBrief.js";
-import { blockMd, cellMd, displayQuestionText, oneLineMd, SYSTEM_CHECK_LABEL } from "./mdText.js";
+import {
+  blockMd,
+  cellCodeMd,
+  cellMd,
+  displayQuestionText,
+  flatLineMd,
+  SYSTEM_CHECK_LABEL,
+} from "./mdText.js";
 
 const when = (iso: string): string => (iso ? iso.slice(0, 16).replace("T", " ") + " UTC" : "unknown");
 const more = (n: number, what: string): string[] => (n > 0 ? [`- _… and ${n} more ${what}_`] : []);
@@ -17,7 +24,9 @@ const more = (n: number, what: string): string[] => (n > 0 ? [`- _… and ${n} m
 export function renderHandoffMarkdown(b: HandoffBrief, opts: { neutralizeHtml?: boolean } = {}): string {
   const html = opts.neutralizeHtml ?? true;
   const ent = (s: string): string => (html ? s.replace(/</g, "&lt;").replace(/>/g, "&gt;") : s);
-  const line = (s: string): string => ent(cellMd(oneLineMd(s)));
+  // One escape per line, never two: the entity form for the pasteable copy, cellMd's backslash
+  // escape (which also covers `<`, `>` and `&`) for the report section.
+  const line = (s: string): string => (html ? ent(cellCodeMd(flatLineMd(s))) : cellMd(flatLineMd(s)));
   const block = (s: string): string => ent(blockMd(s));
   const out: string[] = [];
   out.push(`## Handoff Brief — ${line(b.caseId)} (${when(b.generatedAt)})`, "");

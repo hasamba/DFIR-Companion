@@ -314,6 +314,7 @@ When nothing new happens for 60 seconds, Watson reacts once to everything it not
 - When an import starts a synthesis, Watson waits for the synthesis to finish and then reacts to its result.
 - After an import, Watson can answer and update the key questions, but it does not propose findings, next steps or report text. After notes and stars, it can propose them for your approval.
 - When a reaction is held by Presidio, reaches the Watson cost or token limit, or fails two times in a row, Watson stops reacting on the case and says so in the chat. Send a message to start again.
+- When the companion restarts before a reaction runs, the reaction is not lost. At start-up, Watson waits a full quiet time again and then reacts. The rules above still apply.
 
 Set the quiet time with `DFIR_AI_WATSON_REACT_DELAY_SEC` (default 60). Set 0 to stop the reactions: Watson then reads what it noted at the start of your next message.
 

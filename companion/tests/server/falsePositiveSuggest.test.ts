@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState, type ForensicEvent, type Finding } from "../../src/analysis/stateTypes.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 function fakeProvider(rawText: string): AIProvider {
   return {
@@ -58,6 +59,7 @@ describe("POST /cases/:id/false-positive/suggest", () => {
     store = new CaseStore(dir);
     stateStore = new StateStore(store);
     await store.createCase({ caseId: "c1", name: "c1", investigator: "tester", aiProvider: null });
+    await enableCaseAi(store, "c1");
     const state = emptyState("c1");
     state.forensicTimeline.push(
       ev("e1", "2026-01-01T00:00:00Z"),
