@@ -208,6 +208,13 @@ describe("aiAgentForensics section rendering (#2721)", () => {
     expect(out).not.toContain("No rule matched on the endpoints and scopes above.");
   });
 
+  it("does not read as a clean result when result rows could not be read", () => {
+    const out = md(one(run({ report: report({ hits: [], unreadableRows: 2 }) })));
+    expect(out).toContain("not a clean result");
+    expect(out).toContain("2 result row(s) could not be read.");
+    expect(out).not.toContain("No rule matched on the endpoints and scopes above.");
+  });
+
   it("caps the hits table in the case report and points to the run's own download for the rest", () => {
     const h = report().hits[0];
     const many = report({ hits: Array.from({ length: AI_AGENT_SECTION_MAX_HITS + 3 }, () => h) });

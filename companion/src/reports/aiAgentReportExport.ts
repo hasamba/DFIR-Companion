@@ -140,7 +140,7 @@ function hitLine(h: AiAgentReportHit): string {
 function hitsMarkdown(run: AiAgentRunView, r: AiAgentReport, h: string, maxHits: number): string[] {
   const lines = [`${h} Hits`, ""];
   if (!r.hits.length) {
-    const partial = run.readIncomplete?.length || run.reportError;
+    const partial = run.readIncomplete?.length || run.reportError || r.unreadableRows > 0;
     lines.push(
       partial
         ? "No rule matched in the results that were read, but the results are incomplete (see above), so this is not a clean result."
