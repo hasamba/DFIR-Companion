@@ -397,6 +397,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     timeBasis: timeBasisOf(events, times[0] ?? primary.timestamp), // follows the kept time (#2684)
     sha256: events.find((e) => e.sha256)?.sha256,
     md5: events.find((e) => e.md5)?.md5,
+    fileIdentity: primary.fileIdentity, // #2731: the hash, size and signer of the row that is shown
     path: primary.path ?? events.find((e) => e.path)?.path,
     asset: primary.asset ?? events.find((e) => e.asset)?.asset,
     processName: primary.processName ?? events.find((e) => e.processName)?.processName,

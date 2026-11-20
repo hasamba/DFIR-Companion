@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { canonicalEventEnvelopeSchema } from "./canonicalEvent.js";
 import { tagNaiveAsUtc } from "./naiveTimestamp.js";
+import { fileIdentitySchema } from "./fileIdentity.js";
 
 // Shared parser for a key-question status; junk falls back to "unknown".
 export const questionStatusSchema = z
@@ -270,6 +271,9 @@ export const deltaSchema = z.object({
         // The modification time the source artifact recorded for this file (#909 item 8). A field
         // that is not in this schema is stripped at the merge, so it would never reach the timeline.
         fileModified: z.string().optional(),
+        // Importer-only (#2731): the Amcache SHA1 + size and the Autoruns signer verdict a client
+        // approval can match. Stripped from model deltas by stripAiExtractedFrom.
+        fileIdentity: fileIdentitySchema.optional().catch(undefined),
         chainSignature: z.string().optional(), // time-independent process-creation identity (#68)
         // Set only by a deterministic importer whose source genuinely carries a distribution
         // marking (currently theHiveImport.ts). A model has no way to know an external system's
@@ -649,8 +653,9 @@ export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
     // collection steps; one clearing it cannot happen, because the merge never clears it on absence.
     // `sourceRecords` (#2301) is provenance too: a model must never point an event at source records.
     // `timeBasis` (#2684) likewise: a model claiming "scan time" would mute a gap's tampering grade.
+    // `fileIdentity` (#2731) likewise: a model-asserted signer or hash could match a client approval.
     forensicEvents: (delta.forensicEvents ?? []).map(
-      ({ origin, assetRecord, partlyReadArtifact, sourceRecords, timeBasis, ...rest }) => rest,
+      ({ origin, assetRecord, partlyReadArtifact, sourceRecords, timeBasis, fileIdentity, ...rest }) => rest,
     ),
   };
 }

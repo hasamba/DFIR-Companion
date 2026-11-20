@@ -66,7 +66,7 @@ import { msgFingerprint } from "./veloMsgFingerprint.js";
 import { mapAiAgentRow, learnWholeFile, type AiAgentHostsCtx } from "./aiAgentImport.js"; // AI Agent Forensics rows first (#2690, #2734)
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
-import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
+import { withHostSuffix, titleSafe } from "./velociraptorTitle.js";
 import {
   gradeByContentLocation,
   isUnforgeableContentPath,
@@ -91,7 +91,6 @@ import {
   actionAggKey,
   pslistAggKey,
   netstatAggKey,
-  startupAggKey,
   sigmaOverlayAggKey,
   withMessageFingerprint,
 } from "./veloAggKeys.js";
@@ -106,6 +105,8 @@ import { MAX_TIME_MS, MIN_TIME_MS, pickTime, usDateTime, vrTime } from "./veloRo
 import { winRowToFlat } from "./veloWinRow.js";
 import { prefetchSignal } from "./prefetchExecution.js";
 import { isSamAccountRow, mapSamAccount } from "./samAccountImport.js";
+import { isAutorunsRow, mapStartupRow } from "./veloAutorunsMap.js"; // Autoruns keeps entry, path, signer (#2731)
+import { amcacheFileIdentity } from "./veloAmcacheIdentity.js";
 
 type Row = Record<string, unknown>;
 
@@ -356,7 +357,7 @@ function classify(row: Row, artifact: string): Kind {
   if (/netstat/.test(a)) return "netstat";
   if (/pslist|pstree|psscan/.test(a)) return "pslist";
   if (/browserdownload|evidence.*download/i.test(a)) return "download";
-  if (/startup|autorun/i.test(a)) return "startup";
+  if (/startup|autorun/i.test(a)) return "startup"; // veloAutorunsMap.ts picks the mapper by the columns
   if (/taskscheduler/i.test(a)) return "taskscheduler";
   if (/persistencesniper/i.test(a)) return "persistenceSniper";
   if (/binaryrename/i.test(a)) return "binaryRename";
@@ -412,6 +413,7 @@ function classify(row: Row, artifact: string): Kind {
   // Startup/autorun rows: Name + OSPath + Enabled (Windows.Sys.StartupItems and similar)
   if (getCI(row, "Enabled") != null && getCI(row, "OSPath") != null && getCI(row, "Name") != null)
     return "startup";
+  if (isAutorunsRow(row)) return "startup"; // an autorunsc row with no _Source (#2731)
   // Scheduled task rows (Windows.System.TaskScheduler/Analysis): TaskName is unique to this artifact
   if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null))
     return "taskscheduler";
@@ -1130,11 +1132,12 @@ function mapAmcacheApp(row: Row, artifact: string, host: string): MappedEvent {
 // Windows.Forensics.Amcache/InventoryApplicationFile — a binary PRESENT on disk (execution/presence
 // evidence), with its SHA1. The generic mapper showed the path alone with no verb.
 function mapAmcacheFile(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
-  collectRowIocs(row, sink);
+  const { sha256 } = collectRowIocs(row, sink);
   const path = firstStr(row, ["FullPath", "OSPath"]) || firstStr(row, ["Name", "OriginalFileName"]);
   const sha1 = str(getCI(row, "SHA1")).trim();
   if (/^[0-9a-f]{40}$/i.test(sha1)) addIoc(sink, "hash", sha1.toLowerCase());
-  return actionEvent({
+  // The SHA1 and Size travel together (#2731): Amcache hashes only the first 30 MiB of a file.
+  const event = actionEvent({
     artifact,
     host,
     action: "Program file present (Amcache)",
@@ -1143,6 +1146,7 @@ function mapAmcacheFile(row: Row, artifact: string, host: string, sink: Map<stri
     path: path || undefined,
     processName: path || undefined,
   });
+  return { ...event, ...(sha256 ? { sha256 } : {}), ...amcacheFileIdentity(row) };
 }
 
 // Windows.Forensics.Prefetch — a program EXECUTION (with a run count). The generic mapper showed the
@@ -1323,40 +1327,6 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   };
 }
 
-function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
-  const name = str(getCI(row, "Name")).trim();
-  const ospath = str(getCI(row, "OSPath")).trim();
-  const details = demangleUtf16Noise(str(getCI(row, "Details")).trim());
-  const enabledRaw = str(getCI(row, "Enabled")).trim().toLowerCase();
-  const enabled =
-    enabledRaw === "enable" || enabledRaw === "enabled" || enabledRaw === "true" || enabledRaw === "1";
-
-  // Add the executable path or registry path as file/process IOC when it looks like a real path.
-  const cmdPath = details.replace(/^["']?([A-Za-z]:\\[^"'\s]+).*$/, "$1");
-  if (details && /^[A-Za-z]:\\/.test(cmdPath)) addIoc(sink, "file", cmdPath.slice(0, 300));
-  if (ospath && /^[A-Za-z]:\\/.test(ospath)) addIoc(sink, "file", ospath.slice(0, 300));
-
-  const enabledLabel = enabled ? "enabled" : "disabled";
-  const subject = details && details !== name ? oneLine(details).slice(0, 300) : ospath;
-  let description = `Velociraptor: Startup [${name || "item"}] — ${subject} (${enabledLabel})`;
-  description = withHostSuffix(description, host).slice(0, 600);
-
-  // Active persistence is worth surfacing; disabled items are informational.
-  const severity: Severity = enabled ? "Low" : "Info";
-
-  const aggKey = startupAggKey(host, name, ospath);
-
-  return {
-    timestamp: pickTime(row),
-    description,
-    severity,
-    mitre: enabled ? ["T1547"] : [],
-    aggKey,
-    sources: ["Velociraptor"],
-    ...(host ? { asset: host } : {}),
-  };
-}
-
 function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const taskName = str(getCI(row, "TaskName")).trim();
   const command = str(getCI(row, "Command")).trim();
@@ -1509,7 +1479,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
     } else if (kind === "download") {
       ms = [mapDownload(row, host, rowSink)];
     } else if (kind === "startup") {
-      ms = [mapStartup(row, host, rowSink)];
+      ms = [mapStartupRow(row, artifact, host, rowSink)];
     } else if (kind === "taskscheduler") {
       ms = [mapTaskScheduler(row, host, rowSink)];
     } else if (kind === "persistenceSniper") {

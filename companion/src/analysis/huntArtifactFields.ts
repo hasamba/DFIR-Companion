@@ -1,4 +1,5 @@
 import type { ForensicEvent } from "./stateTypes.js";
+import { sha1Unusable, usableSha1 } from "./fileIdentity.js";
 
 /**
  * Normalised hunt fields of one imported row (#2670), derived at the import seam from the row the
@@ -13,9 +14,12 @@ import type { ForensicEvent } from "./stateTypes.js";
  *
  * Signer vs publisher: Amcache "Publisher" and version-info strings are ATTACKER-CONTROLLED text. They
  * are kept as `publisher` with `publisherVerified: false` and may describe a candidate, but they never
- * approve anything. A VERIFIED signer can only come from an Authenticode check on the endpoint; no
- * importer in this release records one, so `signer` is always absent and an approval that needs a
- * signer resolves to Unknown (huntApprovalMatch.ts).
+ * approve anything. A VERIFIED signer can only come from an Authenticode check on the endpoint: today
+ * only an Autoruns row whose Signer starts with "(Verified) " (#2731, veloAutorunsMap.ts).
+ *
+ * Amcache SHA1 (#2731): Windows hashes only the first 30 MiB of a file, so the SHA1 is a hunt field
+ * only when Amcache also recorded a size within that limit. A larger or unsized file keeps the reason
+ * (`sha1Unusable`) so the client-baseline panel can say why the hash cannot approve it.
  */
 export type HuntEvidence = "execution" | "presence" | "installed" | "autorun" | "download";
 
@@ -29,9 +33,15 @@ export interface HuntFields {
   path: string;
   publisher?: string;
   publisherVerified: false;
-  /** Verified Authenticode signer — never set in this release (see the header). */
+  /** Verified Authenticode signer — only from a "(Verified) " Autoruns Signer (see the header). */
   signer?: string;
+  /** The endpoint checked the signature and did not verify it. */
+  signatureUnverified?: true;
   sha256?: string;
+  /** Amcache SHA1 of a file of known size within 30 MiB — the only SHA1 an approval may use. */
+  sha1?: string;
+  /** Amcache recorded a SHA1 an approval cannot use: no size, or a file over 30 MiB. */
+  sha1Unusable?: "no-size" | "over-limit";
   md5?: string;
   /** Download source URL (Zone.Identifier HostUrl) when the row named one. */
   sourceUrl?: string;
@@ -103,6 +113,21 @@ function downloadUrl(description: string): string | undefined {
   return m ? m[1].replace(/[),.]+$/, "") : undefined;
 }
 
+/** The importer-recorded identity (#2731): a usable Amcache SHA1 or why not, and the signer verdict. */
+function identityFields(
+  e: ForensicEvent,
+): Pick<HuntFields, "sha1" | "sha1Unusable" | "signer" | "signatureUnverified"> {
+  const id = e.fileIdentity;
+  const sha1 = usableSha1(id);
+  const unusable = sha1Unusable(id);
+  return {
+    ...(sha1 ? { sha1 } : {}),
+    ...(unusable ? { sha1Unusable: unusable } : {}),
+    ...(id?.signer && !id.signatureUnverified ? { signer: id.signer } : {}),
+    ...(id?.signatureUnverified ? { signatureUnverified: true as const } : {}),
+  };
+}
+
 export function huntFieldsOf(e: ForensicEvent): HuntFields | null {
   const evidence = evidenceOf(e);
   const host = (e.asset ?? "").trim();
@@ -116,6 +141,7 @@ export function huntFieldsOf(e: ForensicEvent): HuntFields | null {
     host,
     ...(e.sha256 ? { sha256: e.sha256.toLowerCase() } : {}),
     ...(e.md5 ? { md5: e.md5.toLowerCase() } : {}),
+    ...identityFields(e),
   };
   if (evidence === "installed") {
     const f = installedFields(e);

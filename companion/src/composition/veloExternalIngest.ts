@@ -249,6 +249,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
           ...(e.path ? { path: e.path } : {}),
           ...(e.sha256 ? { sha256: e.sha256 } : {}),
           ...(e.md5 ? { md5: e.md5 } : {}),
+          ...(e.fileIdentity ? { fileIdentity: e.fileIdentity } : {}), // the Amcache SHA1 + size, Autoruns signer (#2731)
         }));
         const superAdded = await options.superTimelineStore.append(caseId, events);
         getServerLogger().info(`[import] ${caseId} ${storedName}: done — super +${superAdded} (super-only)`, {

@@ -211,6 +211,7 @@ export async function importSuperOnlyArtifact(
     ...(e.path ? { path: e.path } : {}),
     ...(e.sha256 ? { sha256: e.sha256 } : {}),
     ...(e.md5 ? { md5: e.md5 } : {}),
+    ...(e.fileIdentity ? { fileIdentity: e.fileIdentity } : {}), // the Amcache SHA1 + size, Autoruns signer (#2731)
   }));
   const appended = await deps.superTimelineStore.appendReporting(a.caseId, events);
   getServerLogger().info(

@@ -45,11 +45,26 @@ function harness(profile: Route = { body: { id: PID, name: "Client A", baseline:
             reason: "rare",
             family: "program",
           },
+          {
+            program: "updater.exe",
+            pathPattern: "\\program files\\vendor",
+            hostCount: 2,
+            hosts: ["H1", "H2"],
+            evidence: ["presence"],
+            publishers: [],
+            sha256: [],
+            sha1: ["a".repeat(40)],
+            signers: ["Vendor Inc"],
+            approvableSigner: "Vendor Inc",
+            reason: "not in the reviewed baseline",
+            family: "program",
+          },
         ],
       },
     },
     [`GET /client-profiles/${PID}`]: profile,
     [`PUT /client-profiles/${PID}/domains`]: { body: { version: 4 } },
+    [`POST /client-profiles/${PID}/marks`]: { body: { version: 5 } },
   });
   const api = loadDashboardModule<PanelApi>("dashboard-client-baseline.js", [], {
     document: doc,
@@ -175,6 +190,34 @@ describe("Client Baseline panel layout (#2736)", () => {
     expect(h.panel().textContent).toContain(
       "Blocked download categories and sites: editable by the instance administrator.",
     );
+  });
+
+  it("Mark Approved saves the SHA1, the SHA-256 and the verified signer, so the approval can match (#2731)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const table = p.querySelector(".cb-candidates") as FakeEl;
+    const boxes = table.querySelectorAll("input");
+    boxes[1].checked = true;
+    boxes[1].fire("change");
+    byText(p, "button", "Mark Approved").click();
+    await flush();
+    const post = h.net.calls.find((c) => c.method === "POST");
+    expect(post?.url).toBe(`/client-profiles/${PID}/marks`);
+    expect(post?.body).toEqual({
+      marks: [
+        {
+          verdict: "approved",
+          family: "program",
+          program: "updater.exe",
+          pathPattern: "\\program files\\vendor",
+          sha256: [],
+          sha1: ["a".repeat(40)],
+          signer: "Vendor Inc",
+        },
+      ],
+      source: "client email 2026-11-20",
+    });
   });
 
   it("writes nothing through innerHTML", async () => {

@@ -156,7 +156,16 @@
         if (!picked.size) return void (status.textContent = "Tick at least one item first.");
         const source = askSource();
         if (!source) return;
-        const marks = [...picked].map((c) => ({ verdict, family: c.family, program: c.program, pathPattern: c.pathPattern, sha256: c.sha256 }));
+        // The hashes (SHA-256 and the usable Amcache SHA1) and the verified signer go with the mark, or an approval could never match (#2731).
+        const marks = [...picked].map((c) => ({
+          verdict,
+          family: c.family,
+          program: c.program,
+          pathPattern: c.pathPattern,
+          sha256: c.sha256 || [],
+          sha1: c.sha1 || [],
+          ...(c.approvableSigner ? { signer: c.approvableSigner } : {}),
+        }));
         const r = await send("POST", profileUrl(pid, "marks"), { marks, source });
         status.textContent = r.ok ? `Saved as baseline version ${r.body.version}.` : `Save failed: ${failText(r)}`;
         if (r.ok) loadClientBaseline(caseId);

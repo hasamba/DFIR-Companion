@@ -55,7 +55,7 @@ describe("the client's confirm list (#2670)", () => {
     const csv = confirmListCsv(confirmCandidates(inventory(), EMPTY_BASELINE, new Set(), "t"));
     expect(csv).toContain(`"'=cmd.exe"`);
     expect(csv.split("\r\n")[0]).toBe(
-      "family,program,path_pattern,host_count,hosts,evidence,publisher_unverified,sha256,first_seen,verdict,note",
+      "family,program,path_pattern,host_count,hosts,evidence,publisher_unverified,sha256,sha1,signer_verified,first_seen,verdict,note",
     );
   });
 
@@ -84,6 +84,22 @@ describe("the client's confirm list (#2670)", () => {
       }),
     ]);
     expect(r.skipped).toEqual([{ line: 3, reason: 'unknown verdict "maybe"' }]);
+  });
+
+  it("round-trips the Amcache SHA1 and the verified signer into the client's approval (#2731)", () => {
+    const sha1 = "a".repeat(40);
+    const csv = [
+      "family,program,path_pattern,sha256,sha1,signer_verified,verdict",
+      `"program","rclone.exe","\\tools","","${sha1}","","Approved"`,
+      `"autorun","updater.exe","\\program files\\vendor","","","Vendor Inc","yes"`,
+      `"program","bad.exe","\\tools","","not-a-sha1","","Approved"`,
+    ].join("\r\n");
+    const r = parseClientCsv(csv);
+    expect(r.marks).toEqual([
+      expect.objectContaining({ verdict: "approved", program: "rclone.exe", sha1: [sha1] }),
+      expect.objectContaining({ verdict: "approved", program: "updater.exe", signer: "Vendor Inc" }),
+    ]);
+    expect(r.skipped).toEqual([{ line: 4, reason: "invalid row" }]);
   });
 
   it("refuses a CSV without the key columns", () => {

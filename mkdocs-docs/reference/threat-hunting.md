@@ -72,7 +72,8 @@ rare as more hosts answer; its entry is then removed (unless you promoted it).
 ### 6. Build the baseline with the client
 
 The **Client Baseline** panel lists every item the baseline does not settle, rarest first, with
-its hosts, path, evidence label and publisher (as the endpoint reported it, **not verified**).
+its hosts, path, evidence label and publisher (as the endpoint reported it, **not verified**), and why
+it is still pending.
 
 1. Press **Export confirm list (CSV)** or **(Markdown)** and send it to the client.
 2. When the client answers, tick items and press **Mark Approved**, **Mark Not allowed** or
@@ -91,8 +92,26 @@ Rules that keep an attacker from hiding behind a name:
   in `\Program Files\Google\`. If one host runs a different hash at the approved path, that item
   is not covered.
 - Publisher text alone never approves anything. A missing hash or signer gives **Unknown**.
-- No importer records a verified Authenticode signer yet, so an approval needs an approved hash to
-  match. Prefetch rows carry no hash: approve the program from a hash-bearing artifact.
+- Which artifacts can make an item approvable:
+    - **Amcache** (`Windows.Forensics.Amcache`, program files) records a SHA1. Amcache hashes only
+      the first 30 MiB of a file, so a SHA1 approval covers a file only when Amcache also recorded
+      its size and the file is 30 MiB or smaller. A larger file, or one with no recorded size, stays
+      **Unknown**, and the list says why.
+    - **Autoruns** (`Windows.Sysinternals.Autoruns`) records the image path, the SHA-256 and the
+      signature check. Only a signer that Autoruns reports as `(Verified)` counts. `(Not verified)`
+      and the Company name never approve anything.
+    - **Downloads** (Zone.Identifier) carry a SHA-256.
+    - Prefetch, UserAssist and ShimCache rows carry no hash. A program item is covered only when
+      every host it was seen on also has an Amcache row for the same file and path. An Autoruns
+      approval covers the autorun entry, not the program.
+- Every host must be covered on its own. One host's approved hash or signer says nothing about a
+  host seen only through rows without one. A host seen only through a SHA1 is not covered by an
+  approval that names only a SHA-256, and the reverse. A signer approval needs every host verified
+  by that same signer, and one failed signature check keeps the item **Unknown**.
+- **Mark Approved** saves the item's SHA-256, its usable SHA1 and, when every host is verified by
+  one signer, that signer. The confirm-list CSV has `sha1` and `signer_verified` columns for the
+  same purpose.
+- An approval only stops the rare and new hunt grades. It never lowers a detection.
 - **Not allowed** wins over Approved. An approval can carry an expiry date.
 - Every change is a new numbered **baseline version**, saved with who made it, when and its source,
   and can be reversed (Reset to Unknown). Unknown items stay on the list in every hunt report,

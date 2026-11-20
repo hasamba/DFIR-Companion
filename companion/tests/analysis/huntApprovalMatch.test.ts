@@ -52,9 +52,8 @@ describe("strict baseline matching (#2670)", () => {
 
   it("a signer-only approval is Unknown without a VERIFIED signer on the item", () => {
     expect(approvalMatch(mark({ sha256: [], signer: "Google LLC" }), item({}), NOW)).toBe("unknown");
-    expect(
-      approvalMatch(mark({ sha256: [], signer: "Google LLC" }), item({ signer: "Google LLC" }), NOW),
-    ).toBe("match");
+    const signed = { signers: ["Google LLC"], unsignedHosts: [], signersCapped: false };
+    expect(approvalMatch(mark({ sha256: [], signer: "Google LLC" }), item(signed), NOW)).toBe("match");
   });
 
   it("a changed hash on any host is not covered", () => {

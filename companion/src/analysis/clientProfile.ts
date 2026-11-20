@@ -28,6 +28,11 @@ export interface BaselineMark {
   signer?: string;
   /** Approved SHA-256 hashes, for unsigned files. */
   sha256: string[];
+  /**
+   * Approved Amcache SHA1 hashes (#2731). Amcache hashes only the first 30 MiB, so a SHA1 covers only
+   * a file whose recorded size is within that limit. Absent on marks saved before #2731.
+   */
+  sha1?: string[];
   note: string;
   source: string;
   recordedBy: string;
@@ -101,6 +106,16 @@ export const markInputSchema = z.object({
         .trim()
         .toLowerCase()
         .regex(/^[0-9a-f]{64}$/, "not a SHA-256"),
+    )
+    .max(50)
+    .default([]),
+  sha1: z
+    .array(
+      z
+        .string()
+        .trim()
+        .toLowerCase()
+        .regex(/^[0-9a-f]{40}$/, "not a SHA1"),
     )
     .max(50)
     .default([]),
@@ -196,6 +211,7 @@ export function applyMarks(
       pathPattern: input.pathPattern,
       ...(input.signer ? { signer: input.signer } : {}),
       sha256: input.sha256,
+      ...(input.sha1.length ? { sha1: input.sha1 } : {}),
       note: input.note,
       source: meta.source,
       recordedBy: meta.by,

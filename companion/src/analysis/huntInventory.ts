@@ -1,5 +1,6 @@
 import { huntItemKey, type HuntEvidence, type HuntFields } from "./huntArtifactFields.js";
 import type { HostKey } from "./huntHostKey.js";
+import { EMPTY_IDENTITY_COVERAGE, observeIdentity, type IdentityCoverage } from "./huntItemCoverage.js";
 
 /**
  * The per-case hunt inventory (#2670): every distinct program / autorun / download a hunt import
@@ -23,7 +24,8 @@ export interface InventoryHost {
   firstSeen: string;
 }
 
-export interface InventoryItem {
+/** The SHA1 and signer coverage fields (#2731) are documented in huntItemCoverage.ts. */
+export interface InventoryItem extends IdentityCoverage {
   key: string;
   family: InventoryFamily;
   program: string;
@@ -106,6 +108,7 @@ function observe(item: InventoryItem | undefined, o: InventoryObservation): Inve
     sha256: [],
     unhashedHosts: [],
     hashesCapped: false,
+    ...EMPTY_IDENTITY_COVERAGE,
     md5: [],
     sourceUrls: [],
     hosts: {},
@@ -126,6 +129,11 @@ function observe(item: InventoryItem | undefined, o: InventoryObservation): Inve
     publishers: addValue(base.publishers, f.publisher),
     sha256: addValue(base.sha256, f.sha256),
     ...hashCoverage(base, o, known !== undefined),
+    ...observeIdentity(base, f, {
+      hostKey: o.host.key,
+      knownHost: known !== undefined,
+      maxHosts: INVENTORY_MAX_HOSTS,
+    }),
     md5: addValue(base.md5, f.md5),
     sourceUrls: addValue(base.sourceUrls, f.sourceUrl),
     hosts,
