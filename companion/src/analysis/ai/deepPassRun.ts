@@ -105,6 +105,18 @@ async function scopeForDeepPass(
   };
 }
 
+/**
+ * #2766: the deep pass's own "too many batches" refusal. Typed so the route tells it apart from a
+ * provider failure by class, not by searching the message — a provider 429 whose text says "batches"
+ * must stay a retryable provider error.
+ */
+export class DeepPassBudgetError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DeepPassBudgetError";
+  }
+}
+
 interface DeepPassPlan {
   scope: ScopeWindow;
   markers: FalsePositiveMarker[];
@@ -137,7 +149,7 @@ async function planDeepPass(
   const ceiling = maxBatches ?? (Number(process.env.DFIR_DEEP_PASS_MAX_BATCHES) || DEFAULT_MAX_BATCHES);
   if (batches.length > ceiling) {
     const fits = floorsWithinBudget(previewFloors(scopedEvents, { cap }), ceiling);
-    throw new Error(
+    throw new DeepPassBudgetError(
       `deep pass needs ${batches.length} batches, above the ${ceiling} limit. ` +
         (fits.length
           ? `Raise the floor to ${fits[fits.length - 1]} or above.`

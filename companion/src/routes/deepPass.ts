@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
+import { DeepPassBudgetError } from "../analysis/ai/deepPassRun.js";
 import { deepPassCheckpointSchema, type DeepPassCheckpoint } from "../analysis/deepPass.js";
 import type { Job } from "../analysis/jobRegistry.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
@@ -208,13 +209,15 @@ export function registerDeepPassRoutes(app: Express, ctx: RouteContext): void {
         aiStatus(caseId, "blocked", message);
         return sendPipelineError(res, error);
       }
+      // #2766: by class, not by message text — a provider error that mentions "batches" is not a refusal.
+      const overBudget = error instanceof DeepPassBudgetError;
       if (registered) {
         await options.jobManager?.fail(registered.jobId, error, {
-          code: /batches/i.test(message) ? "budget_exceeded" : "deep_pass_failed",
-          retryable: !/batches/i.test(message),
+          code: overBudget ? "budget_exceeded" : "deep_pass_failed",
+          retryable: !overBudget,
         });
       }
-      if (/batches/i.test(message)) {
+      if (overBudget) {
         aiStatus(caseId, "idle", "deep pass not started — raise the severity floor");
         return res.status(400).json({ error: message });
       }
