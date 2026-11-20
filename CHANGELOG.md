@@ -38,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dashboard stays responsive during a large import** — the full-state merge, its index pass and the import auto-tagger now work in slices that yield to the event loop (closes #2716)
 - **Large Velociraptor imports no longer exhaust memory in the settle step** — rows are settled in pages, and a drop file that crashed the server twice moves to `_failed/` (closes #2713)
 - **Client Baseline panel layout** — standard buttons and inputs, a clear Download policy block with category tick boxes (closes #2736)
+- **AI Agent Forensics clients sharing a host name** — Add to case keys timeline events by Velociraptor client id, so two machines with one host name no longer merge into one event (closes #2734)
+- **Host label across Add-to-case batches** — the client id is added to a shared host name even when the two clients land in different batches (closes #2745)
+- **Filed AI Agent Forensics runs survive sweep retention** — Add to case keeps a report-safe copy of the run in the case, so the case report still lists it after the sweep is deleted (closes #2740)
+- **Re-read updates the filed copy** — refreshing a filed sweep updates its copy in each case it was filed into (closes #2744)
+- **Bulk import no longer slows down batch after batch** — per-batch cost depends on the batch size, not on rows already stored, and the mapping step yields to the event loop (closes #2727)
+- **Client approvals by Amcache hash and verified signer** — approvals match the Amcache SHA1 for files of 30 MiB or less and verified Autoruns signers; Autoruns rows keep their entry, path, signer and hashes, and only unsigned enabled entries grade Low (closes #2731)
+- **Installed programs say why they cannot be approved** — items with no file path show the reason, and approvals with no path are refused in the panel, the API and CSV import (closes #2747)
+- **Prefetch and Amcache paths give one hunt item** — device and volume path prefixes are ignored when hunt items are keyed and matched (closes #2749)
+- **Startup items and scheduled tasks in threat hunts** — startup items form hunt items, and tasks are counted by the program they run (the script or DLL for built-in tools); task items show as "new" once after upgrading (closes #2748)
+- **Threat-hunt architecture notes and eval case** — ARCHITECTURE.md describes hunt grading at the seam, Re-grade with current baseline and the approved-by-client block; the eval corpus has a hunt-mode case (closes #2733)
 
 ## [0.47.0] - 2026-11-19
 
