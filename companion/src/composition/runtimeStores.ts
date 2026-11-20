@@ -84,6 +84,8 @@ import { createGuardedFetch } from "../routes/outboundGuardedFetch.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
 import { loadHuntReportData } from "../analysis/huntReportLoad.js";
 import { wireHuntGrading } from "./huntGrading.js";
+import { ClientProfileStore } from "../analysis/clientProfileStore.js";
+import { HuntClientLinkStore } from "../analysis/huntClientLink.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import { HuntRunSnapshotStore } from "../analysis/huntRunSnapshotStore.js";
 import { VeloMonitorStore } from "../analysis/veloMonitorStore.js";
@@ -380,7 +382,10 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     (id) => serverSetStore.caseSetId(id),
     clientInventoryFor,
   );
-  // #2670: hunt grading at the import seam (inventory + grouped rare/new/policy entries).
+  // #2670: client profiles live beside cases/ (a client outlives every hunt case); hunt grading runs
+  // at the import seam (inventory + grouped rare/new/policy entries).
+  const clientProfileStore = new ClientProfileStore(join(dirname(casesRoot), "client-profiles"));
+  const huntClientLinkStore = new HuntClientLinkStore(store);
   const huntInventoryStore = wireHuntGrading({
     store,
     stateStore,
@@ -587,6 +592,8 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     dashboardBaseUrl,
     veloHuntStore,
     huntInventoryStore,
+    clientProfileStore,
+    huntClientLinkStore,
     huntOutcomeStore,
     huntRunSnapshotStore,
     veloMonitorStore,

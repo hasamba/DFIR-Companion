@@ -438,6 +438,8 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     kevStore,
     veloHuntStore,
     huntInventoryStore: rt.huntInventoryStore,
+    clientProfileStore: rt.clientProfileStore,
+    huntClientLinkStore: rt.huntClientLinkStore,
     huntOutcomeStore,
     huntRunSnapshotStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),

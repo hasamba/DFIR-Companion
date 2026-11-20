@@ -1,0 +1,230 @@
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+
+/**
+ * Client profiles for threat hunting (#2670, decisions D3/D5). A client is its OWN record: a name, an
+ * optional default Velociraptor server set (it only pre-fills new hunt cases — it never decides which
+ * hosts belong to the client), and the client's REVIEWED baseline. PURE: schema, normalisation, and the
+ * immutable edits; persistence is clientProfileStore.ts.
+ *
+ * Integrity rules:
+ *   - Seeing a program never approves it. Only an analyst's mark does, saved with who, when and the
+ *     source ("client email 2026-11-20"); an approval can carry an expiry date.
+ *   - Every edit is a numbered baseline VERSION, kept as a snapshot, so a case graded against v3 can
+ *     be re-read exactly as it was. Every change is audit-logged and reversible (mark it Unknown).
+ *   - Approvals are not false-positive marks and are never turned into one.
+ */
+export type BaselineVerdict = "approved" | "not-allowed" | "unknown";
+export type BaselineFamily = "program" | "installed" | "autorun" | "download";
+
+export interface BaselineMark {
+  id: string;
+  verdict: BaselineVerdict;
+  family: BaselineFamily;
+  program: string;
+  /** Normalised directory pattern; `*` is one path segment, `**` any number. "" = any path (blocks only). */
+  pathPattern: string;
+  /** VERIFIED Authenticode signer the approval requires (never Amcache publisher text). */
+  signer?: string;
+  /** Approved SHA-256 hashes, for unsigned files. */
+  sha256: string[];
+  note: string;
+  source: string;
+  recordedBy: string;
+  recordedAt: string;
+  expiresAt?: string;
+}
+
+export interface Baseline {
+  marks: BaselineMark[];
+  blockedDomains: string[];
+  approvedDomains: string[];
+  blockedCategories: string[];
+}
+
+export interface BaselineVersion {
+  version: number;
+  at: string;
+  by: string;
+  note: string;
+  baseline: Baseline;
+}
+
+export interface ProfileAuditEntry {
+  at: string;
+  by: string;
+  action: string;
+  detail: string;
+  version: number;
+}
+
+export interface ClientProfile {
+  id: string;
+  name: string;
+  defaultServerSetId?: string;
+  version: number;
+  baseline: Baseline;
+  versions: BaselineVersion[];
+  audit: ProfileAuditEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const MAX_VERSIONS_KEPT = 100;
+export const MAX_AUDIT_KEPT = 2000;
+export const MAX_MARKS = 20_000;
+
+export const EMPTY_BASELINE: Baseline = {
+  marks: [],
+  blockedDomains: [],
+  approvedDomains: [],
+  blockedCategories: [],
+};
+
+const text = (max: number) => z.string().trim().max(max);
+const domain = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^(?:[a-z0-9-]+\.)+[a-z]{2,63}$/, "not a domain name");
+
+export const markInputSchema = z.object({
+  verdict: z.enum(["approved", "not-allowed", "unknown"]),
+  family: z.enum(["program", "installed", "autorun", "download"]),
+  program: text(260).min(1).toLowerCase(),
+  pathPattern: text(1024).toLowerCase().default(""),
+  signer: text(260).optional(),
+  sha256: z
+    .array(
+      z
+        .string()
+        .trim()
+        .toLowerCase()
+        .regex(/^[0-9a-f]{64}$/, "not a SHA-256"),
+    )
+    .max(50)
+    .default([]),
+  note: text(2000).default(""),
+  expiresAt: z.string().datetime().optional(),
+});
+export type MarkInput = z.infer<typeof markInputSchema>;
+
+export const domainsInputSchema = z.object({
+  blockedDomains: z.array(domain).max(5000).default([]),
+  approvedDomains: z.array(domain).max(5000).default([]),
+  blockedCategories: z.array(text(64).min(1)).max(100).default([]),
+});
+
+export const profileInputSchema = z.object({
+  name: text(120).min(1),
+  defaultServerSetId: text(120).optional(),
+});
+
+/** A url-safe id from a name, plus a short random suffix so two "Client A" profiles never collide. */
+export function newProfileId(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return `${slug || "client"}-${randomUUID().slice(0, 8)}`;
+}
+
+export const PROFILE_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+export function newProfile(input: z.infer<typeof profileInputSchema>, by: string, at: string): ClientProfile {
+  return {
+    id: newProfileId(input.name),
+    name: input.name,
+    ...(input.defaultServerSetId ? { defaultServerSetId: input.defaultServerSetId } : {}),
+    version: 0,
+    baseline: EMPTY_BASELINE,
+    versions: [{ version: 0, at, by, note: "profile created", baseline: EMPTY_BASELINE }],
+    audit: [{ at, by, action: "create", detail: `profile "${input.name}" created`, version: 0 }],
+    createdAt: at,
+    updatedAt: at,
+  };
+}
+
+/** The identity two marks share when one replaces the other: family + program + path pattern. */
+export const markIdentity = (m: Pick<BaselineMark, "family" | "program" | "pathPattern">): string =>
+  `${m.family}|${m.program}|${m.pathPattern}`;
+
+function withVersion(
+  p: ClientProfile,
+  baseline: Baseline,
+  by: string,
+  at: string,
+  note: string,
+  action: string,
+  detail: string,
+): ClientProfile {
+  const version = p.version + 1;
+  return {
+    ...p,
+    version,
+    baseline,
+    versions: [...p.versions, { version, at, by, note, baseline }].slice(-MAX_VERSIONS_KEPT),
+    audit: [...p.audit, { at, by, action, detail, version }].slice(-MAX_AUDIT_KEPT),
+    updatedAt: at,
+  };
+}
+
+/**
+ * Record marks (one new baseline version). A mark replaces any earlier mark with the same identity;
+ * marking Unknown REMOVES the earlier verdict (the reversal), and is audit-logged like any change.
+ */
+export function applyMarks(
+  p: ClientProfile,
+  marks: readonly MarkInput[],
+  meta: { by: string; at: string; source: string; note?: string },
+): ClientProfile {
+  const byIdentity = new Map(p.baseline.marks.map((m) => [markIdentity(m), m]));
+  const counts = { approved: 0, "not-allowed": 0, unknown: 0 };
+  for (const input of marks) {
+    const key = markIdentity(input);
+    counts[input.verdict]++;
+    if (input.verdict === "unknown") {
+      byIdentity.delete(key);
+      continue;
+    }
+    byIdentity.set(key, {
+      id: randomUUID(),
+      verdict: input.verdict,
+      family: input.family,
+      program: input.program,
+      pathPattern: input.pathPattern,
+      ...(input.signer ? { signer: input.signer } : {}),
+      sha256: input.sha256,
+      note: input.note,
+      source: meta.source,
+      recordedBy: meta.by,
+      recordedAt: meta.at,
+      ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+    });
+  }
+  const next = [...byIdentity.values()].slice(0, MAX_MARKS);
+  const detail = `${counts.approved} approved, ${counts["not-allowed"]} not allowed, ${counts.unknown} reset to unknown — source: ${meta.source}`;
+  return withVersion(p, { ...p.baseline, marks: next }, meta.by, meta.at, meta.note ?? "", "marks", detail);
+}
+
+export function applyDomains(
+  p: ClientProfile,
+  input: z.infer<typeof domainsInputSchema>,
+  meta: { by: string; at: string; source: string },
+): ClientProfile {
+  const uniq = (xs: string[]) => [...new Set(xs)].sort();
+  const baseline: Baseline = {
+    ...p.baseline,
+    blockedDomains: uniq(input.blockedDomains),
+    approvedDomains: uniq(input.approvedDomains),
+    blockedCategories: uniq(input.blockedCategories),
+  };
+  const detail = `${baseline.blockedDomains.length} blocked domain(s), ${baseline.approvedDomains.length} approved, categories: ${baseline.blockedCategories.join(", ") || "none"} — source: ${meta.source}`;
+  return withVersion(p, baseline, meta.by, meta.at, "", "domains", detail);
+}
+
+/** The baseline as it was at `version` (the pinned one), or null when that version is no longer kept. */
+export function baselineAt(p: ClientProfile, version: number): Baseline | null {
+  return p.versions.find((v) => v.version === version)?.baseline ?? null;
+}

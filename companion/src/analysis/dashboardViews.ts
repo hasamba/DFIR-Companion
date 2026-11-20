@@ -90,6 +90,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-uncertainties",
   "sec-huntprofile",
   "sec-hunt-case", // #2670 Threat Hunt panel (coverage, graded items, Convert to incident)
+  "sec-client-baseline", // #2670 the client's reviewed baseline and confirm list
   "sec-threads",
   "sec-mitre",
   "sec-adversary",
@@ -385,6 +386,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "Planning collections — playbook, next steps, ATT&CK, adversary hints and D3FEND countermeasures to drive hunts.",
     sections: [
       "sec-hunt-case",
+      "sec-client-baseline",
       "sec-hunt-workbench",
       "sec-huntprofile",
       "sec-fleet-collection",
@@ -425,6 +427,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "A proactive hunt: coverage, policy / new / rare items, the client baseline, then the hunt tools and findings.",
     sections: [
       "sec-hunt-case",
+      "sec-client-baseline",
       "sec-hunt-workbench",
       "sec-huntprofile",
       "sec-fleet-collection",

@@ -408,6 +408,8 @@
   <script src="/js/dashboard-ai-agent.js"></script>
   <!-- Threat Hunt panel (#2670): coverage, graded hunt items, Convert to incident, Re-grade. -->
   <script src="/js/dashboard-hunt-case.js"></script>
+  <!-- Client Baseline panel (#2670): client link, confirm list, marks, download policy. -->
+  <script src="/js/dashboard-client-baseline.js"></script>
   <!-- Setup wizard: the IRIS / Timesketch / Velociraptor steps save into the default server set. -->
   <script src="/js/dashboard-wizard-server-set.js"></script>
   <!-- Case templates and incident types. Owns the caches the saver invalidates. -->
@@ -4269,6 +4271,7 @@
     <section id="sec-uncertainties" data-safe-style="grid-column: 1 / -1"><h2>Uncertainty Ledger<span class="ev-sub">what the analysis KNOWS vs INFERRED vs SPECULATED — treat anything below Confirmed as provisional, not fact</span></h2><div id="uncertainties">—</div></section>
     <section id="sec-huntprofile" data-safe-style="grid-column: 1 / -1"><h2>Hunting Profile<span class="ev-sub">What has been hunted in this case and whether it found anything</span></h2><div id="huntProfile">—</div></section>
     <section id="sec-hunt-case" data-safe-style="grid-column: 1 / -1"><h2>Threat Hunt<span class="ev-sub">a proactive hunt: coverage of the hosts that answered, policy / new / rare items (one entry per program, with its hosts), and Convert to incident when a High or Critical finding appears</span></h2><div id="huntCasePanel">—</div></section>
+    <section id="sec-client-baseline" data-safe-style="grid-column: 1 / -1"><h2>Client Baseline<span class="ev-sub">the client's reviewed baseline: link the case to a client, export the “please confirm” list, mark items Approved / Not allowed / Unknown, import the client's answers, and keep blocked download sources — seeing a program never approves it</span></h2><div id="clientBaselinePanel">—</div></section>
     <section id="sec-threads"><h2>Investigation Threads<span class="ev-sub">open leads the AI tracks across re-synthesis runs — closed automatically once the evidence resolves them</span></h2><div id="openThreads">—</div><div id="closedThreads"></div></section>
     <section id="sec-mitre"><h2>MITRE ATT&amp;CK</h2>
       <div id="mitreControls" class="mm-controls">
@@ -4968,7 +4971,7 @@
       { id: "sec-exposure",     label: "Customer Exposure" },
       { id: "sec-questions",    label: "Key Investigative Questions" },
       { id: "sec-uncertainties", label: "Uncertainty Ledger" },
-      { id: "sec-huntprofile",  label: "Hunting Profile" }, { id: "sec-hunt-case", label: "Threat Hunt" },
+      { id: "sec-huntprofile",  label: "Hunting Profile" }, { id: "sec-hunt-case", label: "Threat Hunt" }, { id: "sec-client-baseline", label: "Client Baseline" },
       { id: "sec-threads",      label: "Investigation Threads" },
       { id: "sec-mitre",        label: "MITRE ATT&CK" },
       { id: "sec-adversary",    label: "Adversary Hints" },

@@ -1299,6 +1299,13 @@ export const FEATURES: Feature[] = [
     private: ["huntCaseRenderGen"],
   },
   {
+    // The Client Baseline panel (#2670): client link, confirm-list exports, marks, download policy.
+    // No `initializer`: the case loader in dashboard-case-connect.js runs loadClientBaseline per case.
+    file: "dashboard-client-baseline.js",
+    publish: ["loadClientBaseline"],
+    private: ["baselineRenderGen"],
+  },
+  {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the
     // IRIS / Timesketch / Velociraptor tool flags (caseToolEnabled).
     // No `initializer`: initCaseConnect() runs initCaseServers(), not the inline script.

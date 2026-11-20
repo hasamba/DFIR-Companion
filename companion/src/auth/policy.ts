@@ -179,6 +179,7 @@ const CASE_EXPORT_PATTERNS = [
   /^\/attack-layer\.json$/,
   /^\/geo-map\.csv$/,
   /^\/custody\/manifest$/,
+  /^\/hunt\/confirm-list\.(?:csv|md)$/, // #2670 the client's "please confirm" list
 ];
 
 const ROLE_PERMISSIONS: Record<CaseRole, ReadonlySet<CasePermission>> = {
@@ -226,6 +227,10 @@ function casePolicy(method: string, path: string, caseId: string): RequestPolicy
   // Changing a case's server set stops its monitors and forgets its links: case administrator.
   // GET /cases/:id/server-set (read) is not affected.
   if (method === "POST" && matchSuffix === "/server-set")
+    return { kind: "case", permission: "admin", caseId };
+  // Linking a hunt case to a client profile (#2670, D3) is a separate right from writing evidence:
+  // the case administrator's. GET /cases/:id/hunt/client (read) is not affected.
+  if (method === "POST" && matchSuffix === "/hunt/client")
     return { kind: "case", permission: "admin", caseId };
   if (CASE_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "admin", caseId };
@@ -290,6 +295,9 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
     collectionPath(path) === "/cases/import/zip" ||
     // The set picker on New case and in the case header. Members get names only; the route decides.
     (normalizedMethod === "GET" && collectionPath(path) === "/server-sets") ||
+    // Client profiles (#2670, D3): members get names only (the route decides); every other method and
+    // every /client-profiles/:id route stays with the instance administrator (the default below).
+    (normalizedMethod === "GET" && collectionPath(path) === "/client-profiles") ||
     // AI Agent Forensics (#2690): the rule version and scopes are reference data; the sweep list is
     // cut by the route to the sweeps the caller may see (visibleCaseIds); a launch is open to every
     // analyst, like POST /cases, and the route requires WRITE on a case the body names. Its rule-pack
