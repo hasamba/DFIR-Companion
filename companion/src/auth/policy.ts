@@ -139,6 +139,24 @@ export function isCloudRoutePath(rawPath: string): boolean {
   }
   return spellings.some((path) => CLOUD_ROUTE_PATTERN.test(path.toLowerCase()));
 }
+// Client profiles and the case routes that read one (#2670): a client's reviewed baseline, marks,
+// versions and audit trail, and the confirm list derived from them. The public demo has no login, so
+// its gate refuses every one of them, GET included (composition/httpStack.ts); the routes refuse again.
+const CLIENT_DATA_ROUTE_PATTERN =
+  /^(?:\/client-profiles(?:\/|$)|\/cases\/[^/]+\/hunt\/(?:client|candidates|confirm-list\.(?:csv|md))\/?$)/;
+
+export const CLIENT_DATA_DEMO_REFUSAL = "Demo mode: client profiles are disabled on the public demo.";
+
+/** True for every client-profile route and every case route that reads a client profile. */
+export function isClientDataRoutePath(rawPath: string): boolean {
+  const spellings = [rawPath];
+  try {
+    spellings.push(decodeURIComponent(rawPath));
+  } catch {
+    // An undecodable path is still checked as sent.
+  }
+  return spellings.some((path) => CLIENT_DATA_ROUTE_PATTERN.test(path.toLowerCase()));
+}
 /**
  * A BUCKET IS CHOSEN BY THE ROUTE, NEVER BY A VALUE THE ROUTE CARRIES.
  *

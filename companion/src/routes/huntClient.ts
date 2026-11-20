@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { huntCoverageFromJobs } from "../analysis/huntFraming.js";
 import { loadHuntJobsSafe } from "../analysis/huntFramingLoad.js";
@@ -7,6 +7,7 @@ import { confirmCandidates, confirmListCsv, confirmListMarkdown } from "../analy
 import { EMPTY_BASELINE, PROFILE_ID_RE } from "../analysis/clientProfile.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { currentIdentity } from "../auth/identityContext.js";
+import { CLIENT_DATA_DEMO_REFUSAL } from "../auth/policy.js";
 import { isAnalystCase } from "../storage/sweepCase.js";
 import type { RouteContext } from "./context.js";
 
@@ -25,6 +26,16 @@ const linkSchema = z.object({ clientId: z.string().regex(PROFILE_ID_RE, "invalid
 
 export function registerHuntClientRoutes(app: Express, ctx: RouteContext): void {
   const { options, store } = ctx;
+
+  // Every route here reads the linked client's profile: refused on the public demo (no login), GET
+  // included. The demo gate (composition/httpStack.ts) refuses first; this is the second line.
+  app.use(
+    ["/cases/:id/hunt/client", "/cases/:id/hunt/candidates", "/cases/:id/hunt/confirm-list.:fmt(csv|md)"],
+    function huntClientDemoRefusal(_req: Request, res: Response, next: NextFunction) {
+      if (options.demoMode) return res.status(403).json({ error: CLIENT_DATA_DEMO_REFUSAL, demo: true });
+      return next();
+    },
+  );
 
   async function answered(caseId: string): Promise<Set<string>> {
     const jobs = await loadHuntJobsSafe({ veloHuntStore: options.veloHuntStore }, caseId);

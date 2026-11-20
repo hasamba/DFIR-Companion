@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import {
   applyDomains,
@@ -11,6 +11,7 @@ import {
 } from "../analysis/clientProfile.js";
 import { parseClientCsv } from "../analysis/huntConfirmList.js";
 import { currentIdentity } from "../auth/identityContext.js";
+import { CLIENT_DATA_DEMO_REFUSAL } from "../auth/policy.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -24,6 +25,7 @@ import type { RouteContext } from "./context.js";
  *   PUT  /client-profiles/:pid/domains       — blocked / approved domains and categories (admin).
  * Only GET /client-profiles is open to members (auth/policy.ts); every other route falls to the
  * administrator default. A member sees earlier-hunt data only through the cases they can open.
+ * The public demo (no login) refuses every one of them, GET included.
  */
 const MAX_MARKS_PER_CALL = 5000;
 const MAX_CSV_BYTES = 5 * 1024 * 1024;
@@ -55,6 +57,15 @@ function guarded(fn: (req: Request, res: Response) => Promise<unknown>) {
 
 export function registerClientProfileRoutes(app: Express, ctx: RouteContext): void {
   const store = () => ctx.options.clientProfileStore;
+  // The public demo has no login: every profile route is refused there, GET included. The demo gate
+  // (composition/httpStack.ts) refuses first; this is the second line.
+  app.use(
+    "/client-profiles",
+    function clientProfilesDemoRefusal(_req: Request, res: Response, next: NextFunction) {
+      if (ctx.options.demoMode) return res.status(403).json({ error: CLIENT_DATA_DEMO_REFUSAL, demo: true });
+      return next();
+    },
+  );
 
   app.get("/client-profiles", async (_req: Request, res: Response) => {
     const s = store();
