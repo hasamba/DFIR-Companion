@@ -112,7 +112,7 @@ Rules that keep an attacker from hiding behind a name:
       **Mark Approved** leaves these items out and tells you how many. Approve the program's files
       (its Amcache file rows or Autoruns entries) instead, or use **Mark Not allowed**, which matches
       them by name. The same applies to any item with no path. An Approved row with no path in the
-      client's CSV is skipped, and the skipped list gives the reason.
+      client's CSV is skipped, and the import message gives the line number and the reason.
 - Every host must be covered on its own. One host's approved hash or signer says nothing about a
   host seen only through rows without one. A host seen only through a SHA1 is not covered by an
   approval that names only a SHA-256, and the reverse. A signer approval needs every host verified

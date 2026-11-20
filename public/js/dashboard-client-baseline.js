@@ -53,6 +53,14 @@
   ];
   const DOMAIN_HINT = "One domain per line; subdomains are included.";
   const NO_PATH_LABEL = "(no path — cannot be approved)";
+  const SKIPPED_SHOWN = 5;
+  /** " Skipped: line 2: <reason>; …" for the first few skipped CSV rows, or "" when none. */
+  const skippedText = (skipped) => {
+    if (!Array.isArray(skipped) || !skipped.length) return "";
+    const shown = skipped.slice(0, SKIPPED_SHOWN).map((s) => `line ${s.line}: ${s.reason}`).join("; ");
+    const more = skipped.length > SKIPPED_SHOWN ? ` (+${skipped.length - SKIPPED_SHOWN} more)` : "";
+    return ` Skipped: ${shown}${more}`;
+  };
 
   function button(text) {
     const b = el("button", text, "ev-bulk-btn");
@@ -174,8 +182,9 @@
           ...(c.approvableSigner ? { signer: c.approvableSigner } : {}),
         }));
         const r = await send("POST", profileUrl(pid, "marks"), { marks, source });
-        status.textContent = [r.ok ? `Saved as baseline version ${r.body.version}.` : `Save failed: ${failText(r)}`, why].filter(Boolean).join(" ");
-        if (r.ok) loadClientBaseline(caseId, why);
+        const text = [r.ok ? `Saved as baseline version ${r.body.version}.` : `Save failed: ${failText(r)}`, why].filter(Boolean).join(" ");
+        status.textContent = text;
+        if (r.ok) loadClientBaseline(caseId, text);
       });
       bar.appendChild(b);
     }
@@ -189,8 +198,11 @@
       const source = askSource();
       if (!source) return;
       const r = await send("POST", profileUrl(pid, "marks/import"), { csv: await f.text(), source });
-      status.textContent = r.ok ? `Imported ${r.body.imported} answer(s); ${r.body.skipped.length} row(s) skipped.` : `Import failed: ${failText(r)}`;
-      if (r.ok) loadClientBaseline(caseId);
+      // Name why rows were skipped (e.g. an Approved row with no path, #2747), on success and on a refusal alike.
+      const said = r.ok ? `Imported ${r.body.imported} answer(s); ${r.body.skipped.length} row(s) skipped.` : `Import failed: ${failText(r)}.`;
+      const text = `${said}${skippedText(r.body.skipped)}`;
+      status.textContent = text;
+      if (r.ok) loadClientBaseline(caseId, text);
     });
     const pick = button("Import the client's filled CSV…");
     pick.addEventListener("click", () => file.click());

@@ -23,7 +23,10 @@ const BASELINE = {
   approvedDomains: ["downloads.example", "updates.example"],
 };
 
-function harness(profile: Route = { body: { id: PID, name: "Client A", baseline: BASELINE } }) {
+function harness(
+  profile: Route = { body: { id: PID, name: "Client A", baseline: BASELINE } },
+  extra: Record<string, Route> = {},
+) {
   const doc = new FakeDocument();
   doc.add("div", "clientBaselinePanel");
   const net = routedFetch({
@@ -65,6 +68,7 @@ function harness(profile: Route = { body: { id: PID, name: "Client A", baseline:
     [`GET /client-profiles/${PID}`]: profile,
     [`PUT /client-profiles/${PID}/domains`]: { body: { version: 4 } },
     [`POST /client-profiles/${PID}/marks`]: { body: { version: 5 } },
+    ...extra,
   });
   const api = loadDashboardModule<PanelApi>("dashboard-client-baseline.js", [], {
     document: doc,
@@ -249,6 +253,40 @@ describe("Client Baseline panel layout (#2736)", () => {
     expect(p.textContent).toContain(
       "1 item(s) have no file path or hash and cannot be approved; mark them Not allowed or approve their files instead.",
     );
+  });
+
+  it("a partial Mark Approved still says it saved, after the panel reloads (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const boxes = (p.querySelector(".cb-candidates") as FakeEl).querySelectorAll("input");
+    for (const b of [boxes[0], boxes[1]]) {
+      b.checked = true;
+      b.fire("change");
+    }
+    byText(p, "button", "Mark Approved").click();
+    await flush();
+    await flush();
+    expect(h.net.calls.filter((c) => c.url === `/cases/${CASE}/hunt/status`).length).toBeGreaterThan(1);
+    expect(h.panel().textContent).toContain("Saved as baseline version 5.");
+    expect(h.panel().textContent).toContain("1 item(s) have no file path or hash and cannot be approved");
+  });
+
+  it("a CSV import names why rows were skipped, also when nothing could be imported (#2747)", async () => {
+    const reason = `"7-zip 23.01": no file path or hash; approve the program's files instead, or mark it Not allowed`;
+    const h = harness(undefined, {
+      [`POST /client-profiles/${PID}/marks/import`]: {
+        status: 400,
+        body: { error: "no row carried a verdict", skipped: [{ line: 2, reason }] },
+      },
+    });
+    await h.render();
+    const p = h.panel();
+    const file = p.querySelectorAll("input").find((i) => i.type === "file") as FakeEl & { files: unknown };
+    file.files = [{ text: async () => "family,program,path_pattern,verdict\n" }];
+    file.fire("change");
+    await flush();
+    expect(p.textContent).toContain(`Import failed: no row carried a verdict. Skipped: line 2: ${reason}`);
   });
 
   it("Mark Approved with only no-path items ticked saves nothing and says why (#2747)", async () => {
