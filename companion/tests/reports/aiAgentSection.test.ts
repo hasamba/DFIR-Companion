@@ -24,6 +24,7 @@ import type { AiAgentCaseRuns, AiAgentReport } from "../../src/analysis/aiAgentR
 import { AiAgentRunStore, type AiAgentRun } from "../../src/analysis/aiAgentRunStore.js";
 import { loadAiAgentCaseRuns, projectAiAgentRun } from "../../src/reports/aiAgentCaseRuns.js";
 import { AI_AGENT_SECTION_MAX_HITS } from "../../src/reports/aiAgentSection.js";
+import { FILED_RUNS_FILE, saveFiledRun } from "../../src/reports/aiAgentFiledRuns.js";
 import { aiAgentReportMarkdown } from "../../src/reports/aiAgentReportExport.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
@@ -316,6 +317,32 @@ describe("which runs a case report reads, and the AI boundary (#2721)", () => {
     expect((await writer.filteredState("c1", true)).aiAgentRuns).toBeUndefined();
     const redacted = await writer.redactedReportContents("c1", (t) => t);
     expect(JSON.stringify(redacted)).not.toContain(MARK);
+  });
+
+  it("keeps a filed sweep after the sweep case is gone; the live sweep wins while it is kept (#2740)", async () => {
+    const sweepRun = (await new AiAgentRunStore(cases).list(SWEEP))[0];
+    await saveFiledRun(cases, "c1", sweepRun, { sweepCaseId: SWEEP, at: "2026-11-19T11:30:00Z" });
+    const live = await loadAiAgentCaseRuns(cases, "c1");
+    expect(live.runs.map((r) => r.run.huntId)).toEqual(["H.CASE", "H.SWEEP"]);
+    expect(live.runs[1].filedFrom?.at).toBe("2026-11-19T12:00:00Z"); // the live sweep, not the copy
+    await cases.deleteCaseFolder(SWEEP);
+    const kept = await loadAiAgentCaseRuns(cases, "c1");
+    expect(kept.runs.map((r) => r.run.huntId)).toEqual(["H.CASE", "H.SWEEP"]);
+    expect(kept.runs[1].filedFrom).toEqual({ sweepCaseId: SWEEP, at: "2026-11-19T11:30:00Z" });
+    const mdOut = await readFile((await writer.writeAll("c1")).markdown, "utf8");
+    expect(mdOut).toContain("Filed into this case from sweep");
+    expect(mdOut).toContain("` H.SWEEP `");
+    // The copy is report-time data like the run record: not saved with the case, not in the redacted export.
+    expect(JSON.stringify(await stateStore.load("c1"))).not.toContain(MARK);
+    expect((await writer.filteredState("c1")).aiAgentRuns).toBeUndefined();
+    expect(JSON.stringify(await writer.redactedReportContents("c1", (t) => t))).not.toContain(MARK);
+  });
+
+  it("says when the filed copies cannot be read, and still renders the other runs (#2740)", async () => {
+    await writeFile(join(cases.stateDir("c1"), FILED_RUNS_FILE), "{not json");
+    const got = await loadAiAgentCaseRuns(cases, "c1");
+    expect(got.unreadable).toContain("this case's filed AI Agent Forensics sweep copies");
+    expect(got.runs.map((r) => r.run.huntId)).toEqual(["H.CASE", "H.SWEEP"]);
   });
 
   it("still writes the report when the case's run record is corrupt, and says so", async () => {

@@ -4,8 +4,8 @@
 // Sigma coverage, and what was not run and why. The body is the one the per-run download renders
 // (aiAgentReportExport.ts), so the two never disagree.
 //
-// The data is read at report time only (aiAgentCaseRuns.ts): it is never saved with the case and the
-// AI never reads it. Omitted when the case has no run, so every other report is unchanged.
+// The data is read at report time only (aiAgentCaseRuns.ts): it is never saved with the investigation
+// state (a filed sweep's report-safe copy is kept in its own state file, #2740) and the AI never reads it. Omitted when the case has no run, so every other report is unchanged.
 
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { AiAgentCaseRun } from "../analysis/aiAgentReportTypes.js";
@@ -22,8 +22,9 @@ const INTRO =
 const APPENDIX =
   "Each run below is its own record, as read from Velociraptor. The case's scope, clock-skew " +
   "alignment and false-positive marks apply to the timeline and findings above, not to this record. " +
-  "A sweep filed into the case shows here while the sweep is kept (the newest 20 sweeps); the hits it " +
-  "filed stay in the case timeline either way.";
+  "The case keeps a copy of each filed sweep's run report from the moment it is filed (its latest 50), " +
+  "so a filed sweep stays here after the sweep is removed; a sweep filed before this version shows " +
+  "only while it is kept (the newest 20 sweeps). The hits a sweep filed stay in the case timeline either way.";
 
 function originLine(c: AiAgentCaseRun): string {
   if (!c.filedFrom) return "Launched in this case.";

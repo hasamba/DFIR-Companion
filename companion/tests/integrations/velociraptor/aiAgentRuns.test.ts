@@ -1,7 +1,7 @@
 // AI Agent Forensics (#2690): run lifecycle — sweep case, case mode, refresh, Add to case, retention.
 // Real case storage on a temp folder; the Velociraptor client is a mock.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../../src/storage/caseStore.js";
@@ -20,6 +20,8 @@ import { isAnalystCase, SWEEP_RETENTION } from "../../../src/storage/sweepCase.j
 import { withSilentEndpoints } from "../../../src/integrations/velociraptor/aiAgentRuns.js";
 import { buildAiAgentReport } from "../../../src/analysis/aiAgentReport.js";
 import { loadAiAgentRuleSet } from "../../../src/analysis/aiAgentRuleSet.js";
+import { loadAiAgentCaseRuns } from "../../../src/reports/aiAgentCaseRuns.js";
+import { FILED_RUNS_FILE } from "../../../src/reports/aiAgentFiledRuns.js";
 import type { VelociraptorClient } from "../../../src/integrations/velociraptor/velociraptorApi.js";
 import type { ServerSetStore } from "../../../src/integrations/serverSets/serverSetStore.js";
 
@@ -229,6 +231,69 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     await expect(addSweepToCase(deps, "case-1", run.runId, caseId)).rejects.toThrow(
       /not an AI Agent Forensics sweep/,
     );
+  });
+});
+
+describe("AI Agent Forensics: a filed sweep's report copy in the target case (#2740)", () => {
+  async function filedSweep(deps: ReturnType<typeof makeDeps>) {
+    await store.createCase({ caseId: "case-1", name: "c", investigator: "x", aiProvider: null });
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    await refreshAiAgentRun(deps, caseId, run.runId);
+    return { sweepCaseId: caseId, runId: run.runId };
+  }
+  const copyPath = () => join(store.stateDir("case-1"), FILED_RUNS_FILE);
+
+  it("keeps the run in the case report after the sweep case is deleted", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    const filedAt = (await deps.runStore.get(sweepCaseId, runId))?.addedTo?.[0].at;
+    await store.deleteCaseFolder(sweepCaseId);
+    const got = await loadAiAgentCaseRuns(store, "case-1");
+    expect(got.unreadable).toEqual([]);
+    expect(got.runs).toHaveLength(1);
+    expect(got.runs[0].run.runId).toBe(runId);
+    expect(got.runs[0].filedFrom).toEqual({ sweepCaseId, at: filedAt });
+    expect(got.runs[0].run.report?.hits[0].rule).toBe("Agent_Memory_Hidden_Instruction_Concealment");
+  });
+
+  it("saves only the report-safe fields: no raw rows, no raw matched-text field, no manifest file list", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    const text = readFileSync(copyPath(), "utf8");
+    const saved = JSON.parse(text) as { run: Record<string, unknown>; filedFrom: unknown }[];
+    expect(saved).toHaveLength(1);
+    expect(saved[0].filedFrom).toMatchObject({ sweepCaseId });
+    expect(Object.keys(saved[0].run)).not.toContain("rows");
+    expect(text).not.toContain("MatchedText");
+    expect(text).not.toContain('"files"');
+    expect(text).not.toContain("/u/a"); // the manifest's file path
+  });
+
+  it("keeps one copy per run when the same sweep is filed twice, with the later filing time", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    await new Promise((r) => setTimeout(r, 5));
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    const saved = JSON.parse(readFileSync(copyPath(), "utf8")) as { filedFrom: { at: string } }[];
+    expect(saved).toHaveLength(1);
+    const times = (await deps.runStore.get(sweepCaseId, runId))?.addedTo?.map((a) => a.at) ?? [];
+    expect(times).toHaveLength(2);
+    expect(saved[0].filedFrom.at).toBe(times.at(-1));
+  });
+
+  it("still files the hits when the copy cannot be saved, and says so in the case activity", async () => {
+    const activity: { caseId: string; detail: string }[] = [];
+    const deps = makeDeps({ onActivity: (caseId, a) => activity.push({ caseId, detail: a.detail }) });
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    mkdirSync(copyPath(), { recursive: true }); // a directory where the file goes: the write fails
+    const out = await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    expect(out.addedEvents).toBe(1);
+    expect((await deps.runStore.get(sweepCaseId, runId))?.addedTo?.[0].caseId).toBe("case-1");
+    const detail = activity.find((a) => a.caseId === "case-1")?.detail ?? "";
+    expect(detail).toContain("the report copy could not be saved");
   });
 });
 

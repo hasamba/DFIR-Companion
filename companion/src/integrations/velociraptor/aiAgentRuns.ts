@@ -29,6 +29,7 @@ import { AI_AGENT_HUNT_EXPIRY_SECONDS, launchAiAgentRun } from "./aiAgentLaunch.
 import { preflightAiAgentRun, type AiAgentEndpoint } from "./aiAgentPreflight.js";
 import { readUploadManifestStatus } from "./uploadVql.js";
 import { CLIENT_RE } from "./clientInventory.js";
+import { saveFiledRun, type FiledFrom } from "../../reports/aiAgentFiledRuns.js";
 import {
   SWEEP_CASE_KIND,
   isSweepCase,
@@ -385,6 +386,26 @@ export async function refreshAiAgentRun(
   return updated ?? run;
 }
 
+/** Keep the run's report-safe copy in the target case so its report outlives sweep retention (#2740).
+ *  The hits are already filed: a failed copy never fails the filing — it is logged and noted. */
+async function saveReportCopy(
+  deps: AiAgentForensicsDeps,
+  targetCaseId: string,
+  run: AiAgentRun,
+  filedFrom: FiledFrom,
+): Promise<string> {
+  try {
+    await saveFiledRun(deps.store, targetCaseId, run, filedFrom);
+    return "";
+  } catch (e) {
+    const why = (e as Error).message;
+    deps.log(
+      `[ai-agent] could not save the report copy of sweep ${filedFrom.sweepCaseId} into ${targetCaseId}: ${why}`,
+    );
+    return " (the report copy could not be saved; the run shows in the case report only while the sweep is kept)";
+  }
+}
+
 /** File a sweep's rows into a real case, evidence-first under that case's import lock. */
 export async function addSweepToCase(
   deps: AiAgentForensicsDeps,
@@ -436,14 +457,15 @@ export async function addSweepToCase(
     }
   }
   const at = new Date().toISOString();
-  await deps.runStore.update(sweepCaseId, runId, (r) => ({
+  const filed = await deps.runStore.update(sweepCaseId, runId, (r) => ({
     ...r,
     addedTo: [...(r.addedTo ?? []), { caseId: targetCaseId, at, events: out.addedEvents }],
   }));
+  const copyNote = await saveReportCopy(deps, targetCaseId, filed ?? run, { sweepCaseId, at });
   const counts = `+${out.addedEvents} event(s), +${out.addedIocs} IOC(s)`;
   deps.onActivity?.(targetCaseId, {
     action: "ai-agent-add-to-case",
-    detail: `added AI Agent Forensics sweep ${sweepCaseId} (hunt ${run.huntId}): ${counts}`,
+    detail: `added AI Agent Forensics sweep ${sweepCaseId} (hunt ${run.huntId}): ${counts}${copyNote}`,
   });
   deps.onActivity?.(sweepCaseId, {
     action: "ai-agent-add-to-case",
