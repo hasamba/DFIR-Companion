@@ -782,7 +782,8 @@ describe("codex review regressions", () => {
 
 describe("reachability", () => {
   it("runs from the merge", () => {
-    const merge = readFileSync(join(process.cwd(), "src/analysis/stateMerge.ts"), "utf8");
+    // The merge's timeline passes run from timelineChain.ts (stateMerge.ts → runTimelineChain, #2716).
+    const merge = readFileSync(join(process.cwd(), "src/analysis/timelineChain.ts"), "utf8");
     expect(merge).toContain("summarizeBulkReads");
   });
 

@@ -202,24 +202,29 @@ describe("drop folder crash-loop guard (#2713)", () => {
     expect(await readdir(join(dropDir, "_processed"))).toContain("b.json");
   });
 
-  it("keeps refusing a refused file whose move to _failed fails, instead of importing it again", async () => {
-    const store = await newCase();
-    const dropDir = await dropFiles(store, ["big.json"]);
-    const started: string[] = [];
-    await crashOnce(store, started, 1);
-    await crashOnce(store, started, 2);
-    await mkdir(join(dropDir, "_failed"), { recursive: true });
-    await chmod(join(dropDir, "_failed"), 0o500); // the move cannot land
-    try {
-      const third = incarnation(store, dyingImport(new ImportLock(), started));
-      await third.drops.scanCaseDrops("c1");
-      await third.drops.scanCaseDrops("c1");
-      expect(started).toHaveLength(2);
-      expect(parseInFlight(await readFile(markerOf(store), "utf8"))[0]?.starts).toBe(2);
-    } finally {
-      await chmod(join(dropDir, "_failed"), 0o700);
-    }
-  });
+  // A read-only _failed/ (chmod) is what makes the move fail; Windows ignores POSIX modes, so the
+  // move succeeds there and the premise never arises.
+  it.skipIf(process.platform === "win32")(
+    "keeps refusing a refused file whose move to _failed fails, instead of importing it again",
+    async () => {
+      const store = await newCase();
+      const dropDir = await dropFiles(store, ["big.json"]);
+      const started: string[] = [];
+      await crashOnce(store, started, 1);
+      await crashOnce(store, started, 2);
+      await mkdir(join(dropDir, "_failed"), { recursive: true });
+      await chmod(join(dropDir, "_failed"), 0o500); // the move cannot land
+      try {
+        const third = incarnation(store, dyingImport(new ImportLock(), started));
+        await third.drops.scanCaseDrops("c1");
+        await third.drops.scanCaseDrops("c1");
+        expect(started).toHaveLength(2);
+        expect(parseInFlight(await readFile(markerOf(store), "utf8"))[0]?.starts).toBe(2);
+      } finally {
+        await chmod(join(dropDir, "_failed"), 0o700);
+      }
+    },
+  );
 });
 
 describe("runImportAttempt (#2713)", () => {
