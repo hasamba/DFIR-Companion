@@ -479,6 +479,9 @@
   #sec-client-baseline .cb-policy-note{margin:0 0 10px;font-size:12px;color:var(--text-muted)}
   #sec-client-baseline .cb-cats{display:flex;flex-wrap:wrap;gap:6px 16px;padding:2px 0}
   #sec-client-baseline .cb-cats label{display:inline-flex;align-items:center;font-size:12px;color:var(--text-primary);cursor:pointer}
+  #sec-client-baseline .cb-candidates{border-collapse:collapse;margin:4px 0;font-size:12px}
+  #sec-client-baseline .cb-candidates th,#sec-client-baseline .cb-candidates td{padding:4px 12px 4px 0;text-align:left;vertical-align:top;border-bottom:1px solid var(--border-subtle)}
+  #sec-client-baseline .cb-candidates th{font-weight:600;color:var(--text-muted)}
   /* ── Query Translator (NL → hunt queries, #100) ── */
   #sec-nlquery .nlq-empty{color:var(--text-muted);font-size:12px}
   #sec-nlquery .nlq-platforms{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
