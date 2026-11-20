@@ -67,6 +67,8 @@ export interface DropSweepDeps {
   recordImportFailure: (name: string, err: unknown, debug?: ImportDebugRecorder) => void;
   /** Absent in wirings without the batch path (tests): every file imports on its own. */
   dropBatch?: DiskBatchIngest;
+  /** Called after each file's outcome is tallied, so the log and status can be written as files finish (#2715). */
+  onRecorded?: (tally: SweepTally) => Promise<void>;
 }
 
 /** Import `ready` in relpath order, batching what may batch; every file's outcome is recorded. */
@@ -194,6 +196,7 @@ async function recordOutcome(
     // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
     // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
     tally.pendingRawInputs.push(res.pending);
+    await d.onRecorded?.(tally);
     return;
   }
   // A failed move is named to the analyst, merged into the file's one warning or failure
@@ -219,4 +222,5 @@ async function recordOutcome(
       reason: joinReasons(res.reason ?? "import failed", moveNote),
     });
   d.forget(file.relpath); // moved out of the watched area
+  await d.onRecorded?.(tally);
 }
