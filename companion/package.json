@@ -102,6 +102,7 @@
     "undici": "^8.10.0",
     "ws": "^8.21.0",
     "yaml": "^2.9.0",
+    "yauzl": "^3.4.0",
     "zod": "^3.23.8"
   },
   "overrides": {
@@ -116,6 +117,8 @@
     "@types/node": "^20.14.0",
     "@types/supertest": "^6.0.2",
     "@types/ws": "^8.18.1",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
     "esbuild": "^0.24.0",
     "eslint": "^9.39.5",
     "globals": "^17.8.0",
@@ -126,6 +129,7 @@
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.65.0",
-    "vitest": "^2.0.0"
+    "vitest": "^2.0.0",
+    "yazl": "^3.3.1"
   }
 }

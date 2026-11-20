@@ -3439,7 +3439,8 @@ for the case's running jobs and keeps new ones out until it ends.
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.
 
-Processed files move to `drop/_processed/`; failures move to `drop/_failed/` and are reported in the dashboard **📥 Drop** banner and any configured notification channel.
+Processed files move to `drop/_processed/`; failures move to `drop/_failed/`; the duplicate copies of a
+[Velociraptor hunt export](#velociraptor-hunt-exports) move to `drop/_skipped/`. Failures are reported in the dashboard **📥 Drop** banner and any configured notification channel.
 
 If that move fails (for example, antivirus or a sync client still holds the file open, or
 `_processed/` is read-only), the file stays in `drop/` and is not imported again. Its
@@ -3466,6 +3467,44 @@ guess, and the case log gets a WARN line. Velociraptor uploaded reports get the 
 `warnings` list of an uploads-only import, and in the case log for a hunt collect.
 
 Enabled by default. Configure via `DFIR_DROP_ENABLED`, `DFIR_DROP_POLL_S` (poll interval), `DFIR_DROP_MAX_BYTES` (size cap).
+
+### Velociraptor hunt exports
+
+A Velociraptor hunt export can carry the same rows up to four times: each client folder's
+`results/<Artifact>.json`, its `.csv` twin, the hunt-wide `results/All <Artifact>.json` (all clients
+combined) and its `.csv` twin. The drop folder recognises a hunt export, whether you drop the `.zip`
+or the unzipped folder, and imports **one copy of each artifact**:
+
+1. the per-client `.json` files, when there are any;
+2. otherwise the hunt-wide `All <Artifact>.json`;
+3. a `.csv` only when that artifact has no `.json` at all.
+
+The host comes from the client folder name (`<hostname>-C.<id>`). A hunt-wide copy has no client
+folder, so each row's own host fields (`Fqdn`, `Hostname`, …) name the host, as for any Velociraptor
+file.
+
+**Unzipped folder.** Everything that is not imported — the other copies, each client's metadata
+(`client_info.json`, `collection_context.json`, `log.json`, `requests.json`, `uploads.json`, …) and
+`hunt_info.json` — moves to `drop/_skipped/` with its full relative path. Nothing is deleted. One
+`SKIPPED` line per hunt in `drop-log.txt` says how many files were set aside and why. Other files in
+the folder (for example a client's `uploads/` tree) are handled like any dropped file. The watcher
+waits until every file of the hunt has settled, but it cannot wait for a file that has not appeared
+yet: drop the `.zip`, or unzip somewhere else and move the finished folder into `drop/` in one step.
+
+**Zip.** Only the members to import are read, streamed from the zip on disk (ZIP64, so a hunt zip
+over 4 GB works); nothing else is extracted. A member over `DFIR_DROP_MAX_BYTES` is unpacked to disk
+first and imported from there when it is a format that streams (Velociraptor JSON Lines). One member
+failing never stops the rest. The zip moves to `_processed/` if at least one member imported, or to
+`_failed/` if none did. Each failed member is extracted to `_failed/<zip name>/<path in the zip>`
+(the zip name without `.zip`), with its reason on a `FAILED` line `<zip>!<member>` in `drop-log.txt`
+— drop just that file back in to retry it. A crash or restart in the middle of a zip picks up where
+it stopped and does not import a finished member again.
+
+**Refused for safety.** A member whose name leaves the zip (`../`, an absolute or drive path), a
+symbolic-link member, an encrypted member, two members with the same name, and a member whose
+compression ratio marks it as a zip bomb are refused and never extracted. A hunt zip that would
+inflate to more than 64 GB across the members it imports is refused as a whole. A `.zip` that is not
+a hunt export is handled exactly as before (an external tool input).
 
 ### Many small CloudTrail files are imported in batches
 
