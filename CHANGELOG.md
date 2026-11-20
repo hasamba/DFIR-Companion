@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Watson Telegram mirror** — opt-in per chat with `/dfir mirror on`; Watson's case chat is mirrored to a bound Telegram chat and allowlisted users can ask Watson from Telegram (closes #2647)
 - **Velociraptor hunt exports in the drop folder** — a hunt `.zip` or unzipped folder imports one copy of each artifact with the client's host; other copies and metadata move to `_skipped/` (closes #2714)
 - **Threat-hunt mode** — a threat-hunt case type: hunt framing for the AI, host-prevalence "seen on N of M hosts" grading, admin-only client baselines with an approval confirm list, "new since last hunt" grading, a hunt summary report and Convert to incident (closes #2670)
+- **AI Agent Forensics report section** — the case report lists each run launched in or filed into the case, with inventory, matched text, both hashes, Sigma coverage and the rules not run (closes #2721)
 
 ### Fixed
 

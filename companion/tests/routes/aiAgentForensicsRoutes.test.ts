@@ -139,8 +139,9 @@ describe("AI Agent Forensics routes", () => {
     expect(md.text).toContain("differs");
     // #2722: the rule-by-endpoint Sigma table — hostile rule and host names stay one escaped cell.
     expect(md.text).toContain("## Sigma coverage per rule and endpoint");
-    expect(md.text).toContain("| Rule | Basis | DEV\\|WS | =cmd\\|WS2 |");
-    expect(md.text).toContain("ran (live state), 1 hit(s) | not recorded |");
+    // #2721: each one a code span, so link and image syntax stay literal too.
+    expect(md.text).toContain("| Rule | Basis | ` DEV\\|WS ` | ` =cmd\\|WS2 ` |");
+    expect(md.text).toContain("` ran (live state), 1 hit(s) ` | ` not recorded ` |");
     const sig = await request(app).get("/cases/c1/ai-agent/runs/aar-1/sigma-coverage.csv");
     expect(sig.status).toBe(200);
     expect(sig.headers["content-type"]).toContain("text/csv");

@@ -90,6 +90,14 @@ export const REPORT_SECTION_DEFS = [
     label: "AWS account weaknesses (from CloudTrail records: root use, Object Lock, data-event coverage)",
     defaultEnabled: false,
   },
+  // Off by default (#2721), same reasoning as cloudWeaknesses: a fresh Standard template and Technical
+  // Detail carry it. Renders nothing for a case with no AI Agent Forensics run.
+  {
+    key: "aiAgentForensics",
+    label:
+      "AI Agent Forensics (endpoint runs: inventory, hits with matched text, hashes, Sigma coverage, rules not run)",
+    defaultEnabled: false,
+  },
   // Opt-in EVERYWHERE (#1406): a shift-change surface — open threads, owners, the outgoing
   // analyst's note — is working state, not a deliverable, and must never appear in a report by
   // accident of "every section is what default means". Technical Detail switches it on explicitly.
@@ -344,6 +352,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "kerberoastChain", enabled: false },
       { key: "sensitiveAccess", enabled: false },
       { key: "cloudWeaknesses", enabled: false },
+      { key: "aiAgentForensics", enabled: false },
       { key: "handoffBrief", enabled: false },
       { key: "remediationChecks", enabled: false },
     ],
@@ -376,6 +385,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "compliance", enabled: true },
       { key: "notebook", enabled: true },
       { key: "cloudWeaknesses", enabled: true },
+      { key: "aiAgentForensics", enabled: true },
       { key: "handoffBrief", enabled: true },
     ],
   }),

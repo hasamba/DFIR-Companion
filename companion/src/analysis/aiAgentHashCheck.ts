@@ -16,7 +16,8 @@
 import type { AiAgentHitRow } from "./aiAgentRows.js";
 import type { UploadManifestEntry } from "./aiAgentRunStore.js";
 
-export type AiAgentHashCheck = "same" | "differs" | "not preserved" | "not recorded";
+import type { AiAgentHashCheck } from "./aiAgentReportTypes.js";
+export type { AiAgentHashCheck };
 
 /** Said beside the check on every surface: the panel, report.md, report.csv and the manual. */
 export const AI_AGENT_HASH_CAVEAT =
