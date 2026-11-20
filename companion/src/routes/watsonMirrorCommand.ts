@@ -3,7 +3,8 @@ import type { ChannelBinding } from "../analysis/slashCommand.js";
 import { escapeMirrorHtml } from "../integrations/telegram/watsonMirrorFormat.js";
 import { sendMirrorMessage } from "../integrations/telegram/watsonMirrorSender.js";
 import { acquireAndCommit, sharedTelegramLimiters } from "../analysis/notify/telegramRateLimiter.js";
-import { resolveToken } from "../analysis/telegramPoller.js";
+import { resolveToken, sendTelegramMessage } from "../analysis/telegramPoller.js";
+import type { Logger } from "../logging/logger.js";
 import { mirrorAudit, telegramAllowlist, telegramApiBase, telegramBotToken } from "./watsonMirrorSupport.js";
 import type { RouteContext } from "./context.js";
 import { guardCase } from "./slashCaseGuard.js";
@@ -22,10 +23,12 @@ export interface MirrorCommandInput {
 }
 
 /**
- * What `/dfir mirror` answers: a string for the webhook reply, or (#2709) text the command already sent
- * to the chat itself, so its message id is recorded and the webhook gets an empty ack.
+ * What `/dfir mirror` answers: a string for the webhook reply, or (#2709) text the command sends to the
+ * chat itself, so its message id is recorded and the webhook gets an empty ack. #2711: that send is
+ * `background` work, run after the command is answered, because it waits in the bot's shared limiter.
  */
-export type MirrorReply = string | { readonly text: string; readonly quiet: true };
+export type MirrorReply =
+  string | { readonly text: string; readonly quiet: true; readonly background?: () => Promise<void> };
 
 const ALLOWLIST_NEEDED =
   "Mirroring needs the Telegram user allowlist. Set DFIR_TELEGRAM_ACTION_USERS in the Companion's .env " +
@@ -66,44 +69,53 @@ async function mirrorOn(
   const text =
     `Mirroring started for case ${binding.caseId}. New Watson turns will appear here. ` +
     "Ask by replying to a mirrored message or mentioning the bot. Stop with `/dfir mirror off`.";
-  return sendStarted(store, channelId, text);
+  return { text, quiet: true, background: () => sendStarted(store, channelId, text, ctx.serverLogger) };
 }
 
-/**
- * #2711: how long "Mirroring started" may wait for the bot's shared limiter. The command is answered
- * inline — the poller handles one update at a time and a webhook delivery waits for its response — so
- * the wait stays short; past it the text goes back as the reply instead.
- */
-const STARTED_MAX_WAIT_MS = 3_000;
+/** How long "Mirroring started" waits for a slot before it goes the plain-reply way (which waits again). */
+const STARTED_MAX_WAIT_MS = 60_000;
 
 /**
  * #2709: send "Mirroring started" through the Bot API and record its id, so a group reply to it counts
- * as a question like a reply to any mirrored message. A failed send falls back to the webhook reply.
- * #2711: it takes its turn in the bot's shared limiter (reply lane), and a 429 pauses the bot.
+ * as a question like a reply to any mirrored message.
+ * #2711: background work, after the command was answered — it waits its turn in the bot's shared
+ * limiter (reply lane), so neither the poller (one update at a time) nor a webhook delivery waits for
+ * it. A failed send is retried as a plain reply through the same limiter, never as a webhook reply,
+ * which Telegram would run outside the limiter (and inside a 429 pause).
  */
 async function sendStarted(
   store: NonNullable<RouteContext["options"]["watsonMirrorStore"]>,
   chatId: string,
   text: string,
-): Promise<MirrorReply> {
+  log: Logger,
+): Promise<void> {
   const token = resolveToken(telegramBotToken); // one bot for the slot and the send
-  const limiter = sharedTelegramLimiters.forToken(token);
-  const slot = await acquireAndCommit(limiter, {
+  const slot = await acquireAndCommit(sharedTelegramLimiters.forToken(token), {
     chatId,
     lane: "reply",
     maxWaitMs: STARTED_MAX_WAIT_MS,
   }).catch(() => undefined);
-  if (!slot) return text;
-  const out = await sendMirrorMessage({
+  if (slot) {
+    const out = await sendMirrorMessage({
+      botToken: token,
+      apiBase: telegramApiBase(),
+      chatId,
+      text: escapeMirrorHtml(text),
+    });
+    if (out.kind === "sent") {
+      await store.addMessageIds(chatId, [out.messageId]).catch(() => undefined);
+      return;
+    }
+    if (out.kind === "rate_limited") slot.backOff(out.retryAfterMs);
+  }
+  await sendTelegramMessage({
     botToken: token,
     apiBase: telegramApiBase(),
     chatId,
-    text: escapeMirrorHtml(text),
+    text,
+    log,
+    limiters: sharedTelegramLimiters,
   });
-  if (out.kind === "rate_limited") slot.backOff(out.retryAfterMs);
-  if (out.kind !== "sent") return text;
-  await store.addMessageIds(chatId, [out.messageId]).catch(() => undefined);
-  return { text, quiet: true };
 }
 
 /** The reply to `/dfir mirror on|off`. The permission gate (isAllowed) has already run. */

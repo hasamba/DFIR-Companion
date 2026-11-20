@@ -479,7 +479,8 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
   }
   if (cmd.name === "mirror") {
     const out = await runMirrorCommand(input, cmd, binding); // #2647
-    return typeof out === "string" ? reply(out) : { ...reply(out.text), quiet: true }; // #2709
+    if (typeof out === "string") return reply(out);
+    return { ...reply(out.text), quiet: true, background: out.background }; // #2709, #2711
   }
 
   if (cmd.name === "bind") {

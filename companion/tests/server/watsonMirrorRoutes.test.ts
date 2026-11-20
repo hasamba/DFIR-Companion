@@ -124,8 +124,11 @@ async function mirrorOn(chat = PRIVATE, caseId = "c1") {
   const before = sent.length;
   const res = await tg({ text: "/dfir mirror on" }, { chat });
   expect(res.body).toEqual({});
-  const started = sent.slice(before).filter((s) => s.chat_id === String(chat));
-  expect(started).toHaveLength(1);
+  // #2711: sent as background work after the ack, through the bot's shared limiter.
+  const startedNow = () => sent.slice(before).filter((s) => s.chat_id === String(chat));
+  await vi.waitFor(() => expect(startedNow()).toHaveLength(1), SPACED);
+  await vi.waitFor(async () => expect((await mirrors.get(String(chat)))?.messageIds?.length).toBe(1));
+  const started = startedNow();
   expect(started[0].text).toMatch(/Mirroring started for case c1/);
   return started[0];
 }
@@ -211,16 +214,35 @@ describe("plain-text questions", () => {
     await vi.waitFor(() => expect(asked).toEqual([{ caseId: "c1", text: "what now?" }]));
   });
 
-  it("falls back to the webhook reply when sending 'Mirroring started' fails (#2709)", async () => {
+  // #2711: the fallback is a plain reply through the shared limiter, never a webhook reply (Telegram
+  // would run that outside the limiter, even inside a 429 pause).
+  it("falls back to a plain reply when sending 'Mirroring started' fails (#2709, #2711)", async () => {
     await tg({ text: "/dfir bind c1" }, { chat: GROUP });
-    vi.stubGlobal("fetch", async (url: string) =>
-      url.endsWith("/getMe")
-        ? Response.json({ ok: true, result: { username: "DfirBot" } })
-        : Response.json({ ok: false, description: "Internal" }, { status: 500 }),
-    );
+    const tries: Array<{ html: boolean; text: string }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (url.endsWith("/getMe")) return Response.json({ ok: true, result: { username: "DfirBot" } });
+      const body = JSON.parse(init?.body ?? "{}");
+      tries.push({ html: body.parse_mode === "HTML", text: String(body.text) });
+      return tries.length === 1
+        ? Response.json({ ok: false, description: "Internal" }, { status: 500 })
+        : Response.json({ ok: true, result: { message_id: 1 } });
+    });
     const res = await tg({ text: "/dfir mirror on" }, { chat: GROUP });
-    expect(res.body.text).toMatch(/Mirroring started for case c1/);
+    expect(res.body).toEqual({});
+    await vi.waitFor(() => expect(tries).toHaveLength(2), SPACED);
+    expect(tries.map((t) => t.html)).toEqual([true, false]);
+    expect(tries[1].text).toMatch(/Mirroring started for case c1/);
     expect((await mirrors.get(String(GROUP)))?.messageIds).toEqual([]);
+  });
+
+  it("a 'Mirroring started' waiting out a 429 pause does not hold the next command back (#2711)", async () => {
+    await tg({ text: "/dfir bind c1" }, { chat: GROUP });
+    sharedTelegramLimiters.forToken("1:T").backOff(30_000); // Telegram asked the bot to wait
+    const res = await tg({ text: "/dfir mirror on" }, { chat: GROUP });
+    expect(res.body).toEqual({});
+    expect(toChat(GROUP)).toEqual([]); // nothing sent inside the pause, not even as a webhook reply
+    const off = await tg({ text: "/dfir mirror off" }, { chat: GROUP });
+    expect(off.body.text).toMatch(/Mirroring stopped for case c1/);
   });
 
   it("refuses an unlisted user and a password-protected case with the existing sentences (AC6)", async () => {
