@@ -56,7 +56,7 @@ describe("GET /incident-types", () => {
     const res = await request(app).get("/incident-types");
     expect(res.status).toBe(200);
     expect(res.body.map((t: IncidentType) => t.id)).toContain("ransomware");
-    expect(res.body).toHaveLength(8);
+    expect(res.body).toHaveLength(9);
     expect(res.body.every((t: IncidentType) => t.builtIn)).toBe(true);
   });
 
@@ -69,7 +69,7 @@ describe("GET /incident-types", () => {
 
     const res = await request(app).get("/incident-types");
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(9);
+    expect(res.body).toHaveLength(10);
     const custom = res.body.find((t: IncidentType) => t.id === "org-cryptolocker");
     expect(custom.builtIn).toBe(false);
   });

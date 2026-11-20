@@ -1,0 +1,58 @@
+{
+  "$comment": "Download-source categories for threat-hunt grading (#2670). Authored for DFIR Companion from publicly known service domains; not copied from any third-party list. Matching is on the domain with its subdomains (blocking example.com also blocks dl.example.com, never notexample.com). A site in no category is Unknown, never approved and never given a guessed category. Each hunt records which version graded it.",
+  "version": "2026.11.1",
+  "categories": {
+    "torrent": [
+      "thepiratebay.org",
+      "1337x.to",
+      "rarbg.to",
+      "yts.mx",
+      "nyaa.si",
+      "torrentgalaxy.to",
+      "limetorrents.lol",
+      "eztv.re",
+      "fitgirl-repacks.site"
+    ],
+    "file-sharing": [
+      "mega.nz",
+      "mediafire.com",
+      "wetransfer.com",
+      "sendspace.com",
+      "zippyshare.com",
+      "rapidgator.net",
+      "uploaded.net",
+      "anonfiles.com",
+      "gofile.io",
+      "transfer.sh",
+      "file.io",
+      "pixeldrain.com"
+    ],
+    "cloud-storage": [
+      "dropbox.com",
+      "dropboxusercontent.com",
+      "box.com",
+      "pcloud.com",
+      "drive.google.com",
+      "docs.google.com",
+      "onedrive.live.com",
+      "1drv.ms",
+      "icloud.com"
+    ],
+    "paste-sites": [
+      "pastebin.com",
+      "paste.ee",
+      "ghostbin.com",
+      "hastebin.com",
+      "rentry.co"
+    ],
+    "remote-access": [
+      "anydesk.com",
+      "teamviewer.com",
+      "rustdesk.com",
+      "splashtop.com",
+      "screenconnect.com",
+      "ammyy.com",
+      "supremocontrol.com"
+    ]
+  }
+}

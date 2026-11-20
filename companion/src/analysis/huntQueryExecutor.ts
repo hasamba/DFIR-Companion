@@ -417,7 +417,9 @@ export function explainHuntIndexedPlan(plan: HuntIndexedPlan): string {
 }
 
 function isAnalytical(pipeline: readonly HuntPipelineStage[]): boolean {
-  return pipeline.some((stage) => ["group", "count", "stats", "rare", "sort"].includes(stage.kind));
+  return pipeline.some((stage) =>
+    ["group", "count", "stats", "rare", "prevalence", "sort"].includes(stage.kind),
+  );
 }
 
 function stageLimit(pipeline: readonly HuntPipelineStage[], fallback: number): number {
@@ -436,7 +438,7 @@ async function executeAnalytical(
   options: ExecutionState,
 ): Promise<Pick<HuntExecutionResult, "columns" | "rows" | "events" | "matched" | "scanned">> {
   const materialized: ForensicEvent[] = [];
-  const rare = options.parsed.pipeline.find((stage) => stage.kind === "rare");
+  const rare = options.parsed.pipeline.find((stage) => stage.kind === "rare" || stage.kind === "prevalence");
   const group = options.parsed.pipeline.find((stage) => stage.kind === "group");
   const stats = options.parsed.pipeline.find((stage) => stage.kind === "stats");
   const rawSort =

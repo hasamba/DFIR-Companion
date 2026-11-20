@@ -82,6 +82,12 @@ import { nodeSmtpConnect } from "../integrations/notify/smtpClient.js";
 import { tlsConnectFor, tlsFetchFor } from "./tlsFetch.js";
 import { createGuardedFetch } from "../routes/outboundGuardedFetch.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
+import { loadHuntReportData } from "../analysis/huntReportLoad.js";
+import { wireHuntGrading } from "./huntGrading.js";
+import { huntComparisonSource, huntPendingSource } from "./huntBaselineGrades.js";
+import { caseRoleHolders, huntPeerCaseIds } from "./huntPeerCases.js";
+import { ClientProfileStore } from "../analysis/clientProfileStore.js";
+import { HuntClientLinkStore } from "../analysis/huntClientLink.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import { HuntRunSnapshotStore } from "../analysis/huntRunSnapshotStore.js";
 import { VeloMonitorStore } from "../analysis/veloMonitorStore.js";
@@ -378,6 +384,30 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     (id) => serverSetStore.caseSetId(id),
     clientInventoryFor,
   );
+  // #2670: client profiles live beside cases/ (a client outlives every hunt case); hunt grading runs
+  // at the import seam (inventory + grouped rare/new/policy entries).
+  const clientProfileStore = new ClientProfileStore(join(dirname(casesRoot), "client-profiles"));
+  const huntClientLinkStore = new HuntClientLinkStore(store);
+  const huntBaselineDeps = {
+    links: huntClientLinkStore,
+    profiles: clientProfileStore,
+    huntJobs: (id: string) => veloHuntStore.list(id),
+    // Only cases every reader of the hunt case could open feed its persisted output (#2670).
+    peerCaseIds: huntPeerCaseIds({
+      listCases: () => store.listCases(),
+      ...(teamAuth ? { roleHolders: caseRoleHolders(teamAuth.store) } : {}),
+    }),
+    serverSetId: (id: string) => serverSetStore.caseSetId(id),
+  };
+  const huntGrading = wireHuntGrading({
+    store,
+    stateStore,
+    incidentTypeStore,
+    veloHuntStore,
+    serverSetId: (id) => serverSetStore.caseSetId(id),
+    baseline: huntBaselineDeps,
+  });
+  const huntInventoryStore = huntGrading.inventoryStore;
   const hub = new LiveHub(casesRoot); // #1866: closes a deleted case's sockets
   // Late subscribers to "a case's jobs changed" (#2406: the AI status idle gate), wired by appWiring.
   const jobChangeListeners = new Set<(caseId: string) => void>();
@@ -503,6 +533,20 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
         },
         caseId,
       ),
+    // #2670: the Threat hunt summary's data (null outside hunt mode).
+    huntReport: (caseId: string) =>
+      loadHuntReportData(
+        {
+          incidentTypeStore,
+          veloHuntStore,
+          huntInventoryStore,
+          huntClientLinkStore,
+          clientProfileStore,
+          previousHunt: huntComparisonSource({ ...huntBaselineDeps, inventories: huntInventoryStore }),
+          pending: huntPendingSource({ ...huntBaselineDeps, inventories: huntInventoryStore }),
+        },
+        caseId,
+      ),
     falsePositives: new FalsePositiveStore(store),
     reportMeta: reportMetaStore,
     customerExposure: new CustomerExposureStore(store),
@@ -573,6 +617,10 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     notifier,
     dashboardBaseUrl,
     veloHuntStore,
+    huntInventoryStore,
+    huntGradingDeps: huntGrading.deps,
+    clientProfileStore,
+    huntClientLinkStore,
     huntOutcomeStore,
     huntRunSnapshotStore,
     veloMonitorStore,

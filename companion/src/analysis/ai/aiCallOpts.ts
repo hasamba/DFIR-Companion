@@ -150,6 +150,9 @@ export function buildAiCallOpts(opts: PipelineOptions) {
     get veloHuntStore() {
       return opts.veloHuntStore;
     },
+    get huntInventoryStore() {
+      return opts.huntInventoryStore;
+    },
     get analysisRunStore() {
       return opts.analysisRunStore;
     },

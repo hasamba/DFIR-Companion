@@ -102,6 +102,8 @@ Multiple templates can be saved (e.g. "Executive" with fewer sections vs. "Techn
 
 21. AWS account weaknesses — what the imported CloudTrail records prove about each account's hygiene (root sign-in without MFA, root used for routine management, buckets with no Object Lock, S3 data events off before the selector change), each item citing its record by eventID and time, with the limits stated beside it (see [Dashboard → Account weaknesses (AWS)](dashboard.md#account-weaknesses-aws)). Included in the Standard and Technical Detail templates, left out of the Executive Brief, and off in a template you saved before this section existed. A case with no CloudTrail import has no such section
 
+22. Threat hunt summary — for a [threat-hunt case](threat-hunting.md#threat-hunt-mode-proactive-hunts): scope (hosts targeted versus hosts that answered, the hunts run, the time window), the verdict qualified by coverage (no compromise found / anomalies need follow-up / compromise suspected), policy violations, new, rare and flagged-download items with their hosts, items still waiting for the client's confirmation with their age, and the comparison with the last comparable hunt (it says plainly when there is nothing to compare). Opt-in everywhere; the built-in **Threat hunt summary** template carries it straight after the executive summary and leaves out the incident chapters. A hunt case defaults to that template.
+
 Sections are enabled/disabled per template — see **Report Customisation** above.
 
 ---

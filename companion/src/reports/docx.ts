@@ -1,3 +1,4 @@
+import type { HuntReportData } from "../analysis/huntReport.js";
 import {
   AlignmentType,
   BorderStyle,
@@ -489,6 +490,7 @@ export async function renderDocxReportChecked(
   exposure?: CustomerExposureSummary,
   template: ReportTemplate = defaultReportTemplate(),
   hostScope?: HostScopeLedger | null,
+  hunt?: HuntReportData, // #2670: the Threat hunt summary's data
 ): Promise<{ buffer: Buffer; evidenceSafety: EvidenceSafetyFinding[] }> {
   // Positional pass-through: the scoping statement is the 17th argument. The .docx must carry the
   // same canonical report as report.md — a Word deliverable that silently omits the scope section
@@ -509,6 +511,7 @@ export async function renderDocxReportChecked(
     undefined,
     undefined,
     undefined,
+    hunt,
   );
   // The scoping statement is appended rather than threaded through renderMarkdownReport:
   // markdown.ts sits at its size cap, and every format must carry the same canonical report.

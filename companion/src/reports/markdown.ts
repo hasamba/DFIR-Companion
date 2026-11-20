@@ -16,6 +16,7 @@ import { kerberoastChainSection } from "./kerberoastChainSection.js";
 import { sensitiveAccessSection } from "./sensitiveAccessSection.js";
 import { cloudWeaknessSection } from "./cloudWeaknessSection.js";
 import { handoffBriefSection } from "./handoffSection.js";
+import { huntSummarySection, type HuntReportData } from "./huntSummary.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
@@ -1394,6 +1395,7 @@ export function renderMarkdownReport(
   modelPerf?: ModelPerfSnapshot | null, // #74: model-performance footnote (opt-in via DFIR_REPORT_MODEL_PERF)
   complianceControl?: ComplianceControl, // #336: analyst-set discovery date + framework filter
   custody?: CustodyRecord[], // #231: per-artifact chain of custody for the appendix
+  hunt?: HuntReportData, // #2670: the Threat hunt summary's coverage, items and comparison
 ): string {
   const lines: string[] = [];
   const ctx = buildBrandingContext(state, meta);
@@ -1402,13 +1404,10 @@ export function renderMarkdownReport(
   const header = renderTemplateString(template.headerText, ctx).trim();
   if (header.length > 0) lines.push(`> ${header}`, "");
 
-  // Each canonical report section is a keyed builder; the template decides which appear and in
-  // what order. The default template enables them all in the canonical order, so the default
-  // report is byte-identical to the historical fixed-format one.
+  // Keyed builders; the template picks which appear and in what order (default: all, canonical order).
   const builders: Record<ReportSectionKey, () => void> = {
     titlePage: () => titlePage(state, meta, template, ctx, lines),
-    // Section 1 — report metadata. The major heading is rendered explicitly so the AnttiKurittu
-    // template's section structure is complete: "1 Report metadata" sits above 1.1 / 1.2 / 1.3 / 1.4.
+    // Section 1: the major heading is explicit so "1 Report metadata" sits above 1.1 / 1.2 / 1.3 / 1.4.
     reportMetadata: () => {
       lines.push("## 1 Report metadata", "");
       revisions(state, meta, lines);
@@ -1456,6 +1455,7 @@ export function renderMarkdownReport(
     sensitiveAccess: () => sensitiveAccessSection(state, lines),
     cloudWeaknesses: () => cloudWeaknessSection(state, lines),
     handoffBrief: () => handoffBriefSection(state, notebookEntries, hypotheses, lines),
+    huntSummary: () => huntSummarySection(hunt, state, lines),
   };
 
   for (const key of orderedEnabledSections(template)) builders[key]();

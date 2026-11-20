@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { runHuntSettle } from "../analysis/huntSettleHook.js";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import type { SuperEviction } from "../analysis/superTimelineStore.js";
 import type { TimelineDiff } from "../analysis/timelineDiff.js";
@@ -235,6 +236,14 @@ export async function settleForensicImport(
   // Defender engine start-up (#2084): the Info start-up rows are still here; demote is next.
   const engineBoot = await lock(caseId, () => stampEngineBootScoped(store, caseId, candidates));
   changed ||= engineBoot > 0;
+  // Hunt grading (#2670): a hunt case records this import's rows (Info still here) as host counts and
+  // writes one summary entry per graded program. Reads no raw record; changes no imported row.
+  const hunt = await lock(caseId, () =>
+    runHuntSettle(store, caseId, added, (e) =>
+      getServerLogger().warn(`[hunt] ${caseId}: grading skipped: ${e.message}`, { caseId }),
+    ),
+  );
+  changed ||= hunt > 0;
   const demoted = await demote(deps, caseId);
   changed ||= demoted.removed > 0;
   // Caller names (#2490): after demote, so only rows that stay in the forensic record are rewritten.
