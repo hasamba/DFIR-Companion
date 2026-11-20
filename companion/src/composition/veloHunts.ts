@@ -332,7 +332,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const cutShort: ReturnType<typeof truncatedRecord>[] = []; // TruncatedArtifact
       const unread: { name: string; rows: number }[] = []; // source list unknown — never "empty" (#1635)
       let totalRows = 0;
-      const holds = await loadHuntHolds(store, caseId, job.huntId); // size limits (#2753)
+      const holds = await loadHuntHolds(store, caseId, job.huntId, superOnly); // size limits (#2753)
       for (const artifact of job.artifacts) {
         const name = String(artifact ?? "").trim();
         let rows: unknown[];

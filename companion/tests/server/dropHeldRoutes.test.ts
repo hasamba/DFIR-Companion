@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,4 +64,20 @@ describe("held hunt file routes (#2755)", () => {
       expect((await request(app).post("/cases/c1/drop/held/decide").send(body)).status).toBe(400);
     expect((await request(app).get("/cases/nope/drop/held")).status).toBe(404);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses to move a file whose folder links outside drop/",
+    async () => {
+      const { app, drop } = await makeApp();
+      const outside = await mkdtemp(join(tmpdir(), "dfir-outside-"));
+      await writeFile(join(outside, "secret.json"), "{}\n");
+      await symlink(outside, join(drop, "_held", "link"));
+      const res = await request(app)
+        .post("/cases/c1/drop/held/decide")
+        .send({ decisions: [{ rel: "_held/link/secret.json", decision: "import" }] });
+      expect(res.body.updated).toBe(0);
+      expect(res.body.ignored[0].why).toMatch(/outside drop/);
+      expect(existsSync(join(outside, "secret.json"))).toBe(true);
+    },
+  );
 });

@@ -64,4 +64,24 @@ describe("hunt held store (#2755)", () => {
     await s.forgetMissing("c1", new Set(["_held/b.json"]));
     expect((await s.load("c1")).held.map((h) => h.rel)).toEqual(["_held/b.json"]);
   });
+
+  it("carries over bundle-hunt decisions stored by #2753's format", async () => {
+    const { s, dir } = await store();
+    await writeFile(
+      join(dir, HUNT_HELD_FILE),
+      JSON.stringify({
+        hunts: [
+          {
+            huntId: "H.OLD1",
+            entries: [
+              { artifact: "A", decision: "import" },
+              { artifact: "B", decision: "skip" },
+              { artifact: "C" },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(await s.huntDecisions("c1", "H.OLD1")).toEqual({ A: "import", B: "skip" });
+  });
 });

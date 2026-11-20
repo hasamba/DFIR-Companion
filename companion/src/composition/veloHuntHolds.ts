@@ -1,4 +1,6 @@
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { withCaseWrite } from "../storage/caseIncarnation.js";
 import {
   artifactRowHold,
   huntArtifactLimitsFromEnv,
@@ -45,10 +47,18 @@ export function heldArtifactFileName(artifact: string): string {
   return `${artifact.replace(/\//g, "%2F").replace(/[\\:*?"<>|\u0000-\u001f]/g, "_")}.json`;
 }
 
+/** Remove an earlier held copy of an artifact this collect imports (it is a copy; the evidence is kept). */
+async function supersede(dropDir: string, rel: string): Promise<void> {
+  await withCaseWrite(dropDir, () => rm(join(dropDir, ...rel.split("/")), { force: true })).catch(
+    () => undefined,
+  );
+}
+
 export async function loadHuntHolds(
   cases: { stateDir: (caseId: string) => string; caseDir: (caseId: string) => string },
   caseId: string,
   huntId: string,
+  superOnly = false,
 ): Promise<HuntHolds> {
   const store = huntHeldStoreFor(cases);
   const dropDir = join(cases.caseDir(caseId), "drop");
@@ -56,6 +66,9 @@ export async function loadHuntHolds(
   const left = new Map<string, string>(); // artifact → why it is not imported
   return {
     async note(name, rows) {
+      // A super-timeline-only hunt never reaches the forensic timeline and has its own cap: never held,
+      // since a released held file would import through the normal drop path instead (§7).
+      if (superOnly) return rows.length;
       const hold = artifactRowHold(name, rows, limits);
       // Read per artifact: a decision made while this pass downloads is followed.
       const decision = (await store.huntDecisions(caseId, huntId))[name];
@@ -66,8 +79,11 @@ export async function loadHuntHolds(
         );
         return 0;
       }
-      if (!hold || decision === "import") return rows.length;
       const rel = `${DROP_HELD}/${huntId}/${heldArtifactFileName(name)}`;
+      if (!hold || decision === "import") {
+        await supersede(dropDir, rel); // imported by this collect: an earlier held copy must not import again
+        return rows.length;
+      }
       await writeHeldText(dropDir, rel, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
       await store.putHeld(caseId, {
         ...{ rel, origin: "hunt", source: huntId, huntId, artifact: name, host: hold.hosts.join(", ") },

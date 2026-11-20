@@ -55,10 +55,27 @@ const approvedSchema = z.object({
 
 const pendingSchema = z.object({ relpath: z.string().refine(isSafeDropRelpath), meta: metaSchema });
 
-const huntSchema = z.object({
-  huntId: z.string().regex(/^H\.[A-Za-z0-9]{1,64}$/),
-  decisions: z.record(z.string().max(256), z.enum(["import", "skip"])).catch({}),
-});
+/** #2753 stored `entries: [{ artifact, decision? }]`; carried over into the decisions map. */
+function fromLegacyHunt(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || "decisions" in raw) return raw;
+  const entries = (raw as { entries?: unknown }).entries;
+  const decisions: Record<string, unknown> = {};
+  if (Array.isArray(entries))
+    for (const e of entries) {
+      const { artifact, decision } = (e ?? {}) as { artifact?: unknown; decision?: unknown };
+      if (typeof artifact === "string" && (decision === "import" || decision === "skip"))
+        decisions[artifact] = decision;
+    }
+  return { ...raw, decisions };
+}
+
+const huntSchema = z.preprocess(
+  fromLegacyHunt,
+  z.object({
+    huntId: z.string().regex(/^H\.[A-Za-z0-9]{1,64}$/),
+    decisions: z.record(z.string().max(256), z.enum(["import", "skip"])).catch({}),
+  }),
+);
 
 const validList = <S extends z.ZodTypeAny>(schema: S) =>
   z

@@ -177,4 +177,24 @@ describe("bundle hunt — artifacts over the size limits (#2753, #2755)", () => 
     },
     POLL_TIMEOUT_MS * 3,
   );
+
+  it(
+    "a later collect that imports the artifact removes its earlier held copy",
+    async () => {
+      process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0.002";
+      const { app, stateStore, drop } = await makeApp();
+      await request(app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      await request(app).post("/cases/c1/velociraptor/collect");
+      await collected(app);
+      expect(existsSync(join(drop, ...HELD.split("/")))).toBe(true);
+      process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0"; // now it fits
+      await request(app).post("/cases/c1/velociraptor/collect");
+      await collected(app);
+      expect(await pstreeEvents(stateStore)).toBeGreaterThan(0);
+      expect(existsSync(join(drop, ...HELD.split("/")))).toBe(false); // cannot import a second time
+    },
+    POLL_TIMEOUT_MS * 3,
+  );
 });

@@ -71,6 +71,10 @@ export async function moveWithinDrop(dropDir: string, fromRel: string, toRel: st
     const from = join(dropDir, ...fromRel.split("/"));
     const st = await lstat(from);
     if (!st.isFile()) throw new Error(`${fromRel} is not a regular file`);
+    // The source's folders must resolve inside drop/ too: a linked folder must not bring a file in.
+    const [dropReal, fromParent] = await Promise.all([realpath(dropDir), realpath(dirname(from))]);
+    if (fromParent !== dropReal && !fromParent.startsWith(dropReal + sep))
+      throw new Error(`refused to move a file from outside drop/ (security): ${fromRel}`);
     await mkdir(dirname(join(dropDir, ...toRel.split("/"))), { recursive: true });
     const target = await freeTarget(dropDir, toRel);
     const [realDrop, realParent] = await Promise.all([realpath(dropDir), realpath(dirname(target))]);
