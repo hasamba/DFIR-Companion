@@ -223,6 +223,17 @@ describe("buildBrandingContext", () => {
     expect(ctx.date).toBe("2026-06-10");
   });
 
+  it("keeps HTML-significant characters plain for the slide deck (plain mode)", () => {
+    const meta = emptyReportMeta();
+    meta.organization = "Smith & Jones <IR>";
+    meta.investigators = ["A & B"];
+    const plain = buildBrandingContext(emptyState("c1"), meta, { plain: true });
+    expect(plain.organization).toBe("Smith & Jones <IR>");
+    expect(plain.investigators).toBe("A & B");
+    // The Markdown report keeps its escaping.
+    expect(buildBrandingContext(emptyState("c1"), meta).organization).not.toBe("Smith & Jones <IR>");
+  });
+
   it("treats the epoch default updatedAt as no date", () => {
     const ctx = buildBrandingContext(emptyState("c1"), emptyReportMeta());
     expect(ctx.date).toBe("");

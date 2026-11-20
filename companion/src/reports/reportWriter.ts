@@ -498,7 +498,7 @@ export class ReportWriter {
     const caseMeta = await this.cases.getCaseMeta(caseId);
     const template = await this.loadTemplate(caseId);
     const reportMeta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
-    const ctx = buildBrandingContext(state, reportMeta);
+    const ctx = buildBrandingContext(state, reportMeta, { plain: true });
     const branding: PresentationBranding = {
       title: renderTemplateString(template.coverTitle, ctx).trim() || (caseMeta?.name ?? caseId),
       subtitle: renderTemplateString(template.coverSubtitle, ctx).trim(),
