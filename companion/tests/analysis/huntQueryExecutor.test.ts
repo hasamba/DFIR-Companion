@@ -141,6 +141,37 @@ describe("hunt query executor", () => {
     expect(result.events).toEqual([]);
   });
 
+  it("sums and averages only the numeric values of a mixed field (#2761)", async () => {
+    const { source } = sourceFor([
+      event("e1", { processName: "10" }),
+      event("e2", { processName: "abc" }),
+      event("e3", { processName: "20" }),
+      event("e4", { processName: "  " }),
+    ]);
+    const result = await executeHuntQuery({
+      caseId: "c1",
+      dataset: "forensic",
+      parsed: parseHuntQuery("process.name exists | stats count(), sum(process.name), avg(process.name)"),
+      source,
+    });
+    expect(result.rows).toEqual([{ count: 4, "sum_process.name": 30, "avg_process.name": 15 }]);
+  });
+
+  it("reports sum and avg over a field with no numeric values as not applicable (#2761)", async () => {
+    const { source } = sourceFor([
+      event("e1", { processName: "abc" }),
+      event("e2", { processName: "def" }),
+      event("e3", { processName: "" }),
+    ]);
+    const result = await executeHuntQuery({
+      caseId: "c1",
+      dataset: "forensic",
+      parsed: parseHuntQuery("process.name exists | stats sum(process.name), avg(process.name)"),
+      source,
+    });
+    expect(result.rows).toEqual([{ "sum_process.name": null, "avg_process.name": null }]);
+  });
+
   it("returns least-common values for a rare stage", async () => {
     const { source } = sourceFor([
       event("e1", { dstIp: "198.51.100.1" }),
