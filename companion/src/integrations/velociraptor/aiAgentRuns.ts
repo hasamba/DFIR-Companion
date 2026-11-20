@@ -17,7 +17,7 @@ import type { ServerSetStore } from "../serverSets/serverSetStore.js";
 import type { VeloHuntJob, VeloHuntStore } from "../../analysis/veloHuntStore.js";
 import type { VelociraptorClient } from "./velociraptorApi.js";
 import { activeAiAgentRuleSet } from "../../analysis/aiAgentActiveRules.js";
-import { buildAiAgentReport } from "../../analysis/aiAgentReport.js";
+import { aiAgentEndpointLabels, buildAiAgentReport } from "../../analysis/aiAgentReport.js";
 import {
   AiAgentRunStore,
   capManifest,
@@ -27,7 +27,7 @@ import {
 import { AI_AGENT_DEFAULT_UPLOAD_MAX_BYTES, buildAiAgentArtifact } from "./aiAgentArtifact.js";
 import { AI_AGENT_HUNT_EXPIRY_SECONDS, launchAiAgentRun } from "./aiAgentLaunch.js";
 import { preflightAiAgentRun, type AiAgentEndpoint } from "./aiAgentPreflight.js";
-import { readUploadManifest } from "./uploadVql.js";
+import { readUploadManifestStatus } from "./uploadVql.js";
 import { CLIENT_RE } from "./clientInventory.js";
 import {
   SWEEP_CASE_KIND,
@@ -72,6 +72,12 @@ export interface AiAgentForensicsDeps {
     opts: { label: string; idBase: string; rows?: number },
   ): Promise<{ addedEvents: number; addedIocs: number }>;
   onChange?(caseId: string): void;
+  /**
+   * An activity-log entry for a case (#2722): a run started, a sweep filed. Routes write it with
+   * logActivity. The detail holds counts, ids, the rule version and scope ids — never a matched text
+   * or path, which are attacker-controlled.
+   */
+  onActivity?(caseId: string, entry: { action: string; detail: string }): void;
   log(line: string): void;
 }
 
@@ -92,10 +98,16 @@ function veloFor(deps: AiAgentForensicsDeps, caseId: string): VelociraptorClient
   return r.servers.velociraptor;
 }
 
-/** The chosen clients' host names and OS, read live (bounded, validated ids). */
-async function readEndpoints(client: VelociraptorClient, ids: string[]): Promise<AiAgentEndpoint[]> {
+/**
+ * The chosen clients' host names and OS, read live (bounded, validated ids), and the ids this server
+ * does not know (`missing`): a client id that is not enrolled here is not on this server set.
+ */
+async function readEndpoints(
+  client: VelociraptorClient,
+  ids: string[],
+): Promise<{ endpoints: AiAgentEndpoint[]; missing: string[] }> {
   const list = ids.map((c) => `'${c}'`).join(", ");
-  const { rows } = await client.runProgram(
+  const { rows, reason } = await client.runProgram(
     `SELECT client_id, os_info.system AS OS, os_info.hostname AS Hostname, os_info.fqdn AS Fqdn FROM clients() WHERE client_id IN [${list}]`,
   );
   const found = new Map(
@@ -104,11 +116,16 @@ async function readEndpoints(client: VelociraptorClient, ids: string[]): Promise
       { os: String(r.OS ?? ""), hostname: String(r.Hostname || r.Fqdn || "") },
     ]),
   );
-  return ids.map((clientId) => ({
+  const endpoints = ids.map((clientId) => ({
     clientId,
     hostname: found.get(clientId)?.hostname || clientId,
     os: found.get(clientId)?.os ?? "",
   }));
+  const missing = ids.filter((id) => !found.has(id));
+  // A failed clients() query returns no rows: say why, never blame the ids.
+  if (missing.length && reason?.trim())
+    throw new AiAgentRunError(`could not read the endpoints from Velociraptor: ${reason.trim()}`, 502);
+  return { endpoints, missing };
 }
 
 function validClientIds(raw: unknown): string[] {
@@ -195,7 +212,11 @@ export async function startAiAgentRun(
   const bundle = buildAiAgentArtifact(set, { scopes: input.scopes, uploadMaxBytes }); // option errors before any case is made
   const target = input.caseId ? { client: veloFor(deps, input.caseId) } : sweepSet(deps, input.serverSetId);
   const client = target.client;
-  const endpoints = await readEndpoints(client, clientIds);
+  const { endpoints, missing } = await readEndpoints(client, clientIds);
+  // Inside a case, every endpoint must belong to the case's own server set (#2725): a case writer may
+  // not reach a client of another set by naming its id.
+  if (input.caseId && missing.length)
+    throw new AiAgentRunError(`not enrolled on this case's Velociraptor server: ${missing.join(", ")}`);
   const pre = await preflightAiAgentRun(endpoints, () =>
     client.listClientArtifacts("client", { refresh: true }),
   );
@@ -259,6 +280,10 @@ export async function startAiAgentRun(
   deps.log(
     `[ai-agent] run ${runId} hunt ${launch.huntId} on ${launch.added.length} endpoint(s) in ${caseId}`,
   );
+  deps.onActivity?.(caseId, {
+    action: "ai-agent-run",
+    detail: `started AI Agent Forensics on ${run.endpoints.length} endpoint(s) (hunt ${run.huntId}, rules ${run.ruleSetVersion}, scopes ${run.scopes.join(", ")})`,
+  });
   deps.onChange?.(caseId);
   return { caseId, run, sweep };
 }
@@ -270,20 +295,36 @@ export function withSilentEndpoints(
   report: ReturnType<typeof buildAiAgentReport>,
   endpoints: { clientId: string; hostname: string }[],
 ): ReturnType<typeof buildAiAgentReport> {
-  const seen = new Set(report.endpoints.map((e) => shortHost(e.host)));
+  // Matched by client id (Codex review of #2722): a silent client sharing a reporting client's host
+  // name must still be listed. Only a report endpoint with no client id (an older report) is matched
+  // by host name.
+  const seenIds = new Set(report.endpoints.flatMap((e) => (e.clientId ? [e.clientId] : [])));
+  const seenNames = new Set(
+    report.endpoints.filter((e) => !e.clientId).map((e) => shortHost(e.hostname ?? e.host)),
+  );
   const silent = endpoints
-    .filter((e) => !seen.has(shortHost(e.hostname)) && !seen.has(shortHost(e.clientId)))
+    .filter(
+      (e) =>
+        !seenIds.has(e.clientId) &&
+        !seenNames.has(shortHost(e.hostname)) &&
+        !seenNames.has(shortHost(e.clientId)),
+    )
     .map((e) => ({
       host: e.hostname || e.clientId,
+      hostname: e.hostname || e.clientId,
+      clientId: e.clientId,
       tools: [],
       mcpServers: [],
       credentialStores: 0,
       hits: 0,
+      sigma: [],
       coverage: [
         { source: "run", status: "no results yet", detail: `client ${e.clientId} has returned no rows` },
       ],
     }));
-  return silent.length ? { ...report, endpoints: [...report.endpoints, ...silent] } : report;
+  return silent.length
+    ? aiAgentEndpointLabels({ ...report, endpoints: [...report.endpoints, ...silent] })
+    : report;
 }
 
 /** Re-read the run's results from Velociraptor and rebuild its report + upload manifest. */
@@ -317,11 +358,20 @@ export async function refreshAiAgentRun(
     }
   }
   await deps.runStore.writeRows(caseId, runId, rows); // the complete set read — never capped
-  const report = withSilentEndpoints(buildAiAgentReport(rows, activeAiAgentRuleSet()), run.endpoints);
-  const manifest = await readUploadManifest(client, run.huntId).catch((e: Error) => {
+  // The manifest first, uncapped: the report joins each agent-home hit to its preserved copy's hash
+  // (#2722). A manifest that could not be read leaves those hashes "not recorded".
+  const read = await readUploadManifestStatus(client, run.huntId).catch((e: Error) => {
     problems.push(`upload manifest: ${e.message}`);
     return null;
   });
+  if (read?.problem) problems.push(`upload manifest: ${read.problem}`);
+  const manifest = read?.entries ?? null;
+  const report = withSilentEndpoints(
+    buildAiAgentReport(rows, activeAiAgentRuleSet(), new Date(), {
+      manifest: read && !read.problem ? read.entries : null,
+    }),
+    run.endpoints,
+  );
   const updated = await deps.runStore.update(caseId, runId, (r) => ({
     ...r,
     report,
@@ -390,6 +440,15 @@ export async function addSweepToCase(
     ...r,
     addedTo: [...(r.addedTo ?? []), { caseId: targetCaseId, at, events: out.addedEvents }],
   }));
+  const counts = `+${out.addedEvents} event(s), +${out.addedIocs} IOC(s)`;
+  deps.onActivity?.(targetCaseId, {
+    action: "ai-agent-add-to-case",
+    detail: `added AI Agent Forensics sweep ${sweepCaseId} (hunt ${run.huntId}): ${counts}`,
+  });
+  deps.onActivity?.(sweepCaseId, {
+    action: "ai-agent-add-to-case",
+    detail: `filed into case ${targetCaseId}: ${counts}`,
+  });
   deps.onChange?.(targetCaseId);
   return out;
 }

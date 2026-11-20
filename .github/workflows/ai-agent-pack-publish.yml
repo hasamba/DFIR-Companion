@@ -46,6 +46,17 @@ jobs:
         with:
           node-version: "22"
 
+      # Same check as ci.yml (#2720): never publish a pack whose YARA rules do not compile.
+      - name: Set up Python (AI-agent YARA check)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile-check AI-agent YARA rules
+        run: |
+          pip install yara-python==4.5.4 pyyaml==6.0.3
+          python companion/scripts/checkAiAgentYara.py
+
       - name: Find the newest pack
         id: prev
         env:

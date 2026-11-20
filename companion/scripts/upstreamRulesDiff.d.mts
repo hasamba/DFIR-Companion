@@ -16,6 +16,8 @@ export interface UpstreamGroup {
   /** Upstream path whose newest commit is the comparison head. */
   readonly watchPath: string;
   readonly files: readonly string[];
+  /** rule-files only: keep just these full upstream paths from each listing of watchPath (#2723). */
+  readonly onlyFiles?: readonly string[];
 }
 
 export interface RecordedCommit {

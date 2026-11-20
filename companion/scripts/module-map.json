@@ -150,6 +150,7 @@
     "aiAuthoredText.ts": "analysis/ai",
     "aiControl.ts": "analysis/ai",
     "aiAgentActiveRules.ts": "analysis/hunt",
+    "aiAgentHashCheck.ts": "analysis/ingest",
     "aiAgentImport.ts": "analysis/ingest",
     "aiAgentPack.ts": "analysis/findings",
     "aiAgentReport.ts": "analysis/ingest",

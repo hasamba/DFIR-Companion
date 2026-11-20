@@ -41,4 +41,26 @@ describe("AI Agent Forensics panel", () => {
     expect(js).toContain("Grades are provisional until measured on real developer profiles.");
     expect(js).toContain("SENSITIVE");
   });
+
+  it("lists a case's endpoints through the case route, and explains a 403 accurately (#2725)", () => {
+    expect(js).toContain("/ai-agent/endpoints`");
+    expect(js).toContain("Only an administrator can list endpoints");
+    expect(js).toContain("You need write access to this case to list its endpoints");
+    // The Settings advice is for an empty inventory, never for a refusal: a non-admin cannot open Settings.
+    const refusal = js.slice(js.indexOf("inv.status === 403"), js.indexOf("Only an administrator") + 100);
+    expect(refusal).not.toContain("Settings");
+  });
+
+  it("shows both hashes, the check, and the rule-by-endpoint Sigma table (#2722)", () => {
+    expect(js).toContain("function hashCell(h)");
+    expect(js).toContain('h.hashCheck || "not recorded"');
+    expect(js).toContain("function sigmaTable(report)");
+    // Codex review: the YARA read is not hashed, so "same" claims only "unchanged since hashing".
+    expect(js).toContain("same: unchanged between hashing and preservation");
+    expect(js).toContain("differs: changed between hashing and preservation");
+    expect(js).toContain("The bytes YARA read are not separately hashed");
+    expect(js).not.toContain("the file changed after the scan");
+    expect(js).toContain('cell ? `${cell.status}, ${cell.hits} hit(s)` : "not recorded"');
+    expect(js).toContain("/sigma-coverage.csv`");
+  });
 });

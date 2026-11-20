@@ -938,8 +938,11 @@ a poisoned MCP server, a backdoored rules file, planted agent memory, or an inst
 project's `CLAUDE.md`. The toolbar's **AI agents** button opens it; inside a case it opens this
 section, and with no case open it opens the **sweep** view.
 
-1. Tick the endpoints (from the server set's Velociraptor client inventory). Non-Windows endpoints
-   are left out and named: this version runs on Windows only.
+1. Tick the endpoints. Inside a case, the list is the endpoints of the case's own Velociraptor
+   server set, and anyone with write access to the case can see it (host name, FQDN, client id, last
+   seen, labels). A read-only member is told they need write access. With no case open, the list is
+   the whole fleet, and only an administrator can see it and start a run. Non-Windows endpoints are
+   left out and named: this version runs on Windows only.
 2. Leave the three default scopes ticked (agent home folders, project instruction files, MCP server
    installs) or add the two slow ones (local model files, script drop locations).
 3. Press **Run**. Velociraptor runs the [ai-dfir-toolkit](https://github.com/depalmar/ai-dfir-toolkit)
@@ -949,11 +952,34 @@ section, and with no case open it opens the **sweep** view.
 
 The results-only report shows, per endpoint, the AI tools found, the MCP servers configured (name and
 executable only; arguments are counted, never shown, and environment values are never read), the
-number of hits, whether a credential store is present, and what each scope scanned. Below it: the
+number of hits, whether a credential store is present, and what each scope scanned. Endpoints are
+told apart by their Velociraptor client id: when two clients share a host name (a re-imaged machine
+or a cloned VM), each is shown with its client id, for example `WS-01 (C.aaa111)`, in the panel and
+in every download. Below it: the
 hits table (grade, endpoint, rule, file, the **latest time the content could have been planted**,
-the matched text, and the rule's author with a link to the rule), **Rules not run, and why**, the
-rule version, and a link to the collection in Velociraptor. **Report .md** and **Report .csv**
-download the same report.
+the matched text, the file's hashes, and the rule's author with a link to the rule), the **Sigma
+coverage per rule and endpoint** table, **Rules not run, and why**, the rule version, and a link to
+the collection in Velociraptor. **Report .md** and **Report .csv** download the same report;
+**Sigma coverage .csv** downloads the rule-by-endpoint table.
+
+- **Two hashes per matched file.** The **file** hash is taken on the endpoint after the YARA scan;
+  the **preserved** hash is the hash of the copy kept in Velociraptor (from the run's own upload, or
+  for agent-home files from the preservation collection's file list). The check says **same**
+  (the file did not change between hashing and preservation), **differs** (it changed between
+  hashing and preservation), **not preserved** (the run said it did not keep the file, for example
+  over the upload cap) or **not recorded** (the Companion could not tell, for example because the
+  file list was not read in full). Only the file hash becomes a case IOC; a difference is written in
+  the event's detail.
+- **What "same" does not prove.** YARA, the hash and the upload each read the file separately, and
+  the bytes YARA read are not separately hashed. If the file was replaced after YARA matched it but
+  before it was hashed, both hashes describe the replacement and the check still says **same**. So
+  **same** does not prove that the preserved copy holds the matched bytes. The panel, **Report .md**
+  and **Report .csv** (column `hash_note`) say this beside the check.
+- **Sigma coverage per rule and endpoint.** One row per Sigma rule, one column per endpoint. Each
+  cell says whether the rule ran there and on what it ran (**live state**, **event history**, or
+  **Sysmon event history**), with its hit count, or "not run: no Sysmon". A cell that says **not
+  recorded** means that endpoint sent no answer for that rule (for example, a run made before this
+  table existed); it does not mean the rule found nothing.
 
 - **Grades are provisional** until they are measured on real developer profiles. A hit on the
   toolkit's own test files or rule copies is graded Info, recognised by content hash, never by
@@ -971,6 +997,8 @@ download the same report.
 - **Outside a case**, each run is kept as a hidden sweep (the newest 20; older ones are removed
   from the Companion, never from Velociraptor). **Add to case…** files a sweep's results into a real
   case, as if the run had been made there.
+- **The case's activity log** records each run (endpoint count, hunt, rule version, scopes) and each
+  **Add to case** (in the target case and in the sweep, with the events and IOCs added).
 - **Rules not run** lists every toolkit rule this run cannot use and why: it needs LLM application
   logs, it is a correlation rule, it reads a cloud log source, it is a Linux rule, it needs
   file-read auditing, or the compiler refused it. File-change Sigma rules run on the Sysmon log;

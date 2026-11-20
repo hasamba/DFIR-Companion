@@ -121,10 +121,15 @@
     list.setAttribute("role", "group");
     list.setAttribute("aria-label", "Endpoints to check");
     wrap.append(filter, list);
-    const inv = await call(`/velociraptor/clients${caseId ? `?caseId=${encodeURIComponent(caseId)}` : ""}`);
+    // Inside a case: the case's own endpoint list (case writers, #2725). No case: the fleet inventory,
+    // which — like a run with no case open — is the administrator's.
+    const inv = await call(caseId ? `/cases/${encodeURIComponent(caseId)}/ai-agent/endpoints` : "/velociraptor/clients");
     const clients = (inv.ok && inv.body.clients) || [];
-    if (!clients.length)
-      list.appendChild(el("p", "No Velociraptor client inventory yet — refresh it in Settings → Velociraptor.", "aa-note"));
+    if (inv.status === 403)
+      list.appendChild(el("p", caseId ? "You need write access to this case to list its endpoints — ask the case owner or an administrator." : "Only an administrator can list endpoints and run with no case open — open a case you can write to.", "aa-note"));
+    else if (!inv.ok) list.appendChild(el("p", (inv.body && inv.body.error) || `Could not list endpoints (HTTP ${inv.status}).`, "aa-note"));
+    else if (!clients.length)
+      list.appendChild(el("p", "No Velociraptor client inventory yet — an administrator can refresh it in Settings → Velociraptor.", "aa-note"));
     for (const c of clients.slice(0, 2000)) {
       const label = el("label", null, "aa-endpoint");
       const box = el("input");
@@ -199,11 +204,53 @@
     return form;
   }
 
+  // #2722: the file's hash (taken after the YARA scan), the preserved copy's hash and whether they
+  // match. A report stored before the check existed never recorded it. YARA, the hash and the upload
+  // are separate reads, so "same" claims only "unchanged since hashing" (Codex review).
+  const HASH_LABELS = {
+    same: "same: unchanged between hashing and preservation",
+    differs: "differs: changed between hashing and preservation",
+  };
+  const HASH_CAVEAT =
+    "File hashes are taken after the YARA scan. The bytes YARA read are not separately hashed, so \"same\" shows only that the file did not change between hashing and preservation; that the preserved copy holds the matched bytes is not proven.";
+  function hashCell(h) {
+    const td = el("td", null, "aa-hash");
+    td.appendChild(el("div", `after scan: ${h.sha256 || "none"}`));
+    td.appendChild(el("div", `preserved: ${h.preservedSha256 || "none"}`));
+    const check = h.hashCheck || "not recorded";
+    td.appendChild(el("div", HASH_LABELS[check] || check, check === "differs" ? "aa-warn" : "aa-muted"));
+    return td;
+  }
+
+  // #2722: one row per Sigma rule of the rule set, one column per endpoint. A rule that sent no row
+  // from an endpoint was not recorded there — never "did not run".
+  function sigmaTable(report) {
+    const rules = report.sigmaRules || [];
+    if (!rules.length) return null;
+    const wrap = el("details", null, "aa-sigma");
+    wrap.appendChild(el("summary", `Sigma coverage per rule and endpoint (${rules.length} rule(s))`));
+    const table = el("table", null, "aa-hits");
+    const head = el("tr");
+    for (const h of ["Rule", "Basis", ...report.endpoints.map((e) => e.host)]) head.appendChild(el("th", h));
+    table.appendChild(head);
+    for (const r of rules) {
+      const tr = el("tr");
+      tr.append(el("td", r.rule), el("td", r.basis));
+      for (const e of report.endpoints) {
+        const cell = (e.sigma || []).find((c) => c.rule === r.rule);
+        tr.appendChild(el("td", cell ? `${cell.status}, ${cell.hits} hit(s)` : "not recorded", cell ? "" : "aa-muted"));
+      }
+      table.appendChild(tr);
+    }
+    wrap.appendChild(table);
+    return wrap;
+  }
+
   function hitsTable(hits) {
     if (!hits.length) return el("p", "No rule matched on these endpoints and scopes.", "aa-note");
     const table = el("table", null, "aa-hits");
     const head = el("tr");
-    for (const h of ["Grade", "Endpoint", "Rule", "File", "Latest time the content could have been planted", "Matched text", "Rule"])
+    for (const h of ["Grade", "Endpoint", "Rule", "File", "Latest time the content could have been planted", "Matched text", "File SHA-256 after scan / preserved", "Rule"])
       head.appendChild(el("th", h));
     table.appendChild(head);
     for (const h of hits) {
@@ -214,6 +261,7 @@
       tr.appendChild(el("td", h.path));
       tr.appendChild(el("td", `${h.time} (${h.timeBasis})`));
       tr.appendChild(el("td", h.snippet, "aa-snippet"));
+      tr.appendChild(hashCell(h));
       const ruleCell = el("td", h.author ? `${h.author} ` : "");
       if (h.link && /^https:\/\/github\.com\//.test(h.link)) {
         const a = el("a", "rule");
@@ -225,7 +273,9 @@
       tr.appendChild(ruleCell);
       table.appendChild(tr);
     }
-    return table;
+    const wrap = el("div");
+    wrap.append(table, el("p", HASH_CAVEAT, "aa-note"));
+    return wrap;
   }
 
   function endpointLines(endpoints) {
@@ -286,6 +336,9 @@
       a.href = `${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/report.${fmt}`;
       actions.appendChild(a);
     }
+    const sigmaCsv = el("a", "Sigma coverage .csv");
+    sigmaCsv.href = `${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/sigma-coverage.csv`;
+    actions.appendChild(sigmaCsv);
     if (sweep) {
       const add = el("button", "Add to case…");
       add.type = "button";
@@ -307,6 +360,8 @@
     }
     card.appendChild(endpointLines(r.endpoints));
     card.appendChild(hitsTable(r.hits));
+    const sigma = sigmaTable(r);
+    if (sigma) card.appendChild(sigma);
     card.appendChild(notRunBlock(r.notRun));
     if (run.manifest) card.appendChild(el("p", `Preserved in Velociraptor: ${run.manifest.total} file(s), ${run.manifest.totalBytes} bytes (manifest only).`, "aa-note"));
     if (r.unreadableRows) card.appendChild(el("p", `${r.unreadableRows} result row(s) could not be read.`, "aa-warn"));

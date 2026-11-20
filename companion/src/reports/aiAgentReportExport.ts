@@ -1,9 +1,12 @@
-// AI Agent Forensics (#2690): the run report as Markdown and CSV. Matched snippets, file paths, MCP
+// AI Agent Forensics (#2690): the run report as Markdown and CSV, and (#2722) the rule-by-endpoint
+// Sigma coverage table as its own CSV. Matched snippets, file paths, MCP
 // names and commands are attacker-controlled, so every one goes through the shared escapers: cellMd /
 // codeSpanMd for Markdown tables, csv.row (formula-injection guard + quoting) for CSV. The snippet is
 // already redacted and length-capped by the report builder.
 
 import type { AiAgentRun } from "../analysis/aiAgentRunStore.js";
+import type { AiAgentReport, AiAgentReportEndpoint, AiAgentReportHit } from "../analysis/aiAgentReport.js";
+import { AI_AGENT_HASH_CAVEAT, hashCheckLabel } from "../analysis/aiAgentHashCheck.js";
 import { cellMd, codeSpanMd } from "./mdText.js";
 import { row } from "./csv.js";
 
@@ -27,6 +30,51 @@ function summaryLines(run: AiAgentRun): string[] {
     `- ${SENSITIVE_NOTE}`,
     `- ${PROVISIONAL_NOTE}`,
   ];
+}
+
+/** A report stored before #2722 has no hash check: it was never recorded. */
+function hashCheckOf(h: AiAgentReportHit): string {
+  return hashCheckLabel(h.hashCheck ?? "not recorded");
+}
+
+/** The caveat travels with every check that compares two hashes. */
+function hashNoteOf(h: AiAgentReportHit): string {
+  return h.hashCheck === "same" || h.hashCheck === "differs" ? AI_AGENT_HASH_CAVEAT : "";
+}
+
+/** The text of one rule-by-endpoint cell; a rule with no row from that endpoint was not recorded. */
+export function sigmaCellText(ep: AiAgentReportEndpoint, rule: string, sep = ", "): string {
+  const cell = (ep.sigma ?? []).find((c) => c.rule === rule);
+  return cell ? `${cell.status}${sep}${cell.hits} hit(s)` : "not recorded";
+}
+
+/** The rule-by-endpoint Sigma table (#2722): one row per rule of the rule set, one column per endpoint. */
+function sigmaMarkdown(r: AiAgentReport): string[] {
+  const rules = r.sigmaRules ?? [];
+  if (!rules.length) return [];
+  const out = [
+    "",
+    "## Sigma coverage per rule and endpoint",
+    "",
+    `| Rule | Basis | ${r.endpoints.map((e) => cellMd(e.host)).join(" | ")} |`,
+    `|---|---|${r.endpoints.map(() => "---|").join("")}`,
+  ];
+  for (const rule of rules)
+    out.push(
+      `| ${cellMd(rule.rule)} | ${cellMd(rule.basis)} | ${r.endpoints.map((e) => cellMd(sigmaCellText(e, rule.rule))).join(" | ")} |`,
+    );
+  return out;
+}
+
+/** The rule-by-endpoint Sigma table as CSV: rule, basis, then one column per endpoint (#2722). */
+export function aiAgentSigmaCoverageCsv(run: AiAgentRun): string {
+  const r = run.report;
+  const endpoints = r?.endpoints ?? [];
+  const header = row(["rule", "basis", ...endpoints.map((e) => e.host)]);
+  const lines = (r?.sigmaRules ?? []).map((rule) =>
+    row([rule.rule, rule.basis, ...endpoints.map((e) => sigmaCellText(e, rule.rule, " - "))]),
+  );
+  return [header, ...lines].join("\r\n") + "\r\n";
 }
 
 /** The run report as Markdown. */
@@ -53,14 +101,17 @@ export function aiAgentReportMarkdown(run: AiAgentRun): string {
   if (!r.hits.length) lines.push("No rule matched on the endpoints and scopes above.");
   else {
     lines.push(
-      "| Grade | Endpoint | Rule | File | Latest time the content could have been planted | Matched text | Rule author |",
+      AI_AGENT_HASH_CAVEAT,
+      "",
+      "| Grade | Endpoint | Rule | File | Latest time the content could have been planted | Matched text | File SHA-256 (hashed after the scan) | Preserved SHA-256 | Hash check | Rule author |",
     );
-    lines.push("|---|---|---|---|---|---|---|");
+    lines.push("|---|---|---|---|---|---|---|---|---|---|");
     for (const h of r.hits)
       lines.push(
-        `| ${h.severity}${h.selfScan ? " (self-scan)" : ""} | ${cellMd(h.host)} | ${cellMd(h.rule)} | ${cellMd(h.path)} | ${h.time} (${cellMd(h.timeBasis)}) | ${codeSpanMd(h.snippet)} | ${cellMd(h.author)} ${cellMd(h.link)} |`,
+        `| ${h.severity}${h.selfScan ? " (self-scan)" : ""} | ${cellMd(h.host)} | ${cellMd(h.rule)} | ${cellMd(h.path)} | ${h.time} (${cellMd(h.timeBasis)}) | ${codeSpanMd(h.snippet)} | ${cellMd(h.sha256 || "none")} | ${cellMd(h.preservedSha256 || "none")} | ${cellMd(hashCheckOf(h))} | ${cellMd(h.author)} ${cellMd(h.link)} |`,
       );
   }
+  lines.push(...sigmaMarkdown(r));
   lines.push("", "## Rules not run, and why", "");
   for (const g of r.notRun)
     lines.push(`- ${cellMd(g.reason)} (${g.rules.length}): ${g.rules.map(cellMd).join(", ")}`);
@@ -82,7 +133,10 @@ export function aiAgentReportCsv(run: AiAgentRun): string {
     "atlas",
     "scope",
     "file",
-    "sha256",
+    "file_sha256_after_scan",
+    "preserved_sha256",
+    "hash_check",
+    "hash_note",
     "event_time",
     "event_time_basis",
     "scan_time",
@@ -104,6 +158,9 @@ export function aiAgentReportCsv(run: AiAgentRun): string {
       h.scope,
       h.path,
       h.sha256,
+      h.preservedSha256 ?? "",
+      hashCheckOf(h),
+      hashNoteOf(h),
       h.time,
       h.timeBasis,
       h.scanTime,

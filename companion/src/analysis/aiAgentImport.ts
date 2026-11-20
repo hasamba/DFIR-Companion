@@ -111,6 +111,11 @@ function mapHit(
     `file modified ${row.FileMtime || "unknown"}, created ${row.FileBtime || "unknown"}, scanned ${row.ScanTime || "unknown"}`,
     `event time basis: ${basis}`,
     row.Preserved ? `preserved: ${row.Preserved}` : "",
+    // The file changed between hashing and the upload (#2722): said here, never a second hash IOC.
+    // The hash is taken after the YARA scan, so it is not called the scan hash (Codex review).
+    row.PreservedSha256 && row.FileSha256 && row.PreservedSha256 !== row.FileSha256
+      ? `preserved copy hash differs from the file's hash taken after the scan (preserved SHA-256 ${row.PreservedSha256})`
+      : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -173,8 +178,8 @@ function mapOther(row: Exclude<AiAgentRow, AiAgentHitRow>, host: string): Mapped
   return infoEvent(
     row,
     host,
-    `coverage: ${row.Source} — ${row.Status}${row.Detail ? ` (${row.Detail})` : ""}`,
-    `cov|${row.Source}|${row.Status}`,
+    `coverage: ${row.Source}${row.RuleName ? ` "${row.RuleName}"` : ""} — ${row.Status}${row.Detail ? ` (${row.Detail})` : ""}`,
+    `cov|${row.Source}|${row.RuleName ? `${row.RuleName}|` : ""}${row.Status}`,
   );
 }
 

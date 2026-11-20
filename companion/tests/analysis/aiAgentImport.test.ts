@@ -279,4 +279,37 @@ describe("AI Agent Forensics mapper: Sigma hits", () => {
     expect(r.events[0].path).toBe("C:\\Users\\dev\\AppData\\Local\\Temp\\thinking_robot_log.txt");
     expect(r.events[0].mitreTechniques).toContain("T1547.001");
   });
+
+  it("notes a preserved copy whose hash differs in the event detail, and keeps the scan hash the only hash IOC (#2722)", () => {
+    const scan = "a".repeat(64);
+    const kept = "b".repeat(64);
+    const out = parseVelociraptorJson(
+      JSON.stringify([
+        hit({
+          RuleName: "Changed_During_Collection",
+          FilePath: "C:\\Users\\dev\\changed\\CLAUDE.md",
+          FileSha256: scan,
+          PreservedSha256: kept,
+          MatchedText: "x",
+        }),
+        hit({
+          RuleName: "Same_Copy",
+          FilePath: "C:\\Users\\dev\\same\\CLAUDE.md",
+          FileSha256: "c".repeat(64),
+          PreservedSha256: "c".repeat(64),
+          MatchedText: "x",
+        }),
+      ]),
+    );
+    const changed = out.events.find((e) => e.description.includes("Changed_During_Collection"))!;
+    expect(JSON.stringify(changed)).toContain(
+      `preserved copy hash differs from the file's hash taken after the scan (preserved SHA-256 ${kept})`,
+    );
+    const same = out.events.find((e) => e.description.includes("Same_Copy"))!;
+    expect(JSON.stringify(same)).not.toContain("differs");
+    const hashes = out.iocs.filter((i) => i.type === "hash").map((i) => i.value);
+    expect(hashes).toContain(scan);
+    expect(hashes).not.toContain(kept);
+    expect(hashes.filter((h) => h === "c".repeat(64))).toHaveLength(1);
+  });
 });

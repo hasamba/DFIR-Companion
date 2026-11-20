@@ -317,9 +317,12 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
     // every /client-profiles/:id route stays with the instance administrator (the default below).
     (normalizedMethod === "GET" && collectionPath(path) === "/client-profiles") ||
     // AI Agent Forensics (#2690): the rule version and scopes are reference data; the sweep list is
-    // cut by the route to the sweeps the caller may see (visibleCaseIds); a launch is open to every
-    // analyst, like POST /cases, and the route requires WRITE on a case the body names. Its rule-pack
-    // install / roll back stay with the instance administrator (the default below).
+    // cut by the route to the sweeps the caller may see (visibleCaseIds). A launch passes this gate for
+    // every signed-in user because only the BODY says where it runs, so the route decides (#2725): a
+    // case named in the body needs WRITE on it and every endpoint must be on that case's server set; a
+    // launch with NO case (a sweep, on any server set) is the instance administrator's alone. The case's
+    // endpoint list (GET /cases/:id/ai-agent/endpoints) is in the case bucket, and the route requires
+    // WRITE there. Rule-pack install / roll back stay with the instance administrator (the default below).
     (normalizedMethod === "GET" && (path === "/ai-agent/rules" || path === "/ai-agent/sweeps")) ||
     (normalizedMethod === "POST" && path === "/ai-agent/runs") ||
     pathStarts(path, "/api/jobs") ||

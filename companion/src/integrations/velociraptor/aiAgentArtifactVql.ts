@@ -17,7 +17,16 @@ export function cfgPreamble(partVars: string[]): string {
   ].join("\n");
 }
 
-/** One YARA scope: list its files once, scan them, emit hit rows and one coverage row. */
+/**
+ * One YARA scope: list its files once, scan them, emit hit rows and one coverage row. A hit carries the
+ * file's hash AND, when the run uploaded the file, the hash of that upload (#2722).
+ *
+ * yara(), hash() and upload() are three separate reads of the file, and the bytes YARA matched are not
+ * hashed: the file hash is taken after the scan, and the order of hash() and upload() inside one row is
+ * not guaranteed. Binding all three to one read (read_file into memory, then the "data" accessor) would
+ * hold up to the scan cap — gigabytes for model files — in memory per file, so it is not done; the
+ * report says instead what an equal pair of hashes does and does not prove (aiAgentHashCheck.ts).
+ */
 export function yaraScopeVql(key: string): { lets: string; hits: string; coverage: string } {
   const s = `cfg.${key}`;
   const lets = [
@@ -27,6 +36,11 @@ export function yaraScopeVql(key: string): { lets: string; hits: string; coverag
     `  row={ SELECT * FROM files_${key} WHERE Size <= cfg.ScanMaxBytes },`,
     `  query={ SELECT Rule, String, OSPath AS HitPath, Size AS HitSize, Mtime AS HitMtime, Btime AS HitBtime`,
     `          FROM yara(files=OSPath, rules=${s}.Rules, number=1) })`,
+    // The ONE upload() per hit (#2722): its result is read twice below — size and hash — so the
+    // preserved copy's hash is the hash of the very upload that preserved it.
+    `LET kept_${key} = SELECT *, if(condition=${s}.Upload AND HitSize <= cfg.UploadMaxBytes,`,
+    `    then=upload(file=HitPath)) AS Up`,
+    `  FROM scan_${key} WHERE NOT Rule IN cfg.Disabled`,
   ].join("\n");
   const meta = (field: string) => `get(item=get(item=cfg.RuleMeta, field=Rule), field="${field}")`;
   const hits = [
@@ -34,12 +48,13 @@ export function yaraScopeVql(key: string): { lets: string; hits: string; coverag
     `  Rule AS RuleName, ${meta("File")} AS RuleFile, ${meta("Author")} AS RuleAuthor,`,
     `  ${meta("Atlas")} AS RuleAtlas, ${meta("Grade")} AS Grade, ${s}.Id AS Scope,`,
     `  HitPath AS FilePath, HitSize AS FileSize, HitMtime AS FileMtime, HitBtime AS FileBtime,`,
-    `  hash(path=HitPath).SHA256 AS FileSha256,`,
+    `  hash(path=HitPath).SHA256 AS FileSha256, Up.Sha256 AS PreservedSha256,`,
     `  format(format="%.200s", args=[String.Data]) AS MatchedText,`,
     `  if(condition=NOT ${s}.Upload, then="kept by the AICodingAgents preservation collection",`,
     `     else=if(condition=HitSize > cfg.UploadMaxBytes, then="match observed; file not preserved (over the upload cap)",`,
-    `     else=format(format="uploaded (%v bytes)", args=[upload(file=HitPath).Size]))) AS Preserved`,
-    `FROM scan_${key} WHERE NOT Rule IN cfg.Disabled`,
+    `     else=if(condition=Up, then=format(format="uploaded (%v bytes)", args=[Up.Size]),`,
+    `     else="match observed; upload result not recorded"))) AS Preserved`,
+    `FROM kept_${key}`,
   ].join("\n");
   const coverage = [
     `SELECT ${MARK}, "coverage" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime,`,
@@ -108,16 +123,23 @@ export function compiledSigmaSourceVql(preamble: string, block: string, key: str
     preamble,
     stages,
     `LET sigma_rows = ${select}`,
-    `SELECT *, ${MARK}, "hit" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime, "sigma" AS Family,`,
-    `  cfg.${key}.Title AS RuleName, cfg.${key}.File AS RuleFile, cfg.${key}.Author AS RuleAuthor,`,
-    `  cfg.${key}.Tags AS RuleTags, cfg.${key}.Grade AS Grade, cfg.${key}.Coverage AS Scope`,
-    `FROM sigma_rows`,
+    `SELECT * FROM chain(`,
+    `  h={ SELECT *, ${MARK}, "hit" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime, "sigma" AS Family,`,
+    `    cfg.${key}.Title AS RuleName, cfg.${key}.File AS RuleFile, cfg.${key}.Author AS RuleAuthor,`,
+    `    cfg.${key}.Tags AS RuleTags, cfg.${key}.Grade AS Grade, cfg.${key}.Coverage AS Scope`,
+    `    FROM sigma_rows },`,
+    // One coverage row per rule per endpoint (#2722), after its hits: the rule ran here, on this basis.
+    `  c={ SELECT ${MARK}, "coverage" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime,`,
+    `    "Sigma" AS Source, cfg.${key}.Title AS RuleName,`,
+    `    format(format="ran (%v)", args=[cfg.${key}.Basis]) AS Status, cfg.${key}.Sentence AS Detail`,
+    `    FROM scope() })`,
   ].join("\n");
 }
 
 /**
  * The Sigma rules the compiler refuses but Sysmon can answer (§14.4), through Velociraptor's own
- * sigma() engine over the Sysmon event log. No Sysmon → one coverage row "not run: no Sysmon".
+ * sigma() engine over the Sysmon event log. Every rule gets one coverage row per endpoint: "ran" when
+ * the Sysmon log is there, "not run: no Sysmon" when it is not (#2722).
  */
 export function sysmonSigmaSourceVql(preamble: string): string {
   const evtx = (eid: number) =>
@@ -131,15 +153,20 @@ export function sysmonSigmaSourceVql(preamble: string): string {
     `  \`dns_query/windows/*\`=${evtx(22)},`,
     `  \`dns_query/*/*\`=${evtx(22)})`,
     `SELECT * FROM if(condition=has_sysmon,`,
-    `  then={ SELECT *, ${MARK}, "hit" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime, "sigma" AS Family,`,
-    `    _Rule.Title AS RuleName, get(item=get(item=cfg.SysmonMeta, field=_Rule.Title), field="File") AS RuleFile,`,
-    `    get(item=get(item=cfg.SysmonMeta, field=_Rule.Title), field="Grade") AS Grade,`,
-    `    get(item=get(item=cfg.SysmonMeta, field=_Rule.Title), field="Tags") AS RuleTags,`,
-    `    "Sysmon event history" AS Scope, System.TimeCreated.SystemTime AS EventTime`,
-    `    FROM sigma(rules=cfg.SysmonRules, log_sources=log_sources,`,
-    `               field_mapping=cfg.SysmonFieldMapping) },`,
+    `  then={ SELECT * FROM chain(`,
+    `    h={ SELECT *, ${MARK}, "hit" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime, "sigma" AS Family,`,
+    `      _Rule.Title AS RuleName, get(item=get(item=cfg.SysmonMeta, field=_Rule.Title), field="File") AS RuleFile,`,
+    `      get(item=get(item=cfg.SysmonMeta, field=_Rule.Title), field="Grade") AS Grade,`,
+    `      get(item=get(item=cfg.SysmonMeta, field=_Rule.Title), field="Tags") AS RuleTags,`,
+    `      "Sysmon event history" AS Scope, System.TimeCreated.SystemTime AS EventTime`,
+    `      FROM sigma(rules=cfg.SysmonRules, log_sources=log_sources,`,
+    `                 field_mapping=cfg.SysmonFieldMapping) },`,
+    // One coverage row per Sysmon rule per endpoint (#2722); the titles come from cfg, never the VQL.
+    `    c={ SELECT ${MARK}, "coverage" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime,`,
+    `      "Sigma on Sysmon" AS Source, Title AS RuleName, "ran (Sysmon event history)" AS Status,`,
+    `      "Velociraptor sigma() over the Sysmon event log" AS Detail FROM foreach(row=cfg.SysmonTitles) }) },`,
     `  else={ SELECT ${MARK}, "coverage" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime,`,
-    `    "Sigma on Sysmon" AS Source, "not run: no Sysmon" AS Status,`,
-    `    format(format="%v rule(s) need the Sysmon log", args=[cfg.SysmonCount]) AS Detail FROM scope() })`,
+    `    "Sigma on Sysmon" AS Source, Title AS RuleName, "not run: no Sysmon" AS Status,`,
+    `    "the Sysmon event log is not on this endpoint" AS Detail FROM foreach(row=cfg.SysmonTitles) })`,
   ].join("\n");
 }

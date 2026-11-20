@@ -18,6 +18,8 @@ import {
 } from "../../../src/integrations/velociraptor/aiAgentRuns.js";
 import { isAnalystCase, SWEEP_RETENTION } from "../../../src/storage/sweepCase.js";
 import { withSilentEndpoints } from "../../../src/integrations/velociraptor/aiAgentRuns.js";
+import { buildAiAgentReport } from "../../../src/analysis/aiAgentReport.js";
+import { loadAiAgentRuleSet } from "../../../src/analysis/aiAgentRuleSet.js";
 import type { VelociraptorClient } from "../../../src/integrations/velociraptor/velociraptorApi.js";
 import type { ServerSetStore } from "../../../src/integrations/serverSets/serverSetStore.js";
 
@@ -187,6 +189,15 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     expect((await store.listCases()).filter((m) => m.kind === "sweep")).toHaveLength(0);
   });
 
+  it("refuses a client id that is not enrolled on the case's Velociraptor server (#2725)", async () => {
+    await store.createCase({ caseId: "case-2", name: "c", investigator: "x", aiProvider: null });
+    const deps = makeDeps();
+    await expect(
+      startAiAgentRun(deps, { caseId: "case-2", clientIds: ["C.w1", "C.other9"] }),
+    ).rejects.toThrow(/not enrolled on this case's Velociraptor server: C\.other9/);
+    expect(programs.some((p) => p.includes("hunt("))).toBe(false); // nothing launched
+  });
+
   it("refreshes the report and the manifest without reading upload contents", async () => {
     const deps = makeDeps();
     const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
@@ -248,6 +259,31 @@ describe("AI Agent Forensics: an endpoint with no rows yet", () => {
     expect(out.endpoints.map((e) => e.host)).toEqual(["dev-ws-014.corp.example", "BUILD-01"]);
     expect(out.endpoints[1].coverage[0].status).toBe("no results yet");
   });
+
+  it("reconciles silent endpoints by client id, so a silent twin of a reporting host name is listed (Codex review)", () => {
+    const report = buildAiAgentReport(
+      [
+        {
+          DFIRCompanionAIAgent: 1,
+          Hostname: "WS-01",
+          ClientId: "C.aaa111",
+          Kind: "inventory",
+          Tool: "Cursor",
+        },
+      ],
+      loadAiAgentRuleSet(),
+    );
+    expect(report.endpoints.map((e) => e.host)).toEqual(["WS-01"]);
+    const out = withSilentEndpoints(report, [
+      { clientId: "C.aaa111", hostname: "WS-01" },
+      { clientId: "C.bbb222", hostname: "WS-01" },
+    ]);
+    expect(out.endpoints.map((e) => [e.host, e.clientId])).toEqual([
+      ["WS-01 (C.aaa111)", "C.aaa111"],
+      ["WS-01 (C.bbb222)", "C.bbb222"],
+    ]);
+    expect(out.endpoints[1].coverage[0].status).toBe("no results yet");
+  });
 });
 
 describe("AI Agent Forensics: Add to case files the complete result set", () => {
@@ -298,5 +334,136 @@ describe("AI Agent Forensics: Add to case files the complete result set", () => 
       /not read in full.*500 rows were read.*at least one more/s,
     );
     expect(deps.ingested).toEqual([]);
+  });
+});
+
+// #2722: the activity log gets an entry for a run and for Add to case — counts and ids only.
+describe("AI Agent Forensics: activity entries", () => {
+  it("records a run in its case, and Add to case in the target and the sweep", async () => {
+    await store.createCase({ caseId: "case-1", name: "c", investigator: "x", aiProvider: null });
+    const entries: { caseId: string; action: string; detail: string }[] = [];
+    const deps = makeDeps({ onActivity: (caseId, e) => entries.push({ caseId, ...e }) });
+    await startAiAgentRun(deps, { caseId: "case-1", clientIds: ["C.w1"] });
+    expect(entries).toEqual([
+      {
+        caseId: "case-1",
+        action: "ai-agent-run",
+        detail: expect.stringMatching(
+          /^started AI Agent Forensics on 1 endpoint\(s\) \(hunt H\.AI1, rules .+, scopes agent-home, project-instructions, mcp-installs\)$/,
+        ),
+      },
+    ]);
+    entries.length = 0;
+    const { caseId: sweep, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    expect(entries.map((e) => [e.caseId, e.action])).toEqual([[sweep, "ai-agent-run"]]);
+    await refreshAiAgentRun(deps, sweep, run.runId);
+    entries.length = 0;
+    await addSweepToCase(deps, sweep, run.runId, "case-1");
+    expect(entries).toEqual([
+      {
+        caseId: "case-1",
+        action: "ai-agent-add-to-case",
+        detail: `added AI Agent Forensics sweep ${sweep} (hunt H.AI1): +1 event(s), +1 IOC(s)`,
+      },
+      {
+        caseId: sweep,
+        action: "ai-agent-add-to-case",
+        detail: "filed into case case-1: +1 event(s), +1 IOC(s)",
+      },
+    ]);
+    expect(JSON.stringify(entries)).not.toContain("do not tell the user"); // never the matched text
+  });
+
+  it("joins the refreshed report to the uncapped manifest, so an agent-home hit gets its preserved hash", async () => {
+    const A = "a".repeat(64);
+    const velo = fakeVelo();
+    const reading = {
+      ...velo,
+      huntArtifactRows: async () => ({
+        rows: [
+          {
+            ...hitRow,
+            ClientId: "C.w1",
+            FileSha256: A,
+            Preserved: "kept by the AICodingAgents preservation collection",
+          },
+        ],
+        total: 1,
+        truncated: false,
+      }),
+      runProgram: async (p: string) =>
+        p.includes("uploads(")
+          ? {
+              rows: [
+                {
+                  ClientId: "C.w1",
+                  FlowId: "F.1",
+                  Path: "/uploads/auto/C%3A/Users/dev/.claude/CLAUDE.md",
+                  Size: 5,
+                  SHA256: A,
+                },
+              ],
+              reason: "",
+            }
+          : (velo as unknown as { runProgram(p: string): Promise<unknown> }).runProgram(p),
+    } as unknown as VelociraptorClient;
+    const servers = { ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: reading } };
+    const deps = makeDeps({
+      serverClients: {
+        forCase: () => servers,
+        forSet: () => servers,
+        forDefault: () => servers,
+      } as unknown as AiAgentForensicsDeps["serverClients"],
+    });
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    const updated = await refreshAiAgentRun(deps, caseId, run.runId);
+    expect(updated.report?.hits[0]).toMatchObject({ preservedSha256: A, hashCheck: "same" });
+  });
+  it("keeps the totals of a manifest read that logged an error, but never joins hashes to it", async () => {
+    const A = "a".repeat(64);
+    const velo = fakeVelo();
+    const reading = {
+      ...velo,
+      huntArtifactRows: async () => ({
+        rows: [
+          {
+            ...hitRow,
+            ClientId: "C.w1",
+            FileSha256: A,
+            Preserved: "kept by the AICodingAgents preservation collection",
+          },
+        ],
+        total: 1,
+        truncated: false,
+      }),
+      runProgram: async (p: string) =>
+        p.includes("uploads(")
+          ? {
+              rows: [
+                {
+                  ClientId: "C.w1",
+                  FlowId: "F.1",
+                  Path: "/uploads/auto/C%3A/Users/dev/.claude/CLAUDE.md",
+                  Size: 5,
+                  SHA256: A,
+                },
+              ],
+              reason: "PermissionDenied: partial listing",
+            }
+          : (velo as unknown as { runProgram(p: string): Promise<unknown> }).runProgram(p),
+    } as unknown as VelociraptorClient;
+    const servers = { ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: reading } };
+    const deps = makeDeps({
+      serverClients: {
+        forCase: () => servers,
+        forSet: () => servers,
+        forDefault: () => servers,
+      } as unknown as AiAgentForensicsDeps["serverClients"],
+    });
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    const updated = await refreshAiAgentRun(deps, caseId, run.runId);
+    expect(updated.report?.hits[0]).toMatchObject({ preservedSha256: "", hashCheck: "not recorded" });
+    expect(updated.manifest?.total).toBe(1);
+    expect(updated.reportError).toContain("upload manifest: PermissionDenied: partial listing");
   });
 });
