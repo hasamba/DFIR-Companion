@@ -92,7 +92,7 @@ describe("file identity carry-through (#2731)", () => {
     const inv = recordObservations(
       EMPTY_INVENTORY,
       events.map((e) => ({
-        fields: huntFieldsOf(e)!,
+        fields: huntFieldsOf({ ...e, relatedFindingIds: [], sourceScreenshots: [] })!,
         host: { key: `srv/${e.asset}`, basis: "client" as const, hostname: e.asset! },
         at: e.timestamp,
       })),
