@@ -92,10 +92,16 @@ function veloFor(deps: AiAgentForensicsDeps, caseId: string): VelociraptorClient
   return r.servers.velociraptor;
 }
 
-/** The chosen clients' host names and OS, read live (bounded, validated ids). */
-async function readEndpoints(client: VelociraptorClient, ids: string[]): Promise<AiAgentEndpoint[]> {
+/**
+ * The chosen clients' host names and OS, read live (bounded, validated ids), and the ids this server
+ * does not know (`missing`): a client id that is not enrolled here is not on this server set.
+ */
+async function readEndpoints(
+  client: VelociraptorClient,
+  ids: string[],
+): Promise<{ endpoints: AiAgentEndpoint[]; missing: string[] }> {
   const list = ids.map((c) => `'${c}'`).join(", ");
-  const { rows } = await client.runProgram(
+  const { rows, reason } = await client.runProgram(
     `SELECT client_id, os_info.system AS OS, os_info.hostname AS Hostname, os_info.fqdn AS Fqdn FROM clients() WHERE client_id IN [${list}]`,
   );
   const found = new Map(
@@ -104,11 +110,16 @@ async function readEndpoints(client: VelociraptorClient, ids: string[]): Promise
       { os: String(r.OS ?? ""), hostname: String(r.Hostname || r.Fqdn || "") },
     ]),
   );
-  return ids.map((clientId) => ({
+  const endpoints = ids.map((clientId) => ({
     clientId,
     hostname: found.get(clientId)?.hostname || clientId,
     os: found.get(clientId)?.os ?? "",
   }));
+  const missing = ids.filter((id) => !found.has(id));
+  // A failed clients() query returns no rows: say why, never blame the ids.
+  if (missing.length && reason?.trim())
+    throw new AiAgentRunError(`could not read the endpoints from Velociraptor: ${reason.trim()}`, 502);
+  return { endpoints, missing };
 }
 
 function validClientIds(raw: unknown): string[] {
@@ -195,7 +206,11 @@ export async function startAiAgentRun(
   const bundle = buildAiAgentArtifact(set, { scopes: input.scopes, uploadMaxBytes }); // option errors before any case is made
   const target = input.caseId ? { client: veloFor(deps, input.caseId) } : sweepSet(deps, input.serverSetId);
   const client = target.client;
-  const endpoints = await readEndpoints(client, clientIds);
+  const { endpoints, missing } = await readEndpoints(client, clientIds);
+  // Inside a case, every endpoint must belong to the case's own server set (#2725): a case writer may
+  // not reach a client of another set by naming its id.
+  if (input.caseId && missing.length)
+    throw new AiAgentRunError(`not enrolled on this case's Velociraptor server: ${missing.join(", ")}`);
   const pre = await preflightAiAgentRun(endpoints, () =>
     client.listClientArtifacts("client", { refresh: true }),
   );

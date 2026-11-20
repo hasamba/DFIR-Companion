@@ -4,7 +4,9 @@
 //
 //   GET  /ai-agent/rules                                 rule version, scopes, rules not run, problem
 //   GET  /ai-agent/sweeps                                the hidden sweep cases and their runs
-//   POST /ai-agent/runs                                  start a run (body.caseId → in that case; none → sweep)
+//   POST /ai-agent/runs                                  start a run (body.caseId → in that case; none → sweep,
+//                                                        the instance administrator's in team mode — #2725)
+//   GET  /cases/:id/ai-agent/endpoints                   the case set's endpoints, reduced fields (case WRITE)
 //   GET  /cases/:id/ai-agent/runs                        the case's (or sweep's) runs
 //   POST /cases/:id/ai-agent/runs/:runId/refresh         read results back, rebuild the report
 //   POST /cases/:id/ai-agent/runs/:runId/add-to-case     file a sweep into body.targetCaseId
@@ -29,6 +31,8 @@ import {
 import { AiAgentArtifactError } from "../integrations/velociraptor/aiAgentArtifact.js";
 import { AiAgentLaunchError } from "../integrations/velociraptor/aiAgentLaunch.js";
 import { aiAgentReportCsv, aiAgentReportMarkdown } from "../reports/aiAgentReportExport.js";
+import { requestAuthentication } from "../auth/types.js";
+import type { VeloClientRecord } from "../integrations/velociraptor/clientInventory.js";
 
 /** The run as the dashboard sees it: no raw rows. */
 export function publicRun(run: AiAgentRun): Omit<AiAgentRun, "rows"> & { rowCount: number } {
@@ -109,6 +113,60 @@ async function writableBodyCase(
 
 const NOT_WIRED = { error: "Velociraptor hunts are not configured on this server" };
 
+/** True for the instance administrator, and for the one operator in single-user mode. */
+function isGlobalAdmin(ctx: RouteContext, req: Request): boolean {
+  const teamAuth = ctx.options.teamAuth;
+  if (!teamAuth) return true;
+  const auth = requestAuthentication(req) ?? teamAuth.requireSession(req);
+  return !!auth && teamAuth.isGlobalAdministrator(auth);
+}
+
+/** One endpoint as a case writer sees it (#2725): the reduced view, nothing else from the record. */
+interface CaseEndpoint {
+  clientId: string;
+  hostname: string;
+  fqdn: string;
+  lastSeen?: string;
+  labels: string[];
+}
+
+function caseEndpoint(r: VeloClientRecord): CaseEndpoint {
+  return {
+    clientId: String(r.clientId),
+    hostname: String(r.hostname ?? ""),
+    fqdn: String(r.fqdn ?? ""),
+    ...(r.lastSeen ? { lastSeen: String(r.lastSeen) } : {}),
+    labels: Array.isArray(r.labels) ? r.labels.map(String) : [],
+  };
+}
+
+/**
+ * GET /cases/:id/ai-agent/endpoints (#2725): the endpoint picker inside a case. The case policy lets a
+ * reader through on GET, so WRITE is checked here — the list is for the people who may launch a run in
+ * the case. Only the case's own server set is read; an unresolved set or one without Velociraptor is an
+ * empty list, never another set's inventory.
+ */
+async function caseEndpoints(ctx: RouteContext, req: Request, res: Response): Promise<Response> {
+  const caseId = req.params.id;
+  if (ctx.options.teamAuth && !ctx.options.teamAuth.canWriteCase(req, caseId))
+    return res.status(403).json({ error: "you need write access to this case to list its endpoints" });
+  const r = ctx.serverClients.forCase(caseId);
+  if (!r.ok || !r.servers.velociraptor) return res.status(200).json({ updatedAt: "", clients: [] });
+  const inventory = ctx.options.clientInventoryFor?.(r.servers.setId);
+  if (!inventory) return res.status(200).json({ updatedAt: "", clients: [], setName: r.servers.setName });
+  try {
+    const inv = await inventory.load();
+    return res.status(200).json({
+      updatedAt: inv.updatedAt,
+      setName: r.servers.setName,
+      clients: (inv.clients ?? []).map(caseEndpoint),
+    });
+  } catch (err) {
+    ctx.serverLogger.info(`[ai-agent] endpoint list ERROR: ${(err as Error).message}`);
+    return res.status(500).json({ error: "could not read the endpoint list" });
+  }
+}
+
 export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext): void {
   const runStore = new AiAgentRunStore(ctx.store);
 
@@ -149,6 +207,12 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
     const caseId = typeof body.caseId === "string" && body.caseId.trim() ? body.caseId.trim() : undefined;
     if (caseId && !isValidCaseId(caseId))
       return res.status(400).json({ error: "caseId must be a valid case id" });
+    // A run with no case open makes a sweep on any server set: the instance administrator's (#2725).
+    if (!caseId && !isGlobalAdmin(ctx, req))
+      return res.status(403).json({
+        error:
+          "only an administrator can run AI Agent Forensics with no case open — open a case you can write to",
+      });
     if (caseId && !(await writableBodyCase(ctx, req, res, caseId))) return;
     try {
       const start = () =>
@@ -170,6 +234,8 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
       return fail(res, err);
     }
   });
+
+  app.get("/cases/:id/ai-agent/endpoints", (req: Request, res: Response) => caseEndpoints(ctx, req, res));
 
   app.get("/cases/:id/ai-agent/runs", async (req: Request, res: Response) => {
     try {

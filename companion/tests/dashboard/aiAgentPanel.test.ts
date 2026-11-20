@@ -41,4 +41,13 @@ describe("AI Agent Forensics panel", () => {
     expect(js).toContain("Grades are provisional until measured on real developer profiles.");
     expect(js).toContain("SENSITIVE");
   });
+
+  it("lists a case's endpoints through the case route, and explains a 403 accurately (#2725)", () => {
+    expect(js).toContain("/ai-agent/endpoints`");
+    expect(js).toContain("Only an administrator can list endpoints");
+    expect(js).toContain("You need write access to this case to list its endpoints");
+    // The Settings advice is for an empty inventory, never for a refusal: a non-admin cannot open Settings.
+    const refusal = js.slice(js.indexOf("inv.status === 403"), js.indexOf("Only an administrator") + 100);
+    expect(refusal).not.toContain("Settings");
+  });
 });

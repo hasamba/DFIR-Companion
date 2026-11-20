@@ -187,6 +187,15 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     expect((await store.listCases()).filter((m) => m.kind === "sweep")).toHaveLength(0);
   });
 
+  it("refuses a client id that is not enrolled on the case's Velociraptor server (#2725)", async () => {
+    await store.createCase({ caseId: "case-2", name: "c", investigator: "x", aiProvider: null });
+    const deps = makeDeps();
+    await expect(
+      startAiAgentRun(deps, { caseId: "case-2", clientIds: ["C.w1", "C.other9"] }),
+    ).rejects.toThrow(/not enrolled on this case's Velociraptor server: C\.other9/);
+    expect(programs.some((p) => p.includes("hunt("))).toBe(false); // nothing launched
+  });
+
   it("refreshes the report and the manifest without reading upload contents", async () => {
     const deps = makeDeps();
     const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });

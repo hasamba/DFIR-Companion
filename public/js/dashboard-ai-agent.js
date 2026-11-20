@@ -121,10 +121,15 @@
     list.setAttribute("role", "group");
     list.setAttribute("aria-label", "Endpoints to check");
     wrap.append(filter, list);
-    const inv = await call(`/velociraptor/clients${caseId ? `?caseId=${encodeURIComponent(caseId)}` : ""}`);
+    // Inside a case: the case's own endpoint list (case writers, #2725). No case: the fleet inventory,
+    // which — like a run with no case open — is the administrator's.
+    const inv = await call(caseId ? `/cases/${encodeURIComponent(caseId)}/ai-agent/endpoints` : "/velociraptor/clients");
     const clients = (inv.ok && inv.body.clients) || [];
-    if (!clients.length)
-      list.appendChild(el("p", "No Velociraptor client inventory yet — refresh it in Settings → Velociraptor.", "aa-note"));
+    if (inv.status === 403)
+      list.appendChild(el("p", caseId ? "You need write access to this case to list its endpoints — ask the case owner or an administrator." : "Only an administrator can list endpoints and run with no case open — open a case you can write to.", "aa-note"));
+    else if (!inv.ok) list.appendChild(el("p", (inv.body && inv.body.error) || `Could not list endpoints (HTTP ${inv.status}).`, "aa-note"));
+    else if (!clients.length)
+      list.appendChild(el("p", "No Velociraptor client inventory yet — an administrator can refresh it in Settings → Velociraptor.", "aa-note"));
     for (const c of clients.slice(0, 2000)) {
       const label = el("label", null, "aa-endpoint");
       const box = el("input");
