@@ -59,7 +59,8 @@ the two views cannot disagree. **Mark reviewed** records a separate timestamp fo
 when a name is configured under Settings.
 
 The existing **Analyst**, **Lead**, **Executive**, **Triage**, **Report**, **Deep-Dive**, and
-**Hunt Prep** views remain available from the dashboard-view picker. **Analyst** includes Now above
+**Hunt Prep** views remain available from the dashboard-view picker, with **Threat Hunt** for a
+proactive hunt case (its report template is the Threat hunt summary). **Analyst** includes Now above
 the full workspace; the focused **Now** view shows only the cockpit.
 
 ---
@@ -873,6 +874,34 @@ listed here; they search events already in the case and deploy nothing.
 - Result row count and new events added to the case
 - **Re-collect** button to pull fresh results
 - **Expand** to view hunt rows inline
+
+---
+
+## Threat Hunt
+
+Shown for a [threat-hunt case](threat-hunting.md#threat-hunt-mode-proactive-hunts).
+
+- Coverage: how many hosts answered the hunts cleanly, out of how many were targeted, and how many
+  did not answer. "Coverage unknown" for an uploaded hunt export.
+- The graded hunt items: policy violations, new, rare and flagged downloads, one row per program
+  with its hosts ("+N more" past ten).
+- **Convert to incident** — shown when the case holds any High or Critical finding. Keeps all
+  evidence and marks the AI conclusions out of date.
+- **Re-grade with current baseline** — re-grades the case against the client's current baseline,
+  including rows already moved to the super-timeline, and says how many rows the raw record no
+  longer holds.
+
+---
+
+## Client Baseline
+
+Shown for a threat-hunt case. Link the case to a client, export the client's "please confirm"
+list (CSV or Markdown, rarest first), tick items and mark them **Approved**, **Not allowed** or
+**Unknown**, import the client's filled CSV, and keep the client's blocked download categories and
+sites. Editing a client profile needs the instance administrator; linking a case needs the case
+administrator. Earlier hunts of the same client are listed only when you can open them.
+
+Both panels are in the **Hunt Prep** view and lead the **Threat Hunt** view.
 
 ---
 
