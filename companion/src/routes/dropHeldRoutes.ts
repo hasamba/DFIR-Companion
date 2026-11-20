@@ -1,32 +1,32 @@
 import type { Express, Request, Response } from "express";
+import { join } from "node:path";
 import { z } from "zod";
 import type { RouteContext } from "./context.js";
 import { huntArtifactLimitsFromEnv } from "../analysis/huntArtifactLimits.js";
 import { huntHeldStoreFor } from "../analysis/huntHeldStore.js";
+import { decideHeldFile, listHeld } from "../analysis/dropHeldFiles.js";
 
 /**
- * Hunt-zip result files held over the size limits (#2746): the list the dashboard shows, and the
- * analyst's Import anyway / Skip. A decision only marks an entry that exists for that exact archive;
- * the next drop sweep acts on it (imports it, or records it as skipped), then the entry goes.
+ * Hunt results held over the size limits (#2746, #2753, #2755). Each is a file under drop/_held/; the
+ * list is read from the folder itself, with what the store knows about each file.
+ *
+ * - Import anyway moves the file back to its place in drop/ and approves it, so the next drop sweep
+ *   imports it (a bundle hunt artifact: no new download). A bundle hunt also remembers the decision,
+ *   so its later collects import that artifact.
+ * - Skip moves it to `_skipped/` and approves it there, so moving it back into drop/ imports it. A
+ *   bundle hunt's later collects leave that artifact out.
  */
 
 export const MAX_DECISIONS = 1000;
 
-const zipDecision = z.object({
-  archiveId: z.string().regex(/^[0-9a-f]{8,64}$/),
-  member: z.string().min(1).max(4096),
-  decision: z.enum(["import", "skip"]),
-});
-// A bundle hunt's held artifact (#2753).
-const huntDecision = z.object({
-  huntId: z.string().regex(/^H\.[A-Za-z0-9]{1,64}$/),
-  artifact: z.string().min(1).max(256),
-  decision: z.enum(["import", "skip"]),
-});
-
 const decideSchema = z.object({
   decisions: z
-    .array(z.union([zipDecision, huntDecision]))
+    .array(
+      z.object({
+        rel: z.string().min(1).max(4096),
+        decision: z.enum(["import", "skip"]),
+      }),
+    )
     .min(1)
     .max(MAX_DECISIONS),
 });
@@ -43,13 +43,18 @@ async function caseVisible(ctx: RouteContext, req: Request, res: Response, caseI
 
 export function registerDropHeldRoutes(app: Express, ctx: RouteContext): void {
   const held = huntHeldStoreFor(ctx.store);
+  const dropDir = (caseId: string) => join(ctx.store.caseDir(caseId), "drop");
 
   app.get("/cases/:id/drop/held", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     if (!(await caseVisible(ctx, req, res, caseId))) return;
     try {
-      const [archives, hunts] = [await held.list(caseId), await held.listHunts(caseId)];
-      return res.status(200).json({ archives, hunts, limits: huntArtifactLimitsFromEnv() });
+      const files = await listHeld(dropDir(caseId));
+      await held.forgetMissing(caseId, new Set(files.map((f) => f.rel)));
+      const state = await held.load(caseId);
+      const known = new Map(state.held.map((h) => [h.rel, h]));
+      const listed = files.map((f) => ({ ...known.get(f.rel), rel: f.rel, size: f.size }));
+      return res.status(200).json({ files: listed, limits: huntArtifactLimitsFromEnv() });
     } catch (err) {
       return res.status(500).json({ error: `could not read the held hunt files: ${(err as Error).message}` });
     }
@@ -65,21 +70,16 @@ export function registerDropHeldRoutes(app: Express, ctx: RouteContext): void {
     const parsed = decideSchema.safeParse(req.body);
     if (!parsed.success)
       return res.status(400).json({
-        error: `send { decisions: [{ archiveId, member, decision } or { huntId, artifact, decision }] } with decision "import" or "skip", 1 to ${MAX_DECISIONS} at a time`,
+        error: `send { decisions: [{ rel: "_held/…", decision: "import" | "skip" }] }, 1 to ${MAX_DECISIONS} at a time`,
       });
-    const all = parsed.data.decisions;
-    const zips = all.flatMap((d) => ("archiveId" in d ? [d] : []));
-    const hunts = all.flatMap((d) => ("huntId" in d ? [d] : []));
-    try {
-      const updatedZips = zips.length ? await held.decide(caseId, zips) : 0;
-      const applied = hunts.length ? await held.decideHunts(caseId, hunts) : [];
-      // Import anyway on a bundle hunt: a fresh collect re-reads the hunt and imports it (#2753).
-      const recollect = [...new Set(applied.filter((d) => d.decision === "import").map((d) => d.huntId))];
-      for (const huntId of recollect) ctx.startVeloHuntCollect(caseId, huntId);
-      const updated = updatedZips + applied.length;
-      return res.status(200).json({ updated, ignored: all.length - updated, collecting: recollect });
-    } catch (err) {
-      return res.status(500).json({ error: `could not record the decision: ${(err as Error).message}` });
+    const dir = dropDir(caseId);
+    const moved: { rel: string; to: string }[] = [];
+    const ignored: { rel: string; why: string }[] = [];
+    for (const d of parsed.data.decisions) {
+      const r = await decideHeldFile(held, caseId, dir, d.rel, d.decision);
+      if (r.to) moved.push({ rel: r.rel, to: r.to });
+      else ignored.push({ rel: r.rel, why: r.error ?? "not moved" });
     }
+    return res.status(200).json({ updated: moved.length, moved, ignored });
   });
 }

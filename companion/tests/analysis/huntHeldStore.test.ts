@@ -2,96 +2,86 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HuntHeldStore, HUNT_HELD_FILE, type HeldArchive } from "../../src/analysis/huntHeldStore.js";
+import { HuntHeldStore, HUNT_HELD_FILE, isApproved } from "../../src/analysis/huntHeldStore.js";
 
-// #2746: the held-file record per archive. Synthetic values only.
+// #2755: what the held-file store remembers. Synthetic values only.
 
-const ID = "a".repeat(32);
-const entry = (member: string) => ({
-  ...{ member, artifact: "Hayabusa", host: "WS-A", bytes: 9, groupBytes: 9 },
-  ...{ reason: "host" as const, limitMb: 50 },
-});
-const archive = (over: Partial<HeldArchive> = {}): HeldArchive => ({
-  ...{ archiveId: ID, relpath: "hunt.zip", size: 10, mtimeMs: 1, waiting: true },
-  entries: [entry("WS-A-C.1/results/H.json"), entry("WS-B-C.2/results/H.json")],
-  ...over,
-});
+const meta = {
+  ...{ origin: "zip" as const, source: "hunt.zip", artifact: "Hayabusa", host: "WS-A" },
+  ...{ bytes: 9, groupBytes: 9, reason: "host" as const, limitMb: 50 },
+};
 
 async function store() {
   const dir = await mkdtemp(join(tmpdir(), "dfir-held-"));
   return { s: new HuntHeldStore(() => dir), dir };
 }
 
-describe("hunt held store (#2746)", () => {
+describe("hunt held store (#2755)", () => {
   it("drops entries naming unsafe paths on load", async () => {
     const { s, dir } = await store();
-    const bad = { ...archive(), relpath: "../escape.zip" };
-    const badMember = archive({
-      archiveId: "b".repeat(32),
-      entries: [entry("../../etc/x"), entry("ok/results/H.json")],
-    });
-    await writeFile(join(dir, HUNT_HELD_FILE), JSON.stringify({ archives: [bad, badMember] }));
-    const list = await s.list("c1");
-    expect(list).toHaveLength(1);
-    expect(list[0].entries.map((e) => e.member)).toEqual(["ok/results/H.json"]);
-  });
-
-  it("decides only existing entries and clears waiting", async () => {
-    const { s } = await store();
-    await s.put("c1", archive());
-    const n = await s.decide("c1", [
-      { archiveId: ID, member: "WS-A-C.1/results/H.json", decision: "skip" },
-      { archiveId: ID, member: "nope/results/H.json", decision: "import" },
-    ]);
-    expect(n).toBe(1);
-    const [rec] = await s.list("c1");
-    expect(rec.waiting).toBe(false);
-    expect(rec.entries.find((e) => e.member.startsWith("WS-A"))?.decision).toBe("skip");
-  });
-
-  it("leaves out a ready zip only while it waits for the analyst and has not changed", async () => {
-    const { s } = await store();
-    await s.put("c1", archive());
-    const zip = { relpath: "hunt.zip", size: 10, mtimeMs: 1 };
-    expect(await s.excludeAwaiting("c1", [zip])).toEqual([]);
-    expect(await s.excludeAwaiting("c1", [{ ...zip, size: 11 }])).toHaveLength(1); // a changed file runs
-    await s.decide("c1", [{ archiveId: ID, member: "WS-A-C.1/results/H.json", decision: "import" }]);
-    expect(await s.excludeAwaiting("c1", [zip])).toHaveLength(1); // a decision arrived
-  });
-
-  it("update keeps a decision made meanwhile; prune drops zips gone from drop/", async () => {
-    const { s } = await store();
-    await s.put("c1", archive());
-    await s.decide("c1", [{ archiveId: ID, member: "WS-B-C.2/results/H.json", decision: "import" }]);
-    await s.update("c1", ID, (cur) => ({ ...cur, waiting: false }));
-    expect((await s.get("c1", ID))?.entries.find((e) => e.member.startsWith("WS-B"))?.decision).toBe(
-      "import",
+    await writeFile(
+      join(dir, HUNT_HELD_FILE),
+      JSON.stringify({
+        held: [
+          { ...meta, rel: "../escape.json" },
+          { ...meta, rel: "not-held/x.json" },
+          { ...meta, rel: "_held/ok.json" },
+        ],
+        approved: [{ relpath: "../x", size: 1, mtimeMs: 1 }],
+      }),
     );
-    await s.prune("c1", []);
-    expect(await s.list("c1")).toEqual([]);
+    const st = await s.load("c1");
+    expect(st.held.map((h) => h.rel)).toEqual(["_held/ok.json"]);
+    expect(st.approved).toEqual([]);
   });
 
-  it("hunt holds keep decisions across passes, drop an undecided one that now fits, and keep zip records", async () => {
+  it("an approval matches the exact file: path, size and modification time", async () => {
     const { s } = await store();
-    await s.put("c1", archive());
-    const held = (artifact: string) => ({
-      artifact,
-      bytes: 9,
-      hosts: [],
-      hostBytes: 9,
-      reason: "total" as const,
-      limitMb: 200,
-    });
-    await s.putHuntHolds("c1", "H.A1", ["Big", "Fits", "Other"], [held("Big"), held("Fits")]);
-    const applied = await s.decideHunts("c1", [
-      { huntId: "H.A1", artifact: "Big", decision: "import" },
-      { huntId: "H.A1", artifact: "Nope", decision: "skip" },
-    ]);
-    expect(applied).toHaveLength(1);
-    // Next pass: Big still over (keeps its decision), Fits now fits (undecided, dropped), Other not downloaded.
-    await s.putHuntHolds("c1", "H.A1", ["Big", "Fits"], [held("Big")]);
-    const [hunt] = await s.listHunts("c1");
-    expect(hunt.entries).toEqual([expect.objectContaining({ artifact: "Big", decision: "import" })]);
-    expect(await s.list("c1")).toHaveLength(1); // the zip record survived every hunt write
+    await s.putHeld("c1", { ...meta, rel: "_held/a/x.json" });
+    await s.approve("c1", { relpath: "a/x.json", size: 10, mtimeMs: 1000 }, "_held/a/x.json");
+    const st = await s.load("c1");
+    expect(st.held).toEqual([]);
+    expect(isApproved(st, { relpath: "a/x.json", size: 10, mtimeMs: 1000 })).toBe(true);
+    expect(isApproved(st, { relpath: "a/x.json", size: 11, mtimeMs: 1000 })).toBe(false);
+    expect(isApproved(st, { relpath: "a/x.json", size: 10, mtimeMs: 5000 })).toBe(false);
+  });
+
+  it("pending holds are added and cleared; hunt decisions accumulate", async () => {
+    const { s } = await store();
+    await s.setPending("c1", [{ relpath: "h/c/results/A.json", meta }]);
+    expect((await s.load("c1")).pending).toHaveLength(1);
+    await s.setPending("c1", [], ["h/c/results/A.json"]);
+    expect((await s.load("c1")).pending).toEqual([]);
+    await s.decideHunt("c1", "H.X1", "A", "import");
+    await s.decideHunt("c1", "H.X1", "B", "skip");
+    expect(await s.huntDecisions("c1", "H.X1")).toEqual({ A: "import", B: "skip" });
+  });
+
+  it("forgets the details of held files that are gone", async () => {
+    const { s } = await store();
+    await s.putHeld("c1", { ...meta, rel: "_held/a.json" });
+    await s.putHeld("c1", { ...meta, rel: "_held/b.json" });
+    await s.forgetMissing("c1", new Set(["_held/b.json"]));
+    expect((await s.load("c1")).held.map((h) => h.rel)).toEqual(["_held/b.json"]);
+  });
+
+  it("carries over bundle-hunt decisions stored by #2753's format", async () => {
+    const { s, dir } = await store();
+    await writeFile(
+      join(dir, HUNT_HELD_FILE),
+      JSON.stringify({
+        hunts: [
+          {
+            huntId: "H.OLD1",
+            entries: [
+              { artifact: "A", decision: "import" },
+              { artifact: "B", decision: "skip" },
+              { artifact: "C" },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(await s.huntDecisions("c1", "H.OLD1")).toEqual({ A: "import", B: "skip" });
   });
 });

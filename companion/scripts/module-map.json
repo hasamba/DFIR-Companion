@@ -1098,6 +1098,7 @@
     "veloHuntLayout.ts": "analysis/case",
     "huntArtifactLimits.ts": "analysis/case",
     "huntHeldStore.ts": "analysis/case",
+    "dropHeldFiles.ts": "analysis/case",
     "veloHuntStore.ts": "analysis/case",
     "veloKeptSpan.ts": "analysis/ingest",
     "veloRereadReason.ts": "analysis/case",

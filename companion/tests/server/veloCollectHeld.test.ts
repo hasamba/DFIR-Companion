@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -77,7 +78,7 @@ async function makeApp() {
     veloHuntStore: new VeloHuntStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, stateStore };
+  return { app, stateStore, drop: join(store.caseDir("c1"), "drop") };
 }
 
 type App = Awaited<ReturnType<typeof makeApp>>["app"];
@@ -96,53 +97,52 @@ async function collected(app: App): Promise<void> {
 const pstreeEvents = async (stateStore: StateStore): Promise<number> =>
   (await stateStore.load("c1")).forensicTimeline.filter((e) => /payload\d+\.dll/.test(e.description)).length;
 
-describe("bundle hunt — artifacts over the size limits (#2753)", () => {
+const HELD = "_held/H.HELD1/Generic.System.Pstree.json";
+
+describe("bundle hunt — artifacts over the size limits (#2753, #2755)", () => {
   it(
-    "holds the artifact as a whole; Import anyway starts a collect that imports it",
+    "saves a held artifact in drop/_held/; Import anyway moves it into drop/ and later collects import it",
     async () => {
       process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0.002"; // about 2 KB per PC
       process.env.DFIR_HUNT_ARTIFACT_TOTAL_MAX_MB = "0";
-      const { app, stateStore } = await makeApp();
+      const { app, stateStore, drop } = await makeApp();
       await request(app)
         .post("/cases/c1/velociraptor/run-bundle")
         .send({ bundleId: "best-practice", waitMinutes: 30 });
       expect((await request(app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
       await collected(app);
       expect(await pstreeEvents(stateStore)).toBe(0); // held: not imported
+      const saved = await readFile(join(drop, ...HELD.split("/")), "utf8");
+      expect(saved.trim().split("\n")).toHaveLength(41); // every downloaded row, one per line
 
-      const held = (await request(app).get("/cases/c1/drop/held")).body;
-      expect(held.hunts).toEqual([
-        {
+      const listed = (await request(app).get("/cases/c1/drop/held")).body.files;
+      expect(listed).toEqual([
+        expect.objectContaining({
+          rel: HELD,
+          origin: "hunt",
           huntId: "H.HELD1",
-          entries: [
-            expect.objectContaining({
-              artifact: "Generic.System.Pstree",
-              reason: "host",
-              hosts: ["ws-alpha.example.test"],
-            }),
-          ],
-        },
+          reason: "host",
+          host: "ws-alpha.example.test",
+        }),
       ]);
-
       const res = await request(app)
         .post("/cases/c1/drop/held/decide")
-        .send({ decisions: [{ huntId: "H.HELD1", artifact: "Generic.System.Pstree", decision: "import" }] });
-      expect(res.body).toMatchObject({ updated: 1, collecting: ["H.HELD1"] });
-      await pollFor("the held artifact to import", async () =>
-        (await pstreeEvents(stateStore)) > 0 ? true : undefined,
-      );
+        .send({ decisions: [{ rel: HELD, decision: "import" }] });
+      expect(res.body.moved).toEqual([{ rel: HELD, to: "H.HELD1/Generic.System.Pstree.json" }]);
+      expect(existsSync(join(drop, "H.HELD1", "Generic.System.Pstree.json"))).toBe(true); // the drop sweep imports it
+
+      await request(app).post("/cases/c1/velociraptor/collect"); // a later collect follows the decision
       await collected(app);
-      const after = (await request(app).get("/cases/c1/drop/held")).body;
-      expect(after.hunts[0].entries[0].decision).toBe("import"); // kept: later collects follow it
+      expect(await pstreeEvents(stateStore)).toBeGreaterThan(0);
     },
     POLL_TIMEOUT_MS * 3,
   );
 
   it(
-    "Skip leaves it out of this and later collects, with no new collect started",
+    "Skip moves the held file to _skipped/, and later collects leave the artifact out even when it fits",
     async () => {
       process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0.002";
-      const { app, stateStore } = await makeApp();
+      const { app, stateStore, drop } = await makeApp();
       await request(app)
         .post("/cases/c1/velociraptor/run-bundle")
         .send({ bundleId: "best-practice", waitMinutes: 30 });
@@ -150,12 +150,9 @@ describe("bundle hunt — artifacts over the size limits (#2753)", () => {
       await collected(app);
       const res = await request(app)
         .post("/cases/c1/drop/held/decide")
-        .send({ decisions: [{ huntId: "H.HELD1", artifact: "Generic.System.Pstree", decision: "skip" }] });
-      expect(res.body).toMatchObject({ updated: 1, collecting: [] });
-      await request(app).post("/cases/c1/velociraptor/collect");
-      await collected(app);
-      expect(await pstreeEvents(stateStore)).toBe(0);
-      // Raising the limit later does not bring a skipped artifact back.
+        .send({ decisions: [{ rel: HELD, decision: "skip" }] });
+      expect(res.body.moved[0].to).toBe("_skipped/H.HELD1/Generic.System.Pstree.json");
+      expect(existsSync(join(drop, "_skipped", "H.HELD1", "Generic.System.Pstree.json"))).toBe(true);
       process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0";
       await request(app).post("/cases/c1/velociraptor/collect");
       await collected(app);
@@ -169,14 +166,34 @@ describe("bundle hunt — artifacts over the size limits (#2753)", () => {
     async () => {
       process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0";
       process.env.DFIR_HUNT_ARTIFACT_TOTAL_MAX_MB = "0";
-      const { app, stateStore } = await makeApp();
+      const { app, stateStore, drop } = await makeApp();
       await request(app)
         .post("/cases/c1/velociraptor/run-bundle")
         .send({ bundleId: "best-practice", waitMinutes: 30 });
       await request(app).post("/cases/c1/velociraptor/collect");
       await collected(app);
       expect(await pstreeEvents(stateStore)).toBeGreaterThan(0);
-      expect((await request(app).get("/cases/c1/drop/held")).body.hunts).toEqual([]);
+      expect(existsSync(join(drop, "_held"))).toBe(false);
+    },
+    POLL_TIMEOUT_MS * 3,
+  );
+
+  it(
+    "a later collect that imports the artifact removes its earlier held copy",
+    async () => {
+      process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0.002";
+      const { app, stateStore, drop } = await makeApp();
+      await request(app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      await request(app).post("/cases/c1/velociraptor/collect");
+      await collected(app);
+      expect(existsSync(join(drop, ...HELD.split("/")))).toBe(true);
+      process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0"; // now it fits
+      await request(app).post("/cases/c1/velociraptor/collect");
+      await collected(app);
+      expect(await pstreeEvents(stateStore)).toBeGreaterThan(0);
+      expect(existsSync(join(drop, ...HELD.split("/")))).toBe(false); // cannot import a second time
     },
     POLL_TIMEOUT_MS * 3,
   );

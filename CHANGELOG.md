@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Held results as drop-folder files** — oversized Velociraptor results (zips, unzipped hunts, single dropped files, bundle hunts) wait in drop/_held/; Import anyway moves the file back into drop/, Skip moves it to drop/_skipped/ (closes #2755)
 - **Bundle hunt size limits** — a collected bundle hunt holds an artifact over 50 MB from one PC or 200 MB across PCs for Import anyway / Skip, like dropped hunt zips (closes #2753)
 - **Hunt artifact size limits** — a dropped hunt zip holds result files over 50 MB per PC or 200 MB per artifact across PCs for Import anyway / Skip in the dashboard; the rest imports (closes #2746)
 - **New client from New Case** — the instance administrator can create a client straight from the New Case Client box (closes #2735)

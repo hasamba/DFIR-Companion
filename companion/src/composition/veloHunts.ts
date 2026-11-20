@@ -332,7 +332,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const cutShort: ReturnType<typeof truncatedRecord>[] = []; // TruncatedArtifact
       const unread: { name: string; rows: number }[] = []; // source list unknown — never "empty" (#1635)
       let totalRows = 0;
-      const holds = await loadHuntHolds(store, caseId, job.huntId); // size limits (#2753)
+      const holds = await loadHuntHolds(store, caseId, job.huntId, superOnly); // size limits (#2753)
       for (const artifact of job.artifacts) {
         const name = String(artifact ?? "").trim();
         let rows: unknown[];
@@ -360,13 +360,13 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         // failure writing the scratch file (e.g. a full disk) is a local persistence bug, a different
         // class of problem — let it fail the whole collect pass instead of silently reporting success on
         // rows that were never actually persisted anywhere.
-        totalRows += holds.note(name, rows); // rows it imports: a held artifact adds none (#2753)
+        totalRows += await holds.note(name, rows); // rows it imports: a held artifact adds none (#2753)
         snapshotFragments.push(buildHuntRunSnapshot({ [name]: rows })); // small capped key/host strings only — the rows themselves are never retained
         const file = path.join(scratchDir, `${artifactFiles.length}_${name}.json`);
         await writeFile(file, JSON.stringify({ [name]: rows }), "utf8");
         artifactFiles.push({ name, file, rows: rows.length });
       }
-      skipped.push(...(await holds.save())); // held over a size limit: stored, not imported (#2753)
+      skipped.push(...holds.skippedRecords()); // held over a size limit: saved in drop/_held/ (#2755)
       for (const w of collectWarnings(job.huntId, skipped, cutShort, unread, !!job.timeScope)) logLine(w);
       const done = completeness(skipped, cutShort, unread); // final: on the job BEFORE the seam grades (#2670)
       // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing

@@ -32,6 +32,11 @@ export interface HuntDropInput {
   stuck: ReadonlyMap<string, StuckDropFile>;
   /** Move one file (native relpath) to drop/_skipped/<relpath>. */
   skipMove: (relpath: string) => Promise<void>;
+  /**
+   * Put the plan's imports over the hunt artifact size limits on hold (#2755); returns every import
+   * (posix path) that must not be released — held now, or chosen to be held but not yet moved.
+   */
+  hold?: (plan: HuntPlan) => Promise<ReadonlySet<string>>;
 }
 
 const posix = (relpath: string): string => relpath.replace(/\\/g, "/");
@@ -54,7 +59,8 @@ export async function prepareHuntDrops(input: HuntDropInput): Promise<DropFileSt
     if (!live.every((m) => readySet.has(m))) continue; // not settled as a whole yet
     const moved = await moveSkips(plan, stuck, native, input.skipMove);
     if (moved === null) continue; // a copy is still in place: hold the hunt
-    for (const imp of plan.imports) if (!stuck.has(imp.path)) released.add(imp.path);
+    const onHold = (await input.hold?.(plan)) ?? new Set<string>(); // after the copies moved (#2755)
+    for (const imp of plan.imports) if (!stuck.has(imp.path) && !onHold.has(imp.path)) released.add(imp.path);
     if (moved.length) log.push(skippedLine(plan, moved));
   }
   if (log.length) {

@@ -3506,20 +3506,26 @@ compression ratio marks it as a zip bomb are refused and never extracted. A hunt
 inflate to more than 64 GB across the members it imports is refused as a whole. A `.zip` that is not
 a hunt export is handled exactly as before (an external tool input).
 
-**Oversized artifacts wait for you.** Before a hunt zip imports anything, every result file that would
-import is measured, by its unpacked size from the zip's index:
+**Oversized results wait for you in `drop/_held/`.** Before Velociraptor results import, each result file is measured:
 
 - one artifact's results from one PC over `DFIR_HUNT_ARTIFACT_HOST_MAX_MB` (default 50 MB), or
 - one artifact summed across every PC over `DFIR_HUNT_ARTIFACT_TOTAL_MAX_MB` (default 200 MB; every
   PC's copy is then held).
 
-Everything else imports as usual. The held files are listed in the dashboard banner with their PC, size
-and the limit they crossed, with **Import anyway** or **Skip**. A very large artifact (a Hayabusa result
-of hundreds of MB, for example) is usually mostly noise: post-process it in a Velociraptor notebook,
-keeping only the rows and columns you need, and drop the smaller result into `drop/`. The zip stays in
-`drop/` until every held file has a decision; a skipped file gets a `SKIPPED` line in `drop-log.txt`.
-The limits are worked out once per zip, so changing them later does not re-check a zip that is already
-waiting. 0 turns a limit off. Unzipped hunt folders are not checked yet.
+This covers a dropped hunt zip, an unzipped hunt folder, a single Velociraptor result file you drop by hand
+(per-PC limit), and a collected bundle hunt (see the Velociraptor integration). Other file types import as
+before. A held result is moved, or extracted from the zip, to `drop/_held/` under the path it would have
+had in `drop/`, so it keeps its client folder and its PC. Everything else imports as usual, and a zip
+completes as usual. A held file gets a `SKIPPED` line in `drop-log.txt`.
+
+The dashboard banner lists each held file with its PC, size and the limit it crossed:
+
+- **Import anyway** moves the file back into `drop/`, and the next sweep imports it.
+- **Skip** moves it to `drop/_skipped/`. Move it back to its place in `drop/` later and it imports.
+
+A very large artifact (a Hayabusa result of hundreds of MB, for example) is usually mostly noise:
+post-process it in a Velociraptor notebook, keeping only the rows and columns you need, and drop the
+smaller result into `drop/` instead. 0 turns a limit off.
 
 ### Many small CloudTrail files are imported in batches
 
