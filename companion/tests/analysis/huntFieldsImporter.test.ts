@@ -33,6 +33,33 @@ describe("hunt fields from real importer rows (#2670)", () => {
     expect(f[0]).toMatchObject({ program: "7z.exe", pathPattern: "\\tools" });
   });
 
+  it("Prefetch device path and Amcache drive-letter path for one file give ONE item (#2749)", () => {
+    // Win10/11 Prefetch (upstream Windows.Forensics.Prefetch): ExecutablePath is the NT device path.
+    const ev = rows([
+      {
+        _Source: "Windows.Forensics.Prefetch",
+        Fqdn: "WS-01",
+        Executable: "FOO.EXE",
+        ExecutablePath: "\\DEVICE\\HARDDISKVOLUME3\\PROGRAM FILES\\FOO\\FOO.EXE",
+        ExecutableDosPath: "C:\\PROGRAM FILES\\FOO\\FOO.EXE",
+        RunCount: 3,
+        LastRunTimes: "2026-01-01T00:00:00Z",
+      },
+      {
+        _Source: "Windows.Forensics.Amcache/InventoryApplicationFile",
+        Fqdn: "WS-01",
+        FullPath: "c:\\program files\\foo\\foo.exe",
+        OriginalFileName: "foo.exe",
+        SHA1: "0123456789abcdef0123456789abcdef01234567",
+        Size: 12345,
+        LastModified: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    const f = ev.map(huntFieldsOf);
+    expect(f.map((x) => x?.evidence).sort()).toEqual(["execution", "presence"]);
+    expect(new Set(f.map((x) => huntItemKey(x!)))).toEqual(new Set(["program|foo.exe|\\program files\\foo"]));
+  });
+
   it("Amcache installed program with ' - ' in its name: one item, publisher unverified", () => {
     const ev = rows(
       hosts.map((h) => ({

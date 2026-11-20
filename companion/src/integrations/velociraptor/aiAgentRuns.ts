@@ -18,6 +18,7 @@ import type { VeloHuntJob, VeloHuntStore } from "../../analysis/veloHuntStore.js
 import type { VelociraptorClient } from "./velociraptorApi.js";
 import { activeAiAgentRuleSet } from "../../analysis/aiAgentActiveRules.js";
 import { aiAgentEndpointLabels, buildAiAgentReport } from "../../analysis/aiAgentReport.js";
+import { AiAgentHostLedger, type AiAgentHostOptions } from "../../analysis/aiAgentHostLabels.js";
 import {
   AiAgentRunStore,
   capManifest,
@@ -29,6 +30,7 @@ import { AI_AGENT_HUNT_EXPIRY_SECONDS, launchAiAgentRun } from "./aiAgentLaunch.
 import { preflightAiAgentRun, type AiAgentEndpoint } from "./aiAgentPreflight.js";
 import { readUploadManifestStatus } from "./uploadVql.js";
 import { CLIENT_RE } from "./clientInventory.js";
+import { saveFiledRun, updateFiledRun, type FiledFrom } from "../../reports/aiAgentFiledRuns.js";
 import {
   SWEEP_CASE_KIND,
   isSweepCase,
@@ -69,7 +71,7 @@ export interface AiAgentForensicsDeps {
   ingestVeloArtifactMap(
     caseId: string,
     mapJson: string,
-    opts: { label: string; idBase: string; rows?: number },
+    opts: { label: string; idBase: string; rows?: number } & AiAgentHostOptions,
   ): Promise<{ addedEvents: number; addedIocs: number }>;
   onChange?(caseId: string): void;
   /**
@@ -382,7 +384,47 @@ export async function refreshAiAgentRun(
     ...(problems.length ? { reportError: problems.join("; ") } : { reportError: undefined }),
   }));
   deps.onChange?.(caseId);
+  if (updated) await refreshReportCopies(deps, caseId, updated);
   return updated ?? run;
+}
+
+/** Bring the report copy in each case the sweep was filed into up to the re-read (#2744). Update only;
+ *  a failed copy never fails the re-read — it is logged and the next case is tried. */
+async function refreshReportCopies(
+  deps: AiAgentForensicsDeps,
+  sweepCaseId: string,
+  run: AiAgentRun,
+): Promise<void> {
+  for (const targetCaseId of new Set((run.addedTo ?? []).map((a) => a.caseId))) {
+    try {
+      if (!(await deps.store.caseExists(targetCaseId))) continue;
+      if (await updateFiledRun(deps.store, targetCaseId, run)) deps.onChange?.(targetCaseId);
+    } catch (e) {
+      deps.log(
+        `[ai-agent] could not update the report copy of sweep ${sweepCaseId} in ${targetCaseId}: ${(e as Error).message}`,
+      );
+    }
+  }
+}
+
+/** Keep the run's report-safe copy in the target case so its report outlives sweep retention (#2740).
+ *  The hits are already filed: a failed copy never fails the filing — it is logged and noted. */
+async function saveReportCopy(
+  deps: AiAgentForensicsDeps,
+  targetCaseId: string,
+  run: AiAgentRun,
+  filedFrom: FiledFrom,
+): Promise<string> {
+  try {
+    await saveFiledRun(deps.store, targetCaseId, run, filedFrom);
+    return "";
+  } catch (e) {
+    const why = (e as Error).message;
+    deps.log(
+      `[ai-agent] could not save the report copy of sweep ${filedFrom.sweepCaseId} into ${targetCaseId}: ${why}`,
+    );
+    return " (the report copy could not be saved; the run shows in the case report only while the sweep is kept)";
+  }
 }
 
 /** File a sweep's rows into a real case, evidence-first under that case's import lock. */
@@ -417,6 +459,11 @@ export async function addSweepToCase(
     run.artifacts.find((a) => a.startsWith("Custom.DFIRCompanion.AIAgentForensics.")) ?? "AIAgentForensics";
   // Bounded batches, each evidence-first under the target case's import lock. A failed batch stops
   // the filing and says how far it got: a partial filing is never reported as success.
+  // Each batch is parsed alone, so the host names two clients share are learned once over the whole
+  // sweep and handed to every batch: a batch holding one of the two still names its client (#2745).
+  const sweepHosts = AiAgentHostLedger.from();
+  sweepHosts.learn(rows);
+  const aiAgentHostClients = sweepHosts.sharedPairs();
   const out = { addedEvents: 0, addedIocs: 0 };
   for (let i = 0, part = 1; i < rows.length; i += ADD_BATCH_ROWS, part++) {
     const batch = rows.slice(i, i + ADD_BATCH_ROWS);
@@ -425,6 +472,7 @@ export async function addSweepToCase(
         label: `ai-agent-forensics_${run.huntId}_part${part}.json`,
         idBase: `aiagent-${run.huntId}-${part}`,
         rows: batch.length,
+        ...(aiAgentHostClients.length ? { aiAgentHostClients } : {}),
       });
       out.addedEvents += r.addedEvents;
       out.addedIocs += r.addedIocs;
@@ -436,14 +484,15 @@ export async function addSweepToCase(
     }
   }
   const at = new Date().toISOString();
-  await deps.runStore.update(sweepCaseId, runId, (r) => ({
+  const filed = await deps.runStore.update(sweepCaseId, runId, (r) => ({
     ...r,
     addedTo: [...(r.addedTo ?? []), { caseId: targetCaseId, at, events: out.addedEvents }],
   }));
+  const copyNote = await saveReportCopy(deps, targetCaseId, filed ?? run, { sweepCaseId, at });
   const counts = `+${out.addedEvents} event(s), +${out.addedIocs} IOC(s)`;
   deps.onActivity?.(targetCaseId, {
     action: "ai-agent-add-to-case",
-    detail: `added AI Agent Forensics sweep ${sweepCaseId} (hunt ${run.huntId}): ${counts}`,
+    detail: `added AI Agent Forensics sweep ${sweepCaseId} (hunt ${run.huntId}): ${counts}${copyNote}`,
   });
   deps.onActivity?.(sweepCaseId, {
     action: "ai-agent-add-to-case",

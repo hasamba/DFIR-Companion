@@ -63,10 +63,11 @@ import { mapBinaryRename } from "./binaryRenameImport.js";
 import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
 import { applyMftTimeHints, markSharedSourceMtime, noteInheritedFileTime } from "./mftTimeHints.js";
 import { msgFingerprint } from "./veloMsgFingerprint.js";
-import { mapAiAgentRow } from "./aiAgentImport.js"; // AI Agent Forensics rows first (#2690)
+import { mapAiAgentRow, learnWholeFile, AiAgentHostLedger } from "./aiAgentImport.js"; // AI Agent Forensics rows first (#2690, #2734)
+import type { AiAgentHostsCtx, AiAgentHostOptions } from "./aiAgentImport.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
-import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
+import { withHostSuffix, titleSafe } from "./velociraptorTitle.js";
 import {
   gradeByContentLocation,
   isUnforgeableContentPath,
@@ -85,13 +86,11 @@ import {
   detectionOverlayAggKey,
   downloadAggKey,
   mftAggKey,
-  taskAggKey,
   genericVrAggKey,
   usnAggKey,
   actionAggKey,
   pslistAggKey,
   netstatAggKey,
-  startupAggKey,
   sigmaOverlayAggKey,
   withMessageFingerprint,
 } from "./veloAggKeys.js";
@@ -106,10 +105,12 @@ import { MAX_TIME_MS, MIN_TIME_MS, pickTime, usDateTime, vrTime } from "./veloRo
 import { winRowToFlat } from "./veloWinRow.js";
 import { prefetchSignal } from "./prefetchExecution.js";
 import { isSamAccountRow, mapSamAccount } from "./samAccountImport.js";
+import { isAutorunsRow, mapStartupRow, mapTaskScheduler } from "./veloAutorunsMap.js"; // Autoruns keeps entry, path, signer (#2731); tasks (#2748)
+import { amcacheFileIdentity } from "./veloAmcacheIdentity.js";
 
 type Row = Record<string, unknown>;
 
-export interface VelociraptorImportOptions {
+export interface VelociraptorImportOptions extends AiAgentHostOptions {
   aggregate?: boolean;
   minSeverity?: Severity;
   maxEvents?: number;
@@ -356,7 +357,7 @@ function classify(row: Row, artifact: string): Kind {
   if (/netstat/.test(a)) return "netstat";
   if (/pslist|pstree|psscan/.test(a)) return "pslist";
   if (/browserdownload|evidence.*download/i.test(a)) return "download";
-  if (/startup|autorun/i.test(a)) return "startup";
+  if (/startup|autorun/i.test(a)) return "startup"; // veloAutorunsMap.ts picks the mapper by the columns
   if (/taskscheduler/i.test(a)) return "taskscheduler";
   if (/persistencesniper/i.test(a)) return "persistenceSniper";
   if (/binaryrename/i.test(a)) return "binaryRename";
@@ -412,6 +413,7 @@ function classify(row: Row, artifact: string): Kind {
   // Startup/autorun rows: Name + OSPath + Enabled (Windows.Sys.StartupItems and similar)
   if (getCI(row, "Enabled") != null && getCI(row, "OSPath") != null && getCI(row, "Name") != null)
     return "startup";
+  if (isAutorunsRow(row)) return "startup"; // an autorunsc row with no _Source (#2731)
   // Scheduled task rows (Windows.System.TaskScheduler/Analysis): TaskName is unique to this artifact
   if (getCI(row, "TaskName") != null && (getCI(row, "Mtime") != null || getCI(row, "OSPath") != null))
     return "taskscheduler";
@@ -1130,11 +1132,12 @@ function mapAmcacheApp(row: Row, artifact: string, host: string): MappedEvent {
 // Windows.Forensics.Amcache/InventoryApplicationFile — a binary PRESENT on disk (execution/presence
 // evidence), with its SHA1. The generic mapper showed the path alone with no verb.
 function mapAmcacheFile(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
-  collectRowIocs(row, sink);
+  const { sha256 } = collectRowIocs(row, sink);
   const path = firstStr(row, ["FullPath", "OSPath"]) || firstStr(row, ["Name", "OriginalFileName"]);
   const sha1 = str(getCI(row, "SHA1")).trim();
   if (/^[0-9a-f]{40}$/i.test(sha1)) addIoc(sink, "hash", sha1.toLowerCase());
-  return actionEvent({
+  // The SHA1 and Size travel together (#2731): Amcache hashes only the first 30 MiB of a file.
+  const event = actionEvent({
     artifact,
     host,
     action: "Program file present (Amcache)",
@@ -1143,6 +1146,7 @@ function mapAmcacheFile(row: Row, artifact: string, host: string, sink: Map<stri
     path: path || undefined,
     processName: path || undefined,
   });
+  return { ...event, ...(sha256 ? { sha256 } : {}), ...amcacheFileIdentity(row) };
 }
 
 // Windows.Forensics.Prefetch — a program EXECUTION (with a run count). The generic mapper showed the
@@ -1323,80 +1327,6 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   };
 }
 
-function mapStartup(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
-  const name = str(getCI(row, "Name")).trim();
-  const ospath = str(getCI(row, "OSPath")).trim();
-  const details = demangleUtf16Noise(str(getCI(row, "Details")).trim());
-  const enabledRaw = str(getCI(row, "Enabled")).trim().toLowerCase();
-  const enabled =
-    enabledRaw === "enable" || enabledRaw === "enabled" || enabledRaw === "true" || enabledRaw === "1";
-
-  // Add the executable path or registry path as file/process IOC when it looks like a real path.
-  const cmdPath = details.replace(/^["']?([A-Za-z]:\\[^"'\s]+).*$/, "$1");
-  if (details && /^[A-Za-z]:\\/.test(cmdPath)) addIoc(sink, "file", cmdPath.slice(0, 300));
-  if (ospath && /^[A-Za-z]:\\/.test(ospath)) addIoc(sink, "file", ospath.slice(0, 300));
-
-  const enabledLabel = enabled ? "enabled" : "disabled";
-  const subject = details && details !== name ? oneLine(details).slice(0, 300) : ospath;
-  let description = `Velociraptor: Startup [${name || "item"}] — ${subject} (${enabledLabel})`;
-  description = withHostSuffix(description, host).slice(0, 600);
-
-  // Active persistence is worth surfacing; disabled items are informational.
-  const severity: Severity = enabled ? "Low" : "Info";
-
-  const aggKey = startupAggKey(host, name, ospath);
-
-  return {
-    timestamp: pickTime(row),
-    description,
-    severity,
-    mitre: enabled ? ["T1547"] : [],
-    aggKey,
-    sources: ["Velociraptor"],
-    ...(host ? { asset: host } : {}),
-  };
-}
-
-function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
-  const taskName = str(getCI(row, "TaskName")).trim();
-  const command = str(getCI(row, "Command")).trim();
-  const args = str(getCI(row, "Arguments")).trim();
-  const userId = str(getCI(row, "UserId")).trim();
-  const runLevel = str(getCI(row, "RunLevel")).trim();
-  const ospath = str(getCI(row, "OSPath")).trim();
-
-  if (ospath) addIoc(sink, "file", ospath);
-  if (command && /^[A-Za-z]:\\/.test(command)) addIoc(sink, "file", command.slice(0, 300));
-
-  const cmd = [command, args].filter(Boolean).join(" ");
-  const userLabel =
-    userId === "S-1-5-18"
-      ? "SYSTEM"
-      : userId === "S-1-5-19"
-        ? "LOCAL SERVICE"
-        : userId === "S-1-5-20"
-          ? "NETWORK SERVICE"
-          : userId;
-
-  let description = `Velociraptor: Scheduled Task [${taskName || "task"}]`;
-  if (cmd) description += ` — ${oneLine(cmd).slice(0, 250)}`;
-  if (userLabel) description += ` (${userLabel}${runLevel ? `, ${runLevel}` : ""})`;
-  description = withHostSuffix(description, host).slice(0, 600);
-
-  const aggKey = taskAggKey(host, taskName);
-
-  return {
-    timestamp: pickTime(row),
-    description,
-    severity: "Info",
-    mitre: [],
-    aggKey,
-    sources: ["Velociraptor"],
-    ...(ospath ? { path: ospath } : {}),
-    ...(host ? { asset: host } : {}),
-  };
-}
-
 // ───────────────────────────── row extraction ─────────────────────────────
 
 // Returns the flat row list. Handles a Velociraptor multi-artifact map { "Artifact": [rows] }
@@ -1447,7 +1377,7 @@ export function extractRows(text: string): { rows: Row[]; format: string } {
 
 // Shared mutable accumulators + fallbacks for one parse run, threaded into mapRowToEvents so the
 // per-row dispatch is identical under the synchronous loop, the chunked async one and the bulk driver.
-interface VrParseCtx {
+interface VrParseCtx extends AiAgentHostsCtx {
   fallbackArtifact: string;
   fallbackHost: string;
   fallbackBasis: "collector" | "analyst";
@@ -1473,7 +1403,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
   ctx.renames.note(rh, pickTime(row));
   ctx.dbg.host(row, rh);
 
-  const ai = mapAiAgentRow(row, artifact, host, ctx.iocSink); // own schema; never the shared mappers or tail
+  const ai = mapAiAgentRow(row, artifact, host, ctx.iocSink, ctx.aiHosts); // own schema; never the shared mappers or tail
   if (ai) return ai;
   const rowSink = new Map<string, SiemIoc>();
   let detections = 0;
@@ -1509,7 +1439,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
     } else if (kind === "download") {
       ms = [mapDownload(row, host, rowSink)];
     } else if (kind === "startup") {
-      ms = [mapStartup(row, host, rowSink)];
+      ms = [mapStartupRow(row, artifact, host, rowSink)];
     } else if (kind === "taskscheduler") {
       ms = [mapTaskScheduler(row, host, rowSink)];
     } else if (kind === "persistenceSniper") {
@@ -1685,6 +1615,7 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
     renames: new HostRenameLedger(),
     aliases: HostRenameMap.from(opts.knownRenames, opts.collectorHostnames, opts.hostFallback), // the case's ledger, and the flow's client is a collector (#1495)
     lineage: new CollectorFootprintLedger(),
+    aiHosts: AiAgentHostLedger.from(opts.aiAgentHostClients), // a sweep's shared host names, before its batch (#2745)
     partlyReadArtifact: (opts.partlyReadArtifact ?? "").trim(),
     dbg: new VrDebugTally(opts.debug),
   };
@@ -1723,7 +1654,7 @@ export function parseVelociraptorJson(
   const rows = prepareRows(rawRows);
   if (rows.length === 0) return emptyVrResult();
   const ctx = newVrCtx(opts);
-  ctx.aliases.learn(rows); // the whole file's rename evidence before any row is attributed (#1489)
+  learnWholeFile(ctx, rows); // the whole file's rename evidence (#1489) and shared host names (#2734) first
   const mapped: MappedEvent[] = [];
   let detections = 0;
   for (const rawRow of rows) {
@@ -1749,7 +1680,7 @@ export async function parseVelociraptorJsonProgress(
   const rows = await prepareRowsAsync(rawRows);
   const total = rows.length;
   const ctx = newVrCtx(opts);
-  ctx.aliases.learn(rows); // as the synchronous driver: the whole file first (#1489)
+  learnWholeFile(ctx, rows); // as the synchronous driver: the whole file first (#1489, #2734)
   const mapped: MappedEvent[] = [];
   let detections = 0;
   for (let i = 0; i < total; i++) {

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.4.0",
+  "version": "1.5.0",
   "license": "AGPL-3.0-only",
   "provenance": {
     "origin": "synthetic",
@@ -24,6 +24,7 @@
     { "id": "rmm-anydesk-persistence", "file": "rmm-anydesk-persistence.json" },
     { "id": "webshell-iis-write", "file": "webshell-iis-write.json" },
     { "id": "prior-answer-stable", "file": "prior-answer-stable.json" },
-    { "id": "prior-answer-stale", "file": "prior-answer-stale.json" }
+    { "id": "prior-answer-stale", "file": "prior-answer-stale.json" },
+    { "id": "threat-hunt-rare-binary", "file": "threat-hunt-rare-binary.json" }
   ]
 }

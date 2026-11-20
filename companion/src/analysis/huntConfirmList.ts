@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { itemVerdict } from "./huntApprovalMatch.js";
 import { answeringHostCount, itemLabel, type HuntInventory, type InventoryItem } from "./huntInventory.js";
 import { markInputSchema, type Baseline, type MarkInput } from "./clientProfile.js";
@@ -5,7 +6,7 @@ import { markInputSchema, type Baseline, type MarkInput } from "./clientProfile.
 /**
  * The client's "please confirm" list (#2670). From THIS case's inventory: every item the reviewed
  * baseline does not settle (Unknown), rarest first, with its hosts, path and — where known — publisher
- * (unverified) and hash. Exported as CSV (formula-injection guarded) and Markdown; the client's filled
+ * (unverified), hashes (SHA-256 and the usable Amcache SHA1) and verified signer. Exported as CSV (formula-injection guarded) and Markdown; the client's filled
  * CSV comes back in through parseClientCsv. PURE.
  */
 export interface ConfirmCandidate {
@@ -19,6 +20,12 @@ export interface ConfirmCandidate {
   evidence: string[];
   publishers: string[];
   sha256: string[];
+  /** Usable Amcache SHA1s (#2731): size recorded and within 30 MiB. */
+  sha1: string[];
+  /** Verified signers seen (#2731). */
+  signers: string[];
+  /** The one verified signer an approval can name: every host verified by it, nothing failed. */
+  approvableSigner?: string;
   firstSeen: string;
   reason: string;
 }
@@ -47,11 +54,26 @@ export function confirmCandidates(
       evidence: item.evidence,
       publishers: item.publishers,
       sha256: item.sha256,
+      sha1: item.sha1 ?? [],
+      signers: item.signers ?? [],
+      ...signerOf(item),
       firstSeen: item.firstSeen,
       reason: v.reason,
     });
   }
   return out.sort((a, b) => a.hostCount - b.hostCount || a.label.localeCompare(b.label));
+}
+
+/** The signer an approval can name: one verified signer covering every host, nothing failed or capped. */
+function signerOf(item: InventoryItem): { approvableSigner?: string } {
+  const one = item.signers?.length === 1 ? item.signers[0] : undefined;
+  const complete =
+    item.unsignedHosts?.length === 0 &&
+    item.signersCapped === false &&
+    !item.signatureUnverified &&
+    !item.identityConflict &&
+    !item.hostOverflow;
+  return one && complete ? { approvableSigner: one } : {};
 }
 
 /** One CSV cell: a leading =, +, -, @, tab or CR is neutralised so a spreadsheet never runs it. */
@@ -70,6 +92,8 @@ export const CONFIRM_COLUMNS = [
   "evidence",
   "publisher_unverified",
   "sha256",
+  "sha1",
+  "signer_verified",
   "first_seen",
   "verdict",
   "note",
@@ -88,6 +112,8 @@ export function confirmListCsv(list: readonly ConfirmCandidate[]): string {
         c.evidence.join(" "),
         c.publishers.join(" | "),
         c.sha256.join(" "),
+        c.sha1.join(" "),
+        c.approvableSigner ?? "",
         c.firstSeen,
         "",
         "",
@@ -160,9 +186,22 @@ const VERDICTS: Record<string, MarkInput["verdict"]> = {
 
 const unguard = (v: string): string => (v.startsWith("'") && /^'[=+\-@\t\r]/.test(v) ? v.slice(1) : v).trim();
 
+const listCell = (r: readonly string[], i: number): string[] =>
+  i >= 0
+    ? unguard(r[i] ?? "")
+        .split(/\s+/)
+        .filter(Boolean)
+    : [];
+
 export interface ClientCsvResult {
   marks: MarkInput[];
   skipped: { line: number; reason: string }[];
+}
+
+/** An Approved row with no path is refused with the plain reason (#2747); any other bad row stays "invalid row". */
+function rowRefusal(err: z.ZodError | undefined): string {
+  const noPath = err?.issues.find((x) => x.code === "custom" && x.path[0] === "pathPattern");
+  return noPath ? noPath.message : "invalid row";
 }
 
 /** The client's filled confirm list → marks. Rows with no verdict are skipped (still pending). */
@@ -176,6 +215,8 @@ export function parseClientCsv(text: string, maxRows = 20_000): ClientCsvResult 
     verdict: col("verdict"),
     note: col("note"),
     sha: col("sha256"),
+    sha1: col("sha1"),
+    signer: col("signer_verified"),
   };
   const out: ClientCsvResult = { marks: [], skipped: [] };
   if (at.program < 0 || at.verdict < 0 || at.family < 0) {
@@ -197,10 +238,16 @@ export function parseClientCsv(text: string, maxRows = 20_000): ClientCsvResult 
               .split(/\s+/)
               .filter(Boolean)
           : [],
+      sha1: listCell(r, at.sha1),
+      ...(at.signer >= 0 && unguard(r[at.signer] ?? "") ? { signer: unguard(r[at.signer] ?? "") } : {}),
       note: at.note >= 0 ? unguard(r[at.note] ?? "") : "",
     });
     if (verdict && parsed.success) out.marks.push(parsed.data);
-    else out.skipped.push({ line: i + 2, reason: verdict ? "invalid row" : `unknown verdict "${raw}"` });
+    else
+      out.skipped.push({
+        line: i + 2,
+        reason: verdict ? rowRefusal(parsed.error) : `unknown verdict "${raw}"`,
+      });
   });
   return out;
 }

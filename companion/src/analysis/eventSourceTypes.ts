@@ -1,5 +1,6 @@
 // Where a ForensicEvent's record and its time came from. Types only, so stateTypes.ts (the shared
 // layer) can carry the fields without growing past its size limit.
+import type { FileIdentity } from "./fileIdentity.js";
 
 // Where an aggregated cloud event came from (#2301). `group` keys its member records in the case's
 // provenance relation (analysis/cloudRecordStore.ts; GET /cases/:id/source-records/:group pages them);
@@ -20,4 +21,9 @@ export interface EventTimeBasisFields {
   // row that fell back to the scan time. A coverage gap that closes on such a row is the wait before
   // collection (gapEdgeClass.ts). Importer-only: stripAiExtractedFrom drops it from every model delta.
   timeBasis?: "scan";
+}
+
+/** The optional file-identity field a ForensicEvent carries (#2731) — importer-only, see fileIdentity.ts. */
+export interface FileIdentityFields {
+  fileIdentity?: FileIdentity;
 }

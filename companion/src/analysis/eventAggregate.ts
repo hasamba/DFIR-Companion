@@ -5,6 +5,7 @@ import { annotateBenignOsActivity } from "./benignOsActivity.js";
 import { annotateBidiMasquerade } from "./bidiMasquerade.js";
 import { combineMarkings } from "./tlp.js";
 import { carryNoteMark, neutraliseRowNotes } from "./derivedNote.js";
+import { mergeFileIdentity } from "./fileIdentity.js";
 
 /**
  * The aggregation half of the shared import path: collapse mapped rows into counted events, apply
@@ -83,6 +84,9 @@ function applyEventIdentity(target: SiemEvent, m: MappedEvent): void {
   else delete target.sha256;
   if (m.md5) target.md5 = m.md5;
   else delete target.md5;
+  if (m.fileIdentity)
+    target.fileIdentity = m.fileIdentity; // #2731: the Amcache SHA1 + size, Autoruns signer
+  else delete target.fileIdentity;
   if (m.path) target.path = m.path;
   else delete target.path;
   // Set-or-clear like the rest: a stale modification time from a DIFFERENT row would be compared
@@ -225,10 +229,13 @@ export function createEventAggregator(opts: AggregateOptions = {}): EventAggrega
         // an analyst could see "High" attached to text that describes the benign twin, with
         // nothing in the row explaining the grade. When the incoming row is STRICTLY more severe,
         // promote the whole displayed record to it — never just the number.
+        const fileIdentity = mergeFileIdentity(existing.fileIdentity, m.fileIdentity); // #2731
         if (SEVERITY_RANK[m.severity] < SEVERITY_RANK[existing.severity]) {
           applyEventIdentity(existing, m);
           carryNoteMark(m, existing);
         }
+        if (fileIdentity) existing.fileIdentity = fileIdentity;
+        else delete existing.fileIdentity;
         // `count` records repeats; retaining one instance's identity avoids unbounded provenance arrays.
         noteMember(existing, key, m, opts.provenance);
       } else {

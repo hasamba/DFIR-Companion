@@ -282,6 +282,7 @@ export function upsertForensicEvents(
       if (incoming.pid !== undefined) existing.pid = incoming.pid;
       if (incoming.commandLine) existing.commandLine = incoming.commandLine;
       if (incoming.fileModified) existing.fileModified = incoming.fileModified;
+      if (incoming.fileIdentity) existing.fileIdentity = incoming.fileIdentity; // #2731
       if (incoming.chainSignature) existing.chainSignature = incoming.chainSignature;
       // A re-import may restate whether this source guesses its year; nothing else may clear the
       // mark, because it describes the SOURCE, not this particular merge (#739).
@@ -325,6 +326,7 @@ export function upsertForensicEvents(
         ...(incoming.pid !== undefined ? { pid: incoming.pid } : {}),
         ...(incoming.commandLine ? { commandLine: incoming.commandLine } : {}),
         ...(incoming.fileModified ? { fileModified: incoming.fileModified } : {}),
+        ...(incoming.fileIdentity ? { fileIdentity: incoming.fileIdentity } : {}), // #2731
         ...(incoming.chainSignature ? { chainSignature: incoming.chainSignature } : {}),
         ...(incoming.yearInferred ? { yearInferred: true } : {}),
         ...(incoming.canonical ? { canonical: incoming.canonical } : {}),

@@ -3,6 +3,7 @@ import type { Request } from "express";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { Logger } from "../logging/logger.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
+import type { AiAgentHostOptions } from "../analysis/aiAgentHostLabels.js";
 import type { VeloUploadsOutcome } from "./veloUploadFields.js";
 import type { DropFingerprint, ProcessedVersion } from "../analysis/dropScan.js";
 import type { AppOptions } from "../server.js";
@@ -326,7 +327,7 @@ export interface RouteContext {
       partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
       rows?: number; // the map's row count, which sizes it for the memory guard (#1874)
       debug?: ImportDebugRecorder; // this artifact's recorder (#1736)
-    },
+    } & AiAgentHostOptions, // a sweep's shared host names, seeded into this batch's parse (#2745)
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }>;
   ingestVeloUploads(
     caseId: string,

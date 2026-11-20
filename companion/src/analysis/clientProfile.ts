@@ -28,6 +28,11 @@ export interface BaselineMark {
   signer?: string;
   /** Approved SHA-256 hashes, for unsigned files. */
   sha256: string[];
+  /**
+   * Approved Amcache SHA1 hashes (#2731). Amcache hashes only the first 30 MiB, so a SHA1 covers only
+   * a file whose recorded size is within that limit. Absent on marks saved before #2731.
+   */
+  sha1?: string[];
   note: string;
   source: string;
   recordedBy: string;
@@ -88,7 +93,15 @@ const domain = z
   .toLowerCase()
   .regex(/^(?:[a-z0-9-]+\.)+[a-z]{2,63}$/, "not a domain name");
 
-export const markInputSchema = z.object({
+/**
+ * Why an item with no path pattern can never be approved (#2747): an approval needs a path and a
+ * verified signer or hash, and an Amcache installed-program record carries none of them. Shown on the
+ * confirm list and when an approval with an empty path is refused.
+ */
+export const NO_PATH_APPROVAL =
+  "no file path or hash; approve the program's files instead, or mark it Not allowed";
+
+const markObjectSchema = z.object({
   verdict: z.enum(["approved", "not-allowed", "unknown"]),
   family: z.enum(["program", "installed", "autorun", "download"]),
   program: text(260).min(1).toLowerCase(),
@@ -104,8 +117,28 @@ export const markInputSchema = z.object({
     )
     .max(50)
     .default([]),
+  sha1: z
+    .array(
+      z
+        .string()
+        .trim()
+        .toLowerCase()
+        .regex(/^[0-9a-f]{40}$/, "not a SHA1"),
+    )
+    .max(50)
+    .default([]),
   note: text(2000).default(""),
   expiresAt: z.string().datetime().optional(),
+});
+
+/**
+ * A new APPROVAL with no path is refused (#2747): it could never match. Not allowed and Unknown marks
+ * with no path stay valid (Not allowed matches by name). Stored marks are not re-validated here, so an
+ * empty-path approval saved before #2747 still loads — and still fails closed in the matcher.
+ */
+export const markInputSchema = markObjectSchema.superRefine((m, ctx) => {
+  if (m.verdict === "approved" && !m.pathPattern)
+    ctx.addIssue({ code: "custom", path: ["pathPattern"], message: `"${m.program}": ${NO_PATH_APPROVAL}` });
 });
 export type MarkInput = z.infer<typeof markInputSchema>;
 
@@ -196,6 +229,7 @@ export function applyMarks(
       pathPattern: input.pathPattern,
       ...(input.signer ? { signer: input.signer } : {}),
       sha256: input.sha256,
+      ...(input.sha1.length ? { sha1: input.sha1 } : {}),
       note: input.note,
       source: meta.source,
       recordedBy: meta.by,

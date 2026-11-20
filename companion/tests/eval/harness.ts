@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { IncidentTypeStore } from "../../src/analysis/incidentTypeStore.js";
+import { HuntInventoryStore } from "../../src/analysis/huntInventoryStore.js";
 import { buildRuntimePipeline, buildProvider, buildSynthesisProvider } from "../../src/server.js";
 import { MockProvider, type AIProvider, type AnalyzeImage } from "../../src/providers/provider.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
@@ -20,11 +22,20 @@ import type { CorpusCase } from "./corpus.js";
 import type { QualityOutput } from "./qualityScorer.js";
 
 const IMPORTED_AT = "2026-06-01T00:00:00Z"; // fixed clock input — keeps runs reproducible
+const HUNT_TYPE_ID = "threat-hunt"; // the built-in incident type in hunt mode (#2670)
 
 export interface EvalPipeline {
   pipeline: ReturnType<typeof buildRuntimePipeline>;
   stateStore: StateStore;
+  store: CaseStore;
   caseId: string;
+  /** Wired only when asked for (a threat-hunt corpus case, #2733). */
+  incidentTypeStore?: IncidentTypeStore;
+}
+
+export interface EvalPipelineOptions {
+  /** Wire an incident-type store, so a case can be put in hunt mode (#2733). */
+  withIncidentTypes?: boolean;
 }
 
 // Convenience: a MockProvider that always returns `canned` (Phase-1 deterministic runs).
@@ -52,19 +63,40 @@ export async function makeEvalPipeline(
   provider: AIProvider,
   caseId = "eval",
   imageLoader: (caseId: string, screenshotFile: string) => Promise<AnalyzeImage> = stubImageLoader,
+  options: EvalPipelineOptions = {},
 ): Promise<EvalPipeline> {
   const root = await mkdtemp(join(tmpdir(), "dfir-eval-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   await store.createCase({ caseId, name: "eval", investigator: "eval", aiProvider: provider.name });
+  // Built-in types only: the custom-types directory sits in the temp root and is never created.
+  const incidentTypeStore = options.withIncidentTypes
+    ? new IncidentTypeStore(store, join(root, "incident-types"))
+    : undefined;
   const pipeline = buildRuntimePipeline({
     provider,
     synthesisProvider: provider,
     stateStore,
     store,
     imageLoader,
+    ...(incidentTypeStore ? { incidentTypeStore } : {}),
   });
-  return { pipeline, stateStore, caseId };
+  return { pipeline, stateStore, store, caseId, ...(incidentTypeStore ? { incidentTypeStore } : {}) };
+}
+
+/**
+ * Put an eval case in hunt mode (#2733): the built-in threat-hunt type, and the client baseline's
+ * approved labels in the case's hunt inventory record — where hunt grading would have saved them.
+ * The pipeline reads that record for the APPROVED BY CLIENT block. No hunt job is seeded, so the
+ * HUNT MODE block states coverage as unknown.
+ */
+async function seedHuntCase(ep: EvalPipeline, approvedLabels: readonly string[]): Promise<void> {
+  if (!ep.incidentTypeStore) throw new Error("a hunt case needs an incident-type store");
+  await ep.incidentTypeStore.saveRecord(ep.caseId, HUNT_TYPE_ID, IMPORTED_AT);
+  await new HuntInventoryStore(ep.store).update(ep.caseId, (cur) => ({
+    ...cur,
+    approvedLabels: [...approvedLabels],
+  }));
 }
 
 export function producedEvents(state: InvestigationState): ProducedEvent[] {
@@ -261,7 +293,9 @@ function qualityOutput(state: InvestigationState, evidenceEventIds: readonly str
 }
 
 export async function runCorpusCase(fixture: CorpusCase, provider: AIProvider): Promise<QualityOutput> {
-  const { pipeline, stateStore, caseId } = await makeEvalPipeline(provider);
+  const ep = await makeEvalPipeline(provider, "eval", stubImageLoader, { withIncidentTypes: !!fixture.hunt });
+  const { pipeline, stateStore, caseId } = ep;
+  if (fixture.hunt) await seedHuntCase(ep, fixture.hunt.approvedLabels);
   const seeded = {
     ...emptyState(caseId),
     forensicTimeline: fixture.seedEvents.map((event) => ({

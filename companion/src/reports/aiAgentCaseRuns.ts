@@ -2,70 +2,30 @@
 //
 //   - the runs launched in the case (its own state/ai-agent-runs.json, newest 20 by the run store's cap);
 //   - the sweeps filed into it with "Add to case": a sweep's run stays in the sweep case and records
-//     the filing in `addedTo`, so the sweeps still kept (the newest SWEEP_RETENTION) are looked up here.
-//     A sweep past retention drops out of this list; the hits it filed stay in the case timeline.
+//     the filing in `addedTo`, so the sweeps still kept (the newest SWEEP_RETENTION) are looked up here;
+//   - the report-safe copies saved into the case at filing time (#2740, aiAgentFiledRuns.ts), so a
+//     filed sweep stays in the report after retention removes the sweep. A live sweep wins over its copy
+//     (it can show a re-read after filing). A sweep filed before #2740 has no copy and drops out with it.
 //
 // READ-TIME ONLY. withAiAgentRuns() is applied by ReportWriter to the state it renders report.md,
-// report.html, state-export.json and the .docx from, and nowhere else: never saved, never part of
-// loadFilteredState (so no dashboard panel, push, presentation or redacted export carries it), and
-// never AI input — the matched text in a run report is attacker-controlled and stays out of every AI
-// path (user decision for #2690). Only report-safe fields are copied (an allowlist): never the raw rows,
-// which hold the unredacted matched text, and never the manifest's file list.
+// report.html, state-export.json and the .docx from, and nowhere else: never saved with the
+// investigation state, never part of loadFilteredState (so no dashboard panel, push, presentation or
+// redacted export carries it), and never AI input — the matched text in a run report is
+// attacker-controlled and stays out of every AI path (user decision for #2690). Only report-safe fields
+// are copied (an allowlist, aiAgentRunProjection.ts): never the raw rows, which hold the unredacted
+// matched text, and never the manifest's file list.
 
 import type { CaseStore } from "../storage/caseStore.js";
 import type { InvestigationState } from "../analysis/stateTypes.js";
-import type { AiAgentCaseRun, AiAgentCaseRuns, AiAgentRunView } from "../analysis/aiAgentReportTypes.js";
+import type { AiAgentCaseRun, AiAgentCaseRuns } from "../analysis/aiAgentReportTypes.js";
 import { AiAgentRunStore } from "../analysis/aiAgentRunStore.js";
 import { isSweepCase, SWEEP_RETENTION } from "../storage/sweepCase.js";
+import { isObj, objs, projectAiAgentRun, str } from "./aiAgentRunProjection.js";
+import { listFiledRuns } from "./aiAgentFiledRuns.js";
 
-type Obj = Record<string, unknown>;
+export { projectAiAgentRun };
 
-const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
-const str = (v: unknown): v is string => typeof v === "string";
-const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter(str) : []);
-const objs = (v: unknown): Obj[] => (Array.isArray(v) ? v.filter(isObj) : []);
-const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-
-/** A stored report is kept only when its lists are lists; its nested cells are escaped at render. */
-function reportOf(v: unknown): AiAgentRunView["report"] {
-  if (!isObj(v) || !Array.isArray(v.endpoints) || !Array.isArray(v.hits) || !Array.isArray(v.notRun))
-    return undefined;
-  return v as unknown as AiAgentRunView["report"];
-}
-
-/** The report-safe fields of one stored run; null when it lacks the fields every run has. */
-export function projectAiAgentRun(raw: unknown): AiAgentRunView | null {
-  if (!isObj(raw) || !str(raw.runId) || !str(raw.huntId) || !str(raw.launchedAt)) return null;
-  const report = reportOf(raw.report);
-  const manifest = isObj(raw.manifest) ? raw.manifest : null;
-  const incomplete = objs(raw.readIncomplete).map((x) => ({
-    artifact: String(x.artifact ?? ""),
-    rowsRead: num(x.rowsRead),
-  }));
-  return {
-    runId: raw.runId,
-    huntId: raw.huntId,
-    ...(str(raw.guiUrl) ? { guiUrl: raw.guiUrl } : {}),
-    launchedAt: raw.launchedAt,
-    scopes: strs(raw.scopes),
-    ruleSetVersion: str(raw.ruleSetVersion) ? raw.ruleSetVersion : "",
-    preserved: raw.preserved === true,
-    warnings: strs(raw.warnings),
-    failedEndpoints: objs(raw.failedEndpoints).map((e) => ({
-      clientId: String(e.clientId ?? ""),
-      error: String(e.error ?? ""),
-    })),
-    skippedEndpoints: objs(raw.skippedEndpoints).map((e) => ({
-      clientId: String(e.clientId ?? ""),
-      hostname: String(e.hostname ?? ""),
-      reason: String(e.reason ?? ""),
-    })),
-    ...(incomplete.length ? { readIncomplete: incomplete } : {}),
-    ...(str(raw.reportError) ? { reportError: raw.reportError } : {}),
-    ...(manifest ? { manifest: { total: num(manifest.total), totalBytes: num(manifest.totalBytes) } } : {}),
-    ...(report ? { report } : {}),
-  };
-}
+type Candidate = { raw: unknown; filed?: { sweepCaseId: string; at: string } };
 
 /** When this sweep run was last filed into the case; null when it never was. */
 function filedAt(raw: unknown, caseId: string): string | null {
@@ -81,7 +41,7 @@ async function sweepRuns(
   store: AiAgentRunStore,
   caseId: string,
   unreadable: string[],
-): Promise<{ raw: unknown; filed: { sweepCaseId: string; at: string } }[]> {
+): Promise<Required<Candidate>[]> {
   let sweeps: string[];
   try {
     sweeps = (await cases.listCases())
@@ -93,7 +53,7 @@ async function sweepRuns(
     unreadable.push("the list of AI Agent Forensics sweeps");
     return [];
   }
-  const out: { raw: unknown; filed: { sweepCaseId: string; at: string } }[] = [];
+  const out: Required<Candidate>[] = [];
   for (const sweepCaseId of sweeps) {
     try {
       for (const raw of await store.list(sweepCaseId)) {
@@ -104,7 +64,20 @@ async function sweepRuns(
       unreadable.push(`the run record of sweep ${sweepCaseId}`);
     }
   }
-  return out.sort((a, b) => (a.filed.at < b.filed.at ? 1 : a.filed.at > b.filed.at ? -1 : 0));
+  return out;
+}
+
+const byFiledAtDesc = (a: { at: string }, b: { at: string }): number =>
+  a.at < b.at ? 1 : a.at > b.at ? -1 : 0;
+
+/** The copies saved at filing time (#2740), latest filing first; after the live sweeps so those win. */
+async function filedCopies(cases: CaseStore, caseId: string, unreadable: string[]): Promise<Candidate[]> {
+  try {
+    return (await listFiledRuns(cases, caseId)).map((e) => ({ raw: e.run, filed: e.filedFrom }));
+  } catch {
+    unreadable.push("this case's filed AI Agent Forensics sweep copies");
+    return [];
+  }
 }
 
 /** The runs a case's report shows: its own, then the sweeps filed into it (latest filing first). */
@@ -117,9 +90,10 @@ export async function loadAiAgentCaseRuns(cases: CaseStore, caseId: string): Pro
   } catch {
     unreadable.push("this case's AI Agent Forensics run record");
   }
-  const candidates = [
-    ...own.map((raw) => ({ raw, filed: undefined })),
+  const candidates: Candidate[] = [
+    ...own.map((raw) => ({ raw })),
     ...(await sweepRuns(cases, store, caseId, unreadable)),
+    ...(await filedCopies(cases, caseId, unreadable)),
   ];
   const runs: AiAgentCaseRun[] = [];
   const seen = new Set<string>();
@@ -133,7 +107,9 @@ export async function loadAiAgentCaseRuns(cases: CaseStore, caseId: string): Pro
     }
   }
   if (malformed) unreadable.push(`${malformed} run record(s) in an unexpected shape`);
-  return { runs, unreadable };
+  const launched = runs.filter((r) => !r.filedFrom);
+  const filed = runs.filter((r) => r.filedFrom).sort((a, b) => byFiledAtDesc(a.filedFrom!, b.filedFrom!));
+  return { runs: [...launched, ...filed], unreadable };
 }
 
 /** The state with the case's runs added for this one report; the same state when there are none. */

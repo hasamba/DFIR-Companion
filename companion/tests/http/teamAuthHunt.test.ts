@@ -124,6 +124,22 @@ describe("threat-hunt routes under team authentication (#2670)", () => {
     expect(info.body.earlierHunts.map((h: { caseId: string }) => h.caseId)).toEqual(["c2"]);
   });
 
+  it("refuses an approval with no path but saves a Not-allowed mark with none (#2747)", async () => {
+    const approve = await post(admin, `/client-profiles/${clientId}/marks`, {
+      source: "client email 2026-11-20",
+      marks: [{ verdict: "approved", family: "installed", program: "7-Zip 23.01 (x64)", pathPattern: "" }],
+    });
+    expect(approve.status).toBe(400);
+    expect(approve.body.error).toMatch(
+      /"7-zip 23.01 \(x64\)": no file path or hash; approve the program's files instead/,
+    );
+    const block = await post(admin, `/client-profiles/${clientId}/marks`, {
+      source: "client email 2026-11-20",
+      marks: [{ verdict: "not-allowed", family: "installed", program: "7-Zip 23.01 (x64)" }],
+    });
+    expect(block.status).toBe(200);
+  });
+
   it("investigator: names only, no profile edit, no link, but reads and exports the case", async () => {
     const inv = await member("investigator1", "investigator");
     const list = await inv.agent.get("/client-profiles");

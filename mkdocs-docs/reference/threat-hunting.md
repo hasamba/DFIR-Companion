@@ -55,6 +55,22 @@ timeline, listing its hosts ("on 3 of 287 answering hosts: WS-01, WS-02, WS-03")
 rows stay searchable in the super-timeline. Each kind is capped at 50 entries, with one visible
 "N more" entry, so a routine update on 300 hosts never floods the timeline.
 
+**How an autorun is counted.** A startup item (`Windows.Sys.StartupItems`) or a scheduled task
+(`Windows.System.TaskScheduler`) is counted by the **program it runs**, not by its entry or task
+name. Two hosts that run `C:\Tools\updater.exe` from differently named tasks are one item. When the
+program is a script host or a built-in Windows tool (PowerShell, cmd, wscript, cscript, mshta,
+regsvr32, rundll32 and similar), the item is counted by the **script or DLL that tool runs**
+instead, so a rare malicious task does not hide inside one common `regsvr32.exe` item. When no
+script or DLL can be read reliably (for example an encoded PowerShell command or a web address),
+the item is counted by the task or entry name. A client **Not allowed** mark that was saved on a
+task name still matches the task. Because that task is now part of the item for the program it
+runs, the mark flags that whole item, on every host that runs the program from any task. The first
+hunt imported after this change shows its scheduled task items, and startup items that Autoruns
+did not already list, as **new** once, because the earlier hunt counted tasks by task name and did
+not count startup items. They settle from the next hunt on. Cases imported before the change keep
+their task-name items. If you re-import a hunt into such a case, it holds both the old and the new
+items.
+
 | Item | When |
 |---|---|
 | **Policy violation** | The client marked it **Not allowed**, or it was downloaded from a blocked site or a blocked category. Default severity Medium (setting below). Labelled as policy, not as malicious activity. |
@@ -72,7 +88,8 @@ rare as more hosts answer; its entry is then removed (unless you promoted it).
 ### 6. Build the baseline with the client
 
 The **Client Baseline** panel lists every item the baseline does not settle, rarest first, with
-its hosts, path, evidence label and publisher (as the endpoint reported it, **not verified**).
+its hosts, path, evidence label and publisher (as the endpoint reported it, **not verified**), and why
+it is still pending.
 
 1. Press **Export confirm list (CSV)** or **(Markdown)** and send it to the client.
 2. When the client answers, tick items and press **Mark Approved**, **Mark Not allowed** or
@@ -89,10 +106,37 @@ Rules that keep an attacker from hiding behind a name:
 - An approval matches only on the program name **and** its path pattern **and** a verified signer
   or an approved hash. A `chrome.exe` in a Temp folder does not match an approval for `chrome.exe`
   in `\Program Files\Google\`. If one host runs a different hash at the approved path, that item
-  is not covered.
+  is not covered. The path pattern ignores the volume, so a Prefetch path (`\Device\HarddiskVolume3\…`)
+  and an Amcache path (`C:\…`) for the same file are one item.
 - Publisher text alone never approves anything. A missing hash or signer gives **Unknown**.
-- No importer records a verified Authenticode signer yet, so an approval needs an approved hash to
-  match. Prefetch rows carry no hash: approve the program from a hash-bearing artifact.
+- Which artifacts can make an item approvable:
+    - **Amcache** (`Windows.Forensics.Amcache`, program files) records a SHA1. Amcache hashes only
+      the first 30 MiB of a file, so a SHA1 approval covers a file only when Amcache also recorded
+      its size and the file is 30 MiB or smaller. A larger file, or one with no recorded size, stays
+      **Unknown**, and the list says why.
+    - **Autoruns** (`Windows.Sysinternals.Autoruns`) records the image path, the SHA-256 and the
+      signature check. Only a signer that Autoruns reports as `(Verified)` counts. `(Not verified)`
+      and the Company name never approve anything. An enabled entry with no verified signer is
+      graded Low (persistence, T1547). A verified or disabled entry is Info: it still goes into the
+      hunt inventory and the super-timeline.
+    - **Downloads** (Zone.Identifier) carry a SHA-256.
+    - Prefetch, UserAssist and ShimCache rows carry no hash. A program item is covered only when
+      every host it was seen on also has an Amcache row for the same file and path. An Autoruns
+      approval covers the autorun entry, not the program.
+    - **Amcache installed programs** (the Installed program items) carry no file path and no hash,
+      so they can never be approved. The list shows "(no path — cannot be approved)" and says why.
+      **Mark Approved** leaves these items out and tells you how many. Approve the program's files
+      (its Amcache file rows or Autoruns entries) instead, or use **Mark Not allowed**, which matches
+      them by name. The same applies to any item with no path. An Approved row with no path in the
+      client's CSV is skipped, and the import message gives the line number and the reason.
+- Every host must be covered on its own. One host's approved hash or signer says nothing about a
+  host seen only through rows without one. A host seen only through a SHA1 is not covered by an
+  approval that names only a SHA-256, and the reverse. A signer approval needs every host verified
+  by that same signer, and one failed signature check keeps the item **Unknown**.
+- **Mark Approved** saves the item's SHA-256, its usable SHA1 and, when every host is verified by
+  one signer, that signer. The confirm-list CSV has `sha1` and `signer_verified` columns for the
+  same purpose.
+- An approval only stops the rare and new hunt grades. It never lowers a detection.
 - **Not allowed** wins over Approved. An approval can carry an expiry date.
 - Every change is a new numbered **baseline version**, saved with who made it, when and its source,
   and can be reversed (Reset to Unknown). Unknown items stay on the list in every hunt report,

@@ -1,4 +1,5 @@
 import type { ForensicEvent } from "./stateTypes.js";
+import { sha1Unusable, usableSha1 } from "./fileIdentity.js";
 
 /**
  * Normalised hunt fields of one imported row (#2670), derived at the import seam from the row the
@@ -13,9 +14,12 @@ import type { ForensicEvent } from "./stateTypes.js";
  *
  * Signer vs publisher: Amcache "Publisher" and version-info strings are ATTACKER-CONTROLLED text. They
  * are kept as `publisher` with `publisherVerified: false` and may describe a candidate, but they never
- * approve anything. A VERIFIED signer can only come from an Authenticode check on the endpoint; no
- * importer in this release records one, so `signer` is always absent and an approval that needs a
- * signer resolves to Unknown (huntApprovalMatch.ts).
+ * approve anything. A VERIFIED signer can only come from an Authenticode check on the endpoint: today
+ * only an Autoruns row whose Signer starts with "(Verified) " (#2731, veloAutorunsMap.ts).
+ *
+ * Amcache SHA1 (#2731): Windows hashes only the first 30 MiB of a file, so the SHA1 is a hunt field
+ * only when Amcache also recorded a size within that limit. A larger or unsized file keeps the reason
+ * (`sha1Unusable`) so the client-baseline panel can say why the hash cannot approve it.
  */
 export type HuntEvidence = "execution" | "presence" | "installed" | "autorun" | "download";
 
@@ -29,12 +33,25 @@ export interface HuntFields {
   path: string;
   publisher?: string;
   publisherVerified: false;
-  /** Verified Authenticode signer — never set in this release (see the header). */
+  /** Verified Authenticode signer — only from a "(Verified) " Autoruns Signer (see the header). */
   signer?: string;
+  /** The endpoint checked the signature and did not verify it. */
+  signatureUnverified?: true;
   sha256?: string;
+  /** Amcache SHA1 of a file of known size within 30 MiB — the only SHA1 an approval may use. */
+  sha1?: string;
+  /** Amcache recorded a SHA1 an approval cannot use: no size, or a file over 30 MiB. */
+  sha1Unusable?: "no-size" | "over-limit";
+  /** The importer folded rows that disagreed on the hash, size or signer: no approval may cover it. */
+  identityConflict?: true;
   md5?: string;
   /** Download source URL (Zone.Identifier HostUrl) when the row named one. */
   sourceUrl?: string;
+  /**
+   * (#2748) The identity an autorun row had before it was keyed on its target: a scheduled task's file
+   * (`\windows\system32\tasks\<name>`). Kept so a client's Not-allowed mark on a task name still matches.
+   */
+  entry?: { program: string; pathPattern: string };
   host: string;
 }
 
@@ -60,15 +77,26 @@ function evidenceOf(e: ForensicEvent): HuntEvidence | null {
   return null;
 }
 
-/** `c:\Users\Bob\AppData\x.exe` → `\users\*\appdata`; drive letters and device prefixes dropped. */
+/** `\\.\`, `\\?\` and `\??\` — Win32 / NT namespace prefixes in front of a drive or volume. */
+const NAMESPACE_PREFIX = /^(?:\\\\[.?]|\\\?\?)\\/;
+/** `\device\harddiskvolume3` (Win10/11 Prefetch ExecutablePath) and `\volume{guid}` — whole segment only. */
+const VOLUME_PREFIX = /^\\?(?:device\\harddiskvolume\d+|volume\{[^}\\]*\})(?=\\|$)/i;
+const DRIVE_PREFIX = /^[a-z]:/i;
+
+/**
+ * Drop the volume a path lives on (#2749): namespace prefix, NT device / volume-GUID root, drive letter.
+ * Prefetch names `\DEVICE\HARDDISKVOLUME3\…` where Amcache and ShimCache name `C:\…` for the same
+ * file, so both must reduce to `\…` to be one hunt item. Backslash-separated input; case kept.
+ */
+export function stripVolumePrefix(path: string): string {
+  return path.replace(NAMESPACE_PREFIX, "").replace(VOLUME_PREFIX, "").replace(DRIVE_PREFIX, "");
+}
+
+/** `c:\Users\Bob\AppData\x.exe` → `\users\*\appdata`; the volume (drive, device, GUID) dropped. */
 export function normalisePathPattern(path: string): string {
-  const p = path
-    .trim()
-    .replace(/^\\\\\.\\/, "")
-    .replace(/\//g, "\\")
-    .toLowerCase();
+  const p = stripVolumePrefix(path.trim().replace(/\//g, "\\").toLowerCase());
   const dir = p.includes("\\") ? p.slice(0, p.lastIndexOf("\\")) : "";
-  return dir.replace(/^[a-z]:/, "").replace(/\\users\\[^\\]+/, "\\users\\*");
+  return dir.replace(/\\users\\[^\\]+/, "\\users\\*");
 }
 
 const baseName = (p: string): string => p.replace(/\//g, "\\").split("\\").pop() ?? "";
@@ -103,11 +131,41 @@ function downloadUrl(description: string): string | undefined {
   return m ? m[1].replace(/[),.]+$/, "") : undefined;
 }
 
+/** The importer-recorded identity (#2731): a usable Amcache SHA1 or why not, and the signer verdict. */
+function identityFields(
+  e: ForensicEvent,
+): Pick<HuntFields, "sha1" | "sha1Unusable" | "signer" | "signatureUnverified" | "identityConflict"> {
+  const id = e.fileIdentity;
+  const sha1 = usableSha1(id);
+  const unusable = sha1Unusable(id);
+  return {
+    ...(sha1 ? { sha1 } : {}),
+    ...(unusable ? { sha1Unusable: unusable } : {}),
+    ...(id?.signer && !id.signatureUnverified ? { signer: id.signer } : {}),
+    ...(id?.signatureUnverified ? { signatureUnverified: true as const } : {}),
+    ...(id?.conflict ? { identityConflict: true as const } : {}),
+  };
+}
+
+/** The old task-file identity of an autorun row now keyed on its target (#2748), else undefined. */
+function entryOf(rowPath: string, keyPath: string): HuntFields["entry"] {
+  if (!rowPath || rowPath === keyPath) return undefined;
+  const program = baseName(rowPath);
+  return program ? { program, pathPattern: normalisePathPattern(rowPath) } : undefined;
+}
+
+/**
+ * An autorun row is keyed on the program or script it runs (`fileIdentity.autorunTarget`, #2748),
+ * falling back to its own `path`: a stored row without the target keeps its old item key.
+ */
 export function huntFieldsOf(e: ForensicEvent): HuntFields | null {
   const evidence = evidenceOf(e);
   const host = (e.asset ?? "").trim();
   if (!evidence || !host) return null;
-  const path = (e.path ?? "").trim().toLowerCase();
+  const rowPath = (e.path ?? "").trim().toLowerCase();
+  const target = evidence === "autorun" ? (e.fileIdentity?.autorunTarget ?? "").trim().toLowerCase() : "";
+  const path = target || rowPath;
+  const entry = target ? entryOf(rowPath, path) : undefined;
   const base = {
     evidence,
     path,
@@ -116,6 +174,7 @@ export function huntFieldsOf(e: ForensicEvent): HuntFields | null {
     host,
     ...(e.sha256 ? { sha256: e.sha256.toLowerCase() } : {}),
     ...(e.md5 ? { md5: e.md5.toLowerCase() } : {}),
+    ...identityFields(e),
   };
   if (evidence === "installed") {
     const f = installedFields(e);
@@ -124,7 +183,7 @@ export function huntFieldsOf(e: ForensicEvent): HuntFields | null {
   const program = (path ? baseName(path) : (e.processName ?? "")).toLowerCase();
   if (!program) return null;
   const sourceUrl = evidence === "download" ? downloadUrl(e.description) : undefined;
-  return { ...base, program, ...(sourceUrl ? { sourceUrl } : {}) };
+  return { ...base, program, ...(sourceUrl ? { sourceUrl } : {}), ...(entry ? { entry } : {}) };
 }
 
 /** The item identity: one entry per program + path pattern + evidence family. */

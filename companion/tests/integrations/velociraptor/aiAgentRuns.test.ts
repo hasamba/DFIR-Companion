@@ -1,7 +1,7 @@
 // AI Agent Forensics (#2690): run lifecycle — sweep case, case mode, refresh, Add to case, retention.
 // Real case storage on a temp folder; the Velociraptor client is a mock.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../../src/storage/caseStore.js";
@@ -20,6 +20,8 @@ import { isAnalystCase, SWEEP_RETENTION } from "../../../src/storage/sweepCase.j
 import { withSilentEndpoints } from "../../../src/integrations/velociraptor/aiAgentRuns.js";
 import { buildAiAgentReport } from "../../../src/analysis/aiAgentReport.js";
 import { loadAiAgentRuleSet } from "../../../src/analysis/aiAgentRuleSet.js";
+import { loadAiAgentCaseRuns } from "../../../src/reports/aiAgentCaseRuns.js";
+import { FILED_RUNS_FILE } from "../../../src/reports/aiAgentFiledRuns.js";
 import type { VelociraptorClient } from "../../../src/integrations/velociraptor/velociraptorApi.js";
 import type { ServerSetStore } from "../../../src/integrations/serverSets/serverSetStore.js";
 
@@ -232,6 +234,110 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
   });
 });
 
+describe("AI Agent Forensics: a filed sweep's report copy in the target case (#2740)", () => {
+  async function filedSweep(deps: ReturnType<typeof makeDeps>) {
+    await store.createCase({ caseId: "case-1", name: "c", investigator: "x", aiProvider: null });
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    await refreshAiAgentRun(deps, caseId, run.runId);
+    return { sweepCaseId: caseId, runId: run.runId };
+  }
+  const copyPath = () => join(store.stateDir("case-1"), FILED_RUNS_FILE);
+
+  it("keeps the run in the case report after the sweep case is deleted", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    const filedAt = (await deps.runStore.get(sweepCaseId, runId))?.addedTo?.[0].at;
+    await store.deleteCaseFolder(sweepCaseId);
+    const got = await loadAiAgentCaseRuns(store, "case-1");
+    expect(got.unreadable).toEqual([]);
+    expect(got.runs).toHaveLength(1);
+    expect(got.runs[0].run.runId).toBe(runId);
+    expect(got.runs[0].filedFrom).toEqual({ sweepCaseId, at: filedAt });
+    expect(got.runs[0].run.report?.hits[0].rule).toBe("Agent_Memory_Hidden_Instruction_Concealment");
+  });
+
+  it("saves only the report-safe fields: no raw rows, no raw matched-text field, no manifest file list", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    const text = readFileSync(copyPath(), "utf8");
+    const saved = JSON.parse(text) as { run: Record<string, unknown>; filedFrom: unknown }[];
+    expect(saved).toHaveLength(1);
+    expect(saved[0].filedFrom).toMatchObject({ sweepCaseId });
+    expect(Object.keys(saved[0].run)).not.toContain("rows");
+    expect(text).not.toContain("MatchedText");
+    expect(text).not.toContain('"files"');
+    expect(text).not.toContain("/u/a"); // the manifest's file path
+  });
+
+  it("keeps one copy per run when the same sweep is filed twice, with the later filing time", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    await new Promise((r) => setTimeout(r, 5));
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    const saved = JSON.parse(readFileSync(copyPath(), "utf8")) as { filedFrom: { at: string } }[];
+    expect(saved).toHaveLength(1);
+    const times = (await deps.runStore.get(sweepCaseId, runId))?.addedTo?.map((a) => a.at) ?? [];
+    expect(times).toHaveLength(2);
+    expect(saved[0].filedFrom.at).toBe(times.at(-1));
+  });
+
+  it("still files the hits when the copy cannot be saved, and says so in the case activity", async () => {
+    const activity: { caseId: string; detail: string }[] = [];
+    const deps = makeDeps({ onActivity: (caseId, a) => activity.push({ caseId, detail: a.detail }) });
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    mkdirSync(copyPath(), { recursive: true }); // a directory where the file goes: the write fails
+    const out = await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    expect(out.addedEvents).toBe(1);
+    expect((await deps.runStore.get(sweepCaseId, runId))?.addedTo?.[0].caseId).toBe("case-1");
+    const detail = activity.find((a) => a.caseId === "case-1")?.detail ?? "";
+    expect(detail).toContain("the report copy could not be saved");
+  });
+
+  it("updates the case copy when the filed sweep is re-read, keeping the filing time (#2744)", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    const filedAt = (await deps.runStore.get(sweepCaseId, runId))?.addedTo?.[0].at ?? "";
+    await new Promise((r) => setTimeout(r, 5));
+    const reread = await refreshAiAgentRun(deps, sweepCaseId, runId);
+    const rereadAt = reread.report?.builtAt ?? "";
+    expect(rereadAt > filedAt).toBe(true);
+    await store.deleteCaseFolder(sweepCaseId);
+    const got = await loadAiAgentCaseRuns(store, "case-1");
+    expect(got.runs).toHaveLength(1);
+    expect(got.runs[0].run.report?.builtAt).toBe(rereadAt);
+    expect(got.runs[0].filedFrom).toEqual({ sweepCaseId, at: filedAt });
+  });
+
+  it("a refresh whose copy update fails still returns the re-read run and logs it (#2744)", async () => {
+    const logged: string[] = [];
+    const deps = makeDeps({ log: (m: string) => logged.push(m) });
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    rmSync(copyPath());
+    mkdirSync(copyPath(), { recursive: true }); // a directory where the file goes: the update fails
+    await new Promise((r) => setTimeout(r, 5));
+    const reread = await refreshAiAgentRun(deps, sweepCaseId, runId);
+    expect(reread.report?.builtAt).toBeDefined();
+    expect((await deps.runStore.get(sweepCaseId, runId))?.report?.builtAt).toBe(reread.report?.builtAt);
+    expect(logged.some((m) => m.includes(`could not update the report copy of sweep ${sweepCaseId}`))).toBe(
+      true,
+    );
+  });
+
+  it("a refresh never creates a copy for a case that holds none (#2744)", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    rmSync(copyPath()); // a filing from before #2740, or an evicted copy
+    await refreshAiAgentRun(deps, sweepCaseId, runId);
+    expect(existsSync(copyPath())).toBe(false);
+  });
+});
+
 describe("AI Agent Forensics: an endpoint with no rows yet", () => {
   it("is listed as 'no results yet', never dropped from the report", () => {
     const report = {
@@ -322,6 +428,32 @@ describe("AI Agent Forensics: Add to case files the complete result set", () => 
     );
     expect(filed.reduce((a, b) => a + b, 0)).toBe(25_001);
     expect(Math.max(...filed)).toBeLessThanOrEqual(10_000);
+  });
+
+  // #2745: two clients that share a host name, in different batches, are both labelled with their id.
+  it("seeds every batch with the host names the whole sweep shows two clients sharing", async () => {
+    await store.createCase({ caseId: "case-1", name: "c", investigator: "x", aiProvider: null });
+    const rows = many(10_001).map((r, i) =>
+      i === 0
+        ? { ...r, Fqdn: "WS-01", ClientId: "C.aaa111" }
+        : i === 10_000
+          ? { ...r, Fqdn: "WS-01", ClientId: "C.bbb222" }
+          : { ...r, Fqdn: "WS-02", ClientId: "C.ccc333" },
+    );
+    const seeds: unknown[] = [];
+    const deps = depsReading({ rows, truncated: false });
+    deps.ingestVeloArtifactMap = async (_caseId, _json, opts) => {
+      seeds.push(opts.aiAgentHostClients);
+      return { addedEvents: 1, addedIocs: 1 };
+    };
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    await refreshAiAgentRun(deps, caseId, run.runId);
+    await addSweepToCase(deps, caseId, run.runId, "case-1");
+    expect(seeds).toHaveLength(2);
+    for (const seed of seeds) {
+      const pairs = (seed as [string, string][]).map(([h, c]) => `${h}|${c}`).sort();
+      expect(pairs).toEqual(["ws-01|C.aaa111", "ws-01|C.bbb222"]); // the unshared WS-02 is not sent
+    }
   });
 
   it("refuses to file a sweep whose results were not read in full, and says how much is missing", async () => {

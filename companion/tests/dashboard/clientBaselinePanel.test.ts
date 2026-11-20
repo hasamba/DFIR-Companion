@@ -23,7 +23,10 @@ const BASELINE = {
   approvedDomains: ["downloads.example", "updates.example"],
 };
 
-function harness(profile: Route = { body: { id: PID, name: "Client A", baseline: BASELINE } }) {
+function harness(
+  profile: Route = { body: { id: PID, name: "Client A", baseline: BASELINE } },
+  extra: Record<string, Route> = {},
+) {
   const doc = new FakeDocument();
   doc.add("div", "clientBaselinePanel");
   const net = routedFetch({
@@ -45,11 +48,27 @@ function harness(profile: Route = { body: { id: PID, name: "Client A", baseline:
             reason: "rare",
             family: "program",
           },
+          {
+            program: "updater.exe",
+            pathPattern: "\\program files\\vendor",
+            hostCount: 2,
+            hosts: ["H1", "H2"],
+            evidence: ["presence"],
+            publishers: [],
+            sha256: [],
+            sha1: ["a".repeat(40)],
+            signers: ["Vendor Inc"],
+            approvableSigner: "Vendor Inc",
+            reason: "not in the reviewed baseline",
+            family: "program",
+          },
         ],
       },
     },
     [`GET /client-profiles/${PID}`]: profile,
     [`PUT /client-profiles/${PID}/domains`]: { body: { version: 4 } },
+    [`POST /client-profiles/${PID}/marks`]: { body: { version: 5 } },
+    ...extra,
   });
   const api = loadDashboardModule<PanelApi>("dashboard-client-baseline.js", [], {
     document: doc,
@@ -175,6 +194,127 @@ describe("Client Baseline panel layout (#2736)", () => {
     expect(h.panel().textContent).toContain(
       "Blocked download categories and sites: editable by the instance administrator.",
     );
+  });
+
+  it("Mark Approved saves the SHA1, the SHA-256 and the verified signer, so the approval can match (#2731)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const table = p.querySelector(".cb-candidates") as FakeEl;
+    const boxes = table.querySelectorAll("input");
+    boxes[1].checked = true;
+    boxes[1].fire("change");
+    byText(p, "button", "Mark Approved").click();
+    await flush();
+    const post = h.net.calls.find((c) => c.method === "POST");
+    expect(post?.url).toBe(`/client-profiles/${PID}/marks`);
+    expect(post?.body).toEqual({
+      marks: [
+        {
+          verdict: "approved",
+          family: "program",
+          program: "updater.exe",
+          pathPattern: "\\program files\\vendor",
+          sha256: [],
+          sha1: ["a".repeat(40)],
+          signer: "Vendor Inc",
+        },
+      ],
+      source: "client email 2026-11-20",
+    });
+  });
+
+  it("labels an item with no path as one that cannot be approved, never as (any) (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const table = h.panel().querySelector(".cb-candidates") as FakeEl;
+    const cells = table.querySelectorAll("td").map((c) => c.textContent);
+    expect(cells).toContain("(no path — cannot be approved)");
+    expect(cells).not.toContain("(any)");
+    // The tick box stays usable: Not allowed must keep working for these items.
+    expect(table.querySelectorAll("input")[0].disabled).not.toBe(true);
+  });
+
+  it("Mark Approved leaves out items with no path and says why; the rest are saved (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const boxes = (p.querySelector(".cb-candidates") as FakeEl).querySelectorAll("input");
+    for (const b of [boxes[0], boxes[1]]) {
+      b.checked = true;
+      b.fire("change");
+    }
+    byText(p, "button", "Mark Approved").click();
+    await flush();
+    const post = h.net.calls.find((c) => c.method === "POST");
+    expect((post?.body as { marks: { program: string }[] }).marks.map((m) => m.program)).toEqual([
+      "updater.exe",
+    ]);
+    expect(p.textContent).toContain(
+      "1 item(s) have no file path or hash and cannot be approved; mark them Not allowed or approve their files instead.",
+    );
+  });
+
+  it("a partial Mark Approved still says it saved, after the panel reloads (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const boxes = (p.querySelector(".cb-candidates") as FakeEl).querySelectorAll("input");
+    for (const b of [boxes[0], boxes[1]]) {
+      b.checked = true;
+      b.fire("change");
+    }
+    byText(p, "button", "Mark Approved").click();
+    await flush();
+    await flush();
+    expect(h.net.calls.filter((c) => c.url === `/cases/${CASE}/hunt/status`).length).toBeGreaterThan(1);
+    expect(h.panel().textContent).toContain("Saved as baseline version 5.");
+    expect(h.panel().textContent).toContain("1 item(s) have no file path or hash and cannot be approved");
+  });
+
+  it("a CSV import names why rows were skipped, also when nothing could be imported (#2747)", async () => {
+    const reason = `"7-zip 23.01": no file path or hash; approve the program's files instead, or mark it Not allowed`;
+    const h = harness(undefined, {
+      [`POST /client-profiles/${PID}/marks/import`]: {
+        status: 400,
+        body: { error: "no row carried a verdict", skipped: [{ line: 2, reason }] },
+      },
+    });
+    await h.render();
+    const p = h.panel();
+    const file = p.querySelectorAll("input").find((i) => i.type === "file") as FakeEl & { files: unknown };
+    file.files = [{ text: async () => "family,program,path_pattern,verdict\n" }];
+    file.fire("change");
+    await flush();
+    expect(p.textContent).toContain(`Import failed: no row carried a verdict. Skipped: line 2: ${reason}`);
+  });
+
+  it("Mark Approved with only no-path items ticked saves nothing and says why (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const box = (p.querySelector(".cb-candidates") as FakeEl).querySelectorAll("input")[0];
+    box.checked = true;
+    box.fire("change");
+    byText(p, "button", "Mark Approved").click();
+    await flush();
+    expect(h.net.calls.find((c) => c.method === "POST")).toBeUndefined();
+    expect(p.textContent).toContain("1 item(s) have no file path or hash and cannot be approved");
+  });
+
+  it("Mark Not allowed still saves an item with no path (#2747)", async () => {
+    const h = harness();
+    await h.render();
+    const p = h.panel();
+    const box = (p.querySelector(".cb-candidates") as FakeEl).querySelectorAll("input")[0];
+    box.checked = true;
+    box.fire("change");
+    byText(p, "button", "Mark Not allowed").click();
+    await flush();
+    const post = h.net.calls.find((c) => c.method === "POST");
+    expect(post?.body).toMatchObject({
+      marks: [{ verdict: "not-allowed", program: "tool.exe", pathPattern: "" }],
+    });
   });
 
   it("writes nothing through innerHTML", async () => {
