@@ -42,15 +42,42 @@
   const profileUrl = (pid, tail) => `/client-profiles/${encodeURIComponent(pid)}${tail ? `/${tail}` : ""}`;
   const failText = (r) => (r.status === 403 ? "only the instance administrator can edit a client profile" : r.body.error || r.status);
 
+  // The bundled download-categories list (companion/data/hunt/download-categories.json), id → plain
+  // label. The ids are the stored values; a test keeps this table in step with the JSON file.
+  const DOWNLOAD_CATEGORY_LABELS = [
+    ["torrent", "Torrent"],
+    ["file-sharing", "File sharing"],
+    ["cloud-storage", "Cloud storage"],
+    ["paste-sites", "Paste sites"],
+    ["remote-access", "Remote access"],
+  ];
+  const DOMAIN_HINT = "One domain per line; subdomains are included.";
+
+  function button(text) {
+    const b = el("button", text, "ev-bulk-btn");
+    b.type = "button";
+    return b;
+  }
+
+  /** A labelled field: the label above its control, an optional hint below (the Settings .sfield look). */
+  function field(labelText, control, hint) {
+    const box = el("div", null, "sfield");
+    const label = el("label", labelText);
+    if (control.id) label.htmlFor = control.id;
+    box.append(label, control);
+    if (hint) box.appendChild(el("span", hint, "sfield-hint"));
+    return box;
+  }
+
   function askSource() {
     const s = window.prompt("Source of this answer (for the audit log), e.g. “client email 2026-11-20”:", "");
     return s && s.trim() ? s.trim() : null;
   }
 
   async function linkRow(caseId, info, status) {
-    const row = el("div", null, "cb-link");
     const list = await call("/client-profiles");
-    const select = el("select");
+    const select = el("select", null, "toolbar-select");
+    select.id = "cbClientSelect";
     select.appendChild(el("option", "— pick a client —"));
     for (const p of list.ok && Array.isArray(list.body) ? list.body : []) {
       const o = el("option", p.name);
@@ -58,16 +85,14 @@
       if (info.client && info.client.id === p.id) o.selected = true;
       select.appendChild(o);
     }
-    const link = el("button", "Link case to client");
-    link.type = "button";
+    const link = button("Link case to client");
     link.addEventListener("click", async () => {
       if (!select.value || select.selectedIndex === 0) return;
       const r = await send("POST", huntUrl(caseId, "client"), { clientId: select.value });
       status.textContent = r.ok ? "Linked." : `Link failed: ${r.status === 403 ? "linking needs case administrator rights" : r.body.error || r.status}`;
       if (r.ok) loadClientBaseline(caseId);
     });
-    const create = el("button", "New client…");
-    create.type = "button";
+    const create = button("New client…");
     create.addEventListener("click", async () => {
       const name = window.prompt("Client name (e.g. “Client A”):", "");
       if (!name || !name.trim()) return;
@@ -75,7 +100,11 @@
       status.textContent = r.ok ? `Client “${r.body.name}” created — link it above.` : `Create failed: ${failText(r)}`;
       if (r.ok) loadClientBaseline(caseId);
     });
-    row.append(el("label", "Client: "), select, link, create);
+    const controls = el("div", null, "cb-link-row");
+    controls.append(select, link, create);
+    const row = field("Client", controls);
+    row.classList.add("cb-link");
+    row.querySelector("label").htmlFor = select.id;
     return row;
   }
 
@@ -91,7 +120,7 @@
       const a = el("a", label);
       a.href = huntUrl(caseId, `confirm-list.${fmt}`);
       a.setAttribute("download", "");
-      exports.append(a, document.createTextNode(" "));
+      exports.append(a, " ");
     }
     box.appendChild(exports);
     if (info.earlierHunts && info.earlierHunts.length)
@@ -122,8 +151,7 @@
   function markBar(caseId, pid, picked, status) {
     const bar = el("div", null, "cb-marks");
     for (const [verdict, label] of [["approved", "Mark Approved"], ["not-allowed", "Mark Not allowed"], ["unknown", "Reset to Unknown"]]) {
-      const b = el("button", label);
-      b.type = "button";
+      const b = button(label);
       b.addEventListener("click", async () => {
         if (!picked.size) return void (status.textContent = "Tick at least one item first.");
         const source = askSource();
@@ -138,6 +166,7 @@
     const file = el("input");
     file.type = "file";
     file.accept = ".csv,text/csv";
+    file.hidden = true;
     file.addEventListener("change", async () => {
       const f = file.files && file.files[0];
       if (!f) return;
@@ -147,36 +176,69 @@
       status.textContent = r.ok ? `Imported ${r.body.imported} answer(s); ${r.body.skipped.length} row(s) skipped.` : `Import failed: ${failText(r)}`;
       if (r.ok) loadClientBaseline(caseId);
     });
-    bar.append(el("span", " Import the client's filled CSV: "), file);
+    const pick = button("Import the client's filled CSV…");
+    pick.addEventListener("click", () => file.click());
+    bar.append(pick, file);
     return bar;
+  }
+
+  /** Tick boxes for the bundled categories; a stored id outside the list stays as its own ticked box, so a save never drops it. */
+  function categoryBoxes(stored) {
+    const ids = DOWNLOAD_CATEGORY_LABELS.map(([id]) => id);
+    const extra = stored.filter((id) => !ids.includes(id)).map((id) => [id, id]);
+    const wrap = el("div", null, "cb-cats");
+    const boxes = [];
+    for (const [id, label] of [...DOWNLOAD_CATEGORY_LABELS, ...extra]) {
+      const box = el("input");
+      box.type = "checkbox";
+      box.value = id;
+      box.checked = stored.includes(id);
+      const lab = el("label");
+      lab.append(box, label);
+      wrap.appendChild(lab);
+      boxes.push(box);
+    }
+    const group = el("div", null, "sfield");
+    group.append(el("label", "Blocked categories"), wrap);
+    group.appendChild(el("span", "Each category is the bundled list of known sites of that kind.", "sfield-hint"));
+    return { group, boxes };
+  }
+
+  function domainArea(id, label, values, example) {
+    const t = el("textarea");
+    t.id = id;
+    t.rows = 3;
+    t.placeholder = example;
+    t.value = (values || []).join("\n");
+    return { node: field(label, t, DOMAIN_HINT), area: t };
   }
 
   async function domainsEditor(pid, status) {
     const r = await call(profileUrl(pid));
     if (!r.ok) return el("p", "Blocked download categories and sites: editable by the instance administrator.", "ev-sub");
     const b = r.body.baseline || {};
-    const box = el("div", null, "cb-domains");
-    const area = (label, values) => {
-      const t = el("textarea");
-      t.rows = 2;
-      t.value = (values || []).join("\n");
-      t.setAttribute("aria-label", label);
-      box.append(el("label", label), t);
-      return t;
-    };
-    const cats = area("Blocked download categories (one per line: torrent, file-sharing, cloud-storage, paste-sites, remote-access)", b.blockedCategories);
-    const blocked = area("Blocked download sites (domains; subdomains included)", b.blockedDomains);
-    const approved = area("Approved download sources (domains)", b.approvedDomains);
-    const save = el("button", "Save download policy");
-    save.type = "button";
+    const box = el("div", null, "cb-policy");
+    box.appendChild(el("h3", "Download policy", "cb-policy-title"));
+    box.appendChild(
+      el(
+        "p",
+        "Downloads from a blocked category or a blocked site are graded as policy violations; runnable or archive files (.exe, .msi, .zip …) downloaded from anywhere other than an approved source, or with no recorded source, are flagged.",
+        "cb-policy-note",
+      ),
+    );
+    const cats = categoryBoxes(b.blockedCategories || []);
+    const blocked = domainArea("cbBlockedSites", "Blocked sites", b.blockedDomains, "files.example\nshare.example");
+    const approved = domainArea("cbApprovedSources", "Approved download sources", b.approvedDomains, "downloads.example\nupdates.example");
+    const save = button("Save download policy");
     const lines = (t) => t.value.split(/\s+/).map((x) => x.trim()).filter(Boolean);
     save.addEventListener("click", async () => {
       const source = askSource();
       if (!source) return;
-      const w = await send("PUT", profileUrl(pid, "domains"), { blockedCategories: lines(cats), blockedDomains: lines(blocked), approvedDomains: lines(approved), source });
+      const blockedCategories = cats.boxes.filter((x) => x.checked).map((x) => x.value);
+      const w = await send("PUT", profileUrl(pid, "domains"), { blockedCategories, blockedDomains: lines(blocked.area), approvedDomains: lines(approved.area), source });
       status.textContent = w.ok ? `Saved as baseline version ${w.body.version}.` : `Save failed: ${failText(w)}`;
     });
-    box.appendChild(save);
+    box.append(cats.group, blocked.node, approved.node, save);
     return box;
   }
 
