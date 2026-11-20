@@ -131,7 +131,8 @@ from the same browser; leave it unchecked and the case re-locks the moment you s
 or close the tab.
 
 Enforced server-side — an unlock cookie gates every `/cases/:id/*` route, not just a UI prompt. That
-includes adding evidence: an import into a locked case needs the unlock or the case password.
+includes adding evidence: an import into a locked case needs the unlock or the case password. The
+Jobs list also leaves out a locked case's jobs until this browser has unlocked it.
 
 The capture extension shows a **Case password** field when you pick a locked case. Type the password
 once and press **Check**. The extension keeps it in memory until the browser closes, and screenshots

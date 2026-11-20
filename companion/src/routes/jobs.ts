@@ -10,9 +10,28 @@ function canAccessGlobalJob(ctx: RouteContext, req: Request): boolean {
   return auth !== null && teamAuth.isGlobalAdministrator(auth);
 }
 
-function canRead(ctx: RouteContext, req: Request, caseId: string | null): boolean {
+function canReadByRole(ctx: RouteContext, req: Request, caseId: string | null): boolean {
   if (caseId === null) return canAccessGlobalJob(ctx, req);
   return !ctx.options.teamAuth || ctx.options.teamAuth.canReadCase(req, caseId);
+}
+
+/** /api/jobs is not under /cases/:id, so the case password gate never covers it. A job's label and
+ * file names are case evidence: a password-locked case's jobs are readable only with the same
+ * unlock cookie the gate accepts. A case that cannot be read fails CLOSED, as the gate does. */
+async function isUnlocked(ctx: RouteContext, req: Request, caseId: string): Promise<boolean> {
+  let meta;
+  try {
+    meta = await ctx.store.getCaseMeta(caseId);
+  } catch {
+    return false;
+  }
+  if (!meta?.password) return true;
+  return ctx.readUnlockState(req, caseId, meta.password.salt).unlocked;
+}
+
+async function canRead(ctx: RouteContext, req: Request, caseId: string | null): Promise<boolean> {
+  if (!canReadByRole(ctx, req, caseId)) return false;
+  return caseId === null || isUnlocked(ctx, req, caseId);
 }
 
 function canWrite(ctx: RouteContext, req: Request, caseId: string | null): boolean {
@@ -24,13 +43,17 @@ async function listJobs(ctx: RouteContext, req: Request, res: Response): Promise
   await ctx.options.jobManager?.ready();
   const caseId = typeof req.query.caseId === "string" ? req.query.caseId : undefined;
   const jobs = ctx.options.jobManager?.list(caseId) ?? [];
-  return res.status(200).json({ jobs: jobs.filter((job) => canRead(ctx, req, job.caseId)) });
+  // One lock decision per case, not per job row.
+  const caseIds = [...new Set(jobs.map((job) => job.caseId))];
+  const decisions = await Promise.all(caseIds.map((id) => canRead(ctx, req, id)));
+  const readable = new Set(caseIds.filter((_, index) => decisions[index]));
+  return res.status(200).json({ jobs: jobs.filter((job) => readable.has(job.caseId)) });
 }
 
 async function getJob(ctx: RouteContext, req: Request, res: Response): Promise<Response> {
   await ctx.options.jobManager?.ready();
   const job = ctx.options.jobManager?.get(req.params.id);
-  if (!job || !canRead(ctx, req, job.caseId)) {
+  if (!job || !(await canRead(ctx, req, job.caseId))) {
     return res.status(404).json({ error: `unknown job: ${req.params.id}` });
   }
   return res.status(200).json(job);
@@ -41,7 +64,7 @@ async function cancelJob(ctx: RouteContext, req: Request, res: Response): Promis
   if (!manager) return res.status(501).json({ error: "job manager not configured" });
   await manager.ready();
   const job = manager.get(req.params.id);
-  if (!job || !canRead(ctx, req, job.caseId)) {
+  if (!job || !(await canRead(ctx, req, job.caseId))) {
     return res.status(404).json({ error: `unknown job: ${req.params.id}` });
   }
   if (!canWrite(ctx, req, job.caseId)) {
@@ -59,7 +82,7 @@ async function resumeJob(ctx: RouteContext, req: Request, res: Response): Promis
   if (!manager) return res.status(501).json({ error: "job manager not configured" });
   await manager.ready();
   const job = manager.get(req.params.id);
-  if (!job || !canRead(ctx, req, job.caseId)) {
+  if (!job || !(await canRead(ctx, req, job.caseId))) {
     return res.status(404).json({ error: `unknown job: ${req.params.id}` });
   }
   if (!canWrite(ctx, req, job.caseId)) {
