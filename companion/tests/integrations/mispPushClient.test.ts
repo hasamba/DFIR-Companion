@@ -100,6 +100,37 @@ describe("MispPushClient HTTP handling", () => {
     expect(await client(fetchFn).findEventByTag("t")).toBeNull();
   });
 
+  // #2776: a failed lookup used to read as "no prior event" / "no attributes", so a MISP outage
+  // made the push create a duplicate event or duplicate attributes. It must reject instead.
+  it("rejects (not null) when the event search answers HTTP 500", async () => {
+    const { fetchFn } = stubFetch(() => ({ status: 500, json: {} }));
+    await expect(client(fetchFn).findEventByTag("t")).rejects.toThrow(/MISP HTTP 500/);
+  });
+
+  it("rejects when the event search never reaches MISP", async () => {
+    const fetchFn = (async () => {
+      throw new Error("fetch failed");
+    }) as unknown as typeof fetch;
+    await expect(client(fetchFn).findEventByTag("t")).rejects.toThrow(/MISP request failed/);
+  });
+
+  it("rejects (not an empty list) when the attribute listing answers HTTP 500", async () => {
+    const { fetchFn } = stubFetch(() => ({ status: 500, json: {} }));
+    await expect(client(fetchFn).listAttributes("42")).rejects.toThrow(/MISP HTTP 500/);
+  });
+
+  it("rejects when the attribute listing never reaches MISP", async () => {
+    const fetchFn = (async () => {
+      throw new Error("fetch failed");
+    }) as unknown as typeof fetch;
+    await expect(client(fetchFn).listAttributes("42")).rejects.toThrow(/MISP request failed/);
+  });
+
+  it("returns an empty list when the event has no attributes", async () => {
+    const { fetchFn } = stubFetch(() => ({ json: { Event: { Attribute: [] } } }));
+    expect(await client(fetchFn).listAttributes("42")).toEqual([]);
+  });
+
   it("quotes MISP's own reason on a 403 instead of blaming the API key", async () => {
     const { fetchFn } = stubFetch(() => ({
       status: 403,
