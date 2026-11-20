@@ -1,5 +1,6 @@
 import { StateLock } from "./stateLock.js";
 import type { ImportAdmission, ImportAdmissionHint } from "./importMemoryGuard.js";
+import { noteImportSectionStart } from "./importAttempt.js";
 
 /**
  * Per-case IMPORT mutex: one writer at a time through the whole import critical section —
@@ -49,6 +50,7 @@ export class ImportLock {
     return this.lock.runExclusive(caseId, async () => {
       const releaseAdmission = await this.admit(caseId, hint);
       try {
+        await noteImportSectionStart(); // the drop folder's crash-loop guard counts from here (#2713)
         return await fn();
       } finally {
         releaseAdmission();
@@ -71,6 +73,13 @@ export class ImportLock {
     try {
       releaseAdmission = await this.admit(caseId, hint);
     } catch (error) {
+      releaseSection();
+      throw error;
+    }
+    try {
+      await noteImportSectionStart();
+    } catch (error) {
+      releaseAdmission();
       releaseSection();
       throw error;
     }

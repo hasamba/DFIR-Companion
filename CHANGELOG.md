@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dashboard stays responsive during a large import** — the full-state merge, its index pass and the import auto-tagger now work in slices that yield to the event loop (closes #2716)
 
+### Fixed
+
+- **Large Velociraptor imports no longer exhaust memory in the settle step** — rows are settled in pages, and a drop file that crashed the server twice moves to `_failed/` (closes #2713)
+
 ## [0.47.0] - 2026-11-19
 
 ### Added

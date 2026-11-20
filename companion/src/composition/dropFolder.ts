@@ -52,6 +52,7 @@ import { prepareHuntDrops } from "./dropHuntFolder.js";
 import { createHuntZipHandler, isZipCandidate } from "./dropHuntZip.js";
 import { pruneHuntZipLedgers } from "./dropHuntZipLedger.js";
 import { clearStaging } from "./dropHuntExtract.js";
+import { createDropInFlight } from "./dropInFlight.js";
 import {
   selectReadyFiles,
   excludeStuck,
@@ -208,6 +209,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   const pendingLogged = new CaseKeyedMap<Set<string>>(() => store.casesRoot);
   const stuckFiles = createDropStuckTracker(() => store.casesRoot);
   const stuck = stuckFiles.stuck;
+  const inFlight = createDropInFlight(store); // crash-loop guard (#2713)
 
   // One admitted write (#1855): a tick for a case deleted meanwhile never recreates its folder.
   function ensureDropFolders(caseId: string): Promise<void> {
@@ -694,6 +696,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         recordImportFailure: (name, err, debug) => recordImportFailure(caseId, "drop", name, err, debug),
         ...(dropBatch ? { dropBatch } : {}),
         onRecorded: recorder.flush,
+        inFlight, // #2713
       });
       const { imported, failed, pendingRawInputs } = tally;
       if (job) await options.jobManager?.finish(job.jobId);

@@ -6,10 +6,11 @@ import {
   capBuildTimeRow,
   hardAttackerSignal,
   hasBuildTimeMark,
+  onBuildChain,
   windowFor,
 } from "../analysis/buildTimeWindow.js";
 import { hostBuildMarkers } from "../analysis/gapHostHistory.js";
-import { rewriteRows } from "./importSettleRows.js";
+import { rewriteByIdInPages } from "./importSettleRows.js";
 import {
   capLabSetupRow,
   hasLabSetupMark,
@@ -44,7 +45,9 @@ export async function capBuildTimeScoped(
   const seen: Array<Pick<ForensicEvent, "id" | "asset" | "timestamp"> & { marked: boolean }> = [];
   const read = (batch: readonly ForensicEvent[]): void => {
     for (const e of batch) {
-      if (buildMarkerKind(e) || hardAttackerSignal(e)) discovery.push(e);
+      // Window discovery reads only rows on a rename chain (#2713): on a scan-all settle the rest of
+      // the case's build-marker and hard-signal rows were collected for nothing.
+      if (onBuildChain(chains, e) && (buildMarkerKind(e) || hardAttackerSignal(e))) discovery.push(e);
       seen.push({ id: e.id, asset: e.asset, timestamp: e.timestamp, marked: hasBuildTimeMark(e) });
     }
   };
@@ -64,8 +67,7 @@ export async function capBuildTimeScoped(
   const ids = new Set(opts.extraIds);
   for (const s of seen) if (s.marked || windowFor(windows, s as unknown as ForensicEvent)) ids.add(s.id);
   if (!ids.size) return 0;
-  const rows = await store.forensicRowsById(caseId, [...ids]);
-  return (await rewriteRows(store, caseId, rows, (e) => capBuildTimeRow(e, windows))).length;
+  return rewriteByIdInPages(store, caseId, [...ids], (e) => capBuildTimeRow(e, windows));
 }
 
 /**
@@ -76,20 +78,24 @@ export async function capBuildTimeScoped(
 export async function capLabSetupScoped(
   store: ForensicRowStore,
   caseId: string,
-  opts: { scanAll: boolean; candidates: readonly ForensicEvent[] },
+  opts: { scanAll: boolean; candidateIds: readonly string[] },
 ): Promise<number> {
   const paths = labSetupPaths();
-  const ids = new Set<string>();
+  // The candidates come pre-picked with labSetupCandidate (the paged settle keeps ids, #2713).
+  const ids = new Set<string>(opts.candidateIds);
   const read = (batch: readonly ForensicEvent[]): void => {
-    for (const e of batch) if (hasLabSetupMark(e) || labSetupFolder(e, paths)) ids.add(e.id);
+    for (const e of batch) if (labSetupCandidate(e, paths)) ids.add(e.id);
   };
-  read(opts.candidates);
   if (opts.scanAll) {
     for await (const batch of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) read(batch);
   }
   if (!ids.size) return 0;
-  const rows = await store.forensicRowsById(caseId, [...ids]);
-  return (await rewriteRows(store, caseId, rows, (e) => capLabSetupRow(e, paths))).length;
+  return rewriteByIdInPages(store, caseId, [...ids], (e) => capLabSetupRow(e, paths));
+}
+
+/** Whether the lab-setup cap reads this row: in a lab folder, or already carrying its mark. */
+export function labSetupCandidate(e: ForensicEvent, paths: readonly string[]): boolean {
+  return hasLabSetupMark(e) || !!labSetupFolder(e, paths);
 }
 
 /**
@@ -104,6 +110,5 @@ export async function stampEngineBootScoped(
 ): Promise<number> {
   const stamps = new Map(stampEngineBoot(candidates).map((e) => [e.id, engineBootOf(e)] as const));
   if (!stamps.size) return 0;
-  const rows = await store.forensicRowsById(caseId, [...stamps.keys()]);
-  return (await rewriteRows(store, caseId, rows, (e) => withEngineBoot(e, stamps.get(e.id)))).length;
+  return rewriteByIdInPages(store, caseId, [...stamps.keys()], (e) => withEngineBoot(e, stamps.get(e.id)));
 }

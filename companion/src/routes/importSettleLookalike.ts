@@ -7,7 +7,7 @@ import {
   lookalikeCandidateName,
   LOOKALIKE_ACCOUNT_MARKER,
 } from "../analysis/lookalikeCaseAccount.js";
-import { rewriteRows } from "./importSettleRows.js";
+import { rewriteByIdInPages } from "./importSettleRows.js";
 
 /**
  * Case-account look-alikes (#1971) over this import's new accounts and group members. It runs after
@@ -23,10 +23,23 @@ export async function flagCaseLookalikesScoped(
 ): Promise<number> {
   const candidates = new Map<string, string>();
   for (const e of added) {
-    if ((e.description ?? "").includes(LOOKALIKE_ACCOUNT_MARKER)) continue;
-    const name = lookalikeCandidateName(e);
+    const name = lookalikeCandidate(e);
     if (name) candidates.set(e.id, name);
   }
+  return flagLookalikeCandidates(store, caseId, candidates);
+}
+
+/** The account name the look-alike check tests for this row, or "" (already noted, or no account). */
+export function lookalikeCandidate(e: ForensicEvent): string {
+  return (e.description ?? "").includes(LOOKALIKE_ACCOUNT_MARKER) ? "" : lookalikeCandidateName(e);
+}
+
+/** The check over candidates already picked (row id → account name), as the paged settle keeps them (#2713). */
+export async function flagLookalikeCandidates(
+  store: ForensicRowStore,
+  caseId: string,
+  candidates: ReadonlyMap<string, string>,
+): Promise<number> {
   if (!candidates.size) return 0;
   const pool = new Set<string>();
   for await (const batch of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS })) {
@@ -38,10 +51,8 @@ export async function flagCaseLookalikesScoped(
     if (match) hits.set(id, { name, match });
   }
   if (!hits.size) return 0;
-  const rows = await store.forensicRowsById(caseId, [...hits.keys()]);
-  const written = await rewriteRows(store, caseId, rows, (e) => {
+  return rewriteByIdInPages(store, caseId, [...hits.keys()], (e) => {
     const hit = hits.get(e.id);
     return hit ? flagCaseLookalikeRow(e, hit.name, hit.match) : e;
   });
-  return written.length;
 }
