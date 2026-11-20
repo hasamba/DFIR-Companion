@@ -23,7 +23,10 @@ Pick the client in **New Case** (the **Client** box appears for the Threat hunt 
 in the **Client Baseline** panel with **Link case to client**. A client is its own record (for
 example "Client A"). It keeps the client's reviewed baseline across hunt cases.
 
-- Only the instance administrator can create or edit a client profile.
+- Only the instance administrator can create or edit a client profile. The administrator can
+  create one straight from the **New Case** Client box: pick **New client…** at the end of the
+  list, type the name, and the new client is selected for the case. A new client has no default
+  server set, so the **Servers** box stays as it is. Members do not see **New client…**.
 - Linking a case to a client needs case-administrator rights on that case.
 - A profile can name a default Velociraptor server set. Picking the client in **New Case** fills
   the **Servers** box with it, unless you already chose a set there. It never changes an existing

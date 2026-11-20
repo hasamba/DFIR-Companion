@@ -1254,7 +1254,14 @@ export const FEATURES: Feature[] = [
     file: "dashboard-new-case.js",
     initializer: "initNewCase",
     publish: ["initNewCase", "openNewCase", "closeNewCase", "createNewCase", "loadDemoCase"],
-    private: ["lastServerSet", "serverSetChosen", "serverSetsReady", "huntClients"],
+    private: [
+      "lastServerSet",
+      "serverSetChosen",
+      "serverSetsReady",
+      "huntClients",
+      "huntClientCreate",
+      "lastHuntClient",
+    ],
   },
   {
     // Settings → Server sets and the set editor. fetchServerSets is shared with the New Case picker
