@@ -85,7 +85,7 @@ Service-token limits:
 | `401` | No credential, a wrong credential, or a locked case |
 | `403` | Your role does not allow it, or the server runs in demo mode |
 | `404` | The case does not exist, or you have no access to it |
-| `409` | The case waits for an analyst decision, or the item already exists |
+| `409` | The case waits for an analyst decision, the item already exists, or an open case must be closed before it is archived |
 | `413` | The body is too large |
 | `423` | The case is closed or archived. Reopen it first |
 | `429` | Rate limit. Wait and try again |

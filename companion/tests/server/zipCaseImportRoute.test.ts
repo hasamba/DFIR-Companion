@@ -42,6 +42,7 @@ async function seedAndArchive(app: ReturnType<typeof createApp>, stateStore: Sta
       },
     ],
   });
+  await request(app).patch("/cases/INC-1/status").send({ status: "closed" }); // archive needs a closed case (#2758)
   const archived = await request(app).post("/cases/INC-1/archive").send({});
   expect(archived.status).toBe(200);
   return readFile(archived.body.archivePath as string);

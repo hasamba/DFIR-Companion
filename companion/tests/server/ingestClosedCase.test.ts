@@ -122,6 +122,7 @@ describe("ingest routes — archived case refuses evidence (#2071)", () => {
     ["velociraptor/import-external", { ref: "H.1" }],
   ])("423s /cases/:id/%s on an archived case", async (route, body) => {
     const { app, store } = await makeApp();
+    await request(app).patch("/cases/c1/status").send({ status: "closed" }); // archive needs a closed case (#2758)
     expect((await request(app).post("/cases/c1/archive").send({ removeFromList: true })).status).toBe(200);
 
     const res = await request(app).post(`/cases/c1/${route}`).send(body);

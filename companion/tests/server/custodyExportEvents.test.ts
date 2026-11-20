@@ -13,6 +13,8 @@ let artifactPath: string;
 
 const custodyRecords = async () =>
   (await request(app).get("/cases/c1/custody")).body.records as Array<Record<string, unknown>>;
+// Archiving needs a closed case (#2758).
+const closeCase = () => request(app).patch("/cases/c1/status").send({ status: "closed" });
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-custodyexportev-"));
@@ -25,6 +27,7 @@ beforeEach(async () => {
 
 describe("exported custody events", () => {
   it("records an export when the case is archived to a ZIP", async () => {
+    await closeCase();
     const res = await request(app).post("/cases/c1/archive").send({});
     expect(res.status).toBe(200);
 
@@ -45,7 +48,8 @@ describe("exported custody events", () => {
   });
 
   it("leaves the chain intact after an export", async () => {
-    await request(app).post("/cases/c1/archive").send({});
+    await closeCase();
+    expect((await request(app).post("/cases/c1/archive").send({})).status).toBe(200);
 
     const verify = await request(app).get("/cases/c1/custody/verify");
     expect(verify.body).toMatchObject({ ok: true, chainBreaks: [] });

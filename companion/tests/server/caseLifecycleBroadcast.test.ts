@@ -33,7 +33,13 @@ async function harness() {
     request(app)
       .post("/cases")
       .send({ caseId, name: caseId, investigator: "alice", aiProvider: "anthropic" });
-  return { app, store, fired, seed };
+  // Archiving needs a closed case (#2758); the close itself fires, so the record starts empty after it.
+  const seedClosed = async (caseId: string) => {
+    await seed(caseId);
+    expect((await request(app).patch(`/cases/${caseId}/status`).send({ status: "closed" })).status).toBe(200);
+    fired.length = 0;
+  };
+  return { app, store, fired, seed, seedClosed };
 }
 
 describe("lifecycle routes fire onCaseLifecycle after a successful change (#2443)", () => {
@@ -47,8 +53,8 @@ describe("lifecycle routes fire onCaseLifecycle after a successful change (#2443
   });
 
   it("does not fire when the status change is refused", async () => {
-    const { app, fired, seed } = await harness();
-    await seed("INC-2");
+    const { app, fired, seedClosed } = await harness();
+    await seedClosed("INC-2");
     await request(app).post("/cases/INC-2/archive").send({ removeFromList: true });
     fired.length = 0;
     const res = await request(app).patch("/cases/INC-2/status").send({ status: "open" });
@@ -58,8 +64,8 @@ describe("lifecycle routes fire onCaseLifecycle after a successful change (#2443
   });
 
   it("fires on a ZIP archive that removes the case from the list, not on a plain archive", async () => {
-    const { app, fired, seed } = await harness();
-    await seed("INC-3");
+    const { app, fired, seedClosed } = await harness();
+    await seedClosed("INC-3");
     expect((await request(app).post("/cases/INC-3/archive").send({})).status).toBe(200);
     expect(fired).toEqual([]);
     const res = await request(app).post("/cases/INC-3/archive").send({ removeFromList: true });
@@ -68,8 +74,8 @@ describe("lifecycle routes fire onCaseLifecycle after a successful change (#2443
   });
 
   it("fires on an encrypted export that removes the case from the list", async () => {
-    const { app, fired, seed } = await harness();
-    await seed("INC-4");
+    const { app, fired, seedClosed } = await harness();
+    await seedClosed("INC-4");
     const res = await request(app)
       .post("/cases/INC-4/export/encrypted")
       .send({ password: PASSWORD, removeFromList: true })
@@ -83,8 +89,8 @@ describe("lifecycle routes fire onCaseLifecycle after a successful change (#2443
   });
 
   it("fires on restore, and not on a restore of a case that is not archived", async () => {
-    const { app, fired, seed } = await harness();
-    await seed("INC-5");
+    const { app, fired, seedClosed } = await harness();
+    await seedClosed("INC-5");
     expect((await request(app).post("/cases/INC-5/restore")).status).toBe(400);
     expect(fired).toEqual([]);
     await request(app).post("/cases/INC-5/archive").send({ removeFromList: true });

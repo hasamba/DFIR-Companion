@@ -191,6 +191,7 @@ describe("HTTP server", () => {
     await request(app)
       .post("/cases")
       .send({ caseId: "c-arch", name: "n", investigator: "i", aiProvider: null });
+    await request(app).patch("/cases/c-arch/status").send({ status: "closed" }); // #2758
     await request(app).post("/cases/c-arch/archive").send({ removeFromList: true });
     const res = await request(app)
       .post("/captures")

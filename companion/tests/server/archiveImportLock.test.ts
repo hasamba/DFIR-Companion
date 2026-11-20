@@ -79,6 +79,7 @@ describe("archive vs a running import (#1903)", () => {
 
   it("the archive waits for an ingest that holds a reservation, then builds once it drains", async () => {
     const { root, app } = await setup(5_000);
+    await request(app).patch("/cases/c1/status").send({ status: "closed" }); // archive needs a closed case (#2758)
     const releaseIngest = admitIngest(root, "c1"); // e.g. a push storing its raw file
     const settled = setTimeout(releaseIngest, 120);
     const ok = await request(app).post("/cases/c1/archive").send({});
@@ -89,6 +90,7 @@ describe("archive vs a running import (#1903)", () => {
 
   it("POST /archive answers 409 and writes no zip when the import section stays held past the wait", async () => {
     const { root, app, importLock } = await setup();
+    await request(app).patch("/cases/c1/status").send({ status: "closed" }); // archive needs a closed case (#2758)
     const release = await importLock.acquire("c1");
     const refused = await request(app).post("/cases/c1/archive").send({ removeFromList: true });
     expect(refused.status).toBe(409);

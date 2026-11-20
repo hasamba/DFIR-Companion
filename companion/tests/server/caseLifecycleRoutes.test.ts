@@ -50,6 +50,12 @@ async function seedCase(app: ReturnType<typeof createApp>, caseId: string, name:
   await request(app).post("/cases").send({ caseId, name, investigator: "alice", aiProvider: "anthropic" });
 }
 
+// Archiving needs a closed case (#2758): an open one is refused with 409.
+async function seedClosedCase(app: ReturnType<typeof createApp>, caseId: string, name: string) {
+  await seedCase(app, caseId, name);
+  expect((await request(app).patch(`/cases/${caseId}/status`).send({ status: "closed" })).status).toBe(200);
+}
+
 function bufferRequest(req: request.Test): request.Test {
   return req.buffer().parse((r, cb) => {
     const chunks: Buffer[] = [];
@@ -70,7 +76,7 @@ describe("PATCH /cases/:id/status", () => {
 describe("POST /cases/:id/archive (removeFromList)", () => {
   it("keeps the case active by default (no removeFromList)", async () => {
     const { app, store } = await harness();
-    await seedCase(app, "INC-2", "Case Two");
+    await seedClosedCase(app, "INC-2", "Case Two");
     const res = await request(app).post("/cases/INC-2/archive").send({});
     expect(res.status).toBe(200);
     expect(res.body.removedFromList).toBe(false);
@@ -80,7 +86,7 @@ describe("POST /cases/:id/archive (removeFromList)", () => {
 
   it("moves the case to _archived/ and sets status when removeFromList is true", async () => {
     const { app, store } = await harness();
-    await seedCase(app, "INC-3", "Case Three");
+    await seedClosedCase(app, "INC-3", "Case Three");
     const res = await request(app).post("/cases/INC-3/archive").send({ removeFromList: true });
     expect(res.status).toBe(200);
     expect(res.body.removedFromList).toBe(true);
@@ -92,7 +98,7 @@ describe("POST /cases/:id/archive (removeFromList)", () => {
 
   it("400s when the case is already archived", async () => {
     const { app } = await harness();
-    await seedCase(app, "INC-3b", "Case Three B");
+    await seedClosedCase(app, "INC-3b", "Case Three B");
     await request(app).post("/cases/INC-3b/archive").send({ removeFromList: true });
     const res = await request(app).post("/cases/INC-3b/archive").send({ removeFromList: true });
     expect(res.status).toBe(400);
@@ -102,7 +108,7 @@ describe("POST /cases/:id/archive (removeFromList)", () => {
 describe("POST /cases/:id/export/encrypted (removeFromList)", () => {
   it("moves the case to _archived/ and sets status when removeFromList is true", async () => {
     const { app, store } = await harness();
-    await seedCase(app, "INC-4", "Case Four");
+    await seedClosedCase(app, "INC-4", "Case Four");
     const res = await request(app)
       .post("/cases/INC-4/export/encrypted")
       .send({ password: PASSWORD, removeFromList: true });
@@ -124,7 +130,7 @@ describe("POST /cases/:id/export/encrypted (removeFromList)", () => {
 
   it("still returns the encrypted file even if the post-export folder move fails", async () => {
     const { app, store } = await harness();
-    await seedCase(app, "INC-4c", "Case Four C");
+    await seedClosedCase(app, "INC-4c", "Case Four C");
     const originalArchiveCaseFolder = store.archiveCaseFolder.bind(store);
     // Typed to the one method being swapped, so a rename of archiveCaseFolder breaks this test
     // instead of silently leaving it patching a method that no longer exists.
@@ -148,7 +154,7 @@ describe("POST /cases/:id/export/encrypted (removeFromList)", () => {
 describe("POST /cases/:id/restore", () => {
   it("restores an archived case back to the active root with status closed", async () => {
     const { app, store } = await harness();
-    await seedCase(app, "INC-5", "Case Five");
+    await seedClosedCase(app, "INC-5", "Case Five");
     await request(app).post("/cases/INC-5/archive").send({ removeFromList: true });
 
     const res = await request(app).post("/cases/INC-5/restore").send({});
@@ -175,7 +181,7 @@ describe("POST /cases/:id/restore", () => {
 describe("Archived-case write guards on other evidence routes", () => {
   it("POST /cases/:id/import returns 423 for an archived case", async () => {
     const { app } = await harnessWithPipeline();
-    await seedCase(app, "INC-8", "Case Eight");
+    await seedClosedCase(app, "INC-8", "Case Eight");
     await request(app).post("/cases/INC-8/archive").send({ removeFromList: true });
     const res = await request(app).post("/cases/INC-8/import").send({ csv: "a,b\n1,2" });
     expect(res.status).toBe(423);
@@ -183,7 +189,7 @@ describe("Archived-case write guards on other evidence routes", () => {
 
   it("POST /cases/:id/import-file returns 423 for an archived case", async () => {
     const { app } = await harnessWithPipeline();
-    await seedCase(app, "INC-9", "Case Nine");
+    await seedClosedCase(app, "INC-9", "Case Nine");
     await request(app).post("/cases/INC-9/archive").send({ removeFromList: true });
     const res = await request(app)
       .post("/cases/INC-9/import-file")
@@ -193,7 +199,7 @@ describe("Archived-case write guards on other evidence routes", () => {
 
   it("POST /cases/:id/synthesize returns 423 for an archived case", async () => {
     const { app } = await harnessWithPipeline();
-    await seedCase(app, "INC-10", "Case Ten");
+    await seedClosedCase(app, "INC-10", "Case Ten");
     await request(app).post("/cases/INC-10/archive").send({ removeFromList: true });
     const res = await request(app).post("/cases/INC-10/synthesize").send({});
     expect(res.status).toBe(423);
@@ -262,7 +268,7 @@ describe("Archived-case write guards on other evidence routes", () => {
 
   it("POST /cases/:id/events returns 423 for an archived case", async () => {
     const { app } = await harness();
-    await seedCase(app, "INC-13", "Case Thirteen");
+    await seedClosedCase(app, "INC-13", "Case Thirteen");
     await request(app).post("/cases/INC-13/archive").send({ removeFromList: true });
 
     const res = await request(app).post("/cases/INC-13/events").send({
@@ -338,7 +344,7 @@ describe("POST /cases — body types", () => {
   it("archives a case created through the route without a 500", async () => {
     // The end of the chain the bad `name` used to break.
     const { app } = await harness();
-    await seedCase(app, "TYPE-5", "Case Five");
+    await seedClosedCase(app, "TYPE-5", "Case Five");
     const res = await request(app).post("/cases/TYPE-5/archive").send({});
 
     expect(res.status).toBe(200);
@@ -392,7 +398,7 @@ describe("POST /cases/:id/delete", () => {
 
   it("deletes an already-archived case", async () => {
     const { app, store } = await harness();
-    await seedCase(app, "DEL-5", "Case Del Five");
+    await seedClosedCase(app, "DEL-5", "Case Del Five");
     await request(app).post("/cases/DEL-5/archive").send({ removeFromList: true });
     const res = await request(app).post("/cases/DEL-5/delete").send({ archiveFirst: "none" });
     expect(res.status).toBe(200);
@@ -402,7 +408,7 @@ describe("POST /cases/:id/delete", () => {
 
   it("archives to ZIP then deletes an already-archived case (exercises the archive-aware caseDirOverride path)", async () => {
     const { app, store } = await harness();
-    await seedCase(app, "DEL-8", "Case Del Eight");
+    await seedClosedCase(app, "DEL-8", "Case Del Eight");
     await request(app).post("/cases/DEL-8/archive").send({ removeFromList: true });
     const res = await request(app).post("/cases/DEL-8/delete").send({ archiveFirst: "zip" });
     expect(res.status).toBe(200);
@@ -415,7 +421,7 @@ describe("POST /cases/:id/delete", () => {
 
   it("exports encrypted then deletes an already-archived case (exercises store.caseDir resolving to _archived/)", async () => {
     const { app, store } = await harness();
-    await seedCase(app, "DEL-9", "Case Del Nine");
+    await seedClosedCase(app, "DEL-9", "Case Del Nine");
     await request(app).post("/cases/DEL-9/archive").send({ removeFromList: true });
     const res = await bufferRequest(
       request(app).post("/cases/DEL-9/delete").send({ archiveFirst: "encrypted", password: PASSWORD }),

@@ -36,6 +36,7 @@ import { registerStateBackupRoutes } from "./stateBackups.js";
 import { registerCasePushRoutes } from "./casePush.js";
 import { registerCaseStateRoutes } from "./caseState.js";
 import { deleteArchivesFirst, refusedWhileArchiving, withArchiveBarrier } from "./archiveImportBarrier.js"; // #1903
+import { archiveStatusRefusal } from "./caseArchiveGuard.js"; // #2758
 import { computeCaseStats } from "../analysis/caseStats.js";
 import { ACTIVITY_CATEGORIES, type ActivityCategory } from "../analysis/activityLog.js";
 import { buildManualEvent } from "../analysis/manualEntry.js";
@@ -278,8 +279,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   const archiveCaseLocked = (id: string, caseName: string | undefined) =>
     ctx.runStateExclusive(id, () => archiveCase(store.casesRoot, id, {}, caseName, store.caseDir(id)));
 
-  // Archive a case to a ZIP file (<casesRoot>/<caseId or name> (no password).zip). Intended for
-  // closed cases. Returns the archive path and a manifest of archived files + checksums. With
+  // Archive a case to a ZIP file (<casesRoot>/<caseId or name> (no password).zip). Only a closed
+  // case: an open one is refused with 409 (#2758). Returns the path and a checksum manifest. With
   // { removeFromList: true }, additionally moves the case folder to _archived/ and sets
   // status: "archived" — non-destructive and reversible via POST /cases/:id/restore.
   const archiveRoute = async (req: Request, res: Response) => {
@@ -288,8 +289,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (!isValidCaseId(id)) return res.status(400).json({ error: "invalid caseId" });
       const meta = await store.getCaseMeta(id);
       if (!meta) return res.status(404).json({ error: `case ${id} not found` });
-      if (meta.status === "archived")
-        return res.status(400).json({ error: `case ${id} is already archived` });
+      const refusal = archiveStatusRefusal(id, meta, true);
+      if (refusal) return res.status(refusal.code).json({ error: refusal.error });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
       const running = removeFromList ? runningCollectionRefusal(ctx, id) : undefined;
       if (running) return res.status(409).json({ error: running });
@@ -323,10 +324,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   app.post("/cases/:id/archive", withArchiveBarrier(ctx, archiveRoute));
 
   // Restore a case previously archived via the removeFromList option: moves it back from
-  // _archived/ into the active cases root and sets status to "closed". Archiving does not require a
-  // closed case, so this can differ from the status it had before: closed is the conservative
-  // choice for a handed-over record, and every change then goes through an explicit Reopen
-  // (PATCH /cases/:id/status). The dashboard's status line says so (#2466).
+  // _archived/ into the active cases root and sets status to "closed" — also for a legacy case
+  // archived while open, before archiving required a closed case (#2758). Every change then goes
+  // through an explicit Reopen (PATCH /cases/:id/status); the dashboard says so (#2466).
   app.post("/cases/:id/restore", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
@@ -534,9 +534,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD_LENGTH} characters` });
       }
       const meta = await store.getCaseMeta(id);
-      if (meta?.status === "archived")
-        return res.status(400).json({ error: `case ${id} is already archived` });
       const removeFromList = (req.body as { removeFromList?: unknown })?.removeFromList === true;
+      const refusal = archiveStatusRefusal(id, meta, removeFromList); // a plain export is no archive
+      if (refusal) return res.status(refusal.code).json({ error: refusal.error });
       const running = removeFromList ? runningCollectionRefusal(ctx, id) : undefined;
       if (running) return res.status(409).json({ error: running });
       // The signed custody manifest travels inside the archive, so the recipient can verify the

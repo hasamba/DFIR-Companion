@@ -252,6 +252,7 @@ describe("whole-case imports of a reused id", () => {
       .post("/cases")
       .send({ caseId: "SRC", name: "Source", investigator: "alice", aiProvider: "mock" });
     await stateStore.save(emptyState("SRC"));
+    await request(app).patch("/cases/SRC/status").send({ status: "closed" }); // #2758
     const archived = await request(app).post("/cases/SRC/archive").send({});
     expect(archived.status).toBe(200);
     return readFile(archived.body.archivePath as string);
