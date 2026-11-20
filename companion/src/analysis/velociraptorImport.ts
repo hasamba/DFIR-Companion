@@ -86,7 +86,6 @@ import {
   detectionOverlayAggKey,
   downloadAggKey,
   mftAggKey,
-  taskAggKey,
   genericVrAggKey,
   usnAggKey,
   actionAggKey,
@@ -106,7 +105,7 @@ import { MAX_TIME_MS, MIN_TIME_MS, pickTime, usDateTime, vrTime } from "./veloRo
 import { winRowToFlat } from "./veloWinRow.js";
 import { prefetchSignal } from "./prefetchExecution.js";
 import { isSamAccountRow, mapSamAccount } from "./samAccountImport.js";
-import { isAutorunsRow, mapStartupRow } from "./veloAutorunsMap.js"; // Autoruns keeps entry, path, signer (#2731)
+import { isAutorunsRow, mapStartupRow, mapTaskScheduler } from "./veloAutorunsMap.js"; // Autoruns keeps entry, path, signer (#2731); tasks (#2748)
 import { amcacheFileIdentity } from "./veloAmcacheIdentity.js";
 
 type Row = Record<string, unknown>;
@@ -1324,46 +1323,6 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
     ...(sha256 ? { sha256 } : {}),
     ...(md5 && !sha256 ? { md5 } : {}),
     ...(rawPath ? { path: rawPath } : {}),
-    ...(host ? { asset: host } : {}),
-  };
-}
-
-function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
-  const taskName = str(getCI(row, "TaskName")).trim();
-  const command = str(getCI(row, "Command")).trim();
-  const args = str(getCI(row, "Arguments")).trim();
-  const userId = str(getCI(row, "UserId")).trim();
-  const runLevel = str(getCI(row, "RunLevel")).trim();
-  const ospath = str(getCI(row, "OSPath")).trim();
-
-  if (ospath) addIoc(sink, "file", ospath);
-  if (command && /^[A-Za-z]:\\/.test(command)) addIoc(sink, "file", command.slice(0, 300));
-
-  const cmd = [command, args].filter(Boolean).join(" ");
-  const userLabel =
-    userId === "S-1-5-18"
-      ? "SYSTEM"
-      : userId === "S-1-5-19"
-        ? "LOCAL SERVICE"
-        : userId === "S-1-5-20"
-          ? "NETWORK SERVICE"
-          : userId;
-
-  let description = `Velociraptor: Scheduled Task [${taskName || "task"}]`;
-  if (cmd) description += ` — ${oneLine(cmd).slice(0, 250)}`;
-  if (userLabel) description += ` (${userLabel}${runLevel ? `, ${runLevel}` : ""})`;
-  description = withHostSuffix(description, host).slice(0, 600);
-
-  const aggKey = taskAggKey(host, taskName);
-
-  return {
-    timestamp: pickTime(row),
-    description,
-    severity: "Info",
-    mitre: [],
-    aggKey,
-    sources: ["Velociraptor"],
-    ...(ospath ? { path: ospath } : {}),
     ...(host ? { asset: host } : {}),
   };
 }

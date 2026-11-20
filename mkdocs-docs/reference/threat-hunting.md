@@ -55,6 +55,18 @@ timeline, listing its hosts ("on 3 of 287 answering hosts: WS-01, WS-02, WS-03")
 rows stay searchable in the super-timeline. Each kind is capped at 50 entries, with one visible
 "N more" entry, so a routine update on 300 hosts never floods the timeline.
 
+**How an autorun is counted.** A startup item (`Windows.Sys.StartupItems`) or a scheduled task
+(`Windows.System.TaskScheduler`) is counted by the **program it runs**, not by its entry or task
+name. Two hosts that run `C:\Tools\updater.exe` from differently named tasks are one item. When the
+program is a script host or a built-in Windows tool (PowerShell, cmd, wscript, cscript, mshta,
+regsvr32, rundll32 and similar), the item is counted by the **script or DLL that tool runs**
+instead, so a rare malicious task does not hide inside one common `regsvr32.exe` item. When no
+script or DLL can be read reliably (for example an encoded PowerShell command or a web address),
+the item is counted by the task or entry name. A client **Not allowed** mark that was saved on a
+task name still matches the task. The first hunt imported after this change shows its scheduled
+task items as **new** once, because the earlier hunt counted them by task name; they settle from
+the next hunt on. Cases imported before the change keep their task-name items.
+
 | Item | When |
 |---|---|
 | **Policy violation** | The client marked it **Not allowed**, or it was downloaded from a blocked site or a blocked category. Default severity Medium (setting below). Labelled as policy, not as malicious activity. |

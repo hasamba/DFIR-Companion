@@ -19,7 +19,9 @@ import { stripVolumePrefix } from "./huntArtifactFields.js";
  *     failed signature check — one signed host never approves an unsigned one.
  *   - A field the approval needs that is missing or unverified gives UNKNOWN, never a weaker match.
  *   - An expired approval no longer applies.
- *   - NOT ALLOWED matches on program (+ path pattern when given) and WINS over any approval.
+ *   - NOT ALLOWED matches on program (+ path pattern when given) and WINS over any approval. On an
+ *     autorun item it also matches the item's old entry identities (#2748): a task item keyed on the
+ *     program it runs still answers to a mark saved on its task name. Approvals never use them.
  *   - An item with NO path pattern (Amcache installed programs never have one) can never be approved,
  *     and its reason says so plainly (#2747); Not allowed still matches it by name.
  * Path patterns: segments separated by "\", `*` = exactly one segment, `**` = any number (0+).
@@ -35,6 +37,8 @@ export interface MatchItem extends IdentityCoverage {
   hashesCapped?: boolean;
   /** Hosts the item could not record (host cap): their binaries are unknown. */
   hostOverflow?: number;
+  /** (#2748) Old identities (scheduled task files) a Not-allowed mark still matches. */
+  entries?: readonly { program: string; pathPattern: string }[];
 }
 
 export type MatchResult = "match" | "no-match" | "unknown";
@@ -117,9 +121,15 @@ export function approvalMatch(m: BaselineMark, item: MatchItem, now: string): Ma
   return hashResult(m, item);
 }
 
+function blocks(m: BaselineMark, family: string, program: string, pathPattern: string): boolean {
+  if (m.family !== family || m.program.toLowerCase() !== program.toLowerCase()) return false;
+  return !m.pathPattern || (!!pathPattern && pathPatternMatches(m.pathPattern, pathPattern));
+}
+
 export function notAllowedMatch(m: BaselineMark, item: MatchItem): boolean {
-  if (m.verdict !== "not-allowed" || !sameName(m, item)) return false;
-  return !m.pathPattern || (!!item.pathPattern && pathPatternMatches(m.pathPattern, item.pathPattern));
+  if (m.verdict !== "not-allowed") return false;
+  if (blocks(m, item.family, item.program, item.pathPattern)) return true;
+  return (item.entries ?? []).some((e) => blocks(m, item.family, e.program, e.pathPattern));
 }
 
 export interface ItemVerdict {

@@ -1093,6 +1093,7 @@
     "veloAggKeys.ts": "analysis/ingest",
     "veloAmcacheIdentity.ts": "analysis/ingest",
     "veloAutorunsMap.ts": "analysis/ingest",
+    "veloCommandTarget.ts": "analysis/ingest",
     "veloDetectionNoise.ts": "analysis/ingest",
     "veloHuntLayout.ts": "analysis/case",
     "veloHuntStore.ts": "analysis/case",

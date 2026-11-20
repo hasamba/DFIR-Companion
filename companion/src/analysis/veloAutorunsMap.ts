@@ -1,7 +1,8 @@
 import type { FileIdentity } from "./fileIdentity.js";
 import { addIoc, baseName, getCI, oneLine, str, type MappedEvent, type SiemIoc } from "./siemImport.js";
 import type { Severity } from "./stateTypes.js";
-import { startupAggKey } from "./veloAggKeys.js";
+import { startupAggKey, taskAggKey } from "./veloAggKeys.js";
+import { huntCommandTarget, splitCommandLine } from "./veloCommandTarget.js";
 import { pickTime } from "./veloRowTime.js";
 import { demangleUtf16Noise, withHostSuffix } from "./velociraptorTitle.js";
 
@@ -15,7 +16,16 @@ import { demangleUtf16Noise, withHostSuffix } from "./velociraptorTitle.js";
  *     Category, Signer, Company, Image Path, Launch String, MD5, SHA-256. Before #2731 these rows went
  *     to the StartupItems mapper, which reads none of them: the event lost the entry, the image path,
  *     the signer and the hashes, and no autorun hunt item was formed.
- *   Windows.Sys.StartupItems and similar — Name / OSPath / Details / Enabled (unchanged).
+ *   Windows.Sys.StartupItems and similar — Name / OSPath / Details / Enabled.
+ *   Windows.System.TaskScheduler/Analysis — TaskName / Command / Arguments / UserId / RunLevel / OSPath
+ *     (its own importer route, "taskscheduler"; moved here from velociraptorImport.ts in #2748).
+ *
+ * Hunt target (#2748): a StartupItems row and a scheduled task form an autorun hunt item keyed on the
+ * program they run, or on the script / DLL a script host or built-in tool runs (veloCommandTarget.ts).
+ * It travels as `fileIdentity.autorunTarget`, never as `path` or `processName`: those feed the content
+ * tagger, LOLBin grading and correlation, which this does not change. The task row keeps `path` = the
+ * task file, so a stored event without the target keeps its old item key. With no reliable target a
+ * task falls back to that old key, and a StartupItems row to its entry name.
  *
  * Verified signer: ONLY a Signer value that starts with the literal "(Verified) " records a signer.
  * "(Not verified) …" records a FAILED check; Company and empty values never count. A signer is
@@ -89,6 +99,9 @@ function mapAutoruns(row: Row, artifact: string, host: string, sink: Map<string,
   };
 }
 
+const target = (t: string | undefined): { fileIdentity?: FileIdentity } =>
+  t ? { fileIdentity: { autorunTarget: t.slice(0, 600) } } : {};
+
 // Windows.Sys.StartupItems and similar: Name + OSPath + Details + Enabled.
 function mapStartupItem(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   const name = str(getCI(row, "Name")).trim();
@@ -96,9 +109,9 @@ function mapStartupItem(row: Row, host: string, sink: Map<string, SiemIoc>): Map
   const details = demangleUtf16Noise(str(getCI(row, "Details")).trim());
   const enabled = isEnabled(str(getCI(row, "Enabled")));
 
-  // Add the executable path or registry path as file/process IOC when it looks like a real path.
-  const cmdPath = details.replace(/^["']?([A-Za-z]:\\[^"'\s]+).*$/, "$1");
-  if (details && /^[A-Za-z]:\\/.test(cmdPath)) addIoc(sink, "file", cmdPath.slice(0, 300));
+  // The launched program as a file IOC — the whole quoted path, never cut at its first space (#2748).
+  const cmdPath = details ? splitCommandLine(details).program : "";
+  if (/^[A-Za-z]:\\/.test(cmdPath)) addIoc(sink, "file", cmdPath.slice(0, 300));
   if (ospath && /^[A-Za-z]:\\/.test(ospath)) addIoc(sink, "file", ospath.slice(0, 300));
 
   const enabledLabel = enabled ? "enabled" : "disabled";
@@ -116,6 +129,46 @@ function mapStartupItem(row: Row, host: string, sink: Map<string, SiemIoc>): Map
     mitre: enabled ? ["T1547"] : [],
     aggKey: startupAggKey(host, name, ospath),
     sources: ["Velociraptor"],
+    ...target((details ? huntCommandTarget(details) : undefined) ?? (name || undefined)),
+    ...(host ? { asset: host } : {}),
+  };
+}
+
+const ACCOUNT_LABELS: Record<string, string> = {
+  "S-1-5-18": "SYSTEM",
+  "S-1-5-19": "LOCAL SERVICE",
+  "S-1-5-20": "NETWORK SERVICE",
+};
+
+/** Windows.System.TaskScheduler/Analysis. With no reliable target the task file keys the item (#2748). */
+export function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent {
+  const taskName = str(getCI(row, "TaskName")).trim();
+  const command = str(getCI(row, "Command")).trim();
+  const args = str(getCI(row, "Arguments")).trim();
+  const userId = str(getCI(row, "UserId")).trim();
+  const runLevel = str(getCI(row, "RunLevel")).trim();
+  const ospath = str(getCI(row, "OSPath")).trim();
+
+  if (ospath) addIoc(sink, "file", ospath);
+  if (command && /^[A-Za-z]:\\/.test(command)) addIoc(sink, "file", command.slice(0, 300));
+
+  const cmd = [command, args].filter(Boolean).join(" ");
+  const userLabel = ACCOUNT_LABELS[userId] ?? userId;
+
+  let description = `Velociraptor: Scheduled Task [${taskName || "task"}]`;
+  if (cmd) description += ` — ${oneLine(cmd).slice(0, 250)}`;
+  if (userLabel) description += ` (${userLabel}${runLevel ? `, ${runLevel}` : ""})`;
+  description = withHostSuffix(description, host).slice(0, 600);
+
+  return {
+    timestamp: pickTime(row),
+    description,
+    severity: "Info",
+    mitre: [],
+    aggKey: taskAggKey(host, taskName),
+    sources: ["Velociraptor"],
+    ...(ospath ? { path: ospath } : {}),
+    ...target(command ? huntCommandTarget(command, args) : undefined),
     ...(host ? { asset: host } : {}),
   };
 }

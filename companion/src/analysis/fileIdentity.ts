@@ -14,12 +14,16 @@ import { z } from "zod";
  *   signer               — a VERIFIED Authenticode signer: only an Autoruns "Signer" value that starts
  *                          with "(Verified) ". Never Company, Publisher or version-info text.
  *   signatureUnverified  — Autoruns checked the signature and did NOT verify it.
+ *   autorunTarget        — (#2748) the file a startup item or scheduled task runs: the program, or the
+ *                          script / DLL a script host or built-in tool runs (veloCommandTarget.ts). It
+ *                          keys the autorun hunt item; the event's own `path` (the task file) is kept.
  */
 export interface FileIdentity {
   sha1?: string;
   size?: number;
   signer?: string;
   signatureUnverified?: true;
+  autorunTarget?: string;
 }
 
 /** Amcache hashes only the first 31,457,280 bytes of a file: a SHA1 identifies a file up to this size. */
@@ -32,6 +36,7 @@ export const fileIdentitySchema = z.object({
   size: z.number().int().nonnegative().optional().catch(undefined),
   signer: z.string().min(1).max(260).optional().catch(undefined),
   signatureUnverified: z.literal(true).optional().catch(undefined),
+  autorunTarget: z.string().min(1).max(600).optional().catch(undefined),
 });
 
 /** The SHA1 a client approval may use: only when the size is recorded and within the Amcache limit. */

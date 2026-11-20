@@ -45,6 +45,11 @@ export interface HuntFields {
   md5?: string;
   /** Download source URL (Zone.Identifier HostUrl) when the row named one. */
   sourceUrl?: string;
+  /**
+   * (#2748) The identity an autorun row had before it was keyed on its target: a scheduled task's file
+   * (`\windows\system32\tasks\<name>`). Kept so a client's Not-allowed mark on a task name still matches.
+   */
+  entry?: { program: string; pathPattern: string };
   host: string;
 }
 
@@ -139,11 +144,25 @@ function identityFields(
   };
 }
 
+/** The old task-file identity of an autorun row now keyed on its target (#2748), else undefined. */
+function entryOf(rowPath: string, keyPath: string): HuntFields["entry"] {
+  if (!rowPath || rowPath === keyPath) return undefined;
+  const program = baseName(rowPath);
+  return program ? { program, pathPattern: normalisePathPattern(rowPath) } : undefined;
+}
+
+/**
+ * An autorun row is keyed on the program or script it runs (`fileIdentity.autorunTarget`, #2748),
+ * falling back to its own `path`: a stored row without the target keeps its old item key.
+ */
 export function huntFieldsOf(e: ForensicEvent): HuntFields | null {
   const evidence = evidenceOf(e);
   const host = (e.asset ?? "").trim();
   if (!evidence || !host) return null;
-  const path = (e.path ?? "").trim().toLowerCase();
+  const rowPath = (e.path ?? "").trim().toLowerCase();
+  const target = evidence === "autorun" ? (e.fileIdentity?.autorunTarget ?? "").trim().toLowerCase() : "";
+  const path = target || rowPath;
+  const entry = target ? entryOf(rowPath, path) : undefined;
   const base = {
     evidence,
     path,
@@ -161,7 +180,7 @@ export function huntFieldsOf(e: ForensicEvent): HuntFields | null {
   const program = (path ? baseName(path) : (e.processName ?? "")).toLowerCase();
   if (!program) return null;
   const sourceUrl = evidence === "download" ? downloadUrl(e.description) : undefined;
-  return { ...base, program, ...(sourceUrl ? { sourceUrl } : {}) };
+  return { ...base, program, ...(sourceUrl ? { sourceUrl } : {}), ...(entry ? { entry } : {}) };
 }
 
 /** The item identity: one entry per program + path pattern + evidence family. */
