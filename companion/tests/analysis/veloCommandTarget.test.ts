@@ -45,6 +45,7 @@ describe("huntCommandTarget", () => {
     expect(huntCommandTarget("%SystemRoot%\\system32\\x.exe")).toBe("C:\\Windows\\system32\\x.exe");
     expect(expandEnv("%LOCALAPPDATA%\\u\\u.exe")).toBe("C:\\Users\\user\\AppData\\Local\\u\\u.exe");
     expect(expandEnv("%NOT_KNOWN%\\a.exe")).toBe("%NOT_KNOWN%\\a.exe");
+    expect(expandEnv("%constructor%\\a.exe")).toBe("%constructor%\\a.exe"); // no inherited lookups
   });
 
   it("regsvr32: the /i: payload, not the trailing scrobj.dll", () => {

@@ -153,7 +153,7 @@ export function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemI
   if (command && /^[A-Za-z]:\\/.test(command)) addIoc(sink, "file", command.slice(0, 300));
 
   const cmd = [command, args].filter(Boolean).join(" ");
-  const userLabel = ACCOUNT_LABELS[userId] ?? userId;
+  const userLabel = Object.hasOwn(ACCOUNT_LABELS, userId) ? ACCOUNT_LABELS[userId] : userId;
 
   let description = `Velociraptor: Scheduled Task [${taskName || "task"}]`;
   if (cmd) description += ` — ${oneLine(cmd).slice(0, 250)}`;

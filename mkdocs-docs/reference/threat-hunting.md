@@ -63,9 +63,13 @@ regsvr32, rundll32 and similar), the item is counted by the **script or DLL that
 instead, so a rare malicious task does not hide inside one common `regsvr32.exe` item. When no
 script or DLL can be read reliably (for example an encoded PowerShell command or a web address),
 the item is counted by the task or entry name. A client **Not allowed** mark that was saved on a
-task name still matches the task. The first hunt imported after this change shows its scheduled
-task items as **new** once, because the earlier hunt counted them by task name; they settle from
-the next hunt on. Cases imported before the change keep their task-name items.
+task name still matches the task. Because that task is now part of the item for the program it
+runs, the mark flags that whole item, on every host that runs the program from any task. The first
+hunt imported after this change shows its scheduled task items, and startup items that Autoruns
+did not already list, as **new** once, because the earlier hunt counted tasks by task name and did
+not count startup items. They settle from the next hunt on. Cases imported before the change keep
+their task-name items. If you re-import a hunt into such a case, it holds both the old and the new
+items.
 
 | Item | When |
 |---|---|

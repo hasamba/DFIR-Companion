@@ -63,7 +63,9 @@ const ENV: Record<string, string> = {
 
 /** `%SystemRoot%\x.exe` → `C:\Windows\x.exe`; an unknown variable is left as written. */
 export function expandEnv(path: string): string {
-  return path.replace(/%([A-Za-z0-9_()]+)%/g, (all, name: string) => ENV[name.toLowerCase()] ?? all);
+  return path.replace(/%([A-Za-z0-9_()]+)%/g, (all, name: string) =>
+    Object.hasOwn(ENV, name.toLowerCase()) ? ENV[name.toLowerCase()] : all,
+  );
 }
 
 const unquote = (v: string): string => v.replace(/^(["'])(.*)\1$/, "$2").trim();

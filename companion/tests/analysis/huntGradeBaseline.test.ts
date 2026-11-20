@@ -275,6 +275,38 @@ describe("pinned baselines and the explicit re-grade (#2670)", () => {
         .sort(),
     ).toEqual(["late.exe", "old.exe"]);
   });
+
+  it("re-grading stored task rows keeps the program key, with no task-file duplicate (#2748)", async () => {
+    const { parseVelociraptorJson } = await import("../../src/analysis/velociraptorImport.js");
+    const stored: ForensicEvent[] = parseVelociraptorJson(
+      JSON.stringify(
+        [1, 2].map((i) => ({
+          _Source: "Windows.System.TaskScheduler/Analysis",
+          Fqdn: `WS-00${i}`,
+          TaskName: `\\Task_${i}`,
+          Mtime: "2026-01-01T00:00:00Z",
+          Command: "C:\\Tools\\same.exe",
+          OSPath: `C:\\Windows\\System32\\Tasks\\Task_${i}`,
+        })),
+      ),
+      { aggregate: true },
+    ).events.map((e, i) => ({ ...e, id: `t${i}`, relatedFindingIds: [], sourceScreenshots: [] }));
+    const { deps, inventoryStore } = await world({ current: profileWith([]) }, [reachedJob(10)]);
+    await huntSettle(deps, "c1", stored);
+    await regradeHuntCase(
+      {
+        ...deps,
+        rows: {
+          async *forensicTimelineBatches() {
+            yield stored;
+          },
+        },
+      },
+      "c1",
+    );
+    const inv = (await inventoryStore.load("c1")).inventory;
+    expect(Object.keys(inv.items)).toEqual(["autorun|same.exe|\\tools"]);
+  });
 });
 
 describe("an unconfirmed item never goes quiet (#2670)", () => {

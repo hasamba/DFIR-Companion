@@ -115,6 +115,8 @@ describe("scheduled tasks are keyed on the program or the script they run (#2748
     expect(e.path).toBe("C:\\Windows\\System32\\Tasks\\A_Task");
     expect(e.severity).toBe("Info");
     expect(e.description).toContain("Scheduled Task [\\A_Task] — C:\\Tools\\same.exe");
+    const [odd] = rows([{ ...task("WS-01", "A_Task", "C:\\Tools\\same.exe"), UserId: "constructor" }]);
+    expect(odd.description).toContain("(constructor, LeastPrivilege)");
   });
 
   it("a regsvr32 task loading a rare payload stays its own item (icedid fixture)", () => {
