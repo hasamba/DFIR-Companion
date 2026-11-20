@@ -23,7 +23,7 @@ export interface AiAgentReportHit {
   severity: Severity;
   selfScan: boolean;
   path: string;
-  /** The scan-time hash — the only hash that becomes an IOC. */
+  /** The file's hash, taken after the YARA scan (not of the bytes YARA read) — the only hash IOC. */
   sha256: string;
   /** The preserved copy's hash, when it is known (#2722). Optional: reports stored before it lack it. */
   preservedSha256?: string;

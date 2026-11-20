@@ -204,14 +204,21 @@
     return form;
   }
 
-  // #2722: the scan hash, the preserved copy's hash and whether they match. A report stored before
-  // the check existed never recorded it.
+  // #2722: the file's hash (taken after the YARA scan), the preserved copy's hash and whether they
+  // match. A report stored before the check existed never recorded it. YARA, the hash and the upload
+  // are separate reads, so "same" claims only "unchanged since hashing" (Codex review).
+  const HASH_LABELS = {
+    same: "same: unchanged between hashing and preservation",
+    differs: "differs: changed between hashing and preservation",
+  };
+  const HASH_CAVEAT =
+    "File hashes are taken after the YARA scan. The bytes YARA read are not separately hashed, so \"same\" shows only that the file did not change between hashing and preservation; that the preserved copy holds the matched bytes is not proven.";
   function hashCell(h) {
     const td = el("td", null, "aa-hash");
-    td.appendChild(el("div", `scan: ${h.sha256 || "none"}`));
+    td.appendChild(el("div", `after scan: ${h.sha256 || "none"}`));
     td.appendChild(el("div", `preserved: ${h.preservedSha256 || "none"}`));
     const check = h.hashCheck || "not recorded";
-    td.appendChild(el("div", check === "differs" ? "DIFFERS — the file changed after the scan" : check, check === "differs" ? "aa-warn" : "aa-muted"));
+    td.appendChild(el("div", HASH_LABELS[check] || check, check === "differs" ? "aa-warn" : "aa-muted"));
     return td;
   }
 
@@ -243,7 +250,7 @@
     if (!hits.length) return el("p", "No rule matched on these endpoints and scopes.", "aa-note");
     const table = el("table", null, "aa-hits");
     const head = el("tr");
-    for (const h of ["Grade", "Endpoint", "Rule", "File", "Latest time the content could have been planted", "Matched text", "Scan / preserved SHA-256", "Rule"])
+    for (const h of ["Grade", "Endpoint", "Rule", "File", "Latest time the content could have been planted", "Matched text", "File SHA-256 after scan / preserved", "Rule"])
       head.appendChild(el("th", h));
     table.appendChild(head);
     for (const h of hits) {
@@ -266,7 +273,9 @@
       tr.appendChild(ruleCell);
       table.appendChild(tr);
     }
-    return table;
+    const wrap = el("div");
+    wrap.append(table, el("p", HASH_CAVEAT, "aa-note"));
+    return wrap;
   }
 
   function endpointLines(endpoints) {

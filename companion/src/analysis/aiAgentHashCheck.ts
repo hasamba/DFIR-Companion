@@ -1,6 +1,12 @@
-// AI Agent Forensics (#2722): does the copy kept in Velociraptor match the file that matched? Each hit
-// carries the scan-time hash; the preserved copy's hash comes from the artifact's own upload() (project
-// files) or, for files the AICodingAgents triage collection kept, from the hunt's upload manifest.
+// AI Agent Forensics (#2722): did the file change between hashing and preservation? Each hit carries
+// the file's hash taken after the YARA scan; the preserved copy's hash comes from the artifact's own
+// upload() (project files) or, for files the AICodingAgents triage collection kept, from the hunt's
+// upload manifest.
+//
+// WHAT "same" DOES NOT PROVE: YARA, hash() and upload() each read the file separately, and the bytes
+// YARA matched are never hashed. A file replaced after the match but before the hash gives two equal
+// hashes of the replacement. So "same" means only "unchanged between hashing and preservation", and
+// every surface that shows the check also shows AI_AGENT_HASH_CAVEAT (Codex review of #2722).
 //
 // The answer fails toward "not recorded": "not preserved" is said only when the artifact itself said
 // the file was not kept. A manifest that could not be read in full, a row with no client id, or a path
@@ -11,6 +17,22 @@ import type { AiAgentHitRow } from "./aiAgentRows.js";
 import type { UploadManifestEntry } from "./aiAgentRunStore.js";
 
 export type AiAgentHashCheck = "same" | "differs" | "not preserved" | "not recorded";
+
+/** Said beside the check on every surface: the panel, report.md, report.csv and the manual. */
+export const AI_AGENT_HASH_CAVEAT =
+  "The file is hashed after the YARA scan, in a separate read: the bytes YARA read are not separately " +
+  "hashed, so a match between the file hash and the preserved copy shows only that the file did not " +
+  "change between hashing and preservation. That the preserved copy holds the matched bytes is not proven.";
+
+const LABELS: Partial<Record<AiAgentHashCheck, string>> = {
+  same: "same: unchanged between hashing and preservation",
+  differs: "differs: changed between hashing and preservation",
+};
+
+/** The check as the exports word it; "not preserved" and "not recorded" read as they are. */
+export function hashCheckLabel(check: AiAgentHashCheck): string {
+  return LABELS[check] ?? check;
+}
 
 export interface AiAgentHashResult {
   preservedSha256: string;

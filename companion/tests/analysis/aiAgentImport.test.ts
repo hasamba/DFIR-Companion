@@ -303,7 +303,7 @@ describe("AI Agent Forensics mapper: Sigma hits", () => {
     );
     const changed = out.events.find((e) => e.description.includes("Changed_During_Collection"))!;
     expect(JSON.stringify(changed)).toContain(
-      `preserved copy hash differs from the scan hash (preserved SHA-256 ${kept})`,
+      `preserved copy hash differs from the file's hash taken after the scan (preserved SHA-256 ${kept})`,
     );
     const same = out.events.find((e) => e.description.includes("Same_Copy"))!;
     expect(JSON.stringify(same)).not.toContain("differs");

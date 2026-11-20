@@ -129,9 +129,13 @@ describe("AI Agent Forensics routes", () => {
     expect(md.text).toContain('=HYPERLINK("http://evil") \\| <img'); // the cell stays one cell
 
     // #2722: both hashes and the check, in both exports.
-    expect(csv.text.split("\r\n")[0]).toContain(`"scan_sha256","preserved_sha256","hash_check"`);
-    expect(csv.text).toContain(`"${"a".repeat(64)}","${"b".repeat(64)}","differs"`);
-    expect(md.text).toContain("| Scan SHA-256 | Preserved SHA-256 | Hash check |");
+    expect(csv.text.split("\r\n")[0]).toContain(
+      `"file_sha256_after_scan","preserved_sha256","hash_check","hash_note"`,
+    );
+    expect(csv.text).toContain(
+      `"${"a".repeat(64)}","${"b".repeat(64)}","differs: changed between hashing and preservation"`,
+    );
+    expect(md.text).toContain("| File SHA-256 (hashed after the scan) | Preserved SHA-256 | Hash check |");
     expect(md.text).toContain("differs");
     // #2722: the rule-by-endpoint Sigma table — hostile rule and host names stay one escaped cell.
     expect(md.text).toContain("## Sigma coverage per rule and endpoint");

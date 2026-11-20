@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadAiAgentRuleSet } from "../../src/analysis/aiAgentRuleSet.js";
 import { buildAiAgentReport } from "../../src/analysis/aiAgentReport.js";
+import { AI_AGENT_HASH_CAVEAT, hashCheckLabel } from "../../src/analysis/aiAgentHashCheck.js";
+import { aiAgentReportCsv, aiAgentReportMarkdown } from "../../src/reports/aiAgentReportExport.js";
 import {
   AiAgentRunStore,
   capManifest,
@@ -193,6 +195,63 @@ describe("AI Agent Forensics report: scan hash and preserved hash", () => {
     ).toBe("not recorded");
     // An older run's row: uploaded, but no hash column and no manifest.
     expect(check(hitRow({ Preserved: "uploaded (5 bytes)", ...path }), null).hashCheck).toBe("not recorded");
+  });
+});
+
+// #2722 (Codex review): the YARA read, the hash and the upload are three separate reads of the file. A
+// file replaced after YARA matched it but before it was hashed gives two equal hashes of the
+// replacement, so "same" may only ever claim the file did not change between hashing and preservation.
+describe("AI Agent Forensics report: a file replaced between the YARA read and the hashing", () => {
+  const REPLACEMENT = "c".repeat(64);
+  const replaced = {
+    ...base,
+    Fqdn: "DEV-WS-014",
+    ClientId: "C.w1",
+    Kind: "hit",
+    Family: "yara",
+    RuleName: "Agent_Memory_Hidden_Instruction_Concealment",
+    FilePath: "C:\\Users\\dev\\.claude\\CLAUDE.md",
+    FileSha256: REPLACEMENT, // hashed after the scan: already the replacement
+    PreservedSha256: REPLACEMENT, // the upload: also the replacement
+    Preserved: "uploaded (5 bytes)",
+  };
+  const report = buildAiAgentReport([replaced], set, new Date("2026-11-19T11:00:00Z"));
+  const run: AiAgentRun = {
+    runId: "aar-x",
+    huntId: "H.1",
+    launchedAt: "2026-11-19T10:00:00Z",
+    endpoints: [],
+    failedEndpoints: [],
+    skippedEndpoints: [],
+    scopes: ["agent-home"],
+    uploadMaxBytes: 1,
+    ruleSetVersion: set.version,
+    artifacts: [],
+    preserved: true,
+    warnings: [],
+    sensitive: true,
+    report,
+  };
+
+  it("reads 'same', and the label claims only that the file did not change between hashing and preservation", () => {
+    expect(report.hits[0].hashCheck).toBe("same");
+    expect(hashCheckLabel("same")).toBe("same: unchanged between hashing and preservation");
+    expect(hashCheckLabel("differs")).toBe("differs: changed between hashing and preservation");
+    expect(hashCheckLabel("not recorded")).toBe("not recorded");
+    expect(AI_AGENT_HASH_CAVEAT).toContain("not separately hashed");
+    expect(AI_AGENT_HASH_CAVEAT).toContain("not proven");
+  });
+
+  it("says so in report.md and report.csv, and never calls the after-scan hash the scan hash", () => {
+    const md = aiAgentReportMarkdown(run);
+    expect(md).toContain(AI_AGENT_HASH_CAVEAT);
+    expect(md).toContain("| File SHA-256 (hashed after the scan) | Preserved SHA-256 | Hash check |");
+    expect(md).toContain("same: unchanged between hashing and preservation");
+    expect(md).not.toContain("Scan SHA-256");
+    const [head, first] = aiAgentReportCsv(run).split("\r\n");
+    expect(head).toContain(`"file_sha256_after_scan","preserved_sha256","hash_check","hash_note"`);
+    expect(head).not.toContain("scan_sha256");
+    expect(first).toContain(`"same: unchanged between hashing and preservation","${AI_AGENT_HASH_CAVEAT}"`);
   });
 });
 

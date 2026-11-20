@@ -6,6 +6,7 @@
 
 import type { AiAgentRun } from "../analysis/aiAgentRunStore.js";
 import type { AiAgentReport, AiAgentReportEndpoint, AiAgentReportHit } from "../analysis/aiAgentReport.js";
+import { AI_AGENT_HASH_CAVEAT, hashCheckLabel } from "../analysis/aiAgentHashCheck.js";
 import { cellMd, codeSpanMd } from "./mdText.js";
 import { row } from "./csv.js";
 
@@ -33,7 +34,12 @@ function summaryLines(run: AiAgentRun): string[] {
 
 /** A report stored before #2722 has no hash check: it was never recorded. */
 function hashCheckOf(h: AiAgentReportHit): string {
-  return h.hashCheck ?? "not recorded";
+  return hashCheckLabel(h.hashCheck ?? "not recorded");
+}
+
+/** The caveat travels with every check that compares two hashes. */
+function hashNoteOf(h: AiAgentReportHit): string {
+  return h.hashCheck === "same" || h.hashCheck === "differs" ? AI_AGENT_HASH_CAVEAT : "";
 }
 
 /** The text of one rule-by-endpoint cell; a rule with no row from that endpoint was not recorded. */
@@ -95,7 +101,9 @@ export function aiAgentReportMarkdown(run: AiAgentRun): string {
   if (!r.hits.length) lines.push("No rule matched on the endpoints and scopes above.");
   else {
     lines.push(
-      "| Grade | Endpoint | Rule | File | Latest time the content could have been planted | Matched text | Scan SHA-256 | Preserved SHA-256 | Hash check | Rule author |",
+      AI_AGENT_HASH_CAVEAT,
+      "",
+      "| Grade | Endpoint | Rule | File | Latest time the content could have been planted | Matched text | File SHA-256 (hashed after the scan) | Preserved SHA-256 | Hash check | Rule author |",
     );
     lines.push("|---|---|---|---|---|---|---|---|---|---|");
     for (const h of r.hits)
@@ -125,9 +133,10 @@ export function aiAgentReportCsv(run: AiAgentRun): string {
     "atlas",
     "scope",
     "file",
-    "scan_sha256",
+    "file_sha256_after_scan",
     "preserved_sha256",
     "hash_check",
+    "hash_note",
     "event_time",
     "event_time_basis",
     "scan_time",
@@ -151,6 +160,7 @@ export function aiAgentReportCsv(run: AiAgentRun): string {
       h.sha256,
       h.preservedSha256 ?? "",
       hashCheckOf(h),
+      hashNoteOf(h),
       h.time,
       h.timeBasis,
       h.scanTime,

@@ -930,13 +930,19 @@ coverage per rule and endpoint** table, **Rules not run, and why**, the rule ver
 the collection in Velociraptor. **Report .md** and **Report .csv** download the same report;
 **Sigma coverage .csv** downloads the rule-by-endpoint table.
 
-- **Two hashes per matched file.** The **scan** hash is taken when the rule matched; the
-  **preserved** hash is the hash of the copy kept in Velociraptor (from the run's own upload, or for
-  agent-home files from the preservation collection's file list). The check says **same**,
-  **differs** (the file changed between the scan and the upload), **not preserved** (the run said
-  it did not keep the file, for example over the upload cap) or **not recorded** (the Companion
-  could not tell, for example because the file list was not read in full). Only the scan hash
-  becomes a case IOC; a difference is written in the event's detail.
+- **Two hashes per matched file.** The **file** hash is taken on the endpoint after the YARA scan;
+  the **preserved** hash is the hash of the copy kept in Velociraptor (from the run's own upload, or
+  for agent-home files from the preservation collection's file list). The check says **same**
+  (the file did not change between hashing and preservation), **differs** (it changed between
+  hashing and preservation), **not preserved** (the run said it did not keep the file, for example
+  over the upload cap) or **not recorded** (the Companion could not tell, for example because the
+  file list was not read in full). Only the file hash becomes a case IOC; a difference is written in
+  the event's detail.
+- **What "same" does not prove.** YARA, the hash and the upload each read the file separately, and
+  the bytes YARA read are not separately hashed. If the file was replaced after YARA matched it but
+  before it was hashed, both hashes describe the replacement and the check still says **same**. So
+  **same** does not prove that the preserved copy holds the matched bytes. The panel, **Report .md**
+  and **Report .csv** (column `hash_note`) say this beside the check.
 - **Sigma coverage per rule and endpoint.** One row per Sigma rule, one column per endpoint. Each
   cell says whether the rule ran there and on what it ran (**live state**, **event history**, or
   **Sysmon event history**), with its hit count, or "not run: no Sysmon". A cell that says **not

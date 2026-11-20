@@ -19,7 +19,13 @@ export function cfgPreamble(partVars: string[]): string {
 
 /**
  * One YARA scope: list its files once, scan them, emit hit rows and one coverage row. A hit carries the
- * scan-time hash AND, when the run uploaded the file, the hash of that upload (#2722).
+ * file's hash AND, when the run uploaded the file, the hash of that upload (#2722).
+ *
+ * yara(), hash() and upload() are three separate reads of the file, and the bytes YARA matched are not
+ * hashed: the file hash is taken after the scan, and the order of hash() and upload() inside one row is
+ * not guaranteed. Binding all three to one read (read_file into memory, then the "data" accessor) would
+ * hold up to the scan cap — gigabytes for model files — in memory per file, so it is not done; the
+ * report says instead what an equal pair of hashes does and does not prove (aiAgentHashCheck.ts).
  */
 export function yaraScopeVql(key: string): { lets: string; hits: string; coverage: string } {
   const s = `cfg.${key}`;

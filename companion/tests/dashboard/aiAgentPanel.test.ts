@@ -55,6 +55,11 @@ describe("AI Agent Forensics panel", () => {
     expect(js).toContain("function hashCell(h)");
     expect(js).toContain('h.hashCheck || "not recorded"');
     expect(js).toContain("function sigmaTable(report)");
+    // Codex review: the YARA read is not hashed, so "same" claims only "unchanged since hashing".
+    expect(js).toContain("same: unchanged between hashing and preservation");
+    expect(js).toContain("differs: changed between hashing and preservation");
+    expect(js).toContain("The bytes YARA read are not separately hashed");
+    expect(js).not.toContain("the file changed after the scan");
     expect(js).toContain('cell ? `${cell.status}, ${cell.hits} hit(s)` : "not recorded"');
     expect(js).toContain("/sigma-coverage.csv`");
   });
