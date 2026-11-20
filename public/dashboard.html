@@ -404,6 +404,8 @@
   <script src="/js/dashboard-cloud-accounts.js"></script>
   <!-- Cloud Collection panel + toolbar button (#2311). initCloudCollect() runs from initCaseConnect(). -->
   <script src="/js/dashboard-cloud-collect.js"></script>
+  <!-- AI Agent Forensics panel + toolbar button (#2690). initAiAgentPanel() runs from initCaseConnect(). -->
+  <script src="/js/dashboard-ai-agent.js"></script>
   <!-- Setup wizard: the IRIS / Timesketch / Velociraptor steps save into the default server set. -->
   <script src="/js/dashboard-wizard-server-set.js"></script>
   <!-- Case templates and incident types. Owns the caches the saver invalidates. -->
@@ -605,6 +607,9 @@
     <!-- Collect cloud logs (#2311) — OPENS the Cloud Collection panel; starting a collection is a
          separate press inside it. The ::before icon keeps it visible under .icons-only. -->
     <button id="cloudCollectBtn" type="button" aria-label="Collect cloud logs" data-tip="Collect cloud logs: pull AWS, Microsoft or GCP logs live with one of this case's cloud accounts. Every page the cloud returns is saved as evidence with its SHA-256 in an append-only manifest, imported, and a stopped collection resumes without losing or duplicating anything. Opening the panel costs nothing.">Cloud logs</button>
+    <!-- AI Agent Forensics (#2690) — OPENS the panel; a run starts only from Run inside it. With no
+         case open it opens the sweep view. The ::before icon keeps it visible under .icons-only. -->
+    <button id="aiAgentBtn" type="button" aria-label="AI Agent Forensics" data-tip="AI Agent Forensics: check endpoints for tampered AI coding agents (poisoned MCP servers, backdoored rules files, planted agent memory, hidden instructions in CLAUDE.md). Velociraptor runs the ai-dfir-toolkit YARA and Sigma rules on the endpoints you pick and preserves the AI-agent artifacts. Opening the panel costs nothing; with no case open it opens the sweep view.">AI agents</button>
     <button id="importUndoBtn" type="button" data-safe-style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" data-safe-style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
       <span class="tb-group-label" aria-hidden="true">Evidence</span>
@@ -1129,6 +1134,13 @@
   </div>
   <!-- Change… on the case header (js/dashboard-case-servers.js): pick a set, then confirm when the
        case has work on its old servers. -->
+  <div id="aiAgentOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="aiAgentOverlayTitle">
+    <div class="comment-modal aa-modal">
+      <h3 id="aiAgentOverlayTitle">AI Agent Forensics — sweep (no case open)</h3>
+      <div id="aiAgentSweepPanel"></div>
+      <button id="aiAgentOverlayClose" type="button" data-safe-style="margin-top:10px">Close</button>
+    </div>
+  </div>
   <div id="caseServersPickOverlay" class="comment-overlay" role="dialog" aria-modal="true" aria-labelledby="caseServersPickTitle">
     <div class="comment-modal">
       <h3 id="caseServersPickTitle">Velociraptor / IRIS / Timesketch servers for this case</h3>
@@ -4332,6 +4344,7 @@
         </details>
       </div>
     </section>
+    <section id="sec-aiagent" data-safe-style="grid-column: 1 / -1"><h2>AI Agent Forensics<span class="ev-sub">has an AI coding agent on these endpoints been tampered with? Velociraptor runs the ai-dfir-toolkit YARA and Sigma rules on the endpoints, lists AI tools and MCP servers, and preserves the AI-agent artifacts — hits become timeline events; collected files stay in Velociraptor</span></h2><div id="aiAgentPanel">—</div></section>
     <section id="sec-velohunts" data-safe-style="grid-column: 1 / -1"><h2><span id="veloHuntsTitle">Suggested Fleet Hunts</span><span class="ev-sub">AI-proposed hunts from the findings, in the query language of the case's main evidence source — sweep the estate for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive hunts in the case's main evidence source language — Velociraptor VQL (deployable to all enrolled endpoints), or CrowdStrike CQL, KQL, ES|QL, SPL, Carbon Black, Wazuh, SentinelOne PowerQuery, Cortex XQL or QRadar AQL to copy into that tool. Review each query before running it" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="mainSourceLine"></div><div id="veloHuntSuggest">—</div></section>
     <section id="sec-false-positive" data-safe-style="grid-column: 1 / -1"><h2>False Positives (excluded from analysis)<span id="fpCount" title="Total false-positive markers in scope; updates in real time"></span>
       <select id="fpReasonFilterSel" title="Show only false-positive markers with this reason" data-safe-style="font-size:12px;margin-left:10px;vertical-align:middle;background:var(--bg-tertiary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:4px;padding:2px 4px">
@@ -4954,7 +4967,7 @@
       { id: "sec-playbook-match", label: "Playbook Match" },
       { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
       { id: "sec-compliance",   label: "Compliance Impact" },
-      { id: "sec-fleet-collection", label: "Fleet Collection" }, { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
+      { id: "sec-fleet-collection", label: "Fleet Collection" }, { id: "sec-velohunts",    label: "Suggested Fleet Hunts" }, { id: "sec-aiagent", label: "AI Agent Forensics" },
       { id: "sec-false-positive", label: "False Positives" },
       { id: "sec-source-trust", label: "Source Trust" },
       { id: "sec-hypotheses",   label: "Hypotheses" },

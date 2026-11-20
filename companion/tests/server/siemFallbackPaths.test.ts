@@ -249,6 +249,9 @@ const runner: VqlRunner = async (statements) => {
   const p = statements[0];
   if (p.includes("hunt(") && p.includes("artifacts="))
     return { rows: [{ Hunt: { HuntId: "H.SIEMFB1", state: "RUNNING" } }], raw: "" };
+  // The upload reader's probe: what did this hunt collect? Not an AI Agent Forensics run (#2690).
+  if (p.startsWith("SELECT * FROM hunts() WHERE hunt_id="))
+    return { rows: [{ artifacts: ["Windows.System.Pstree"] }], raw: "" };
   if (p.includes("uploads("))
     return {
       rows: [{ ClientId: "C.1", Path: "/r/guess.json", Name: "guess.json", Content: GUESSED }],

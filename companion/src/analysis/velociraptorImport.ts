@@ -62,7 +62,8 @@ import { mapPersistenceSniper, isPersistenceSniperRow } from "./persistenceSnipe
 import { mapBinaryRename } from "./binaryRenameImport.js";
 import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
 import { applyMftTimeHints, markSharedSourceMtime, noteInheritedFileTime } from "./mftTimeHints.js";
-import { networkTokens } from "./networkTokens.js";
+import { msgFingerprint } from "./veloMsgFingerprint.js";
+import { mapAiAgentRow } from "./aiAgentImport.js"; // AI Agent Forensics rows first (#2690)
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
@@ -190,31 +191,6 @@ function rowMessage(row: Row): string {
   if (m) return m;
   const ev = getCI(row, "_Event");
   return isObject(ev) ? str(getCI(ev, "Message")) : "";
-}
-
-// A stable djb2 hash → base36, for folding message content into an aggregation key compactly.
-function hashStr(s: string): string {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36);
-}
-
-// Fingerprint a message for aggregation: strip VOLATILE bits (GUIDs, digits — PIDs, record ids,
-// counters), keep the words AND every network address, then hash the WHOLE thing: two detections
-// differing only by PID collapse; two naming different tools (HackTool:Passview vs Mimikatz) or
-// peers stay apart. Hashing (not a prefix) lets a token anywhere in a long boilerplate message
-// separate events and keeps the key a fixed length however many addresses one message names.
-function msgFingerprint(msg: string): string {
-  const line = oneLine(msg)
-    .toLowerCase()
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "");
-  const addrs = networkTokens(line);
-  const norm = line
-    .replace(/\d+/g, "")
-    .replace(/[^a-z]+/g, " ")
-    .trim();
-  const joined = addrs.length ? `${norm} ${addrs.join(" ")}`.trim() : norm;
-  return joined ? hashStr(joined) : "";
 }
 
 // ───────────────────────────── detection verdicts ─────────────────────────────
@@ -1497,6 +1473,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
   ctx.renames.note(rh, pickTime(row));
   ctx.dbg.host(row, rh);
 
+  const ai = mapAiAgentRow(row, artifact, host, ctx.iocSink); // own schema; never the shared mappers or tail
+  if (ai) return ai;
   const rowSink = new Map<string, SiemIoc>();
   let detections = 0;
   const out: MappedEvent[] = [];

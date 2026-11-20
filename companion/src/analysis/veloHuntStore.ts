@@ -104,6 +104,11 @@ export interface VeloHuntJob {
   truncatedArtifacts?: TruncatedArtifact[]; // fetched PARTIALLY — the read hit the row cap, findings missing
   unreadArtifacts?: UnreadArtifact[]; // named sources NOT read — the source list lookup failed (#1635)
   superCappedArtifacts?: SuperCappedArtifact[]; // super-only: the shared super-timeline cap cut these (#1982)
+  // "external" (#2690): the run's collected files stay in Velociraptor. Every collect, retry and
+  // re-import of this hunt skips the upload-content read entirely; only a manifest is kept.
+  uploadPolicy?: "external";
+  aiAgentRunId?: string; // the AI Agent Forensics run this hunt carries (aiAgentRunStore.ts)
+  sensitive?: boolean; // the run may have copied credential files into Velociraptor's file store (§14.3)
 }
 
 /**

@@ -290,6 +290,12 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
     collectionPath(path) === "/cases/import/zip" ||
     // The set picker on New case and in the case header. Members get names only; the route decides.
     (normalizedMethod === "GET" && collectionPath(path) === "/server-sets") ||
+    // AI Agent Forensics (#2690): the rule version and scopes are reference data; the sweep list is
+    // cut by the route to the sweeps the caller may see (visibleCaseIds); a launch is open to every
+    // analyst, like POST /cases, and the route requires WRITE on a case the body names. Its rule-pack
+    // install / roll back stay with the instance administrator (the default below).
+    (normalizedMethod === "GET" && (path === "/ai-agent/rules" || path === "/ai-agent/sweeps")) ||
+    (normalizedMethod === "POST" && path === "/ai-agent/runs") ||
     pathStarts(path, "/api/jobs") ||
     AUTHENTICATED_SHELLS.has(path) ||
     (normalizedMethod === "GET" &&

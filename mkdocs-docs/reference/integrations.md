@@ -34,6 +34,32 @@ Run fleet hunts, collect artifacts, and stream live monitoring events into cases
 - Watson can ask to run VQL on a single host or fleet-wide, with your approval or in Auto for single-host collections (see [Running Velociraptor](watson.md#running-velociraptor))
 - Triage bundles (Best Practice / Best Practice - Big Hogs / Hayabusa Full / Super-Timeline Triage / Linux Triage / custom)
 
+### AI Agent Forensics
+
+The dashboard's **AI Agent Forensics** panel ([details](dashboard.md#ai-agent-forensics)) checks
+chosen Windows endpoints for tampered AI coding agents. What it needs on the Velociraptor server:
+
+- The API user needs **ARTIFACT_WRITER** (the Companion uploads its own client artifact,
+  `Custom.DFIRCompanion.AIAgentForensics.<digest>`, generated at run time from the installed rule
+  set) and **START_HUNT**. A refusal names the missing permission.
+- **`Windows.Triage.Targets` with the `AICodingAgents` rule** (a recent triage release) for
+  preservation. On an older release the run still detects and lists inventory, and says the
+  artifacts were not preserved.
+- **Sysmon** on the endpoint for the file-change Sigma rules. Without it, those rules are reported
+  as not run.
+
+The run is one paused hunt; only the endpoints you pick are added to it, so it never spreads to the
+fleet. Its collected files stay in Velociraptor: no upload of an AI Agent Forensics hunt or flow is
+ever imported, including through **Import external hunt/flow** and a custom
+`DFIR_VELOCIRAPTOR_UPLOAD_VQL`.
+
+**Rule updates.** The vendored rules come from
+[depalmar/ai-dfir-toolkit](https://github.com/depalmar/ai-dfir-toolkit) (Apache-2.0) at a pinned
+commit, and the preservation globs from the KapeFiles `AICodingAgents` target (MIT). The weekly
+upstream rule check opens an issue when either moves. A reviewed re-sync publishes a separate
+AI-agent rule pack (release tag `aiagent-rules-YYYY.MM.DD`, which older versions of the app ignore).
+Past runs keep the rule version they ran with, and existing case events are never regraded.
+
 ### Triage Bundles
 
 Settings → Velociraptor. Five bundles ship built-in — **Best Practice** (the quick-wins detection sweep), **Best Practice - Big Hogs** (the DetectRaptor YARA file and webshell scans, the DetectRaptor MFT keyword scan, and THOR, split out because they all walk the whole disk and run far longer than the rest of Best Practice; 7200s default timeout, longer than the other bundles' 6000s), **Hayabusa Full** (Hayabusa alone, every rule status from Low severity up, no Sysmon exclusions; only rules marked noisy stay out. Run it once the attack timeframe is known, scoped to that timeframe), **Super-Timeline Triage** (raw host artifacts; results go to the super-timeline only), and **Linux Triage**. Every bundle is editable in place, and **Reset to default** restores a built-in. You can also create and save custom bundles. Run a bundle from the dashboard's **Fleet Collection** panel — it launches a fleet hunt into the connected case and auto-imports results. See [Step 3a of the walkthrough](../walkthrough.md) for the run procedure.

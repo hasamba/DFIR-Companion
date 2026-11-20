@@ -1767,6 +1767,20 @@ describe("translateVelociraptorError", () => {
   });
 });
 
+// The upload readers first ask Velociraptor what the hunt / flow collected and read contents only
+// for a positively identified non-AI-Agent-Forensics collection (#2690); answer that probe here.
+const withProbe =
+  (runner: VqlRunner): VqlRunner =>
+  async (statements, opts) =>
+    /FROM hunts\(\)|FROM flows\(/.test(statements[0])
+      ? {
+          rows: [
+            { artifacts: ["Generic.Scanner.ThorZIP"], request: { artifacts: ["Generic.Scanner.ThorZIP"] } },
+          ],
+          raw: "",
+        }
+      : runner(statements, opts);
+
 describe("VelociraptorClient.huntUploads", () => {
   it("reads .json upload content, drops empties, and substitutes the hunt id into the VQL", async () => {
     let program = "";
@@ -1780,7 +1794,7 @@ describe("VelociraptorClient.huntUploads", () => {
         raw: "",
       };
     };
-    const ups = await new VelociraptorClient(cfg, runner).huntUploads("H.UP1");
+    const ups = await new VelociraptorClient(cfg, withProbe(runner)).huntUploads("H.UP1");
     expect(program).toContain("hunt_flows(hunt_id='H.UP1')");
     expect(program).not.toContain("__HUNT_ID__");
     expect(ups).toHaveLength(1); // the empty-content row is dropped
@@ -1795,14 +1809,14 @@ describe("VelociraptorClient.huntUploads", () => {
     };
     await new VelociraptorClient(
       { ...cfg, uploadVql: "SELECT * FROM custom(hunt='__HUNT_ID__')" },
-      runner,
+      withProbe(runner),
     ).huntUploads("H.UP2");
     expect(program).toBe("SELECT * FROM custom(hunt='H.UP2')");
   });
 
   it("rejects a malformed hunt id (no VQL-string injection)", async () => {
     const runner: VqlRunner = async () => ({ rows: [], raw: "" });
-    await expect(new VelociraptorClient(cfg, runner).huntUploads("bad id")).rejects.toThrow(
+    await expect(new VelociraptorClient(cfg, withProbe(runner)).huntUploads("bad id")).rejects.toThrow(
       /invalid hunt id/,
     );
   });
@@ -1813,7 +1827,7 @@ describe("VelociraptorClient.huntUploads", () => {
       program = statements[0];
       return { rows: [], raw: "" };
     };
-    await new VelociraptorClient(cfg, runner).huntUploads("H.UP3");
+    await new VelociraptorClient(cfg, withProbe(runner)).huntUploads("H.UP3");
     expect(program).toContain("(json|jsonl|ndjson|csv|txt|log)");
     expect(program).not.toContain("\\.json$'"); // the old json-only filter is gone
   });
@@ -1832,7 +1846,7 @@ describe("VelociraptorClient.flowUploads", () => {
         raw: "",
       };
     };
-    const ups = await new VelociraptorClient(cfg, runner).flowUploads("C.dead", "F.CFF001");
+    const ups = await new VelociraptorClient(cfg, withProbe(runner)).flowUploads("C.dead", "F.CFF001");
     expect(program).toContain("client_id='C.dead'");
     expect(program).toContain("flow_id='F.CFF001'");
     expect(program).not.toContain("__CLIENT_ID__");
@@ -1849,19 +1863,19 @@ describe("VelociraptorClient.flowUploads", () => {
     };
     await new VelociraptorClient(
       { ...cfg, flowUploadVql: "SELECT * FROM custom(client='__CLIENT_ID__', flow='__FLOW_ID__')" },
-      runner,
+      withProbe(runner),
     ).flowUploads("C.dead", "F.CFF001");
     expect(program).toBe("SELECT * FROM custom(client='C.dead', flow='F.CFF001')");
   });
 
   it("rejects a malformed client id or flow id (no VQL-string injection)", async () => {
     const runner: VqlRunner = async () => ({ rows: [], raw: "" });
-    await expect(new VelociraptorClient(cfg, runner).flowUploads("bad id", "F.CFF001")).rejects.toThrow(
-      /invalid client id/,
-    );
-    await expect(new VelociraptorClient(cfg, runner).flowUploads("C.dead", "bad id")).rejects.toThrow(
-      /invalid flow id/,
-    );
+    await expect(
+      new VelociraptorClient(cfg, withProbe(runner)).flowUploads("bad id", "F.CFF001"),
+    ).rejects.toThrow(/invalid client id/);
+    await expect(
+      new VelociraptorClient(cfg, withProbe(runner)).flowUploads("C.dead", "bad id"),
+    ).rejects.toThrow(/invalid flow id/);
   });
 });
 

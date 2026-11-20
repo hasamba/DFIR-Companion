@@ -1,0 +1,457 @@
+# The AICodingAgents preservation globs, pinned (#2690).
+#
+# Converted from the KapeFiles `Targets/Compound/AICodingAgents.tkape` compound target and the nine
+# app targets it names (ClaudeCode, OpenAICodex, GitHubCopilot, GeminiCLI, OpenCode, Cursor, Cline,
+# RooCode, VisualStudioCode). KapeFiles is MIT-licensed (see NOTICE). Velociraptor's
+# `Windows.Triage.Targets` is generated from the same KapeFiles targets, so the AI Agent Forensics
+# agent-home YARA scope scans the files that preservation keeps.
+#
+# Conversion: `%user%` -> `*`, `Recursive: true` -> `/**/`, FileMask appended (default `*`),
+# backslashes written as `/` (Velociraptor's glob() accepts both on Windows).
+#
+# KapeFiles upstream commit: fee80dafa89d80818084337f70e03ad983772cf1 (2026-11-14)
+# AICodingAgents.tkape last changed in: d544862a7a64dcb27ecbf55e6526606dd7fb29fc (2026-09-02)
+# The weekly upstream rules check compares these lines and opens an issue when either moves.
+schema: 1
+globs:
+  - tool: Claude Code
+    name: "Claude Code Global State"
+    glob: "C:/Users/*/.claude.json*"
+  - tool: Claude Code
+    name: "Claude Code Session Transcripts"
+    glob: "C:/Users/*/.claude/projects/**/*"
+  - tool: Claude Code
+    name: "Claude Code Prompt History"
+    glob: "C:/Users/*/.claude/history.jsonl"
+  - tool: Claude Code
+    name: "Claude Code User Settings"
+    glob: "C:/Users/*/.claude/settings*.json"
+  - tool: Claude Code
+    name: "Claude Code User Instructions"
+    glob: "C:/Users/*/.claude/CLAUDE.md"
+  - tool: Claude Code
+    name: "Claude Code Keybindings"
+    glob: "C:/Users/*/.claude/keybindings.json"
+  - tool: Claude Code
+    name: "Claude Code Stats Cache"
+    glob: "C:/Users/*/.claude/stats-cache.json"
+  - tool: Claude Code
+    name: "Claude Code Hooks"
+    glob: "C:/Users/*/.claude/hooks/**/*"
+  - tool: Claude Code
+    name: "Claude Code Commands"
+    glob: "C:/Users/*/.claude/commands/**/*"
+  - tool: Claude Code
+    name: "Claude Code Skills"
+    glob: "C:/Users/*/.claude/skills/**/*"
+  - tool: Claude Code
+    name: "Claude Code Agents"
+    glob: "C:/Users/*/.claude/agents/**/*"
+  - tool: Claude Code
+    name: "Claude Code Rules"
+    glob: "C:/Users/*/.claude/rules/**/*"
+  - tool: Claude Code
+    name: "Claude Code Workflows"
+    glob: "C:/Users/*/.claude/workflows/**/*"
+  - tool: Claude Code
+    name: "Claude Code Plugin Configuration"
+    glob: "C:/Users/*/.claude/plugins/*.json"
+  - tool: Claude Code
+    name: "Claude Code Shell Snapshots"
+    glob: "C:/Users/*/.claude/shell-snapshots/**/*"
+  - tool: Claude Code
+    name: "Claude Code File History"
+    glob: "C:/Users/*/.claude/file-history/**/*"
+  - tool: Claude Code
+    name: "Claude Code Todos"
+    glob: "C:/Users/*/.claude/todos/**/*"
+  - tool: Claude Code
+    name: "Claude Code Tasks"
+    glob: "C:/Users/*/.claude/tasks/**/*"
+  - tool: Claude Code
+    name: "Claude Code Plans"
+    glob: "C:/Users/*/.claude/plans/**/*"
+  - tool: Claude Code
+    name: "Claude Code Sessions"
+    glob: "C:/Users/*/.claude/sessions/*.json"
+  - tool: Claude Code
+    name: "Claude Code IDE Locks"
+    glob: "C:/Users/*/.claude/ide/*.lock"
+  - tool: Claude Code
+    name: "Claude Code Debug Logs"
+    glob: "C:/Users/*/.claude/debug/**/*"
+  - tool: Claude Code
+    name: "Claude Code Paste Cache"
+    glob: "C:/Users/*/.claude/paste-cache/**/*"
+  - tool: Claude Code
+    name: "Claude Code Session Environment"
+    glob: "C:/Users/*/.claude/session-env/**/*"
+  - tool: Claude Code
+    name: "Claude Code Settings Backups"
+    glob: "C:/Users/*/.claude/backups/**/*"
+  - tool: Claude Code
+    name: "Claude Code Telemetry Cache"
+    glob: "C:/Users/*/.claude/statsig/**/*"
+  - tool: Claude Code
+    name: "Claude Code VS Code Extension Storage"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/anthropic.claude-code/**/*"
+  - tool: Claude Code
+    name: "Claude Code Cursor Extension Storage"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/User/globalStorage/anthropic.claude-code/**/*"
+  - tool: Claude Code
+    name: "Claude Desktop Embedded Claude Code Sessions"
+    glob: "C:/Users/*/AppData/Roaming/Claude/claude-code-sessions/**/*"
+  - tool: Claude Code
+    name: "Claude Desktop Cowork Agent Sessions"
+    glob: "C:/Users/*/AppData/Roaming/Claude/local-agent-mode-sessions/**/*"
+  - tool: Claude Code
+    name: "Claude Desktop MCP Configuration"
+    glob: "C:/Users/*/AppData/Roaming/Claude/claude_desktop_config.json"
+  - tool: Claude Code
+    name: "Claude Desktop Embedded Claude Code Sessions (MSIX)"
+    glob: "C:/Users/*/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code-sessions/**/*"
+  - tool: Claude Code
+    name: "Claude Desktop Cowork Agent Sessions (MSIX)"
+    glob: "C:/Users/*/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/local-agent-mode-sessions/**/*"
+  - tool: Claude Code
+    name: "Claude Desktop MCP Configuration (MSIX)"
+    glob: "C:/Users/*/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude_desktop_config.json"
+  - tool: OpenAI Codex
+    name: "Codex Session Rollouts"
+    glob: "C:/Users/*/.codex/sessions/**/*"
+  - tool: OpenAI Codex
+    name: "Codex Archived Session Rollouts"
+    glob: "C:/Users/*/.codex/archived_sessions/**/*"
+  - tool: OpenAI Codex
+    name: "Codex History and Session Index"
+    glob: "C:/Users/*/.codex/*.jsonl"
+  - tool: OpenAI Codex
+    name: "Codex State Databases"
+    glob: "C:/Users/*/.codex/*.sqlite*"
+  - tool: OpenAI Codex
+    name: "Codex Legacy Databases"
+    glob: "C:/Users/*/.codex/sqlite/*.db*"
+  - tool: OpenAI Codex
+    name: "Codex Configuration"
+    glob: "C:/Users/*/.codex/config.toml"
+  - tool: OpenAI Codex
+    name: "Codex Global Instructions"
+    glob: "C:/Users/*/.codex/AGENTS.md"
+  - tool: OpenAI Codex
+    name: "Codex Hooks"
+    glob: "C:/Users/*/.codex/hooks.json"
+  - tool: OpenAI Codex
+    name: "Codex Installation Metadata"
+    glob: "C:/Users/*/.codex/installation_id"
+  - tool: OpenAI Codex
+    name: "Codex Version"
+    glob: "C:/Users/*/.codex/version.json"
+  - tool: OpenAI Codex
+    name: "Codex External Agent Imports"
+    glob: "C:/Users/*/.codex/*import*.json"
+  - tool: OpenAI Codex
+    name: "Codex Rules"
+    glob: "C:/Users/*/.codex/rules/**/*"
+  - tool: OpenAI Codex
+    name: "Codex Skills"
+    glob: "C:/Users/*/.codex/skills/**/*"
+  - tool: OpenAI Codex
+    name: "Codex Agents"
+    glob: "C:/Users/*/.codex/agents/**/*"
+  - tool: OpenAI Codex
+    name: "Codex Memories"
+    glob: "C:/Users/*/.codex/memories/**/*"
+  - tool: OpenAI Codex
+    name: "Codex Shell Snapshots"
+    glob: "C:/Users/*/.codex/shell_snapshots/**/*"
+  - tool: OpenAI Codex
+    name: "Codex Logs"
+    glob: "C:/Users/*/.codex/log/**/*"
+  - tool: OpenAI Codex
+    name: "Codex Thread Writer Locks"
+    glob: "C:/Users/*/.codex/thread-writer-locks/**/*"
+  - tool: OpenAI Codex
+    name: "Codex VS Code Extension Storage"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/openai.chatgpt/**/*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Session State"
+    glob: "C:/Users/*/.copilot/session-state/**/*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Session Store"
+    glob: "C:/Users/*/.copilot/session-store.db*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Command History"
+    glob: "C:/Users/*/.copilot/command-history-state*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Command History Directory"
+    glob: "C:/Users/*/.copilot/command-history-state/**/*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Configuration"
+    glob: "C:/Users/*/.copilot/*.json"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Instructions"
+    glob: "C:/Users/*/.copilot/copilot-instructions.md"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Agents"
+    glob: "C:/Users/*/.copilot/agents/**/*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Skills"
+    glob: "C:/Users/*/.copilot/skills/**/*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Hooks"
+    glob: "C:/Users/*/.copilot/hooks/**/*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Custom Instructions Directory"
+    glob: "C:/Users/*/.copilot/instructions/**/*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Plugin Data"
+    glob: "C:/Users/*/.copilot/plugin-data/**/*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI Logs"
+    glob: "C:/Users/*/.copilot/logs/**/*"
+  - tool: GitHub Copilot
+    name: "Copilot CLI IDE Locks"
+    glob: "C:/Users/*/.copilot/ide/*.lock"
+  - tool: GitHub Copilot
+    name: "Copilot Chat Extension Storage"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/github.copilot-chat/**/*"
+  - tool: GitHub Copilot
+    name: "VS Code Workspace Chat Sessions"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/workspaceStorage/*/chatSessions/**/*"
+  - tool: GitHub Copilot
+    name: "VS Code Workspace Chat Editing Sessions"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/workspaceStorage/*/chatEditingSessions/**/*"
+  - tool: GitHub Copilot
+    name: "VS Code Empty Window Chat Sessions"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/emptyWindowChatSessions/**/*"
+  - tool: GitHub Copilot
+    name: "VS Code Transferred Chat Sessions"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/transferredChatSessions/**/*"
+  - tool: Gemini CLI
+    name: "Gemini CLI Project Temp and Chat History"
+    glob: "C:/Users/*/.gemini/tmp/**/*"
+  - tool: Gemini CLI
+    name: "Gemini CLI Project Registry"
+    glob: "C:/Users/*/.gemini/projects.json"
+  - tool: Gemini CLI
+    name: "Gemini CLI Settings"
+    glob: "C:/Users/*/.gemini/settings.json"
+  - tool: Gemini CLI
+    name: "Gemini CLI Trusted Folders"
+    glob: "C:/Users/*/.gemini/trustedFolders.json"
+  - tool: Gemini CLI
+    name: "Gemini CLI Installation ID"
+    glob: "C:/Users/*/.gemini/installation_id"
+  - tool: Gemini CLI
+    name: "Gemini CLI Google Accounts"
+    glob: "C:/Users/*/.gemini/google_accounts.json"
+  - tool: Gemini CLI
+    name: "Gemini CLI MCP Server Enablement"
+    glob: "C:/Users/*/.gemini/mcp-server-enablement.json"
+  - tool: Gemini CLI
+    name: "Gemini CLI Global Context"
+    glob: "C:/Users/*/.gemini/GEMINI.md"
+  - tool: Gemini CLI
+    name: "Gemini CLI Keybindings"
+    glob: "C:/Users/*/.gemini/keybindings.json"
+  - tool: Gemini CLI
+    name: "Gemini CLI Commands"
+    glob: "C:/Users/*/.gemini/commands/**/*"
+  - tool: Gemini CLI
+    name: "Gemini CLI Policies"
+    glob: "C:/Users/*/.gemini/policies/**/*"
+  - tool: Gemini CLI
+    name: "Gemini CLI Skills"
+    glob: "C:/Users/*/.gemini/skills/**/*"
+  - tool: Gemini CLI
+    name: "Gemini CLI Agents"
+    glob: "C:/Users/*/.gemini/agents/**/*"
+  - tool: Gemini CLI
+    name: "Gemini CLI Acknowledgments"
+    glob: "C:/Users/*/.gemini/acknowledgments/**/*"
+  - tool: Gemini CLI
+    name: "Gemini CLI Extension Manifests"
+    glob: "C:/Users/*/.gemini/extensions/**/*.json"
+  - tool: Gemini CLI
+    name: "Gemini CLI Checkpoint Shadow Repositories"
+    glob: "C:/Users/*/.gemini/history/**/*"
+  - tool: Gemini CLI
+    name: "Gemini CLI System Settings"
+    glob: "C:/ProgramData/gemini-cli/**/*"
+  - tool: OpenCode
+    name: "OpenCode Session Database"
+    glob: "C:/Users/*/.local/share/opencode/opencode*.db*"
+  - tool: OpenCode
+    name: "OpenCode Logs"
+    glob: "C:/Users/*/.local/share/opencode/log/**/*"
+  - tool: OpenCode
+    name: "OpenCode File Snapshots"
+    glob: "C:/Users/*/.local/share/opencode/snapshot/**/*"
+  - tool: OpenCode
+    name: "OpenCode Legacy JSON Storage"
+    glob: "C:/Users/*/.local/share/opencode/storage/**/*"
+  - tool: OpenCode
+    name: "OpenCode Oldest JSON Storage"
+    glob: "C:/Users/*/.local/share/opencode/project/**/*"
+  - tool: OpenCode
+    name: "OpenCode State"
+    glob: "C:/Users/*/.local/state/opencode/**/*"
+  - tool: OpenCode
+    name: "OpenCode User Configuration"
+    glob: "C:/Users/*/.config/opencode/*.json*"
+  - tool: OpenCode
+    name: "OpenCode User Agents"
+    glob: "C:/Users/*/.config/opencode/agents/**/*"
+  - tool: OpenCode
+    name: "OpenCode User Commands"
+    glob: "C:/Users/*/.config/opencode/commands/**/*"
+  - tool: OpenCode
+    name: "OpenCode User Plugins"
+    glob: "C:/Users/*/.config/opencode/plugins/**/*"
+  - tool: OpenCode
+    name: "OpenCode User Skills"
+    glob: "C:/Users/*/.config/opencode/skills/**/*"
+  - tool: OpenCode
+    name: "OpenCode User Tools"
+    glob: "C:/Users/*/.config/opencode/tools/**/*"
+  - tool: OpenCode
+    name: "OpenCode Home Config Directory"
+    glob: "C:/Users/*/.opencode/**/*"
+  - tool: Cursor
+    name: "Cursor Global State Database"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/User/globalStorage/state.vscdb*"
+  - tool: Cursor
+    name: "Cursor Global Storage JSON"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/User/globalStorage/storage.json"
+  - tool: Cursor
+    name: "Cursor Workspace State Databases"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/User/workspaceStorage/*/state.vscdb*"
+  - tool: Cursor
+    name: "Cursor Workspace Mapping"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/User/workspaceStorage/*/workspace.json"
+  - tool: Cursor
+    name: "Cursor Local File History"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/User/History/**/*"
+  - tool: Cursor
+    name: "Cursor Unsaved Backups"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/Backups/**/*"
+  - tool: Cursor
+    name: "Cursor User Settings"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/User/settings.json"
+  - tool: Cursor
+    name: "Cursor Logs"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/logs/**/*"
+  - tool: Cursor
+    name: "Cursor Machine ID"
+    glob: "C:/Users/*/AppData/Roaming/Cursor/machineid"
+  - tool: Cursor
+    name: "Cursor Agent Transcripts"
+    glob: "C:/Users/*/.cursor/projects/*/agent-transcripts/**/*"
+  - tool: Cursor
+    name: "Cursor Project Terminals"
+    glob: "C:/Users/*/.cursor/projects/*/terminals/**/*"
+  - tool: Cursor
+    name: "Cursor Project MCP Data"
+    glob: "C:/Users/*/.cursor/projects/*/mcps/**/*"
+  - tool: Cursor
+    name: "Cursor AI Code Tracking"
+    glob: "C:/Users/*/.cursor/ai-tracking/ai-code-tracking.db*"
+  - tool: Cursor
+    name: "Cursor MCP Configuration"
+    glob: "C:/Users/*/.cursor/mcp.json"
+  - tool: Cursor
+    name: "Cursor Hooks"
+    glob: "C:/Users/*/.cursor/hooks.json"
+  - tool: Cursor
+    name: "Cursor Hook Scripts"
+    glob: "C:/Users/*/.cursor/hooks/**/*"
+  - tool: Cursor
+    name: "Cursor Startup Arguments"
+    glob: "C:/Users/*/.cursor/argv.json"
+  - tool: Cursor
+    name: "Cursor Agents"
+    glob: "C:/Users/*/.cursor/agents/**/*"
+  - tool: Cursor
+    name: "Cursor Installed Extensions List"
+    glob: "C:/Users/*/.cursor/extensions/extensions.json"
+  - tool: Cursor
+    name: "Cursor Enterprise Hooks"
+    glob: "C:/ProgramData/Cursor/hooks.json"
+  - tool: Cline
+    name: "Cline Tasks"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/tasks/**/*"
+  - tool: Cline
+    name: "Cline Settings"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/settings/**/*"
+  - tool: Cline
+    name: "Cline State"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/state/**/*"
+  - tool: Cline
+    name: "Cline Checkpoints"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/checkpoints/**/*"
+  - tool: Cline
+    name: "Cline Cache"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/cache/**/*"
+  - tool: Cline
+    name: "Cline Global State"
+    glob: "C:/Users/*/.cline/data/globalState.json"
+  - tool: Cline
+    name: "Cline Workspace State"
+    glob: "C:/Users/*/.cline/data/workspaces/**/*"
+  - tool: Cline
+    name: "Cline SDK Sessions"
+    glob: "C:/Users/*/.cline/data/sessions/**/*"
+  - tool: Cline
+    name: "Cline Logs"
+    glob: "C:/Users/*/.cline/data/logs/**/*"
+  - tool: Cline
+    name: "Cline User MCP Servers"
+    glob: "C:/Users/*/Documents/Cline/MCP/**/*"
+  - tool: Cline
+    name: "Cline User Rules"
+    glob: "C:/Users/*/Documents/Cline/Rules/**/*"
+  - tool: Cline
+    name: "Cline User Workflows"
+    glob: "C:/Users/*/Documents/Cline/Workflows/**/*"
+  - tool: Cline
+    name: "Cline User Hooks"
+    glob: "C:/Users/*/Documents/Cline/Hooks/**/*"
+  - tool: Roo Code
+    name: "Roo Code Tasks"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/rooveterinaryinc.roo-cline/tasks/**/*"
+  - tool: Roo Code
+    name: "Roo Code Settings"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/**/*"
+  - tool: Roo Code
+    name: "Roo Code Checkpoints"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/rooveterinaryinc.roo-cline/checkpoints/**/*"
+  - tool: Roo Code
+    name: "Roo Code Cache"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/rooveterinaryinc.roo-cline/cache/**/*"
+  - tool: Visual Studio Code
+    name: "VSCode Opened Files"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/History/*/**/*"
+  - tool: Visual Studio Code
+    name: "VSCode Workspaces"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/storage.json*"
+  - tool: Visual Studio Code
+    name: "VSCode User extensions"
+    glob: "C:/Users/*/AppData/Roaming/Code/CachedExtensions/user*"
+  - tool: Visual Studio Code
+    name: "VSCode User settings"
+    glob: "C:/Users/*/AppData/Roaming/Code/User/settings.json*"
+  - tool: Visual Studio Code
+    name: "VSCode User Preferences"
+    glob: "C:/Users/*/AppData/Roaming/Code/preferences*"
+  - tool: Visual Studio Code
+    name: "VSCode Network Cookies"
+    glob: "C:/Users/*/AppData/Roaming/Code/Network/Cookies*"
+  - tool: Visual Studio Code
+    name: "VSCode Network Persistent State"
+    glob: "C:/Users/*/AppData/Roaming/Code/Network/Network Persistent State*"
+  - tool: Visual Studio Code
+    name: "VSCode Logs"
+    glob: "C:/Users/*/AppData/Roaming/Code/logs/**/*"
+  - tool: Visual Studio Code
+    name: "VSCode File Backups"
+    glob: "C:/Users/*/AppData/Roaming/Code/Backups/*/**/*"

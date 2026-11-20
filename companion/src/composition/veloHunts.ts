@@ -380,7 +380,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // (set DFIR_VELOCIRAPTOR_UPLOAD_VQL).
       let uploads: HuntUpload[] = [];
       try {
-        uploads = await client.huntUploads(job.huntId);
+        if (job.uploadPolicy !== "external") uploads = await client.huntUploads(job.huntId); // manifest-only run: never read (#2690)
       } catch (e) {
         logLine(
           `[velociraptor] hunt uploads read failed (override DFIR_VELOCIRAPTOR_UPLOAD_VQL?): ${(e as Error).message}`,

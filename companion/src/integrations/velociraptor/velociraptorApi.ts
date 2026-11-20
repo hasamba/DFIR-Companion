@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { ARTIFACT_RE, artifactRefs, isArtifactRef, readHuntArtifactRows } from "./artifactRefs.js";
 import type { HuntResultsByArtifact } from "./artifactRefs.js";
 import { catalogSources, parseArtifactParams, type VeloArtifactInfo } from "./artifactCatalog.js";
+import * as up from "./uploadVql.js"; // upload readers + the AI Agent Forensics manifest-only guard (#2690)
 // Re-exported so the artifact-definition metadata keeps its long-standing import path.
 export {
   parseArtifactParams,
@@ -322,33 +323,7 @@ export interface SkippedArtifact {
   error: string;
 }
 
-// Extensions treated as a readable text report upload (e.g. THOR's --jsonfile, a CSV/log export).
-// Anything else (a raw .zip, a binary) is invisible to the upload-reading VQLs below — reading those
-// needs server-side unzip, which is out of scope for now. Shared by DEFAULT_UPLOAD_VQL (hunt-scoped)
-// and DEFAULT_FLOW_UPLOAD_VQL (flow-scoped) so the two never drift apart.
-const UPLOAD_EXT_PATTERN = "(?i)\\.(json|jsonl|ndjson|csv|txt|log)$";
-
-// Default VQL to enumerate a hunt's uploaded text-report files and read their content server-side.
-// Walks the hunt's flows → each flow's uploads → reads matching-extension ones from the filestore
-// (`fs` accessor + the upload's filestore components). __HUNT_ID__ is replaced with the validated hunt
-// id. Override per Velociraptor version with DFIR_VELOCIRAPTOR_UPLOAD_VQL (keep the __HUNT_ID__
-// placeholder + a Name/ClientId/Content column shape).
-const DEFAULT_UPLOAD_VQL =
-  "LET flows = SELECT Flow.client_id AS ClientId, Flow.session_id AS FlowId FROM hunt_flows(hunt_id='__HUNT_ID__')\n" +
-  "LET ups = SELECT * FROM foreach(row=flows, query={ SELECT ClientId, vfs_path AS Path, file_size AS Size, _Components AS Components FROM uploads(client_id=ClientId, flow_id=FlowId) })\n" +
-  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '" +
-  UPLOAD_EXT_PATTERN +
-  "' AND Size < __MAX_BYTES__ AND Content";
-
-// Default VQL to read ONE external flow's uploaded text-report files (content included) — the
-// flow-scoped analogue of DEFAULT_UPLOAD_VQL, needed because hunt_flows(hunt_id=) has no flow-scoped
-// equivalent. __CLIENT_ID__/__FLOW_ID__ are replaced with the validated ids. Override per Velociraptor
-// version with DFIR_VELOCIRAPTOR_FLOW_UPLOAD_VQL (keep both placeholders + the same column shape).
-const DEFAULT_FLOW_UPLOAD_VQL =
-  "LET ups = SELECT '__CLIENT_ID__' AS ClientId, vfs_path AS Path, file_size AS Size, _Components AS Components FROM uploads(client_id='__CLIENT_ID__', flow_id='__FLOW_ID__')\n" +
-  "SELECT ClientId, Path, basename(path=Path) AS Name, read_file(accessor='fs', filename=Components) AS Content FROM ups WHERE Path =~ '" +
-  UPLOAD_EXT_PATTERN +
-  "' AND Size < __MAX_BYTES__ AND Content";
+// The upload-reading VQLs (and the AI Agent Forensics manifest-only one) live in uploadVql.ts.
 
 // Default VQL to read a CLIENT_EVENT (monitoring) artifact's rows for one client over a time window
 // (#84). Velociraptor's `source()` plugin reads a client's monitoring result set when given an event
@@ -575,6 +550,11 @@ export class VelociraptorClient {
   ): Promise<{ rows: unknown[]; reason: string }> {
     const res = await this.runner([program], { timeoutMs, maxOutputBytes });
     return { rows: res.rows, reason: vqlLogErrors(res.stderr ?? "") };
+  }
+
+  // A verbatim orchestration program with its log reason — AI Agent Forensics launch + manifest (#2690).
+  async runProgram(program: string, maxOutputBytes?: number): Promise<{ rows: unknown[]; reason: string }> {
+    return this.runRawLogged(program, maxOutputBytes ?? this.collectCap());
   }
 
   // The larger stdout cap to use for bundle-hunt collection (rows + uploaded JSON), falling back to the
@@ -1153,9 +1133,10 @@ export class VelociraptorClient {
   // substitution, so interpolating it into the program is injection-safe.
   async huntUploads(huntId: string): Promise<HuntUpload[]> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
+    await this.refuseExternalRetention({ huntId });
     const cap = this.collectCap();
     const template =
-      this.config.uploadVql && this.config.uploadVql.trim() ? this.config.uploadVql : DEFAULT_UPLOAD_VQL;
+      this.config.uploadVql && this.config.uploadVql.trim() ? this.config.uploadVql : up.DEFAULT_UPLOAD_VQL;
     // __MAX_BYTES__ lets the VQL skip a single upload bigger than the cap at the source (so one huge
     // file doesn't blow the read); __HUNT_ID__ is the validated hunt id.
     const program = template.split("__HUNT_ID__").join(huntId).split("__MAX_BYTES__").join(String(cap));
@@ -1174,6 +1155,14 @@ export class VelociraptorClient {
     return out;
   }
 
+  // An AI Agent Forensics run's uploads are never read, whatever the caller or override VQL (#2690). Fail closed.
+  private async refuseExternalRetention(target: Parameters<typeof up.externalRetentionProbe>[0]) {
+    const probe = await this.runRawLogged(up.externalRetentionProbe(target)).catch((e: Error) => e);
+    if (probe instanceof Error) throw new up.ExternalRetentionError(probe.message);
+    const v = up.classifyRetentionProbe(probe.rows, probe.reason);
+    if (v.verdict !== "clear") throw new up.ExternalRetentionError(v.verdict === "unknown" ? v.why : "");
+  }
+
   // Read ONE external flow's uploaded text-report files (content included) — the flow-scoped
   // analogue of huntUploads(), for a flow that isn't part of a hunt (no hunt_flows() to walk). Same
   // best-effort contract: the caller tolerates a throw and treats it as "no uploads found this way".
@@ -1182,11 +1171,12 @@ export class VelociraptorClient {
   async flowUploads(clientId: string, flowId: string): Promise<HuntUpload[]> {
     if (!CLIENT_RE.test(clientId)) throw new Error("invalid client id");
     if (!FLOW_RE.test(flowId)) throw new Error("invalid flow id");
+    await this.refuseExternalRetention({ clientId, flowId });
     const cap = this.collectCap();
     const template =
       this.config.flowUploadVql && this.config.flowUploadVql.trim()
         ? this.config.flowUploadVql
-        : DEFAULT_FLOW_UPLOAD_VQL;
+        : up.DEFAULT_FLOW_UPLOAD_VQL;
     const program = template
       .split("__CLIENT_ID__")
       .join(clientId)
