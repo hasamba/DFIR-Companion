@@ -38,6 +38,7 @@ import {
   SHARED_DELIVERY_DIRNAME,
   sweepStaleStaging,
 } from "../storage/exportStaging.js";
+import { sweepStaleAtomicTemps } from "../storage/staleTempSweep.js";
 import { keepChatRosterDurable } from "../analysis/ai/watson/rosterRead.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
@@ -119,6 +120,13 @@ export function startMaintenanceTasks({
     );
   };
   sweepStaging(EXPORT_STAGING_DIRNAME);
+  // #2770: an archive killed mid-write leaves its `<name>.zip.<uuid>.tmp` in the cases root.
+  void sweepStaleAtomicTemps(store.casesRoot).then(
+    (removed) => {
+      if (removed > 0) logLine(`[archive] removed ${removed} stale temp file(s) from the cases root`);
+    },
+    (e: unknown) => warnLine(`[archive] stale temp sweep failed: ${(e as Error).message}`),
+  );
   // #2437: a crash between an archive/restore folder move and its relabel leaves the folder and the
   // status disagreeing. Reconciled to "archived" once at startup, so Restore works on it again.
   void reconcileArchiveLabels(store, (id, e) =>
