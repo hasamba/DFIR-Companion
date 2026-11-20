@@ -44,7 +44,12 @@ import {
   parseCookieHeader,
 } from "../analysis/casePassword.js";
 import { isTeamAuthRoutePath, registerTeamAuthRoutes } from "../auth/authRoutes.js";
-import { isCloudRoutePath, resolveRequestPolicy } from "../auth/policy.js";
+import {
+  CLIENT_DATA_DEMO_REFUSAL,
+  isClientDataRoutePath,
+  isCloudRoutePath,
+  resolveRequestPolicy,
+} from "../auth/policy.js";
 import { setRequestAuthentication } from "../auth/types.js";
 import { redactPaths } from "../analysis/redactPaths.js";
 import { registerStaticAssets } from "../http/staticAssets.js";
@@ -142,6 +147,11 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
           error: "Demo mode: cloud accounts and cloud collection are disabled on the public demo.",
           demo: true,
         });
+      }
+      // Client profiles (#2670): one client's baseline, marks and audit trail — an instance
+      // administrator's data, and the demo has no login. Refused outright, GET included.
+      if (isClientDataRoutePath(req.path)) {
+        return res.status(403).json({ error: CLIENT_DATA_DEMO_REFUSAL, demo: true });
       }
       if (req.method === "GET" || req.method === "OPTIONS") return next();
       if (req.path === "/cases/seed-demo") return next();

@@ -1,0 +1,53 @@
+{
+  "id": "threat-hunt",
+  "name": "Threat hunt (proactive)",
+  "description": "A proactive sweep of a client's endpoints with no known incident — policy violations, rare and new programs, early attacker activity.",
+  "builtIn": true,
+  "mode": "hunt",
+  "recommendedImports": [
+    "velociraptor"
+  ],
+  "initialKeyQuestions": [
+    "Which hosts answered the hunt, and which did not (coverage gaps)?",
+    "Are there programs, autoruns or downloads the client does not allow?",
+    "Which programs are rare across the hosts that answered?",
+    "What is new since the last comparable hunt for this client?",
+    "Is there any sign of real attacker activity that should become an incident?"
+  ],
+  "initialNextSteps": [
+    {
+      "priority": "high",
+      "action": "Run the starter threat-hunt bundle across the client's endpoints",
+      "rationale": "Collects installed software, execution evidence, user-writable-path executions, downloads, autoruns and remote-access tools in one sweep",
+      "pointer": "Velociraptor Hunts panel → Threat hunt starter bundle"
+    },
+    {
+      "priority": "medium",
+      "action": "Export the 'please confirm' list and send it to the client",
+      "rationale": "The baseline is built from what the client confirms; seeing a program never approves it",
+      "pointer": "Client Baseline panel → Export confirm list"
+    },
+    {
+      "priority": "medium",
+      "action": "Record the hosts that did not answer as coverage gaps",
+      "rationale": "A verdict is only valid within the coverage the hunt actually achieved",
+      "pointer": "Velociraptor Hunts panel → client counts"
+    }
+  ],
+  "severityFloor": null,
+  "huntPlatforms": [
+    "Velociraptor"
+  ],
+  "recommendedImportOrder": [
+    "endpoint-triage",
+    "windows-event-logs",
+    "threat-scan"
+  ],
+  "findingsSeeds": [
+    "Program or download the client does not allow",
+    "Rare program on few hosts",
+    "New program since the last comparable hunt",
+    "Real attacker activity (convert to incident)"
+  ],
+  "synthesisHint": "This is a proactive threat hunt, not an incident. Rank anomalies by how suspicious they are, state the verdict within coverage, and do not force a kill chain or attribution."
+}

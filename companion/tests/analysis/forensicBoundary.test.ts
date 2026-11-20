@@ -560,6 +560,95 @@ describe("the Sigma re-grade reads the raw record but feeds no AI (#2206)", () =
   });
 });
 
+describe("hunt grading reads no raw record and starts no AI (#2670)", () => {
+  // Threat-hunt grading runs at the import seam on the import's OWN rows (before demote) and grades
+  // from the host counts it recorded there. One grouped summary entry per program reaches the
+  // forensic timeline; nothing automatic reads the super-timeline, so the boundary rule is unchanged.
+  const MODULES = [
+    "../../src/analysis/huntSettle.ts",
+    "../../src/analysis/huntSettleHook.ts",
+    "../../src/analysis/huntInventory.ts",
+    "../../src/analysis/huntInventoryStore.ts",
+    "../../src/analysis/huntGrade.ts",
+    "../../src/analysis/huntEntries.ts",
+    "../../src/analysis/huntRarity.ts",
+    "../../src/analysis/huntArtifactFields.ts",
+    "../../src/analysis/huntHostKey.ts",
+    "../../src/analysis/huntGradeBaseline.ts",
+    "../../src/analysis/huntApprovalMatch.ts",
+    "../../src/analysis/huntConfirmList.ts",
+    "../../src/analysis/clientProfile.ts",
+    "../../src/analysis/clientProfileStore.ts",
+    "../../src/analysis/huntReportLoad.ts",
+    "../../src/composition/huntGrading.ts",
+    "../../src/composition/huntBaselineGrades.ts",
+  ];
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("never names the super-timeline", () => {
+    for (const rel of MODULES) expect(read(rel), rel).not.toMatch(/superTimeline|SuperTimeline/);
+  });
+
+  it("imports nothing AI-related and starts no synthesis", () => {
+    for (const rel of MODULES) {
+      const src = read(rel);
+      for (const [, spec] of src.matchAll(/from "([^"]+)"/g))
+        expect(spec, `${rel} imports ${spec}`).not.toMatch(/\/ai\/|providers?\/|prompt|synth|jev/i);
+      expect(src, rel).not.toMatch(/resynthesizeInBackground|\.synthesize\(|promoteSuperTimeline\(/);
+    }
+  });
+
+  it("never writes promotedAt", () => {
+    for (const rel of MODULES) expect(read(rel), rel).not.toMatch(/promotedAt\s*[:=](?!=)/);
+  });
+
+  it("runs at the seam after the tagger and before demote", () => {
+    const seam = read("../../src/routes/importSettle.ts");
+    const tag = seam.indexOf("await deps.autoTagImported(caseId, added)");
+    const hunt = seam.indexOf("runHuntSettle(store, caseId, added");
+    const demote = seam.indexOf("const demoted = await demote(deps, caseId)");
+    expect(tag).toBeGreaterThan(0);
+    expect(hunt).toBeGreaterThan(tag);
+    expect(demote).toBeGreaterThan(hunt);
+  });
+});
+
+describe("the hunt re-grade reads the raw record but feeds no AI (#2670)", () => {
+  // "Re-grade with current baseline" is ANALYST-PRESSED and audit-logged, like the Sigma re-grade
+  // (#2206): it re-reads the case's rows from both records, demoted rows included, and rewrites the
+  // grouped hunt entries as normal graded rows — never through promoteSuperTimeline, never via a model.
+  const MODULES = ["../../src/analysis/huntRegrade.ts", "../../src/routes/huntRegrade.ts"];
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("imports nothing AI-related and starts no synthesis", () => {
+    for (const rel of MODULES) {
+      const src = read(rel);
+      for (const [, spec] of src.matchAll(/from "([^"]+)"/g))
+        expect(spec, `${rel} imports ${spec}`).not.toMatch(/\/ai\/|providers?\/|prompt|synth|jev/i);
+      expect(src, rel).not.toMatch(/resynthesizeInBackground|\.synthesize\(|promoteSuperTimeline\(/);
+    }
+  });
+
+  it("never writes promotedAt", () => {
+    for (const rel of MODULES) expect(read(rel), rel).not.toMatch(/promotedAt\s*[:=](?!=)/);
+  });
+
+  it("is reached only from its analyst-pressed route, never from the import seam", () => {
+    expect(read("../../src/routes/huntRegrade.ts")).toMatch(/app\.post\("\/cases\/:id\/hunt\/regrade"/);
+    for (const rel of [
+      "../../src/routes/importSettle.ts",
+      "../../src/analysis/huntSettle.ts",
+      "../../src/composition/huntGrading.ts",
+    ])
+      expect(read(rel), rel).not.toMatch(/regradeHuntCase|huntRegrade/);
+  });
+
+  it("discloses how many observations the raw record has evicted", () => {
+    expect(read("../../src/analysis/huntRegrade.ts")).toMatch(/evicted/);
+    expect(read("../../src/routes/huntRegrade.ts")).toMatch(/no longer in the raw record/);
+  });
+});
+
 describe("the Sigma dry-run reads both timelines but feeds no AI and writes nothing (#2211)", () => {
   // An analyst-pressed read of the super-timeline, like the Hunt Workbench: allowed because no model
   // sees what it reads. Its matched ids go back to the analyst only.

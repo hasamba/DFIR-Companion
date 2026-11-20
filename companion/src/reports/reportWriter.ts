@@ -14,6 +14,7 @@ import {
 } from "../analysis/falsePositive.js";
 import { renderReportContents } from "./reportContents.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
+import type { HuntReportData } from "../analysis/huntReport.js";
 import { assembleCustodyManifest } from "../analysis/custodyManifest.js";
 import { renderDocxReportChecked } from "./docx.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
@@ -133,6 +134,7 @@ export interface ReportWriterOptions {
   // to render what it is handed, and holding a super-timeline store here only to assemble one
   // object put ingest plumbing inside the reporting layer.
   hostScope?: (caseId: string) => Promise<HostScopeLedger | null>;
+  huntReport?: (caseId: string) => Promise<HuntReportData | null>; // #2670, assembled by composition
   falsePositives?: FalsePositiveStore;
   reportMeta?: ReportMetaStore;
   customerExposure?: CustomerExposureStore;
@@ -162,6 +164,7 @@ export interface ReportWriterOptions {
 export class ReportWriter {
   private readonly scope?: ScopeStore;
   private readonly hostScope?: (caseId: string) => Promise<HostScopeLedger | null>;
+  private readonly huntReport?: (caseId: string) => Promise<HuntReportData | null>;
   private readonly falsePositives?: FalsePositiveStore;
   private readonly reportMeta?: ReportMetaStore;
   private readonly customerExposure?: CustomerExposureStore;
@@ -191,6 +194,7 @@ export class ReportWriter {
   ) {
     this.scope = opts.scope;
     this.hostScope = opts.hostScope;
+    this.huntReport = opts.huntReport;
     this.custodyStore = opts.custodyStore;
     this.instanceSecret = opts.instanceSecret;
     this.falsePositives = opts.falsePositives;
@@ -237,8 +241,7 @@ export class ReportWriter {
     }
   }
 
-  // Model-performance footnote (#74) — OPT-IN via DFIR_REPORT_MODEL_PERF, same posture as the
-  // synthesis-coverage footnote (internal methodology detail, not every report should carry it).
+  // Model-performance footnote (#74): OPT-IN via DFIR_REPORT_MODEL_PERF, like the coverage footnote.
   private async loadModelPerf(caseId: string): Promise<ModelPerfSnapshot | null> {
     const flag = (process.env.DFIR_REPORT_MODEL_PERF ?? "").trim().toLowerCase();
     if (!this.synthMeta || flag === "" || flag === "0" || flag === "false" || flag === "off") return null;
@@ -249,9 +252,8 @@ export class ReportWriter {
     }
   }
 
-  // Resolve the report template selected for the case (issue #60). Falls back to the default
-  // "standard" template when no selection is stored, the stores aren't wired, or the selected
-  // template was since deleted — so report generation never breaks on a dangling id.
+  // The case's report template (#60); the default "standard" one when none is stored, the stores are
+  // not wired, or the selected template was deleted — so a dangling id never breaks generation.
   private async loadTemplate(caseId: string): Promise<ReportTemplate> {
     if (!this.reportTemplates || !this.reportTemplateControl) return defaultReportTemplate();
     const { templateId } = await this.reportTemplateControl.load(caseId);
@@ -298,6 +300,7 @@ export class ReportWriter {
       await this.loadExposure(caseId),
       await this.loadTemplate(caseId),
       (await this.hostScope?.(caseId)) ?? null,
+      (await this.huntReport?.(caseId)) ?? undefined,
     );
   }
 
@@ -616,6 +619,7 @@ export class ReportWriter {
       custody,
       (await this.hostScope?.(caseId)) ?? null,
       sourceRuns,
+      (await this.huntReport?.(caseId)) ?? undefined,
     );
     // Staged, not published: nothing in reports/ changes until every artifact AND the provenance record
     // below succeed. A straight overwrite left a mixed generation on any failure (reportGeneration.ts).
@@ -777,11 +781,9 @@ export class ReportWriter {
     );
     // The control carries no case data (a date and a framework list), so it needs no redaction.
     const complianceControl = this.complianceControl ? await this.complianceControl.load(caseId) : {};
-    // Custody records live in custody.jsonl, NOT in investigation.json, so they never passed
-    // through the applyAnonDeep(state) above. Redacting them here is what stops the appendix
-    // shipping real hostnames, analyst names and filesystem paths to an external party (#231).
-    // Field by field rather than wholesale, so the artifact hashes survive and the recipient can
-    // actually check the chain against the evidence they hold (#362).
+    // Custody records (custody.jsonl) never passed through applyAnonDeep(state): redacting them here
+    // keeps real hostnames, analyst names and paths out of an external party's appendix (#231). Field
+    // by field, so the artifact hashes survive and the recipient can check the chain (#362).
     const custody = this.custodyStore
       ? redactCustodyRecords(await this.custodyStore.load(caseId), redact)
       : undefined;

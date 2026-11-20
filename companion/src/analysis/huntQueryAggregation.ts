@@ -6,6 +6,8 @@ type HuntRow = Record<string, string | number | boolean | null>;
 
 interface AggregateValue {
   count: number;
+  /** Distinct hosts (short name, upper-cased) — kept only for a `prevalence` stage (#2670). */
+  hosts?: Set<string>;
   statistics: Map<
     string,
     {
@@ -78,8 +80,15 @@ function sortRows(rows: HuntRow[], pipeline: readonly HuntPipelineStage[]): void
   });
 }
 
+/** The host a row is about, as the short upper-cased name hosts are compared on; "" when none. */
+function hostOf(event: ForensicEvent): string {
+  return (event.asset ?? "").trim().split(".")[0].toUpperCase();
+}
+
 export class HuntAggregation {
   private readonly groups = new Map<string, AggregateValue>();
+  private readonly allHosts = new Set<string>();
+  private readonly prevalence;
   private readonly rare;
   private readonly stats;
   private readonly groupField: string | undefined;
@@ -89,16 +98,19 @@ export class HuntAggregation {
     private readonly maxGroups: number,
   ) {
     this.rare = pipeline.find((stage) => stage.kind === "rare");
+    this.prevalence = pipeline.find((stage) => stage.kind === "prevalence");
     const group = pipeline.find((stage) => stage.kind === "group");
     this.stats = pipeline.find((stage) => stage.kind === "stats");
     this.groupField =
-      this.rare?.kind === "rare"
-        ? this.rare.field
-        : this.stats?.kind === "stats"
-          ? this.stats.by
-          : group?.kind === "group"
-            ? group.field
-            : undefined;
+      this.prevalence?.kind === "prevalence"
+        ? this.prevalence.field
+        : this.rare?.kind === "rare"
+          ? this.rare.field
+          : this.stats?.kind === "stats"
+            ? this.stats.by
+            : group?.kind === "group"
+              ? group.field
+              : undefined;
   }
 
   add(event: ForensicEvent): void {
@@ -112,6 +124,13 @@ export class HuntAggregation {
       this.groups.set(key, aggregate);
     }
     aggregate.count++;
+    if (this.prevalence) {
+      const host = hostOf(event);
+      if (host) {
+        (aggregate.hosts ??= new Set()).add(host);
+        this.allHosts.add(host);
+      }
+    }
     if (this.stats?.kind === "stats") {
       for (const statistic of this.stats.statistics) {
         addStatistic(aggregate, statistic, event);
@@ -119,7 +138,24 @@ export class HuntAggregation {
     }
   }
 
+  /** `prevalence`: value, distinct hosts, of how many hosts in the matched rows, events. Rarest first. */
+  private finishPrevalence(field: string, limit: number): { columns: string[]; rows: HuntRow[] } {
+    const of = this.allHosts.size;
+    const rows: HuntRow[] = [...this.groups.entries()].map(([key, a]) => ({
+      [field]: key,
+      hosts: a.hosts?.size ?? 0,
+      of_hosts: of,
+      events: a.count,
+    }));
+    rows.sort(
+      (l, r) => Number(l.hosts) - Number(r.hosts) || String(l[field]).localeCompare(String(r[field])),
+    );
+    return { columns: [field, "hosts", "of_hosts", "events"], rows: rows.slice(0, limit) };
+  }
+
   finish(): { columns: string[]; rows: HuntRow[] } {
+    if (this.prevalence?.kind === "prevalence")
+      return this.finishPrevalence(this.prevalence.field, this.prevalence.limit);
     const statList =
       this.stats?.kind === "stats" ? this.stats.statistics : [{ fn: "count" as const, alias: "count" }];
     const columns = [...(this.groupField ? [this.groupField] : []), ...statList.map((item) => item.alias)];

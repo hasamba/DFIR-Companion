@@ -40,7 +40,16 @@ export type IncidentTypeId =
   | "insider-threat"
   | "cloud-compromise"
   | "web-app-intrusion"
-  | "malware-outbreak";
+  | "malware-outbreak"
+  | "threat-hunt";
+
+/**
+ * How the AI frames a case (#2670). "incident" is every type before hunt mode existed; "hunt" is a
+ * proactive sweep with no known incident: synthesis and Watson get the hunt framing block instead of
+ * the attack-phase digest, and the report defaults to the Threat hunt summary. Absent → "incident",
+ * so custom type files written before #2670 keep loading unchanged.
+ */
+export type IncidentMode = "incident" | "hunt";
 
 // Presentation order for the built-in library — the loader reads a directory, whose entries arrive
 // alphabetically, but the pickers should lead with the incident types analysts meet most often.
@@ -53,6 +62,7 @@ export const BUILT_IN_INCIDENT_TYPE_IDS: readonly IncidentTypeId[] = [
   "cloud-compromise",
   "web-app-intrusion",
   "malware-outbreak",
+  "threat-hunt",
 ];
 
 // An incident type IS a case template plus the type-specific guidance fields.
@@ -60,6 +70,7 @@ export interface IncidentType extends CaseTemplate {
   recommendedImportOrder: string[]; // ordered collection-plan step ids (#347)
   findingsSeeds: string[]; // expected finding categories, pre-seeded as open questions
   synthesisHint: string; // one-line context for the synthesis prompt
+  mode: IncidentMode; // #2670 — "hunt" switches the case to hunt framing
 }
 
 const severitySchema = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
@@ -91,6 +102,7 @@ export const incidentTypeSchema = z.object({
   recommendedImportOrder: z.array(z.string()).catch([]),
   findingsSeeds: z.array(z.string()).catch([]),
   synthesisHint: z.string().catch(""),
+  mode: z.enum(["incident", "hunt"]).catch("incident"),
 });
 
 // Parse one candidate definition, returning null rather than throwing — callers list a directory of
@@ -184,6 +196,11 @@ export function applyIncidentTypeToState(
 // Render the type's synthesis hint as a prompt block for the synthesis pass, so the AI prioritizes
 // the techniques that matter for this incident type. Returns "" for no type or an empty hint, so the
 // caller can concatenate it unconditionally and it costs nothing when unset.
+/** True when the type puts the case in hunt mode (#2670). */
+export function isHuntType(type: Pick<IncidentType, "mode"> | null | undefined): boolean {
+  return type?.mode === "hunt";
+}
+
 export function renderIncidentTypeBlock(type: IncidentType | null | undefined): string {
   const hint = type?.synthesisHint?.trim();
   if (!type || !hint) return "";

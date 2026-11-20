@@ -66,6 +66,17 @@ export interface HuntRareStage {
   limit: number;
 }
 
+/**
+ * `prevalence <field> [limit N]` (#2670): per value, on how many DISTINCT HOSTS it appears, out of the
+ * distinct hosts in the matched rows — "seen on 3 of 287 hosts". Rarest first. `rare` keeps its
+ * meaning (events per value); this counts hosts.
+ */
+export interface HuntPrevalenceStage {
+  kind: "prevalence";
+  field: string;
+  limit: number;
+}
+
 export interface HuntSortStage {
   kind: "sort";
   field: string;
@@ -78,7 +89,13 @@ export interface HuntLimitStage {
 }
 
 export type HuntPipelineStage =
-  HuntGroupStage | HuntCountStage | HuntStatsStage | HuntRareStage | HuntSortStage | HuntLimitStage;
+  | HuntGroupStage
+  | HuntCountStage
+  | HuntStatsStage
+  | HuntRareStage
+  | HuntPrevalenceStage
+  | HuntSortStage
+  | HuntLimitStage;
 
 export interface ParsedHuntQuery {
   text: string;

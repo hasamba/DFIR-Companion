@@ -1,3 +1,4 @@
+import type { HuntReportData } from "../analysis/huntReport.js";
 import { Marked } from "marked";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
@@ -134,6 +135,7 @@ export function renderHtmlReport(
   hypotheses?: Hypothesis[],
   custody?: CustodyRecord[],
   hostScope?: HostScopeLedger | null,
+  hunt?: HuntReportData, // #2670
 ): string {
   const markdown = renderMarkdownReport(
     state,
@@ -151,6 +153,7 @@ export function renderHtmlReport(
     undefined,
     undefined,
     custody,
+    hunt,
   );
   // The scoping statement is appended rather than threaded through renderMarkdownReport:
   // markdown.ts sits at its size cap, and every format must carry the same canonical report.

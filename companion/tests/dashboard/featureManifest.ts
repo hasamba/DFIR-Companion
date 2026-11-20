@@ -1254,7 +1254,7 @@ export const FEATURES: Feature[] = [
     file: "dashboard-new-case.js",
     initializer: "initNewCase",
     publish: ["initNewCase", "openNewCase", "closeNewCase", "createNewCase", "loadDemoCase"],
-    private: ["lastServerSet"],
+    private: ["lastServerSet", "serverSetChosen", "serverSetsReady", "huntClients"],
   },
   {
     // Settings → Server sets and the set editor. fetchServerSets is shared with the New Case picker
@@ -1290,6 +1290,20 @@ export const FEATURES: Feature[] = [
     file: "dashboard-ai-agent.js",
     publish: ["initAiAgentPanel", "loadAiAgentPanel"],
     private: ["rules"],
+  },
+  {
+    // The Threat Hunt panel (#2670): coverage, graded hunt items, Convert to incident, Re-grade.
+    // No `initializer`: the case loader in dashboard-case-connect.js runs loadHuntCase per case.
+    file: "dashboard-hunt-case.js",
+    publish: ["loadHuntCase"],
+    private: ["huntCaseRenderGen"],
+  },
+  {
+    // The Client Baseline panel (#2670): client link, confirm-list exports, marks, download policy.
+    // No `initializer`: the case loader in dashboard-case-connect.js runs loadClientBaseline per case.
+    file: "dashboard-client-baseline.js",
+    publish: ["loadClientBaseline"],
+    private: ["baselineRenderGen"],
   },
   {
     // The open case's server set: header label, Change… and its dialogs, and the one writer of the

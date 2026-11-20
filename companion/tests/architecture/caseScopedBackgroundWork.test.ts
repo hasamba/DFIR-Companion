@@ -97,8 +97,13 @@ const LIST_SWEEPS: Record<string, string> = {
   "composition/veloMonitors.ts": "startup resume arms each monitor in scope with generationOf(listed)",
   "composition/veloHuntStatusTimers.ts": "startup resume arms each hunt poll with generationOf(listed)",
   "composition/runtimeStores.ts": "audit export lists case ids only; its writes are global (cursors)",
+  "composition/huntPeerCases.ts":
+    "#2670 lists case ids only, to pick which earlier hunts may feed a hunt case; starts no per-case work",
 };
-const LIST_SWEEPS_WITHOUT_GENERATION = new Set(["composition/runtimeStores.ts"]);
+const LIST_SWEEPS_WITHOUT_GENERATION = new Set([
+  "composition/runtimeStores.ts",
+  "composition/huntPeerCases.ts",
+]);
 
 // ── 3. Mutating routes outside the /cases/:id gate ─────────────────────────────────────────────
 // "global:" touches no case folder. "creates:" makes a new incarnation (it stamps a generation).
@@ -120,6 +125,7 @@ const OUTSIDE_GATE_GLOBAL_PREFIXES = [
   "/mcp/",
   "/notifications",
   "/server-sets", // the global server set store beside the cases root, no case folder
+  "/client-profiles", // #2670 client profiles beside the cases root, no case folder
   "/cloud-accounts", // the global cloud account vault beside the cases root, no case folder (#2307)
   "/diagnostics/",
   "/system/",

@@ -139,6 +139,24 @@ export function isCloudRoutePath(rawPath: string): boolean {
   }
   return spellings.some((path) => CLOUD_ROUTE_PATTERN.test(path.toLowerCase()));
 }
+// Client profiles and the case routes that read one (#2670): a client's reviewed baseline, marks,
+// versions and audit trail, and the confirm list derived from them. The public demo has no login, so
+// its gate refuses every one of them, GET included (composition/httpStack.ts); the routes refuse again.
+const CLIENT_DATA_ROUTE_PATTERN =
+  /^(?:\/client-profiles(?:\/|$)|\/cases\/[^/]+\/hunt\/(?:client|candidates|confirm-list\.(?:csv|md))\/?$)/;
+
+export const CLIENT_DATA_DEMO_REFUSAL = "Demo mode: client profiles are disabled on the public demo.";
+
+/** True for every client-profile route and every case route that reads a client profile. */
+export function isClientDataRoutePath(rawPath: string): boolean {
+  const spellings = [rawPath];
+  try {
+    spellings.push(decodeURIComponent(rawPath));
+  } catch {
+    // An undecodable path is still checked as sent.
+  }
+  return spellings.some((path) => CLIENT_DATA_ROUTE_PATTERN.test(path.toLowerCase()));
+}
 /**
  * A BUCKET IS CHOSEN BY THE ROUTE, NEVER BY A VALUE THE ROUTE CARRIES.
  *
@@ -179,6 +197,7 @@ const CASE_EXPORT_PATTERNS = [
   /^\/attack-layer\.json$/,
   /^\/geo-map\.csv$/,
   /^\/custody\/manifest$/,
+  /^\/hunt\/confirm-list\.(?:csv|md)$/, // #2670 the client's "please confirm" list
 ];
 
 const ROLE_PERMISSIONS: Record<CaseRole, ReadonlySet<CasePermission>> = {
@@ -226,6 +245,10 @@ function casePolicy(method: string, path: string, caseId: string): RequestPolicy
   // Changing a case's server set stops its monitors and forgets its links: case administrator.
   // GET /cases/:id/server-set (read) is not affected.
   if (method === "POST" && matchSuffix === "/server-set")
+    return { kind: "case", permission: "admin", caseId };
+  // Linking a hunt case to a client profile (#2670, D3) is a separate right from writing evidence:
+  // the case administrator's. GET /cases/:id/hunt/client (read) is not affected.
+  if (method === "POST" && matchSuffix === "/hunt/client")
     return { kind: "case", permission: "admin", caseId };
   if (CASE_ADMIN_SEGMENTS.some((segment) => pathStarts(lowerSuffix, segment))) {
     return { kind: "case", permission: "admin", caseId };
@@ -290,6 +313,9 @@ export function resolveRequestPolicy(method: string, rawPath: string): RequestPo
     collectionPath(path) === "/cases/import/zip" ||
     // The set picker on New case and in the case header. Members get names only; the route decides.
     (normalizedMethod === "GET" && collectionPath(path) === "/server-sets") ||
+    // Client profiles (#2670, D3): members get names only (the route decides); every other method and
+    // every /client-profiles/:id route stays with the instance administrator (the default below).
+    (normalizedMethod === "GET" && collectionPath(path) === "/client-profiles") ||
     // AI Agent Forensics (#2690): the rule version and scopes are reference data; the sweep list is
     // cut by the route to the sweeps the caller may see (visibleCaseIds); a launch is open to every
     // analyst, like POST /cases, and the route requires WRITE on a case the body names. Its rule-pack

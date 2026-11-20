@@ -95,6 +95,10 @@ import type { TransferRunner } from "../integrations/mcp/mcpDelivery.js";
 import type { CaseFleetInventory, VelociraptorClientStore } from "../analysis/velociraptorClientStore.js";
 import type { ArtifactBundleStore } from "../analysis/artifactBundleStore.js";
 import type { VeloHuntStore } from "../analysis/veloHuntStore.js";
+import type { HuntInventoryStore } from "../analysis/huntInventoryStore.js";
+import type { ClientProfileStore } from "../analysis/clientProfileStore.js";
+import type { HuntSettleDeps } from "../analysis/huntSettle.js";
+import type { HuntClientLinkStore } from "../analysis/huntClientLink.js";
 import type { JobManager } from "../analysis/jobManager.js";
 import type { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import type { HuntRunSnapshotStore } from "../analysis/huntRunSnapshotStore.js";
@@ -538,6 +542,10 @@ export interface AppOptions {
   // dashboard can show its status + countdown; onVeloHunt broadcasts a change to the case's clients.
   artifactBundleStore?: ArtifactBundleStore;
   veloHuntStore?: VeloHuntStore;
+  huntInventoryStore?: HuntInventoryStore; // #2670 per-case hunt inventory (host counts per program)
+  huntGradingDeps?: HuntSettleDeps; // #2670 the seam's hunt grader, for the analyst-pressed re-grade
+  clientProfileStore?: ClientProfileStore; // #2670 client profiles + reviewed baselines (beside cases/)
+  huntClientLinkStore?: HuntClientLinkStore; // #2670 which client a hunt case belongs to
   onVeloHunt?: (caseId: string) => void;
   // A fleet hunt's collect filled its outcome (rows or none): Watson notes its own hunt's result (Task 5).
   onVeloHuntCollected?: (caseId: string, r: { huntId: string; rows: number; added: number }) => void;

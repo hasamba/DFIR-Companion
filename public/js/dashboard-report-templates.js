@@ -44,6 +44,7 @@
     ["cloudWeaknesses", "AWS account weaknesses (from CloudTrail records: root use, Object Lock, data-event coverage)"],
     ["handoffBrief", "Handoff brief (open items, what to check next, the outgoing analyst's note)"],
     ["remediationChecks", "Remediation checks (analyst-recorded residual risk with the receipt it names)"],
+    ["huntSummary", "Threat hunt summary (coverage, verdict within coverage, policy / new / rare items, client confirmations)"],
   ];
   const RT_LABELS = Object.fromEntries(RT_SECTIONS);
   let rtTemplates = []; // last fetched list of templates
