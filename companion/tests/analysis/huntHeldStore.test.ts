@@ -70,4 +70,28 @@ describe("hunt held store (#2746)", () => {
     await s.prune("c1", []);
     expect(await s.list("c1")).toEqual([]);
   });
+
+  it("hunt holds keep decisions across passes, drop an undecided one that now fits, and keep zip records", async () => {
+    const { s } = await store();
+    await s.put("c1", archive());
+    const held = (artifact: string) => ({
+      artifact,
+      bytes: 9,
+      hosts: [],
+      hostBytes: 9,
+      reason: "total" as const,
+      limitMb: 200,
+    });
+    await s.putHuntHolds("c1", "H.A1", ["Big", "Fits", "Other"], [held("Big"), held("Fits")]);
+    const applied = await s.decideHunts("c1", [
+      { huntId: "H.A1", artifact: "Big", decision: "import" },
+      { huntId: "H.A1", artifact: "Nope", decision: "skip" },
+    ]);
+    expect(applied).toHaveLength(1);
+    // Next pass: Big still over (keeps its decision), Fits now fits (undecided, dropped), Other not downloaded.
+    await s.putHuntHolds("c1", "H.A1", ["Big", "Fits"], [held("Big")]);
+    const [hunt] = await s.listHunts("c1");
+    expect(hunt.entries).toEqual([expect.objectContaining({ artifact: "Big", decision: "import" })]);
+    expect(await s.list("c1")).toHaveLength(1); // the zip record survived every hunt write
+  });
 });
