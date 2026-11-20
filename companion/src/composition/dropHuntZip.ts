@@ -32,6 +32,7 @@ import { failedMembersFolder } from "./dropHuntExtract.js";
 import { importHuntMember, type HuntMemberDeps } from "./dropHuntMember.js";
 import type { DropOutcome } from "./dropBatch.js";
 import type { ModelCallHooks } from "./importIngest.js";
+import type { HuntProgress } from "./dropSweepProgress.js";
 
 /** The most a hunt zip may inflate to across the members it imports (the zip-bomb bound). */
 export const HUNT_ZIP_MAX_TOTAL_BYTES = 64 * 1024 ** 3;
@@ -58,6 +59,8 @@ export interface HuntZipArgs {
   fullPath: string;
   file: DropFileStat;
   modelCall?: ModelCallHooks;
+  /** The zip's result-file count for the Jobs row (#2742); never called for a zip with none to import. */
+  onProgress?: (p: HuntProgress) => void;
 }
 
 /** Null: not a hunt export — the caller routes the zip as it always has. */
@@ -204,9 +207,14 @@ async function importMembers(
   memo: Map<string, MemberOutcome>,
 ): Promise<{ fresh: boolean; interrupted?: string }> {
   let fresh = false;
+  const total = imports.length;
+  // Handled = recorded in the ledger (or this process's memo), imported or failed; refusals are not imports.
+  let handled = imports.filter((n) => ledger.done.has(n)).length;
+  if (total) args.onProgress?.({ done: handled, total });
   for (const name of imports) {
     if (ledger.done.has(name)) continue;
     fresh = true;
+    args.onProgress?.({ done: handled, total, current: name });
     const debug: ImportDebugRecorder = createImportDebugRecorder();
     const res: MemberOutcome = await importHuntMember(deps, {
       caseId: args.caseId,
@@ -218,6 +226,7 @@ async function importMembers(
       debug,
     });
     memo.set(name, res);
+    args.onProgress?.({ done: ++handled, total });
     if (!res.ok) log.push({ status: "FAILED", relpath: `${zipRel}!${name}`, reason: res.reason });
     try {
       await ledger.record(name, res);

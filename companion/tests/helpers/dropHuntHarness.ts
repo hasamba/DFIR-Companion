@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { DropStatusStore } from "../../src/analysis/dropStatus.js";
+import type { JobManager } from "../../src/analysis/jobManager.js";
 import { detectImportWithCustomEx } from "../../src/analysis/importDecision.js";
 import { createDropFolder, dropDirOf, type DropFolder } from "../../src/composition/dropFolder.js";
 import { rowKeysOf } from "./huntExportFixture.js";
@@ -31,6 +32,8 @@ export interface Harness {
   /** Called after each successful ingest call, with the number of calls so far. */
   onIngest: ((n: number) => Promise<void> | void) | null;
   drops: DropFolder;
+  /** The Jobs manager the sweep reports to, when the test passed one (#2742). */
+  jobManager?: JobManager;
   sweep(): Promise<void>;
   /** Start a sweep and abandon it once ingest hangs (the crash), without awaiting it. */
   sweepUntilHang(): Promise<void>;
@@ -39,7 +42,9 @@ export interface Harness {
   rowKeys(): string[];
 }
 
-export async function makeHarness(opts: { dropMaxBytes?: number } = {}): Promise<Harness> {
+export async function makeHarness(
+  opts: { dropMaxBytes?: number; jobManager?: JobManager } = {},
+): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), "dfir-drop-hunt-"));
   const store = new CaseStore(root);
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -55,6 +60,7 @@ export async function makeHarness(opts: { dropMaxBytes?: number } = {}): Promise
     hangAfter: null,
     onIngest: null,
     drops: undefined as unknown as DropFolder,
+    ...(opts.jobManager ? { jobManager: opts.jobManager } : {}),
     sweep: async () => {
       await h.drops.scanCaseDrops("c1");
     },
@@ -97,7 +103,10 @@ function build(h: Harness): DropFolder {
   };
   return createDropFolder({
     store: h.store,
-    options: { dropStatusStore: new DropStatusStore(h.store) },
+    options: {
+      dropStatusStore: new DropStatusStore(h.store),
+      ...(h.jobManager ? { jobManager: h.jobManager } : {}),
+    },
     hasAiProvider: () => false,
     getControl: refuse,
     recordImportFailure: () => {},

@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Hunt zip progress in Jobs** — a dropped hunt zip counts its result files (done of total), names the one importing and shows an ETA, instead of "1 file" at 0/1 (closes #2742)
 - **AI Agent Forensics endpoint picker** — case writers see their case's endpoints; runs with no case open are admin-only (closes #2725)
 - **AI Agent Forensics evidence detail** — file hash and preserved-copy hash per matched file (shows whether the file changed before preservation), per-rule Sigma coverage per endpoint, activity-log entries (closes #2722)
 - **AI-agent YARA compile check** — CI compiles the vendored AI-agent YARA rules on every PR (closes #2720)

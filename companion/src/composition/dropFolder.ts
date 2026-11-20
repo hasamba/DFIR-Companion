@@ -51,6 +51,7 @@ import { createDropStreamer, isGzipMagic, streamGzipDropFile } from "./dropStrea
 import { prepareHuntDrops } from "./dropHuntFolder.js";
 import { createHuntZipHandler, isZipCandidate } from "./dropHuntZip.js";
 import { pruneHuntZipLedgers } from "./dropHuntZipLedger.js";
+import { createSweepProgress, type HuntProgress } from "./dropSweepProgress.js";
 import { clearStaging } from "./dropHuntExtract.js";
 import { createDropInFlight } from "./dropInFlight.js";
 import {
@@ -421,6 +422,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     // stood when this sweep began" — a boundary an analyst can state.
     cache: ToolRunCache,
     modelCall?: ModelCallHooks,
+    onHuntProgress?: (p: HuntProgress) => void, // #2742: a hunt zip's result-file count
   ): Promise<{
     ok: boolean;
     reason?: string;
@@ -465,7 +467,14 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         return streamGzipDropFile(streamDropFile, caseId, full, file.relpath, debug);
       // A Velociraptor hunt export zip imports its members (#2714); any other zip routes as before.
       const hunt = isZipCandidate(file.relpath, head)
-        ? await handleHuntZip({ caseId, dropDir, fullPath: full, file, modelCall })
+        ? await handleHuntZip({
+            caseId,
+            dropDir,
+            fullPath: full,
+            file,
+            modelCall,
+            onProgress: onHuntProgress,
+          })
         : null;
       if (hunt) return hunt;
 
@@ -669,8 +678,16 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       };
 
       const runCache = createToolRunCache();
-      // Sorted by relpath, small same-importer files batched (#2540, composition/dropBatch.ts).
-      let processed = 0;
+      // Sorted by relpath, small same-importer files batched (#2540, composition/dropBatch.ts). A hunt
+      // zip counts as its result files once its handler knows them (#2742).
+      const count =
+        sweepJob &&
+        createSweepProgress({
+          relpaths: ready.map((f) => f.relpath),
+          startedAt: new Date().toISOString(),
+          report: (done, total, detail, step) =>
+            options.jobManager?.progress(sweepJob.jobId, done, total, detail, step),
+        });
       const recorder = createSweepRecorder({
         caseId,
         dropDir,
@@ -683,15 +700,14 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       const tally = await runDropSweep(ready, {
         caseId,
         dropDir,
-        processFile: (file) => processDropFile(caseId, dropDir, file, runCache, modelCall),
+        processFile: (file) =>
+          processDropFile(caseId, dropDir, file, runCache, modelCall, (p) => count?.hunt(file.relpath, p)),
         moveDropFile,
         forget: (relpath) => {
           nextSeen.delete(relpath);
           pendingLogged.get(caseId)?.delete(relpath);
         },
-        progress: (relpath) => {
-          if (job) options.jobManager?.progress(job.jobId, ++processed, ready.length, basename(relpath));
-        },
+        progress: (relpath) => count?.fileDone(relpath),
         resolveImportKind,
         recordImportFailure: (name, err, debug) => recordImportFailure(caseId, "drop", name, err, debug),
         ...(dropBatch ? { dropBatch } : {}),
