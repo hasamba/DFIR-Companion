@@ -34,6 +34,7 @@ import type { CaseLifecycle } from "../auth/teamAuth.js";
 import type { AppOptions } from "./appOptions.js";
 import { createOriginGuard } from "../http/originGuard.js";
 import { createSecurityHeaders } from "../http/securityHeaders.js";
+import { requestLogTarget } from "../http/requestLogTarget.js";
 import { createOperationalHttpMetrics } from "../analysis/operationalHttpMetrics.js";
 import { createCaseIdGate } from "../analysis/caseIdGate.js";
 import { createCaseLockGate } from "../analysis/caseLockGate.js";
@@ -164,10 +165,12 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
     });
   }
 
-  // Log each request and its final status (useful for a local single-user tool).
+  // Log each request and its final status (useful for a local single-user tool). The path and the
+  // query parameter NAMES only: values (sign-in codes, return addresses, tokens) stay out of a log
+  // that support bundles copy.
   app.use(function requestLogger(req: Request, res: Response, next: NextFunction) {
     res.on("finish", () => {
-      logLine(`[req] ${req.method} ${req.url} -> ${res.statusCode}`);
+      logLine(`[req] ${req.method} ${requestLogTarget(req.url)} -> ${res.statusCode}`);
     });
     next();
   });
