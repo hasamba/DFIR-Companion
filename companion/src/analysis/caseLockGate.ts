@@ -3,6 +3,8 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { unlockCookieName, verifyUnlockToken, parseCookieHeader } from "./casePassword.js";
 import { checkCaseWriteCredential, sendCaseWriteRefusal } from "./caseWriteCredential.js";
 import { CSP_NONCE_PLACEHOLDER, withNonce } from "../http/securityHeaders.js";
+import { CASE_JSON_UNREADABLE_MESSAGE, isCaseJsonParseError } from "../storage/caseMetaListing.js";
+import { getServerLogger } from "../logging/serverLogger.js";
 
 // Routes that must stay reachable on a locked case:
 //  - lock-status / unlock / lock: how a client checks/clears/re-locks in the first place.
@@ -54,10 +56,21 @@ export function createCaseLockGate(store: CaseStore, secret: Buffer) {
     let meta;
     try {
       meta = await store.getCaseMeta(caseId);
-    } catch {
+    } catch (err) {
       // getCaseMeta failed unexpectedly (not "case doesn't exist" — that resolves to null,
       // not a throw). Fail CLOSED rather than silently letting a locked case through: this
       // gate's entire job is to block, so an internal error must not default to open.
+      if (isCaseJsonParseError(err)) {
+        // A damaged case.json is still blocked, but named as such rather than answered with a
+        // password prompt that no password can clear (#2768).
+        getServerLogger().error(
+          `case "${caseId}": ${CASE_JSON_UNREADABLE_MESSAGE} (${(err as Error).message})`,
+        );
+        res
+          .status(500)
+          .json({ error: "case_json_unreadable", caseId, message: CASE_JSON_UNREADABLE_MESSAGE });
+        return;
+      }
       res.status(401).json({ error: "locked", caseId });
       return;
     }

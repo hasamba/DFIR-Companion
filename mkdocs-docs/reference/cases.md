@@ -144,6 +144,12 @@ that use a push key keep working on a locked case. Setting or changing a passwor
 you're prompted the same as anyone else. Leaving a case you unlocked without "remember" forgets the unlock in this browser only. To shut out every browser that has unlocked the case, including one that saved a copy of the unlock, change the password. Dashboards that already have the case open are disconnected at once. **Remove password** is only available when the case is
 currently unlocked and has a password set.
 
+!!! warning "A damaged case file is not a locked case"
+    If a case's `case.json` is empty or cut short (for example after a crash or a sync conflict),
+    the case is left out of the case list and opening it answers **"case.json is damaged or
+    unreadable"** instead of a password prompt. The server log names the damaged file. Restore
+    `case.json` from a backup or a ZIP case archive; the case's evidence folders are not touched.
+
 ## Permanently Deleting a Case
 
 **☰ Case lifecycle → 🗑️ Delete…** removes a case's directory for good — this cannot be undone. The

@@ -19,6 +19,7 @@ import type { CaseMeta, CaptureMetadata, ImportMetadata } from "../types.js";
 import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
+import { readListedCaseMeta } from "./caseMetaListing.js";
 import { copyHandleHashed, CopyContentChangedError } from "./handleCopy.js";
 import {
   ARCHIVED_DIRNAME,
@@ -547,11 +548,9 @@ export class CaseStore {
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         if (dir === this.root && entry.name === ARCHIVED_DIRNAME) continue; // not a case — the archived-cases folder itself
-        try {
-          metas.push(JSON.parse(await readFile(this.caseMetaPath(entry.name), "utf8")) as CaseMeta);
-        } catch {
-          // a directory without a valid case.json is not a case — skip it
-        }
+        // No case.json → not a case. A damaged one is skipped too, but logged (#2768).
+        const meta = await readListedCaseMeta(this.caseMetaPath(entry.name), entry.name);
+        if (meta) metas.push(meta);
       }
     }
     metas.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
