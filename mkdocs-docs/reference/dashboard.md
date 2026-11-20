@@ -923,7 +923,10 @@ section, and with no case open it opens the **sweep** view.
 
 The results-only report shows, per endpoint, the AI tools found, the MCP servers configured (name and
 executable only; arguments are counted, never shown, and environment values are never read), the
-number of hits, whether a credential store is present, and what each scope scanned. Below it: the
+number of hits, whether a credential store is present, and what each scope scanned. Endpoints are
+told apart by their Velociraptor client id: when two clients share a host name (a re-imaged machine
+or a cloned VM), each is shown with its client id, for example `WS-01 (C.aaa111)`, in the panel and
+in every download. Below it: the
 hits table (grade, endpoint, rule, file, the **latest time the content could have been planted**,
 the matched text, the file's hashes, and the rule's author with a link to the rule), the **Sigma
 coverage per rule and endpoint** table, **Rules not run, and why**, the rule version, and a link to

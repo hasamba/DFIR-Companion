@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { loadAiAgentRuleSet } from "../../src/analysis/aiAgentRuleSet.js";
 import { buildAiAgentReport } from "../../src/analysis/aiAgentReport.js";
 import { AI_AGENT_HASH_CAVEAT, hashCheckLabel } from "../../src/analysis/aiAgentHashCheck.js";
-import { aiAgentReportCsv, aiAgentReportMarkdown } from "../../src/reports/aiAgentReportExport.js";
+import {
+  aiAgentReportCsv,
+  aiAgentReportMarkdown,
+  aiAgentSigmaCoverageCsv,
+} from "../../src/reports/aiAgentReportExport.js";
 import {
   AiAgentRunStore,
   capManifest,
@@ -306,6 +310,81 @@ describe("AI Agent Forensics report: Sigma coverage per rule per endpoint", () =
     expect((b.sigma ?? []).some((c) => c.rule === "=HYPERLINK(not a rule)")).toBe(false);
     // Per-rule rows are table cells, not endpoint coverage lines.
     expect(a.coverage).toEqual([]);
+  });
+});
+
+// Codex review of #2722: two Velociraptor clients can share a host name (a re-imaged machine, a cloned
+// VM). The run report keys endpoints by client id; the host name is only a display label, made unique.
+describe("AI Agent Forensics report: two clients with the same host name", () => {
+  const compiled = set.sigma.find((d) => d.mode === "compiled")!;
+  const row = (clientId: string, over: Record<string, unknown>) => ({
+    ...base,
+    Hostname: "WS-01",
+    ClientId: clientId,
+    ...over,
+  });
+  const report = buildAiAgentReport(
+    [
+      row("C.aaa111", { Kind: "inventory", Tool: "Claude Code" }),
+      row("C.aaa111", {
+        Kind: "coverage",
+        Source: "Sigma",
+        RuleName: compiled.title,
+        Status: "ran (live state)",
+      }),
+      row("C.aaa111", { Kind: "hit", Family: "sigma", RuleName: compiled.title }),
+      row("C.bbb222", { Kind: "inventory", Tool: "Cursor" }),
+      row("C.bbb222", {
+        Kind: "coverage",
+        Source: "Sigma",
+        RuleName: compiled.title,
+        Status: "not run: no Sysmon",
+      }),
+    ],
+    set,
+  );
+  const run: AiAgentRun = {
+    runId: "aar-dup",
+    huntId: "H.1",
+    launchedAt: "2026-11-19T10:00:00Z",
+    endpoints: [],
+    failedEndpoints: [],
+    skippedEndpoints: [],
+    scopes: ["agent-home"],
+    uploadMaxBytes: 1,
+    ruleSetVersion: set.version,
+    artifacts: [],
+    preserved: true,
+    warnings: [],
+    sensitive: true,
+    report,
+  };
+
+  it("keeps them as two endpoints, labelled with the client id", () => {
+    expect(report.endpoints.map((e) => [e.host, e.clientId])).toEqual([
+      ["WS-01 (C.aaa111)", "C.aaa111"],
+      ["WS-01 (C.bbb222)", "C.bbb222"],
+    ]);
+    const [a, b] = report.endpoints;
+    expect(a.tools).toEqual(["Claude Code"]);
+    expect(b.tools).toEqual(["Cursor"]);
+    expect(a.hits).toBe(1);
+    expect(b.hits).toBe(0);
+    expect(a.sigma).toEqual([{ rule: compiled.title, status: "ran (live state)", hits: 1 }]);
+    expect(b.sigma).toEqual([{ rule: compiled.title, status: "not run: no Sysmon", hits: 0 }]);
+    expect(report.hits.map((h) => [h.host, h.clientId])).toEqual([["WS-01 (C.aaa111)", "C.aaa111"]]);
+  });
+
+  it("gives each its own column in report.md and the Sigma coverage CSV", () => {
+    expect(aiAgentReportMarkdown(run)).toContain("| Rule | Basis | WS-01 (C.aaa111) | WS-01 (C.bbb222) |");
+    expect(aiAgentSigmaCoverageCsv(run).split("\r\n")[0]).toBe(
+      `"rule","basis","WS-01 (C.aaa111)","WS-01 (C.bbb222)"`,
+    );
+  });
+
+  it("leaves a unique host name as it is", () => {
+    const one = buildAiAgentReport([row("C.aaa111", { Kind: "inventory", Tool: "Cursor" })], set);
+    expect(one.endpoints.map((e) => e.host)).toEqual(["WS-01"]);
   });
 });
 

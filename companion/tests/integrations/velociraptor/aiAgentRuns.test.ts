@@ -18,6 +18,8 @@ import {
 } from "../../../src/integrations/velociraptor/aiAgentRuns.js";
 import { isAnalystCase, SWEEP_RETENTION } from "../../../src/storage/sweepCase.js";
 import { withSilentEndpoints } from "../../../src/integrations/velociraptor/aiAgentRuns.js";
+import { buildAiAgentReport } from "../../../src/analysis/aiAgentReport.js";
+import { loadAiAgentRuleSet } from "../../../src/analysis/aiAgentRuleSet.js";
 import type { VelociraptorClient } from "../../../src/integrations/velociraptor/velociraptorApi.js";
 import type { ServerSetStore } from "../../../src/integrations/serverSets/serverSetStore.js";
 
@@ -255,6 +257,31 @@ describe("AI Agent Forensics: an endpoint with no rows yet", () => {
       { clientId: "C.w2", hostname: "BUILD-01" },
     ]);
     expect(out.endpoints.map((e) => e.host)).toEqual(["dev-ws-014.corp.example", "BUILD-01"]);
+    expect(out.endpoints[1].coverage[0].status).toBe("no results yet");
+  });
+
+  it("reconciles silent endpoints by client id, so a silent twin of a reporting host name is listed (Codex review)", () => {
+    const report = buildAiAgentReport(
+      [
+        {
+          DFIRCompanionAIAgent: 1,
+          Hostname: "WS-01",
+          ClientId: "C.aaa111",
+          Kind: "inventory",
+          Tool: "Cursor",
+        },
+      ],
+      loadAiAgentRuleSet(),
+    );
+    expect(report.endpoints.map((e) => e.host)).toEqual(["WS-01"]);
+    const out = withSilentEndpoints(report, [
+      { clientId: "C.aaa111", hostname: "WS-01" },
+      { clientId: "C.bbb222", hostname: "WS-01" },
+    ]);
+    expect(out.endpoints.map((e) => [e.host, e.clientId])).toEqual([
+      ["WS-01 (C.aaa111)", "C.aaa111"],
+      ["WS-01 (C.bbb222)", "C.bbb222"],
+    ]);
     expect(out.endpoints[1].coverage[0].status).toBe("no results yet");
   });
 });

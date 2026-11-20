@@ -17,7 +17,7 @@ import type { ServerSetStore } from "../serverSets/serverSetStore.js";
 import type { VeloHuntJob, VeloHuntStore } from "../../analysis/veloHuntStore.js";
 import type { VelociraptorClient } from "./velociraptorApi.js";
 import { activeAiAgentRuleSet } from "../../analysis/aiAgentActiveRules.js";
-import { buildAiAgentReport } from "../../analysis/aiAgentReport.js";
+import { aiAgentEndpointLabels, buildAiAgentReport } from "../../analysis/aiAgentReport.js";
 import {
   AiAgentRunStore,
   capManifest,
@@ -295,11 +295,24 @@ export function withSilentEndpoints(
   report: ReturnType<typeof buildAiAgentReport>,
   endpoints: { clientId: string; hostname: string }[],
 ): ReturnType<typeof buildAiAgentReport> {
-  const seen = new Set(report.endpoints.map((e) => shortHost(e.host)));
+  // Matched by client id (Codex review of #2722): a silent client sharing a reporting client's host
+  // name must still be listed. Only a report endpoint with no client id (an older report) is matched
+  // by host name.
+  const seenIds = new Set(report.endpoints.flatMap((e) => (e.clientId ? [e.clientId] : [])));
+  const seenNames = new Set(
+    report.endpoints.filter((e) => !e.clientId).map((e) => shortHost(e.hostname ?? e.host)),
+  );
   const silent = endpoints
-    .filter((e) => !seen.has(shortHost(e.hostname)) && !seen.has(shortHost(e.clientId)))
+    .filter(
+      (e) =>
+        !seenIds.has(e.clientId) &&
+        !seenNames.has(shortHost(e.hostname)) &&
+        !seenNames.has(shortHost(e.clientId)),
+    )
     .map((e) => ({
       host: e.hostname || e.clientId,
+      hostname: e.hostname || e.clientId,
+      clientId: e.clientId,
       tools: [],
       mcpServers: [],
       credentialStores: 0,
@@ -309,7 +322,9 @@ export function withSilentEndpoints(
         { source: "run", status: "no results yet", detail: `client ${e.clientId} has returned no rows` },
       ],
     }));
-  return silent.length ? { ...report, endpoints: [...report.endpoints, ...silent] } : report;
+  return silent.length
+    ? aiAgentEndpointLabels({ ...report, endpoints: [...report.endpoints, ...silent] })
+    : report;
 }
 
 /** Re-read the run's results from Velociraptor and rebuild its report + upload manifest. */
