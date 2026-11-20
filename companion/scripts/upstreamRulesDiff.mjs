@@ -26,7 +26,8 @@
  *   "rule-files"  every file directly in `watchPath` (a Panther or Sentinel rule folder), listed at both
  *                 commits with `listDir` (path -> content hash, the git blob sha). A rule is code or a
  *                 query, so nothing is parsed: a file added, removed or whose content hash changed is
- *                 reported, and a person reads the upstream diff.
+ *                 reported, and a person reads the upstream diff. An optional `onlyFiles` (full
+ *                 upstream paths) narrows a big folder to the files the port came from (#2723).
  */
 
 /** Matches "<marker>: <40-hex sha> (<YYYY-MM-DD>)" on a `#` comment line of tags.yaml. */
@@ -196,8 +197,7 @@ export const UPSTREAM_GROUPS = Object.freeze([
     watchPath: "09-agent-memory-forensics",
     files: Object.freeze([]),
   }),
-  // #2690: the AICodingAgents preservation globs. Watches the compound target's folder; the nine app
-  // targets live in Targets/Apps, too large a folder for one listing (tracked in the issue as a gap).
+  // #2690: the AICodingAgents preservation globs. This group watches the compound target's folder.
   Object.freeze({
     id: "kapefiles-aicodingagents",
     kind: "rule-files",
@@ -207,6 +207,32 @@ export const UPSTREAM_GROUPS = Object.freeze([
     markerFile: "data/ai-agent-rules/aicodingagents-globs.yaml",
     watchPath: "Targets/Compound",
     files: Object.freeze([]),
+  }),
+  // #2723: the nine app targets the globs were converted from, in Targets/Apps (~200 entries, well
+  // inside one listing). `onlyFiles` keeps the diff to those nine, so an edit to one of the folder's
+  // unrelated app targets moves the head but never opens the re-sync issue.
+  Object.freeze({
+    id: "kapefiles-aicodingagents-apps",
+    kind: "rule-files",
+    name: "KapeFiles AI coding agent app targets",
+    repo: "EricZimmerman/KapeFiles",
+    marker: "KapeFiles upstream commit",
+    markerFile: "data/ai-agent-rules/aicodingagents-globs.yaml",
+    watchPath: "Targets/Apps",
+    files: Object.freeze([]),
+    onlyFiles: Object.freeze(
+      [
+        "ClaudeCode",
+        "Cline",
+        "Cursor",
+        "GeminiCLI",
+        "GitHubCopilot",
+        "OpenAICodex",
+        "OpenCode",
+        "RooCode",
+        "VisualStudioCode",
+      ].map((name) => `Targets/Apps/${name}.tkape`),
+    ),
   }),
 ]);
 
@@ -422,15 +448,23 @@ export const RULE_FILE_HEADER = Object.freeze(["file", "content"]);
 
 /**
  * Diff the files directly in one rule folder between two commits. `listDir(repo, dir, ref)` resolves
- * to a Map of path -> content hash (the blob sha) for the files in `dir`. An empty folder at either
- * commit throws — a moved folder never reads as "every rule removed".
+ * to a Map of path -> content hash (the blob sha) for the files in `dir`. A group with `onlyFiles`
+ * (full upstream paths) keeps just those files from each listing. An empty folder at either commit,
+ * or none of the `onlyFiles` in it, throws — a moved folder never reads as "every rule removed".
  */
 export async function diffRuleFiles(group, base, head, listDir) {
+  const only = group.onlyFiles?.length ? new Set(group.onlyFiles) : null;
   const [baseFiles, headFiles] = await Promise.all(
     [base, head].map(async (ref) => {
-      const files = await listDir(group.repo, group.watchPath, ref);
-      if (!(files instanceof Map) || files.size === 0) {
+      const listed = await listDir(group.repo, group.watchPath, ref);
+      if (!(listed instanceof Map) || listed.size === 0) {
         throw new Error(`${group.repo}@${ref}: no files in "${group.watchPath}/" — was it moved?`);
+      }
+      const files = only ? new Map([...listed].filter(([path]) => only.has(path))) : listed;
+      if (files.size === 0) {
+        throw new Error(
+          `${group.repo}@${ref}: none of the ${only.size} watched files in "${group.watchPath}/" — were they moved?`,
+        );
       }
       return files;
     }),

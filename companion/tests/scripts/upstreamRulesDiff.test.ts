@@ -328,6 +328,79 @@ describe("rule-file groups — Panther and Sentinel GCP (#2346)", () => {
   });
 });
 
+// #2723: the nine KapeFiles app targets the AICodingAgents globs were converted from sit in
+// Targets/Apps beside ~190 unrelated apps. `onlyFiles` keeps the diff to those nine, so an edit to
+// an unrelated app target never opens the re-sync issue.
+describe("rule-files groups with an onlyFiles filter (KapeFiles Targets/Apps, #2723)", () => {
+  const sha = (c: string) => c.repeat(40);
+  const APPS = "Targets/Apps";
+  const NINE = [
+    "ClaudeCode",
+    "Cline",
+    "Cursor",
+    "GeminiCLI",
+    "GitHubCopilot",
+    "OpenAICodex",
+    "OpenCode",
+    "RooCode",
+    "VisualStudioCode",
+  ].map((n) => `${APPS}/${n}.tkape`);
+  const apps = UPSTREAM_GROUPS.find((g) => g.id === "kapefiles-aicodingagents-apps")!;
+  const noFetch: FetchFile = async () => {
+    throw new Error("a rule-files group never fetches file content");
+  };
+  const listing = (extra: [string, string][] = []) =>
+    new Map<string, string>([...NINE.map((p): [string, string] => [p, `h-${p}`]), ...extra]);
+
+  it("watches Targets/Apps against the recorded KapeFiles commit, filtered to the nine app targets", () => {
+    expect(apps).toMatchObject({
+      kind: "rule-files",
+      repo: "EricZimmerman/KapeFiles",
+      marker: "KapeFiles upstream commit",
+      markerFile: "data/ai-agent-rules/aicodingagents-globs.yaml",
+      watchPath: APPS,
+    });
+    expect([...(apps.onlyFiles ?? [])].sort()).toEqual([...NINE].sort());
+  });
+
+  it("reports no change when only an app target outside the filter changed", async () => {
+    const listDir: ListDir = async (_r, dir, ref) => {
+      expect(dir).toBe(APPS);
+      return listing([
+        [`${APPS}/Unrelated.tkape`, ref === sha("a") ? "u1" : "u2"],
+        ...(ref === sha("b") ? ([[`${APPS}/BrandNew.tkape`, "n1"]] as [string, string][]) : []),
+      ]);
+    };
+    const result = await compareGroup(apps, sha("a"), sha("b"), noFetch, undefined, listDir);
+    expect(groupChanged(result)).toBe(false);
+  });
+
+  it("reports a change to, or the removal of, one of the nine", async () => {
+    const claude = `${APPS}/ClaudeCode.tkape`;
+    const cline = `${APPS}/Cline.tkape`;
+    const listDir: ListDir = async (_r, _d, ref) => {
+      if (ref === sha("a")) return listing();
+      const head = listing([[claude, "h-edited"]]);
+      head.delete(cline);
+      return head;
+    };
+    const result = await compareGroup(apps, sha("a"), sha("b"), noFetch, undefined, listDir);
+    const diff = result.lists[0].diff;
+    expect(diff.changed.map((c) => c.key)).toEqual([claude]);
+    expect(diff.removed.map((e) => e.key)).toEqual([cline]);
+    expect(diff.added).toEqual([]);
+    expect(groupChanged(result)).toBe(true);
+  });
+
+  it("fails loudly when none of the nine is in the listing, even if the folder is not empty", async () => {
+    const listDir: ListDir = async (_r, _d, ref) =>
+      ref === sha("a") ? listing() : new Map([[`${APPS}/Unrelated.tkape`, "u1"]]);
+    await expect(compareGroup(apps, sha("a"), sha("b"), noFetch, undefined, listDir)).rejects.toThrow(
+      /none of the 9 watched files in "Targets\/Apps\/" — were they moved\?/,
+    );
+  });
+});
+
 describe("each source's marker file records the upstream commit it came from", () => {
   const text = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
 
