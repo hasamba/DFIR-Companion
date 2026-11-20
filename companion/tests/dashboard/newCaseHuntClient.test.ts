@@ -37,7 +37,9 @@ const RANSOMWARE = { kind: "type", id: "ransomware", def: { id: "ransomware" } }
 
 type Routes = Record<string, Route | ((call: FetchCall) => Route | Promise<Route>)>;
 
-function harness(extra: Routes = {}) {
+const MEMBER = { enabled: true, identity: { globalRole: "member" } };
+
+function harness(extra: Routes = {}, opts: { auth?: unknown; prompt?: () => string | null } = {}) {
   const doc = new FakeDocument();
   doc.add("input", "ncCaseId", "ncName", "ncInvestigator", "caseId");
   doc.add("div", "ncMsg", "ncTemplateDesc", "newCaseOverlay");
@@ -64,6 +66,8 @@ function harness(extra: Routes = {}) {
     loadCaseList: () => {},
     connect: () => {},
     alert: (m: string) => alerts.push(m),
+    prompt: opts.prompt ?? (() => null),
+    dfirAuthState: opts.auth,
   });
   api.initNewCase();
   const el = (id: string) => doc.getElementById(id) as FakeEl;
@@ -90,6 +94,7 @@ describe("New Case: a threat hunt's client pre-fills its servers (#2670, D5)", (
       "Client A",
       "Client B",
       "Client Z",
+      "New client…",
     ]);
   });
 
@@ -158,5 +163,92 @@ describe("New Case: a threat hunt's client pre-fills its servers (#2670, D5)", (
     await h.api.createNewCase();
     expect(h.alerts.join(" ")).toMatch(/created, but linking it to the client failed/);
     expect(h.el("newCaseOverlay").classList.contains("open")).toBe(false);
+  });
+});
+
+describe("New Case: the administrator creates a client from the Client box (#2735)", () => {
+  const NEW = { status: 201, body: { id: "client-n-9", name: "Client N" } };
+  const labels = (h: ReturnType<typeof harness>) => h.el("ncHuntClient").options.map((o) => o.textContent);
+
+  it("offers New client… to the administrator, last in the list", async () => {
+    const h = harness({}, { auth: { enabled: true, identity: { globalRole: "administrator" } } });
+    await h.api.openNewCase();
+    await flush();
+    expect(labels(h).at(-1)).toBe("New client…");
+  });
+
+  it("does not offer New client… to a member", async () => {
+    const h = harness({}, { auth: MEMBER });
+    await h.api.openNewCase();
+    await flush();
+    expect(labels(h)).not.toContain("New client…");
+  });
+
+  it("shows the box with no clients yet, so the first client can be created", async () => {
+    const h = harness({ "GET /client-profiles": { body: [] } });
+    await h.api.openNewCase();
+    await flush();
+    expect(h.el("ncHuntClientRow").hidden).toBe(false);
+    expect(labels(h)).toEqual(["No client", "New client…"]);
+  });
+
+  it("a member with no clients sees no box", async () => {
+    const h = harness({ "GET /client-profiles": { body: [] } }, { auth: MEMBER });
+    await h.api.openNewCase();
+    await flush();
+    expect(h.el("ncHuntClientRow").hidden).toBe(true);
+  });
+
+  it("creates the client, selects it, leaves the servers alone, and links the case to it", async () => {
+    const h = harness({ "POST /client-profiles": NEW }, { prompt: () => "  Client N  " });
+    await h.api.openNewCase();
+    await flush();
+    await h.chooseClient("__new_client__");
+    const post = h.net.calls.find((c) => c.method === "POST" && c.url === "/client-profiles");
+    expect(post?.body).toEqual({ name: "Client N" });
+    expect(h.el("ncHuntClient").value).toBe("client-n-9");
+    expect(labels(h)).toEqual(["No client", "Client A", "Client B", "Client Z", "Client N", "New client…"]);
+    expect(h.el("ncServerSet").value).toBe("b");
+    expect(h.el("ncMsg").textContent).toMatch(/Client N/);
+    h.el("ncName").value = "Quarterly hunt";
+    await h.api.createNewCase();
+    const link = h.net.calls.find((c) => c.url === "/cases/INC-2026-001/hunt/client");
+    expect(link?.body).toEqual({ clientId: "client-n-9" });
+  });
+
+  it("a 403 keeps the previous client and says only the administrator can create one", async () => {
+    const h = harness(
+      { "POST /client-profiles": { status: 403, body: { error: "forbidden" } } },
+      { prompt: () => "Client N" },
+    );
+    await h.api.openNewCase();
+    await flush();
+    await h.chooseClient("client-b-2");
+    await h.chooseClient("__new_client__");
+    expect(h.el("ncHuntClient").value).toBe("client-b-2");
+    expect(h.el("ncMsg").textContent).toMatch(/only the instance administrator can edit a client profile/);
+    expect(labels(h)).not.toContain("Client N");
+  });
+
+  it("any other failure keeps the previous client and shows the server's reason", async () => {
+    const h = harness(
+      { "POST /client-profiles": { status: 400, body: { error: "name: too long" } } },
+      { prompt: () => "Client N" },
+    );
+    await h.api.openNewCase();
+    await flush();
+    await h.chooseClient("__new_client__");
+    expect(h.el("ncHuntClient").value).toBe("");
+    expect(h.el("ncMsg").textContent).toMatch(/name: too long/);
+  });
+
+  it("cancelling the name prompt keeps the previous client and creates nothing", async () => {
+    const h = harness({ "POST /client-profiles": NEW }, { prompt: () => null });
+    await h.api.openNewCase();
+    await flush();
+    await h.chooseClient("client-a-1");
+    await h.chooseClient("__new_client__");
+    expect(h.el("ncHuntClient").value).toBe("client-a-1");
+    expect(h.net.calls.some((c) => c.method === "POST" && c.url === "/client-profiles")).toBe(false);
   });
 });
