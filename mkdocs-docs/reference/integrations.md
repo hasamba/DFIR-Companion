@@ -4,6 +4,11 @@ Most integrations are configured in **Settings → Integrations** (or via the Se
 optional—removing credentials from `.env` disables it. MCP analysis is the exception: configure the
 connection in Claude Code, then allow it in **Settings → All → Tools**.
 
+**One push at a time.** While a push of a case to an external system (MISP, DFIR-IRIS, Timesketch,
+Notion, ClickUp) is still running, a second push of the same case to that system is refused with
+"a … push for this case is already running" instead of creating a duplicate event, case or page. For
+Jira and ServiceNow the rule is per finding. Wait for the first push to finish, then push again.
+
 ---
 
 ## MCP Analysis
