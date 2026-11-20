@@ -461,3 +461,67 @@ describe("star detection (createWatsonCaseEvents)", () => {
     expect(chat.pendingCaseEvents).toMatchObject([{ kind: "import", text: "An import finished" }]);
   });
 });
+
+describe("WatsonReactor.resume (#2774: a reaction pending at a restart)", () => {
+  const pending = [{ kind: "hunt" as const, text: "A collection finished", at: "2026-11-16T10:00:00Z" }];
+  const withPending = (s: Setup, over: Partial<WatsonChat> = {}) => {
+    s.chats.chat = { ...s.chats.chat, pendingCaseEvents: pending, ...over };
+  };
+
+  it("re-arms a full quiet window for saved case events, and the reaction runs once it ends", async () => {
+    const changed: string[] = [];
+    const s = setup({ onChanged: (id) => changed.push(id) });
+    withPending(s);
+    await s.reactor.resume(CASE);
+    expect(s.reactor.due(CASE)).not.toBeNull();
+    expect(changed).toContain(CASE);
+    await advance(s, DELAY - SEC);
+    expect(s.rounds).toHaveLength(0);
+    await advance(s, SEC);
+    expect(s.rounds).toHaveLength(1);
+    expect(s.reactor.due(CASE)).toBeNull();
+  });
+
+  it("does nothing with no pending events, paused reactions, an unengaged chat, or reactions off", async () => {
+    const empty = setup();
+    await empty.reactor.resume(CASE);
+    const paused = setup();
+    withPending(paused, { reactionsPaused: "limit" });
+    await paused.reactor.resume(CASE);
+    const unused = setup({}, { analyst: false });
+    withPending(unused);
+    await unused.reactor.resume(CASE);
+    const off = setup({ delayMs: () => 0 });
+    withPending(off);
+    await off.reactor.resume(CASE);
+    for (const s of [empty, paused, unused, off]) {
+      expect(s.reactor.due(CASE)).toBeNull();
+      await advance(s, DELAY * 2);
+      expect(s.rounds).toHaveLength(0);
+    }
+  });
+
+  it("a re-armed reaction still respects AI off when the window ends", async () => {
+    const s = setup({ isAiEnabled: async () => false });
+    withPending(s);
+    await s.reactor.resume(CASE);
+    await advance(s, DELAY);
+    expect(s.rounds).toHaveLength(0);
+  });
+
+  it("does not restart a window a new event already armed, and is a no-op once stopped", async () => {
+    let t = Date.parse("2026-11-16T10:00:00Z");
+    const s = setup({ now: () => t });
+    s.reactor.note(CASE, { kind: "hunt", text: "A collection finished" });
+    await s.chats.drain();
+    const first = s.reactor.due(CASE);
+    t += 10 * SEC;
+    await s.reactor.resume(CASE);
+    expect(s.reactor.due(CASE)).toEqual(first);
+    const stopped = setup();
+    withPending(stopped);
+    stopped.reactor.stop();
+    await stopped.reactor.resume(CASE);
+    expect(stopped.reactor.due(CASE)).toBeNull();
+  });
+});

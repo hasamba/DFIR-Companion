@@ -409,7 +409,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // tests and embeddings that don't use monitoring.
   void monitors.resumeVeloMonitors();
   void hunts.resumeVeloHuntStatusPolls({ startup: true }); // #2403: + interrupted collects (startup only)
-  void recoverWatsonLaunches(store, options.watsonChatStore, logLine, app.locals.watsonFlowWatcher); // + result watches
+  void recoverWatsonLaunches(store, options.watsonChatStore, logLine, app.locals); // + result watches, + reactions (#2774)
 
   // Arm the evidence drop-folder watcher (auto-import inbox). Gated on the status store being wired
   // (startServer), so createApp-only unit tests never start a filesystem poller.

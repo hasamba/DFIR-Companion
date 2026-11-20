@@ -90,6 +90,20 @@ export class WatsonReactor {
     this.deps.onChanged?.(caseId);
   }
 
+  /**
+   * Startup (#2774): case events saved on the chat before a restart lost their in-memory window.
+   * Re-arm a full quiet window for them; when it ends, decide() applies every gate again (AI off,
+   * paused, frozen). A window a new event already armed is left alone.
+   */
+  async resume(caseId: string): Promise<void> {
+    if (this.stopped || this.armed.has(caseId) || this.deps.delayMs() <= 0) return;
+    const chat = await this.deps.chatStore.load(caseId);
+    if (!chat.analystEngaged || chat.reactionsPaused || chat.pendingCaseEvents.length === 0) return;
+    if (this.stopped || this.armed.has(caseId)) return;
+    this.arm(caseId, 0);
+    this.deps.onChanged?.(caseId);
+  }
+
   /** The case's reaction that is due (a quiet window running), or null. Memory only. */
   due(caseId: string): WatsonReactionDue | null {
     const a = this.armed.get(caseId);
