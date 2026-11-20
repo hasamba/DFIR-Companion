@@ -437,6 +437,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     nsrlDbEnvManaged,
     kevStore,
     veloHuntStore,
+    huntInventoryStore: rt.huntInventoryStore,
     huntOutcomeStore,
     huntRunSnapshotStore,
     onVeloHunt: (caseId) => hub.broadcastTo(caseId, { type: "velo_hunt_changed" }),

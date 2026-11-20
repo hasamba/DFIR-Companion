@@ -2528,6 +2528,11 @@
           <div class="sfield"><label for="env-DFIR_SUPERTIMELINE_MAX">Super-timeline event cap<span class="sfield-hint">DFIR_SUPERTIMELINE_MAX — cap for bulk MFT/USN/registry super-timeline imports (default 100000)</span></label><input id="env-DFIR_SUPERTIMELINE_MAX" placeholder="100000" /></div>
         </div>
         <div class="sfield-row3">
+          <div class="sfield"><label for="env-DFIR_HUNT_RARE_MIN_HOSTS">Threat hunt — rarity minimum hosts<span class="sfield-hint">DFIR_HUNT_RARE_MIN_HOSTS — nothing is graded rare until at least this many hosts answered the hunt cleanly (default 20)</span></label><input id="env-DFIR_HUNT_RARE_MIN_HOSTS" placeholder="20" /></div>
+          <div class="sfield"><label for="env-DFIR_HUNT_RARE_MAX_PCT">Threat hunt — rare at most % of hosts<span class="sfield-hint">DFIR_HUNT_RARE_MAX_PCT — rare means on at most this percent of the answering hosts (default 5)</span></label><input id="env-DFIR_HUNT_RARE_MAX_PCT" placeholder="5" /></div>
+          <div class="sfield"><label for="env-DFIR_HUNT_RARE_MAX_HOSTS">Threat hunt — rare at most N hosts<span class="sfield-hint">DFIR_HUNT_RARE_MAX_HOSTS — and on no more than this many hosts (default 10)</span></label><input id="env-DFIR_HUNT_RARE_MAX_HOSTS" placeholder="10" /></div>
+        </div>
+        <div class="sfield-row3">
           <div class="sfield"><label for="env-DFIR_VELOCIRAPTOR_MAX_OUTPUT">Max output — interactive (bytes)<span class="sfield-hint">DFIR_VELOCIRAPTOR_MAX_OUTPUT</span></label><input id="env-DFIR_VELOCIRAPTOR_MAX_OUTPUT" placeholder="52428800" /></div>
           <div class="sfield"><label for="env-DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT">Max output — collect (bytes)<span class="sfield-hint">DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT</span></label><input id="env-DFIR_VELOCIRAPTOR_COLLECT_MAX_OUTPUT" placeholder="419430400" /></div>
           <div class="sfield"><label for="env-DFIR_VELOCIRAPTOR_UPLOAD_VQL">Upload VQL override<span class="sfield-hint">DFIR_VELOCIRAPTOR_UPLOAD_VQL — version-specific; blank = default</span></label><input id="env-DFIR_VELOCIRAPTOR_UPLOAD_VQL" placeholder="(optional)" /></div>

@@ -1,5 +1,6 @@
 import type { Finding, ForensicEvent, InvestigationState, Severity } from "./stateTypes.js";
 import type { HuntCoverage } from "./huntFraming.js";
+import { hostList, type HuntGrade } from "./huntEntries.js";
 
 /**
  * What the Threat hunt summary report reads (#2670), assembled by composition and handed to the
@@ -94,3 +95,17 @@ export const VERDICT_TEXT: Record<HuntVerdict, string> = {
   anomalies: "Anomalies need follow-up — no compromise confirmed",
   clean: "No compromise found",
 };
+
+/** A stored grade as the report / panel row: hosts capped with an "N more" count. */
+export function reportItemOf(g: HuntGrade): HuntReportItem {
+  const { shown, more } = hostList(g.hosts);
+  return {
+    kind: g.kind,
+    label: g.label,
+    hosts: shown,
+    moreHosts: more,
+    hostCount: g.hosts.length,
+    severity: g.severity,
+    reason: g.reason,
+  };
+}

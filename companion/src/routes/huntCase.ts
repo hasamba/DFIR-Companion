@@ -3,7 +3,7 @@ import { isHuntType } from "../analysis/incidentTypes.js";
 import { loadHuntFramingFor } from "../analysis/huntFramingLoad.js";
 import { huntCoverageFromJobs } from "../analysis/huntFraming.js";
 import { loadHuntJobsSafe } from "../analysis/huntFramingLoad.js";
-import { hasHighOrCritical } from "../analysis/huntReport.js";
+import { hasHighOrCritical, reportItemOf } from "../analysis/huntReport.js";
 import { convertedState, convertRefusal, DEFAULT_CONVERT_TYPE_ID } from "../analysis/huntCase.js";
 import { logActivity } from "../analysis/activityLog.js";
 import type { RouteContext } from "./context.js";
@@ -44,11 +44,14 @@ export function registerHuntCaseRoutes(app: Express, ctx: RouteContext): void {
       const stores = { incidentTypeStore: options.incidentTypeStore, veloHuntStore: options.veloHuntStore };
       const coverage = hunt ? huntCoverageFromJobs(await loadHuntJobsSafe(stores, caseId)) : null;
       const convertOffered = hunt ? await holdsHighOrCritical(options.stateStore, caseId) : false;
+      const rec = hunt ? await options.huntInventoryStore?.load(caseId).catch(() => null) : null;
       return res.status(200).json({
         hunt,
         typeId: record.typeId,
         coverage,
         convertOffered,
+        items: (rec?.grades ?? []).map(reportItemOf),
+        ...(rec?.baselineVersion !== undefined ? { baselineVersion: rec.baselineVersion } : {}),
         ...(record.convertedFrom
           ? { convertedFrom: record.convertedFrom, convertedAt: record.convertedAt }
           : {}),

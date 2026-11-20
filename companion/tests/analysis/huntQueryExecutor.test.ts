@@ -156,6 +156,42 @@ describe("hunt query executor", () => {
     expect(result.rows).toEqual([{ "destination.ip": "203.0.113.9", count: 1 }]);
   });
 
+  it("counts DISTINCT HOSTS per value for a prevalence stage, rarest first (#2670)", async () => {
+    const { source } = sourceFor([
+      event("e1", { processName: "chrome.exe", asset: "WS-01" }),
+      event("e2", { processName: "chrome.exe", asset: "WS-01.corp.test" }),
+      event("e3", { processName: "chrome.exe", asset: "WS-02" }),
+      event("e4", { processName: "chrome.exe", asset: "WS-03" }),
+      event("e5", { processName: "rclone.exe", asset: "WS-02" }),
+      event("e6", { processName: "rclone.exe", asset: "WS-02" }),
+    ]);
+    const result = await executeHuntQuery({
+      caseId: "c1",
+      dataset: "super",
+      parsed: parseHuntQuery("process.name exists | prevalence process.name"),
+      source,
+    });
+    expect(result.columns).toEqual(["process.name", "hosts", "of_hosts", "events"]);
+    expect(result.rows).toEqual([
+      { "process.name": "rclone.exe", hosts: 1, of_hosts: 3, events: 2 },
+      { "process.name": "chrome.exe", hosts: 3, of_hosts: 3, events: 4 },
+    ]);
+  });
+
+  it("leaves the rare stage counting events, not hosts (#2670)", async () => {
+    const { source } = sourceFor([
+      event("e1", { processName: "a.exe", asset: "WS-01" }),
+      event("e2", { processName: "a.exe", asset: "WS-01" }),
+    ]);
+    const result = await executeHuntQuery({
+      caseId: "c1",
+      dataset: "super",
+      parsed: parseHuntQuery("process.name exists | rare process.name"),
+      source,
+    });
+    expect(result.rows).toEqual([{ "process.name": "a.exe", count: 2 }]);
+  });
+
   it("requires all parameters before execution", async () => {
     const { source } = sourceFor([]);
     await expect(

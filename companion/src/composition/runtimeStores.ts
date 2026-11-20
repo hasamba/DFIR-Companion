@@ -83,6 +83,7 @@ import { tlsConnectFor, tlsFetchFor } from "./tlsFetch.js";
 import { createGuardedFetch } from "../routes/outboundGuardedFetch.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
 import { loadHuntReportData } from "../analysis/huntReportLoad.js";
+import { wireHuntGrading } from "./huntGrading.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import { HuntRunSnapshotStore } from "../analysis/huntRunSnapshotStore.js";
 import { VeloMonitorStore } from "../analysis/veloMonitorStore.js";
@@ -379,6 +380,14 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     (id) => serverSetStore.caseSetId(id),
     clientInventoryFor,
   );
+  // #2670: hunt grading at the import seam (inventory + grouped rare/new/policy entries).
+  const huntInventoryStore = wireHuntGrading({
+    store,
+    stateStore,
+    incidentTypeStore,
+    veloHuntStore,
+    serverSetId: (id) => serverSetStore.caseSetId(id),
+  });
   const hub = new LiveHub(casesRoot); // #1866: closes a deleted case's sockets
   // Late subscribers to "a case's jobs changed" (#2406: the AI status idle gate), wired by appWiring.
   const jobChangeListeners = new Set<(caseId: string) => void>();
@@ -505,7 +514,8 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
         caseId,
       ),
     // #2670: the Threat hunt summary's data (null outside hunt mode).
-    huntReport: (caseId: string) => loadHuntReportData({ incidentTypeStore, veloHuntStore }, caseId),
+    huntReport: (caseId: string) =>
+      loadHuntReportData({ incidentTypeStore, veloHuntStore, huntInventoryStore }, caseId),
     falsePositives: new FalsePositiveStore(store),
     reportMeta: reportMetaStore,
     customerExposure: new CustomerExposureStore(store),
@@ -576,6 +586,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     notifier,
     dashboardBaseUrl,
     veloHuntStore,
+    huntInventoryStore,
     huntOutcomeStore,
     huntRunSnapshotStore,
     veloMonitorStore,
