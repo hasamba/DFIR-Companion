@@ -181,7 +181,7 @@ async function world(profile: { current: ClientProfile }, jobs: VeloHuntJob[], r
       profiles: { get: async () => profile.current },
       inventories: inventoryStore,
       huntJobs: async () => jobs,
-      listCaseIds: async () => ["c1"],
+      peerCaseIds: async () => [],
       serverSetId: () => "srv",
       env: {},
     }),
@@ -297,7 +297,7 @@ describe("an unconfirmed item never goes quiet (#2670)", () => {
       profiles: { get: async () => p },
       inventories: { load: async (id) => stores[id] },
       huntJobs: async () => [],
-      listCaseIds: async () => ["prev", "c1"],
+      peerCaseIds: async () => ["prev"],
       serverSetId: () => "srv",
     })("c1");
     expect(pending).toEqual([

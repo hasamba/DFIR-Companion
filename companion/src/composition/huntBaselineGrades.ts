@@ -18,14 +18,17 @@ import type { HuntReportPending } from "../analysis/huntReport.js";
  * one for an analyst-pressed re-grade), and the LAST COMPARABLE hunt for that client — another hunt
  * case linked to the same client that ran an overlapping bundle over mostly the same answering hosts,
  * collected before this one. Only that case's derived inventory (item keys, answering hosts) is read,
- * never its raw record, and nothing of it is written into this case but counts.
+ * never its raw record, and nothing of it is written into this case but counts and a date. Only the
+ * cases `peerCaseIds` allows are read — never a password-protected one, never one outside this case's
+ * audience (composition/huntPeerCases.ts says why it cannot be a per-request filter).
  */
 export interface BaselineGradeDeps {
   links: Pick<HuntClientLinkStore, "load">;
   profiles: Pick<ClientProfileStore, "get">;
   inventories: Pick<HuntInventoryStore, "load">;
   huntJobs: (caseId: string) => Promise<VeloHuntJob[]>;
-  listCaseIds: () => Promise<string[]>;
+  /** The other cases allowed to feed this case's persisted output (composition/huntPeerCases.ts). */
+  peerCaseIds: (caseId: string) => Promise<string[]>;
   serverSetId: (caseId: string) => string | undefined;
   env?: NodeJS.ProcessEnv;
   now?: () => string;
@@ -55,7 +58,7 @@ export async function previousComparableHunt(
   const myLatest = latest(mine);
   if (!bundles.size || !answered.size) return null;
   let best: PreviousHunt | null = null;
-  for (const other of await d.listCaseIds()) {
+  for (const other of await d.peerCaseIds(caseId)) {
     if (other === caseId || (await d.links.load(other).catch(() => null))?.clientId !== clientId) continue;
     const jobs = await d.huntJobs(other).catch(() => []);
     const at = latest(jobs);
@@ -145,7 +148,7 @@ export function huntPendingSource(d: BaselineGradeDeps) {
     const answered = answeredOf(await d.huntJobs(caseId), d.serverSetId(caseId) ?? "");
     const list = confirmCandidates(rec.inventory, profile.baseline, answered, new Date().toISOString());
     const age = new Map<string, { hunts: number; first: string }>();
-    for (const other of await d.listCaseIds()) {
+    for (const other of await d.peerCaseIds(caseId)) {
       if (other === caseId || (await d.links.load(other).catch(() => null))?.clientId !== profile.id)
         continue;
       const inv = (await d.inventories.load(other).catch(() => null))?.inventory;

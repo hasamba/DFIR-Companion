@@ -85,6 +85,7 @@ import { VeloHuntStore } from "../analysis/veloHuntStore.js";
 import { loadHuntReportData } from "../analysis/huntReportLoad.js";
 import { wireHuntGrading } from "./huntGrading.js";
 import { huntComparisonSource, huntPendingSource } from "./huntBaselineGrades.js";
+import { caseRoleHolders, huntPeerCaseIds } from "./huntPeerCases.js";
 import { ClientProfileStore } from "../analysis/clientProfileStore.js";
 import { HuntClientLinkStore } from "../analysis/huntClientLink.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
@@ -391,7 +392,11 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     links: huntClientLinkStore,
     profiles: clientProfileStore,
     huntJobs: (id: string) => veloHuntStore.list(id),
-    listCaseIds: async () => (await store.listCases()).map((m) => m.caseId),
+    // Only cases every reader of the hunt case could open feed its persisted output (#2670).
+    peerCaseIds: huntPeerCaseIds({
+      listCases: () => store.listCases(),
+      ...(teamAuth ? { roleHolders: caseRoleHolders(teamAuth.store) } : {}),
+    }),
     serverSetId: (id: string) => serverSetStore.caseSetId(id),
   };
   const huntGrading = wireHuntGrading({
