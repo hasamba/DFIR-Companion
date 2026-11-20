@@ -23,6 +23,7 @@ const APPENDIX =
   "Each run below is its own record, as read from Velociraptor. The case's scope, clock-skew " +
   "alignment and false-positive marks apply to the timeline and findings above, not to this record. " +
   "The case keeps a copy of each filed sweep's run report from the moment it is filed (its latest 50), " +
+  "updated each time the sweep's results are read again while the sweep is kept, " +
   "so a filed sweep stays here after the sweep is removed; a sweep filed before this version shows " +
   "only while it is kept (the newest 20 sweeps). The hits a sweep filed stay in the case timeline either way.";
 

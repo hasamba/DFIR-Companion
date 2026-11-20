@@ -1,7 +1,7 @@
 // AI Agent Forensics (#2690): run lifecycle — sweep case, case mode, refresh, Add to case, retention.
 // Real case storage on a temp folder; the Velociraptor client is a mock.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CaseStore } from "../../../src/storage/caseStore.js";
@@ -294,6 +294,47 @@ describe("AI Agent Forensics: a filed sweep's report copy in the target case (#2
     expect((await deps.runStore.get(sweepCaseId, runId))?.addedTo?.[0].caseId).toBe("case-1");
     const detail = activity.find((a) => a.caseId === "case-1")?.detail ?? "";
     expect(detail).toContain("the report copy could not be saved");
+  });
+
+  it("updates the case copy when the filed sweep is re-read, keeping the filing time (#2744)", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    const filedAt = (await deps.runStore.get(sweepCaseId, runId))?.addedTo?.[0].at ?? "";
+    await new Promise((r) => setTimeout(r, 5));
+    const reread = await refreshAiAgentRun(deps, sweepCaseId, runId);
+    const rereadAt = reread.report?.builtAt ?? "";
+    expect(rereadAt > filedAt).toBe(true);
+    await store.deleteCaseFolder(sweepCaseId);
+    const got = await loadAiAgentCaseRuns(store, "case-1");
+    expect(got.runs).toHaveLength(1);
+    expect(got.runs[0].run.report?.builtAt).toBe(rereadAt);
+    expect(got.runs[0].filedFrom).toEqual({ sweepCaseId, at: filedAt });
+  });
+
+  it("a refresh whose copy update fails still returns the re-read run and logs it (#2744)", async () => {
+    const logged: string[] = [];
+    const deps = makeDeps({ log: (m: string) => logged.push(m) });
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    rmSync(copyPath());
+    mkdirSync(copyPath(), { recursive: true }); // a directory where the file goes: the update fails
+    await new Promise((r) => setTimeout(r, 5));
+    const reread = await refreshAiAgentRun(deps, sweepCaseId, runId);
+    expect(reread.report?.builtAt).toBeDefined();
+    expect((await deps.runStore.get(sweepCaseId, runId))?.report?.builtAt).toBe(reread.report?.builtAt);
+    expect(logged.some((m) => m.includes(`could not update the report copy of sweep ${sweepCaseId}`))).toBe(
+      true,
+    );
+  });
+
+  it("a refresh never creates a copy for a case that holds none (#2744)", async () => {
+    const deps = makeDeps();
+    const { sweepCaseId, runId } = await filedSweep(deps);
+    await addSweepToCase(deps, sweepCaseId, runId, "case-1");
+    rmSync(copyPath()); // a filing from before #2740, or an evicted copy
+    await refreshAiAgentRun(deps, sweepCaseId, runId);
+    expect(existsSync(copyPath())).toBe(false);
   });
 });
 

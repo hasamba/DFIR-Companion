@@ -29,7 +29,7 @@ import { AI_AGENT_HUNT_EXPIRY_SECONDS, launchAiAgentRun } from "./aiAgentLaunch.
 import { preflightAiAgentRun, type AiAgentEndpoint } from "./aiAgentPreflight.js";
 import { readUploadManifestStatus } from "./uploadVql.js";
 import { CLIENT_RE } from "./clientInventory.js";
-import { saveFiledRun, type FiledFrom } from "../../reports/aiAgentFiledRuns.js";
+import { saveFiledRun, updateFiledRun, type FiledFrom } from "../../reports/aiAgentFiledRuns.js";
 import {
   SWEEP_CASE_KIND,
   isSweepCase,
@@ -383,7 +383,27 @@ export async function refreshAiAgentRun(
     ...(problems.length ? { reportError: problems.join("; ") } : { reportError: undefined }),
   }));
   deps.onChange?.(caseId);
+  if (updated) await refreshReportCopies(deps, caseId, updated);
   return updated ?? run;
+}
+
+/** Bring the report copy in each case the sweep was filed into up to the re-read (#2744). Update only;
+ *  a failed copy never fails the re-read — it is logged and the next case is tried. */
+async function refreshReportCopies(
+  deps: AiAgentForensicsDeps,
+  sweepCaseId: string,
+  run: AiAgentRun,
+): Promise<void> {
+  for (const targetCaseId of new Set((run.addedTo ?? []).map((a) => a.caseId))) {
+    try {
+      if (!(await deps.store.caseExists(targetCaseId))) continue;
+      if (await updateFiledRun(deps.store, targetCaseId, run)) deps.onChange?.(targetCaseId);
+    } catch (e) {
+      deps.log(
+        `[ai-agent] could not update the report copy of sweep ${sweepCaseId} in ${targetCaseId}: ${(e as Error).message}`,
+      );
+    }
+  }
 }
 
 /** Keep the run's report-safe copy in the target case so its report outlives sweep retention (#2740).
