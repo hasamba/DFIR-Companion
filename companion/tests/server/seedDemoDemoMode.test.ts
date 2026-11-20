@@ -47,6 +47,25 @@ describe("POST /cases/seed-demo in demo mode", () => {
     expect(ids).toHaveLength(1); // the one default demo case, reseeded rather than duplicated
   });
 
+  // The reset button is the one write demo mode allows; every spelling Express routes to it is
+  // allowed too, and look-alike paths that route elsewhere stay refused.
+  it.each(["/Cases/Seed-Demo", "/cases/seed-demo/", "/CASES/SEED-DEMO/"])(
+    "allows the %s spelling of the reset route",
+    async (path) => {
+      const { app } = await harness(true);
+      const res = await request(app).post(path).send({});
+      expect(res.status).toBe(201);
+    },
+  );
+
+  it("still refuses other writes whose path only resembles the reset route", async () => {
+    const { app } = await harness(true);
+    for (const path of ["/cases/seed-demo/delete", "/cases/seed-demo-x", "/cases/seed%2Ddemo"]) {
+      const res = await request(app).post(path).send({});
+      expect(res.status, path).toBe(403);
+    }
+  });
+
   it("still honours an explicit caseId when demo mode is off", async () => {
     const { app } = await harness(false);
 

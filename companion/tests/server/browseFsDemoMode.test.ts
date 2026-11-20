@@ -27,6 +27,21 @@ describe("GET /settings/browse-fs in demo mode", () => {
     expect(res.body.error).toMatch(/demo mode/i);
   });
 
+  // Express routes case-insensitively with an optional trailing slash, so every one of these
+  // spellings reaches the picker. The gate must refuse them all, not only the canonical one.
+  it.each([
+    "/Settings/browse-fs",
+    "/settings/BROWSE-FS",
+    "/settings/browse-fs/",
+    "/SETTINGS/BROWSE-FS/",
+    "/settings/browse%2Dfs",
+  ])("refuses the %s spelling too", async (path) => {
+    const { app } = await harness(true);
+    const res = await request(app).get(path).query({ dir: tmpdir() });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/demo mode/i);
+  });
+
   it("still works when demo mode is off", async () => {
     const { app } = await harness(false);
     const res = await request(app).get("/settings/browse-fs");
