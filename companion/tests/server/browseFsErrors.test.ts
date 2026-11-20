@@ -64,6 +64,13 @@ describe("GET /settings/browse-fs error mapping", () => {
     expect(JSON.stringify(res.body)).not.toMatch(/scandir|secret/);
   });
 
+  it("answers 400 for a path with a NUL byte instead of 500 (#2773)", async () => {
+    const res = await request(await harness()).get("/settings/browse-fs?dir=%00");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not valid/i);
+    expect(JSON.stringify(res.body)).not.toMatch(/ERR_INVALID_ARG_VALUE|\\u0000/);
+  });
+
   const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
   it.skipIf(isRoot || process.platform === "win32")("answers 403 for a real chmod 000 folder", async () => {
     const app = await harness();

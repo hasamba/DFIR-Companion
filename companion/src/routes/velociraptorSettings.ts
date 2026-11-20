@@ -18,6 +18,8 @@ function browseFsErrorResponse(code: string | undefined): { status: number; erro
       return { status: 400, error: "Cannot read this folder: too many symbolic links" };
     case "ENAMETOOLONG":
       return { status: 400, error: "Cannot read this folder: the path is too long" };
+    case "ERR_INVALID_ARG_VALUE": // e.g. a NUL byte in the path (#2773)
+      return { status: 400, error: "Cannot read this folder: the path is not valid" };
     default:
       return null;
   }
