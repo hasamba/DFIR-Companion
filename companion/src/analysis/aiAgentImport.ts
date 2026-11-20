@@ -22,7 +22,16 @@ import { withHostSuffix } from "./velociraptorTitle.js";
 import { parseGrade } from "./aiAgentRuleParse.js";
 import { activeAiAgentRuleSet } from "./aiAgentActiveRules.js";
 import { aiAgentRuleGrade, aiAgentRuleLink, type AiAgentRuleSet } from "./aiAgentRuleSet.js";
-import { isAiAgentRow, parseAiAgentRow, type AiAgentHitRow, type AiAgentRow } from "./aiAgentRows.js";
+import {
+  aiAgentClientId,
+  isAiAgentRow,
+  parseAiAgentRow,
+  type AiAgentHitRow,
+  type AiAgentRow,
+} from "./aiAgentRows.js";
+import type { AiAgentHostLedger } from "./aiAgentHostLabels.js";
+// Re-exported so the Velociraptor importer takes everything AI Agent Forensics from one import.
+export { learnWholeFile, type AiAgentHostsCtx } from "./aiAgentHostLabels.js";
 import { AI_AGENT_FORENSICS_SOURCE } from "./vendorGrade.js";
 import type { Severity } from "./stateTypes.js";
 
@@ -32,6 +41,23 @@ const SOURCES = ["Velociraptor", AI_AGENT_FORENSICS_SOURCE];
 export const AI_AGENT_TIME_LABEL = "latest time the content could have been planted";
 
 type Row = Record<string, unknown>;
+
+/**
+ * Who a row is about (#2734): the aggKey part is the Velociraptor client id, so two clients sharing a
+ * host name never merge; the label is the host name, with the client id added only when another
+ * client in the file shares it. A row with no client id keys and labels by host name, as before.
+ */
+interface Endpoint {
+  key: string;
+  label: string;
+  clientId: string;
+}
+
+function endpointOf(row: Row, host: string, ledger?: AiAgentHostLedger): Endpoint {
+  const clientId = aiAgentClientId(row);
+  const label = clientId && ledger ? ledger.label(host, clientId) : host;
+  return { key: clientId || host, label, clientId };
+}
 
 function iso(v: unknown): string {
   if (v == null || v === "") return "";
@@ -88,7 +114,7 @@ export function gradeAiAgentHit(
 function mapHit(
   set: AiAgentRuleSet,
   row: AiAgentHitRow,
-  host: string,
+  ep: Endpoint,
   sink: Map<string, SiemIoc>,
 ): MappedEvent {
   const path = row.FilePath || (row.Family === "sigma" ? sigmaSubjectPath(row) : "");
@@ -99,7 +125,7 @@ function mapHit(
   if (lowInfo) description += " [file rewritten every agent session — low-information time]";
   if (selfScan) description += " [detector's own rule copy or test fixture — self-scan]";
   description += " [provisional grade]";
-  description = withHostSuffix(description, host).slice(0, 600);
+  description = withHostSuffix(description, ep.label).slice(0, 600);
   const atlas = (row.RuleAtlas ?? "").trim();
   const detail = [
     `Rule ${row.RuleName} (${row.Family}${row.RuleFile ? `, ${row.RuleFile}` : ""})`,
@@ -108,6 +134,7 @@ function mapHit(
     atlas ? `ATLAS ${atlas}` : "",
     row.Scope ? `scope ${row.Scope}` : "",
     `rule set ${row.RuleSet || set.version}`,
+    ep.clientId ? `client ${ep.clientId}` : "",
     `file modified ${row.FileMtime || "unknown"}, created ${row.FileBtime || "unknown"}, scanned ${row.ScanTime || "unknown"}`,
     `event time basis: ${basis}`,
     row.Preserved ? `preserved: ${row.Preserved}` : "",
@@ -119,7 +146,7 @@ function mapHit(
   ]
     .filter(Boolean)
     .join(" · ");
-  const aggKey = `aiagent|${host}|${row.Family}|${row.RuleName}|${path.toLowerCase()}`;
+  const aggKey = `aiagent|${ep.key}|${row.Family}|${row.RuleName}|${path.toLowerCase()}`;
   const rowSink = new Map<string, SiemIoc>();
   if (!selfScan) {
     if (path) addIoc(rowSink, "file", path);
@@ -137,47 +164,47 @@ function mapHit(
     ...(row.FileMtime && iso(row.FileMtime) ? { fileModified: iso(row.FileMtime) } : {}),
     ...(path ? { path } : {}),
     ...(row.FileSha256 ? { sha256: row.FileSha256 } : {}),
-    ...(host ? { asset: host } : {}),
+    ...(ep.label ? { asset: ep.label } : {}),
   };
 }
 
 function infoEvent(
   row: AiAgentRow,
-  host: string,
+  ep: Endpoint,
   description: string,
   aggKey: string,
   path = "",
 ): MappedEvent {
   return {
     timestamp: iso(row.ScanTime) || new Date(0).toISOString(),
-    description: withHostSuffix(`${LABEL} ${description}`, host).slice(0, 600),
+    description: withHostSuffix(`${LABEL} ${description}`, ep.label).slice(0, 600),
     severity: "Info",
     mitre: [],
-    aggKey: `aiagent|${host}|${aggKey}`,
+    aggKey: `aiagent|${ep.key}|${aggKey}`,
     sources: SOURCES,
-    message: `rule set ${row.RuleSet || "unknown"}`,
+    message: `rule set ${row.RuleSet || "unknown"}${ep.clientId ? ` · client ${ep.clientId}` : ""}`,
     ...(path ? { path } : {}),
-    ...(host ? { asset: host } : {}),
+    ...(ep.label ? { asset: ep.label } : {}),
   };
 }
 
-function mapOther(row: Exclude<AiAgentRow, AiAgentHitRow>, host: string): MappedEvent {
+function mapOther(row: Exclude<AiAgentRow, AiAgentHitRow>, ep: Endpoint): MappedEvent {
   if (row.Kind === "inventory") {
     if (row.McpServer)
       return infoEvent(
         row,
-        host,
+        ep,
         `inventory: MCP server "${row.McpServer}" configured in ${row.Tool} (runs ${row.McpCommand || "unknown"}, ${row.McpArgCount ?? 0} argument(s) not shown)`,
         `mcp|${row.Tool}|${row.McpServer}|${row.ConfigPath ?? ""}`,
         row.ConfigPath ?? "",
       );
-    return infoEvent(row, host, `inventory: ${row.Tool} present`, `tool|${row.Tool}`);
+    return infoEvent(row, ep, `inventory: ${row.Tool} present`, `tool|${row.Tool}`);
   }
   if (row.Kind === "credential")
-    return infoEvent(row, host, `inventory: credential store present`, `cred|${row.FilePath}`, row.FilePath);
+    return infoEvent(row, ep, `inventory: credential store present`, `cred|${row.FilePath}`, row.FilePath);
   return infoEvent(
     row,
-    host,
+    ep,
     `coverage: ${row.Source}${row.RuleName ? ` "${row.RuleName}"` : ""} — ${row.Status}${row.Detail ? ` (${row.Detail})` : ""}`,
     `cov|${row.Source}|${row.RuleName ? `${row.RuleName}|` : ""}${row.Status}`,
   );
@@ -193,24 +220,29 @@ export function mapAiAgentRow(
   artifact: string,
   host: string,
   sink: Map<string, SiemIoc>,
+  ledger?: AiAgentHostLedger,
 ): { events: MappedEvent[]; detections: number } | null {
   if (!isAiAgentRow(row)) return null;
+  const ep = endpointOf(row, host, ledger);
   const set = activeAiAgentRuleSet();
   const parsed = parseAiAgentRow(row);
   const stamp = (m: MappedEvent): MappedEvent => (artifact ? { ...m, artifactName: artifact } : m);
   if (!parsed.ok) {
     const bad: MappedEvent = {
       timestamp: iso(row.ScanTime) || new Date().toISOString(),
-      description: withHostSuffix(`${LABEL}: unreadable result row (${parsed.error})`, host).slice(0, 600),
+      description: withHostSuffix(`${LABEL}: unreadable result row (${parsed.error})`, ep.label).slice(
+        0,
+        600,
+      ),
       severity: "Info",
       mitre: [],
-      aggKey: `aiagent|${host}|unreadable`,
+      aggKey: `aiagent|${ep.key}|unreadable`,
       sources: SOURCES,
-      ...(host ? { asset: host } : {}),
+      ...(ep.label ? { asset: ep.label } : {}),
     };
     return { events: [stamp(bad)], detections: 0 };
   }
   const r = parsed.row;
-  if (r.Kind === "hit") return { events: [stamp(mapHit(set, r, host, sink))], detections: 1 };
-  return { events: [stamp(mapOther(r, host))], detections: 0 };
+  if (r.Kind === "hit") return { events: [stamp(mapHit(set, r, ep, sink))], detections: 1 };
+  return { events: [stamp(mapOther(r, ep))], detections: 0 };
 }

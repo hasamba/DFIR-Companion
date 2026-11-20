@@ -313,3 +313,59 @@ describe("AI Agent Forensics mapper: Sigma hits", () => {
     expect(hashes.filter((h) => h === "c".repeat(64))).toHaveLength(1);
   });
 });
+
+describe("AI Agent Forensics mapper: endpoints that share a host name (#2734)", () => {
+  const same = { RuleName: "Agent_Memory_Hidden_Instruction_Concealment", FilePath: "C:\\x\\CLAUDE.md" };
+  const twin = (clientId: string, mtime: string) =>
+    hit({ ...same, Fqdn: "WS-01", ClientId: clientId, FileMtime: mtime, FileBtime: "" });
+
+  it("keeps two clients' hits on the same host name apart, each labelled with its client id", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([twin("C.aaa111", "2026-11-12T03:14:00Z"), twin("C.bbb222", "2026-11-13T03:14:00Z")]),
+    );
+    expect(r.events).toHaveLength(2);
+    const a = r.events.find((e) => e.asset === "WS-01 (C.aaa111)")!;
+    const b = r.events.find((e) => e.asset === "WS-01 (C.bbb222)")!;
+    expect(a.description).toContain("WS-01 (C.aaa111)");
+    expect(b.description).toContain("WS-01 (C.bbb222)");
+    expect(a.message).toContain("client C.aaa111");
+    expect(b.message).toContain("client C.bbb222");
+    expect(a.timestamp).not.toBe(b.timestamp);
+  });
+
+  it("leaves the label as the bare host name when only one client has it", () => {
+    const r = parseVelociraptorJson(JSON.stringify([twin("C.aaa111", "2026-11-12T03:14:00Z")]));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].asset).toBe("WS-01");
+    expect(r.events[0].message).toContain("client C.aaa111");
+  });
+
+  it("still aggregates the same hit from the same client", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([twin("C.aaa111", "2026-11-12T03:14:00Z"), twin("C.aaa111", "2026-11-12T03:14:00Z")]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].asset).toBe("WS-01");
+  });
+
+  it("keeps a row with no client id on today's host-name key and label", () => {
+    const e = byRule(
+      "Agent_Memory_Hidden_Instruction_Concealment",
+      "C:\\Users\\dev\\src\\ai-dfir-toolkit\\CLAUDE.md",
+    );
+    expect(e.asset).toBe("DEV-WS-014");
+    expect(e.message).not.toContain("client ");
+  });
+
+  it("keeps two clients' inventory rows apart too", () => {
+    const r = parseVelociraptorJson(
+      JSON.stringify([
+        { ...inventory, Fqdn: "WS-01", ClientId: "C.aaa111" },
+        { ...inventory, Fqdn: "WS-01", ClientId: "C.bbb222" },
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS-01 (C.aaa111)", "WS-01 (C.bbb222)"]);
+    expect(r.events.every((e) => /client C\.(aaa111|bbb222)/.test(e.message ?? ""))).toBe(true);
+  });
+});

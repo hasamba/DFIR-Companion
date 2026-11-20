@@ -6,7 +6,7 @@
 
 import { gradeAiAgentHit, hitTime, AI_AGENT_TIME_LABEL } from "./aiAgentImport.js";
 import { aiAgentRuleLink, type AiAgentNotRun, type AiAgentRuleSet } from "./aiAgentRuleSet.js";
-import { isAiAgentRow, parseAiAgentRow, redactSnippet } from "./aiAgentRows.js";
+import { aiAgentClientId, isAiAgentRow, parseAiAgentRow, redactSnippet } from "./aiAgentRows.js";
 import { aiAgentHashCheck } from "./aiAgentHashCheck.js";
 import type { UploadManifestEntry } from "./aiAgentRunStore.js";
 import type { Severity } from "./stateTypes.js";
@@ -35,14 +35,6 @@ function hostOf(row: Row): string {
   return "unknown host";
 }
 
-function clientOf(row: Row): string {
-  for (const k of ["ClientId", "client_id"]) {
-    const v = row[k];
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-  return "";
-}
-
 /**
  * An endpoint's key: its client id, so two clients that share a host name stay two endpoints (Codex
  * review of #2722). The host name is the key only for a row with no client id.
@@ -51,7 +43,7 @@ const endpointKey = (e: { clientId?: string; host: string }): string => e.client
 
 function endpointFor(map: Map<string, AiAgentReportEndpoint>, raw: Row): AiAgentReportEndpoint {
   const host = hostOf(raw);
-  const clientId = clientOf(raw);
+  const clientId = aiAgentClientId(raw);
   const key = clientId || host;
   let e = map.get(key);
   if (!e) {
@@ -184,7 +176,7 @@ export function buildAiAgentReport(
         selfScan,
         path: r.FilePath ?? "",
         sha256: r.FileSha256 ?? "",
-        ...aiAgentHashCheck(r, clientOf(raw), opts.manifest),
+        ...aiAgentHashCheck(r, aiAgentClientId(raw), opts.manifest),
         time,
         timeBasis: basis,
         timeLabel: AI_AGENT_TIME_LABEL,

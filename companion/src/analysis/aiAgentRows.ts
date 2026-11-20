@@ -129,6 +129,15 @@ export function isAiAgentRow(row: Record<string, unknown>): boolean {
   return v !== undefined && v !== null && v !== "";
 }
 
+/** The row's Velociraptor client id (hunt_results() stamps it on every row), "" when it has none. */
+export function aiAgentClientId(row: Record<string, unknown>): string {
+  for (const k of ["ClientId", "client_id"]) {
+    const v = row[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
 /** Validate one marked row. A row from a NEWER schema than this build reads is refused, not guessed. */
 export function parseAiAgentRow(
   row: Record<string, unknown>,

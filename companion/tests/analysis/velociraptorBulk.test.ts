@@ -902,3 +902,32 @@ describe("runVelociraptorBulk — generic Sysmon registry alerts (#1958)", () =>
     expect(run?.severity).toBe("Medium");
   });
 });
+
+describe("runVelociraptorBulk — AI Agent Forensics clients sharing a host name (#2734)", () => {
+  const ai = (clientId: string, mtime: string) => ({
+    DFIRCompanionAIAgent: 1,
+    Kind: "hit",
+    Fqdn: "WS-01",
+    ClientId: clientId,
+    RuleSet: "synthetic",
+    Family: "yara",
+    RuleName: "Agent_Memory_Hidden_Instruction_Concealment",
+    Grade: "High",
+    FilePath: "C:\\x\\CLAUDE.md",
+    ScanTime: "2026-11-19T10:00:00Z",
+    FileMtime: mtime,
+  });
+
+  it("the first batch is labelled from the whole file, and the two clients stay two events", async () => {
+    const sink = memorySink({ batchRows: 1, gate: "Info" });
+    const rows = [ai("C.aaa111", "2026-11-12T03:14:00Z"), ai("C.bbb222", "2026-11-13T03:14:00Z")];
+    await runVelociraptorBulk(
+      sink,
+      "c1",
+      JSON.stringify({ "Custom.DFIRCompanion.AIAgentForensics.abc123": rows }),
+      baseOpts("0011_Custom.DFIRCompanion.AIAgentForensics.abc123.json"),
+      "super-only",
+    );
+    expect(sink.superRows.map((e) => e.asset).sort()).toEqual(["WS-01 (C.aaa111)", "WS-01 (C.bbb222)"]);
+  });
+});

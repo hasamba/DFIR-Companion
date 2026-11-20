@@ -14,6 +14,7 @@ import { mergeHostRenameRecords, type HostRenameRecord } from "../hostRenameReco
 import { mergeEvictions, type SuperEviction } from "../superTimelineStore.js";
 import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { isCollectorEvidenceRow } from "../collectorChildren.js";
+import { learnWholeFile } from "../aiAgentHostLabels.js";
 import {
   openVelociraptorRowStream,
   type Row,
@@ -522,7 +523,7 @@ export async function runVelociraptorBulk(
       const scratch = { ...vrBulkInternals.newVrCtx(vr), aliases: vrCtx.aliases };
       for await (const item of evidence.rows) {
         const rows = prepareRows([item.row]);
-        vrCtx.aliases.learn(rows);
+        learnWholeFile(vrCtx, rows); // rename evidence and AI Agent Forensics shared host names (#2734)
         for (const row of rows)
           if (isCollectorEvidenceRow(row))
             vrCtx.lineage.prime(row, vrBulkInternals.mapRowToEvents(row, scratch).events);

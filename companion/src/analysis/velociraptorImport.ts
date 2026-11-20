@@ -63,7 +63,7 @@ import { mapBinaryRename } from "./binaryRenameImport.js";
 import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
 import { applyMftTimeHints, markSharedSourceMtime, noteInheritedFileTime } from "./mftTimeHints.js";
 import { msgFingerprint } from "./veloMsgFingerprint.js";
-import { mapAiAgentRow } from "./aiAgentImport.js"; // AI Agent Forensics rows first (#2690)
+import { mapAiAgentRow, learnWholeFile, type AiAgentHostsCtx } from "./aiAgentImport.js"; // AI Agent Forensics rows first (#2690, #2734)
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
 import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTitle.js";
@@ -1447,7 +1447,7 @@ export function extractRows(text: string): { rows: Row[]; format: string } {
 
 // Shared mutable accumulators + fallbacks for one parse run, threaded into mapRowToEvents so the
 // per-row dispatch is identical under the synchronous loop, the chunked async one and the bulk driver.
-interface VrParseCtx {
+interface VrParseCtx extends AiAgentHostsCtx {
   fallbackArtifact: string;
   fallbackHost: string;
   fallbackBasis: "collector" | "analyst";
@@ -1473,7 +1473,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
   ctx.renames.note(rh, pickTime(row));
   ctx.dbg.host(row, rh);
 
-  const ai = mapAiAgentRow(row, artifact, host, ctx.iocSink); // own schema; never the shared mappers or tail
+  const ai = mapAiAgentRow(row, artifact, host, ctx.iocSink, ctx.aiHosts); // own schema; never the shared mappers or tail
   if (ai) return ai;
   const rowSink = new Map<string, SiemIoc>();
   let detections = 0;
@@ -1723,7 +1723,7 @@ export function parseVelociraptorJson(
   const rows = prepareRows(rawRows);
   if (rows.length === 0) return emptyVrResult();
   const ctx = newVrCtx(opts);
-  ctx.aliases.learn(rows); // the whole file's rename evidence before any row is attributed (#1489)
+  learnWholeFile(ctx, rows); // the whole file's rename evidence (#1489) and shared host names (#2734) first
   const mapped: MappedEvent[] = [];
   let detections = 0;
   for (const rawRow of rows) {
@@ -1749,7 +1749,7 @@ export async function parseVelociraptorJsonProgress(
   const rows = await prepareRowsAsync(rawRows);
   const total = rows.length;
   const ctx = newVrCtx(opts);
-  ctx.aliases.learn(rows); // as the synchronous driver: the whole file first (#1489)
+  learnWholeFile(ctx, rows); // as the synchronous driver: the whole file first (#1489, #2734)
   const mapped: MappedEvent[] = [];
   let detections = 0;
   for (let i = 0; i < total; i++) {
