@@ -53,6 +53,7 @@ import { createHuntZipHandler, isZipCandidate } from "./dropHuntZip.js";
 import { pruneHuntZipLedgers } from "./dropHuntZipLedger.js";
 import { createSweepProgress, type HuntProgress } from "./dropSweepProgress.js";
 import { huntHeldStoreFor } from "../analysis/huntHeldStore.js";
+import { applyDropHolds, holdFolderPlan } from "./dropHeld.js";
 import { clearStaging } from "./dropHuntExtract.js";
 import { createDropInFlight } from "./dropInFlight.js";
 import {
@@ -648,13 +649,19 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // A hunt export imports one copy per artifact; the rest moves to _skipped/ (#2714).
       await clearStaging(dropDir);
       await pruneHuntZipLedgers(store.stateDir(caseId), listing).catch(() => undefined);
-      await heldStore.prune(caseId, listing).catch(() => undefined);
+      const holds = {
+        store: heldStore,
+        caseId,
+        dropDir,
+        resolveImportKind: (n: string, t: string) => resolveImportKind(n, t),
+      };
       const prepared = await prepareHuntDrops({
         ...{ dropDir, listing, ready: unstuck.ready, stuck: nextStuck },
         skipMove: (rel) =>
           store.withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, rel, DROP_SKIPPED)),
+        hold: (plan) => holdFolderPlan(holds, plan, listing), // over the size limits → _held/ (#2755)
       });
-      const ready = await heldStore.excludeAwaiting(caseId, prepared); // waits only for the analyst (#2746)
+      const ready = await applyDropHolds(holds, prepared);
       // A batch a crash interrupted gets its settle before anything else imports (#2540).
       await dropBatch
         ?.recoverDropBatch(caseId)

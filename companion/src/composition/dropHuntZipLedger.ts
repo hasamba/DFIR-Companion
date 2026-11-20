@@ -29,8 +29,10 @@ export interface MemberOutcome {
   reason?: string;
   /** An imported member's caveat (a guessed format, a streamed import's coverage disclosure). */
   warning?: string;
-  /** Held over a size limit and skipped by the analyst (#2746): neither imported nor failed. */
+  /** Skipped by the analyst under #2746 (records written before #2755): neither imported nor failed. */
   skipped?: boolean;
+  /** Over a size limit, extracted to drop/_held/ for the analyst (#2755): neither imported nor failed. */
+  held?: boolean;
 }
 
 export interface HuntZipLedger {
@@ -81,6 +83,7 @@ export async function openHuntZipLedger(
         ...(outcome.reason ? { reason: outcome.reason } : {}),
         ...(outcome.warning ? { warning: outcome.warning } : {}),
         ...(outcome.skipped ? { skipped: true } : {}),
+        ...(outcome.held ? { held: true } : {}),
       });
       done.set(member, outcome);
     },
@@ -96,6 +99,7 @@ function parseLine(line: string, done: Map<string, MemberOutcome>): void {
       reason?: unknown;
       warning?: unknown;
       skipped?: unknown;
+      held?: unknown;
     };
     if (typeof v.member !== "string" || typeof v.ok !== "boolean") return;
     done.set(v.member, {
@@ -103,6 +107,7 @@ function parseLine(line: string, done: Map<string, MemberOutcome>): void {
       ...(typeof v.reason === "string" ? { reason: v.reason } : {}),
       ...(typeof v.warning === "string" ? { warning: v.warning } : {}),
       ...(v.skipped === true ? { skipped: true } : {}),
+      ...(v.held === true ? { held: true } : {}),
     });
   } catch {
     /* a torn last line (crash mid-append) */

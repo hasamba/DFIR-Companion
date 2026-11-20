@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, realpath, rename, rm, type FileHandle } from "node:fs/promises";
 import { dirname, extname, join, relative, sep } from "node:path";
-import { DROP_FAILED } from "../analysis/dropScan.js";
+import { DROP_FAILED, DROP_HELD } from "../analysis/dropScan.js";
 import { withCaseWrite } from "../storage/caseIncarnation.js";
 
 export const HUNT_ZIP_STAGING = ".hunt-zip-staging";
@@ -24,18 +24,27 @@ export function failedMembersFolder(zipRelpath: string): string {
   return `${DROP_FAILED}/${stem}`;
 }
 
-/** A unique, exclusively created file for `member` under the zip's failed folder; null-safe paths. */
-async function reserveFailedPath(
+/** The folder a zip's held members go to (#2755): `_held/<zip relpath minus .zip>`. */
+export function heldMembersFolder(zipRelpath: string): string {
+  return `${DROP_HELD}${failedMembersFolder(zipRelpath).slice(DROP_FAILED.length)}`;
+}
+
+/**
+ * A unique, exclusively created file at `folder/<member>` under one reserved root of drop/ (`_failed`
+ * or `_held`); its parent must resolve inside that root. A name already taken gets `_N`.
+ */
+async function reserveUnder(
   dropDir: string,
-  zipRelpath: string,
+  root: string,
+  folder: string,
   member: string,
 ): Promise<{ path: string; handle: FileHandle }> {
-  const failedRoot = join(dropDir, DROP_FAILED);
-  const target = join(dropDir, ...failedMembersFolder(zipRelpath).split("/"), ...member.split("/"));
+  const rootDir = join(dropDir, root);
+  const target = join(dropDir, ...folder.split("/"), ...member.split("/"));
   await mkdir(dirname(target), { recursive: true });
-  const [realRoot, realParent] = await Promise.all([realpath(failedRoot), realpath(dirname(target))]);
+  const [realRoot, realParent] = await Promise.all([realpath(rootDir), realpath(dirname(target))]);
   if (realParent !== realRoot && !realParent.startsWith(realRoot + sep))
-    throw new Error(`refused to extract outside ${DROP_FAILED}/ (security): ${member}`);
+    throw new Error(`refused to extract outside ${root}/ (security): ${member}`);
   const ext = extname(target);
   const stem = target.slice(0, target.length - ext.length);
   for (let n = 0; n < 1000; n++) {
@@ -49,6 +58,31 @@ async function reserveFailedPath(
   throw new Error(`no free name to extract ${member} to`);
 }
 
+const reserveFailedPath = (dropDir: string, zipRelpath: string, member: string) =>
+  reserveUnder(dropDir, DROP_FAILED, failedMembersFolder(zipRelpath), member);
+
+/** Extract a held member via `fill` to `_held/<zip stem>/<member>`; returns its path relative to drop/. */
+export async function extractHeldMember(
+  dropDir: string,
+  zipRelpath: string,
+  member: string,
+  fill: (out: FileHandle) => Promise<unknown>,
+): Promise<string> {
+  return withCaseWrite(join(dropDir, DROP_HELD), async () => {
+    await mkdir(join(dropDir, DROP_HELD), { recursive: true });
+    const { path, handle } = await reserveUnder(dropDir, DROP_HELD, heldMembersFolder(zipRelpath), member);
+    try {
+      await fill(handle);
+    } catch (e) {
+      await handle.close().catch(() => undefined);
+      await rm(path, { force: true });
+      throw e;
+    }
+    await handle.close();
+    return relative(dropDir, path).replace(/\\/g, "/");
+  });
+}
+
 /** Write a failed member via `fill`; returns its path relative to drop/. */
 export async function extractFailedMember(
   dropDir: string,
@@ -58,6 +92,7 @@ export async function extractFailedMember(
 ): Promise<string> {
   const failedRoot = join(dropDir, DROP_FAILED);
   return withCaseWrite(failedRoot, async () => {
+    await mkdir(failedRoot, { recursive: true });
     const { path, handle } = await reserveFailedPath(dropDir, zipRelpath, member);
     try {
       await fill(handle);

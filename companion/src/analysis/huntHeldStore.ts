@@ -3,73 +3,61 @@ import { join } from "node:path";
 import { z } from "zod";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { isSafeDropRelpath } from "../storage/dropRelpath.js";
-import { isSafeZipEntryPath } from "./caseRestore.js";
-import type { DropFileStat } from "./dropScan.js";
 
 /**
- * Hunt-zip result files held over a size limit, and the analyst's decisions (#2746):
- * `state/hunt-held.json`. One record per ARCHIVE (the ledger's id: relpath, size and every member's
- * name, CRC and sizes), so a different zip dropped under the same name never inherits a decision.
+ * Hunt results held over the size limits (#2746, #2753, #2755): `state/hunt-held.json`.
  *
- * - The holds are worked out once, the first time an archive is seen, and frozen: totals never shrink
- *   as members import, and a settings change does not re-evaluate an archive already held.
- * - `waiting` is set only when the zip's last run ended with nothing left but undecided holds. The sweep
- *   then leaves that zip alone (no Jobs row every poll) until a decision arrives or the file changes.
- * - A decided entry is removed once its outcome is in the zip's ledger.
+ * THE DROP FOLDER IS THE STATE. A held result is a file under `drop/_held/<the path it would have in
+ * drop/>`; this store only adds what the dashboard shows about it (artifact, PC, size, the limit it
+ * crossed) and remembers what the files cannot:
  *
- * The file is validated on load, and an entry naming an unsafe path is dropped: it is machine-local,
- * but nothing here trusts it more than the drop status does.
+ * - `held`: the details of each file under `_held/` (a file with no details is still listed).
+ * - `approved`: files the analyst released (Import anyway) or skipped, by path, size and modification
+ *   time. A file that matches is never held again, so it imports when it is in drop/ — after Import
+ *   anyway, or when the analyst moves a skipped file back. A move keeps the modification time, so a
+ *   different file under the same name is not approved. The newest MAX_APPROVED are kept.
+ * - `pending`: an unzipped hunt folder's files chosen to be held, recorded BEFORE any is moved, so a
+ *   crash part-way finishes that decision instead of recomputing a smaller one from what is left.
+ * - `hunts`: a bundle hunt's per-artifact decisions, followed by every later collect of that hunt.
+ *
+ * Validated on load; an entry naming an unsafe path is dropped.
  */
 
-const entrySchema = z.object({
-  member: z.string().refine(isSafeZipEntryPath),
-  artifact: z.string().catch(""),
-  host: z.string().catch(""),
+const MAX_LIST = 5000;
+const MAX_APPROVED = 1000;
+
+const metaSchema = z.object({
+  origin: z.enum(["zip", "hunt", "file", "folder"]).catch("file"),
+  /** What it came from: the zip's relpath, the hunt id, or the dropped path. */
+  source: z.string().max(1024).catch(""),
+  artifact: z.string().max(256).catch(""),
+  host: z.string().max(256).catch(""),
   bytes: z.number().catch(0),
   groupBytes: z.number().catch(0),
-  reason: z.enum(["host", "total"]).catch("total"),
+  reason: z.enum(["host", "total"]).catch("host"),
   limitMb: z.number().catch(0),
-  decision: z.enum(["import", "skip"]).optional().catch(undefined),
+  huntId: z.string().max(80).optional().catch(undefined),
 });
 
-const validEntries = z
-  .array(z.unknown())
-  .catch([])
-  .transform((list) => list.flatMap((e) => (entrySchema.safeParse(e).success ? [entrySchema.parse(e)] : [])));
+const heldSchema = metaSchema.extend({
+  /** Relative to drop/, starting with `_held/`. */
+  rel: z
+    .string()
+    .refine(isSafeDropRelpath)
+    .refine((r) => r.startsWith("_held/")),
+});
 
-const archiveSchema = z.object({
-  archiveId: z.string().regex(/^[0-9a-f]{8,64}$/),
+const approvedSchema = z.object({
   relpath: z.string().refine(isSafeDropRelpath),
   size: z.number(),
   mtimeMs: z.number(),
-  waiting: z.boolean().catch(false),
-  entries: validEntries,
 });
 
-// A bundle hunt's artifact held over a limit (#2753): held as a whole, decided per artifact, and the
-// decision is followed by every later collect of that hunt (a collect re-reads the full results).
-const huntEntrySchema = z.object({
-  artifact: z
-    .string()
-    .min(1)
-    .max(256)
-    .regex(/^[^\u0000-\u001f]+$/),
-  bytes: z.number().catch(0),
-  /** The PC(s) whose results crossed the per-PC limit (capped), empty for the across-PCs limit. */
-  hosts: z.array(z.string().max(256)).max(20).catch([]),
-  hostBytes: z.number().catch(0),
-  reason: z.enum(["host", "total"]).catch("total"),
-  limitMb: z.number().catch(0),
-  decision: z.enum(["import", "skip"]).optional().catch(undefined),
-});
+const pendingSchema = z.object({ relpath: z.string().refine(isSafeDropRelpath), meta: metaSchema });
+
 const huntSchema = z.object({
   huntId: z.string().regex(/^H\.[A-Za-z0-9]{1,64}$/),
-  entries: z
-    .array(z.unknown())
-    .catch([])
-    .transform((list) =>
-      list.flatMap((e) => (huntEntrySchema.safeParse(e).success ? [huntEntrySchema.parse(e)] : [])),
-    ),
+  decisions: z.record(z.string().max(256), z.enum(["import", "skip"])).catch({}),
 });
 
 const validList = <S extends z.ZodTypeAny>(schema: S) =>
@@ -77,41 +65,40 @@ const validList = <S extends z.ZodTypeAny>(schema: S) =>
     .array(z.unknown())
     .catch([])
     .transform((list): z.output<S>[] =>
-      list.flatMap((a) => {
+      list.slice(-MAX_LIST).flatMap((a) => {
         const r = schema.safeParse(a);
         return r.success ? [r.data as z.output<S>] : [];
       }),
     );
 
 const fileSchema = z.object({
-  archives: validList(archiveSchema),
+  held: validList(heldSchema),
+  approved: validList(approvedSchema),
+  pending: validList(pendingSchema),
   hunts: validList(huntSchema),
 });
 
-export type HeldEntry = z.infer<typeof entrySchema>;
-export type HeldArchive = z.infer<typeof archiveSchema>;
+export type HeldMeta = z.infer<typeof metaSchema>;
+export type HeldFileInfo = z.infer<typeof heldSchema>;
+export type Approval = z.infer<typeof approvedSchema>;
+export type PendingHold = z.infer<typeof pendingSchema>;
 export type HeldDecision = "import" | "skip";
-export type HeldHuntEntry = z.infer<typeof huntEntrySchema>;
-export type HeldHunt = z.infer<typeof huntSchema>;
-
-export interface HuntDecisionInput {
-  huntId: string;
-  artifact: string;
-  decision: HeldDecision;
-}
-
-interface HeldFile {
-  archives: HeldArchive[];
-  hunts: HeldHunt[];
-}
-
-export interface DecisionInput {
-  archiveId: string;
-  member: string;
-  decision: HeldDecision;
-}
+export type HeldState = z.infer<typeof fileSchema>;
 
 export const HUNT_HELD_FILE = "hunt-held.json";
+
+export interface FileIdentity {
+  relpath: string;
+  size: number;
+  mtimeMs: number;
+}
+
+export function isApproved(state: HeldState, f: FileIdentity): boolean {
+  const rel = f.relpath.replace(/\\/g, "/");
+  return state.approved.some(
+    (a) => a.relpath === rel && a.size === f.size && Math.abs(a.mtimeMs - f.mtimeMs) < 1,
+  );
+}
 
 export class HuntHeldStore {
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -122,18 +109,18 @@ export class HuntHeldStore {
     return join(this.stateDir(caseId), HUNT_HELD_FILE);
   }
 
-  private async read(caseId: string): Promise<HeldFile> {
+  private async read(caseId: string): Promise<HeldState> {
     try {
       return fileSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8")));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT" || err instanceof SyntaxError)
-        return { archives: [], hunts: [] };
+        return { held: [], approved: [], pending: [], hunts: [] };
       throw err;
     }
   }
 
-  /** One read-modify-write of the whole file for a case, after every earlier one; no `next`, no write. */
-  private serialFile<T>(caseId: string, fn: (file: HeldFile) => { next?: HeldFile; result: T }): Promise<T> {
+  /** One read-modify-write for a case after every earlier one; no `next`, no write. */
+  private serial<T>(caseId: string, fn: (s: HeldState) => { next?: HeldState; result: T }): Promise<T> {
     const run = (this.queues.get(caseId) ?? Promise.resolve()).then(async () => {
       const { next, result } = fn(await this.read(caseId));
       if (next) await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
@@ -146,169 +133,72 @@ export class HuntHeldStore {
     return run;
   }
 
-  /** The zip records; the hunt records are carried through unchanged. */
-  private serial<T>(
-    caseId: string,
-    fn: (list: HeldArchive[]) => { next?: HeldArchive[]; result: T },
-  ): Promise<T> {
-    return this.serialFile(caseId, (file) => {
-      const { next, result } = fn(file.archives);
-      return next ? { next: { ...file, archives: next }, result } : { result };
+  load(caseId: string): Promise<HeldState> {
+    return this.serial(caseId, (s) => ({ result: s }));
+  }
+
+  /** Record (or replace) the details of a held file. */
+  putHeld(caseId: string, info: HeldFileInfo): Promise<void> {
+    return this.serial(caseId, (s) => ({
+      next: { ...s, held: [...s.held.filter((h) => h.rel !== info.rel), info] },
+      result: undefined,
+    }));
+  }
+
+  /** Forget the details of held files that are gone (imported, skipped, or moved by hand). */
+  forgetMissing(caseId: string, heldRels: ReadonlySet<string>): Promise<void> {
+    return this.serial(caseId, (s) => {
+      const held = s.held.filter((h) => heldRels.has(h.rel));
+      return held.length === s.held.length
+        ? { result: undefined }
+        : { next: { ...s, held }, result: undefined };
     });
   }
 
-  /** The hunt records; the zip records are carried through unchanged. */
-  private serialHunts<T>(
-    caseId: string,
-    fn: (list: HeldHunt[]) => { next?: HeldHunt[]; result: T },
-  ): Promise<T> {
-    return this.serialFile(caseId, (file) => {
-      const { next, result } = fn(file.hunts);
-      return next ? { next: { ...file, hunts: next }, result } : { result };
+  /** Approve a file (released or skipped by the analyst), dropping the details of the held file it was. */
+  approve(caseId: string, approval: Approval, fromHeldRel: string): Promise<void> {
+    return this.serial(caseId, (s) => ({
+      next: {
+        ...s,
+        held: s.held.filter((h) => h.rel !== fromHeldRel),
+        approved: [...s.approved.filter((a) => a.relpath !== approval.relpath), approval].slice(
+          -MAX_APPROVED,
+        ),
+      },
+      result: undefined,
+    }));
+  }
+
+  /** Add an unzipped folder's chosen holds, and/or clear the ones that were carried out. */
+  setPending(caseId: string, add: readonly PendingHold[], done: readonly string[] = []): Promise<void> {
+    return this.serial(caseId, (s) => {
+      const drop = new Set([...done, ...add.map((p) => p.relpath)]);
+      const pending = [...s.pending.filter((p) => !drop.has(p.relpath)), ...add];
+      return { next: { ...s, pending }, result: undefined };
     });
   }
 
-  listHunts(caseId: string): Promise<HeldHunt[]> {
-    return this.serialHunts(caseId, (list) => ({ result: list }));
+  huntDecisions(caseId: string, huntId: string): Promise<Record<string, HeldDecision>> {
+    return this.serial(caseId, (s) => ({
+      result: s.hunts.find((h) => h.huntId === huntId)?.decisions ?? {},
+    }));
   }
 
-  /**
-   * Record one collect pass's held artifacts. A held artifact keeps any decision it has; an undecided
-   * entry for an artifact this pass downloaded but did not hold is dropped (it now fits). Entries for
-   * artifacts this pass did not download are kept as they are, and decided entries are never dropped.
-   */
-  putHuntHolds(
-    caseId: string,
-    huntId: string,
-    downloaded: readonly string[],
-    held: readonly HeldHuntEntry[],
-  ): Promise<void> {
-    return this.serialHunts(caseId, (list) => {
-      const prev = list.find((h) => h.huntId === huntId)?.entries ?? [];
-      const heldNames = new Set(held.map((e) => e.artifact));
-      const fetched = new Set(downloaded);
-      const kept = prev.filter((e) => !heldNames.has(e.artifact) && (e.decision || !fetched.has(e.artifact)));
-      const fresh = held.map((e) => {
-        const before = prev.find((p) => p.artifact === e.artifact);
-        return before?.decision ? { ...e, decision: before.decision } : { ...e, decision: undefined };
-      });
-      const entries = [...kept, ...fresh];
-      const rest = list.filter((h) => h.huntId !== huntId);
-      if (!entries.length && rest.length === list.length) return { result: undefined };
-      return { next: entries.length ? [...rest, { huntId, entries }] : rest, result: undefined };
-    });
-  }
-
-  /** Apply decisions to held hunt artifacts that exist; returns the decisions applied. */
-  decideHunts(caseId: string, decisions: readonly HuntDecisionInput[]): Promise<HuntDecisionInput[]> {
-    return this.serialHunts(caseId, (list) => {
-      const applied: HuntDecisionInput[] = [];
-      const next = list.map((h) => ({
-        ...h,
-        entries: h.entries.map((e) => {
-          const d = decisions.find((x) => x.huntId === h.huntId && x.artifact === e.artifact);
-          if (!d) return e;
-          applied.push(d);
-          return { ...e, decision: d.decision };
-        }),
-      }));
-      return applied.length ? { next, result: applied } : { result: [] };
-    });
-  }
-
-  list(caseId: string): Promise<HeldArchive[]> {
-    return this.serial(caseId, (list) => ({ result: list }));
-  }
-
-  get(caseId: string, archiveId: string): Promise<HeldArchive | undefined> {
-    return this.serial(caseId, (list) => ({ result: list.find((a) => a.archiveId === archiveId) }));
-  }
-
-  /** Replace (or add) one archive's record; no entries left removes it. */
-  put(caseId: string, archive: HeldArchive): Promise<void> {
-    return this.serial(caseId, (list) => {
-      const rest = list.filter((a) => a.archiveId !== archive.archiveId);
-      return { next: archive.entries.length ? [...rest, archive] : rest, result: undefined };
-    });
-  }
-
-  /** Edit one archive's CURRENT record in place (decisions that arrived meanwhile are kept). */
-  update(
-    caseId: string,
-    archiveId: string,
-    fn: (rec: HeldArchive) => HeldArchive,
-  ): Promise<HeldArchive | undefined> {
-    return this.serial(caseId, (list) => {
-      const rec = list.find((a) => a.archiveId === archiveId);
-      if (!rec) return { result: undefined };
-      const next = fn(rec);
-      const rest = list.filter((a) => a.archiveId !== archiveId);
-      return { next: next.entries.length ? [...rest, next] : rest, result: next };
-    });
-  }
-
-  remove(caseId: string, archiveId: string): Promise<void> {
-    return this.serial(caseId, (list) =>
-      list.some((a) => a.archiveId === archiveId)
-        ? { next: list.filter((a) => a.archiveId !== archiveId), result: undefined }
-        : { result: undefined },
-    );
-  }
-
-  /** Apply the analyst's decisions to entries that exist; returns how many were applied. */
-  decide(caseId: string, decisions: readonly DecisionInput[]): Promise<number> {
-    return this.serial(caseId, (list) => {
-      let applied = 0;
-      const next = list.map((a) => {
-        const mine = decisions.filter((d) => d.archiveId === a.archiveId);
-        if (!mine.length) return a;
-        let touched = false;
-        const entries = a.entries.map((e) => {
-          const d = mine.find((x) => x.member === e.member);
-          if (!d) return e;
-          applied += 1;
-          touched = true;
-          return { ...e, decision: d.decision };
-        });
-        return touched ? { ...a, entries, waiting: false } : a;
-      });
-      return applied ? { next, result: applied } : { result: 0 };
-    });
-  }
-
-  /** Drop the records of zips no longer in drop/. */
-  prune(caseId: string, listing: readonly DropFileStat[]): Promise<void> {
-    const present = new Set(listing.map((f) => f.relpath.replace(/\\/g, "/")));
-    return this.serial(caseId, (list) => {
-      const next = list.filter((a) => present.has(a.relpath));
-      return next.length === list.length ? { result: undefined } : { next, result: undefined };
-    });
-  }
-
-  /**
-   * `ready` without the zips that wait only for the analyst: the record matches the file as it is now,
-   * the zip's last run left nothing else to do, and no decision has arrived since.
-   */
-  async excludeAwaiting(caseId: string, ready: readonly DropFileStat[]): Promise<DropFileStat[]> {
-    const list = await this.list(caseId);
-    if (!list.length) return [...ready];
-    return ready.filter((f) => {
-      const rel = f.relpath.replace(/\\/g, "/");
-      const rec = list.find((a) => a.relpath === rel);
-      const idle =
-        rec &&
-        rec.waiting &&
-        rec.size === f.size &&
-        rec.mtimeMs === f.mtimeMs &&
-        rec.entries.every((e) => !e.decision);
-      return !idle;
+  decideHunt(caseId: string, huntId: string, artifact: string, decision: HeldDecision): Promise<void> {
+    return this.serial(caseId, (s) => {
+      const prev = s.hunts.find((h) => h.huntId === huntId)?.decisions ?? {};
+      const hunts = [
+        ...s.hunts.filter((h) => h.huntId !== huntId),
+        { huntId, decisions: { ...prev, [artifact]: decision } },
+      ];
+      return { next: { ...s, hunts }, result: undefined };
     });
   }
 }
 
 const stores = new WeakMap<object, HuntHeldStore>();
 
-/** One store per case store, shared by the drop sweep and the held-artifacts routes. */
+/** One store per case store, shared by the drop sweep, the hunt collect and the routes. */
 export function huntHeldStoreFor(cases: { stateDir: (caseId: string) => string }): HuntHeldStore {
   let s = stores.get(cases);
   if (!s) {

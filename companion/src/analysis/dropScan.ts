@@ -82,6 +82,8 @@ export const DROP_PROCESSED = "_processed";
 export const DROP_FAILED = "_failed";
 // Hunt-export copies and metadata that were not imported (#2714) — set aside, never deleted.
 export const DROP_SKIPPED = "_skipped";
+/** Results held over the hunt artifact size limits, waiting for Import anyway / Skip (#2755). */
+export const DROP_HELD = "_held";
 
 // The usage hint dropped into an empty drop/ folder; ignored by the scanner.
 export const DROP_README = "README.txt";
@@ -105,7 +107,8 @@ function firstSegment(relpath: string): string {
 /** True for files in the reserved subtrees, the README, dotfiles, and known OS/sync junk. */
 export function shouldIgnoreDropFile(relpath: string): boolean {
   const seg0 = firstSegment(relpath);
-  if (seg0 === DROP_PROCESSED || seg0 === DROP_FAILED || seg0 === DROP_SKIPPED) return true;
+  if (seg0 === DROP_PROCESSED || seg0 === DROP_FAILED || seg0 === DROP_SKIPPED || seg0 === DROP_HELD)
+    return true;
   const base = basename(relpath);
   if (!base) return true;
   if (base.startsWith(".")) return true; // dotfiles / partial-download markers
