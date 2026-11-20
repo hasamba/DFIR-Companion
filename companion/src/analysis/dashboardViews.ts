@@ -89,6 +89,8 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-questions",
   "sec-uncertainties",
   "sec-huntprofile",
+  "sec-hunt-case", // #2670 Threat Hunt panel (coverage, graded items, Convert to incident)
+  "sec-client-baseline", // #2670 the client's reviewed baseline and confirm list
   "sec-threads",
   "sec-mitre",
   "sec-adversary",
@@ -383,6 +385,8 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     description:
       "Planning collections — playbook, next steps, ATT&CK, adversary hints and D3FEND countermeasures to drive hunts.",
     sections: [
+      "sec-hunt-case",
+      "sec-client-baseline",
       "sec-hunt-workbench",
       "sec-huntprofile",
       "sec-fleet-collection",
@@ -413,6 +417,31 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
     ],
     defaultSort: "severity",
     reportTemplateId: "standard",
+  },
+  {
+    // #2670: the default workspace of a proactive THREAT HUNT case — coverage, graded hunt items and
+    // the client's baseline first, the hunt tools next, and the report set to the hunt summary.
+    id: "threat-hunt",
+    name: "Threat Hunt",
+    description:
+      "A proactive hunt: coverage, policy / new / rare items, the client baseline, then the hunt tools and findings.",
+    sections: [
+      "sec-hunt-case",
+      "sec-client-baseline",
+      "sec-hunt-workbench",
+      "sec-huntprofile",
+      "sec-fleet-collection",
+      "sec-velohunts",
+      "sec-findings",
+      "sec-timeline",
+      "sec-iocs",
+      "sec-hostranking",
+      "sec-questions",
+      "sec-next-steps",
+      "sec-notebook",
+    ],
+    defaultSort: "severity",
+    reportTemplateId: "threat-hunt-summary",
   },
 ];
 

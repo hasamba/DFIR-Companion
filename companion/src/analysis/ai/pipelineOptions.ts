@@ -1,4 +1,5 @@
 import type { VeloHuntStore } from "../veloHuntStore.js";
+import type { HuntInventoryStore } from "../huntInventoryStore.js";
 import type { IocAttributionStore } from "../iocAttributionStore.js";
 import type { AIProvider, AnalyzeImage } from "../../providers/provider.js";
 import type { Logger } from "../../logging/logger.js";
@@ -172,6 +173,7 @@ export interface PipelineOptions {
   // Velociraptor hunt metadata: the collection inventory reads which artifacts came back empty,
   // failed or went to the archive only (#1588). Optional; absent = no hunt lines.
   veloHuntStore?: VeloHuntStore;
+  huntInventoryStore?: HuntInventoryStore; // #2670: approved items for the hunt framing
   analysisRunStore?: AnalysisRunStore; // append-only reproducibility ledger (#377)
   // Per-case AI cost/token accounting (vision / synthesis / other buckets), read by the
   // Diagnostics "AI cost — this case" card. Absent → cost tracking is skipped (CLI scripts).

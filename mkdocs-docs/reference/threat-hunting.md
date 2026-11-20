@@ -1,5 +1,136 @@
 # Threat Hunting
 
+## Threat-hunt mode (proactive hunts)
+
+Use threat-hunt mode when there is no incident: a routine sweep of a client's endpoints for things
+that should not be there, such as programs the client does not allow, rare or new software, risky
+downloads, and early signs of an attacker.
+
+### 1. Create a hunt case
+
+In **New Case**, pick the **Threat hunt (proactive)** template. This:
+
+- puts the case in **hunt mode**. Synthesis and Watson then rank anomalies, state their verdict
+  *within coverage* (for example "no compromise found on the 287 hosts that answered; 13 did not
+  answer") and do not force a kill chain or attribution;
+- sets the case report to the **Threat hunt summary** template (unless you already picked another);
+- shows the **Threat Hunt** and **Client Baseline** panels. The **Threat Hunt** dashboard view
+  puts them first.
+
+### 2. Link the case to a client
+
+Pick the client in **New Case** (the **Client** box appears for the Threat hunt template), or later
+in the **Client Baseline** panel with **Link case to client**. A client is its own record (for
+example "Client A"). It keeps the client's reviewed baseline across hunt cases.
+
+- Only the instance administrator can create or edit a client profile.
+- Linking a case to a client needs case-administrator rights on that case.
+- A profile can name a default Velociraptor server set. Picking the client in **New Case** fills
+  the **Servers** box with it, unless you already chose a set there. It never changes an existing
+  case and never decides which hosts belong to the client.
+
+### 3. Run the hunt
+
+Run the built-in **Threat Hunt Starter** bundle (Fleet Collection panel), or any other hunt. The
+starter bundle collects installed software, execution and presence evidence, downloads,
+autoruns / services / scheduled tasks, remote-access tools and a signature check. Every result
+keeps an honest label: Prefetch and UserAssist mean the program **ran**; ShimCache and Amcache
+mean the file was **present**, not that it ran.
+
+### 4. Read the coverage
+
+The Threat Hunt panel and the report say how many hosts answered each hunt cleanly, out of how
+many were targeted, and how many did not answer. Only Companion-launched hunts record this. For an
+uploaded hunt export the coverage is **unknown**: nothing is called absent, and no percentage is
+given.
+
+### 5. Rare, new, policy and download items
+
+Each time hunt rows are imported, the Companion counts on how many hosts each distinct program,
+autorun and download appears. It then adds **one summary entry per item** to the forensic
+timeline, listing its hosts ("on 3 of 287 answering hosts: WS-01, WS-02, WS-03"). The individual
+rows stay searchable in the super-timeline. Each kind is capped at 50 entries, with one visible
+"N more" entry, so a routine update on 300 hosts never floods the timeline.
+
+| Item | When |
+|---|---|
+| **Policy violation** | The client marked it **Not allowed**, or it was downloaded from a blocked site or a blocked category. Default severity Medium (setting below). Labelled as policy, not as malicious activity. |
+| **Rare** | At least 20 hosts answered cleanly, and the item is on at most 5% of them and on at most 10 hosts. Below 20 answering hosts, or with unknown or partial coverage, nothing is graded rare. |
+| **New since the last comparable hunt** | Not in the baseline and not seen in the last comparable hunt for this client: an earlier hunt case of the same client, with an overlapping bundle, over at least half the same answering hosts. An item is called new only on hosts both hunts covered cleanly. A first hunt has nothing to compare with. |
+| **Flagged download** | A runnable or archive file downloaded from a site outside the client's approved sources, or with no source URL. |
+
+**Approved** items get no entry and lose any rare or new flag. The AI is told which programs the
+client approved, so it ranks expected use low and only unusual use as an anomaly. An approval
+never lowers a detection: a Sigma or tagger hit on an approved tool keeps its grade.
+
+These summaries are recalculated after every import, so an item that looked rare can stop being
+rare as more hosts answer; its entry is then removed (unless you promoted it).
+
+### 6. Build the baseline with the client
+
+The **Client Baseline** panel lists every item the baseline does not settle, rarest first, with
+its hosts, path, evidence label and publisher (as the endpoint reported it, **not verified**).
+
+1. Press **Export confirm list (CSV)** or **(Markdown)** and send it to the client.
+2. When the client answers, tick items and press **Mark Approved**, **Mark Not allowed** or
+   **Reset to Unknown**, or import the client's filled CSV (fill the `verdict` column with
+   `approved`, `not allowed` or `unknown`). You are asked for the source of the answer, for example
+   "client email 2026-11-20".
+3. Record blocked download categories (torrent, file-sharing, cloud-storage, paste-sites,
+   remote-access) and blocked or approved download sites. Blocking `example.com` also blocks
+   `dl.example.com`, never `notexample.com`.
+
+Rules that keep an attacker from hiding behind a name:
+
+- **Seeing a program never approves it.** Only a mark does.
+- An approval matches only on the program name **and** its path pattern **and** a verified signer
+  or an approved hash. A `chrome.exe` in a Temp folder does not match an approval for `chrome.exe`
+  in `\Program Files\Google\`. If one host runs a different hash at the approved path, that item
+  is not covered.
+- Publisher text alone never approves anything. A missing hash or signer gives **Unknown**.
+- No importer records a verified Authenticode signer yet, so an approval needs an approved hash to
+  match. Prefetch rows carry no hash: approve the program from a hash-bearing artifact.
+- **Not allowed** wins over Approved. An approval can carry an expiry date.
+- Every change is a new numbered **baseline version**, saved with who made it, when and its source,
+  and can be reversed (Reset to Unknown). Unknown items stay on the list in every hunt report,
+  with how many hunts they have stayed unconfirmed.
+
+### 7. Earlier cases stay as they were
+
+Each hunt case is graded against the baseline version it was first graded with. A later baseline
+change does not alter a delivered report. To apply the current baseline to a case, press
+**Re-grade with current baseline** in the Threat Hunt panel. The re-grade is written to the
+activity log. It re-reads the case's rows from both the forensic timeline and the super-timeline,
+including rows the gate moved out of the forensic timeline. The super-timeline has a size cap, so
+on a large hunt some rows may already be gone; the result says how many host observations the raw
+record no longer holds. Re-import the hunt to recover them.
+
+### 8. Convert to incident
+
+When the hunt case holds any High or Critical finding, the Threat Hunt panel shows **Convert to
+incident**. Conversion keeps all evidence and analyst work, switches the case to the incident type
+you choose (Intrusion by default), and marks the current AI conclusions out of date until the next
+synthesis.
+
+### Who sees what (team mode)
+
+- Everyone signed in sees the list of client names. The public demo shows no client profiles.
+- Only the instance administrator sees and edits a full client profile.
+- Earlier hunts of the same client are listed only when you can open them, including their case
+  password when they have one.
+- The client's name and its blocked and approved domains are masked before every AI call when
+  anonymisation is on. Approval notes are never sent to a model.
+
+### What is not done
+
+- Hunt grading reads the rows an import adds to the case. Rows from a super-timeline-only bundle
+  never pass that point, so they are counted only by **Re-grade with current baseline**.
+- A download's referrer is not recorded on the timeline row, so download rules judge the source
+  URL only.
+- The Hunt Workbench `prevalence` stage counts hosts in the matched rows; it does not know which
+  hosts answered a hunt.
+
+
 ## AI-Generated Hunt Suggestions
 
 After synthesis, the dashboard surfaces four types of hunt suggestions:

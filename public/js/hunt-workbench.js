@@ -21,6 +21,7 @@ const PIPELINE_STAGES = [
   "count",
   "stats",
   "rare",
+  "prevalence",
   "sort",
   "limit",
 ];

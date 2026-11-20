@@ -570,6 +570,11 @@ class Parser {
         const limit = this.match("word", "limit") ? this.parsePositiveInteger("rare limit", 100) : 10;
         return { kind: "rare", field, limit };
       }
+      case "prevalence": {
+        const field = this.parseField().name;
+        const limit = this.match("word", "limit") ? this.parsePositiveInteger("prevalence limit", 100) : 10;
+        return { kind: "prevalence", field, limit };
+      }
       case "sort": {
         const field = this.expect("word").value;
         const direction =
@@ -589,6 +594,7 @@ class Parser {
           "count",
           "stats",
           "rare",
+          "prevalence",
           "sort",
           "limit",
         ]);

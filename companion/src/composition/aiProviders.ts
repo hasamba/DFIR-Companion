@@ -10,6 +10,11 @@
  * Re-exported from server.ts, because scripts/{reanalyze,synthesize,deep-pass,verify-ai}.ts and the
  * provider wiring tests import them from `src/server.js`.
  */
+import { dirname, join } from "node:path";
+import { HuntProfileNames } from "../analysis/huntMaskNames.js";
+import { HuntClientLinkStore } from "../analysis/huntClientLink.js";
+import { HuntInventoryStore } from "../analysis/huntInventoryStore.js";
+import { ClientProfileStore } from "../analysis/clientProfileStore.js";
 import { IocAttributionStore } from "../analysis/iocAttributionStore.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
@@ -392,10 +397,16 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     customEntitiesStore: new CustomEntitiesStore(params.store),
     discoveredStore: new DiscoveredEntitiesStore(params.store),
     anonMapStore: new AnonMapStore(params.store), // #2657
-    rawNamesStore: new WatsonRosterNames(new WatsonChatStore(params.store)), // H3: Watson's roster
+    // H3: Watson's roster, plus the linked client profile's name and domains in a hunt case (#2670).
+    rawNamesStore: new HuntProfileNames(
+      new WatsonRosterNames(new WatsonChatStore(params.store)),
+      new HuntClientLinkStore(params.store),
+      new ClientProfileStore(join(dirname(params.store.casesRoot), "client-profiles")),
+    ),
     synthMetaStore: new SynthMetaStore(params.store),
     findingSeverityRestoreStore: new FindingSeverityRestoreStore(params.store), // #1973
     veloHuntStore: new VeloHuntStore(params.store), // #1588 collection inventory
+    huntInventoryStore: new HuntInventoryStore(params.store), // #2670 approved items for the hunt framing
     analysisRunStore: params.analysisRunStore,
     operationalMetrics: params.operationalMetrics,
     aiCostStore: new AiCostStore(params.store),

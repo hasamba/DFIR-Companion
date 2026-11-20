@@ -23,7 +23,9 @@
     const mainSourcePick = document.getElementById("ncMainSource");
     if (mainSourcePick) mainSourcePick.value = ""; // #2594 — Automatic by default
     populateTemplateSelect(); // async, fills while user edits fields
-    populateServerSetSelect(); // async too; preselects the default server set
+    serverSetChosen = false; // a fresh dialog: no server set picked by the analyst yet
+    serverSetsReady = populateServerSetSelect(); // async too; preselects the default server set
+    populateHuntClients(); // #2670: the threat-hunt client picker (shown for a hunt type only)
     document.getElementById("newCaseOverlay").classList.add("open");
     // Auto-suggest the next incident id — still fully editable (focus + select so a
     // manually-typed id overtypes it in one keystroke).
@@ -77,6 +79,7 @@
     lastServerSet = select.value;
   }
   function onServerSetChange() {
+    serverSetChosen = true; // the analyst's own pick: a client's default never overrides it
     const select = document.getElementById("ncServerSet");
     if (select.value !== NEW_SET) {
       lastServerSet = select.value;
@@ -87,6 +90,70 @@
       closeOnSave: true,
       onSaved: (set) => populateServerSetSelect(set.id),
     });
+  }
+  // Threat-hunt client (#2670, D5). A client is its own record; its default server set only
+  // PRE-FILLS the Servers picker of a new hunt case. The analyst's own pick always wins, an
+  // existing case never changes, and no host membership is inferred. Names go in with textContent.
+  let serverSetChosen = false;
+  let serverSetsReady = Promise.resolve();
+  let huntClients = [];
+  function isHuntPick() {
+    const p = typeof selectedNewCasePlaybook === "function" ? selectedNewCasePlaybook() : null;
+    return !!(p && p.kind === "type" && p.def && p.def.mode === "hunt");
+  }
+  function syncHuntClientRow() {
+    const row = document.getElementById("ncHuntClientRow");
+    if (row) row.hidden = !(isHuntPick() && huntClients.length);
+  }
+  async function populateHuntClients() {
+    const select = document.getElementById("ncHuntClient");
+    if (!select) return;
+    huntClients = [];
+    try {
+      const res = await fetch("/client-profiles"); // 403 on the public demo: no picker
+      const list = res.ok ? await res.json() : [];
+      huntClients = Array.isArray(list) ? list : [];
+    } catch {
+      huntClients = [];
+    }
+    select.textContent = "";
+    for (const [value, label] of [["", "No client"], ...huntClients.map((c) => [c.id, c.name])]) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      select.appendChild(opt);
+    }
+    select.value = "";
+    syncHuntClientRow();
+  }
+  // The picked client's id, only while the picked type is a threat hunt.
+  function pickedHuntClient() {
+    const select = document.getElementById("ncHuntClient");
+    return select && select.value && isHuntPick() ? select.value : "";
+  }
+  async function onHuntClientChange() {
+    await serverSetsReady; // both lists loaded before the pre-fill
+    const client = huntClients.find((c) => c.id === pickedHuntClient());
+    const want = client && client.defaultServerSetId;
+    const sets = document.getElementById("ncServerSet");
+    if (serverSetChosen || !want || !sets || !sets.options.some((o) => o.value === want)) return;
+    sets.value = want;
+    lastServerSet = want;
+  }
+  // Link the new case to its client; the case already exists, so a failure is said, not fatal.
+  async function linkHuntClient(caseId, clientId) {
+    let error = "";
+    try {
+      const res = await fetch(`/cases/${encodeURIComponent(caseId)}/hunt/client`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId }),
+      });
+      if (!res.ok) error = ((await res.json().catch(() => ({}))).error || "HTTP " + res.status);
+    } catch (err) {
+      error = err.message;
+    }
+    if (error) alert(`The case was created, but linking it to the client failed: ${error}. Link it in the Client Baseline panel.`);
   }
   function closeNewCase() {
     document.getElementById("newCaseOverlay").classList.remove("open");
@@ -99,6 +166,7 @@
     const serverSet = document.getElementById("ncServerSet");
     const serverSetId =
       serverSet && serverSet.value && serverSet.value !== NEW_SET ? serverSet.value : undefined;
+    const huntClientId = pickedHuntClient();
     const mainSourceEl = document.getElementById("ncMainSource");
     const mainSource = mainSourceEl ? mainSourceEl.value : "";
     const msg = document.getElementById("ncMsg");
@@ -127,6 +195,7 @@
         // #2594: the case exists even when its picked main source could not be saved — say so.
         if (created.mainSourceError)
           alert(created.mainSourceError.charAt(0).toUpperCase() + created.mainSourceError.slice(1) + ".");
+        if (huntClientId) await linkHuntClient(caseId, huntClientId);
         closeNewCase();
         // A pick; connect() below loads it and only then does #caseId change (#2399).
         if (typeof setCasePick === "function") setCasePick(caseId);
@@ -199,6 +268,9 @@
     document.getElementById("ncCancel").onclick = closeNewCase;
     document.getElementById("ncTemplate").onchange = onTemplateSelectChange;
     document.getElementById("ncServerSet").onchange = onServerSetChange;
+    document.getElementById("ncTemplate").addEventListener("change", syncHuntClientRow);
+    const huntClient = document.getElementById("ncHuntClient");
+    if (huntClient) huntClient.onchange = onHuntClientChange;
     document.getElementById("newCaseOverlay").addEventListener("click", (e) => {
       if (e.target.id === "newCaseOverlay") closeNewCase();
     });

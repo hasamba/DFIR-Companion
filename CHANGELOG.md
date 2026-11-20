@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sliding sign-in** — activity extends a team-mode session up to a hard limit (`DFIR_AUTH_SESSION_MAX_HOURS`, default 7 days); idle sessions still expire (closes #2717)
 - **Watson Telegram mirror** — opt-in per chat with `/dfir mirror on`; Watson's case chat is mirrored to a bound Telegram chat and allowlisted users can ask Watson from Telegram (closes #2647)
 - **Velociraptor hunt exports in the drop folder** — a hunt `.zip` or unzipped folder imports one copy of each artifact with the client's host; other copies and metadata move to `_skipped/` (closes #2714)
+- **Threat-hunt mode** — a threat-hunt case type: hunt framing for the AI, host-prevalence "seen on N of M hosts" grading, admin-only client baselines with an approval confirm list, "new since last hunt" grading, a hunt summary report and Convert to incident (closes #2670)
 
 ### Fixed
 

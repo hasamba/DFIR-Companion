@@ -287,6 +287,34 @@ export const BUILT_IN_BUNDLES: readonly ArtifactBundle[] = [
     timeoutSeconds: 6000, // a broad forensic sweep (MFT/SRUM/SQLiteHunter) runs well past the 600s default
   },
   {
+    // #2670: the starter sweep for a proactive THREAT HUNT. Every artifact here is one the other
+    // built-ins already run, so nothing is invented; each row keeps its honest label (ShimCache and
+    // Amcache = present, Prefetch and UserAssist = ran). NOT super-timeline-only: hunt grading reads
+    // the import's own rows at the seam, before the gate moves the Info rows to the super-timeline.
+    id: "threat-hunt-starter",
+    name: "Threat Hunt Starter",
+    description:
+      "Proactive hunt: installed software, execution and presence evidence, downloads, autoruns / services / tasks, RMM tools, signature check",
+    builtIn: true,
+    artifacts: [
+      "Windows.Sys.Programs",
+      "Windows.Forensics.Amcache",
+      "Windows.Forensics.Prefetch",
+      "Windows.Registry.UserAssist",
+      "Windows.Registry.AppCompatCache",
+      "Windows.Forensics.Bam",
+      "Windows.Analysis.EvidenceOfDownload",
+      "DetectRaptor.Windows.Detection.ZoneIdentifier",
+      "Windows.Sys.StartupItems",
+      "Windows.Sysinternals.Autoruns",
+      "Windows.System.TaskScheduler",
+      "DetectRaptor.Windows.Detection.LolRMM",
+      "Windows.System.UntrustedBinaries",
+    ],
+    defaultWaitMinutes: 15,
+    timeoutSeconds: 3600,
+  },
+  {
     id: "linux-triage",
     name: "Linux Triage",
     description: "Linux host triage: users, persistence, network, packages, and detection artifacts",

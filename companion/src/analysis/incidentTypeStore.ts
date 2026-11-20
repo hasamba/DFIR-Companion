@@ -20,6 +20,10 @@ import { loadBuiltInIncidentTypes, getBuiltInIncidentType } from "./incidentType
 export interface IncidentTypeRecord {
   typeId: string; // the chosen incident type id (built-in or custom)
   appliedAt: string; // ISO timestamp of the last apply
+  // #2670 "Convert to incident": the hunt type the case was converted from, and when. Absent on a
+  // case that was never converted.
+  convertedFrom?: string;
+  convertedAt?: string;
 }
 
 export const EMPTY_INCIDENT_TYPE_RECORD: IncidentTypeRecord = { typeId: "", appliedAt: "" };
@@ -27,6 +31,8 @@ export const EMPTY_INCIDENT_TYPE_RECORD: IncidentTypeRecord = { typeId: "", appl
 const incidentTypeRecordSchema = z.object({
   typeId: z.string().catch(""),
   appliedAt: z.string().catch(""),
+  convertedFrom: z.string().optional().catch(undefined),
+  convertedAt: z.string().optional().catch(undefined),
 });
 
 export class IncidentTypeStore {
@@ -55,8 +61,9 @@ export class IncidentTypeStore {
     caseId: string,
     typeId: string,
     at: string = new Date().toISOString(),
+    conversion?: { convertedFrom: string; convertedAt: string },
   ): Promise<IncidentTypeRecord> {
-    const record: IncidentTypeRecord = { typeId, appliedAt: at };
+    const record: IncidentTypeRecord = { typeId, appliedAt: at, ...(conversion ?? {}) };
     await atomicWrite(this.path(caseId), JSON.stringify(record, null, 2));
     return record;
   }

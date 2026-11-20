@@ -12,7 +12,7 @@ import { flagLookalikeCandidates } from "./importSettleLookalike.js";
 import { nameCallersScoped } from "./importSettleNames.js";
 import { principalLedgerChanged } from "../analysis/principalNames.js";
 import { runUnlocked, settleScope, type RunExclusive } from "./importSettleRows.js";
-import { carryAndStampPaged, dualWriteAndTagPaged } from "./importSettlePaged.js";
+import { carryAndStampPaged, dualWriteAndTagPaged, huntSettlePaged } from "./importSettlePaged.js";
 import {
   rehomeSuperTimeline,
   renameLedgerChanged,
@@ -215,6 +215,13 @@ export async function settleForensicImport(
   // Defender engine start-up (#2084): the Info start-up rows are still here; demote is next.
   const engineBoot = await lock(caseId, () => stampEngineBootScoped(store, caseId, candidates.engineBoot));
   changed ||= engineBoot > 0;
+  // Hunt grading (#2670): a hunt case records this import's rows (Info still here) as host counts and
+  // writes one summary entry per graded program. Reads no raw record; changes no imported row.
+  // In pages of the added ids (#2713, importSettlePaged.ts), each page read under the state lock.
+  const hunt = await huntSettlePaged(store, lock, caseId, addedIds, (e) =>
+    getServerLogger().warn(`[hunt] ${caseId}: grading skipped: ${e.message}`, { caseId }),
+  );
+  changed ||= hunt > 0;
   const demoted = await demote(deps, caseId);
   changed ||= demoted.removed > 0;
   // Caller names (#2490): after demote, so only rows that stay in the forensic record are rewritten.

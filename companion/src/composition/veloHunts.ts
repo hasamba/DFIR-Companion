@@ -78,6 +78,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { mergeEvictions, type SuperEviction } from "../analysis/superTimelineStore.js";
 import * as ev from "./veloEvidenceFirst.js"; // store evidence before the import section (#1874)
+import { completeness, regradeAfterCollect } from "./veloHuntCompleteness.js";
 import {
   createSuperShareLedger,
   importSuperOnlyArtifact,
@@ -367,6 +368,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         artifactFiles.push({ name, file, rows: rows.length });
       }
       for (const w of collectWarnings(job.huntId, skipped, cutShort, unread, !!job.timeScope)) logLine(w);
+      const done = completeness(skipped, cutShort, unread); // final: on the job BEFORE the seam grades (#2670)
       // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
       // to report), but worth distinguishing from `skipped` so "N artifacts collected, M had no findings,
       // K failed to collect" is fully accounted for instead of a bare "+X events" that reads as one artifact.
@@ -404,7 +406,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // Published BEFORE the await, because the wait is the part the analyst cannot otherwise see —
       // on a busy case it is minutes of a card that says nothing at all (#770).
       if (!(await current())) return; // the set changed while the evidence was stored
-      job = { ...job, collectPhase: "queued", collectRows: totalRows };
+      job = { ...job, collectPhase: "queued", collectRows: totalRows, ...done };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
       importSlot = await claimImportSlot(
@@ -681,13 +683,12 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         addedEvents,
         addedIocs,
         error: undefined,
-        skippedArtifacts: skipped.length ? skipped : undefined,
-        truncatedArtifacts: cutShort.length ? cutShort : undefined,
+        ...done,
         emptyArtifacts: emptyArtifacts.length ? emptyArtifacts : undefined,
-        unreadArtifacts: unread.length ? unread : undefined,
         superCappedArtifacts: superCapped.length ? superCapped : undefined,
       };
       if (await current()) await huntStore.upsert(caseId, job); // a forgotten hunt is not written back
+      await regradeAfterCollect(options.stateStore, caseId, runStateExclusive, logLine); // final coverage (#2670)
       options.onVeloHunt?.(caseId);
       if (importedAny) resynthesizeInBackground(caseId);
       else if (inventorySignature([before]) !== inventorySignature([job]))

@@ -100,6 +100,7 @@ export interface PreloadedBlocks {
   playbookProgressBlock: string;
   incidentTypeBlock: string;
   mainSourceBlock?: string; // #2594
+  huntMode?: boolean; // #2670: hunt framing replaces the attack-phase digest
 }
 
 export interface BlockInput {
@@ -149,7 +150,8 @@ export async function buildSynthesisBlocks(
     beaconBlock: buildBeaconDigest(detectBeacons(scopedEvents, beaconEnvOptions())),
     // The report's host-activity spikes, over the SCOPED forensic timeline, as leads (hostSpikeLeads.ts).
     hostSpikeBlock: buildHostSpikeBlock(scopedEvents),
-    attackPhaseBlock: buildAttackPhaseDigest(buildAttackPhases(scopedEvents)),
+    // A hunt case (#2670) has no incident to phase: the digest would push the model toward a kill chain.
+    attackPhaseBlock: preloaded.huntMode ? "" : buildAttackPhaseDigest(buildAttackPhases(scopedEvents)),
     // Known unknowns (#165): the gaps in the story (silent windows, uncovered ATT&CK phases,
     // likely-next techniques) so the model builds on what's MISSING instead of glossing over it.
     // Plus the (env-gated, default OFF) candidate-actor block.

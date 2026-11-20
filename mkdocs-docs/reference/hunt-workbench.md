@@ -79,6 +79,7 @@ stage      := group by field
             | count
             | stats function(field) [by field]
             | rare field [limit N]
+            | prevalence field [limit N]
             | sort field [asc|desc]
             | limit N
 ```
@@ -112,7 +113,8 @@ anchor, so a long review cannot shift the result window between pages.
 | `group by host.name \| count` | One row per host with a `count` column |
 | `count` | One total matched-row count |
 | `stats count(), min(destination.port), max(destination.port) by source.ip` | Typed statistics per source address |
-| `rare destination.ip limit 10` | Ten least-common non-empty values |
+| `rare destination.ip limit 10` | Ten least-common non-empty values, counted in events |
+| `prevalence process.name limit 20` | Twenty values on the fewest DISTINCT HOSTS: columns `hosts`, `of_hosts` (the distinct hosts in the matched rows) and `events` — "seen on 3 of 287 hosts" |
 | `sort count desc` | Descending order by the named output column |
 | `limit 50` | At most 50 returned rows |
 

@@ -8,6 +8,7 @@ import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
 import { downgradeGenericSysmonRegistry } from "../analysis/genericSysmonRegistry.js";
 import { hasBuildTimeMark } from "../analysis/buildTimeWindow.js";
 import { labSetupPaths } from "../analysis/labSetupTransfer.js";
+import { runHuntSettle } from "../analysis/huntSettleHook.js";
 import {
   isAttackerDefenderTouch,
   isDefenderEngineWrite,
@@ -220,4 +221,29 @@ export async function dualWriteAndTagPaged(
     await deps.autoTagImported(caseId, events);
   }
   return { retained, ...(evicted ? { evicted } : {}) };
+}
+
+/**
+ * Hunt grading (#2670) in pages (#2713): each page of this import's rows (Info still here) is handed
+ * on in turn. The hunt inventory only adds what it observes, so the pages together record what one
+ * call with every row did, and the last call grades the whole inventory. An import that added nothing
+ * still gets its one call, as before, so a coverage change still regrades. Returns the entry changes.
+ */
+export async function huntSettlePaged(
+  stateStore: ForensicRowStore,
+  lock: RunExclusive,
+  caseId: string,
+  addedIds: readonly string[],
+  onError: (err: Error) => void,
+): Promise<number> {
+  if (!addedIds.length) return lock(caseId, () => runHuntSettle(stateStore, caseId, [], onError));
+  let changed = 0;
+  for (let i = 0; i < addedIds.length; i += SCAN_PAGE_ROWS) {
+    const pageIds = addedIds.slice(i, i + SCAN_PAGE_ROWS);
+    changed += await lock(caseId, async () => {
+      const events = (await stateStore.forensicRowsById(caseId, pageIds)).map((r) => r.event);
+      return runHuntSettle(stateStore, caseId, events, onError);
+    });
+  }
+  return changed;
 }

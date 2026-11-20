@@ -508,6 +508,18 @@ the GUI URL belong to each [server set](#server-sets). **Reconnect**, the client
 **↻ Refresh client list** use the open case's set, or the default set when no case is open. The
 label beside them names that set.
 
+### Threat hunting
+
+These apply to [threat-hunt cases](threat-hunting.md#threat-hunt-mode-proactive-hunts) and are read
+on every import, so no restart is needed.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `DFIR_HUNT_RARE_MIN_HOSTS` | 20 | Nothing is graded rare until at least this many hosts answered the hunt cleanly. |
+| `DFIR_HUNT_RARE_MAX_PCT` | 5 | Rare means on at most this percent of the answering hosts… |
+| `DFIR_HUNT_RARE_MAX_HOSTS` | 10 | …and on no more than this many hosts. |
+| `DFIR_HUNT_POLICY_SEVERITY` | Medium | Severity of a policy finding (Not allowed, or a blocked download): Low, Medium, High or Critical. |
+
 ---
 
 ## Tools

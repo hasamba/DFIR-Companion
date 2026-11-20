@@ -12,6 +12,7 @@ import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { buildInitialQuestions, buildInitialNextSteps } from "../analysis/templateStore.js";
 import { keepWatsonSteps } from "../analysis/timeline/watsonItems.js";
 import { applyIncidentTypeToState } from "../analysis/incidentTypes.js";
+import { applyHuntDefaults } from "../analysis/huntCase.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { registerSeedDemoRoutes } from "./seedDemo.js";
 import { registerCaseIdentityRoutes, clearStateOutlivingCase, stoppingMessage } from "./caseIdentity.js";
@@ -169,13 +170,12 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           await options.stateStore.save(state);
         }
       }
-      // Incident-type auto-configuration (#236): when an incident type is picked at creation, apply
-      // its key questions, next steps, and findings seeds to the fresh state, and persist the
-      // per-case chosen-type record (which the synthesis prompt reads for the type's hint).
+      // Incident-type auto-configuration (#236): apply the picked type's key questions, next steps and
+      // findings seeds, persist the chosen-type record (the synthesis prompt reads its hint), and give
+      // a hunt type its default report (#2670).
       //
-      // Runs AFTER the template apply and MERGES rather than replaces. The dashboard offers a single
-      // picker, so in practice only one of the two arrives — but an API caller may send both, and
-      // silently discarding the questions the template just seeded loses what it asked for.
+      // Runs AFTER the template apply and MERGES: an API caller may send both, and discarding the
+      // questions the template just seeded would lose what it asked for.
       if (incidentTypeId && options.incidentTypeStore && options.stateStore) {
         const type = await options.incidentTypeStore.get(String(incidentTypeId));
         if (type) {
@@ -183,6 +183,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
           const { state: next } = applyIncidentTypeToState(state, type);
           await options.stateStore.save(next);
           await options.incidentTypeStore.saveRecord(caseId, String(incidentTypeId));
+          await applyHuntDefaults(options.reportTemplateControlStore, caseId, type);
         }
       }
       dispatchNotify(
