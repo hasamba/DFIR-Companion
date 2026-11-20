@@ -45,12 +45,16 @@ export function registerHuntCaseRoutes(app: Express, ctx: RouteContext): void {
       const coverage = hunt ? huntCoverageFromJobs(await loadHuntJobsSafe(stores, caseId)) : null;
       const convertOffered = hunt ? await holdsHighOrCritical(options.stateStore, caseId) : false;
       const rec = hunt ? await options.huntInventoryStore?.load(caseId).catch(() => null) : null;
+      const link = hunt ? await options.huntClientLinkStore?.load(caseId).catch(() => null) : null;
+      const profile = link ? await options.clientProfileStore?.get(link.clientId).catch(() => null) : null;
       return res.status(200).json({
         hunt,
         typeId: record.typeId,
         coverage,
         convertOffered,
         items: (rec?.grades ?? []).map(reportItemOf),
+        regradeAvailable: hunt && !!options.huntGradingDeps,
+        ...(profile ? { clientName: profile.name, currentBaselineVersion: profile.version } : {}),
         ...(rec?.baselineVersion !== undefined ? { baselineVersion: rec.baselineVersion } : {}),
         ...(record.convertedFrom
           ? { convertedFrom: record.convertedFrom, convertedAt: record.convertedAt }

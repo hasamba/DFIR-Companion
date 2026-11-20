@@ -84,6 +84,7 @@ import { createGuardedFetch } from "../routes/outboundGuardedFetch.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
 import { loadHuntReportData } from "../analysis/huntReportLoad.js";
 import { wireHuntGrading } from "./huntGrading.js";
+import { huntComparisonSource, huntPendingSource } from "./huntBaselineGrades.js";
 import { ClientProfileStore } from "../analysis/clientProfileStore.js";
 import { HuntClientLinkStore } from "../analysis/huntClientLink.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
@@ -386,13 +387,22 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
   // at the import seam (inventory + grouped rare/new/policy entries).
   const clientProfileStore = new ClientProfileStore(join(dirname(casesRoot), "client-profiles"));
   const huntClientLinkStore = new HuntClientLinkStore(store);
-  const huntInventoryStore = wireHuntGrading({
+  const huntBaselineDeps = {
+    links: huntClientLinkStore,
+    profiles: clientProfileStore,
+    huntJobs: (id: string) => veloHuntStore.list(id),
+    listCaseIds: async () => (await store.listCases()).map((m) => m.caseId),
+    serverSetId: (id: string) => serverSetStore.caseSetId(id),
+  };
+  const huntGrading = wireHuntGrading({
     store,
     stateStore,
     incidentTypeStore,
     veloHuntStore,
     serverSetId: (id) => serverSetStore.caseSetId(id),
+    baseline: huntBaselineDeps,
   });
+  const huntInventoryStore = huntGrading.inventoryStore;
   const hub = new LiveHub(casesRoot); // #1866: closes a deleted case's sockets
   // Late subscribers to "a case's jobs changed" (#2406: the AI status idle gate), wired by appWiring.
   const jobChangeListeners = new Set<(caseId: string) => void>();
@@ -520,7 +530,18 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
       ),
     // #2670: the Threat hunt summary's data (null outside hunt mode).
     huntReport: (caseId: string) =>
-      loadHuntReportData({ incidentTypeStore, veloHuntStore, huntInventoryStore }, caseId),
+      loadHuntReportData(
+        {
+          incidentTypeStore,
+          veloHuntStore,
+          huntInventoryStore,
+          huntClientLinkStore,
+          clientProfileStore,
+          previousHunt: huntComparisonSource({ ...huntBaselineDeps, inventories: huntInventoryStore }),
+          pending: huntPendingSource({ ...huntBaselineDeps, inventories: huntInventoryStore }),
+        },
+        caseId,
+      ),
     falsePositives: new FalsePositiveStore(store),
     reportMeta: reportMetaStore,
     customerExposure: new CustomerExposureStore(store),
@@ -592,6 +613,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir, scheme = "h
     dashboardBaseUrl,
     veloHuntStore,
     huntInventoryStore,
+    huntGradingDeps: huntGrading.deps,
     clientProfileStore,
     huntClientLinkStore,
     huntOutcomeStore,

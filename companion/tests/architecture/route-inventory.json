@@ -615,6 +615,7 @@
     "ROUTE POST /cases/:id/hunt/client",
     "ROUTE GET /cases/:id/hunt/candidates",
     "ROUTE GET /cases/:id/hunt/confirm-list.:fmt(csv|md)",
+    "ROUTE POST /cases/:id/hunt/regrade",
     "ROUTE GET /client-profiles",
     "ROUTE POST /client-profiles",
     "ROUTE GET /client-profiles/:pid",

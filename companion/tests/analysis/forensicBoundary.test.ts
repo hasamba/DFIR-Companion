@@ -574,7 +574,14 @@ describe("hunt grading reads no raw record and starts no AI (#2670)", () => {
     "../../src/analysis/huntRarity.ts",
     "../../src/analysis/huntArtifactFields.ts",
     "../../src/analysis/huntHostKey.ts",
+    "../../src/analysis/huntGradeBaseline.ts",
+    "../../src/analysis/huntApprovalMatch.ts",
+    "../../src/analysis/huntConfirmList.ts",
+    "../../src/analysis/clientProfile.ts",
+    "../../src/analysis/clientProfileStore.ts",
+    "../../src/analysis/huntReportLoad.ts",
     "../../src/composition/huntGrading.ts",
+    "../../src/composition/huntBaselineGrades.ts",
   ];
   const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
@@ -603,6 +610,42 @@ describe("hunt grading reads no raw record and starts no AI (#2670)", () => {
     expect(tag).toBeGreaterThan(0);
     expect(hunt).toBeGreaterThan(tag);
     expect(demote).toBeGreaterThan(hunt);
+  });
+});
+
+describe("the hunt re-grade reads the raw record but feeds no AI (#2670)", () => {
+  // "Re-grade with current baseline" is ANALYST-PRESSED and audit-logged, like the Sigma re-grade
+  // (#2206): it re-reads the case's rows from both records, demoted rows included, and rewrites the
+  // grouped hunt entries as normal graded rows — never through promoteSuperTimeline, never via a model.
+  const MODULES = ["../../src/analysis/huntRegrade.ts", "../../src/routes/huntRegrade.ts"];
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("imports nothing AI-related and starts no synthesis", () => {
+    for (const rel of MODULES) {
+      const src = read(rel);
+      for (const [, spec] of src.matchAll(/from "([^"]+)"/g))
+        expect(spec, `${rel} imports ${spec}`).not.toMatch(/\/ai\/|providers?\/|prompt|synth|jev/i);
+      expect(src, rel).not.toMatch(/resynthesizeInBackground|\.synthesize\(|promoteSuperTimeline\(/);
+    }
+  });
+
+  it("never writes promotedAt", () => {
+    for (const rel of MODULES) expect(read(rel), rel).not.toMatch(/promotedAt\s*[:=](?!=)/);
+  });
+
+  it("is reached only from its analyst-pressed route, never from the import seam", () => {
+    expect(read("../../src/routes/huntRegrade.ts")).toMatch(/app\.post\("\/cases\/:id\/hunt\/regrade"/);
+    for (const rel of [
+      "../../src/routes/importSettle.ts",
+      "../../src/analysis/huntSettle.ts",
+      "../../src/composition/huntGrading.ts",
+    ])
+      expect(read(rel), rel).not.toMatch(/regradeHuntCase|huntRegrade/);
+  });
+
+  it("discloses how many observations the raw record has evicted", () => {
+    expect(read("../../src/analysis/huntRegrade.ts")).toMatch(/evicted/);
+    expect(read("../../src/routes/huntRegrade.ts")).toMatch(/no longer in the raw record/);
   });
 });
 

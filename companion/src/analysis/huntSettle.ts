@@ -4,6 +4,7 @@ import { buildHuntEntries, HUNT_ENTRY_PREFIX, rankGrades, type HuntGrade } from 
 import { huntCoverageFromJobs, type HuntCoverage } from "./huntFraming.js";
 import { loadHuntJobsSafe, type HuntFramingStores } from "./huntFramingLoad.js";
 import { gradeRarity } from "./huntGrade.js";
+import { mergeGrades } from "./huntGradeBaseline.js";
 import { buildHostKeyIndex, resolveHostKey, stableHostKey } from "./huntHostKey.js";
 import { recordObservations, type HuntInventory, type InventoryObservation } from "./huntInventory.js";
 import { GRADES_KEPT, type HuntInventoryStore } from "./huntInventoryStore.js";
@@ -34,6 +35,10 @@ export interface HuntSettleStateStore {
 
 export interface ExtraGrades {
   grades: HuntGrade[];
+  /** Item keys the baseline approves: they lose rare / new bumps (mergeGrades). */
+  approved?: string[];
+  /** Readable labels of the approved items, for the AI's hunt framing ("Approved by client"). */
+  approvedLabels?: string[];
   /** Folded into the graded signature, so a baseline change re-grades. */
   signature: string;
   baselineVersion?: number;
@@ -51,6 +56,10 @@ export interface HuntSettleDeps extends HuntFramingStores {
     inventory: HuntInventory;
     coverage: HuntCoverage;
     answered: ReadonlySet<string>;
+    /** The baseline version this case is pinned to; absent on its first grading. */
+    pinnedVersion?: number;
+    /** Re-grade with the CURRENT baseline (the analyst-pressed action), not the pinned one. */
+    useCurrent: boolean;
   }) => Promise<ExtraGrades>;
 }
 
@@ -109,6 +118,7 @@ export async function huntSettle(
   deps: HuntSettleDeps,
   caseId: string,
   added: readonly ForensicEvent[],
+  opts: { useCurrentBaseline?: boolean; replaceInventory?: HuntInventory } = {},
 ): Promise<HuntSettleResult> {
   if (!isHuntType(await loadType(deps, caseId))) return { changed: 0, entries: 0 };
   const now = (deps.now ?? (() => new Date().toISOString()))();
@@ -124,16 +134,28 @@ export async function huntSettle(
   const rarity = raritySettingsFromEnv(deps.env);
   let result: HuntSettleResult = { changed: 0, entries: 0 };
   await deps.inventoryStore.update(caseId, async (rec) => {
-    const inventory = recordObservations(rec.inventory, obs, now);
-    const extra = deps.extraGrades ? await deps.extraGrades({ caseId, inventory, coverage, answered }) : null;
+    const inventory = recordObservations(opts.replaceInventory ?? rec.inventory, obs, now);
+    const extra = deps.extraGrades
+      ? await deps.extraGrades({
+          caseId,
+          inventory,
+          coverage,
+          answered,
+          useCurrent: opts.useCurrentBaseline === true,
+          ...(rec.baselineVersion !== undefined ? { pinnedVersion: rec.baselineVersion } : {}),
+        })
+      : null;
     const signature = createHash("sha1")
       .update(JSON.stringify([coverage, rarity, extra?.signature ?? "", Object.keys(inventory.items).length]))
       .digest("hex");
-    if (!obs.length && signature === rec.gradedSignature) {
+    if (!obs.length && !opts.replaceInventory && signature === rec.gradedSignature) {
       result = { changed: 0, entries: rec.entryIds.length };
       return rec;
     }
-    const grades = [...gradeRarity({ inventory, coverage, answered, rarity }), ...(extra?.grades ?? [])];
+    const grades = mergeGrades(
+      [...gradeRarity({ inventory, coverage, answered, rarity }), ...(extra?.grades ?? [])],
+      new Set(extra?.approved ?? []),
+    );
     const wanted = buildHuntEntries(grades, now);
     const changed = await syncHuntEntries(deps.stateStore, caseId, wanted, rec.entryIds);
     result = { changed, entries: wanted.length };
@@ -141,6 +163,7 @@ export async function huntSettle(
       inventory,
       entryIds: wanted.map((e) => e.id),
       grades: rankGrades(grades).slice(0, GRADES_KEPT),
+      approvedLabels: (extra?.approvedLabels ?? []).slice(0, GRADES_KEPT),
       gradedSignature: signature,
       ...(extra?.baselineVersion !== undefined ? { baselineVersion: extra.baselineVersion } : {}),
     };

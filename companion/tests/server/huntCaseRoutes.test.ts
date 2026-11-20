@@ -11,6 +11,7 @@ import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 import { ReportTemplateControlStore } from "../../src/reports/reportTemplateControl.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { pollFor } from "../helpers/poll.js";
 
 // Hunt-case routes (#2670): status, Convert to incident, and the hunt case's default report.
 async function makeApp() {
@@ -98,8 +99,9 @@ describe("hunt case routes (#2670)", () => {
     expect(after.forensicTimeline.map((e) => e.id).sort()).toEqual(["h", "i"]);
     expect(after.lastSummary).toBe("hunt summary");
     expect((await synthMetaStore.load("c1")).outOfDate?.reason).toMatch(/Converted from a threat hunt/);
-    const log = await activityLogStore.load("c1");
-    expect(log.some((e) => e.action === "hunt-convert-to-incident")).toBe(true);
+    await pollFor("the convert audit line", async () =>
+      (await activityLogStore.load("c1")).find((e) => e.action === "hunt-convert-to-incident"),
+    );
     expect((await request(app).get("/cases/c1/hunt/status")).body).toMatchObject({
       hunt: false,
       convertedFrom: "threat-hunt",
@@ -115,5 +117,49 @@ describe("hunt case routes (#2670)", () => {
     expect(res.status).toBe(400);
     const bad = await request(app).post("/cases/c1/hunt/convert-to-incident").send({ typeId: 7 });
     expect(bad.status).toBe(400);
+  });
+});
+
+describe("POST /cases/:id/hunt/regrade (#2670)", () => {
+  async function regradeApp() {
+    const { HuntInventoryStore } = await import("../../src/analysis/huntInventoryStore.js");
+    const root = await mkdtemp(join(tmpdir(), "dfir-huntregrade-"));
+    const store = new CaseStore(join(root, "cases"));
+    const stateStore = new StateStore(store);
+    const incidentTypeStore = new IncidentTypeStore(store, join(root, "incident-types"));
+    const activityLogStore = new ActivityLogStore(store);
+    const huntGradingDeps = {
+      stateStore,
+      inventoryStore: new HuntInventoryStore(store),
+      incidentTypeStore,
+      veloHuntStore: { list: async () => [] },
+    };
+    const app = createApp(store, {
+      stateStore,
+      aiConfigured: false,
+      activityLogStore,
+      incidentTypeStore,
+      huntGradingDeps,
+    });
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    return { app, incidentTypeStore, activityLogStore };
+  }
+
+  it("refuses a case that is not a hunt", async () => {
+    const { app, incidentTypeStore } = await regradeApp();
+    await incidentTypeStore.saveRecord("c1", "ransomware");
+    expect((await request(app).post("/cases/c1/hunt/regrade").send({})).status).toBe(409);
+  });
+
+  it("re-grades a hunt case, discloses evicted observations, and is audit-logged", async () => {
+    const { app, incidentTypeStore, activityLogStore } = await regradeApp();
+    await incidentTypeStore.saveRecord("c1", "threat-hunt");
+    const res = await request(app).post("/cases/c1/hunt/regrade").send({});
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ rowsRead: 0, evicted: 0, entries: 0 });
+    const entry = await pollFor("the re-grade audit line", async () =>
+      (await activityLogStore.load("c1")).find((e) => e.action === "hunt-regrade"),
+    );
+    expect(entry.detail).toMatch(/no longer in the raw record/);
   });
 });

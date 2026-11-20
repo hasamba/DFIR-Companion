@@ -92,6 +92,7 @@ import { registerSecondLookRoutes } from "../routes/secondLook.js";
 import { registerIncidentTypeRoutes } from "../routes/incidentTypes.js";
 import { registerHuntCaseRoutes } from "../routes/huntCase.js";
 import { registerHuntClientRoutes } from "../routes/huntClient.js";
+import { registerHuntRegradeRoutes } from "../routes/huntRegrade.js";
 import { registerClientProfileRoutes } from "../routes/clientProfiles.js";
 import { registerCollectionPlanRoutes } from "../routes/collectionPlan.js";
 import { registerHostScopeRoutes } from "../routes/hostScope.js";
@@ -265,6 +266,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerIncidentTypeRoutes(app, ctx);
   registerHuntCaseRoutes(app, ctx); // #2670
   registerHuntClientRoutes(app, ctx); // #2670
+  registerHuntRegradeRoutes(app, ctx); // #2670
   registerClientProfileRoutes(app, ctx); // #2670
   registerCollectionPlanRoutes(app, ctx);
   registerHostScopeRoutes(app, ctx);

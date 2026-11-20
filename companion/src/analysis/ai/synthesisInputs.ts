@@ -13,6 +13,7 @@ import type { IncidentTypeStore } from "../incidentTypeStore.js";
 import { renderIncidentTypeBlock } from "../incidentTypes.js";
 import { loadHuntFramingFor } from "../huntFramingLoad.js";
 import type { VeloHuntStore } from "../veloHuntStore.js";
+import type { HuntInventoryStore } from "../huntInventoryStore.js";
 import type { NotebookStore } from "../notebookStore.js";
 import type { PlaybookTask } from "../playbook.js";
 import type { PlaybookStore } from "../playbookStore.js";
@@ -48,6 +49,7 @@ export interface SynthesisInputContext extends HuntContext {
       playbookStore?: PlaybookStore;
       incidentTypeStore?: IncidentTypeStore;
       veloHuntStore?: VeloHuntStore; // #2670: hunt coverage for the hunt framing block
+      huntInventoryStore?: HuntInventoryStore; // #2670: approved items for the hunt framing block
     };
 }
 

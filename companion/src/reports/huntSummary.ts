@@ -122,8 +122,11 @@ function comparison(hunt: HuntReportData, lines: string[]): void {
     );
     return;
   }
+  const which = c.previousCaseId
+    ? `case ${cellMd(c.previousCaseId)}`
+    : "the last comparable hunt for this client";
   lines.push(
-    `Compared with case ${cellMd(c.previousCaseId)} (${cellMd(c.previousAt)}): ${c.newItems} item(s) are new and ${c.goneItems} item(s) were not seen this time (absence is only claimed where both hunts covered the host cleanly).`,
+    `Compared with ${which} (${cellMd(c.previousAt.slice(0, 10))}): ${c.newItems} item(s) are new on hosts both hunts covered cleanly, and ${c.goneItems} item(s) from that hunt were not seen this time (not proof of removal: a host may not have reported them).`,
     "",
   );
 }

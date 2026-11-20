@@ -13,6 +13,7 @@
 import { dirname, join } from "node:path";
 import { HuntProfileNames } from "../analysis/huntMaskNames.js";
 import { HuntClientLinkStore } from "../analysis/huntClientLink.js";
+import { HuntInventoryStore } from "../analysis/huntInventoryStore.js";
 import { ClientProfileStore } from "../analysis/clientProfileStore.js";
 import { IocAttributionStore } from "../analysis/iocAttributionStore.js";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -405,6 +406,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     synthMetaStore: new SynthMetaStore(params.store),
     findingSeverityRestoreStore: new FindingSeverityRestoreStore(params.store), // #1973
     veloHuntStore: new VeloHuntStore(params.store), // #1588 collection inventory
+    huntInventoryStore: new HuntInventoryStore(params.store), // #2670 approved items for the hunt framing
     analysisRunStore: params.analysisRunStore,
     operationalMetrics: params.operationalMetrics,
     aiCostStore: new AiCostStore(params.store),

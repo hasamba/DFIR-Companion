@@ -17,6 +17,8 @@ export interface HuntInventoryRecord {
   entryIds: string[];
   /** The last grading's grades, worst first, capped at GRADES_KEPT (panel + report). */
   grades: HuntGrade[];
+  /** Labels of the items the baseline approves — the AI's hunt framing says "Approved by client". */
+  approvedLabels: string[];
   /** What the last grading read (coverage, settings, baseline version) — skip when unchanged. */
   gradedSignature: string;
   /** The client baseline version the case was graded against (phase 5), pinned. */
@@ -29,6 +31,7 @@ export const EMPTY_RECORD: HuntInventoryRecord = {
   inventory: EMPTY_INVENTORY,
   entryIds: [],
   grades: [],
+  approvedLabels: [],
   gradedSignature: "",
 };
 
@@ -42,6 +45,9 @@ function parse(raw: unknown): HuntInventoryRecord {
     inventory: { ...EMPTY_INVENTORY, ...r.inventory, items: r.inventory.items ?? {} },
     entryIds: Array.isArray(r.entryIds) ? r.entryIds.filter((x): x is string => typeof x === "string") : [],
     grades: Array.isArray(r.grades) ? r.grades.slice(0, GRADES_KEPT) : [],
+    approvedLabels: Array.isArray(r.approvedLabels)
+      ? r.approvedLabels.filter((x): x is string => typeof x === "string").slice(0, GRADES_KEPT)
+      : [],
     gradedSignature: typeof r.gradedSignature === "string" ? r.gradedSignature : "",
     ...(typeof r.baselineVersion === "number" ? { baselineVersion: r.baselineVersion } : {}),
   };

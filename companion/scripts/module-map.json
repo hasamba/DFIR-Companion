@@ -614,6 +614,8 @@
     "huntConfirmList.ts": "analysis/hunt",
     "downloadCategories.ts": "analysis/hunt",
     "huntMaskNames.ts": "analysis/hunt",
+    "huntGradeBaseline.ts": "analysis/hunt",
+    "huntRegrade.ts": "analysis/hunt",
     "huntOutcomeStore.ts": "analysis/hunt",
     "huntOutcomes.ts": "analysis/hunt",
     "huntPlatforms.ts": "analysis/hunt",

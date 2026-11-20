@@ -438,6 +438,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     kevStore,
     veloHuntStore,
     huntInventoryStore: rt.huntInventoryStore,
+    huntGradingDeps: rt.huntGradingDeps,
     clientProfileStore: rt.clientProfileStore,
     huntClientLinkStore: rt.huntClientLinkStore,
     huntOutcomeStore,
