@@ -4,6 +4,8 @@ import { deltaSchema, stripAiExtractedFrom } from "../../src/analysis/responseSc
 import { upsertForensicEvents } from "../../src/analysis/stateMerge.js";
 import { mergeFileIdentity } from "../../src/analysis/fileIdentity.js";
 import { huntFieldsOf } from "../../src/analysis/huntArtifactFields.js";
+import { itemVerdict } from "../../src/analysis/huntApprovalMatch.js";
+import { EMPTY_INVENTORY, recordObservations } from "../../src/analysis/huntInventory.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -67,13 +69,74 @@ describe("file identity carry-through (#2731)", () => {
     expect(huntFieldsOf(ev({ Size: "" }))).toMatchObject({ sha1Unusable: "no-size" });
   });
 
-  it("two folded rows that disagree on the hash keep none of it", () => {
+  it("two folded rows that disagree on the hash keep none of it, and record the conflict", () => {
     const [e] = parse([amcacheRow("WS-01"), amcacheRow("WS-01", { SHA1: "d".repeat(40) })]);
     expect(e.count).toBe(2);
-    expect(e.fileIdentity).toBeUndefined();
+    expect(e.fileIdentity).toEqual({ conflict: true });
     expect(mergeFileIdentity({ signer: "A" }, { signatureUnverified: true })).toEqual({
+      conflict: true,
       signatureUnverified: true,
     });
+  });
+
+  it("a conflict stays sticky through later agreeing rows", () => {
+    const a = { sha1: SHA1, size: 1 };
+    const b = { sha1: "d".repeat(40), size: 1 };
+    expect(mergeFileIdentity(mergeFileIdentity(a, b), a)).toEqual({ conflict: true });
+    expect(mergeFileIdentity(a, mergeFileIdentity(b, a))).toEqual({ conflict: true });
+  });
+
+  // Importer → hunt fields → inventory → approval verdict (Codex review of the batch PR).
+  const verdictAfter = (rows: object[]) => {
+    const events = parse(rows);
+    const inv = recordObservations(
+      EMPTY_INVENTORY,
+      events.map((e) => ({
+        fields: huntFieldsOf(e)!,
+        host: { key: `srv/${e.asset}`, basis: "client" as const, hostname: e.asset! },
+        at: e.timestamp,
+      })),
+      "now",
+    );
+    const baseline = applyMarks(
+      newProfile({ name: "Client A" }, "admin", "2026-01-01T00:00:00Z"),
+      [
+        markInputSchema.parse({
+          verdict: "approved",
+          family: "program",
+          program: "rclone.exe",
+          pathPattern: "\\tools",
+          sha1: [SHA1],
+        }),
+      ],
+      { by: "admin", at: "t", source: "client email" },
+    ).baseline;
+    const items = Object.values(inv.items);
+    expect(items).toHaveLength(1);
+    return itemVerdict(baseline, items[0], "2026-06-01T00:00:00.000Z");
+  };
+
+  it("approved / unapproved / approved hashes on one host never approve the item", () => {
+    const v = verdictAfter([
+      amcacheRow("WS-01"),
+      amcacheRow("WS-01", { SHA1: "d".repeat(40) }),
+      amcacheRow("WS-01"),
+    ]);
+    expect(v.verdict).toBe("unknown");
+    expect(v.reason).toMatch(/disagree/);
+  });
+
+  it("small / over-limit / small sizes on one host never approve the item", () => {
+    const v = verdictAfter([
+      amcacheRow("WS-01"),
+      amcacheRow("WS-01", { Size: 31_457_281 }),
+      amcacheRow("WS-01"),
+    ]);
+    expect(v.verdict).toBe("unknown");
+  });
+
+  it("agreeing rows still approve", () => {
+    expect(verdictAfter([amcacheRow("WS-01"), amcacheRow("WS-01")]).verdict).toBe("approved");
   });
 
   it("the delta schema keeps it, the merge writes it, and a model delta loses it", () => {

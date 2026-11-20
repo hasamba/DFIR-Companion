@@ -24,6 +24,8 @@ export interface FileIdentity {
   signer?: string;
   signatureUnverified?: true;
   autorunTarget?: string;
+  /** Folded rows disagreed on the hash, size or signer. Sticky: no client approval may cover the row. */
+  conflict?: true;
 }
 
 /** Amcache hashes only the first 31,457,280 bytes of a file: a SHA1 identifies a file up to this size. */
@@ -37,6 +39,7 @@ export const fileIdentitySchema = z.object({
   signer: z.string().min(1).max(260).optional().catch(undefined),
   signatureUnverified: z.literal(true).optional().catch(undefined),
   autorunTarget: z.string().min(1).max(600).optional().catch(undefined),
+  conflict: z.literal(true).optional().catch(undefined),
 });
 
 /** The SHA1 a client approval may use: only when the size is recorded and within the Amcache limit. */
@@ -57,8 +60,9 @@ const sameIdentity = (a: FileIdentity, b: FileIdentity): boolean =>
 
 /**
  * Two rows folded into one event (one aggregation group): a row with no identity adds nothing, and
- * rows that DISAGREE on the hash, size or signer keep none of them, so a replaced binary is never
- * covered by the other row's approval. A failed signature check is sticky.
+ * rows that DISAGREE on the hash, size or signer keep none of them and record `conflict`, so a
+ * replaced binary is never covered by the other row's approval. The conflict and a failed signature
+ * check are sticky: an A / B / A sequence stays conflicted, it never falls back to A.
  */
 export function mergeFileIdentity(
   a: FileIdentity | undefined,
@@ -66,6 +70,12 @@ export function mergeFileIdentity(
 ): FileIdentity | undefined {
   if (!a || !b) return a ?? b;
   const unverified = a.signatureUnverified || b.signatureUnverified;
-  if (sameIdentity(a, b)) return unverified ? { ...a, signatureUnverified: true } : a;
-  return unverified ? { signatureUnverified: true } : undefined;
+  if (!a.conflict && !b.conflict && sameIdentity(a, b))
+    return unverified ? { ...a, signatureUnverified: true } : a;
+  const target = a.autorunTarget === b.autorunTarget ? a.autorunTarget : undefined;
+  return {
+    conflict: true,
+    ...(unverified ? { signatureUnverified: true as const } : {}),
+    ...(target ? { autorunTarget: target } : {}),
+  };
 }

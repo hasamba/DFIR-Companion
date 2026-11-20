@@ -64,6 +64,8 @@ export interface IdentityCoverage {
   signersCapped?: boolean;
   /** Some observation's signature was checked and NOT verified. Sticky: no signer approval applies. */
   signatureUnverified?: true;
+  /** Some observation folded rows that disagreed on the hash, size or signer. Sticky: no approval applies. */
+  identityConflict?: true;
 }
 
 export const EMPTY_IDENTITY_COVERAGE: IdentityCoverage = {
@@ -90,5 +92,6 @@ export function observeIdentity(base: IdentityCoverage, f: HuntFields, s: Covera
     unsignedHosts: nextMissing(base.unsignedHosts, !!signer, s),
     signersCapped: nextCapped(base.signers ? base.signersCapped : undefined, signers, signer),
     ...(base.signatureUnverified || f.signatureUnverified ? { signatureUnverified: true as const } : {}),
+    ...(base.identityConflict || f.identityConflict ? { identityConflict: true as const } : {}),
   };
 }

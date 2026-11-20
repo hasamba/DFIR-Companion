@@ -42,6 +42,8 @@ export interface HuntFields {
   sha1?: string;
   /** Amcache recorded a SHA1 an approval cannot use: no size, or a file over 30 MiB. */
   sha1Unusable?: "no-size" | "over-limit";
+  /** The importer folded rows that disagreed on the hash, size or signer: no approval may cover it. */
+  identityConflict?: true;
   md5?: string;
   /** Download source URL (Zone.Identifier HostUrl) when the row named one. */
   sourceUrl?: string;
@@ -132,7 +134,7 @@ function downloadUrl(description: string): string | undefined {
 /** The importer-recorded identity (#2731): a usable Amcache SHA1 or why not, and the signer verdict. */
 function identityFields(
   e: ForensicEvent,
-): Pick<HuntFields, "sha1" | "sha1Unusable" | "signer" | "signatureUnverified"> {
+): Pick<HuntFields, "sha1" | "sha1Unusable" | "signer" | "signatureUnverified" | "identityConflict"> {
   const id = e.fileIdentity;
   const sha1 = usableSha1(id);
   const unusable = sha1Unusable(id);
@@ -141,6 +143,7 @@ function identityFields(
     ...(unusable ? { sha1Unusable: unusable } : {}),
     ...(id?.signer && !id.signatureUnverified ? { signer: id.signer } : {}),
     ...(id?.signatureUnverified ? { signatureUnverified: true as const } : {}),
+    ...(id?.conflict ? { identityConflict: true as const } : {}),
   };
 }
 

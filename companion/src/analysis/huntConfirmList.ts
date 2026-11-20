@@ -71,6 +71,7 @@ function signerOf(item: InventoryItem): { approvableSigner?: string } {
     item.unsignedHosts?.length === 0 &&
     item.signersCapped === false &&
     !item.signatureUnverified &&
+    !item.identityConflict &&
     !item.hostOverflow;
   return one && complete ? { approvableSigner: one } : {};
 }

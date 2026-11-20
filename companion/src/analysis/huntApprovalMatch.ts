@@ -77,13 +77,15 @@ function signerResult(signer: string, i: MatchItem): MatchResult {
     i.unsignedHosts.length === 0 &&
     i.signersCapped === false &&
     !i.signatureUnverified &&
+    !i.identityConflict &&
     !i.hostOverflow;
   return complete ? "match" : "unknown";
 }
 
 /** No host lacks an observation in every algorithm the approval names, and nothing was capped. */
 function hostsCovered(i: MatchItem, want256: boolean, want1: boolean): boolean {
-  if (i.hostOverflow) return false;
+  // Sticky: rows folded into one observation disagreed on the binary — never covered by any hash.
+  if (i.hostOverflow || i.identityConflict) return false;
   if (want256 && (!Array.isArray(i.unhashedHosts) || i.hashesCapped !== false)) return false;
   if (want1 && (!Array.isArray(i.noSha1Hosts) || i.sha1Capped !== false)) return false;
   // Sticky: one observation of a file over 30 MiB, or with no size, means that host's binary is not
@@ -166,5 +168,8 @@ function identityNotes(i: MatchItem): string[] {
       : []),
     ...(i.sha1NoSize ? ["the Amcache SHA1 cannot approve it: Amcache recorded no file size"] : []),
     ...(i.signatureUnverified ? ["its signature was checked and NOT verified"] : []),
+    ...(i.identityConflict
+      ? ["rows for this file disagree on its hash, size or signer, so no hash or signer can approve it"]
+      : []),
   ];
 }
