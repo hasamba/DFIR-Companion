@@ -1,6 +1,8 @@
 import type { ResolvedSlashCommand } from "../analysis/slashCommand.js";
 import type { ChannelBinding } from "../analysis/slashCommand.js";
-import { mirrorAudit, telegramAllowlist, telegramBotToken } from "./watsonMirrorSupport.js";
+import { escapeMirrorHtml } from "../integrations/telegram/watsonMirrorFormat.js";
+import { sendMirrorMessage } from "../integrations/telegram/watsonMirrorSender.js";
+import { mirrorAudit, telegramAllowlist, telegramApiBase, telegramBotToken } from "./watsonMirrorSupport.js";
 import type { RouteContext } from "./context.js";
 import { guardCase } from "./slashCaseGuard.js";
 
@@ -17,11 +19,20 @@ export interface MirrorCommandInput {
   ctx: RouteContext;
 }
 
+/**
+ * What `/dfir mirror` answers: a string for the webhook reply, or (#2709) text the command already sent
+ * to the chat itself, so its message id is recorded and the webhook gets an empty ack.
+ */
+export type MirrorReply = string | { readonly text: string; readonly quiet: true };
+
 const ALLOWLIST_NEEDED =
   "Mirroring needs the Telegram user allowlist. Set DFIR_TELEGRAM_ACTION_USERS in the Companion's .env " +
   "to the numeric Telegram user ids allowed to turn it on, restart the Companion, and try again.";
 
-async function mirrorOn(input: MirrorCommandInput, binding: ChannelBinding | undefined): Promise<string> {
+async function mirrorOn(
+  input: MirrorCommandInput,
+  binding: ChannelBinding | undefined,
+): Promise<MirrorReply> {
   const { ctx, channelId, userId } = input;
   const allow = telegramAllowlist();
   if (allow.length === 0) return ALLOWLIST_NEEDED;
@@ -50,10 +61,30 @@ async function mirrorOn(input: MirrorCommandInput, binding: ChannelBinding | und
     "watson-mirror-on",
     `Telegram chat ${channelId} now mirrors the Watson chat (turned on by user ${userId})`,
   );
-  return (
+  const text =
     `Mirroring started for case ${binding.caseId}. New Watson turns will appear here. ` +
-    "Ask by replying to a mirrored message or mentioning the bot. Stop with `/dfir mirror off`."
-  );
+    "Ask by replying to a mirrored message or mentioning the bot. Stop with `/dfir mirror off`.";
+  return sendStarted(store, channelId, text);
+}
+
+/**
+ * #2709: send "Mirroring started" through the Bot API and record its id, so a group reply to it counts
+ * as a question like a reply to any mirrored message. A failed send falls back to the webhook reply.
+ */
+async function sendStarted(
+  store: NonNullable<RouteContext["options"]["watsonMirrorStore"]>,
+  chatId: string,
+  text: string,
+): Promise<MirrorReply> {
+  const out = await sendMirrorMessage({
+    botToken: telegramBotToken,
+    apiBase: telegramApiBase(),
+    chatId,
+    text: escapeMirrorHtml(text),
+  });
+  if (out.kind !== "sent") return text;
+  await store.addMessageIds(chatId, [out.messageId]).catch(() => undefined);
+  return { text, quiet: true };
 }
 
 /** The reply to `/dfir mirror on|off`. The permission gate (isAllowed) has already run. */
@@ -61,7 +92,7 @@ export async function runMirrorCommand(
   input: MirrorCommandInput,
   cmd: ResolvedSlashCommand,
   binding: ChannelBinding | undefined,
-): Promise<string> {
+): Promise<MirrorReply> {
   const { ctx, channelId, userId } = input;
   if (input.platform !== "telegram") return "Mirroring is available for Telegram chats only.";
   if (!ctx.options.watsonMirrorStore || !ctx.watsonMirror?.())

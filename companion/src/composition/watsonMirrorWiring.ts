@@ -1,5 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { caseMasker, withSendMasking } from "../analysis/ai/maskRequest.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
 import { bindingKey } from "../analysis/slashCommandStore.js";
 import {
@@ -12,7 +13,7 @@ import { sendMirrorMessage } from "../integrations/telegram/watsonMirrorSender.j
 import type { WatsonMirrorEntry } from "../integrations/telegram/watsonMirrorStore.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { RouteContext } from "../routes/context.js";
-import { jevMasking } from "../routes/jevMasking.js";
+import { jevAnonStores } from "../routes/jevMasking.js";
 import {
   mirrorAudit,
   telegramAllowlist,
@@ -26,7 +27,8 @@ import {
 
 /**
  * How far back the mirror reads the append-only history when its cursor rotated out of the live chat
- * (400 turns): turns written while the server was down. A gap larger than this is not resent.
+ * (400 turns): turns written while the server was down. A gap larger than this is not resent; the
+ * chat gets a one-line notice instead (#2710).
  */
 const MIRROR_HISTORY_TURNS = 5000;
 
@@ -84,20 +86,29 @@ async function liveness(ctx: RouteContext, entry: WatsonMirrorEntry): Promise<Mi
   return { ok: true };
 }
 
+const PENDING_NAMES: MirrorMasking = { ok: false, reason: "names await approval in the Anonymization panel" };
+
 /**
  * Re-mask with the case's own anonymization list (the saved chat holds restored real values). Fails
  * closed: a masking error, or names waiting for approval in the Anonymization panel, holds the chat.
  * No Presidio scan per message (user decision 2026-11-19).
+ *
+ * #2708: masks under the case's masking-map lock, like a real AI send (withSendMasking), so a token it
+ * mints for a value new to the case is saved and the AI and reports reuse it. A held flush saves nothing.
  */
-async function masking(ctx: RouteContext, caseId: string): Promise<MirrorMasking> {
+export async function mirrorMaskText(ctx: RouteContext, caseId: string, raw: string): Promise<MirrorMasking> {
   const stateStore = ctx.options.stateStore;
   if (!stateStore) return { ok: false, reason: "the case state is not available" };
   try {
     const state = await stateStore.load(caseId);
-    const { masker } = await jevMasking(ctx.store, caseId, state);
-    if (masker.anon && (await new PresidioPendingStore(ctx.store).load(caseId)).length > 0)
-      return { ok: false, reason: "names await approval in the Anonymization panel" };
-    return { ok: true, mask: masker.mask };
+    const opts = jevAnonStores(ctx.store);
+    const sendCtx = { log: getServerLogger(), opts };
+    return await withSendMasking<MirrorMasking>(sendCtx, caseId, async (identity) => {
+      const masker = await caseMasker(sendCtx, caseId, state, undefined, undefined, identity);
+      if (masker.anon && (await new PresidioPendingStore(ctx.store).load(caseId)).length > 0)
+        return { anon: null, result: PENDING_NAMES };
+      return { anon: masker.anon, result: { ok: true, text: masker.mask(raw) } };
+    });
   } catch (err) {
     getServerLogger().warn(`[telegram-mirror] masking failed: ${(err as Error).message}`, { caseId });
     return { ok: false, reason: "masking failed" };
@@ -112,10 +123,9 @@ export function createAppWatsonMirror(ctx: RouteContext): WatsonMirror | undefin
   return new WatsonMirror({
     store: mirrorStore,
     loadChat: (caseId) => chatStore.load(caseId),
-    loadHistory: async (caseId) =>
-      (await chatStore.history.page(caseId, { limit: MIRROR_HISTORY_TURNS })).turns,
+    loadHistory: (caseId) => chatStore.history.page(caseId, { limit: MIRROR_HISTORY_TURNS }),
     liveness: (entry) => liveness(ctx, entry),
-    masking: (caseId) => masking(ctx, caseId),
+    masking: (caseId, raw) => mirrorMaskText(ctx, caseId, raw),
     send: (chatId, text) =>
       sendMirrorMessage({ botToken: telegramBotToken, apiBase: telegramApiBase(), chatId, text }),
     audit: mirrorAudit(ctx, "telegram-mirror"),
