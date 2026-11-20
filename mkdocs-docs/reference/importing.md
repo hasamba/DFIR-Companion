@@ -3506,6 +3506,21 @@ compression ratio marks it as a zip bomb are refused and never extracted. A hunt
 inflate to more than 64 GB across the members it imports is refused as a whole. A `.zip` that is not
 a hunt export is handled exactly as before (an external tool input).
 
+**Oversized artifacts wait for you.** Before a hunt zip imports anything, every result file that would
+import is measured, by its unpacked size from the zip's index:
+
+- one artifact's results from one PC over `DFIR_HUNT_ARTIFACT_HOST_MAX_MB` (default 50 MB), or
+- one artifact summed across every PC over `DFIR_HUNT_ARTIFACT_TOTAL_MAX_MB` (default 200 MB; every
+  PC's copy is then held).
+
+Everything else imports as usual. The held files are listed in the dashboard banner with their PC, size
+and the limit they crossed, with **Import anyway** or **Skip**. A very large artifact (a Hayabusa result
+of hundreds of MB, for example) is usually mostly noise: post-process it in a Velociraptor notebook,
+keeping only the rows and columns you need, and drop the smaller result into `drop/`. The zip stays in
+`drop/` until every held file has a decision; a skipped file gets a `SKIPPED` line in `drop-log.txt`.
+The limits are worked out once per zip, so changing them later does not re-check a zip that is already
+waiting. 0 turns a limit off. Unzipped hunt folders are not checked yet.
+
 ### Many small CloudTrail files are imported in batches
 
 AWS delivers CloudTrail to S3 as thousands of small `.json.gz` files. When you drop a folder of

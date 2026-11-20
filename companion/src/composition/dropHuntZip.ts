@@ -33,6 +33,8 @@ import { importHuntMember, type HuntMemberDeps } from "./dropHuntMember.js";
 import type { DropOutcome } from "./dropBatch.js";
 import type { ModelCallHooks } from "./importIngest.js";
 import type { HuntProgress } from "./dropSweepProgress.js";
+import type { HuntHeldStore } from "../analysis/huntHeldStore.js";
+import { NO_HOLDS, resolveZipHolds } from "./dropHuntHold.js";
 
 /** The most a hunt zip may inflate to across the members it imports (the zip-bomb bound). */
 export const HUNT_ZIP_MAX_TOTAL_BYTES = 64 * 1024 ** 3;
@@ -51,6 +53,8 @@ export function isZipCandidate(relpath: string, head: Buffer | undefined): boole
 
 export interface HuntZipDeps extends HuntMemberDeps {
   stateDir: (caseId: string) => string;
+  /** Result files held over the size limits until the analyst decides (#2746). */
+  held?: HuntHeldStore;
 }
 
 export interface HuntZipArgs {
@@ -160,17 +164,14 @@ async function processHunt(
   remembered.set(id, memo);
   for (const [name, o] of memo) if (!ledger.done.has(name)) ledger.done.set(name, o);
   const log: DropLogEntry[] = [];
-  const { fresh, interrupted } = await importMembers(
-    deps,
-    args,
-    zip,
-    run,
-    imports,
-    ledger,
-    log,
-    zipRel,
-    memo,
-  );
+  const holds = deps.held
+    ? await resolveZipHolds({
+        ...{ store: deps.held, caseId: args.caseId, archiveId: id, zipRel, file: args.file },
+        ...{ plans: run.plans, byName: run.byName, ledger, log },
+      })
+    : NO_HOLDS;
+  const now = imports.filter((n) => !holds.undecided.has(n) && !holds.skipped.has(n));
+  const { fresh, interrupted } = await importMembers(deps, args, zip, run, now, ledger, log, zipRel, memo);
   for (const r of run.refused) {
     if (ledger.done.has(r.name)) continue;
     log.push({ status: "FAILED", relpath: `${zipRel}!${r.name}`, reason: r.reason });
@@ -189,7 +190,12 @@ async function processHunt(
       logLine(`[drop] log append failed: ${(e as Error).message}`),
     );
   }
+  const waiting = await holds.finish(!interrupted);
   if (interrupted) return { ok: false, deferred: interrupted }; // stays in drop/; the next sweep resumes
+  if (waiting) {
+    const what = `${waiting} result file(s) held over the hunt artifact size limit`;
+    return { ok: false, deferred: `${what} — Import anyway or Skip in the dashboard` };
+  }
   remembered.delete(id);
   return outcome(imports, ledger.done, run.refused.length, zipRel);
 }
@@ -248,13 +254,16 @@ function outcome(
   zipRel: string,
 ): DropOutcome {
   const ok = imports.filter((n) => done.get(n)?.ok).length;
-  const failed = imports.length - ok + refused;
+  const skipped = imports.filter((n) => done.get(n)?.skipped).length; // #2746: the analyst's call
+  const failed = imports.length - ok - skipped + refused;
   const where = `see drop-log.txt; failed members are in ${failedMembersFolder(zipRel)}/`;
   const notes = imports.flatMap((n) => {
     const o = done.get(n);
     return o?.ok && o.warning ? [`${n}: ${o.warning}`] : [];
   });
   const caveat = notes.length ? notes.join(" | ") : undefined;
+  if (ok === 0 && failed === 0 && skipped > 0)
+    return { ok: true, warning: `all ${skipped} hunt result file(s) were over the size limit and skipped` };
   if (ok === 0) {
     return {
       ok: false,
