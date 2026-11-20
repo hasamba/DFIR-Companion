@@ -30,6 +30,8 @@ const item = (p: Partial<MatchItem>): MatchItem => ({
   program: "chrome.exe",
   pathPattern: "\\program files\\google\\chrome\\application",
   sha256: [H1],
+  unhashedHosts: [],
+  hashesCapped: false,
   ...p,
 });
 

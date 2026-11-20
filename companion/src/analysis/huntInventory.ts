@@ -32,6 +32,14 @@ export interface InventoryItem {
   evidence: HuntEvidence[];
   publishers: string[]; // UNVERIFIED text — describes, never approves
   sha256: string[];
+  /**
+   * Hosts with NO hashed observation of this item yet. A hash approval covers the item only when this
+   * is empty: one host's approved SHA256 says nothing about a host seen only through a hash-less row.
+   * Absent on an item stored before it was recorded — completeness unknown, so never approved.
+   */
+  unhashedHosts?: string[];
+  /** A distinct SHA256 was dropped by the MAX_VALUES cap: the hash list is incomplete. */
+  hashesCapped?: boolean;
   md5: string[];
   sourceUrls: string[];
   hosts: Record<string, InventoryHost>;
@@ -64,6 +72,28 @@ const addValue = (list: readonly string[], v: string | undefined): string[] =>
 const earlier = (a: string, b: string): string => (!a ? b : !b ? a : a < b ? a : b);
 const later = (a: string, b: string): string => (a > b ? a : b);
 
+/**
+ * Per-host hash coverage: a host leaves `unhashedHosts` at its first hashed observation and joins it
+ * when first seen without a hash. A legacy item (no list) stays unknown: it is never approved.
+ */
+function hashCoverage(
+  base: InventoryItem,
+  o: InventoryObservation,
+  knownHost: boolean,
+): Pick<InventoryItem, "unhashedHosts" | "hashesCapped"> {
+  const sha = o.fields.sha256;
+  const capped =
+    base.hashesCapped !== false || (!!sha && !base.sha256.includes(sha) && base.sha256.length >= MAX_VALUES);
+  if (!base.unhashedHosts) return { hashesCapped: capped };
+  const list = base.unhashedHosts;
+  const unhashedHosts = sha
+    ? list.filter((k) => k !== o.host.key)
+    : knownHost || list.includes(o.host.key) || list.length >= INVENTORY_MAX_HOSTS // overflow: hostOverflow says so
+      ? [...list]
+      : [...list, o.host.key];
+  return { unhashedHosts, hashesCapped: capped };
+}
+
 function observe(item: InventoryItem | undefined, o: InventoryObservation): InventoryItem {
   const f = o.fields;
   const base: InventoryItem = item ?? {
@@ -74,6 +104,8 @@ function observe(item: InventoryItem | undefined, o: InventoryObservation): Inve
     evidence: [],
     publishers: [],
     sha256: [],
+    unhashedHosts: [],
+    hashesCapped: false,
     md5: [],
     sourceUrls: [],
     hosts: {},
@@ -93,6 +125,7 @@ function observe(item: InventoryItem | undefined, o: InventoryObservation): Inve
     evidence: base.evidence.includes(f.evidence) ? base.evidence : [...base.evidence, f.evidence],
     publishers: addValue(base.publishers, f.publisher),
     sha256: addValue(base.sha256, f.sha256),
+    ...hashCoverage(base, o, known !== undefined),
     md5: addValue(base.md5, f.md5),
     sourceUrls: addValue(base.sourceUrls, f.sourceUrl),
     hosts,

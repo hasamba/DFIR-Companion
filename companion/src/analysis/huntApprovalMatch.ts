@@ -6,6 +6,9 @@ import type { Baseline, BaselineMark, BaselineVerdict } from "./clientProfile.js
  *     or an approved hash. Publisher text alone never approves anything.
  *   - Every hash observed for the item must be approved: one host running a different binary at the
  *     same path is a changed hash, and the approval does not cover it.
+ *   - Every HOST must have its own hashed observation: one host's approved hash says nothing about a
+ *     host seen only through a hash-less row, so such an item stays Unknown. A hash list or host list
+ *     cut short by its cap is incomplete too.
  *   - A field the approval needs that is missing or unverified gives UNKNOWN, never a weaker match.
  *   - An expired approval no longer applies.
  *   - NOT ALLOWED matches on program (+ path pattern when given) and WINS over any approval.
@@ -16,9 +19,22 @@ export interface MatchItem {
   program: string;
   pathPattern: string;
   sha256: readonly string[];
+  /** Hosts with no hashed observation (huntInventory.ts). Absent = unknown, never approved by hash. */
+  unhashedHosts?: readonly string[];
+  /** The hash list lost a value to its cap. Absent = unknown, never approved by hash. */
+  hashesCapped?: boolean;
+  /** Hosts the item could not record (host cap): their binaries are unknown. */
+  hostOverflow?: number;
   /** A VERIFIED Authenticode signer. Absent in this release: no importer records one. */
   signer?: string;
 }
+
+/** Every host has its own hashed observation and no hash or host was dropped by a cap. */
+const hashesComplete = (i: MatchItem): boolean =>
+  Array.isArray(i.unhashedHosts) &&
+  i.unhashedHosts.length === 0 &&
+  i.hashesCapped === false &&
+  !i.hostOverflow;
 
 export type MatchResult = "match" | "no-match" | "unknown";
 
@@ -51,7 +67,7 @@ export function approvalMatch(m: BaselineMark, item: MatchItem, now: string): Ma
     if (!m.sha256.length) return "unknown";
   }
   if (!m.sha256.length) return "unknown";
-  if (!item.sha256.length) return "unknown";
+  if (!item.sha256.length || !hashesComplete(item)) return "unknown";
   const ok = new Set(m.sha256.map((h) => h.toLowerCase()));
   return item.sha256.every((h) => ok.has(h.toLowerCase())) ? "match" : "no-match";
 }
