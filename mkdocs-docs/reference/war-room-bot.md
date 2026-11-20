@@ -272,6 +272,8 @@ Mirroring is **off by default**, and each chat turns it on for itself:
 
 **When it is sent.** An analyst's question and Watson's answer to it go out at once. Turns that come in while nobody waits for an answer (reactions, Auto rounds) are collected and sent together, at most once a minute per chat. Nothing is dropped: a long batch is split into several messages, in order. Messages are never edited.
 
+**Sharing the bot with alerts.** Telegram limits how fast one bot may send: about one message a second to a chat, 20 a minute to a group. Alerts, command replies and the mirror share those limits, and the Companion queues their messages in that order: an alert goes first, even when the mirror has a backlog, then command replies, then the mirror. The mirror always leaves room for alerts. When Telegram still answers "too many requests", every message from that bot waits the time Telegram asks for.
+
 **Asking from the chat.** In a private chat with the bot, any plain message from a listed user is a question for the bound case. In a group, only a message that **replies to a message the mirror sent** or **mentions the bot** (`@YourBot what ran on WS-01?`) is a question. Everything else in the group is ignored and never reaches the AI. A group bot with privacy mode on sees only mentions and replies, which is all the mirror needs. The chat gets "Asking Watson…", then the answer arrives once, through the mirror. Your question is not sent back to the chat it came from. `/dfir ask` in a mirroring chat works the same way.
 
 **Privacy.**

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **New client from New Case** — the instance administrator can create a client straight from the New Case Client box (closes #2735)
 - **AI Agent Forensics** — check chosen endpoints for tampered AI coding agents (poisoned instruction files, rogue MCP servers, hooks) with the ai-dfir-toolkit YARA/Sigma rules through Velociraptor; provisional grades, matched text kept away from the AI (closes #2690)
 - **Sliding sign-in** — activity extends a team-mode session up to a hard limit (`DFIR_AUTH_SESSION_MAX_HOURS`, default 7 days); idle sessions still expire (closes #2717)
+- **Shared Telegram rate limit** — alerts, command replies and the Watson mirror share one per-bot limit; alerts go first, the mirror waits, and Telegram's retry-after is honoured by all (closes #2711)
 - **Watson Telegram mirror** — opt-in per chat with `/dfir mirror on`; Watson's case chat is mirrored to a bound Telegram chat and allowlisted users can ask Watson from Telegram (closes #2647)
 - **Velociraptor hunt exports in the drop folder** — a hunt `.zip` or unzipped folder imports one copy of each artifact with the client's host; other copies and metadata move to `_skipped/` (closes #2714)
 - **Threat-hunt mode** — a threat-hunt case type: hunt framing for the AI, host-prevalence "seen on N of M hosts" grading, admin-only client baselines with an approval confirm list, "new since last hunt" grading, a hunt summary report and Convert to incident (closes #2670)

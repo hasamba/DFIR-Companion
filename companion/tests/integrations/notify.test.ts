@@ -14,7 +14,12 @@ import {
   type SmtpReply,
   type SmtpSocketLike,
 } from "../../src/integrations/notify/smtpClient.js";
-import { dispatchEvent, createNotifier } from "../../src/integrations/notify/notifyDispatch.js";
+import {
+  dispatchEvent,
+  createNotifier,
+  TEST_ALERT_WAIT,
+} from "../../src/integrations/notify/notifyDispatch.js";
+import { TelegramLimiters } from "../../src/analysis/notify/telegramRateLimiter.js";
 import { NotificationConfigStore } from "../../src/analysis/notificationStore.js";
 import {
   parseChannelInput,
@@ -356,6 +361,48 @@ describe("dispatchEvent + createNotifier", () => {
     expect(Array.isArray(mm.body.attachments)).toBe(true);
     const dc = sent.find((s) => s.url.includes("/api/webhooks/"))!;
     expect(Array.isArray(dc.body.embeds)).toBe(true);
+  });
+
+  // #2711: through the bot's shared limiter, an alert waits out a 429's retry_after and is sent again.
+  it("retries a telegram alert once after a 429, waiting retry_after", async () => {
+    const at: number[] = [];
+    const fetchFn = (async () => {
+      at.push(Date.now());
+      return at.length === 1
+        ? Response.json({ ok: false, parameters: { retry_after: 1 } }, { status: 429 })
+        : new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    const ch = channel({
+      id: "tg1",
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "777:TOKEN", chatId: "-100" },
+    });
+    const [r] = await dispatchEvent([ch], event(), { fetchFn, telegramLimiters: new TelegramLimiters() });
+    expect(r.ok).toBe(true);
+    expect(at).toHaveLength(2);
+    expect(at[1] - at[0]).toBeGreaterThanOrEqual(990);
+  });
+
+  it("gives up on a telegram alert at once when the wait is past its limit (the Send test button)", async () => {
+    const limiters = new TelegramLimiters();
+    limiters.forToken("777:TOKEN").backOff(60_000);
+    let calls = 0;
+    const fetchFn = (async () => (++calls, new Response("ok"))) as typeof fetch;
+    const ch = channel({
+      id: "tg1",
+      type: "telegram",
+      webhookUrl: undefined,
+      telegram: { botToken: "777:TOKEN", chatId: "-100" },
+    });
+    const [r] = await dispatchEvent([ch], event(), {
+      fetchFn,
+      telegramLimiters: limiters,
+      telegramWait: TEST_ALERT_WAIT,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/rate limited by Telegram — try again in 60 s/);
+    expect(calls).toBe(0);
   });
 
   it("routes telegram events to the Bot API sendMessage endpoint", async () => {

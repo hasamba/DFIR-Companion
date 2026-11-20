@@ -9,6 +9,7 @@ import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { AiControlStore } from "../../src/analysis/aiControl.js";
 import { SlashCommandChannelStore } from "../../src/analysis/slashCommandStore.js";
 import { getAiLimiter, resetLimiters } from "../../src/http/rateLimiter.js";
+import { sharedTelegramLimiters } from "../../src/analysis/notify/telegramRateLimiter.js";
 import { createApp } from "../../src/server.js";
 import { WatsonChatStore } from "../../src/analysis/ai/watson/chatStore.js";
 import type { WatsonChat } from "../../src/analysis/ai/watson/types.js";
@@ -79,6 +80,7 @@ beforeEach(async () => {
   vi.stubEnv("DFIR_TELEGRAM_BOT_TOKEN", "1:T");
   vi.stubEnv("DFIR_TELEGRAM_ACTION_USERS", LISTED);
   resetLimiters();
+  sharedTelegramLimiters.reset(); // #2711: each test starts with a fresh view of the bot
   const link = createWatsonMirrorLink();
   app = createApp(store, {
     stateStore: new StateStore(store),
@@ -122,12 +124,18 @@ async function mirrorOn(chat = PRIVATE, caseId = "c1") {
   const before = sent.length;
   const res = await tg({ text: "/dfir mirror on" }, { chat });
   expect(res.body).toEqual({});
-  const started = sent.slice(before).filter((s) => s.chat_id === String(chat));
-  expect(started).toHaveLength(1);
+  // #2711: sent as background work after the ack, through the bot's shared limiter.
+  const startedNow = () => sent.slice(before).filter((s) => s.chat_id === String(chat));
+  await vi.waitFor(() => expect(startedNow()).toHaveLength(1), SPACED);
+  await vi.waitFor(async () => expect((await mirrors.get(String(chat)))?.messageIds?.length).toBe(1));
+  const started = startedNow();
   expect(started[0].text).toMatch(/Mirroring started for case c1/);
   return started[0];
 }
 
+// #2711: the bot's shared limiter spaces sends to one chat a second apart, so the answer that follows
+// "Mirroring started" (or a reply) in the same chat arrives about a second later.
+const SPACED = { timeout: 3_000 };
 const toChat = (chat: number) => sent.filter((s) => s.chat_id === String(chat));
 const settle = () => new Promise((r) => setTimeout(r, 30));
 
@@ -165,7 +173,7 @@ describe("plain-text questions", () => {
     const before = sent.length;
     const res = await tg({ text: "c2 what ran   on the host?" });
     expect(res.body.text).toBe("Asking Watson…");
-    await vi.waitFor(() => expect(toChat(PRIVATE).length).toBe(before + 1));
+    await vi.waitFor(() => expect(toChat(PRIVATE).length).toBe(before + 1), SPACED);
     await settle();
     expect(asked).toEqual([{ caseId: "c1", text: "c2 what ran   on the host?" }]);
     const out = sent.slice(before);
@@ -191,7 +199,7 @@ describe("plain-text questions", () => {
       { text: "@DfirBot who logged on?", entities: [{ type: "mention", offset: 0, length: 8 }] },
       { chat: GROUP },
     );
-    await vi.waitFor(() => expect(toChat(GROUP).length).toBe(before + 1));
+    await vi.waitFor(() => expect(toChat(GROUP).length).toBe(before + 1), SPACED);
     expect(asked[0]).toEqual({ caseId: "c1", text: "who logged on?" });
     const answer = toChat(GROUP)[before];
     expect(answer.text).toContain("answer about c1");
@@ -206,16 +214,35 @@ describe("plain-text questions", () => {
     await vi.waitFor(() => expect(asked).toEqual([{ caseId: "c1", text: "what now?" }]));
   });
 
-  it("falls back to the webhook reply when sending 'Mirroring started' fails (#2709)", async () => {
+  // #2711: the fallback is a plain reply through the shared limiter, never a webhook reply (Telegram
+  // would run that outside the limiter, even inside a 429 pause).
+  it("falls back to a plain reply when sending 'Mirroring started' fails (#2709, #2711)", async () => {
     await tg({ text: "/dfir bind c1" }, { chat: GROUP });
-    vi.stubGlobal("fetch", async (url: string) =>
-      url.endsWith("/getMe")
-        ? Response.json({ ok: true, result: { username: "DfirBot" } })
-        : Response.json({ ok: false, description: "Internal" }, { status: 500 }),
-    );
+    const tries: Array<{ html: boolean; text: string }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+      if (url.endsWith("/getMe")) return Response.json({ ok: true, result: { username: "DfirBot" } });
+      const body = JSON.parse(init?.body ?? "{}");
+      tries.push({ html: body.parse_mode === "HTML", text: String(body.text) });
+      return tries.length === 1
+        ? Response.json({ ok: false, description: "Internal" }, { status: 500 })
+        : Response.json({ ok: true, result: { message_id: 1 } });
+    });
     const res = await tg({ text: "/dfir mirror on" }, { chat: GROUP });
-    expect(res.body.text).toMatch(/Mirroring started for case c1/);
+    expect(res.body).toEqual({});
+    await vi.waitFor(() => expect(tries).toHaveLength(2), SPACED);
+    expect(tries.map((t) => t.html)).toEqual([true, false]);
+    expect(tries[1].text).toMatch(/Mirroring started for case c1/);
     expect((await mirrors.get(String(GROUP)))?.messageIds).toEqual([]);
+  });
+
+  it("a 'Mirroring started' waiting out a 429 pause does not hold the next command back (#2711)", async () => {
+    await tg({ text: "/dfir bind c1" }, { chat: GROUP });
+    sharedTelegramLimiters.forToken("1:T").backOff(30_000); // Telegram asked the bot to wait
+    const res = await tg({ text: "/dfir mirror on" }, { chat: GROUP });
+    expect(res.body).toEqual({});
+    expect(toChat(GROUP)).toEqual([]); // nothing sent inside the pause, not even as a webhook reply
+    const off = await tg({ text: "/dfir mirror off" }, { chat: GROUP });
+    expect(off.body.text).toMatch(/Mirroring stopped for case c1/);
   });
 
   it("refuses an unlisted user and a password-protected case with the existing sentences (AC6)", async () => {
@@ -274,7 +301,7 @@ describe("plain-text questions", () => {
     await mirrorOn();
     const before = sent.length;
     expect((await tg({ text: "/dfir ask what ran?" })).body.text).toBe("Asking Watson…");
-    await vi.waitFor(() => expect(sent.length).toBe(before + 1));
+    await vi.waitFor(() => expect(sent.length).toBe(before + 1), SPACED);
     await settle();
     expect(sent.slice(before).map((s) => s.text.includes("answer about c1"))).toEqual([true]);
   });
@@ -287,7 +314,7 @@ describe("plain-text questions", () => {
       actor: "ana",
     });
     app.locals.watsonMirror.notify("c1");
-    await vi.waitFor(() => expect(sent.length).toBe(before + 1));
+    await vi.waitFor(() => expect(sent.length).toBe(before + 1), SPACED);
     expect(sent[before].text).toContain("dashboard q");
     expect(sent[before].preview).toEqual({ is_disabled: true });
   });

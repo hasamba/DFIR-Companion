@@ -7,7 +7,10 @@ import {
   WatsonMirror,
   type MirrorLiveness,
   type MirrorMasking,
+  type TelegramSendGate,
 } from "../integrations/telegram/watsonMirror.js";
+import { sharedTelegramLimiters } from "../analysis/notify/telegramRateLimiter.js";
+import { resolveToken } from "../analysis/telegramPoller.js";
 import { workstationRoots } from "../integrations/telegram/watsonMirrorFormat.js";
 import { sendMirrorMessage } from "../integrations/telegram/watsonMirrorSender.js";
 import type { WatsonMirrorEntry } from "../integrations/telegram/watsonMirrorStore.js";
@@ -115,6 +118,18 @@ export async function mirrorMaskText(ctx: RouteContext, caseId: string, raw: str
   }
 }
 
+/**
+ * #2711: the mirror's slots come from the bot's shared limiter, the one alerts and command replies use.
+ * The token is read once per slot, so the slot and the send are the same bot even across a reload.
+ */
+export const sharedMirrorGate: TelegramSendGate = {
+  acquire: async (req) => {
+    const botToken = resolveToken(telegramBotToken);
+    const slot = await sharedTelegramLimiters.forToken(botToken).acquire(req);
+    return { ...slot, botToken };
+  },
+};
+
 export function createAppWatsonMirror(ctx: RouteContext): WatsonMirror | undefined {
   const { options, store } = ctx;
   const chatStore = options.watsonChatStore;
@@ -126,8 +141,9 @@ export function createAppWatsonMirror(ctx: RouteContext): WatsonMirror | undefin
     loadHistory: (caseId) => chatStore.history.page(caseId, { limit: MIRROR_HISTORY_TURNS }),
     liveness: (entry) => liveness(ctx, entry),
     masking: (caseId, raw) => mirrorMaskText(ctx, caseId, raw),
-    send: (chatId, text) =>
-      sendMirrorMessage({ botToken: telegramBotToken, apiBase: telegramApiBase(), chatId, text }),
+    send: (chatId, text, botToken) =>
+      sendMirrorMessage({ botToken: botToken ?? telegramBotToken, apiBase: telegramApiBase(), chatId, text }),
+    limiter: sharedMirrorGate,
     audit: mirrorAudit(ctx, "telegram-mirror"),
     roots: workstationRoots({
       casesRoot: store.casesRoot,
