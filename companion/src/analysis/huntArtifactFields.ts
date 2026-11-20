@@ -70,15 +70,26 @@ function evidenceOf(e: ForensicEvent): HuntEvidence | null {
   return null;
 }
 
-/** `c:\Users\Bob\AppData\x.exe` → `\users\*\appdata`; drive letters and device prefixes dropped. */
+/** `\\.\`, `\\?\` and `\??\` — Win32 / NT namespace prefixes in front of a drive or volume. */
+const NAMESPACE_PREFIX = /^(?:\\\\[.?]|\\\?\?)\\/;
+/** `\device\harddiskvolume3` (Win10/11 Prefetch ExecutablePath) and `\volume{guid}` — whole segment only. */
+const VOLUME_PREFIX = /^\\?(?:device\\harddiskvolume\d+|volume\{[^}\\]*\})(?=\\|$)/i;
+const DRIVE_PREFIX = /^[a-z]:/i;
+
+/**
+ * Drop the volume a path lives on (#2749): namespace prefix, NT device / volume-GUID root, drive letter.
+ * Prefetch names `\DEVICE\HARDDISKVOLUME3\…` where Amcache and ShimCache name `C:\…` for the same
+ * file, so both must reduce to `\…` to be one hunt item. Backslash-separated input; case kept.
+ */
+export function stripVolumePrefix(path: string): string {
+  return path.replace(NAMESPACE_PREFIX, "").replace(VOLUME_PREFIX, "").replace(DRIVE_PREFIX, "");
+}
+
+/** `c:\Users\Bob\AppData\x.exe` → `\users\*\appdata`; the volume (drive, device, GUID) dropped. */
 export function normalisePathPattern(path: string): string {
-  const p = path
-    .trim()
-    .replace(/^\\\\\.\\/, "")
-    .replace(/\//g, "\\")
-    .toLowerCase();
+  const p = stripVolumePrefix(path.trim().replace(/\//g, "\\").toLowerCase());
   const dir = p.includes("\\") ? p.slice(0, p.lastIndexOf("\\")) : "";
-  return dir.replace(/^[a-z]:/, "").replace(/\\users\\[^\\]+/, "\\users\\*");
+  return dir.replace(/\\users\\[^\\]+/, "\\users\\*");
 }
 
 const baseName = (p: string): string => p.replace(/\//g, "\\").split("\\").pop() ?? "";

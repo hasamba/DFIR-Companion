@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   approvalMatch,
   itemVerdict,
+  notAllowedMatch,
   pathPatternMatches,
   type MatchItem,
 } from "../../src/analysis/huntApprovalMatch.js";
@@ -71,6 +72,17 @@ describe("strict baseline matching (#2670)", () => {
     expect(pathPatternMatches("\\program files\\**\\app", "\\program files\\a\\b\\app")).toBe(true);
     expect(pathPatternMatches("\\program files", "\\program files2")).toBe(false);
     expect(pathPatternMatches("\\users\\*\\appdata", "\\users\\*\\appdata")).toBe(true);
+  });
+
+  it("a mark saved from a device-path Prefetch item still matches the re-keyed item (#2749)", () => {
+    const dev = "\\device\\harddiskvolume3\\program files\\google\\chrome\\application";
+    expect(pathPatternMatches(dev, "\\program files\\google\\chrome\\application")).toBe(true);
+    expect(pathPatternMatches("\\program files\\google\\chrome\\application", dev)).toBe(true);
+    expect(approvalMatch(mark({ pathPattern: dev }), item({}), NOW)).toBe("match");
+    expect(notAllowedMatch(mark({ verdict: "not-allowed", pathPattern: dev }), item({}))).toBe(true);
+    expect(approvalMatch(mark({ pathPattern: dev }), item({ pathPattern: "\\users\\*\\appdata" }), NOW)).toBe(
+      "no-match",
+    );
   });
 
   it("Not allowed beats Approved", () => {

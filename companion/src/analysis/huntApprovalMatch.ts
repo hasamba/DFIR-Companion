@@ -1,5 +1,6 @@
 import type { Baseline, BaselineMark, BaselineVerdict } from "./clientProfile.js";
 import type { IdentityCoverage } from "./huntItemCoverage.js";
+import { stripVolumePrefix } from "./huntArtifactFields.js";
 
 /**
  * Strict baseline matching (#2670, #2731). PURE. An attacker must not be able to hide behind a name:
@@ -46,9 +47,13 @@ function segMatch(pat: readonly string[], dir: readonly string[]): boolean {
   return (head === "*" || head === dir[0]) && segMatch(rest, dir.slice(1));
 }
 
-/** Does `pattern` match the item's directory? Whole segments only: `\program files` ≠ `\program files2`. */
+/**
+ * Does `pattern` match the item's directory? Whole segments only: `\program files` ≠ `\program files2`.
+ * Both sides lose their volume prefix first (#2749), so a mark saved from a `\device\harddiskvolumeN\…`
+ * Prefetch item keeps matching (and a not-allowed mark keeps firing) once items are keyed without it.
+ */
 export function pathPatternMatches(pattern: string, dir: string): boolean {
-  return segMatch(segs(pattern), segs(dir));
+  return segMatch(segs(stripVolumePrefix(pattern)), segs(stripVolumePrefix(dir)));
 }
 
 const sameName = (m: BaselineMark, i: MatchItem): boolean =>

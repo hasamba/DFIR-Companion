@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { huntFieldsOf, huntItemKey, normalisePathPattern } from "../../src/analysis/huntArtifactFields.js";
+import {
+  huntFieldsOf,
+  huntItemKey,
+  normalisePathPattern,
+  stripVolumePrefix,
+} from "../../src/analysis/huntArtifactFields.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const row = (description: string, p: Partial<ForensicEvent> = {}): ForensicEvent => ({
@@ -86,6 +91,30 @@ describe("hunt artifact fields (#2670)", () => {
     expect(normalisePathPattern("D:\\Program Files\\Google\\Chrome\\chrome.exe")).toBe(
       "\\program files\\google\\chrome",
     );
+  });
+
+  it("drops NT device, volume-GUID and Win32 namespace prefixes like a drive letter (#2749)", () => {
+    for (const p of [
+      "C:\\Program Files\\Foo\\foo.exe",
+      "\\DEVICE\\HARDDISKVOLUME3\\PROGRAM FILES\\FOO\\FOO.EXE",
+      "\\VOLUME{01d2a3b4-0000-0000-0000-100000000000}\\PROGRAM FILES\\FOO\\FOO.EXE",
+      "\\\\?\\C:\\Program Files\\Foo\\foo.exe",
+      "\\??\\C:\\Program Files\\Foo\\foo.exe",
+      "\\\\.\\C:\\Program Files\\Foo\\foo.exe",
+      "\\\\?\\Volume{01d2a3b4-0000-0000-0000-100000000000}\\Program Files\\Foo\\foo.exe",
+    ])
+      expect(normalisePathPattern(p), p).toBe("\\program files\\foo");
+    expect(normalisePathPattern("\\Device\\HarddiskVolume12\\Users\\Bob\\AppData\\x.exe")).toBe(
+      "\\users\\*\\appdata",
+    );
+  });
+
+  it("stripVolumePrefix keeps the rest of the path and leaves look-alike folders alone (#2749)", () => {
+    expect(stripVolumePrefix("\\device\\harddiskvolume3\\program files\\foo")).toBe("\\program files\\foo");
+    expect(stripVolumePrefix("\\device\\harddiskvolume3")).toBe("");
+    expect(stripVolumePrefix("\\program files\\foo")).toBe("\\program files\\foo");
+    expect(stripVolumePrefix("\\device\\harddiskvolume3x\\foo")).toBe("\\device\\harddiskvolume3x\\foo");
+    expect(stripVolumePrefix("\\tools\\device\\harddiskvolume3")).toBe("\\tools\\device\\harddiskvolume3");
   });
 
   it("presence and execution of one program at one path are ONE item", () => {

@@ -90,7 +90,8 @@ Rules that keep an attacker from hiding behind a name:
 - An approval matches only on the program name **and** its path pattern **and** a verified signer
   or an approved hash. A `chrome.exe` in a Temp folder does not match an approval for `chrome.exe`
   in `\Program Files\Google\`. If one host runs a different hash at the approved path, that item
-  is not covered.
+  is not covered. The path pattern ignores the volume, so a Prefetch path (`\Device\HarddiskVolume3\…`)
+  and an Amcache path (`C:\…`) for the same file are one item.
 - Publisher text alone never approves anything. A missing hash or signer gives **Unknown**.
 - Which artifacts can make an item approvable:
     - **Amcache** (`Windows.Forensics.Amcache`, program files) records a SHA1. Amcache hashes only
