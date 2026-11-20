@@ -2,7 +2,7 @@
 
 ## License, privacy and provenance
 
-Corpus version `1.1.0` is distributed under the repository's `AGPL-3.0-only` license. Every case was
+Corpus version `1.5.0` is distributed under the repository's `AGPL-3.0-only` license. Every case was
 written from scratch as fictional evaluation data. No client case, production export, public breach
 dataset, credential, or real person's identity was used.
 
@@ -30,6 +30,16 @@ Version 1.4.0 adds two cases with `prior-answers`: each seeds a key question an 
 answered (`seedKeyQuestions`), and `golden.keyQuestions` says how the run must end. In
 `prior-answer-stable` the seeded answer is correct and must survive unrelated new evidence. In
 `prior-answer-stale` the new events contradict the seeded answer; keeping it (anchoring) fails.
+
+Version 1.5.0 adds the `threat-hunt` scenario (#2733). Its case, `threat-hunt-rare-binary`, carries an
+optional `hunt` block with `approvedLabels`. The harness puts the case in hunt mode (the built-in
+threat-hunt incident type) and saves those labels as the client baseline's approved items, so the
+synthesis prompt carries the HUNT MODE and APPROVED BY CLIENT blocks. No hunt job is seeded, so
+coverage reads as unknown. The case expects one ranked anomaly (an unsigned binary with a Run-key
+autorun on one host), stated with uncertainty and a next step to collect the binary. It forbids a
+forced attack chain or attribution, and any finding against the approved remote-support agent in
+normal use. `corpus.test.ts` checks that both blocks reach the prompt and that an incident case
+carries neither.
 
 ## Versioning
 

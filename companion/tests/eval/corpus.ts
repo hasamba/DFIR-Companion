@@ -18,6 +18,7 @@ export const CORPUS_SCENARIOS = [
   "clean",
   "web-server",
   "remote-access",
+  "threat-hunt",
 ] as const;
 
 export const CORPUS_TRAITS = [
@@ -130,6 +131,15 @@ const provenanceSchema = z
   })
   .strict();
 
+// A threat-hunt case (#2733): the run puts the case in hunt mode (the built-in threat-hunt incident
+// type) and saves these labels as the client baseline's approved items, so the HUNT MODE and APPROVED
+// BY CLIENT blocks reach the prompt. No hunt jobs are seeded, so coverage reads as unknown.
+const huntSchema = z
+  .object({
+    approvedLabels: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+
 const caseSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -140,6 +150,7 @@ const caseSchema = z
     provenance: provenanceSchema,
     seedEvents: z.array(eventSchema).min(1),
     seedKeyQuestions: z.array(seedKeyQuestionSchema).default([]),
+    hunt: huntSchema.optional(),
     cannedOutput: z.record(z.string(), z.unknown()),
     golden: goldenSchema,
   })
@@ -171,6 +182,8 @@ export interface CorpusCase {
   provenance: z.infer<typeof provenanceSchema>;
   seedEvents: ForensicEvent[];
   seedKeyQuestions: InvestigationQuestion[];
+  /** Present only on a threat-hunt case (#2733). */
+  hunt?: { approvedLabels: string[] };
   canned: string;
   golden: CaseGolden;
 }
@@ -234,6 +247,7 @@ async function loadCase(file: string, expectedId: string): Promise<CorpusCase> {
     provenance: { ...parsed.provenance },
     seedEvents: parsed.seedEvents.map(forensicEvent),
     seedKeyQuestions: parsed.seedKeyQuestions.map((q) => ({ ...q })),
+    ...(parsed.hunt ? { hunt: { approvedLabels: [...parsed.hunt.approvedLabels] } } : {}),
     canned: JSON.stringify(parsed.cannedOutput),
     golden: {
       claims: parsed.golden.claims.map((claim) => ({

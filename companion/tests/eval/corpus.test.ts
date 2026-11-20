@@ -19,13 +19,14 @@ const REQUIRED_SCENARIOS = [
   "clean",
   "web-server",
   "remote-access",
+  "threat-hunt",
 ];
 
 describe("versioned production golden corpus (#378)", () => {
   it("documents safe provenance and covers the required investigative scenarios", async () => {
     const corpus = await loadGoldenCorpus();
     expect(corpus.schemaVersion).toBe(1);
-    expect(corpus.version).toBe("1.4.0");
+    expect(corpus.version).toBe("1.5.0");
     expect(new Set(corpus.cases.map((fixture) => fixture.scenario))).toEqual(new Set(REQUIRED_SCENARIOS));
     expect(corpus.cases.every((fixture) => fixture.provenance.origin === "synthetic")).toBe(true);
     expect(corpus.cases.every((fixture) => fixture.provenance.containsClientData === false)).toBe(true);
@@ -44,7 +45,7 @@ describe("versioned production golden corpus (#378)", () => {
   it("gives every forbidden conclusion a claim sentence for the semantic judge (#1704)", async () => {
     const corpus = await loadGoldenCorpus();
     const forbidden = corpus.cases.flatMap((fixture) => fixture.golden.forbiddenConclusions);
-    expect(forbidden).toHaveLength(13);
+    expect(forbidden).toHaveLength(15);
     expect(forbidden.every((item) => (item.claim ?? "").trim().length > 10)).toBe(true);
   });
 
@@ -152,6 +153,46 @@ describe("versioned production golden corpus (#378)", () => {
     const cited = (/\[([^\]]+)\]$/.exec(lines[0])?.[1] ?? "").split(", ");
     const timeline = synthesis?.slice(synthesis.indexOf("FORENSIC TIMELINE")) ?? "";
     for (const id of cited) expect(timeline, id).toContain(`[${id}]`);
+  });
+
+  // #2733: the hunt case exists to test the hunt framing, so prove the REAL synthesis path puts the
+  // HUNT MODE block and the client's approved programs in front of the model — and that a case that is
+  // not a hunt carries neither.
+  describe("threat-hunt-rare-binary: the hunt framing reaches the synthesis prompt (#2733)", () => {
+    const promptsFor = async (id: string): Promise<string> => {
+      const fixture = (await loadGoldenCorpus()).cases.find((candidate) => candidate.id === id);
+      if (!fixture) throw new Error(`corpus case ${id} missing`);
+      const sent: string[] = [];
+      const capturing: AIProvider = {
+        name: "mock",
+        model: "mock-model",
+        analyze: async (req: AnalyzeRequest): Promise<AnalyzeResult> => {
+          sent.push(`${req.systemPrompt}\n${req.userPrompt}`);
+          return { rawText: fixture.canned };
+        },
+      };
+      await runCorpusCase(fixture, capturing);
+      return sent.join("\n");
+    };
+
+    it("is the one hunt case, and it lists approved programs", async () => {
+      const cases = (await loadGoldenCorpus()).cases.filter((candidate) => candidate.hunt);
+      expect(cases.map((candidate) => candidate.id)).toEqual(["threat-hunt-rare-binary"]);
+      expect(cases[0].hunt?.approvedLabels.length).toBeGreaterThan(0);
+    });
+
+    it("carries HUNT MODE and APPROVED BY CLIENT with the approved program", async () => {
+      const prompt = await promptsFor("threat-hunt-rare-binary");
+      expect(prompt).toContain("HUNT MODE:");
+      expect(prompt).toContain("APPROVED BY CLIENT");
+      expect(prompt).toContain("ScreenConnect.ClientService.exe");
+    });
+
+    it("an incident case carries neither block", async () => {
+      const prompt = await promptsFor("rmm-anydesk-persistence");
+      expect(prompt).not.toContain("HUNT MODE:");
+      expect(prompt).not.toContain("APPROVED BY CLIENT");
+    });
   });
 
   // #1579: a real model run (claude-sonnet-5) got these three right in its own words and the literal

@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "id": "threat-hunt-rare-binary",
+  "title": "Synthetic fleet hunt: one unsigned binary with a Run-key autorun beside a client-approved remote-support agent",
+  "scenario": "threat-hunt",
+  "traits": ["incomplete-evidence"],
+  "provenance": {
+    "origin": "synthetic",
+    "method": "Fictional Amcache, Autoruns and Prefetch rows from a proactive hunt, written for this corpus and graded as the importers and tagger grade them; the approved labels stand in for a client baseline.",
+    "containsClientData": false,
+    "privacyReviewedAt": "2026-11-20"
+  },
+  "hunt": {
+    "approvedLabels": [
+      "ScreenConnect.ClientService.exe in C:\\Program Files (x86)\\ScreenConnect Client\\",
+      "installed program Example Endpoint Agent"
+    ]
+  },
+  "seedEvents": [
+    {
+      "id": "th-e1",
+      "timestamp": "2026-10-14T02:41:09.000Z",
+      "description": "Amcache: execution from a user-writable path - C:\\Users\\Public\\Libraries\\svcupd.exe (unsigned, no publisher) @ HUNT-WS-17",
+      "severity": "Medium",
+      "mitreTechniques": [],
+      "asset": "HUNT-WS-17",
+      "path": "C:\\Users\\Public\\Libraries\\svcupd.exe",
+      "sources": ["Amcache"]
+    },
+    {
+      "id": "th-e2",
+      "timestamp": "2026-10-14T02:41:30.000Z",
+      "description": "Autoruns: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run - Entry=SvcUpd - Image=C:\\Users\\Public\\Libraries\\svcupd.exe - enabled, not verified @ HUNT-WS-17",
+      "severity": "Low",
+      "mitreTechniques": ["T1547.001"],
+      "asset": "HUNT-WS-17",
+      "path": "C:\\Users\\Public\\Libraries\\svcupd.exe",
+      "sources": ["Autoruns"]
+    },
+    {
+      "id": "th-e3",
+      "timestamp": "2026-10-14T02:20:00.000Z",
+      "description": "Prefetch: SCREENCONNECT.CLIENTSERVICE.EXE executed (run 31×) @ HUNT-WS-02",
+      "severity": "Low",
+      "mitreTechniques": ["T1219"],
+      "asset": "HUNT-WS-02",
+      "path": "C:\\Program Files (x86)\\ScreenConnect Client\\ScreenConnect.ClientService.exe",
+      "sources": ["Prefetch"]
+    },
+    {
+      "id": "th-e4",
+      "timestamp": "2026-10-14T02:25:00.000Z",
+      "description": "Prefetch: SCREENCONNECT.CLIENTSERVICE.EXE executed (run 27×) @ HUNT-WS-05",
+      "severity": "Low",
+      "mitreTechniques": ["T1219"],
+      "asset": "HUNT-WS-05",
+      "path": "C:\\Program Files (x86)\\ScreenConnect Client\\ScreenConnect.ClientService.exe",
+      "sources": ["Prefetch"]
+    },
+    {
+      "id": "th-e5",
+      "timestamp": "2026-10-14T02:30:00.000Z",
+      "description": "Prefetch: SCREENCONNECT.CLIENTSERVICE.EXE executed (run 29×) @ HUNT-WS-11",
+      "severity": "Low",
+      "mitreTechniques": ["T1219"],
+      "asset": "HUNT-WS-11",
+      "path": "C:\\Program Files (x86)\\ScreenConnect Client\\ScreenConnect.ClientService.exe",
+      "sources": ["Prefetch"]
+    }
+  ],
+  "cannedOutput": {
+    "findings": [
+      {
+        "id": "th-f1",
+        "severity": "Medium",
+        "confidence": 45,
+        "confidenceReason": "One unsigned program in a user-writable folder with its own Run-key autorun, seen on one host only; nothing shows what it does.",
+        "title": "Rare unsigned svcupd.exe with a Run-key autorun on HUNT-WS-17",
+        "description": "svcupd.exe ran from C:\\Users\\Public\\Libraries on HUNT-WS-17 with no publisher, and an enabled, unverified HKCU Run entry starts it at logon. It is the one anomaly in this hunt; its purpose is not established.",
+        "relatedIocs": [],
+        "mitreTechniques": ["T1547.001"],
+        "status": "open",
+        "relatedEventIds": ["th-e1", "th-e2"]
+      }
+    ],
+    "iocs": [],
+    "mitreTechniques": [],
+    "attackerPath": "",
+    "narrativeTimeline": "",
+    "summary": "Proactive hunt: one anomaly ranked — an unsigned svcupd.exe with a Run-key autorun on HUNT-WS-17. ScreenConnect on HUNT-WS-02, HUNT-WS-05 and HUNT-WS-11 is approved by the client and runs as expected. Coverage is unknown, so no absence is claimed for hosts not shown.",
+    "threadsOpened": [],
+    "threadsClosed": [],
+    "keyQuestions": [],
+    "nextSteps": [
+      {
+        "id": "th-n1",
+        "priority": "high",
+        "action": "Collect svcupd.exe from HUNT-WS-17 and check its hash and signature",
+        "rationale": "The binary decides whether this is unapproved software or a real compromise.",
+        "pointer": "HUNT-WS-17 C:\\Users\\Public\\Libraries\\svcupd.exe",
+        "relatedFindingIds": ["th-f1"]
+      }
+    ],
+    "hypotheses": [],
+    "uncertainties": [
+      {
+        "topic": "What svcupd.exe is and does",
+        "status": "unknown",
+        "basis": "Only its execution and its autorun entry are recorded.",
+        "gap": "The binary has not been collected or analysed."
+      },
+      {
+        "topic": "Hunt coverage across the fleet",
+        "status": "unknown",
+        "basis": "No hunt coverage record is available.",
+        "gap": "Which hosts answered the hunt is not known."
+      }
+    ],
+    "evidenceRequests": [],
+    "forensicEvents": [],
+    "timelineNote": ""
+  },
+  "golden": {
+    "claims": [
+      {
+        "id": "rare-unsigned-binary",
+        "requiredTerms": ["svcupd", "rare|unsigned|anomal|unusual|autorun|run key|run-key"],
+        "evidenceEventIds": ["th-e1"],
+        "confidence": {
+          "min": 20,
+          "max": 75
+        }
+      }
+    ],
+    "iocs": [],
+    "forbiddenConclusions": [
+      {
+        "id": "approved-rmm-compromise",
+        "terms": [
+          "ScreenConnect was used maliciously",
+          "unauthorized ScreenConnect",
+          "malicious ScreenConnect",
+          "ScreenConnect backdoor",
+          "attacker used ScreenConnect"
+        ],
+        "claim": "The client-approved ScreenConnect agent running on the fleet hosts is evidence of attacker remote access."
+      },
+      {
+        "id": "forced-kill-chain",
+        "terms": ["lateral movement", "threat actor", "attributed to", "kill chain", "ransomware"],
+        "claim": "The rare binary is part of an attack chain with lateral movement, ransomware or a named threat actor behind it."
+      }
+    ],
+    "uncertainties": [
+      {
+        "id": "binary-purpose",
+        "topicTerms": ["svcupd|binary|program"],
+        "allowedStatuses": ["unknown", "inferred", "speculated"]
+      },
+      {
+        "id": "hunt-coverage",
+        "topicTerms": ["coverage|answered|hosts"],
+        "allowedStatuses": ["unknown", "inferred", "speculated"]
+      }
+    ],
+    "nextSteps": [
+      {
+        "id": "collect-binary",
+        "requiredTerms": ["svcupd", "collect|acquire|hash|signature|sample"]
+      }
+    ],
+    "expectAbstention": false
+  }
+}

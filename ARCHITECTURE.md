@@ -152,8 +152,10 @@ update traffic entered the record as graded signal and was read as C2 (#1530).
 
 It runs **before** the dual-write and **before** the tagger, in `routes/importSettle.ts` and in the
 bulk driver's per-batch flush. Before the dual-write so the super-timeline keeps the graded copy;
-before the tagger so the order stays **merge-all → lower → tag → demote** — a tagger rule that
-matches the row raises it straight back, which is the only escape hatch this pass needs. It never
+before the tagger so the order stays **merge-all → lower → tag → hunt grade → demote** — a tagger
+rule that matches the row raises it straight back, which is the only escape hatch this pass needs.
+(The hunt step does nothing outside a threat-hunt case; see "Threat-hunt grading runs at the seam"
+below.) It never
 lowers a High or Critical, never touches a row that carries an ATT&CK technique or an analyst
 promotion, and is skipped entirely when no super-timeline store is wired, because demote would then
 delete the row rather than move it.
@@ -209,9 +211,10 @@ no import card at all.
 ### The content tagger's promotion window is the import that collected the event
 
 The deterministic content tagger is what lifts high-value telemetry out of `Info` — but it can only
-do so during the import that collected it. The order is **merge-all → tag → demote**: merge-all puts
-every event in the forensic timeline, the tagger raises the ones its rules match, and demote then
-removes whatever is still `Info`. `runAndApplyTagger` **maps over the forensic timeline and never
+do so during the import that collected it. The order is **merge-all → lower → tag → hunt grade →
+demote**: merge-all puts every event in the forensic timeline, the tagger raises the ones its rules
+match, and demote then removes whatever is still `Info`. The hunt step between them never changes an
+imported row's grade, so the tagger is still the only thing that can lift one across the cut. `runAndApplyTagger` **maps over the forensic timeline and never
 appends to it**, so once demote has run, the event is in the super-timeline only and out of reach.
 The first row demote never touches is a promoted one: `promoteSuperTimeline` stamps `promotedAt` on
 every row it pulls up (any intent), and `demoteBelowSeverity` keeps a stamped row whatever its
@@ -232,7 +235,7 @@ run moves nothing.
 
 ### The seam is one function, and every import route runs it
 
-The dual-write → tag → demote sequence is `routes/importSettle.ts: settleForensicImport`. It used
+The dual-write → tag → hunt grade → demote sequence is `routes/importSettle.ts: settleForensicImport`. It used
 to be six inline copies (the generic import route twice, the streamed ingest, the hunt collector,
 both Velociraptor external-ingest paths) and **zero** copies on the dedicated `import-*` routes,
 which called their importer and resynthesized. The consequence was the exact thing the rule forbids: an Info row imported through
@@ -248,6 +251,59 @@ directly when it cannot — or it is not on the boundary. The resume path
 (`routes/importRecovery.ts`) keeps its own copy on purpose: it re-selects every row of the
 artifact by name, not the rows added since a snapshot, because a resumed import has no clean
 pre-import snapshot to diff against.
+
+### Threat-hunt grading runs at the seam, before demote (#2670)
+
+A case whose incident type is in hunt mode (the built-in "Threat hunt (proactive)" type) gets one more
+deterministic step in `settleForensicImport`: after the tagger and the caps, before demote
+(`huntSettlePaged` → `analysis/huntSettle.ts`, registered by `composition/huntGrading.ts`). In any
+other case the step does nothing. It sits before demote for the same reason the tagger does: the
+import's `Info` rows are still in the forensic timeline there, and after demote nothing automatic may
+read them.
+
+What it reads, writes and starts:
+
+- **Reads only this import's own rows**, by the ids the import added, page by page under the state
+  lock. It never names the super-timeline.
+- **Records host counts**, not rows: which program was seen on which host, in the case's derived hunt
+  inventory (`state/hunt-inventory.json`).
+- **Writes one grouped summary entry per graded item** into the forensic timeline: a deterministic id
+  per kind and item, graded above `Info` so the gate keeps it, marked as a hunt summary, capped per
+  kind with one visible "N more" entry for the rest. Every settle recalculates them, updates the ones
+  whose wording changed and removes the ones that no longer apply. An entry the analyst promoted is
+  never removed.
+- **Never changes an imported row.** A detection keeps its own grade. The client's baseline can only
+  remove hunt summary entries for an approved item; it never lowers that item's detection.
+- **Starts no AI** and never writes `promotedAt`. The model reads the summary entries later, like any
+  other forensic-timeline row, and never the rows they were counted from.
+- **"New since the last comparable hunt"** looks at another case of the same client. It reads that
+  case's client link, hunt jobs and derived inventory, never its rows
+  (`composition/huntBaselineGrades.ts: previousComparableHunt`).
+
+A grading failure is logged and skipped, and never fails the import. A hunt collect also re-runs the
+step once with no new rows after its final job write (`composition/veloHuntCompleteness.ts:
+regradeAfterCollect`), so a collection that is now partial does not keep entries from an earlier,
+complete one. `forensicBoundary.test.ts` → "hunt grading reads no raw record and starts no AI
+(#2670)" pins the module list (no super-timeline, no AI import, no `promotedAt`) and the seam order.
+What makes an item rare, how completeness is judged and how an approval matches belong to the user
+manual (`mkdocs-docs/reference/threat-hunting.md`), not to this boundary.
+
+**The APPROVED BY CLIENT block.** In a hunt case, synthesis and Watson both read a HUNT MODE block
+(`analysis/huntFramingLoad.ts: loadHuntFramingFor`), followed by an "APPROVED BY CLIENT" block that
+names what the client's baseline approves (`renderApprovedBlock`). Synthesis appends both to the
+incident-type block, so they are hashed with it (`ai/synthesisInputs.ts`). Watson puts them at the
+head of its case context (`ai/watson/roundContext.ts: buildWatsonCaseHead`). The block:
+
+- is built from the labels grading saved in the hunt inventory record (program and path labels of the
+  approved items), never from the raw record;
+- names at most 40 (`APPROVED_LISTED`) and counts the rest;
+- says that a detection on an approved item still stands;
+- carries no client name, note or audit text. The client's name and approved or blocked domains are
+  registered with the AI-call masker for that case (`analysis/huntMaskNames.ts`), and approval notes
+  are in no prompt block.
+
+`tests/analysis/huntFraming.test.ts` pins the block, and the eval corpus case
+`threat-hunt-rare-binary` checks that it reaches the synthesis prompt.
 
 ### Three analyst-initiated paths touch the raw record
 
@@ -269,6 +325,29 @@ The per-finding **containment check** (#1925, `routes/containmentCheck.ts`) is n
 and not an exception. It sends Jev one finding and the events it cites, resolved against the
 forensic timeline only (`analysis/ai/jev/containmentState.ts`); a cited id that is not there is
 counted as missing, never fetched from the raw record. `forensicBoundary.test.ts` pins both.
+
+### Two re-grades read the raw record, and no model sees what they read
+
+Both are buttons the analyst presses, both write an activity-log line, and neither feeds a model. So
+they are not exceptions to "the model never reads the raw record", but they are reads of it, and an
+audit should find them listed here.
+
+- **Sigma re-grade (#2206, `routes/sigmaRegrade.ts`).** It re-grades an imported case with the
+  current Sigma rules. The preview writes nothing. The apply rewrites the super-timeline copies by
+  id, and a row a rule now grades above the gate re-enters the forensic timeline as a normal graded
+  row through the same-id merge, never through `promoteSuperTimeline`. It writes no `promotedAt` and
+  starts no synthesis; it marks the conclusions out of date. Pinned by "the Sigma re-grade reads the
+  raw record but feeds no AI (#2206)".
+- **Re-grade with current baseline (#2670, `POST /cases/:id/hunt/regrade`, `analysis/huntRegrade.ts`).**
+  It is modelled on the Sigma re-grade. It works only on a hunt case (another case gets a 409). Under
+  the state lock it re-reads the case's rows from the forensic timeline and, when a super-timeline
+  store is wired, from the raw record too, so demoted rows count. It adds their host counts to the
+  inventory, keeps the counts recorded at import, re-pins the case to the client's current baseline
+  version and rewrites only the grouped hunt entries. No imported row changes, and it writes no
+  `promotedAt`. The raw record evicts at its cap, so the answer and the activity line state how many
+  host observations are "no longer in the raw record"; re-importing the hunt is the only way to read
+  them again. The import seam never calls it, so a delivered report never changes silently. Pinned by
+  "the hunt re-grade reads the raw record but feeds no AI (#2670)".
 
 ### One automatic read: the S3 ransomware-precursor promotion (#2563)
 
