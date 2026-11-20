@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { ReportMeta } from "./reportMeta.js";
 import { oneLineMd } from "./mdText.js";
+import { HUNT_REPORT_TEMPLATE_ID } from "../analysis/huntCase.js";
 
 // A "report template" lets a DFIR team turn the fixed-format incident report into a
 // client-facing deliverable WITHOUT hand-formatting: it controls report **branding** (accent
@@ -267,7 +268,7 @@ export function normalizeReportTemplate(input: unknown): ReportTemplate {
 
 // The template a THREAT HUNT case defaults to (#2670): hunt scope and verdict first, no incident
 // chapters (kill chain, sessions, D3FEND), and the analyst notebook for the hunt's own notes.
-export const HUNT_REPORT_TEMPLATE_ID = "threat-hunt-summary";
+export { HUNT_REPORT_TEMPLATE_ID };
 const HUNT_TEMPLATE_ON: ReadonlySet<string> = new Set([
   "titlePage",
   "reportMetadata",

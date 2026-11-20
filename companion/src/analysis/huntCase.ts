@@ -1,6 +1,10 @@
 import { applyIncidentTypeToState, isHuntType, type IncidentType } from "./incidentTypes.js";
 import type { InvestigationState } from "./stateTypes.js";
-import { HUNT_REPORT_TEMPLATE_ID, DEFAULT_TEMPLATE_ID } from "../reports/reportTemplate.js";
+
+/** The built-in report template a hunt case defaults to (reports/reportTemplate.ts defines it). */
+export const HUNT_REPORT_TEMPLATE_ID = "threat-hunt-summary";
+/** The report template a case has when nobody picked one (reports/reportTemplate.ts). */
+const STANDARD_TEMPLATE_ID = "standard";
 
 /**
  * Hunt-case lifecycle helpers (#2670): the report a hunt case defaults to, and "Convert to incident".
@@ -25,7 +29,7 @@ export async function applyHuntDefaults(
 ): Promise<boolean> {
   if (!control || !isHuntType(type)) return false;
   const current = await control.load(caseId);
-  if (current.templateId && current.templateId !== DEFAULT_TEMPLATE_ID) return false;
+  if (current.templateId && current.templateId !== STANDARD_TEMPLATE_ID) return false;
   await control.set(caseId, { templateId: HUNT_REPORT_TEMPLATE_ID });
   return true;
 }

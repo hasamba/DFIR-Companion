@@ -1,4 +1,3 @@
-import { shortHostName } from "./hostIdentity.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import type { VeloHuntJob } from "./veloHuntStore.js";
 
@@ -13,6 +12,11 @@ import type { VeloHuntJob } from "./veloHuntStore.js";
  * reported (an uploaded export) gets a NAME key, marked as such — it is never counted as an answering
  * host, because nothing proves it answered.
  */
+
+/** The first DNS label, upper-cased — hostIdentity.shortHostName's rule (that module sits in ingest). */
+export function shortHostName(name: string): string {
+  return name.trim().split(".")[0].toUpperCase();
+}
 
 export interface HostKey {
   key: string;
