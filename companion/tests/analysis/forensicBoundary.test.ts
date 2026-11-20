@@ -604,8 +604,9 @@ describe("hunt grading reads no raw record and starts no AI (#2670)", () => {
 
   it("runs at the seam after the tagger and before demote", () => {
     const seam = read("../../src/routes/importSettle.ts");
-    const tag = seam.indexOf("await deps.autoTagImported(caseId, added)");
-    const hunt = seam.indexOf("runHuntSettle(store, caseId, added");
+    // The tagger and the hunt step run page by page from the added ids (#2713, importSettlePaged.ts).
+    const tag = seam.indexOf("await dualWriteAndTagPaged(");
+    const hunt = seam.indexOf("await huntSettlePaged(store, lock, caseId, addedIds");
     const demote = seam.indexOf("const demoted = await demote(deps, caseId)");
     expect(tag).toBeGreaterThan(0);
     expect(hunt).toBeGreaterThan(tag);

@@ -215,7 +215,8 @@ describe("reachability — every detection has a production caller", () => {
   const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
   it("runs the parent and sacrificial rules from the merge", () => {
-    const merge = src("src/analysis/stateMerge.ts");
+    // The merge's timeline passes run from timelineChain.ts (stateMerge.ts → runTimelineChain, #2716).
+    const merge = src("src/analysis/timelineChain.ts");
     expect(merge).toContain("markProcessLifetimeSignals");
   });
 

@@ -5,7 +5,8 @@ import type { CaptureMetadata } from "../types.js";
 import type { InvestigationState } from "./stateTypes.js";
 import type { CaseStateReader } from "./hostScopeLoad.js";
 import { type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
-import { mergeDelta, type WindowContext } from "./stateMerge.js";
+import type { mergeDelta, WindowContext } from "./stateMerge.js";
+import { mergeDeltaYielding } from "./mergeYielding.js";
 import { mergeIntoCase, type CaseMergeResult } from "./caseMerge.js";
 
 import { checkConfiguredPromptDrift } from "./promptCapabilities.js";
@@ -139,9 +140,9 @@ export class AnalysisPipeline {
     delta: Parameters<typeof mergeDelta>[1],
     ctx: WindowContext,
   ): Promise<InvestigationState> {
-    if (!this.opts.iocAliasStore) return mergeDelta(state, delta, ctx);
+    if (!this.opts.iocAliasStore) return mergeDeltaYielding(state, delta, ctx);
     const { aliases } = await this.opts.iocAliasStore.load(state.caseId);
-    return mergeDelta(state, delta, { ...ctx, iocAliases: aliases });
+    return mergeDeltaYielding(state, delta, { ...ctx, iocAliases: aliases });
   }
 
   // An importer's merge + save + announce (#1874, analysis/caseMerge.ts), with the same IOC aliases as
@@ -157,7 +158,7 @@ export class AnalysisPipeline {
       : undefined;
     const withAliases = aliases ? { ...ctx, iocAliases: aliases } : ctx;
     const out = await mergeIntoCase(this.opts.stateStore, caseId, delta, withAliases, (state) =>
-      mergeDelta(state, delta, withAliases),
+      mergeDeltaYielding(state, delta, withAliases),
     );
     if (out.complete) this.opts.onState?.(out.state);
     else if (this.opts.onStateChanged) this.opts.onStateChanged(caseId);

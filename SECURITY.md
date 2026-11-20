@@ -68,9 +68,11 @@ Findings against these come up in every automated review; they are design decisi
   changing the password also closes every live dashboard connection that is open on the case at
   once, so each one must unlock again (#2441). A server-side list of revoked unlocks, to cut off
   one unlock without changing the password, is tracked separately (#2441).
-- **Team-mode sessions have a fixed lifetime and no idle timeout.** A sign-in lasts
-  `DFIR_AUTH_SESSION_HOURS` (default 12, at most 168), however long the browser sits unused. The
-  "last seen" time on a session shows activity in the session list. It does not end the session.
+- **Team-mode sessions slide while in use, up to a hard limit.** A sign-in lasts
+  `DFIR_AUTH_SESSION_HOURS` (default 12, at most 168) after the last authenticated request, and
+  never longer than `DFIR_AUTH_SESSION_MAX_HOURS` (default 168, at most 720) after sign-in. Any
+  authenticated HTTP request counts, including the dashboard's background polling, so a tab left
+  open stays signed in until the hard limit. A WebSocket alone does not extend a session.
   To end one early, sign out, or have an administrator disable the user (which revokes all of
   that user's sessions). Signing out, disabling or demoting a user, or removing their case role
   also closes their open live dashboard connections at once; an expired session loses its live

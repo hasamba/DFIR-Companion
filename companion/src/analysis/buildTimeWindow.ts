@@ -208,6 +208,11 @@ function chainOf(chains: readonly HostHistoryMarker[], e: ForensicEvent): HostHi
   return key ? chains.find((c) => c.names.includes(key)) : undefined;
 }
 
+/** Whether the row sits on one of the chains — the only rows buildTimeWindows reads (#2713). */
+export function onBuildChain(chains: readonly HostHistoryMarker[], e: ForensicEvent): boolean {
+  return chainOf(chains, e) !== undefined;
+}
+
 // The rename bounds each chain owns, from OBSERVED bases only. `analyst` is one import's manual
 // attribution, not something the machine or a collector wrote (#1496), so it never corroborates a
 // build window — the same rule gapHostHistory.ts applies to the history cut.

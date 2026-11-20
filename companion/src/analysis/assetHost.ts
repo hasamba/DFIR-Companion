@@ -20,6 +20,8 @@ const MAX_LABEL = 63;
 const LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?$/;
 const SEPARATOR = /[\\/]/;
 const ASSET_FOLDER = /^asset=(.*)$/i;
+// A Velociraptor hunt export's per-client folder: `<hostname>-C.<16 hex>` (#2714).
+const CLIENT_FOLDER = /^(.+)-C\.[0-9a-f]{16}$/i;
 
 export type AssetHostParse = { ok: true; host: string } | { ok: false; error: string };
 
@@ -49,14 +51,32 @@ export function parseAssetHost(value: unknown): AssetHostParse {
 }
 
 /**
- * The host a drop-folder relpath declares through its FIRST segment, `asset=<HOST>`, on either
- * separator; "" when the path declares none or names an invalid host. Only the first segment
- * counts: the analyst makes the folder at the top of drop/, and a deeper one is not a convention
- * this reads.
+ * The hostname a Velociraptor hunt export's per-client folder names (`<hostname>-C.<16 hex>`), or
+ * null when the segment is not a client folder. "" when it is one but the hostname is not a valid
+ * host (the folder still counts as a client folder; it just declares nothing). (#2714)
+ */
+export function clientFolderHost(segment: string): string | null {
+  const m = CLIENT_FOLDER.exec(segment);
+  if (!m) return null;
+  const parsed = parseAssetHost(m[1]);
+  return parsed.ok ? parsed.host : "";
+}
+
+/**
+ * The host a drop-folder relpath declares, on either separator; "" when it declares none or names
+ * an invalid host. Two conventions, the first winning:
+ *  - a hunt export's per-client result, `…/<hostname>-C.<16 hex>/results/<file>` (#2714): the
+ *    folder Velociraptor named after the client the rows came from;
+ *  - the FIRST segment `asset=<HOST>` (#1496): the analyst makes that folder at the top of drop/,
+ *    and a deeper one is not a convention this reads.
  */
 export function assetHostFromDropRelpath(relpath: string): string {
-  const first = relpath.split(SEPARATOR)[0] ?? "";
-  const m = ASSET_FOLDER.exec(first);
+  const segs = relpath.split(SEPARATOR);
+  if (segs.length >= 3 && segs[segs.length - 2].toLowerCase() === "results") {
+    const client = clientFolderHost(segs[segs.length - 3]);
+    if (client) return client;
+  }
+  const m = ASSET_FOLDER.exec(segs[0] ?? "");
   if (!m) return "";
   const parsed = parseAssetHost(m[1]);
   return parsed.ok ? parsed.host : "";

@@ -12,6 +12,7 @@ import { hasFieldValue, matchEvent, ruleFields, SEVERITIES, type CompiledRuleset
 import { withClrUsageLogNote } from "./clrUsageLogNote.js";
 import { capLabSetupSeverity, labSetupOf } from "./labSetupTransfer.js";
 import { keepsVendorGrade } from "./vendorGrade.js";
+import { createSliceClock, yieldToEventLoop } from "./yieldToEventLoop.js";
 
 /** Per-rule outcome for a run — its match count, the events it hit, and the actions it carries. */
 export interface RuleMatch {
@@ -68,6 +69,16 @@ export function runTagger(events: readonly ForensicEvent[], ruleset: CompiledRul
   return acc.finish();
 }
 
+/** runTagger, yielding to the event loop between slices (#2716): the identical result. */
+export async function runTaggerYielding(
+  events: readonly ForensicEvent[],
+  ruleset: CompiledRuleset,
+): Promise<TaggerResult> {
+  const acc = createTaggerAccumulator(ruleset);
+  await acc.addYielding(events);
+  return acc.finish();
+}
+
 /**
  * runTagger, one batch at a time (#1444). Per-event accumulators are built lazily so rows with no
  * match never allocate, and the rule → matched-ids lists grow only with matches — so a 900k-row
@@ -76,6 +87,12 @@ export function runTagger(events: readonly ForensicEvent[], ruleset: CompiledRul
  */
 export interface TaggerAccumulator {
   add(events: readonly ForensicEvent[]): void;
+  /**
+   * `add`, giving the event loop a turn about every slice budget (#2716): the same rule-major walk
+   * over the same events, so every list and order `finish` reports is the one `add` would produce.
+   * Do not call `add`, `addYielding` or `finish` on this accumulator until it resolves.
+   */
+  addYielding(events: readonly ForensicEvent[]): Promise<void>;
   finish(): TaggerResult;
   sample(): ForensicEvent[];
 }
@@ -85,33 +102,44 @@ export function createTaggerAccumulator(ruleset: CompiledRuleset, sampleSize = 0
   const idsByRule = ruleset.rules.map((): string[] => []);
   const sample: ForensicEvent[] = [];
 
+  // One rule against one event: the whole per-pair step, shared by add and addYielding.
+  const visit = (rule: CompiledRuleset["rules"][number], ruleIndex: number, event: ForensicEvent): void => {
+    if (!matchEvent(event, rule)) return;
+    idsByRule[ruleIndex].push(event.id);
+    let slot = byEvent.get(event.id);
+    if (!slot) {
+      slot = {
+        res: { eventId: event.id, tags: [], mitre: [], severity: undefined, ruleIds: [] },
+        tagSeen: new Set(),
+        mitreSeen: new Set(),
+      };
+      byEvent.set(event.id, slot);
+      if (sample.length < sampleSize) sample.push(event);
+    }
+    uniqPush(slot.res.tags, slot.tagSeen, rule.tags);
+    uniqPush(slot.res.mitre, slot.mitreSeen, rule.mitre);
+    slot.res.ruleIds.push(rule.id);
+    if (rule.severity) {
+      slot.res.severity = slot.res.severity ? raiseSeverity(slot.res.severity, rule.severity) : rule.severity;
+    }
+  };
+
   return {
     add(events) {
       ruleset.rules.forEach((rule, ruleIndex) => {
-        const eventIds = idsByRule[ruleIndex];
-        for (const event of events) {
-          if (!matchEvent(event, rule)) continue;
-          eventIds.push(event.id);
-          let slot = byEvent.get(event.id);
-          if (!slot) {
-            slot = {
-              res: { eventId: event.id, tags: [], mitre: [], severity: undefined, ruleIds: [] },
-              tagSeen: new Set(),
-              mitreSeen: new Set(),
-            };
-            byEvent.set(event.id, slot);
-            if (sample.length < sampleSize) sample.push(event);
-          }
-          uniqPush(slot.res.tags, slot.tagSeen, rule.tags);
-          uniqPush(slot.res.mitre, slot.mitreSeen, rule.mitre);
-          slot.res.ruleIds.push(rule.id);
-          if (rule.severity) {
-            slot.res.severity = slot.res.severity
-              ? raiseSeverity(slot.res.severity, rule.severity)
-              : rule.severity;
-          }
-        }
+        for (const event of events) visit(rule, ruleIndex, event);
       });
+    },
+    async addYielding(events) {
+      // The clock is read after every pair, matched or not, and carries across rules.
+      const clock = createSliceClock();
+      for (let ruleIndex = 0; ruleIndex < ruleset.rules.length; ruleIndex++) {
+        const rule = ruleset.rules[ruleIndex];
+        for (const event of events) {
+          visit(rule, ruleIndex, event);
+          if (clock.due()) await yieldToEventLoop();
+        }
+      }
     },
     finish() {
       const perRule: RuleMatch[] = ruleset.rules.map((rule, ruleIndex) => ({

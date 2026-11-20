@@ -1,7 +1,8 @@
-import type { ForensicRowStore } from "../analysis/forensicRows.js";
+import { SCAN_PAGE_ROWS, type ForensicRow, type ForensicRowStore } from "../analysis/forensicRows.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { isManualId } from "../analysis/manualId.js";
+import { rewriteRows } from "../analysis/forensicRowRewrite.js";
 
 /**
  * The row-level plumbing of an import's settle phase (#1874): which rows the import added, which old
@@ -13,7 +14,7 @@ export const runUnlocked: RunExclusive = (_caseId, fn) => fn();
 
 // The read-transform-write lives with the row types (analysis/forensicRowRewrite.ts) so the
 // tagger shares it; re-exported for the settle steps.
-export { rewriteRows } from "../analysis/forensicRowRewrite.js";
+export { rewriteRows };
 
 /** What the settle knows about the rows before it changes anything. */
 export interface SettleScope {
@@ -74,4 +75,30 @@ export function isForeignToImport(e: ForensicEvent, capturedAt: string | undefin
   const promoted = Date.parse(e.promotedAt);
   const captured = Date.parse(capturedAt);
   return Number.isFinite(promoted) && Number.isFinite(captured) && promoted >= captured;
+}
+
+/** Read `ids` a page at a time, in pages of SCAN_PAGE_ROWS. */
+export async function* rowPages(
+  store: ForensicRowStore,
+  caseId: string,
+  ids: readonly string[],
+): AsyncGenerator<ForensicRow[]> {
+  for (let i = 0; i < ids.length; i += SCAN_PAGE_ROWS) {
+    const page = await store.forensicRowsById(caseId, ids.slice(i, i + SCAN_PAGE_ROWS));
+    if (page.length) yield page;
+  }
+}
+
+/** rewriteRows over rows read by id, a page at a time. Returns how many rows it wrote. */
+export async function rewriteByIdInPages(
+  store: ForensicRowStore,
+  caseId: string,
+  ids: readonly string[],
+  transform: (e: ForensicEvent) => ForensicEvent,
+): Promise<number> {
+  let written = 0;
+  for await (const rows of rowPages(store, caseId, ids)) {
+    written += (await rewriteRows(store, caseId, rows, transform)).length;
+  }
+  return written;
 }

@@ -28,6 +28,8 @@ import {
   type DropWorkItem,
 } from "./dropBatchPlan.js";
 import type { BatchFileResult, DiskBatchIngest, DiskBatchResult } from "./importIngestBatch.js";
+import type { DropInFlight } from "./dropInFlight.js";
+import { runImportAttempt } from "../analysis/importAttempt.js";
 
 /** Single files imported at once (imports still serialize on the case's import lock). */
 export const DROP_CONCURRENCY = 4;
@@ -39,6 +41,8 @@ export interface DropOutcome {
   pending?: PendingRawInput;
   submitted?: string;
   warning?: string;
+  /** Not finished and safe to retry: the file stays in drop/ and the next sweep runs it again (#2714). */
+  deferred?: string;
 }
 
 export interface SweepTally {
@@ -67,6 +71,10 @@ export interface DropSweepDeps {
   recordImportFailure: (name: string, err: unknown, debug?: ImportDebugRecorder) => void;
   /** Absent in wirings without the batch path (tests): every file imports on its own. */
   dropBatch?: DiskBatchIngest;
+  /** Called after each file's outcome is tallied, so the log and status can be written as files finish (#2715). */
+  onRecorded?: (tally: SweepTally) => Promise<void>;
+  /** The crash-loop guard (#2713, composition/dropInFlight.ts); absent → no guard. */
+  inFlight?: DropInFlight;
 }
 
 /** Import `ready` in relpath order, batching what may batch; every file's outcome is recorded. */
@@ -163,13 +171,43 @@ async function runSolos(files: readonly DropFileStat[], d: DropSweepDeps, tally:
     await Promise.all(
       files.slice(i, i + DROP_CONCURRENCY).map(async (file) => {
         try {
-          await recordOutcome(file, await d.processFile(file), d, tally);
+          await runSolo(file, d, tally);
         } finally {
           d.progress(file.relpath);
         }
       }),
     );
   }
+}
+
+/**
+ * One single file: refused when its earlier imports kept killing the server (#2713), else imported
+ * with its start counted once its import holds the case's import section.
+ */
+async function runSolo(file: DropFileStat, d: DropSweepDeps, tally: SweepTally): Promise<void> {
+  const guard = d.inFlight;
+  if (!guard) return void (await recordOutcome(file, await d.processFile(file), d, tally));
+  const refused = await guard.refusal(d.caseId, file.relpath, file);
+  if (refused) {
+    // The entry stays until the file has left drop/: a failed move refuses it again next sweep.
+    if (await recordOutcome(file, { ok: false, reason: refused }, d, tally))
+      await guard.end(d.caseId, file.relpath);
+    return;
+  }
+  let started = false;
+  let outcome: DropOutcome;
+  try {
+    outcome = await runImportAttempt(
+      async () => {
+        started = true;
+        await guard.begin(d.caseId, file.relpath, file);
+      },
+      () => d.processFile(file),
+    );
+  } finally {
+    if (started) await guard.end(d.caseId, file.relpath);
+  }
+  await recordOutcome(file, outcome, d, tally);
 }
 
 async function recordBatchResult(
@@ -183,18 +221,25 @@ async function recordBatchResult(
   await recordOutcome(file, { ok: res.ok, reason: res.reason, warning: res.warning }, d, tally);
 }
 
-/** One file's move and its tally entry — the same for a single file and a batch member. */
+/** One file's move and its tally entry — the same for a single file and a batch member. True: moved. */
 async function recordOutcome(
   file: DropFileStat,
   res: DropOutcome,
   d: DropSweepDeps,
   tally: SweepTally,
-): Promise<void> {
+): Promise<boolean> {
   if (res.pending) {
     // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
     // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
     tally.pendingRawInputs.push(res.pending);
-    return;
+    await d.onRecorded?.(tally);
+    return false;
+  }
+  if (res.deferred) {
+    // Interrupted (a hunt zip whose progress could not be recorded): left in place, still tracked,
+    // so the next stable poll resumes it rather than filing it as finished.
+    logLine(`[drop] ${file.relpath} left in drop/ for the next sweep: ${res.deferred}`);
+    return false;
   }
   // A failed move is named to the analyst, merged into the file's one warning or failure
   // entry (buildSweepLogEntries reads only the first warning per file) (#2281).
@@ -219,4 +264,6 @@ async function recordOutcome(
       reason: joinReasons(res.reason ?? "import failed", moveNote),
     });
   d.forget(file.relpath); // moved out of the watched area
+  await d.onRecorded?.(tally);
+  return moveNote === undefined;
 }

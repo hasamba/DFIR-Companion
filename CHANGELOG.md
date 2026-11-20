@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **AI Agent Forensics** — check chosen endpoints for tampered AI coding agents (poisoned instruction files, rogue MCP servers, hooks) with the ai-dfir-toolkit YARA/Sigma rules through Velociraptor; provisional grades, matched text kept away from the AI (closes #2690)
+- **Sliding sign-in** — activity extends a team-mode session up to a hard limit (`DFIR_AUTH_SESSION_MAX_HOURS`, default 7 days); idle sessions still expire (closes #2717)
 - **Watson Telegram mirror** — opt-in per chat with `/dfir mirror on`; Watson's case chat is mirrored to a bound Telegram chat and allowlisted users can ask Watson from Telegram (closes #2647)
+- **Velociraptor hunt exports in the drop folder** — a hunt `.zip` or unzipped folder imports one copy of each artifact with the client's host; other copies and metadata move to `_skipped/` (closes #2714)
 - **Threat-hunt mode** — a threat-hunt case type: hunt framing for the AI, host-prevalence "seen on N of M hosts" grading, admin-only client baselines with an approval confirm list, "new since last hunt" grading, a hunt summary report and Convert to incident (closes #2670)
 
 ### Fixed
@@ -24,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Telegram mirror masking tokens** — tokens the mirror creates are saved to the case's masking map, so a value gets the same token everywhere (closes #2708)
 - **Replies to 'Mirroring started'** — a group reply to that message now asks Watson (closes #2709)
 - **Telegram mirror outage gap** — a chat is told once when older turns could not be mirrored (closes #2710)
+- **Drop log and status per file** — each dropped file's log line and status entry are written as it finishes, so a stop mid-sweep loses nothing (closes #2715)
+- **Dashboard stays responsive during a large import** — the full-state merge, its index pass and the import auto-tagger now work in slices that yield to the event loop (closes #2716)
+- **Large Velociraptor imports no longer exhaust memory in the settle step** — rows are settled in pages, and a drop file that crashed the server twice moves to `_failed/` (closes #2713)
 
 ## [0.47.0] - 2026-11-19
 

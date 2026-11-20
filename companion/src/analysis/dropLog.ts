@@ -15,7 +15,8 @@ export const DROP_LOG_FILE = "drop-log.txt";
 // been handed the file at that point. Its verdicts land minutes later, or the analysis fails — either
 // way a second line follows. Logging the handoff as IMPORTED would make this file claim an import that
 // had not happened, and would still claim it if the analysis later failed.
-export type DropLogStatus = "IMPORTED" | "SUBMITTED" | "FAILED" | "PENDING";
+// SKIPPED (#2714): a hunt export's duplicate copies and metadata, set aside in _skipped/ — one line per hunt.
+export type DropLogStatus = "IMPORTED" | "SUBMITTED" | "FAILED" | "PENDING" | "SKIPPED";
 
 export interface DropLogEntry {
   status: DropLogStatus;

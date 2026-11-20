@@ -48,6 +48,11 @@ import type { IngestDiskFile } from "./importIngestDisk.js";
 import type { DiskBatchIngest } from "./importIngestBatch.js";
 import { runDropSweep } from "./dropBatch.js";
 import { createDropStreamer, isGzipMagic, streamGzipDropFile } from "./dropStreamed.js";
+import { prepareHuntDrops } from "./dropHuntFolder.js";
+import { createHuntZipHandler, isZipCandidate } from "./dropHuntZip.js";
+import { pruneHuntZipLedgers } from "./dropHuntZipLedger.js";
+import { clearStaging } from "./dropHuntExtract.js";
+import { createDropInFlight } from "./dropInFlight.js";
 import {
   selectReadyFiles,
   excludeStuck,
@@ -57,12 +62,13 @@ import {
   dropMaxBytesFromEnv,
   DROP_PROCESSED,
   DROP_FAILED,
+  DROP_SKIPPED,
   DROP_README,
   DROP_README_TEXT,
   type DropFileStat,
   type StuckDropFile,
 } from "../analysis/dropScan.js";
-import { formatDropLogLines, appendDropLog, buildSweepLogEntries } from "../analysis/dropLog.js";
+import { createSweepRecorder } from "./dropIncremental.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
@@ -189,6 +195,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     dropMaxBytes,
     veloSinkWired: () => !!options.bulkImportSink, // #2705
   }); // #2336
+  const handleHuntZip = createHuntZipHandler({
+    ...{ dropMaxBytes, resolveImportKind, ingestStreamed, recordImportFailure },
+    streamDropFile,
+    stateDir: (caseId) => store.stateDir(caseId),
+  }); // #2714
   // #1866: keyed by (case id, generation), so a deleted case's sweep state never carries into a
   // same-id successor, and its late `finally` never clears the successor's scanning mark.
   const seen = new CaseKeyedMap<Map<string, { size: number; mtimeMs: number }>>(() => store.casesRoot);
@@ -198,6 +209,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   const pendingLogged = new CaseKeyedMap<Set<string>>(() => store.casesRoot);
   const stuckFiles = createDropStuckTracker(() => store.casesRoot);
   const stuck = stuckFiles.stuck;
+  const inFlight = createDropInFlight(store); // crash-loop guard (#2713)
 
   // One admitted write (#1855): a tick for a case deleted meanwhile never recreates its folder.
   function ensureDropFolders(caseId: string): Promise<void> {
@@ -276,14 +288,14 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     processed?: ProcessedVersion,
   ): Promise<void> {
     return store
-      .withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, relpath, ok))
+      .withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, relpath, ok ? DROP_PROCESSED : DROP_FAILED))
       .catch(async (e: unknown) => {
         await stuckFiles.record(dropDir, relpath, ok, processed);
         throw e;
       });
   }
 
-  async function moveDropFileAdmitted(dropDir: string, relpath: string, ok: boolean): Promise<void> {
+  async function moveDropFileAdmitted(dropDir: string, relpath: string, destFolder: string): Promise<void> {
     // FIRST, before the mkdir below: this is the one function that renames a file, and its relpath
     // is not only the walk's — run-pending feeds it from state/drop-status.json, which an imported
     // archive restores verbatim (#919). The schema drops an escaping entry at load; this is the
@@ -293,7 +305,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       throw new Error(`refused to move a path outside the drop folder (security): ${relpath}`);
     }
     const src = join(dropDir, relpath);
-    const dest = await uniqueDest(join(dropDir, ok ? DROP_PROCESSED : DROP_FAILED, relpath));
+    const dest = await uniqueDest(join(dropDir, destFolder, relpath));
     await mkdir(dirname(dest), { recursive: true });
     try {
       // rename() operates on the directory entry itself, so it cannot follow a planted symlink to
@@ -415,6 +427,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     pending?: PendingRawInput;
     submitted?: string;
     warning?: string;
+    deferred?: string; // a hunt zip interrupted mid-run stays for the next sweep (#2714)
   }> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
@@ -450,6 +463,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // instead, decompressed on read when it holds a cloud export, refused otherwise (#2336).
       if (head && isGzipMagic(head))
         return streamGzipDropFile(streamDropFile, caseId, full, file.relpath, debug);
+      // A Velociraptor hunt export zip imports its members (#2714); any other zip routes as before.
+      const hunt = isZipCandidate(file.relpath, head)
+        ? await handleHuntZip({ caseId, dropDir, fullPath: full, file, modelCall })
+        : null;
+      if (hunt) return hunt;
 
       // A macOS Background Task Management file (#1013) is the one binary this codebase natively
       // decodes — checked BEFORE the raw-tool-input routing below claims it, even if an operator has
@@ -611,9 +629,18 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       const settled = selectReadyFiles(listing, seen.get(caseId) ?? new Map());
       const nextSeen = settled.nextSeen;
       seen.set(caseId, nextSeen);
-      const { ready, nextStuck } = excludeStuck(settled.ready, listing, stuck.get(caseId) ?? new Map());
+      const unstuck = excludeStuck(settled.ready, listing, stuck.get(caseId) ?? new Map());
+      const nextStuck = unstuck.nextStuck;
       stuck.set(caseId, nextStuck);
       await stuckFiles.retry(dropDir, nextStuck, moveDropFile);
+      // A hunt export imports one copy per artifact; the rest moves to _skipped/ (#2714).
+      await clearStaging(dropDir);
+      await pruneHuntZipLedgers(store.stateDir(caseId), listing).catch(() => undefined);
+      const ready = await prepareHuntDrops({
+        ...{ dropDir, listing, ready: unstuck.ready, stuck: nextStuck },
+        skipMove: (rel) =>
+          store.withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, rel, DROP_SKIPPED)),
+      });
       // A batch a crash interrupted gets its settle before anything else imports (#2540).
       await dropBatch
         ?.recoverDropBatch(caseId)
@@ -644,7 +671,16 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       const runCache = createToolRunCache();
       // Sorted by relpath, small same-importer files batched (#2540, composition/dropBatch.ts).
       let processed = 0;
-      const { imported, submitted, failed, warned, pendingRawInputs } = await runDropSweep(ready, {
+      const recorder = createSweepRecorder({
+        caseId,
+        dropDir,
+        ...(options.dropStatusStore ? { statusStore: options.dropStatusStore } : {}),
+        loggedPending: pendingLogged.get(caseId) ?? new Set<string>(),
+        setLoggedPending: (next) => pendingLogged.set(caseId, next),
+        ...(options.onDropStatus ? { onDropStatus: options.onDropStatus } : {}),
+        log: logLine,
+      });
+      const tally = await runDropSweep(ready, {
         caseId,
         dropDir,
         processFile: (file) => processDropFile(caseId, dropDir, file, runCache, modelCall),
@@ -659,46 +695,14 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         resolveImportKind,
         recordImportFailure: (name, err, debug) => recordImportFailure(caseId, "drop", name, err, debug),
         ...(dropBatch ? { dropBatch } : {}),
+        onRecorded: recorder.flush,
+        inFlight, // #2713
       });
+      const { imported, failed, pendingRawInputs } = tally;
       if (job) await options.jobManager?.finish(job.jobId);
       if (imported.length === 0 && failed.length === 0 && pendingRawInputs.length === 0) return;
-
-      if (options.dropStatusStore) {
-        try {
-          await options.dropStatusStore.record(caseId, {
-            dropPath: dropDir,
-            imported,
-            failed,
-            pendingRawInputs,
-            warnings: warned,
-          });
-          options.onDropStatus?.(caseId);
-        } catch (e) {
-          logLine(`[drop] status record failed: ${(e as Error).message}`);
-        }
-      }
-
-      // Folder-visible history (drop/drop-log.txt): every imported/failed file gets a line; a pending
-      // raw-tool file gets ONE PENDING line the first time it's seen (pendingLogged dedups it across
-      // the ~10s poll interval until it resolves).
-      const { entries: logEntries, nextLoggedPending } = buildSweepLogEntries(
-        // `imported` minus the async handoffs — those get a SUBMITTED line instead, so a file is
-        // never claimed as imported before its verdicts actually land.
-        {
-          imported: imported.filter((r) => !submitted.some((s) => s.relpath === r)),
-          submitted,
-          failed,
-          pendingRawInputs,
-          warned,
-        },
-        pendingLogged.get(caseId) ?? new Set<string>(),
-      );
-      pendingLogged.set(caseId, nextLoggedPending);
-      if (logEntries.length > 0) {
-        await appendDropLog(dropDir, formatDropLogLines(logEntries, new Date().toISOString())).catch((e) =>
-          logLine(`[drop] log append failed: ${(e as Error).message}`),
-        );
-      }
+      // Per-file writes already happened in the sweep; this settles anything left (a pending file).
+      await recorder.flush(tally);
 
       logLine(`[drop] ${caseId}: ${imported.length} imported, ${failed.length} failed`);
       if (failed.length > 0) {

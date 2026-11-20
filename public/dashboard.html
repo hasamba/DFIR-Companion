@@ -1736,7 +1736,10 @@
           <div class="sfield"><label for="env-DFIR_AUTH_DATA_DIR">Auth data dir<span class="sfield-hint">DFIR_AUTH_DATA_DIR — where accounts and sessions live; default is a sibling of the cases root. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_DATA_DIR" placeholder="(beside cases root)" readonly /></div>
         </div>
         <div class="sfield-row">
-          <div class="sfield"><label for="env-DFIR_AUTH_SESSION_HOURS">Session lifetime (h)<span class="sfield-hint">DFIR_AUTH_SESSION_HOURS — how long a signed-in session stays valid. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_SESSION_HOURS" placeholder="(default)" readonly /></div>
+          <div class="sfield"><label for="env-DFIR_AUTH_SESSION_HOURS">Session lifetime (h)<span class="sfield-hint">DFIR_AUTH_SESSION_HOURS — how long an idle signed-in session stays valid; activity extends it. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_SESSION_HOURS" placeholder="(default)" readonly /></div>
+          <div class="sfield"><label for="env-DFIR_AUTH_SESSION_MAX_HOURS">Session hard limit (h)<span class="sfield-hint">DFIR_AUTH_SESSION_MAX_HOURS — longest a session can last since sign-in, however active. Default 168. <b>Read-only here</b> — edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_SESSION_MAX_HOURS" placeholder="(default)" readonly /></div>
+        </div>
+        <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_AUTH_COOKIE_SECURE">Secure cookie<span class="sfield-hint">DFIR_AUTH_COOKIE_SECURE — true when served over HTTPS. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_AUTH_COOKIE_SECURE" placeholder="true" readonly /></div>
         </div>
         <div class="sfield-row">

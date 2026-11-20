@@ -89,6 +89,7 @@ export function createTeamAuthRuntime(
         bootstrapToken: config.bootstrapToken,
         cookieSecure: config.cookieSecure,
         sessionTtlMs: config.sessionTtlMs,
+        sessionMaxMs: config.sessionMaxMs,
         oidcClient,
       }),
       writerGuard,

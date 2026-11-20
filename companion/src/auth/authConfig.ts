@@ -11,12 +11,16 @@ export interface TeamAuthConfig {
   bootstrapToken?: string;
   cookieSecure: boolean;
   sessionTtlMs: number;
+  /** Hard cap since sign-in: activity extends a session, never past this (#2717). */
+  sessionMaxMs: number;
   oidc?: OidcConfig;
 }
 
 const DEFAULT_SESSION_HOURS = 12;
 const MIN_SESSION_HOURS = 0.25;
 const MAX_SESSION_HOURS = 168;
+const DEFAULT_SESSION_CAP_HOURS = 168;
+const MAX_SESSION_CAP_HOURS = 720;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 // The bootstrap token is the only credential that exists before the first administrator does, and
 // POST /auth/bootstrap is rate-limited rather than unguessable (#920). 32 characters is the floor
@@ -28,12 +32,25 @@ function enabled(value: string | undefined): boolean {
   return ["1", "on", "true", "yes"].includes((value ?? "").trim().toLowerCase());
 }
 
+function hoursSetting(raw: string | undefined): number {
+  return raw === undefined || raw.trim() === "" ? Number.NaN : Number(raw);
+}
+
 function sessionTtlMs(raw: string | undefined): number {
-  const parsed = Number(raw);
+  const parsed = hoursSetting(raw);
   const hours = Number.isFinite(parsed)
     ? Math.min(MAX_SESSION_HOURS, Math.max(MIN_SESSION_HOURS, parsed))
     : DEFAULT_SESSION_HOURS;
   return hours * 60 * 60_000;
+}
+
+/** The absolute session cap, never shorter than the idle lifetime it extends (#2717). */
+function sessionMaxMs(raw: string | undefined, idleMs: number): number {
+  const parsed = hoursSetting(raw);
+  const hours = Number.isFinite(parsed)
+    ? Math.min(MAX_SESSION_CAP_HOURS, Math.max(MIN_SESSION_HOURS, parsed))
+    : DEFAULT_SESSION_CAP_HOURS;
+  return Math.max(idleMs, hours * 60 * 60_000);
 }
 
 function oidcConfig(env: NodeJS.ProcessEnv): OidcConfig | undefined {
@@ -84,11 +101,13 @@ export function resolveTeamAuthConfig(env: NodeJS.ProcessEnv = process.env): Tea
         `(got ${bootstrapToken.length}); generate one with: openssl rand -base64 32`,
     );
   }
+  const idleMs = sessionTtlMs(env.DFIR_AUTH_SESSION_HOURS);
   return {
     enabled: team,
     ...(bootstrapToken ? { bootstrapToken } : {}),
     cookieSecure: env.DFIR_AUTH_COOKIE_SECURE === undefined ? team : enabled(env.DFIR_AUTH_COOKIE_SECURE),
-    sessionTtlMs: sessionTtlMs(env.DFIR_AUTH_SESSION_HOURS),
+    sessionTtlMs: idleMs,
+    sessionMaxMs: sessionMaxMs(env.DFIR_AUTH_SESSION_MAX_HOURS, idleMs),
     ...(oidc ? { oidc } : {}),
   };
 }
