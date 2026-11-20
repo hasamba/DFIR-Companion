@@ -6,6 +6,11 @@ import { AiControlStore, describeAnalysisHold, holdToken } from "../analysis/aiC
 import { logActivityWithWarning } from "../analysis/activityLog.js";
 import { frozenCaseRefusal } from "./importCaseGuard.js";
 import { SynthMetaStore } from "../analysis/synthMeta.js";
+import {
+  StateFileCorruptError,
+  corruptNotice,
+  type StateFileCorruptNotice,
+} from "../storage/stateFileCorrupt.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -60,10 +65,16 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
   }
 
   /**
-   * The per-case AI toggle (defaults to enabled on a read failure) and the failed-window hold
-   * (#2265), from one read of the control record.
+   * The per-case AI toggle and the failed-window hold (#2265), from one read of the control record.
+   * #2760: a read failure reports the toggle OFF (fail closed, as the AI routes now behave) — it
+   * used to report ON while every AI call failed — and a damaged file carries its notice.
    */
-  async function control(caseId: string) {
+  async function control(caseId: string): Promise<{
+    enabled: boolean;
+    screenshotHold: { detail: string; gaveUp: boolean } | null;
+    offer: Record<string, unknown> | null;
+    corrupt?: StateFileCorruptNotice;
+  }> {
     try {
       const c = await new AiControlStore(store).load(caseId);
       const detail = describeAnalysisHold(c.analysisHold);
@@ -80,8 +91,9 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
             }
           : null;
       return { enabled: c.enabled, screenshotHold, offer };
-    } catch {
-      return { enabled: true, screenshotHold: null, offer: null };
+    } catch (err) {
+      const off = { enabled: false, screenshotHold: null, offer: null };
+      return err instanceof StateFileCorruptError ? { ...off, corrupt: corruptNotice(err) } : off;
     }
   }
 
@@ -118,6 +130,11 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
         jobs: options.jobManager?.list(caseId) ?? [],
         outOfDate: stale,
       });
+      // #2760: a damaged switch file needs the analyst, so it outranks whatever the pill would say.
+      if (ctl.corrupt) {
+        const damaged = { state: "error" as const, detail: ctl.corrupt.message, corrupt: ctl.corrupt };
+        return res.status(200).json({ ...state, ...damaged, screenshotHold: ctl.offer });
+      }
       return res.status(200).json({ ...state, screenshotHold: ctl.offer });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

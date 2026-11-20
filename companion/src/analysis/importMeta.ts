@@ -3,6 +3,12 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
+import {
+  StateFileCorruptError,
+  corruptNotice,
+  parseStateObject,
+  type StateFileCorruptNotice,
+} from "../storage/stateFileCorrupt.js";
 import type { TimelineDiff } from "./timelineDiff.js";
 import type { IocsDiff } from "./iocsDiff.js";
 import type { ImportDebugRecorder } from "./importDebug.js";
@@ -116,7 +122,12 @@ export const importMetaSchema = z.object({
     .catch([]),
 });
 
-export type ImportMeta = z.infer<typeof importMetaSchema>;
+// `corrupt` is set only on a read of a damaged file (#2760); record() and clear() never write it.
+export type ImportMeta = z.infer<typeof importMetaSchema> & { corrupt?: StateFileCorruptNotice };
+
+const IMPORT_META_FILE = "import-meta.json";
+const IMPORT_META_CONSEQUENCE =
+  "The last-import banner shows no import until the next import rewrites the file; the evidence is unaffected.";
 
 const EMPTY: ImportMeta = {
   lastImportedAt: "",
@@ -215,15 +226,35 @@ export class ImportMetaStore {
   constructor(private readonly cases: CaseStore) {}
 
   private path(caseId: string): string {
-    return join(this.cases.stateDir(caseId), "import-meta.json");
+    return join(this.cases.stateDir(caseId), IMPORT_META_FILE);
   }
 
+  // #2760 (SYS-102): a damaged file is derived data, so it reads as "no import" plus a notice that
+  // names the case and the file — it used to throw, which took the cockpit and the banner down.
   async load(caseId: string): Promise<ImportMeta> {
+    let text: string;
     try {
-      return importMetaSchema.parse(JSON.parse(await readFile(this.path(caseId), "utf8")));
+      text = await readFile(this.path(caseId), "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ...EMPTY };
       throw err;
+    }
+    try {
+      return importMetaSchema.parse(
+        parseStateObject(text, caseId, IMPORT_META_FILE, IMPORT_META_CONSEQUENCE),
+      );
+    } catch (err) {
+      const damage =
+        err instanceof StateFileCorruptError
+          ? err
+          : new StateFileCorruptError(
+              caseId,
+              IMPORT_META_FILE,
+              IMPORT_META_CONSEQUENCE,
+              (err as Error).message,
+            );
+      console.warn(`[import-meta] ${damage.message}`);
+      return { ...EMPTY, corrupt: corruptNotice(damage) };
     }
   }
 

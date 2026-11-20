@@ -3,6 +3,7 @@ import { PresidioApprovalRequired } from "../analysis/presidio.js";
 import { HostMergeDecisionRequired } from "../analysis/hostDuplicateGate.js";
 import type { AiStatusEvent } from "../server.js";
 import { AuditLogNeedsRepairError } from "../storage/auditLogNeedsRepairError.js";
+import { StateFileCorruptError } from "../storage/stateFileCorrupt.js";
 
 /**
  * What sendPipelineError needs to ALSO broadcast the approval gate over ai_status, for routes
@@ -66,5 +67,8 @@ export function sendPipelineError(res: Response, err: unknown, ctx?: PipelineErr
   // the message names the case and the line.
   if (err instanceof AuditLogNeedsRepairError)
     return res.status(409).json({ error: err.message, code: err.code });
+  // A damaged state/<file>.json (#2760): name the case and the file, never the bare parser text.
+  if (err instanceof StateFileCorruptError)
+    return res.status(409).json({ error: err.message, code: err.code, file: err.file });
   return res.status(500).json({ error: (err as Error)?.message ?? String(err) });
 }
