@@ -117,3 +117,28 @@ describe("GET/PUT /cases/:id/confidence-control", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("PUT /cases/:id/confidence-control — non-object bodies (#2765)", () => {
+  it("answers 400 for a text/plain body and leaves the saved control unchanged", async () => {
+    const { app } = await makeApp();
+    await request(app).put("/cases/c1/confidence-control").send({ minConfidence: 60 });
+
+    const res = await request(app)
+      .put("/cases/c1/confidence-control")
+      .set("Content-Type", "text/plain")
+      .send("hello");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("request body must be a JSON object");
+
+    const get = await request(app).get("/cases/c1/confidence-control");
+    expect(get.body.minConfidence).toBe(60);
+  });
+
+  it("an empty JSON object is still a no-change 200", async () => {
+    const { app } = await makeApp();
+    await request(app).put("/cases/c1/confidence-control").send({ minConfidence: 60 });
+    const res = await request(app).put("/cases/c1/confidence-control").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.minConfidence).toBe(60);
+  });
+});
