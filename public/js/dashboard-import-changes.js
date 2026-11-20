@@ -79,8 +79,8 @@
         (r, i) =>
           `<div class="rb-files"><b>${esc(r.e.artifact || r.e.member)}</b> — ${esc(r.e.host || "all PCs")}, ` +
           `${heldMb(r.e.bytes)} MB · ${esc(heldWhy(r.e))} <code>${esc(r.zip)}</code> ` +
-          `<button class="rb-yes" data-held="${i}" data-act="import">Import anyway</button>` +
-          `<button class="rb-no" data-held="${i}" data-act="skip">Skip</button></div>`,
+          `<button class="rb-yes" data-held="${i}" data-held-act="import">Import anyway</button>` +
+          `<button class="rb-no" data-held="${i}" data-held-act="skip">Skip</button></div>`,
       )
       .join("");
     el.style.display = "block";
@@ -123,7 +123,7 @@
         .then(() => loadDropHeld(caseId));
     };
     el.querySelectorAll("button[data-held]").forEach((b) => {
-      b.onclick = () => send([rows[Number(b.dataset.held)]], b.dataset.act);
+      b.onclick = () => send([rows[Number(b.dataset.held)]], b.dataset.heldAct);
     });
     document.getElementById("heldImportAll").onclick = () => send(rows, "import");
     document.getElementById("heldSkipAll").onclick = () => send(rows, "skip");
