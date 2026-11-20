@@ -14,6 +14,7 @@ import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis
 import type { PresidioClient } from "../../src/analysis/presidio.js";
 import type { AIProvider, AnalyzeResult } from "../../src/providers/provider.js";
 import type { JobManager } from "../../src/analysis/jobManager.js";
+import { enableCaseAi } from "./enableCaseAi.js";
 
 export const JEV_JOB_ENV = [
   "DFIR_JEV_ENABLED",
@@ -112,6 +113,7 @@ export interface JevJobCaseOptions {
 export async function jevJobCase(opts: JevJobCaseOptions) {
   const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-jev-job-")));
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(cases, "c1"); // #2757: the Jev routes are refused while the case's AI is off
   const stateStore = new StateStore(cases);
   const archive = row("r1", "Info", `logon by ${PERSON}`);
   await stateStore.save({

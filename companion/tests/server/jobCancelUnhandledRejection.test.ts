@@ -11,6 +11,7 @@ import type { JobLedgerStore } from "../../src/analysis/jobLedgerStore.js";
 import type { Job } from "../../src/analysis/jobRegistry.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { pollFor } from "../helpers/poll.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // JobManager.cancel() REJECTS the admission promise it hands out as RegisteredJob.ready ("job
 // cancelled before it started"). That rejection only reaches a job still queued — once admitted
@@ -67,15 +68,16 @@ async function harness() {
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, { stateStore, pipeline, jobManager, aiConfigured: true });
-  return { app, jobManager };
+  return { app, jobManager, store };
 }
 
 describe("cancelling a job that never started", () => {
   it("answers POST /cases/:id/synthesize with 499 instead of killing the server", async () => {
-    const { app, jobManager } = await harness();
+    const { app, jobManager, store } = await harness();
     await request(app)
       .post("/cases")
       .send({ caseId: "INC-1", name: "case", investigator: "alice", aiProvider: "anthropic" });
+    await enableCaseAi(store, "INC-1");
 
     // Occupy the case's only concurrency slot with an unrelated job that never finishes, so the
     // synthesis job below is admitted nowhere and parks in "queued".

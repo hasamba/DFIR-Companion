@@ -24,6 +24,7 @@ import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js
 import type { HostRenameRecord } from "../../src/analysis/hostRenameRecord.js";
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
 import { rowsInBuildWindow } from "../../src/routes/jevBuildWindow.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 const HOST = "DESKTOP-16OJFO6";
 const renames: HostRenameRecord[] = [
@@ -67,6 +68,7 @@ async function caseWith(archive: ForensicEvent[], forensic: ForensicEvent[] = []
   const root = await mkdtemp(join(tmpdir(), "dfir-jev-build-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(cases, "c1");
   const stateStore = new StateStore(cases);
   await stateStore.save({ ...emptyState("c1"), forensicTimeline: forensic, hostRenames: renames });
   const superTimelineStore = new SuperTimelineStore(cases);

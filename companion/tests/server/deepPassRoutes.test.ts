@@ -16,6 +16,7 @@ import { JobLedgerStore } from "../../src/analysis/jobLedgerStore.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { getServerLogger, setServerLogger } from "../../src/logging/serverLogger.js";
 import { DEEP_PASS_CHECKPOINT_UNREADABLE } from "../../src/routes/deepPass.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 class ScriptedProvider implements AIProvider {
   readonly name = "scripted";
@@ -97,6 +98,7 @@ async function makeApp(opts: { aiConfigured?: boolean; failBatches?: boolean } =
     },
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   await stateStore.save({ ...emptyState("c1"), forensicTimeline: events() });
   return { app, stateStore, aiStatus, synthMeta: new SynthMetaStore(store) };
 }
@@ -375,6 +377,7 @@ describe("resuming a deep pass from a damaged checkpoint (#2495)", () => {
       const store = new CaseStore(root);
       const stateStore = new StateStore(store);
       await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      await enableCaseAi(store, "c1");
       await stateStore.save({ ...emptyState("c1"), forensicTimeline: events() });
       const ledger = new JobLedgerStore(store);
       const first = new JobManager({ ledger });

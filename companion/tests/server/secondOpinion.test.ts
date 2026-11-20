@@ -14,6 +14,7 @@ import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 import { ProviderError } from "../../src/providers/provider.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // A provider that returns the synthesis delta for the Pass-1 (synthesis) call and the reconcile
 // JSON for the Pass-2 (reconcile) call — distinguished by the RECONCILE system prompt marker.
@@ -190,6 +191,7 @@ async function makeApp(opts: { enabled: boolean; referee?: "b" | "c"; synthA?: s
     secondOpinionEnabled: opts.enabled,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   await stateStore.save(seededState());
   return { app, stateStore, store, aProvider, bProvider, cProvider, pipeline };
 }

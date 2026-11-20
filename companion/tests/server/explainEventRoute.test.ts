@@ -8,6 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 class StubProvider implements AIProvider {
   readonly name = "stub";
@@ -36,6 +37,7 @@ async function makeApp() {
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   await store.createCase({ caseId: "c1", name: "Test", investigator: "analyst", aiProvider: null });
+  await enableCaseAi(store, "c1");
   const s = emptyState("c1");
   s.forensicTimeline.push({
     id: "ev1",
@@ -83,6 +85,7 @@ describe("POST /cases/:id/events/:eid/explain", () => {
     const store = new CaseStore(root);
     const stateStore = new StateStore(store);
     await store.createCase({ caseId: "c2", name: "T", investigator: "i", aiProvider: null });
+    await enableCaseAi(store, "c2");
     const app = createApp(store, { stateStore, aiConfigured: false });
     const res = await request(app).post("/cases/c2/events/ev1/explain");
     expect(res.status).toBe(501);

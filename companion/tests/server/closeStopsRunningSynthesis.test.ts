@@ -10,6 +10,7 @@ import { JobManager } from "../../src/analysis/jobManager.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { stopConclusionJobs } from "../../src/routes/caseCloseJobs.js";
 import { pollFor } from "../helpers/poll.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #2437 Part B: a synthesis still running when the case is closed or archived used to land its
 // conclusions in the frozen case. Closing or archiving now cancels the case's running synthesis,
@@ -46,6 +47,7 @@ async function harness() {
   await request(app)
     .post("/cases")
     .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "anthropic" });
+  await enableCaseAi(store, "c1");
   return { app, jobManager, stateStore, calls };
 }
 

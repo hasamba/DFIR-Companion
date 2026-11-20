@@ -15,6 +15,7 @@ import { JobManager } from "../../src/analysis/jobManager.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 const SYNTH_RESULT = JSON.stringify({
   findings: [],
@@ -45,6 +46,7 @@ beforeEach(async () => {
   jobManager = new JobManager({ perCaseConcurrency: 1 });
   app = createApp(store, { pipeline, stateStore, jobManager, aiConfigured: false });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(store, "c1");
   // synthesize() early-returns on an empty timeline, so seed one event for it to work on.
   const state = emptyState("c1");
   state.forensicTimeline.push({

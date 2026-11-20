@@ -13,6 +13,7 @@ import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
 import { getAiLimiter, resetLimiters } from "../../src/http/rateLimiter.js";
 import { AiCostStore } from "../../src/analysis/aiCost.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // The Jev review is OFF unless the analyst turns it on, and it reads the raw record — so the two
 // properties worth pinning at the route are that an unconfigured install offers nothing, and that
@@ -41,6 +42,7 @@ async function harness() {
   const root = await mkdtemp(join(tmpdir(), "dfir-jev-route-"));
   const cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(cases, "c1");
   const stateStore = new StateStore(cases);
   await stateStore.save(emptyState("c1"));
   const superTimelineStore = new SuperTimelineStore(cases);
@@ -167,6 +169,7 @@ describe("what the analyst is told about coverage", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-jev-cov-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, "c1");
     const stateStore = new StateStore(cases);
     const rows = Array.from({ length: archive }, (_, i) => raw(`r${i}`, `row ${i}`));
     await stateStore.save({ ...emptyState("c1"), forensicTimeline: rows.slice(0, analyzed) });
@@ -263,6 +266,7 @@ describe("what the analyst is told about coverage", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-jev-all-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, "c1");
     const stateStore = new StateStore(cases);
     await stateStore.save(emptyState("c1"));
     const superTimelineStore = new SuperTimelineStore(cases);
@@ -302,6 +306,7 @@ describe("what the analyst is told about coverage", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-jev-alias-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, "c1");
     const stateStore = new StateStore(cases);
     await stateStore.save({
       ...emptyState("c1"),
@@ -337,6 +342,7 @@ describe("what the analyst is told about coverage", () => {
       const root = await mkdtemp(join(tmpdir(), "dfir-jev-collector-"));
       const cases = new CaseStore(root);
       await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+      await enableCaseAi(cases, "c1");
       const stateStore = new StateStore(cases);
       await stateStore.save(emptyState("c1"));
       const superTimelineStore = new SuperTimelineStore(cases);
@@ -517,6 +523,7 @@ describe("the cost of a decision-model review is on the ledger whatever happens 
     const root = await mkdtemp(join(tmpdir(), "dfir-jev-spend-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(cases, "c1");
     const stateStore = new StateStore(cases);
     await stateStore.save(emptyState("c1"));
     const superTimelineStore = new SuperTimelineStore(cases);

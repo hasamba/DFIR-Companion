@@ -14,6 +14,7 @@ import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type Finding } from "../../src/analysis/stateTypes.js";
 import type { AIProvider } from "../../src/providers/provider.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 const SKIP_MESSAGE = "nothing to synthesize — the forensic timeline is empty";
 
@@ -41,6 +42,7 @@ beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-synth-empty-"));
   cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(cases, "c1");
   stateStore = new StateStore(cases);
   await stateStore.save(emptyState("c1"));
   meta = new SynthMetaStore(cases);

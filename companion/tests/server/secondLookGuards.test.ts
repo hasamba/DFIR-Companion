@@ -10,6 +10,7 @@ import { MockProvider } from "../../src/providers/provider.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { pollFor } from "../helpers/poll.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // The second look never runs twice at once for the same case (#1576). Its re-synthesis is forced,
 // so two overlapping presses would both plan the same promotions from the pre-promotion state and
@@ -31,6 +32,7 @@ async function harness(ids: string[] = ["c1"]) {
   const stateStore = new StateStore(store);
   for (const caseId of ids) {
     await store.createCase({ caseId, name: "n", investigator: "i", aiProvider: "mock" });
+    await enableCaseAi(store, caseId);
     await stateStore.save(emptyState(caseId));
   }
   const provider = new MockProvider("mock", "{}");

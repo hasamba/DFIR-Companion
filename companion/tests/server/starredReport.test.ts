@@ -11,6 +11,7 @@ import { TagsStore } from "../../src/analysis/tags.js";
 import { StarredReportStore } from "../../src/analysis/starredReportStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 class CapturingProvider implements AIProvider {
   readonly name = "capture";
@@ -55,6 +56,7 @@ async function harness(opts: { ai?: boolean } = {}) {
     starredReportStore: new StarredReportStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(store, "c1");
   return { app, superStore, provider, stateStore };
 }
 
@@ -219,6 +221,7 @@ describe("synthesis-provider gate (no vision provider)", () => {
       starredReportStore: new StarredReportStore(store),
     });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(store, "c1");
     return { app, superStore };
   }
 
@@ -277,6 +280,7 @@ describe("AI reply in the wrong shape (#2459)", () => {
       starredReportStore: new StarredReportStore(store),
     });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(store, "c1");
     await superStore.append("c1", [sev("v1", "2026-06-01T09:00:00Z", "mimikatz.exe executed")]);
     await request(app)
       .post("/cases/c1/tags")

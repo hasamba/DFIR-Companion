@@ -340,6 +340,16 @@ curl -s -X POST http://127.0.0.1:4773/cases/IR-2026-001/ai-control \
 Turning AI on analyzes the evidence already in the case, in the background. After that, every
 import that finishes starts a new synthesis by itself.
 
+AI is off on every new case. While it is off, every request that would call an AI model is refused
+with `409` and `{"error": "AI is off for this case — turn AI on to use this", "aiOff": true}`, and
+no model is called. This includes the manual actions: synthesize, explain an event, the executive
+summary, the starred report, the view summary, the remediation plan, the hypothesis review, the
+narrative, memory next steps, hunt suggestions, the deep pass, the second opinion and its referee,
+the second look, the Jev review, the containment check, query translation, the tagger rule
+suggestion, the AI false-positive suggestion, session summaries, gap hypotheses, the MCP agent, and a
+replay of a synthesis, deep-pass or AI-analyzed import run. Watson gives its own "AI is off" answer.
+A generic CSV or log import is still saved as evidence, but not analyzed (see above).
+
 ### Re-synthesize
 
 ```bash

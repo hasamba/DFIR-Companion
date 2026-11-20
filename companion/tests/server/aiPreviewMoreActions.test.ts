@@ -29,6 +29,7 @@ import {
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { veloServerClients } from "../helpers/serverClientsStub.js";
 import { storedImportName } from "../../src/routes/importCommit.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #2515 — the AI preview now covers import-time extraction (the chosen file), playbook hunts (built
 // from the STORED fleet inventory, no refresh) and the two decision-model (Jev) requests. Each test
@@ -79,6 +80,7 @@ async function harness(opts: HarnessOpts = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-ai-preview-more-"));
   const store = new CaseStore(root);
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(store, "c1");
   const stateStore = new StateStore(store);
   const state = emptyState("c1");
   state.forensicTimeline = [ev("e1")];

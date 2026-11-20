@@ -17,6 +17,7 @@ import { createCaseExistsGate } from "../analysis/caseExistsGate.js";
 import { mountCaseWriteExistsGate } from "./caseWriteExistsGate.js";
 import { mountAiRateLimit } from "./aiRateLimit.js";
 import { mountCaseWriteGuard } from "./caseWriteGuard.js";
+import { mountAiOffGate } from "./aiOffGate.js";
 import { mountHeavyReadGate } from "./heavyReadGate.js";
 import { registerSystemRoutes } from "../routes/system.js";
 import { registerSupportBundleRoutes } from "../routes/supportBundleRoutes.js";
@@ -145,6 +146,9 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   // allowlist (#2437, deny by default). Ahead of every /cases/:id route, cloud, push, tool and MCP
   // included, because a gate only covers what is registered after it. See composition/caseWriteGuard.ts.
   mountCaseWriteGuard(app, store);
+  // THIRD: a case whose AI switch is off refuses every request that would call a model (#2757) —
+  // ahead of the MCP agent and the AI rate limiter, so a refusal spends no budget. See aiOffGate.ts.
+  mountAiOffGate(app, ctx.getControl);
   registerSystemRoutes(app, ctx);
   registerSupportBundleRoutes(app, ctx);
   // The basemap under the Geographic Map panel, proxied so the dashboard keeps `img-src 'self'`

@@ -11,6 +11,7 @@ import { MockProvider } from "../../src/providers/provider.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // The second look at the route (#1554). It stopped being the tail of every synthesis and became a
 // button, so the properties worth pinning here are the ones only the route can show: the preview
@@ -44,6 +45,7 @@ async function harness(opts: { withSuperTimeline?: boolean } = {}) {
   const withSuper = opts.withSuperTimeline !== false;
   const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-secondlook-route-")));
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   const stateStore = new StateStore(store);
   const seeded = emptyState("c1");
   seeded.forensicTimeline.push(

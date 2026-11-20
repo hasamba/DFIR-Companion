@@ -8,6 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // Route coverage for the per-session AI summary (#342). The point of these tests is the SLICING:
 // a session summary that quietly included the whole timeline would still return 200 with plausible
@@ -56,6 +57,7 @@ async function harness(opts: { ai?: boolean } = {}) {
   });
   const app = createApp(store, { pipeline, stateStore, aiConfigured: ai });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(store, "c1");
   await stateStore.save({
     ...emptyState("c1"),
     forensicTimeline: [

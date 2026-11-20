@@ -10,6 +10,7 @@ import { ReportTemplateStore } from "../../src/reports/reportTemplateStore.js";
 import { ReportTemplateControlStore } from "../../src/reports/reportTemplateControl.js";
 import type { AIProvider, AnalyzeResult } from "../../src/providers/provider.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // A provider that records how many times it's asked to analyze. The gate's whole point is that a
 // disabled report section never reaches the model — so `calls` must stay 0 on a gated request.
@@ -60,6 +61,7 @@ async function harness() {
     reportTemplateControlStore,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   await stateStore.save(seededState());
   return { app, provider };
 }

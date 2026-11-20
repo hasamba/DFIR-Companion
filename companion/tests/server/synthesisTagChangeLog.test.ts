@@ -10,6 +10,7 @@ import { awaitActivityEntry } from "../helpers/activityLog.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type Finding, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeResult } from "../../src/providers/provider.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // #1684 — f8 lost T1048.003 on a re-synthesis with no new evidence, and the activity log said only
 // "synthesis ran — N finding(s)". A kept finding whose tags move now gets its own line.
@@ -91,6 +92,7 @@ async function makeApp() {
     activityLogStore: new ActivityLogStore(store),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   await stateStore.save({
     ...emptyState("c1"),
     forensicTimeline: [ev("e8"), ev("e9")],

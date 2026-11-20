@@ -8,6 +8,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 // Regression tests for the provider-gate mismatch: DFIR_VISION_PROVIDER is the SCREENSHOT (vision)
 // model, DFIR_AI_SYNTH_PROVIDER is ALL TEXT WORK. An OCR-less install sets ONLY the synthesis
@@ -27,6 +28,7 @@ async function makeSynthOnlyApp(canned: string) {
   });
   const app = createApp(store, { pipeline, stateStore, aiConfigured: false });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  await enableCaseAi(store, "c1");
   return { app, store, stateStore };
 }
 
@@ -145,6 +147,7 @@ describe("synthesis-provider gate (no vision provider)", () => {
     });
     const app = createApp(store, { pipeline, stateStore, aiConfigured: false });
     await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await enableCaseAi(store, "c1");
     const synth = await request(app).post("/cases/c1/synthesize").send({});
     expect(synth.status).toBe(501);
     const csv = await request(app)

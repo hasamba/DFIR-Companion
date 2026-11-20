@@ -22,6 +22,7 @@ import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { enableCaseAi } from "../helpers/enableCaseAi.js";
 
 const SYNTH = JSON.stringify({
   findings: [],
@@ -74,6 +75,7 @@ async function makeApp() {
     jobManager: new JobManager({ perCaseConcurrency: 1 }),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+  await enableCaseAi(store, "c1");
   return { app, a, stateStore, pipeline };
 }
 
