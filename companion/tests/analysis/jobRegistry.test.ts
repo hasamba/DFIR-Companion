@@ -3,6 +3,7 @@ import {
   emptyJobTable,
   createJob,
   progressJob,
+  relabelJob,
   checkpointJob,
   finishJob,
   failJob,
@@ -203,5 +204,14 @@ describe("jobRegistry", () => {
   it("capJobs is a no-op under the limit", () => {
     const t = withJobs(2);
     expect(capJobs(t, 10)).toBe(t);
+  });
+
+  it("relabelJob renames a running job only (#2742)", () => {
+    const t = createJob(emptyJobTable(), { id: "j", caseId: "c1", kind: "import", label: "a", now: T0 });
+    const renamed = relabelJob(t, "j", "b", T1);
+    expect(getJob(renamed, "j")).toMatchObject({ label: "b", updatedAt: T1 });
+    expect(relabelJob(renamed, "j", "b", T1)).toBe(renamed);
+    const done = finishJob(t, "j", T1);
+    expect(relabelJob(done, "j", "b", T1)).toBe(done);
   });
 });

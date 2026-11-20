@@ -46,6 +46,8 @@ export interface JobProgress {
 
 /** A step of a multi-step job (#2470): when it began, and how much was already done then. */
 export type JobStep = Pick<JobProgress, "stepStartedAt" | "stepBaseline">;
+/** A progress update's step, plus a new label for the row when the work turned out different. */
+export type ProgressStep = JobStep & { label?: string };
 
 export interface JobCheckpoint {
   sequence: number;
@@ -240,6 +242,13 @@ function progressMetrics(
     throughputPerSecond,
     etaAt: new Date(Date.parse(now) + remainingMs).toISOString(),
   };
+}
+
+/** A running job's label, renamed once the work turns out to be other than first named (#2742). */
+export function relabelJob(table: JobTable, id: string, label: string, now: string): JobTable {
+  return patchJob(table, id, (job) =>
+    job.status !== "running" || job.label === label ? job : { ...job, label, updatedAt: now },
+  );
 }
 
 export function checkpointJob(

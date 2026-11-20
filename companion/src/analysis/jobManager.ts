@@ -31,6 +31,7 @@ import {
   startJob,
   checkpointJob,
   progressJob,
+  relabelJob,
   warnJob,
   finishJob,
   stampServedModel,
@@ -55,7 +56,7 @@ import {
   type JobPriority,
   type JobResourceBudget,
   type JobTable,
-  type JobStep,
+  type ProgressStep,
 } from "./jobRegistry.js";
 
 export interface JobManagerOptions {
@@ -326,10 +327,12 @@ export class JobManager {
     };
   }
 
-  progress(jobId: string, done: number, total: number, detail?: string, step?: JobStep): void {
+  /** `step.label` renames the running job's row too (#2742: a drop sweep that found a hunt zip). */
+  progress(jobId: string, done: number, total: number, detail?: string, step?: ProgressStep): void {
     const before = getJob(this.table, jobId);
+    const next = progressJob(this.table, jobId, { done, total, ...step }, detail, this.now());
     if (before)
-      this.publishPatch(before, progressJob(this.table, jobId, { done, total, ...step }, detail, this.now()));
+      this.publishPatch(before, step?.label ? relabelJob(next, jobId, step.label, this.now()) : next);
   }
 
   async checkpoint(jobId: string, input: CheckpointInput): Promise<void> {
