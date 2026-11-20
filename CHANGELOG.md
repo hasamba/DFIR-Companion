@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AI Agent Forensics endpoint picker** — case writers see their case's endpoints; runs with no case open are admin-only (closes #2725)
+- **AI Agent Forensics evidence detail** — scan and preserved hash per matched file, per-rule Sigma coverage per endpoint, activity-log entries (closes #2722)
+- **AI-agent YARA compile check** — CI compiles the vendored AI-agent YARA rules on every PR (closes #2720)
+- **KapeFiles app targets watched** — the weekly upstream check now watches the nine AI coding agent KapeFiles targets (closes #2723)
 - **Telegram mirror masking tokens** — tokens the mirror creates are saved to the case's masking map, so a value gets the same token everywhere (closes #2708)
 - **Replies to 'Mirroring started'** — a group reply to that message now asks Watson (closes #2709)
 - **Telegram mirror outage gap** — a chat is told once when older turns could not be mirrored (closes #2710)
