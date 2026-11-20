@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Changelog wording** — Watson's super-timeline search limit is 2 per question (closes #2778)
 - **Stopped AI calls** — stopping Watson logs a cancellation, not a timeout (closes #2779)
 - **Undo then re-import** — super-timeline rows that return to the forensic timeline show Promoted again (closes #2619)
-- **Hardening** — tighter demo-mode route matching, redacted packages without derived name fragments, query strings kept out of the request log, block-list header lines kept as comments, sessions ended on an admin password reset, the jobs list respects case passwords, channel secrets kept out of notification errors, case data marked untrusted in the synthesis prompt, and HTML escaped in Markdown report headings and cells
+- **Security hardening** — several small fixes from the 2026-11-20 QA run
 - **Hunt zip progress in Jobs** — a dropped hunt zip counts its result files (done of total), names the one importing and shows an ETA, instead of "1 file" at 0/1 (closes #2742)
 - **AI Agent Forensics endpoint picker** — case writers see their case's endpoints; runs with no case open are admin-only (closes #2725)
 - **AI Agent Forensics evidence detail** — file hash and preserved-copy hash per matched file (shows whether the file changed before preservation), per-rule Sigma coverage per endpoint, activity-log entries (closes #2722)
