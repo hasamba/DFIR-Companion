@@ -26,13 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Replies to 'Mirroring started'** — a group reply to that message now asks Watson (closes #2709)
 - **Telegram mirror outage gap** — a chat is told once when older turns could not be mirrored (closes #2710)
 - **Drop log and status per file** — each dropped file's log line and status entry are written as it finishes, so a stop mid-sweep loses nothing (closes #2715)
-
-### Fixed
-
 - **Dashboard stays responsive during a large import** — the full-state merge, its index pass and the import auto-tagger now work in slices that yield to the event loop (closes #2716)
-
-### Fixed
-
 - **Large Velociraptor imports no longer exhaust memory in the settle step** — rows are settled in pages, and a drop file that crashed the server twice moves to `_failed/` (closes #2713)
 
 ## [0.47.0] - 2026-11-19
