@@ -231,6 +231,23 @@ describe("CodexProvider", () => {
     ).rejects.toMatchObject({ kind: "timeout" });
   });
 
+  // #2779: an analyst Stop kills the CLI the same way a timeout does — log it as a cancellation.
+  it("maps a run killed by an aborted signal to an AbortError, not a timeout", async () => {
+    const runner = fakeRunner({ code: null, timedOut: true });
+    const ac = new AbortController();
+    ac.abort();
+    const err = await new CodexProvider({ model: "m", timeoutMs: 5, runner })
+      .analyze({ systemPrompt: "s", userPrompt: "u", images: [], signal: ac.signal })
+      .then(
+        () => new Error("resolved"),
+        (e: unknown) => e as Error,
+      );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toMatchObject({ name: "AbortError" });
+    expect(err.message).toMatch(/cancelled/);
+    expect(err.message).not.toMatch(/timed out/);
+  });
+
   it("errors when there is no content at all", async () => {
     const runner = fakeRunner({ code: 1, stdout: "", stderr: "" });
     await expect(

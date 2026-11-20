@@ -252,6 +252,23 @@ describe("ClaudeCodeProvider", () => {
     });
   });
 
+  // #2779: an analyst Stop kills the CLI the same way a timeout does. It is a cancellation, not
+  // "timed out after 800000ms".
+  it("maps a run killed by an aborted signal to an AbortError, not a timeout", async () => {
+    const runner = fakeRunner({ code: null, timedOut: true });
+    const p = new ClaudeCodeProvider({ model: "haiku", timeoutMs: 5, runner });
+    const ac = new AbortController();
+    ac.abort();
+    const err = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], signal: ac.signal }).then(
+      () => new Error("resolved"),
+      (e: unknown) => e as Error,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toMatchObject({ name: "AbortError" });
+    expect(err.message).toMatch(/cancelled/);
+    expect(err.message).not.toMatch(/timed out/);
+  });
+
   it("errors as transport when no result event is produced", async () => {
     const runner = fakeRunner({ code: 1, stdout: "", stderr: "boom" });
     const p = new ClaudeCodeProvider({ model: "haiku", runner });

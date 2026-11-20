@@ -122,6 +122,12 @@ export class ProviderError extends Error {
   }
 }
 
+/** #2779: the CLI run was killed because the caller's signal aborted (an analyst Stop), not by the
+ *  timeout. Named "AbortError" so retry skips it and the pipeline logs it as a cancel. */
+export function cancelledError(label: string): Error {
+  return Object.assign(new Error(`${label} call cancelled by the analyst`), { name: "AbortError" });
+}
+
 /** Run checks on a billed response; a ProviderError they throw carries that response's usage. */
 export function billedChecks<T>(usage: ProviderUsage | undefined, run: () => T): T {
   try {
