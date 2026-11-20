@@ -34,6 +34,10 @@ export interface AiAgentSigmaDoc {
   vqlBlocks: string[]; // compiled sources (mode "compiled" only)
   text: string; // the document's own YAML, verbatim (mode "sysmon" feeds it to sigma())
   tags: string[];
+  /** Compiled only: true when the VQL reads live state, false when it reads event history (#2722). */
+  snapshot?: boolean;
+  /** Compiled only: the compiler's sentence on which plugin ran and what it covers (#2722). */
+  coverage?: string;
 }
 
 /** The reason groups the panel shows under "Rules not run" (§5.3). */
@@ -143,7 +147,14 @@ export function classifySigmaFile(file: string, text: string): AiAgentSigmaDoc[]
     };
     if (compiled.ok) {
       const blocks = compiled.vql.split(/\n\s*\n/).filter((b) => b.trim());
-      return { ...base, mode: "compiled" as const, reason: "", vqlBlocks: blocks };
+      return {
+        ...base,
+        mode: "compiled" as const,
+        reason: "",
+        vqlBlocks: blocks,
+        snapshot: compiled.snapshot,
+        coverage: compiled.coverage,
+      };
     }
     const why = compiled.refusals.map((r) => r.message).join("; ");
     const { mode, reason } = notRunReason(logsource, det.timeframe != null, why);

@@ -7,7 +7,9 @@ import { bundledAiAgentRulesDir, loadAiAgentRuleSet } from "../../../src/analysi
 import {
   AI_AGENT_ARTIFACT_PREFIX,
   AI_AGENT_MAX_PROGRAM_CHARS,
+  AI_AGENT_VQL_TEMPLATE_VERSION,
   AiAgentArtifactError,
+  aiAgentArtifactDigest,
   buildAiAgentArtifact,
   credentialRegex,
 } from "../../../src/integrations/velociraptor/aiAgentArtifact.js";
@@ -90,6 +92,42 @@ describe("AI Agent Forensics artifact: shape", () => {
     );
   });
 
+  it("uploads each matched file once and keeps that upload's hash beside the scan hash (#2722)", () => {
+    const yara = doc.sources.find((x) => x.name === "Yara")!.query;
+    const scopes = (yara.match(/LET kept_S\d+ =/g) ?? []).length;
+    expect(scopes).toBeGreaterThan(0);
+    expect((yara.match(/upload\(/g) ?? []).length).toBe(scopes); // one upload() per scope, read twice
+    expect(yara).toContain("hash(path=HitPath).SHA256 AS FileSha256");
+    expect(yara).toContain("Up.Sha256 AS PreservedSha256");
+  });
+
+  it("emits one coverage row per compiled Sigma rule, with the compiler's own basis (#2722)", () => {
+    const cfg = decodeConfig(b);
+    const g = Object.entries(cfg).filter(([k]) => /^G\d+_\d+$/.test(k));
+    expect(g.length).toBeGreaterThan(0);
+    for (const [, v] of g) {
+      const c = v as { Basis: string; Coverage: string; Sentence: string };
+      expect(["live state", "event history"]).toContain(c.Basis);
+      expect(c.Coverage).toBe(`compiled Sigma (${c.Basis})`);
+      expect(c.Sentence.length).toBeGreaterThan(0);
+    }
+    const sigma = doc.sources.find((x) => x.name.startsWith("SigmaG"))!.query;
+    expect(sigma).toMatch(/"coverage" AS Kind/);
+    expect(sigma).toMatch(/cfg\.G\d+_\d+\.Title AS RuleName/);
+  });
+
+  it("emits one Sysmon coverage row per rule, ran or not run, titles from cfg only (#2722)", () => {
+    const cfg = decodeConfig(b);
+    const titles = cfg.SysmonTitles as { Title: string }[];
+    const sysmonDocs = set.sigma.filter((d) => d.mode === "sysmon");
+    expect(titles.map((t) => t.Title)).toEqual(sysmonDocs.map((d) => d.title));
+    const q = doc.sources.find((x) => x.name === "SigmaSysmon")!.query;
+    expect((q.match(/foreach\(row=cfg\.SysmonTitles\)/g) ?? []).length).toBe(2);
+    expect(q).toContain('"ran (Sysmon event history)" AS Status');
+    expect(q).toContain('"not run: no Sysmon" AS Status');
+    for (const d of sysmonDocs) expect(q).not.toContain(d.title);
+  });
+
   it("excludes credential stores from the scan with one anchored regex", () => {
     const re = new RegExp(credentialRegex(set.credentials).replace("(?i)", ""), "i");
     expect(re.test("C:\\Users\\dev\\.claude\\.credentials.json")).toBe(true);
@@ -105,6 +143,17 @@ describe("AI Agent Forensics artifact: naming and safety", () => {
       buildAiAgentArtifact(set).name,
     );
     expect(buildAiAgentArtifact(set, { uploadMaxBytes: 1024 }).name).not.toBe(buildAiAgentArtifact(set).name);
+  });
+
+  it("renames when the VQL template changes, even with the same rules (#2722)", () => {
+    const one = aiAgentArtifactDigest(set.digest, ["agent-home"], 1024, AI_AGENT_VQL_TEMPLATE_VERSION);
+    expect(aiAgentArtifactDigest(set.digest, ["agent-home"], 1024, AI_AGENT_VQL_TEMPLATE_VERSION)).toBe(one);
+    expect(
+      aiAgentArtifactDigest(set.digest, ["agent-home"], 1024, AI_AGENT_VQL_TEMPLATE_VERSION + 1),
+    ).not.toBe(one);
+    expect(buildAiAgentArtifact(set).digest).toBe(
+      aiAgentArtifactDigest(set.digest, buildAiAgentArtifact(set).scopes, 50 * 1024 * 1024),
+    );
   });
 
   it("renames on any rule change, so a running hunt's definition is never overwritten", () => {

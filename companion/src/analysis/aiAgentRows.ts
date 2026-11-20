@@ -2,10 +2,12 @@
 // (integrations/velociraptor/aiAgentArtifact.ts) and the Companion. Every row the artifact emits
 // carries the marker column `DFIRCompanionAIAgent` (the schema version) and a `Kind`:
 //
-//   hit        — a YARA or Sigma match: rule, file, file times and hash, a bounded matched snippet;
+//   hit        — a YARA or Sigma match: rule, file, file times, the scan hash and (when the run uploaded
+//                the file) the preserved copy's hash, a bounded matched snippet;
 //   inventory  — an AI tool present, or one configured MCP server (name + executable only);
 //   credential — a credential store present: path, size, modified time, SHA-256 — never contents;
-//   coverage   — what ran and what did not on this endpoint (Sysmon absent, a scope with no files…).
+//   coverage   — what ran and what did not on this endpoint (Sysmon absent, a scope with no files…);
+//                a per-rule Sigma row also names its rule (RuleName).
 //
 // The column names are chosen to stay clear of what the shared Velociraptor mappers harvest:
 // no `Rule`+`Strings`/`Meta` (that routes to the YARA mapper), no `Message`/`Details` (read into
@@ -56,6 +58,8 @@ export const aiAgentHitRow = z
     FileMtime: text(64),
     FileBtime: text(64),
     FileSha256: sha,
+    /** The hash of the copy the run uploaded, from that same upload() (#2722); absent on older rows. */
+    PreservedSha256: sha,
     EventTime: text(64),
     MatchedText: text(AI_AGENT_SNIPPET_MAX * 4),
     Preserved: text(64),
@@ -93,6 +97,8 @@ export const aiAgentCoverageRow = z
     Status: z.string().min(1).max(TEXT_MAX),
     Detail: text(TEXT_MAX),
     Count: num,
+    /** A per-rule Sigma coverage row names its rule (#2722). */
+    RuleName: text(TEXT_MAX),
   })
   .passthrough();
 

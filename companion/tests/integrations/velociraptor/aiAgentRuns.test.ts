@@ -309,3 +309,87 @@ describe("AI Agent Forensics: Add to case files the complete result set", () => 
     expect(deps.ingested).toEqual([]);
   });
 });
+
+// #2722: the activity log gets an entry for a run and for Add to case — counts and ids only.
+describe("AI Agent Forensics: activity entries", () => {
+  it("records a run in its case, and Add to case in the target and the sweep", async () => {
+    await store.createCase({ caseId: "case-1", name: "c", investigator: "x", aiProvider: null });
+    const entries: { caseId: string; action: string; detail: string }[] = [];
+    const deps = makeDeps({ onActivity: (caseId, e) => entries.push({ caseId, ...e }) });
+    await startAiAgentRun(deps, { caseId: "case-1", clientIds: ["C.w1"] });
+    expect(entries).toEqual([
+      {
+        caseId: "case-1",
+        action: "ai-agent-run",
+        detail: expect.stringMatching(
+          /^started AI Agent Forensics on 1 endpoint\(s\) \(hunt H\.AI1, rules .+, scopes agent-home, project-instructions, mcp-installs\)$/,
+        ),
+      },
+    ]);
+    entries.length = 0;
+    const { caseId: sweep, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    expect(entries.map((e) => [e.caseId, e.action])).toEqual([[sweep, "ai-agent-run"]]);
+    await refreshAiAgentRun(deps, sweep, run.runId);
+    entries.length = 0;
+    await addSweepToCase(deps, sweep, run.runId, "case-1");
+    expect(entries).toEqual([
+      {
+        caseId: "case-1",
+        action: "ai-agent-add-to-case",
+        detail: `added AI Agent Forensics sweep ${sweep} (hunt H.AI1): +1 event(s), +1 IOC(s)`,
+      },
+      {
+        caseId: sweep,
+        action: "ai-agent-add-to-case",
+        detail: "filed into case case-1: +1 event(s), +1 IOC(s)",
+      },
+    ]);
+    expect(JSON.stringify(entries)).not.toContain("do not tell the user"); // never the matched text
+  });
+
+  it("joins the refreshed report to the uncapped manifest, so an agent-home hit gets its preserved hash", async () => {
+    const A = "a".repeat(64);
+    const velo = fakeVelo();
+    const reading = {
+      ...velo,
+      huntArtifactRows: async () => ({
+        rows: [
+          {
+            ...hitRow,
+            ClientId: "C.w1",
+            FileSha256: A,
+            Preserved: "kept by the AICodingAgents preservation collection",
+          },
+        ],
+        total: 1,
+        truncated: false,
+      }),
+      runProgram: async (p: string) =>
+        p.includes("uploads(")
+          ? {
+              rows: [
+                {
+                  ClientId: "C.w1",
+                  FlowId: "F.1",
+                  Path: "/uploads/auto/C%3A/Users/dev/.claude/CLAUDE.md",
+                  Size: 5,
+                  SHA256: A,
+                },
+              ],
+              reason: "",
+            }
+          : (velo as unknown as { runProgram(p: string): Promise<unknown> }).runProgram(p),
+    } as unknown as VelociraptorClient;
+    const servers = { ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: reading } };
+    const deps = makeDeps({
+      serverClients: {
+        forCase: () => servers,
+        forSet: () => servers,
+        forDefault: () => servers,
+      } as unknown as AiAgentForensicsDeps["serverClients"],
+    });
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    const updated = await refreshAiAgentRun(deps, caseId, run.runId);
+    expect(updated.report?.hits[0]).toMatchObject({ preservedSha256: A, hashCheck: "same" });
+  });
+});

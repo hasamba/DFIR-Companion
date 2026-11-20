@@ -7,6 +7,8 @@
 import { gradeAiAgentHit, hitTime, AI_AGENT_TIME_LABEL } from "./aiAgentImport.js";
 import { aiAgentRuleLink, type AiAgentNotRun, type AiAgentRuleSet } from "./aiAgentRuleSet.js";
 import { isAiAgentRow, parseAiAgentRow, redactSnippet } from "./aiAgentRows.js";
+import { aiAgentHashCheck, type AiAgentHashCheck } from "./aiAgentHashCheck.js";
+import type { UploadManifestEntry } from "./aiAgentRunStore.js";
 import type { Severity } from "./stateTypes.js";
 
 export interface AiAgentReportHit {
@@ -21,7 +23,11 @@ export interface AiAgentReportHit {
   severity: Severity;
   selfScan: boolean;
   path: string;
+  /** The scan-time hash — the only hash that becomes an IOC. */
   sha256: string;
+  /** The preserved copy's hash, when it is known (#2722). Optional: reports stored before it lack it. */
+  preservedSha256?: string;
+  hashCheck?: AiAgentHashCheck;
   time: string;
   timeBasis: string;
   timeLabel: string;
@@ -37,6 +43,21 @@ export interface AiAgentReportEndpoint {
   credentialStores: number;
   hits: number;
   coverage: { source: string; status: string; detail: string }[];
+  /** One cell per Sigma rule that reported on this endpoint (#2722); a rule with no cell: not recorded. */
+  sigma?: AiAgentSigmaCell[];
+}
+
+export interface AiAgentSigmaCell {
+  rule: string;
+  status: string; // adversary-reachable (an endpoint row) — escape on every render
+  hits: number;
+}
+
+/** A Sigma rule of the rule set, with what it reads (the rows of the rule-by-endpoint table). */
+export interface AiAgentSigmaRule {
+  rule: string;
+  mode: "compiled" | "sysmon";
+  basis: string;
 }
 
 export interface AiAgentReport {
@@ -44,6 +65,8 @@ export interface AiAgentReport {
   ruleSetVersion: string;
   endpoints: AiAgentReportEndpoint[];
   hits: AiAgentReportHit[];
+  /** The rule-by-endpoint Sigma table's rows, from the rule set (#2722). Absent on older reports. */
+  sigmaRules?: AiAgentSigmaRule[];
   notRun: { reason: string; rules: string[] }[];
   unreadableRows: number;
   provisionalGrades: true;
@@ -59,10 +82,18 @@ function hostOf(row: Row): string {
   return "unknown host";
 }
 
+function clientOf(row: Row): string {
+  for (const k of ["ClientId", "client_id"]) {
+    const v = row[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
 function endpointFor(map: Map<string, AiAgentReportEndpoint>, host: string): AiAgentReportEndpoint {
   let e = map.get(host);
   if (!e) {
-    e = { host, tools: [], mcpServers: [], credentialStores: 0, hits: 0, coverage: [] };
+    e = { host, tools: [], mcpServers: [], credentialStores: 0, hits: 0, coverage: [], sigma: [] };
     map.set(host, e);
   }
   return e;
@@ -79,12 +110,55 @@ export function groupNotRun(notRun: readonly AiAgentNotRun[]): AiAgentReport["no
   return [...groups.entries()].map(([reason, rules]) => ({ reason, rules }));
 }
 
+/** The Sigma rules a run can report on, from the rule set — never from row strings (#2722). */
+export function aiAgentSigmaRules(set: AiAgentRuleSet): AiAgentSigmaRule[] {
+  const out = new Map<string, AiAgentSigmaRule>();
+  for (const d of set.sigma) {
+    if (!d.title || out.has(d.title)) continue;
+    if (d.mode === "compiled")
+      out.set(d.title, {
+        rule: d.title,
+        mode: "compiled",
+        basis: d.snapshot === false ? "event history" : "live state",
+      });
+    else if (d.mode === "sysmon")
+      out.set(d.title, { rule: d.title, mode: "sysmon", basis: "Sysmon event history" });
+  }
+  return [...out.values()];
+}
+
+/** Fill each endpoint's Sigma cells: one per known rule that reported, hits counted from hit rows. */
+function sigmaCells(
+  endpoints: Map<string, AiAgentReportEndpoint>,
+  statuses: Map<string, Map<string, string>>,
+  hits: readonly AiAgentReportHit[],
+): void {
+  for (const [host, byRule] of statuses) {
+    const ep = endpoints.get(host);
+    if (!ep) continue;
+    ep.sigma = [...byRule.entries()].map(([rule, status]) => ({
+      rule,
+      status,
+      hits: hits.filter((h) => h.host === host && h.family === "sigma" && h.rule === rule).length,
+    }));
+  }
+}
+
+export interface AiAgentReportOptions {
+  /** The hunt's complete upload manifest; null/absent when it could not be read in full (#2722). */
+  manifest?: readonly UploadManifestEntry[] | null;
+}
+
 /** Build the report from every raw row the run's artifacts returned (other rows are ignored). */
 export function buildAiAgentReport(
   rows: readonly Row[],
   set: AiAgentRuleSet,
   now = new Date(),
+  opts: AiAgentReportOptions = {},
 ): AiAgentReport {
+  const sigmaRules = aiAgentSigmaRules(set);
+  const known = new Set(sigmaRules.map((r) => r.rule));
+  const statuses = new Map<string, Map<string, string>>();
   const endpoints = new Map<string, AiAgentReportEndpoint>();
   const hits: AiAgentReportHit[] = [];
   let unreadable = 0;
@@ -117,6 +191,7 @@ export function buildAiAgentReport(
         selfScan,
         path: r.FilePath ?? "",
         sha256: r.FileSha256 ?? "",
+        ...aiAgentHashCheck(r, clientOf(raw), opts.manifest),
         time,
         timeBasis: basis,
         timeLabel: AI_AGENT_TIME_LABEL,
@@ -135,8 +210,14 @@ export function buildAiAgentReport(
         });
       else if (!ep.tools.includes(r.Tool)) ep.tools.push(r.Tool);
     } else if (r.Kind === "credential") ep.credentialStores++;
-    else ep.coverage.push({ source: r.Source, status: r.Status, detail: r.Detail ?? "" });
+    else if (r.RuleName && known.has(r.RuleName)) {
+      // A per-rule Sigma row: a table cell. Several compiled blocks of one rule share one cell.
+      const byRule = statuses.get(host) ?? new Map<string, string>();
+      if (!byRule.has(r.RuleName) || !r.Status.startsWith("ran")) byRule.set(r.RuleName, r.Status);
+      statuses.set(host, byRule);
+    } else if (!r.RuleName) ep.coverage.push({ source: r.Source, status: r.Status, detail: r.Detail ?? "" });
   }
+  sigmaCells(endpoints, statuses, hits);
   const order: Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
   hits.sort((a, b) => order.indexOf(a.severity) - order.indexOf(b.severity) || a.host.localeCompare(b.host));
   return {
@@ -144,6 +225,7 @@ export function buildAiAgentReport(
     ruleSetVersion: version || set.version,
     endpoints: [...endpoints.values()].sort((a, b) => a.host.localeCompare(b.host)),
     hits,
+    sigmaRules,
     notRun: groupNotRun(set.notRun),
     unreadableRows: unreadable,
     provisionalGrades: true,

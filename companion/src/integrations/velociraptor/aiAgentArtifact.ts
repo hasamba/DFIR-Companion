@@ -35,6 +35,13 @@ export const AI_AGENT_MAX_PROGRAM_CHARS = 30_000;
 export const AI_AGENT_DEFAULT_UPLOAD_MAX_BYTES = 50 * 1024 * 1024; // §11.7: 50 MB per file
 const DEFAULT_SCAN_MAX_BYTES = 20 * 1024 * 1024;
 const MODEL_SCAN_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+/**
+ * The version of the generated VQL (aiAgentArtifactVql.ts). It is part of the artifact-name digest, so a
+ * changed template gets a new name even when the rules did not change, and an artifact on the server
+ * always matches what the runs that named it executed (§13.8). Bump it with every VQL change.
+ *   2 — #2722: the preserved copy's hash, and per-rule Sigma coverage rows.
+ */
+export const AI_AGENT_VQL_TEMPLATE_VERSION = 2;
 const SYSMON_LOG = "C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx";
 
 export interface AiAgentRunOptions {
@@ -150,6 +157,24 @@ function buildConfig(set: AiAgentRuleSet, scopes: AiAgentScope[], uploadMaxBytes
   return { cfg, keys };
 }
 
+/** What a compiled rule reads, as the per-rule coverage row says it: the compiler's own call (#2722). */
+export function compiledBasis(d: { snapshot?: boolean }): "live state" | "event history" {
+  return d.snapshot === false ? "event history" : "live state";
+}
+
+/** The artifact-name digest: the rule set, the run options and the VQL template version (#2722). */
+export function aiAgentArtifactDigest(
+  setDigest: string,
+  scopes: readonly string[],
+  uploadMaxBytes: number,
+  templateVersion = AI_AGENT_VQL_TEMPLATE_VERSION,
+): string {
+  return createHash("sha256")
+    .update(`${setDigest}\0${JSON.stringify({ scopes, uploadMaxBytes, template: templateVersion })}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
 function addSigma(set: AiAgentRuleSet, cfg: Record<string, unknown>) {
   const compiled = set.sigma.filter((d) => d.mode === "compiled");
   const sigmaKeys: { key: string; block: string }[] = [];
@@ -163,7 +188,9 @@ function addSigma(set: AiAgentRuleSet, cfg: Record<string, unknown>) {
         Author: "",
         Tags: d.tags.join(", "),
         Grade: set.sigmaGrades[d.title] ?? sigmaLevelGrade(d.level),
-        Coverage: "compiled Sigma (live state or event history)",
+        Basis: compiledBasis(d),
+        Coverage: `compiled Sigma (${compiledBasis(d)})`,
+        Sentence: d.coverage || "compiled Sigma",
         Link: aiAgentRuleLink(set, d.file),
       };
     });
@@ -171,6 +198,7 @@ function addSigma(set: AiAgentRuleSet, cfg: Record<string, unknown>) {
   const sysmon = set.sigma.filter((d) => d.mode === "sysmon");
   cfg.SysmonRules = sysmon.map((d) => d.text);
   cfg.SysmonCount = sysmon.length;
+  cfg.SysmonTitles = sysmon.map((d) => ({ Title: d.title }));
   cfg.SysmonFieldMapping = sigmaFieldMapping(sysmon.map((d) => d.text));
   cfg.SysmonMeta = Object.fromEntries(
     sysmon.map((d) => [
@@ -249,10 +277,11 @@ export function buildAiAgentArtifact(
   if (keys.length === 0 && sigmaKeys.length === 0 && sysmonCount === 0)
     throw new AiAgentArtifactError("the AI-agent rule set has no rule that can run");
   const json = JSON.stringify(cfg);
-  const digest = createHash("sha256")
-    .update(`${set.digest}\0${JSON.stringify({ scopes: scopes.map((s) => s.id), uploadMaxBytes })}`)
-    .digest("hex")
-    .slice(0, 16);
+  const digest = aiAgentArtifactDigest(
+    set.digest,
+    scopes.map((s) => s.id),
+    uploadMaxBytes,
+  );
   const b64 = Buffer.from(json, "utf8").toString("base64");
   const parts: { name: string; yaml: string }[] = [];
   const vars: string[] = [];

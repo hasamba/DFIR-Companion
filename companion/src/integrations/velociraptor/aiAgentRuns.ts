@@ -72,6 +72,12 @@ export interface AiAgentForensicsDeps {
     opts: { label: string; idBase: string; rows?: number },
   ): Promise<{ addedEvents: number; addedIocs: number }>;
   onChange?(caseId: string): void;
+  /**
+   * An activity-log entry for a case (#2722): a run started, a sweep filed. Routes write it with
+   * logActivity. The detail holds counts, ids, the rule version and scope ids — never a matched text
+   * or path, which are attacker-controlled.
+   */
+  onActivity?(caseId: string, entry: { action: string; detail: string }): void;
   log(line: string): void;
 }
 
@@ -274,6 +280,10 @@ export async function startAiAgentRun(
   deps.log(
     `[ai-agent] run ${runId} hunt ${launch.huntId} on ${launch.added.length} endpoint(s) in ${caseId}`,
   );
+  deps.onActivity?.(caseId, {
+    action: "ai-agent-run",
+    detail: `started AI Agent Forensics on ${run.endpoints.length} endpoint(s) (hunt ${run.huntId}, rules ${run.ruleSetVersion}, scopes ${run.scopes.join(", ")})`,
+  });
   deps.onChange?.(caseId);
   return { caseId, run, sweep };
 }
@@ -294,6 +304,7 @@ export function withSilentEndpoints(
       mcpServers: [],
       credentialStores: 0,
       hits: 0,
+      sigma: [],
       coverage: [
         { source: "run", status: "no results yet", detail: `client ${e.clientId} has returned no rows` },
       ],
@@ -332,11 +343,16 @@ export async function refreshAiAgentRun(
     }
   }
   await deps.runStore.writeRows(caseId, runId, rows); // the complete set read — never capped
-  const report = withSilentEndpoints(buildAiAgentReport(rows, activeAiAgentRuleSet()), run.endpoints);
+  // The manifest first, uncapped: the report joins each agent-home hit to its preserved copy's hash
+  // (#2722). A manifest that could not be read leaves those hashes "not recorded".
   const manifest = await readUploadManifest(client, run.huntId).catch((e: Error) => {
     problems.push(`upload manifest: ${e.message}`);
     return null;
   });
+  const report = withSilentEndpoints(
+    buildAiAgentReport(rows, activeAiAgentRuleSet(), new Date(), { manifest }),
+    run.endpoints,
+  );
   const updated = await deps.runStore.update(caseId, runId, (r) => ({
     ...r,
     report,
@@ -405,6 +421,15 @@ export async function addSweepToCase(
     ...r,
     addedTo: [...(r.addedTo ?? []), { caseId: targetCaseId, at, events: out.addedEvents }],
   }));
+  const counts = `+${out.addedEvents} event(s), +${out.addedIocs} IOC(s)`;
+  deps.onActivity?.(targetCaseId, {
+    action: "ai-agent-add-to-case",
+    detail: `added AI Agent Forensics sweep ${sweepCaseId} (hunt ${run.huntId}): ${counts}`,
+  });
+  deps.onActivity?.(sweepCaseId, {
+    action: "ai-agent-add-to-case",
+    detail: `filed into case ${targetCaseId}: ${counts}`,
+  });
   deps.onChange?.(targetCaseId);
   return out;
 }

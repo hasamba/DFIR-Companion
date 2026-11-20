@@ -11,12 +11,14 @@
 //   POST /cases/:id/ai-agent/runs/:runId/refresh         read results back, rebuild the report
 //   POST /cases/:id/ai-agent/runs/:runId/add-to-case     file a sweep into body.targetCaseId
 //   GET  /cases/:id/ai-agent/runs/:runId/report.md|.csv  the run report, escaped
+//   GET  /cases/:id/ai-agent/runs/:runId/sigma-coverage.csv  the rule-by-endpoint Sigma table (#2722)
 
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { frozenCaseRefusal } from "./importCaseGuard.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
+import { logActivity } from "../analysis/activityLog.js";
 import { activeAiAgentRuleSet, activeAiAgentRulesProblem } from "../analysis/aiAgentActiveRules.js";
 import { groupNotRun } from "../analysis/aiAgentReport.js";
 import { AiAgentRunStore, type AiAgentRun } from "../analysis/aiAgentRunStore.js";
@@ -30,7 +32,11 @@ import {
 } from "../integrations/velociraptor/aiAgentRuns.js";
 import { AiAgentArtifactError } from "../integrations/velociraptor/aiAgentArtifact.js";
 import { AiAgentLaunchError } from "../integrations/velociraptor/aiAgentLaunch.js";
-import { aiAgentReportCsv, aiAgentReportMarkdown } from "../reports/aiAgentReportExport.js";
+import {
+  aiAgentReportCsv,
+  aiAgentReportMarkdown,
+  aiAgentSigmaCoverageCsv,
+} from "../reports/aiAgentReportExport.js";
 import { requestAuthentication } from "../auth/types.js";
 import type { VeloClientRecord } from "../integrations/velociraptor/clientInventory.js";
 
@@ -72,6 +78,12 @@ function deps(ctx: RouteContext, runStore: AiAgentRunStore, req?: Request): AiAg
     cancelVeloHuntTimersForCase: (caseId) => ctx.cancelVeloHuntTimersForCase(caseId),
     ingestVeloArtifactMap: (caseId, json, o) => ctx.ingestVeloArtifactMap(caseId, json, o),
     onChange: (caseId) => options.onVeloHunt?.(caseId),
+    // Best-effort, in the named case's scope (#1866): a case deleted meanwhile gets no late entry.
+    onActivity: (caseId, entry) => {
+      void runInCaseScope(ctx.store.casesRoot, caseId, () =>
+        logActivity(options.activityLogStore, options.onActivity, caseId, { category: "hunt", ...entry }),
+      ).catch((e: Error) => log(`[ai-agent] activity log for ${caseId} failed: ${e.message}`));
+    },
     log,
   };
 }
@@ -270,6 +282,21 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
       return res.status(200).json(await addSweepToCase(d, req.params.id, req.params.runId, target));
     } catch (err) {
       return fail(res, err);
+    }
+  });
+
+  // The rule-by-endpoint Sigma coverage table (#2722): its own CSV, so the hits CSV keeps one shape.
+  app.get("/cases/:id/ai-agent/runs/:runId/sigma-coverage.csv", async (req: Request, res: Response) => {
+    try {
+      const run = await runStore.get(req.params.id, req.params.runId);
+      if (!run) return res.status(404).json({ error: "run not found" });
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="ai-agent-forensics-${run.huntId}-sigma-coverage.csv"`,
+      );
+      return res.type("text/csv; charset=utf-8").send(aiAgentSigmaCoverageCsv(run));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
     }
   });
 

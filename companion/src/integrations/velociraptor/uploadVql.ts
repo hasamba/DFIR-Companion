@@ -105,7 +105,11 @@ export async function readUploadManifest(
   huntId: string,
 ): Promise<UploadManifestEntry[]> {
   if (!/^H\.[A-Za-z0-9]+$/.test(huntId)) throw new Error("invalid hunt id");
-  const { rows } = await client.runProgram(HUNT_UPLOAD_MANIFEST_VQL.split("__HUNT_ID__").join(huntId));
+  const { rows, reason } = await client.runProgram(
+    HUNT_UPLOAD_MANIFEST_VQL.split("__HUNT_ID__").join(huntId),
+  );
+  // A query that logged an error may have returned part of the list: never treat it as complete (#2722).
+  if (reason?.trim()) throw new Error(reason.trim());
   return (rows as Record<string, unknown>[]).map((r) => ({
     clientId: String(r.ClientId ?? ""),
     flowId: String(r.FlowId ?? ""),

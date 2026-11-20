@@ -50,4 +50,12 @@ describe("AI Agent Forensics panel", () => {
     const refusal = js.slice(js.indexOf("inv.status === 403"), js.indexOf("Only an administrator") + 100);
     expect(refusal).not.toContain("Settings");
   });
+
+  it("shows both hashes, the check, and the rule-by-endpoint Sigma table (#2722)", () => {
+    expect(js).toContain("function hashCell(h)");
+    expect(js).toContain('h.hashCheck || "not recorded"');
+    expect(js).toContain("function sigmaTable(report)");
+    expect(js).toContain('cell ? `${cell.status}, ${cell.hits} hit(s)` : "not recorded"');
+    expect(js).toContain("/sigma-coverage.csv`");
+  });
 });

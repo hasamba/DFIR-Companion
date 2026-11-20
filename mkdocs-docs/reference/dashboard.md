@@ -909,8 +909,11 @@ a poisoned MCP server, a backdoored rules file, planted agent memory, or an inst
 project's `CLAUDE.md`. The toolbar's **AI agents** button opens it; inside a case it opens this
 section, and with no case open it opens the **sweep** view.
 
-1. Tick the endpoints (from the server set's Velociraptor client inventory). Non-Windows endpoints
-   are left out and named: this version runs on Windows only.
+1. Tick the endpoints. Inside a case, the list is the endpoints of the case's own Velociraptor
+   server set, and anyone with write access to the case can see it (host name, FQDN, client id, last
+   seen, labels). A read-only member is told they need write access. With no case open, the list is
+   the whole fleet, and only an administrator can see it and start a run. Non-Windows endpoints are
+   left out and named: this version runs on Windows only.
 2. Leave the three default scopes ticked (agent home folders, project instruction files, MCP server
    installs) or add the two slow ones (local model files, script drop locations).
 3. Press **Run**. Velociraptor runs the [ai-dfir-toolkit](https://github.com/depalmar/ai-dfir-toolkit)
@@ -922,9 +925,23 @@ The results-only report shows, per endpoint, the AI tools found, the MCP servers
 executable only; arguments are counted, never shown, and environment values are never read), the
 number of hits, whether a credential store is present, and what each scope scanned. Below it: the
 hits table (grade, endpoint, rule, file, the **latest time the content could have been planted**,
-the matched text, and the rule's author with a link to the rule), **Rules not run, and why**, the
-rule version, and a link to the collection in Velociraptor. **Report .md** and **Report .csv**
-download the same report.
+the matched text, the file's hashes, and the rule's author with a link to the rule), the **Sigma
+coverage per rule and endpoint** table, **Rules not run, and why**, the rule version, and a link to
+the collection in Velociraptor. **Report .md** and **Report .csv** download the same report;
+**Sigma coverage .csv** downloads the rule-by-endpoint table.
+
+- **Two hashes per matched file.** The **scan** hash is taken when the rule matched; the
+  **preserved** hash is the hash of the copy kept in Velociraptor (from the run's own upload, or for
+  agent-home files from the preservation collection's file list). The check says **same**,
+  **differs** (the file changed between the scan and the upload), **not preserved** (the run said
+  it did not keep the file, for example over the upload cap) or **not recorded** (the Companion
+  could not tell, for example because the file list was not read in full). Only the scan hash
+  becomes a case IOC; a difference is written in the event's detail.
+- **Sigma coverage per rule and endpoint.** One row per Sigma rule, one column per endpoint. Each
+  cell says whether the rule ran there and on what it ran (**live state**, **event history**, or
+  **Sysmon event history**), with its hit count, or "not run: no Sysmon". A cell that says **not
+  recorded** means that endpoint sent no answer for that rule (for example, a run made before this
+  table existed); it does not mean the rule found nothing.
 
 - **Grades are provisional** until they are measured on real developer profiles. A hit on the
   toolkit's own test files or rule copies is graded Info, recognised by content hash, never by
@@ -942,6 +959,8 @@ download the same report.
 - **Outside a case**, each run is kept as a hidden sweep (the newest 20; older ones are removed
   from the Companion, never from Velociraptor). **Add to case…** files a sweep's results into a real
   case, as if the run had been made there.
+- **The case's activity log** records each run (endpoint count, hunt, rule version, scopes) and each
+  **Add to case** (in the target case and in the sweep, with the events and IOCs added).
 - **Rules not run** lists every toolkit rule this run cannot use and why: it needs LLM application
   logs, it is a correlation rule, it reads a cloud log source, it is a Linux rule, it needs
   file-read auditing, or the compiler refused it. File-change Sigma rules run on the Sysmon log;
