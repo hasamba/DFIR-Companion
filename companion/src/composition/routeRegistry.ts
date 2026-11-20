@@ -32,6 +32,7 @@ import { registerAuditExportRoutes } from "../routes/auditExport.js";
 import { registerTemplatesViewsRoutes } from "../routes/templatesViews.js";
 import { registerToolsRoutes } from "../routes/tools.js";
 import { registerImportRoutes } from "../routes/import.js";
+import { registerDropHeldRoutes } from "../routes/dropHeldRoutes.js";
 import { registerVelociraptorRoutes } from "../routes/velociraptor.js";
 import { registerAiAgentForensicsRoutes } from "../routes/aiAgentForensics.js";
 import { registerAiAgentPackRoutes } from "../routes/aiAgentPack.js";
@@ -174,6 +175,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   mountHeavyReadGate(app);
 
   registerImportRoutes(app, ctx);
+  registerDropHeldRoutes(app, ctx); // hunt-zip files held over the size limits (#2746)
   // The third case gate, and the narrowest: /cases/:id/velociraptor/* additionally requires a case
   // that EXISTS. The two mounted in httpStack.ts do not — caseIdGate validates the SHAPE of :id and
   // caseLockGate lets a case with no meta through — and routes/velociraptor.ts checked caseExists in

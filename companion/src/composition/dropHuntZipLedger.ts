@@ -29,6 +29,8 @@ export interface MemberOutcome {
   reason?: string;
   /** An imported member's caveat (a guessed format, a streamed import's coverage disclosure). */
   warning?: string;
+  /** Held over a size limit and skipped by the analyst (#2746): neither imported nor failed. */
+  skipped?: boolean;
 }
 
 export interface HuntZipLedger {
@@ -78,6 +80,7 @@ export async function openHuntZipLedger(
         ok: outcome.ok,
         ...(outcome.reason ? { reason: outcome.reason } : {}),
         ...(outcome.warning ? { warning: outcome.warning } : {}),
+        ...(outcome.skipped ? { skipped: true } : {}),
       });
       done.set(member, outcome);
     },
@@ -87,12 +90,19 @@ export async function openHuntZipLedger(
 function parseLine(line: string, done: Map<string, MemberOutcome>): void {
   if (!line.trim()) return;
   try {
-    const v = JSON.parse(line) as { member?: unknown; ok?: unknown; reason?: unknown; warning?: unknown };
+    const v = JSON.parse(line) as {
+      member?: unknown;
+      ok?: unknown;
+      reason?: unknown;
+      warning?: unknown;
+      skipped?: unknown;
+    };
     if (typeof v.member !== "string" || typeof v.ok !== "boolean") return;
     done.set(v.member, {
       ok: v.ok,
       ...(typeof v.reason === "string" ? { reason: v.reason } : {}),
       ...(typeof v.warning === "string" ? { warning: v.warning } : {}),
+      ...(v.skipped === true ? { skipped: true } : {}),
     });
   } catch {
     /* a torn last line (crash mid-append) */

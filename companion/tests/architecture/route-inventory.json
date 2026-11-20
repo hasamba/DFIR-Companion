@@ -178,6 +178,8 @@
     "ROUTE GET /cases/:id/import/undo-stack",
     "ROUTE POST /cases/:id/import/undo",
     "ROUTE POST /cases/:id/import/redo",
+    "ROUTE GET /cases/:id/drop/held",
+    "ROUTE POST /cases/:id/drop/held/decide",
     "USE /^\\/cases(?:\\/([^/]+?))\\/velociraptor\\/?(?=\\/|$)/i caseExistsGate/3",
     "ROUTE POST /velociraptor/run",
     "ROUTE POST /velociraptor/hunt",

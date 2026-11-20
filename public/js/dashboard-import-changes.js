@@ -39,6 +39,94 @@
       .then((r) => (r.ok ? r.json() : null))
       .then(renderDropStatus)
       .catch(() => {});
+    loadDropHeld(caseId);
+  }
+  // Hunt-zip result files held over the size limits (#2746): their own banner (#dropHeld), so the raw
+  // tool prompt above and this one never hide each other. A held file appears without any import
+  // finishing, so the list re-polls every 30 s while a case is open (a small GET).
+  let heldTimer = null;
+  function loadDropHeld(caseId) {
+    clearTimeout(heldTimer);
+    fetch(`/cases/${encodeURIComponent(caseId)}/drop/held`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => renderDropHeld(caseId, d))
+      .catch(() => {});
+    heldTimer = setTimeout(() => {
+      const open = (document.getElementById("caseId").value || "").trim();
+      if (open === caseId) loadDropHeld(caseId);
+    }, 30000);
+  }
+  const heldMb = (n) => (Number(n) / 1048576).toFixed(Number(n) < 10485760 ? 1 : 0);
+  function heldWhy(e) {
+    return e.reason === "host"
+      ? `${heldMb(e.groupBytes)} MB on this PC (limit ${e.limitMb} MB per PC)`
+      : `${heldMb(e.groupBytes)} MB across all PCs (limit ${e.limitMb} MB)`;
+  }
+  function renderDropHeld(caseId, d) {
+    const el = document.getElementById("dropHeld");
+    if (!el) return;
+    const rows = ((d && d.archives) || []).flatMap((a) =>
+      (a.entries || []).filter((e) => !e.decision).map((e) => ({ archiveId: a.archiveId, zip: a.relpath, e })),
+    );
+    if (!rows.length) {
+      el.style.display = "none";
+      el.innerHTML = "";
+      return;
+    }
+    const n = rows.length;
+    const list = rows
+      .map(
+        (r, i) =>
+          `<div class="rb-files"><b>${esc(r.e.artifact || r.e.member)}</b> — ${esc(r.e.host || "all PCs")}, ` +
+          `${heldMb(r.e.bytes)} MB · ${esc(heldWhy(r.e))} <code>${esc(r.zip)}</code> ` +
+          `<button class="rb-yes" data-held="${i}" data-held-act="import">Import anyway</button>` +
+          `<button class="rb-no" data-held="${i}" data-held-act="skip">Skip</button></div>`,
+      )
+      .join("");
+    el.style.display = "block";
+    el.innerHTML =
+      `<div class="rb-head">📥 ${n} hunt result file${n !== 1 ? "s" : ""} held — over the size limit</div>` +
+      `<div class="rb-files">Very large artifacts are usually noise. Post-process them in a Velociraptor ` +
+      `notebook (keep only the rows and columns you need), then drop the smaller result into drop/. ` +
+      `Or import them as they are.</div>` +
+      list +
+      `<button class="rb-yes" id="heldImportAll">Import all anyway</button>` +
+      `<button class="rb-no" id="heldSkipAll">Skip all</button>`;
+    const send = (picked, decision) => {
+      const all = picked.map((r) => ({ archiveId: r.archiveId, member: r.e.member, decision }));
+      const chunks = [];
+      for (let i = 0; i < all.length; i += 500) chunks.push(all.slice(i, i + 500));
+      el.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      chunks
+        .reduce(
+          (p, c) =>
+            p.then(() =>
+              fetch(`/cases/${encodeURIComponent(caseId)}/drop/held/decide`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ decisions: c }),
+              }).then((r) => {
+                if (!r.ok) return r.json().then((j) => Promise.reject(new Error((j && j.error) || r.status)));
+              }),
+            ),
+          Promise.resolve(),
+        )
+        .then(() => {
+          document.getElementById("status").textContent =
+            decision === "import"
+              ? "Held hunt files will import on the next drop sweep"
+              : "Held hunt files will be skipped on the next drop sweep";
+        })
+        .catch((e) => {
+          document.getElementById("status").textContent = "could not record the decision: " + e.message;
+        })
+        .then(() => loadDropHeld(caseId));
+    };
+    el.querySelectorAll("button[data-held]").forEach((b) => {
+      b.onclick = () => send([rows[Number(b.dataset.held)]], b.dataset.heldAct);
+    });
+    document.getElementById("heldImportAll").onclick = () => send(rows, "import");
+    document.getElementById("heldSkipAll").onclick = () => send(rows, "skip");
   }
   // The drop-folder auto-import feature stays fully enabled (the server poller keeps ingesting
   // cases/<id>/drop/); we deliberately do NOT surface its inbox/sweep banner in the dashboard —

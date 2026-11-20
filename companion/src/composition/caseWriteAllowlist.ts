@@ -120,6 +120,7 @@ const PURPOSES: ReadonlyArray<readonly [method: string, pattern: RegExp, purpose
   ["POST", re("/import(-[a-z0-9-]+)?"), "importing evidence"],
   ["POST", re("/import/:seg"), "changing it"], // undo / redo
   ["POST", re("/drop/run-pending"), "importing evidence"],
+  ["POST", re("/drop/held/decide"), "importing evidence"], // #2746
   ["POST", re("/velociraptor/(run-bundle|import-external|collect)"), "importing evidence"],
   ["POST", re("/iris-import"), "importing evidence"],
   ["POST", re("/tools/:seg/(run|run-upload)"), "importing evidence"],

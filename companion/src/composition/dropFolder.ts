@@ -52,6 +52,7 @@ import { prepareHuntDrops } from "./dropHuntFolder.js";
 import { createHuntZipHandler, isZipCandidate } from "./dropHuntZip.js";
 import { pruneHuntZipLedgers } from "./dropHuntZipLedger.js";
 import { createSweepProgress, type HuntProgress } from "./dropSweepProgress.js";
+import { huntHeldStoreFor } from "../analysis/huntHeldStore.js";
 import { clearStaging } from "./dropHuntExtract.js";
 import { createDropInFlight } from "./dropInFlight.js";
 import {
@@ -196,10 +197,12 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     dropMaxBytes,
     veloSinkWired: () => !!options.bulkImportSink, // #2705
   }); // #2336
+  const heldStore = huntHeldStoreFor(store);
   const handleHuntZip = createHuntZipHandler({
     ...{ dropMaxBytes, resolveImportKind, ingestStreamed, recordImportFailure },
     streamDropFile,
     stateDir: (caseId) => store.stateDir(caseId),
+    held: heldStore, // #2746
   }); // #2714
   // #1866: keyed by (case id, generation), so a deleted case's sweep state never carries into a
   // same-id successor, and its late `finally` never clears the successor's scanning mark.
@@ -645,11 +648,13 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // A hunt export imports one copy per artifact; the rest moves to _skipped/ (#2714).
       await clearStaging(dropDir);
       await pruneHuntZipLedgers(store.stateDir(caseId), listing).catch(() => undefined);
-      const ready = await prepareHuntDrops({
+      await heldStore.prune(caseId, listing).catch(() => undefined);
+      const prepared = await prepareHuntDrops({
         ...{ dropDir, listing, ready: unstuck.ready, stuck: nextStuck },
         skipMove: (rel) =>
           store.withCaseWrite(dropDir, () => moveDropFileAdmitted(dropDir, rel, DROP_SKIPPED)),
       });
+      const ready = await heldStore.excludeAwaiting(caseId, prepared); // waits only for the analyst (#2746)
       // A batch a crash interrupted gets its settle before anything else imports (#2540).
       await dropBatch
         ?.recoverDropBatch(caseId)

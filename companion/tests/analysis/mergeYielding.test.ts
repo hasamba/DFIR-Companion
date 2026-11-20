@@ -104,7 +104,10 @@ describe("the yielding merge lets the event loop run (#2716)", () => {
     expect(sync.ticks).toBeLessThanOrEqual(1);
     // The yielding merge hands the loop a turn between ~35 passes and its stages.
     expect(yielding.ticks).toBeGreaterThanOrEqual(10);
-    expect(yielding.maxGapMs).toBeLessThan(Math.max(250, sync.maxGapMs * 0.6));
+    // Shorter than the one synchronous block. Not a fixed ratio: on a loaded CI runner (Windows) a
+    // single GC pause inside a slice put the longest gap at 66–79% of the sync block. The tick count
+    // above is what proves the loop ran during the merge.
+    expect(yielding.maxGapMs).toBeLessThan(Math.max(250, sync.maxGapMs));
   });
 });
 

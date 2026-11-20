@@ -1096,6 +1096,8 @@
     "veloCommandTarget.ts": "analysis/ingest",
     "veloDetectionNoise.ts": "analysis/ingest",
     "veloHuntLayout.ts": "analysis/case",
+    "huntArtifactLimits.ts": "analysis/case",
+    "huntHeldStore.ts": "analysis/case",
     "veloHuntStore.ts": "analysis/case",
     "veloKeptSpan.ts": "analysis/ingest",
     "veloRereadReason.ts": "analysis/case",

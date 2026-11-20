@@ -41,6 +41,7 @@
     "bench:storage": "tsx scripts/bench-case-storage.ts",
     "bench:collect-import": "tsx scripts/bench-collect-import.ts",
     "bench:velo-bulk": "tsx scripts/bench-velo-bulk-import.ts",
+    "bench:velo-many": "tsx scripts/bench-velo-many-files.ts",
     "dev": "node --max-old-space-size=8192 --import tsx/esm src/server.ts",
     "verify:ai": "tsx scripts/verify-ai.ts",
     "ocr:demo": "tsx scripts/ocr-redact-demo.ts",
