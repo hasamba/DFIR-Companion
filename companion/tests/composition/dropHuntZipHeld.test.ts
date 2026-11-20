@@ -130,4 +130,24 @@ describe("drop folder — hunt zip artifacts over the size limits (#2746)", () =
     const [rec] = await held.list("c1");
     expect(rec.entries.map((e) => e.member)).toEqual([PSLIST_A]);
   });
+
+  it("a decision made while the rest imports is applied on the next sweep, not lost", async () => {
+    process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0.1";
+    const h = await makeHarness();
+    const held = huntHeldStoreFor(h.store);
+    await writeFile(join(h.dropDir, "hunt.zip"), await buildZip(inflated([PSLIST_A], 200)));
+    h.onIngest = async (n) => {
+      if (n !== 2) return;
+      const [rec] = await held.list("c1");
+      await held.decide("c1", [{ archiveId: rec.archiveId, member: PSLIST_A, decision: "import" }]);
+    };
+    await h.sweep();
+    await h.sweep();
+    expect(h.calls).toHaveLength(8);
+    expect(await exists(join(h.dropDir, "hunt.zip"))).toBe(true); // not filed as complete
+    h.onIngest = null;
+    await h.sweep();
+    expect(h.calls).toHaveLength(9);
+    expect(await listFiles(h.dropDir)).toContain("_processed/hunt.zip");
+  });
 });

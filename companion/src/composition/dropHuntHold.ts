@@ -16,7 +16,10 @@ export interface ZipHolds {
   undecided: ReadonlySet<string>;
   /** Members the analyst skipped this run (recorded in the ledger, logged SKIPPED). */
   skipped: ReadonlySet<string>;
-  /** After the run: store what is still held; returns how many members still wait for a decision. */
+  /**
+   * After the run: store what is still held. Returns how many held members still have no outcome in
+   * the ledger — undecided, or decided during this run (applied on the next sweep).
+   */
   finish(completed: boolean): Promise<number>;
 }
 
@@ -99,7 +102,7 @@ export async function resolveZipHolds(a: HoldArgs): Promise<ZipHolds> {
           waiting: completed && waiting > 0 && waiting === entries.length,
         };
       });
-      return rec ? rec.entries.filter((e) => !e.decision).length : 0;
+      return rec ? rec.entries.length : 0;
     },
   };
 }

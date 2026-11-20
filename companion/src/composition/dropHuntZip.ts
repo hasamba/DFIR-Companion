@@ -193,6 +193,7 @@ async function processHunt(
   const waiting = await holds.finish(!interrupted);
   if (interrupted) return { ok: false, deferred: interrupted }; // stays in drop/; the next sweep resumes
   if (waiting) {
+    // Undecided, or decided while this run imported the rest: the zip stays until each has an outcome.
     const what = `${waiting} result file(s) held over the hunt artifact size limit`;
     return { ok: false, deferred: `${what} — Import anyway or Skip in the dashboard` };
   }
