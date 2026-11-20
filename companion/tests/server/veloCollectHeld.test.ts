@@ -155,6 +155,11 @@ describe("bundle hunt — artifacts over the size limits (#2753)", () => {
       await request(app).post("/cases/c1/velociraptor/collect");
       await collected(app);
       expect(await pstreeEvents(stateStore)).toBe(0);
+      // Raising the limit later does not bring a skipped artifact back.
+      process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0";
+      await request(app).post("/cases/c1/velociraptor/collect");
+      await collected(app);
+      expect(await pstreeEvents(stateStore)).toBe(0);
     },
     POLL_TIMEOUT_MS * 3,
   );

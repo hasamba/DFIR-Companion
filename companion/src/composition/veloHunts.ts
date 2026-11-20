@@ -446,7 +446,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // A super-only bundle shares one DFIR_SUPERTIMELINE_MAX across its artifacts, by row count (#1982).
       const superCap = superTimelineCap();
       const superShare = createSuperShareLedger(
-        evidence.artifacts.map((a) => a.rows),
+        holds.importable(evidence.artifacts).map((a) => a.rows),
         superCap,
       );
       const superCapped: SuperCappedArtifact[] = [];

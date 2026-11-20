@@ -21,7 +21,7 @@ export interface HuntHolds {
 const MB = 1024 * 1024;
 const mb = (n: number): string => (n / MB).toFixed(n < 10 * MB ? 1 : 0);
 
-function why(h: HeldHuntEntry): string {
+function why(h: Pick<HeldHuntEntry, "reason" | "bytes" | "hostBytes" | "limitMb">): string {
   return h.reason === "host"
     ? `${mb(h.hostBytes)} MB from one PC (limit ${h.limitMb} MB per PC)`
     : `${mb(h.bytes)} MB across all PCs (limit ${h.limitMb} MB)`;
@@ -43,15 +43,21 @@ export async function loadHuntHolds(
     note(name, rows) {
       downloaded.push(name);
       const hold = artifactRowHold(name, rows, limits);
-      if (!hold) return rows.length;
-      held.push(hold);
+      if (hold) held.push(hold);
       const decision = decisions.get(name);
-      if (decision === "import") return rows.length;
+      // Skip wins whatever the size now: raised limits or a smaller download never bring it back.
+      if (decision === "skip") {
+        const size = hold ?? prior.find((e) => e.artifact === name);
+        left.set(
+          name,
+          `over the hunt artifact size limit${size ? ` (${why(size)})` : ""} — skipped by the analyst`,
+        );
+        return 0;
+      }
+      if (!hold || decision === "import") return rows.length;
       left.set(
         name,
-        decision === "skip"
-          ? `over the hunt artifact size limit (${why(hold)}) — skipped by the analyst`
-          : `held over the hunt artifact size limit (${why(hold)}) — Import anyway or Skip in the dashboard`,
+        `held over the hunt artifact size limit (${why(hold)}) — Import anyway or Skip in the dashboard`,
       );
       return 0;
     },
