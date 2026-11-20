@@ -430,6 +430,32 @@ describe("AI Agent Forensics: Add to case files the complete result set", () => 
     expect(Math.max(...filed)).toBeLessThanOrEqual(10_000);
   });
 
+  // #2745: two clients that share a host name, in different batches, are both labelled with their id.
+  it("seeds every batch with the host names the whole sweep shows two clients sharing", async () => {
+    await store.createCase({ caseId: "case-1", name: "c", investigator: "x", aiProvider: null });
+    const rows = many(10_001).map((r, i) =>
+      i === 0
+        ? { ...r, Fqdn: "WS-01", ClientId: "C.aaa111" }
+        : i === 10_000
+          ? { ...r, Fqdn: "WS-01", ClientId: "C.bbb222" }
+          : { ...r, Fqdn: "WS-02", ClientId: "C.ccc333" },
+    );
+    const seeds: unknown[] = [];
+    const deps = depsReading({ rows, truncated: false });
+    deps.ingestVeloArtifactMap = async (_caseId, _json, opts) => {
+      seeds.push(opts.aiAgentHostClients);
+      return { addedEvents: 1, addedIocs: 1 };
+    };
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    await refreshAiAgentRun(deps, caseId, run.runId);
+    await addSweepToCase(deps, caseId, run.runId, "case-1");
+    expect(seeds).toHaveLength(2);
+    for (const seed of seeds) {
+      const pairs = (seed as [string, string][]).map(([h, c]) => `${h}|${c}`).sort();
+      expect(pairs).toEqual(["ws-01|C.aaa111", "ws-01|C.bbb222"]); // the unshared WS-02 is not sent
+    }
+  });
+
   it("refuses to file a sweep whose results were not read in full, and says how much is missing", async () => {
     await store.createCase({ caseId: "case-1", name: "c", investigator: "x", aiProvider: null });
     const deps = depsReading({ rows: many(500), truncated: true });

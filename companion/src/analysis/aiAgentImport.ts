@@ -31,7 +31,12 @@ import {
 } from "./aiAgentRows.js";
 import type { AiAgentHostLedger } from "./aiAgentHostLabels.js";
 // Re-exported so the Velociraptor importer takes everything AI Agent Forensics from one import.
-export { learnWholeFile, type AiAgentHostsCtx } from "./aiAgentHostLabels.js";
+export {
+  learnWholeFile,
+  AiAgentHostLedger,
+  type AiAgentHostsCtx,
+  type AiAgentHostOptions,
+} from "./aiAgentHostLabels.js";
 import { AI_AGENT_FORENSICS_SOURCE } from "./vendorGrade.js";
 import type { Severity } from "./stateTypes.js";
 

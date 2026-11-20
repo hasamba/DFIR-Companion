@@ -21,6 +21,7 @@ import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
+import type { AiAgentHostOptions } from "../analysis/aiAgentHostLabels.js";
 import { bulkPathApplies, runVelociraptorBulk } from "../analysis/ingest/velociraptorBulk.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
 import { settleForensicImport } from "../routes/importSettle.js";
@@ -89,7 +90,7 @@ export interface VeloExternalIngest {
       veloUrl?: string;
       partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
       rows?: number; // the map's row count, which sizes it for the memory guard (#1874)
-    },
+    } & AiAgentHostOptions, // a sweep's shared host names, seeded into this batch's parse (#2745)
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }>;
   ingestVeloUploads(
     caseId: string,
@@ -159,7 +160,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       // The caller's recorder for this artifact (#1736). The caller owns failure (recordImportFailure);
       // this function writes the success line, since it imports without dispatchImport.
       debug?: ImportDebugRecorder;
-    },
+    } & AiAgentHostOptions,
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
@@ -206,6 +207,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
                 hostFallback: opts.hostFallback,
                 ...knownHostIdentityOf(stateBefore),
                 partlyReadArtifact: opts.partlyReadArtifact,
+                aiAgentHostClients: opts.aiAgentHostClients,
               },
               minSeverity: opts.minSeverity,
               veloUrl: opts.veloUrl,
@@ -228,6 +230,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
           aggregate: false,
           maxEvents: Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000,
           partlyReadArtifact: opts.partlyReadArtifact,
+          aiAgentHostClients: opts.aiAgentHostClients,
         });
         const floored = applySeverityFloor(parsed.events, opts.minSeverity); // honor the import floor (no-op when unset) — the forensic path floors via importVelociraptor
         // Same field set as collectVeloHuntOnce's super-only mapping (intentional parallel — the two
@@ -269,10 +272,11 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         importedAt,
         minSeverity: opts.minSeverity,
         velociraptor:
-          opts.hostFallback || opts.partlyReadArtifact
+          opts.hostFallback || opts.partlyReadArtifact || opts.aiAgentHostClients?.length
             ? {
                 ...(opts.hostFallback ? { hostFallback: opts.hostFallback } : {}),
                 ...(opts.partlyReadArtifact ? { partlyReadArtifact: opts.partlyReadArtifact } : {}),
+                ...(opts.aiAgentHostClients?.length ? { aiAgentHostClients: opts.aiAgentHostClients } : {}),
               }
             : undefined,
         veloUrl: opts.veloUrl,

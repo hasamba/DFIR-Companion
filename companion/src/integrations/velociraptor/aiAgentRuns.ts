@@ -18,6 +18,7 @@ import type { VeloHuntJob, VeloHuntStore } from "../../analysis/veloHuntStore.js
 import type { VelociraptorClient } from "./velociraptorApi.js";
 import { activeAiAgentRuleSet } from "../../analysis/aiAgentActiveRules.js";
 import { aiAgentEndpointLabels, buildAiAgentReport } from "../../analysis/aiAgentReport.js";
+import { AiAgentHostLedger, type AiAgentHostOptions } from "../../analysis/aiAgentHostLabels.js";
 import {
   AiAgentRunStore,
   capManifest,
@@ -70,7 +71,7 @@ export interface AiAgentForensicsDeps {
   ingestVeloArtifactMap(
     caseId: string,
     mapJson: string,
-    opts: { label: string; idBase: string; rows?: number },
+    opts: { label: string; idBase: string; rows?: number } & AiAgentHostOptions,
   ): Promise<{ addedEvents: number; addedIocs: number }>;
   onChange?(caseId: string): void;
   /**
@@ -458,6 +459,11 @@ export async function addSweepToCase(
     run.artifacts.find((a) => a.startsWith("Custom.DFIRCompanion.AIAgentForensics.")) ?? "AIAgentForensics";
   // Bounded batches, each evidence-first under the target case's import lock. A failed batch stops
   // the filing and says how far it got: a partial filing is never reported as success.
+  // Each batch is parsed alone, so the host names two clients share are learned once over the whole
+  // sweep and handed to every batch: a batch holding one of the two still names its client (#2745).
+  const sweepHosts = AiAgentHostLedger.from();
+  sweepHosts.learn(rows);
+  const aiAgentHostClients = sweepHosts.sharedPairs();
   const out = { addedEvents: 0, addedIocs: 0 };
   for (let i = 0, part = 1; i < rows.length; i += ADD_BATCH_ROWS, part++) {
     const batch = rows.slice(i, i + ADD_BATCH_ROWS);
@@ -466,6 +472,7 @@ export async function addSweepToCase(
         label: `ai-agent-forensics_${run.huntId}_part${part}.json`,
         idBase: `aiagent-${run.huntId}-${part}`,
         rows: batch.length,
+        ...(aiAgentHostClients.length ? { aiAgentHostClients } : {}),
       });
       out.addedEvents += r.addedEvents;
       out.addedIocs += r.addedIocs;

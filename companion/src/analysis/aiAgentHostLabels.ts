@@ -7,31 +7,51 @@
 // only decides the label: "WS-01 (C.aaa111)" when two or more clients share "WS-01", else "WS-01".
 
 import { aiAgentClientId, isAiAgentRow } from "./aiAgentRows.js";
+import { recordCollector } from "./hostIdentity.js";
 
 type Row = Record<string, unknown>;
 
-/** The row's own host name, as resolveRowHost reads it for a hunt_results() row. */
-function rowHostName(row: Row): string {
-  for (const k of ["Fqdn", "Hostname"]) {
-    const v = row[k];
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-  return "";
+/** One host name → client id pair; a sweep hands its shared ones to every batch it files (#2745). */
+export type AiAgentHostClient = readonly [host: string, clientId: string];
+
+/** Import option: the host names a whole sweep shows two or more clients sharing (#2745). */
+export interface AiAgentHostOptions {
+  aiAgentHostClients?: readonly AiAgentHostClient[];
 }
+
+// The row's own host name, read exactly as resolveRowHost reads the collector (case-insensitive,
+// "-" and "N/A" absent), so the ledger key and the mapper's host can never differ (#2745).
+const rowHostName = (row: Row): string => recordCollector(row);
 
 export class AiAgentHostLedger {
   private readonly clientsByHost = new Map<string, Set<string>>();
 
+  /** A ledger seeded with pairs learned elsewhere: the other batches of the same sweep (#2745). */
+  static from(pairs: readonly AiAgentHostClient[] = []): AiAgentHostLedger {
+    const ledger = new AiAgentHostLedger();
+    for (const [host, clientId] of pairs) ledger.add(host, clientId);
+    return ledger;
+  }
+
   /** Record every AI Agent Forensics row's host name → client id. Other rows are ignored. */
   learn(rows: readonly Row[]): void {
     for (const row of rows) {
-      if (!isAiAgentRow(row)) continue;
-      const host = rowHostName(row).toLowerCase();
-      const clientId = aiAgentClientId(row);
-      if (!host || !clientId) continue;
-      const set = this.clientsByHost.get(host) ?? new Set<string>();
-      this.clientsByHost.set(host, set.add(clientId));
+      if (isAiAgentRow(row)) this.add(rowHostName(row), aiAgentClientId(row));
     }
+  }
+
+  /** Only the host names two or more clients share: the label needs nothing else (#2745). */
+  sharedPairs(): AiAgentHostClient[] {
+    return [...this.clientsByHost].flatMap(([host, ids]) =>
+      ids.size > 1 ? [...ids].map((id): AiAgentHostClient => [host, id]) : [],
+    );
+  }
+
+  private add(host: string, clientId: string): void {
+    const key = host.trim().toLowerCase();
+    if (!key || !clientId) return;
+    const set = this.clientsByHost.get(key) ?? new Set<string>();
+    this.clientsByHost.set(key, set.add(clientId));
   }
 
   /** "WS-01 (C.aaa111)" when another client shares the host name, else the host name unchanged. */

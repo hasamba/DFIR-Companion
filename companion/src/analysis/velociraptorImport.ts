@@ -63,7 +63,8 @@ import { mapBinaryRename } from "./binaryRenameImport.js";
 import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
 import { applyMftTimeHints, markSharedSourceMtime, noteInheritedFileTime } from "./mftTimeHints.js";
 import { msgFingerprint } from "./veloMsgFingerprint.js";
-import { mapAiAgentRow, learnWholeFile, type AiAgentHostsCtx } from "./aiAgentImport.js"; // AI Agent Forensics rows first (#2690, #2734)
+import { mapAiAgentRow, learnWholeFile, AiAgentHostLedger } from "./aiAgentImport.js"; // AI Agent Forensics rows first (#2690, #2734)
+import type { AiAgentHostsCtx, AiAgentHostOptions } from "./aiAgentImport.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
 import { withHostSuffix, titleSafe } from "./velociraptorTitle.js";
@@ -110,7 +111,7 @@ import { amcacheFileIdentity } from "./veloAmcacheIdentity.js";
 
 type Row = Record<string, unknown>;
 
-export interface VelociraptorImportOptions {
+export interface VelociraptorImportOptions extends AiAgentHostOptions {
   aggregate?: boolean;
   minSeverity?: Severity;
   maxEvents?: number;
@@ -1655,6 +1656,7 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
     renames: new HostRenameLedger(),
     aliases: HostRenameMap.from(opts.knownRenames, opts.collectorHostnames, opts.hostFallback), // the case's ledger, and the flow's client is a collector (#1495)
     lineage: new CollectorFootprintLedger(),
+    aiHosts: AiAgentHostLedger.from(opts.aiAgentHostClients), // a sweep's shared host names, before its batch (#2745)
     partlyReadArtifact: (opts.partlyReadArtifact ?? "").trim(),
     dbg: new VrDebugTally(opts.debug),
   };

@@ -368,4 +368,27 @@ describe("AI Agent Forensics mapper: endpoints that share a host name (#2734)", 
     expect(r.events.map((e) => e.asset).sort()).toEqual(["WS-01 (C.aaa111)", "WS-01 (C.bbb222)"]);
     expect(r.events.every((e) => /client C\.(aaa111|bbb222)/.test(e.message ?? ""))).toBe(true);
   });
+
+  // #2745: Add to case files a sweep in batches, each parsed alone. The sweep's shared host names
+  // are learned once over all its rows and seeded into every batch, so a batch holding only one of
+  // the two clients still labels it with its client id.
+  it("labels a lone client with its id when the seeded sweep says another client shares the name", () => {
+    const shared: [string, string][] = [
+      ["ws-01", "C.aaa111"],
+      ["ws-01", "C.bbb222"],
+    ];
+    const r = parseVelociraptorJson(JSON.stringify([twin("C.bbb222", "2026-11-13T03:14:00Z")]), {
+      aiAgentHostClients: shared,
+    });
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].asset).toBe("WS-01 (C.bbb222)");
+    expect(r.events[0].description).toContain("WS-01 (C.bbb222)");
+  });
+
+  it("learns the host name the way the mapper resolves it: a '-' Fqdn falls through to Hostname", () => {
+    const dash = (clientId: string) =>
+      hit({ ...same, Fqdn: "-", Hostname: "WS-01", ClientId: clientId, FileMtime: "2026-11-12T03:14:00Z" });
+    const r = parseVelociraptorJson(JSON.stringify([dash("C.aaa111"), dash("C.bbb222")]));
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS-01 (C.aaa111)", "WS-01 (C.bbb222)"]);
+  });
 });
