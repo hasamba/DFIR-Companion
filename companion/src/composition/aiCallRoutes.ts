@@ -32,6 +32,9 @@ export const AI_OFF_EXTRA_PATHS = new Map<string, string>([
 const AI_OFF_ONLY_WHEN = new Map<string, (body: unknown) => boolean>([
   // Without `ai` the route returns its deterministic candidates and calls no model (routes/findings.ts).
   ["/false-positive/suggest", (body) => Boolean((body as { ai?: unknown } | undefined)?.ai)],
+  // With resynthesize:false the run only promotes rows deterministically (secondLookRun.ts) — the
+  // route's own 501 text tells the analyst to untick "Re-synthesise afterwards" to work without AI.
+  ["/second-look", (body) => (body as { resynthesize?: unknown } | undefined)?.resynthesize !== false],
 ]);
 
 /**

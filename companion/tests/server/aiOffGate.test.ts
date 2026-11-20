@@ -109,6 +109,12 @@ describe("AI switched off (#2757)", () => {
     expect(res.body?.aiOff).toBeUndefined();
   });
 
+  it("leaves a promote-only Second look alone (resynthesize: false calls no model)", async () => {
+    const app = createApp(store, { pipeline: countingPipeline().pipeline as never });
+    const res = await request(app).post("/cases/c1/second-look").send({ resynthesize: false });
+    expect(res.body?.aiOff).toBeUndefined();
+  });
+
   it("keeps Watson's own AI-off answer", async () => {
     const app = createApp(store, { pipeline: countingPipeline().pipeline as never });
     const res = await request(app).post("/cases/c1/watson/message").send({ text: "hi" });
