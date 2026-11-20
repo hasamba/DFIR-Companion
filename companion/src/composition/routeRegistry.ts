@@ -148,7 +148,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   mountCaseWriteGuard(app, store);
   // THIRD: a case whose AI switch is off refuses every request that would call a model (#2757) —
   // ahead of the MCP agent and the AI rate limiter, so a refusal spends no budget. See aiOffGate.ts.
-  mountAiOffGate(app, ctx.getControl);
+  mountAiOffGate(app, ctx.getControl, (id) => store.caseExists(id));
   registerSystemRoutes(app, ctx);
   registerSupportBundleRoutes(app, ctx);
   // The basemap under the Geographic Map panel, proxied so the dashboard keeps `img-src 'self'`

@@ -22,7 +22,11 @@ import { isNonCasePath } from "../auth/policy.js";
 import { sendAiOff } from "../routes/aiOffRefusal.js";
 import { aiOffGateApplies } from "./aiCallRoutes.js";
 
-export function mountAiOffGate(app: Express, getControl: (caseId: string) => Promise<AiControl>): void {
+export function mountAiOffGate(
+  app: Express,
+  getControl: (caseId: string) => Promise<AiControl>,
+  caseExists: (caseId: string) => Promise<boolean> = async () => true,
+): void {
   app.use("/cases/:id", function aiOffGate(req: Request, res: Response, next: NextFunction) {
     if (req.method !== "POST") return next();
     if (isNonCasePath(req.baseUrl + req.path)) return next();
@@ -35,9 +39,14 @@ export function mountAiOffGate(app: Express, getControl: (caseId: string) => Pro
         .toLowerCase() || "/";
     if (!aiOffGateApplies(req.method, rel, req.body)) return next();
 
-    getControl(req.params.id).then((control) => {
-      if (control.enabled) return next();
-      sendAiOff(res);
-    }, next);
+    // An unknown case is not "AI off": let it fall through to the route's own 404 (the
+    // /velociraptor family has its exists gate mounted after this one).
+    const caseId = req.params.id;
+    caseExists(caseId)
+      .then((exists) => (exists ? getControl(caseId) : null))
+      .then((control) => {
+        if (!control || control.enabled) return next();
+        sendAiOff(res);
+      }, next);
   });
 }
