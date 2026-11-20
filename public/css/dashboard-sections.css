@@ -468,6 +468,17 @@
   #sec-huntprofile .hp-pivot-rate{color:#6bcb77}
   #sec-huntprofile .hp-pivot-rate.hp-pivot-rate-low{color:#9aa4b2}
   #sec-huntprofile .hp-collect-inline:disabled{opacity:.6;cursor:default}
+  /* #2736 Client Baseline: standard small buttons (.ev-bulk-btn), .sfield labels above their boxes, and a titled Download policy block. */
+  #sec-client-baseline #clientBaselinePanel{font-size:13px;color:var(--text-primary)}
+  #sec-client-baseline .cb-link{max-width:720px}
+  #sec-client-baseline .cb-link-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  #sec-client-baseline .cb-link-row select{width:auto;min-width:220px;max-width:360px}
+  #sec-client-baseline .cb-marks{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0}
+  #sec-client-baseline .cb-policy{margin-top:12px;padding:10px 12px;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-secondary);max-width:720px}
+  #sec-client-baseline .cb-policy-title{margin:0 0 4px;font-size:13px;font-weight:600;color:var(--text-bright);text-transform:none;letter-spacing:0}
+  #sec-client-baseline .cb-policy-note{margin:0 0 10px;font-size:12px;color:var(--text-muted)}
+  #sec-client-baseline .cb-cats{display:flex;flex-wrap:wrap;gap:6px 16px;padding:2px 0}
+  #sec-client-baseline .cb-cats label{display:inline-flex;align-items:center;font-size:12px;color:var(--text-primary);cursor:pointer}
   /* ── Query Translator (NL → hunt queries, #100) ── */
   #sec-nlquery .nlq-empty{color:var(--text-muted);font-size:12px}
   #sec-nlquery .nlq-platforms{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
