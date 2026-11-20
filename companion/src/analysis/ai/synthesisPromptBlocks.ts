@@ -28,7 +28,6 @@ import { withoutReview } from "../timeline/watsonVerdicts.js";
 import { capDisclosure } from "../synthCaps.js";
 import { promptDescription } from "./promptDescription.js";
 import { aiSpan } from "./aiSpan.js";
-import { fence } from "./promptFence.js";
 import {
   adversaryHintBlock,
   cloudCoverageBlock,
@@ -442,7 +441,7 @@ export interface TimelineSection {
 export function assembleUserPrompt(b: SynthesisBlocks, t: TimelineSection): string {
   return (
     leadingBlocks(b) +
-    `FORENSIC TIMELINE (${t.scopedCount} dated events${t.truncatedNote}).${t.contextLegend}\n${fence("TIMELINE", t.timelineText)}\n\n` +
+    `FORENSIC TIMELINE (${t.scopedCount} dated events${t.truncatedNote}).${t.contextLegend}\n${t.timelineText}\n\n` +
     `${EXISTING_FINDINGS_HEADER}\n${b.existingFindings}\n\n` +
     (t.promotedBlock ? `${t.promotedBlock}\n\n` : "") +
     `CURRENTLY OPEN THREADS (close by id in threadsClosed when the evidence resolves them):\n${b.openThreads}\n\n` +
