@@ -1,0 +1,66 @@
+title: Large Upload to AI SaaS Endpoint (Possible Sensitive Data Paste)
+id: 1011a2b3-c4d5-e6f7-0809-1011a2b3c4d5
+status: experimental
+description: |
+  Detects a large upload to an AI SaaS chat endpoint (ChatGPT, Claude.ai,
+  Gemini, Perplexity, Copilot consumer) in web proxy logs. Models the
+  Samsung 2023 incident, in which engineers pasted proprietary source code
+  and meeting transcripts into ChatGPT.
+
+  Reads proxy logs because that is where the size of an upload is recorded.
+  This was a network-connection rule that tested BytesSent, which endpoint
+  network-connection events do not carry, so it could not match. A proxy
+  cannot see which process made the request, so the browser test is gone:
+  the rule now covers any client on the host, including a script.
+
+  Without TLS inspection the proxy sees one CONNECT tunnel per session and
+  the byte count is the tunnel's total, so the threshold then means "a large
+  session", not "a large paste". With inspection it is the request body.
+references:
+  - https://www.darkreading.com/vulnerabilities-threats/samsung-engineers-sensitive-data-chatgpt-warnings-ai-use-workplace
+  - https://techcrunch.com/2023/05/02/samsung-bans-use-of-generative-ai-tools-like-chatgpt-after-april-internal-data-leak/
+author: Raymond DePalma (ai-dfir-toolkit)
+date: 2026-04-15
+modified: 2026-11-17
+tags:
+  - attack.exfiltration
+  - attack.t1567.002
+  - attack.atlas.t0086
+  - owasp.llm02
+logsource:
+  category: proxy
+detection:
+  selection_ai_destination:
+    cs-host|endswith:
+      - '.openai.com'
+      - 'chatgpt.com'
+      - '.anthropic.com'
+      - 'claude.ai'
+      - 'gemini.google.com'
+      - 'bard.google.com'
+      - 'perplexity.ai'
+      - 'copilot.microsoft.com'
+      - 'chat.deepseek.com'
+      - 'mistral.ai'
+      - 'huggingface.co'
+      - 'poe.com'
+  selection_upload:
+    cs-method:
+      - 'POST'
+      - 'PUT'
+      - 'CONNECT'
+  selection_large_payload:
+    cs-bytes|gte: 1048576   # >=1 MB sent by the client
+  condition: all of selection_*
+fields:
+  - src_ip
+  - cs-host
+  - cs-method
+  - cs-bytes
+  - c-useragent
+falsepositives:
+  - Image / file uploads to AI assistants for legitimate analysis
+  - Paste of large logs for legitimate troubleshooting
+  - Power users with large context window usage
+  - File-attachment workflows in approved AI tools
+level: medium

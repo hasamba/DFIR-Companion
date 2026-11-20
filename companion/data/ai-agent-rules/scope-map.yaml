@@ -1,0 +1,152 @@
+# AI Agent Forensics — where each vendored YARA rule file runs, and the grade each rule gets (#2690).
+#
+# Data, not code: a re-sync PR that brings a new upstream rule file assigns it a scope and grades
+# here. A rule FILE with no entry does not run and is listed under "Rules not run" ("no scope
+# assignment yet"). A RULE with no grade entry runs and is graded Medium.
+#
+# GRADES ARE PROVISIONAL. They follow the design table in issue #2690 §5.1 and have not yet been
+# measured on real developer profiles; the panel says so. Only a measured noise rate should move a
+# grade. The importer applies them as a baseline and may only LOWER one afterwards (self-scan by
+# content hash → Info), never raise it by path.
+schema: 1
+
+# The scan scopes. `default` is whether the Run form ticks the box. `globs` are Velociraptor glob()
+# patterns (forward slashes). The agent-home scope also scans every pinned AICodingAgents glob
+# (aicodingagents-globs.yaml), so the scan and the preservation see the same files.
+scopes:
+  agent-home:
+    label: Agent home folders
+    default: true
+    includeTriageGlobs: true
+    globs:
+      - "C:/Users/*/.claude/**/*.md"
+      - "C:/Users/*/.claude/**/*.json"
+      - "C:/Users/*/.gemini/**/*.{md,json}"
+      - "C:/Users/*/.codex/**/*.{md,toml,json}"
+      - "C:/Users/*/.cursor/**/*.{json,md,mdc}"
+      - "C:/Users/*/.codeium/windsurf/**/*.json"
+      - "C:/Users/*/.copilot/**/*.json"
+      - "C:/Users/*/AppData/Roaming/Claude/claude_desktop_config.json"
+      - "C:/Users/*/AppData/Roaming/Code/User/{settings,mcp}.json"
+  project-instructions:
+    label: Project instruction files
+    default: true
+    # A bounded name search under each profile, not a glob: depth-limited and skipping the folders
+    # that hold other people's files (dependencies, VCS objects, application data).
+    search:
+      roots: ["C:/Users/*"]
+      maxDepth: 6
+      skipDirs: [node_modules, .git, AppData, .venv, venv, __pycache__, .cache]
+      names:
+        - .mcp.json
+        - CLAUDE.md
+        - AGENTS.md
+        - AGENT.md
+        - GEMINI.md
+        - MEMORY.md
+        - .cursorrules
+        - .windsurfrules
+        - .clinerules
+        - .aiderrules
+        - copilot-instructions.md
+        - mcp.json
+        - memory.json
+        - memories.json
+  mcp-installs:
+    label: MCP server installs
+    default: true
+    globs:
+      - "C:/Users/*/AppData/Roaming/npm/node_modules/*mcp*/**/*.{js,mjs,cjs,ts}"
+      - "C:/Users/*/AppData/Roaming/npm/node_modules/@*/*mcp*/**/*.{js,mjs,cjs,ts}"
+      - "C:/Users/*/AppData/Local/npm-cache/_npx/*/node_modules/*mcp*/**/*.{js,mjs,cjs}"
+      - "C:/Users/*/AppData/Local/npm-cache/_npx/*/node_modules/@*/*mcp*/**/*.{js,mjs,cjs}"
+      - "C:/Users/*/AppData/Roaming/uv/tools/*mcp*/**/*.py"
+      - "C:/Users/*/pipx/venvs/*mcp*/**/*.py"
+      - "C:/Users/*/.local/pipx/venvs/*mcp*/**/*.py"
+  model-files:
+    label: Local model files (slow)
+    default: false
+    globs:
+      - "C:/Users/*/.cache/huggingface/hub/**/*.{pt,pth,bin,pkl,ckpt,keras,h5}"
+      - "C:/Users/*/.lmstudio/models/**/*.{pt,pth,bin,pkl,ckpt,keras,h5}"
+      - "C:/Users/*/.cache/lm-studio/models/**/*.{pt,pth,bin,pkl,ckpt,keras,h5}"
+  script-drops:
+    label: Script drop locations (slow)
+    default: false
+    globs:
+      - "C:/Users/*/AppData/Local/Temp/**/*.{ps1,vbs,js,py,bat,cmd,hta,wsf}"
+      - "C:/Users/*/Downloads/**/*.{ps1,vbs,js,py,bat,cmd,hta,wsf}"
+      - "C:/Users/*/AppData/Roaming/*.{ps1,vbs,js,py,bat,cmd}"
+      - "C:/Users/*/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/*"
+      - "C:/ProgramData/Microsoft/Windows/Start Menu/Programs/StartUp/*"
+
+# Vendored YARA file (path under yara/) → the scopes it runs in, and each rule's baseline grade.
+yara:
+  02-mcp-attacks/mcp_tool_poisoning.yar:
+    scopes: [agent-home, project-instructions, mcp-installs]
+    rules:
+      MCP_Tool_Poisoning_Hidden_Instructions: High
+      MCP_Tool_Description_Sensitive_Path_Reference: High
+      MCP_Server_Outbound_Exfil_Code: High
+  05-copilot-assistant-abuse/copilot_rules_file_backdoor.yar:
+    scopes: [agent-home, project-instructions]
+    rules:
+      Copilot_Rules_File_Hidden_Unicode: High
+      Copilot_Rules_File_Coercive_Instructions: Medium
+      Copilot_Rules_File_Pinned_Dependency_Override: Medium
+  09-agent-memory-forensics/memory_poisoning_indicators.yar:
+    scopes: [agent-home, project-instructions]
+    rules:
+      Agent_Memory_Poisoning_Persistent_Exfil_Instruction: High
+      Agent_Memory_Hidden_Instruction_Concealment: High
+  06-rag-vector-db/rag_document_hidden_text.yar:
+    scopes: [agent-home, project-instructions]
+    rules:
+      RAG_Document_Bidi_Override: High
+      RAG_Document_Tags_Block_Hidden_Prompt: High
+      RAG_Document_HTML_Hidden_Instructions: High
+      RAG_Document_Whitespace_Smuggling: Medium
+      RAG_Document_PDF_Whitetext_Injection: Medium
+  01-llm-prompt-injection/adversarial_suffix.yar:
+    scopes: [agent-home, project-instructions]
+    rules:
+      LLM_Adversarial_Suffix_GCG_Style: Medium
+      LLM_Adversarial_Suffix_Repeated_Tokens: Medium
+  03-model-supply-chain/pickle_malicious_opcodes.yar:
+    scopes: [model-files]
+    rules:
+      Pickle_Dangerous_Imports: High
+      Pickle_Reduce_With_Shell_Command: High
+      Pickle_Network_Exfiltration: High
+      Pickle_Encoded_Payload: Medium
+      Pickle_HuggingFace_Hidden_File: Medium
+  03-model-supply-chain/keras_lambda_layer_rce.yar:
+    scopes: [model-files]
+    rules:
+      Keras_Lambda_Layer_Present: Medium
+      Keras_Lambda_With_Encoded_Bytecode: High
+      Keras_H5_Lambda_Layer_Legacy: Medium
+  07-runtime-ai-malware/promptflux_thinking_robot.yar:
+    scopes: [script-drops]
+    rules:
+      PROMPTFLUX_ThinkingRobot_VBScript: High
+  07-runtime-ai-malware/promptsteal_lamehug.yar:
+    scopes: [script-drops]
+    rules:
+      PROMPTSTEAL_LAMEHUG_HuggingFace_CommandGen: High
+  07-runtime-ai-malware/llm_api_prompt_in_script_generic.yar:
+    scopes: [script-drops]
+    rules:
+      Runtime_LLM_API_Prompt_In_Script_Heuristic: Medium
+
+# Sigma rules are graded from their own `level` (critical/high → High, medium → Medium, low → Low,
+# informational → Info), capped at High. Overrides by rule title go here.
+sigmaGrades: {}
+
+# Files every agent session rewrites. A hit dated by one of these has a low-information time: the
+# file's modified time is the last session, not the moment the content was planted.
+lowInformationTimeFiles:
+  - .claude.json
+  - history.jsonl
+  - state.vscdb
+  - storage.json

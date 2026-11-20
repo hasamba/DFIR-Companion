@@ -1,0 +1,49 @@
+# AI Agent Forensics — self-scan demotion by CONTENT HASH (#2690, §13.6).
+#
+# A YARA hit on a file whose SHA-256 is listed here is the detector's own test material (the toolkit's
+# tests/ fixtures), so it is graded Info. The vendored rule files themselves are hashed at load time
+# and added to this set. Never a path or a folder: a poisoned CLAUDE.md that lives inside a detector
+# checkout still hits at its full grade. Each file is listed with its LF bytes and, for text, its
+# CRLF bytes (a Windows checkout with autocrlf).
+#
+# ai-dfir-toolkit upstream commit: 5960308d7d8e9bbf838f31ca0e783373fc8a2ae7 (2026-11-18)
+schema: 1
+sha256:
+  - b146a68913e91ff000cef80d50a06a4555f04e3abe43bf7aad3b5e7f84ac08f8  # tests/README.md
+  - a6abafefd1ada2cbc769eafbae69dfb80d4aa1bfd01e21c951d8342f0f10116d  # tests/README.md (CRLF)
+  - 6bf587e0ed94268ab5a20f8ef2bcfe3992ff8e31cf69bc8194cf71f3d53f86f9  # tests/copilot_rules_backdoored.md
+  - 425d89071dbee7429b9ac05d25b1245f819409322e1801289beb654ef357ae8c  # tests/copilot_rules_backdoored.md (CRLF)
+  - 881d95679dd9a441dc5fe9bdae843c6d9b361627ae5006727a190d48f55bc61d  # tests/generate_test_pickles.py
+  - 87272955dbc1da216e83845d3805bac04c7fd55a48ba28e18a19c7e0218b695f  # tests/generate_test_pickles.py (CRLF)
+  - accdab8afd06e5d9ff72c2fd142e1311eca9a3190bf0cd9301ee66e9f554a23a  # tests/mcp_config_benign.json
+  - 392b53b6787430766e4f66464de808c54c0547996405490deb2de9b22f50f6d6  # tests/mcp_config_benign.json (CRLF)
+  - ed9964fc410a70457551d74fe9f6675435e48e764e52a8137aa68a1e7ba7923b  # tests/mcp_config_poisoned.json
+  - 73bcde1fd012652a233cfe5d0d80a628e71bf71ebe6486e54dd9fa58373124f8  # tests/mcp_config_poisoned.json (CRLF)
+  - 154d7a36da23a89f9833936b0561ccf4b1244cc42cf01ef47267734e5f973b3b  # tests/rag_document_benign.html
+  - e4a4078a8a5f35eb5c0b298745a414bd1eef2f1aa8d028058631aee1ae72be7d  # tests/rag_document_benign.html (CRLF)
+  - b7fceadbc90c9635df695187afcf6ebc3e44c05c06627c63985bbce27e59df73  # tests/rag_document_hidden_text.html
+  - dd9bfa170f2647b7fd216837561c2a33643caf540b143facde12efcd770b342e  # tests/rag_document_hidden_text.html (CRLF)
+  - 59e429a9601e916d67086f6ca80fa241df80aae86d71b3648503d7900dcb9afa  # tests/runtime_ai_benign_llm_client.txt
+  - 4191949ec47a09f7f11bab43245d0c1552888131e555e40ef9fbe4502d204bce  # tests/runtime_ai_benign_llm_client.txt (CRLF)
+  - 684a539185df4316515141b154f3f4241469ee35dbf33419d59a4871656dab6e  # tests/runtime_ai_malware_generic.txt
+  - 93a3d0b8bcd7ddc188d57d56d54bfcc35ee2b012df82e4923ebc568566bea0ac  # tests/runtime_ai_malware_generic.txt (CRLF)
+  - 0443cb97ce43c7e1cf52ec1d66bcab16cfce40bab595a8d9be678d8a56e67bc8  # tests/runtime_ai_malware_promptflux.txt
+  - ff27f6dc3353d4c9e008277d7e1a171cf7ac1678dfb9fcfb2957e8a285f907b5  # tests/runtime_ai_malware_promptflux.txt (CRLF)
+  - 6bb32d50fe595eb06573cf0b53017e4c516ff8f6a0a28eb82fea3686be426eab  # tests/runtime_ai_malware_promptsteal.txt
+  - 495f1c5aed00fdcfff561e5a60ca1f037b3b2d72a0eaf778e8656e499a02a891  # tests/runtime_ai_malware_promptsteal.txt (CRLF)
+  - 1249ac96d5c1887b35244aaa331461edbaf7825ef90dbb66d6de411cf7c1c1f0  # tests/suricata_replay.py
+  - 040b90770f7f0dbd053599da1449f78512e6d963eae6a839c52a445d49d2f947  # tests/suricata_replay.py (CRLF)
+  - 52440bf443a167626e5ccea121b259c03d57e68e25a88a5514373dfaa06ac1a9  # tests/validate.sh
+  - 76aba8b3043c27c230e34fc8867e5b535c86c63d6098ed31fe7abf1d6fa52ea3  # tests/validate.sh (CRLF)
+  - ac8203f2a5f16355835a0c235c0edd48c3429c542a6fc4b549b4cb9a6208da89  # tests/sample_logs/azure_openai_injection.json
+  - 028d53a4a7ca591dc037f79487a4ff449f7c9eccd7bd79ace7e82ec7fa23c660  # tests/sample_logs/azure_openai_injection.json (CRLF)
+  - 1d94ec0011cb3dc495e21f53178cd61784a60e740b8726d0d62edbff2c9f23e3  # tests/sample_logs/bedrock_high_tokens.json
+  - 088753cea8acab73d9bbc884ba08ad02f1051d7d2e51a3f86bcc4e3da06d4e72  # tests/sample_logs/bedrock_high_tokens.json (CRLF)
+  - 53d1d19677e90e83eec2e443bcc0354563adaff8dc5e081cae47befa6976f7b9  # tests/sample_logs/camoleak_pixel_burst.pcap.txt
+  - 03ba593421ddc751465fe9d312318f4dfef97647671a8d73d28568c3a0a18538  # tests/sample_logs/camoleak_pixel_burst.pcap.txt (CRLF)
+  - 8e6a7f63e595a0d65e645a3d25ea61a50541f10b62f7a48219374cb9f0f0075c  # tests/sample_logs/entra_app_signin_invalid_secret.json
+  - bfb78b642ab89cf276e2ec29d5cae389e39ce3f98dd9c35f5183bb872d1ef129  # tests/sample_logs/entra_app_signin_invalid_secret.json (CRLF)
+  - 749ce45a4995eb3ed94af71be972ac38f3f711ef86bc72bd3a8b916f7d2451a5  # tests/sample_logs/m365_copilot_sensitive.json
+  - 7b5a2cdf62c0ca92a4a3a06a480d42ed33da45ba1440f2b24575e7ca55378bd5  # tests/sample_logs/m365_copilot_sensitive.json (CRLF)
+  - 67db4c0dfe43cb62817e9c3a732240a7388946cdcfd9eab443c670c2a4622693  # tests/sample_logs/ray_jobs_api_rce.pcap.txt
+  - a1f9dbafc9debcf0aefc1e85328dd4f2cc58dd09395b30e76c729e7a28b6d23b  # tests/sample_logs/ray_jobs_api_rce.pcap.txt (CRLF)

@@ -670,3 +670,19 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 @media (max-width: 760px) { .aip-row { grid-template-columns: 3em minmax(0, 1fr) 2.5em minmax(0, 1fr); } }
 #aiPreviewBtn::before { content: ""; display: inline-block; width: 14px; height: 14px; vertical-align: middle; margin-right: 6px;
   background: no-repeat center / contain url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa4b2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z'/><circle cx='12' cy='12' r='3'/></svg>"); }
+
+/* AI Agent Forensics panel (#2690) */
+.aa-note { color: var(--text-muted); font-size: 12px; margin: 4px 0; }
+.aa-warn { color: var(--sev-medium, #e0a030); font-size: 12px; margin: 4px 0; }
+.aa-provisional { font-style: italic; }
+.aa-sensitive { color: var(--sev-high, #e05050); font-size: 11px; font-weight: 600; margin-left: 6px; }
+.aa-endpoint-list { max-height: 180px; overflow: auto; border: 1px solid var(--border-color); padding: 4px; margin: 4px 0; }
+.aa-endpoint, .aa-scopes label { display: block; font-size: 12px; }
+.aa-cap { width: 70px; margin: 0 8px 0 4px; }
+.aa-run { border-top: 1px solid var(--border-color); margin-top: 10px; padding-top: 8px; }
+.aa-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.aa-hits { width: 100%; border-collapse: collapse; font-size: 12px; }
+.aa-hits th, .aa-hits td { border-bottom: 1px solid var(--border-color); padding: 3px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.aa-snippet { font-family: var(--font-mono, monospace); white-space: pre-wrap; }
+.aa-muted { color: var(--text-muted); font-size: 11px; }
+.aa-modal { max-width: 960px; max-height: 85vh; overflow: auto; }

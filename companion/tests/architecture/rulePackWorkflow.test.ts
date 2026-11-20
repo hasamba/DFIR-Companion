@@ -49,17 +49,30 @@ describe("rule-pack tags and the app release workflows", () => {
     expect(text).not.toMatch(/\$\{\{\s*secrets\./);
   });
 
-  it("no workflow is triggered by a rules-* tag", () => {
-    const sample = "rules-2026.11.06.2";
-    const hits = files.filter((name) => {
-      const push = triggersOf(load(name)).push as { tags?: string[]; "tags-ignore"?: string[] } | null;
-      if (!push || typeof push !== "object") return false;
-      if (push.tags) return push.tags.some((g) => globToRegExp(g).test(sample));
-      if (push["tags-ignore"]) return !push["tags-ignore"].some((g) => globToRegExp(g).test(sample));
-      return false; // a push trigger with only branches/paths never fires on a tag
-    });
-    expect(hits).toEqual([]);
+  it("the AI-agent pack publish workflow runs on master for its rule folder and publishes not-latest (#2690)", () => {
+    const wf = load("ai-agent-pack-publish.yml");
+    const push = triggersOf(wf).push as { branches?: string[]; paths?: string[] };
+    expect(push.branches).toEqual(["master"]);
+    expect(push.paths).toEqual(["companion/data/ai-agent-rules/**"]);
+    expect(wf.permissions).toEqual({ contents: "write" });
+    const text = readFileSync(new URL("ai-agent-pack-publish.yml", workflowsDir), "utf8");
+    expect(text).toMatch(/--latest=false/);
+    expect(text).not.toMatch(/\$\{\{\s*secrets\./);
   });
+
+  it.each(["rules-2026.11.06.2", "aiagent-rules-2026.11.19.2"])(
+    "no workflow is triggered by the %s tag",
+    (sample) => {
+      const hits = files.filter((name) => {
+        const push = triggersOf(load(name)).push as { tags?: string[]; "tags-ignore"?: string[] } | null;
+        if (!push || typeof push !== "object") return false;
+        if (push.tags) return push.tags.some((g) => globToRegExp(g).test(sample));
+        if (push["tags-ignore"]) return !push["tags-ignore"].some((g) => globToRegExp(g).test(sample));
+        return false; // a push trigger with only branches/paths never fires on a tag
+      });
+      expect(hits).toEqual([]);
+    },
+  );
 
   it("no workflow runs on a release event (a pack release would start it)", () => {
     expect(files.filter((name) => "release" in triggersOf(load(name)))).toEqual([]);

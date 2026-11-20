@@ -1,0 +1,91 @@
+# AI Agent Forensics — inventory and credential locations on Windows (#2690).
+#
+# Derived from depalmar/ai-dfir-toolkit `collectors/targets.yaml` (same upstream commit as UPSTREAM),
+# whose credential and artifact entries are generated from the toolkit's catalogue:
+#   AI agent artifact catalog, Raymond DePalma, CC BY 4.0 — https://github.com/depalmar/ai-dfir-toolkit
+# Changes: Windows locations only, rewritten as Velociraptor globs. Not a verbatim copy, so it is
+# edited here; a re-sync re-derives it. See NOTICE.
+schema: 1
+
+# Which AI tools are present: a tool counts as present when any of its globs matches. Presence only —
+# the run lists the tool, never the files' contents.
+tools:
+  - name: Claude Code
+    globs: ["C:/Users/*/.claude", "C:/Users/*/.claude.json"]
+  - name: Claude Desktop
+    globs: ["C:/Users/*/AppData/Roaming/Claude", "C:/Users/*/AppData/Local/Packages/Claude_*"]
+  - name: OpenAI Codex
+    globs: ["C:/Users/*/.codex"]
+  - name: GitHub Copilot
+    globs: ["C:/Users/*/.copilot", "C:/Users/*/AppData/Local/github-copilot", "C:/Users/*/.vscode/extensions/github.copilot*"]
+  - name: Gemini CLI
+    globs: ["C:/Users/*/.gemini"]
+  - name: Cursor
+    globs: ["C:/Users/*/.cursor", "C:/Users/*/AppData/Roaming/Cursor"]
+  - name: Windsurf
+    globs: ["C:/Users/*/.codeium/windsurf", "C:/Users/*/AppData/Roaming/Windsurf"]
+  - name: Cline
+    globs: ["C:/Users/*/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev"]
+  - name: Roo Code
+    globs: ["C:/Users/*/AppData/Roaming/Code/User/globalStorage/rooveterinaryinc.roo-cline"]
+  - name: OpenCode
+    globs: ["C:/Users/*/.local/share/opencode", "C:/Users/*/.config/opencode"]
+  - name: Continue
+    globs: ["C:/Users/*/.continue"]
+  - name: Aider
+    globs: ["C:/Users/*/.aider.conf.yml", "C:/Users/*/.aider"]
+  - name: Ollama
+    globs: ["C:/Users/*/.ollama", "C:/Users/*/AppData/Local/Ollama"]
+  - name: LM Studio
+    globs: ["C:/Users/*/.lmstudio"]
+
+# MCP configuration files. The run parses each and emits one inventory row per configured server:
+# its name and executable only. Arguments are reduced to a count and `env` is never read out.
+mcpConfigs:
+  - tool: Claude Desktop
+    glob: "C:/Users/*/AppData/Roaming/Claude/claude_desktop_config.json"
+  - tool: Claude Desktop
+    glob: "C:/Users/*/AppData/Local/Packages/Claude_*/LocalCache/Roaming/Claude/claude_desktop_config.json"
+  - tool: Claude Code
+    glob: "C:/Users/*/.claude.json"
+  - tool: Cursor
+    glob: "C:/Users/*/.cursor/mcp.json"
+  - tool: VS Code
+    glob: "C:/Users/*/AppData/Roaming/Code/User/mcp.json"
+  - tool: VS Code
+    glob: "C:/Users/*/.vscode/mcp.json"
+  - tool: Cline
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"
+  - tool: Roo Code
+    glob: "C:/Users/*/AppData/Roaming/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json"
+  - tool: Gemini CLI
+    glob: "C:/Users/*/.gemini/settings.json"
+  - tool: Windsurf
+    glob: "C:/Users/*/.codeium/windsurf/mcp_config.json"
+  - tool: GitHub Copilot
+    glob: "C:/Users/*/.copilot/mcp-config.json"
+
+# Credential stores. Never scanned by YARA, never read by the detection artifact: the run records
+# path, size, modified time and SHA-256 only, and the panel says "credential store present".
+# (Preservation with Windows.Triage.Targets as is may still upload some of them to Velociraptor's
+# file store — the accepted §14.3 trade-off; the run is marked sensitive.)
+credentials:
+  - "C:/Users/*/.claude/.credentials.json"
+  - "C:/Users/*/.codex/auth.json"
+  - "C:/Users/*/.gemini/oauth_creds.json"
+  - "C:/Users/*/.gemini/google_accounts.json"
+  - "C:/Users/*/.gemini/.env"
+  - "C:/Users/*/.copilot/config.json"
+  - "C:/Users/*/.copilot/mcp-secrets/*"
+  - "C:/Users/*/.copilot/mcp-oauth-config/*"
+  - "C:/Users/*/AppData/Local/github-copilot/apps.json"
+  - "C:/Users/*/AppData/Roaming/Cursor/User/globalStorage/state.vscdb"
+  - "C:/Users/*/AppData/Roaming/Windsurf/User/globalStorage/state.vscdb"
+  - "C:/Users/*/.codeium/config.json"
+  - "C:/Users/*/.continue/auth.json"
+  - "C:/Users/*/.continue/.env"
+  - "C:/Users/*/.aider/oauth-keys.env"
+  - "C:/Users/*/.cache/huggingface/token"
+  - "C:/Users/*/.huggingface/token"
+  - "C:/Users/*/.ollama/id_ed25519"
+  - "C:/Users/*/.mcp_auth/*"

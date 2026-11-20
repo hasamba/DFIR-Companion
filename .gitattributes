@@ -13,3 +13,8 @@ companion/data/sigma/** text eol=lf
 
 # Vitest snapshot files are compared byte for byte; a CRLF checkout on Windows CI would fail them.
 companion/tests/**/__snapshots__/** text eol=lf
+
+# Vendored AI-agent rules (#2690): same reason as data/sigma — the content hashes used for self-scan
+# demotion and the rule-set digest that names the Velociraptor artifact must match on every platform.
+companion/data/ai-agent-rules/** text eol=lf
+companion/tests/fixtures/aiAgent/** text eol=lf

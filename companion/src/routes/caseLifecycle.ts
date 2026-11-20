@@ -1,3 +1,4 @@
+import { isAnalystCase } from "../storage/sweepCase.js";
 import type { Express, Request, Response } from "express";
 import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { readFile } from "node:fs/promises";
@@ -116,7 +117,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   const withServerSets = createCaseListServerSets(ctx); // each case's set name, for the case list
   app.get("/cases", async (req: Request, res: Response) => {
     try {
-      const listed = await store.listCases();
+      const listed = (await store.listCases()).filter(isAnalystCase); // sweep cases: AI Agent Forensics panel only (#2690)
       const visible = options.teamAuth?.visibleCaseIds(req);
       const shown = listed.filter((item) => !visible || visible.has(item.caseId)).map(sanitizeCaseMeta);
       return res.status(200).json(withServerSets(shown));

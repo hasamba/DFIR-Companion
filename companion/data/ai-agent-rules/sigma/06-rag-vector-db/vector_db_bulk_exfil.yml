@@ -1,0 +1,102 @@
+title: Vector Database Bulk Retrieval / Exfiltration Pattern
+id: 11a2b3c4-d5e6-f708-0910-11a2b3c4d5e6
+status: experimental
+description: |
+  Detects bulk extraction patterns from vector databases — high request
+  volume, high limit values, or high cardinality of accessed collections
+  from a single principal. Embedding inversion research (Princeton)
+  demonstrated 85%+ accuracy reconstructing original text from embeddings
+  for medical records — making bulk vector exfil functionally equivalent
+  to source data exfil.
+references:
+  - https://dev.to/tiamatenity/vector-database-breaches-how-embeddings-expose-your-sensitive-data-21a9
+  - https://atlas.mitre.org/techniques/AML.T0024
+author: Raymond DePalma (ai-dfir-toolkit)
+date: 2026-04-15
+tags:
+  - attack.collection
+  - attack.exfiltration
+  - attack.atlas.t0024
+  - owasp.llm02
+  - owasp.llm08
+logsource:
+  product: vector_db
+detection:
+  selection_endpoint:
+    request_uri|contains:
+      - '/collections/'
+      - '/points/scroll'
+      - '/points/search'
+      - '/objects'
+      - '/api/v1/get'
+      - '/api/v2/get'
+      - '/v1/graphql'
+  selection_high_limit:
+    request_body|re: '"limit"\s*:\s*[1-9][0-9]{4,}'
+  # High request volume is the correlation rule further down this file.
+  condition: selection_endpoint and selection_high_limit
+fields:
+  - source_ip
+  - api_key_id
+  - request_uri
+  - request_body
+  - response_size_bytes
+falsepositives:
+  - Legitimate batch indexing or migration jobs
+  - Approved analytics pipelines reading vector data
+  - Backup/replication workflows
+level: medium
+---
+title: Vector Database Collection Request
+name: vector_db_collection_request_base
+id: bef18357-d881-428f-a00f-b5f2269ae3dd
+status: experimental
+description: |
+  Base rule for the correlation below. One request to a collection is
+  ordinary use and is not an alert; it is counted per source.
+author: Raymond DePalma (ai-dfir-toolkit)
+date: 2026-11-17
+tags:
+  - attack.collection
+  - attack.atlas.t0024
+  - owasp.llm02
+  - owasp.llm08
+logsource:
+  product: vector_db
+detection:
+  selection:
+    request_uri|contains: '/collections/'
+  condition: selection
+falsepositives:
+  - Every legitimate query. Use only through the correlation rule.
+level: informational
+---
+title: Vector Database High Request Volume From One Source
+id: 6380a93c-e682-46a0-93f1-aa178e3d4c02
+status: experimental
+description: |
+  One source making 500 or more collection requests within a minute. This
+  replaces a rate_per_minute field the rule used to test, which no log
+  carries and a pipeline had to compute. Tune the count to the busiest
+  legitimate indexing or analytics job in the estate.
+author: Raymond DePalma (ai-dfir-toolkit)
+date: 2026-11-17
+correlation:
+  type: event_count
+  rules:
+    - vector_db_collection_request_base
+  group-by:
+    - source_ip
+  timespan: 1m
+  condition:
+    gte: 500
+tags:
+  - attack.collection
+  - attack.exfiltration
+  - attack.atlas.t0024
+  - owasp.llm02
+  - owasp.llm08
+falsepositives:
+  - Legitimate batch indexing or migration jobs
+  - Approved analytics pipelines reading vector data
+level: medium

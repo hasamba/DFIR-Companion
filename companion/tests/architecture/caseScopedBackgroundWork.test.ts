@@ -157,6 +157,11 @@ const OUTSIDE_GATE: Record<string, string> = {
   "post /velociraptor/collect-results": "global: reads collection rows; no case write",
   "post /velociraptor/bundles/:id/time-scope-preview": "global: preview only",
   "put /velociraptor/bundles/:id/time-scope-param-names": "global: bundle settings",
+  "post /ai-agent/runs":
+    "scoped: runInCaseScope on the body case id; with none, a new sweep case (createCase stamps a generation)",
+  "post /ai-agent/pack/check": "global: stages a pack in the AI-agent pack folder beside the cases root",
+  "post /ai-agent/pack/install": "global: the AI-agent pack folder beside the cases root, no case",
+  "post /ai-agent/pack/rollback": "global: the AI-agent pack folder beside the cases root, no case",
 };
 
 function mutatingRoutesOutsideGate(): { key: string; file: string }[] {

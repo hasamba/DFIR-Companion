@@ -169,3 +169,65 @@ companion/data/sigma-suzaku/LICENSE.DRL-1.1.md. As the DRL requires, every match
 program records names the rule's author and links the rule at that commit. The rule
 authors are named in each rule's `author` field. Yamato Security does not endorse
 this program.
+
+
+================================================================================
+AI Agent Forensics rules — ai-dfir-toolkit (Raymond DePalma)
+================================================================================
+
+Used in: companion/data/ai-agent-rules/yara/, companion/data/ai-agent-rules/sigma/,
+         companion/data/ai-agent-rules/paths.yaml,
+         companion/data/ai-agent-rules/selfscan-hashes.yaml (#2690)
+
+The YARA (.yar) and Sigma (.yml) rules in the folders above are copied verbatim from
+depalmar/ai-dfir-toolkit (https://github.com/depalmar/ai-dfir-toolkit) at upstream
+commit 5960308d7d8e9bbf838f31ca0e783373fc8a2ae7 (2026-11-18). They are licensed under
+the Apache License, Version 2.0; the licence text ships beside them as
+companion/data/ai-agent-rules/LICENSE. selfscan-hashes.yaml lists content
+hashes of the toolkit's test fixtures. Every hit the program records names the
+rule, its author and a link to the rule at that commit. The toolkit's author does
+not endorse this program.
+
+The credential-store and MCP configuration locations in paths.yaml come from the
+toolkit's collectors/targets.yaml, whose credential and artifact entries are
+generated from its catalogue, licensed CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/):
+
+    AI agent artifact catalog, Raymond DePalma, CC BY 4.0
+    https://github.com/depalmar/ai-dfir-toolkit
+
+Changes made: the Windows locations only, rewritten as Velociraptor globs, with
+MCP configuration files listed separately from credential stores.
+
+
+================================================================================
+KapeFiles AICodingAgents target — Eric Zimmerman and contributors
+================================================================================
+
+Used in: companion/data/ai-agent-rules/aicodingagents-globs.yaml (#2690)
+
+The file and folder locations in that file are converted from the KapeFiles
+targets Targets/Compound/AICodingAgents.tkape and the nine app targets it names
+(https://github.com/EricZimmerman/KapeFiles), at upstream commit
+fee80dafa89d80818084337f70e03ad983772cf1 (2026-11-14). KapeFiles is licensed under
+the MIT License:
+
+    Copyright (c) 2023 Eric Zimmerman
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.

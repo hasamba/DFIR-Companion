@@ -1,0 +1,9 @@
+# AI Agent Forensics rules switched off on purpose (#2690), with the reason the panel shows under
+# "Rules not run". Keyed by YARA rule name or Sigma rule id/title. Empty at the first port: every
+# vendored rule either runs or is reported as not run for a structural reason (needs LLM logs,
+# correlation rule, cloud log source, Linux, file-read auditing).
+#
+# disabled:
+#   - rule: Some_Rule_Name
+#     reason: "fires on every developer profile measured (#NNNN)"
+disabled: []

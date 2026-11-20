@@ -115,3 +115,11 @@ paths = [
 description = "Fake curl user:password fixture in the Watson mask-roster tests"
 targetRules = ["curl-auth-user"]
 paths = ['''companion/tests/analysis/watson/superTimelineSearchFixes\.test\.ts''']
+
+# The vendored ai-dfir-toolkit rules (#2690) match on file names such as `/.env.local`, which the
+# internal-hostname rule reads as a `.local` FQDN. They are upstream detection content copied
+# verbatim, not hosts. Scoped to that one rule and that one folder; every secret rule still applies.
+[[allowlists]]
+description = "Vendored ai-dfir-toolkit detection rules (file-name patterns, not hostnames)"
+targetRules = ["internal-hostname"]
+paths = ['''companion/data/ai-agent-rules/''']
