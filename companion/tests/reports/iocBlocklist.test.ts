@@ -157,6 +157,48 @@ describe("buildIocBlocklistTxt", () => {
     expect(txt).toContain("verdict-confirmed only");
   });
 
+  // Every line a block-list consumer reads is either a comment or an exported value — header text
+  // with line breaks or control characters stays on its one comment line.
+  describe("header text with line breaks stays commented", () => {
+    // Every line separator a block-list reader may split on.
+    const splitLines = (s: string): string[] => s.split(/\r\n|[\n\r\v\f\u001c-\u001e\u0085\u2028\u2029]/);
+    const bareLines = (txt: string, exported: string[]): string[] =>
+      splitLines(txt).filter((l) => l.trim() !== "" && !l.startsWith("#") && !exported.includes(l));
+    const injected = ["198.51.100.9", "bad.example.com"];
+    const breaks: Array<[string, string]> = [
+      ["LF", "\n"],
+      ["CR", "\r"],
+      ["CRLF", "\r\n"],
+      ["mixed", "\n\r\n\r"],
+      ["vertical tab / form feed", "\v\f"],
+      ["NEL / line separator / paragraph separator", "\u0085\u2028\u2029"],
+      ["NUL and other C0 controls", "\u0000\u001b\u001e"],
+    ];
+
+    for (const [label, br] of breaks) {
+      it(`case name with ${label}`, () => {
+        const state = emptyState("c1");
+        state.iocs = [
+          ioc({ id: "i1", type: "ip", value: "203.0.113.7", enrichments: [enrich("malicious")] }),
+        ];
+        const txt = buildIocBlocklistTxt(state, {
+          caseName: `Evil${br}${injected[0]}${br}${injected[1]}`,
+          generatedAt: "2026-06-13T10:00:00Z",
+        });
+        expect(bareLines(txt, ["203.0.113.7"])).toEqual([]);
+        expect(splitLines(txt).filter((l) => l.startsWith("# Case:"))).toHaveLength(1);
+        expect(txt).toContain(`# Case: Evil ${injected[0]} ${injected[1]}`);
+        expect(splitLines(txt)).toContain("203.0.113.7");
+      });
+
+      it(`case id fallback and generated timestamp with ${label}`, () => {
+        const state = emptyState(`c1${br}${injected[0]}`);
+        const txt = buildIocBlocklistTxt(state, { generatedAt: `t${br}${injected[1]}` });
+        expect(bareLines(txt, [])).toEqual([]);
+      });
+    }
+  });
+
   it("returns only the header block when no IOCs pass the filter", () => {
     const state = emptyState("c1");
     const txt = buildIocBlocklistTxt(state, { generatedAt: "t" });
@@ -168,6 +210,27 @@ describe("buildIocBlocklistTxt", () => {
 // ── buildIocBlocklistCsv ─────────────────────────────────────────────────────
 
 describe("buildIocBlocklistCsv", () => {
+  for (const [label, br] of [
+    ["LF", "\n"],
+    ["CR", "\r"],
+    ["CRLF", "\r\n"],
+  ]) {
+    it(`quotes a value with ${label} so it stays inside one cell`, () => {
+      const state = emptyState(`c1${br}198.51.100.9`);
+      state.iocs = [
+        ioc({
+          id: "i1",
+          type: "domain",
+          value: `evil.example${br}bad.example.com`,
+          enrichments: [enrich("malicious")],
+        }),
+      ];
+      const csv = buildIocBlocklistCsv(state, { caseName: `Evil${br}198.51.100.9` });
+      expect(csv).not.toContain("198.51.100.9");
+      expect(csv).toContain(`"evil.example${br}bad.example.com"`);
+    });
+  }
+
   it("outputs a header row followed by one row per matching IOC", () => {
     const state = emptyState("c1");
     state.iocs = [
