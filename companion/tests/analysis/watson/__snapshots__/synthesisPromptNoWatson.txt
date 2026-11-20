@@ -5,8 +5,10 @@ KNOWN UNKNOWNS / OPEN GAPS (evidence we'd expect in an intrusion but don't yet h
 - No finding yet explains these ATT&CK phases: Initial Access, Persistence, Privilege Escalation, Lateral Movement, Command and Control, Exfiltration, Impact.
 
 FORENSIC TIMELINE (2 dated events).
+<<<TIMELINE>>>
 [e1] 2026-06-01T00:00:00.000Z [Medium] event e1 ⟨rare: seen 1×⟩
 [e2] 2026-06-01T00:00:00.000Z [Medium] event e2 ⟨rare: seen 1×⟩
+<<<END TIMELINE>>>
 
 EXISTING FINDINGS (update by id, do not duplicate). "(severity: X)" is the severity a finding carried last run — keep it unless the evidence now supports a different grade. Indented lines show what a finding said last run and the events it cited and its ATT&CK tags. Keep every concrete detail it names (file, command, host, account, time) and every ATT&CK tag unless the evidence now contradicts it — then say why in the new description:
 [f-prior] (severity: High) Encoded PowerShell launched from Word

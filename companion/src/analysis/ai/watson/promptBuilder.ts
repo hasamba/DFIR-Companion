@@ -7,6 +7,7 @@ import type { WatsonMaskRoster } from "./superRoster.js";
 import type { WatsonChat, WatsonTurn } from "./types.js";
 import { shownVeloHosts, veloRulesText } from "./velo/veloPrompt.js";
 import { csRulesText, type WatsonCsPrompt } from "./crowdstrike/csPrompt.js";
+import { defang, fence, FENCE_LABELS } from "../promptFence.js";
 
 // Pure builder for Watson's per-round user prompt. Every block is bounded. Every untrusted body
 // (case context, memory, chat, paste, analyst text) sits inside a fence the text cannot forge, and
@@ -58,35 +59,10 @@ export interface WatsonPromptInput {
   rawRoster?: WatsonMaskRoster;
 }
 
-/** Every fence label. One list feeds both the fences and the defang, so no label is left forgeable. */
-const FENCE_LABELS = [
-  "TIMELINE",
-  "CONTEXT",
-  "MEMORY",
-  "CHAT",
-  "PASTE",
-  "HISTORY",
-  "LOOKUP",
-  "SUPERTIMELINE",
-  "ANALYST",
-  "STEPS",
-] as const;
-type FenceLabel = (typeof FENCE_LABELS)[number];
-const MARKER_RE = new RegExp(`<<<\\s*(END\\s+)?(${FENCE_LABELS.join("|")})`, "gi");
-
 const clip = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max)}…` : s);
-
-// Any fence marker inside untrusted text is defanged so it cannot close or open a fence.
-function defang(s: string): string {
-  return s.replace(MARKER_RE, "<<‹$1$2").replace(/>>>/g, "›››");
-}
 
 /** One line of untrusted text: no newline can start a fake block header, and no fence marker. */
 const line = (s: string, max: number): string => defang(clip(s.replace(/\s+/g, " ").trim(), max));
-
-function fence(label: FenceLabel, body: string, attrs = ""): string {
-  return `<<<${label}${attrs}>>>\n${defang(body)}\n<<<END ${label}>>>`;
-}
 
 const safeId = (id: string): string => id.replace(/[^\w-]/g, "");
 
