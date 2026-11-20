@@ -56,6 +56,8 @@ export const DEFAULT_BULK_MIN_MB = 8;
 // first 200; the approximate matcher covers the rest, as it does for a capped event today.
 const MAX_EXTRACTED_FROM = 200;
 const DEFAULT_MAX_IOCS = 5000;
+// Rows a batch maps between yields to the event loop (#2727) — about a second of mapping at most.
+const MAP_YIELD_ROWS = 1000;
 
 export function readBulkBatchRows(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.DFIR_IMPORT_BATCH_ROWS);
@@ -300,6 +302,22 @@ function resolveBatchIocLinks(
   }
 }
 
+// Cut each IOC's link list back to the keys that resolved, first MAX_EXTRACTED_FROM in order —
+// exactly what the result's extractedFrom keeps — so the next batch's per-row merge and link walk
+// cost the batch's size, not the rows already stored (#2727). A key that did not resolve in its own
+// batch was never minted (below the floor); only a later batch minting the SAME aggKey could resolve
+// it, and linking to that different event is not intended. New objects, the sink's entries replaced.
+function compactIocLinks(sink: Map<string, SiemIoc>, resolved: Map<string, string>): void {
+  for (const [key, ioc] of sink) {
+    const keys = ioc.sourceAggKeys;
+    if (!keys?.length) continue;
+    const kept = keys.filter((k) => resolved.has(k)).slice(0, MAX_EXTRACTED_FROM);
+    if (kept.length === keys.length) continue;
+    const { sourceAggKeys: _old, ...rest } = ioc;
+    sink.set(key, kept.length ? { ...rest, sourceAggKeys: kept } : rest);
+  }
+}
+
 // The bulk run's decisions for the import debug record (#1736): the per-row tally the mapper kept,
 // then what the floor, the forensic gate and the event cap removed. Counts only.
 function recordBulkDebug(
@@ -342,8 +360,10 @@ interface BatchOutcome {
 
 // Normalize + consolidate + map + aggregate ONE batch of rows into forensic-shaped events with ids
 // continuing from `nextIndex`. Pure apart from the shared parse context (IOC sink, host tally,
-// rename ledger), which the whole-file driver shares across its rows the same way.
-function mapBatch(
+// rename ledger), which the whole-file driver shares across its rows the same way. The row loop
+// yields every MAP_YIELD_ROWS rows so one batch does not hold the event loop for seconds (#2727);
+// lineage resolution, aggregation and id minting stay one synchronous tail after it.
+async function mapBatch(
   rows: Row[],
   vrCtx: ReturnType<typeof vrBulkInternals.newVrCtx>,
   opts: BulkImportOpts,
@@ -351,12 +371,13 @@ function mapBatch(
   nextIndex: { n: number },
   stamp: { importedAt: string; importBatchId: string },
   batchIdByAggKey: Map<string, string>,
-): BatchOutcome {
+): Promise<BatchOutcome> {
   const prepared = prepareRows(rows);
   const mapped: MappedEvent[] = [];
   let detections = 0;
-  for (const row of prepared) {
-    const r = vrBulkInternals.mapRowToEvents(row, vrCtx);
+  for (let i = 0; i < prepared.length; i++) {
+    if (i > 0 && i % MAP_YIELD_ROWS === 0) await yieldToLoop();
+    const r = vrBulkInternals.mapRowToEvents(prepared[i], vrCtx);
     for (const m of r.events) mapped.push(m);
     detections += r.detections;
   }
@@ -441,7 +462,7 @@ export async function runVelociraptorBulk(
   const flush = async (rows: Row[], offset: number, extra?: ForensicEvent[]): Promise<void> => {
     const tb = performance.now();
     const batchIdByAggKey = new Map<string, string>();
-    const out = mapBatch(rows, vrCtx, opts, mode, nextIndex, stamp, batchIdByAggKey);
+    const out = await mapBatch(rows, vrCtx, opts, mode, nextIndex, stamp, batchIdByAggKey);
     let events = extra ? [...out.events, ...extra] : out.events;
     // #1530, in the same position the whole-file seam uses (routes/importSettle.ts): first-party
     // update traffic drops to Info BEFORE the tagger, so a tagger rule can still raise it and the
@@ -476,6 +497,7 @@ export async function runVelociraptorBulk(
       sink.onSuperTimeline?.(caseId);
     }
     resolveBatchIocLinks(vrCtx.iocSink, batchIdByAggKey, resolvedLinks);
+    compactIocLinks(vrCtx.iocSink, resolvedLinks);
     trimIocSink(vrCtx.iocSink, maxIocs);
     const from = totals.rows + 1;
     totals.rows += out.rowsIn;
