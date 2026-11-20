@@ -223,11 +223,12 @@ export class CaseStore {
   }
 
   // Inverse of archiveCaseFolder: moves the case back into the active root, same `status` contract.
-  // Rejects (via rename's ENOENT) if caseId isn't currently archived under _archived/.
+  // Rejects with a 409 if it is no longer archived once the lock is held — a parallel restore won (#2771).
   async restoreCaseFolder(caseId: string, status?: CaseMeta["status"]): Promise<CaseMeta | null> {
     const active = join(this.root, caseId);
     const archived = join(this.root, ARCHIVED_DIRNAME, caseId);
     return this.metaLock.runExclusive(caseId, async () => {
+      if (!this.isInArchive(caseId)) throw new CaseLifecycleError(`case ${caseId} is not archived`, 409);
       await this.whileClosed(caseId, "moved", () => rename(archived, active), ["archived"]);
       return status ? this.relabelAfterMove(caseId, status, active, archived) : null;
     });

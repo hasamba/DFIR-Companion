@@ -313,6 +313,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       options.onCaseLifecycle?.(id); // #2443
       return res.status(200).json(updated);
     } catch (err) {
+      if (err instanceof CaseLifecycleError) return res.status(err.httpStatus).json({ error: err.message }); // #2771
       errLine(`[restore] error case=${req.params.id}: ${(err as Error).message}`);
       return res.status(500).json({ error: (err as Error).message });
     }
