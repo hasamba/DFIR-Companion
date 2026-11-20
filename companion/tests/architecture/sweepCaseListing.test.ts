@@ -11,6 +11,7 @@ const SRC = join(import.meta.dirname, "..", "..", "src");
 const ANALYST_FACING = new Set([
   "routes/caseLifecycle.ts", // GET /cases — every browser case picker reads it
   "routes/crossCase.ts", // cross-case IOC search: "other cases with this IOC"
+  "routes/huntClient.ts", // #2670 earlier hunts of the same client: analyst cases the caller may open
 ]);
 const KEEPS_SWEEPS = new Set([
   "routes/caseIdentity.ts", // next case id: a sweep's id is still taken

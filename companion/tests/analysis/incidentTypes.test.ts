@@ -37,6 +37,7 @@ function customType(over: Partial<IncidentType> = {}): IncidentType {
     recommendedImportOrder: ["edr"],
     findingsSeeds: ["Encryption observed"],
     synthesisHint: "Org-specific ransomware — prioritize encryption.",
+    mode: "incident",
     ...over,
   };
 }
