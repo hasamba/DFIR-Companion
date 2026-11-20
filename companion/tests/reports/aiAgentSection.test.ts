@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Marked } from "marked";
 import { renderMarkdownReport } from "../../src/reports/markdown.js";
 import { renderHtmlReport } from "../../src/reports/html.js";
@@ -328,13 +329,13 @@ describe("which runs a case report reads, and the AI boundary (#2721)", () => {
 describe("the run data reaches report renderers only (#2721)", () => {
   it("is read by the report section, the loader and the run report renderer, and imported only by the report writer", async () => {
     const { readdirSync, statSync } = await import("node:fs");
-    const SRC = new URL("../../src/", import.meta.url).pathname;
+    const SRC = fileURLToPath(new URL("../../src/", import.meta.url));
     const walk = (d: string): string[] =>
       readdirSync(d).flatMap((n) => {
         const f = join(d, n);
         return statSync(f).isDirectory() ? walk(f) : f.endsWith(".ts") ? [f] : [];
       });
-    const rel = (f: string) => f.slice(SRC.length);
+    const rel = (f: string) => f.slice(SRC.length).split("\\").join("/");
     const files = walk(SRC);
     const readers = files.filter((f) => /\.aiAgentRuns\b|aiAgentRuns\s*[,}]/.test(readFileSync(f, "utf8")));
     expect(readers.map(rel).sort()).toEqual(["reports/aiAgentCaseRuns.ts", "reports/aiAgentSection.ts"]);
