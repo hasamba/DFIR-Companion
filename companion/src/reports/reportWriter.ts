@@ -252,9 +252,8 @@ export class ReportWriter {
     }
   }
 
-  // Resolve the report template selected for the case (issue #60). Falls back to the default
-  // "standard" template when no selection is stored, the stores aren't wired, or the selected
-  // template was since deleted — so report generation never breaks on a dangling id.
+  // The case's report template (#60); the default "standard" one when none is stored, the stores are
+  // not wired, or the selected template was deleted — so a dangling id never breaks generation.
   private async loadTemplate(caseId: string): Promise<ReportTemplate> {
     if (!this.reportTemplates || !this.reportTemplateControl) return defaultReportTemplate();
     const { templateId } = await this.reportTemplateControl.load(caseId);
@@ -301,6 +300,7 @@ export class ReportWriter {
       await this.loadExposure(caseId),
       await this.loadTemplate(caseId),
       (await this.hostScope?.(caseId)) ?? null,
+      (await this.huntReport?.(caseId)) ?? undefined,
     );
   }
 

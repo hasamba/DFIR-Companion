@@ -192,3 +192,31 @@ describe("hunt framing in synthesis (#2670)", () => {
     expect(provider.lastReq!.userPrompt).toContain("Coverage: 4 host(s) of 5 targeted answered cleanly");
   });
 });
+
+describe("the hunt framing Watson and synthesis share (#2670)", () => {
+  it("is empty outside hunt mode and names approved programs inside it", async () => {
+    const { loadHuntFramingFor } = await import("../../src/analysis/huntFramingLoad.js");
+    const stores = (typeId: string) => ({
+      incidentTypeStore: { loadType: async () => getBuiltInIncidentType(typeId) ?? null },
+      veloHuntStore: { list: async () => [] },
+      huntInventoryStore: { load: async () => ({ approvedLabels: ["7z.exe in \\program files\\7-zip"] }) },
+    });
+    expect((await loadHuntFramingFor(stores("ransomware"), "c1")).block).toBe("");
+    const hunt = await loadHuntFramingFor(stores("threat-hunt"), "c1");
+    expect(hunt.block).toMatch(/^HUNT MODE:/);
+    expect(hunt.block).toContain(
+      "APPROVED BY CLIENT (the client's reviewed baseline; a detection on these still stands): 7z.exe",
+    );
+  });
+
+  it("leads Watson's case context", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(
+      new URL("../../src/analysis/ai/watson/roundContext.ts", import.meta.url),
+      "utf8",
+    );
+    expect(src).toMatch(
+      /\(await loadHuntFramingFor\(ctx\.opts, caseId\)\)\.block \+\s*buildSynthesisContext/,
+    );
+  });
+});

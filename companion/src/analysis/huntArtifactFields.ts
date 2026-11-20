@@ -73,15 +73,22 @@ export function normalisePathPattern(path: string): string {
 
 const baseName = (p: string): string => p.replace(/\//g, "\\").split("\\").pop() ?? "";
 
-/** The subject after the action label: "…: Installed program (Amcache): Name v1 (Pub) - @ host". */
-function subjectOf(description: string): string {
+const escapeRe = (v: string): string => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The subject after the action label: "…: Installed program (Amcache): Name v1 (Pub) - @ host".
+ * The importer's host suffix is " - @ host", or " @ host" when the text already holds " - "
+ * (velociraptorTitle.withHostSuffix), so it is stripped by the row's own host, never by guessing.
+ */
+function subjectOf(description: string, host: string): string {
   const parts = description.split(/\): /);
   const tail = parts.length > 1 ? parts.slice(1).join("): ") : description;
-  return tail.replace(/ - @ [^@]+$/, "").trim();
+  const suffix = host ? new RegExp(`\\s*(?:- )?@ ${escapeRe(host)}\\s*$`, "i") : /$^/;
+  return tail.replace(suffix, "").trim();
 }
 
 function installedFields(e: ForensicEvent): { program: string; publisher?: string } {
-  const subject = subjectOf(e.description);
+  const subject = subjectOf(e.description, (e.asset ?? "").trim());
   const pub = /\(([^()]+)\)\s*$/.exec(subject);
   const name = subject
     .replace(/\s*\([^()]+\)\s*$/, "")
