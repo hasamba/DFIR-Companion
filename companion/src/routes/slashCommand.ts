@@ -316,13 +316,14 @@ export function startTelegramPolling(ctx: RouteContext): TelegramPoller | undefi
       const result =
         inbound.kind === "question" ? await askFromMirror(input, inbound) : await dispatchSlashCommand(input);
       if (!result) return; // a replay of an accepted question
-      await sendTelegramMessage({
-        botToken,
-        apiBase,
-        chatId,
-        text: renderText(result.reply),
-        log: ctx.serverLogger,
-      });
+      if (!result.quiet)
+        await sendTelegramMessage({
+          botToken,
+          apiBase,
+          chatId,
+          text: renderText(result.reply),
+          log: ctx.serverLogger,
+        });
       if (result.background) void result.background();
     },
   });
@@ -388,7 +389,7 @@ export function startSlackSocketMode(ctx: RouteContext): SlackSocketMode | undef
  *  spent on the ACK and not on an AI call. */
 async function answer(res: Response, input: DispatchInput, ready?: DispatchResult): Promise<void> {
   const result = ready ?? (await dispatchSlashCommand(input));
-  res.status(200).json(chatResponse(input, result.reply, result.ephemeral));
+  res.status(200).json(result.quiet ? {} : chatResponse(input, result.reply, result.ephemeral));
   if (result.background) void result.background();
 }
 
@@ -411,6 +412,8 @@ export interface DispatchResult {
   reply: SlashCommandResponse;
   ephemeral: boolean;
   background?: () => Promise<void>;
+  /** The reply was already sent to the chat (#2709): answer with an empty ack, never send it again. */
+  quiet?: boolean;
 }
 
 /**
@@ -468,7 +471,10 @@ export async function dispatchSlashCommand(input: DispatchInput): Promise<Dispat
     await auditDenial(input, cmd, `not permitted to run /dfir ${cmd.name}`);
     return reply(`User ${userId || "(unknown)"} is not permitted to run /dfir ${cmd.name}.`);
   }
-  if (cmd.name === "mirror") return reply(await runMirrorCommand(input, cmd, binding)); // #2647
+  if (cmd.name === "mirror") {
+    const out = await runMirrorCommand(input, cmd, binding); // #2647
+    return typeof out === "string" ? reply(out) : { ...reply(out.text), quiet: true }; // #2709
+  }
 
   if (cmd.name === "bind") {
     if (!cmd.caseId || !isValidCaseId(cmd.caseId)) return reply("Usage: /dfir bind <caseId>");

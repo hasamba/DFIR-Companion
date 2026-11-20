@@ -1,4 +1,4 @@
-import type { WatsonChat, WatsonTurn } from "../../analysis/ai/watson/types.js";
+import type { WatsonChat } from "../../analysis/ai/watson/types.js";
 import type { Logger } from "../../logging/logger.js";
 import {
   buildMirrorMessages,
@@ -16,6 +16,7 @@ import {
   resolvePending,
   turnsAfterCursor,
   type ExpectedEcho,
+  type MirrorHistory,
 } from "./watsonMirrorTurns.js";
 
 // #2647: the Telegram mirror service. A chat bound to a case that ran `/dfir mirror on` gets every
@@ -35,6 +36,9 @@ export const MIRROR_BATCH_WINDOW_MS = 60_000;
 export const MIRROR_HOLD_RECHECK_MS = 60_000;
 
 export const HELD_TEXT = "Held: open the dashboard to review.";
+/** #2710: sent once when turns between the cursor and the history window were never mirrored. */
+export const GAP_TEXT =
+  "Older Watson turns were not mirrored (the Companion was offline too long). See the dashboard for the full chat.";
 
 /** Why a chat may not receive now. "pause" keeps its queue (an archived case); the rest switch it off. */
 export type MirrorLiveness =
@@ -42,16 +46,18 @@ export type MirrorLiveness =
   | { ok: false; action: "pause"; reason: string }
   | { ok: false; action: "disable"; reason: string };
 
-export type MirrorMasking = { ok: true; mask: (text: string) => string } | { ok: false; reason: string };
+/** The text masked with the case's anonymization list, or why it may not be sent (the chat is held). */
+export type MirrorMasking = { ok: true; text: string } | { ok: false; reason: string };
 
 export interface WatsonMirrorDeps {
   store: WatsonMirrorStore;
   loadChat: (caseId: string) => Promise<WatsonChat>;
-  loadHistory: (caseId: string) => Promise<readonly WatsonTurn[]>;
+  /** The newest turns of the append-only history (bounded), and whether older ones remain. */
+  loadHistory: (caseId: string) => Promise<MirrorHistory>;
   /** Bound, mirroring, case present and unlocked, the enabling user still allowed. */
   liveness: (entry: WatsonMirrorEntry) => Promise<MirrorLiveness>;
-  /** Re-mask with the case's anonymization list; not ok when masking fails or names await approval. */
-  masking: (caseId: string) => Promise<MirrorMasking>;
+  /** Re-mask `raw` with the case's anonymization list; not ok when masking fails or names await approval. */
+  masking: (caseId: string, raw: string) => Promise<MirrorMasking>;
   send: (chatId: string, text: string) => Promise<MirrorSendOutcome>;
   audit: (caseId: string, action: string, detail: string, outcome?: "error") => void;
   roots: readonly WorkstationRoot[];
@@ -141,10 +147,10 @@ export class WatsonMirror {
     const entries = await this.deps.store.listCase(caseId);
     if (entries.length === 0) return;
     const live = (await this.deps.loadChat(caseId)).turns;
-    let history: Promise<readonly WatsonTurn[]> | undefined;
+    let history: Promise<MirrorHistory> | undefined;
     const readHistory = () => (history ??= this.deps.loadHistory(caseId));
     for (const entry of entries) {
-      const fresh = await turnsAfterCursor(entry, live, readHistory);
+      const { turns: fresh, gap } = await turnsAfterCursor(entry, live, readHistory);
       const known = new Set([...entry.pending, ...entry.sent]);
       const unseen = fresh.filter((t) => !known.has(t.id));
       const last = fresh.at(-1);
@@ -159,7 +165,8 @@ export class WatsonMirror {
         );
         if (skip.length) await this.deps.store.markSent(entry.chatId, skip, []);
       }
-      if (entry.pending.length || unseen.length) this.schedule(entry.chatId, 0);
+      if (gap) await this.recordGap(entry);
+      if (gap || entry.pending.length || unseen.length) this.schedule(entry.chatId, 0);
     }
   }
 
@@ -196,7 +203,7 @@ export class WatsonMirror {
   private async flushOnce(chatId: string): Promise<void> {
     if (this.stopped) return;
     const entry = await this.deps.store.get(chatId);
-    if (!entry || entry.pending.length === 0) return;
+    if (!entry || (entry.pending.length === 0 && !entry.gapPending)) return;
     if (!(await this.stillLive(entry))) return;
     const now = this.now();
     const retryAt = entry.retry ? Date.parse(entry.retry.nextAt) : NaN;
@@ -208,24 +215,28 @@ export class WatsonMirror {
     // A pending turn that rotated out of the live chat (or the turn before it, for urgency) is read
     // from the append-only history.
     if (found.missing.length || !chat.turns.some((t) => t.id === entry.pending[0])) {
-      found = resolvePending(entry.pending, allTurns(await this.deps.loadHistory(caseId), chat.turns));
+      found = resolvePending(
+        entry.pending,
+        allTurns((await this.deps.loadHistory(caseId)).turns, chat.turns),
+      );
     }
     const { turns, urgent, missing } = found;
     if (missing.length) await this.deps.store.markSent(chatId, missing, []); // gone from chat and history
-    if (turns.length === 0) return;
+    if (turns.length === 0 && !entry.gapPending) return;
     const lastBatch = entry.lastBatchAt ? Date.parse(entry.lastBatchAt) : NaN;
     if (!urgent && Number.isFinite(lastBatch) && lastBatch + this.windowMs > now) {
       return this.schedule(chatId, lastBatch + this.windowMs - now);
     }
-    const masking = await this.deps.masking(caseId);
+    const raw = turns.map((t) => turnPlainText(t, chat.proposals)).join("\n\n");
+    const masking = await this.deps.masking(caseId, replaceWorkstationRoots(raw, this.deps.roots));
     if (!masking.ok) return this.hold(entry, masking.reason);
     if (entry.held) {
       await this.deps.store.patch(chatId, { held: false });
       this.deps.audit(caseId, "watson-mirror-hold-cleared", `Telegram chat ${chatId}: mirroring resumed`);
     }
-    const raw = turns.map((t) => turnPlainText(t, chat.proposals)).join("\n\n");
-    const text = masking.mask(replaceWorkstationRoots(raw, this.deps.roots));
-    const messages = buildMirrorMessages(text, mirrorFooter(caseId, this.deps.publicUrl()));
+    if (entry.gapPending && !(await this.sendGapNotice(entry))) return;
+    if (turns.length === 0) return;
+    const messages = buildMirrorMessages(masking.text, mirrorFooter(caseId, this.deps.publicUrl()));
     const ids = await this.sendAll(entry, messages);
     if (!ids) return;
     await this.deps.store.markSent(
@@ -270,6 +281,38 @@ export class WatsonMirror {
       if (sent.kind === "sent") await this.deps.store.addMessageIds(entry.chatId, [sent.messageId]);
     }
     this.schedule(entry.chatId, MIRROR_HOLD_RECHECK_MS);
+  }
+
+  /**
+   * #2710: turns older than the history window were never mirrored. The notice is owed (persisted)
+   * BEFORE the send is tried: the enqueue before this moved the cursor past the gap, so no later scan
+   * would see it again. Audited once, here.
+   */
+  private async recordGap(entry: WatsonMirrorEntry): Promise<void> {
+    await this.deps.store.patch(entry.chatId, { gapPending: true });
+    this.deps.audit(
+      entry.caseId,
+      "watson-mirror-gap",
+      `Telegram chat ${entry.chatId}: older Watson turns were not mirrored (beyond the history window)`,
+    );
+  }
+
+  /**
+   * Send the owed gap notice ahead of the batch, once the chat is not held. Cleared only after Telegram
+   * accepted it; a failure retries on the normal backoff (the batch waits behind it, keeping order).
+   * Switching the mirror off drops the entry and the notice with it. true = sent, go on.
+   */
+  private async sendGapNotice(entry: WatsonMirrorEntry): Promise<boolean> {
+    const footer = mirrorFooter(entry.caseId, this.deps.publicUrl());
+    const out = await this.sendOne(entry, buildMirrorMessages(GAP_TEXT, footer)[0]);
+    if (out.kind === "revoked") return false;
+    if (out.kind !== "sent") {
+      await this.failed(entry, out);
+      return false;
+    }
+    await this.deps.store.addMessageIds(entry.chatId, [out.messageId]);
+    await this.deps.store.patch(entry.chatId, { gapPending: false, retry: undefined });
+    return true;
   }
 
   /**

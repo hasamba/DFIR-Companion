@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI Agent Forensics** — check chosen endpoints for tampered AI coding agents (poisoned instruction files, rogue MCP servers, hooks) with the ai-dfir-toolkit YARA/Sigma rules through Velociraptor; provisional grades, matched text kept away from the AI (closes #2690)
 - **Watson Telegram mirror** — opt-in per chat with `/dfir mirror on`; Watson's case chat is mirrored to a bound Telegram chat and allowlisted users can ask Watson from Telegram (closes #2647)
 
+### Fixed
+
+- **Telegram mirror masking tokens** — tokens the mirror creates are saved to the case's masking map, so a value gets the same token everywhere (closes #2708)
+- **Replies to 'Mirroring started'** — a group reply to that message now asks Watson (closes #2709)
+- **Telegram mirror outage gap** — a chat is told once when older turns could not be mirrored (closes #2710)
+
 ## [0.47.0] - 2026-11-19
 
 ### Added

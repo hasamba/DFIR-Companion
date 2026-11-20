@@ -10,25 +10,37 @@ export function allTurns(history: readonly WatsonTurn[], live: readonly WatsonTu
   return [...history, ...live.filter((t) => !known.has(t.id))];
 }
 
+/** The newest part of the append-only history, and whether older turns remain beyond it. */
+export interface MirrorHistory {
+  turns: readonly WatsonTurn[];
+  more: boolean;
+}
+
 /**
  * The turns after the chat's cursor. The live chat keeps only the newest 400 turns: when the cursor
  * has rotated out of it, `history()` (the append-only file) is read instead, so turns written while
  * the server was down are not lost. With no cursor, or one found nowhere, every turn since the chat
  * turned mirroring on counts; the caller drops the ones already sent or pending.
+ *
+ * `gap` (#2710): the cursor is older than the history window, older turns remain, and the window
+ * starts after the chat turned mirroring on — so turns between the cursor and the window are lost.
  */
 export async function turnsAfterCursor(
   entry: Pick<WatsonMirrorChat, "cursor" | "enabledAt">,
   live: readonly WatsonTurn[],
-  history: () => Promise<readonly WatsonTurn[]>,
-): Promise<WatsonTurn[]> {
+  history: () => Promise<MirrorHistory>,
+): Promise<{ turns: WatsonTurn[]; gap: boolean }> {
   const sinceEnabled = (list: readonly WatsonTurn[]): WatsonTurn[] =>
     list.filter((t) => t.at >= entry.enabledAt);
-  if (!entry.cursor) return sinceEnabled(live);
+  if (!entry.cursor) return { turns: sinceEnabled(live), gap: false };
   const i = live.findIndex((t) => t.id === entry.cursor);
-  if (i >= 0) return live.slice(i + 1);
-  const all = allTurns(await history(), live);
+  if (i >= 0) return { turns: live.slice(i + 1), gap: false };
+  const window = await history();
+  const all = allTurns(window.turns, live);
   const j = all.findIndex((t) => t.id === entry.cursor);
-  return j >= 0 ? all.slice(j + 1) : sinceEnabled(all);
+  if (j >= 0) return { turns: all.slice(j + 1), gap: false };
+  const first = all[0];
+  return { turns: sinceEnabled(all), gap: window.more && !!first && first.at >= entry.enabledAt };
 }
 
 /**
