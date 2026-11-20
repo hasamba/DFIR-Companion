@@ -29,6 +29,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AI off blocks every AI button** — with a case's AI switched off, Synthesize, Explain, Deep pass, Second opinion and every other model-calling action refuse with "AI is off" instead of calling the model (closes #2757)
+- **Open cases cannot be archived** — archiving asks the analyst to close the case first (closes #2758)
+- **Delete with encrypted archive keeps a server copy** — the `.dfircase` file is saved in the cases folder before the case is removed, so a dropped download cannot lose it (closes #2759)
+- **Damaged AI switch file** — a corrupt per-case AI setting holds AI off and names the case and file; a damaged import record no longer takes down the cockpit (closes #2760)
+- **Hunt stats** — sum and average count only numbers; a text field shows no sum instead of 0 (closes #2761)
+- **Localized Velociraptor detections stay separate** — non-Latin messages no longer merge into one event (closes #2762)
+- **Remediation report code spans** — a backtick in an artifact value no longer breaks the Markdown (closes #2763)
+- **Held-file save after a crash** — a leftover temp file no longer blocks saving a held hunt result (closes #2764)
+- **Bad request bodies** — a non-JSON body on compliance and confidence controls answers 400, not 500 (closes #2765)
+- **Deep pass errors** — a provider error is no longer mistaken for the batch-budget refusal (closes #2766)
+- **Double Import anyway / Skip** — two clicks on one held file leave no empty placeholder file (closes #2767)
+- **Damaged case file** — a corrupt case.json is named in the log and the error, not shown as a locked case (closes #2768)
+- **Long case names** — archive and export file names are shortened so a long name no longer fails (closes #2769)
+- **Archive temp leftovers** — stale archive temp files in the cases folder are removed at startup (closes #2770)
+- **Two restores at once** — the second restore of one case answers "not archived" instead of a raw error (closes #2771)
+- **New case with a failed setup step** — the case is created and the dialog names the template, incident type, server set or drop folder that was not applied (closes #2772)
+- **Folder picker** — an invalid folder path answers 400, not 500 (closes #2773)
+- **Watson reactions survive a restart** — a reaction pending at shutdown runs after a fresh quiet time (closes #2774)
+- **One push at a time** — a second push of the same case to MISP, IRIS, Jira, ServiceNow, Notion, ClickUp or Timesketch while one runs is refused instead of duplicating (closes #2775)
+- **MISP push stops on a failed lookup** — a failed event search or attribute listing no longer creates duplicates (closes #2776)
+- **`.env.example` duplicates** — each setting appears once (closes #2777)
+- **Changelog wording** — Watson's super-timeline search limit is 2 per question (closes #2778)
+- **Stopped AI calls** — stopping Watson logs a cancellation, not a timeout (closes #2779)
+- **Undo then re-import** — super-timeline rows that return to the forensic timeline show Promoted again (closes #2619)
+- **Hardening** — tighter demo-mode route matching, redacted packages without derived name fragments, query strings kept out of the request log, block-list header lines kept as comments, sessions ended on an admin password reset, the jobs list respects case passwords, channel secrets kept out of notification errors, case data marked untrusted in the synthesis prompt, and HTML escaped in Markdown report headings and cells
 - **Hunt zip progress in Jobs** — a dropped hunt zip counts its result files (done of total), names the one importing and shows an ETA, instead of "1 file" at 0/1 (closes #2742)
 - **AI Agent Forensics endpoint picker** — case writers see their case's endpoints; runs with no case open are admin-only (closes #2725)
 - **AI Agent Forensics evidence detail** — file hash and preserved-copy hash per matched file (shows whether the file changed before preservation), per-rule Sigma coverage per endpoint, activity-log entries (closes #2722)
@@ -68,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Risky Watson queries need your approval** — a red warning and a second confirm; Auto never launches them
 - **Best Practice artifacts are safe for Watson** — the built-in Best Practice bundle (not Big Hogs) is on Watson's safe list
 - **Watson CrowdStrike search cards** — Watson proposes CQL searches on Next-Gen SIEM; Run or Auto imports the rows (closes #2666)
-- **Watson searches the super-timeline** — one targeted search per round; cited rows are promoted with the Watson badge and Undo
+- **Watson searches the super-timeline** — up to 2 targeted searches per question; cited rows are promoted with the Watson badge and Undo
 - **Watson looks up forensic-timeline events** — up to 200 by finding, event, time, host or text, never the super-timeline
 - **Watson tool calling** — up to 10 lookups per question, each masked, cost-checked and listed on the card
 - **Watson reads pasted files in known formats** — graded like an import; tagger promotions wait for approval
