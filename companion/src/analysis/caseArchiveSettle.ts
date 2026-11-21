@@ -22,6 +22,8 @@ export const ARCHIVE_SETTLE_ATTEMPTS = 3;
 /** A file the walk listed was gone when it was read. */
 export class CaseFileVanishedError extends Error {
   readonly code = "DFIR_CASE_FILE_VANISHED";
+  /** A retry-later condition, not a server fault (#2795): routes answer it 503 with this message. */
+  readonly httpStatus = 503;
   constructor(readonly rel: string) {
     super(
       `"${rel}" disappeared while the case was being packaged — something is still writing to ` +
