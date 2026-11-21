@@ -281,6 +281,18 @@ describe("CaseStore archive/restore folder moves", () => {
     expect(await store.caseExists("af-5")).toBe(true);
   });
 
+  it("archiveCaseFolder with closedOnly refuses a case reopened before the move, and leaves it in place (#2786)", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "af-6", name: "n", investigator: "i", aiProvider: null });
+    await store.setCaseStatus("af-6", "closed");
+    await store.setCaseStatus("af-6", "open"); // reopened while the archive was being built
+    await expect(store.archiveCaseFolder("af-6", "archived", true)).rejects.toMatchObject({
+      httpStatus: 409,
+    });
+    expect((await stat(join(root, "af-6", "case.json"))).isFile()).toBe(true);
+    expect((await store.getCaseMeta("af-6"))?.status).toBe("open");
+  });
+
   it("archiveCaseFolder rejects when the case doesn't exist in the active root", async () => {
     const store = new CaseStore(root);
     await expect(store.archiveCaseFolder("never-created")).rejects.toThrow();

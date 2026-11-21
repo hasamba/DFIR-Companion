@@ -83,7 +83,9 @@ Toolbar **☰ Case lifecycle** menu lets you:
 - **Close** a case (marks it inactive)
 - **Archive** a case — packages it as a ZIP with a SHA-256 manifest. Close the case first: an open
   case cannot be archived, and the archive is refused with "case … is still open — close it first,
-  then archive it". When it finishes, the status line shows where the ZIP file was saved (in the cases
+  then archive it". If someone reopens the case while the ZIP is being built, the ZIP is still
+  saved, but the case stays open in the case list and the archive reports "was reopened while its
+  archive was being built". When it finishes, the status line shows where the ZIP file was saved (in the cases
   folder). See [ZIP Case Archive](#zip-case-archive-restore) to bring it back.
 - **Restore** an archived case — puts it back in the case list. A restored case always comes back
   **Closed**. This includes a case that an older version archived while it was open. Use

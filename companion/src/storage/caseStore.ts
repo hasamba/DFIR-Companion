@@ -40,6 +40,7 @@ import {
   CaseFolderLeftoverError,
   CaseLifecycleError,
   CaseNotFoundError,
+  CaseReopenedError,
 } from "./caseErrors.js";
 
 // How long a delete, archive or reseed waits for writes already admitted to the case folder (#1855).
@@ -199,16 +200,16 @@ export class CaseStore {
   }
 
   // Non-destructive "remove from active list": moves the whole case folder under _archived/.
-  // Nothing is deleted — caseDir()'s fallback means every other method keeps working unchanged.
-  // Rejects (via rename's ENOENT) if caseId doesn't currently exist in the active root.
-  // Serialized against case.json writes and the delete (metaLock); evidence writers are not locked,
-  // and rely on the closed/archived write guards instead.
-  // With `status`, the move and the status write are one step under the metadata lock, and a failed
-  // status write moves the folder back — so no other write can see the case moved but not re-labelled.
-  async archiveCaseFolder(caseId: string, status?: CaseMeta["status"]): Promise<CaseMeta | null> {
+  // Nothing is deleted (caseDir() falls back). Rejects (rename's ENOENT) if not in the active root.
+  // Serialized against case.json writes and the delete (metaLock); evidence writers rely on the
+  // closed/archived write guards. With `status`, move + status write are one locked step, and a
+  // failed status write moves the folder back. `closedOnly` re-checks the status under that lock (#2786).
+  async archiveCaseFolder(caseId: string, status?: CaseMeta["status"], closedOnly = false) {
     const active = join(this.root, caseId);
     const archived = join(this.root, ARCHIVED_DIRNAME, caseId);
-    return this.metaLock.runExclusive(caseId, async () => {
+    return this.metaLock.runExclusive(caseId, async (): Promise<CaseMeta | null> => {
+      const meta = closedOnly ? await this.getCaseMeta(caseId) : undefined;
+      if (meta && meta.status !== "closed") throw new CaseReopenedError(caseId);
       await this.whileClosed(
         caseId,
         "moved",

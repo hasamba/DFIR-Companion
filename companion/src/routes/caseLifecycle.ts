@@ -3,7 +3,12 @@ import type { Express, Request, Response } from "express";
 import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { readFile } from "node:fs/promises";
 import { ZodError } from "zod";
-import { isValidCaseId, CaseAlreadyExistsError, CaseLifecycleError } from "../storage/caseStore.js";
+import {
+  isValidCaseId,
+  CaseAlreadyExistsError,
+  CaseLifecycleError,
+  CaseReopenedError,
+} from "../storage/caseStore.js";
 import { saveCreationMainSource } from "./caseMainSource.js";
 import { validateCaseCreateBody } from "./caseCreateBody.js";
 import { applyCreationSeeds } from "./caseCreationSeeds.js"; // #2772
@@ -229,16 +234,29 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     id: string,
     logPrefix: string,
     req: Request,
-  ): Promise<{ removed: boolean; error?: string; credentials?: true; released?: ReleaseReport }> {
+  ): Promise<{
+    removed: boolean;
+    error?: string;
+    credentials?: true;
+    reopened?: true;
+    released?: ReleaseReport;
+  }> {
+    // #2786: reopened while the archive was built — keep the case, and its credentials, in the list.
+    const reopened = (): { removed: false; error: string; reopened: true } => {
+      logLine(`${logPrefix} case=${id} was reopened during the build — left in the active list`);
+      return { removed: false, error: new CaseReopenedError(id).message, reopened: true };
+    };
+    if ((await store.getCaseMeta(id))?.status !== "closed") return reopened();
     const release = await releaseBeforeCaseEnd(ctx, req, id, "case archived");
     if (!release.ok) return { removed: false, error: release.error, credentials: true };
     try {
-      await store.archiveCaseFolder(id, "archived"); // move + status in one locked step (#1809)
+      await store.archiveCaseFolder(id, "archived", true); // move + status, re-checked closed, one locked step
       logStopped(id, await stopConclusionJobs(ctx, id));
       logLine(`${logPrefix} case=${id} removed from active list (moved to _archived/)`);
       options.onCaseLifecycle?.(id); // #2443
       return { removed: true, released: release.report };
     } catch (err) {
+      if (err instanceof CaseReopenedError) return { ...reopened(), released: release.report };
       errLine(`${logPrefix} case=${id} failed to remove from active list: ${(err as Error).message}`);
       return { removed: false, error: (err as Error).message, released: release.report };
     }
@@ -282,10 +300,12 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       const outcome = removeFromList
         ? await removeCaseFromActiveListBestEffort(id, "[archive]", req)
         : { removed: false };
-      return res.status(200).json({
+      const reopened = "reopened" in outcome; // #2786: refused — the case was reopened mid-build
+      return res.status(reopened ? 409 : 200).json({
         ...result,
         removedFromList: outcome.removed,
         ...(outcome.error ? { removeFromListError: outcome.error } : {}),
+        ...(reopened ? { error: outcome.error } : {}),
         ...outcome.released,
       });
     } catch (err) {
@@ -540,6 +560,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       res.setHeader("Cache-Control", "private, no-cache");
       res.setHeader("X-Case-Removed-From-List", String(outcome.removed));
       if (outcome.credentials) res.setHeader("X-Case-Remove-Error", "cloud-credentials"); // #2347
+      if ("reopened" in outcome) res.setHeader("X-Case-Remove-Error", "case-reopened"); // #2786
       return res.send(archive);
     } catch (err) {
       if ((err as Error).message.includes("does not exist")) {

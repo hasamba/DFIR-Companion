@@ -72,6 +72,20 @@ export class CaseNotFoundError extends CaseLifecycleError {
   }
 }
 
+/**
+ * An archive's move was refused because the case is no longer closed: it was reopened while the
+ * archive was being built (#2786). The archive file stays written; the case stays in the list, open.
+ */
+export class CaseReopenedError extends CaseLifecycleError {
+  constructor(readonly caseId: string) {
+    super(
+      `case ${caseId} was reopened while its archive was being built — the archive file was written, but the case stays open in the active list`,
+      409,
+    );
+    this.name = "CaseReopenedError";
+  }
+}
+
 /** The case is archived (in _archived/); only restore may move it back to open or closed (#1809). */
 export class CaseArchivedError extends CaseLifecycleError {
   constructor(readonly caseId: string) {
