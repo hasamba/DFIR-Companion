@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { huntSettle, type HuntSettleDeps } from "../../src/analysis/huntSettle.js";
 import { HuntInventoryStore } from "../../src/analysis/huntInventoryStore.js";
+import type { HuntInventory } from "../../src/analysis/huntInventory.js";
 import { HUNT_ENTRY_CAP, huntOverflowId } from "../../src/analysis/huntEntries.js";
 import { getBuiltInIncidentType } from "../../src/analysis/incidentTypesData.js";
 import { registerHuntSettle } from "../../src/analysis/huntSettleHook.js";
@@ -250,6 +251,50 @@ describe("a partial artifact blocks rarity only for the kinds of item it reports
     });
     await huntSettle(d, "c1", []);
     expect(rare(stateStore.events())).toEqual([]);
+  });
+});
+
+describe("a persisted known-folder GUID item joins its normalised item (#2750)", () => {
+  const GUID_DIR = "{6d809377-6af0-444b-8957-a3773f02200e}\\foo"; // FOLDERID_ProgramFilesX64
+  const foo = (i: number) => prefetchRow(`f${i}`, i, "foo.exe", "C:\\Program Files\\Foo");
+  const fooItems = (inv: HuntInventory) =>
+    Object.entries(inv.items).filter(([, v]) => v.program === "foo.exe");
+
+  it("re-keys the stored GUID item on load and merges it, so the combined host count grades", async () => {
+    const { d, stateStore } = await deps([reachedJob(300)]);
+    const sweepRows = sweep(300, 0);
+    await huntSettle(d, "c1", [...sweepRows, foo(0)]);
+    // Rewrite the stored item into the form an inventory recorded before #2750 kept.
+    await d.inventoryStore.update("c1", async (rec) => {
+      const items = Object.fromEntries(
+        Object.entries(rec.inventory.items).map(([k, v]) =>
+          v.program === "foo.exe"
+            ? [
+                `program|foo.exe|${GUID_DIR}`,
+                { ...v, key: `program|foo.exe|${GUID_DIR}`, pathPattern: GUID_DIR },
+              ]
+            : [k, v],
+        ),
+      );
+      return { ...rec, inventory: { ...rec.inventory, items }, gradedSignature: "" };
+    });
+    const later = Array.from({ length: 10 }, (_, i) => foo(i + 1));
+    await huntSettle(d, "c1", later);
+    const rowsDep = {
+      async *forensicTimelineBatches() {
+        yield [...sweepRows, ...later];
+      },
+    };
+    await regradeHuntCase({ ...d, rows: rowsDep }, "c1");
+
+    const inv = (await d.inventoryStore.load("c1")).inventory;
+    const items = fooItems(inv);
+    expect(items.map(([k]) => k)).toEqual(["program|foo.exe|\\program files\\foo"]);
+    expect(Object.keys(items[0][1].hosts)).toHaveLength(11);
+    const fooEntries = entries(stateStore.events()).filter((e) => /foo\.exe/.test(e.description));
+    expect(fooEntries, "11 of 300 hosts is over the 10-host cap: not rare, and no stale GUID entry").toEqual(
+      [],
+    );
   });
 });
 

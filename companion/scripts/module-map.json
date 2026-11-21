@@ -612,6 +612,7 @@
     "huntGrade.ts": "analysis/hunt",
     "huntHostKey.ts": "analysis/hunt",
     "huntInventory.ts": "analysis/hunt",
+    "huntInventoryCanon.ts": "analysis/hunt",
     "huntInventoryStore.ts": "analysis/hunt",
     "huntItemCoverage.ts": "analysis/hunt",
     "huntRarity.ts": "analysis/hunt",

@@ -14,7 +14,7 @@ import { EMPTY_IDENTITY_COVERAGE, observeIdentity, type IdentityCoverage } from 
  */
 export const INVENTORY_MAX_ITEMS = 20_000;
 export const INVENTORY_MAX_HOSTS = 5_000;
-const MAX_VALUES = 20;
+export const MAX_VALUES = 20;
 /** Task names per autorun item (#2748): per-host or per-user named tasks can exceed MAX_VALUES. */
 export const MAX_ENTRIES = 200;
 
