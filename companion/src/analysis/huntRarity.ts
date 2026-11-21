@@ -1,5 +1,5 @@
 import type { HuntCoverage } from "./huntFraming.js";
-import type { InventoryItem } from "./huntInventory.js";
+import type { InventoryFamily, InventoryItem } from "./huntInventory.js";
 
 /**
  * Host rarity (#2670, decision D2). An item is RARE when, among the hosts that cleanly answered:
@@ -9,10 +9,13 @@ import type { InventoryItem } from "./huntInventory.js";
  * Integer maths only (n·100 ≤ pct·M), so a boundary never depends on float rounding.
  *
  * Absence is never assumed from incomplete coverage: with unknown coverage nothing is graded rare.
- * A partial artifact collection (cut short, unread source list, failed fetch) blocks rarity only for
- * the items that artifact reported (#2732): their host count is a lower bound. An item whose artifacts
+ * A partial artifact collection (cut short, unread source list, failed fetch) blocks rarity for every
+ * item of a kind that artifact could report (#2732), not only the items it did report: the rows it
+ * lost may belong to an item another, complete artifact reported (Prefetch and Amcache share one
+ * program item), so that item's host count is a lower bound too. An artifact whose name is not one
+ * of the known hunt artifacts could report any kind, so it blocks every item. An item whose artifacts
  * are not all known (stored before they were recorded, a row naming none, the list capped) is not
- * graded while any artifact is partial. Items from complete artifacts keep their grading.
+ * graded while any artifact is partial. Items of kinds no partial artifact reports keep their grading.
  */
 export interface RaritySettings {
   minHosts: number;
@@ -46,16 +49,38 @@ export function rarityBlocked(c: HuntCoverage, s: RaritySettings): string | null
 /** `Windows.X/Source` → `windows.x`: a job names the artifact, a row may name its source too. */
 const artifactBase = (name: string): string => name.split("/")[0].trim().toLowerCase();
 
+const ALL_FAMILIES: readonly InventoryFamily[] = ["program", "installed", "autorun", "download"];
+
 /**
- * Did a partial artifact report this item — or, while any artifact is partial, one the hunts did not
- * name (a row's own `_Source`/`Source` column can differ from the job's artifact) or none at all?
+ * The item kinds an artifact's rows can become, by its name (the importer's artifact fast paths and
+ * huntArtifactFields' evidence labels). Amcache is one artifact with two sources: present files
+ * (program) and installed programs. An unknown name could be anything: every kind.
+ */
+const ARTIFACT_FAMILIES: readonly { re: RegExp; families: readonly InventoryFamily[] }[] = [
+  { re: /amcache/, families: ["program", "installed"] },
+  { re: /browserdownload|evidence.*download|zone\.?identifier/, families: ["download"] },
+  { re: /startup|autorun|taskscheduler|services|persistencesniper/, families: ["autorun"] },
+  { re: /prefetch|userassist|appcompatcache|shimcache/, families: ["program"] },
+];
+
+/** The kinds a (base-named) artifact could report; every kind when the name is not recognised. */
+export function artifactFamilies(name: string): readonly InventoryFamily[] {
+  const base = artifactBase(name);
+  return ARTIFACT_FAMILIES.find((a) => a.re.test(base))?.families ?? ALL_FAMILIES;
+}
+
+/**
+ * Could a partial artifact have reported this item (it reports items of this kind, #2732) — or did
+ * one the hunts did not name report it (a row's own `_Source`/`Source` column can differ from the
+ * job's artifact), or none at all, while any artifact is partial?
  * Fails closed: only an item whose every artifact is a collected, complete one is graded.
  */
 export function itemArtifactPartial(
-  item: Pick<InventoryItem, "artifacts" | "artifactsIncomplete">,
+  item: Pick<InventoryItem, "family" | "artifacts" | "artifactsIncomplete">,
   coverage: { partialArtifactNames: readonly string[]; collectedArtifactNames: readonly string[] },
 ): boolean {
   if (!coverage.partialArtifactNames.length) return false;
+  if (coverage.partialArtifactNames.some((a) => artifactFamilies(a).includes(item.family))) return true;
   if (!item.artifacts?.length || item.artifactsIncomplete) return true;
   const partial = new Set(coverage.partialArtifactNames.map(artifactBase));
   const collected = new Set(coverage.collectedArtifactNames.map(artifactBase));

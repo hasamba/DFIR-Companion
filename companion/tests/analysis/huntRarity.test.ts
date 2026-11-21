@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  artifactFamilies,
   DEFAULT_RARITY,
   isRare,
   itemArtifactPartial,
@@ -50,28 +51,82 @@ describe("host rarity (#2670, D2)", () => {
 
   it("blocks an item reported by a partial artifact, matched on the artifact's base name (#2732)", () => {
     const c = {
-      partialArtifactNames: ["Windows.Forensics.Amcache"],
-      collectedArtifactNames: ["Windows.Forensics.Amcache", "Windows.Forensics.Prefetch"],
+      partialArtifactNames: ["Windows.System.TaskScheduler"],
+      collectedArtifactNames: [
+        "Windows.System.TaskScheduler",
+        "Windows.Sys.StartupItems",
+        "Windows.Forensics.Prefetch",
+      ],
     };
-    expect(itemArtifactPartial({ artifacts: ["Windows.Forensics.Prefetch"] }, c)).toBe(false);
+    expect(itemArtifactPartial({ family: "program", artifacts: ["Windows.Forensics.Prefetch"] }, c)).toBe(
+      false,
+    );
     expect(
-      itemArtifactPartial({ artifacts: ["windows.forensics.amcache/InventoryApplicationFile"] }, c),
+      itemArtifactPartial({ family: "autorun", artifacts: ["windows.system.taskscheduler/Analysis"] }, c),
     ).toBe(true);
     expect(
-      itemArtifactPartial({ artifacts: ["Windows.Forensics.Prefetch"], artifactsIncomplete: true }, c),
+      itemArtifactPartial(
+        { family: "program", artifacts: ["Windows.Forensics.Prefetch"], artifactsIncomplete: true },
+        c,
+      ),
     ).toBe(true);
-    expect(itemArtifactPartial({}, c), "artifacts unknown").toBe(true);
-    expect(itemArtifactPartial({ artifacts: [] }, c), "no artifact recorded").toBe(true);
+    expect(itemArtifactPartial({ family: "program" }, c), "artifacts unknown").toBe(true);
+    expect(itemArtifactPartial({ family: "program", artifacts: [] }, c), "no artifact recorded").toBe(true);
+  });
+
+  it("blocks an item of a kind the partial artifact reports, even one only a complete artifact reported (#2732)", () => {
+    const amcacheCut = {
+      partialArtifactNames: ["Windows.Forensics.Amcache"],
+      collectedArtifactNames: [
+        "Windows.Forensics.Amcache",
+        "Windows.Forensics.Prefetch",
+        "Windows.Sys.StartupItems",
+      ],
+    };
+    // Prefetch and Amcache share one program item: Amcache's lost rows may hold more hosts for it.
+    expect(
+      itemArtifactPartial({ family: "program", artifacts: ["Windows.Forensics.Prefetch"] }, amcacheCut),
+    ).toBe(true);
+    expect(
+      itemArtifactPartial({ family: "installed", artifacts: ["Windows.Forensics.Prefetch"] }, amcacheCut),
+    ).toBe(true);
+    expect(
+      itemArtifactPartial({ family: "autorun", artifacts: ["Windows.Sys.StartupItems"] }, amcacheCut),
+      "an unrelated kind keeps its grading",
+    ).toBe(false);
+    const unknownCut = {
+      partialArtifactNames: ["Custom.Org.Collector"],
+      collectedArtifactNames: ["Custom.Org.Collector", "Windows.Sys.StartupItems"],
+    };
+    expect(
+      itemArtifactPartial({ family: "autorun", artifacts: ["Windows.Sys.StartupItems"] }, unknownCut),
+      "an unrecognised partial artifact could report any kind",
+    ).toBe(true);
+  });
+
+  it("maps hunt artifacts to the kinds of item they report", () => {
+    expect(artifactFamilies("Windows.Forensics.Prefetch")).toEqual(["program"]);
+    expect(artifactFamilies("Windows.Registry.UserAssist")).toEqual(["program"]);
+    expect(artifactFamilies("Windows.Registry.AppCompatCache")).toEqual(["program"]);
+    expect(artifactFamilies("Windows.Forensics.Amcache/InventoryApplication")).toEqual([
+      "program",
+      "installed",
+    ]);
+    expect(artifactFamilies("Windows.System.TaskScheduler")).toEqual(["autorun"]);
+    expect(artifactFamilies("Windows.Analysis.EvidenceOfDownload")).toEqual(["download"]);
+    expect(artifactFamilies("Custom.Org.Collector")).toEqual(["program", "installed", "autorun", "download"]);
   });
 
   it("fails closed on an artifact name the hunts did not collect (a row's own Source column)", () => {
     const c = {
-      partialArtifactNames: ["Windows.Forensics.Prefetch"],
-      collectedArtifactNames: ["Windows.Forensics.Prefetch"],
+      partialArtifactNames: ["Windows.System.TaskScheduler"],
+      collectedArtifactNames: ["Windows.System.TaskScheduler"],
     };
-    expect(itemArtifactPartial({ artifacts: ["Microsoft-Windows-Something"] }, c)).toBe(true);
+    expect(itemArtifactPartial({ family: "program", artifacts: ["Microsoft-Windows-Something"] }, c)).toBe(
+      true,
+    );
     expect(
-      itemArtifactPartial({}, { partialArtifactNames: [], collectedArtifactNames: [] }),
+      itemArtifactPartial({ family: "program" }, { partialArtifactNames: [], collectedArtifactNames: [] }),
       "nothing partial: grade as before",
     ).toBe(false);
   });

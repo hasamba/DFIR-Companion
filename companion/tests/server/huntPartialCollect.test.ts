@@ -23,7 +23,9 @@ import { pollFor } from "../helpers/poll.js";
 
 const HOSTS = 30;
 const PREFETCH = "Windows.Forensics.Prefetch";
-const FAILING = "Windows.Forensics.Amcache";
+// Fails to fetch: an artifact that reports autoruns only, so the rare PROGRAM keeps its grading (#2732).
+const FAILING = "Windows.System.TaskScheduler";
+const AMCACHE = "Windows.Forensics.Amcache";
 const host = (i: number) => `WS-${String(i).padStart(3, "0")}`;
 const prefetch = (i: number, exe: string, dir: string) => ({
   Fqdn: host(i),
@@ -39,7 +41,7 @@ const ROWS = [
   prefetch(0, "rclone.exe", "C:\\Users\\x\\Downloads"),
 ];
 
-async function world(failingFetch: boolean, truncatePrefetch = false) {
+async function world(failingFetch: boolean, truncatePrefetch = false, failing = FAILING) {
   const root = await mkdtemp(join(tmpdir(), "dfir-hunt-partial-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -66,7 +68,7 @@ async function world(failingFetch: boolean, truncatePrefetch = false) {
       return reached;
     },
     async huntArtifactRows(_h: string, artifact: string): Promise<VelociraptorRunResult> {
-      if (artifact === FAILING && failingFetch) throw new Error("fetch failed: upstream timeout");
+      if (artifact === failing && failingFetch) throw new Error("fetch failed: upstream timeout");
       const rows = artifact === PREFETCH ? ROWS : [];
       const cut = truncatePrefetch && artifact === PREFETCH;
       return { rows, total: rows.length + (cut ? 1 : 0), truncated: cut };
@@ -90,7 +92,7 @@ async function world(failingFetch: boolean, truncatePrefetch = false) {
   const job: VeloHuntJob = {
     bundleId: "threat-hunt-starter",
     bundleName: "Threat Hunt Starter",
-    artifacts: [PREFETCH, FAILING],
+    artifacts: [PREFETCH, failing],
     huntId: "H.1",
     launchedAt: "2026-01-01T00:00:00Z",
     waitMinutes: 15,
@@ -145,6 +147,13 @@ describe("rarity sees the collection's final completeness (#2670)", () => {
       skipped: 1,
     });
     expect((await huntEntries(w.stateStore)).map((x) => x.description)).toEqual(rareRclone);
+  });
+
+  it("a failed fetch of Amcache blocks the program Prefetch alone reported: they share the item (#2732)", async () => {
+    const w = await world(true, false, AMCACHE);
+    await collect(w);
+    expect(w.seen[0]).toMatchObject({ skipped: 1 });
+    expect(await huntEntries(w.stateStore)).toEqual([]);
   });
 
   it("grades once more after the collection's final job write (the after-collect reconcile)", async () => {

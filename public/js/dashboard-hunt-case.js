@@ -48,7 +48,7 @@
     const of = c.targeted ? ` of ${c.targeted} targeted` : "";
     const gap = c.notAnswered > 0 ? `; ${c.notAnswered} did not answer (coverage gap)` : "";
     const names = Array.isArray(c.partialArtifactNames) ? c.partialArtifactNames : [];
-    const notGraded = names.length ? ` (rarity not graded for what they reported: ${names.join(", ")})` : "";
+    const notGraded = names.length ? ` (rarity not graded for the kinds of item they report: ${names.join(", ")})` : "";
     const partial = c.partialArtifacts > 0 ? `; ${c.partialArtifacts} partial artifact collection(s)${notGraded}` : "";
     return `Coverage: ${c.answered} host(s)${of} answered cleanly${gap}${partial}.`;
   }

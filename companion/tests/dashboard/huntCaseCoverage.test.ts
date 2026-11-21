@@ -66,7 +66,7 @@ describe("the Threat Hunt panel coverage line (#2732)", () => {
       partialArtifactNames: ["Windows.Forensics.Amcache", "Windows.System.TaskScheduler"],
     });
     expect(line).toBe(
-      "Coverage: 30 host(s) of 30 targeted answered cleanly; 2 partial artifact collection(s) (rarity not graded for what they reported: Windows.Forensics.Amcache, Windows.System.TaskScheduler).",
+      "Coverage: 30 host(s) of 30 targeted answered cleanly; 2 partial artifact collection(s) (rarity not graded for the kinds of item they report: Windows.Forensics.Amcache, Windows.System.TaskScheduler).",
     );
   });
 

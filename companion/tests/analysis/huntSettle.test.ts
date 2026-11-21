@@ -134,9 +134,10 @@ describe("hunt grading at the seam (#2670)", () => {
   });
 });
 
-const HUNT_ARTIFACTS = ["Windows.Forensics.Prefetch", "Windows.Forensics.Amcache"];
+const TASKS = "Windows.System.TaskScheduler";
+const HUNT_ARTIFACTS = ["Windows.Forensics.Prefetch", "Windows.Forensics.Amcache", TASKS];
 
-describe("a partial artifact blocks rarity only for its own items (#2732)", () => {
+describe("a partial artifact blocks rarity only for the kinds of item it reports (#2732)", () => {
   const cut = (name: string) => ({ name, kept: 10, total: 11 });
   const amcacheRow = (id: string, i: number, program: string, dir: string): ForensicEvent => ({
     ...prefetchRow(id, i, program, dir),
@@ -148,16 +149,28 @@ describe("a partial artifact blocks rarity only for its own items (#2732)", () =
       .map((e) => /: (\S+) in /.exec(e.description)?.[1])
       .sort();
 
-  it("grades the complete artifact's rare item while another artifact is partial", async () => {
+  it("grades a rare program while an artifact that reports only autoruns is partial", async () => {
     const { d, stateStore } = await deps([
-      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut("Windows.Forensics.Amcache")] }),
+      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut(TASKS)] }),
     ]);
-    const rows = [...sweep(300, 2), amcacheRow("a0", 0, "plink.exe", "C:\\Users\\x\\Temp")];
-    await huntSettle(d, "c1", rows);
+    await huntSettle(d, "c1", sweep(300, 2));
     expect(rare(stateStore.events())).toEqual(["rclone.exe"]);
   });
 
-  it("matches the partial artifact by its base name, whatever source the rows name", async () => {
+  it("a cut-short Amcache blocks a program seen only in complete Prefetch: its lost rows share the item", async () => {
+    // Amcache kept only rows for other programs; the rclone.exe rows lay past the cut, so the
+    // inventory shows 1 of 300 hosts when Amcache may have seen it on many more.
+    const { d, stateStore } = await deps([
+      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut("Windows.Forensics.Amcache")] }),
+    ]);
+    const kept = Array.from({ length: 10 }, (_, i) =>
+      amcacheRow(`a${i}`, i, "chrome.exe", "C:\\Program Files\\Google"),
+    );
+    await huntSettle(d, "c1", [...sweep(300, 1), ...kept]);
+    expect(rare(stateStore.events())).toEqual([]);
+  });
+
+  it("an unread source list of an artifact that reports programs blocks every rare program", async () => {
     const { d, stateStore } = await deps([
       reachedJob(300, {
         artifacts: HUNT_ARTIFACTS,
@@ -165,7 +178,7 @@ describe("a partial artifact blocks rarity only for its own items (#2732)", () =
       }),
     ]);
     await huntSettle(d, "c1", [...sweep(300, 2), amcacheRow("a0", 0, "plink.exe", "C:\\Users\\x\\Temp")]);
-    expect(rare(stateStore.events())).toEqual(["plink.exe"]);
+    expect(rare(stateStore.events())).toEqual([]);
   });
 
   it("an item also reported by the partial artifact is not graded: its count is a lower bound", async () => {
@@ -181,9 +194,7 @@ describe("a partial artifact blocks rarity only for its own items (#2732)", () =
   });
 
   it("a re-grade from the stored rows keeps the per-artifact grading", async () => {
-    const jobs = [
-      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut("Windows.Forensics.Amcache")] }),
-    ];
+    const jobs = [reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut(TASKS)] })];
     const { d, stateStore } = await deps(jobs);
     const rows = sweep(300, 2);
     await huntSettle(d, "c1", rows);
@@ -198,7 +209,7 @@ describe("a partial artifact blocks rarity only for its own items (#2732)", () =
 
   it("a row naming an artifact the hunts did not collect is not graded while any artifact is partial", async () => {
     const { d, stateStore } = await deps([
-      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut("Windows.Forensics.Prefetch")] }),
+      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut(TASKS)] }),
     ]);
     const rows = sweep(300, 2).map((e) =>
       e.id.startsWith("r") ? { ...e, artifactName: "SomeOtherSource" } : e,
@@ -209,7 +220,7 @@ describe("a partial artifact blocks rarity only for its own items (#2732)", () =
 
   it("an item whose rows name no artifact is not graded while any artifact is partial", async () => {
     const { d, stateStore } = await deps([
-      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut("Windows.Forensics.Amcache")] }),
+      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut(TASKS)] }),
     ]);
     const rows = sweep(300, 2).map((e) => (e.id.startsWith("r") ? { ...e, artifactName: undefined } : e));
     await huntSettle(d, "c1", rows);
@@ -235,7 +246,7 @@ describe("a partial artifact blocks rarity only for its own items (#2732)", () =
     }));
     jobs[0] = reachedJob(300, {
       artifacts: HUNT_ARTIFACTS,
-      truncatedArtifacts: [cut("Windows.Forensics.Amcache")],
+      truncatedArtifacts: [cut(TASKS)],
     });
     await huntSettle(d, "c1", []);
     expect(rare(stateStore.events())).toEqual([]);
