@@ -23,6 +23,7 @@ import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import { CaseFileRefusedError, readCaseFile, withPinnedCaseFile } from "../storage/caseFileRead.js";
 import { restoreCaseZip, type CaseImportCounts, type RestoreCaseZipOptions } from "./caseRestore.js";
 import { listCaseZipEntries, readCaseZipEntry } from "./caseZipReader.js";
+import { copyNumberedSuffix } from "./archiveNoClobber.js";
 import { caseNamedFilename } from "./caseFilename.js";
 
 // Whole-case export/import (#54 follow-up): the entire case directory tree is zipped, then
@@ -38,10 +39,11 @@ export { CaseImportConflictError, isSafeZipEntryPath, type CaseImportCounts } fr
 /**
  * The filename for a case's `.dfircase` export: `"<caseId> - <name>.dfircase"`, or just
  * `"<caseId>.dfircase"` when the case has no distinct name set. Delete-with-encrypted-archive
- * writes it to disk (#2759), so a long name is shortened to fit (#2769).
+ * writes it to disk (#2759), so a long name is shortened to fit (#2769). A `copyNumber` above 1
+ * names a later copy beside an earlier one: `"<caseId> - <name> (2).dfircase"` (#2787).
  */
-export function dfircaseFilename(caseId: string, name: string | null | undefined): string {
-  return caseNamedFilename(caseId, name, ".dfircase");
+export function dfircaseFilename(caseId: string, name: string | null | undefined, copyNumber = 1): string {
+  return caseNamedFilename(caseId, name, copyNumberedSuffix(".dfircase", copyNumber));
 }
 
 /**

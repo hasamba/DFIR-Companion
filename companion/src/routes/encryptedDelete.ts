@@ -6,9 +6,9 @@
 // #2759 the archive lived only in memory and the response body: a dropped socket, a closed tab or
 // a proxy timeout after the delete lost the only copy of the case. A failed write throws, so the
 // caller answers 500 and nothing is deleted.
-import { join } from "node:path";
+import { basename } from "node:path";
 import type { Response } from "express";
-import { writeBufferAtomic } from "../analysis/caseArchive.js";
+import { writeBufferNewFile } from "../analysis/archiveNoClobber.js";
 import {
   attachmentContentDisposition,
   dfircaseFilename,
@@ -31,9 +31,13 @@ export async function sendEncryptedArchiveThenDelete(
   const archive = await exportEncryptedCase(ctx.store, id, password, [], {
     runExclusive: ctx.runStateExclusive, // same lock as /export/encrypted (#2247)
   });
-  const filename = dfircaseFilename(id, name);
-  const archivePath = join(ctx.store.casesRoot, filename);
-  await writeBufferAtomic(archivePath, archive);
+  // #2787: never over an earlier copy — a second delete of the same id and name gets " (2)".
+  const archivePath = await writeBufferNewFile(
+    ctx.store.casesRoot,
+    (n) => dfircaseFilename(id, name, n),
+    archive,
+  );
+  const filename = basename(archivePath);
   ctx.serverLogger.info(`[delete] case=${id} encrypted archive saved before deletion: ${archivePath}`);
   const { deleted } = await deleteCase();
   res.type("application/octet-stream");

@@ -322,6 +322,7 @@
     "canonicalPowerShell.ts": "shared",
     "canonicalObjectAccess.ts": "shared",
     "canonicalMerge.ts": "analysis/timeline",
+    "archiveNoClobber.ts": "analysis/case",
     "caseArchive.ts": "analysis/case",
     "caseArchiveManifest.ts": "analysis/case",
     "caseArchiveSettle.ts": "analysis/case",

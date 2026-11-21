@@ -10,7 +10,7 @@ const UNSAFE_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
 
 /**
  * The most bytes a whole file name built here may take. Well under the 255-byte limit, because
- * writeBufferAtomic first writes `<name>.<uuid>.tmp` (41 more bytes) and then renames it.
+ * writeBufferNewFile first writes `<name>.<uuid>.tmp` (41 more bytes) and then publishes it.
  */
 export const MAX_CASE_FILENAME_BYTES = 200;
 
