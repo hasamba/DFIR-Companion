@@ -19,7 +19,7 @@ const file = (client: string, artifact: string, mb: number, huntWide = false) =>
 });
 
 describe("hunt artifact size limits (#2746)", () => {
-  it("defaults to 50 MB per PC and 200 MB across PCs; 0 is off; junk falls back", () => {
+  it("defaults to 50 MB for a one-PC file and 200 MB for a several-PCs file; 0 is off; junk falls back", () => {
     expect(huntArtifactLimitsFromEnv({})).toEqual({ hostMb: 50, totalMb: 200 });
     expect(
       huntArtifactLimitsFromEnv({
@@ -39,16 +39,20 @@ describe("hunt artifact size limits (#2746)", () => {
     expect(held[0]).toMatchObject({ artifact: "Hayabusa", reason: "host", limitMb: 50, groupBytes: 60 * MB });
   });
 
-  it("holds an artifact for every PC when its sum crosses the across-PCs limit", () => {
-    const held = planHolds(
-      [file("WS-A", "Hayabusa", 45), file("WS-B", "Hayabusa", 45), file("WS-C", "Hayabusa", 45)],
-      { hostMb: 50, totalMb: 100 },
-    );
-    expect(held).toHaveLength(3);
-    expect(held.every((h) => h.reason === "total" && h.groupBytes === 135 * MB)).toBe(true);
+  it("#2805: never sums one artifact across PCs — 100 PCs at 40 MB each hold nothing", () => {
+    const many = Array.from({ length: 100 }, (_, i) => file(`WS-${i}`, "Evtx", 40));
+    expect(planHolds(many, { hostMb: 50, totalMb: 200 })).toEqual([]);
   });
 
-  it("a hunt-wide copy has no per-PC limit, only the across-PCs one", () => {
+  it("#2805: never sums one PC's files either — each file is judged on its own", () => {
+    const two = [
+      { ...file("WS-A", "Evtx", 30), path: "WS-A-C.1/results/Evtx%2FA.json" },
+      { ...file("WS-A", "Evtx", 30), path: "WS-A-C.1/results/Evtx%2FB.json" },
+    ];
+    expect(planHolds(two, { hostMb: 50, totalMb: 200 })).toEqual([]);
+  });
+
+  it("a hunt-wide copy (several PCs in one file) has the several-PCs limit only", () => {
     expect(planHolds([file("", "Hayabusa", 120, true)], { hostMb: 50, totalMb: 200 })).toEqual([]);
     const held = planHolds([file("", "Hayabusa", 250, true)], { hostMb: 50, totalMb: 200 });
     expect(held).toEqual([expect.objectContaining({ reason: "total", host: "" })]);
@@ -57,8 +61,9 @@ describe("hunt artifact size limits (#2746)", () => {
   it("0 turns each limit off", () => {
     const big = [file("WS-A", "Hayabusa", 900)];
     expect(planHolds(big, { hostMb: 0, totalMb: 0 })).toEqual([]);
-    expect(planHolds(big, { hostMb: 0, totalMb: 200 })[0].reason).toBe("total");
+    expect(planHolds(big, { hostMb: 0, totalMb: 200 })).toEqual([]); // one-PC file: per-PC limit only
     expect(planHolds(big, { hostMb: 50, totalMb: 0 })[0].reason).toBe("host");
+    expect(planHolds([file("", "H", 900, true)], { hostMb: 50, totalMb: 0 })).toEqual([]);
   });
 
   it("names the client folder a result sits in", () => {
@@ -80,17 +85,19 @@ describe("bundle hunt artifact holds (#2753)", () => {
     expect(h).toMatchObject({ artifact: "Pstree", reason: "host", hosts: ["C.1.example.test"] });
   });
 
-  it("holds it as a whole past the across-PCs limit", () => {
-    const rows = [row("C.1", 900), row("C.2", 900)];
-    expect(artifactRowHold("Pstree", rows, { hostMb: 0, totalMb: 1500 / 1048576 })).toMatchObject({
+  it("#2805: never sums PCs — many PCs each under the per-PC limit hold nothing", () => {
+    const rows = Array.from({ length: 50 }, (_, i) => row(`C.${i}`, 900));
+    expect(
+      artifactRowHold("Pstree", rows, { hostMb: 1500 / 1048576, totalMb: 1500 / 1048576 }),
+    ).toBeUndefined();
+  });
+
+  it("counts UTF-8 bytes; rows with no ClientId are measured together against the several-PCs limit", () => {
+    const multi = { Pad: "é".repeat(600) }; // 1200 UTF-8 bytes, 600 UTF-16 units
+    expect(artifactRowHold("A", [multi], { hostMb: 0, totalMb: 1000 / 1048576 })).toMatchObject({
       reason: "total",
       hosts: [],
     });
-  });
-
-  it("counts UTF-8 bytes, and rows with no ClientId toward the total only", () => {
-    const multi = { Pad: "é".repeat(600) }; // 1200 UTF-8 bytes, 600 UTF-16 units
-    expect(artifactRowHold("A", [multi], { hostMb: 0, totalMb: 1000 / 1048576 })?.reason).toBe("total");
     expect(artifactRowHold("A", [multi, multi], { hostMb: 1000 / 1048576, totalMb: 0 })).toBeUndefined();
   });
 

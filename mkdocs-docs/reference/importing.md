@@ -3516,19 +3516,24 @@ compression ratio marks it as a zip bomb are refused and never extracted. A hunt
 inflate to more than 64 GB across the members it imports is refused as a whole. A `.zip` that is not
 a hunt export is handled exactly as before (an external tool input).
 
-**Oversized results wait for you in `drop/_held/`.** Before Velociraptor results import, each result file is measured:
+**Oversized results wait for you in `drop/_held/`.** Before Velociraptor results import, each result
+file is measured on its own:
 
-- one artifact's results from one PC over `DFIR_HUNT_ARTIFACT_HOST_MAX_MB` (default 50 MB), or
-- one artifact summed across every PC over `DFIR_HUNT_ARTIFACT_TOTAL_MAX_MB` (default 200 MB; every
-  PC's copy is then held).
+- a file with one PC's results over `DFIR_HUNT_ARTIFACT_HOST_MAX_MB` (default 50 MB), or
+- a file with several PCs' results in it (the hunt's `All <Artifact>` copy, or a dropped file that names
+  more than one client) over `DFIR_HUNT_ARTIFACT_TOTAL_MAX_MB` (default 200 MB).
 
-This covers a dropped hunt zip, an unzipped hunt folder, a single Velociraptor result file you drop by hand
-(per-PC limit), and a collected bundle hunt (see the Velociraptor integration). Other file types import as
+Sizes are never added up across files: a hunt where 100 PCs each have a 40 MB file for the same artifact
+holds nothing (#2805). A file held earlier by the old across-PCs sum is released by the next sweep when
+its own size is within the limit.
+
+This covers a dropped hunt zip, an unzipped hunt folder, a single Velociraptor result file you drop by hand,
+and a collected bundle hunt (see the Velociraptor integration). Other file types import as
 before. A held result is moved, or extracted from the zip, to `drop/_held/` under the path it would have
 had in `drop/`, so it keeps its client folder and its PC. Everything else imports as usual, and a zip
 completes as usual. A held file gets a `SKIPPED` line in `drop-log.txt`.
 
-The dashboard banner lists each held file with its PC, size and the limit it crossed:
+The dashboard banner's title states both limits and carries **Import all anyway** and **Skip all**. Below it, each held file is listed with its PC, size and the limit it crossed:
 
 - **Import anyway** moves the file back into `drop/`, and the next sweep imports it.
 - **Skip** moves it to `drop/_skipped/`. Move it back to its place in `drop/` later and it imports.

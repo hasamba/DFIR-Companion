@@ -36,10 +36,10 @@ export interface HuntHolds {
 const MB = 1024 * 1024;
 const mb = (n: number): string => (n / MB).toFixed(n < 10 * MB ? 1 : 0);
 
-function why(h: Pick<HeldArtifactRows, "reason" | "bytes" | "hostBytes" | "limitMb">): string {
+function why(h: Pick<HeldArtifactRows, "reason" | "overBytes" | "limitMb">): string {
   return h.reason === "host"
-    ? `${mb(h.hostBytes)} MB from one PC (limit ${h.limitMb} MB per PC)`
-    : `${mb(h.bytes)} MB across all PCs (limit ${h.limitMb} MB)`;
+    ? `${mb(h.overBytes)} MB from one PC (limit ${h.limitMb} MB per PC)`
+    : `${mb(h.overBytes)} MB of rows with no PC (limit ${h.limitMb} MB for several PCs)`;
 }
 
 /** An artifact (or artifact/source) name as one safe file name: `/` as Velociraptor writes it, `%2F`. */
@@ -87,7 +87,7 @@ export async function loadHuntHolds(
       await writeHeldText(dropDir, rel, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
       await store.putHeld(caseId, {
         ...{ rel, origin: "hunt", source: huntId, huntId, artifact: name, host: hold.hosts.join(", ") },
-        ...{ bytes: hold.bytes, groupBytes: hold.reason === "host" ? hold.hostBytes : hold.bytes },
+        ...{ bytes: hold.bytes, groupBytes: hold.overBytes },
         ...{ reason: hold.reason, limitMb: hold.limitMb },
       });
       left.set(
