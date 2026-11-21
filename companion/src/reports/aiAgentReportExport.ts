@@ -86,10 +86,12 @@ export function sigmaCellText(ep: AiAgentReportEndpoint, rule: string, sep = ", 
 function sigmaMarkdown(r: AiAgentReport, h: string): string[] {
   const rules = r.sigmaRules ?? [];
   if (!rules.length) return [];
+  const head = ["", `${h} Sigma coverage per rule and endpoint`, ""];
+  // No endpoint, no column: a table would have a header wider than its delimiter row (#2799).
+  if (!r.endpoints.length)
+    return [...head, "No endpoint reported results, so there is no Sigma coverage to show."];
   const out = [
-    "",
-    `${h} Sigma coverage per rule and endpoint`,
-    "",
+    ...head,
     `| Rule | Basis | ${r.endpoints.map((e) => ev(e.host)).join(" | ")} |`,
     `|---|---|${r.endpoints.map(() => "---|").join("")}`,
   ];

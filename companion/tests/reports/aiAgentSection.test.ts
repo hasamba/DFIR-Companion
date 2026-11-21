@@ -217,6 +217,21 @@ describe("aiAgentForensics section rendering (#2721)", () => {
     expect(out).not.toContain("No rule matched on the endpoints and scopes above.");
   });
 
+  // #2799: with no endpoint the per-endpoint table had a 3-cell header over a 2-cell delimiter.
+  it("says there is no Sigma coverage instead of a broken table when no endpoint reported", () => {
+    const empty = run({ report: report({ endpoints: [], hits: [] }) });
+    const out = aiAgentReportMarkdown(empty);
+    expect(out).toMatch(/^## Sigma coverage per rule and endpoint$/m);
+    expect(out).toContain("No endpoint reported results, so there is no Sigma coverage to show.");
+    expect(out).not.toMatch(/^\| Rule \| Basis \|/m);
+    const tables = new Marked({ gfm: true }).lexer(out).filter((t) => t.type === "table") as unknown as {
+      header: unknown[];
+      rows: unknown[][];
+    }[];
+    for (const t of tables) for (const r of t.rows) expect(r.length).toBe(t.header.length);
+    expect(md(one(empty))).toContain("No endpoint reported results, so there is no Sigma coverage to show.");
+  });
+
   it("caps the hits table in the case report and points to the run's own download for the rest", () => {
     const h = report().hits[0];
     const many = report({ hits: Array.from({ length: AI_AGENT_SECTION_MAX_HITS + 3 }, () => h) });
