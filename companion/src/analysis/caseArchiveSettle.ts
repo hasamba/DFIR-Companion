@@ -15,18 +15,28 @@ import { warnLine } from "../logging/serverLogger.js";
 // ledger head): a second walk after the reads must list exactly what was packaged, or it is built
 // again. Only when the folder never settles within the attempts does the archive fail, and then with
 // a message that names the file and says what to do — never a bare filesystem error.
+//
+// Every attempt is verified, the last one included (#2801). The final attempt used to return without
+// its re-walk, so a file written during the last build was missing from the archive — and a ZIP or
+// encrypted delete then removed the case. A last build whose folder changed now fails retryably.
 
 /** How many times an archive is built before a folder that keeps changing fails it. */
 export const ARCHIVE_SETTLE_ATTEMPTS = 3;
 
-/** A file the walk listed was gone when it was read. */
+/** How a file changed while the case was packaged. */
+export type CaseFileChange = "disappeared" | "appeared";
+
+/** A file the walk listed was gone when it was read — or the folder's file set changed by the end. */
 export class CaseFileVanishedError extends Error {
   readonly code = "DFIR_CASE_FILE_VANISHED";
   /** A retry-later condition, not a server fault (#2795): routes answer it 503 with this message. */
   readonly httpStatus = 503;
-  constructor(readonly rel: string) {
+  constructor(
+    readonly rel: string,
+    readonly change: CaseFileChange = "disappeared",
+  ) {
     super(
-      `"${rel}" disappeared while the case was being packaged — something is still writing to ` +
+      `"${rel}" ${change} while the case was being packaged — something is still writing to ` +
         `this case. Let it finish (or close the case) and try again.`,
     );
     this.name = "CaseFileVanishedError";
@@ -49,19 +59,34 @@ export interface SettledBuild<T> {
 }
 
 /** The first path in one list and not the other, or null when both name the same files. */
-function firstDifference(packaged: readonly string[], now: readonly string[]): string | null {
+function firstDifference(packaged: readonly string[], now: readonly string[]): CaseFileVanishedError | null {
   const before = new Set(packaged);
   const after = new Set(now);
-  for (const p of after) if (!before.has(p)) return `"${p}" appeared`;
-  for (const p of before) if (!after.has(p)) return `"${p}" disappeared`;
+  for (const p of after) if (!before.has(p)) return new CaseFileVanishedError(p, "appeared");
+  for (const p of before) if (!after.has(p)) return new CaseFileVanishedError(p, "disappeared");
   return null;
+}
+
+/** The change `rewalk` finds against what a build packaged, or null when the folder held still. */
+async function changeSince(
+  packaged: readonly string[],
+  rewalk: () => Promise<readonly string[]>,
+): Promise<CaseFileVanishedError | null> {
+  return rewalk().then(
+    (now) => firstDifference(packaged, now),
+    (err: unknown) => {
+      if (err instanceof CaseFileVanishedError) return err;
+      throw err;
+    },
+  );
 }
 
 /**
  * Run `build` until it packages a folder that held still: no listed file vanished during it, and
- * `rewalk` afterwards lists exactly what it packaged. A vanished file on the last attempt throws its
- * CaseFileVanishedError; a file that appeared during the last attempt is accepted, as it always was
- * (the archive is then the folder as of its walk). Any other error ends it at once.
+ * `rewalk` afterwards lists exactly what it packaged. Every attempt is re-walked, the last one too: a
+ * file that vanished or appeared during the last attempt throws a CaseFileVanishedError (503, retry
+ * later) and nothing is returned, so no caller deletes a case on an unverified archive (#2801). Any
+ * other error ends it at once.
  */
 export async function buildFromSettledCase<T>(
   label: string,
@@ -78,15 +103,11 @@ export async function buildFromSettledCase<T>(
       warnLine(`${label} "${err.rel}" disappeared mid-build — building again (attempt ${attempt + 1})`);
       continue;
     }
-    if (attempt >= attempts) return built.value;
-    const changed = await rewalk().then(
-      (now) => firstDifference(built.relPaths, now),
-      (err: unknown) => {
-        if (err instanceof CaseFileVanishedError) return `"${err.rel}" disappeared`;
-        throw err;
-      },
-    );
+    const changed = await changeSince(built.relPaths, rewalk);
     if (changed === null) return built.value;
-    warnLine(`${label} ${changed} mid-build — building again (attempt ${attempt + 1})`);
+    if (attempt >= attempts) throw changed;
+    warnLine(
+      `${label} "${changed.rel}" ${changed.change} mid-build — building again (attempt ${attempt + 1})`,
+    );
   }
 }
