@@ -186,3 +186,45 @@ describe("body-caseId routes respect the case password", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// The seed route seeds `caseId ?? "demo"`, and demo mode discards the caller's id. The lock check
+// must run on the case actually reseeded, not on whatever the body happened to name.
+describe("POST /cases/seed-demo checks the lock of the case it actually seeds", () => {
+  async function lockDemoCase(): Promise<void> {
+    await store.createCase({ caseId: "demo", name: "n", investigator: "i", aiProvider: null });
+    await store.updateCaseMeta("demo", { status: "closed", password: await hashCasePassword("demo1234") });
+  }
+
+  it("refuses a force reseed of a locked default demo case when no caseId is named", async () => {
+    await lockDemoCase();
+    const res = await request(app).post("/cases/seed-demo").send({ force: true });
+    expect(res.status).toBe(401);
+    expect(res.body).toMatchObject({ error: "locked", caseId: "demo" });
+  });
+
+  it("reseeds the locked default demo case once it is unlocked", async () => {
+    await lockDemoCase();
+    const login = await request(app).post("/cases/demo/unlock").send({ password: "demo1234" });
+    expect(login.status).toBe(200);
+    const res = await request(app)
+      .post("/cases/seed-demo")
+      .set("Cookie", login.headers["set-cookie"]?.[0])
+      .send({ force: true });
+    expect(res.status).toBe(201);
+  });
+
+  it("in demo mode, naming a different locked case does not refuse the default reseed", async () => {
+    const demoApp = createApp(store, { activityLogStore, demoMode: true });
+    const res = await request(demoApp).post("/cases/seed-demo").send({ caseId: "locked" });
+    expect(res.status).toBe(201);
+    expect(res.body.caseId).toBe("demo");
+  });
+
+  it("in demo mode, a locked default demo case is refused whatever id the body names", async () => {
+    await lockDemoCase();
+    const demoApp = createApp(store, { activityLogStore, demoMode: true });
+    const res = await request(demoApp).post("/cases/seed-demo").send({ caseId: "open1", force: true });
+    expect(res.status).toBe(401);
+    expect(res.body.caseId).toBe("demo");
+  });
+});

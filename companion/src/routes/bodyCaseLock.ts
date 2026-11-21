@@ -15,9 +15,18 @@ function namedCaseId(req: Request): string {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
-export function requireBodyCaseUnlocked(ctx: RouteContext): RequestHandler {
+/**
+ * Maps a request to the case the route will actually act on, when that is not simply the id the
+ * request names (POST /cases/seed-demo falls back to a default id, and demo mode ignores the body's).
+ */
+export type CaseIdResolver = (req: Request) => string;
+
+export function requireBodyCaseUnlocked(
+  ctx: RouteContext,
+  resolve: CaseIdResolver = namedCaseId,
+): RequestHandler {
   return async function bodyCaseLock(req: Request, res: Response, next: NextFunction): Promise<void> {
-    const caseId = namedCaseId(req);
+    const caseId = resolve(req);
     if (!caseId || !isValidCaseId(caseId)) {
       next();
       return;
