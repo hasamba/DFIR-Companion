@@ -898,7 +898,8 @@ Shown for a [threat-hunt case](threat-hunting.md#threat-hunt-mode-proactive-hunt
 Shown for a threat-hunt case. Link the case to a client, export the client's "please confirm"
 list (CSV or Markdown, rarest first), tick items and mark them **Approved**, **Not allowed** or
 **Unknown**, import the client's filled CSV, and keep the client's blocked download categories and
-sites. Editing a client profile needs the instance administrator; linking a case needs the case
+sites. The confirm list fills itself from the case's hunt results; the download policy is optional and
+typed in by you from the client's own rules. Editing a client profile needs the instance administrator; linking a case needs the case
 administrator. Earlier hunts of the same client are listed only when you can open them.
 
 Both panels are in the **Hunt Prep** view and lead the **Threat Hunt** view.

@@ -132,6 +132,7 @@
       exports.append(a, " ");
     }
     box.appendChild(exports);
+    box.appendChild(el("p", "Filled automatically from this case's hunt results (programs, autoruns and downloads the client has not confirmed yet, rarest first) — nothing to type. Send the confirm list to the client and mark their answers below; the answers carry over to the client's next hunt cases.", "ev-sub cb-auto-hint"));
     if (info.earlierHunts && info.earlierHunts.length)
       box.appendChild(el("p", `Earlier hunts you can open: ${info.earlierHunts.map((h) => `${h.name} (${h.caseId})`).join(", ")}`, "ev-sub"));
     return box;
@@ -246,12 +247,19 @@
     if (!r.ok) return el("p", "Blocked download categories and sites: editable by the instance administrator.", "ev-sub");
     const b = r.body.baseline || {};
     const box = el("div", null, "cb-policy");
-    box.appendChild(el("h3", "Download policy", "cb-policy-title"));
+    box.appendChild(el("h3", "Download policy (optional)", "cb-policy-title"));
     box.appendChild(
       el(
         "p",
         "Downloads from a blocked category or a blocked site are graded as policy violations; runnable or archive files (.exe, .msi, .zip …) downloaded from anywhere other than an approved source, or with no recorded source, are flagged.",
         "cb-policy-note",
+      ),
+    );
+    box.appendChild(
+      el(
+        "p",
+        "Typed in by you, from the client's own rules — never filled automatically. The grey text is only an example. Leave it empty if the client has no download policy: nothing is graded as a policy violation and the rest of the hunt works as usual.",
+        "cb-policy-note cb-manual-hint",
       ),
     );
     const cats = categoryBoxes(b.blockedCategories || []);
@@ -297,7 +305,7 @@
       if (cands.ok && cands.body.candidates.length) {
         box.appendChild(markBar(caseId, pid, picked, status));
         box.appendChild(candidatesTable(cands.body.candidates, picked));
-      } else box.appendChild(el("p", "Nothing is waiting for the client's confirmation.", "ev-sub"));
+      } else box.appendChild(el("p", "Nothing is waiting for the client's confirmation yet. Items appear here after a hunt imports program, autorun or download evidence (for example the Threat Hunt Starter bundle).", "ev-sub"));
       box.appendChild(await domainsEditor(pid, status));
     }
     box.appendChild(status);
