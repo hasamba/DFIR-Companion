@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **UserAssist folder IDs in threat hunts** — UserAssist paths that start with a Windows known-folder ID group with the matching Prefetch/Amcache entries as one hunt item (closes #2750)
-- **Partial artifacts and hunt rarity** — a partial artifact now blocks rarity grading only for the items it reported; complete artifacts keep their grading, and the coverage line names the partial ones (closes #2732)
+- **Partial artifacts and hunt rarity** — a partial artifact now blocks rarity grading only for the kinds of item it can report; other kinds keep their grading, and the coverage line names the partial ones (closes #2732)
 - **AI Agent Forensics on a locked case** — launch and add-to-case answer the standard "locked" response and the panel says to unlock the case (closes #2798)
 - **AI Agent Forensics Sigma section** — a run with no endpoint results says there is no Sigma coverage instead of printing a broken table (closes #2799)
 - **Flaky Watson mirror test** — the test waits for the mirrored answer before replying (closes #2797)
