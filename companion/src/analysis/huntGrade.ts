@@ -1,7 +1,7 @@
 import type { HuntCoverage } from "./huntFraming.js";
 import type { HuntGrade } from "./huntEntries.js";
 import { answeringHostCount, itemLabel, type HuntInventory, type InventoryItem } from "./huntInventory.js";
-import { isRare, itemArtifactPartial, rarityBlocked, type RaritySettings } from "./huntRarity.js";
+import { isRare, itemRarityUnsafe, rarityBlocked, type RaritySettings } from "./huntRarity.js";
 import type { Severity } from "./stateTypes.js";
 
 /**
@@ -51,7 +51,7 @@ export function gradeRarity(ctx: GradeContext): HuntGrade[] {
   const out: HuntGrade[] = [];
   const coverage = ctx.coverage;
   for (const item of Object.values(ctx.inventory.items)) {
-    if (itemArtifactPartial(item, coverage)) continue;
+    if (itemRarityUnsafe(item, coverage)) continue;
     const n = answeringHostCount(item, ctx.answered);
     if (isRare(n, m, ctx.rarity)) out.push(rareGrade(item, ctx, n, m));
   }

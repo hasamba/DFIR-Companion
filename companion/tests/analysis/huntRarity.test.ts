@@ -4,6 +4,7 @@ import {
   DEFAULT_RARITY,
   isRare,
   itemArtifactPartial,
+  itemRarityUnsafe,
   rarityBlocked,
   raritySettingsFromEnv,
 } from "../../src/analysis/huntRarity.js";
@@ -142,5 +143,15 @@ describe("host rarity (#2670, D2)", () => {
     expect(raritySettingsFromEnv({ DFIR_HUNT_RARE_MAX_PCT: "200", DFIR_HUNT_RARE_MIN_HOSTS: "x" })).toEqual(
       DEFAULT_RARITY,
     );
+  });
+});
+
+describe("itemRarityUnsafe (#2750 capped merge)", () => {
+  const none = { partialArtifactNames: [], collectedArtifactNames: [] };
+  it("never grades an item whose host list overflowed its cap", () => {
+    expect(itemRarityUnsafe({ family: "program", artifacts: ["x"], hostOverflow: 19 }, none)).toBe(true);
+  });
+  it("still grades a complete item with no overflow", () => {
+    expect(itemRarityUnsafe({ family: "program", artifacts: ["x"], hostOverflow: 0 }, none)).toBe(false);
   });
 });

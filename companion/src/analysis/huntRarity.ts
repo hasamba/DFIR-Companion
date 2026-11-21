@@ -87,6 +87,17 @@ export function itemArtifactPartial(
   return item.artifacts.some((a) => partial.has(artifactBase(a)) || !collected.has(artifactBase(a)));
 }
 
+/**
+ * Must rarity skip this item? A partial artifact could have reported it, or its host list overflowed
+ * the cap (#2750: a capped merge drops host identities, so the retained count is only a lower bound).
+ */
+export function itemRarityUnsafe(
+  item: Pick<InventoryItem, "family" | "artifacts" | "artifactsIncomplete" | "hostOverflow">,
+  coverage: { partialArtifactNames: readonly string[]; collectedArtifactNames: readonly string[] },
+): boolean {
+  return (item.hostOverflow ?? 0) > 0 || itemArtifactPartial(item, coverage);
+}
+
 /** Is an item on `n` of `answered` answering hosts rare? Pure integer test. */
 export function isRare(n: number, answered: number, s: RaritySettings): boolean {
   if (n < 1 || answered < s.minHosts) return false;
