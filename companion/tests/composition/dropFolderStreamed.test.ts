@@ -58,7 +58,7 @@ interface DiskCall {
   bytes: Buffer;
 }
 
-function harness(store: CaseStore, dropStatusStore: DropStatusStore) {
+function harness(store: CaseStore, dropStatusStore: DropStatusStore, extra: Partial<DropFolderDeps> = {}) {
   const refuse = (): never => {
     throw new Error("not expected to be reached");
   };
@@ -73,6 +73,12 @@ function harness(store: CaseStore, dropStatusStore: DropStatusStore) {
       return { storedName: `0001_${name}`, addedEvents: 1, addedIocs: 0, disclosure: ["Read by streaming."] };
     },
   );
+  const ingestStreamed: DropFolderDeps["ingestStreamed"] = vi.fn(async () => ({
+    storedName: "x",
+    addedEvents: 0,
+    addedIocs: 0,
+    analyzed: true,
+  }));
   const drops = createDropFolder({
     store,
     options: { dropStatusStore },
@@ -81,7 +87,7 @@ function harness(store: CaseStore, dropStatusStore: DropStatusStore) {
     recordImportFailure: () => {},
     dispatchNotify: () => {},
     resolveImportKind,
-    ingestStreamed: vi.fn(async () => ({ storedName: "x", addedEvents: 0, addedIocs: 0, analyzed: true })),
+    ingestStreamed,
     ingestDiskFile,
     ingestMacLoginItemBinary: refuse,
     liveToolConfigs: () => new Map(),
@@ -91,11 +97,12 @@ function harness(store: CaseStore, dropStatusStore: DropStatusStore) {
     indexCaptureText: refuse,
     captureBuffers: new Map(),
     flush: refuse,
+    ...extra,
   });
-  return { drops, calls, ingestDiskFile };
+  return { drops, calls, ingestDiskFile, ingestStreamed };
 }
 
-async function seed(name: string, body: Buffer | string) {
+async function seed(name: string, body: Buffer | string, extra: Partial<DropFolderDeps> = {}) {
   const root = await mkdtemp(join(tmpdir(), "dfir-drop-streamed-"));
   const store = new CaseStore(root);
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -103,7 +110,7 @@ async function seed(name: string, body: Buffer | string) {
   await mkdir(dropDir, { recursive: true });
   await writeFile(join(dropDir, name), body);
   const dropStatusStore = new DropStatusStore(store);
-  return { store, dropDir, dropStatusStore, ...harness(store, dropStatusStore) };
+  return { store, dropDir, dropStatusStore, ...harness(store, dropStatusStore, extra) };
 }
 
 async function sweepTwice(s: Awaited<ReturnType<typeof seed>>) {
@@ -170,5 +177,42 @@ describe("drop folder streams cloud and Plaso files, and reads gzip (#2336)", ()
     const s = await seed("ct.json", cloudTrail(1));
     await sweepTwice(s);
     expect(s.calls).toHaveLength(0);
+  });
+});
+
+// #2813 — the engine cannot build one string past ~512 MB, so raising DFIR_DROP_MAX_BYTES above that
+// made every file in between fail with the engine's error. The whole-read ceiling is now the smaller
+// of the cap and a safe limit; the test injects a tiny safe limit BELOW the configured cap.
+describe("drop folder whole-read ceiling under a raised cap (#2813)", () => {
+  const SAFE_BYTES = 1024; // below CAP_BYTES (2048): the "raised cap" shape, in KB
+
+  it("streams a cloud export between the safe limit and the cap instead of reading it whole", async () => {
+    const body = cloudTrail(5);
+    expect(body.length).toBeGreaterThan(SAFE_BYTES);
+    expect(body.length).toBeLessThan(CAP_BYTES);
+    const s = await seed("ct.json", body, { dropWholeReadSafeBytes: SAFE_BYTES });
+    const status = await sweepTwice(s);
+    expect(status.failed).toEqual([]);
+    expect(s.calls).toHaveLength(1);
+    expect(s.calls[0].kind).toBe("aws");
+    expect(s.ingestStreamed).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-streaming file in that band with a clear sentence, not the engine's error", async () => {
+    const body = "Oct  1 10:00:00 host sshd[1]: Accepted password for root\n".repeat(25);
+    expect(body.length).toBeGreaterThan(SAFE_BYTES);
+    expect(body.length).toBeLessThan(CAP_BYTES);
+    const s = await seed("auth.log", body, { dropWholeReadSafeBytes: SAFE_BYTES });
+    const status = await sweepTwice(s);
+    expect(s.calls).toHaveLength(0);
+    expect(s.ingestStreamed).not.toHaveBeenCalled();
+    expect(status.failed[0]?.reason).toMatch(/DFIR_DROP_MAX_BYTES does not lift it/);
+  });
+
+  it("without the injected limit the same file is under the cap and read whole", async () => {
+    const body = "Oct  1 10:00:00 host sshd[1]: Accepted password for root\n".repeat(25);
+    const s = await seed("auth.log", body);
+    await sweepTwice(s);
+    expect(s.ingestStreamed).toHaveBeenCalledTimes(1);
   });
 });

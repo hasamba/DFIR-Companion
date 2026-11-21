@@ -10,6 +10,7 @@
 // unit-tested in isolation. Pairs with `dropStatus.ts` (the persisted last-sweep summary).
 
 import { extname, basename } from "node:path";
+import { constants } from "node:buffer";
 import { DROP_LOG_FILE } from "./dropLog.js";
 import { SOCRATES_EXTS } from "../integrations/tools/toolConfig.js";
 
@@ -155,6 +156,53 @@ export function dropMaxBytesFromEnv(env: NodeJS.ProcessEnv = process.env): numbe
   // cap OFF, and "Infinity" passes Number() and the settings validator and does the same.
   const n = Number(env.DFIR_DROP_MAX_BYTES);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_DROP_MAX_BYTES;
+}
+
+/**
+ * The most bytes the drop sweep reads whole into one string, whatever DFIR_DROP_MAX_BYTES says
+ * (#2813). The engine cannot build a string longer than constants.MAX_STRING_LENGTH UTF-16 units
+ * (about 512 Mi on 64-bit) and a decode yields at most one unit per input byte, so bytes bound the
+ * decoded length. The 1/8 margin is policy: it keeps the read clear of the hard limit for an
+ * importer that builds one whole-text string a little longer than its input. Derived from the
+ * constant, so a build with a smaller string limit gets a smaller ceiling.
+ */
+export const DROP_WHOLE_READ_SAFE_BYTES = Math.floor(constants.MAX_STRING_LENGTH / 8) * 7;
+
+/** The sweep's whole-read ceiling: the cap, never above the safe limit. Over it a file streams or is refused. */
+export function dropWholeReadCeiling(cap: number, safe: number = DROP_WHOLE_READ_SAFE_BYTES): number {
+  return Math.min(cap, safe);
+}
+
+const MB = 1024 * 1024;
+const WHOLE_READ_LIMIT =
+  "the most a text file can be read whole; raising DFIR_DROP_MAX_BYTES does not lift it";
+
+/** "" under a configured cap; at the safe limit, a clause saying raising the cap does not lift it. */
+export function dropWholeReadLimitNote(ceiling: number, safe: number = DROP_WHOLE_READ_SAFE_BYTES): string {
+  return ceiling >= safe ? ` (${WHOLE_READ_LIMIT})` : "";
+}
+
+/** The sweep's refusal for a file over the ceiling that no streaming importer took. */
+export function dropOversizeReason(
+  size: number,
+  ceiling: number,
+  safe: number = DROP_WHOLE_READ_SAFE_BYTES,
+): string {
+  const head = `too large (${Math.round(size / MB)} MB > ${Math.round(ceiling / MB)} MB cap`;
+  if (ceiling < safe) return `${head}) — use Import-from-path`;
+  return (
+    `${head}; ${WHOLE_READ_LIMIT}) — only cloud audit exports, Plaso super-timelines and ` +
+    "Velociraptor JSON Lines results stream past it; split the file"
+  );
+}
+
+/** The drop sweep's read limit from DFIR_DROP_MAX_BYTES, and its refusal sentence. `safe` is for tests. */
+export function dropReadLimitsFromEnv(
+  safe: number = DROP_WHOLE_READ_SAFE_BYTES,
+  env: NodeJS.ProcessEnv = process.env,
+): { maxBytes: number; oversizeReason: (size: number) => string } {
+  const maxBytes = dropWholeReadCeiling(dropMaxBytesFromEnv(env), safe);
+  return { maxBytes, oversizeReason: (size) => dropOversizeReason(size, maxBytes, safe) };
 }
 
 export interface SettleResult {

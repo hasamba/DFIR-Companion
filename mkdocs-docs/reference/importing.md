@@ -3477,6 +3477,10 @@ guess, and the case log gets a WARN line. Velociraptor uploaded reports get the 
 `warnings` list of an uploads-only import, and in the case log for a hunt collect.
 
 Enabled by default. Configure via `DFIR_DROP_ENABLED`, `DFIR_DROP_POLL_S` (poll interval), `DFIR_DROP_MAX_BYTES` (size cap).
+Raising the cap above about 448 MB does not raise the whole-file limit: a text file is never read
+whole past it, because the server cannot hold a single string that large. A bigger Velociraptor JSON
+Lines result, cloud export or Plaso super-timeline streams instead; any other kind is refused with a
+sentence that says so.
 
 ### Velociraptor hunt exports
 

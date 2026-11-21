@@ -40,10 +40,12 @@ export interface Harness {
   /** A new drop folder over the same case dir — what a restart sees (no in-memory state). */
   restart(): void;
   rowKeys(): string[];
+  /** A whole-read ceiling below the cap (#2813); absent → the real one. */
+  dropWholeReadSafeBytes?: number;
 }
 
 export async function makeHarness(
-  opts: { dropMaxBytes?: number; jobManager?: JobManager } = {},
+  opts: { dropMaxBytes?: number; jobManager?: JobManager; dropWholeReadSafeBytes?: number } = {},
 ): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), "dfir-drop-hunt-"));
   const store = new CaseStore(root);
@@ -61,6 +63,7 @@ export async function makeHarness(
     onIngest: null,
     drops: undefined as unknown as DropFolder,
     ...(opts.jobManager ? { jobManager: opts.jobManager } : {}),
+    ...(opts.dropWholeReadSafeBytes ? { dropWholeReadSafeBytes: opts.dropWholeReadSafeBytes } : {}),
     sweep: async () => {
       await h.drops.scanCaseDrops("c1");
     },
@@ -126,6 +129,7 @@ function build(h: Harness): DropFolder {
     indexCaptureText: refuse,
     captureBuffers: new Map(),
     flush: refuse,
+    ...(h.dropWholeReadSafeBytes ? { dropWholeReadSafeBytes: h.dropWholeReadSafeBytes } : {}),
   });
 }
 
