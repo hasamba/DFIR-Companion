@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Archive copy is on disk before a delete** — the saved archive and its folder entry are flushed to disk before the case is removed (closes #2800)
+- **Every archive attempt is verified** — if the case folder still changed on the last attempt, archive answers a retryable error and nothing is deleted (closes #2801)
 - **GET requests with a body** — a case read that carries a request body is answered instead of hanging (closes #2792)
 - **Plain ZIP of a reopened case** — a case reopened while its ZIP is built is refused like the archive-and-remove variant (closes #2793)
 - **Damaged case database on archive/report** — archive and report answer a named error instead of a raw 500 (closes #2794)
