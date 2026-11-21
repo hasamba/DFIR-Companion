@@ -5,7 +5,8 @@
 // the same folder, and the same atomic temp-file-then-rename write, the ZIP path uses. Before
 // #2759 the archive lived only in memory and the response body: a dropped socket, a closed tab or
 // a proxy timeout after the delete lost the only copy of the case. A failed write throws, so the
-// caller answers 500 and nothing is deleted.
+// caller answers 500 and nothing is deleted. #2800: the write resolves only once the file and its
+// folder entry are fsynced, so a crash right after the delete cannot lose the copy either.
 import { basename } from "node:path";
 import type { Response } from "express";
 import { writeBufferNewFile } from "../analysis/archiveNoClobber.js";
