@@ -2,6 +2,7 @@ import type { Finding, ForensicEvent } from "../analysis/stateTypes.js";
 import { revisionSuffix } from "../analysis/eventRevision.js";
 import { mdControlPictures } from "./controlChars.js";
 import { TYPE_SEED_PREFIX } from "../analysis/incidentTypes.js";
+import { breakLinkSyntaxMd, escapeHtmlMd, escapeRunBeforeChar, proseLineMd } from "./mdInline.js";
 
 // One home for "untrusted text → safe Markdown fragment".
 //
@@ -17,29 +18,7 @@ import { TYPE_SEED_PREFIX } from "../analysis/incidentTypes.js";
 // A whole backslash run with the pipe that may follow it, or a bare pipe.
 const BACKSLASH_RUN_OR_PIPE = /\\+\|?|\|/g;
 // The same, for the HTML-significant characters (`<`, `>`, `&`) with or without the pipe.
-const BACKSLASH_RUN_OR_HTML = /\\+[<>&]?|[<>&]/g;
 const BACKSLASH_RUN_OR_HTML_OR_PIPE = /\\+[|<>&]?|[|<>&]/g;
-
-// A backslash run directly before an escaped character is doubled first, so every original
-// backslash stays literal and the character itself is still escaped: `\<b>` must not become
-// `\\<b>`, an escaped backslash followed by a LIVE tag. A run before anything else is left alone.
-function escapeRunBeforeChar(match: string): string {
-  const last = match[match.length - 1];
-  if (last === "\\") return match;
-  const run = match.slice(0, -1);
-  return `${run}${run}\\${last}`;
-}
-
-/**
- * `<`, `>` and `&` from case text, backslash-escaped. A Markdown viewer that renders raw HTML would
- * otherwise run an `<img onerror>` from a filename; `&lt;` in evidence is the four characters the
- * attacker typed, not a less-than sign. A backslash escape (not an entity) is used because it is the
- * form every CommonMark reader shows as the plain character, and marked hands the DOCX export an
- * escape token carrying that character — an entity would reach the DOCX as literal `&lt;`.
- */
-function escapeHtmlMd(value: string): string {
-  return value.replace(BACKSLASH_RUN_OR_HTML, escapeRunBeforeChar);
-}
 
 /** Flattens text onto one line, without any escaping: for text placed inside a code span. */
 export function flatLineMd(value: string): string {
@@ -76,11 +55,14 @@ export function cellCodeMd(codeSpan: string): string {
  * scan is linear. An unanchored `(\\*)\|` retried the rest of a pipe-less run from every position —
  * quadratic, and one long hostile evidence field blocked the event loop for seconds.
  *
- * `<`, `>` and `&` are escaped the same way (see escapeHtmlMd), in the same single pass.
+ * `<`, `>` and `&` are escaped the same way (see escapeHtmlMd), in the same single pass, and link
+ * syntax is broken (breakLinkSyntaxMd), so case text cannot make a live link in the table.
  */
 export function cellMd(value: string): string {
   return mdControlPictures(
-    value.replace(BACKSLASH_RUN_OR_HTML_OR_PIPE, escapeRunBeforeChar).replace(/[\r\n]+/g, " "),
+    breakLinkSyntaxMd(
+      value.replace(BACKSLASH_RUN_OR_HTML_OR_PIPE, escapeRunBeforeChar).replace(/[\r\n]+/g, " "),
+    ),
   );
 }
 
@@ -96,17 +78,19 @@ export function eventCellMd(
  * A newline would end that line and let the rest of the value start a construct of its own, so the
  * value is flattened onto the one line it was placed on. Nothing is dropped: the reader still sees
  * the whole string, attributed to the finding or hypothesis that carries it. `<`, `>` and `&` are
- * escaped (escapeHtmlMd), so a heading cannot carry live HTML. Text going inside a code span uses
+ * escaped (escapeHtmlMd), so a heading cannot carry live HTML, and link syntax is broken
+ * (breakLinkSyntaxMd), so it cannot carry a live link. Text going inside a code span uses
  * flatLineMd instead, because a code span shows backslashes as written.
  */
 export function oneLineMd(value: string): string {
-  return escapeHtmlMd(flatLineMd(value));
+  return breakLinkSyntaxMd(escapeHtmlMd(flatLineMd(value)));
 }
 
 // Indent, then any blockquote and list-item markers: the part of a line before its content. A
 // heading may open inside a list item (`- # Forged`), so the check looks past those markers too.
 const CONTAINER_PREFIX = "[ \\t]*(?:(?:>|[-*+][ \\t]|\\d{1,9}[.)][ \\t])[ \\t]*)*";
 // Group 1 is the prefix the marker actually follows, so the backslash lands right before the marker.
+const CONTAINER_PREFIX_RE = new RegExp(`^${CONTAINER_PREFIX}`);
 const SECTION_MARKER_RE = new RegExp(`^(${CONTAINER_PREFIX})(?:#{1,6}(?:\\s|$)|=+[ \\t]*$|-+[ \\t]*$)`);
 
 // A code fence, or a raw-HTML block of the kinds that only end at a closing marker (`</pre>`, `-->`,
@@ -142,14 +126,40 @@ function escapeSectionMarker(line: string): string {
  * into code (#1918). Inline code spans are untouched.
  * A line that only holds `-` is never a list item with text, so real bullets are untouched.
  * Thematic breaks of `*` or `_` are left alone: they render a rule, never a heading.
+ * Inline, the text after each line's container prefix gets the same neutralisation as a heading or a
+ * cell — `<`, `>` and `&` escaped, link and image syntax broken — except inside code spans, which
+ * stay literal (proseLineMd).
  */
 export function blockMd(value: string): string {
-  // A lone CR is a line break to marked, so it is split on here too — otherwise "benign\r## X"
-  // would slip past the per-line check and forge a heading.
-  return mdControlPictures(value)
-    .split(/\r\n|\r|\n/)
-    .map(escapeSectionMarker)
+  return splitLines(value)
+    .map((line) => escapeSectionMarker(proseLine(line)))
     .join("\n");
+}
+
+/**
+ * blockMd's structure escapes only, with no inline neutralisation: for a caller that neutralises HTML
+ * its own way afterwards (the handoff brief's pasteable copy turns `<` into an entity), where a
+ * backslash escape as well would show twice.
+ */
+export function blockStructureMd(value: string): string {
+  return splitLines(value).map(escapeSectionMarker).join("\n");
+}
+
+// A lone CR is a line break to marked, so it is split on here too — otherwise "benign\r## X" would
+// slip past the per-line check and forge a heading.
+function splitLines(value: string): string[] {
+  return mdControlPictures(value).split(/\r\n|\r|\n/);
+}
+
+// The container prefix (indent, quote and list markers) is kept as written, so a quote's `>` is not
+// escaped into text; only the content after it is neutralised. A leading run of three or more
+// backticks would open a code fence, which escapeSectionMarker breaks, so it never opens a span
+// here either: it is escaped first, and the prose pass sees the rest with that run gone.
+function proseLine(line: string): string {
+  const prefix = CONTAINER_PREFIX_RE.exec(line)?.[0] ?? "";
+  const rest = line.slice(prefix.length);
+  const fence = /^`{3,}/.exec(rest)?.[0] ?? "";
+  return prefix + "\\`".repeat(fence.length) + proseLineMd(rest.slice(fence.length));
 }
 
 /**
@@ -200,6 +210,14 @@ export function findingIocsMd(f: Finding): string[] {
       `- Indicators removed by the IOC exclude list: ${refs.map((r) => codeSpanMd(r.value)).join(", ")}`,
     );
   return out;
+}
+
+/**
+ * A key question as one list-item line of prose: flattened, then blockMd's structure and inline
+ * escapes, applied once (oneLineMd as well would escape `<` twice).
+ */
+export function goalLineMd(question: string): string {
+  return blockMd(flatLineMd(displayQuestionText(question)));
 }
 
 /** The mark on a system-made coverage-check key question (#2681): not a finding, not an analyst's. */

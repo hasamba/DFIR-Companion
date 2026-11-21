@@ -74,7 +74,8 @@ describe("renderHtmlReport", () => {
       status: "open",
     });
     const html = renderHtmlReport(state);
-    expect(html).not.toContain("javascript:");
+    // The attacker's text is shown as written, never as a link or an image.
+    expect(html).not.toMatch(/(?:href|src)="javascript:/i);
     expect(html).toContain("[open]");
     expect(html).toContain("![pixel]");
   });
