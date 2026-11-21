@@ -5,6 +5,7 @@ import type { TaggerStore } from "../analysis/taggerStore.js";
 import type { TagsStore } from "../analysis/tags.js";
 import type { ForensicGateControlStore } from "../analysis/forensicGateControl.js";
 import type { AnalysisRunStore } from "../analysis/analysisRunStore.js";
+import type { ImportMemoryGuard } from "../analysis/importMemoryGuard.js";
 import { resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { readTaggerSettings, runAndApplyTagger } from "../analysis/taggerRun.js";
 import { hashManifestValue } from "../analysis/analysisRunHash.js";
@@ -41,6 +42,8 @@ export interface BulkImportSinkDeps {
   onSuperTimeline?: (caseId: string) => void;
   onTags?: (caseId: string) => void;
   env?: NodeJS.ProcessEnv;
+  /** The import memory guard: a forensic run re-checks its section's admission as it grows (#2812). */
+  importMemory?: Pick<ImportMemoryGuard, "openSectionCheck">;
 }
 
 export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | undefined {
@@ -156,6 +159,7 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
     }
   };
 
+  const { importMemory } = deps;
   return {
     minBytes: readBulkMinBytes(env),
     batchRows: readBulkBatchRows(env),
@@ -175,5 +179,6 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
     onSuperTimeline: deps.onSuperTimeline,
     onTags: deps.onTags,
     recordRun,
+    ...(importMemory ? { openMemoryCheck: (caseId: string) => importMemory.openSectionCheck(caseId) } : {}),
   };
 }

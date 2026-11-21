@@ -16,6 +16,7 @@ import type { AnalysisPipeline } from "../analysis/pipeline.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
 import type { StateLock } from "../analysis/stateLock.js";
 import type { ImportLock } from "../analysis/importLock.js";
+import type { ImportMemoryGuard } from "../analysis/importMemoryGuard.js";
 import type { OperationalMetricsStore } from "../analysis/operationalMetrics.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import type { ReportWriter } from "../reports/reportWriter.js";
@@ -178,6 +179,9 @@ export interface AppOptions {
   // import never counts a concurrent writer's events as its own. createApp makes one when unset;
   // pass an instance to hold the section from a test. See analysis/importLock.ts.
   importLock?: ImportLock;
+  // The memory guard that admits the import sections createApp's lock makes (#1874). startServer
+  // passes the one its bulk importer re-checks against (#2812); unset, createApp makes its own.
+  importMemoryGuard?: ImportMemoryGuard;
   // How long an archive/export waits for in-flight ingest before it answers 409 (#1903/#1920);
   // routes/archiveImportBarrier.ts's ARCHIVE_INGEST_WAIT_MS when unset. Tests shorten it.
   archiveIngestWaitMs?: number;

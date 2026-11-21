@@ -98,7 +98,7 @@ export class ImportLock {
    * guard wired or no size hint it admits at once and reserves nothing.
    */
   admitWithoutSection(caseId: string, hint?: ImportAdmissionHint): Promise<() => void> {
-    return this.admit(caseId, hint);
+    return this.admission && hint ? this.admission.admit(caseId, hint) : Promise.resolve(() => {});
   }
 
   /** True while an import section for the case is held or queued (#1903 — archive refuses then). */
@@ -106,7 +106,10 @@ export class ImportLock {
     return this.lock.isBusy(caseId);
   }
 
+  // The section's own admission: marked so the running import can re-check it as it grows (#2812).
   private admit(caseId: string, hint?: ImportAdmissionHint): Promise<() => void> {
-    return this.admission && hint ? this.admission.admit(caseId, hint) : Promise.resolve(() => {});
+    return this.admission && hint
+      ? this.admission.admit(caseId, hint, { section: true })
+      : Promise.resolve(() => {});
   }
 }

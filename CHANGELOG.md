@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Big Velociraptor imports no longer crash the server** — the import memory guard re-checks a batched Velociraptor import against the rows it really keeps, and refuses it with the standard message and the case unchanged before the case outgrows the server's memory (closes #2812)
 - **Drop files over 512 MB under a raised cap** — a text file is never read whole past ~448 MB, so a Velociraptor JSON Lines result, cloud export or Plaso file that size streams; other kinds get a clear refusal instead of a string-length error (closes #2813)
 - **Faster hunt export imports** — a dropped Velociraptor hunt imports one hunt-wide `All <Artifact>` copy per artifact instead of one file per client, so a large hunt takes a few dozen case merges instead of hundreds (closes #2810)
 - **Hunt size limits per file** — a result file is held over 50 MB (one PC) or 200 MB (several PCs in one file), never by summing an artifact across PCs; files held by the old sum are released, and the banner shows both limits with Import all / Skip all at the top (closes #2805)
