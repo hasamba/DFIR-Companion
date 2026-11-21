@@ -231,6 +231,17 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   // fails, the case is not moved (`credentials: true`), so it never leaves the list still holding them.
   const logStopped = (id: string, n: number) =>
     n && logLine(`[lifecycle] case=${id} stopped ${n} running analysis job(s)`);
+  // #2786: reopened while the archive was built — keep the case, and its credentials, in the list.
+  const reopenedOutcome = (id: string, logPrefix: string) => {
+    logLine(`${logPrefix} case=${id} was reopened during the build — left in the active list`);
+    return { removed: false, error: new CaseReopenedError(id).message, reopened: true } as const;
+  };
+  // #2793: a plain archive moves nothing, but an open case is still never archived — same re-check.
+  const plainArchiveOutcome = async (
+    id: string,
+    logPrefix: string,
+  ): ReturnType<typeof removeCaseFromActiveListBestEffort> =>
+    (await store.getCaseMeta(id))?.status === "closed" ? { removed: false } : reopenedOutcome(id, logPrefix);
   async function removeCaseFromActiveListBestEffort(
     id: string,
     logPrefix: string,
@@ -242,11 +253,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     reopened?: true;
     released?: ReleaseReport;
   }> {
-    // #2786: reopened while the archive was built — keep the case, and its credentials, in the list.
-    const reopened = (): { removed: false; error: string; reopened: true } => {
-      logLine(`${logPrefix} case=${id} was reopened during the build — left in the active list`);
-      return { removed: false, error: new CaseReopenedError(id).message, reopened: true };
-    };
+    const reopened = () => reopenedOutcome(id, logPrefix);
     if ((await store.getCaseMeta(id))?.status !== "closed") return reopened();
     const release = await releaseBeforeCaseEnd(ctx, req, id, "case archived");
     if (!release.ok) return { removed: false, error: release.error, credentials: true };
@@ -300,8 +307,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       });
       const outcome = removeFromList
         ? await removeCaseFromActiveListBestEffort(id, "[archive]", req)
-        : { removed: false };
-      const reopened = "reopened" in outcome; // #2786: refused — the case was reopened mid-build
+        : await plainArchiveOutcome(id, "[archive]");
+      const reopened = "reopened" in outcome; // #2786/#2793: refused — the case was reopened mid-build
       return res.status(reopened ? 409 : 200).json({
         ...result,
         removedFromList: outcome.removed,

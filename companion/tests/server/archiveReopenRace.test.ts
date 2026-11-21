@@ -45,6 +45,18 @@ describe("archive vs a reopen during the build (#2786)", () => {
     expect((await stat(join(store.casesRoot, "INC-R", "case.json"))).isFile()).toBe(true);
   });
 
+  // #2793: an open case is never archived — the plain ZIP archive (no removeFromList) re-checks too,
+  // and keeps the written ZIP exactly as the removeFromList variant does.
+  it("refuses a plain ZIP archive with 409 when the case was reopened during the build", async () => {
+    const { app, store } = await harness();
+    const res = await request(app).post("/cases/INC-R/archive").send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/reopened/);
+    expect(res.body.removedFromList).toBe(false);
+    expect((await stat(res.body.archivePath)).isFile()).toBe(true);
+    expect((await store.getCaseMeta("INC-R"))?.status).toBe("open");
+  });
+
   it("keeps the reopened case open after an encrypted export with removeFromList", async () => {
     const { app, store } = await harness();
     const res = await request(app)
