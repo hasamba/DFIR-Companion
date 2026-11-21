@@ -13,7 +13,8 @@ import type { HuntPlan } from "../analysis/veloHuntLayout.js";
 import { isApproved, type HeldMeta, type HuntHeldStore } from "../analysis/huntHeldStore.js";
 import { withCaseWrite } from "../storage/caseIncarnation.js";
 import { isSafeDropRelpath } from "../storage/dropRelpath.js";
-import { openNoFollow, readHeadNoFollow } from "../storage/noFollowRead.js";
+import { readHeadNoFollow } from "../storage/noFollowRead.js";
+import { severalPcs } from "./dropResultClients.js";
 import { logLine } from "../logging/serverLogger.js";
 
 /**
@@ -145,37 +146,6 @@ export async function applyDropHolds(
 function smallestLimitMb(limits: HuntArtifactLimits): number {
   const on = [limits.hostMb, limits.totalMb].filter((n) => n > 0);
   return on.length ? Math.min(...on) : Infinity;
-}
-
-const CLIENT_ID = /"ClientId"\s*:\s*"([^"]+)"/g;
-const SCAN_CHUNK = 1024 * 1024;
-
-/**
- * Whether a dropped result file holds several PCs' results (#2805): named `All <Artifact>` (the
- * hunt-wide copy), or two different ClientIds anywhere in it. Read in chunks, stopping at the second
- * PC — a file sorted by PC shows only its first PC in the head. Only files over a limit get here.
- */
-async function severalPcs(path: string, name: string): Promise<boolean> {
-  if (/^All /i.test(name)) return true;
-  const fh = await openNoFollow(path);
-  try {
-    const buf = Buffer.alloc(SCAN_CHUNK);
-    let first = "";
-    let tail = "";
-    for (let pos = 0; ;) {
-      const { bytesRead } = await fh.read(buf, 0, SCAN_CHUNK, pos);
-      if (!bytesRead) return false;
-      pos += bytesRead;
-      const text = tail + buf.toString("utf8", 0, bytesRead);
-      for (const m of text.matchAll(CLIENT_ID)) {
-        if (!first) first = m[1];
-        else if (m[1] !== first) return true;
-      }
-      tail = text.slice(-256); // a ClientId split across two chunks
-    }
-  } finally {
-    await fh.close();
-  }
 }
 
 /**
