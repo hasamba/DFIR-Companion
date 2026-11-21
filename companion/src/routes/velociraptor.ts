@@ -66,8 +66,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   const { options } = ctx;
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
   const gate = requireBodyCaseUnlocked(ctx); // a locked case named by body/?caseId= needs its unlock
-  // Module-private copy of createApp's toStringArray (a non-exported server.ts helper) so the moved
-  // run-bundle / deploy-hunt bodies keep their original calls without importing across the route seam.
+  // Module-private copy of createApp's (non-exported) toStringArray for the moved run-bundle/deploy-hunt bodies.
   const toStringArray = (v: unknown): string[] => {
     if (typeof v === "string")
       return v
