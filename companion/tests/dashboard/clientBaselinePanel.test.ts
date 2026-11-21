@@ -147,7 +147,13 @@ describe("Client Baseline panel layout (#2736)", () => {
     const h = harness();
     await h.render();
     const policy = h.panel().querySelector(".cb-policy") as FakeEl;
-    expect((policy.querySelector("h3") as FakeEl).textContent).toBe("Download policy");
+    expect((policy.querySelector("h3") as FakeEl).textContent).toBe("Download policy (optional)");
+    expect((policy.querySelector(".cb-manual-hint") as FakeEl).textContent).toMatch(
+      /Typed in by you.*never filled automatically.*Leave it empty/,
+    );
+    expect((h.panel().querySelector(".cb-auto-hint") as FakeEl).textContent).toMatch(
+      /Filled automatically from this case's hunt results.*nothing to type/,
+    );
     const note = (policy.querySelector(".cb-policy-note") as FakeEl).textContent;
     expect(note).toMatch(/blocked category or a blocked site are graded as policy violations/);
     expect(note).toMatch(/runnable or archive files .* other than an approved source/);

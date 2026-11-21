@@ -895,11 +895,44 @@ Shown for a [threat-hunt case](threat-hunting.md#threat-hunt-mode-proactive-hunt
 
 ## Client Baseline
 
-Shown for a threat-hunt case. Link the case to a client, export the client's "please confirm"
-list (CSV or Markdown, rarest first), tick items and mark them **Approved**, **Not allowed** or
-**Unknown**, import the client's filled CSV, and keep the client's blocked download categories and
-sites. Editing a client profile needs the instance administrator; linking a case needs the case
-administrator. Earlier hunts of the same client are listed only when you can open them.
+Shown for a threat-hunt case. It keeps what the client told you about the programs and downloads on
+their PCs, so the next hunt for the same client does not ask the same questions again. Part of it fills
+itself, and part of it you type in.
+
+**Link the case to a client first.** Pick the client in the **Client** box and press **Link case to
+client**. The answers are saved on the client, not on the case. (Only the instance administrator can
+create or edit a client; linking a case needs the case administrator.)
+
+**The "waiting for the client" list fills itself. You type nothing.** After a hunt imports program,
+autorun or download evidence (for example the **Threat Hunt Starter** bundle: Amcache, Prefetch,
+UserAssist, Autoruns, downloads), the Companion lists what it found on the hosts that the client has
+not confirmed yet, rarest first (a program on 1 of 40 PCs comes before one on all 40). This list comes
+from the hunt results, not from the case IOCs. "0 item(s) waiting" means nothing in this case has
+produced items yet.
+
+1. Press **Export confirm list (CSV)** or **(Markdown)** and send it to the client.
+2. When they answer, tick items and press **Mark Approved**, **Mark Not allowed** or **Reset to
+   Unknown**, or import their filled CSV.
+3. The answers carry over: the client's next hunt cases start with those items settled. Earlier hunts
+   of the same client are listed only when you can open them.
+
+**The download policy is optional, and you type it in** from the client's own rules. It is never
+filled automatically, and the grey text in the boxes (`files.example`, `downloads.example`) is only an
+example, not a value.
+
+- **Blocked categories** — tick the kinds of sites the client forbids (torrent, file sharing, cloud
+  storage, paste sites, remote access). Each one is a bundled list of known sites of that kind.
+- **Blocked sites** — the client's own forbidden domains, one per line. Subdomains are included.
+- **Approved download sources** — where installers may come from, for example their internal
+  software portal.
+
+Once saved, a download from a blocked category or site is graded as a policy violation, and an
+`.exe`, `.msi` or `.zip` downloaded from anywhere not approved (or with no recorded source) is flagged.
+Leave it all empty if the client has no policy: nothing is graded as a policy violation, and the rest
+of the hunt works as usual.
+
+**In short:** you do not need to enter anything to start. Send the confirm list once it fills up, and
+fill in the download policy only if the client gives you one.
 
 Both panels are in the **Hunt Prep** view and lead the **Threat Hunt** view.
 
