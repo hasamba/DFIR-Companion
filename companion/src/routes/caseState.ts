@@ -9,6 +9,7 @@ import { eventAliasSource } from "../analysis/eventAliasRead.js";
 import { taggerTagsForRows } from "../analysis/taggerRowTags.js";
 import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { readCaseState } from "./caseStateRead.js";
+import { StateFileCorruptError } from "../storage/stateFileCorrupt.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -92,6 +93,9 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
       });
     } catch (err) {
       if (clientGone(res) || isAbortError(err)) return;
+      // A damaged investigation.json / SQLite store (#2783): name the case and file, never the raw text.
+      if (err instanceof StateFileCorruptError)
+        return res.status(409).json({ error: err.message, code: err.code, file: err.file });
       return res.status(500).json({ error: (err as Error).message });
     }
   });
