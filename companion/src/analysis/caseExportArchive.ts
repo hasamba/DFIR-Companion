@@ -20,6 +20,7 @@ import { EXPORT_STAGING_DIRNAME, createStagingDir } from "../storage/exportStagi
 import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
+import { asStateLoadCorruption } from "./stateLoadCorrupt.js";
 import { CaseFileRefusedError, readCaseFile, withPinnedCaseFile } from "../storage/caseFileRead.js";
 import { restoreCaseZip, type CaseImportCounts, type RestoreCaseZipOptions } from "./caseRestore.js";
 import { listCaseZipEntries, readCaseZipEntry } from "./caseZipReader.js";
@@ -299,7 +300,9 @@ async function snapshotGeneration(
         );
     } catch (err) {
       const retryable = err instanceof CaseFileRefusedError && err.kind === "changed file";
-      if (!retryable || attempt >= SNAPSHOT_ATTEMPTS) refusedAs(DB_REL)(err);
+      // #2794: a damaged store names the case and the file, as GET /cases/:id/state does.
+      if (!retryable || attempt >= SNAPSHOT_ATTEMPTS)
+        refusedAs(DB_REL)(asStateLoadCorruption(err, caseId, "read"));
     }
     relPaths = await walkDir(scope.caseDir);
     if (relPaths.length === 0) throw new Error(`case ${caseId} does not exist`);

@@ -47,6 +47,7 @@ import { parseImporterSpec } from "../analysis/importerSpec.js";
 import { buildCustodyManifest, CUSTODY_MANIFEST_FILENAME } from "../analysis/custodyManifest.js";
 import { getImporterPrompt } from "../analysis/pipeline.js";
 import { registerVelociraptorSettingsRoutes } from "./velociraptorSettings.js";
+import { answerArchiveFailure } from "./archiveFailure.js";
 import {
   getEnvForSettings,
   updateEnv as updateEnvFile,
@@ -318,7 +319,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       });
     } catch (err) {
       errLine(`[archive] error case=${req.params.id}: ${(err as Error).message}`);
-      return res.status(500).json({ error: (err as Error).message });
+      return answerArchiveFailure(res, err); // #2794: a damaged state file is a named 409
     }
   };
   app.post("/cases/:id/archive", withArchiveBarrier(ctx, archiveRoute));
@@ -437,7 +438,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
       errLine(`[delete] error case=${req.params.id}: ${(err as Error).message}`);
-      return res.status(500).json({ error: (err as Error).message });
+      return answerArchiveFailure(res, err); // #2794: a damaged state file is a named 409
     }
   };
   app.post("/cases/:id/delete", withArchiveBarrier(ctx, deleteRoute, deleteArchivesFirst));
@@ -575,7 +576,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if ((err as Error).message.includes("does not exist")) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      return res.status(500).json({ error: (err as Error).message });
+      return answerArchiveFailure(res, err); // #2794: a damaged state file is a named 409
     }
   };
   app.post("/cases/:id/export/encrypted", withArchiveBarrier(ctx, exportEncryptedRoute));

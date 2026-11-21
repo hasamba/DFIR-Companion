@@ -10,6 +10,7 @@ import { caseNamedFilename } from "./caseFilename.js";
 import { copyNumberedSuffix, writeBufferNewFile } from "./archiveNoClobber.js";
 import { EXPORT_STAGING_DIRNAME, createStagingDir } from "../storage/exportStaging.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
+import { asStateLoadCorruption } from "./stateLoadCorrupt.js";
 import {
   CaseFileRefusedError,
   readCaseFile,
@@ -338,7 +339,8 @@ async function snapshotDatabase(
     return { staging, path };
   } catch (err) {
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);
-    throw err;
+    // #2794: a damaged store names the case and the file, as GET /cases/:id/state does.
+    throw asStateLoadCorruption(err, caseId, "read");
   }
 }
 

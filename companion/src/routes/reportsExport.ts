@@ -7,6 +7,7 @@ import { injectPrintTrigger } from "../reports/html.js";
 import { ReportMetaStale } from "../reports/reportMeta.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { logEvidenceSafety } from "./evidenceSafetyLog.js";
+import { answerArchiveFailure } from "./archiveFailure.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { fetchIrisCase } from "../integrations/iris/irisImportFetch.js";
 import { defaultIrisCaseName } from "../integrations/iris/irisExportStore.js";
@@ -99,7 +100,7 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
       logEvidenceSafety(options, req.params.id, "html", paths.evidenceSafety ?? []);
       return res.status(200).json(paths);
     } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
+      return answerArchiveFailure(res, err); // #2794: a damaged state file is a named 409
     }
   });
 
