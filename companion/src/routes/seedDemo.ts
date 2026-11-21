@@ -4,6 +4,7 @@ import { seedDemoCase, DEMO_CASE_ID_DEFAULT } from "../analysis/seedDemoCase.js"
 import { isTerminal } from "../analysis/jobRegistry.js";
 import { linkNewCase } from "./serverSets.js";
 import type { RouteContext } from "./context.js";
+import { requireBodyCaseUnlocked } from "./bodyCaseLock.js";
 import { stoppingMessage } from "./caseIdentity.js";
 import { requestAuthentication } from "../auth/types.js";
 
@@ -29,7 +30,7 @@ import { requestAuthentication } from "../auth/types.js";
 export function registerSeedDemoRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
 
-  app.post("/cases/seed-demo", async (req: Request, res: Response) => {
+  app.post("/cases/seed-demo", requireBodyCaseUnlocked(ctx), async (req: Request, res: Response) => {
     try {
       const rawCaseId = req.body?.caseId ?? undefined;
       if (rawCaseId !== undefined && (typeof rawCaseId !== "string" || !isValidCaseId(rawCaseId))) {
