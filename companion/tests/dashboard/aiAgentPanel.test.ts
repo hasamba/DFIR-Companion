@@ -51,6 +51,11 @@ describe("AI Agent Forensics panel", () => {
     expect(refusal).not.toContain("Settings");
   });
 
+  it("turns the standard 401 locked answer into an unlock hint (#2798)", () => {
+    expect(js).toContain('res.status === 401 && body && body.error === "locked"');
+    expect(js).toContain("is locked — unlock it first.");
+  });
+
   it("shows both hashes, the check, and the rule-by-endpoint Sigma table (#2722)", () => {
     expect(js).toContain("function hashCell(h)");
     expect(js).toContain('h.hashCheck || "not recorded"');

@@ -117,7 +117,7 @@ async function writableBodyCase(
     return false;
   }
   if (meta.password && !ctx.readUnlockState(req, caseId, meta.password.salt).unlocked) {
-    res.status(403).json({ error: "this case is locked — unlock it first" });
+    res.status(401).json({ error: "locked", caseId }); // the case-lock gate's answer (#2798)
     return false;
   }
   return true;
