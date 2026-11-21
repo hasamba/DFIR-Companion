@@ -4,6 +4,7 @@ import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { StateLock } from "./stateLock.js";
 import { EMPTY_INVENTORY, type HuntInventory } from "./huntInventory.js";
+import { canonicalizeInventory } from "./huntInventoryCanon.js";
 import type { HuntGrade } from "./huntEntries.js";
 
 /**
@@ -41,14 +42,19 @@ function parse(raw: unknown): HuntInventoryRecord {
   const r = raw as Partial<HuntInventoryRecord> | null;
   if (!r || typeof r !== "object" || !r.inventory || typeof r.inventory !== "object")
     return { ...EMPTY_RECORD };
+  // #2750: an inventory stored before known-folder GUID paths were normalised is re-keyed on load,
+  // and its grading signature cleared so the next settle re-grades the merged items.
+  const canon = canonicalizeInventory({ ...EMPTY_INVENTORY, ...r.inventory, items: r.inventory.items ?? {} });
   return {
-    inventory: { ...EMPTY_INVENTORY, ...r.inventory, items: r.inventory.items ?? {} },
+    inventory: canon.inventory,
     entryIds: Array.isArray(r.entryIds) ? r.entryIds.filter((x): x is string => typeof x === "string") : [],
-    grades: Array.isArray(r.grades) ? r.grades.slice(0, GRADES_KEPT) : [],
+    // A re-key can merge hosts into an existing item, so every stored grade may now be wrong (a
+    // "rare" item can stop being rare): drop them all and let the next settle or regrade rebuild them.
+    grades: !canon.changed && Array.isArray(r.grades) ? r.grades.slice(0, GRADES_KEPT) : [],
     approvedLabels: Array.isArray(r.approvedLabels)
       ? r.approvedLabels.filter((x): x is string => typeof x === "string").slice(0, GRADES_KEPT)
       : [],
-    gradedSignature: typeof r.gradedSignature === "string" ? r.gradedSignature : "",
+    gradedSignature: !canon.changed && typeof r.gradedSignature === "string" ? r.gradedSignature : "",
     ...(typeof r.baselineVersion === "number" ? { baselineVersion: r.baselineVersion } : {}),
   };
 }

@@ -14,7 +14,7 @@ import { EMPTY_IDENTITY_COVERAGE, observeIdentity, type IdentityCoverage } from 
  */
 export const INVENTORY_MAX_ITEMS = 20_000;
 export const INVENTORY_MAX_HOSTS = 5_000;
-const MAX_VALUES = 20;
+export const MAX_VALUES = 20;
 /** Task names per autorun item (#2748): per-host or per-user named tasks can exceed MAX_VALUES. */
 export const MAX_ENTRIES = 200;
 
@@ -53,6 +53,13 @@ export interface InventoryItem extends IdentityCoverage {
    */
   entries?: { program: string; pathPattern: string }[];
   entriesCapped?: true;
+  /**
+   * (#2732) The Velociraptor artifacts this item was reported by, so a partial artifact blocks rarity
+   * for its own items only. Absent on an item stored before it was recorded: unknown, never graded
+   * while any artifact is partial. `artifactsIncomplete`: a row named no artifact, or the cap dropped one.
+   */
+  artifacts?: string[];
+  artifactsIncomplete?: true;
   hosts: Record<string, InventoryHost>;
   hostOverflow: number;
   firstSeen: string;
@@ -72,6 +79,8 @@ export interface InventoryObservation {
   fields: HuntFields;
   host: HostKey;
   at: string;
+  /** The artifact that emitted the row (`artifactName`), when it named one (#2732). */
+  artifact?: string;
 }
 
 const familyOf = (e: HuntEvidence): InventoryFamily =>
@@ -93,6 +102,22 @@ function entryList(
   if (!e || list.some((x) => x.program === e.program && x.pathPattern === e.pathPattern)) return keep;
   if (list.length >= MAX_ENTRIES) return { ...keep, entriesCapped: true };
   return { ...keep, entries: [...list, e] };
+}
+
+/** The item's artifact list with this observation's one added (#2732); a legacy item stays unknown. */
+function artifactList(
+  base: InventoryItem,
+  artifact: string | undefined,
+): Pick<InventoryItem, "artifacts" | "artifactsIncomplete"> {
+  if (!base.artifacts) return {};
+  const keep = {
+    artifacts: base.artifacts,
+    ...(base.artifactsIncomplete ? { artifactsIncomplete: true as const } : {}),
+  };
+  if (!artifact) return { ...keep, artifactsIncomplete: true };
+  if (base.artifacts.includes(artifact)) return keep;
+  if (base.artifacts.length >= MAX_VALUES) return { ...keep, artifactsIncomplete: true };
+  return { ...keep, artifacts: [...base.artifacts, artifact] };
 }
 
 const earlier = (a: string, b: string): string => (!a ? b : !b ? a : a < b ? a : b);
@@ -135,6 +160,7 @@ function observe(item: InventoryItem | undefined, o: InventoryObservation): Inve
     ...EMPTY_IDENTITY_COVERAGE,
     md5: [],
     sourceUrls: [],
+    artifacts: [],
     hosts: {},
     hostOverflow: 0,
     firstSeen: o.at,
@@ -161,6 +187,7 @@ function observe(item: InventoryItem | undefined, o: InventoryObservation): Inve
     md5: addValue(base.md5, f.md5),
     sourceUrls: addValue(base.sourceUrls, f.sourceUrl),
     ...entryList(base, f.entry),
+    ...artifactList(base, o.artifact?.trim() || undefined),
     hosts,
     hostOverflow: base.hostOverflow + (!known && !roomForHost ? 1 : 0),
     firstSeen: earlier(base.firstSeen, o.at),

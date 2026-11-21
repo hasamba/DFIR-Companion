@@ -45,7 +45,8 @@ mean the file was **present**, not that it ran.
 The Threat Hunt panel and the report say how many hosts answered each hunt cleanly, out of how
 many were targeted, and how many did not answer. Only Companion-launched hunts record this. For an
 uploaded hunt export the coverage is **unknown**: nothing is called absent, and no percentage is
-given.
+given. When an artifact was read only partly, the panel names it and says that rarity is not
+graded for the kinds of item it reports.
 
 ### 5. Rare, new, policy and download items
 
@@ -74,7 +75,7 @@ items.
 | Item | When |
 |---|---|
 | **Policy violation** | The client marked it **Not allowed**, or it was downloaded from a blocked site or a blocked category. Default severity Medium (setting below). Labelled as policy, not as malicious activity. |
-| **Rare** | At least 20 hosts answered cleanly, and the item is on at most 5% of them and on at most 10 hosts. Below 20 answering hosts, or with unknown or partial coverage, nothing is graded rare. |
+| **Rare** | At least 20 hosts answered cleanly, and the item is on at most 5% of them and on at most 10 hosts. Below 20 answering hosts, or with unknown coverage, nothing is graded rare. When an artifact was read only partly (cut short, failed or with an unread source list), no item of a kind it reports is graded rare, because the rows it lost may belong to any such item, including one another artifact reported in full (Prefetch and Amcache report the same programs). Items of other kinds are still graded: a cut-short scheduled-task list does not stop rare programs. An artifact Companion does not recognise blocks every kind. |
 | **New since the last comparable hunt** | Not in the baseline and not seen in the last comparable hunt for this client: an earlier hunt case of the same client, with an overlapping bundle, over at least half the same answering hosts. An item is called new only on hosts both hunts covered cleanly. A first hunt has nothing to compare with. |
 | **Flagged download** | A runnable or archive file downloaded from a site outside the client's approved sources, or with no source URL. |
 
@@ -107,7 +108,9 @@ Rules that keep an attacker from hiding behind a name:
   or an approved hash. A `chrome.exe` in a Temp folder does not match an approval for `chrome.exe`
   in `\Program Files\Google\`. If one host runs a different hash at the approved path, that item
   is not covered. The path pattern ignores the volume, so a Prefetch path (`\Device\HarddiskVolume3\…`)
-  and an Amcache path (`C:\…`) for the same file are one item.
+  and an Amcache path (`C:\…`) for the same file are one item. A UserAssist path that starts with
+  a Windows known-folder ID (for example `{6D809377-…}\Foo\foo.exe` for `\Program Files\Foo`) is
+  read as that folder, so it is the same item too. An unrecognised folder ID is kept as it is.
 - Publisher text alone never approves anything. A missing hash or signer gives **Unknown**.
 - Which artifacts can make an item approvable:
     - **Amcache** (`Windows.Forensics.Amcache`, program files) records a SHA1. Amcache hashes only

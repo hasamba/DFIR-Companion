@@ -5,6 +5,7 @@ import {
   normalisePathPattern,
   stripVolumePrefix,
 } from "../../src/analysis/huntArtifactFields.js";
+import { pathPatternMatches } from "../../src/analysis/huntApprovalMatch.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const row = (description: string, p: Partial<ForensicEvent> = {}): ForensicEvent => ({
@@ -115,6 +116,38 @@ describe("hunt artifact fields (#2670)", () => {
     expect(stripVolumePrefix("\\program files\\foo")).toBe("\\program files\\foo");
     expect(stripVolumePrefix("\\device\\harddiskvolume3x\\foo")).toBe("\\device\\harddiskvolume3x\\foo");
     expect(stripVolumePrefix("\\tools\\device\\harddiskvolume3")).toBe("\\tools\\device\\harddiskvolume3");
+  });
+
+  it("maps a leading known-folder GUID to its folder, and leaves unknown GUIDs alone (#2750)", () => {
+    const n = normalisePathPattern;
+    expect(n("{6D809377-6AF0-444B-8957-A3773F02200E}\\Foo\\foo.exe")).toBe("\\program files\\foo");
+    expect(n("{7c5a40ef-a0fb-4bfc-874a-c0f2e0b9fa8e}\\Foo\\foo.exe")).toBe("\\program files (x86)\\foo");
+    expect(n("{F38BF404-1D43-42F2-9305-67DE0B28FC23}\\regedit.exe")).toBe("\\windows");
+    expect(n("{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\cmd.exe")).toBe("\\windows\\system32");
+    expect(n("{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}\\Programs\\x.exe")).toBe(
+      "\\users\\*\\appdata\\local\\programs",
+    );
+    expect(n("{3EB685DB-65F9-4CF6-A03A-E3EF65729F3D}\\x.exe")).toBe("\\users\\*\\appdata\\roaming");
+    expect(n("{62AB5D82-FDC1-4DC3-A9DD-070D1D495D97}\\x\\y.exe")).toBe("\\programdata\\x");
+    // FOLDERID_ProgramFiles resolves by the CALLING process's bitness: not mapped.
+    expect(n("{905E63B6-C1BF-494E-B29C-65B732D3D21A}\\Foo\\foo.exe")).toBe(
+      "{905e63b6-c1bf-494e-b29c-65b732d3d21a}\\foo",
+    );
+    expect(n("{00000000-0000-0000-0000-000000000000}\\x.exe")).toBe("{00000000-0000-0000-0000-000000000000}");
+    // Only the whole FIRST segment: a GUID further down the path stays as it is.
+    expect(n("C:\\Tools\\{F38BF404-1D43-42F2-9305-67DE0B28FC23}\\x.exe")).toBe(
+      "\\tools\\{f38bf404-1d43-42f2-9305-67de0b28fc23}",
+    );
+    expect(n("{F38BF404-1D43-42F2-9305-67DE0B28FC23}x\\y.exe")).toBe(
+      "{f38bf404-1d43-42f2-9305-67de0b28fc23}x",
+    );
+  });
+
+  it("an approval saved on a GUID-keyed item still matches the folder form (#2750)", () => {
+    expect(stripVolumePrefix("{6D809377-6AF0-444B-8957-A3773F02200E}\\Foo")).toBe("\\program files\\Foo");
+    expect(pathPatternMatches("{6d809377-6af0-444b-8957-a3773f02200e}\\foo", "\\program files\\foo")).toBe(
+      true,
+    );
   });
 
   it("presence and execution of one program at one path are ONE item", () => {

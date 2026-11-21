@@ -1,5 +1,6 @@
 import type { ForensicEvent } from "./stateTypes.js";
 import { sha1Unusable, usableSha1 } from "./fileIdentity.js";
+import { expandKnownFolder } from "./huntKnownFolders.js";
 
 /**
  * Normalised hunt fields of one imported row (#2670), derived at the import seam from the row the
@@ -86,10 +87,13 @@ const DRIVE_PREFIX = /^[a-z]:/i;
 /**
  * Drop the volume a path lives on (#2749): namespace prefix, NT device / volume-GUID root, drive letter.
  * Prefetch names `\DEVICE\HARDDISKVOLUME3\…` where Amcache and ShimCache name `C:\…` for the same
- * file, so both must reduce to `\…` to be one hunt item. Backslash-separated input; case kept.
+ * file, so both must reduce to `\…` to be one hunt item. A UserAssist known-folder GUID root becomes
+ * its folder (#2750, huntKnownFolders.ts). Backslash-separated input; case kept except that folder.
  */
 export function stripVolumePrefix(path: string): string {
-  return path.replace(NAMESPACE_PREFIX, "").replace(VOLUME_PREFIX, "").replace(DRIVE_PREFIX, "");
+  return expandKnownFolder(
+    path.replace(NAMESPACE_PREFIX, "").replace(VOLUME_PREFIX, "").replace(DRIVE_PREFIX, ""),
+  );
 }
 
 /** `c:\Users\Bob\AppData\x.exe` → `\users\*\appdata`; the volume (drive, device, GUID) dropped. */

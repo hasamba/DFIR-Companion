@@ -84,6 +84,8 @@ describe("Threat hunt summary report (#2670)", () => {
           huntsWithCoverage: 1,
           huntsWithoutCoverage: 0,
           partialArtifacts: 0,
+          partialArtifactNames: [],
+          collectedArtifactNames: [],
           answeredHosts: [{ clientId: "C.1", hostname: "ws-1" }],
         },
       }),

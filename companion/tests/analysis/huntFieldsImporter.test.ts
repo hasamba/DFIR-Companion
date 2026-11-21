@@ -60,6 +60,62 @@ describe("hunt fields from real importer rows (#2670)", () => {
     expect(new Set(f.map((x) => huntItemKey(x!)))).toEqual(new Set(["program|foo.exe|\\program files\\foo"]));
   });
 
+  it("UserAssist known-folder GUID path, Prefetch and Amcache for one file give ONE item (#2750)", () => {
+    const ev = rows([
+      {
+        _Source: "Windows.Registry.UserAssist",
+        Fqdn: "WS-01",
+        Name: "{6D809377-6AF0-444B-8957-A3773F02200E}\\Foo\\foo.exe",
+        NumberOfExecutions: 4,
+        LastExecution: "2026-01-01T00:00:00Z",
+      },
+      {
+        _Source: "Windows.Forensics.Prefetch",
+        Fqdn: "WS-01",
+        Executable: "FOO.EXE",
+        ExecutablePath: "\\DEVICE\\HARDDISKVOLUME3\\PROGRAM FILES\\FOO\\FOO.EXE",
+        RunCount: 3,
+        LastRunTimes: "2026-01-01T00:00:00Z",
+      },
+      {
+        _Source: "Windows.Forensics.Amcache/InventoryApplicationFile",
+        Fqdn: "WS-01",
+        FullPath: "c:\\program files\\foo\\foo.exe",
+        OriginalFileName: "foo.exe",
+        SHA1: "0123456789abcdef0123456789abcdef01234567",
+        Size: 12345,
+        LastModified: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    const f = ev.map(huntFieldsOf);
+    expect(f.filter(Boolean)).toHaveLength(3);
+    expect(new Set(f.map((x) => huntItemKey(x!)))).toEqual(new Set(["program|foo.exe|\\program files\\foo"]));
+  });
+
+  it("a UserAssist path under a per-user known folder keys like the drive-letter path (#2750)", () => {
+    const ev = rows([
+      {
+        _Source: "Windows.Registry.UserAssist",
+        Fqdn: "WS-01",
+        Name: "{374DE290-123F-4565-9164-39C4925E467B}\\rclone.exe",
+        NumberOfExecutions: 1,
+        LastExecution: "2026-01-01T00:00:00Z",
+      },
+      {
+        _Source: "Windows.Forensics.Prefetch",
+        Fqdn: "WS-01",
+        Executable: "RCLONE.EXE",
+        ExecutablePath: "C:\\Users\\alice\\Downloads\\rclone.exe",
+        RunCount: 1,
+        LastRunTimes: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    const f = ev.map(huntFieldsOf);
+    expect(new Set(f.map((x) => huntItemKey(x!)))).toEqual(
+      new Set(["program|rclone.exe|\\users\\*\\downloads"]),
+    );
+  });
+
   it("Amcache installed program with ' - ' in its name: one item, publisher unverified", () => {
     const ev = rows(
       hosts.map((h) => ({
