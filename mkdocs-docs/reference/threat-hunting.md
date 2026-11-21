@@ -107,7 +107,9 @@ Rules that keep an attacker from hiding behind a name:
   or an approved hash. A `chrome.exe` in a Temp folder does not match an approval for `chrome.exe`
   in `\Program Files\Google\`. If one host runs a different hash at the approved path, that item
   is not covered. The path pattern ignores the volume, so a Prefetch path (`\Device\HarddiskVolume3\…`)
-  and an Amcache path (`C:\…`) for the same file are one item.
+  and an Amcache path (`C:\…`) for the same file are one item. A UserAssist path that starts with
+  a Windows known-folder ID (for example `{6D809377-…}\Foo\foo.exe` for `\Program Files\Foo`) is
+  read as that folder, so it is the same item too. An unrecognised folder ID is kept as it is.
 - Publisher text alone never approves anything. A missing hash or signer gives **Unknown**.
 - Which artifacts can make an item approvable:
     - **Amcache** (`Windows.Forensics.Amcache`, program files) records a SHA1. Amcache hashes only

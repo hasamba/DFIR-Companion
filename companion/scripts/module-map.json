@@ -604,6 +604,7 @@
     "clientProfile.ts": "analysis/hunt",
     "huntApprovalMatch.ts": "analysis/hunt",
     "huntArtifactFields.ts": "analysis/hunt",
+    "huntKnownFolders.ts": "analysis/hunt",
     "huntCase.ts": "analysis/hunt",
     "huntEntries.ts": "analysis/hunt",
     "huntFraming.ts": "analysis/hunt",
