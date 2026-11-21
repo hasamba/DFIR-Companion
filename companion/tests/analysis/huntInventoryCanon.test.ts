@@ -118,6 +118,23 @@ describe("canonical hunt inventory keys (#2750)", () => {
     expect(mergeInventoryItems(a, c).unhashedHosts).toEqual([]);
   });
 
+  it("drops a merge destination's stored grade too (its host count changed)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-hunt-canon-"));
+    const store = new HuntInventoryStore({ stateDir: () => dir });
+    const destGrade = { itemKey: `program|foo.exe|${NORMAL}`, kind: "rare", label: "foo.exe" };
+    const record = {
+      inventory: inv(item(NORMAL, ["name/ws-a"]), item(GUID, ["name/ws-b", "name/ws-c"])),
+      entryIds: [],
+      grades: [destGrade],
+      approvedLabels: [],
+      gradedSignature: "sig",
+    };
+    await writeFile(join(dir, "hunt-inventory.json"), JSON.stringify(record));
+    const loaded = await store.load("c1");
+    expect(Object.keys(loaded.inventory.items)).toEqual([`program|foo.exe|${NORMAL}`]);
+    expect(loaded.grades, "the destination's old 'rare' grade must not survive the merge").toEqual([]);
+  });
+
   it("the store re-keys on load and clears the grading signature so the next settle re-grades", async () => {
     const dir = await mkdtemp(join(tmpdir(), "dfir-hunt-canon-"));
     const store = new HuntInventoryStore({ stateDir: () => dir });

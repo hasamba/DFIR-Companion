@@ -48,11 +48,9 @@ function parse(raw: unknown): HuntInventoryRecord {
   return {
     inventory: canon.inventory,
     entryIds: Array.isArray(r.entryIds) ? r.entryIds.filter((x): x is string => typeof x === "string") : [],
-    grades: Array.isArray(r.grades)
-      ? r.grades
-          .filter((g) => !canon.changed || (!!g && g.itemKey in canon.inventory.items)) // no stale GUID grade
-          .slice(0, GRADES_KEPT)
-      : [],
+    // A re-key can merge hosts into an existing item, so every stored grade may now be wrong (a
+    // "rare" item can stop being rare): drop them all and let the next settle or regrade rebuild them.
+    grades: !canon.changed && Array.isArray(r.grades) ? r.grades.slice(0, GRADES_KEPT) : [],
     approvedLabels: Array.isArray(r.approvedLabels)
       ? r.approvedLabels.filter((x): x is string => typeof x === "string").slice(0, GRADES_KEPT)
       : [],
