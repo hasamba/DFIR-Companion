@@ -8,7 +8,7 @@ import { runImportAttempt } from "../../src/analysis/importAttempt.js";
 import { ImportMemoryRefusedError, type ImportAdmissionHint } from "../../src/analysis/importMemoryGuard.js";
 import { createDropFolder, dropDirOf, type DropFolderDeps } from "../../src/composition/dropFolder.js";
 import { DROP_INFLIGHT_MARKER, parseInFlight } from "../../src/composition/dropInFlight.js";
-import { createDropWholeReader } from "../../src/composition/dropWholeRead.js";
+import { createDropWholeReader, DropReadDeferredError } from "../../src/composition/dropWholeRead.js";
 
 // #2785 — a large file UNDER the drop cap is read whole into memory before its import takes the
 // case's import section. A server that ran out of memory there left no crash-loop marker, so it
@@ -152,6 +152,25 @@ describe("drop folder whole-file read is crash-loop guarded (#2785)", () => {
     expect(status?.failed[0]?.reason).toMatch(/Import refused to protect the server/);
   });
 
+  it("leaves a large file in drop/ when the refusal is only because other imports hold memory", async () => {
+    const store = await newCase();
+    const dropDir = await dropFile(store, "big.csv", 2000);
+    const resolveImportKind = vi.fn(() => "plaso");
+    const admitImport = vi.fn(async () => {
+      throw new ImportMemoryRefusedError("Import refused to protect the server: busy.", true);
+    });
+    const run = incarnation(store, { resolveImportKind, admitImport });
+    await run.drops.scanCaseDrops("c1");
+    await run.drops.scanCaseDrops("c1");
+    expect(admitImport).toHaveBeenCalled();
+    expect(resolveImportKind).not.toHaveBeenCalled();
+    expect(await readdir(dropDir)).toContain("big.csv");
+    await expect(readdir(join(dropDir, "_failed"))).resolves.not.toContain("big.csv");
+    expect((await run.dropStatusStore.load("c1"))?.failed ?? []).toHaveLength(0);
+    // A deferral is not a crash-loop start: no marker counts it.
+    await expect(readFile(markerOf(store), "utf8")).rejects.toThrow();
+  });
+
   it("releases the guard's reservation before the import, so the import's own admission is not doubled", async () => {
     const store = await newCase();
     const dropDir = await dropFile(store, "big.csv", 2000);
@@ -200,6 +219,37 @@ describe("createDropWholeReader (#2785)", () => {
     const hint = admit.mock.calls[0]?.[1];
     expect(hint?.incomingBytes).toBe(50);
     expect(hint?.wording?.saved).toMatch(/_failed/);
+  });
+
+  it("defers, without counting a start, when the guard refuses while other imports hold reservations", async () => {
+    const onStart = vi.fn(async () => {});
+    const read = vi.fn(async () => Buffer.from("x"));
+    const reader = createDropWholeReader({
+      maxBytes: 1000,
+      earlyMarkBytes: 10,
+      admit: async () => {
+        throw new ImportMemoryRefusedError("refused: busy", true);
+      },
+      read,
+    });
+    const err = await runImportAttempt(onStart, () => reader("c1", "/nowhere", 50)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DropReadDeferredError);
+    expect(onStart).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("still refuses outright when nothing else holds a reservation", async () => {
+    const reader = createDropWholeReader({
+      maxBytes: 1000,
+      earlyMarkBytes: 10,
+      admit: async () => {
+        throw new ImportMemoryRefusedError("refused: too big", false);
+      },
+      read: async () => Buffer.from("x"),
+    });
+    const err = await reader("c1", "/nowhere", 50).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ImportMemoryRefusedError);
+    expect(err).not.toBeInstanceOf(DropReadDeferredError);
   });
 
   it("skips the guard and the early start for a file under the threshold", async () => {

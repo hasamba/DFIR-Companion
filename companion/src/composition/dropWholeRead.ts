@@ -10,7 +10,9 @@
  * 1. asks the import memory guard first (analysis/importMemoryGuard.ts — the same estimate the
  *    upload path uses), and releases the reservation at once: the import's own admission inside its
  *    section is what holds one, and holding this one too would count the file twice. A refusal
- *    throws, and the sweep moves the file to `_failed/` with the guard's reason, unread.
+ *    throws, and the sweep moves the file to `_failed/` with the guard's reason, unread — but only
+ *    when no other import held a reservation. A refusal made while others hold memory throws
+ *    DropReadDeferredError instead: the file stays in drop/ for a later sweep, uncounted.
  * 2. counts the import attempt's start BEFORE the read (analysis/importAttempt.ts), so a crash
  *    during the read or the parse counts toward the guard's limit and the file goes to `_failed/`.
  *
@@ -23,7 +25,11 @@
  */
 import { decodeImportedText } from "../ingest/decodeText.js";
 import { noteImportSectionStart } from "../analysis/importAttempt.js";
-import type { ImportAdmissionHint, RefusalWording } from "../analysis/importMemoryGuard.js";
+import {
+  ImportMemoryRefusedError,
+  type ImportAdmissionHint,
+  type RefusalWording,
+} from "../analysis/importMemoryGuard.js";
 import { openNoFollow } from "../storage/noFollowRead.js";
 import { readHandleBounded } from "../storage/boundedRead.js";
 
@@ -33,6 +39,14 @@ import { readHandleBounded } from "../storage/boundedRead.js";
  * file's size) is covered; high enough that the common small file keeps the queue-safe rule.
  */
 export const DROP_EARLY_MARK_BYTES = 16 * 1024 * 1024;
+
+/** The guard refused only while other imports held memory: leave the file for a later sweep. */
+export class DropReadDeferredError extends Error {
+  constructor(reason: string) {
+    super(`waiting for other imports to finish (${reason})`);
+    this.name = "DropReadDeferredError";
+  }
+}
 
 const REFUSAL_WORDING: RefusalWording = {
   saved: "The file was not read; it is in the drop folder's _failed folder",
@@ -73,7 +87,14 @@ export function createDropWholeReader(
   return async (caseId, fullPath, size) => {
     if (size >= earlyMarkBytes) {
       if (deps.admit) {
-        const release = await deps.admit(caseId, { incomingBytes: size, wording: REFUSAL_WORDING });
+        const release = await deps
+          .admit(caseId, { incomingBytes: size, wording: REFUSAL_WORDING })
+          .catch((err: unknown) => {
+            // Before the start is counted, so a deferral never counts toward the crash-loop limit.
+            if (err instanceof ImportMemoryRefusedError && err.othersReserved)
+              throw new DropReadDeferredError(err.message);
+            throw err;
+          });
         release();
       }
       await noteImportSectionStart();

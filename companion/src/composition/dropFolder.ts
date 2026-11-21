@@ -55,7 +55,7 @@ import { huntHeldStoreFor } from "../analysis/huntHeldStore.js";
 import { applyDropHolds, holdFolderPlan } from "./dropHeld.js";
 import { clearStaging } from "./dropHuntExtract.js";
 import { createDropInFlight } from "./dropInFlight.js";
-import { createDropWholeReader, readDropFileBounded, type DropWholeReadDeps } from "./dropWholeRead.js";
+import { createDropWholeReader, DropReadDeferredError, readDropFileBounded } from "./dropWholeRead.js";
 import {
   selectReadyFiles,
   excludeStuck,
@@ -148,7 +148,7 @@ export interface DropFolderDeps {
   flush: (caseId: string) => Promise<void>;
   // #2785: the import memory guard, asked before a large under-cap file is read whole; and the size
   // from which that file counts its crash-loop start before the read (tests inject a small one).
-  admitImport?: DropWholeReadDeps["admit"];
+  admitImport?: Parameters<typeof createDropWholeReader>[0]["admit"];
   dropEarlyMarkBytes?: number;
 }
 
@@ -609,6 +609,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
           reason: `too large at read time (${err.size} bytes > ${err.maxBytes}-byte cap; the file changed after the sweep listed it) — use Import-from-path`,
         };
       }
+      if (err instanceof DropReadDeferredError) return { ok: false, deferred: err.message }; // #2785
       recordImportFailure(caseId, "drop", name, err, debug);
       return { ok: false, reason: (err as Error)?.message ?? String(err) };
     }
