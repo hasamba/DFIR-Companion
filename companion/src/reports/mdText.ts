@@ -2,7 +2,13 @@ import type { Finding, ForensicEvent } from "../analysis/stateTypes.js";
 import { revisionSuffix } from "../analysis/eventRevision.js";
 import { mdControlPictures } from "./controlChars.js";
 import { TYPE_SEED_PREFIX } from "../analysis/incidentTypes.js";
-import { breakLinkSyntaxMd, escapeHtmlMd, escapeRunBeforeChar, proseLineMd } from "./mdInline.js";
+import {
+  breakAbsorbingAutolinksMd,
+  breakLinkSyntaxMd,
+  escapeHtmlMd,
+  escapeRunBeforeChar,
+  proseLineMd,
+} from "./mdInline.js";
 
 // One home for "untrusted text → safe Markdown fragment".
 //
@@ -59,9 +65,12 @@ export function cellCodeMd(codeSpan: string): string {
  * syntax is broken (breakLinkSyntaxMd), so case text cannot make a live link in the table.
  */
 export function cellMd(value: string): string {
-  return mdControlPictures(
-    breakLinkSyntaxMd(
-      value.replace(BACKSLASH_RUN_OR_HTML_OR_PIPE, escapeRunBeforeChar).replace(/[\r\n]+/g, " "),
+  // Autolinks last: control pictures turn \v and \f into glyphs, joining the words around them.
+  return breakAbsorbingAutolinksMd(
+    mdControlPictures(
+      breakLinkSyntaxMd(
+        value.replace(BACKSLASH_RUN_OR_HTML_OR_PIPE, escapeRunBeforeChar).replace(/[\r\n]+/g, " "),
+      ),
     ),
   );
 }

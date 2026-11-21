@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **GET requests with a body** — a case read that carries a request body is answered instead of hanging (closes #2792)
+- **Plain ZIP of a reopened case** — a case reopened while its ZIP is built is refused like the archive-and-remove variant (closes #2793)
+- **Damaged case database on archive/report** — archive and report answer a named error instead of a raw 500 (closes #2794)
+- **Case folder still changing** — archive answers a retryable 503 with a clear message (closes #2795)
 - **Archive no longer fails on a background write** — archive, ZIP and encrypted delete re-pack when a background record changes the case folder instead of answering a raw error (closes #2784)
 - **Large drop-folder file cannot crash-loop the server** — a large file's start is counted before it is read, so a file that crashes the server twice moves to `_failed` (closes #2785)
 - **Reopen during archive** — a case reopened while its archive is built stays open (closes #2786)

@@ -30,7 +30,34 @@ export function escapeRunBeforeChar(match: string): string {
  * escape token carrying that character — an entity would reach the DOCX as literal `&lt;`.
  */
 export function escapeHtmlMd(value: string): string {
-  return value.replace(BACKSLASH_RUN_OR_HTML, escapeRunBeforeChar);
+  return breakAbsorbingAutolinksMd(value.replace(BACKSLASH_RUN_OR_HTML, escapeRunBeforeChar));
+}
+
+// Where a GFM bare-URL autolink starts, as marked finds it: anywhere in a word, any letter case.
+const AUTOLINK_TRIGGER = /(https?|ftp)(:\/\/)|(www)(\.)/gi;
+const WORD = /\S+/g;
+
+/** Every autolink trigger in `word` made literal: `https\://`, `www\.` render as the plain text. */
+function breakTriggers(word: string, before: number): string {
+  return word.replace(AUTOLINK_TRIGGER, (m, scheme, sep, www, dot, at: number) => {
+    if (at >= before) return m;
+    return scheme ? `${scheme}\\${sep}` : `${www}\\${dot}`;
+  });
+}
+
+/**
+ * A bare-URL autolink runs to the next whitespace or `<`, so it swallows the backslash of an escape
+ * after the URL in the same word and leaves the escaped character live: `https://x\<img …\>` renders
+ * a raw tag. In such a word every trigger BEFORE the last backslash is escaped, so no autolink forms
+ * there; the reader sees the same characters. A word with no backslash after its URL is left alone.
+ * With `runsOn`, the text continues straight into a code span, which the URL would swallow the same
+ * way, so a trailing word's triggers are broken whatever follows them. Idempotent.
+ */
+export function breakAbsorbingAutolinksMd(value: string, runsOn = false): string {
+  return value.replace(WORD, (word, at: number) => {
+    const last = runsOn && at + word.length === value.length ? word.length : word.lastIndexOf("\\");
+    return last > 0 ? breakTriggers(word, last) : word;
+  });
 }
 
 /**
@@ -85,9 +112,9 @@ export function breakLinkSyntaxMd(value: string): string {
   return breakImageTargets(value).replace(LINK_CLOSE, "]\\");
 }
 
-/** Text outside any code span: HTML escaped, link syntax broken. */
-function escapeProseText(text: string): string {
-  return breakLinkSyntaxMd(escapeHtmlMd(text));
+/** Text outside any code span: HTML escaped, link syntax broken. `runsOn`: a code span follows. */
+function escapeProseText(text: string, runsOn = false): string {
+  return breakAbsorbingAutolinksMd(breakLinkSyntaxMd(escapeHtmlMd(text)), runsOn);
 }
 
 /** Every maximal backtick run on the line, by length → start offsets in order. */
@@ -138,7 +165,7 @@ export function proseLineMd(line: string): string {
       const close = closerAt(j, n);
       if (close < 0) text += "\\`".repeat(n);
       else {
-        out += escapeProseText(text) + line.slice(i, close + n);
+        out += escapeProseText(text, true) + line.slice(i, close + n);
         text = "";
         j = close + n;
       }
