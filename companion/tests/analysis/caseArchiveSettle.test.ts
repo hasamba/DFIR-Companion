@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { archiveCase } from "../../src/analysis/caseArchive.js";
 import { exportEncryptedCase } from "../../src/analysis/caseExportArchive.js";
+import {
+  ARCHIVE_SETTLE_ATTEMPTS,
+  buildFromSettledCase,
+  CaseFileVanishedError,
+} from "../../src/analysis/caseArchiveSettle.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { readZip } from "../../src/analysis/zipArchive.js";
 import { decryptBuffer } from "../../src/analysis/caseEncryption.js";
@@ -152,5 +157,60 @@ describe("encrypted export — a background write overlapping the walk (#2784)",
     } finally {
       await rm(store.casesRoot, { recursive: true, force: true });
     }
+  });
+});
+
+// #2801: the last attempt used to return before its verification re-walk, so a file written during
+// the final build was missing from an archive a ZIP or encrypted delete then removed the case after.
+describe("buildFromSettledCase — every attempt is verified, the last one too (#2801)", () => {
+  // A folder whose walk lists one more file on every call: it changes during every build.
+  function churningFolder() {
+    let n = 0;
+    const walk = async () => Array.from({ length: ++n }, (_, i) => `f${i}`);
+    return { walk, calls: () => n };
+  }
+
+  it("throws the retryable 503 when the folder changed during the final build", async () => {
+    const folder = churningFolder();
+    let builds = 0;
+    const err = await buildFromSettledCase(
+      "[test]",
+      async () => {
+        builds++;
+        const relPaths = await folder.walk();
+        return { value: relPaths.length, relPaths };
+      },
+      folder.walk,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CaseFileVanishedError);
+    expect((err as CaseFileVanishedError).httpStatus).toBe(503);
+    expect(builds).toBe(ARCHIVE_SETTLE_ATTEMPTS);
+    expect(folder.calls()).toBe(ARCHIVE_SETTLE_ATTEMPTS * 2); // a re-walk after every build
+  });
+
+  it("names a file that appeared, not one that disappeared", async () => {
+    const folder = churningFolder();
+    const err = await buildFromSettledCase(
+      "[test]",
+      async () => {
+        const relPaths = await folder.walk();
+        return { value: 0, relPaths };
+      },
+      folder.walk,
+    ).catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/appeared while the case was being packaged/);
+  });
+
+  it.each([2, 3])("succeeds when the folder settles on attempt %i", async (settleOn) => {
+    let builds = 0;
+    const value = await buildFromSettledCase(
+      "[test]",
+      async () => {
+        builds++;
+        return { value: builds, relPaths: ["a"] };
+      },
+      async () => (builds >= settleOn ? ["a"] : ["a", `new-${builds}`]),
+    );
+    expect(value).toBe(settleOn);
   });
 });
