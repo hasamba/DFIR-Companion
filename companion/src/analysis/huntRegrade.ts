@@ -52,7 +52,8 @@ export async function regradeHuntCase(
       rowsRead++;
       const fields = huntFieldsOf(e);
       const host = fields ? resolveHostKey(index, fields.host, renames) : null;
-      if (fields && host) obs.push({ fields, host, at: e.timestamp });
+      const artifact = e.artifactName ? { artifact: e.artifactName } : {}; // #2732
+      if (fields && host) obs.push({ fields, host, at: e.timestamp, ...artifact });
     }
   };
   for await (const b of deps.rows.forensicTimelineBatches(caseId)) take(b);

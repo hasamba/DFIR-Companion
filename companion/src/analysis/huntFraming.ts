@@ -29,6 +29,10 @@ export interface HuntCoverageKnown {
   huntsWithoutCoverage: number;
   /** Artifacts read only partly (row cap, unread source list, failed fetch) across those hunts. */
   partialArtifacts: number;
+  /** Their names, distinct and sorted: rarity is not graded for the items they reported (#2732). */
+  partialArtifactNames: string[];
+  /** Every artifact those hunts collected, distinct and sorted — an item from any other is not graded while one is partial. */
+  collectedArtifactNames: string[];
   /** The answering hosts, for the report's scope table. */
   answeredHosts: { clientId: string; hostname: string }[];
 }
@@ -48,6 +52,15 @@ function partialCount(j: VeloHuntJob): number {
   return (
     (j.truncatedArtifacts?.length ?? 0) + (j.unreadArtifacts?.length ?? 0) + (j.skippedArtifacts?.length ?? 0)
   );
+}
+
+function partialNames(jobs: readonly VeloHuntJob[]): string[] {
+  const names = jobs.flatMap((j) =>
+    [...(j.truncatedArtifacts ?? []), ...(j.unreadArtifacts ?? []), ...(j.skippedArtifacts ?? [])].map(
+      (a) => a.name,
+    ),
+  );
+  return [...new Set(names)].sort();
 }
 
 /** What the case's Velociraptor hunt jobs say about coverage. Never guesses a denominator. */
@@ -75,6 +88,8 @@ export function huntCoverageFromJobs(jobs: readonly VeloHuntJob[]): HuntCoverage
     huntsWithCoverage: withCov.length,
     huntsWithoutCoverage: collected.length - withCov.length,
     partialArtifacts: withCov.reduce((n, j) => n + partialCount(j), 0),
+    partialArtifactNames: partialNames(withCov),
+    collectedArtifactNames: [...new Set(withCov.flatMap((j) => j.artifacts))].sort(),
     answeredHosts: [...hosts].map(([clientId, hostname]) => ({ clientId, hostname })),
   };
 }

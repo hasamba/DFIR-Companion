@@ -78,7 +78,8 @@ function observations(
     if (e.id.startsWith(HUNT_ENTRY_PREFIX)) continue;
     const fields = huntFieldsOf(e);
     const host = fields ? resolveHostKey(index, fields.host, renames ?? []) : null;
-    if (fields && host) out.push({ fields, host, at: e.timestamp });
+    const artifact = e.artifactName ? { artifact: e.artifactName } : {};
+    if (fields && host) out.push({ fields, host, at: e.timestamp, ...artifact });
   }
   return out;
 }

@@ -47,7 +47,9 @@
     if (!c.known) return `Coverage: ${c.reason}. No absence can be claimed and no percentage stated.`;
     const of = c.targeted ? ` of ${c.targeted} targeted` : "";
     const gap = c.notAnswered > 0 ? `; ${c.notAnswered} did not answer (coverage gap)` : "";
-    const partial = c.partialArtifacts > 0 ? `; ${c.partialArtifacts} partial artifact collection(s)` : "";
+    const names = Array.isArray(c.partialArtifactNames) ? c.partialArtifactNames : [];
+    const notGraded = names.length ? ` (rarity not graded for what they reported: ${names.join(", ")})` : "";
+    const partial = c.partialArtifacts > 0 ? `; ${c.partialArtifacts} partial artifact collection(s)${notGraded}` : "";
     return `Coverage: ${c.answered} host(s)${of} answered cleanly${gap}${partial}.`;
   }
 

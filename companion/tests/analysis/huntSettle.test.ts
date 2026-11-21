@@ -7,6 +7,7 @@ import { HuntInventoryStore } from "../../src/analysis/huntInventoryStore.js";
 import { HUNT_ENTRY_CAP, huntOverflowId } from "../../src/analysis/huntEntries.js";
 import { getBuiltInIncidentType } from "../../src/analysis/incidentTypesData.js";
 import { registerHuntSettle } from "../../src/analysis/huntSettleHook.js";
+import { regradeHuntCase } from "../../src/analysis/huntRegrade.js";
 import { settleForensicImport } from "../../src/routes/importSettle.js";
 import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
 import type { VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
@@ -130,6 +131,114 @@ describe("hunt grading at the seam (#2670)", () => {
     expect((await huntSettle(d, "c1", [])).changed).toBe(0);
     expect(append).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+const HUNT_ARTIFACTS = ["Windows.Forensics.Prefetch", "Windows.Forensics.Amcache"];
+
+describe("a partial artifact blocks rarity only for its own items (#2732)", () => {
+  const cut = (name: string) => ({ name, kept: 10, total: 11 });
+  const amcacheRow = (id: string, i: number, program: string, dir: string): ForensicEvent => ({
+    ...prefetchRow(id, i, program, dir),
+    description: `Velociraptor [Windows.Forensics.Amcache/InventoryApplicationFile]: Program file present (Amcache): ${dir}\\${program} - @ WS-${String(i).padStart(3, "0")}`,
+    artifactName: "Windows.Forensics.Amcache/InventoryApplicationFile",
+  });
+  const rare = (events: ForensicEvent[]) =>
+    entries(events)
+      .map((e) => /: (\S+) in /.exec(e.description)?.[1])
+      .sort();
+
+  it("grades the complete artifact's rare item while another artifact is partial", async () => {
+    const { d, stateStore } = await deps([
+      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut("Windows.Forensics.Amcache")] }),
+    ]);
+    const rows = [...sweep(300, 2), amcacheRow("a0", 0, "plink.exe", "C:\\Users\\x\\Temp")];
+    await huntSettle(d, "c1", rows);
+    expect(rare(stateStore.events())).toEqual(["rclone.exe"]);
+  });
+
+  it("matches the partial artifact by its base name, whatever source the rows name", async () => {
+    const { d, stateStore } = await deps([
+      reachedJob(300, {
+        artifacts: HUNT_ARTIFACTS,
+        unreadArtifacts: [{ name: "Windows.Forensics.Prefetch", rows: 5 }],
+      }),
+    ]);
+    await huntSettle(d, "c1", [...sweep(300, 2), amcacheRow("a0", 0, "plink.exe", "C:\\Users\\x\\Temp")]);
+    expect(rare(stateStore.events())).toEqual(["plink.exe"]);
+  });
+
+  it("an item also reported by the partial artifact is not graded: its count is a lower bound", async () => {
+    const { d, stateStore } = await deps([
+      reachedJob(300, {
+        artifacts: HUNT_ARTIFACTS,
+        skippedArtifacts: [{ name: "Windows.Forensics.Amcache", error: "timeout" }],
+      }),
+    ]);
+    const both = [...sweep(300, 1), amcacheRow("a0", 1, "rclone.exe", "C:\\Users\\x\\Downloads")];
+    await huntSettle(d, "c1", both);
+    expect(rare(stateStore.events())).toEqual([]);
+  });
+
+  it("a re-grade from the stored rows keeps the per-artifact grading", async () => {
+    const jobs = [
+      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut("Windows.Forensics.Amcache")] }),
+    ];
+    const { d, stateStore } = await deps(jobs);
+    const rows = sweep(300, 2);
+    await huntSettle(d, "c1", rows);
+    const rowsDep = {
+      async *forensicTimelineBatches() {
+        yield rows;
+      },
+    };
+    await regradeHuntCase({ ...d, rows: rowsDep }, "c1");
+    expect(rare(stateStore.events())).toEqual(["rclone.exe"]);
+  });
+
+  it("a row naming an artifact the hunts did not collect is not graded while any artifact is partial", async () => {
+    const { d, stateStore } = await deps([
+      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut("Windows.Forensics.Prefetch")] }),
+    ]);
+    const rows = sweep(300, 2).map((e) =>
+      e.id.startsWith("r") ? { ...e, artifactName: "SomeOtherSource" } : e,
+    );
+    await huntSettle(d, "c1", rows);
+    expect(rare(stateStore.events())).toEqual([]);
+  });
+
+  it("an item whose rows name no artifact is not graded while any artifact is partial", async () => {
+    const { d, stateStore } = await deps([
+      reachedJob(300, { artifacts: HUNT_ARTIFACTS, truncatedArtifacts: [cut("Windows.Forensics.Amcache")] }),
+    ]);
+    const rows = sweep(300, 2).map((e) => (e.id.startsWith("r") ? { ...e, artifactName: undefined } : e));
+    await huntSettle(d, "c1", rows);
+    expect(rare(stateStore.events())).toEqual([]);
+  });
+
+  it("an inventory item stored before artifacts were recorded is not graded while any artifact is partial", async () => {
+    const jobs = [reachedJob(300)];
+    const { d, stateStore } = await deps(jobs);
+    await huntSettle(d, "c1", sweep(300, 2));
+    expect(rare(stateStore.events())).toEqual(["rclone.exe"]);
+    await d.inventoryStore.update("c1", async (rec) => ({
+      ...rec,
+      inventory: {
+        ...rec.inventory,
+        items: Object.fromEntries(
+          Object.entries(rec.inventory.items).map(([k, v]) => {
+            const { artifacts: _drop, ...legacy } = v as typeof v & { artifacts?: string[] };
+            return [k, legacy];
+          }),
+        ),
+      },
+    }));
+    jobs[0] = reachedJob(300, {
+      artifacts: HUNT_ARTIFACTS,
+      truncatedArtifacts: [cut("Windows.Forensics.Amcache")],
+    });
+    await huntSettle(d, "c1", []);
+    expect(rare(stateStore.events())).toEqual([]);
   });
 });
 

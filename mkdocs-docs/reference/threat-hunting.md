@@ -45,7 +45,8 @@ mean the file was **present**, not that it ran.
 The Threat Hunt panel and the report say how many hosts answered each hunt cleanly, out of how
 many were targeted, and how many did not answer. Only Companion-launched hunts record this. For an
 uploaded hunt export the coverage is **unknown**: nothing is called absent, and no percentage is
-given.
+given. When an artifact was read only partly, the panel names it and says that rarity is not
+graded for what it reported.
 
 ### 5. Rare, new, policy and download items
 
@@ -74,7 +75,7 @@ items.
 | Item | When |
 |---|---|
 | **Policy violation** | The client marked it **Not allowed**, or it was downloaded from a blocked site or a blocked category. Default severity Medium (setting below). Labelled as policy, not as malicious activity. |
-| **Rare** | At least 20 hosts answered cleanly, and the item is on at most 5% of them and on at most 10 hosts. Below 20 answering hosts, or with unknown or partial coverage, nothing is graded rare. |
+| **Rare** | At least 20 hosts answered cleanly, and the item is on at most 5% of them and on at most 10 hosts. Below 20 answering hosts, or with unknown coverage, nothing is graded rare. When an artifact was read only partly (cut short, failed or with an unread source list), the items it reported are not graded rare, because their host count may be too low; items from the artifacts that were read in full are still graded. |
 | **New since the last comparable hunt** | Not in the baseline and not seen in the last comparable hunt for this client: an earlier hunt case of the same client, with an overlapping bundle, over at least half the same answering hosts. An item is called new only on hosts both hunts covered cleanly. A first hunt has nothing to compare with. |
 | **Flagged download** | A runnable or archive file downloaded from a site outside the client's approved sources, or with no source URL. |
 

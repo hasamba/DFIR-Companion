@@ -68,4 +68,5 @@ export const prefetchRow = (id: string, i: number, program: string, dir = "C:\\T
   asset: `WS-${String(i).padStart(3, "0")}`,
   path: `${dir}\\${program}`,
   processName: program,
+  artifactName: "Windows.Forensics.Prefetch",
 });

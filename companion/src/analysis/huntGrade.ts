@@ -1,7 +1,7 @@
 import type { HuntCoverage } from "./huntFraming.js";
 import type { HuntGrade } from "./huntEntries.js";
 import { answeringHostCount, itemLabel, type HuntInventory, type InventoryItem } from "./huntInventory.js";
-import { isRare, rarityBlocked, type RaritySettings } from "./huntRarity.js";
+import { isRare, itemArtifactPartial, rarityBlocked, type RaritySettings } from "./huntRarity.js";
 import type { Severity } from "./stateTypes.js";
 
 /**
@@ -44,12 +44,14 @@ function rareGrade(item: InventoryItem, ctx: GradeContext, n: number, m: number)
   };
 }
 
-/** Rare grades for the whole inventory; [] when coverage does not allow rarity. */
+/** Rare grades for the inventory; [] when coverage does not allow rarity. A partial artifact's items are skipped. */
 export function gradeRarity(ctx: GradeContext): HuntGrade[] {
   if (rarityBlocked(ctx.coverage, ctx.rarity) || !ctx.coverage.known) return [];
   const m = ctx.coverage.answered;
   const out: HuntGrade[] = [];
+  const coverage = ctx.coverage;
   for (const item of Object.values(ctx.inventory.items)) {
+    if (itemArtifactPartial(item, coverage)) continue;
     const n = answeringHostCount(item, ctx.answered);
     if (isRare(n, m, ctx.rarity)) out.push(rareGrade(item, ctx, n, m));
   }
