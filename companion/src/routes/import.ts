@@ -5,7 +5,7 @@ import { parseLogLines } from "../analysis/logImport.js";
 import { parseThorReport } from "../analysis/thorImport.js";
 import { parseSiemExport, type SiemImportOptions } from "../analysis/siemImport.js";
 import { parseChainsawReport, type ChainsawImportOptions } from "../analysis/chainsawImport.js";
-import { parseHayabusaTimeline, type HayabusaImportOptions } from "../analysis/hayabusaImport.js";
+import { parseHayabusaTimelineYielding, type HayabusaImportOptions } from "../analysis/hayabusaImport.js";
 import { parseVelociraptorJson, type VelociraptorImportOptions } from "../analysis/velociraptorImport.js";
 import { parseNetworkLogs, countLines, type NetworkImportOptions } from "../analysis/networkImport.js";
 import { parseKapeCsv, type KapeImportOptions } from "../analysis/kapeImport.js";
@@ -977,7 +977,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     try {
       // Parse up-front: reject a file with no parseable records, and report counts to the UI.
-      const preview = parseHayabusaTimeline(text, hayabusaOpts);
+      const preview = await parseHayabusaTimelineYielding(text, hayabusaOpts); // #2789: yields
       if (preview.total === 0)
         return res.status(400).json({
           error: "no parseable Hayabusa records found (expected a Hayabusa json-timeline or csv-timeline)",

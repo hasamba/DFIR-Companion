@@ -13,7 +13,7 @@
  */
 import {
   looksLikeHayabusaNamedExport,
-  parseHayabusaTimeline,
+  parseHayabusaTimelineYielding,
   type HayabusaImportOptions,
 } from "../hayabusaImport.js";
 import { deltaSchema } from "../responseSchema.js";
@@ -57,7 +57,11 @@ export async function importHayabusa(
   },
 ): Promise<InvestigationState> {
   const known = await knownHostIdentity(ctx, caseId); // the case's rename ledger seeds the parse (#1495)
-  const parsedRaw = parseHayabusaTimeline(text, { ...known, ...opts.hayabusa, debug: opts.debug });
+  const parsedRaw = await parseHayabusaTimelineYielding(text, {
+    ...known,
+    ...opts.hayabusa,
+    debug: opts.debug,
+  });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   recordParsedImport(opts.debug, parsedRaw, parsedRaw.events.length, parsed.events.length);
   if (parsed.events.length === 0 && parsed.iocs.length === 0 && parsed.hostRenames.length === 0)
