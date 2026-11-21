@@ -72,6 +72,7 @@ import {
   type StuckDropFile,
 } from "../analysis/dropScan.js";
 import { createSweepRecorder } from "./dropIncremental.js";
+import { createDropLinkReporter, type DropLink } from "./dropLinkReport.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
@@ -219,6 +220,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   const stuckFiles = createDropStuckTracker(() => store.casesRoot);
   const stuck = stuckFiles.stuck;
   const inFlight = createDropInFlight(store); // crash-loop guard (#2713)
+  const linkReporter = createDropLinkReporter({ casesRoot: () => store.casesRoot, log: logLine }); // #2788
   const readWholeText = createDropWholeReader({
     maxBytes: dropMaxBytes,
     admit: deps.admitImport,
@@ -243,8 +245,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   }
 
   // Recursive walk of drop/, skipping the reserved subtrees + README + OS/sync junk (shouldIgnoreDropFile).
-  // Symlinks and hardlinks are rejected here — see the file header for the threat model.
-  async function listDropFiles(dropDir: string): Promise<DropFileStat[]> {
+  // Symlinks and hardlinks are rejected here — see the file header for the threat model — and
+  // collected into `links`, so the sweep can report each one once (#2788).
+  async function listDropFiles(dropDir: string, links: DropLink[] = []): Promise<DropFileStat[]> {
     const out: DropFileStat[] = [];
     const walk = async (dir: string): Promise<void> => {
       let entries;
@@ -257,15 +260,17 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         const full = join(dir, e.name);
         const rel = relative(dropDir, full);
         if (shouldIgnoreDropFile(rel)) continue;
-        if (e.isSymbolicLink()) continue; // never follow symlinks in the drop folder
         if (e.isDirectory()) {
-          await walk(full);
+          await walk(full); // a symlinked directory is not a directory dirent, so never followed
           continue;
         }
-        if (!e.isFile()) continue;
+        if (!e.isFile() && !e.isSymbolicLink()) continue; // a symlink falls to the lstat refusal
         try {
           const st = await lstat(full);
-          if (st.isSymbolicLink() || st.nlink > 1) continue;
+          if (st.isSymbolicLink() || st.nlink > 1) {
+            links.push({ relpath: rel, kind: st.isSymbolicLink() ? "symlink" : "hardlink" });
+            continue;
+          }
           out.push({ relpath: rel, size: st.size, mtimeMs: st.mtimeMs });
         } catch {
           /* vanished mid-walk */
@@ -630,7 +635,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       if (meta?.status === "closed" || meta?.status === "archived") return; // don't auto-import into a closed or archived case (parity with /import)
       const dropDir = dropDirOf(store, caseId);
       await ensureDropFolders(caseId);
-      const listing = await listDropFiles(dropDir);
+      const links: DropLink[] = [];
+      const listing = await listDropFiles(dropDir, links);
+      await linkReporter.report(caseId, dropDir, links);
       const settled = selectReadyFiles(listing, seen.get(caseId) ?? new Map());
       const nextSeen = settled.nextSeen;
       seen.set(caseId, nextSeen);

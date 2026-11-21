@@ -3467,6 +3467,10 @@ running `drop-log.txt` in the same `drop/` folder — including the terminal out
 previously-pending file is later run manually. Use it as an audit trail of everything the watcher has
 seen for this case.
 
+A symbolic link or hardlink in `drop/` is never imported (security) and stays where it is, but the
+watcher writes one `SKIPPED` line to `drop-log.txt` and one to the server log the first time it sees
+each link, not on every poll (and once more after a server restart).
+
 A dropped JSON file that no importer recognises still imports, as generic SIEM events at default
 severity Low. Its `IMPORTED` line in `drop-log.txt` carries a warning that says the format was a
 guess, and the case log gets a WARN line. Velociraptor uploaded reports get the same warning: in the
