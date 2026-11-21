@@ -143,18 +143,10 @@ async function processHunt(
   args: HuntZipArgs,
   zip: ZipFile,
   members: readonly ZipMember[],
-  run: HuntRun,
+  initial: HuntRun,
   remembered: Map<string, Map<string, MemberOutcome>>,
 ): Promise<DropOutcome> {
   const zipRel = args.file.relpath.replace(/\\/g, "/");
-  const imports = run.plans.flatMap((p) => p.imports.map((i) => i.path));
-  const total = imports.reduce((n, name) => n + run.byName.get(name)!.entry.uncompressedSize, 0);
-  if (total > HUNT_ZIP_MAX_TOTAL_BYTES) {
-    return {
-      ok: false,
-      reason: `hunt export would inflate to ${Math.round(total / 1024 ** 3)} GB (> ${HUNT_ZIP_MAX_TOTAL_BYTES / 1024 ** 3} GB bound) — refused (security); unzip it and drop the per-client folders`,
-    };
-  }
   const id = huntZipId(zipRel, args.file.size, members);
   const ledger = await openHuntZipLedger(deps.stateDir(args.caseId), id, {
     relpath: zipRel,
@@ -163,6 +155,19 @@ async function processHunt(
   const memo = remembered.get(id) ?? new Map<string, MemberOutcome>();
   remembered.set(id, memo);
   for (const [name, o] of memo) if (!ledger.done.has(name)) ledger.done.set(name, o);
+  // #2810: a run that already imported an artifact's per-client files keeps them for that artifact.
+  const run: HuntRun = ledger.done.size
+    ? { ...initial, plans: planHuntExports([...initial.byName.keys()], new Set(ledger.done.keys())) }
+    : initial;
+  const imports = run.plans.flatMap((p) => p.imports.map((i) => i.path));
+  // The inflation bound measures the plan this run executes, after a resume chose it (#2810).
+  const total = imports.reduce((n, name) => n + run.byName.get(name)!.entry.uncompressedSize, 0);
+  if (total > HUNT_ZIP_MAX_TOTAL_BYTES) {
+    return {
+      ok: false,
+      reason: `hunt export would inflate to ${Math.round(total / 1024 ** 3)} GB (> ${HUNT_ZIP_MAX_TOTAL_BYTES / 1024 ** 3} GB bound) — refused (security); unzip it and drop the per-client folders`,
+    };
+  }
   const log: DropLogEntry[] = [];
   const holds = deps.held
     ? await holdZipMembers({

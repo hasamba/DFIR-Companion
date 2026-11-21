@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { join } from "node:path";
-import { chmod, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, chmod, readdir, readFile, writeFile } from "node:fs/promises";
 import { buildZip, expectedRowKeys, huntTree } from "../helpers/huntExportFixture.js";
 import { dropLog, exists, listFiles, makeHarness } from "../helpers/dropHuntHarness.js";
 import { HUNT_ZIP_LEDGER_DIR } from "../../src/composition/dropHuntZipLedger.js";
@@ -35,11 +35,23 @@ describe("drop folder — Velociraptor hunt export zip (#2714)", () => {
   });
 
   it("names per-client hosts from the client folder and logs the members not read", async () => {
-    const h = await dropZip(await buildZip(huntTree("full", "H.TEST0001")));
+    const h = await dropZip(await buildZip(huntTree("perClientJson", "H.TEST0001")));
     const hosts = h.calls.filter((c) => c.name === "Windows.Network.Netstat.json").map((c) => c.host);
     expect(hosts.sort()).toEqual(["SRV-CHARLIE", "WS-ALPHA", "WS-BRAVO"]);
     const log = await dropLog(h.dropDir);
-    expect(log).toMatch(/SKIPPED\s+hunt\.zip\s+— Velociraptor hunt export: 28 member\(s\) not read/);
+    expect(log).toMatch(/IMPORTED\s+hunt\.zip/);
+  });
+
+  it("#2810: imports one hunt-wide copy per artifact and logs the per-client copies not read", async () => {
+    const h = await dropZip(await buildZip(huntTree("full", "H.TEST0001")));
+    expect(h.calls.map((c) => c.name).sort()).toEqual([
+      "All Windows.Network.Netstat.json",
+      "All Windows.Sys.Users%2FUsers.json",
+      "All Windows.System.Pslist.json",
+    ]);
+    expect(h.rowKeys()).toEqual(expectedRowKeys("full"));
+    const log = await dropLog(h.dropDir);
+    expect(log).toMatch(/SKIPPED\s+hunt\.zip\s+— Velociraptor hunt export: 34 member\(s\) not read/);
     expect(log).toMatch(/IMPORTED\s+hunt\.zip/);
   });
 
@@ -94,9 +106,9 @@ describe("drop folder — Velociraptor hunt export zip (#2714)", () => {
     const h = await makeHarness();
     await writeFile(join(h.dropDir, "hunt.zip"), await buildZip(huntTree("full")));
     await h.sweep();
-    h.hangAfter = 4; // four members imported, the fifth never returns: the process dies there
+    h.hangAfter = 1; // one member imported, the second never returns: the process dies there
     await h.sweepUntilHang();
-    expect(h.calls).toHaveLength(4);
+    expect(h.calls).toHaveLength(1);
     h.restart(); // fresh in-memory state over the same case dir
     await h.sweep();
     await h.sweep();
@@ -120,6 +132,26 @@ describe("drop folder — Velociraptor hunt export zip (#2714)", () => {
     await h.sweep();
     await h.sweep();
     expect(h.calls).toHaveLength(9); // nothing imported twice
+  });
+
+  it("#2810: a run begun per-client before the change finishes that artifact per-client, without duplicates", async () => {
+    const h = await makeHarness();
+    await writeFile(join(h.dropDir, "hunt.zip"), await buildZip(huntTree("full")));
+    await h.sweep();
+    h.hangAfter = 1;
+    await h.sweepUntilHang(); // the ledger exists; one hunt-wide member is recorded
+    const ledgerDir = join(h.store.stateDir("c1"), HUNT_ZIP_LEDGER_DIR);
+    const [file] = await readdir(ledgerDir);
+    // As an older build would have left it: one per-client Pslist file already imported.
+    const pc = "WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json";
+    await appendFile(join(ledgerDir, file), JSON.stringify({ member: pc, ok: true }) + "\n");
+    h.restart();
+    await h.sweep();
+    await h.sweep();
+    const names = h.calls.map((c) => c.name);
+    expect(names).not.toContain("All Windows.System.Pslist.json");
+    expect(names.filter((n) => n === "Windows.System.Pslist.json")).toHaveLength(2); // the other two clients
+    expect(await listFiles(h.dropDir)).toContain("_processed/hunt.zip");
   });
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(

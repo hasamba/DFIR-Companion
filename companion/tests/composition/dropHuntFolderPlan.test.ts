@@ -36,8 +36,8 @@ describe("prepareHuntDrops (#2714)", () => {
   it("reads a backslash (Windows) listing and hands back native relpaths", async () => {
     const listing = Object.keys(huntTree("full", "Hunt1")).map((p) => p.replace(/\//g, "\\"));
     const { ready, moved } = await run(listing);
-    expect(ready).toHaveLength(9);
-    expect(ready.every((r) => r.includes("\\results\\") && r.endsWith(".json"))).toBe(true);
+    expect(ready).toHaveLength(3); // #2810: one hunt-wide copy per artifact
+    expect(ready.every((r) => r.includes("\\results\\All ") && r.endsWith(".json"))).toBe(true);
     expect(moved).toContain("Hunt1\\hunt_info.json");
   });
 
@@ -50,7 +50,7 @@ describe("prepareHuntDrops (#2714)", () => {
 
   it("holds the whole hunt when a copy cannot be moved", async () => {
     const { ready, moved } = await run(Object.keys(huntTree("full")), {
-      failMove: (r) => r === "results/All Windows.System.Pslist.json",
+      failMove: (r) => r === "WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json",
     });
     expect(ready).toEqual([]);
     expect(moved.some((m) => m.endsWith("hunt_info.json"))).toBe(false); // metadata stays, so it is still a hunt
@@ -58,11 +58,11 @@ describe("prepareHuntDrops (#2714)", () => {
 
   it("a stuck member neither holds the hunt nor imports again, and still counts for the choice", async () => {
     const listing = Object.keys(huntTree("full"));
-    const stuckOne = "WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json";
+    const stuckOne = "results/All Windows.System.Pslist.json";
     const { ready, moved } = await run(listing, { stuck: [stuckOne] });
-    expect(ready).toHaveLength(8);
+    expect(ready).toHaveLength(2);
     expect(ready).not.toContain(stuckOne);
-    expect(moved).toContain("results/All Windows.System.Pslist.json");
+    expect(moved).toContain("WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json");
   });
 
   it("keeps every member back while one is unsettled, and leaves other files alone", async () => {
