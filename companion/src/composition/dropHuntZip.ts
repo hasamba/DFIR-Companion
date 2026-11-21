@@ -147,14 +147,6 @@ async function processHunt(
   remembered: Map<string, Map<string, MemberOutcome>>,
 ): Promise<DropOutcome> {
   const zipRel = args.file.relpath.replace(/\\/g, "/");
-  const planned = initial.plans.flatMap((p) => p.imports.map((i) => i.path));
-  const total = planned.reduce((n, name) => n + initial.byName.get(name)!.entry.uncompressedSize, 0);
-  if (total > HUNT_ZIP_MAX_TOTAL_BYTES) {
-    return {
-      ok: false,
-      reason: `hunt export would inflate to ${Math.round(total / 1024 ** 3)} GB (> ${HUNT_ZIP_MAX_TOTAL_BYTES / 1024 ** 3} GB bound) — refused (security); unzip it and drop the per-client folders`,
-    };
-  }
   const id = huntZipId(zipRel, args.file.size, members);
   const ledger = await openHuntZipLedger(deps.stateDir(args.caseId), id, {
     relpath: zipRel,
@@ -168,6 +160,14 @@ async function processHunt(
     ? { ...initial, plans: planHuntExports([...initial.byName.keys()], new Set(ledger.done.keys())) }
     : initial;
   const imports = run.plans.flatMap((p) => p.imports.map((i) => i.path));
+  // The inflation bound measures the plan this run executes, after a resume chose it (#2810).
+  const total = imports.reduce((n, name) => n + run.byName.get(name)!.entry.uncompressedSize, 0);
+  if (total > HUNT_ZIP_MAX_TOTAL_BYTES) {
+    return {
+      ok: false,
+      reason: `hunt export would inflate to ${Math.round(total / 1024 ** 3)} GB (> ${HUNT_ZIP_MAX_TOTAL_BYTES / 1024 ** 3} GB bound) — refused (security); unzip it and drop the per-client folders`,
+    };
+  }
   const log: DropLogEntry[] = [];
   const holds = deps.held
     ? await holdZipMembers({
