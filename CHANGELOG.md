@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Import memory guard re-measured** — the heap estimate drops from 48 to 36 KB per event, so a 4 GB heap holds about 115,000 events; RAM stays at 128 KB per event; the manual gives sizing guidance (closes #2814)
 - **Big Velociraptor imports no longer crash the server** — the import memory guard re-checks a batched Velociraptor import against the rows it really keeps, and refuses it with the standard message and the case unchanged before the case outgrows the server's memory (closes #2812)
 - **Drop files over 512 MB under a raised cap** — a text file is never read whole past ~448 MB, so a Velociraptor JSON Lines result, cloud export or Plaso file that size streams; other kinds get a clear refusal instead of a string-length error (closes #2813)
 - **Faster hunt export imports** — a dropped Velociraptor hunt imports one hunt-wide `All <Artifact>` copy per artifact instead of one file per client, so a large hunt takes a few dozen case merges instead of hundreds (closes #2810)
