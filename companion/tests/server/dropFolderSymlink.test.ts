@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, mkdir, writeFile, symlink, link, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, symlink, link, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -133,6 +133,11 @@ describe("drop-folder auto-importer — symlink/hardlink rejection (#243)", () =
     // it was dropped — never moved to _processed/ or _failed/.
     const remaining = await readdir(caseDropDir);
     expect(remaining).toContain("innocuous.json");
+    // #2788: refused, but no longer silently — drop-log.txt names it once.
+    const dropLog = await readFile(join(caseDropDir, "drop-log.txt"), "utf8");
+    expect(
+      dropLog.match(/SKIPPED\s+innocuous\.json\s+— symbolic link — not imported \(security\)/g),
+    ).toHaveLength(1);
   }, 30_000);
 
   it("never reads a hardlink's target content into the case, but still imports a normal file", async () => {
@@ -143,5 +148,9 @@ describe("drop-folder auto-importer — symlink/hardlink rejection (#243)", () =
     expect(haystack).toContain("Bad");
     const remaining = await readdir(caseDropDir);
     expect(remaining).toContain("innocuous2.json");
+    const dropLog = await readFile(join(caseDropDir, "drop-log.txt"), "utf8");
+    expect(
+      dropLog.match(/SKIPPED\s+innocuous2\.json\s+— hardlink — not imported \(security\)/g),
+    ).toHaveLength(1);
   }, 30_000);
 });

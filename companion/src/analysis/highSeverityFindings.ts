@@ -1,5 +1,6 @@
 import { AUTO_FINDING_ID_PREFIX } from "./responseSchema.js";
 import { absorbedHighRowIds } from "./absorbedHighRows.js";
+import { capAtWord } from "./wordSafeCap.js";
 import { dismissedClusters, findDismissedCluster } from "./dismissedClusterFold.js";
 import type { InvestigationState, Finding, Severity, ForensicEvent } from "./stateTypes.js";
 
@@ -81,11 +82,11 @@ function findDismissingFinding(
   return undefined;
 }
 
-// A concise finding title from an event description: first sentence, capped in length.
+// A concise finding title from an event description: first sentence, capped in length without
+// cutting inside a word (capAtWord), so the redacted export never meets a half-value it cannot match.
 export function shortTitle(description: string, max = 90): string {
   const firstSentence = description.split(/(?<=[.!?])\s/)[0] ?? description;
-  const t = firstSentence.trim();
-  return t.length <= max ? t : t.slice(0, max - 1).trimEnd() + "…";
+  return capAtWord(firstSentence, max);
 }
 
 // ── Twins of an event a finding already cites (#1556) ──────────────────────────────────────────

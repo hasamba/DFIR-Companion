@@ -8,11 +8,11 @@ import { INVESTIGATION_DB_FILENAME, StateStore } from "../../src/analysis/stateS
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 
-// #2247: the plain ZIP archive walks the case once and snapshots the database only when that walk
-// saw it. A database that APPEARS after the walk — a legacy JSON case migrated by a dashboard load,
-// which does not take the state lock — is deliberately left out. The archive is still complete: the
-// migration copies from state/investigation.json and never deletes it, and the manifest carries only
-// per-file hashes of the bytes it packaged, so it cannot contradict itself. This pins that behaviour.
+// #2247: the plain ZIP archive snapshots the database only when its walk saw it. A database that
+// APPEARS after the walk — a legacy JSON case migrated by a dashboard load, which does not take the
+// state lock — used to be left out. Since #2784 the archive re-walks after packaging and builds again
+// when the folder changed, so the settled archive carries the new database (as its snapshot) beside
+// the untouched legacy JSON, and the manifest still lists exactly the bytes it packaged.
 
 async function walk(dir: string, rel = ""): Promise<string[]> {
   const out: string[] = [];
@@ -41,7 +41,7 @@ function zipEntries(buf: Buffer): Map<string, Buffer> {
 }
 
 describe("plain ZIP archive vs a database that appears after the walk (#2247)", () => {
-  it("ships the legacy JSON state complete and leaves the new database out, with a self-consistent manifest", async () => {
+  it("ships the legacy JSON state complete and builds again to include the new database, with a self-consistent manifest", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-archive-race-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -63,7 +63,7 @@ describe("plain ZIP archive vs a database that appears after the walk (#2247)", 
     const entries = zipEntries(await readFile(result.archivePath));
     const names = [...entries.keys()].map((n) => n.replace(/^c1\//, ""));
     expect(names).toContain("state/investigation.json");
-    expect(names.some((n) => n.endsWith(".sqlite"))).toBe(false);
+    expect(names).toContain(`state/${INVESTIGATION_DB_FILENAME}`);
     expect(entries.get("c1/state/investigation.json")?.equals(legacyBytes)).toBe(true);
     const caseFiles = names.filter((n) => n !== "archive-manifest.json");
     expect(result.manifest.files.map((f) => f.path).sort()).toEqual([...caseFiles].sort());

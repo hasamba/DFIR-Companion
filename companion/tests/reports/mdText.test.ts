@@ -97,8 +97,8 @@ describe("blockMd escapes a block that would run past the end of the text (#1918
     ["  ~~~~", "  \\~\\~\\~\\~"],
     ["- ```", "- \\`\\`\\`"],
     ["> ~~~", "> \\~\\~\\~"],
-    ["<pre>", "\\<pre>"],
-    ["<SCRIPT src=x>", "\\<SCRIPT src=x>"],
+    ["<pre>", "\\<pre\\>"],
+    ["<SCRIPT src=x>", "\\<SCRIPT src=x\\>"],
     ["<!-- hide", "\\<!-- hide"],
     ["<![CDATA[", "\\<![CDATA["],
     ["<?php", "\\<?php"],
@@ -106,10 +106,12 @@ describe("blockMd escapes a block that would run past the end of the text (#1918
     expect(blockMd(input)).toBe(expected);
   });
 
-  it("leaves inline code spans and ordinary tags in prose alone", () => {
+  it("leaves inline code spans alone and escapes tags and unpaired backticks in prose", () => {
     expect(blockMd("ran `whoami` then ``a`b``")).toBe("ran `whoami` then ``a`b``");
-    expect(blockMd("the <pre> tag")).toBe("the <pre> tag");
-    expect(blockMd("``two only")).toBe("``two only");
+    // Mid-line tags get the same escape as headings and cells; an unpaired backtick run is escaped
+    // so a later line cannot pair with it (both render as the characters written).
+    expect(blockMd("the <pre> tag")).toBe("the \\<pre\\> tag");
+    expect(blockMd("``two only")).toBe("\\`\\`two only");
   });
 });
 

@@ -4,6 +4,7 @@ import { seedDemoCase, DEMO_CASE_ID_DEFAULT } from "../analysis/seedDemoCase.js"
 import { isTerminal } from "../analysis/jobRegistry.js";
 import { linkNewCase } from "./serverSets.js";
 import type { RouteContext } from "./context.js";
+import { requireBodyCaseUnlocked } from "./bodyCaseLock.js";
 import { stoppingMessage } from "./caseIdentity.js";
 import { requestAuthentication } from "../auth/types.js";
 
@@ -26,10 +27,19 @@ import { requestAuthentication } from "../auth/types.js";
  * `store.getCaseMeta` below reads a case.json from there. Demo mode's gate in server.ts
  * allow-lists this one mutating route, so on a public deployment it is reachable unauthenticated.
  */
+// The case the route will reseed: the default demo case in demo mode or when no id is named,
+// otherwise the named id. The lock check runs on this id, not on whatever the body named.
+function seedTargetId(req: Request, demoMode: boolean | undefined): string {
+  const raw = req.body?.caseId;
+  if (demoMode || raw === undefined || raw === null) return DEMO_CASE_ID_DEFAULT;
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
 export function registerSeedDemoRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
+  const unlocked = requireBodyCaseUnlocked(ctx, (req) => seedTargetId(req, options.demoMode));
 
-  app.post("/cases/seed-demo", async (req: Request, res: Response) => {
+  app.post("/cases/seed-demo", unlocked, async (req: Request, res: Response) => {
     try {
       const rawCaseId = req.body?.caseId ?? undefined;
       if (rawCaseId !== undefined && (typeof rawCaseId !== "string" || !isValidCaseId(rawCaseId))) {

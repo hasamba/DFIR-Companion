@@ -35,18 +35,25 @@ describe("a Hide during a Jev review (#1840)", () => {
   let bodies: string[];
   let onFirst: () => Promise<void>;
   let firstStatus: number;
+  // The Hide, started by the first request to reach the stub. EVERY request waits for it before it is
+  // answered (#2782): answering the others at once let their workers drain the whole queue while the
+  // Hide's write was still on disk (slow on Windows), so the review finished before the Hide landed.
+  let hide: Promise<void> | undefined;
 
   beforeEach(async () => {
     for (const k of ENV) saved[k] = process.env[k];
     bodies = [];
     firstStatus = 200;
+    hide = undefined;
     jev = createServer((req, res) => {
       let body = "";
       req.on("data", (c) => (body += c));
       req.on("end", async () => {
         bodies.push(body);
-        if (bodies.length === 1) {
-          await onFirst();
+        const first = bodies.length === 1;
+        hide ??= onFirst();
+        await hide;
+        if (first) {
           if (firstStatus !== 200) {
             res.writeHead(firstStatus, { "content-type": "application/json" });
             res.end(JSON.stringify({ error: { message: "busy" } }));
@@ -130,7 +137,10 @@ describe("a Hide during a Jev review (#1840)", () => {
     expect(res.status).toBe(502);
     expect(String(res.body.error)).toMatch(/anonymization/i);
     // Only the first concurrent wave (sent before the Hide) reached the service; 12 batches were planned.
+    // No request is answered before the Hide lands, so no worker can send a second batch: at most the
+    // grader's concurrency (4) ever leaves.
     expect(bodies.length).toBeGreaterThan(0);
     expect(bodies.length).toBeLessThan(12);
+    expect(bodies.length).toBeLessThanOrEqual(4);
   });
 });

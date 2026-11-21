@@ -27,6 +27,7 @@ import type { ImportBase } from "../routes/context.js";
 import { runDiskImport, streamedImportMeta } from "../routes/importCloudStream.js";
 import type { AppOptions } from "./appOptions.js";
 import { settleStreamedImport, type StreamedSettleDeps } from "./importIngestSettle.js";
+import { recordImportRows } from "../storage/importRowsLog.js";
 
 export interface DiskIngestDeps {
   store: CaseStore;
@@ -114,6 +115,7 @@ export function createDiskIngest(deps: DiskIngestDeps): IngestDiskFile {
       const baseline = await baselineOf(caseId);
       try {
         await runDiskImport(diskCtx, kind, caseId, saved.path, storedName, base);
+        await recordImportRows(store, caseId, seq, debug.summary().counts); // #2790
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         const streamMeta = streamedImportMeta(caseId, storedName);
         disclosure = streamMeta.streamDisclosure ?? [];

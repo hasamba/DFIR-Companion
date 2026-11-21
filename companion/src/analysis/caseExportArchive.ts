@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { isValidCaseId, type CaseStore } from "../storage/caseStore.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
+import { buildFromSettledCase, vanishedAs, type SettledBuild } from "./caseArchiveSettle.js";
 import type { CaseMeta } from "../types.js";
 import { createZip, type ZipEntry } from "./zipArchive.js";
 import { portableArchivePaths } from "../storage/portableFilename.js";
@@ -22,6 +23,7 @@ import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import { CaseFileRefusedError, readCaseFile, withPinnedCaseFile } from "../storage/caseFileRead.js";
 import { restoreCaseZip, type CaseImportCounts, type RestoreCaseZipOptions } from "./caseRestore.js";
 import { listCaseZipEntries, readCaseZipEntry } from "./caseZipReader.js";
+import { copyNumberedSuffix } from "./archiveNoClobber.js";
 import { caseNamedFilename } from "./caseFilename.js";
 
 // Whole-case export/import (#54 follow-up): the entire case directory tree is zipped, then
@@ -37,10 +39,11 @@ export { CaseImportConflictError, isSafeZipEntryPath, type CaseImportCounts } fr
 /**
  * The filename for a case's `.dfircase` export: `"<caseId> - <name>.dfircase"`, or just
  * `"<caseId>.dfircase"` when the case has no distinct name set. Delete-with-encrypted-archive
- * writes it to disk (#2759), so a long name is shortened to fit (#2769).
+ * writes it to disk (#2759), so a long name is shortened to fit (#2769). A `copyNumber` above 1
+ * names a later copy beside an earlier one: `"<caseId> - <name> (2).dfircase"` (#2787).
  */
-export function dfircaseFilename(caseId: string, name: string | null | undefined): string {
-  return caseNamedFilename(caseId, name, ".dfircase");
+export function dfircaseFilename(caseId: string, name: string | null | undefined, copyNumber = 1): string {
+  return caseNamedFilename(caseId, name, copyNumberedSuffix(".dfircase", copyNumber));
 }
 
 /**
@@ -87,25 +90,13 @@ function refusedAs(rel: string): (err: unknown) => never {
 }
 
 /**
- * Turn an ENOENT on a path the walk had just listed into something an analyst can act on.
- *
- * A file vanishing mid-export is not the same as one that was never there: it means the case was
- * being written while it was being packaged. The export still refuses to continue — an archive that
- * quietly omits a case file while presenting itself as complete is the one outcome a forensic
- * export must never produce — but it now names the file and says what to do, instead of surfacing a
- * bare "ENOENT ... lstat" that reads as a server fault. Any other error is rethrown untouched.
+ * An ENOENT on a path the walk had just listed means the case was being written while it was being
+ * packaged. The file is never quietly omitted — an archive that drops a case file while presenting
+ * itself as complete is the one outcome a forensic export must never produce. The whole export is
+ * built again from a fresh walk instead (#2784, caseArchiveSettle.ts); a folder that never holds
+ * still fails with a message naming the file, never a bare "ENOENT ... lstat".
  */
-function rethrowVanished(rel: string): (err: unknown) => never {
-  return (err: unknown) => {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(
-        `"${rel}" disappeared while the case was being packaged — something is still writing to ` +
-          `this case. Let it finish (or close the case) and export again.`,
-      );
-    }
-    throw err;
-  };
-}
+const rethrowVanished = vanishedAs;
 
 async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
   const out: string[] = [];
@@ -218,14 +209,34 @@ async function buildCaseArchive(
   // file named "back\slash.bin" became the path "back/slash.bin", so the read looked inside a
   // directory that does not exist and the export died claiming the file had "disappeared while the
   // case was being packaged".
-  const relPaths = await walkDir(caseDir);
-  if (relPaths.length === 0) throw new Error(`case ${caseId} does not exist`);
+  //
+  // #2784: every attempt is the walk, the snapshot and the reads together, from its own staging; a
+  // file that came or went during one (an analysis-run record's pending.json) runs it again.
+  return buildFromSettledCase(
+    `[export] case=${caseId}`,
+    async () => {
+      const relPaths = await walkDir(caseDir);
+      if (relPaths.length === 0) throw new Error(`case ${caseId} does not exist`);
+      return buildOneAttempt(store, caseId, password, extraEntries, relPaths);
+    },
+    () => walkDir(caseDir),
+  );
+}
 
+async function buildOneAttempt(
+  store: CaseStore,
+  caseId: string,
+  password: string,
+  extraEntries: ZipEntry[],
+  firstWalk: string[],
+): Promise<SettledBuild<Buffer>> {
+  const caseDir = store.caseDir(caseId);
   const staging = await createStagingDir(join(store.casesRoot, EXPORT_STAGING_DIRNAME), `${caseId}-`);
   try {
     const scope = { casesRoot: store.casesRoot, caseDir };
-    const generation = await snapshotGeneration(scope, caseId, relPaths, staging);
-    return await archiveGeneration(scope, caseId, password, generation, extraEntries, staging);
+    const generation = await snapshotGeneration(scope, caseId, firstWalk, staging);
+    const value = await archiveGeneration(scope, caseId, password, generation, extraEntries, staging);
+    return { value, relPaths: generation.relPaths };
   } finally {
     // The snapshot is a full copy of the case database, so it never outlives the request that
     // needed it — including when the export throws.
@@ -342,10 +353,9 @@ async function archiveGeneration(
     // the path after checking it let a process controlling the case directory swap the approved file
     // — or a folder above it (#1846) — for a link and seal another file into the encrypted export.
     // The same open refuses a FIFO instead of hanging on it.
-    const data = await readCaseFile(scope, fullPath).catch((err: unknown) => {
-      refusedAs(rel)(err);
-      return rethrowVanished(rel)(err);
-    });
+    // refusedAs rethrows anything that is not a refusal, so the ENOENT check has to come first: in
+    // the other order a vanished file escaped as the raw "ENOENT ... lstat" 500 of #2784.
+    const data = await readCaseFile(scope, fullPath).catch(rethrowVanished(rel)).catch(refusedAs(rel));
     entries.push({ path: recordFile(rel, data), data });
   }
   // Listed in archive-manifest.json alongside the case's own files, so a recipient checking the

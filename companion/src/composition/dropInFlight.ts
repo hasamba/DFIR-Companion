@@ -10,7 +10,9 @@
  * returned; after DROP_CRASH_LIMIT such starts of the SAME version of the file (relpath, size and
  * mtime) the sweep refuses it, so it goes to `_failed/` with a reason that says why. A start is
  * counted when the file's import is granted the case's import section (analysis/importAttempt.ts),
- * so a file queued behind another one is never blamed for the other one's crash.
+ * so a file queued behind another one is never blamed for the other one's crash — except a LARGE
+ * under-cap text file, whose start counts before its whole-file read (composition/dropWholeRead.ts,
+ * #2785): that read and its parse are where it runs the server out of memory.
  *
  * Kept beside the batch's crash marker (composition/dropBatchMarker.ts, #2540) and written the same
  * way — the case's state folder, one case-scoped write at a time. The two answer different crashes:

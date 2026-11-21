@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
+import { requireBodyCaseUnlocked } from "./bodyCaseLock.js";
 import { caseVelo, requestVelo, veloErrorStatus } from "./veloServers.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { ALL_CLIENTS } from "../integrations/velociraptor/velociraptorApi.js";
@@ -32,19 +33,23 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
 
   // List the server's CLIENT_EVENT (continuous monitoring) artifacts for the Monitor-mode picker.
   // Same short-TTL catalog cache + `?refresh=1` bypass as /velociraptor/artifacts above.
-  app.get("/velociraptor/event-artifacts", async (req: Request, res: Response) => {
-    const vc = requestVelo(ctx, req, res);
-    if (!vc) return;
-    try {
-      return res.status(200).json({
-        artifacts: await vc.client.listClientArtifacts("client_event", {
-          refresh: isRefresh(req),
-        }),
-      });
-    } catch (err) {
-      return res.status(502).json({ error: (err as Error).message });
-    }
-  });
+  app.get(
+    "/velociraptor/event-artifacts",
+    requireBodyCaseUnlocked(ctx),
+    async (req: Request, res: Response) => {
+      const vc = requestVelo(ctx, req, res);
+      if (!vc) return;
+      try {
+        return res.status(200).json({
+          artifacts: await vc.client.listClientArtifacts("client_event", {
+            refresh: isRefresh(req),
+          }),
+        });
+      } catch (err) {
+        return res.status(502).json({ error: (err as Error).message });
+      }
+    },
+  );
 
   // All live monitors for a case (with status + running stats). [] when monitoring isn't configured.
   app.get("/cases/:id/velociraptor/monitors", async (req: Request, res: Response) => {

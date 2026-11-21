@@ -24,6 +24,7 @@ import {
 import type { ArtifactBundle } from "../analysis/artifactBundleStore.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
+import { requireBodyCaseUnlocked } from "./bodyCaseLock.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
 import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
 import {
@@ -64,8 +65,8 @@ import { vqlSizeProblem } from "../analysis/vqlInput.js";
 export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
-  // Module-private copy of createApp's toStringArray (a non-exported server.ts helper) so the moved
-  // run-bundle / deploy-hunt bodies keep their original calls without importing across the route seam.
+  const gate = requireBodyCaseUnlocked(ctx); // a locked case named by body/?caseId= needs its unlock
+  // Module-private copy of createApp's (non-exported) toStringArray for the moved run-bundle/deploy-hunt bodies.
   const toStringArray = (v: unknown): string[] => {
     if (typeof v === "string")
       return v
@@ -95,7 +96,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   registerVelociraptorVqlRoutes(app, ctx);
 
   // Read a launched hunt's results (rows collected from the endpoints so far). Polled by the dashboard.
-  app.post("/velociraptor/hunt-results", async (req: Request, res: Response) => {
+  app.post("/velociraptor/hunt-results", gate, async (req: Request, res: Response) => {
     const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     const huntId = typeof req.body?.huntId === "string" ? req.body.huntId.trim() : "";
@@ -116,7 +117,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // else the default set (empty when it has no Velociraptor). Empty when never refreshed. Settings
   // reads this on open, so a named case whose set does not resolve or lacks Velociraptor is an empty
   // 200 too (#2462) — still never the default set's inventory.
-  app.get("/velociraptor/clients", async (req: Request, res: Response) => {
+  app.get("/velociraptor/clients", gate, async (req: Request, res: Response) => {
     const named = namesCase(req) ? namedCaseVeloOrNull(ctx, req, res) : undefined;
     if (named === undefined && namesCase(req)) return; // malformed caseId: 400 already sent
     if (named === null) return res.status(200).json({ updatedAt: "", clients: [] });
@@ -132,7 +133,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
 
   // Refresh a set's client inventory now (Settings → Velociraptor "Refresh client list"): the case's set
   // with body.caseId, else the default. 409/501 when that set has no Velociraptor; 502 on a query failure.
-  app.post("/velociraptor/clients/refresh", async (req: Request, res: Response) => {
+  app.post("/velociraptor/clients/refresh", gate, async (req: Request, res: Response) => {
     const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     const inventory = options.clientInventoryFor?.(vc.setId);
@@ -187,7 +188,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // Re-read DFIR_VELOCIRAPTOR_* from .env, DROP the cached server-set clients, and refresh the inventory
   // of the set the request acts on (the named case's set, else the default) — a reachability probe, so
   // the analyst reconnects without a restart. Re-arms monitors and hunt polls. The body names the set.
-  app.post("/velociraptor/reconnect", async (req: Request, res: Response) => {
+  app.post("/velociraptor/reconnect", gate, async (req: Request, res: Response) => {
     try {
       await reloadEnvPrefix("DFIR_VELOCIRAPTOR_");
       ctx.serverClients.invalidate();
@@ -240,7 +241,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
 
   // Read a single COLLECTION flow's result rows so the dashboard can show them inline + auto-poll (the
   // per-flow analog of /velociraptor/hunt-results). Body `{ clientId, flowId, artifact, sources }`.
-  app.post("/velociraptor/collect-results", async (req: Request, res: Response) => {
+  app.post("/velociraptor/collect-results", gate, async (req: Request, res: Response) => {
     const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.trim() : "";
@@ -307,7 +308,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // cached in the client for a few tens of seconds; `?refresh=1` bypasses that — the dashboard's
   // "Browse server artifacts" button sends it, since a deliberate browse is exactly the moment an
   // analyst who just added an artifact on the server expects to see it.
-  app.get("/velociraptor/artifacts", async (req: Request, res: Response) => {
+  app.get("/velociraptor/artifacts", gate, async (req: Request, res: Response) => {
     const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     try {
@@ -324,7 +325,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
   // artifacts get bounded (and via which parameter), and which have no date parameter and so collect in
   // full. Bundles are global; the artifact definitions come from body.caseId's set, else the default.
   // Body: {preset} or {start,end}, optional caseId.
-  app.post("/velociraptor/bundles/:id/time-scope-preview", async (req: Request, res: Response) => {
+  app.post("/velociraptor/bundles/:id/time-scope-preview", gate, async (req: Request, res: Response) => {
     const vc = requestVelo(ctx, req, res);
     if (!vc) return;
     if (!options.artifactBundleStore) return res.status(501).json({ error: "bundle store not configured" });

@@ -13,6 +13,7 @@ import { withStringIocValues } from "./iocValueCoerce.js";
 import { compactEventProvenance } from "./canonicalProvenanceCompact.js";
 import type { OperationalMetricsStore, QueryIndex, QueryOperation } from "./operationalMetrics.js";
 import { IocJournalReader, type IocOutline } from "./iocJournal.js";
+import { asStateLoadCorruption, readingStateStore } from "./stateLoadCorrupt.js";
 import {
   EMPTY_OUTLINE,
   type ForensicOutline,
@@ -242,7 +243,15 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
     return join(this.cases.stateDir(caseId), LEGACY_STATE_FILENAME);
   }
 
-  private async ensureMigrated(caseId: string): Promise<boolean> {
+  private ensureMigrated(caseId: string): Promise<boolean> {
+    return this.migrateIfNeeded(caseId).catch((err: unknown) => {
+      // A legacy JSON case above V8's max string size: name recovery, never a half-migrated database.
+      if (isStringTooLongError(err)) throw this.legacyTooLargeError(caseId);
+      throw asStateLoadCorruption(err, caseId, "migrate"); // #2783: a damaged file names case + file
+    });
+  }
+
+  private async migrateIfNeeded(caseId: string): Promise<boolean> {
     const dbPath = this.databasePath(caseId);
     if (await caseSqliteWorker.request<boolean>({ op: "stateExists", dbPath })) return true;
 
@@ -257,22 +266,14 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
         return true;
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-        // A legacy JSON case above V8's max string size: name recovery, never a half-migrated database.
-        if (isStringTooLongError(err)) throw this.legacyTooLargeError(caseId);
         throw err;
       }
     }
-
-    try {
-      return await caseSqliteWorker.request<boolean>({
-        op: "migrateState",
-        dbPath,
-        jsonPath: this.legacyPath(caseId),
-      });
-    } catch (err) {
-      if (isStringTooLongError(err)) throw this.legacyTooLargeError(caseId);
-      throw err;
-    }
+    return caseSqliteWorker.request<boolean>({
+      op: "migrateState",
+      dbPath,
+      jsonPath: this.legacyPath(caseId),
+    });
   }
 
   private legacyTooLargeError(caseId: string): Error {
@@ -313,12 +314,15 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
   private async loadState(caseId: string, excluded: string[], slim = false): Promise<InvestigationState> {
     const startedAt = performance.now();
     if (!(await this.ensureMigrated(caseId))) return emptyState(caseId);
-    const parsed = await caseSqliteWorker.request<Partial<InvestigationState> | null>({
-      op: "loadState",
-      dbPath: this.databasePath(caseId),
-      excludedKinds: excluded,
-      slimCanonical: slim,
-    });
+    const parsed = await readingStateStore(
+      caseId,
+      caseSqliteWorker.request<Partial<InvestigationState> | null>({
+        op: "loadState",
+        dbPath: this.databasePath(caseId),
+        excludedKinds: excluded,
+        slimCanonical: slim,
+      }),
+    );
     if (parsed?.caseId && parsed.caseId !== caseId) {
       await caseSqliteWorker.request<void>({
         op: "setStateCaseId",

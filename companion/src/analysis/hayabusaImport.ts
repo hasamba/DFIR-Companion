@@ -67,6 +67,7 @@ import {
   type DecisionTally,
   type ImportDebugRecorder,
 } from "./rowDecisionDebug.js";
+import { createSliceClock, yieldToEventLoop } from "./yieldToEventLoop.js";
 
 type Row = Record<string, unknown>;
 
@@ -457,49 +458,102 @@ function extractHayabusaRecords(text: string): { records: HayabusaRecord[]; form
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
-export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions = {}): HayabusaParseResult {
-  const maxIocs = opts.maxIocs ?? 5000;
-  const { records, format } = extractHayabusaRecords(text);
-  const total = records.length;
-  if (total === 0) {
-    return {
-      events: [],
-      iocs: [],
-      total: 0,
-      kept: 0,
-      dropped: 0,
-      groups: 0,
-      format: "empty",
-      hostname: "",
-      hostRenames: [],
-      collectorHostnames: [],
-    };
-  }
+const emptyResult = (): HayabusaParseResult => ({
+  events: [],
+  iocs: [],
+  total: 0,
+  kept: 0,
+  dropped: 0,
+  groups: 0,
+  format: "empty",
+  hostname: "",
+  hostRenames: [],
+  collectorHostnames: [],
+});
 
-  const iocSink = new Map<string, SiemIoc>();
-  const hostTally = new Map<string, number>();
-  const mapped: MappedEvent[] = [];
-  const withRaw: { raw: Row; m: MappedEvent }[] = [];
+// One parse in progress: the extracted records and the sinks the per-record mapping fills. Split out
+// so the synchronous parse and the yielding one (#2789) run the same steps in the same order.
+interface ParseRun {
+  opts: HayabusaImportOptions;
+  records: HayabusaRecord[];
+  format: string;
+  iocSink: Map<string, SiemIoc>;
+  hostTally: Map<string, number>;
+  mapped: MappedEvent[];
+  withRaw: { raw: Row; m: MappedEvent }[];
+  aliases: HostRenameMap;
+  fallback: { host: string; basis: "collector" | "analyst" };
+  renames: HostRenameLedger;
+  tally: DecisionTally | undefined;
+}
+
+function startParse(text: string, opts: HayabusaImportOptions): ParseRun | null {
+  const { records, format } = extractHayabusaRecords(text);
+  if (records.length === 0) return null;
   // The file's own rename evidence, read before any record is attributed (#1489). Only a
   // Velociraptor-wrapped row carries the raw `_Event` the rules read; a plain Hayabusa timeline
   // yields no evidence but still consumes what the wrapped rows of the same file establish.
   const aliases = HostRenameMap.from(opts.knownRenames, opts.collectorHostnames, opts.hostFallback);
   aliases.learn(records.map((r) => r.rec));
-  const fallback = { host: (opts.hostFallback ?? "").trim(), basis: opts.hostFallbackBasis ?? "collector" };
-  const renames = new HostRenameLedger(); // one Info marker per (host, former name), as Chainsaw does
-  const tally = opts.debug ? createDecisionTally() : undefined;
+  return {
+    opts,
+    records,
+    format,
+    iocSink: new Map<string, SiemIoc>(),
+    hostTally: new Map<string, number>(),
+    mapped: [],
+    withRaw: [],
+    aliases,
+    fallback: { host: (opts.hostFallback ?? "").trim(), basis: opts.hostFallbackBasis ?? "collector" },
+    renames: new HostRenameLedger(), // one Info marker per (host, former name), as Chainsaw does
+    tally: opts.debug ? createDecisionTally() : undefined,
+  };
+}
 
-  for (const { rec, details, fullMessage } of records) {
-    const r = mapRecord(rec, details, iocSink, fullMessage, aliases, renames, fallback);
-    if (!r) {
-      tally?.skipped.add("no_rule_or_event_id");
-      continue;
-    }
-    if (tally) tallyRecord(tally, rec, details, r.rh, r.mapped.timestamp);
-    if (r.host) hostTally.set(r.host, (hostTally.get(r.host) ?? 0) + 1);
-    mapped.push(r.mapped);
-    withRaw.push({ raw: rec, m: r.mapped });
+function mapOne(run: ParseRun, { rec, details, fullMessage }: HayabusaRecord): void {
+  const { iocSink, aliases, renames, fallback, tally, hostTally } = run;
+  const r = mapRecord(rec, details, iocSink, fullMessage, aliases, renames, fallback);
+  if (!r) {
+    tally?.skipped.add("no_rule_or_event_id");
+    return;
   }
+  if (tally) tallyRecord(tally, rec, details, r.rh, r.mapped.timestamp);
+  if (r.host) hostTally.set(r.host, (hostTally.get(r.host) ?? 0) + 1);
+  run.mapped.push(r.mapped);
+  run.withRaw.push({ raw: rec, m: r.mapped });
+}
+
+export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions = {}): HayabusaParseResult {
+  const run = startParse(text, opts);
+  if (!run) return emptyResult();
+  for (const item of run.records) mapOne(run, item);
+  return finishParse(run);
+}
+
+/**
+ * `parseHayabusaTimeline` for the import paths (#2789): the same result, but the per-record mapping
+ * hands the event loop a turn about every SLICE_BUDGET_MS, so a large timeline no longer stalls
+ * `/health`, job polls and every other request for the whole parse.
+ */
+export async function parseHayabusaTimelineYielding(
+  text: string,
+  opts: HayabusaImportOptions = {},
+): Promise<HayabusaParseResult> {
+  const run = startParse(text, opts);
+  if (!run) return emptyResult();
+  await yieldToEventLoop(); // extraction is one block; let queued requests in before mapping starts
+  const clock = createSliceClock();
+  for (const item of run.records) {
+    mapOne(run, item);
+    if (clock.due()) await yieldToEventLoop();
+  }
+  return finishParse(run);
+}
+
+function finishParse(run: ParseRun): HayabusaParseResult {
+  const { opts, mapped, withRaw, renames, tally, iocSink, hostTally, aliases, format } = run;
+  const total = run.records.length;
+  const maxIocs = opts.maxIocs ?? 5000;
   // A parent's handle to its own child at creation, and an AppX update's firewall rule swap (#1621).
   // Only a row that carries the parsed record (Velociraptor's Windows.Hayabusa.Rules `_Event`) gives
   // the rules their fields; a plain csv/json timeline's rendered Details gives them none, and they

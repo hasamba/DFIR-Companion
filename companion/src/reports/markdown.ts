@@ -24,7 +24,7 @@ import { deriveGlossary } from "./glossary.js";
 import {
   blockMd,
   cellMd,
-  displayQuestionText,
+  goalLineMd,
   reportQuestionText,
   eventCellMd,
   findingIocsMd,
@@ -247,7 +247,7 @@ function investigationGoals(state: InvestigationState, meta: ReportMeta, lines: 
   const goals = state.keyQuestions.filter((q) => !q.coverageGap);
   if (goals.length > 0) {
     lines.push("Derived from the investigation's key questions:", "");
-    for (const q of goals) lines.push(`- ${blockMd(oneLineMd(displayQuestionText(q.question)))}`);
+    for (const q of goals) lines.push(`- ${goalLineMd(q.question)}`);
     lines.push("");
     return;
   }

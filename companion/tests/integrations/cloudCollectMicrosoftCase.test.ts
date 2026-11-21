@@ -3,7 +3,11 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createCollection, runCollection } from "../../src/integrations/cloudCollect/collectEngine.js";
+import {
+  createCollection,
+  runCollection,
+  type CollectProgress,
+} from "../../src/integrations/cloudCollect/collectEngine.js";
 import { collectionPaths, parseManifest } from "../../src/integrations/cloudCollect/collectManifest.js";
 import { QueryUsageStore } from "../../src/integrations/cloudCollect/collectBudget.js";
 import { readCheckpoint } from "../../src/integrations/cloudCollect/collectCheckpoint.js";
@@ -52,6 +56,7 @@ interface RunOpts {
   sources: string[];
   budget?: number;
   onPoll?: () => Promise<void>;
+  onProgress?: (progress: CollectProgress) => void;
 }
 
 async function collect(t: TempCase, tenantOpts: MockTenantOptions, opts: RunOpts) {
@@ -97,6 +102,7 @@ async function collect(t: TempCase, tenantOpts: MockTenantOptions, opts: RunOpts
     now,
     clock,
     ...(budget ? { budget } : {}),
+    ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
   };
   const cp = await runCollection(deps, t.dir, { resume: false });
   return { cp, tenant, resume: () => runCollection(deps, t.dir, { resume: true }) };
@@ -171,23 +177,29 @@ describe("Microsoft collection into a case (#2315)", () => {
   it("shows the audit query's status in the checkpoint while it waits", async () => {
     const t = await tempCase();
     const seen: string[] = [];
+    // The engine reports progress only AFTER a checkpoint save has landed, so a report carrying the
+    // poll status is the signal that the status is on disk (#2782). Polling the file instead raced the
+    // earlier "submitted" status write: the probe took whichever status had landed first.
+    const POLLING = /audit query (notStarted|running)/;
+    let landed: string | undefined;
     await collect(
       t,
       { ual: [graphUalRecord(1, at(1))], pollStatuses: ["notStarted", "running"] },
       {
         sources: ["m365-ual"],
+        onProgress: (p) => {
+          landed ??= p.sources.map((s) => s.status).find((s) => s !== undefined && POLLING.test(s));
+        },
         onPoll: async () => {
           if (seen.length) return;
-          // Wait (bounded) for the status write to land: a checkpoint commit fsyncs, slow on Windows.
-          const status = await pollFor(
-            "a provider status in the checkpoint",
-            async () => {
-              const cp = await readCheckpoint(nodeCollectFs, collectionPaths(t.dir));
-              return cp?.subWindows.find((sw) => sw.providerStatus)?.providerStatus ?? null;
-            },
-            { timeoutMs: pollBudget(5_000) },
-          );
-          seen.push(status);
+          // Bounded: the status write is best effort, so a lost one must fail the test, not hang it.
+          await pollFor("a progress report carrying the audit query's poll status", async () => landed, {
+            timeoutMs: pollBudget(5_000),
+          });
+          // The engine is parked in this sleep, so nothing writes the checkpoint while it is read.
+          const cp = await readCheckpoint(nodeCollectFs, collectionPaths(t.dir));
+          const status = cp?.subWindows.find((sw) => sw.providerStatus)?.providerStatus;
+          if (status) seen.push(status);
         },
       },
     );

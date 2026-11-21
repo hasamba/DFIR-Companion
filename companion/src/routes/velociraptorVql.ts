@@ -4,6 +4,7 @@ import { runInCaseScope } from "../storage/caseIncarnation.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
+import { requireBodyCaseUnlocked } from "./bodyCaseLock.js";
 import { caseVelo, defaultVelo } from "./veloServers.js";
 
 // The two bare (case-less) VQL routes: run a query, launch a fleet hunt. Split out of
@@ -28,6 +29,8 @@ export function clip(text: string, limit: number): string {
 export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): void {
   const { options, store } = ctx;
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
+  // A password-locked case named in the body is refused until the caller has unlocked it.
+  const unlocked = requireBodyCaseUnlocked(ctx);
 
   // Resolve the optional caseId. Returns the id to log under ("" when the caller named none), or
   // sends the refusal and returns null. A caseId that is present but unknown is refused BEFORE the
@@ -119,7 +122,9 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
       return res.status(502).json(withWarning({ error: (err as Error).message }, auditWarning));
     }
   }
-  app.post("/velociraptor/run", (req: Request, res: Response) => inBodyCase(req, () => runVql(req, res)));
+  app.post("/velociraptor/run", unlocked, (req: Request, res: Response) =>
+    inBodyCase(req, () => runVql(req, res)),
+  );
 
   // Launch a HUNT that runs the pivot VQL on ALL enrolled endpoints (packages it as a CLIENT
   // artifact, then creates the hunt). This is the dashboard's "Run hunt on all clients" action.
@@ -159,7 +164,7 @@ export function registerVelociraptorVqlRoutes(app: Express, ctx: RouteContext): 
       return res.status(502).json(withWarning({ error: (err as Error).message }, auditWarning));
     }
   }
-  app.post("/velociraptor/hunt", (req: Request, res: Response) =>
+  app.post("/velociraptor/hunt", unlocked, (req: Request, res: Response) =>
     inBodyCase(req, () => launchHunt(req, res)),
   );
 }

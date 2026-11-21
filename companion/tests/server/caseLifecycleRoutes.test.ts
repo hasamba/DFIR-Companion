@@ -10,6 +10,8 @@ import { CommentsStore } from "../../src/analysis/comments.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
+import { MAX_ARCHIVE_COPY_NUMBER } from "../../src/analysis/archiveNoClobber.js";
+import { dfircaseFilename } from "../../src/analysis/caseExportArchive.js";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -419,8 +421,11 @@ describe("POST /cases/:id/delete", () => {
   it("refuses to delete (500, case kept) when the encrypted copy cannot be written to the cases root", async () => {
     const { app, store } = await harness();
     await seedClosedCase(app, "DEL-11", "Case Del Eleven");
-    // A folder squatting on the target name makes the atomic rename fail on every platform.
-    await mkdir(join(store.casesRoot, "DEL-11 - Case Del Eleven.dfircase", "blocker"), { recursive: true });
+    // A copy never replaces an existing entry (#2787), so folders squatting on EVERY name it may
+    // take leave it nowhere to write — on every platform.
+    for (let n = 1; n <= MAX_ARCHIVE_COPY_NUMBER; n++) {
+      await mkdir(join(store.casesRoot, dfircaseFilename("DEL-11", "Case Del Eleven", n)));
+    }
     const res = await request(app)
       .post("/cases/DEL-11/delete")
       .send({ archiveFirst: "encrypted", password: PASSWORD });
@@ -446,7 +451,11 @@ describe("POST /cases/:id/delete", () => {
     const res = await request(app).post("/cases/DEL-8/delete").send({ archiveFirst: "zip" });
     expect(res.status).toBe(200);
     expect(res.body.deleted).toBe(true);
-    expect(res.body.archivePath).toContain("(no password).zip");
+    // The earlier archive's ZIP keeps its name; this one sits beside it (#2787).
+    expect(res.body.archivePath).toBe(join(store.casesRoot, "DEL-8 - Case Del Eight (no password) (2).zip"));
+    expect((await stat(join(store.casesRoot, "DEL-8 - Case Del Eight (no password).zip"))).isFile()).toBe(
+      true,
+    );
     const zipStat = await stat(res.body.archivePath);
     expect(zipStat.isFile()).toBe(true);
     await expect(stat(join(store.casesRoot, "_archived", "DEL-8"))).rejects.toThrow();

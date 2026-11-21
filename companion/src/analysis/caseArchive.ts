@@ -1,11 +1,13 @@
-import { readdir, readFile, rm, stat, writeFile, rename, unlink } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
 import { portableZipEntryPath, portableArchivePaths } from "../storage/portableFilename.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
+import { buildFromSettledCase, vanishedAs } from "./caseArchiveSettle.js";
 import { caseNamedFilename } from "./caseFilename.js";
+import { copyNumberedSuffix, writeBufferNewFile } from "./archiveNoClobber.js";
 import { EXPORT_STAGING_DIRNAME, createStagingDir } from "../storage/exportStaging.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import {
@@ -169,10 +171,11 @@ export interface ArchiveDeps {
  * The on-disk filename for a case's plain (unencrypted) ZIP archive:
  * `"<caseId> - <name> (no password).zip"`, or just `"<caseId> (no password).zip"` when the case
  * has no distinct name. The "(no password)" marker keeps it visually unambiguous next to an
- * encrypted `.dfircase` archive of the same case. A long name is shortened to fit (#2769).
+ * encrypted `.dfircase` archive of the same case. A long name is shortened to fit (#2769). A
+ * `copyNumber` above 1 names a later copy: `"<caseId> - <name> (no password) (2).zip"` (#2787).
  */
-export function zipArchiveFilename(caseId: string, name: string | null | undefined): string {
-  return caseNamedFilename(caseId, name, " (no password).zip");
+export function zipArchiveFilename(caseId: string, name: string | null | undefined, copyNumber = 1): string {
+  return caseNamedFilename(caseId, name, copyNumberedSuffix(" (no password).zip", copyNumber));
 }
 
 // Default recursive file scanner for the real filesystem.
@@ -186,7 +189,7 @@ async function defaultScanFiles(dir: string): Promise<string[]> {
       // routinely lists a name the read below no longer finds, which took the whole archive down
       // with a raw ENOENT 500 (#1442). Same rule, same reason and same list as the encrypted
       // export: what counts as transient (and what deliberately does not) is caseTransientPaths.ts.
-      // A path that vanishes without matching there still fails loudly.
+      // A path that vanishes without matching there makes the whole archive build again (#2784).
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       if (isTransientCasePath(childRel)) continue;
       if (e.isDirectory()) {
@@ -200,29 +203,12 @@ async function defaultScanFiles(dir: string): Promise<string[]> {
   return paths;
 }
 
-/** Write a binary Buffer atomically: a unique temp file renamed over the target. The encrypted
- * delete path saves its server-side copy with it too (#2759). */
-export async function writeBufferAtomic(p: string, d: Buffer): Promise<void> {
-  const tmp = `${p}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(tmp, d);
-    await rename(tmp, p);
-  } catch (err) {
-    try {
-      await unlink(tmp);
-    } catch {
-      /* temp may not exist; ignore */
-    }
-    throw err;
-  }
-}
-
 /**
  * Create a ZIP archive of the case directory.
  *
- * Writes `<casesRoot>/<zipArchiveFilename(caseId, caseName)>` atomically (write
- * to temp path then caller renames, or write directly when deps.writeFile is
- * provided). The archive includes a `<caseId>/archive-manifest.json` that
+ * Writes `<casesRoot>/<zipArchiveFilename(caseId, caseName)>` atomically (a temp
+ * file published under the first free name — `... (2).zip` when that one exists,
+ * #2787 — or written directly when deps.writeFile is provided). The archive includes a `<caseId>/archive-manifest.json` that
  * lists every file with its SHA-256 and byte size so integrity can be
  * verified offline.
  *
@@ -243,14 +229,13 @@ export async function archiveCase(
   caseDirOverride?: string,
 ): Promise<ArchiveResult> {
   const caseDir = caseDirOverride ?? join(casesRoot, caseId);
-  const archivePath = join(casesRoot, zipArchiveFilename(caseId, caseName));
 
   const scan = deps.scanFiles ?? defaultScanFiles;
   // Every case file is read from ONE judged handle (#1846): a name swapped for a link — at the file or
   // at a folder above it — or a FIFO fails the archive instead of shipping another case's file.
   const scope: CaseScope = { casesRoot, caseDir };
   const read = deps.readFile ?? ((p: string) => readCaseFile(scope, p));
-  // The default write is ATOMIC (write to a unique temp file then rename over the target), so a
+  // The default write is ATOMIC (write to a unique temp file, then publish it), so a
   // crash (power loss, OOM kill, disk full mid-write) never leaves a partially-written ZIP as the
   // only copy of a case. Plain fs.writeFile opens with O_TRUNC and streams in chunks; a crash
   // mid-stream leaves a truncated, unopenable archive. This is the same protection atomicWrite
@@ -258,22 +243,49 @@ export async function archiveCase(
   // bytes). Every other write in the data-integrity core (StateStore, BackupManager, CaseStore)
   // already routes through atomicWrite; archiveCase was the outlier — its own JSDoc claimed
   // atomicity the previous default did NOT provide.
-  const write = deps.writeFile ?? writeBufferAtomic;
+  // #2787: the default write also never replaces an existing archive — an earlier ZIP of a case with
+  // the same id and name keeps its file, and this one takes the next free " (2)" name. An injected
+  // writeFile (tests) gets the base name.
+  const write = async (data: Buffer): Promise<string> => {
+    if (!deps.writeFile) {
+      return writeBufferNewFile(casesRoot, (n) => zipArchiveFilename(caseId, caseName, n), data);
+    }
+    const p = join(casesRoot, zipArchiveFilename(caseId, caseName));
+    await deps.writeFile(p, data);
+    return p;
+  };
 
-  const relPaths = await scan(caseDir);
+  // #2784: built from a folder that held still. A background write that adds or removes a file
+  // mid-build (an analysis-run record's pending.json) runs the whole build again from a fresh walk —
+  // the file is never quietly left out (caseArchiveSettle.ts). The ZIP is written once, at the end.
+  const { zipData, manifest } = await buildFromSettledCase(
+    `[archive] case=${caseId}`,
+    async () => {
+      const relPaths = await scan(caseDir);
+      return { value: await snapshotAndPackage(scope, caseId, relPaths, read), relPaths };
+    },
+    () => scan(caseDir),
+  );
+  const archivePath = await write(zipData);
+  return { archivePath, manifest };
+}
 
+async function snapshotAndPackage(
+  scope: CaseScope,
+  caseId: string,
+  relPaths: string[],
+  read: (path: string) => Promise<Buffer>,
+): Promise<PackagedArchive> {
+  const { casesRoot, caseDir } = scope;
   // #1454: the live database runs in WAL mode, so its committed rows can sit in the -wal sidecar
   // (not case content, and never archived) while any reader has the file open. A raw copy of the
   // .sqlite file alone would be missing them. The archive carries a VACUUM INTO snapshot instead —
   // one consistent standalone file — exactly as the encrypted export does.
   //
   // #2247: only a database the walk saw is snapshotted. One that APPEARS after the walk (a legacy JSON
-  // case migrated by a dashboard load, which does not take the state lock) is deliberately left out:
-  // the walk's state/investigation.json is the complete source the migration copies from and never
-  // deletes, and this manifest holds only per-file hashes of the bytes packaged, so it cannot
-  // contradict itself. The encrypted export needs a retry for that case (caseExportArchive.ts,
-  // snapshotGeneration) because its manifest counts entities from the snapshot. A REPLACED database
-  // (backup restore) is kept out by the caller holding the case's state lock (routes/caseLifecycle.ts).
+  // case migrated by a dashboard load, which does not take the state lock) shows up in the settle
+  // re-walk, and the archive is built again with it (#2784). A REPLACED database (backup restore) is
+  // kept out by the caller holding the case's state lock (routes/caseLifecycle.ts).
   const dbRel = `state/${INVESTIGATION_DB_FILENAME}`;
   const snapshot = relPaths.includes(dbRel)
     ? await withPinnedCaseFile(scope, join(caseDir, dbRel), () =>
@@ -281,7 +293,7 @@ export async function archiveCase(
       ).catch(refusedAs(dbRel))
     : null;
   try {
-    return await packageArchive(caseId, caseDir, archivePath, relPaths, read, write, snapshot, dbRel);
+    return await packageArchive(caseId, caseDir, relPaths, read, snapshot, dbRel);
   } finally {
     if (snapshot) await rm(snapshot.staging, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -330,16 +342,19 @@ async function snapshotDatabase(
   }
 }
 
+interface PackagedArchive {
+  zipData: Buffer;
+  manifest: ArchiveManifest;
+}
+
 async function packageArchive(
   caseId: string,
   caseDir: string,
-  archivePath: string,
   relPaths: string[],
   read: (path: string) => Promise<Buffer>,
-  write: (path: string, data: Buffer) => Promise<void>,
   snapshot: DatabaseSnapshot | null,
   dbRel: string,
-): Promise<ArchiveResult> {
+): Promise<PackagedArchive> {
   const zipFiles: Array<{ name: string; data: Buffer }> = [];
   const manifestFiles: Array<{
     path: string;
@@ -370,7 +385,9 @@ async function packageArchive(
     const data =
       snapshot && rel === dbRel
         ? await readFile(snapshot.path)
-        : await read(join(caseDir, rel)).catch(refusedAs(rel));
+        : await read(join(caseDir, rel))
+            .catch(vanishedAs(rel)) // gone since the walk: the settle loop builds again (#2784)
+            .catch(refusedAs(rel));
     const sha256 = createHash("sha256").update(data).digest("hex");
     const archivedRel = archivePathByRel.get(rel) ?? rel;
     zipFiles.push({ name: `${entryPrefix}/${archivedRel}`, data });
@@ -400,8 +417,5 @@ async function packageArchive(
     data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8"),
   });
 
-  const zipData = buildZip(zipFiles);
-  await write(archivePath, zipData);
-
-  return { archivePath, manifest };
+  return { zipData: buildZip(zipFiles), manifest };
 }

@@ -227,18 +227,18 @@ describe("archiveCase", () => {
     // The crash-mid-write property itself can't be observed in-process; what CAN be is the
     // cleanup branch the atomic write adds, which is where a temp file becomes permanent litter
     // sitting next to the case.
-    it("a failed rename leaves neither a partial archive at the target nor a temp file", async () => {
+    it("an existing entry at the archive name is never replaced — the ZIP takes the (2) name (#2787)", async () => {
       const dir = await realCaseDir();
       try {
-        // A non-empty DIRECTORY at the target path makes rename() fail after the temp file exists.
         const archivePath = join(dir, zipArchiveFilename("c1", null));
         await mkdir(archivePath, { recursive: true });
         await writeFile(join(archivePath, "blocker"), "x");
 
-        await expect(archiveCase(dir, "c1")).rejects.toThrow();
+        const result = await archiveCase(dir, "c1");
 
-        // The target is still the untouched directory — no truncated ZIP replaced it — and the
-        // temp file was cleaned up rather than left as litter next to the case.
+        expect(result.archivePath).toBe(join(dir, zipArchiveFilename("c1", null, 2)));
+        expect((await readFile(result.archivePath)).subarray(0, 2).toString("latin1")).toBe("PK");
+        // The blocker is untouched and the temp file was cleaned up rather than left as litter.
         expect((await stat(archivePath)).isDirectory()).toBe(true);
         expect((await readdir(dir)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
       } finally {

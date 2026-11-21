@@ -229,8 +229,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   });
   options.onSocratesRecoveryReady?.(tools.resumeSocratesJobs); // #2408: startServer runs it after listen()
   const drops = createDropFolder({
-    store,
-    options,
+    ...{ store, options },
     hasAiProvider,
     getControl,
     recordImportFailure,
@@ -247,6 +246,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     indexCaptureText,
     captureBuffers: analysis.captureBuffers,
     flush: analysis.flush,
+    admitImport: (caseId, hint) => importLock.admitWithoutSection(caseId, hint), // #2785
   });
   const monitors = createVeloMonitors({ store, options, ingestStreamed: imports.ingestStreamed });
   const markConclusionsOutOfDate = createConclusionsOutOfDate({

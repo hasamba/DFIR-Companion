@@ -80,6 +80,7 @@ export interface ImportIngestDeps {
 // Declared in routes/context.ts (#1736) so RouteContext.ingestStreamed can name it without an upward
 // import; re-exported here for the callers that have always taken it from this module.
 import type { ModelCallHooks } from "../routes/context.js";
+import { recordImportRows } from "../storage/importRowsLog.js";
 export type { ModelCallHooks } from "../routes/context.js";
 
 export interface ImportIngest {
@@ -617,6 +618,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         ...(assetHost ? { assetHost } : {}),
         ...(signal ? { signal } : {}),
       });
+      await recordImportRows(store, caseId, seq, debug.summary().counts); // #2790
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
       return settleStreamedImport(settleDeps, { caseId, kind, storedName, baseline });

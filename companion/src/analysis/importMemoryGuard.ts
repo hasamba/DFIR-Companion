@@ -37,8 +37,14 @@ export const IMPORT_INPUT_BYTES_PER_EVENT = 200;
 const UNSIZED_INCOMING_EVENTS = 2000;
 
 export class ImportMemoryRefusedError extends Error {
-  constructor(message: string) {
+  /**
+   * True when other admitted imports held reservations at the refusal: memory may free up once they
+   * finish, so a caller able to retry later (the drop folder, #2785) waits instead of failing.
+   */
+  readonly othersReserved: boolean;
+  constructor(message: string, othersReserved = false) {
     super(message);
+    this.othersReserved = othersReserved;
     this.name = "ImportMemoryRefusedError";
   }
 }
@@ -193,7 +199,7 @@ export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemo
         wording: hint?.wording,
         ...probe(),
       });
-      if (!verdict.ok) throw new ImportMemoryRefusedError(verdict.message);
+      if (!verdict.ok) throw new ImportMemoryRefusedError(verdict.message, reserved > 0 || reservedHeap > 0);
       reserved += verdict.needBytes;
       reservedHeap += verdict.heapNeedBytes;
       let held = true;

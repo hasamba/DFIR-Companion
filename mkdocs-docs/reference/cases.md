@@ -83,7 +83,9 @@ Toolbar **☰ Case lifecycle** menu lets you:
 - **Close** a case (marks it inactive)
 - **Archive** a case — packages it as a ZIP with a SHA-256 manifest. Close the case first: an open
   case cannot be archived, and the archive is refused with "case … is still open — close it first,
-  then archive it". When it finishes, the status line shows where the ZIP file was saved (in the cases
+  then archive it". If someone reopens the case while the ZIP is being built, the ZIP is still
+  saved, but the case stays open in the case list and the archive reports "was reopened while its
+  archive was being built". When it finishes, the status line shows where the ZIP file was saved (in the cases
   folder). See [ZIP Case Archive](#zip-case-archive-restore) to bring it back.
 - **Restore** an archived case — puts it back in the case list. A restored case always comes back
   **Closed**. This includes a case that an older version archived while it was open. Use
@@ -161,7 +163,9 @@ the case is wiped. With the encrypted archive, a copy of the `.dfircase` file is
 cases folder on the server (next to where the ZIP archive goes), and only then is the case deleted —
 so a download that fails or a tab closed too early cannot lose the case. The dialog tells you the
 path of that copy; it is protected by the same password, and you delete it by hand when you no
-longer need it; to get the case back from it, use **Import case → Encrypted case archive (.dfircase)**.
+longer need it. A saved copy is never replaced: if a file with the same name is already there (for
+example, from an earlier delete of a case with the same ID and name), the new copy gets a number,
+such as `<caseId> - <case name> (2).dfircase`, and the dialog shows that path; to get the case back from it, use **Import case → Encrypted case archive (.dfircase)**.
 If the server cannot save that copy, nothing is deleted. Guardrails: it refuses to touch a directory that isn't a real case, and it won't
 delete an already-archived case's live folder out from under its archive. While an archive or an
 encrypted export of the case is still being built, Delete and Restore are refused with "an import or
@@ -171,7 +175,9 @@ an archive in progress — try again" until it finishes.
 
 **Archive to ZIP** writes `<caseId> - <case name> (no password).zip` into the cases folder (just
 `<caseId> (no password).zip` when the case has no separate name). A very long case name is
-shortened in the file name only; the case keeps its full name. The case must be
+shortened in the file name only; the case keeps its full name. An existing ZIP is never replaced:
+if that name is taken, the new ZIP is named `<caseId> - <case name> (no password) (2).zip` (then
+`(3)`, and so on). The case must be
 closed first. The ZIP holds one
 `<caseId>/` folder with every case file, plus `<caseId>/archive-manifest.json`. The manifest lists
 the SHA-256 hash and size of each file. The ZIP has no password.

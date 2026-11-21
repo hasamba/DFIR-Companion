@@ -162,6 +162,18 @@ describe("createImportMemoryGuard", () => {
     (await guard.admit("b", { incomingEvents: 0 }))();
   });
 
+  it("says on a refusal whether other imports held reservations at the time (#2785)", async () => {
+    const counts: Record<string, number> = { a: 30_000, b: 30_000, huge: 200_000 };
+    const guard = createImportMemoryGuard({ countEvents: async (c) => counts[c], probe: probe(5 * GB) });
+    const alone = await guard.admit("huge").catch((e: unknown) => e);
+    expect(alone).toBeInstanceOf(ImportMemoryRefusedError);
+    expect((alone as ImportMemoryRefusedError).othersReserved).toBe(false);
+    const releaseA = await guard.admit("a");
+    const crowded = await guard.admit("b").catch((e: unknown) => e);
+    expect((crowded as ImportMemoryRefusedError).othersReserved).toBe(true);
+    releaseA();
+  });
+
   it("is off when DFIR_IMPORT_MEMORY_GUARD=off, and never counts", async () => {
     process.env.DFIR_IMPORT_MEMORY_GUARD = "off";
     let counted = false;

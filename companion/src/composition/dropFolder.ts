@@ -26,7 +26,6 @@
  * tests never spin up a filesystem poller.
  */
 import { basename, dirname, extname, join, relative } from "node:path";
-import { decodeImportedText } from "../ingest/decodeText.js";
 import { readdir, stat, lstat, mkdir, rename, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { copyHandleBounded } from "../storage/handleCopy.js";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -42,7 +41,7 @@ import { ingestCapture } from "../ingest/captureIngest.js";
 import { detectBinaryImportKind } from "../analysis/macBinaryDetect.js";
 import { unknownImportHintFor } from "../analysis/importKindHints.js";
 import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
-import { readHandleBounded, FileTooLargeError } from "../storage/boundedRead.js";
+import { FileTooLargeError } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "../routes/importFileHead.js";
 import type { IngestDiskFile } from "./importIngestDisk.js";
 import type { DiskBatchIngest } from "./importIngestBatch.js";
@@ -56,6 +55,7 @@ import { huntHeldStoreFor } from "../analysis/huntHeldStore.js";
 import { applyDropHolds, holdFolderPlan } from "./dropHeld.js";
 import { clearStaging } from "./dropHuntExtract.js";
 import { createDropInFlight } from "./dropInFlight.js";
+import { createDropWholeReader, DropReadDeferredError, readDropFileBounded } from "./dropWholeRead.js";
 import {
   selectReadyFiles,
   excludeStuck,
@@ -72,6 +72,7 @@ import {
   type StuckDropFile,
 } from "../analysis/dropScan.js";
 import { createSweepRecorder } from "./dropIncremental.js";
+import { createDropLinkReporter, type DropLink } from "./dropLinkReport.js";
 import type { PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
@@ -145,6 +146,10 @@ export interface DropFolderDeps {
   indexCaptureText: (metadata: CaptureMetadata) => void;
   captureBuffers: PerCaseMap<CaptureMetadata[]>;
   flush: (caseId: string) => Promise<void>;
+  // #2785: the import memory guard, asked before a large under-cap file is read whole; and the size
+  // from which that file counts its crash-loop start before the read (tests inject a small one).
+  admitImport?: Parameters<typeof createDropWholeReader>[0]["admit"];
+  dropEarlyMarkBytes?: number;
 }
 
 export interface DropFolder {
@@ -215,6 +220,12 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   const stuckFiles = createDropStuckTracker(() => store.casesRoot);
   const stuck = stuckFiles.stuck;
   const inFlight = createDropInFlight(store); // crash-loop guard (#2713)
+  const linkReporter = createDropLinkReporter({ casesRoot: () => store.casesRoot, log: logLine }); // #2788
+  const readWholeText = createDropWholeReader({
+    maxBytes: dropMaxBytes,
+    admit: deps.admitImport,
+    earlyMarkBytes: deps.dropEarlyMarkBytes,
+  }); // #2785
 
   // One admitted write (#1855): a tick for a case deleted meanwhile never recreates its folder.
   function ensureDropFolders(caseId: string): Promise<void> {
@@ -234,8 +245,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   }
 
   // Recursive walk of drop/, skipping the reserved subtrees + README + OS/sync junk (shouldIgnoreDropFile).
-  // Symlinks and hardlinks are rejected here — see the file header for the threat model.
-  async function listDropFiles(dropDir: string): Promise<DropFileStat[]> {
+  // Symlinks and hardlinks are rejected here — see the file header for the threat model — and
+  // collected into `links`, so the sweep can report each one once (#2788).
+  async function listDropFiles(dropDir: string, links: DropLink[] = []): Promise<DropFileStat[]> {
     const out: DropFileStat[] = [];
     const walk = async (dir: string): Promise<void> => {
       let entries;
@@ -248,15 +260,17 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         const full = join(dir, e.name);
         const rel = relative(dropDir, full);
         if (shouldIgnoreDropFile(rel)) continue;
-        if (e.isSymbolicLink()) continue; // never follow symlinks in the drop folder
         if (e.isDirectory()) {
-          await walk(full);
+          await walk(full); // a symlinked directory is not a directory dirent, so never followed
           continue;
         }
-        if (!e.isFile()) continue;
+        if (!e.isFile() && !e.isSymbolicLink()) continue; // a symlink falls to the lstat refusal
         try {
           const st = await lstat(full);
-          if (st.isSymbolicLink() || st.nlink > 1) continue;
+          if (st.isSymbolicLink() || st.nlink > 1) {
+            links.push({ relpath: rel, kind: st.isSymbolicLink() ? "symlink" : "hardlink" });
+            continue;
+          }
           out.push({ relpath: rel, size: st.size, mtimeMs: st.mtimeMs });
         } catch {
           /* vanished mid-walk */
@@ -359,22 +373,6 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       throw e;
     }
     await rm(src, { force: true });
-  }
-
-  // The ONE whole-file read for every branch of processDropFile. The cap travels with the
-  // descriptor: opened O_NOFOLLOW, sized by fstat on that same handle, and the read stops one byte
-  // past the promised size (storage/boundedRead.ts). The listing stat's `isOversize` gate stays as
-  // the cheap early skip, but it is only a check on what the sweep saw — a file that grew, or was
-  // swapped for a larger one, between the listing and this read was read in full by the old
-  // path-based `readFileNoFollow` (#1329, the #947 check-then-read shape). Throws FileTooLargeError,
-  // which each caller phrases in its own terms.
-  async function readDropFileBounded(fullPath: string, maxBytes: number): Promise<Buffer> {
-    const handle = await openNoFollow(fullPath);
-    try {
-      return await readHandleBounded(handle, maxBytes);
-    } finally {
-      await handle.close();
-    }
   }
 
   // Ingest one dropped image as screenshot evidence: transcode to webp (imageLoader sends screenshots
@@ -564,8 +562,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         await ingestDroppedImage(caseId, full, name, file.mtimeMs);
         return { ok: true };
       }
-      // BOM-aware: a Report.wer is UTF-16LE, and utf8 turns it into NUL-interleaved mojibake.
-      const text = decodeImportedText(await readDropFileBounded(full, dropMaxBytes));
+      const text = await readWholeText(caseId, full, file.size); // guarded before the read (#2785)
       if (!text.trim()) return { ok: false, reason: "empty file" };
       const kind = resolveImportKind(name, text, debug);
       // Same named reason the /import routes give (#1302): a capa-shaped report whose flavor isn't
@@ -612,6 +609,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
           reason: `too large at read time (${err.size} bytes > ${err.maxBytes}-byte cap; the file changed after the sweep listed it) — use Import-from-path`,
         };
       }
+      if (err instanceof DropReadDeferredError) return { ok: false, deferred: err.message }; // #2785
       recordImportFailure(caseId, "drop", name, err, debug);
       return { ok: false, reason: (err as Error)?.message ?? String(err) };
     }
@@ -638,7 +636,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       if (meta?.status === "closed" || meta?.status === "archived") return; // don't auto-import into a closed or archived case (parity with /import)
       const dropDir = dropDirOf(store, caseId);
       await ensureDropFolders(caseId);
-      const listing = await listDropFiles(dropDir);
+      const links: DropLink[] = [];
+      const listing = await listDropFiles(dropDir, links);
+      await linkReporter.report(caseId, dropDir, links);
       const settled = selectReadyFiles(listing, seen.get(caseId) ?? new Map());
       const nextSeen = settled.nextSeen;
       seen.set(caseId, nextSeen);
