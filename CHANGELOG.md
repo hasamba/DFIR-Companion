@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AI Agent Forensics on a locked case** — launch and add-to-case answer the standard "locked" response and the panel says to unlock the case (closes #2798)
+- **AI Agent Forensics Sigma section** — a run with no endpoint results says there is no Sigma coverage instead of printing a broken table (closes #2799)
+- **Flaky Watson mirror test** — the test waits for the mirrored answer before replying (closes #2797)
 - **Archive copy is on disk before a delete** — the saved archive and its folder entry are flushed to disk before the case is removed (closes #2800)
 - **Every archive attempt is verified** — if the case folder still changed on the last attempt, archive answers a retryable error and nothing is deleted (closes #2801)
 - **GET requests with a body** — a case read that carries a request body is answered instead of hanging (closes #2792)
