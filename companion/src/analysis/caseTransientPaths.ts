@@ -19,8 +19,9 @@ import { isAtomicWriteTempPath } from "../storage/atomicWrite.js";
 //      (a uuid, a known database name), never a bare extension.
 //   2. Nothing whose absence loses committed data. See the journal note in SQLITE_TRANSIENT below.
 //
-// Anything that vanishes and is NOT matched here still fails the export loudly, with a message
-// naming the file — see caseExportArchive.ts. Skipping is the exception, not the fallback.
+// Anything that vanishes and is NOT matched here is never skipped: the whole archive is built again
+// from a fresh walk, and a folder that never holds still fails with a message naming the file — see
+// caseArchiveSettle.ts (#2784). Skipping is the exception, not the fallback.
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 

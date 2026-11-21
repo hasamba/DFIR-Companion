@@ -324,6 +324,7 @@
     "canonicalMerge.ts": "analysis/timeline",
     "caseArchive.ts": "analysis/case",
     "caseArchiveManifest.ts": "analysis/case",
+    "caseArchiveSettle.ts": "analysis/case",
     "caseEncryption.ts": "analysis/privacy",
     "caseExistsGate.ts": "analysis/case",
     "caseExportArchive.ts": "analysis/case",
