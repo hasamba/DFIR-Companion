@@ -198,6 +198,16 @@ describe("the Detection rules box (#2389)", () => {
     ).toMatchObject({ text: "SigmaHQ r2026-07-01 + Suzaku suzaku-2026-11-01 — current" });
   });
 
+  it("leaves Suzaku off the Sigma line when Suzaku has its own row", () => {
+    const { api } = harness();
+    const origins = [{ name: "Suzaku", release: "suzaku-2026-11-01" }];
+    const settings = {
+      suzaku: { enabled: true, active: { release: "suzaku-2026-11-01", source: "bundled" } },
+    };
+    expect(api.drSigmaLine({ ...SIGMA, origins, settings })?.text).toBe("SigmaHQ r2026-07-01 — not checked");
+    expect(api.drSuzakuLine({ ...SIGMA, origins, settings })?.text).toBe("suzaku-2026-11-01 — not checked");
+  });
+
   it("never calls a pack that needs a newer app current", () => {
     const { api } = harness();
     const line = api.drTaggerLine({

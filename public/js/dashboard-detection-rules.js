@@ -43,8 +43,13 @@ function drTaggerLine(st) {
 // The Sigma line, from GET /sigma/status. PURE.
 function drSigmaLine(s) {
   if (!s || !s.active) return null;
-  // #2499: the bundled Suzaku rules are named beside the SigmaHQ release when they grade.
-  const extra = (s.origins || []).map((o) => ` + ${o.name} ${o.release}`).join("");
+  // #2499: the bundled Suzaku rules are named beside the SigmaHQ release when they grade — unless the
+  // Suzaku line (#2508) already shows them, so one rule set is never listed on two rows.
+  const ownRow = drSuzakuLine(s) !== null;
+  const extra = (s.origins || [])
+    .filter((o) => !(ownRow && /^suzaku$/i.test(o.name)))
+    .map((o) => ` + ${o.name} ${o.release}`)
+    .join("");
   const what = `SigmaHQ ${s.active.release}${extra}`;
   const lc = s.lastCheck;
   if (s.enabled === false) return { label: "Sigma rules", text: `${what} — grading switched off`, action: null };
