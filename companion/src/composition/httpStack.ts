@@ -317,8 +317,10 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
   // something checks first. This is that check: skip the (often expensive) handler entirely once the
   // underlying connection is already gone, so the event loop reaches the new case's requests sooner.
   // GET-only: a write whose client disconnected mid-flight should still finish, not leave a partial edit.
+  // Check the RESPONSE side, never req.destroyed: a request stream auto-destroys once its body has
+  // been read to the end, so a GET carrying a body looked "abandoned" and never got an answer (#2792).
   app.use("/cases/:id", function abandonedCaseReadGate(req: Request, res: Response, next: NextFunction) {
-    if (req.method === "GET" && req.destroyed) return;
+    if (req.method === "GET" && (res.destroyed || req.socket?.destroyed === true)) return;
     next();
   });
 }
