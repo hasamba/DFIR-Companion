@@ -7,9 +7,12 @@
  * `hunt_info.json`. Importing every file imports every row up to four times.
  *
  * The rule goes by artifact, not by layout. For each artifact exactly one copy is imported:
- *   1. the per-client `.json` files, when there are any;
- *   2. otherwise the hunt-wide `All <Artifact>.json`;
- *   3. a `.csv` only when no `.json` of that artifact exists (per-client first, again).
+ *   1. the hunt-wide `All <Artifact>.json`, when there is one (#2810) — ONE import for every client,
+ *      its rows naming their host (`Fqdn`); one file per client meant one full case merge per client;
+ *   2. otherwise the per-client `.json` files;
+ *   3. a `.csv` only when no `.json` of that artifact exists (hunt-wide first, again).
+ * An artifact whose per-client files a run already started (`started`, a resumed zip's ledger) keeps
+ * the per-client copy, so a run begun before #2810 never imports the hunt-wide rows on top.
  *
  * Input is a list of `/`-separated paths — a drop-folder listing or a zip's member names — and the
  * output names only hunt MEMBERS. Anything else beside a hunt (a client's `uploads/` tree, an
@@ -18,7 +21,7 @@
 import { clientFolderHost } from "./assetHost.js";
 
 /** Why a hunt member is not imported. */
-export type HuntSkipReason = "csv-twin" | "hunt-wide-copy" | "metadata";
+export type HuntSkipReason = "csv-twin" | "hunt-wide-copy" | "per-client-copy" | "metadata";
 
 export interface HuntImport {
   path: string;
@@ -62,8 +65,11 @@ const HUNT_WIDE = /^All (.+)$/;
 type Slot = "pcJson" | "pcCsv" | "hwJson" | "hwCsv";
 type Member = { path: string; slot: Slot; artifact: string } | { path: string; slot: "metadata" };
 
-/** Every hunt in `paths`, each with the members to import and the members to set aside. */
-export function planHuntExports(paths: readonly string[]): HuntPlan[] {
+/**
+ * Every hunt in `paths`, each with the members to import and the members to set aside. `started`:
+ * members a resumed run already handled; an artifact with a started per-client file stays per-client.
+ */
+export function planHuntExports(paths: readonly string[], started?: ReadonlySet<string>): HuntPlan[] {
   const roots = huntRoots(paths);
   if (roots.length === 0) return [];
   const byRoot = new Map<string, Member[]>(roots.map((r) => [r, []]));
@@ -76,7 +82,7 @@ export function planHuntExports(paths: readonly string[]): HuntPlan[] {
   const plans: HuntPlan[] = [];
   for (const [root, members] of byRoot) {
     if (members.length === 0) continue;
-    plans.push(choose(root, members));
+    plans.push(choose(root, members, started));
   }
   return plans;
 }
@@ -133,7 +139,7 @@ function result(path: string, file: string, huntWide: boolean): Member | null {
   return { path, slot, artifact: stem };
 }
 
-function choose(root: string, members: readonly Member[]): HuntPlan {
+function choose(root: string, members: readonly Member[], started?: ReadonlySet<string>): HuntPlan {
   const imports: HuntImport[] = [];
   const skips: HuntSkip[] = [];
   const groups = new Map<string, Record<Slot, string[]>>();
@@ -153,17 +159,22 @@ function choose(root: string, members: readonly Member[]): HuntPlan {
     const skip = (paths: string[], reason: HuntSkipReason): void => {
       for (const path of paths) skips.push({ path, reason });
     };
-    if (g.pcJson.length) {
+    const perClientStarted = !!started && [...g.pcJson, ...g.pcCsv].some((p) => started.has(p));
+    if (g.hwJson.length && !perClientStarted) {
+      take(g.hwJson, true);
+      skip(g.pcJson, "per-client-copy");
+      skip([...g.pcCsv, ...g.hwCsv], "csv-twin");
+    } else if (g.pcJson.length) {
       take(g.pcJson, false);
       skip(g.pcCsv, "csv-twin");
       skip([...g.hwJson, ...g.hwCsv], "hunt-wide-copy");
-    } else if (g.hwJson.length) {
-      take(g.hwJson, true);
-      skip([...g.pcCsv, ...g.hwCsv], "csv-twin");
+    } else if (g.hwCsv.length && !perClientStarted) {
+      take(g.hwCsv, true);
+      skip(g.pcCsv, "per-client-copy");
     } else if (g.pcCsv.length) {
       take(g.pcCsv, false);
       skip(g.hwCsv, "hunt-wide-copy");
-    } else take(g.hwCsv, true);
+    } else take(g.hwJson.length ? g.hwJson : g.hwCsv, true);
   }
   imports.sort((a, b) => a.path.localeCompare(b.path));
   skips.sort((a, b) => a.path.localeCompare(b.path));
@@ -173,6 +184,7 @@ function choose(root: string, members: readonly Member[]): HuntPlan {
 const REASON_LABEL: Record<HuntSkipReason, string> = {
   "csv-twin": "CSV twin(s) of an imported JSON",
   "hunt-wide-copy": "hunt-wide copy(ies) of per-client results",
+  "per-client-copy": "per-client copy(ies) of an imported hunt-wide result",
   metadata: "collection metadata file(s)",
 };
 
@@ -180,7 +192,7 @@ const REASON_LABEL: Record<HuntSkipReason, string> = {
 export function huntSkipSummary(skips: readonly { reason: HuntSkipReason }[]): string {
   const counts = new Map<HuntSkipReason, number>();
   for (const s of skips) counts.set(s.reason, (counts.get(s.reason) ?? 0) + 1);
-  return (["csv-twin", "hunt-wide-copy", "metadata"] as const)
+  return (["csv-twin", "hunt-wide-copy", "per-client-copy", "metadata"] as const)
     .filter((r) => counts.has(r))
     .map((r) => `${counts.get(r)} ${REASON_LABEL[r]}`)
     .join(", ");

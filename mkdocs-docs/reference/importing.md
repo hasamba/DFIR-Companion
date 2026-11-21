@@ -3485,13 +3485,17 @@ A Velociraptor hunt export can carry the same rows up to four times: each client
 combined) and its `.csv` twin. The drop folder recognises a hunt export, whether you drop the `.zip`
 or the unzipped folder, and imports **one copy of each artifact**:
 
-1. the per-client `.json` files, when there are any;
-2. otherwise the hunt-wide `All <Artifact>.json`;
-3. a `.csv` only when that artifact has no `.json` at all.
+1. the hunt-wide `All <Artifact>.json`, when the export has one;
+2. otherwise the per-client `.json` files;
+3. a `.csv` only when that artifact has no `.json` at all (again the hunt-wide copy first).
 
-The host comes from the client folder name (`<hostname>-C.<id>`). A hunt-wide copy has no client
-folder, so each row's own host fields (`Fqdn`, `Hostname`, …) name the host, as for any Velociraptor
-file.
+The hunt-wide copy is preferred because it is **one import for every client** (#2810). Each import
+merges into the whole case, so one file per client per artifact made a large hunt slow, and the
+slower the bigger the case grew. A hunt-wide copy has no client folder, so each row's own host fields
+(`Fqdn`, `Hostname`, …) name the host; Velociraptor writes `Fqdn` on every hunt result row. Per-client
+files take their host from the client folder name (`<hostname>-C.<id>`). A zip that was already
+part-way through its per-client files when you upgraded finishes those artifacts per-client, so
+nothing is imported twice.
 
 **Unzipped folder.** Everything that is not imported — the other copies, each client's metadata
 (`client_info.json`, `collection_context.json`, `log.json`, `requests.json`, `uploads.json`, …) and

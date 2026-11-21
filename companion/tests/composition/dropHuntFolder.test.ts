@@ -32,7 +32,7 @@ describe("drop folder — unzipped Velociraptor hunt export (#2714)", () => {
   }
 
   it("per-client copies carry the client folder's host; JSON goes to the Velociraptor importer", async () => {
-    const { h } = await dropHunt("full");
+    const { h } = await dropHunt("perClientJson");
     const pslist = h.calls.filter((c) => c.name === "Windows.System.Pslist.json");
     expect(pslist.map((c) => c.host).sort()).toEqual(["SRV-CHARLIE", "WS-ALPHA", "WS-BRAVO"]);
     expect(h.calls.every((c) => c.kind === "velociraptor")).toBe(true);
@@ -51,7 +51,12 @@ describe("drop folder — unzipped Velociraptor hunt export (#2714)", () => {
   it("moves the skipped files with their full relative path and logs one SKIPPED line per hunt", async () => {
     const { h } = await dropHunt("full");
     expect(await exists(join(h.dropDir, "_skipped/Hunt1/hunt_info.json"))).toBe(true);
-    expect(await exists(join(h.dropDir, "_skipped/Hunt1/results/All Windows.System.Pslist.json"))).toBe(true);
+    // #2810: the hunt-wide copy imports; the per-client copies are the ones set aside
+    expect(
+      await exists(
+        join(h.dropDir, "_skipped/Hunt1/WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json"),
+      ),
+    ).toBe(true);
     expect(
       await exists(
         join(h.dropDir, "_skipped/Hunt1/WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.csv"),
@@ -60,7 +65,7 @@ describe("drop folder — unzipped Velociraptor hunt export (#2714)", () => {
     const skipped = (await dropLog(h.dropDir)).split("\n").filter((l) => l.includes("SKIPPED"));
     expect(skipped).toHaveLength(1);
     expect(skipped[0]).toContain("Hunt1/");
-    expect(skipped[0]).toContain("28 moved to _skipped/");
+    expect(skipped[0]).toContain("34 moved to _skipped/");
   });
 
   it("waits while any member of the hunt has not settled", async () => {
@@ -73,7 +78,7 @@ describe("drop folder — unzipped Velociraptor hunt export (#2714)", () => {
     expect(h2.calls).toEqual([]);
     expect(await exists(join(h2.dropDir, "Hunt1/results/All Windows.System.Pslist.json"))).toBe(true);
     await h2.sweep();
-    expect(h2.calls.length).toBe(10);
+    expect(h2.calls.length).toBe(4); // #2810: three hunt-wide copies + Late.json (no hunt-wide copy)
   });
 
   it("leaves non-member files beside a hunt to the ordinary drop path", async () => {

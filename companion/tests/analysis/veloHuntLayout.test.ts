@@ -14,17 +14,19 @@ const plan = (layout: HuntLayout, prefix = "") => {
 const importPaths = (layout: HuntLayout) => plan(layout).imports.map((i) => i.path);
 
 describe("planHuntExports (#2714)", () => {
-  it("per-client + hunt-wide + CSV: imports only the per-client JSON", () => {
+  it("#2810: per-client + hunt-wide + CSV: imports only the hunt-wide JSON, one per artifact", () => {
     const p = plan("full", "Hunt1");
     expect(p.root).toBe("Hunt1");
-    expect(p.imports).toHaveLength(9);
-    expect(p.imports.every((i) => !i.huntWide && i.path.endsWith(".json"))).toBe(true);
+    expect(p.imports).toHaveLength(3);
+    expect(p.imports.every((i) => i.huntWide && i.path.endsWith(".json"))).toBe(true);
     const reasons = Object.fromEntries(p.skips.map((s) => [s.path, s.reason]));
     expect(reasons["Hunt1/hunt_info.json"]).toBe("metadata");
     expect(reasons["Hunt1/WS-ALPHA-C.0000000000000001/client_info.json"]).toBe("metadata");
     expect(reasons["Hunt1/WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.csv"]).toBe("csv-twin");
-    expect(reasons["Hunt1/results/All Windows.System.Pslist.json"]).toBe("hunt-wide-copy");
-    expect(reasons["Hunt1/results/All Windows.System.Pslist.csv"]).toBe("hunt-wide-copy");
+    expect(reasons["Hunt1/WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json"]).toBe(
+      "per-client-copy",
+    );
+    expect(reasons["Hunt1/results/All Windows.System.Pslist.csv"]).toBe("csv-twin");
     expect(p.members).toHaveLength(Object.keys(huntTree("full")).length);
   });
 
@@ -42,15 +44,45 @@ describe("planHuntExports (#2714)", () => {
     ]);
   });
 
-  it("CSV only for one artifact: its per-client CSVs import, the hunt-wide CSV is skipped", () => {
+  it("#2810: CSV only for one artifact: the hunt-wide CSV imports, its per-client CSVs are skipped", () => {
     const p = plan("csvOnlyUsers");
     const users = p.imports.filter((i) => i.artifact === "Windows.Sys.Users%2FUsers");
-    expect(users).toHaveLength(3);
-    expect(users.every((i) => i.path.endsWith(".csv") && !i.huntWide)).toBe(true);
+    expect(users).toEqual([
+      {
+        path: "results/All Windows.Sys.Users%2FUsers.csv",
+        artifact: "Windows.Sys.Users%2FUsers",
+        huntWide: true,
+      },
+    ]);
+    expect(
+      p.skips.filter((s) => s.reason === "per-client-copy" && s.path.endsWith("Users.csv")),
+    ).toHaveLength(3);
+  });
+
+  it("#2810: an artifact whose per-client files a run already started stays per-client", () => {
+    const paths = Object.keys(huntTree("full"));
+    const started = new Set(["WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json"]);
+    const [p] = planHuntExports(paths, started);
+    const pslist = p.imports.filter((i) => i.artifact === "Windows.System.Pslist");
+    expect(pslist).toHaveLength(3);
+    expect(pslist.every((i) => !i.huntWide)).toBe(true);
     expect(p.skips).toContainEqual({
-      path: "results/All Windows.Sys.Users%2FUsers.csv",
+      path: "results/All Windows.System.Pslist.json",
       reason: "hunt-wide-copy",
     });
+    const others = p.imports.filter((i) => i.artifact !== "Windows.System.Pslist");
+    expect(others.every((i) => i.huntWide)).toBe(true);
+  });
+
+  it("per-client JSON beats a hunt-wide CSV of the same artifact", () => {
+    const [p] = planHuntExports([
+      "hunt_info.json",
+      "WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json",
+      "results/All Windows.System.Pslist.csv",
+    ]);
+    expect(p.imports.map((i) => i.path)).toEqual([
+      "WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json",
+    ]);
   });
 
   it("a hunt-wide JSON beats per-client CSVs of the same artifact", () => {
@@ -97,7 +129,7 @@ describe("planHuntExports (#2714)", () => {
 
   it("summarises skips by reason", () => {
     expect(huntSkipSummary(plan("full").skips)).toBe(
-      "9 CSV twin(s) of an imported JSON, 6 hunt-wide copy(ies) of per-client results, 13 collection metadata file(s)",
+      "12 CSV twin(s) of an imported JSON, 9 per-client copy(ies) of an imported hunt-wide result, 13 collection metadata file(s)",
     );
   });
 });
