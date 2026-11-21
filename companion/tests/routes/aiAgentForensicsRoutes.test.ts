@@ -7,6 +7,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp } from "../../src/server.js";
 import { pollFor } from "../helpers/poll.js";
+import { hashCasePassword } from "../../src/analysis/casePassword.js";
 
 let store: CaseStore;
 let app: ReturnType<typeof createApp>;
@@ -200,6 +201,28 @@ describe("AI Agent Forensics routes: a case named in the body", () => {
       .post("/ai-agent/runs")
       .send({ caseId: "closed-1", clientIds: ["C.1"] });
     expect(closed.status).toBe(423);
+  });
+
+  // #2798: a locked case answers like every other route's lock gate, so clients see "locked", not a 403.
+  it("answers a password-locked case with the standard 401 locked body", async () => {
+    await store.createCase({ caseId: "locked-1", name: "L", investigator: "y", aiProvider: null });
+    await store.updateCaseMeta("locked-1", { password: await hashCasePassword("correct horse battery") });
+    await store.createCase({ caseId: "sweep-1", name: "S", investigator: "y", aiProvider: null });
+    const { VeloHuntStore } = await import("../../src/analysis/veloHuntStore.js");
+    const wired = createApp(store, {
+      veloHuntStore: new VeloHuntStore(store),
+      pipeline: {} as unknown as import("../../src/analysis/pipeline.js").AnalysisPipeline,
+    });
+    const run = await request(wired)
+      .post("/ai-agent/runs")
+      .send({ caseId: "locked-1", clientIds: ["C.1"] });
+    expect(run.status).toBe(401);
+    expect(run.body).toEqual({ error: "locked", caseId: "locked-1" });
+    const add = await request(wired)
+      .post("/cases/sweep-1/ai-agent/runs/r1/add-to-case")
+      .send({ targetCaseId: "locked-1" });
+    expect(add.status).toBe(401);
+    expect(add.body).toEqual({ error: "locked", caseId: "locked-1" });
   });
 });
 

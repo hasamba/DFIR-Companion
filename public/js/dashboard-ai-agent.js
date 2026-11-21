@@ -42,6 +42,9 @@
       } catch {
         body = {};
       }
+      // A locked case answers 401 { error: "locked", caseId } like every lock gate (#2798): say it.
+      if (res.status === 401 && body && body.error === "locked")
+        body = { ...body, error: `${body.caseId ? `Case ${body.caseId}` : "This case"} is locked — unlock it first.` };
       return { ok: res.ok, status: res.status, body };
     } catch (e) {
       return { ok: false, status: 0, body: { error: String((e && e.message) || e) } };

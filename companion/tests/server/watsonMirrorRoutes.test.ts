@@ -203,6 +203,11 @@ describe("plain-text questions", () => {
     expect(asked[0]).toEqual({ caseId: "c1", text: "who logged on?" });
     const answer = toChat(GROUP)[before];
     expect(answer.text).toContain("answer about c1");
+    // #2797: the answer is sent before its id is recorded; a reply that lands in between is (rightly)
+    // not a reply to a mirrored message, so wait until the id is on file before replying.
+    await vi.waitFor(async () =>
+      expect((await mirrors.get(String(GROUP)))?.messageIds).toContain(answer.message_id),
+    );
     await tg({ text: "and then?", reply_to_message: { message_id: answer.message_id } }, { chat: GROUP });
     await vi.waitFor(() => expect(asked).toHaveLength(2));
   });
