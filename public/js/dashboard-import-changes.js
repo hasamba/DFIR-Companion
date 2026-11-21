@@ -60,8 +60,8 @@
   function heldWhy(f) {
     if (!f.limitMb) return "over the size limit";
     return f.reason === "host"
-      ? `${heldMb(f.groupBytes)} MB from one PC (limit ${f.limitMb} MB per PC)`
-      : `${heldMb(f.groupBytes)} MB across all PCs (limit ${f.limitMb} MB)`;
+      ? `one PC's file over the ${f.limitMb} MB limit`
+      : `a file with several PCs over the ${f.limitMb} MB limit`;
   }
   // #2755: every held result is a file in drop/_held/ (from a zip, a bundle hunt, or a dropped file).
   function renderDropHeld(caseId, d) {
@@ -77,22 +77,27 @@
     const list = rows
       .map(
         (f, i) =>
-          `<div class="rb-files"><b>${esc(f.artifact || f.rel.split("/").pop())}</b> — ${esc(f.host || "all PCs")}, ` +
+          `<div class="rb-files"><b>${esc(f.artifact || f.rel.split("/").pop())}</b> — ${esc(f.host || "several PCs")}, ` +
           `${heldMb(f.size)} MB · ${esc(heldWhy(f))} <code>${esc(f.rel)}</code> ` +
           `<button class="rb-yes" data-held="${i}" data-held-act="import">Import anyway</button>` +
           `<button class="rb-no" data-held="${i}" data-held-act="skip">Skip</button></div>`,
       )
       .join("");
+    // #2805: the title states both limits (each file is judged on its own, never summed across PCs) and
+    // carries the bulk buttons, so they are visible without scrolling past every held row.
+    const lim = (d && d.limits) || {};
+    const limText = (mb) => (Number(mb) > 0 ? `${mb} MB` : "no limit");
     el.style.display = "block";
     el.innerHTML =
-      `<div class="rb-head">📥 ${n} hunt result file${n !== 1 ? "s" : ""} held — over the size limit</div>` +
+      `<div class="rb-head">📥 ${n} hunt result file${n !== 1 ? "s" : ""} held — each is larger than ` +
+      `${esc(limText(lim.hostMb))} (a file from one PC) or ${esc(limText(lim.totalMb))} (a file with several PCs)` +
+      `<button class="rb-yes" id="heldImportAll">Import all anyway</button>` +
+      `<button class="rb-no" id="heldSkipAll">Skip all</button></div>` +
       `<div class="rb-files">They wait in drop/_held/. Very large artifacts are usually noise: post-process ` +
       `them in a Velociraptor notebook (keep only the rows and columns you need) and drop the smaller result ` +
       `into drop/. Import anyway imports the held file; Skip moves it to drop/_skipped/ (move it back into ` +
       `drop/ to import it later).</div>` +
-      list +
-      `<button class="rb-yes" id="heldImportAll">Import all anyway</button>` +
-      `<button class="rb-no" id="heldSkipAll">Skip all</button>`;
+      list;
     const send = (picked, decision) => {
       const all = picked.map((f) => ({ rel: f.rel, decision }));
       const chunks = [];

@@ -1,15 +1,20 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
-import { moveWithinDrop } from "../analysis/dropHeldFiles.js";
+import { decideHeldFile, listHeld, moveWithinDrop } from "../analysis/dropHeldFiles.js";
 import { DROP_HELD, type DropFileStat } from "../analysis/dropScan.js";
 import { appendDropLog, formatDropLogLines, type DropLogEntry } from "../analysis/dropLog.js";
-import { huntArtifactLimitsFromEnv, planHolds } from "../analysis/huntArtifactLimits.js";
+import {
+  huntArtifactLimitsFromEnv,
+  planHolds,
+  type HuntArtifactLimits,
+} from "../analysis/huntArtifactLimits.js";
 import type { HuntPlan } from "../analysis/veloHuntLayout.js";
 import { isApproved, type HeldMeta, type HuntHeldStore } from "../analysis/huntHeldStore.js";
 import { withCaseWrite } from "../storage/caseIncarnation.js";
 import { isSafeDropRelpath } from "../storage/dropRelpath.js";
 import { readHeadNoFollow } from "../storage/noFollowRead.js";
+import { severalPcs } from "./dropResultClients.js";
 import { logLine } from "../logging/serverLogger.js";
 
 /**
@@ -73,6 +78,30 @@ export interface SweepHoldDeps {
 }
 
 /**
+ * Release held files the per-file rules no longer hold (#2805): one PC's result file from a hunt zip
+ * or folder, held when an artifact's files were summed across PCs (or across one PC's files), whose own
+ * size is within the per-PC limit. Released exactly like Import anyway: back into drop/, approved, so
+ * the next sweep imports it. A bundle hunt's held copy is re-measured by its next collect instead.
+ */
+export async function releaseOutdatedHolds(
+  d: Pick<SweepHoldDeps, "store" | "caseId" | "dropDir">,
+): Promise<number> {
+  const { hostMb } = huntArtifactLimitsFromEnv();
+  const known = new Map((await d.store.load(d.caseId)).held.map((h) => [h.rel, h]));
+  let released = 0;
+  for (const f of await listHeld(d.dropDir).catch(() => [])) {
+    const info = known.get(f.rel);
+    if (!info || info.origin === "hunt" || info.origin === "file" || !info.host) continue;
+    if (hostMb > 0 && f.size > hostMb * MB) continue;
+    const r = await decideHeldFile(d.store, d.caseId, d.dropDir, f.rel, "import");
+    if (r.error) logLine(`[drop] could not release ${f.rel}: ${r.error}`);
+    else released++;
+  }
+  if (released) logLine(`[drop] released ${released} held file(s) now within the per-file size limits`);
+  return released;
+}
+
+/**
  * The sweep's hold step, after hunt folders were prepared: finish an unzipped folder's pending holds,
  * and hold a single Velociraptor result file over the per-PC limit (only files that large are sniffed;
  * approved files never). Returns `ready` without the files that went on hold.
@@ -81,6 +110,7 @@ export async function applyDropHolds(
   d: SweepHoldDeps,
   ready: readonly DropFileStat[],
 ): Promise<DropFileStat[]> {
+  await releaseOutdatedHolds(d);
   const state = await d.store.load(d.caseId);
   const limits = huntArtifactLimitsFromEnv();
   const pending = new Map(state.pending.map((p) => [p.relpath, p.meta]));
@@ -91,8 +121,7 @@ export async function applyDropHolds(
     const rel = posix(f.relpath);
     if (isApproved(state, f)) continue;
     let meta = pending.get(rel);
-    if (!meta && limits.hostMb > 0 && f.size > limits.hostMb * MB)
-      meta = await singleFileHold(d, f, limits.hostMb);
+    if (!meta && f.size > smallestLimitMb(limits) * MB) meta = await singleFileHold(d, f, limits);
     if (!meta) continue;
     try {
       const where = await holdDropFile(d.store, d.caseId, d.dropDir, f.relpath, meta);
@@ -113,20 +142,33 @@ export async function applyDropHolds(
   return ready.filter((f) => !held.has(f.relpath));
 }
 
-/** A single dropped file over the per-PC limit that the importer would read as Velociraptor results. */
+/** Below this no limit can apply, so the file is not even opened. */
+function smallestLimitMb(limits: HuntArtifactLimits): number {
+  const on = [limits.hostMb, limits.totalMb].filter((n) => n > 0);
+  return on.length ? Math.min(...on) : Infinity;
+}
+
+/**
+ * A single dropped file the importer would read as Velociraptor results, over the limit for what it
+ * holds (#2805): one PC's results against `hostMb`, several PCs' results against `totalMb`.
+ */
 async function singleFileHold(
   d: SweepHoldDeps,
   f: DropFileStat,
-  hostMb: number,
+  limits: HuntArtifactLimits,
 ): Promise<HeldMeta | undefined> {
   const head = await readHeadNoFollow(join(d.dropDir, f.relpath), 8192).catch(() => undefined);
   if (!head) return undefined;
   const name = basename(f.relpath);
-  if (d.resolveImportKind(name, head.toString("utf8")) !== "velociraptor") return undefined;
+  const text = head.toString("utf8");
+  if (d.resolveImportKind(name, text) !== "velociraptor") return undefined;
+  const several = await severalPcs(join(d.dropDir, f.relpath), name).catch(() => false);
+  const limitMb = several ? limits.totalMb : limits.hostMb;
+  if (!(limitMb > 0) || f.size <= limitMb * MB) return undefined;
   const artifact = name.replace(/\.(jsonl?|csv)$/i, "");
   return {
     ...{ origin: "file", source: posix(f.relpath), artifact, host: "", bytes: f.size, groupBytes: f.size },
-    ...{ reason: "host", limitMb: hostMb },
+    ...{ reason: several ? "total" : "host", limitMb },
   };
 }
 

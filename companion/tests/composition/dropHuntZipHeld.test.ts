@@ -60,15 +60,31 @@ describe("drop folder — hunt zip results over the size limits (#2755)", () => 
     );
   });
 
-  it("an artifact over the across-PCs limit is held for every PC", async () => {
+  it("#2805: one artifact is never summed across PCs — small per-PC files all import", async () => {
     process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0.1";
     process.env.DFIR_HUNT_ARTIFACT_TOTAL_MAX_MB = "0.15";
     const h = await makeHarness();
     await writeFile(join(h.dropDir, "hunt.zip"), await buildZip(inflated(NETSTAT, 60)));
     await settle(h);
-    expect(h.calls).toHaveLength(6);
-    const held = (await listFiles(h.dropDir)).filter((f) => f.startsWith("_held/"));
-    expect(held.sort()).toEqual(NETSTAT.map((p) => `_held/hunt/${p}`).sort());
+    expect(h.calls).toHaveLength(9);
+    expect((await listFiles(h.dropDir)).some((f) => f.startsWith("_held/"))).toBe(false);
+  });
+
+  it("#2805: a file held by the old across-PCs sum is released by the next sweep and imports", async () => {
+    process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0.1";
+    const h = await makeHarness();
+    const small = NETSTAT[0];
+    const heldRel = `_held/hunt/${small}`;
+    await mkdir(join(h.dropDir, "_held/hunt", small, ".."), { recursive: true });
+    await writeFile(join(h.dropDir, heldRel), inflated([small], 1)[small]);
+    await huntHeldStoreFor(h.store).putHeld("c1", {
+      ...{ rel: heldRel, origin: "zip", source: "hunt.zip", artifact: "Windows.Network.Netstat" },
+      ...{ host: "WS-ALPHA", bytes: 1024, groupBytes: 900 * 1024 * 1024, reason: "total", limitMb: 200 },
+    });
+    await settle(h); // released back into drop/
+    await settle(h); // settled and imported
+    expect((await listFiles(h.dropDir)).some((f) => f.startsWith("_held/"))).toBe(false);
+    expect(h.calls.map((c) => c.name)).toContain("Windows.Network.Netstat.json");
   });
 
   it("Import anyway moves it back into drop/ and the next sweep imports it, with its PC's host", async () => {
@@ -137,6 +153,21 @@ describe("drop folder — manually dropped Velociraptor results over the size li
     expect(await listFiles(h.dropDir)).toContain("_held/Windows.System.Pslist.json");
     await decide(h, "_held/Windows.System.Pslist.json", "import");
     await settle(h);
+    expect(h.calls).toHaveLength(1);
+  });
+
+  it("#2805: a dropped file with several PCs' results has the several-PCs limit", async () => {
+    process.env.DFIR_HUNT_ARTIFACT_HOST_MAX_MB = "0.1";
+    process.env.DFIR_HUNT_ARTIFACT_TOTAL_MAX_MB = "0.5";
+    const h = await makeHarness();
+    const rows = (client: string) =>
+      Array.from({ length: 900 }, (_, i) =>
+        JSON.stringify({ ClientId: client, Fqdn: `${client}.example.test`, Name: `proc${i}.exe`, Pid: i }),
+      ).join("\n");
+    const several = `${rows("C.0000000000000001")}\n${rows("C.0000000000000002")}\n`; // ~0.17 MB: over the per-PC limit, under the several-PCs one
+    await writeFile(join(h.dropDir, "Windows.System.Pslist.json"), several);
+    await settle(h);
+    expect(await exists(join(h.dropDir, "_held"))).toBe(false);
     expect(h.calls).toHaveLength(1);
   });
 
