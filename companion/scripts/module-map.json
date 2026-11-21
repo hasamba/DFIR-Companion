@@ -1126,6 +1126,7 @@
     "werImport.ts": "analysis/ingest",
     "wholeCaseLoadLimit.ts": "storage",
     "winProcessBaseline.ts": "analysis/detect",
+    "wordSafeCap.ts": "analysis/intel",
     "workLogFilter.ts": "analysis/workflow",
     "yaraGrade.ts": "analysis/ingest",
     "yaraHitContext.ts": "analysis/ingest",

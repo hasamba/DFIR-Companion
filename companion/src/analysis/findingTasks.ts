@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Finding, ForensicEvent, Severity } from "./stateTypes.js";
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
+import { capAtWord } from "./wordSafeCap.js";
 
 // Per-finding analyst tasks (#1418). A Critical/High finding used to become a playbook card that
 // restated the finding ("Investigate & remediate: <title>" over the description, verbatim). This
@@ -175,8 +176,7 @@ export interface FallbackInput {
 }
 
 function shortTitle(title: string): string {
-  const t = title.trim();
-  return t.length <= SHORT_TITLE_MAX ? t : `${t.slice(0, SHORT_TITLE_MAX - 1).trimEnd()}…`;
+  return capAtWord(title, SHORT_TITLE_MAX);
 }
 
 function dateOnly(iso: string): string {

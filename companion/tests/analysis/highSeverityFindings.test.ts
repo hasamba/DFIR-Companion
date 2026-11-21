@@ -20,6 +20,16 @@ describe("shortTitle", () => {
     expect(shortTitle("x".repeat(200)).length).toBeLessThanOrEqual(90);
     expect(shortTitle("x".repeat(200)).endsWith("…")).toBe(true);
   });
+
+  it("never cuts inside a word — a value straddling the cap is dropped whole", () => {
+    const d =
+      "Inbox forwarding rule created on the mailbox server that forwards all mail to " +
+      "someuser@example.org outside the org";
+    const t = shortTitle(d);
+    expect(t.length).toBeLessThanOrEqual(90);
+    expect(t).toBe("Inbox forwarding rule created on the mailbox server that forwards all mail to…");
+    expect(t).not.toContain("some");
+  });
 });
 
 describe("backfillHighSeverityFindings", () => {
