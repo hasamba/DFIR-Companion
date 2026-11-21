@@ -34,14 +34,55 @@ export function escapeHtmlMd(value: string): string {
 }
 
 /**
+ * Indices of every `]` that closes an image's text (`![…]`) and is followed by `(`. Brackets nest as
+ * in CommonMark; a bracket or `!` after an odd backslash run is literal and opens nothing.
+ */
+function imageTargetCloses(value: string): number[] {
+  const stack: boolean[] = []; // one entry per open `[`: true when it opened an image
+  const closes: number[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "\\") {
+      i++; // the escaped character is literal
+    } else if (ch === "[") {
+      stack.push(i > 0 && value[i - 1] === "!" && !isEscapedAt(value, i - 1));
+    } else if (ch === "]" && stack.length > 0) {
+      if (stack.pop() && value[i + 1] === "(") closes.push(i);
+    }
+  }
+  return closes;
+}
+
+/** True when the character at `at` follows an odd backslash run (so it is escaped). */
+function isEscapedAt(value: string, at: number): boolean {
+  let n = 0;
+  for (let j = at - 1; j >= 0 && value[j] === "\\"; j--) n++;
+  return n % 2 === 1;
+}
+
+/** Escapes the `(` after every image's closing `]`, whatever its target's scheme. */
+function breakImageTargets(value: string): string {
+  const closes = imageTargetCloses(value);
+  if (closes.length === 0) return value;
+  let out = "";
+  let from = 0;
+  for (const at of closes) {
+    out += value.slice(from, at + 1) + "\\";
+    from = at + 1;
+  }
+  return out + value.slice(from);
+}
+
+/**
  * Breaks Markdown link and image syntax: the character after a link-closing `]` is backslash-escaped,
  * so `[x](javascript:…)` and `[x]: javascript:…` render as the literal text and never as a link,
- * whatever the scheme is spelled as (only a literal http(s):// or mailto: target stays a link). The
- * escape renders as the plain character, so the reader sees
+ * whatever the scheme is spelled as (only a literal http(s):// or mailto: target stays a link). An
+ * IMAGE is broken whatever its scheme: a viewer loads `![x](https://…)` on open, a beacon that tells
+ * the attacker who read the report. The escape renders as the plain character, so the reader sees
  * exactly what was written. Idempotent: an escaped `](` no longer matches.
  */
 export function breakLinkSyntaxMd(value: string): string {
-  return value.replace(LINK_CLOSE, "]\\");
+  return breakImageTargets(value).replace(LINK_CLOSE, "]\\");
 }
 
 /** Text outside any code span: HTML escaped, link syntax broken. */
