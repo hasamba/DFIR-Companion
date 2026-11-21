@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { join } from "node:path";
 import type { CaseStore } from "../storage/caseStore.js";
-import { parseStateObject, type StateFileCorruptNotice } from "../storage/stateFileCorrupt.js";
+import {
+  StateFileCorruptError,
+  parseStateObject,
+  type StateFileCorruptNotice,
+} from "../storage/stateFileCorrupt.js";
 
 // Per-case AI analysis control. `enabled` gates every call to the model: the live screenshot
 // pipeline, synthesis, and the CSV / log imports (the unified /import and /import-file and the
@@ -90,6 +94,41 @@ const AI_CONTROL_FILE = "ai-control.json";
 const AI_CONTROL_CORRUPT_CONSEQUENCE =
   "AI is held OFF for this case until the switch is set again — setting AI on or off rewrites the file.";
 
+// No lower bound: capture recovery writes `lowest failed seq - 1`, which a real file can hold.
+const isSeq = (v: unknown): boolean => typeof v === "number" && Number.isInteger(v);
+const isSeqList = (v: unknown): boolean => Array.isArray(v) && v.every(isSeq);
+const isHold = (v: unknown): boolean => {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const h = v as Record<string, unknown>;
+  return isSeqList(h.failedSeqs) && isSeq(h.analyzedThrough) && isSeq(h.attempts);
+};
+
+// The fields that gate behaviour, and the only values each may hold. A present field with any other
+// value (the string "false", 1, null, …) is damage: read by truthiness it could switch AI or the
+// notebook ON, so the file fails closed instead. A missing field takes its default. watsonRunMode
+// is not checked: analysis/ai/watson/runMode.ts already reads any junk value as Approve.
+const FIELD_CHECKS: ReadonlyArray<[keyof AiControl, (v: unknown) => boolean, string]> = [
+  ["enabled", (v) => typeof v === "boolean", "true or false"],
+  ["includeNotebook", (v) => typeof v === "boolean", "true or false"],
+  ["lastAnalyzedSeq", isSeq, "a whole number"],
+  ["inFlightSeqs", isSeqList, "a list of whole numbers"],
+  ["analysisHold", isHold, "a hold record"],
+];
+
+function describeValue(v: unknown): string {
+  if (v === null) return "null";
+  return Array.isArray(v) ? "a list" : `a ${typeof v}`;
+}
+
+/** The reason a parsed record cannot be trusted, or undefined when every gating field is well-typed. */
+function invalidAiControlField(raw: Record<string, unknown>): string | undefined {
+  for (const [field, ok, expected] of FIELD_CHECKS) {
+    if (field in raw && !ok(raw[field]))
+      return `"${field}" must be ${expected}, found ${describeValue(raw[field])}`;
+  }
+  return undefined;
+}
+
 export class AiControlStore {
   constructor(private readonly cases: CaseStore) {}
 
@@ -107,6 +146,8 @@ export class AiControlStore {
       throw err;
     }
     const raw = parseStateObject(text, caseId, AI_CONTROL_FILE, AI_CONTROL_CORRUPT_CONSEQUENCE);
+    const bad = invalidAiControlField(raw);
+    if (bad) throw new StateFileCorruptError(caseId, AI_CONTROL_FILE, AI_CONTROL_CORRUPT_CONSEQUENCE, bad);
     return { ...DEFAULT, ...(raw as Partial<AiControl>) };
   }
 

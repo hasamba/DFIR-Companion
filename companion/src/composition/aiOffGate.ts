@@ -45,7 +45,8 @@ export function mountAiOffGate(
     caseExists(caseId)
       .then((exists) => (exists ? getControl(caseId) : null))
       .then((control) => {
-        if (!control || control.enabled) return next();
+        // Only the boolean true lets a call through (the store already rejects any other value).
+        if (!control || control.enabled === true) return next();
         sendAiOff(res);
       }, next);
   });

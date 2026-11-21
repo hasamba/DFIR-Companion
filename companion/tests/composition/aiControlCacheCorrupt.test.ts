@@ -34,6 +34,17 @@ describe("aiControlCache on a damaged ai-control.json (#2760)", () => {
     expect(c.corrupt?.message).toContain(CASE_ID);
   });
 
+  it.each(['"false"', '"yes"', "1", "null"])(
+    "holds AI off with the damage detail for enabled %s",
+    async (v) => {
+      await writeFile(file(), `{"enabled":${v},"lastAnalyzedSeq":0}`);
+      const c = await createAiControlCache(store).getControl(CASE_ID);
+      expect(c.enabled).toBe(false);
+      expect(c.corrupt?.file).toBe("ai-control.json");
+      expect(c.corrupt?.message).toContain("enabled");
+    },
+  );
+
   it("does not cache the fail-closed answer, so a repaired file is read next time", async () => {
     const cache = createAiControlCache(store);
     await cache.getControl(CASE_ID);

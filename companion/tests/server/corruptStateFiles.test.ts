@@ -64,6 +64,24 @@ describe("corrupt state/ai-control.json (#2760)", () => {
     expect(res.body.detail).toContain("ai-control.json");
     expect(res.body.corrupt.message).toContain("ai-control.json");
   });
+
+  // A non-boolean switch ("false", "yes", 1, null) is damage too: AI held off with the same notice,
+  // and an AI route is refused instead of spending a model call.
+  it.each(['"false"', '"yes"', "1", "null"])(
+    "enabled %s holds AI off and refuses synthesis",
+    async (value) => {
+      const { app, damage } = await makeApp();
+      await damage("ai-control.json", `{"enabled":${value},"lastAnalyzedSeq":0}`);
+      const get = await request(app).get("/cases/c1/ai-control");
+      expect(get.status).toBe(200);
+      expect(get.body.enabled).toBe(false);
+      expect(get.body.corrupt.file).toBe("ai-control.json");
+      expect(get.body.corrupt.message).toContain("enabled");
+      const synth = await request(app).post("/cases/c1/synthesize").send({});
+      expect(synth.status).toBe(409);
+      expect(synth.body.aiOff).toBe(true);
+    },
+  );
 });
 
 describe("corrupt state/import-meta.json (#2760, SYS-102)", () => {
