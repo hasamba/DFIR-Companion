@@ -62,7 +62,7 @@ import {
   classifyDropFile,
   shouldIgnoreDropFile,
   isOversize,
-  dropMaxBytesFromEnv,
+  dropReadLimitsFromEnv,
   DROP_PROCESSED,
   DROP_FAILED,
   DROP_SKIPPED,
@@ -150,6 +150,7 @@ export interface DropFolderDeps {
   // from which that file counts its crash-loop start before the read (tests inject a small one).
   admitImport?: Parameters<typeof createDropWholeReader>[0]["admit"];
   dropEarlyMarkBytes?: number;
+  dropWholeReadSafeBytes?: number; // #2813: a whole-read ceiling below the cap, injected by tests
 }
 
 export interface DropFolder {
@@ -196,7 +197,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
 
   const watchEnabled = (process.env.DFIR_DROP_ENABLED ?? "on").trim().toLowerCase() !== "off";
   const dropPollMs = Math.min(600, Math.max(2, Number(process.env.DFIR_DROP_POLL_S) || 10)) * 1000;
-  const dropMaxBytes = dropMaxBytesFromEnv();
+  const { maxBytes: dropMaxBytes, oversizeReason } = dropReadLimitsFromEnv(deps.dropWholeReadSafeBytes);
   const streamDropFile = createDropStreamer({
     resolveImportKind,
     ingestDiskFile,
@@ -553,10 +554,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         // A cloud export or Plaso file streams from disk instead (#2336); anything else is refused.
         const streamed = await streamDropFile(caseId, full, file.relpath, debug);
         if (streamed) return streamed;
-        return {
-          ok: false,
-          reason: `too large (${Math.round(file.size / 1048576)} MB > ${Math.round(dropMaxBytes / 1048576)} MB cap) — use Import-from-path`,
-        };
+        return { ok: false, reason: oversizeReason(file.size) }; // over the whole-read ceiling (#2813)
       }
       if (classifyDropFile(file.relpath) === "image") {
         await ingestDroppedImage(caseId, full, name, file.mtimeMs);

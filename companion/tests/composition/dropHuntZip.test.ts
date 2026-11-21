@@ -12,7 +12,11 @@ afterEach(() => {
   delete process.env.DFIR_DROP_MAX_BYTES;
 });
 
-async function dropZip(zip: Buffer, name = "hunt.zip", opts: { dropMaxBytes?: number } = {}) {
+async function dropZip(
+  zip: Buffer,
+  name = "hunt.zip",
+  opts: { dropMaxBytes?: number; dropWholeReadSafeBytes?: number } = {},
+) {
   const h = await makeHarness(opts);
   await writeFile(join(h.dropDir, name), zip);
   await h.sweep();
@@ -213,6 +217,21 @@ describe("drop folder — Velociraptor hunt export zip (#2714)", () => {
     const files = await listFiles(join(h.dropDir, ".."));
     expect(files.some((f) => f.endsWith("evil.json"))).toBe(false);
     expect(files.some((f) => f.includes("Linked.json"))).toBe(false);
+  });
+
+  // #2813: a raised cap no longer reads a member whole past the string-safe ceiling.
+  it("a member under a raised cap but over the whole-read ceiling stages instead of being read whole", async () => {
+    const tree = huntTree("perClientJson");
+    const big = "WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.json";
+    const h = await dropZip(await buildZip(tree), "hunt.zip", {
+      dropMaxBytes: 64 * 1024 * 1024,
+      dropWholeReadSafeBytes: tree[big].length - 1,
+    });
+    const failed = (await listFiles(h.dropDir)).filter((f) => f.startsWith("_failed/hunt/"));
+    expect(failed).toContain(`_failed/hunt/${big}`);
+    // Staged, not read whole: the zip handler got the ceiling, not the raised cap. (The wording names
+    // the real safe limit only; tests/analysis/dropWholeReadCeiling.test.ts checks that clause.)
+    expect(await dropLog(h.dropDir)).toMatch(/in-memory cap/);
   });
 
   it("a member over the in-memory cap that does not stream fails and is extracted", async () => {

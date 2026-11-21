@@ -7,6 +7,7 @@
 import { basename, posix } from "node:path";
 import { decodeImportedText } from "../ingest/decodeText.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
+import { dropWholeReadLimitNote } from "../analysis/dropScan.js";
 import { unknownImportHintFor } from "../analysis/importKindHints.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug, logSiemFallback } from "../routes/importDebugEmit.js";
@@ -132,7 +133,7 @@ async function importStaged(deps: HuntMemberDeps, a: HuntMemberArgs): Promise<Me
     const mb = Math.round(deps.dropMaxBytes / 1048576);
     reason =
       r?.reason ??
-      `larger than the drop folder's ${mb} MB in-memory cap and not a format that streams from disk`;
+      `larger than the drop folder's ${mb} MB in-memory cap${dropWholeReadLimitNote(deps.dropMaxBytes)} and not a format that streams from disk`;
   } catch (err) {
     deps.recordImportFailure(a.caseId, "drop", basename(a.member.name), err, a.debug);
     reason = msg(err);
