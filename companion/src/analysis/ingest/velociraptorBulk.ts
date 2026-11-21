@@ -24,6 +24,7 @@ import {
 import type { ImportContext } from "./importContext.js";
 import { abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
+import type { SectionMemoryCheck } from "../importMemoryGuard.js";
 
 /**
  * The bounded Velociraptor import (#1439): rows in, one batch at a time; events out, one batch at a
@@ -120,6 +121,12 @@ export interface BulkImportSink {
   onSuperTimeline?(caseId: string): void;
   onTags?(caseId: string): void;
   recordRun?(caseId: string, summary: BulkRunSummary): Promise<void>;
+  /**
+   * The import memory guard's re-check for this import (#2812), or null when there is nothing to
+   * re-check. A forensic run calls it with its kept rows before each batch's write: the guard's
+   * admission was capped by DFIR_MAX_EVENTS, and this path keeps every graded row.
+   */
+  openMemoryCheck?(caseId: string): Promise<SectionMemoryCheck | null>;
 }
 
 /**
@@ -427,6 +434,9 @@ export async function runVelociraptorBulk(
   const t0 = performance.now();
   const stamp = { importedAt: opts.importedAt, importBatchId: randomUUID() };
   const run: BulkRunHandle = { importBatchId: stamp.importBatchId, fence: await sink.beginRun(caseId), mode };
+  // Super-only runs add nothing to the forensic table, and the super store enforces its own cap.
+  const memoryCheck =
+    mode === "forensic" ? ((await sink.openMemoryCheck?.(caseId).catch(() => null)) ?? null) : null;
   const vr = opts.velociraptor ?? {};
   const vrCtx = vrBulkInternals.newVrCtx(vr);
   const maxIocs = vr.maxIocs ?? DEFAULT_MAX_IOCS;
@@ -483,7 +493,12 @@ export async function runVelociraptorBulk(
       totals.gateDemoted += events.length - graded.length;
       const keep = room > 0 ? graded.slice(0, room) : [];
       totals.dropped += graded.length - keep.length;
-      if (keep.length) kept = await sink.appendForensic(caseId, keep);
+      // Asked BEFORE this batch writes anything (#2812): a refusal leaves the batch unwritten — in
+      // neither timeline, so it evicts nothing from the super-timeline — and rolls the run back below.
+      if (keep.length) {
+        memoryCheck?.(totals.forensicKept + keep.length);
+        kept = await sink.appendForensic(caseId, keep);
+      }
       toolStores?.observe(events, new Set(keep));
     }
     let superAdded = 0;
@@ -523,6 +538,7 @@ export async function runVelociraptorBulk(
     totals.dropped += graded.length - keep.length;
     totals.gateDemoted -= graded.length;
     if (!keep.length) return;
+    memoryCheck?.(totals.forensicKept + keep.length);
     totals.forensicKept += await sink.appendForensic(caseId, keep);
     sink.log(`[import] ${caseId} ${opts.label}: tool-folder check kept ${keep.length} more row(s)`, caseId);
   };

@@ -12,7 +12,7 @@ import { expandHome } from "./storage/expandHome.js";
 import type { RouteContext } from "./routes/context.js";
 import { loadOrCreateInstanceSecret } from "./analysis/instanceSecret.js";
 import { ImportLock } from "./analysis/importLock.js";
-import { createImportMemoryGuard } from "./analysis/importMemoryGuard.js";
+import { createCaseImportMemoryGuard } from "./analysis/importMemoryGuard.js";
 import { resolveEnvFilePath } from "./settings/envManager.js";
 import { importTagger } from "./routes/routeSettleDeps.js";
 import {
@@ -125,17 +125,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // One import writer per case, across EVERY import path (routes, /push + MCP ingest, monitors, hunt
   // collects). Unlike the state lock this one is never optional: an import's "+N events" and its undo
   // checkpoint are only correct if nothing else writes inside its section. See analysis/importLock.ts.
-  // #1874: the memory guard admits each import section, sized from the case's indexed event count.
+  // #1874: the memory guard admits each import section; startServer passes the one its bulk importer
+  // re-checks against (#2812).
   const importLock =
     options.importLock ??
-    new ImportLock(
-      createImportMemoryGuard({
-        countEvents: async (caseId) =>
-          options.stateStore
-            ? (await options.stateStore.queryForensicTimeline(caseId, { limit: 1, includeTotal: true })).total
-            : 0,
-      }),
-    );
+    new ImportLock(options.importMemoryGuard ?? createCaseImportMemoryGuard(options.stateStore));
 
   // Name the model on every AI job the jobs popover lists (#633 follow-up). Installed here because
   // this is the first place holding BOTH the job manager and the pipeline whose provider answers
@@ -505,8 +499,10 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
 
   // The batched Velociraptor driver's stores (#1439): a large export is imported one batch at a
   // time through the indexed appends, with one log line per batch. See composition/bulkImportSink.ts.
+  const importMemoryGuard = createCaseImportMemoryGuard(stateStore);
   const bulkImportSink = buildBulkImportSink({
     stateStore,
+    importMemory: importMemoryGuard,
     superTimelineStore: rt.superTimelineStore,
     taggerStore: rt.taggerStore,
     tagsStore: rt.tagsStore,
@@ -565,6 +561,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   });
   const app = createApp(store, {
     ...appOptions,
+    importMemoryGuard,
     onSocratesRecoveryReady: (run) => {
       scheduledSocratesRecovery = run;
     },

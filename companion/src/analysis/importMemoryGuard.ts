@@ -30,6 +30,12 @@ import { maxEventsDefault } from "./eventAggregate.js";
  *
  * Only a caller that has already stored the evidence is admitted through here (analysis/importLock.ts
  * runs admission only when given a size hint), so "the file is saved in the case" is true.
+ *
+ * An import that can outgrow its admission — the bulk Velociraptor importer keeps every graded row,
+ * not DFIR_MAX_EVENTS of them (#2812) — re-checks itself as it grows (`openSectionCheck`): against the
+ * real count, with its own reservation set aside, growing that reservation when it still fits. Only
+ * the import SECTION's admission can be re-checked (ImportLock marks it), so a caller that took the
+ * section without a size hint — evidence perhaps not stored yet — is never refused mid-run.
  */
 export const IMPORT_RSS_BYTES_PER_EVENT = 128 * 1024;
 export const IMPORT_HEAP_BYTES_PER_EVENT = 48 * 1024;
@@ -133,13 +139,29 @@ export interface ImportAdmissionHint {
   uncapped?: boolean;
 }
 
+/** How the admission is held. */
+export interface AdmitOptions {
+  /** The case's import section holds it (ImportLock): the running import may re-check it (#2812). */
+  section?: boolean;
+}
+
 /** Admit an import for a case; resolves to the release for its reservation, or throws the refusal. */
 export interface ImportAdmission {
-  admit(caseId: string, hint?: ImportAdmissionHint): Promise<() => void>;
+  admit(caseId: string, hint?: ImportAdmissionHint, opts?: AdmitOptions): Promise<() => void>;
 }
+
+/** Re-check the running import with `addedEvents` rows added so far; throws the refusal (#2812). */
+export type SectionMemoryCheck = (addedEvents: number) => void;
 
 export interface ImportMemoryGuard extends ImportAdmission {
   reservedBytes(): number;
+  /**
+   * A re-check for the import running in the case's section, based on the case's event count NOW
+   * (one indexed count per call, so rows an earlier file of the same section committed are counted).
+   * Null — nothing to re-check, never a refusal — when the guard is off, the section was admitted
+   * without a size hint or not at all, or the case cannot be counted.
+   */
+  openSectionCheck(caseId: string): Promise<SectionMemoryCheck | null>;
 }
 
 export interface ImportMemoryGuardDeps {
@@ -175,14 +197,56 @@ export function processMemorySnapshot(): MemorySnapshot {
 
 const NOTHING_RESERVED = (): void => {};
 
+/** One admitted import's reservation; replaced, never mutated, when a re-check grows it. */
+interface Reservation {
+  readonly events: number;
+  readonly needBytes: number;
+  readonly heapNeedBytes: number;
+  readonly wording?: RefusalWording;
+}
+
 export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemoryGuard {
   const probe = deps.probe ?? processMemorySnapshot;
   const maxEvents = deps.maxEvents ?? maxEventsDefault;
   let reserved = 0;
   let reservedHeap = 0;
+  // The reservation each case's import SECTION holds — one at most: the import lock is per case.
+  const sections = new Map<string, { token: object; held: Reservation }>();
+
+  const hold = (next: Reservation, prev?: Reservation): void => {
+    reserved += next.needBytes - (prev?.needBytes ?? 0);
+    reservedHeap += next.heapNeedBytes - (prev?.heapNeedBytes ?? 0);
+  };
+
+  const recheck = (caseId: string, token: object, caseEvents: number, addedEvents: number): void => {
+    const entry = sections.get(caseId);
+    if (!entry || entry.token !== token || !importMemoryGuardEnabled()) return;
+    const own = entry.held;
+    if (caseEvents + addedEvents <= own.events) return; // within what it holds: nothing to ask
+    const othersBytes = reserved - own.needBytes;
+    const othersHeap = reservedHeap - own.heapNeedBytes;
+    const verdict = assessImportMemory({
+      caseEvents,
+      incomingEvents: addedEvents,
+      reservedBytes: othersBytes,
+      reservedHeapBytes: othersHeap,
+      wording: own.wording,
+      ...probe(),
+    });
+    if (!verdict.ok) throw new ImportMemoryRefusedError(verdict.message, othersBytes > 0 || othersHeap > 0);
+    const grown: Reservation = {
+      events: caseEvents + addedEvents,
+      needBytes: Math.max(own.needBytes, verdict.needBytes),
+      heapNeedBytes: Math.max(own.heapNeedBytes, verdict.heapNeedBytes),
+      wording: own.wording,
+    };
+    hold(grown, own);
+    sections.set(caseId, { token, held: grown });
+  };
+
   return {
     reservedBytes: () => reserved,
-    async admit(caseId, hint) {
+    async admit(caseId, hint, opts) {
       if (!importMemoryGuardEnabled()) return NOTHING_RESERVED;
       let caseEvents: number;
       try {
@@ -191,24 +255,62 @@ export function createImportMemoryGuard(deps: ImportMemoryGuardDeps): ImportMemo
         // Fail open: a guard that cannot count must never be the reason an import is lost.
         return NOTHING_RESERVED;
       }
+      const incomingEvents = estimateIncomingEvents(maxEvents(), hint);
       const verdict = assessImportMemory({
         caseEvents,
-        incomingEvents: estimateIncomingEvents(maxEvents(), hint),
+        incomingEvents,
         reservedBytes: reserved,
         reservedHeapBytes: reservedHeap,
         wording: hint?.wording,
         ...probe(),
       });
       if (!verdict.ok) throw new ImportMemoryRefusedError(verdict.message, reserved > 0 || reservedHeap > 0);
-      reserved += verdict.needBytes;
-      reservedHeap += verdict.heapNeedBytes;
+      const admitted: Reservation = {
+        events: caseEvents + incomingEvents,
+        needBytes: verdict.needBytes,
+        heapNeedBytes: verdict.heapNeedBytes,
+        wording: hint?.wording,
+      };
+      hold(admitted);
+      const token = {};
+      if (opts?.section) sections.set(caseId, { token, held: admitted });
       let held = true;
       return () => {
         if (!held) return;
         held = false;
-        reserved -= verdict.needBytes;
-        reservedHeap -= verdict.heapNeedBytes;
+        const entry = sections.get(caseId);
+        const current = entry?.token === token ? entry.held : admitted; // grown by re-checks, if any
+        if (entry?.token === token) sections.delete(caseId);
+        reserved -= current.needBytes;
+        reservedHeap -= current.heapNeedBytes;
       };
     },
+    async openSectionCheck(caseId) {
+      const entry = sections.get(caseId);
+      if (!entry || !importMemoryGuardEnabled()) return null;
+      let caseEvents: number;
+      try {
+        caseEvents = await deps.countEvents(caseId);
+      } catch {
+        return null; // fail open, as admission does
+      }
+      return (addedEvents) => recheck(caseId, entry.token, caseEvents, addedEvents);
+    },
   };
+}
+
+/** What the server's guard counts a case with: the forensic table's index (the state store). */
+export interface ForensicEventIndex {
+  queryForensicTimeline(
+    caseId: string,
+    query: { limit: number; includeTotal: boolean },
+  ): Promise<{ total: number }>;
+}
+
+/** The server's guard, sized from the case's indexed event count; no index → every case counts 0. */
+export function createCaseImportMemoryGuard(index?: ForensicEventIndex): ImportMemoryGuard {
+  return createImportMemoryGuard({
+    countEvents: async (caseId) =>
+      index ? (await index.queryForensicTimeline(caseId, { limit: 1, includeTotal: true })).total : 0,
+  });
 }
