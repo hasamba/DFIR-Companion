@@ -26,7 +26,6 @@
  * tests never spin up a filesystem poller.
  */
 import { basename, dirname, extname, join, relative } from "node:path";
-import { decodeImportedText } from "../ingest/decodeText.js";
 import { readdir, stat, lstat, mkdir, rename, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { copyHandleBounded } from "../storage/handleCopy.js";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -42,7 +41,7 @@ import { ingestCapture } from "../ingest/captureIngest.js";
 import { detectBinaryImportKind } from "../analysis/macBinaryDetect.js";
 import { unknownImportHintFor } from "../analysis/importKindHints.js";
 import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
-import { readHandleBounded, FileTooLargeError } from "../storage/boundedRead.js";
+import { FileTooLargeError } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "../routes/importFileHead.js";
 import type { IngestDiskFile } from "./importIngestDisk.js";
 import type { DiskBatchIngest } from "./importIngestBatch.js";
@@ -56,6 +55,7 @@ import { huntHeldStoreFor } from "../analysis/huntHeldStore.js";
 import { applyDropHolds, holdFolderPlan } from "./dropHeld.js";
 import { clearStaging } from "./dropHuntExtract.js";
 import { createDropInFlight } from "./dropInFlight.js";
+import { createDropWholeReader, readDropFileBounded, type DropWholeReadDeps } from "./dropWholeRead.js";
 import {
   selectReadyFiles,
   excludeStuck,
@@ -145,6 +145,10 @@ export interface DropFolderDeps {
   indexCaptureText: (metadata: CaptureMetadata) => void;
   captureBuffers: PerCaseMap<CaptureMetadata[]>;
   flush: (caseId: string) => Promise<void>;
+  // #2785: the import memory guard, asked before a large under-cap file is read whole; and the size
+  // from which that file counts its crash-loop start before the read (tests inject a small one).
+  admitImport?: DropWholeReadDeps["admit"];
+  dropEarlyMarkBytes?: number;
 }
 
 export interface DropFolder {
@@ -215,6 +219,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
   const stuckFiles = createDropStuckTracker(() => store.casesRoot);
   const stuck = stuckFiles.stuck;
   const inFlight = createDropInFlight(store); // crash-loop guard (#2713)
+  const readWholeText = createDropWholeReader({
+    maxBytes: dropMaxBytes,
+    admit: deps.admitImport,
+    earlyMarkBytes: deps.dropEarlyMarkBytes,
+  }); // #2785
 
   // One admitted write (#1855): a tick for a case deleted meanwhile never recreates its folder.
   function ensureDropFolders(caseId: string): Promise<void> {
@@ -359,22 +368,6 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       throw e;
     }
     await rm(src, { force: true });
-  }
-
-  // The ONE whole-file read for every branch of processDropFile. The cap travels with the
-  // descriptor: opened O_NOFOLLOW, sized by fstat on that same handle, and the read stops one byte
-  // past the promised size (storage/boundedRead.ts). The listing stat's `isOversize` gate stays as
-  // the cheap early skip, but it is only a check on what the sweep saw — a file that grew, or was
-  // swapped for a larger one, between the listing and this read was read in full by the old
-  // path-based `readFileNoFollow` (#1329, the #947 check-then-read shape). Throws FileTooLargeError,
-  // which each caller phrases in its own terms.
-  async function readDropFileBounded(fullPath: string, maxBytes: number): Promise<Buffer> {
-    const handle = await openNoFollow(fullPath);
-    try {
-      return await readHandleBounded(handle, maxBytes);
-    } finally {
-      await handle.close();
-    }
   }
 
   // Ingest one dropped image as screenshot evidence: transcode to webp (imageLoader sends screenshots
@@ -564,8 +557,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         await ingestDroppedImage(caseId, full, name, file.mtimeMs);
         return { ok: true };
       }
-      // BOM-aware: a Report.wer is UTF-16LE, and utf8 turns it into NUL-interleaved mojibake.
-      const text = decodeImportedText(await readDropFileBounded(full, dropMaxBytes));
+      const text = await readWholeText(caseId, full, file.size); // guarded before the read (#2785)
       if (!text.trim()) return { ok: false, reason: "empty file" };
       const kind = resolveImportKind(name, text, debug);
       // Same named reason the /import routes give (#1302): a capa-shaped report whose flavor isn't

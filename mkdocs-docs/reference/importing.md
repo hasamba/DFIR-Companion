@@ -3150,6 +3150,12 @@ reached, whether the file was gzip) is written to `drop-log.txt` and the *last i
 and moved to `_failed/`; decompress it and drop it again. Any other file over the cap is refused and
 moved to `_failed/`; import it from its path on the server instead.
 
+A file of 16 MB or more that is read whole is checked first against the server's import memory
+guard. If the guard refuses, the file is not read and moves to `_failed/` with the guard's reason. If
+the server stops while it reads or imports such a file (for example, it runs out of memory), the stop
+is counted. After two stops on the same file, the file moves to `_failed/` with a reason that says
+so, and the server does not try it again on each restart.
+
 ### Large cloud exports
 
 A 1M-row UAL export or a 1 GB CloudTrail set imports in one go. The companion reads the file from

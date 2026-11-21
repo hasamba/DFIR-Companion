@@ -9,7 +9,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * that one section, so a file still waiting behind another must not be blamed when the other one
  * kills the server. The sweep runs each file inside `runImportAttempt`, and the import lock calls
  * `noteImportSectionStart` when it grants a section — no import seam has to pass anything along.
- * Outside an attempt (every other import path) the note is a no-op.
+ * Outside an attempt (every other import path) the note is a no-op. The drop folder also calls it
+ * itself before reading a large under-cap file whole (composition/dropWholeRead.ts, #2785).
  */
 interface Attempt {
   started: boolean;
