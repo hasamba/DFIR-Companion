@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Archive no longer fails on a background write** — archive, ZIP and encrypted delete re-pack when a background record changes the case folder instead of answering a raw error (closes #2784)
+- **Large drop-folder file cannot crash-loop the server** — a large file's start is counted before it is read, so a file that crashes the server twice moves to `_failed` (closes #2785)
+- **Reopen during archive** — a case reopened while its archive is built stays open (closes #2786)
+- **Saved archive copies are never overwritten** — a later delete or archive of a case with the same id and name takes a numbered file name (closes #2787)
+- **Linked files in the drop folder** — symlinks and hardlinks are still never imported and are now reported once in the log and drop log (closes #2788)
+- **Large Hayabusa import keeps the server responsive** — parsing yields so health checks and other requests are answered during the import (closes #2789)
+- **Import velocity counts** — Import, Import-from-path and drop-folder imports record their real row count in Case Statistics (closes #2790)
+- **Damaged case state files** — a corrupt investigation.json or case database names the case and file instead of a raw error (closes #2783)
+- **Flaky Windows tests** — two timing races in the Jev and Microsoft collection tests are now deterministic (closes #2782)
+- **Security hardening** — more small fixes from the 2026-11-21 QA round
 - **AI off blocks every AI button** — with a case's AI switched off, Synthesize, Explain, Deep pass, Second opinion and every other model-calling action refuse with "AI is off" instead of calling the model (closes #2757)
 - **Open cases cannot be archived** — archiving asks the analyst to close the case first (closes #2758)
 - **Delete with encrypted archive keeps a server copy** — the `.dfircase` file is saved in the cases folder before the case is removed, so a dropped download cannot lose it (closes #2759)
