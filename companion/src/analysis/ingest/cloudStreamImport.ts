@@ -326,6 +326,7 @@ async function finish(
     return { state, coverage, disclosure, weaknesses: acc.weaknesses };
   }
   const format = [...acc.formats].join("+") || stats.format;
+  opts.debug?.counts({ total: stats.records, kept: events.length }); // the import's row count (#2790)
   const forensicEvents = withArtifactHash(events, stats.textHash).map((e, i) => ({
     ...e,
     id: fatigueEventId(e) ?? `${opts.idPrefix}e${i + 1}`, // stable fatigue id (#2306)

@@ -57,6 +57,7 @@ import {
 } from "../settings/envManager.js";
 import { requestAuthentication, type AuthIdentity } from "../auth/types.js";
 import type { ImportMetadata } from "../types.js";
+import { readImportRows, withRecordedRows } from "../storage/importRowsLog.js";
 import {
   IOC_BLOCKLIST_FILE_FORMATS,
   IOC_BLOCKLIST_REQUEST_FORMATS,
@@ -465,7 +466,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       } catch {
         /* no imports for this case yet */
       }
-      return res.status(200).json(computeCaseStats(state, importLog));
+      const recorded = await readImportRows(store, req.params.id); // #2790
+      return res.status(200).json(computeCaseStats(state, withRecordedRows(importLog, recorded)));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

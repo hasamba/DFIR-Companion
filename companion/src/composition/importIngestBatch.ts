@@ -46,6 +46,7 @@ import type { DiskIngestDeps } from "./importIngestDisk.js";
 import { DROP_BATCH_FILE_MAX_BYTES } from "./dropBatchPlan.js";
 import { createDropBatchMarker, type DropBatchMarker } from "./dropBatchMarker.js";
 import { runBatchTail, type BatchCollect, type BatchTailDeps } from "./importIngestBatchTail.js";
+import { recordImportRows } from "../storage/importRowsLog.js";
 
 /** Super rows held for the batch's one tagger call before an interim flush (bounds memory). */
 export const BATCH_SUPER_TAG_FLUSH_ROWS = 20_000;
@@ -359,6 +360,7 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
         cloudBatch: hooks,
         ...(batch.assetHost ? { assetHost: batch.assetHost } : {}),
       });
+      await recordImportRows(store, caseId, seq, debug.summary().counts); // #2790
       const disclosure = consumeCloudStreamDisclosure(caseId, storedName);
       collect.imported.push({ relpath: file.relpath, storedName, disclosure });
       collect.empties.push(...own.empties);

@@ -31,6 +31,7 @@ import {
 import type { AppOptions } from "../../src/composition/appOptions.js";
 import type { ImporterRegistry } from "../../src/analysis/importerStore.js";
 import { sans504Records } from "../analysis/fixtures/sans504Lab.js";
+import { readImportRows } from "../../src/storage/importRowsLog.js";
 
 // #2540 — a drop-folder batch of small CloudTrail files leaves the case as importing the same files
 // one at a time does: forensic timeline, IOCs, super-timeline rows and tags, coverage and weaknesses
@@ -254,6 +255,11 @@ describe("drop-folder batch ≡ one at a time (#2540)", () => {
       (await readFile(join(h.store.caseDir("c1"), "metadata", f), "utf8")).trim().split("\n").length;
     expect(await lines(batched, "imports.jsonl")).toBe(await lines(one, "imports.jsonl"));
     expect(batched.disk.afterImport).toHaveBeenCalledTimes(1);
+    // #2790: each file's row count is recorded for Case Statistics, the same as one at a time.
+    const counts = async (h: Harness) => [...(await readImportRows(h.store, "c1")).values()];
+    const batchCounts = await counts(batched);
+    expect(batchCounts.some((n) => n > 0)).toBe(true);
+    expect(batchCounts).toEqual(await counts(one));
   });
 
   it("records one undo step naming the count, and Undo takes the whole batch back", async () => {

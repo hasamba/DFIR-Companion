@@ -63,6 +63,7 @@ import { beginImportSection, type ImportSection } from "./importSection.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
 import { importFromHandle } from "./importFromHandle.js";
 import { registerImportUploadRoute } from "./importUpload.js";
+import { recordImportRows } from "../storage/importRowsLog.js";
 
 /**
  * Evidence import domain: unified and per-format imports, import metadata, undo/redo, and evidence drop-folder routes.
@@ -340,6 +341,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       run()
         .then(async () => {
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+          await recordImportRows(store, caseId, seq, debug.summary().counts); // #2790
           // Record what this import added to the forensic timeline + IOCs, BEFORE resynthesis (which
           // preserves both). Best-effort: a meta failure must not break the import.
           if (settleDeps && baseline) {
