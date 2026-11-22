@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -7,7 +7,11 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
-import { importFileTooLarge, maxImportFileBytes } from "../../src/routes/importFileHead.js";
+import {
+  importFileTooLarge,
+  maxImportFileBytes,
+  readImportFileBounded,
+} from "../../src/routes/importFileHead.js";
 
 // #921, gap 2. POST /cases/:id/import-file reads a server-local path with readFile(utf8) for every
 // non-Plaso kind, and the only bound was the catch for V8's "Invalid string length" at ~512 MB. A
@@ -113,6 +117,74 @@ describe("importFileTooLarge", () => {
 
   it("rounds a fractional size up, so a file just over the cap never reads as equal to it", () => {
     expect(importFileTooLarge(256 * MB + 1, "csv", 256 * MB)).toMatch(/257 MB/);
+  });
+});
+
+// #2815. The setting is not the only bound on a whole read: the engine cannot hold one string past
+// ~512 MB, so a raised DFIR_MAX_IMPORT_FILE_MB let a 600 MB file be read whole and only then refused,
+// and told the analyst to raise the setting for a file no setting can admit.
+describe("importFileTooLarge — the safe whole-read limit bounds a raised setting (#2815)", () => {
+  const MB = 1024 * 1024;
+
+  it("refuses a file over the safe limit although the setting is higher, without suggesting the setting", () => {
+    const msg = importFileTooLarge(600 * MB, "csv", 1024 * MB);
+    expect(msg).not.toBeNull();
+    expect(msg).toMatch(/600 MB/);
+    expect(msg).toMatch(/448 MB/); // the limit it was really measured against, not the 1024 MB setting
+    expect(msg).not.toMatch(/1024 MB/);
+    expect(msg).not.toMatch(/raise DFIR_MAX_IMPORT_FILE_MB/);
+    expect(msg).toMatch(/Plaso super-timelines/);
+    expect(msg).toMatch(/Velociraptor JSON Lines/);
+  });
+
+  it("does not tell the analyst to raise the setting for a file between the safe limit and ~512 MB", () => {
+    const msg = importFileTooLarge(480 * MB, "csv", 256 * MB);
+    expect(msg).toMatch(/480 MB/);
+    expect(msg).not.toMatch(/raise DFIR_MAX_IMPORT_FILE_MB/);
+  });
+
+  it("still admits a file under both the setting and the safe limit, and Plaso at any size", () => {
+    expect(importFileTooLarge(400 * MB, "csv", 1024 * MB)).toBeNull();
+    expect(importFileTooLarge(10 * 1024 * MB, "plaso", 1024 * MB)).toBeNull();
+  });
+
+  it("measures against an injected safe limit", () => {
+    expect(importFileTooLarge(2048, "csv", MB, 1024)).toMatch(/cannot be held in memory at any setting/);
+    expect(importFileTooLarge(1024, "csv", MB, 1024)).toBeNull();
+  });
+});
+
+describe("readImportFileBounded — reads to the safe limit, not the raw setting (#2815)", () => {
+  const MB = 1024 * 1024;
+
+  async function handleOn(bytes: number) {
+    const dir = await mkdtemp(join(tmpdir(), "dfir-import-file-ceiling-"));
+    const path = join(dir, "rows.csv");
+    await writeFile(path, "a".repeat(bytes), "utf8");
+    return open(path, "r");
+  }
+
+  it("returns the refusal, not the text, for a file over the injected safe limit", async () => {
+    const fh = await handleOn(2048);
+    try {
+      const read = await readImportFileBounded(fh, "csv", MB, 1024);
+      expect(read.text).toBeUndefined();
+      expect(read.tooLarge).toMatch(/too large to import as csv/);
+      expect(read.tooLarge).not.toMatch(/raise DFIR_MAX_IMPORT_FILE_MB/);
+    } finally {
+      await fh.close();
+    }
+  });
+
+  it("still returns the text of a file under the injected safe limit", async () => {
+    const fh = await handleOn(512);
+    try {
+      const read = await readImportFileBounded(fh, "csv", MB, 1024);
+      expect(read.tooLarge).toBeUndefined();
+      expect(read.text).toHaveLength(512);
+    } finally {
+      await fh.close();
+    }
   });
 });
 
