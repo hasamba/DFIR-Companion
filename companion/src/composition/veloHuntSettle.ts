@@ -144,7 +144,9 @@ export async function settleHuntCollect(
     return { ...counted, checkpointed: true };
   } catch (e) {
     // Non-fatal to the collect, but never silent (#2817): the rows are in the case and the settle,
-    // the import record or the undo entry is missing; the next import's settle grades what is left.
+    // the import record or the undo entry is missing. Rows the settle did not reach are not settled later: the next
+    // import's demote is case-wide and moves its Info rows out WITHOUT a tagger pass (#2851). Only a
+    // collect a restart cut off is settled again, at start-up (composition/veloHuntRecovery.ts).
     const error = (e as Error).message;
     logLine(`[velociraptor] hunt ${huntId}: settling what was imported failed: ${error}`);
     return { ...counted, error };

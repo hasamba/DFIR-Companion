@@ -44,6 +44,7 @@ import { ScopeStore } from "../analysis/scope.js";
 import { readInIncidentWindow, readScope } from "../integrations/velociraptor/veloWindowReread.js";
 import type { NewestOrder } from "../integrations/velociraptor/veloNewestRead.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
+import { settleInterruptedHuntRows } from "./veloHuntRecovery.js";
 import { loadHuntHolds } from "./veloHuntHolds.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import { unavailableServerClients } from "./serverSetClients.js";
@@ -215,6 +216,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     options,
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
     isCollecting: (c, h) => collectingNow.has(c, h), // #2403
+    settleInterrupted: (c, h) => settleInterruptedHuntRows(deps, c, h), // #2851
   });
   const servers = () => options.serverClients ?? unavailableServerClients;
   const collectVelo = createTickVelo(servers, logLine, "velo-hunt");

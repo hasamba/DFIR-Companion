@@ -1,0 +1,295 @@
+// #2851: a hunt collect a restart cut off while IMPORTING leaves whole-file rows in the forensic
+// timeline that never crossed the seam. Start-up settles exactly those rows — this hunt's, without an
+// import stamp — and nothing else, once. Real stores (state, super-timeline, forensic gate, demote).
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CaseStore } from "../../src/storage/caseStore.js";
+import { StateStore } from "../../src/analysis/stateStore.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl.js";
+import { StateLock } from "../../src/analysis/stateLock.js";
+import { ImportLock } from "../../src/analysis/importLock.js";
+import { VeloHuntStore, type VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
+import { buildManualEvent } from "../../src/analysis/manualEntry.js";
+import { createImportDemote } from "../../src/composition/importDemote.js";
+import {
+  huntFilePattern,
+  settleInterruptedHuntRows,
+  type HuntRecoveryDeps,
+} from "../../src/composition/veloHuntRecovery.js";
+import {
+  createVeloHuntStatusTimers,
+  INTERRUPTED_IMPORT_MESSAGE,
+} from "../../src/composition/veloHuntStatusTimers.js";
+import { getServerLogger } from "../../src/logging/serverLogger.js";
+import { veloServerClients } from "../helpers/serverClientsStub.js";
+import type { AppOptions } from "../../src/composition/appOptions.js";
+import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
+
+const MINE = "0003_velo-hunt_H.1_Windows.System.Pslist.json";
+const OTHER = "0004_velo-hunt_H.10_Windows.System.Pslist.json";
+
+function ev(
+  id: string,
+  severity: ForensicEvent["severity"],
+  extra: Partial<ForensicEvent> = {},
+): ForensicEvent {
+  return {
+    id,
+    timestamp: "2026-05-02T10:00:00Z",
+    description: `row ${id}`,
+    severity,
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [MINE],
+    sources: ["Velociraptor"],
+    ...extra,
+  };
+}
+
+let root: string;
+let cases: CaseStore;
+let stateStore: StateStore;
+let superStore: SuperTimelineStore;
+let lock: StateLock;
+
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), "dfir-hunt-recovery-"));
+  cases = new CaseStore(root);
+  await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  stateStore = new StateStore(cases);
+  superStore = new SuperTimelineStore(cases);
+  lock = new StateLock();
+});
+
+afterEach(async () => {
+  await rm(root, { recursive: true, force: true });
+});
+
+const runExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> => lock.runExclusive(caseId, fn);
+
+/** The tagger stand-in raises "marker" rows to High, as a one-rule ruleset would. */
+function deps(offered: ForensicEvent[][]) {
+  const options = {
+    stateStore,
+    superTimelineStore: superStore,
+    forensicGateControlStore: new ForensicGateControlStore(cases),
+  } as unknown as AppOptions;
+  const demote = createImportDemote({ options, runStateExclusive: runExclusive });
+  const demoteForensicForCase = vi.fn(demote.demoteForensicForCase);
+  const d: HuntRecoveryDeps = {
+    options,
+    importLock: new ImportLock(),
+    runStateExclusive: runExclusive,
+    autoTagImported: async (caseId, added) => {
+      offered.push(added);
+      await runExclusive(caseId, async () => {
+        const state = await stateStore.load(caseId);
+        const raise = (e: ForensicEvent) =>
+          added.some((a) => a.id === e.id) && e.description.includes("marker")
+            ? { ...e, severity: "High" as const }
+            : e;
+        await stateStore.save({ ...state, forensicTimeline: state.forensicTimeline.map(raise) });
+      });
+    },
+    demoteForensicForCase,
+  };
+  return { d, demoteForensicForCase };
+}
+
+async function addRows(rows: ForensicEvent[]): Promise<void> {
+  await runExclusive("c1", async () => {
+    const state: InvestigationState = await stateStore.load("c1");
+    await stateStore.save({ ...state, forensicTimeline: [...state.forensicTimeline, ...rows] });
+  });
+}
+
+async function superIds(): Promise<string[]> {
+  const ids: string[] = [];
+  for await (const b of superStore.eventBatches("c1")) for (const e of b) ids.push(e.id);
+  return ids.sort();
+}
+
+const forensic = async () => (await stateStore.load("c1")).forensicTimeline;
+
+describe("settleInterruptedHuntRows (#2851)", () => {
+  it("matches this hunt's stored files only, with the stored-name sanitising", () => {
+    const re = huntFilePattern("H.1");
+    expect(re.test(MINE)).toBe(true);
+    expect(re.test(OTHER)).toBe(false); // H.10 is another hunt
+    expect(re.test("velo-hunt_H.1_x.json")).toBe(false); // not a stored name
+    expect(huntFilePattern("H 1/x").test("0001_velo-hunt_H_1_x_A.json")).toBe(true);
+  });
+
+  it("selects only this hunt's unstamped rows, then stamps, dual-writes, tags and demotes them", async () => {
+    const manual = buildManualEvent({
+      timestamp: "2026-05-02T11:00:00Z",
+      description: "note",
+      severity: "Info",
+    });
+    await addRows([
+      ev("marker-1", "Info", { description: "notepad marker" }),
+      ev("plain-1", "Info"),
+      ev("graded-1", "High"),
+      ev("batched-1", "Info", { importBatchId: "b-1", importedAt: "2026-05-01T00:00:00Z" }),
+      ev("other-1", "Medium", { sourceScreenshots: [OTHER] }),
+      ev("promoted-1", "Info", { promotedAt: "2026-05-02T00:00:00Z" }),
+      { ...manual, sourceScreenshots: [MINE] },
+    ]);
+    const offered: ForensicEvent[][] = [];
+    const { d } = deps(offered);
+    expect(await settleInterruptedHuntRows(d, "c1", "H.1")).toBe(3);
+
+    const offeredRows = offered.flat();
+    expect(offeredRows.map((e) => e.id).sort()).toEqual(["graded-1", "marker-1", "plain-1"]);
+    // The tagger sees the STAMPED rows, one batch id for the recovery.
+    const batchIds = new Set(offeredRows.map((e) => e.importBatchId));
+    expect(batchIds.size).toBe(1);
+    expect([...batchIds][0]).toEqual(expect.any(String));
+    expect(offeredRows.every((e) => typeof e.importedAt === "string")).toBe(true);
+
+    const after = new Map((await forensic()).map((e) => [e.id, e]));
+    expect(after.get("marker-1")?.severity).toBe("High"); // tagger before demote
+    expect(after.has("plain-1")).toBe(false); // demoted, into the super-timeline
+    expect(after.get("graded-1")?.importBatchId).toEqual([...batchIds][0]);
+    expect(after.get("batched-1")).toBeUndefined(); // an Info row of the batched path: the demote's
+    expect(after.get("other-1")?.importBatchId).toBeUndefined(); // another hunt's row, untouched
+    expect(after.get("promoted-1")?.importBatchId).toBeUndefined();
+    expect(after.get(manual.id)?.importBatchId).toBeUndefined();
+    const sup = await superIds();
+    for (const id of ["graded-1", "marker-1", "plain-1"]) expect(sup).toContain(id);
+    expect(sup).not.toContain("other-1");
+  });
+
+  it("a second run changes nothing — no tagger call, no demote", async () => {
+    await addRows([ev("marker-1", "Info", { description: "marker" }), ev("graded-1", "High")]);
+    const first = deps([]);
+    expect(await settleInterruptedHuntRows(first.d, "c1", "H.1")).toBe(2);
+    const before = JSON.stringify(await forensic());
+    const superBefore = await superIds();
+    const offered: ForensicEvent[][] = [];
+    const second = deps(offered);
+    expect(await settleInterruptedHuntRows(second.d, "c1", "H.1")).toBe(0);
+    expect(offered).toEqual([]);
+    expect(second.demoteForensicForCase).not.toHaveBeenCalled();
+    expect(JSON.stringify(await forensic())).toBe(before);
+    expect(await superIds()).toEqual(superBefore);
+  });
+
+  it("leaves a batched artifact cut off mid-run alone (its rows are stamped per batch)", async () => {
+    const stamp = { importBatchId: "batch-1", importedAt: "2026-05-01T00:00:00Z" };
+    await addRows([ev("b-1", "High", stamp), ev("b-2", "Medium", stamp)]);
+    const before = JSON.stringify(await forensic());
+    const offered: ForensicEvent[][] = [];
+    const { d, demoteForensicForCase } = deps(offered);
+    expect(await settleInterruptedHuntRows(d, "c1", "H.1")).toBe(0);
+    expect(offered).toEqual([]);
+    expect(demoteForensicForCase).not.toHaveBeenCalled();
+    expect(JSON.stringify(await forensic())).toBe(before);
+  });
+
+  it("a failing super-timeline append keeps the rows in the forensic timeline", async () => {
+    await addRows([ev("plain-1", "Info"), ev("graded-1", "High")]);
+    vi.spyOn(superStore, "appendReporting").mockRejectedValue(new Error("disk full"));
+    vi.spyOn(superStore, "append").mockRejectedValue(new Error("disk full"));
+    const { d } = deps([]);
+    await settleInterruptedHuntRows(d, "c1", "H.1");
+    const ids = (await forensic()).map((e) => e.id).sort();
+    expect(ids).toEqual(["graded-1", "plain-1"]); // never in neither record
+  });
+});
+
+const JOB: VeloHuntJob = {
+  bundleId: "b",
+  bundleName: "B",
+  artifacts: ["Windows.System.Pslist"],
+  huntId: "H.1",
+  launchedAt: "2026-11-08T00:00:00.000Z",
+  waitMinutes: 10,
+  collectAt: "2026-11-08T00:10:00.000Z",
+  status: "collecting",
+};
+
+function timers(huntStore: VeloHuntStore, settle: (c: string, h: string) => Promise<unknown>) {
+  const options = {
+    veloHuntStore: huntStore,
+    serverClients: veloServerClients({ huntStatus: async () => ({ state: "RUNNING" }) }),
+  } as unknown as AppOptions;
+  return createVeloHuntStatusTimers({
+    store: cases,
+    options,
+    startVeloHuntCollect: () => undefined,
+    isCollecting: (_c, h) => h === "H.live",
+    settleInterrupted: settle,
+  });
+}
+
+describe("start-up recovery runs the settle for an interrupted import only (#2851)", () => {
+  it("settles a collect stored as importing — after marking it — and no other", async () => {
+    const huntStore = new VeloHuntStore(cases);
+    for (const [huntId, collectPhase] of [
+      ["H.importing", "importing"],
+      ["H.fetching", "fetching"],
+      ["H.queued", "queued"],
+      ["H.live", "importing"],
+    ] as const)
+      await huntStore.upsert("c1", { ...JOB, huntId, collectPhase });
+    await huntStore.upsert("c1", { ...JOB, huntId: "H.nophase" });
+    const seen: { huntId: string; status?: string }[] = [];
+    const t = timers(huntStore, async (c, h) => {
+      seen.push({ huntId: h, status: (await huntStore.get(c, h))?.status });
+    });
+    await t.resumeVeloHuntStatusPolls({ startup: true });
+    expect(seen).toEqual([{ huntId: "H.importing", status: "error" }]); // marked first
+    expect((await huntStore.get("c1", "H.importing"))?.error).toBe(INTERRUPTED_IMPORT_MESSAGE);
+    t.stopVeloHuntStatusPollsForCase("c1");
+  });
+
+  it("a settle that fails is logged with the case and hunt id; start-up and the mark stand", async () => {
+    const huntStore = new VeloHuntStore(cases);
+    await huntStore.upsert("c1", { ...JOB, collectPhase: "importing" });
+    const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => {});
+    try {
+      const t = timers(huntStore, async () => {
+        throw new Error("out of memory");
+      });
+      await expect(t.resumeVeloHuntStatusPolls({ startup: true })).resolves.toBeUndefined();
+      const lines = warn.mock.calls.map(([m]) => String(m));
+      expect(lines.some((l) => l.includes("c1") && l.includes("H.1") && l.includes("out of memory"))).toBe(
+        true,
+      );
+      expect(await huntStore.get("c1", "H.1")).toMatchObject({
+        status: "error",
+        error: INTERRUPTED_IMPORT_MESSAGE,
+      });
+      t.stopVeloHuntStatusPollsForCase("c1");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not wait for the settle before re-arming status polls", async () => {
+    const huntStore = new VeloHuntStore(cases);
+    await huntStore.upsert("c1", { ...JOB, collectPhase: "importing" });
+    await huntStore.upsert("c1", { ...JOB, huntId: "H.run", status: "running" });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const info = vi.spyOn(getServerLogger(), "info").mockImplementation(() => {});
+    try {
+      const t = timers(huntStore, () => held);
+      const resuming = t.resumeVeloHuntStatusPolls({ startup: true });
+      await vi.waitFor(() =>
+        expect(info.mock.calls.some(([m]) => String(m).includes("resumed status polling for 1 hunt"))).toBe(
+          true,
+        ),
+      );
+      release();
+      await resuming;
+      t.stopVeloHuntStatusPollsForCase("c1");
+    } finally {
+      info.mockRestore();
+    }
+  });
+});

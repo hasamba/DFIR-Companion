@@ -16,7 +16,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { pollHuntStatusOnce, type HuntPollDeps } from "../integrations/velociraptor/huntStatusPoller.js";
-import { logLine } from "../logging/serverLogger.js";
+import { getServerLogger, logLine } from "../logging/serverLogger.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import { unavailableServerClients } from "./serverSetClients.js";
@@ -34,6 +34,11 @@ export interface VeloHuntStatusTimersDeps {
   startVeloHuntCollect: (caseId: string, huntId: string) => void;
   /** Is a collect of this hunt running in THIS process right now (`collectingNow`, #2403)? */
   isCollecting: (caseId: string, huntId: string) => boolean;
+  /**
+   * #2851: settle the rows a collect cut off while IMPORTING left in the case
+   * (composition/veloHuntRecovery.ts). Optional: without it the restart only marks the job.
+   */
+  settleInterrupted?: (caseId: string, huntId: string) => Promise<unknown>;
 }
 
 export interface VeloHuntStatusTimers {
@@ -179,7 +184,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
   async function resumeVeloHuntStatusPolls(opts: { startup?: boolean } = {}): Promise<void> {
     const huntStore = options.veloHuntStore;
     if (!huntStore) return;
-    if (opts.startup) await recoverInterruptedCollects();
+    const settling = opts.startup ? await recoverInterruptedCollects() : [];
     let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
@@ -209,16 +214,37 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
       logLine(
         `[velo-hunt-status] resumed status polling for ${resumed} hunt(s) across ${cases.length} case(s)`,
       );
+    await Promise.all(settling); // each catches its own failure; polls were armed without waiting
   }
 
-  async function recoverInterruptedCollects(): Promise<void> {
+  /**
+   * #2851: started only AFTER the job is marked, so a settle that dies (often the same out-of-memory
+   * kill) is not tried again at every start; the #2849 sentence still tells the analyst. Detached
+   * from the sweep — the server serves and the polls re-arm meanwhile — and run as work of the case
+   * incarnation just listed. Never rejects: a failure is logged with the case and hunt id.
+   */
+  function settleInterruptedImport(caseId: string, huntId: string, generation: string): Promise<void> {
+    const settle = deps.settleInterrupted;
+    if (!settle) return Promise.resolve();
+    return runInCaseScope(store.casesRoot, caseId, () => settle(caseId, huntId), generation).then(
+      () => undefined,
+      (err: unknown) =>
+        getServerLogger().warn(
+          `[velo-hunt] ${caseId}: settling hunt ${huntId}'s interrupted import failed: ${(err as Error)?.message ?? String(err)}`,
+          { caseId },
+        ),
+    );
+  }
+
+  async function recoverInterruptedCollects(): Promise<Promise<void>[]> {
+    const settling: Promise<void>[] = [];
     const huntStore = options.veloHuntStore;
-    if (!huntStore) return;
+    if (!huntStore) return settling;
     let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
     } catch {
-      return;
+      return settling;
     }
     let marked = 0;
     for (const c of cases) {
@@ -246,6 +272,8 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
           if (stored?.status === "error" && message !== undefined && stored.error === message) {
             marked++;
             options.onVeloHunt?.(c.caseId);
+            if (message === INTERRUPTED_IMPORT_MESSAGE)
+              settling.push(settleInterruptedImport(c.caseId, huntId, generationOf(c)));
           }
         }
       } catch {
@@ -256,6 +284,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
       logLine(
         `[velo-hunt] ${marked} hunt collect(s) were interrupted by the restart — marked for Collect now`,
       );
+    return settling;
   }
 
   return {
