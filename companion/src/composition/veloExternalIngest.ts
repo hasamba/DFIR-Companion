@@ -25,7 +25,7 @@ import type { AiAgentHostOptions } from "../analysis/aiAgentHostLabels.js";
 import { bulkPathApplies, runVelociraptorBulk } from "../analysis/ingest/velociraptorBulk.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
 import { settleForensicImport } from "../routes/importSettle.js";
-import type { SuperEviction } from "../analysis/superTimelineStore.js";
+import { createSuperEvictionTally, type SuperEviction } from "../analysis/superTimelineStore.js";
 import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
@@ -266,7 +266,9 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         resynthesizeInBackground(caseId);
         return { addedEvents: superAdded, addedIocs: 0, storedName };
       }
+      const capDropped = createSuperEvictionTally(); // a batched run's own cap report (#2816)
       await pipeline.importVelociraptorArtifact(caseId, mapJson, {
+        onSuperEvicted: capDropped.add,
         label: storedName,
         idPrefix: `${seq}`,
         importedAt,
@@ -309,7 +311,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
               storedName,
             );
             ({ timelineDiff: tDiff, iocsDiff: iDiff } = settled);
-            superTimelineEvicted = settled.superTimelineEvicted;
+            superTimelineEvicted = capDropped.plus(settled.superTimelineEvicted);
           }
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
@@ -326,10 +328,9 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
               }),
               { caseId },
             );
-          if (
-            (addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) &&
-            options.importMetaStore
-          ) {
+          // Rows the cap dropped are recorded also when the import kept nothing forensic (#2816).
+          const changed = addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length;
+          if ((changed || superTimelineEvicted?.count) && options.importMetaStore) {
             await options.importMetaStore.record(caseId, {
               kind: "velociraptor",
               file: storedName,

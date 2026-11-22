@@ -3,6 +3,7 @@ import type { Request } from "express";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { Logger } from "../logging/logger.js";
 import type { ImportDebugRecorder } from "../analysis/importDebug.js";
+import type { SuperEvictionTally } from "../analysis/superTimelineStore.js";
 import type { AiAgentHostOptions } from "../analysis/aiAgentHostLabels.js";
 import type { VeloUploadsOutcome } from "./veloUploadFields.js";
 import type { DropFingerprint, ProcessedVersion } from "../analysis/dropScan.js";
@@ -67,6 +68,9 @@ export type ImportBase = {
   // This attempt's debug recorder (#1736): importers report column mapping, skipped-row reasons and
   // fallbacks to it. Owned by whoever started the attempt; see analysis/importDebug.ts.
   debug?: ImportDebugRecorder;
+  // This import's own tally of what the super-timeline cap dropped in a batched Velociraptor run
+  // (#2816) — fed only by that importer; the import's record adds it to what the settle reports.
+  superEvictions?: SuperEvictionTally;
   // A live collection's page of a kind whose whole-export summaries the collection builds once
   // (#2482) — read only by the streamed cloud import; every other kind ignores it.
   skipSummaries?: boolean;

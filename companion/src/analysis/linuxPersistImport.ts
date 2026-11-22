@@ -75,15 +75,21 @@ const DESCRIPTION_MAX = 900;
 export function incidentWindowFromTimeline(
   events: readonly { timestamp?: string; severity?: string }[],
 ): { start: string; end: string } | undefined {
-  const times = events
-    .filter((e) => e.severity === "High" || e.severity === "Critical")
-    .map((e) => Date.parse(e.timestamp ?? ""))
-    .filter((t) => Number.isFinite(t));
-  if (times.length < 2) return undefined;
-  return {
-    start: new Date(Math.min(...times)).toISOString(),
-    end: new Date(Math.max(...times)).toISOString(),
-  };
+  // A loop, not `Math.min(...times)` / `Math.max(...times)`: a spread passes one argument per event
+  // and overflows the call stack on a case with more than about 125,000 of them (#2827).
+  let count = 0;
+  let earliest = Infinity;
+  let latest = -Infinity;
+  for (const e of events) {
+    if (e.severity !== "High" && e.severity !== "Critical") continue;
+    const t = Date.parse(e.timestamp ?? "");
+    if (!Number.isFinite(t)) continue;
+    count++;
+    if (t < earliest) earliest = t;
+    if (t > latest) latest = t;
+  }
+  if (count < 2) return undefined;
+  return { start: new Date(earliest).toISOString(), end: new Date(latest).toISOString() };
 }
 
 /** Read an upload as a collection, or — when it carries no headers — as one named artifact. */

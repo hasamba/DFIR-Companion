@@ -28,7 +28,7 @@ const keyOf = (item: Pick<InventoryItem, "family" | "program" | "pathPattern">):
   `${item.family}|${item.program}|${item.pathPattern}`;
 
 const earlier = (a: string, b: string): string => (!a ? b : !b ? a : a < b ? a : b);
-const later = (a: string, b: string): string => (a > b ? a : b);
+const later = (a: string, b: string): string => (!a ? b : !b ? a : a > b ? a : b);
 
 function union(a: readonly string[], b: readonly string[], max: number): { list: string[]; capped: boolean } {
   const list = [...a];
@@ -136,7 +136,7 @@ export function mergeInventoryItems(a: InventoryItem, b: InventoryItem): Invento
     md5: union(a.md5, b.md5, MAX_VALUES).list,
     sourceUrls: union(a.sourceUrls, b.sourceUrls, MAX_VALUES).list,
     hosts,
-    hostOverflow: a.hostOverflow + b.hostOverflow + dropped,
+    hostOverflow: (a.hostOverflow ?? 0) + (b.hostOverflow ?? 0) + dropped,
     firstSeen: earlier(a.firstSeen, b.firstSeen),
     lastSeen: later(a.lastSeen, b.lastSeen),
   };

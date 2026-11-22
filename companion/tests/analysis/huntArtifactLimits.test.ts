@@ -105,4 +105,17 @@ describe("bundle hunt artifact holds (#2753)", () => {
     expect(artifactRowHold("A", [row("C.1", 10)], { hostMb: 50, totalMb: 200 })).toBeUndefined();
     expect(artifactRowHold("A", [row("C.1", 99999)], { hostMb: 0, totalMb: 0 })).toBeUndefined();
   });
+
+  it("#2822: a hunt with 200,000 PCs does not overflow the call stack, and still finds the largest PC", () => {
+    const rows: unknown[] = Array.from({ length: 200_000 }, (_, i) => ({ ClientId: `C.${i}` }));
+    expect(artifactRowHold("A", rows, { hostMb: 50, totalMb: 200 })).toBeUndefined();
+
+    const big = row("C.big", 5000);
+    const h = artifactRowHold("A", [...rows, big], { hostMb: 2000 / 1048576, totalMb: 0 });
+    expect(h).toMatchObject({
+      reason: "host",
+      hosts: ["C.big.example.test"],
+      hostBytes: Buffer.byteLength(JSON.stringify(big), "utf8"),
+    });
+  });
 });

@@ -171,8 +171,12 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
         caseId,
         events.filter((e) => !isAnalystWorkLog(e)),
       ),
-    appendSuper: (caseId: string, events: ForensicEvent[]) =>
-      superTimelineStore.appendReporting(caseId, events),
+    // #2816: with the run's fence, the cap holds its evictions of earlier rows until commitSuperCap.
+    appendSuper: (caseId: string, events: ForensicEvent[], holdRowId?: number) =>
+      superTimelineStore.appendReporting(caseId, events, holdRowId === undefined ? {} : { holdRowId }),
+    commitSuperCap: (caseId: string) => superTimelineStore.enforceCap(caseId),
+    superMissingOfRun: (caseId: string, run: BulkRunHandle) =>
+      superTimelineStore.missingOfRun(caseId, run.fence, run.importBatchId),
     openTagger,
     forensicMinSeverity,
     log: deps.log,

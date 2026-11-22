@@ -76,6 +76,23 @@ describe("incidentWindowFromTimeline", () => {
       ]),
     ).toBeUndefined();
   });
+
+  // One argument per event overflows the call stack at about 125,000 events (#2827).
+  it("spans 130,000 High events without overflowing the call stack", () => {
+    const base = Date.parse("2026-01-10T00:00:00Z");
+    const events = Array.from({ length: 130_000 }, (_, i) => ({
+      timestamp: new Date(base + i * 1000).toISOString(),
+      severity: "High",
+    }));
+    // The earliest and the latest sit mid-list, so a first-or-last shortcut cannot pass.
+    events[40_000] = { timestamp: "2026-01-01T00:00:00Z", severity: "High" };
+    events[90_000] = { timestamp: "2026-02-01T00:00:00Z", severity: "Critical" };
+
+    expect(incidentWindowFromTimeline(events)).toEqual({
+      start: "2026-01-01T00:00:00.000Z",
+      end: "2026-02-01T00:00:00.000Z",
+    });
+  });
 });
 
 describe("parseLinuxPersist", () => {

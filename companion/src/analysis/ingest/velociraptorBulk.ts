@@ -23,6 +23,7 @@ import {
 } from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
 import { abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
+import { bulkEvictionForRecord } from "./bulkEvictionReport.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { SectionMemoryCheck } from "../importMemoryGuard.js";
 
@@ -113,7 +114,20 @@ export interface BulkImportSink {
   appendForensic(caseId: string, events: ForensicEvent[]): Promise<number>;
   /** Retained rows AND what the cap dropped to make room (#1535) — the bulk path is the one most
    * likely to hit the cap, so it must not be the one that reports nothing. */
-  appendSuper(caseId: string, events: ForensicEvent[]): Promise<{ retained: number; evicted: SuperEviction }>;
+  appendSuper(
+    caseId: string,
+    events: ForensicEvent[],
+    /** #2816: the run's fence. The cap then evicts only rows above it — see `commitSuperCap`. */
+    holdRowId?: number,
+  ): Promise<{ retained: number; evicted: SuperEviction }>;
+  /**
+   * The run's commit step for the super-timeline cap (#2816): one plain cap pass that carries out
+   * the evictions the run's appends held. The driver passes a fence to `appendSuper` only when the
+   * sink has this, so a sink without it keeps the cap's per-append behaviour.
+   */
+  commitSuperCap?(caseId: string): Promise<SuperEviction>;
+  /** The run's forensic rows its cap passes dropped, which the settle puts back (#2816). */
+  superMissingOfRun?(caseId: string, run: BulkRunHandle): Promise<number>;
   openTagger(caseId: string, mode: "forensic" | "super-only"): Promise<BatchTagger | null>;
   forensicMinSeverity(caseId: string): Promise<Severity>;
   /** With `caseId` the line also lands in the case's own log (#1438). */
@@ -159,6 +173,8 @@ export interface BulkImportOpts {
   minSeverity?: Severity;
   veloUrl?: string;
   onProgress?: (done: number, total: number) => void;
+  /** Forensic entry only (#2816): what the cap dropped in the whole run, once, after it committed. */
+  onSuperEvicted?: (evicted: SuperEviction) => void;
   /** Super-only mode: this artifact's share of the hunt's DFIR_SUPERTIMELINE_MAX (#1982). */
   superMaxEvents?: number;
   /** #2425: the import job's Cancel, checked before each batch and the final merge (→ rollback). */
@@ -189,8 +205,9 @@ export interface BulkImportResult {
  * A failed run leaves nothing behind (#1480). Before this, the batches already flushed stayed in
  * both stores after the FAILED line: the truncated export that is the ordinary failure input
  * throws on its last row, and a retry mints a new id prefix and lands the same rows twice. The
- * rollback removes only this run's rows (see BulkRunHandle) and the tagger tags written for them;
- * what the super cap already evicted to make room is gone before the failure and is not restored.
+ * rollback removes only this run's rows (see BulkRunHandle) and the tagger tags written for them.
+ * Nothing else needs restoring (#2816): while the run is open the super cap evicts only the run's
+ * own rows, and the rows the case held before it wait for `commitBulkSuperCap` at the commit point.
  * The ORIGINAL error is always the one the caller sees — a rollback failure is logged beside it.
  */
 export async function rollbackBulkRun(
@@ -219,6 +236,31 @@ export async function rollbackBulkRun(
       `[import] ${caseId} ${label}: bulk FAILED ${where}: ${reason}; rollback FAILED: ${detail} — the run's rows remain (importBatchId ${run.importBatchId})`,
       caseId,
     );
+  }
+}
+
+/**
+ * The run's commit step for the super-timeline cap (#2816): the evictions its appends held are
+ * carried out now that nothing can roll the run back. A failure is logged, not thrown — the rows
+ * are safely imported, and the store only sits above its cap until the next append or cap pass.
+ */
+async function commitBulkSuperCap(
+  sink: BulkImportSink,
+  caseId: string,
+  label: string,
+): Promise<SuperEviction | undefined> {
+  if (!sink.commitSuperCap) return undefined;
+  try {
+    const evicted = await sink.commitSuperCap(caseId);
+    if (evicted.count) sink.onSuperTimeline?.(caseId);
+    return evicted;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    sink.log(
+      `[import] ${caseId} ${label}: super-timeline cap pass FAILED: ${detail} — the super-timeline stays above its cap until the next import`,
+      caseId,
+    );
+    return undefined;
   }
 }
 
@@ -506,7 +548,8 @@ export async function runVelociraptorBulk(
     superOffered += toSuper.length;
     totals.dropped += events.length - toSuper.length;
     if (toSuper.length) {
-      const appended = await sink.appendSuper(caseId, toSuper);
+      // #2816: held at the run's fence, so a rollback finds every row the case had before the run.
+      const appended = await sink.appendSuper(caseId, toSuper, sink.commitSuperCap ? run.fence : undefined);
       superAdded = appended.retained;
       totals.superEvicted = mergeEvictions(totals.superEvicted, appended.evicted);
       sink.onSuperTimeline?.(caseId);
@@ -615,6 +658,11 @@ export async function runVelociraptorBulk(
       `at batch ${totals.batches + 1} (rows ${from}–${to})`,
     );
     throw err;
+  }
+  // A super-only run commits here (#2816); a forensic run's commit point is its caller's final merge.
+  if (mode === "super-only") {
+    const atCommit = await commitBulkSuperCap(sink, caseId, opts.label);
+    if (atCommit?.count) totals.superEvicted = mergeEvictions(totals.superEvicted, atCommit);
   }
   opts.onProgress?.(totals.rows, totals.rows);
   recordBulkDebug(vr.debug, vrCtx, totals, mode);
@@ -727,6 +775,17 @@ export async function importVelociraptorBulk(
       );
       throw err;
     }
+    // Committed: the cap may now evict the earlier rows this run's appends held (#2816).
+    const atCommit = await commitBulkSuperCap(sink, caseId, opts.label);
+    if (atCommit?.count) {
+      sink.log(
+        `[import] ${caseId} ${opts.label}: the super-timeline cap dropped ${atCommit.count} older row(s) (${atCommit.setAside} set aside by a rule) now that the import is complete`,
+        caseId,
+      );
+    }
+    // The caller gets the state only, and its settle cannot see rows already gone: report them here.
+    const evicted = await bulkEvictionForRecord(sink, caseId, opts.label, result, atCommit);
+    if (evicted.count) opts.onSuperEvicted?.(evicted);
     opts.onProgress?.(1, 1);
     return state;
   });

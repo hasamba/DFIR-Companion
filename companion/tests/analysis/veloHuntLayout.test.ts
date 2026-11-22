@@ -74,6 +74,25 @@ describe("planHuntExports (#2714)", () => {
     expect(others.every((i) => i.huntWide)).toBe(true);
   });
 
+  // #2821: no producer reaches this today (a resume never holds a per-client CSV next to a
+  // hunt-wide JSON), but the plan must still account for every member it was given.
+  it.each([
+    ["a hunt-wide JSON", ["results/All Windows.System.Pslist.json"]],
+    [
+      "a hunt-wide JSON and CSV",
+      ["results/All Windows.System.Pslist.json", "results/All Windows.System.Pslist.csv"],
+    ],
+  ])("#2821: started per-client CSVs stay per-client and skip %s", (_name, huntWide) => {
+    const perClientCsv = "WS-ALPHA-C.0000000000000001/results/Windows.System.Pslist.csv";
+    const paths = ["hunt_info.json", perClientCsv, ...huntWide];
+    const [p] = planHuntExports(paths, new Set([perClientCsv]));
+    expect(p.imports).toEqual([{ path: perClientCsv, artifact: "Windows.System.Pslist", huntWide: false }]);
+    for (const path of huntWide) {
+      expect(p.skips).toContainEqual({ path, reason: "hunt-wide-copy" });
+    }
+    expect([...p.members].sort()).toEqual([...paths].sort());
+  });
+
   it("per-client JSON beats a hunt-wide CSV of the same artifact", () => {
     const [p] = planHuntExports([
       "hunt_info.json",

@@ -344,13 +344,20 @@ export async function crossUploadSprayRows(
   // re-upload, any batch processed days after capture). Anchoring on the batch's own earliest event
   // time keeps the window centered on the evidence, exactly the case the store's own header sells:
   // a low-and-slow spray uploaded in daily batches is still detected however stale the upload is.
-  const batchTimestampsMs = withBatch.map((c) => Date.parse(c.timestamp)).filter((ms) => Number.isFinite(ms));
+  // A loop, not `Math.min(...times)` / `Math.max(...times)`: there is one candidate per sign-in or
+  // logon of the whole upload, and a spread passes one argument each — it overflows the call stack
+  // at about 125,000 of them (#2827).
+  let earliestMs = Infinity;
+  let latestMs = -Infinity;
+  for (const c of withBatch) {
+    const ms = Date.parse(c.timestamp);
+    if (!Number.isFinite(ms)) continue;
+    if (ms < earliestMs) earliestMs = ms;
+    if (ms > latestMs) latestMs = ms;
+  }
+  const hasBatchTime = Number.isFinite(earliestMs);
   const importedAtMs = Date.parse(opts.importedAt);
-  const anchorMs = batchTimestampsMs.length
-    ? Math.min(...batchTimestampsMs)
-    : Number.isFinite(importedAtMs)
-      ? importedAtMs
-      : Date.now();
+  const anchorMs = hasBatchTime ? earliestMs : Number.isFinite(importedAtMs) ? importedAtMs : Date.now();
   const sinceIso = new Date(anchorMs - windowHours * 3_600_000).toISOString();
 
   // Retention-age disclosure (#1286): if this batch's own earliest event already predates the
@@ -360,7 +367,7 @@ export async function crossUploadSprayRows(
   // note must not say it "could not run". What is lost is the other direction — a LATER upload
   // cannot reach this batch once the wall-clock prune removes it.
   const retentionHoursValue = store.retentionHours();
-  const newestMs = batchTimestampsMs.length ? Math.max(...batchTimestampsMs) : anchorMs;
+  const newestMs = hasBatchTime ? latestMs : anchorMs;
   const retentionExceeded = anchorMs < newestMs - retentionHoursValue * 3_600_000;
   const retentionNote = retentionExceeded
     ? `cross-upload spray matching for this batch is limited — its evidence predates the ${retentionHoursValue}h auth-observation retention window, so later uploads cannot be correlated with it`

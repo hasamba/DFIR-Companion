@@ -7,6 +7,8 @@
 // caseCreate.spec.ts, and it must do so through the wizard. An API shortcut would sit unused, and
 // the first person to reach for it would quietly bypass the one path that spec exists to cover.
 
+import type { APIRequestContext } from "@playwright/test";
+
 /**
  * Seed a fully populated case via POST /cases/seed-demo.
  *
@@ -22,4 +24,21 @@ export async function seedDemoCase(baseUrl: string, caseId: string): Promise<str
   });
   if (!res.ok) throw new Error(`seedDemoCase ${caseId} failed: ${res.status} ${await res.text()}`);
   return caseId;
+}
+
+/**
+ * Turn AI on for a case via POST /cases/:id/ai-control.
+ *
+ * AI is off on every new case, the seeded demo case included, and every model-calling route
+ * answers 409 `aiOff` while it is off (#2757). A spec that calls such a route turns AI on first,
+ * for its own case only. The demoCase fixture deliberately does not: the off-by-default state is
+ * itself under test (US-136 in workflows/analysis.spec.ts).
+ */
+export async function enableAi(request: APIRequestContext, caseId: string): Promise<void> {
+  const res = await request.post(`/cases/${encodeURIComponent(caseId)}/ai-control`, {
+    data: { enabled: true },
+  });
+  if (res.status() !== 200) throw new Error(`enableAi ${caseId} failed: ${res.status()} ${await res.text()}`);
+  const body = (await res.json()) as { enabled?: boolean };
+  if (body.enabled !== true) throw new Error(`enableAi ${caseId}: the case still reports AI off`);
 }

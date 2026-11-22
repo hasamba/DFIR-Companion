@@ -548,6 +548,11 @@
                   throw Object.assign(new Error(presidioHoldText("Hypothesis generation")), {
                     presidioHold: true,
                   });
+                // #2828: so is the duplicate-host gate — say what to do, never the raw code.
+                if (typeof hostMergeHold === "function" && hostMergeHold(r.status, body))
+                  throw Object.assign(new Error(hostMergeHoldText("Hypothesis generation", body)), {
+                    hostMergeHold: true,
+                  });
                 throw new Error((body && body.error) || "HTTP 409");
               });
             if (!r.ok) throw new Error("HTTP " + r.status);
@@ -568,7 +573,7 @@
             loadSynthMeta(caseId);
           })
           .catch((e) => {
-            msg.textContent = e.presidioHold
+            msg.textContent = e.presidioHold || e.hostMergeHold
               ? e.message
               : "failed: " +
                 e.message +

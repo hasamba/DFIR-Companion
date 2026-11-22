@@ -4,9 +4,13 @@
  * Usage (from companion/):
  *   npx tsx scripts/bench-velo-bulk-import.ts [--rows=20000] [--graded=0.9] [--heap-mb=1024]
  *       [--out=<dir>] [--timeout-min=60] [--server-dir=<companion dir>] [--keep]
- *   npm run bench:velo-bulk -- --rows=1000000 --graded=0.02 --heap-mb=2048
+ *   npm run bench:velo-bulk -- --rows=60000 --graded=0.02 --heap-mb=4096
+ *       (a 53 MB file. Memory follows --rows, not --graded: the timeline keeps every row until demote.
+ *       Raise --heap-mb with --rows, and expect the import memory guard to refuse the run part-way when
+ *       the machine has less free memory than its estimate of 128 KB per kept row — 7.3 GB here.)
  *
- * WHAT IT RUNS. A real server child (`src/server.ts`, no AI provider, default settings) over a
+ * WHAT IT RUNS. A real server child (`src/server.ts`, no AI provider, default settings except the hunt
+ * artifact size limits, which are off so a file over 50 MB is imported instead of held, #2824) over a
  * throwaway cases root under --out (default: a fresh temp folder; a path in or named `cases` is
  * refused, benchOutputGuard.ts — nothing is read from or written to `cases/`). It creates one case,
  * drops a synthetic file into that case's drop/ folder, and waits for the drop sweep to import it the
@@ -27,6 +31,9 @@
  * the settle's live peak stayed within the batches' live peak plus a margin — the settle no longer
  * holds a copy of every row the file added (#2713). The full-state merge still loads the case's whole
  * forensic timeline once, so a file whose rows are nearly all graded costs that; the table shows it.
+ * A file the drop sweep holds, fails or skips ends the run at once with FAIL and the reason from the
+ * case's drop/drop-log.txt — a refusal by the import memory guard is one of those. The guard is left as
+ * the environment sets it; to measure past a refusal, run with DFIR_IMPORT_MEMORY_GUARD=off.
  * Linux only (VmHWM).
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -46,6 +53,64 @@ const arg = (name: string): string | undefined =>
 const COMPANION_DIR = resolve(arg("server-dir") ?? resolve(dirname(fileURLToPath(import.meta.url)), ".."));
 const CASE_ID = "bench";
 const FILE_NAME = "Windows.Hayabusa.Notebook.json";
+/** The case's drop history file (src/analysis/dropLog.ts), relative to its drop/ folder. */
+const DROP_LOG_FILE = "drop-log.txt";
+/** How a drop-log reason starts when the file was held over a hunt artifact size limit. */
+const HELD_REASON = "held over the hunt artifact size limit";
+/** Splits a drop-log line's relpath from its reason (formatDropLogLines). */
+const REASON_SEPARATOR = "  — ";
+
+/**
+ * The server child's environment: the shell's, then the script's own keys, then both hunt artifact
+ * size limits off (#2824). The limits come last so a value in the shell cannot bring the hold back;
+ * a process value also beats the checkout's `.env`.
+ */
+export function benchChildEnv(base: NodeJS.ProcessEnv, own: Record<string, string>): NodeJS.ProcessEnv {
+  return { ...base, ...own, DFIR_HUNT_ARTIFACT_HOST_MAX_MB: "0", DFIR_HUNT_ARTIFACT_TOTAL_MAX_MB: "0" };
+}
+
+export interface DropOutcome {
+  /** "pending": nothing in the log ends the wait — not seen yet, importing, or imported. */
+  outcome: "held" | "failed" | "skipped" | "pending";
+  /** The drop-log reason, prefixed with the zip member it is about. */
+  reason?: string;
+}
+
+/**
+ * What a case's drop-log.txt says happened to `target` — the dropped file, or a member of it when it
+ * is a zip (`target!member`). A held or failed line wins over a plain skipped one: a hunt zip logs a
+ * routine SKIPPED line for the metadata it does not read.
+ */
+export function classifyDropOutcome(logText: string, target: string): DropOutcome {
+  let skipped: DropOutcome | undefined;
+  // Every complete line ends in a newline; whatever follows the last one is still being written.
+  for (const line of logText.split("\n").slice(0, -1)) {
+    const m = /^\S+\s+(FAILED|SKIPPED)\s+(.*)$/.exec(line);
+    if (!m) continue;
+    const cut = m[2].indexOf(REASON_SEPARATOR);
+    const relpath = cut < 0 ? m[2] : m[2].slice(0, cut);
+    if (relpath !== target && !relpath.startsWith(`${target}!`)) continue;
+    const text = cut < 0 ? "" : m[2].slice(cut + REASON_SEPARATOR.length);
+    const member = relpath.slice(target.length + 1);
+    const reason = member ? `${member}: ${text}` : text;
+    if (m[1] === "FAILED") return { outcome: "failed", reason };
+    if (text.startsWith(HELD_REASON)) return { outcome: "held", reason };
+    skipped ??= { outcome: "skipped", reason };
+  }
+  return skipped ?? { outcome: "pending" };
+}
+
+/** `classifyDropOutcome` over a drop folder on disk; a log that is not there yet is "pending". */
+export function readDropOutcome(dropDir: string, target: string): DropOutcome {
+  let text = "";
+  try {
+    text = readFileSync(join(dropDir, DROP_LOG_FILE), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  return classifyDropOutcome(text, target);
+}
+
 /** How far the settle's live heap may sit above the batches' before the run reports it as growing. */
 const SETTLE_MARGIN_MB = 64;
 
@@ -217,15 +282,14 @@ async function main(): Promise<void> {
     [`--max-old-space-size=${heapMb}`, "--trace-gc", "--import", "tsx/esm", "src/server.ts"],
     {
       cwd: COMPANION_DIR,
-      env: {
-        ...process.env,
+      env: benchChildEnv(process.env, {
         DFIR_CASES_ROOT: root,
         DFIR_LOG_DIR: logs,
         DFIR_PORT: String(port),
         DFIR_LOG_LEVEL: "debug",
         DFIR_DROP_POLL_S: "2",
         DFIR_DROP_MAX_BYTES: String(1024 * 1024), // always the streamed branch
-      },
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -261,9 +325,12 @@ async function main(): Promise<void> {
     await mkdir(drop, { recursive: true });
     await copyFile(source, join(drop, FILE_NAME));
     const processed = join(drop, "_processed");
-    const finished = await until(
-      () =>
-        /: done — forensic/.test(log) && existsSync(processed) && readdirSync(processed).includes(FILE_NAME),
+    const imported = (): boolean =>
+      /: done — forensic/.test(log) && existsSync(processed) && readdirSync(processed).includes(FILE_NAME);
+    // Held, failed and skipped files never print a "done" line: stop on the drop log instead (#2824).
+    let dropped: DropOutcome = { outcome: "pending" };
+    await until(
+      () => imported() || (dropped = readDropOutcome(drop, FILE_NAME)).outcome !== "pending",
       timeoutMs,
       child,
     );
@@ -271,7 +338,8 @@ async function main(): Promise<void> {
       rows,
       graded,
       heapMb,
-      finished,
+      finished: imported(),
+      dropped,
       seconds: (Date.now() - t0) / 1000,
       hwm,
       log,
@@ -286,11 +354,18 @@ async function main(): Promise<void> {
   }
 }
 
+function verdict(finished: boolean, dropped: DropOutcome, exit: number | null): string {
+  if (finished) return "PASS — imported end to end under the heap limit";
+  if (dropped.outcome === "pending") return `FAIL — not finished (exit ${exit})`;
+  return `FAIL — the file was ${dropped.outcome}, not imported: ${dropped.reason || "no reason logged"}`;
+}
+
 function report(r: {
   rows: number;
   graded: number;
   heapMb: number;
   finished: boolean;
+  dropped: DropOutcome;
   seconds: number;
   hwm: number;
   log: string;
@@ -321,9 +396,7 @@ function report(r: {
       `settle live peak ${Math.round(settle)} MB vs batches ${Math.round(batches)} MB: ` +
         (settle <= batches + SETTLE_MARGIN_MB ? "bounded" : "GROWS with the file"),
     );
-  console.log(
-    r.finished ? "PASS — imported end to end under the heap limit" : `FAIL — not finished (exit ${r.exit})`,
-  );
+  console.log(verdict(r.finished, r.dropped, r.exit));
   if (!r.finished) process.exitCode = 1;
 }
 

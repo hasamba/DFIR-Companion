@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures/test.js";
+import { enableAi } from "../fixtures/api.js";
 
 // Covers: US-254, US-261, US-266, US-291, US-312, US-313, US-337, US-338, US-341
 // (feature-user-stories.csv) — the operational surfaces an analyst leans on mid-case: the
@@ -24,6 +25,8 @@ import { test, expect } from "../fixtures/test.js";
 //     proves it re-measured the timeline.
 
 test("US-254: every stub synthesis leaves a reproducible run manifest", async ({ page, demoCase }) => {
+  // AI is off on a new case; the model-calling route answers 409 until it is turned on (#2757).
+  await enableAi(page.request, demoCase);
   const synth = await page.request.post(`/cases/${demoCase}/synthesize`, { data: {} });
   expect(synth.status(), await synth.text()).toBe(200);
 
@@ -98,6 +101,8 @@ test("US-266: a hypothesis keeps its identity and status through a re-synthesis"
   // THE CLAIM: "survives re-synthesis". A synthesis replaces findings and techniques wholesale;
   // if it also replaced the hypothesis ledger, the analyst's investigative state would silently
   // reset every time the AI ran.
+  // AI is off on a new case; the model-calling route answers 409 until it is turned on (#2757).
+  await enableAi(page.request, demoCase);
   const synth = await page.request.post(`/cases/${demoCase}/synthesize`, { data: {} });
   expect(synth.status(), await synth.text()).toBe(200);
 

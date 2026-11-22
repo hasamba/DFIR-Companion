@@ -12,6 +12,9 @@
  * file to import. After each file's "done" line it records the server's RSS and the main heap's live
  * size after the last full mark-compact, then prints the series and the growth per file over the
  * second half (the first files warm caches). Synthetic data only: documentation names, TEST-NET IPs.
+ * The hunt artifact size limits are off, so a result file over 50 MB (about 59,000 rows) is imported
+ * instead of held; a member the sweep holds or fails ends the run with FAIL and its drop-log reason,
+ * once the zip's lines are written (#2824).
  * Linux only (/proc).
  */
 import { spawn } from "node:child_process";
@@ -24,12 +27,13 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ZipFile } from "yazl";
 import { safeOutputDir } from "./benchOutputGuard.js";
-import { syntheticRow } from "./bench-velo-bulk-import.js";
+import { benchChildEnv, readDropOutcome, syntheticRow, type DropOutcome } from "./bench-velo-bulk-import.js";
 
 const arg = (name: string): string | undefined =>
   process.argv.find((v) => v.startsWith(`--${name}=`))?.slice(name.length + 3);
 const COMPANION_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CASE_ID = "bench";
+const ZIP_NAME = "hunt.zip";
 const ARTIFACTS = [
   "Windows.EventLogs.Hayabusa",
   "Windows.Detection.Evtx",
@@ -116,7 +120,7 @@ async function main(): Promise<void> {
   const base = safeOutputDir(arg("out") ?? mkdtempSync(join(tmpdir(), "dfir-bench-many-")));
   const root = join(base, "data");
   await mkdir(root, { recursive: true });
-  const zipPath = join(base, "hunt.zip");
+  const zipPath = join(base, ZIP_NAME);
   await buildHuntZip(zipPath, clients, artifacts, rows, graded);
   const port = await freePort();
   const out = createWriteStream(join(base, "server.log"));
@@ -125,13 +129,12 @@ async function main(): Promise<void> {
     [`--max-old-space-size=${heapMb}`, "--trace-gc", "--import", "tsx/esm", "src/server.ts"],
     {
       cwd: COMPANION_DIR,
-      env: {
-        ...process.env,
+      env: benchChildEnv(process.env, {
         DFIR_CASES_ROOT: root,
         DFIR_LOG_DIR: join(base, "logs"),
         DFIR_PORT: String(port),
         DFIR_DROP_POLL_S: "2",
-      },
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -186,10 +189,20 @@ async function main(): Promise<void> {
     if (!created.ok) throw new Error(`could not create the case (${created.status})`);
     const drop = join(root, CASE_ID, "drop");
     await mkdir(drop, { recursive: true });
-    await writeFile(join(drop, "hunt.zip"), readFileSync(zipPath));
-    while (samples.length < total && Date.now() - t0 < timeoutMs && child.exitCode === null)
+    await writeFile(join(drop, ZIP_NAME), readFileSync(zipPath));
+    // A held or failed member never prints a "done" line, so the count cannot reach `total` (#2824).
+    // "skipped" does not stop the wait: every hunt zip logs one for the metadata it does not read.
+    let dropped: DropOutcome = { outcome: "pending" };
+    const stopped = (): boolean => dropped.outcome === "held" || dropped.outcome === "failed";
+    while (samples.length < total && Date.now() - t0 < timeoutMs && child.exitCode === null && !stopped()) {
       await new Promise((r) => setTimeout(r, 1000));
+      dropped = readDropOutcome(drop, ZIP_NAME);
+    }
     console.log(`${samples.length}/${total} files in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+    if (stopped()) {
+      console.log(`FAIL — a result file was ${dropped.outcome}, not imported: ${dropped.reason}`);
+      process.exitCode = 1;
+    }
     console.log(
       `growth per file (second half): rss ${growthPerFileMb(samples, "rssMb").toFixed(1)} MB, live heap ${growthPerFileMb(samples, "liveMb").toFixed(1)} MB`,
     );

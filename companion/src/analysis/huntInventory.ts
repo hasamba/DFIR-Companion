@@ -189,7 +189,7 @@ function observe(item: InventoryItem | undefined, o: InventoryObservation): Inve
     ...entryList(base, f.entry),
     ...artifactList(base, o.artifact?.trim() || undefined),
     hosts,
-    hostOverflow: base.hostOverflow + (!known && !roomForHost ? 1 : 0),
+    hostOverflow: (base.hostOverflow ?? 0) + (!known && !roomForHost ? 1 : 0),
     firstSeen: earlier(base.firstSeen, o.at),
     lastSeen: later(base.lastSeen, o.at),
   };

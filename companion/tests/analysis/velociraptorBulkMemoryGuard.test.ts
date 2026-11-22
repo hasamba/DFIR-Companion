@@ -64,6 +64,8 @@ interface MemorySink extends BulkImportSink {
   runs: BulkRunSummary[];
   rollbacks: BulkRunHandle[];
   checked: number[];
+  /** How often the run's super-timeline cap pass ran (#2816) — never for a refused run. */
+  commits: number;
 }
 
 function memorySink(check?: (caseId: string) => Promise<SectionMemoryCheck | null>): MemorySink {
@@ -76,6 +78,11 @@ function memorySink(check?: (caseId: string) => Promise<SectionMemoryCheck | nul
     runs: [],
     rollbacks: [],
     checked: [],
+    commits: 0,
+    async commitSuperCap() {
+      sink.commits++;
+      return { count: 0, setAside: 0, from: "", to: "" };
+    },
     async beginRun() {
       return 0;
     },
@@ -158,6 +165,7 @@ describe("runVelociraptorBulk — the memory guard's re-check (#2812)", () => {
     expect(sink.forensic).toEqual([]);
     expect(sink.superRows).toEqual([]);
     expect(sink.runs).toEqual([]);
+    expect(sink.commits).toBe(0); // #2816: the cap's held evictions are never carried out
     // Asked before batch 2 wrote anything: only batch 1's rows existed to roll back.
     expect(sink.logs.at(-1)).toMatch(
       /bulk FAILED at batch 2 \(rows 11–20\): Import refused to protect the server: synthetic — rolled back 10 forensic \/ 10 super row\(s\)/,
@@ -239,7 +247,8 @@ describe("importVelociraptorBulk — refused mid-run through the real guard (#28
   }
 
   it("refuses once the kept rows outgrow the server, and the case is unchanged", async () => {
-    const { outcome, state, guard } = await run(4_000);
+    const { outcome, state, guard, sink } = await run(4_000);
+    expect(sink.commits).toBe(0); // #2816: refused at a later batch, so no cap pass ran
     expect(outcome).toBeInstanceOf(ImportMemoryRefusedError);
     expect((outcome as Error).message).toMatch(
       /^Import refused to protect the server: this case holds 70,000 events, .*The file is saved in the case and nothing was changed\./,
@@ -250,8 +259,9 @@ describe("importVelociraptorBulk — refused mid-run through the real guard (#28
   });
 
   it("an import that fits imports as before", async () => {
-    const { outcome, state } = await run(2_500);
+    const { outcome, state, sink } = await run(2_500);
     expect(outcome).toBeNull();
+    expect(sink.commits).toBe(1);
     expect(state.forensicTimeline.filter((e) => /^18e\d+$/.test(e.id))).toHaveLength(2_500);
   });
 

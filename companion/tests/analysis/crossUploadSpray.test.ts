@@ -6,6 +6,9 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { AuthObservationStore } from "../../src/analysis/authObservationStore.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
+import { crossUploadSprayRows } from "../../src/analysis/ingest/importState.js";
+import type { ImportContext } from "../../src/analysis/ingest/importContext.js";
+import { sprayLowSlowHours, type SprayCandidate } from "../../src/analysis/passwordSprayFanout.js";
 
 // One ECAR failed-logon record — same shape ecarImport.test.ts's own spray fixtures use.
 function loginRec(principal: string, baseMs: number, offsetMs: number, srcIp = "10.44.30.10") {
@@ -338,5 +341,73 @@ describe("cross-upload password-spray detection (#1104)", () => {
     });
     const cross = sprayRows(s2.forensicTimeline).filter((e) => e.description.includes("across"));
     expect(cross).toHaveLength(1);
+  });
+});
+
+// An upload's spray candidates are one per sign-in or logon and are not limited by DFIR_MAX_EVENTS.
+// Spreading them into Math.min / Math.max passes one argument each and overflows the call stack
+// at about 125,000 (#2827).
+describe("crossUploadSprayRows on a very large upload (#2827)", () => {
+  const COUNT = 130_000;
+  const RETENTION_HOURS = 168;
+
+  function stubContext() {
+    const queried: string[] = [];
+    const store = {
+      retentionHours: () => RETENTION_HOURS,
+      queryWindow: async (_caseId: string, sinceIso: string) => {
+        queried.push(sinceIso);
+        return { observations: [], truncated: false };
+      },
+      append: async () => 0,
+    };
+    const ctx = { opts: { authObservationStore: store } } as unknown as ImportContext;
+    return { ctx, queried };
+  }
+
+  // One account from one address, a second apart: no spray pattern, so only the window is measured.
+  // The earliest and the latest are placed mid-list, so a first-or-last shortcut cannot pass.
+  function candidates(earliestMs: number, latestMs: number): SprayCandidate[] {
+    const rows: SprayCandidate[] = [];
+    for (let i = 0; i < COUNT; i++) {
+      rows.push({
+        timestamp: new Date(BASE_MS + i * 1000).toISOString(),
+        account: "alice@example.test",
+        sourceIp: "198.51.100.9",
+        hostOrTenant: "tenant-a",
+        outcome: "failed",
+        locator: `row ${i}`,
+      });
+    }
+    rows[40_000] = { ...rows[40_000], timestamp: new Date(earliestMs).toISOString() };
+    rows[90_000] = { ...rows[90_000], timestamp: new Date(latestMs).toISOString() };
+    return rows;
+  }
+
+  const run = (ctx: ImportContext, rows: SprayCandidate[]) =>
+    crossUploadSprayRows(ctx, "c1", { idPrefix: "big", importedAt: "2026-07-01T00:00:00Z" }, rows, {
+      source: "ECAR",
+      importer: "ecar",
+      mappingVersion: "test",
+    });
+
+  it("anchors the query window on the earliest of 130,000 candidates", async () => {
+    const { ctx, queried } = stubContext();
+    const earliestMs = BASE_MS - 3_600_000;
+    const result = await run(ctx, candidates(earliestMs, BASE_MS + COUNT * 1000));
+
+    const windowHours = Math.min(sprayLowSlowHours(), RETENTION_HOURS);
+    expect(queried).toEqual([new Date(earliestMs - windowHours * 3_600_000).toISOString()]);
+    expect(result.events).toEqual([]);
+    // About 37 hours of evidence, inside the retention span.
+    expect(result.retentionNote).toBe("");
+  });
+
+  it("measures the span to the latest of 130,000 candidates for the retention disclosure", async () => {
+    const { ctx } = stubContext();
+    const latestMs = BASE_MS + (RETENTION_HOURS + 100) * 3_600_000;
+    const result = await run(ctx, candidates(BASE_MS - 3_600_000, latestMs));
+
+    expect(result.retentionNote).toContain(`${RETENTION_HOURS}h auth-observation retention window`);
   });
 });

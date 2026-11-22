@@ -307,7 +307,11 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importHayabusa(caseId, text, { ...base, hayabusa: declaredHost(base) }));
       case "velociraptor":
         return observe(
-          pipeline.importVelociraptor(caseId, text, { ...base, velociraptor: declaredHost(base) }),
+          pipeline.importVelociraptor(caseId, text, {
+            ...base,
+            velociraptor: declaredHost(base),
+            onSuperEvicted: base.superEvictions?.add, // the batched path's cap report (#2816)
+          }),
         );
       case "securityonion":
         return observe(pipeline.importSecurityOnion(caseId, text, base));

@@ -4,6 +4,7 @@ import { closeTruncatedJsonArray } from "../analysis/extractJson.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { DEFAULT_MAX_IMPORT_FILE_MB, maxImportFileBytes } from "../analysis/ingest/importFileCap.js";
 import { gunzipBufferHead, isGzipMagic } from "../analysis/cloudStreamReader.js";
+import { DROP_WHOLE_READ_SAFE_BYTES, dropWholeReadCeiling } from "../analysis/dropScan.js";
 import {
   decodeFirstLine,
   MAX_NDJSON_RECORD_BYTES,
@@ -86,49 +87,67 @@ export async function sniffImportFileHeadDetail(fh: FileHandle): Promise<{ sampl
 }
 
 /**
- * The whole file as text, or the 413 message when it is over the cap. One descriptor — the one the
+ * The whole file as text, the 413 message when it is over the cap, or `changed` when it grew during
+ * the read without passing the cap (#2830). One descriptor — the one the
  * path guard judged (#1834): the size check and the read share it, and the read stops the moment it passes the size it was
  * promised. I/O errors and "Invalid string length" propagate as before. Decoded BOM-aware, the
  * same as the head sample: a UTF-16 CSV was sniffed as csv and then parsed as UTF-8 mojibake.
+ *
+ * The read is bounded by the cap AND the safe whole-read limit (#2815): with the cap raised past
+ * what one string can hold, a 600 MB file was read whole before the decode threw.
  */
 export async function readImportFileBounded(
   fh: FileHandle,
   kind: string,
   maxBytes = maxImportFileBytes(),
-): Promise<{ text: string; tooLarge?: undefined } | { text?: undefined; tooLarge: string }> {
+  safe = DROP_WHOLE_READ_SAFE_BYTES,
+): Promise<ImportFileRead> {
   try {
-    return { text: decodeImportedText(await readHandleBounded(fh, maxBytes)) };
+    const ceiling = dropWholeReadCeiling(maxBytes, safe);
+    return { text: decodeImportedText(await readHandleBounded(fh, ceiling)) };
   } catch (err) {
-    if (err instanceof FileTooLargeError) return { tooLarge: importFileTooLarge(err.size, kind, maxBytes)! };
-    throw err;
+    if (!(err instanceof FileTooLargeError)) throw err;
+    const tooLarge = importFileTooLarge(err.size, kind, maxBytes, safe);
+    return tooLarge === null ? { changed: true } : { tooLarge };
   }
 }
+
+/**
+ * What the whole-file read came to. `changed` is a file that grew during the read and is still
+ * under the ceiling (#2830): the bounded read reports that as "too large" with the promised size
+ * plus one, which is not a size refusal — there is no size sentence for it, and the bytes in hand
+ * are not the whole file. The route answers it like any other file that changed mid-import.
+ */
+export type ImportFileRead =
+  | { text: string; tooLarge?: undefined; changed?: undefined }
+  | { text?: undefined; tooLarge: string; changed?: undefined }
+  | { text?: undefined; tooLarge?: undefined; changed: true };
 
 const MB = 1024 * 1024;
 // The cap lives beside the importers, which honour it too (#1756); re-exported for existing callers.
 export { DEFAULT_MAX_IMPORT_FILE_MB, maxImportFileBytes };
 
-/**
- * V8's longest string is ~512 MB: a file past it cannot be held whole however high the cap is set,
- * so the 413 stops suggesting the cap there (#2705).
- */
-export const STRING_CEILING_BYTES = 512 * MB;
-
 const STREAMING_KINDS =
   "Plaso super-timelines, cloud audit exports (M365, CloudTrail, GCP/Azure) and Velociraptor JSON Lines stream from disk and are exempt";
 
 /**
- * The 413 message when a file would have to be held whole and is over the cap; null when it may be
- * read. Plaso is exempt: it streams from disk line by line and never becomes one string.
+ * The 413 message when a file would have to be held whole and is over the whole-read ceiling; null
+ * when it may be read. Plaso is exempt: it streams from disk line by line and never becomes one string.
+ *
+ * The ceiling is the cap, never above the safe whole-read limit the drop folder uses (#2815): the
+ * engine's longest string is ~512 MB, so a file past `safe` cannot be held whole however high the
+ * cap is set, and the 413 stops suggesting the cap there (#2705).
  */
 export function importFileTooLarge(
   size: number,
   kind: string,
   maxBytes = maxImportFileBytes(),
+  safe = DROP_WHOLE_READ_SAFE_BYTES,
 ): string | null {
-  if (kind === "plaso" || size <= maxBytes) return null;
-  const head = `file is too large to import as ${kind} (${Math.ceil(size / MB)} MB > ${Math.round(maxBytes / MB)} MB) — `;
-  if (size > STRING_CEILING_BYTES)
+  const ceiling = dropWholeReadCeiling(maxBytes, safe);
+  if (kind === "plaso" || size <= ceiling) return null;
+  const head = `file is too large to import as ${kind} (${Math.ceil(size / MB)} MB > ${Math.round(ceiling / MB)} MB) — `;
+  if (size > safe)
     return (
       head +
       "a file this large cannot be held in memory at any setting; split the file" +

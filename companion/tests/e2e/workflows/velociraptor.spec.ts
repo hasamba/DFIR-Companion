@@ -1,5 +1,6 @@
 import { test, expect } from "../fixtures/test.js";
 import { revealSections } from "../fixtures/sections.js";
+import { enableAi } from "../fixtures/api.js";
 
 // Covers: US-097, US-098, US-099, US-100, US-101, US-102, US-103, US-104, US-160, US-214, US-362
 // (feature-user-stories.csv) — VQL execution, clients, hunt deploy, collection, monitors, triage
@@ -83,6 +84,8 @@ test("US-103: hunt suggestions are produced without a Velociraptor server", asyn
   // Unlike the rest of this family, suggest-hunts never talks to Velociraptor: it asks the MODEL
   // to propose fleet VQL from the case's findings, so it works before any server is wired up —
   // which is the point, since you suggest hunts in order to decide whether to deploy them.
+  // AI is off on a new case; the model-calling route answers 409 until it is turned on (#2757).
+  await enableAi(page.request, demoCase);
   const res = await page.request.post(`/cases/${demoCase}/velociraptor/suggest-hunts`, { data: {} });
   expect(res.status(), await res.text()).toBe(200);
   const body = (await res.json()) as { suggestions: unknown[] };

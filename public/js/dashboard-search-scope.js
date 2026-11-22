@@ -302,6 +302,9 @@
     return Array.isArray(st.forensicTimeline) && st.forensicTimeline.length === 0;
   }
 
+  // A 409 whose body is not JSON carries no sentence of its own; this stands in for it (#2826).
+  const REFUSED_UNREADABLE = "the server refused the request and gave no readable reason";
+
   function resynthesize() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
@@ -330,7 +333,9 @@
     })
       .then(async (r) => {
         if (r.status === 409) {
-          const body = await r.json().catch(() => ({}));
+          // #2826: a body can be read once. Every 409 is answered from this one read — a second
+          // r.json() below turned "AI is off for this case" into "body stream already read".
+          const body = await r.json().catch(() => ({ error: REFUSED_UNREADABLE }));
           if (body.error === "presidio_approval_required") {
             if (typeof setPresidioPending === "function")
               setPresidioPending(body.findings);
@@ -338,6 +343,12 @@
               "synthesis held — Presidio found new value(s) to review (see Anonymization)";
             return null;
           }
+          // #2828: the duplicate-host gate is a hold too — say what to do, never the raw code.
+          if (typeof hostMergeHold === "function" && hostMergeHold(r.status, body)) {
+            document.getElementById("status").textContent = hostMergeHoldText("synthesis", body);
+            return null;
+          }
+          return body;
         }
         // 499: this run was superseded by a newer one, or cancelled from the jobs list. Neither is a
         // failure, so the status line must not say "synthesis failed".

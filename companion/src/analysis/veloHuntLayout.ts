@@ -173,7 +173,7 @@ function choose(root: string, members: readonly Member[], started?: ReadonlySet<
       skip(g.pcCsv, "per-client-copy");
     } else if (g.pcCsv.length) {
       take(g.pcCsv, false);
-      skip(g.hwCsv, "hunt-wide-copy");
+      skip([...g.hwJson, ...g.hwCsv], "hunt-wide-copy");
     } else take(g.hwJson.length ? g.hwJson : g.hwCsv, true);
   }
   imports.sort((a, b) => a.path.localeCompare(b.path));

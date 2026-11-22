@@ -6,6 +6,18 @@ import type { RegisteredJob } from "../analysis/jobManager.js";
 import { hasParseProgress } from "./importKinds.js";
 import type { createImportJobTracking } from "./importJobTracking.js";
 import type { ImportBase } from "./context.js";
+import { createSuperEvictionTally, type SuperEviction } from "../analysis/superTimelineStore.js";
+
+/**
+ * What the import's record says the super-timeline cap dropped (#2816): the settle's own report plus
+ * what a batched Velociraptor run reported while it ran — rows the settle can no longer see.
+ */
+export function evictedInImport(
+  base: Pick<ImportBase, "superEvictions">,
+  settled: SuperEviction | undefined,
+): SuperEviction | undefined {
+  return base.superEvictions ? base.superEvictions.plus(settled) : settled;
+}
 
 /**
  * The ImportBase object both `/cases/:id/import` and `/cases/:id/import-file` build identically —
@@ -58,6 +70,7 @@ export function buildImportBase(o: {
     label: o.storedName,
     idPrefix: `${o.seq}`,
     debug: o.debug ?? createImportDebugRecorder(), // one per attempt (#1736)
+    superEvictions: createSuperEvictionTally(), // one per attempt (#2816)
     importedAt: o.importedAt,
     onProgress: o.tracking.onProgress,
     ...(hasParseProgress(o.kind) ? { onParseProgress: o.tracking.onParseProgress } : {}),
