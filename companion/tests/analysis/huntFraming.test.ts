@@ -67,6 +67,43 @@ describe("hunt coverage (#2670)", () => {
     expect(coverageSentence(c)).toMatch(/1 artifact collection\(s\) were partial, so absence is not proven/);
   });
 
+  describe("partial-collection count: one artifact in two of a job's lists is one collection (#2844)", () => {
+    const answered = { clientCounts: { scheduled: 1, completed: 1, errors: 0 }, reachedClients: reached(1) };
+    const held = { name: "A.two", error: "held", notImported: "held" as const };
+    const cut = (name: string) => ({ name, kept: 10, total: 11 });
+
+    it("counts a held artifact that was also cut short once", () => {
+      const c = huntCoverageFromJobs([
+        job({ ...answered, truncatedArtifacts: [cut("A.two")], skippedArtifacts: [held] }),
+      ]);
+      expect(c).toMatchObject({ known: true, partialArtifacts: 1, partialArtifactNames: ["A.two"] });
+      expect(coverageSentence(c)).toMatch(/; 1 artifact collection\(s\) were partial/);
+    });
+
+    it("counts a held artifact that was also not read in full once", () => {
+      const c = huntCoverageFromJobs([
+        job({ ...answered, unreadArtifacts: [{ name: "A.two", rows: 5 }], skippedArtifacts: [held] }),
+      ]);
+      expect(c).toMatchObject({ known: true, partialArtifacts: 1, partialArtifactNames: ["A.two"] });
+    });
+
+    it("still counts two different artifacts in one hunt as two", () => {
+      const c = huntCoverageFromJobs([
+        job({ ...answered, truncatedArtifacts: [cut("A.one")], skippedArtifacts: [held] }),
+      ]);
+      expect(c).toMatchObject({ known: true, partialArtifacts: 2, partialArtifactNames: ["A.one", "A.two"] });
+      expect(coverageSentence(c)).toMatch(/; 2 artifact collection\(s\) were partial/);
+    });
+
+    it("still counts the same artifact cut short in two hunts as two collections", () => {
+      const c = huntCoverageFromJobs([
+        job({ ...answered, huntId: "H.1", truncatedArtifacts: [cut("A.two")] }),
+        job({ ...answered, huntId: "H.2", truncatedArtifacts: [cut("A.two")] }),
+      ]);
+      expect(c).toMatchObject({ known: true, partialArtifacts: 2, partialArtifactNames: ["A.two"] });
+    });
+  });
+
   it("de-duplicates a host that answered two hunts", () => {
     const both = { clientCounts: { scheduled: 3, completed: 3, errors: 0 }, reachedClients: reached(3) };
     const c = huntCoverageFromJobs([job({ ...both, huntId: "H.1" }), job({ ...both, huntId: "H.2" })]);

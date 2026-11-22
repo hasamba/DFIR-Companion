@@ -92,6 +92,7 @@ export type HuntArtifactState =
   | "empty"
   | "truncated"
   | "failed"
+  | "not-imported" // read, but this hunt did not import it (#2838): held, skipped, or the collect stopped
   | "archive-only"
   | "super-capped" // super-only: the shared super-timeline cap cut it (#1982) — NOT all in the archive
   | "running"
@@ -216,10 +217,14 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
       ...(j as VeloHuntJob),
       artifacts: strings(j.artifacts),
       emptyArtifacts: strings(j.emptyArtifacts),
-      skippedArtifacts: named(j.skippedArtifacts).map((x) => ({
-        name: x.name,
-        error: String((x as { error?: unknown }).error ?? ""),
-      })),
+      skippedArtifacts: named(j.skippedArtifacts).map((x) => {
+        const mark = (x as { notImported?: unknown }).notImported; // #2838: only the two known values
+        return {
+          name: x.name,
+          error: String((x as { error?: unknown }).error ?? ""),
+          ...(mark === "held" || mark === "stopped" ? { notImported: mark } : {}),
+        };
+      }),
       truncatedArtifacts: named(j.truncatedArtifacts).map((x) => {
         const t = x as {
           name: string;
@@ -396,7 +401,10 @@ function mergeLines(a: HuntArtifactLine, b: HuntArtifactLine, hunts: number): Hu
 
 /** An empty artifact's line: bounded silence, or silence on the hosts the hunt finished on (#1625). */
 function emptyLine(job: VeloHuntJob, artifact: string, aliasIndex?: HostAliasIndex) {
-  const bound = silenceBound(job, artifact);
+  // #2838: an empty result from a collect that failed never settles. Its lists can be an earlier
+  // collect's (a later one that failed early keeps them) beside this collect's host list.
+  const stopped = job.status === "error" ? STOPPED_PARTWAY : "";
+  const bound = [silenceBound(job, artifact), stopped].filter(Boolean).join("; ");
   const bounded = (why: string) => ({
     detail: `returned no rows — ${why}; silence outside those bounds is not absence`,
     bounded: true,
@@ -459,7 +467,29 @@ function superCappedDetail(c: SuperCappedArtifact): string {
   return `${c.kept} of ${c.total} mapped events${rows} in the super-timeline — the shared cap was used up; the rest is NOT in the archive. Raise DFIR_SUPERTIMELINE_MAX and collect again`;
 }
 
-/** Hunt metadata is supplemental: only imported jobs say anything, and only per artifact. */
+const STOPPED_PARTWAY = "the collect stopped part-way";
+
+/**
+ * The line for an artifact this hunt read but did not import (#2838). Fixed text: the stored reason
+ * holds a file path and machine names, and must not reach the prompt. It speaks for this hunt's read
+ * only — another hunt may have imported the same artifact.
+ */
+const NOT_IMPORTED_DETAIL = {
+  held: "read but NOT imported by this hunt (held over a size limit, or skipped by the analyst) — not evidence of absence",
+  stopped: `read but NOT imported by this hunt (${STOPPED_PARTWAY}) — not evidence of absence`,
+} as const;
+
+/**
+ * A failed collect kept rows only when it stopped at a LATER artifact (#2817): a "stopped" record is
+ * written after the first import. A held record is saved before any import starts, so it proves nothing.
+ */
+const keptSomething = (job: VeloHuntJob): boolean =>
+  job.status === "error" && (job.skippedArtifacts ?? []).some((s) => s.notImported === "stopped");
+
+/**
+ * Hunt metadata is supplemental: only imported jobs, and a collect that failed after it kept
+ * something, say anything — and only per artifact.
+ */
 function huntLines(
   jobs: readonly VeloHuntJob[],
   inTimeline: ReadonlySet<string>,
@@ -487,9 +517,10 @@ function huntLines(
       for (const a of job.artifacts) put(a, "running", "still running");
       continue;
     }
-    if (job.status !== "imported") continue;
+    if (job.status !== "imported" && !keptSomething(job)) continue;
     const empty = new Set(job.emptyArtifacts ?? []);
-    const failed = new Set((job.skippedArtifacts ?? []).map((s) => s.name));
+    // Every skipped artifact, marked or not: none of them gets an empty, cut-short or archive line.
+    const failed = new Map((job.skippedArtifacts ?? []).map((s) => [s.name, s.notImported]));
     const truncated = new Map((job.truncatedArtifacts ?? []).map((t) => [t.name, t]));
     const unread = new Map((job.unreadArtifacts ?? []).map((u) => [u.name, u.rows]));
     const capped = new Map((job.superCappedArtifacts ?? []).map((c) => [c.name, c]));
@@ -497,7 +528,9 @@ function huntLines(
       const t = truncated.get(a);
       const u = unread.get(a);
       if (u !== undefined && !failed.has(a)) put(a, "unread", unreadDetail(u));
-      if (failed.has(a)) put(a, "failed", "fetch failed");
+      const mark = failed.get(a);
+      if (mark) put(a, "not-imported", NOT_IMPORTED_DETAIL[mark]);
+      else if (failed.has(a)) put(a, "failed", "fetch failed");
       else if (u === 0)
         continue; // nothing was read: no empty, truncated or archive line
       else if (empty.has(a)) {
@@ -655,6 +688,10 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
               j.superCappedArtifacts.map((c) => `${c.name}:${c.kept}/${c.total}:${c.rows}:${c.cap}`).sort(),
             ),
           ]
+        : []),
+      // Appended only when present (#2838): a job with no read-but-not-imported artifact keeps its signature.
+      ...((j.skippedArtifacts ?? []).some((s) => s.notImported)
+        ? [(j.skippedArtifacts ?? []).map((s) => `${s.name}:${s.notImported ?? ""}`).sort()]
         : []),
     ]);
   return hunts.map(one).sort().join("\n");

@@ -576,7 +576,7 @@ export interface VeloCoverageApi {
   veloCoverageHtml(job: {
     status?: string;
     artifacts?: string[];
-    skippedArtifacts?: { name: string; error: string }[];
+    skippedArtifacts?: { name: string; error: string; notImported?: string }[];
     emptyArtifacts?: string[];
     truncatedArtifacts?: {
       name: string;
@@ -590,6 +590,7 @@ export interface VeloCoverageApi {
     }[];
     unreadArtifacts?: { name: string; rows: number }[];
     timeScope?: { start: string; end?: string };
+    earlierCoverage?: boolean;
   }): string;
   veloUnreadHtml(unread: { name: string; rows: number }[] | undefined, again: string): string;
   veloReadGapsHtml(

@@ -3,6 +3,8 @@ import { clientGone, requestAbortSignal } from "../http/requestAbort.js";
 import { abortError, isAbortError } from "../analysis/abortable.js";
 import { CaseKeyedSet } from "../storage/caseKeyedState.js";
 import { logActivity } from "../analysis/activityLog.js";
+import { HostMergeDecisionRequired } from "../analysis/hostDuplicateGate.js";
+import { PresidioApprovalRequired } from "../analysis/presidio.js";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { caseOpenStateOf } from "./caseOpenState.js";
@@ -145,8 +147,8 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
       // The re-synthesis inherits the host-merge gate, so a held case reaches here as a decision
       // gate rather than a failure. Report the hold, the way the deep-pass route does.
       if (isAnalystDecisionGate(error)) {
-        if (job) await options.jobManager?.hold(job.jobId, String((error as Error).message));
-        return sendPipelineError(res, error);
+        if (job) await options.jobManager?.hold(job.jobId, heldReason(error, promoted));
+        return sendHeld(res, error, promoted);
       }
       if (isAbortError(error) || job?.signal?.aborted) {
         // finish() is a no-op on the cancelled row; it reports the work's end (#1831).
@@ -181,6 +183,38 @@ async function guardPromotion<T>(
   } finally {
     manager.setCancellable(job.jobId, true);
   }
+}
+
+/**
+ * The hold answer, with the rows the sweep already promoted (#2833). Both gates fire inside the
+ * re-synthesis, which runs AFTER the promotion, so "on hold" alone would hide a change to the
+ * evidence record — the cancel (499) and failure (500) answers already carry this count. `error`
+ * and `pairs`/`findings` are exactly sendPipelineError's, which the dashboard's hold checks match
+ * on; that helper is shared by routes that promote nothing, so the count is added here instead.
+ */
+function sendHeld(res: Response, error: unknown, promoted: number): Response {
+  if (error instanceof PresidioApprovalRequired) {
+    return res.status(409).json({ error: "presidio_approval_required", findings: error.findings, promoted });
+  }
+  if (error instanceof HostMergeDecisionRequired) {
+    return res.status(409).json({ error: "host_merge_decision_required", pairs: error.pairs, promoted });
+  }
+  return sendPipelineError(res, error);
+}
+
+/**
+ * The held job's reason (#2839). The job row is the one report of this ending that outlives a page
+ * reload, so it states the same two facts as the card: rows were promoted, the conclusions are stale.
+ * "; " joins the clause because the row already reads "on hold — …". Nothing promoted → the gate's
+ * own message, unchanged.
+ */
+function heldReason(error: unknown, promoted: number): string {
+  const gate = String((error as Error).message);
+  if (promoted === 0) return gate;
+  return (
+    `${gate}; ${promoted} raw event(s) were already promoted and the conclusions are marked out of ` +
+    "date, so re-synthesise after you decide"
+  );
 }
 
 function cancelledMessage(promoted: number): string {

@@ -315,12 +315,12 @@ export interface HuntUpload {
   content: string; // the file's text content (read server-side)
 }
 
-// An artifact whose hunt_results fetch FAILED (oversized output, timeout, VQL error) — distinct from
-// an artifact that fetched cleanly but returned zero rows (that one is just absent from `results`,
-// not an error). Carries the reason so the analyst can tell "nothing fired" from "we couldn't read it".
+// An artifact a collect did not import (one that fetched cleanly with zero rows is just absent from
+// `results`). No mark: its fetch FAILED (oversized output, timeout, VQL error) — the reason says why.
 export interface SkippedArtifact {
   name: string;
   error: string;
+  notImported?: "held" | "stopped"; // downloaded, not imported (#2835): held over a size limit / the collect stopped
 }
 
 // The upload-reading VQLs (and the AI Agent Forensics manifest-only one) live in uploadVql.ts.

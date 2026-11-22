@@ -25,8 +25,14 @@ import { noteImportSectionStart } from "./importAttempt.js";
  * code that imports through the pipeline directly (dispatchImport, importVelociraptor), never around
  * something that already holds it.
  */
+/** The key of a hold over every case's imports (start-up, while it lists the cases to recover). */
+export const ALL_CASES = Symbol("all cases");
+
 export class ImportLock {
   private readonly lock = new StateLock();
+  /** Start-up holds (#2851 review): an import into a held case waits here, before the section. */
+  private readonly holds = new Map<string | typeof ALL_CASES, Promise<void>>();
+  private readonly parked = new Map<string, number>(); // imports waiting on a hold, per case
 
   /**
    * `admission` runs once the section is granted, before the import does anything (#1874 — the
@@ -47,6 +53,27 @@ export class ImportLock {
 
   /** Run `fn` with the case's import section held. Prefer this — the release cannot be forgotten. */
   runExclusive<T>(caseId: string, fn: () => Promise<T>, hint?: ImportAdmissionHint): Promise<T> {
+    if (!this.isHeld(caseId)) return this.runPastHolds(caseId, fn, hint); // no extra tick when unheld
+    return this.waitHolds(caseId).then(() => this.runPastHolds(caseId, fn, hint));
+  }
+
+  /**
+   * Hold every import into `caseId` (or into every case, ALL_CASES) until `until` settles, success
+   * or failure. The start-up recovery of an interrupted hunt import (composition/veloHuntRecovery.ts)
+   * must settle the case's stranded rows before another import's case-wide demote moves them out
+   * untagged. The holder bounds `until` with a timeout. A held import waits BEFORE it queues for the
+   * section; `runPastHolds` is the holder's own way in. Holds on one key chain.
+   */
+  hold(caseId: string | typeof ALL_CASES, until: Promise<unknown>): void {
+    const done = Promise.all([this.holds.get(caseId), until.then(noop, noop)]);
+    const held: Promise<void> = done.then(() => {
+      if (this.holds.get(caseId) === held) this.holds.delete(caseId); // before any waiter re-checks
+    });
+    this.holds.set(caseId, held);
+  }
+
+  /** runExclusive past the start-up holds — ONLY for the work a hold is waiting on. */
+  runPastHolds<T>(caseId: string, fn: () => Promise<T>, hint?: ImportAdmissionHint): Promise<T> {
     return this.lock.runExclusive(caseId, async () => {
       const releaseAdmission = await this.admit(caseId, hint);
       try {
@@ -64,6 +91,7 @@ export class ImportLock {
    * release from a `finally`. FORGETTING IT WEDGES EVERY LATER IMPORT FOR THE CASE.
    */
   async acquire(caseId: string, hint?: ImportAdmissionHint): Promise<() => void> {
+    if (this.isHeld(caseId)) await this.waitHolds(caseId);
     const releaseSection = await new Promise<() => void>((granted) => {
       // The queued task resolves only when the holder releases, so the chain's tail IS the hold.
       // `granted` fires the moment the task starts, which is the moment the lock is ours.
@@ -103,7 +131,27 @@ export class ImportLock {
 
   /** True while an import section for the case is held or queued (#1903 — archive refuses then). */
   isBusy(caseId: string): boolean {
-    return this.lock.isBusy(caseId);
+    return this.lock.isBusy(caseId) || this.parked.has(caseId);
+  }
+
+  private isHeld(caseId: string): boolean {
+    return this.holds.has(ALL_CASES) || this.holds.has(caseId);
+  }
+
+  // A hold set while another is up (a case's, during the all-case one) is waited for as well.
+  // A parked import counts as queued for `isBusy` (archive refuses while one waits).
+  private async waitHolds(caseId: string): Promise<void> {
+    this.parked.set(caseId, (this.parked.get(caseId) ?? 0) + 1);
+    try {
+      for (let h = this.holds.get(ALL_CASES) ?? this.holds.get(caseId); h;) {
+        await h;
+        h = this.holds.get(ALL_CASES) ?? this.holds.get(caseId);
+      }
+    } finally {
+      const left = (this.parked.get(caseId) ?? 1) - 1;
+      if (left > 0) this.parked.set(caseId, left);
+      else this.parked.delete(caseId);
+    }
   }
 
   // The section's own admission: marked so the running import can re-check it as it grows (#2812).
@@ -113,3 +161,5 @@ export class ImportLock {
       : Promise.resolve(() => {});
   }
 }
+
+const noop = (): void => {};

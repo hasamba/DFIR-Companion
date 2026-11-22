@@ -2,9 +2,11 @@
 // dashboard-velo-triage.js rather than grown inside it).
 //
 // Without this line, "+3 events" next to a 40-artifact bundle reads as "only one artifact worked",
-// with no way to tell why the rest are missing. Three outcomes must stay distinguishable:
+// with no way to tell why the rest are missing. These outcomes must stay distinguishable:
 //
 //   failed     — the fetch errored (oversized/timeout). Loud already.
+//   READ, NOT IMPORTED — downloaded, then held over a size limit, or left out when the collect
+//                stopped (#2835). The record carries a mark; one without it is a failed fetch.
 //   empty      — fetched cleanly, nothing to report. Not a problem.
 //   CUT SHORT  — returned rows AND hit the row cap, so an unknown number of findings were never read.
 //   NOT READ   — the artifact's source list could not be looked up, so rows it keeps under named
@@ -52,26 +54,65 @@ function veloCutLine(t) {
   return `${esc(t.name)} (${kept}${span}, rows outside it were not read)`;
 }
 
+// A collect that failed before it recorded its own results leaves an EARLIER collect's lists on the
+// job, and the server marks them (#2842). They are still true of the case, so the block stays, under
+// one line that says whose results it shows. Fixed text; it never prints without a block under it.
 /* exported veloCoverageHtml */
 function veloCoverageHtml(job) {
-  const cut = job.truncatedArtifacts || [];
-  const failed = job.skippedArtifacts || [];
+  const block = veloCoverageBlock(job);
+  if (!block || job.earlierCoverage !== true) return block;
+  return (
+    `<div data-safe-style="font-size:12px;color:var(--text-muted);margin-top:2px">FROM AN EARLIER ` +
+    `COLLECT &mdash; the last collect failed before it recorded its own results.</div>${block}`
+  );
+}
+
+function veloCoverageBlock(job) {
+  const cutAll = Array.isArray(job.truncatedArtifacts) ? job.truncatedArtifacts : [];
+  const skipped = Array.isArray(job.skippedArtifacts) ? job.skippedArtifacts : [];
+  const failed = skipped.filter((s) => !s.notImported); // the fetch errored
+  const unimported = skipped.filter((s) => s.notImported); // downloaded, not imported (#2835)
   const empty = job.emptyArtifacts || [];
   const unread = job.unreadArtifacts || [];
   const capped = Array.isArray(job.superCappedArtifacts) ? job.superCappedArtifacts : [];
   const total = (job.artifacts || []).length;
-  if (job.status !== "imported" || (total <= 1 && !cut.length && !unread.length && !capped.length)) return "";
+  // "Cut short" is recorded when an artifact is READ, before it is held or the collect stops, so a
+  // not-imported artifact can be in both lists. Its rows are not in the case: it is listed once,
+  // under READ, NOT IMPORTED, and that line says the read was partial (#2841). Exact name match.
+  const unimportedNames = new Set(unimported.map((s) => s.name));
+  const cutNames = new Set(cutAll.map((t) => t.name));
+  const cut = cutAll.filter((t) => !unimportedNames.has(t.name));
+  const alsoPartial = (s) =>
+    cutNames.has(s.name) ? " (this read was also incomplete: not every row was read)" : "";
 
   const box = (body, color) =>
     `<div data-safe-style="font-size:12px;color:${color};margin-top:2px">${body}</div>`;
   const tint = (text, color) => `<span data-safe-style="color:${color}">${text}</span>`;
+  const reasons = (list) => list.map((s) => `${esc(s.name)}: ${esc(s.error)}`).join("<br>");
+  const unimportedBox = unimported.length
+    ? box(
+        `&#9888; READ, NOT IMPORTED &mdash; ` +
+          unimported.map((s) => `${esc(s.name)}: ${esc(s.error)}${alsoPartial(s)}`).join("<br>"),
+        "#ff9f43",
+      )
+    : "";
+
+  // A failed collect kept something only when it STOPPED at a later artifact (#2817): the records it
+  // wrote for that come after its first import. A held record is saved before any import starts, so
+  // on a failed collect it proves nothing was imported — it is named, and nothing else is claimed.
+  // (Records an earlier collect left behind pass the same test; the caller labels them, #2842.)
+  if (job.status === "error" && !unimported.some((s) => s.notImported === "stopped")) return unimportedBox;
+  if (job.status !== "imported" && job.status !== "error") return "";
+  if (total <= 1 && !cut.length && !unread.length && !capped.length && !unimported.length) return "";
 
   const unreadEmpty = unread.filter((u) => !u.rows).length;
-  const bits = [`${total - failed.length - empty.length - unreadEmpty}/${total} artifact(s) returned results`];
+  const returned = total - failed.length - unimported.length - empty.length - unreadEmpty;
+  const bits = [`${returned}/${total} artifact(s) returned results`];
   if (cut.length) bits.push(tint(`${cut.length} cut short at the row cap`, "var(--sev-high)"));
   if (empty.length) bits.push(`${empty.length} had no findings`);
   if (unread.length) bits.push(tint(`${unread.length} not read in full`, "#ff9f43"));
   if (failed.length) bits.push(tint(`${failed.length} failed to collect`, "#ff9f43"));
+  if (unimported.length) bits.push(tint(`${unimported.length} read but not imported`, "#ff9f43"));
 
   let html = box(bits.join(" &middot; "), "var(--text-muted)");
   if (cut.length) {
@@ -96,13 +137,8 @@ function veloCoverageHtml(job) {
     );
   }
   html += veloUnreadHtml(unread, "Collect again.");
-  if (failed.length) {
-    html += box(
-      failed.map((s) => `${esc(s.name)}: ${esc(s.error)}`).join("<br>"),
-      "#ff9f43",
-    );
-  }
-  return html;
+  if (failed.length) html += box(reasons(failed), "#ff9f43");
+  return html + unimportedBox;
 }
 
 // The NOT READ warning (#1635), shared by a collect's hunt card and the two live reads that are not a

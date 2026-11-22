@@ -20,6 +20,7 @@ import {
   type ImportBaseline,
 } from "../analysis/importBaseline.js";
 import type { ImportLock } from "../analysis/importLock.js";
+import { createSuperEvictionTally } from "../analysis/superTimelineStore.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { CaseStore } from "../storage/caseStore.js";
@@ -107,6 +108,7 @@ export function createDiskIngest(deps: DiskIngestDeps): IngestDiskFile {
       idPrefix: `${seq}`,
       importedAt,
       debug,
+      superEvictions: createSuperEvictionTally(), // a batched Velociraptor file's cap report (#2831)
       onProgress: (done, total) => status(`${kind} import — ${done}/${total}`),
       ...(assetHost ? { assetHost } : {}),
     };
@@ -125,6 +127,7 @@ export function createDiskIngest(deps: DiskIngestDeps): IngestDiskFile {
           storedName,
           baseline,
           streamMeta,
+          superEvictions: base.superEvictions,
         });
       } finally {
         if (options.stateStore) await releaseImportBaseline(options.stateStore, baseline);

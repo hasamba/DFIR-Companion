@@ -99,11 +99,14 @@ export interface VeloHuntJob {
   addedIocs?: number;
   // Per-artifact collection accounting from the last collect, so "N artifacts, +X events" doesn't read
   // as "only one artifact collected" when the rest simply had nothing to report vs. actually failed.
-  skippedArtifacts?: SkippedArtifact[]; // fetch FAILED (oversized/timeout/error) — see the reason
+  skippedArtifacts?: SkippedArtifact[]; // not imported: fetch FAILED, or marked downloaded-only (#2835)
   emptyArtifacts?: string[]; // fetched cleanly, zero rows — nothing to report, not an error
   truncatedArtifacts?: TruncatedArtifact[]; // fetched PARTIALLY — the read hit the row cap, findings missing
   unreadArtifacts?: UnreadArtifact[]; // named sources NOT read — the source list lookup failed (#1635)
   superCappedArtifacts?: SuperCappedArtifact[]; // super-only: the shared super-timeline cap cut these (#1982)
+  // The five lists above are an EARLIER collect's: the last collect failed before it wrote its own
+  // (#2842, see failedCollect). Cleared by the next collect that gets as far as its own lists.
+  earlierCoverage?: true;
   // "external" (#2690): the run's collected files stay in Velociraptor. Every collect, retry and
   // re-import of this hunt skips the upload-content read entirely; only a manifest is kept.
   uploadPolicy?: "external";

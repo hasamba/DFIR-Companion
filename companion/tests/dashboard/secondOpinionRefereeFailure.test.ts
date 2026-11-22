@@ -55,7 +55,7 @@ function makeEl(id: string): FakeEl {
   return el;
 }
 
-function harness() {
+function harness(extraPreload: string[] = []) {
   const pending: Deferred[] = [];
   const els = new Map<string, FakeEl>();
   const el = (id: string): FakeEl => {
@@ -85,7 +85,7 @@ function harness() {
   };
   const api = loadDashboardModule<Api>(
     "dashboard-second-opinion.js",
-    ["dashboard-escape.js", "dashboard-time.js"],
+    ["dashboard-escape.js", "dashboard-time.js", ...extraPreload],
     globals,
   );
   el("caseId").value = "case-1";
@@ -240,6 +240,31 @@ describe("2nd opinion — re-running the referee (#1587)", () => {
     await settle();
     expect(held).toEqual([["x"]]);
     expect(h.el("status").textContent).toContain("Presidio");
+    expect(h.panel().innerHTML).toContain("so-referee-error");
+  });
+
+  // #2832: the referee route answers an analyst-decision gate with the gate's code. The button
+  // says the hold in the status pill's words; the code and the case's host names stay off screen.
+  it("says a duplicate-host hold as a hold, never the raw code or a host name", async () => {
+    const h = harness(["dashboard-host-duplicates.js"]);
+    h.api.renderSecondOpinion(FAILED_REC());
+    h.press({ soRefereeRerun: "" });
+    h.pending.shift()!.resolve(
+      {
+        error: "host_merge_decision_required",
+        pairs: [{ canonical: "WS-SAMPLE-01", other: '<img src=x onerror="alert(1)">' }],
+      },
+      { status: 409 },
+    );
+    await settle();
+    const status = h.el("status").textContent;
+    expect(status).toBe(
+      "Referee re-run on hold — 1 possible duplicate host awaiting a merge decision. Decide each pair in the Duplicate Hosts panel.",
+    );
+    expect(status).not.toContain("host_merge_decision_required");
+    expect(status).not.toMatch(/failed|WS-SAMPLE-01|onerror/);
+    // The Duplicate Hosts panel is re-read for the case on screen.
+    expect(h.pending.map((p) => p.url)).toContain("/cases/case-1/host-duplicates");
     expect(h.panel().innerHTML).toContain("so-referee-error");
   });
 

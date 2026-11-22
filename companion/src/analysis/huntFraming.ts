@@ -48,10 +48,9 @@ const COLLECTED = new Set(["imported", "collecting"]);
 
 const hasCoverage = (j: VeloHuntJob): boolean => Array.isArray(j.reachedClients) && !!j.clientCounts;
 
+// Distinct names: one artifact can sit in two of a job's lists (held AND cut short) — one collection (#2844).
 function partialCount(j: VeloHuntJob): number {
-  return (
-    (j.truncatedArtifacts?.length ?? 0) + (j.unreadArtifacts?.length ?? 0) + (j.skippedArtifacts?.length ?? 0)
-  );
+  return partialNames([j]).length;
 }
 
 function partialNames(jobs: readonly VeloHuntJob[]): string[] {

@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, symlink, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -16,6 +17,26 @@ import { dropMaxBytesFromEnv } from "../../src/analysis/dropScan.js";
 //
 // The cap therefore lives in runDropToolAndIngest itself, for the HTTP transport only — a spawn
 // tool really is size-independent — so both callers are covered and neither has to know.
+
+// #2834. While `growth.on`, the real bounded read is handed a handle whose stat is one byte short of
+// what its read yields — a file appended to between the two. Off, the module is untouched.
+const growth = vi.hoisted(() => ({ on: false }));
+vi.mock("../../src/storage/boundedRead.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../src/storage/boundedRead.js")>();
+  return {
+    ...real,
+    readHandleBounded: (handle: FileHandle, maxBytes: number) =>
+      real.readHandleBounded(growth.on ? statOneByteShort(handle) : handle, maxBytes),
+  };
+});
+
+function statOneByteShort(handle: FileHandle): FileHandle {
+  return {
+    stat: async () => ({ size: (await handle.stat()).size - 1 }),
+    read: (buf: Buffer, offset: number, length: number, position: number) =>
+      handle.read(buf, offset, length, position),
+  } as unknown as FileHandle;
+}
 
 const refuse = (): never => {
   throw new Error("not expected on this path");
@@ -43,6 +64,7 @@ beforeEach(() => {
   process.env.DFIR_DROP_MAX_BYTES = "1024";
 });
 afterEach(() => {
+  growth.on = false;
   if (saved === undefined) delete process.env.DFIR_DROP_MAX_BYTES;
   else process.env.DFIR_DROP_MAX_BYTES = saved;
 });
@@ -70,6 +92,36 @@ describe("runDropToolAndIngest — HTTP transport honours the drop size cap (#92
     await expect(
       tools.runDropToolAndIngest("c1", "socrates", small, { name: "small.pcap" }),
     ).rejects.not.toThrow(/DFIR_DROP_MAX_BYTES/);
+  });
+});
+
+describe("runDropToolAndIngest — a file that grows during the upload read (#2834)", () => {
+  it("says the file changed, with no size refusal and no advice to raise the cap", async () => {
+    const { root, tools } = await harness();
+    const growing = join(root, "growing.pcap");
+    await writeFile(growing, Buffer.alloc(512, 0xab)); // half the 1024-byte cap
+    growth.on = true;
+
+    const err = await tools
+      .runDropToolAndIngest("c1", "socrates", growing, { name: "growing.pcap" })
+      .catch((e: unknown) => e);
+
+    const message = err instanceof Error ? err.message : "";
+    expect(message).toBe(
+      '"growing.pcap" changed while it was being read — not uploaded to socrates; drop it again when it is complete',
+    );
+    expect(message).not.toMatch(/too large|DFIR_DROP_MAX_BYTES| MB/);
+  });
+
+  it("keeps the size refusal when the growth takes the file over the cap", async () => {
+    const { root, tools } = await harness();
+    const atCap = join(root, "at-cap.pcap");
+    await writeFile(atCap, Buffer.alloc(1025, 0xab)); // the read is promised 1024 and finds 1025
+    growth.on = true;
+
+    await expect(
+      tools.runDropToolAndIngest("c1", "socrates", atCap, { name: "at-cap.pcap" }),
+    ).rejects.toThrow(/too large.*DFIR_DROP_MAX_BYTES/);
   });
 });
 

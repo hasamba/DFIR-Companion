@@ -454,6 +454,12 @@
       refereeStatus("referee held — Presidio found new value(s) to review (see Anonymization)");
       return;
     }
+    // #2832: defensive — the route hands an analyst-decision gate to sendPipelineError
+    // (secondOpinionRoutes.ts), so a duplicate-host hold must read as a hold, never as its code.
+    if (typeof hostMergeHold === "function" && hostMergeHold(r.status, body)) {
+      refereeStatus(hostMergeHoldText("Referee re-run", body));
+      return;
+    }
     if (body && body.record) renderSecondOpinion(body.record);
     refereeStatus("referee failed: " + ((body && body.error) || `HTTP ${r.status}`));
   }

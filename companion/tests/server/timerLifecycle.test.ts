@@ -21,6 +21,8 @@
  * not change.
  *
  * FAKE TIMERS, NARROWLY. Only setTimeout/clearTimeout are faked (the pollers use nothing else).
+ * One non-poll timer shares that queue: the start-up hunt recovery's import-hold timeout (#2851),
+ * which `pollTimers()` leaves out of every "is a poll armed?" wait — see `startupHoldTimers`.
  * Date, setInterval and setImmediate stay real, so cursor arithmetic is honest and `settle()` can
  * still yield to the real event loop for the store's file I/O — which has no timer to advance.
  *
@@ -49,6 +51,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { VeloMonitorStore, type VeloMonitor } from "../../src/analysis/veloMonitorStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
+import { RECOVERY_HOLD_TIMEOUT_MS } from "../../src/composition/veloHuntRecovery.js";
 import { DropStatusStore } from "../../src/analysis/dropStatus.js";
 import { pollBudget } from "../helpers/poll.js";
 import {
@@ -154,23 +157,68 @@ async function tickUntil(ms: number, ready: () => boolean, what: string): Promis
 }
 
 async function tickAndRearm(ms: number, pollers = 1): Promise<void> {
-  await tickUntil(ms, () => vi.getTimerCount() >= pollers, `all ${pollers} poller(s) to re-arm`);
+  await tickUntil(ms, () => pollTimers() >= pollers, `all ${pollers} poller(s) to re-arm`);
 }
 
 /**
- * Yield real turns, consuming NO fake time, until at least `pollers` timers are pending.
+ * The start-up hunt recovery's import-hold timeouts that are still pending (#2851).
+ *
+ * WHY THESE ARE TRACKED. createApp's hunt resume arms a RECOVERY_HOLD_TIMEOUT_MS setTimeout before
+ * its first await — the bound on how long imports wait for the recovery sweep — and clears it when
+ * the sweep finishes, which is BEFORE it arms any status poll. Counted as a poll, that timer let
+ * `untilArmed(1)` return while the real poll was not armed yet; the 30s tick then advanced a clock
+ * the poll was not on, and the poll armed afterwards and never fired. It is not a poll and never
+ * fires in these tests, so the "is a poll armed?" waits leave it out. Matched by its exported delay,
+ * not a private handle, and dropped on clear or fire.
+ */
+const startupHoldTimers = new Set<unknown>();
+
+/** Pending timers that belong to the pollers: everything but a start-up hold's timeout. */
+const pollTimers = (): number => vi.getTimerCount() - startupHoldTimers.size;
+
+/** Wrap the FAKE setTimeout/clearTimeout so `startupHoldTimers` follows the hold's timeouts. */
+function trackStartupHoldTimers(): void {
+  startupHoldTimers.clear();
+  const fakeSet = globalThis.setTimeout;
+  const fakeClear = globalThis.clearTimeout;
+  const tracked = ((cb: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+    if (ms !== RECOVERY_HOLD_TIMEOUT_MS) return fakeSet(cb, ms, ...args);
+    const handle: unknown = fakeSet(
+      (...a: unknown[]) => {
+        startupHoldTimers.delete(handle);
+        cb(...a);
+      },
+      ms,
+      ...args,
+    );
+    startupHoldTimers.add(handle);
+    return handle;
+  }) as typeof setTimeout;
+  globalThis.setTimeout = tracked;
+  globalThis.clearTimeout = (handle?: Parameters<typeof clearTimeout>[0]) => {
+    startupHoldTimers.delete(handle);
+    fakeClear(handle);
+  };
+}
+
+/**
+ * Yield real turns, consuming NO fake time, until at least `pollers` poll timers are pending.
  *
  * USE THIS AFTER createApp WHEN THE FIRST ARM COMES FROM A RESUME. createApp resumes persisted
  * monitors and hunts asynchronously: it reads them from disk, and only then arms a timer each. A
  * bare `settle()` is a fixed budget, and on a busy CI runner the read outlasts it (#2289). The
  * first `tickAndRearm()` then advances a clock with nothing on it, the late timers satisfy its
  * "re-armed" wait, and the test sees zero polls: `expected +0 to be 1`.
+ *
+ * Counts `pollTimers()`, not every pending timer: the hunt resume's start-up hold timeout is
+ * pending from the moment createApp returns and would otherwise satisfy the wait before any poll
+ * is armed (#2851).
  */
 async function untilArmed(pollers: number, what: string): Promise<void> {
   const deadline = Date.now() + REARM_TIMEOUT_MS;
   for (;;) {
     await settle(2);
-    if (vi.getTimerCount() >= pollers) return;
+    if (pollTimers() >= pollers) return;
     if (Date.now() >= deadline) {
       throw new Error(`timed out after ${REARM_TIMEOUT_MS}ms waiting for: ${what} to arm on resume`);
     }
@@ -254,6 +302,7 @@ beforeEach(() => {
   // Only what the pollers use. Faking Date would break the monitor cursor arithmetic (epoch
   // seconds) and faking setInterval would freeze the unrelated flush/health sweeps for no gain.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  trackStartupHoldTimers();
 });
 
 /**

@@ -260,6 +260,34 @@ describe("a file that grows during the whole read, under the ceiling (#2830)", (
   });
 });
 
+// #2834. The macOS login item route reads through the same bounded read and reported the same
+// growth as 413 "file is too large to import (N bytes)", with N under the cap.
+describe("a macOS login item file that grows during the read (#2834)", () => {
+  it("answers 409 with the changed-while-importing sentence, not a size refusal", async () => {
+    const { app, store, root } = await makeApp();
+    const path = join(root, "backgrounditems.btm");
+    await writeFile(path, Buffer.alloc(2048, 0x41));
+    growth.on = true;
+
+    const res = await request(app).post("/cases/c1/import-mac-login-item").send({ path });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(res.body.error).toBe(CHANGED_WHILE_IMPORTING);
+    expect(await readdir(store.importsDir("c1")).catch(() => [])).toEqual([]);
+  });
+
+  it("still answers 413 for a file that is over the cap by its own size", async () => {
+    const { app, root } = await makeApp();
+    const path = join(root, "backgrounditems.btm");
+    await writeFile(path, Buffer.alloc(1024 * 1024 + 1, 0x41));
+
+    const res = await request(app).post("/cases/c1/import-mac-login-item").send({ path });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(413);
+    expect(res.body.error).toBe(`file is too large to import (${1024 * 1024 + 1} bytes)`);
+  });
+});
+
 describe("maxImportFileBytes", () => {
   it("defaults to 256 MB — the same ceiling as DFIR_MAX_BODY_MB, so an operator sees one number", () => {
     expect(maxImportFileBytes({})).toBe(256 * 1024 * 1024);

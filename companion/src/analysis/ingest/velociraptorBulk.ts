@@ -23,7 +23,7 @@ import {
 } from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
 import { abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
-import { bulkEvictionForRecord } from "./bulkEvictionReport.js";
+import { reportBulkEviction } from "./bulkEvictionReport.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { SectionMemoryCheck } from "../importMemoryGuard.js";
 
@@ -175,6 +175,7 @@ export interface BulkImportOpts {
   onProgress?: (done: number, total: number) => void;
   /** Forensic entry only (#2816): what the cap dropped in the whole run, once, after it committed. */
   onSuperEvicted?: (evicted: SuperEviction) => void;
+  onRunEvicted?: (raw: SuperEviction, run: BulkRunHandle) => void; // a collect counts for itself (#2831)
   /** Super-only mode: this artifact's share of the hunt's DFIR_SUPERTIMELINE_MAX (#1982). */
   superMaxEvents?: number;
   /** #2425: the import job's Cancel, checked before each batch and the final merge (→ rollback). */
@@ -784,8 +785,7 @@ export async function importVelociraptorBulk(
       );
     }
     // The caller gets the state only, and its settle cannot see rows already gone: report them here.
-    const evicted = await bulkEvictionForRecord(sink, caseId, opts.label, result, atCommit);
-    if (evicted.count) opts.onSuperEvicted?.(evicted);
+    await reportBulkEviction(sink, caseId, opts, result, atCommit);
     opts.onProgress?.(1, 1);
     return state;
   });

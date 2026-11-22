@@ -24,6 +24,18 @@ export class FileTooLargeError extends Error {
   }
 }
 
+/**
+ * True when the file is NOT over the cap: it grew between fstat and the end of the read (#2834).
+ * readHandleBounded throws FileTooLargeError twice — for a size over the cap, and for a read that
+ * ran one byte past the promised size. The second carries that size + 1, which is at most the cap
+ * unless the growth itself crossed it. A caller must not phrase this case as a size refusal: its
+ * byte count is under the limit, and raising the limit would not help. The file was still being
+ * written, and the bytes in hand are not the whole of it.
+ */
+export function grewDuringRead(err: FileTooLargeError): boolean {
+  return err.size <= err.maxBytes;
+}
+
 export async function readHandleBounded(handle: FileHandle, maxBytes: number): Promise<Buffer> {
   if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
     throw new Error(`readHandleBounded: cap must be a positive number of bytes, got ${maxBytes}`);

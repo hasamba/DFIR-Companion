@@ -16,11 +16,14 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { pollHuntStatusOnce, type HuntPollDeps } from "../integrations/velociraptor/huntStatusPoller.js";
-import { logLine } from "../logging/serverLogger.js";
+import { getServerLogger, logLine } from "../logging/serverLogger.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import { unavailableServerClients } from "./serverSetClients.js";
 import { createTickVelo } from "./veloCaseClient.js";
+import { failedCollect } from "./veloHuntCompleteness.js";
+import { holdImportsDuring } from "./veloHuntRecovery.js";
+import { ALL_CASES, type ImportLock } from "../analysis/importLock.js";
 
 export interface VeloHuntStatusTimersDeps {
   store: CaseStore;
@@ -33,6 +36,13 @@ export interface VeloHuntStatusTimersDeps {
   startVeloHuntCollect: (caseId: string, huntId: string) => void;
   /** Is a collect of this hunt running in THIS process right now (`collectingNow`, #2403)? */
   isCollecting: (caseId: string, huntId: string) => boolean;
+  /**
+   * #2851: settle the rows a collect cut off while IMPORTING left in the case
+   * (composition/veloHuntRecovery.ts). Optional: without it the restart only marks the job.
+   */
+  settleInterrupted?: (caseId: string, huntId: string) => Promise<unknown>;
+  /** #2851 review: holds imports while start-up recovery runs (`holdImportsDuring`). */
+  importLock?: Pick<ImportLock, "hold">;
 }
 
 export interface VeloHuntStatusTimers {
@@ -54,6 +64,17 @@ export interface VeloHuntStatusTimers {
 export const INTERRUPTED_COLLECT_MESSAGE =
   "Interrupted by a server restart while collecting — the results are still on the Velociraptor " +
   "server. Press Collect now to collect them again.";
+
+/**
+ * #2849: the sentence for a collect the restart cut off while it was IMPORTING. Each artifact is in
+ * the case as soon as its import returns and nothing takes it out at a restart, while the import
+ * record and the Undo entry are written once, after the last one — so "collect them again" alone
+ * reads as an untouched case. The job stores no per-artifact progress, so it names no artifact.
+ */
+export const INTERRUPTED_IMPORT_MESSAGE =
+  "Interrupted by a server restart while importing — some of this collect's rows may already be " +
+  "in the case, with no import record and no Undo entry. The results are still on the Velociraptor " +
+  "server. Press Collect now to collect them again; its count covers only rows not already in the case.";
 
 export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): VeloHuntStatusTimers {
   const { store, options, startVeloHuntCollect, isCollecting } = deps;
@@ -167,7 +188,12 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
   async function resumeVeloHuntStatusPolls(opts: { startup?: boolean } = {}): Promise<void> {
     const huntStore = options.veloHuntStore;
     if (!huntStore) return;
-    if (opts.startup) await recoverInterruptedCollects();
+    let settling: Promise<void>[] = [];
+    if (opts.startup) {
+      const sweep = recoverInterruptedCollects();
+      holdImportsDuring(deps.importLock, ALL_CASES, sweep); // armed before this function's first await
+      settling = await sweep;
+    }
     let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
@@ -197,16 +223,39 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
       logLine(
         `[velo-hunt-status] resumed status polling for ${resumed} hunt(s) across ${cases.length} case(s)`,
       );
+    await Promise.all(settling); // each catches its own failure; polls were armed without waiting
   }
 
-  async function recoverInterruptedCollects(): Promise<void> {
+  /**
+   * #2851: started only AFTER the job is marked, so a settle that dies (often the same out-of-memory
+   * kill) is not tried again at every start; the #2849 sentence still tells the analyst. Detached
+   * from the sweep — the server serves and the polls re-arm meanwhile — and run as work of the case
+   * incarnation just listed. Never rejects: a failure is logged with the case and hunt id.
+   */
+  function settleInterruptedImport(caseId: string, huntId: string, generation: string): Promise<void> {
+    const settle = deps.settleInterrupted;
+    if (!settle) return Promise.resolve();
+    const settled = runInCaseScope(store.casesRoot, caseId, () => settle(caseId, huntId), generation);
+    holdImportsDuring(deps.importLock, caseId, settled); // set while the all-case hold is still up
+    return settled.then(
+      () => undefined,
+      (err: unknown) =>
+        getServerLogger().warn(
+          `[velo-hunt] ${caseId}: settling hunt ${huntId}'s interrupted import failed: ${(err as Error)?.message ?? String(err)}`,
+          { caseId },
+        ),
+    );
+  }
+
+  async function recoverInterruptedCollects(): Promise<Promise<void>[]> {
+    const settling: Promise<void>[] = [];
     const huntStore = options.veloHuntStore;
-    if (!huntStore) return;
+    if (!huntStore) return settling;
     let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
     } catch {
-      return;
+      return settling;
     }
     let marked = 0;
     for (const c of cases) {
@@ -216,26 +265,26 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
           if (isCollecting(c.caseId, huntId)) continue;
           // #1866: as work of the incarnation just listed. The predicate is re-checked under the
           // store lock, so a collect started during this sweep is never overwritten.
+          // #2849: chosen HERE from the stored phase, not inside failedCollect — the in-process
+          // failure path also sees "importing" when the first artifact is refused and nothing was kept.
+          let message: string | undefined;
           const stored = await runInCaseScope(
             store.casesRoot,
             c.caseId,
             () =>
-              huntStore.update(c.caseId, huntId, (cur) =>
-                cur.status !== "collecting" || isCollecting(c.caseId, huntId)
-                  ? null
-                  : {
-                      ...cur,
-                      status: "error",
-                      collectPhase: undefined,
-                      collectRows: undefined,
-                      error: INTERRUPTED_COLLECT_MESSAGE,
-                    },
-              ),
+              huntStore.update(c.caseId, huntId, (cur) => {
+                if (cur.status !== "collecting" || isCollecting(c.caseId, huntId)) return null;
+                message =
+                  cur.collectPhase === "importing" ? INTERRUPTED_IMPORT_MESSAGE : INTERRUPTED_COLLECT_MESSAGE;
+                return failedCollect(cur, message);
+              }),
             generationOf(c),
           );
-          if (stored?.status === "error" && stored.error === INTERRUPTED_COLLECT_MESSAGE) {
+          if (stored?.status === "error" && message !== undefined && stored.error === message) {
             marked++;
             options.onVeloHunt?.(c.caseId);
+            if (message === INTERRUPTED_IMPORT_MESSAGE)
+              settling.push(settleInterruptedImport(c.caseId, huntId, generationOf(c)));
           }
         }
       } catch {
@@ -246,6 +295,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
       logLine(
         `[velo-hunt] ${marked} hunt collect(s) were interrupted by the restart — marked for Collect now`,
       );
+    return settling;
   }
 
   return {

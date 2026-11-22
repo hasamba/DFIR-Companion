@@ -11,6 +11,13 @@
   // analyst-authored. A PATCH freezes a synthesis hypothesis from auto-refresh (server-side). The
   // panel groups by status and survives synthesis (never wiped).
   let hypotheses = [];
+  // #2840: the case the held list was loaded for, the last list load that failed
+  // ({ caseId, text }, cleared by the next good load) and a counter naming the newest request.
+  let hypothesesCase = null;
+  let hypLoadError = null;
+  let hypLoadSeq = 0;
+  // #2843: the case the Falsification review box was drawn for (null: the box is empty).
+  let hypReviewsCase = null;
   const HYP_STATUS = [
     ["open", "Open"],
     ["supported", "Supported"],
@@ -19,14 +26,68 @@
   ];
   const HYP_STATUS_LABEL = Object.fromEntries(HYP_STATUS);
 
+  // #2843: the case every button here writes to. A card or a review drawn for another case would
+  // send its hypothesis id to this one, so nothing is loaded or drawn for a case that is not it.
+  function hypCaseOnScreen() {
+    const el = document.getElementById("caseId");
+    return el ? String(el.value || "").trim() : "";
+  }
+
   function loadHypotheses(caseId) {
+    // #2843: a reload asked for by an action of a case the analyst has left (a slow edit, Generate)
+    // is dropped — first, so it cannot drop the open case's own lines below.
+    if (String(caseId || "").trim() !== hypCaseOnScreen()) return;
+    // The review box is tracked on its own: a Review can answer before its case's list does.
+    if (hypReviewsCase !== null && hypReviewsCase !== caseId) {
+      hypReviewsCase = null;
+      renderHypothesisReviews([]);
+    }
+    // #2837: a refusal line belongs to the case it was refused in. Synthesis hypotheses can carry
+    // the same id in two cases, so it is dropped when another case's list is loaded.
+    if (hypWriteError && hypWriteError.caseId !== caseId) hypWriteError = null;
+    if (hypLoadError && hypLoadError.caseId !== caseId) hypLoadError = null;
+    // #2843: the held list is another case's — empty the list now, not when this request
+    // answers. Its cards would write to the case just opened.
+    if (hypothesesCase !== null && hypothesesCase !== caseId) {
+      hypotheses = [];
+      hypothesesCase = null;
+      renderHypotheses();
+    }
+    // #2840: only the newest request's outcome is applied. A list request can be held for seconds
+    // by the busy-retry wrapper while live pushes start newer ones, so an old failure could land
+    // on a newer good list, and an old case's list under a new case.
+    const seq = ++hypLoadSeq;
     fetch(`/cases/${caseId}/hypotheses`)
-      .then((r) => r.json())
-      .then((list) => {
-        hypotheses = Array.isArray(list) ? list : [];
-        renderHypotheses();
+      .then(async (r) => {
+        if (!r.ok) throw hypRefusal(r.status, await r.json().catch(() => ({})));
+        const list = await r.json();
+        // An answer that is not a list is a failed load. It was read as an empty list, which
+        // drew "No hypotheses yet" on a case that has hypotheses.
+        if (!Array.isArray(list)) throw new Error("the server's answer was not a list");
+        return list;
       })
-      .catch(() => {});
+      // Two handlers, not then/catch: a fault while drawing a list that DID load must never be
+      // reported as "could not be loaded".
+      .then(
+        (list) => {
+          if (seq !== hypLoadSeq) return;
+          hypotheses = list;
+          hypothesesCase = caseId;
+          hypLoadError = null;
+          renderHypotheses();
+        },
+        (e) => {
+          if (seq !== hypLoadSeq) return;
+          // The last good list stays on screen only when it is THIS case's. After a case switch
+          // the line is shown alone — never the previous case's cards.
+          if (hypothesesCase !== caseId) {
+            hypotheses = [];
+            hypothesesCase = caseId;
+          }
+          hypLoadError = { caseId, text: hypRefusalText("", e) };
+          renderHypotheses();
+        },
+      );
     // #1111: the coverage-attestation mini-panel lives inside this same section, so it refreshes
     // on every existing loadHypotheses() call site rather than needing its own callers threaded in.
     if (typeof loadEvidenceAttestations === "function") loadEvidenceAttestations(caseId);
@@ -42,6 +103,21 @@
         return n ? `${n} ${v}` : null;
       }).filter(Boolean);
       badge.textContent = hypotheses.length ? " — " + counts.join(" · ") : "";
+    }
+    // #2840: a list that could not be loaded says so, as the first line. The reason can be the
+    // server's sentence, which carries the case's own text — escaped here. "No hypotheses yet" is a
+    // statement about the case, so it is drawn only for a real empty-list answer.
+    const loadLine = hypLoadError
+      ? `<div class="manual-msg" role="status">The hypotheses could not be loaded (${esc(hypLoadError.text)}). ${hypotheses.length ? "The list below is the last one that loaded." : "Nothing here says the case has no hypotheses."}</div>`
+      : "";
+    if (!hypotheses.length && loadLine) {
+      el.innerHTML = loadLine;
+      return;
+    }
+    // #2843: no list is held (a case switch whose answer is still on its way) — an empty area.
+    if (hypothesesCase === null) {
+      el.innerHTML = "";
+      return;
     }
     if (!hypotheses.length) {
       el.innerHTML =
@@ -79,7 +155,7 @@
         String(a.title).localeCompare(String(b.title))
       );
     };
-    let html = "";
+    let html = loadLine;
     for (const [v, label] of HYP_STATUS) {
       const group = hypotheses.filter((h) => h.status === v).sort(achSort);
       if (!group.length) continue;
@@ -164,6 +240,12 @@
       statusHistory.length > 1
         ? `<div class="hyp-history" title="Dated status-change history">🕘 ${statusHistory.map((s) => `${esc(HYP_STATUS_LABEL[s.status] || s.status)} (${esc(String(s.changedAt || "").slice(0, 10))})`).join(" → ")}</div>`
         : "";
+    // #2837: why the server refused the last write to this card. The sentence can hold the case's
+    // own name, so it is escaped like every other string drawn here.
+    const refused =
+      hypWriteError && hypWriteError.id === h.id && hypWriteError.caseId === hypothesesCase
+        ? `<div class="manual-msg" role="status">${esc(hypWriteError.text)}</div>`
+        : "";
     return (
       `<div class="hyp ${escAttr(h.status)}${h.needsReview ? " needs-review" : ""}${h.exhausted ? " exhausted" : ""}" data-id="${id}">` +
       `<div class="hyp-row1">` +
@@ -178,7 +260,7 @@
       `<div class="hyp-row2">` +
       `<input class="hyp-assignee" placeholder="assignee" value="${escAttr(h.assignee || "")}" data-act="hypPatchAssignee" data-act-on="change" data-id="${id}" />` +
       `<input class="hyp-notes" placeholder="notes" value="${escAttr(h.notes || "")}" data-act="hypPatchNotes" data-act-on="change" data-id="${id}" />` +
-      `</div>` +
+      `</div>${refused}` +
       `</div>`
     );
   }
@@ -276,22 +358,18 @@
       if (input) input.placeholder = "a reason is required — it is the audit trail";
       return;
     }
-    fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}/exclusions`, {
+    hypWrite(caseId, id, "not excluded: ", `/cases/${caseId}/hypotheses/${encodeURIComponent(id)}/exclusions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ eventId, reason }),
-    })
-      .then(() => loadHypotheses(caseId))
-      .catch(() => {});
+    });
   }
   function hypRestoreEvidence(id, eventId) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
-    fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}/exclusions/${encodeURIComponent(eventId)}`, {
+    hypWrite(caseId, id, "not restored: ", `/cases/${caseId}/hypotheses/${encodeURIComponent(id)}/exclusions/${encodeURIComponent(eventId)}`, {
       method: "DELETE",
-    })
-      .then(() => loadHypotheses(caseId))
-      .catch(() => {});
+    });
   }
   function hypAcknowledgeReview(id) {
     hypPatch(id, { acknowledgeReview: true });
@@ -305,16 +383,45 @@
     hypPatch(id, { alternativeIds: [...cur] });
   }
 
+  // #2837: the last write the server refused, as { caseId, id, text } — drawn as one line inside that
+  // hypothesis's card. Kept as state so it survives the list reload and any live redraw; the next
+  // accepted write clears it.
+  let hypWriteError = null;
+
+  // Every write a card makes (edit, delete, exclude, restore) goes through here. These used to
+  // ignore the answer, so a refusal — a closed case is the common one — put the control back on
+  // the saved value with no word of why, and a lost connection left the unsaved value on screen.
+  function hypWrite(caseId, id, prefix, url, init) {
+    fetch(url, init)
+      .then(async (r) => {
+        // A success body is never read: a delete answers 204 with none.
+        if (!r.ok) throw hypRefusal(r.status, await r.json().catch(() => ({})));
+      })
+      // Two handlers, not then/catch: a fault while redrawing an ACCEPTED write must never be
+      // reported as "not saved".
+      .then(
+        () => {
+          hypWriteError = null;
+          loadHypotheses(caseId);
+        },
+        (e) => {
+          hypWriteError = { caseId, id, text: hypRefusalText(prefix, e) };
+          // Redraw first: it puts the control back on the saved value and shows the reason even
+          // when the reload below fails too (no connection). The reload is what shows the truth.
+          renderHypotheses();
+          loadHypotheses(caseId);
+        },
+      );
+  }
+
   function hypPatch(id, patch) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
-    fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, {
+    hypWrite(caseId, id, "not saved: ", `/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
-    })
-      .then(() => loadHypotheses(caseId))
-      .catch(() => {});
+    });
   }
 
   // #14 deferred: arm the NEXT deployed Velociraptor hunt to test a specific hypothesis. Consumed once
@@ -348,11 +455,9 @@
   function hypDelete(id) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
-    fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, {
+    hypWrite(caseId, id, "not deleted: ", `/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, {
       method: "DELETE",
-    })
-      .then(() => loadHypotheses(caseId))
-      .catch(() => {});
+    });
   }
 
   // On-demand falsification review (#71): weigh each OPEN hypothesis's supporting vs. refuting evidence
@@ -431,7 +536,7 @@
           // A Presidio hold waits for the analyst — it is not a failure (#1782).
           if (typeof presidioHold === "function" && presidioHold(r.status, body))
             throw Object.assign(new Error("presidio hold"), { presidioHold: true });
-          throw new Error("HTTP " + r.status);
+          throw hypRefusal(r.status, body);
         }
         return r.json();
       })
@@ -451,12 +556,28 @@
           msg.textContent = presidioHoldText("Promote");
           return;
         }
-        if (msg)
-          msg.textContent =
-            "promote failed: " +
-            e.message +
-            " — restart the companion server if this 404s";
+        if (msg) msg.textContent = hypRefusalText("promote failed: ", e);
       });
+  }
+
+  // #2832: a refused promote/add used to print only "HTTP 423 — restart the companion server",
+  // dropping the reason the server gave (a closed case, a case file that needs repair) and sending
+  // the analyst to restart a healthy server. The server's sentence is carried on the error when
+  // there is one; the bare status is kept for an answer with no sentence.
+  function hypRefusal(status, body) {
+    const said = body && typeof body.error === "string" ? body.error.trim() : "";
+    return said
+      ? Object.assign(new Error(said), { serverSaid: true })
+      : new Error("HTTP " + status);
+  }
+
+  // The restart advice is for a stale server's 404, which carries no sentence — so it is printed
+  // only then. The sentence can hold the case's own text: callers set it with textContent, or
+  // escape it where the line is drawn as markup (the card's refusal line, #2837).
+  function hypRefusalText(prefix, e) {
+    return e && e.serverSaid
+      ? prefix + e.message
+      : prefix + ((e && e.message) || "unknown error") + " — restart the companion server if this 404s";
   }
 
   // Three buttons wired at load. In a <head> script these run before the markup exists, so they
@@ -491,7 +612,7 @@
             // A Presidio hold waits for the analyst — it is not a failure (#1782).
             if (typeof presidioHold === "function" && presidioHold(r.status, body))
               throw Object.assign(new Error("presidio hold"), { presidioHold: true });
-            throw new Error("HTTP " + r.status);
+            throw hypRefusal(r.status, body);
           }
           return r.json();
         })
@@ -506,10 +627,7 @@
             msg.textContent = presidioHoldText("Add hypothesis");
             return;
           }
-          msg.textContent =
-            "failed: " +
-            e.message +
-            " — restart the companion server if this 404s";
+          msg.textContent = hypRefusalText("failed: ", e);
         });
     };
     // On-demand hypothesis generation (#140): hypotheses are a byproduct of synthesis, so this just
@@ -612,9 +730,15 @@
             return r.json();
           })
           .then((p) => {
-            renderHypothesisReviews(p.reviews);
+            // #2843: an answer for a case the analyst has left is not drawn — its Apply buttons
+            // would write to the open case, and "nothing to review" would be said of the wrong one.
+            const here = caseId === hypCaseOnScreen();
+            if (here) {
+              hypReviewsCase = caseId;
+              renderHypothesisReviews(p.reviews);
+            }
             msg.textContent =
-              p.reviews && p.reviews.length
+              !here || (p.reviews && p.reviews.length)
                 ? ""
                 : "no open hypotheses to review";
           })

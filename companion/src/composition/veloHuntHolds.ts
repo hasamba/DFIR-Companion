@@ -97,6 +97,6 @@ export async function loadHuntHolds(
       return 0;
     },
     importable: (list) => list.filter((f) => !left.has(f.name)),
-    skippedRecords: () => [...left].map(([name, error]) => ({ name, error })),
+    skippedRecords: () => [...left].map(([name, error]) => ({ name, error, notImported: "held" })),
   };
 }

@@ -44,6 +44,7 @@ import { ScopeStore } from "../analysis/scope.js";
 import { readInIncidentWindow, readScope } from "../integrations/velociraptor/veloWindowReread.js";
 import type { NewestOrder } from "../integrations/velociraptor/veloNewestRead.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
+import { settleInterruptedHuntRows } from "./veloHuntRecovery.js";
 import { loadHuntHolds } from "./veloHuntHolds.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import { unavailableServerClients } from "./serverSetClients.js";
@@ -54,6 +55,7 @@ import { diffTimeline } from "../analysis/timelineDiff.js";
 import { resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { createHuntEventBudget } from "./huntEventBudget.js";
 import { midFailureMessage, notImportedRecords, settleHuntCollect } from "./veloHuntSettle.js";
+import { createHuntEvictions } from "./veloHuntSettle.js"; // what the cap dropped, per collect (#2831)
 import {
   recordDeploy,
   fillOutcome,
@@ -76,9 +78,8 @@ import { logLine } from "../logging/serverLogger.js";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { mergeEvictions, type SuperEviction } from "../analysis/superTimelineStore.js";
 import * as ev from "./veloEvidenceFirst.js"; // store evidence before the import section (#1874)
-import { completeness, regradeAfterCollect } from "./veloHuntCompleteness.js";
+import { collectFailed, completeness, ownOutcome, regradeAfterCollect } from "./veloHuntCompleteness.js";
 import {
   createSuperShareLedger,
   importSuperOnlyArtifact,
@@ -215,6 +216,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     options,
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
     isCollecting: (c, h) => collectingNow.has(c, h), // #2403
+    settleInterrupted: (c, h) => settleInterruptedHuntRows(deps, c, h), // #2851
+    importLock, // #2851 review: imports into a case wait for its start-up recovery
   });
   const servers = () => options.serverClients ?? unavailableServerClients;
   const collectVelo = createTickVelo(servers, logLine, "velo-hunt");
@@ -300,7 +303,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       let superTimelineAddedCount = 0;
       // What the super-timeline's cap dropped across EVERY append this hunt made (#1535) — a hunt
       // writes one evidence file per artifact and reports one import card for the collection.
-      let superTimelineEvicted: SuperEviction | undefined;
+      const capDropped = createHuntEvictions();
 
       // A bundle flagged superTimelineOnly (the built-in super-timeline-triage) collects raw host
       // artifacts (MFT/USN/Prefetch) whose only purpose is the super-timeline — routing them through the
@@ -494,9 +497,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             );
             superShare.charge(r.offered);
             superTimelineAddedCount += r.added;
-            superTimelineEvicted = r.evicted
-              ? mergeEvictions(superTimelineEvicted, r.evicted)
-              : superTimelineEvicted;
+            if (r.evicted) capDropped.add(r.evicted);
             if (r.capped) superCapped.push(r.capped);
             if (r.imported) importedNames.push(name); // success even though nothing hit the forensic timeline
           } else {
@@ -514,8 +515,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               veloUrl,
               velociraptor: { ...eventBudget.nextImport(), partlyReadArtifact: partly },
               debug,
-              // A batched artifact's own cap report (#2816): the settle cannot see rows already gone.
-              onSuperEvicted: (e) => void (superTimelineEvicted = mergeEvictions(superTimelineEvicted, e)),
+              // A batched artifact's own cap report (#2816), counted once for the collect (#2831).
+              onRunEvicted: capDropped.addRun,
             });
             importedNames.push(name);
             if (options.stateStore && budgetBaseline) {
@@ -578,6 +579,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             idPrefix: `${seq}`,
             importedAt,
             minSeverity,
+            superEvictions: capDropped, // an uploaded report that is itself a large export (#2831)
             debug: upDebug,
           });
           logSiemFallback(caseId, up.name, upKind, upDebug); // a guessed JSON kind outlives the status (#1824)
@@ -596,7 +598,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         {
           ...{ caseId, huntId: jobHuntId, stateBefore, importedAny, lastFile },
           ...{ bundleName: job.bundleName, artifactCount: job.artifacts.length },
-          ...{ superTimelineAddedCount, superTimelineEvicted },
+          ...{ superTimelineAddedCount, capDropped },
         },
       );
       const { addedEvents, addedIocs } = settled;
@@ -684,26 +686,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       else if (inventorySignature([before]) !== inventorySignature([job]))
         await deps.markConclusionsOutOfDate?.(caseId, "hunt outcome changed"); // what settles moved (#1612)
     } catch (err) {
-      recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, err, inFlight);
-      try {
-        const cur = await huntStore.get(caseId, huntId);
-        if (cur)
-          await huntStore.upsert(caseId, {
-            ...cur,
-            status: "error",
-            collectPhase: undefined,
-            collectRows: undefined,
-            error: (err as Error).message,
-          });
-      } catch {
-        /* ignore */
-      }
-      options.onVeloHunt?.(caseId);
-      options.onAiStatus?.(caseId, {
-        status: "error",
-        at: new Date().toISOString(),
-        detail: `Velociraptor hunt collect failed: ${(err as Error).message}`,
-      });
+      const record = (e: unknown) =>
+        recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, e, inFlight);
+      const io = { ...options, ...deps, huntStore, record };
+      await collectFailed(io, caseId, huntId, err, ownOutcome(job, before)); // keeps its own result (#2850)
     } finally {
       // Never leave either held: both are per-case singletons, so a stranded one would block every
       // later import — the analyst's included — until the server restarts. Released in the reverse

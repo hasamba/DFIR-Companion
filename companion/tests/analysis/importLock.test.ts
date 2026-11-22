@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ImportLock } from "../../src/analysis/importLock.js";
+import { ALL_CASES, ImportLock } from "../../src/analysis/importLock.js";
 import { createImportMemoryGuard, ImportMemoryRefusedError } from "../../src/analysis/importMemoryGuard.js";
 
 // The primitive behind "one import writer per case". Its contract is small and load-bearing: FIFO
@@ -129,5 +129,84 @@ describe("ImportLock.admitWithoutSection (#2366)", () => {
     });
     (await counting.admitWithoutSection("c1"))();
     expect(admitted).toBe(0);
+  });
+});
+
+// #2851 review: start-up recovery holds imports into a case until its interrupted-hunt rows are
+// settled. A hold must always let go, must not touch other cases, and the holder's own section
+// must get past it.
+describe("ImportLock start-up holds (#2851 review)", () => {
+  it("an import into a held case waits until the hold settles, also when it rejects", async () => {
+    const lock = new ImportLock();
+    let fail!: (e: Error) => void;
+    lock.hold("c1", new Promise((_r, j) => (fail = j)));
+    let ran = false;
+    const section = lock.runExclusive("c1", async () => void (ran = true));
+    await tick();
+    expect(ran).toBe(false);
+    fail(new Error("settle failed"));
+    await section;
+    expect(ran).toBe(true);
+  });
+
+  it("acquire() waits for a hold too", async () => {
+    const lock = new ImportLock();
+    let end!: () => void;
+    lock.hold("c1", new Promise<void>((r) => (end = r)));
+    let got = false;
+    const acquired = lock.acquire("c1").then((release) => ((got = true), release));
+    await tick();
+    expect(got).toBe(false);
+    end();
+    (await acquired)();
+  });
+
+  it("does not hold another case, and lets the holder's own section past", async () => {
+    const lock = new ImportLock();
+    lock.hold("c1", new Promise(() => {}));
+    await expect(lock.runExclusive("c2", async () => "c2")).resolves.toBe("c2");
+    await expect(lock.runPastHolds("c1", async () => "holder")).resolves.toBe("holder");
+  });
+
+  it("waits for a case hold set while the all-case hold was up", async () => {
+    const lock = new ImportLock();
+    let endSweep!: () => void;
+    let endSettle!: () => void;
+    lock.hold(ALL_CASES, new Promise<void>((r) => (endSweep = r)));
+    const order: string[] = [];
+    const c1 = lock.runExclusive("c1", async () => void order.push("c1 import"));
+    const c2 = lock.runExclusive("c2", async () => void order.push("c2 import"));
+    lock.hold("c1", new Promise<void>((r) => (endSettle = r))); // the sweep found c1 interrupted
+    await tick();
+    expect(order).toEqual([]);
+    endSweep();
+    await c2;
+    expect(order).toEqual(["c2 import"]); // nothing to recover in c2: free once the sweep ends
+    endSettle();
+    await c1;
+    expect(order).toEqual(["c2 import", "c1 import"]);
+  });
+
+  it("an import parked on a hold counts as busy (archive refuses while it waits)", async () => {
+    const lock = new ImportLock();
+    let end!: () => void;
+    lock.hold(ALL_CASES, new Promise<void>((r) => (end = r)));
+    const parked = lock.runExclusive("c1", async () => undefined);
+    const acquired = lock.acquire("c2");
+    expect(lock.isBusy("c1")).toBe(true);
+    expect(lock.isBusy("c2")).toBe(true);
+    expect(lock.isBusy("c3")).toBe(false);
+    end();
+    await parked;
+    (await acquired)();
+    await tick(); // the section's chain clears a tick after its release
+    expect(lock.isBusy("c1")).toBe(false);
+    expect(lock.isBusy("c2")).toBe(false);
+  });
+
+  it("an unheld import queues at once, as before (no extra tick)", () => {
+    const lock = new ImportLock();
+    void lock.runExclusive("c1", () => new Promise(() => {}));
+    expect(lock.isBusy("c1")).toBe(true);
   });
 });

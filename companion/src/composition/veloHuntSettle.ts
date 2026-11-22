@@ -18,7 +18,13 @@ import type { RouteContext } from "../routes/context.js";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import type { SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { describeImportSource } from "../analysis/importMeta.js";
-import { mergeEvictions, type SuperEviction } from "../analysis/superTimelineStore.js";
+import {
+  createSuperEvictionTally,
+  mergeEvictions,
+  type SuperEvictionTally,
+} from "../analysis/superTimelineStore.js";
+import { collectEvictionForRecord, type BatchedRunEviction } from "../analysis/ingest/bulkEvictionReport.js";
+import type { BulkImportOpts } from "../analysis/ingest/velociraptorBulk.js";
 import { settleForensicImport } from "../routes/importSettle.js";
 import { logLine } from "../logging/serverLogger.js";
 
@@ -28,6 +34,23 @@ export interface HuntSettleDeps {
   demoteForensicForCase: (caseId: string) => Promise<InvestigationState>;
   runStateExclusive?: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
   pushImportCheckpoint: RouteContext["pushImportCheckpoint"];
+}
+
+/**
+ * What the super-timeline's cap dropped across a collect, before its settle (#1535, #2831) — a hunt
+ * writes one evidence file per artifact and reports one import card for the collection. The tally
+ * side takes a report that is already final: a super-only artifact's own append, and an uploaded
+ * report's batched import (as the `superEvictions` of its import base). `addRun` takes a batched
+ * ARTIFACT's run instead, whole, so the rows the settle puts back are measured once for the collect.
+ */
+export interface HuntEvictions extends SuperEvictionTally {
+  addRun: NonNullable<BulkImportOpts["onRunEvicted"]>;
+  readonly runs: readonly BatchedRunEviction[];
+}
+
+export function createHuntEvictions(): HuntEvictions {
+  const runs: BatchedRunEviction[] = [];
+  return { ...createSuperEvictionTally(), runs, addRun: (raw, run) => void runs.push({ raw, run }) };
 }
 
 export interface HuntSettleInput {
@@ -40,9 +63,10 @@ export interface HuntSettleInput {
   lastFile: string | undefined;
   bundleName: string | undefined;
   artifactCount: number;
-  /** What the collect's own direct super-timeline appends (a super-only bundle) added and evicted. */
+  /** What the collect's own direct super-timeline appends (a super-only bundle) added. */
   superTimelineAddedCount: number;
-  superTimelineEvicted: SuperEviction | undefined;
+  /** What the cap dropped in the collect's imports, before the settle below. */
+  capDropped: HuntEvictions;
 }
 
 export interface HuntSettleResult {
@@ -65,6 +89,14 @@ export async function settleHuntCollect(
   if (!input.importedAny || !options.stateStore || !stateBefore) return result;
   let counted = result; // the counts stand once the settle itself returned, whatever fails after it
   try {
+    // Measured here, once: after the last import, before the settle puts the graded rows back (#2831).
+    const beforeSettle = await collectEvictionForRecord(
+      options.bulkImportSink,
+      caseId,
+      `hunt ${huntId}`,
+      input.capDropped.runs,
+      input.capDropped.plus(undefined),
+    );
     // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
     const settled = await settleForensicImport(
       {
@@ -95,7 +127,7 @@ export async function settleHuntCollect(
         }),
         diff,
         superTimelineAddedCount: input.superTimelineAddedCount + settled.superTimelineAddedCount,
-        superTimelineEvicted: mergeEvictions(input.superTimelineEvicted, settled.superTimelineEvicted),
+        superTimelineEvicted: mergeEvictions(beforeSettle, settled.superTimelineEvicted),
         iocsDiff,
       });
       options.onImportMeta?.(caseId);
@@ -112,7 +144,9 @@ export async function settleHuntCollect(
     return { ...counted, checkpointed: true };
   } catch (e) {
     // Non-fatal to the collect, but never silent (#2817): the rows are in the case and the settle,
-    // the import record or the undo entry is missing; the next import's settle grades what is left.
+    // the import record or the undo entry is missing. Rows the settle did not reach are not settled later: the next
+    // import's demote is case-wide and moves its Info rows out WITHOUT a tagger pass (#2851). Only a
+    // collect a restart cut off is settled again, at start-up (composition/veloHuntRecovery.ts).
     const error = (e as Error).message;
     logLine(`[velociraptor] hunt ${huntId}: settling what was imported failed: ${error}`);
     return { ...counted, error };
@@ -124,12 +158,18 @@ const NOTHING_CHANGED = " and nothing was changed.";
 
 /**
  * The artifacts a stopped collect did not import, as the job's skipped list records them: the one
- * that failed, with its error, and the ones after it that were never tried.
+ * that failed, with its error, and the ones after it that were never tried. All of them were
+ * downloaded, so each carries the mark that keeps it out of the card's failed-fetch list (#2835).
  */
 export function notImportedRecords(failed: string, error: string, notReached: string[]): SkippedArtifact[] {
+  const stopped = (name: string, why: string): SkippedArtifact => ({
+    name,
+    error: why,
+    notImported: "stopped",
+  });
   return [
-    { name: failed, error: error.replace(NOTHING_CHANGED, ".") },
-    ...notReached.map((name) => ({ name, error: `not imported: the collect stopped when ${failed} failed` })),
+    stopped(failed, error.replace(NOTHING_CHANGED, ".")),
+    ...notReached.map((name) => stopped(name, `not imported: the collect stopped when ${failed} failed`)),
   ];
 }
 
