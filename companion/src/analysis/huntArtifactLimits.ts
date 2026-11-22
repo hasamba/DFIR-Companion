@@ -125,7 +125,10 @@ export function artifactRowHold(
     perClient.set(client, (perClient.get(client) ?? 0) + n);
     if (!names.has(client)) names.set(client, rowField(row, "Fqdn") || client);
   }
-  const hostBytes = Math.max(0, ...perClient.values());
+  // A loop, not `Math.max(0, ...values)`: a spread passes one argument per PC and overflows the call
+  // stack on a hunt with well over 100,000 PCs (#2822).
+  let hostBytes = 0;
+  for (const n of perClient.values()) if (n > hostBytes) hostBytes = n;
   if (limits.hostMb > 0 && hostBytes > limits.hostMb * MB) {
     const over = [...perClient].filter(([, n]) => n > limits.hostMb * MB).map(([c]) => names.get(c) ?? c);
     return {
