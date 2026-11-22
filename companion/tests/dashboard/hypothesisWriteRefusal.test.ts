@@ -104,7 +104,12 @@ async function openPage(write: Outcome) {
   const list = el("hypList");
   expect(list.innerHTML).toContain("RDP was the way in");
   page.reloads = 0;
-  return { api, page, list };
+  /** The analyst opens another case: #caseId changes and its list is asked for (#2843). */
+  const switchCase = (caseId: string) => {
+    el("caseId").value = caseId;
+    api.loadHypotheses(caseId);
+  };
+  return { api, page, list, switchCase };
 }
 
 type Page = Awaited<ReturnType<typeof openPage>>;
@@ -214,8 +219,9 @@ describe("the refusal line belongs to the card's state (#2837)", () => {
     await settle();
     expect(p.list.innerHTML).toContain("not saved: ");
 
-    p.api.loadHypotheses("case-2");
+    p.switchCase("case-2");
     await settle();
+    expect(p.page.reloads).toBe(2);
     expect(p.list.innerHTML).toContain("RDP was the way in");
     expect(p.list.innerHTML).not.toContain("not saved: ");
     expect(p.list.innerHTML).not.toContain("manual-msg");

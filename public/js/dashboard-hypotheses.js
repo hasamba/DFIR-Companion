@@ -16,6 +16,8 @@
   let hypothesesCase = null;
   let hypLoadError = null;
   let hypLoadSeq = 0;
+  // #2843: the case the Falsification review box was drawn for (null: the box is empty).
+  let hypReviewsCase = null;
   const HYP_STATUS = [
     ["open", "Open"],
     ["supported", "Supported"],
@@ -24,11 +26,33 @@
   ];
   const HYP_STATUS_LABEL = Object.fromEntries(HYP_STATUS);
 
+  // #2843: the case every button here writes to. A card or a review drawn for another case would
+  // send its hypothesis id to this one, so nothing is loaded or drawn for a case that is not it.
+  function hypCaseOnScreen() {
+    const el = document.getElementById("caseId");
+    return el ? String(el.value || "").trim() : "";
+  }
+
   function loadHypotheses(caseId) {
+    // #2843: a reload asked for by an action of a case the analyst has left (a slow edit, Generate)
+    // is dropped — first, so it cannot drop the open case's own lines below.
+    if (String(caseId || "").trim() !== hypCaseOnScreen()) return;
+    // The review box is tracked on its own: a Review can answer before its case's list does.
+    if (hypReviewsCase !== null && hypReviewsCase !== caseId) {
+      hypReviewsCase = null;
+      renderHypothesisReviews([]);
+    }
     // #2837: a refusal line belongs to the case it was refused in. Synthesis hypotheses can carry
     // the same id in two cases, so it is dropped when another case's list is loaded.
     if (hypWriteError && hypWriteError.caseId !== caseId) hypWriteError = null;
     if (hypLoadError && hypLoadError.caseId !== caseId) hypLoadError = null;
+    // #2843: the held list is another case's — empty the list now, not when this request
+    // answers. Its cards would write to the case just opened.
+    if (hypothesesCase !== null && hypothesesCase !== caseId) {
+      hypotheses = [];
+      hypothesesCase = null;
+      renderHypotheses();
+    }
     // #2840: only the newest request's outcome is applied. A list request can be held for seconds
     // by the busy-retry wrapper while live pushes start newer ones, so an old failure could land
     // on a newer good list, and an old case's list under a new case.
@@ -88,6 +112,11 @@
       : "";
     if (!hypotheses.length && loadLine) {
       el.innerHTML = loadLine;
+      return;
+    }
+    // #2843: no list is held (a case switch whose answer is still on its way) — an empty area.
+    if (hypothesesCase === null) {
+      el.innerHTML = "";
       return;
     }
     if (!hypotheses.length) {
@@ -214,7 +243,7 @@
     // #2837: why the server refused the last write to this card. The sentence can hold the case's
     // own name, so it is escaped like every other string drawn here.
     const refused =
-      hypWriteError && hypWriteError.id === h.id
+      hypWriteError && hypWriteError.id === h.id && hypWriteError.caseId === hypothesesCase
         ? `<div class="manual-msg" role="status">${esc(hypWriteError.text)}</div>`
         : "";
     return (
@@ -701,9 +730,15 @@
             return r.json();
           })
           .then((p) => {
-            renderHypothesisReviews(p.reviews);
+            // #2843: an answer for a case the analyst has left is not drawn — its Apply buttons
+            // would write to the open case, and "nothing to review" would be said of the wrong one.
+            const here = caseId === hypCaseOnScreen();
+            if (here) {
+              hypReviewsCase = caseId;
+              renderHypothesisReviews(p.reviews);
+            }
             msg.textContent =
-              p.reviews && p.reviews.length
+              !here || (p.reviews && p.reviews.length)
                 ? ""
                 : "no open hypotheses to review";
           })

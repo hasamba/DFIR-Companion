@@ -115,8 +115,13 @@ function openPage() {
     globals,
   );
   const list = el("hypList");
-  /** Ask for one case's list, answered by `outcome`, and wait for it to be drawn. */
+  /**
+   * Ask for one case's list, answered by `outcome`, and wait for it to be drawn. #caseId follows
+   * the case, as it does on the page: a list asked for a case that is not on screen is dropped
+   * (#2843).
+   */
   const load = async (caseId: string, outcome: Outcome) => {
+    el("caseId").value = caseId;
     page.lists.push(outcome);
     api.loadHypotheses(caseId);
     await settle();
