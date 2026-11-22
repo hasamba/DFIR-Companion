@@ -343,6 +343,11 @@
               "synthesis held — Presidio found new value(s) to review (see Anonymization)";
             return null;
           }
+          // #2828: the duplicate-host gate is a hold too — say what to do, never the raw code.
+          if (typeof hostMergeHold === "function" && hostMergeHold(r.status, body)) {
+            document.getElementById("status").textContent = hostMergeHoldText("synthesis", body);
+            return null;
+          }
           return body;
         }
         // 499: this run was superseded by a newer one, or cancelled from the jobs list. Neither is a

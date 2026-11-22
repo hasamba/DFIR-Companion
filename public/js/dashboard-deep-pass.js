@@ -236,6 +236,8 @@
         if (r.status === 501) { deepPassGuidance("No synthesis provider is configured — a deep pass needs one."); return; }
         // A Presidio hold waits for the analyst — it is not a failure (#1782).
         if (typeof presidioHold === "function" && presidioHold(r.status, j)) { deepPassGuidance(presidioHoldText("Deep pass")); return; }
+        // So does the duplicate-host gate (#2828) — guidance that names the panel, not the raw code.
+        if (typeof hostMergeHold === "function" && hostMergeHold(r.status, j)) { deepPassGuidance(hostMergeHoldText("Deep pass", j)); return; }
         document.getElementById("deepPassResult").innerHTML =
           `<div class="dp-result dp-partial"><span class="dp-partial-hd">Deep pass failed</span> — ${esc(j && j.error ? j.error : "unknown error")}. Nothing was written to the case.</div>`;
       })

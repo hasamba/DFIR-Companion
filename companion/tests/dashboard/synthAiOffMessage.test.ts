@@ -25,6 +25,19 @@ interface FakeEl {
 }
 
 const AI_OFF = "AI is off for this case — turn AI on to use this";
+// #2828 — the duplicate-host gate's 409. The host names are the case's own text, so the pair below
+// carries markup that must never reach the screen.
+const HOST_MERGE_CODE = "host_merge_decision_required";
+const HOST_MERGE = {
+  error: HOST_MERGE_CODE,
+  pairs: [
+    { canonical: "WS-SAMPLE-01", other: '<img src=x onerror="alert(1)">' },
+    { canonical: "WS-SAMPLE-02", other: "ws-sample-02.example.test" },
+  ],
+};
+const hostMergeHold = (what: string) =>
+  `${what} on hold — 2 possible duplicate hosts awaiting a merge decision. ` +
+  "Decide each pair in the Duplicate Hosts panel.";
 const BODY_READ_TWICE = "Failed to execute 'json' on 'Response': body stream already read";
 
 function oneShotResponse(status: number, body: unknown, parses = true) {
@@ -56,6 +69,7 @@ function harness(response: ReturnType<typeof oneShotResponse>) {
     return els.get(id) as FakeEl;
   };
   const pending: unknown[] = [];
+  const fetched: string[] = [];
   const globals = {
     document: { getElementById: (id: string) => el(id) },
     localStorage: { getItem: () => null, setItem: () => {} },
@@ -65,16 +79,31 @@ function harness(response: ReturnType<typeof oneShotResponse>) {
     render: () => {},
     loadSynthMeta: () => {},
     setPresidioPending: (findings: unknown) => pending.push(findings),
-    fetch: () => Promise.resolve(response),
+    // The pressed button's request gets `response`; the Duplicate Hosts panel's own re-read of the
+    // case (#2828) gets an empty list.
+    fetch: (url: string) => {
+      fetched.push(url);
+      return url.includes("/host-duplicates")
+        ? Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ pending: [], dismissed: [] }),
+          })
+        : Promise.resolve(response);
+    },
   };
   el("caseId").value = "case-1";
   el("aiStatus").className = "ai-stale";
-  return { el, globals, pending };
+  return { el, globals, pending, fetched };
 }
 
 function pressResynthesize(response: ReturnType<typeof oneShotResponse>) {
   const h = harness(response);
-  loadDashboardModule<ScopeApi>("dashboard-search-scope.js", [], h.globals).resynthesize();
+  loadDashboardModule<ScopeApi>(
+    "dashboard-search-scope.js",
+    ["dashboard-host-duplicates.js"],
+    h.globals,
+  ).resynthesize();
   return h;
 }
 
@@ -82,7 +111,7 @@ function pressSecondOpinion(response: ReturnType<typeof oneShotResponse>) {
   const h = harness(response);
   loadDashboardModule<OpinionApi>(
     "dashboard-second-opinion.js",
-    ["dashboard-escape.js", "dashboard-time.js"],
+    ["dashboard-escape.js", "dashboard-time.js", "dashboard-host-duplicates.js"],
     h.globals,
   ).runSecondOpinion();
   return h;
@@ -150,4 +179,25 @@ describe("Second opinion refused with a 409 (#2826)", () => {
     expect(el("status").textContent).not.toContain("body stream");
     expect(el("status").textContent).not.toContain("disagreement");
   });
+});
+
+describe("a press held by the duplicate-host gate (#2828)", () => {
+  const presses = [
+    { name: "Re-synthesize", press: pressResynthesize, what: "synthesis", button: "synthesize" },
+    { name: "Second opinion", press: pressSecondOpinion, what: "second opinion", button: "secondOpinion" },
+  ];
+  for (const { name, press, what, button } of presses) {
+    it(`${name} says it is on hold and what to do, not "failed" and not the raw code`, async () => {
+      const { el, fetched } = press(oneShotResponse(409, HOST_MERGE));
+      await settle();
+      const text = el("status").textContent;
+      expect(text).toBe(hostMergeHold(what));
+      expect(text).not.toContain(HOST_MERGE_CODE);
+      expect(text).not.toMatch(/failed|error|body stream/i);
+      expect(text).not.toContain("onerror");
+      expect(el(button).disabled).toBe(false);
+      // The Duplicate Hosts panel re-reads the case on screen.
+      expect(fetched).toContain("/cases/case-1/host-duplicates");
+    });
+  }
 });

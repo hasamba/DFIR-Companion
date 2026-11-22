@@ -240,6 +240,12 @@
           slRunError = presidioHoldText("Second look");
           return;
         }
+        // So does the duplicate-host gate (#2828): the re-synthesis inherits it. Say what to do,
+        // never the raw code.
+        if (!r.ok && typeof hostMergeHold === "function" && hostMergeHold(r.code, r.body)) {
+          slRunError = hostMergeHoldText("Second look", r.body);
+          return;
+        }
         // A 501 is a refusal made BEFORE the sweep (re-synthesis asked for, no AI provider set).
         // Nothing changed, and the reason names the opt-out, so show it as it came.
         if (r.code === 501 && r.body && r.body.error) {
@@ -262,7 +268,7 @@
           return;
         }
         if (!r.ok) {
-          slRunError = `The second look did not run:${r.body && r.body.error ? String(r.body.error) : `HTTP ${r.code}`}`;
+          slRunError = `The second look did not run: ${r.body && r.body.error ? String(r.body.error) : `HTTP ${r.code}`}`;
           return;
         }
         slResult = r.body && typeof r.body === "object" ? r.body : null;

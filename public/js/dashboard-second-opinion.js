@@ -544,6 +544,12 @@
               "second opinion held — Presidio found new value(s) to review (see Anonymization)";
             return null;
           }
+          // #2828: the duplicate-host gate is a hold too — say what to do, never the raw code.
+          if (typeof hostMergeHold === "function" && hostMergeHold(r.status, body)) {
+            if (btn) btn.disabled = false;
+            document.getElementById("status").textContent = hostMergeHoldText("second opinion", body);
+            return null;
+          }
           return body;
         }
         return r.json();

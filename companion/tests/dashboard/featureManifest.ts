@@ -2370,7 +2370,16 @@ export const FEATURES: Feature[] = [
     initializer: "initHostDuplicates",
     // revealHostDuplicates is published for the cockpit's blocker card (target panel
     // "host-duplicates"), which lives in js/dashboard-cockpit.js and calls it by bare name.
-    publish: ["loadHostDuplicates", "renderHostDuplicates", "initHostDuplicates", "revealHostDuplicates"],
+    // #2828: hostMergeHold / hostMergeHoldText are the one predicate and wording every AI button
+    // uses for the duplicate-host gate's 409, as presidioHold / presidioHoldText are for Presidio's.
+    publish: [
+      "loadHostDuplicates",
+      "hostMergeHold",
+      "hostMergeHoldText",
+      "renderHostDuplicates",
+      "initHostDuplicates",
+      "revealHostDuplicates",
+    ],
     private: ["pending"],
   },
   {

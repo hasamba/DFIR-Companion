@@ -285,7 +285,31 @@
     sec.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // #2828: the one check and the one sentence every AI button uses for the duplicate-host gate, the
+  // same shape as presidioHold() / presidioHoldText() in dashboard-presidio.js. The gate answers
+  // 409 `host_merge_decision_required`; that is a question for the analyst, not a failure, and the
+  // code itself must never reach the screen.
+  //
+  // The panel is refreshed from the server for the case ON SCREEN, not painted from the 409's
+  // pairs: the answer can arrive after the analyst has switched case.
+  function hostMergeHold(status, body) {
+    if (status !== 409 || !body || body.error !== "host_merge_decision_required") return false;
+    loadHostDuplicates(document.getElementById("caseId")?.value.trim());
+    return true;
+  }
+
+  // The status pill's own words ("on hold — N possible duplicate host(s) awaiting a merge
+  // decision", analysis/hostDuplicateGate.ts) plus where to act. Only the COUNT of pairs is read:
+  // the host names in them are the case's own text and are never put in this sentence.
+  function hostMergeHoldText(what, body) {
+    const n = body && Array.isArray(body.pairs) ? body.pairs.length : 0;
+    const hosts = n > 0 ? `${n} possible duplicate host${n === 1 ? "" : "s"}` : "possible duplicate hosts";
+    return `${what} on hold — ${hosts} awaiting a merge decision. Decide each pair in the Duplicate Hosts panel.`;
+  }
+
   window.loadHostDuplicates = loadHostDuplicates;
+  window.hostMergeHold = hostMergeHold;
+  window.hostMergeHoldText = hostMergeHoldText;
   window.renderHostDuplicates = renderHostDuplicates;
   window.initHostDuplicates = initHostDuplicates;
   // Published for the cockpit's blocker card, which targets panel "host-duplicates".
