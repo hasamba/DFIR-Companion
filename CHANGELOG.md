@@ -29,6 +29,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Held Second look reports promoted rows** — a run held for a duplicate-host or Presidio decision says how many raw events it already promoted and refreshes (closes #2833)
+- **Held Second look job entry** — the Jobs panel entry for that held run also states the rows it already promoted (closes #2839)
+- **Hypothesis promote and add show the refusal** — the server's own sentence replaces "HTTP 423 — restart the companion server" (closes #2832)
+- **Hypothesis edit, delete, exclude and restore say why** — a refused change shows the server's sentence inside the card instead of snapping back silently (closes #2837)
+- **Hypotheses list load failure** — a list that cannot be loaded says so instead of reading as "No hypotheses yet" (closes #2840)
+- **Hypotheses on a case switch** — the previous case's cards and review box are cleared at once, so a click can no longer change a hypothesis in another case (closes #2843)
+- **File that grows during the read** — the drop folder, the macOS login item import and external-tool uploads say the file changed, not "too large" (closes #2834)
+- **Hunt card: read, not imported** — held, skipped and stopped-collect artifacts are listed under READ, NOT IMPORTED instead of "failed to collect" (closes #2835)
+- **Hunt card lists a not-imported artifact once** — no longer also under INCOMPLETE with "kept N rows" (closes #2841)
+- **Hunt card after a later early failure** — an earlier collect's lists are labelled FROM AN EARLIER COLLECT (closes #2842)
+- **Collection inventory for held and part-collected hunts** — a held artifact is "read but NOT imported", not "fetch failed", and a part-collected hunt is listed (closes #2838)
+- **Hunt partial-collection count** — an artifact in two of a hunt's lists counts as one partial collection (closes #2844)
+- **Raw rows pushed out by drop, push, MCP and hunt imports** — the import card shows them, and a multi-artifact hunt collect counts them once (closes #2831)
+- **Hunt collect interrupted while importing** — the card says some rows may already be in the case, with no import record and no Undo entry (closes #2849)
+- **Hunt collect keeps its result after a late failure** — a failure after the collect recorded its result no longer turns an imported hunt into an error (closes #2850)
+- **Hunt import cut off by a restart is graded** — at start-up the companion stamps, tags and copies to the super-timeline the rows it left behind, so they are no longer demoted ungraded (closes #2851)
 - **Rolled-back bulk import keeps older raw rows** — a failed or refused batched Velociraptor import no longer evicts super-timeline rows the case already had (closes #2816)
 - **Rolled-back bulk import on a case with no saved state** — the same protection, and the rollback of the run's own rows, now work on a case fed only by super-only imports (closes #2829)
 - **Hunt collect that fails partway** — the artifacts that imported are settled, recorded and undoable, and the hunt card names what was and was not imported (closes #2817)
