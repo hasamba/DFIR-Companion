@@ -9,9 +9,11 @@ import { createVeloMonitors } from "../../src/composition/veloMonitors.js";
 import {
   createVeloHuntStatusTimers,
   INTERRUPTED_COLLECT_MESSAGE,
+  INTERRUPTED_IMPORT_MESSAGE,
 } from "../../src/composition/veloHuntStatusTimers.js";
 import { veloServerClients } from "../helpers/serverClientsStub.js";
 import { pollFor, pollBudget, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { getServerLogger } from "../../src/logging/serverLogger.js";
 import type { AppOptions } from "../../src/composition/appOptions.js";
 
 // #2403: a background poll waits on the network, then used to save the whole copy it read before the
@@ -208,7 +210,8 @@ describe("hunts left mid-collect by a dead process (#2403)", () => {
     const { t } = huntTimers(huntStore, async () => ({ state: "RUNNING" }), new Set(["H.live"]));
     await t.resumeVeloHuntStatusPolls({ startup: true });
     const dead = await huntStore.get("c1", "H.dead");
-    expect(dead).toMatchObject({ status: "error", error: INTERRUPTED_COLLECT_MESSAGE });
+    // #2849: it was importing, so rows may be in the case — the import sentence, not the collect one.
+    expect(dead).toMatchObject({ status: "error", error: INTERRUPTED_IMPORT_MESSAGE });
     expect(dead?.collectPhase).toBeUndefined();
     expect(dead?.collectRows).toBeUndefined();
     expect(await huntStore.get("c1", "H.live")).toMatchObject({
@@ -248,6 +251,48 @@ describe("hunts left mid-collect by a dead process (#2403)", () => {
     expect(first?.status).toBe("error");
     expect(first?.earlierCoverage).toBeUndefined(); // no earlier collect: nothing to label
     t.stopVeloHuntStatusPollsForCase("c1");
+  });
+
+  // #2849: each artifact is in the case as soon as its import returns, and nothing takes it out at a
+  // restart. Only a collect cut off while importing can have left rows behind, so only that one says so.
+  it("startup tells a collect cut off while importing apart from one cut off earlier", async () => {
+    const huntStore = new VeloHuntStore(store);
+    const cutOff = { ...JOB, status: "collecting" as const };
+    await huntStore.upsert("c1", { ...cutOff, huntId: "H.importing", collectPhase: "importing" });
+    await huntStore.upsert("c1", { ...cutOff, huntId: "H.queued", collectPhase: "queued" });
+    await huntStore.upsert("c1", { ...cutOff, huntId: "H.fetching", collectPhase: "fetching" });
+    await huntStore.upsert("c1", { ...cutOff, huntId: "H.nophase" }); // stored by an older build
+    const info = vi.spyOn(getServerLogger(), "info").mockImplementation(() => {});
+    try {
+      const { t } = huntTimers(huntStore, async () => ({ state: "RUNNING" }));
+      await t.resumeVeloHuntStatusPolls({ startup: true });
+      const errorOf = async (huntId: string) => {
+        const job = await huntStore.get("c1", huntId);
+        expect(job?.status).toBe("error");
+        expect(job?.collectPhase).toBeUndefined();
+        return job?.error;
+      };
+      expect(await errorOf("H.importing")).toBe(INTERRUPTED_IMPORT_MESSAGE);
+      expect(await errorOf("H.queued")).toBe(INTERRUPTED_COLLECT_MESSAGE);
+      expect(await errorOf("H.fetching")).toBe(INTERRUPTED_COLLECT_MESSAGE);
+      expect(await errorOf("H.nophase")).toBe(INTERRUPTED_COLLECT_MESSAGE);
+      // The log line counts every hunt it marked, whichever sentence it got.
+      const lines = info.mock.calls.map(([msg]) => String(msg));
+      expect(lines.filter((l) => l.includes("were interrupted by the restart"))).toEqual([
+        "[velo-hunt] 4 hunt collect(s) were interrupted by the restart — marked for Collect now",
+      ]);
+      t.stopVeloHuntStatusPollsForCase("c1");
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it("the import sentence says rows may be in the case, and promises no artifact names", () => {
+    expect(INTERRUPTED_IMPORT_MESSAGE).not.toBe(INTERRUPTED_COLLECT_MESSAGE);
+    expect(INTERRUPTED_IMPORT_MESSAGE).toContain("may already be in the case");
+    expect(INTERRUPTED_IMPORT_MESSAGE).toContain("no import record and no Undo entry");
+    expect(INTERRUPTED_IMPORT_MESSAGE).toContain("Press Collect now");
+    expect(INTERRUPTED_COLLECT_MESSAGE).not.toContain("in the case");
   });
 
   it("reconnect (no startup flag) never marks a collecting hunt", async () => {

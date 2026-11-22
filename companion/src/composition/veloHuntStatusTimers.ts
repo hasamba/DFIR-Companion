@@ -56,6 +56,17 @@ export const INTERRUPTED_COLLECT_MESSAGE =
   "Interrupted by a server restart while collecting — the results are still on the Velociraptor " +
   "server. Press Collect now to collect them again.";
 
+/**
+ * #2849: the sentence for a collect the restart cut off while it was IMPORTING. Each artifact is in
+ * the case as soon as its import returns and nothing takes it out at a restart, while the import
+ * record and the Undo entry are written once, after the last one — so "collect them again" alone
+ * reads as an untouched case. The job stores no per-artifact progress, so it names no artifact.
+ */
+export const INTERRUPTED_IMPORT_MESSAGE =
+  "Interrupted by a server restart while importing — some of this collect's rows may already be " +
+  "in the case, with no import record and no Undo entry. The results are still on the Velociraptor " +
+  "server. Press Collect now to collect them again; its count covers only rows not already in the case.";
+
 export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): VeloHuntStatusTimers {
   const { store, options, startVeloHuntCollect, isCollecting } = deps;
   // Every tick resolves the case's server set again, so a set edit applies on the next poll.
@@ -217,18 +228,22 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
           if (isCollecting(c.caseId, huntId)) continue;
           // #1866: as work of the incarnation just listed. The predicate is re-checked under the
           // store lock, so a collect started during this sweep is never overwritten.
+          // #2849: chosen HERE from the stored phase, not inside failedCollect — the in-process
+          // failure path also sees "importing" when the first artifact is refused and nothing was kept.
+          let message: string | undefined;
           const stored = await runInCaseScope(
             store.casesRoot,
             c.caseId,
             () =>
-              huntStore.update(c.caseId, huntId, (cur) =>
-                cur.status !== "collecting" || isCollecting(c.caseId, huntId)
-                  ? null
-                  : failedCollect(cur, INTERRUPTED_COLLECT_MESSAGE),
-              ),
+              huntStore.update(c.caseId, huntId, (cur) => {
+                if (cur.status !== "collecting" || isCollecting(c.caseId, huntId)) return null;
+                message =
+                  cur.collectPhase === "importing" ? INTERRUPTED_IMPORT_MESSAGE : INTERRUPTED_COLLECT_MESSAGE;
+                return failedCollect(cur, message);
+              }),
             generationOf(c),
           );
-          if (stored?.status === "error" && stored.error === INTERRUPTED_COLLECT_MESSAGE) {
+          if (stored?.status === "error" && message !== undefined && stored.error === message) {
             marked++;
             options.onVeloHunt?.(c.caseId);
           }
