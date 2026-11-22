@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonicalizeInventory, mergeInventoryItems } from "../../src/analysis/huntInventoryCanon.js";
 import { HuntInventoryStore } from "../../src/analysis/huntInventoryStore.js";
-import type { HuntInventory, InventoryItem } from "../../src/analysis/huntInventory.js";
+import {
+  INVENTORY_MAX_HOSTS,
+  recordObservations,
+  type HuntInventory,
+  type InventoryItem,
+} from "../../src/analysis/huntInventory.js";
 
 // #2750: stored inventories keep known-folder GUID keys from before the normalisation; on load they
 // are re-keyed and merged into the normalised item. Synthetic hosts and programs only.
@@ -116,6 +121,55 @@ describe("canonical hunt inventory keys (#2750)", () => {
     expect(mergeInventoryItems(a, b).unhashedHosts?.sort()).toEqual(["name/ws-b", "name/ws-c"]);
     const c = item(NORMAL, ["name/ws-b"], { sha256: ["bb"], unhashedHosts: [] });
     expect(mergeInventoryItems(a, c).unhashedHosts).toEqual([]);
+  });
+
+  // #2820: hardening against a stored item that lacks these fields (a hand-edited or corrupted file).
+  it("keeps the last-seen date when the other part of a merge has none", () => {
+    const whole = item(NORMAL, ["name/ws-a"], { lastSeen: "2026-03-04" });
+    const partial = item(NORMAL, ["name/ws-b"], { lastSeen: undefined });
+    expect(mergeInventoryItems(whole, partial).lastSeen).toBe("2026-03-04");
+    expect(mergeInventoryItems(partial, whole).lastSeen).toBe("2026-03-04");
+    const newer = item(NORMAL, ["name/ws-b"], { lastSeen: "2026-05-06" });
+    expect(mergeInventoryItems(whole, newer).lastSeen, "two real dates still give the later").toBe(
+      "2026-05-06",
+    );
+  });
+
+  it("counts a missing host overflow as zero in a merge, and still adds the hosts it drops", () => {
+    const counted = item(NORMAL, ["name/ws-a"], { hostOverflow: 3 });
+    const uncounted = item(NORMAL, ["name/ws-b"], { hostOverflow: undefined });
+    expect(mergeInventoryItems(counted, uncounted).hostOverflow).toBe(3);
+    expect(mergeInventoryItems(uncounted, counted).hostOverflow).toBe(3);
+    const full = item(
+      NORMAL,
+      Array.from({ length: INVENTORY_MAX_HOSTS }, (_, i) => `name/ws-${i}`),
+      { hostOverflow: 3, unhashedHosts: [], noSha1Hosts: [], unsignedHosts: [] },
+    );
+    const extra = item(NORMAL, ["name/extra-a", "name/extra-b"], { hostOverflow: undefined });
+    expect(mergeInventoryItems(full, extra).hostOverflow, "two hosts over the cap").toBe(5);
+  });
+
+  it("counts a missing host overflow as zero when a new observation lands on the item", () => {
+    const stored = item(NORMAL, ["name/ws-a"], { hostOverflow: undefined });
+    const next = recordObservations(
+      inv(stored),
+      [
+        {
+          fields: {
+            evidence: "execution",
+            program: "foo.exe",
+            pathPattern: NORMAL,
+            path: `${NORMAL}\\foo.exe`,
+            publisherVerified: false,
+            host: "ws-b",
+          },
+          host: { key: "name/ws-b", basis: "name", hostname: "ws-b" },
+          at: "2026-01-03",
+        },
+      ],
+      "2026-01-03",
+    );
+    expect(next.items[stored.key].hostOverflow).toBe(0);
   });
 
   it("drops a merge destination's stored grade too (its host count changed)", async () => {
