@@ -196,6 +196,46 @@ describe("veloCoverageHtml", () => {
     expect(html).not.toContain("failed to collect");
   });
 
+  // #2842 — a collect that failed before it recorded its own results leaves an earlier collect's
+  // lists on the job. The block stays, under a line that says whose results they are.
+  describe("lists left by an earlier collect (#2842)", () => {
+    const LABEL =
+      "FROM AN EARLIER COLLECT &mdash; the last collect failed before it recorded its own results.";
+    const failedAgain = (extra: Record<string, unknown> = {}) => ({
+      status: "error",
+      artifacts: ["A.one", "A.two", "A.three"],
+      skippedArtifacts: stopped,
+      ...extra,
+    });
+
+    it("leads the block with the earlier-collect line and keeps every list", () => {
+      const html = cov.veloCoverageHtml(failedAgain({ earlierCoverage: true }));
+      expect(html.indexOf(LABEL)).toBeGreaterThan(-1);
+      expect(html.indexOf(LABEL)).toBeLessThan(html.indexOf("artifact(s) returned results"));
+      expect(html).toContain("1/3 artifact(s) returned results");
+      expect(html).toContain("READ, NOT IMPORTED");
+      expect(html).toContain("A.two: Import refused to protect the server.");
+      expect(html).toContain("A.three: not imported: the collect stopped when A.two failed");
+    });
+
+    it("does not print it for a collect's own results", () => {
+      expect(cov.veloCoverageHtml(failedAgain())).not.toContain("FROM AN EARLIER COLLECT");
+    });
+
+    it("leads a held artifact's line with it too", () => {
+      const html = cov.veloCoverageHtml(failedAgain({ skippedArtifacts: [held], earlierCoverage: true }));
+      expect(html.indexOf(LABEL)).toBe(html.indexOf(">") + 1); // first, in its own line
+      expect(html).toContain("A.two: held over the hunt artifact size limit");
+    });
+
+    it("never prints alone: a failed collect with nothing to show stays empty", () => {
+      const cutOnly = { truncatedArtifacts: [{ name: "A.one", kept: 1000, total: 1001 }] };
+      expect(
+        cov.veloCoverageHtml(failedAgain({ skippedArtifacts: undefined, ...cutOnly, earlierCoverage: true })),
+      ).toBe("");
+    });
+  });
+
   it("keeps a failed fetch and a not-imported artifact under their own counts and lists", () => {
     const html = cov.veloCoverageHtml(
       imported({ skippedArtifacts: [{ name: "A.three", error: "too big" }, held] }),

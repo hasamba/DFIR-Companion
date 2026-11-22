@@ -21,6 +21,7 @@ import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import { unavailableServerClients } from "./serverSetClients.js";
 import { createTickVelo } from "./veloCaseClient.js";
+import { failedCollect } from "./veloHuntCompleteness.js";
 
 export interface VeloHuntStatusTimersDeps {
   store: CaseStore;
@@ -223,13 +224,7 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
               huntStore.update(c.caseId, huntId, (cur) =>
                 cur.status !== "collecting" || isCollecting(c.caseId, huntId)
                   ? null
-                  : {
-                      ...cur,
-                      status: "error",
-                      collectPhase: undefined,
-                      collectRows: undefined,
-                      error: INTERRUPTED_COLLECT_MESSAGE,
-                    },
+                  : failedCollect(cur, INTERRUPTED_COLLECT_MESSAGE),
               ),
             generationOf(c),
           );

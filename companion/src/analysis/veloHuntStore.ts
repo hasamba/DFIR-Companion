@@ -104,6 +104,9 @@ export interface VeloHuntJob {
   truncatedArtifacts?: TruncatedArtifact[]; // fetched PARTIALLY — the read hit the row cap, findings missing
   unreadArtifacts?: UnreadArtifact[]; // named sources NOT read — the source list lookup failed (#1635)
   superCappedArtifacts?: SuperCappedArtifact[]; // super-only: the shared super-timeline cap cut these (#1982)
+  // The five lists above are an EARLIER collect's: the last collect failed before it wrote its own
+  // (#2842, see failedCollect). Cleared by the next collect that gets as far as its own lists.
+  earlierCoverage?: true;
   // "external" (#2690): the run's collected files stay in Velociraptor. Every collect, retry and
   // re-import of this hunt skips the upload-content read entirely; only a manifest is kept.
   uploadPolicy?: "external";

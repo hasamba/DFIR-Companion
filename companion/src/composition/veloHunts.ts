@@ -78,7 +78,7 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as ev from "./veloEvidenceFirst.js"; // store evidence before the import section (#1874)
-import { completeness, regradeAfterCollect } from "./veloHuntCompleteness.js";
+import { completeness, failedCollect, regradeAfterCollect } from "./veloHuntCompleteness.js";
 import {
   createSuperShareLedger,
   importSuperOnlyArtifact,
@@ -686,14 +686,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, err, inFlight);
       try {
         const cur = await huntStore.get(caseId, huntId);
-        if (cur)
-          await huntStore.upsert(caseId, {
-            ...cur,
-            status: "error",
-            collectPhase: undefined,
-            collectRows: undefined,
-            error: (err as Error).message,
-          });
+        if (cur) await huntStore.upsert(caseId, failedCollect(cur, (err as Error).message));
       } catch {
         /* ignore */
       }

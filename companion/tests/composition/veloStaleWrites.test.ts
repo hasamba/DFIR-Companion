@@ -218,6 +218,38 @@ describe("hunts left mid-collect by a dead process (#2403)", () => {
     t.stopVeloHuntStatusPollsForCase("c1");
   });
 
+  // #2842: a collect cut off while it was still downloading never wrote its own results, so the lists
+  // on the job are an earlier collect's. One cut off later had already replaced them with its own.
+  it("startup marks the lists of a hunt cut off while fetching as an earlier collect's", async () => {
+    const huntStore = new VeloHuntStore(store);
+    const earlier = {
+      skippedArtifacts: [
+        { name: "Windows.System.Pslist", error: "Import refused.", notImported: "stopped" as const },
+      ],
+    };
+    const cutOff = { ...JOB, ...earlier, status: "collecting" as const };
+    await huntStore.upsert("c1", { ...cutOff, huntId: "H.fetch", collectPhase: "fetching" });
+    await huntStore.upsert("c1", { ...cutOff, huntId: "H.queued", collectPhase: "queued" });
+    await huntStore.upsert("c1", {
+      ...JOB,
+      huntId: "H.first",
+      status: "collecting",
+      collectPhase: "fetching",
+    });
+    const { t } = huntTimers(huntStore, async () => ({ state: "RUNNING" }));
+    await t.resumeVeloHuntStatusPolls({ startup: true });
+    const fetching = await huntStore.get("c1", "H.fetch");
+    expect(fetching).toMatchObject({ status: "error", error: INTERRUPTED_COLLECT_MESSAGE, ...earlier });
+    expect(fetching?.earlierCoverage).toBe(true);
+    const queued = await huntStore.get("c1", "H.queued");
+    expect(queued).toMatchObject({ status: "error", error: INTERRUPTED_COLLECT_MESSAGE, ...earlier });
+    expect(queued?.earlierCoverage).toBeUndefined(); // its own lists
+    const first = await huntStore.get("c1", "H.first");
+    expect(first?.status).toBe("error");
+    expect(first?.earlierCoverage).toBeUndefined(); // no earlier collect: nothing to label
+    t.stopVeloHuntStatusPollsForCase("c1");
+  });
+
   it("reconnect (no startup flag) never marks a collecting hunt", async () => {
     const huntStore = new VeloHuntStore(store);
     await huntStore.upsert("c1", { ...JOB, status: "collecting", collectPhase: "importing" });

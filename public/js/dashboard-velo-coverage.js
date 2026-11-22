@@ -54,8 +54,20 @@ function veloCutLine(t) {
   return `${esc(t.name)} (${kept}${span}, rows outside it were not read)`;
 }
 
+// A collect that failed before it recorded its own results leaves an EARLIER collect's lists on the
+// job, and the server marks them (#2842). They are still true of the case, so the block stays, under
+// one line that says whose results it shows. Fixed text; it never prints without a block under it.
 /* exported veloCoverageHtml */
 function veloCoverageHtml(job) {
+  const block = veloCoverageBlock(job);
+  if (!block || job.earlierCoverage !== true) return block;
+  return (
+    `<div data-safe-style="font-size:12px;color:var(--text-muted);margin-top:2px">FROM AN EARLIER ` +
+    `COLLECT &mdash; the last collect failed before it recorded its own results.</div>${block}`
+  );
+}
+
+function veloCoverageBlock(job) {
   const cutAll = Array.isArray(job.truncatedArtifacts) ? job.truncatedArtifacts : [];
   const skipped = Array.isArray(job.skippedArtifacts) ? job.skippedArtifacts : [];
   const failed = skipped.filter((s) => !s.notImported); // the fetch errored
@@ -85,9 +97,10 @@ function veloCoverageHtml(job) {
       )
     : "";
 
-  // A failed collect kept something only when it STOPPED at a later artifact (#2817): those records
-  // are written after the first import. A held record is saved before any import starts, so on a
-  // failed collect it proves nothing was imported — it is named, and nothing else is claimed.
+  // A failed collect kept something only when it STOPPED at a later artifact (#2817): the records it
+  // wrote for that come after its first import. A held record is saved before any import starts, so
+  // on a failed collect it proves nothing was imported — it is named, and nothing else is claimed.
+  // (Records an earlier collect left behind pass the same test; the caller labels them, #2842.)
   if (job.status === "error" && !unimported.some((s) => s.notImported === "stopped")) return unimportedBox;
   if (job.status !== "imported" && job.status !== "error") return "";
   if (total <= 1 && !cut.length && !unread.length && !capped.length && !unimported.length) return "";

@@ -116,9 +116,11 @@ async function world(
   });
   const realImport = pipeline.importVelociraptorArtifact.bind(pipeline);
   let imports = 0;
+  // What a test changes between two collects of one hunt (#2842).
+  const sw = { failAt, poisonRows: false };
   pipeline.importVelociraptorArtifact = async (...args) => {
     imports += 1;
-    if (imports === failAt) throw refusal();
+    if (imports === sw.failAt) throw refusal();
     const state = await realImport(...args);
     // What a batched artifact's run hands the collect once it committed (#2831): the rows its cap
     // passes dropped, and the run itself.
@@ -145,6 +147,8 @@ async function world(
     async huntArtifactRows(_h: string, artifact: string): Promise<VelociraptorRunResult> {
       const index = ARTIFACTS.indexOf(artifact);
       const rows = batched.real ? manyRows(index, batched.real.rows) : [row(index)];
+      // A row the collect cannot write to its scratch file: the fetch works, the collect then fails.
+      if (sw.poisonRows) return { rows: [{ ...row(index), Size: 1n }], total: 1, truncated: false };
       return { rows, total: rows.length, truncated: false };
     },
     async huntUploads() {
@@ -186,7 +190,7 @@ async function world(
     return 0; // graded nothing
   });
   const made = { app, stateStore, veloHuntStore, importMetaStore, importUndoStore, superTimelineStore };
-  return { ...made, seen, imports: () => imports };
+  return { ...made, seen, sw, imports: () => imports };
 }
 
 async function collect(w: Awaited<ReturnType<typeof world>>, end: VeloHuntJob["status"]) {
@@ -356,5 +360,70 @@ describe("a hunt collect that fails on a later artifact (#2817)", () => {
       expect(buildCollectionInventory({ events: [], hunts: sanitizeHuntJobs([job]) }).hunts).toEqual([]);
     },
     POLL_TIMEOUT_MS * 2,
+  );
+});
+
+// #2842: a collect that fails before it records its own results leaves an EARLIER collect's lists on
+// the job. They stay (they are still true of the case) and the job says whose they are.
+describe("a hunt collect that fails after an earlier part-imported collect (#2842)", () => {
+  type World = Awaited<ReturnType<typeof world>>;
+  /** The second of three refused: one artifact imported, two "stopped" records on the job. */
+  async function partCollected() {
+    const w = await world(2);
+    const first = await collect(w, "error");
+    expect((first.skippedArtifacts ?? []).map((s) => s.notImported)).toEqual(["stopped", "stopped"]);
+    expect(first.earlierCoverage).toBeUndefined(); // its own results
+    return { w, first };
+  }
+  /** Collect again and wait for a failure that is not the earlier one's. */
+  async function collectFailsAgain(w: World, earlier: VeloHuntJob) {
+    const res = await request(w.app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.1" });
+    expect(res.status).toBe(202);
+    return pollFor("hunt H.1 failed again", async () => {
+      const j = await w.veloHuntStore.get("c1", "H.1");
+      return j?.status === "error" && j.error !== earlier.error ? j : null;
+    });
+  }
+
+  it(
+    "a failure before the collect recorded its own results marks the lists as an earlier collect's",
+    async () => {
+      const { w, first } = await partCollected();
+      w.sw.poisonRows = true;
+      const job = await collectFailsAgain(w, first);
+      expect(job.error).toMatch(/BigInt/);
+      expect(w.imports()).toBe(2); // the second collect imported nothing
+      expect(job.skippedArtifacts).toEqual(first.skippedArtifacts);
+      expect(job.earlierCoverage).toBe(true);
+
+      // The AI's inventory still reads the hunt as part-collected, never as clean silence (#2838).
+      const inv = buildCollectionInventory({ events: [], hunts: sanitizeHuntJobs([job]) });
+      expect(inv.hunts.map((h) => `${h.artifact}=${h.state}`)).toEqual([
+        `${THIRD}=not-imported`,
+        `${FIRST}=archive-only`,
+        `${SECOND}=not-imported`,
+      ]);
+      expect([...emptySettledClasses(inv, "WS-001")]).toEqual([]);
+
+      // A collect that completes writes its own results: the mark is gone.
+      w.sw.poisonRows = false;
+      const clean = await collect(w, "imported");
+      expect(clean.earlierCoverage).toBeUndefined();
+      expect(clean.skippedArtifacts).toBeUndefined();
+    },
+    POLL_TIMEOUT_MS * 4,
+  );
+
+  it(
+    "control: a failure after the collect recorded its own results is not marked",
+    async () => {
+      const { w, first } = await partCollected();
+      w.sw.failAt = w.imports() + 1; // the second collect's FIRST artifact is refused
+      const job = await collectFailsAgain(w, first);
+      expect(job.error).toBe(refusal().message);
+      expect(job.skippedArtifacts).toBeUndefined(); // its own results: nothing was skipped or held
+      expect(job.earlierCoverage).toBeUndefined();
+    },
+    POLL_TIMEOUT_MS * 4,
   );
 });
