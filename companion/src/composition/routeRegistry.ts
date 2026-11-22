@@ -18,7 +18,7 @@ import { mountCaseWriteExistsGate } from "./caseWriteExistsGate.js";
 import { mountAiRateLimit } from "./aiRateLimit.js";
 import { mountCaseWriteGuard } from "./caseWriteGuard.js";
 import { mountAiOffGate } from "./aiOffGate.js";
-import { mountHeavyReadGate } from "./heavyReadGate.js";
+import { mountCaseHeavyReadGate } from "./heavyReadWiring.js";
 import { registerSystemRoutes } from "../routes/system.js";
 import { registerSupportBundleRoutes } from "../routes/supportBundleRoutes.js";
 import { registerGeoTileRoutes } from "../routes/geoTiles.js";
@@ -176,7 +176,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
 
   // Admit the heavy whole-case GETs (/state, swimlane, gaps, exports, ...) a few at a time, and 503
   // a burst past the queue (#1915). Above every route family it covers. See composition/heavyReadGate.ts.
-  mountHeavyReadGate(app);
+  mountCaseHeavyReadGate(app, ctx);
 
   registerImportRoutes(app, ctx);
   registerDropHeldRoutes(app, ctx); // hunt-zip files held over the size limits (#2746)
