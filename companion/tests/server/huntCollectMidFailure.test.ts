@@ -14,7 +14,7 @@ import { assessImportMemory, ImportMemoryRefusedError } from "../../src/analysis
 import { ImportUndoStore } from "../../src/analysis/importUndo.js";
 import { registerHuntSettle } from "../../src/analysis/huntSettleHook.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
-import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { SuperTimelineStore, type SuperEviction } from "../../src/analysis/superTimelineStore.js";
 import { VeloHuntStore, type VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
 import { HUNT_REFUSAL_WORDING } from "../../src/composition/veloEvidenceFirst.js";
 import { buildRuntimePipeline, createApp } from "../../src/server.js";
@@ -53,7 +53,7 @@ function refusal(): ImportMemoryRefusedError {
 }
 
 /** `failAt`: the 1-based artifact import that is refused; 0 refuses none. */
-async function world(failAt: number, brokenRecord = false) {
+async function world(failAt: number, brokenRecord = false, capDropped?: SuperEviction) {
   const root = await mkdtemp(join(tmpdir(), "dfir-hunt-midfail-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -76,7 +76,10 @@ async function world(failAt: number, brokenRecord = false) {
   pipeline.importVelociraptorArtifact = async (...args) => {
     imports += 1;
     if (imports === failAt) throw refusal();
-    return realImport(...args);
+    const state = await realImport(...args);
+    // What a batched artifact's run reports once it committed (#2816): the rows the cap dropped.
+    if (capDropped) args[2].onSuperEvicted?.(capDropped);
+    return state;
   };
   const client = {
     async huntStatus() {
@@ -181,6 +184,20 @@ describe("a hunt collect that fails on a later artifact (#2817)", () => {
       expect(job.skippedArtifacts?.[0]?.error).not.toMatch(/nothing was changed/i);
       // Before the settle: the seam's hunt grading already read the failed artifact from the job.
       expect(w.seen[0]).toEqual({ skipped: [THIRD], status: "collecting" });
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  // #2816 review: a batched artifact's run reports what the super-timeline cap dropped when it
+  // committed; the collect adds its artifacts' reports up and its one import record carries them.
+  it(
+    "the import record carries the rows the cap dropped across the artifacts that imported",
+    async () => {
+      const one = { count: 5, setAside: 1, from: "2025-02-01T00:00:00Z", to: "2025-02-03T00:00:00Z" };
+      const w = await world(3, false, one);
+      await collect(w, "error");
+      const meta = await w.importMetaStore.load("c1");
+      expect(meta.superTimelineEvicted).toEqual({ ...one, count: 10, setAside: 2 }); // two imported
     },
     POLL_TIMEOUT_MS * 2,
   );

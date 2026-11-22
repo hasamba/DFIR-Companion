@@ -27,7 +27,7 @@ import { parseJournald, type JournaldImportOptions } from "../analysis/journaldI
 import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.js";
 import { registerWazuhImportRoute } from "./importWazuh.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
-import { buildImportBase, importJobParameters } from "./importBase.js";
+import { buildImportBase, evictedInImport, importJobParameters } from "./importBase.js";
 import { createImportDebugRecorder } from "../analysis/importDebug.js";
 import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { settleForensicImport } from "./importSettle.js";
@@ -371,7 +371,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   file: storedName,
                   diff: tDiff,
                   superTimelineAddedCount,
-                  superTimelineEvicted,
+                  superTimelineEvicted: evictedInImport(base, superTimelineEvicted),
                   iocsDiff: iDiff,
                   linesIn: text.split(/\r?\n/).length,
                   ...cloudStream.importMeta(caseId, storedName),

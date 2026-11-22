@@ -514,6 +514,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               veloUrl,
               velociraptor: { ...eventBudget.nextImport(), partlyReadArtifact: partly },
               debug,
+              // A batched artifact's own cap report (#2816): the settle cannot see rows already gone.
+              onSuperEvicted: (e) => void (superTimelineEvicted = mergeEvictions(superTimelineEvicted, e)),
             });
             importedNames.push(name);
             if (options.stateStore && budgetBaseline) {

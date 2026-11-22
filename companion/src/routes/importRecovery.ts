@@ -13,7 +13,8 @@ import { runDiskImport } from "./importCloudStream.js";
 import { isStreamKind } from "../analysis/ingest/cloudStreamProviders.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
-import type { SuperEviction } from "../analysis/superTimelineStore.js";
+import { createSuperEvictionTally, type SuperEviction } from "../analysis/superTimelineStore.js";
+import { evictedInImport } from "./importBase.js";
 import { safeKind, createImportDebugRecorder } from "../analysis/importDebug.js";
 import { aiExtractionFromDebug } from "../analysis/importMeta.js";
 import { decodeImportedText } from "../ingest/decodeText.js";
@@ -79,6 +80,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         const base: ImportBase = {
           label: parameters.storedName,
           debug: recorder,
+          superEvictions: createSuperEvictionTally(), // this attempt's own (#2816)
           idPrefix: String(parameters.sequence),
           importedAt: parameters.importedAt,
           ...(minSeverity ? { minSeverity } : {}),
@@ -204,7 +206,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
                 file: parameters.storedName,
                 diff: timelineDiff,
                 superTimelineAddedCount,
-                superTimelineEvicted,
+                superTimelineEvicted: evictedInImport(base, superTimelineEvicted),
                 iocsDiff: iocDiff,
                 linesIn: text ? text.split(/\r?\n/).length : 0,
                 path: parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",

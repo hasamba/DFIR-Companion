@@ -14,6 +14,7 @@ import { formatImportCancelled, formatImportMerged, formatImportStart } from "..
 import { abortIfCancelled, ImportCancelledError } from "../analysis/ingest/importState.js";
 import { safeKind, createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { aiExtractionFromDebug } from "../analysis/importMeta.js";
+import { createSuperEvictionTally, type SuperEviction } from "../analysis/superTimelineStore.js";
 import { emitImportDebug } from "./importDebugEmit.js";
 import { admitDedicatedImport, type DedicatedImportJob } from "./importCommitJob.js";
 
@@ -61,7 +62,12 @@ export interface DedicatedImportCommit {
    * spread into the importer's options. A spread, not named properties, so an importer that does not
    * read one of them still type-checks. An AbortError thrown by the importer is a cancel, not a failure.
    */
-  run: (withDebug: { debug: ImportDebugRecorder; signal?: AbortSignal }) => Promise<unknown>;
+  run: (withDebug: {
+    debug: ImportDebugRecorder;
+    signal?: AbortSignal;
+    /** Read only by the batched Velociraptor path (#2816): what the super-timeline cap dropped. */
+    onSuperEvicted: (evicted: SuperEviction) => void;
+  }) => Promise<unknown>;
 }
 
 /**
@@ -125,6 +131,7 @@ export function commitDedicatedImport(
   // One recorder per attempt (#1736). A dedicated route names its format, so nothing was sniffed.
   const debug = createImportDebugRecorder();
   debug.detected(kind, { confident: true, decision: "explicit_route" });
+  const capDropped = createSuperEvictionTally(); // this attempt's own (#2816)
 
   // Both assigned by run(), once this import owns the case. The section is taken INSIDE the
   // background task so the 202 never waited on another import, and released in the `finally`.
@@ -173,7 +180,7 @@ export function commitDedicatedImport(
     );
     const startedAt = Date.now();
     try {
-      await commit.run({ debug, ...(signal ? { signal } : {}) });
+      await commit.run({ debug, onSuperEvicted: capDropped.add, ...(signal ? { signal } : {}) });
     } catch (err) {
       // A cancel can surface as a throw mid-import (an aborted model call) after earlier batches
       // were saved. Not a failure: what landed is settled below. An importer that stopped before
@@ -225,7 +232,7 @@ export function commitDedicatedImport(
               file: storedName,
               diff: tDiff,
               superTimelineAddedCount: settled.superTimelineAddedCount,
-              superTimelineEvicted: settled.superTimelineEvicted,
+              superTimelineEvicted: capDropped.plus(settled.superTimelineEvicted),
               iocsDiff: iDiff,
               linesIn: commit.linesIn,
               path: commit.path,

@@ -170,6 +170,8 @@ export interface BulkImportOpts {
   minSeverity?: Severity;
   veloUrl?: string;
   onProgress?: (done: number, total: number) => void;
+  /** Forensic entry only (#2816): what the cap dropped in the whole run, once, after it committed. */
+  onSuperEvicted?: (evicted: SuperEviction) => void;
   /** Super-only mode: this artifact's share of the hunt's DFIR_SUPERTIMELINE_MAX (#1982). */
   superMaxEvents?: number;
   /** #2425: the import job's Cancel, checked before each batch and the final merge (→ rollback). */
@@ -778,6 +780,9 @@ export async function importVelociraptorBulk(
         caseId,
       );
     }
+    // The caller gets the state only, and its settle cannot see rows already gone: report them here.
+    const evicted = mergeEvictions(result.superEvicted, atCommit);
+    if (evicted.count) opts.onSuperEvicted?.(evicted);
     opts.onProgress?.(1, 1);
     return state;
   });

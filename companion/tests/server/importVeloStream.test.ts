@@ -146,6 +146,27 @@ describe("POST /cases/:id/import-file — a large Velociraptor JSON Lines file s
     expect(hit?.mitreTechniques).toContain("T1567.002");
   });
 
+  // #2816 review: what the cap dropped when the batched run committed is on the import's record,
+  // also when the import kept nothing in the forensic timeline for the settle to dual-write.
+  it("records the rows the super-timeline cap dropped, for an import that kept no forensic row", async () => {
+    const { app, root, sink, store } = await makeApp(true);
+    const dropped = { count: 14, setAside: 2, from: "2025-01-01T00:00:00Z", to: "2025-01-02T00:00:00Z" };
+    sink.forensicMinSeverity = async () => "Critical"; // every row stays below the case gate
+    sink.commitSuperCap = async () => dropped;
+    const path = join(root, "sb_evtx.json");
+    await writeFile(path, ndjson(rowsOfAtLeast(1.5 * MB)), "utf8");
+
+    const res = await request(app).post("/cases/c1/import-file").send({ path });
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+
+    const metaStore = new ImportMetaStore(store);
+    await until(async () => (await metaStore.load("c1")).lastImportedAt !== "");
+    expect(sink.forensic).toEqual([]);
+    const meta = await metaStore.load("c1");
+    expect(meta.addedCount).toBe(0);
+    expect(meta.superTimelineEvicted).toEqual(dropped);
+  });
+
   it("keeps the 413 for an over-cap Velociraptor file that is not JSON Lines, naming JSON Lines", async () => {
     const { app, store, root } = await makeApp(true);
     const path = join(root, "sb_evtx.json");

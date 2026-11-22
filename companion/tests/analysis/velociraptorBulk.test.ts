@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { mergeDelta } from "../../src/analysis/stateMerge.js";
+import { SuperTimelineStore, type SuperEviction } from "../../src/analysis/superTimelineStore.js";
+import { buildBulkImportSink } from "../../src/composition/bulkImportSink.js";
 import type { ImportContext } from "../../src/analysis/ingest/importContext.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
 import {
@@ -645,6 +647,100 @@ describe("runVelociraptorBulk — the super-timeline cap waits for the run's com
     delete sink.commitSuperCap;
     await runVelociraptorBulk(sink, "c1", thirty(), baseOpts(), "super-only");
     expect(sink.holds).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+// #2816 review: a forensic run's caller gets back the case state only, so what the cap dropped —
+// in the run's batches and in its commit pass — reached the server log and nothing the analyst
+// reads. The forensic entry now hands the whole run's eviction to `onSuperEvicted`, once, after it
+// committed; the route or hunt merges it into the import record.
+describe("importVelociraptorBulk — what the cap dropped reaches the import's caller (#2816)", () => {
+  const fifteen = () => artifactMap(Array.from({ length: 15 }, (_, i) => mftRow(i + 1)));
+  // A row the case held before the run: one a minute from 2025-03-01T00:00Z, oldest first.
+  const earlier = (i: number): ForensicEvent => ({
+    ...mftEvent(`old-${String(i).padStart(2, "0")}`),
+    timestamp: new Date(Date.UTC(2025, 2, 1, 0, i)).toISOString(),
+    description: `earlier row ${i}`,
+  });
+
+  it("a full super-timeline and an Info-only import: the count and time span of the rows dropped", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-bulk-evict-"));
+    const caseStore = new CaseStore(root);
+    await caseStore.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+    const stateStore = new StateStore(caseStore);
+    const superStore = new SuperTimelineStore(caseStore, 20);
+    await superStore.append(
+      "c1",
+      Array.from({ length: 20 }, (_, i) => earlier(i)),
+    );
+    const sink = buildBulkImportSink({
+      stateStore,
+      superTimelineStore: superStore,
+      log: () => {},
+      env: { DFIR_IMPORT_BATCH_ROWS: "5" },
+    })!;
+    const ctx: ImportContext = {
+      opts: { stateStore },
+      withStateLock: (_caseId, fn) => fn(),
+      mergeWithAliases: async (state, delta, c) => mergeDelta(state, delta, c),
+    };
+    const reported: SuperEviction[] = [];
+    const state = await importVelociraptorBulk(ctx, sink, "c1", fifteen(), {
+      ...baseOpts(),
+      onSuperEvicted: (e) => reported.push(e),
+    });
+
+    expect(state?.forensicTimeline).toEqual([]); // Info only: nothing for a later settle to dual-write
+    expect((await superStore.meta("c1")).rows).toBe(20);
+    // The 15 oldest earlier rows went, at the commit pass: minutes 0–14 of 2025-03-01.
+    expect(reported).toEqual([
+      { count: 15, setAside: 0, from: "2025-03-01T00:00:00.000Z", to: "2025-03-01T00:14:00.000Z" },
+    ]);
+  });
+
+  it("reports the batches' own evictions and the commit pass as one eviction, once", async () => {
+    const { ctx } = await contextWithStore();
+    const sink = memorySink({ batchRows: 10 });
+    const inRun = { count: 3, setAside: 1, from: "2026-01-01T00:00:01Z", to: "2026-01-01T00:00:03Z" };
+    const atCommit = { count: 14, setAside: 2, from: "2025-01-01T00:00:00Z", to: "2025-01-02T00:00:00Z" };
+    let appends = 0;
+    sink.appendSuper = async (_c, events) => ({
+      retained: events.length,
+      evicted: ++appends === 2 ? inRun : NO_EVICTION,
+    });
+    sink.commitSuperCap = async () => atCommit;
+    const reported: SuperEviction[] = [];
+    await importVelociraptorBulk(ctx, sink, "c1", fifteen(), {
+      ...baseOpts(),
+      onSuperEvicted: (e) => reported.push(e),
+    });
+    expect(reported).toEqual([
+      { count: 17, setAside: 3, from: "2025-01-01T00:00:00Z", to: "2026-01-01T00:00:03Z" },
+    ]);
+  });
+
+  it("reports nothing when the cap dropped nothing, and nothing for a run that rolled back", async () => {
+    const { ctx } = await contextWithStore();
+    const reported: SuperEviction[] = [];
+    const opts = { ...baseOpts(), onSuperEvicted: (e: SuperEviction) => reported.push(e) };
+    await importVelociraptorBulk(ctx, memorySink({ batchRows: 10 }), "c1", fifteen(), opts);
+
+    const failing = memorySink({ batchRows: 10 });
+    failing.appendSuper = async (_c, events) => ({
+      retained: events.length,
+      evicted: { count: 4, setAside: 0, from: "2026-01-01T00:00:01Z", to: "2026-01-01T00:00:04Z" },
+    });
+    const broken: ImportContext = {
+      ...ctx,
+      mergeWithAliases: async () => {
+        throw new Error("merge failed");
+      },
+    };
+    await expect(importVelociraptorBulk(broken, failing, "c1", fifteen(), opts)).rejects.toThrow(
+      /merge failed/,
+    );
+    expect(failing.rollbacks).toHaveLength(1);
+    expect(reported).toEqual([]);
   });
 });
 

@@ -187,6 +187,25 @@ export function mergeEvictions(a: SuperEviction | undefined, b: SuperEviction | 
   };
 }
 
+/**
+ * What one import's batched runs said the cap dropped (#2816), kept by the import itself — not by
+ * the store or the case — until its record is written. A batched forensic run returns the case
+ * state only, and its later settle cannot see rows the run's own cap passes already removed.
+ */
+export interface SuperEvictionTally {
+  add(evicted: SuperEviction): void;
+  /** The import's settle result with the runs' reports added; unchanged when no run reported. */
+  plus(settled: SuperEviction | undefined): SuperEviction | undefined;
+}
+
+export function createSuperEvictionTally(): SuperEvictionTally {
+  let total: SuperEviction | undefined;
+  return {
+    add: (evicted) => void (total = mergeEvictions(total, evicted)),
+    plus: (settled) => (total?.count ? mergeEvictions(total, settled) : settled),
+  };
+}
+
 export class SuperTimelineStore {
   private readonly scanMemo: SuperScanMemo;
 

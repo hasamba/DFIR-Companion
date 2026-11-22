@@ -70,6 +70,7 @@ export async function importVeloFileLogged(
       minSeverity: base.minSeverity,
       debug: base.debug,
       signal: base.signal,
+      onSuperEvicted: base.superEvictions?.add, // what the cap dropped, for the import record (#2816)
       // The analyst-declared host, as the in-memory dispatch passes it (#1496).
       ...(base.assetHost
         ? { velociraptor: { hostFallback: base.assetHost, hostFallbackBasis: "analyst" as const } }

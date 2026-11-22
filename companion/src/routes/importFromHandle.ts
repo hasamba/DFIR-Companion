@@ -10,7 +10,7 @@ import type { ImportBaseline } from "../analysis/importBaseline.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import { isStringTooLongError } from "../storage/boundedRead.js";
 import type { RouteContext } from "./context.js";
-import { buildImportBase, importJobParameters } from "./importBase.js";
+import { buildImportBase, evictedInImport, importJobParameters } from "./importBase.js";
 import { cloudStream } from "./importCloudStream.js";
 import { decideVeloDiskStream, type VeloDiskDecision } from "./importVeloStream.js";
 import { sniffImportFileHeadDetail, readImportFileBounded } from "./importFileHead.js";
@@ -231,7 +231,7 @@ export async function importFromHandle(
                 file: storedName,
                 diff: tDiff,
                 superTimelineAddedCount,
-                superTimelineEvicted,
+                superTimelineEvicted: evictedInImport(base, superTimelineEvicted),
                 iocsDiff: iDiff,
                 linesIn: text.split(/\r?\n/).length,
                 ...cloudStream.importMeta(caseId, storedName),

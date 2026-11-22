@@ -2,6 +2,7 @@ import { open } from "node:fs/promises";
 import type { InvestigationState, Severity } from "../stateTypes.js";
 import type { VelociraptorImportOptions } from "../velociraptorImport.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
+import type { SuperEviction } from "../superTimelineStore.js";
 import {
   openVelociraptorFileRowStream,
   probeNdjsonFileHead,
@@ -51,6 +52,8 @@ export interface VelociraptorFileOptions {
   onProgress?: (done: number, total: number) => void;
   debug?: ImportDebugRecorder;
   signal?: AbortSignal;
+  /** What the super-timeline cap dropped in the run, once it committed (#2816). */
+  onSuperEvicted?: (evicted: SuperEviction) => void;
 }
 
 async function checkHead(storedPath: string): Promise<number> {
@@ -95,6 +98,7 @@ export async function importVelociraptorFile(
       minSeverity: opts.minSeverity,
       veloUrl: opts.veloUrl,
       onProgress: opts.onProgress,
+      onSuperEvicted: opts.onSuperEvicted,
       ...(opts.signal ? { signal: opts.signal } : {}),
     },
   );
