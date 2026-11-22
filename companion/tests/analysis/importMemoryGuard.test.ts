@@ -152,11 +152,13 @@ describe("createImportMemoryGuard", () => {
   });
 
   it("reserves heap too: two imports that each fit the heap are not both admitted", async () => {
+    // A heap limit that holds one 30k-event import's estimate, not two.
+    const heapLimitBytes = 1.75 * 30_000 * IMPORT_HEAP_BYTES_PER_EVENT;
     const guard = createImportMemoryGuard({
       countEvents: async () => 30_000,
-      probe: () => ({ availableBytes: 64 * GB, rssBytes: 0.5 * GB, heapLimitBytes: 2.5 * GB }),
+      probe: () => ({ availableBytes: 64 * GB, rssBytes: 0.5 * GB, heapLimitBytes }),
     });
-    const releaseA = await guard.admit("a", { incomingEvents: 0 }); // 30k x 48 KB ≈ 1.4 GB
+    const releaseA = await guard.admit("a", { incomingEvents: 0 });
     await expect(guard.admit("b", { incomingEvents: 0 })).rejects.toThrow(/held by other imports/);
     releaseA();
     (await guard.admit("b", { incomingEvents: 0 }))();

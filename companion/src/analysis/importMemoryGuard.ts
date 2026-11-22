@@ -10,13 +10,30 @@ import { maxEventsDefault } from "./eventAggregate.js";
  * once, with nothing to restart it. This guard refuses the import first, with a message that says
  * why and what to do. It runs after the evidence is stored, so a refusal loses nothing.
  *
- * The estimate is linear in events and deliberately simple, calibrated on measured runs (SIEM rows,
- * `npm run dev`'s 8 GB old-space limit):
- * - one 35,000-row import into a fresh case peaked at 4.8 GB of process memory, and one 20,000-row
- *   import at 3.1 GB — about 130 KB of peak RSS per event, counting the SQLite worker, native
- *   memory and the garbage V8 has not collected yet (it collects lazily below its limit);
- * - the same 35,000-row import completed under a 1.5 GB heap limit — at most about 44 KB of live
- *   heap per event.
+ * The estimate is linear in events and deliberately simple. First calibrated on SIEM rows (#1874),
+ * re-measured across the main import paths in #2814 (synthetic data, a real server child, one case
+ * per run, peak RSS sampled every 200 ms through the settle and a 20 s tail). Whole-file
+ * Velociraptor ran with DFIR_IMPORT_BULK_MIN_MB raised, SIEM and EVTX XML with DFIR_MAX_EVENTS=50000,
+ * so one file could add that many events; the rest ran at the defaults.
+ * - RSS, under `npm run dev`'s 8 GB old-space limit. Imports into small cases cost the most per
+ *   event: 123 KB at 20,000 events (whole-file Velociraptor), 115 KB at 35,000 (SIEM), 98 KB at
+ *   35,000 (EVTX XML), 97 KB at 70,000 (the issue's bulk Velociraptor seed, default settings). Large
+ *   cases cost less per event: 47-63 KB at 100,000-176,000 (bulk and whole-file Velociraptor, SIEM,
+ *   EVTX XML), up to 9.3 GB at 176,000 on a long-running server. A real-world case of about 145,000
+ *   events was killed at 11.4 GB (>= 80 KB per event, its true peak unknown). The small-case runs and
+ *   that floor leave no room to lower 128 KB: it covers every run measured except the one below, and
+ *   the killed one by 1.5x. A fixed base plus a smaller slope was rejected: much of the small-case
+ *   peak is garbage that scales with the heap limit, so a base fitted at 8 GB over-charges a small
+ *   machine.
+ * - Heap, by pass/fail under a smaller old-space limit, against V8's whole heap limit (what this
+ *   guard compares with): a 35,000-row SIEM import into an empty case completes under a 948 MB limit
+ *   (`--max-old-space-size=900`; live heap 805 MB, the tightest run), and imports into a
+ *   176,000-180,000-event case (a 50,000-row SIEM file; small Velociraptor and SIEM files) complete
+ *   under 4,144 MB (`=4096`). 36 KB is 1.3x the first and 1.5x the second. (#1874's figure was 48 KB:
+ *   the same SIEM import completed under 1.5 GB.)
+ * - Not covered by either figure: a large file read whole whose kept rows are capped. A 100 MB SIEM
+ *   file kept at 2,000 rows peaked about 0.9 GB above the idle server with 660 MB of live heap, against
+ *   estimates of 250 MB and 70 MB. Its memory follows the file, not the events.
  * The case count comes from the index, so it is exact, not sampled from GC timing. The rows an
  * import will add are estimated from the file's size — about one event per 200 bytes, which
  * over-counts every format we measured — capped by DFIR_MAX_EVENTS. When the caller does not know
@@ -38,7 +55,7 @@ import { maxEventsDefault } from "./eventAggregate.js";
  * section without a size hint — evidence perhaps not stored yet — is never refused mid-run.
  */
 export const IMPORT_RSS_BYTES_PER_EVENT = 128 * 1024;
-export const IMPORT_HEAP_BYTES_PER_EVENT = 48 * 1024;
+export const IMPORT_HEAP_BYTES_PER_EVENT = 36 * 1024;
 export const IMPORT_INPUT_BYTES_PER_EVENT = 200;
 const UNSIZED_INCOMING_EVENTS = 2000;
 

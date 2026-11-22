@@ -129,6 +129,35 @@ Deterministic imports also retain a [versioned canonical event envelope](canonic
 structured identities and field-level provenance. This lets graphs and cross-source correlation use
 the source facts rather than parsing the displayed description back into data.
 
+### How much memory a large case needs
+
+Every import loads the whole case, so an import's memory grows mainly with the number of events in
+the case. Before each import the **import memory guard** estimates the peak. If the server does not
+have that much memory, the guard refuses the import (the file stays saved in the case) instead of
+letting the machine kill the server. It estimates two limits, and both must fit:
+
+- **RAM: about 8,000 events per GB** that the server can use (128 KB per event). A machine with 16 GB,
+  of which the server can use about 13 GB, holds a case of about 100,000 events. 32 GB holds about
+  200,000.
+- **JavaScript heap: about 29,000 events per GB of heap limit** (36 KB per event). `npm run dev` sets
+  an 8 GB heap, which caps a case near 230,000 events. The Docker image and the desktop builds use
+  Node's default heap, which depends on the machine's memory and is often about 4 GB. A 4 GB heap caps
+  a case near 115,000 events. Start the server with `node --max-old-space-size=<MB>` to raise it.
+
+Both figures come from measured imports (bulk and whole-file Velociraptor, SIEM JSON, EVTX XML) on
+synthetic data. Small cases cost the most per event, and a real case of about 145,000 events needed
+more than 11 GB. To size a VM for a large hunt, count the events you expect in the forensic timeline.
+Rows graded Info go only to the super-timeline and do not count. Allow 128 KB of free RAM per event.
+
+The estimate does not cover one cost: **a large file that is read whole but keeps only a few rows.**
+A SIEM, EDR or EVTX XML export keeps at most `DFIR_MAX_EVENTS` rows (2,000 by default), but the
+whole file is still parsed in memory. A 100 MB SIEM export kept at 2,000 rows used about 1 GB above
+the idle server, while the guard counted it as 2,000 events (about 250 MB). Leave about 10 times the
+size of the largest such file free, up to about 2 GB for the drop folder's 200 MB limit. Large
+Velociraptor exports are read in batches and do not have this cost.
+`DFIR_IMPORT_MEMORY_GUARD=off` turns the guard off. Do that only if you know the machine has the
+memory.
+
 ### PowerShell rows carry their session
 
 A PowerShell log row records which PowerShell session it ran in. The session is the PowerShell
