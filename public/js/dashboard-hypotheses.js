@@ -20,6 +20,9 @@
   const HYP_STATUS_LABEL = Object.fromEntries(HYP_STATUS);
 
   function loadHypotheses(caseId) {
+    // #2837: a refusal line belongs to the case it was refused in. Synthesis hypotheses can carry
+    // the same id in two cases, so it is dropped when another case's list is loaded.
+    if (hypWriteError && hypWriteError.caseId !== caseId) hypWriteError = null;
     fetch(`/cases/${caseId}/hypotheses`)
       .then((r) => r.json())
       .then((list) => {
@@ -164,6 +167,12 @@
       statusHistory.length > 1
         ? `<div class="hyp-history" title="Dated status-change history">🕘 ${statusHistory.map((s) => `${esc(HYP_STATUS_LABEL[s.status] || s.status)} (${esc(String(s.changedAt || "").slice(0, 10))})`).join(" → ")}</div>`
         : "";
+    // #2837: why the server refused the last write to this card. The sentence can hold the case's
+    // own name, so it is escaped like every other string drawn here.
+    const refused =
+      hypWriteError && hypWriteError.id === h.id
+        ? `<div class="manual-msg" role="status">${esc(hypWriteError.text)}</div>`
+        : "";
     return (
       `<div class="hyp ${escAttr(h.status)}${h.needsReview ? " needs-review" : ""}${h.exhausted ? " exhausted" : ""}" data-id="${id}">` +
       `<div class="hyp-row1">` +
@@ -178,7 +187,7 @@
       `<div class="hyp-row2">` +
       `<input class="hyp-assignee" placeholder="assignee" value="${escAttr(h.assignee || "")}" data-act="hypPatchAssignee" data-act-on="change" data-id="${id}" />` +
       `<input class="hyp-notes" placeholder="notes" value="${escAttr(h.notes || "")}" data-act="hypPatchNotes" data-act-on="change" data-id="${id}" />` +
-      `</div>` +
+      `</div>${refused}` +
       `</div>`
     );
   }
@@ -276,22 +285,18 @@
       if (input) input.placeholder = "a reason is required — it is the audit trail";
       return;
     }
-    fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}/exclusions`, {
+    hypWrite(caseId, id, "not excluded: ", `/cases/${caseId}/hypotheses/${encodeURIComponent(id)}/exclusions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ eventId, reason }),
-    })
-      .then(() => loadHypotheses(caseId))
-      .catch(() => {});
+    });
   }
   function hypRestoreEvidence(id, eventId) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
-    fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}/exclusions/${encodeURIComponent(eventId)}`, {
+    hypWrite(caseId, id, "not restored: ", `/cases/${caseId}/hypotheses/${encodeURIComponent(id)}/exclusions/${encodeURIComponent(eventId)}`, {
       method: "DELETE",
-    })
-      .then(() => loadHypotheses(caseId))
-      .catch(() => {});
+    });
   }
   function hypAcknowledgeReview(id) {
     hypPatch(id, { acknowledgeReview: true });
@@ -305,16 +310,45 @@
     hypPatch(id, { alternativeIds: [...cur] });
   }
 
+  // #2837: the last write the server refused, as { caseId, id, text } — drawn as one line inside that
+  // hypothesis's card. Kept as state so it survives the list reload and any live redraw; the next
+  // accepted write clears it.
+  let hypWriteError = null;
+
+  // Every write a card makes (edit, delete, exclude, restore) goes through here. These used to
+  // ignore the answer, so a refusal — a closed case is the common one — put the control back on
+  // the saved value with no word of why, and a lost connection left the unsaved value on screen.
+  function hypWrite(caseId, id, prefix, url, init) {
+    fetch(url, init)
+      .then(async (r) => {
+        // A success body is never read: a delete answers 204 with none.
+        if (!r.ok) throw hypRefusal(r.status, await r.json().catch(() => ({})));
+      })
+      // Two handlers, not then/catch: a fault while redrawing an ACCEPTED write must never be
+      // reported as "not saved".
+      .then(
+        () => {
+          hypWriteError = null;
+          loadHypotheses(caseId);
+        },
+        (e) => {
+          hypWriteError = { caseId, id, text: hypRefusalText(prefix, e) };
+          // Redraw first: it puts the control back on the saved value and shows the reason even
+          // when the reload below fails too (no connection). The reload is what shows the truth.
+          renderHypotheses();
+          loadHypotheses(caseId);
+        },
+      );
+  }
+
   function hypPatch(id, patch) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
-    fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, {
+    hypWrite(caseId, id, "not saved: ", `/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
-    })
-      .then(() => loadHypotheses(caseId))
-      .catch(() => {});
+    });
   }
 
   // #14 deferred: arm the NEXT deployed Velociraptor hunt to test a specific hypothesis. Consumed once
@@ -348,11 +382,9 @@
   function hypDelete(id) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
-    fetch(`/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, {
+    hypWrite(caseId, id, "not deleted: ", `/cases/${caseId}/hypotheses/${encodeURIComponent(id)}`, {
       method: "DELETE",
-    })
-      .then(() => loadHypotheses(caseId))
-      .catch(() => {});
+    });
   }
 
   // On-demand falsification review (#71): weigh each OPEN hypothesis's supporting vs. refuting evidence
@@ -467,7 +499,8 @@
   }
 
   // The restart advice is for a stale server's 404, which carries no sentence — so it is printed
-  // only then. The sentence can hold the case's own text: callers set it with textContent.
+  // only then. The sentence can hold the case's own text: callers set it with textContent, or
+  // escape it where the line is drawn as markup (the card's refusal line, #2837).
   function hypRefusalText(prefix, e) {
     return e && e.serverSaid
       ? prefix + e.message
