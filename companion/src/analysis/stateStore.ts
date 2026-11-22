@@ -420,13 +420,12 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
   }
 
   async importRowIdMark(caseId: string): Promise<number> {
-    if (!(await this.ensureMigrated(caseId))) return 0;
+    await this.ensureMigrated(caseId); // #2829: no saved state is not no rows — super-only runs save none
     return caseSqliteWorker.request<number>({ op: "entityRowIdMark", dbPath: this.databasePath(caseId) });
   }
 
-  // The super-timeline lives in the same database (superTimelineStore.ts), which is what lets one
-  // transaction cover both kinds; its migration, if it ran after the fence, inserted rows without
-  // this run's batch id, so they are never touched.
+  // The super-timeline shares this database: one transaction covers both kinds, and a case with no
+  // saved state still has rows to remove (#2829). Rows its migration added carry no batch id: kept.
   async rollbackImportBatch(
     caseId: string,
     afterRowId: number,
@@ -434,7 +433,8 @@ export class StateStore implements InvestigationStateStorage, ForensicRowStore {
     kinds: readonly ImportRollbackKind[],
   ): Promise<Record<ImportRollbackKind, ImportRollback>> {
     const empty = { forensicTimeline: { deleted: 0, ids: [] }, superTimeline: { deleted: 0, ids: [] } };
-    if (!kinds.length || !(await this.ensureMigrated(caseId))) return empty;
+    if (!kinds.length) return empty;
+    await this.ensureMigrated(caseId); // migrates a legacy case; the worker copes with no database
     const startedAt = performance.now();
     const out = await caseSqliteWorker.request<Partial<Record<ImportRollbackKind, ImportRollback>>>({
       op: "rollbackImportBatch",

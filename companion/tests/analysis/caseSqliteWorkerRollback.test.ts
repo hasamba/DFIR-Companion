@@ -279,7 +279,7 @@ describe("case SQLite worker: a batched run holds the cap's evictions until it c
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: "mock" });
     const state = new StateStore(cases);
-    await state.save(await state.load("c2")); // a case with no saved state marks its fence at 0
+    await state.save(await state.load("c2")); // saved state here; without it: the #2829 test below
     const store = new SuperTimelineStore(cases, CAP);
     const caseDb = join(cases.stateDir("c2"), INVESTIGATION_DB_FILENAME);
     await store.appendReporting("c2", rows("old", 1, 99, "run-old"));
@@ -300,5 +300,52 @@ describe("case SQLite worker: a batched run holds the cap's evictions until it c
     }
     expect((await store.enforceCap("c2")).count).toBe(14);
     expect((await store.meta("c2")).rows).toBe(CAP);
+  });
+
+  // #2829: super-only collects and external hunt imports write raw rows without ever saving the
+  // investigation state, so the fence and the rollback must not depend on that state being there.
+  it("a case with raw rows but no saved state is fenced and rolled back the same way", async () => {
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c3", name: "n", investigator: "i", aiProvider: "mock" });
+    const state = new StateStore(cases);
+    const store = new SuperTimelineStore(cases, CAP);
+    const caseDb = join(cases.stateDir("c3"), INVESTIGATION_DB_FILENAME);
+    const stateSaved = () => caseSqliteWorker.request<boolean>({ op: "stateExists", dbPath: caseDb });
+    await store.appendReporting("c3", rows("old", 1, 99, "run-old"));
+    const before = idsOf(caseDb, "superTimeline");
+    expect(await stateSaved()).toBe(false);
+
+    const fence = await state.importRowIdMark("c3");
+    expect(fence).toBe(await mark(caseDb));
+    expect(fence).toBeGreaterThan(0);
+    for (let b = 0; b < 3; b++) {
+      const out = await store.appendReporting("c3", rows("new", b * 5 + 1, 5, "run-a"), {
+        holdRowId: fence,
+      });
+      expect(out.evicted.count).toBe(0); // the 99 rows the case already had are spared
+    }
+    expect((await store.meta("c3")).rows).toBe(114);
+
+    const undone = await state.rollbackImportBatch("c3", fence, "run-a", [
+      "forensicTimeline",
+      "superTimeline",
+    ]);
+    expect(undone.superTimeline.deleted).toBe(15); // the run's own rows go
+    expect(undone.superTimeline.ids).toEqual(idList(rows("new", 1, 15, "run-a")));
+    expect(undone.forensicTimeline).toEqual(NONE);
+    expect(idsOf(caseDb, "superTimeline")).toEqual(before);
+    expect((await store.meta("c3")).evictedTotal).toBe(0);
+    expect(await stateSaved()).toBe(false); // neither step saves a state the case did not have
+  });
+
+  it("a case with no database at all still marks its fence at 0 and rolls back nothing", async () => {
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c4", name: "n", investigator: "i", aiProvider: "mock" });
+    const state = new StateStore(cases);
+    expect(await state.importRowIdMark("c4")).toBe(0);
+    expect(await state.rollbackImportBatch("c4", 0, "run-a", ["superTimeline"])).toEqual({
+      forensicTimeline: NONE,
+      superTimeline: NONE,
+    });
   });
 });
