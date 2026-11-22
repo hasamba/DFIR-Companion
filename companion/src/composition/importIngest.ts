@@ -49,6 +49,7 @@ import {
 } from "../analysis/importBaseline.js";
 import { createImportDemote } from "./importDemote.js";
 import { settleStreamedImport, type StreamedSettleDeps } from "./importIngestSettle.js";
+import { createSuperEvictionTally } from "../analysis/superTimelineStore.js";
 import { getServerLogger, logLine } from "../logging/serverLogger.js";
 import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
 import { parseMacLoginItemBtm } from "../analysis/macLoginItemImport.js";
@@ -612,12 +613,14 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     async function dispatchAndSettle(
       baseline: ImportBaseline | null,
     ): Promise<{ addedEvents: number; addedIocs: number }> {
+      const superEvictions = createSuperEvictionTally(); // this attempt's own (#2816, #2831)
       await dispatchImport(kind, caseId, text, {
         label: storedName,
         idPrefix: `${seq}`,
         importedAt,
         onProgress,
         minSeverity,
+        superEvictions,
         debug, // dispatchImport writes its succeeded / cancelled line
         ...(assetHost ? { assetHost } : {}),
         ...(signal ? { signal } : {}),
@@ -625,7 +628,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       await recordImportRows(store, caseId, seq, debug.summary().counts); // #2790
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
       // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
-      return settleStreamedImport(settleDeps, { caseId, kind, storedName, baseline });
+      return settleStreamedImport(settleDeps, { caseId, kind, storedName, baseline, superEvictions });
     }
     const { addedEvents, addedIocs } = counts;
     await autoMarkAndResynthesize(caseId);

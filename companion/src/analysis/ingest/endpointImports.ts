@@ -31,7 +31,7 @@ import {
   abortIfCancelled,
   mergeAndSaveDelta,
 } from "./importState.js";
-import { bulkPathApplies, importVelociraptorBulk } from "./velociraptorBulk.js";
+import { bulkPathApplies, importVelociraptorBulk, type BulkImportOpts } from "./velociraptorBulk.js";
 import { veloArtifactFromLabel } from "./velociraptorFileImport.js";
 import type { ImportContext } from "./importContext.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
@@ -187,6 +187,7 @@ export async function importVelociraptor(
     debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
     signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
     onSuperEvicted?: (evicted: SuperEviction) => void; // batched path: what the cap dropped (#2816)
+    onRunEvicted?: BulkImportOpts["onRunEvicted"]; // a hunt collect's own count of it (#2831)
   },
 ): Promise<InvestigationState> {
   // Rows often carry no _Source; use the (Velociraptor-named) filename as the fallback artifact
@@ -207,6 +208,7 @@ export async function importVelociraptor(
       veloUrl: opts.veloUrl,
       onProgress: opts.onProgress,
       onSuperEvicted: opts.onSuperEvicted,
+      onRunEvicted: opts.onRunEvicted,
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
     if (done) return done;

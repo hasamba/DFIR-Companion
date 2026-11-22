@@ -1,6 +1,7 @@
 import type { AppOptions } from "./appOptions.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
+import type { SuperEvictionTally } from "../analysis/superTimelineStore.js";
 import { settleForensicImport, type SettleDeps } from "../routes/importSettle.js";
 import type { ImportDemote } from "./importDemote.js";
 
@@ -10,7 +11,12 @@ import type { ImportDemote } from "./importDemote.js";
  * copy, and so it could take the section's baseline instead of a full snapshot (#1874).
  *
  * import-meta is recorded ONLY on a non-empty diff, so a quiet poll cannot reset the dashboard's
- * "NEW since last import" highlighting every 30 seconds. Non-fatal: the import is already merged.
+ * "NEW since last import" highlighting every 30 seconds. One more case writes it (#2831): a BATCHED
+ * run of this import reported rows its cap passes pushed out of the super-timeline. Those rows have
+ * left the case, the settle cannot see them, and the record is the only place the analyst is told —
+ * so it is written also when the import kept nothing forensic. The settle's OWN dropped rows do not
+ * open the record: on a monitored case with a full super-timeline every quiet poll would take over
+ * the import card. Non-fatal: the import is already merged.
  */
 export interface StreamedSettleDeps {
   options: AppOptions;
@@ -44,6 +50,8 @@ export async function settleStreamedImport(
     baseline: ImportBaseline | null;
     /** A streamed import's record count and disclosure, for the import-meta record (#2336). */
     streamMeta?: { linesIn?: number; streamDisclosure?: string[] };
+    /** What this import's batched runs said the cap dropped (#2816) — the same tally its base carried. */
+    superEvictions?: SuperEvictionTally;
   },
 ): Promise<{ addedEvents: number; addedIocs: number }> {
   const { options } = deps;
@@ -56,13 +64,16 @@ export async function settleStreamedImport(
     counts.addedEvents = tDiff.added.length;
     counts.addedIocs = iDiff.added.length;
     const changed = tDiff.added.length || iDiff.added.length || tDiff.removed.length || iDiff.removed.length;
-    if (changed && options.importMetaStore) {
+    const batchedDropped = args.superEvictions?.plus(undefined)?.count; // the runs' own, not the settle's
+    if ((changed || batchedDropped) && options.importMetaStore) {
       await options.importMetaStore.record(args.caseId, {
         kind: args.kind,
         file: args.storedName,
         diff: tDiff,
         superTimelineAddedCount: settled.superTimelineAddedCount,
-        superTimelineEvicted: settled.superTimelineEvicted,
+        superTimelineEvicted: args.superEvictions
+          ? args.superEvictions.plus(settled.superTimelineEvicted)
+          : settled.superTimelineEvicted,
         iocsDiff: iDiff,
         ...args.streamMeta,
       });

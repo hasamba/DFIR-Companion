@@ -773,6 +773,46 @@ describe("importVelociraptorBulk — what the cap dropped reaches the import's c
     expect(sink.logs.some((l) => /worker gone — the import record may count a row twice/.test(l))).toBe(true);
   });
 
+  // #2831: a hunt collect settles once for all its artifacts, so it measures the put-back rows
+  // itself. The run then hands over what its cap passes dropped, whole, and the run to ask about.
+  it("hands a collect the run's raw eviction and its handle, and does not measure the put-back rows", async () => {
+    const { ctx } = await contextWithStore();
+    const sink = memorySink({ batchRows: 10 });
+    const atCommit = { count: 14, setAside: 2, from: "2025-01-01T00:00:00Z", to: "2025-01-02T00:00:00Z" };
+    sink.commitSuperCap = async () => atCommit;
+    let asked = 0;
+    sink.superMissingOfRun = async () => {
+      asked++;
+      return 6;
+    };
+    const runs: { raw: SuperEviction | undefined; run: BulkRunHandle }[] = [];
+    const net: SuperEviction[] = [];
+    await importVelociraptorBulk(ctx, sink, "c1", fifteen(), {
+      ...baseOpts(),
+      onRunEvicted: (raw, run) => runs.push({ raw, run }),
+      onSuperEvicted: (e) => net.push(e),
+    });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.raw).toEqual(atCommit);
+    expect(runs[0]?.run.mode).toBe("forensic");
+    expect(runs[0]?.run.importBatchId).toBeTruthy();
+    expect(asked).toBe(0);
+    expect(net).toEqual([]);
+  });
+
+  it("hands a collect the run also when its own cap passes dropped nothing", async () => {
+    const { ctx } = await contextWithStore();
+    const runs: BulkRunHandle[] = [];
+    await importVelociraptorBulk(ctx, memorySink({ batchRows: 10 }), "c1", fifteen(), {
+      ...baseOpts(),
+      onRunEvicted: (raw, run) => {
+        expect(raw?.count ?? 0).toBe(0);
+        runs.push(run);
+      },
+    });
+    expect(runs).toHaveLength(1);
+  });
+
   it("reports nothing when the cap dropped nothing, and nothing for a run that rolled back", async () => {
     const { ctx } = await contextWithStore();
     const reported: SuperEviction[] = [];

@@ -409,6 +409,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       const imported: string[] = [];
       const importedKinds: Array<{ file: string; kind: string; debug: ImportDebugRecorder }> = []; // #1824
       let lastStoredName: string | undefined;
+      const capDropped = createSuperEvictionTally(); // the uploads' batched runs, for the one record (#2831)
       for (const { up, kind, debug, storedName, importedAt, seq } of stored) {
         if (await aiGateClosed(kind, getControl, caseId)) {
           skipped.push(up.name); // AI was turned off while this import waited its turn
@@ -421,6 +422,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
             idPrefix: `${seq}`,
             importedAt,
             minSeverity: opts.minSeverity,
+            superEvictions: capDropped,
             debug,
           });
           imported.push(up.name);
@@ -447,17 +449,15 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
           const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
-          if (
-            (addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) &&
-            options.importMetaStore &&
-            lastStoredName
-          ) {
+          // Rows a batched run's cap passes dropped are recorded also when nothing forensic changed.
+          const changed = addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length;
+          if ((changed || capDropped.plus(undefined)?.count) && options.importMetaStore && lastStoredName) {
             await options.importMetaStore.record(caseId, {
               kind: "velociraptor",
               file: lastStoredName,
               diff: tDiff,
               superTimelineAddedCount: settled.superTimelineAddedCount,
-              superTimelineEvicted: settled.superTimelineEvicted,
+              superTimelineEvicted: capDropped.plus(settled.superTimelineEvicted),
               iocsDiff: iDiff,
             });
             options.onImportMeta?.(caseId);

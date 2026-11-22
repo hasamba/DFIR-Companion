@@ -6,6 +6,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { ImportUndoStore, emptyUndoStack, pushCheckpoint } from "../../src/analysis/importUndo.js";
@@ -103,6 +104,7 @@ async function makeApp(
   });
 
   const undoStore = new ImportUndoStore(store);
+  const importMetaStore = new ImportMetaStore(store);
   // One import at a time per case — the production setting. The external import is an import
   // like any other, so it takes the case's slot and shows in the Background jobs popover (#1428).
   const jobManager = new JobManager({ perCaseConcurrency: 1 });
@@ -160,6 +162,7 @@ async function makeApp(
     pipeline,
     stateStore,
     superTimelineStore,
+    importMetaStore,
     jobManager,
     serverClients: veloServerClients(client),
     ...(withUndo ? { importUndoStore: undoStore } : {}),
@@ -169,6 +172,8 @@ async function makeApp(
     app,
     store,
     stateStore,
+    pipeline,
+    importMetaStore,
     jobManager,
     getRowsFetchCalls: () => rowsFetchCalls,
     getLookupCalls: () => lookupCalls,
@@ -445,6 +450,40 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
     expect(getRowsFetchCalls()).toBe(0); // rows were never fetched on the uploads-only path
     const forensic = (await stateStore.load("c1")).forensicTimeline;
     expect(forensic.some((e) => e.description?.toLowerCase().includes("mimikatz"))).toBe(true);
+  });
+
+  // #2831: an uploaded report can be a large Velociraptor export, imported in batches. What its
+  // cap passes pushed out of the super-timeline is on the import record, also when the import
+  // changed nothing in the forensic timeline — here, a second import of the same report.
+  it("uploads-tab URL: records the raw rows an uploaded report's batched import pushed out", async () => {
+    const dropped = { count: 9, setAside: 1, from: "2025-01-01T00:00:00Z", to: "2025-01-02T00:00:00Z" };
+    const content = JSON.stringify([{ ...MFT_ROW, _Source: "Windows.NTFS.MFT" }]);
+    const { app, pipeline, importMetaStore } = await makeApp({}, [
+      { name: "Windows.NTFS.MFT.json", clientId: "C.1", content },
+    ]);
+    const realVelo = pipeline.importVelociraptor.bind(pipeline);
+    let imports = 0;
+    pipeline.importVelociraptor = async (...args) => {
+      const state = await realVelo(...args);
+      if (++imports === 2) args[2].onSuperEvicted?.(dropped); // what a batched run reports once it committed
+      return state;
+    };
+    const run = () =>
+      request(app)
+        .post("/cases/c1/velociraptor/import-external")
+        .send({ ref: "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC/uploads" });
+
+    expect((await run()).status).toBe(200);
+    const first = await importMetaStore.load("c1");
+    expect(first.addedCount).toBe(1);
+    expect(first.superTimelineEvicted?.count ?? 0).toBe(0);
+
+    expect((await run()).status).toBe(200);
+    expect(imports).toBe(2);
+    const second = await importMetaStore.load("c1");
+    expect(second.lastImportFile).not.toBe(first.lastImportFile);
+    expect(second.addedCount).toBe(0);
+    expect(second.superTimelineEvicted).toEqual(dropped);
   });
 
   it("uploads-tab flow URL imports via flowUploads, skipping rows", async () => {

@@ -21,6 +21,7 @@ import { ImportUndoStore } from "../../src/analysis/importUndo.js";
 import { registerHuntSettle } from "../../src/analysis/huntSettleHook.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore, type SuperEviction } from "../../src/analysis/superTimelineStore.js";
+import { buildBulkImportSink } from "../../src/composition/bulkImportSink.js";
 import { VeloHuntStore, type VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
 import { HUNT_REFUSAL_WORDING } from "../../src/composition/veloEvidenceFirst.js";
 import { buildRuntimePipeline, createApp } from "../../src/server.js";
@@ -58,8 +59,33 @@ function refusal(): ImportMemoryRefusedError {
   return new ImportMemoryRefusedError(assessed.message);
 }
 
+/** What the batched-import tests add to the world (#2831). */
+interface Batched {
+  /** An uploaded Velociraptor report, and what its batched run says the cap dropped. */
+  uploadDropped?: SuperEviction;
+  /** The real batched importer and a real super-timeline of `cap` rows; `rows` graded rows per artifact. */
+  real?: { cap: number; rows: number };
+}
+
+// `rows` YARA hits of one artifact — a detection verdict, graded High — each its own event.
+const manyRows = (artifact: number, rows: number) =>
+  Array.from({ length: rows }, (_, n) => ({
+    _Source: "Windows.Detection.Yara",
+    Fqdn: "WS-001",
+    ClientId: "C.1",
+    Rule: `SyntheticRule_${artifact}_${n}`,
+    Namespace: "n",
+    OSPath: `C:\\Users\\Public\\sample-${artifact}-${n}.dll`,
+    Created0x10: new Date(Date.UTC(2026, 5, 1 + artifact, 10, 0, n)).toISOString(),
+  }));
+
 /** `failAt`: the 1-based artifact import that is refused; 0 refuses none. */
-async function world(failAt: number, brokenRecord = false, capDropped?: SuperEviction) {
+async function world(
+  failAt: number,
+  brokenRecord = false,
+  capDropped?: SuperEviction,
+  batched: Batched = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "dfir-hunt-midfail-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
@@ -70,12 +96,23 @@ async function world(failAt: number, brokenRecord = false, capDropped?: SuperEvi
     importMetaStore.record = async () => {
       throw new Error("disk full");
     };
+  const superTimelineStore = new SuperTimelineStore(store, batched.real?.cap);
+  const bulkImportSink = batched.real
+    ? buildBulkImportSink({
+        stateStore,
+        superTimelineStore,
+        log: () => {},
+        env: { DFIR_IMPORT_BULK_MIN_MB: "0", DFIR_IMPORT_BATCH_ROWS: "500" },
+      })
+    : undefined;
+  const bulk = bulkImportSink ? { bulkImportSink } : {};
   const pipeline = buildRuntimePipeline({
     provider: undefined,
     synthesisProvider: undefined,
     stateStore,
     store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    ...bulk,
   });
   const realImport = pipeline.importVelociraptorArtifact.bind(pipeline);
   let imports = 0;
@@ -83,10 +120,21 @@ async function world(failAt: number, brokenRecord = false, capDropped?: SuperEvi
     imports += 1;
     if (imports === failAt) throw refusal();
     const state = await realImport(...args);
-    // What a batched artifact's run reports once it committed (#2816): the rows the cap dropped.
-    if (capDropped) args[2].onSuperEvicted?.(capDropped);
+    // What a batched artifact's run hands the collect once it committed (#2831): the rows its cap
+    // passes dropped, and the run itself.
+    if (capDropped)
+      args[2].onRunEvicted?.(capDropped, { importBatchId: `run-${imports}`, fence: 0, mode: "forensic" });
     return state;
   };
+  if (batched.uploadDropped) {
+    const dropped = batched.uploadDropped;
+    const realVelo = pipeline.importVelociraptor.bind(pipeline);
+    pipeline.importVelociraptor = async (...args) => {
+      const state = await realVelo(...args);
+      args[2].onSuperEvicted?.(dropped); // an uploaded report's batched run: its own net report
+      return state;
+    };
+  }
   const client = {
     async huntStatus() {
       return { state: "RUNNING", clients: { scheduled: 1, completed: 1, errors: 0 } };
@@ -95,11 +143,14 @@ async function world(failAt: number, brokenRecord = false, capDropped?: SuperEvi
       return [{ clientId: "C.1", hostname: "WS-001", fqdn: "WS-001", os: "windows" }];
     },
     async huntArtifactRows(_h: string, artifact: string): Promise<VelociraptorRunResult> {
-      const rows = [row(ARTIFACTS.indexOf(artifact))];
+      const index = ARTIFACTS.indexOf(artifact);
+      const rows = batched.real ? manyRows(index, batched.real.rows) : [row(index)];
       return { rows, total: rows.length, truncated: false };
     },
     async huntUploads() {
-      return [];
+      if (!batched.uploadDropped) return [];
+      const content = JSON.stringify([{ ...row(7), _Source: "Windows.System.Pslist" }]);
+      return [{ name: "Windows.System.Pslist.json", clientId: "C.1", content }];
     },
     huntGuiUrlFor() {
       return undefined;
@@ -111,7 +162,8 @@ async function world(failAt: number, brokenRecord = false, capDropped?: SuperEvi
     veloHuntStore,
     importMetaStore,
     importUndoStore,
-    superTimelineStore: new SuperTimelineStore(store),
+    superTimelineStore,
+    ...bulk,
     serverClients: veloServerClients(client),
   });
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -133,7 +185,8 @@ async function world(failAt: number, brokenRecord = false, capDropped?: SuperEvi
     seen.push({ skipped: (cur?.skippedArtifacts ?? []).map((s) => s.name), status: cur?.status ?? "" });
     return 0; // graded nothing
   });
-  return { app, stateStore, veloHuntStore, importMetaStore, importUndoStore, seen, imports: () => imports };
+  const made = { app, stateStore, veloHuntStore, importMetaStore, importUndoStore, superTimelineStore };
+  return { ...made, seen, imports: () => imports };
 }
 
 async function collect(w: Awaited<ReturnType<typeof world>>, end: VeloHuntJob["status"]) {
@@ -207,6 +260,41 @@ describe("a hunt collect that fails on a later artifact (#2817)", () => {
       expect(meta.superTimelineEvicted).toEqual({ ...one, count: 10, setAside: 2 }); // two imported
     },
     POLL_TIMEOUT_MS * 2,
+  );
+
+  // #2831: an uploaded report inside the hunt can be a large Velociraptor export, read in batches too.
+  it(
+    "the import record carries the rows an uploaded report's batched import pushed out",
+    async () => {
+      const one = { count: 5, setAside: 1, from: "2025-02-01T00:00:00Z", to: "2025-02-03T00:00:00Z" };
+      const up = { count: 7, setAside: 0, from: "2025-03-01T00:00:00Z", to: "2025-03-02T00:00:00Z" };
+      const w = await world(0, false, one, { uploadDropped: up });
+      await collect(w, "imported");
+      const meta = await w.importMetaStore.load("c1");
+      // Three artifacts and the upload.
+      expect(meta.superTimelineEvicted).toEqual({ count: 22, setAside: 3, from: one.from, to: up.to });
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  // #2831: each artifact is a batched run of its own and the collect settles once. A later artifact's
+  // cap pass drops an earlier artifact's graded rows, the settle offers every graded row again, and
+  // the record counted the rows that came back as dropped. The real importer and a real store.
+  it(
+    "counts each row the cap dropped once across a collect's batched artifacts",
+    async () => {
+      const CAP = 20;
+      const w = await world(0, false, undefined, { real: { cap: CAP, rows: 30 } });
+      await collect(w, "imported");
+      // Every row is graded: each is in the forensic timeline and was offered to the super-timeline,
+      // which started empty. What it does not hold now is what the cap dropped.
+      const graded = await events(w.stateStore);
+      const held = (await w.superTimelineStore.meta("c1")).rows;
+      expect(graded).toBeGreaterThan(CAP * 2);
+      expect(held).toBe(CAP);
+      expect((await w.importMetaStore.load("c1")).superTimelineEvicted?.count).toBe(graded - held);
+    },
+    POLL_TIMEOUT_MS * 4,
   );
 
   it(
