@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures/test.js";
+import { enableAi } from "../fixtures/api.js";
 
 // Covers: US-040, US-131, US-354, US-268, US-306
 // (US-268: the job-queue surface — the list answering for a case and a synthesis reporting a
@@ -27,6 +28,8 @@ test("the job list answers for a case, even with nothing queued", async ({ page,
 test("synthesis is reachable and reports a job", async ({ page, demoCase }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
 
+  // AI is off on a new case; the model-calling route answers 409 until it is turned on (#2757).
+  await enableAi(page.request, demoCase);
   const res = await page.request.post(`/cases/${demoCase}/synthesize`, { data: {} });
   // Asserts the exact accepted status, not merely "< 500".
   //

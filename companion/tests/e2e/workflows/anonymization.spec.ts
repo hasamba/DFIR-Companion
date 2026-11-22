@@ -1,4 +1,5 @@
 import { test, expect } from "../fixtures/test.js";
+import { enableAi } from "../fixtures/api.js";
 
 // Covers: US-272
 // (feature-user-stories.csv) — reversible anonymization of everything sent to the AI provider.
@@ -49,7 +50,9 @@ test("US-272: with anonymization on, the provider sees tokens; the analyst still
   });
   expect(planted.status(), await planted.text()).toBe(201);
 
-  // 3. One stubbed synthesis sends the case to the "provider".
+  // 3. One stubbed synthesis sends the case to the "provider". AI is off on a new case, and the
+  //    route answers 409 until it is turned on (#2757).
+  await enableAi(page.request, demoCase);
   const synth = await page.request.post(`/cases/${demoCase}/synthesize`, { data: {} });
   expect(synth.status(), await synth.text()).toBe(200);
 

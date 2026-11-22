@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { test, expect } from "../fixtures/test.js";
+import { enableAi } from "../fixtures/api.js";
 
 // Covers: US-240
 // (feature-user-stories.csv) — job, import and AI events reaching assistive technology.
@@ -22,6 +23,9 @@ test("US-240: a real import's progress reaches the live regions as spoken announ
   // The import's own synthesis and the Re-synthesize run both happen inside this test; the default
   // 30s would end it before the 60s completion poll below could (#2244).
   test.setTimeout(150_000);
+  // AI is off on a new case. Turned on BEFORE the page loads, so the dashboard starts with AI on
+  // and both synthesis runs below are allowed to reach the model (#2757).
+  await enableAi(page.request, demoCase);
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
   await page.waitForLoadState("networkidle");
 
