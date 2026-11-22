@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, open, readdir, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -12,6 +13,27 @@ import {
   maxImportFileBytes,
   readImportFileBounded,
 } from "../../src/routes/importFileHead.js";
+import { CHANGED_WHILE_IMPORTING } from "../../src/routes/receiptedFile.js";
+
+// #2830. While `growth.on`, the real bounded read is handed a handle whose stat is one byte short of
+// what its read yields — a file appended to between the two. Off, the module is untouched.
+const growth = vi.hoisted(() => ({ on: false }));
+vi.mock("../../src/storage/boundedRead.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../src/storage/boundedRead.js")>();
+  return {
+    ...real,
+    readHandleBounded: (handle: FileHandle, maxBytes: number) =>
+      real.readHandleBounded(growth.on ? statOneByteShort(handle) : handle, maxBytes),
+  };
+});
+
+function statOneByteShort(handle: FileHandle): FileHandle {
+  return {
+    stat: async () => ({ size: (await handle.stat()).size - 1 }),
+    read: (buf: Buffer, offset: number, length: number, position: number) =>
+      handle.read(buf, offset, length, position),
+  } as unknown as FileHandle;
+}
 
 // #921, gap 2. POST /cases/:id/import-file reads a server-local path with readFile(utf8) for every
 // non-Plaso kind, and the only bound was the catch for V8's "Invalid string length" at ~512 MB. A
@@ -66,6 +88,7 @@ beforeEach(() => {
   process.env.DFIR_MAX_IMPORT_FILE_MB = "1";
 });
 afterEach(() => {
+  growth.on = false;
   if (saved === undefined) delete process.env.DFIR_MAX_IMPORT_FILE_MB;
   else process.env.DFIR_MAX_IMPORT_FILE_MB = saved;
 });
@@ -185,6 +208,55 @@ describe("readImportFileBounded — reads to the safe limit, not the raw setting
     } finally {
       await fh.close();
     }
+  });
+});
+
+// #2830. The bounded read reports growth as "too large" with the promised size plus one. Under the
+// ceiling that is not a size refusal, and the sentence builder returned null — which went out behind
+// a non-null assertion as 413 {"error":null}.
+describe("a file that grows during the whole read, under the ceiling (#2830)", () => {
+  const MB = 1024 * 1024;
+
+  it("readImportFileBounded reports the change, not a null size refusal", async () => {
+    // stat says 1000 bytes; the read yields 1001.
+    const growing = {
+      stat: async () => ({ size: 1000 }),
+      read: async (buf: Buffer, offset: number, length: number) => {
+        buf.fill(0x61, offset, offset + length);
+        return { bytesRead: length, buffer: buf };
+      },
+    } as unknown as FileHandle;
+
+    const read = await readImportFileBounded(growing, "csv", MB);
+
+    expect(read).toEqual({ changed: true });
+  });
+
+  it("still reports a size refusal when the growth takes the file over the ceiling", async () => {
+    const growing = {
+      stat: async () => ({ size: 1024 }),
+      read: async (buf: Buffer, offset: number, length: number) => {
+        buf.fill(0x61, offset, offset + length);
+        return { bytesRead: length, buffer: buf };
+      },
+    } as unknown as FileHandle;
+
+    const read = await readImportFileBounded(growing, "csv", MB, 1024);
+
+    expect(read.tooLarge).toMatch(/too large to import as csv/);
+  });
+
+  it("the route answers 409 with the changed-while-importing sentence and keeps no copy", async () => {
+    const { app, store, root } = await makeApp();
+    const path = join(root, "growing-thor.jsonl");
+    await writeFile(path, thorOfAtLeast(2048), "utf8");
+    growth.on = true;
+
+    const res = await request(app).post("/cases/c1/import-file").send({ path });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(409);
+    expect(res.body.error).toBe(CHANGED_WHILE_IMPORTING);
+    expect(await readdir(store.importsDir("c1")).catch(() => [])).toEqual([]);
   });
 });
 
