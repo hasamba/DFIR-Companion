@@ -11,6 +11,11 @@
   // analyst-authored. A PATCH freezes a synthesis hypothesis from auto-refresh (server-side). The
   // panel groups by status and survives synthesis (never wiped).
   let hypotheses = [];
+  // #2840: the case the held list was loaded for, the last list load that failed
+  // ({ caseId, text }, cleared by the next good load) and a counter naming the newest request.
+  let hypothesesCase = null;
+  let hypLoadError = null;
+  let hypLoadSeq = 0;
   const HYP_STATUS = [
     ["open", "Open"],
     ["supported", "Supported"],
@@ -23,13 +28,42 @@
     // #2837: a refusal line belongs to the case it was refused in. Synthesis hypotheses can carry
     // the same id in two cases, so it is dropped when another case's list is loaded.
     if (hypWriteError && hypWriteError.caseId !== caseId) hypWriteError = null;
+    if (hypLoadError && hypLoadError.caseId !== caseId) hypLoadError = null;
+    // #2840: only the newest request's outcome is applied. A list request can be held for seconds
+    // by the busy-retry wrapper while live pushes start newer ones, so an old failure could land
+    // on a newer good list, and an old case's list under a new case.
+    const seq = ++hypLoadSeq;
     fetch(`/cases/${caseId}/hypotheses`)
-      .then((r) => r.json())
-      .then((list) => {
-        hypotheses = Array.isArray(list) ? list : [];
-        renderHypotheses();
+      .then(async (r) => {
+        if (!r.ok) throw hypRefusal(r.status, await r.json().catch(() => ({})));
+        const list = await r.json();
+        // An answer that is not a list is a failed load. It was read as an empty list, which
+        // drew "No hypotheses yet" on a case that has hypotheses.
+        if (!Array.isArray(list)) throw new Error("the server's answer was not a list");
+        return list;
       })
-      .catch(() => {});
+      // Two handlers, not then/catch: a fault while drawing a list that DID load must never be
+      // reported as "could not be loaded".
+      .then(
+        (list) => {
+          if (seq !== hypLoadSeq) return;
+          hypotheses = list;
+          hypothesesCase = caseId;
+          hypLoadError = null;
+          renderHypotheses();
+        },
+        (e) => {
+          if (seq !== hypLoadSeq) return;
+          // The last good list stays on screen only when it is THIS case's. After a case switch
+          // the line is shown alone — never the previous case's cards.
+          if (hypothesesCase !== caseId) {
+            hypotheses = [];
+            hypothesesCase = caseId;
+          }
+          hypLoadError = { caseId, text: hypRefusalText("", e) };
+          renderHypotheses();
+        },
+      );
     // #1111: the coverage-attestation mini-panel lives inside this same section, so it refreshes
     // on every existing loadHypotheses() call site rather than needing its own callers threaded in.
     if (typeof loadEvidenceAttestations === "function") loadEvidenceAttestations(caseId);
@@ -45,6 +79,16 @@
         return n ? `${n} ${v}` : null;
       }).filter(Boolean);
       badge.textContent = hypotheses.length ? " — " + counts.join(" · ") : "";
+    }
+    // #2840: a list that could not be loaded says so, as the first line. The reason can be the
+    // server's sentence, which carries the case's own text — escaped here. "No hypotheses yet" is a
+    // statement about the case, so it is drawn only for a real empty-list answer.
+    const loadLine = hypLoadError
+      ? `<div class="manual-msg" role="status">The hypotheses could not be loaded (${esc(hypLoadError.text)}). ${hypotheses.length ? "The list below is the last one that loaded." : "Nothing here says the case has no hypotheses."}</div>`
+      : "";
+    if (!hypotheses.length && loadLine) {
+      el.innerHTML = loadLine;
+      return;
     }
     if (!hypotheses.length) {
       el.innerHTML =
@@ -82,7 +126,7 @@
         String(a.title).localeCompare(String(b.title))
       );
     };
-    let html = "";
+    let html = loadLine;
     for (const [v, label] of HYP_STATUS) {
       const group = hypotheses.filter((h) => h.status === v).sort(achSort);
       if (!group.length) continue;
