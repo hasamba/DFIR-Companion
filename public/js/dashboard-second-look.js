@@ -210,6 +210,26 @@
     if (resultEl) resultEl.innerHTML = slBusy || !slResult ? "" : slResultHtml();
   }
 
+  // The promoted count of a run that stopped (#2425, #2833): a whole number of rows, or 0. Anything
+  // else the answer carries — missing, negative, fractional, text — is no count at all.
+  function promotedCount(body) {
+    const n = body ? body.promoted : undefined;
+    return typeof n === "number" && Number.isSafeInteger(n) && n > 0 ? n : 0;
+  }
+
+  // #2833: both analyst gates fire in the re-synthesis, AFTER the sweep wrote its rows. The hold
+  // sentence alone would hide a change to the evidence record. A second press finds nothing new to
+  // promote and so does not re-synthesise, which is why the sentence names the button to press.
+  // With nothing promoted the hold sentence is returned untouched.
+  function withPromotedNote(holdText, promoted) {
+    if (!(promoted > 0)) return holdText;
+    const lead = /[.!?]$/.test(holdText) ? holdText : `${holdText}.`;
+    return (
+      `${lead} ${promoted} raw event(s) were already promoted and the conclusions are marked ` +
+      "out of date — re-synthesise after you decide."
+    );
+  }
+
   // ONE RUN AT A TIME, AND THE FLAG COMES OFF ON EVERY PATH.
   //
   // A cancelled or errored load that leaves an in-flight flag on wedges the control for the rest of
@@ -235,15 +255,19 @@
       .then((r) => r.json().then((body) => ({ ok: r.ok, code: r.status, body })))
       .then((r) => {
         if (slCaseId !== caseId || slRunGen !== gen) return;
+        // #2425: a run can stop AFTER it promoted rows. The count is read before any ending is
+        // worded, and only a whole number above zero counts — it is the server's, and it is shown.
+        const promoted = promotedCount(r.body);
+        if (promoted > 0) slRunPromoted = true;
         // A Presidio hold waits for the analyst — it is not a failure (#1782). The status line is muted.
         if (!r.ok && typeof presidioHold === "function" && presidioHold(r.code, r.body)) {
-          slRunError = presidioHoldText("Second look");
+          slRunError = withPromotedNote(presidioHoldText("Second look"), promoted);
           return;
         }
         // So does the duplicate-host gate (#2828): the re-synthesis inherits it. Say what to do,
         // never the raw code.
         if (!r.ok && typeof hostMergeHold === "function" && hostMergeHold(r.code, r.body)) {
-          slRunError = hostMergeHoldText("Second look", r.body);
+          slRunError = withPromotedNote(hostMergeHoldText("Second look", r.body), promoted);
           return;
         }
         // A 501 is a refusal made BEFORE the sweep (re-synthesis asked for, no AI provider set).
@@ -252,11 +276,9 @@
           slRunError = String(r.body.error);
           return;
         }
-        // #2425: a cancel (499) words itself — it may have promoted rows before the analyst stopped
-        // it. Any other failure AFTER rows were promoted must not read "did not run": the rows are in
+        // A cancel (499) words itself — it may have promoted rows before the analyst stopped it.
+        // Any other failure AFTER rows were promoted must not read "did not run": the rows are in
         // the case, and only the re-synthesis is missing (the server marked the conclusions stale).
-        const promoted = r.body && Number(r.body.promoted) > 0 ? Number(r.body.promoted) : 0;
-        if (promoted > 0) slRunPromoted = true;
         if (r.code === 499 && r.body && r.body.error) {
           slRunError = String(r.body.error);
           return;

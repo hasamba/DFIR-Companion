@@ -12,8 +12,11 @@ import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
+import { isHeldJob } from "../../src/analysis/jobRegistry.js";
 import { pollFor } from "../helpers/poll.js";
 import { enableCaseAi } from "../helpers/enableCaseAi.js";
+import { HostMergeDecisionRequired } from "../../src/analysis/hostDuplicateGate.js";
+import { PresidioApprovalRequired } from "../../src/analysis/presidio.js";
 
 // #2407: the second look runs as a job, so its forced re-synthesis takes the case's one job slot
 // instead of running beside another synthesis. Harness copied from secondLookRoute.test.ts.
@@ -82,7 +85,15 @@ async function harness(opts: { withSuperTimeline?: boolean; jobManager?: JobMana
     ...(withSuper ? { superTimelineStore } : {}),
     ...(opts.jobManager ? { jobManager: opts.jobManager } : {}),
   });
-  return { app, stateStore, store, synthMetaStore: new SynthMetaStore(store), superTimelineStore, provider };
+  return {
+    app,
+    stateStore,
+    store,
+    synthMetaStore: new SynthMetaStore(store),
+    superTimelineStore,
+    provider,
+    pipeline,
+  };
 }
 
 /** One synthesis, so the model's own evidence request is on the synth-meta for the button to read. */
@@ -249,5 +260,60 @@ describe("POST /cases/:id/second-look is cancellable at safe points (#2425)", ()
     const meta = await synthMetaStore.load("c1");
     expect(meta?.secondLook?.promoted).toBe(1);
     expect(meta?.outOfDate).toBeTruthy();
+  });
+});
+
+// #2833: the re-synthesis inherits the two analyst gates (duplicate hosts, Presidio approval), and
+// they fire AFTER the sweep wrote its rows. The hold answer is the only thing the panel gets, so it
+// must carry the count the cancel and failure answers already carry. Host names are synthetic.
+describe("POST /cases/:id/second-look held for an analyst decision reports what it promoted (#2833)", () => {
+  type Harness = Awaited<ReturnType<typeof harness>>;
+  /** A run that promotes `promotedRows` rows (none when undefined) and then meets the gate. */
+  function stageHold(pipeline: Harness["pipeline"], gate: Error, promotedRows?: number): void {
+    pipeline.secondLook = async (_caseId, opts) => {
+      if (promotedRows !== undefined) opts?.onPromotionStarted?.(promotedRows);
+      throw gate;
+    };
+  }
+  const hostGate = () =>
+    new HostMergeDecisionRequired([
+      { canonical: "ws-01.lab.example", other: "ws-01", reason: "shortname-fqdn" },
+    ]);
+
+  it("held by the duplicate-host gate after promotion: 409 with the pairs and the promoted count", async () => {
+    const jobManager = new JobManager();
+    const { app, synthMetaStore, pipeline } = await harness({ jobManager });
+    stageHold(pipeline, hostGate(), 2);
+    const res = await request(app).post("/cases/c1/second-look").send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("host_merge_decision_required");
+    expect(res.body.pairs).toHaveLength(1);
+    expect(res.body.promoted).toBe(2);
+    expect((await synthMetaStore.load("c1"))?.outOfDate).toBeTruthy();
+    expect(isHeldJob(jobManager.list("c1").find((j) => j.kind === "second-look"))).toBe(true);
+  });
+
+  it("held before anything was promoted: 409 with promoted 0, and the conclusions are not marked", async () => {
+    const jobManager = new JobManager();
+    const { app, synthMetaStore, pipeline } = await harness({ jobManager });
+    stageHold(pipeline, hostGate());
+    const res = await request(app).post("/cases/c1/second-look").send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("host_merge_decision_required");
+    expect(res.body.promoted).toBe(0);
+    expect((await synthMetaStore.load("c1"))?.outOfDate).toBeFalsy();
+  });
+
+  it("held by the Presidio gate after promotion: 409 with the findings and the promoted count", async () => {
+    const jobManager = new JobManager();
+    const { app, synthMetaStore, pipeline } = await harness({ jobManager });
+    stageHold(pipeline, new PresidioApprovalRequired([{ value: "Test Person", category: "PERSON" }]), 2);
+    const res = await request(app).post("/cases/c1/second-look").send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("presidio_approval_required");
+    expect(res.body.findings).toHaveLength(1);
+    expect(res.body.promoted).toBe(2);
+    expect((await synthMetaStore.load("c1"))?.outOfDate).toBeTruthy();
+    expect(isHeldJob(jobManager.list("c1").find((j) => j.kind === "second-look"))).toBe(true);
   });
 });

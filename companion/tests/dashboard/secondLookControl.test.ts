@@ -47,7 +47,7 @@ interface FakeEl {
   scrollIntoView(o?: unknown): void;
 }
 
-function harness() {
+function harness(extraGlobals: Record<string, unknown> = {}) {
   const pending: Deferred[] = [];
   const els = new Map<string, FakeEl>();
   const el = (id: string): FakeEl => {
@@ -101,6 +101,7 @@ function harness() {
     // Late-bound so vi.useFakeTimers() installed after the harness is built still applies.
     setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
     clearTimeout: (t: ReturnType<typeof setTimeout>) => clearTimeout(t),
+    ...extraGlobals,
   };
   const api = loadDashboardModule<Api>("dashboard-second-look.js", ["dashboard-escape.js"], globals);
   return { api, pending, el, synthMetaCalls };
@@ -122,8 +123,8 @@ const FULL_PREVIEW = {
 /** Let every queued microtask settle — the module chains .then/.finally several deep. */
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-async function withPreview(preview: unknown = FULL_PREVIEW) {
-  const h = harness();
+async function withPreview(preview: unknown = FULL_PREVIEW, extraGlobals: Record<string, unknown> = {}) {
+  const h = harness(extraGlobals);
   h.api.initSecondLook();
   const load = h.api.loadSecondLookPreview("case-1");
   h.pending.shift()!.resolve(preview);
@@ -410,6 +411,83 @@ describe("a run that stopped part-way (#2425)", () => {
     expect(h.el("secondLookStatus").textContent, "the re-measure keeps the message").toContain(
       "promoted 3 raw event(s)",
     );
+  });
+});
+
+// #2833: the re-synthesis inherits the two analyst gates, and they fire AFTER the sweep wrote its
+// rows. "On hold" alone then hides a change to the evidence record. The hold sentences belong to
+// other modules (and may be reworded there), so they are stubbed here and the assertions build on
+// the stub's output — only the promoted clause and the refresh are this panel's.
+describe("a run held for an analyst decision after it promoted rows (#2833)", () => {
+  const HOST_CODE = "host_merge_decision_required";
+  const PRESIDIO_CODE = "presidio_approval_required";
+  const HOST_HOLD = "Second look on hold — 1 possible duplicate host awaiting a merge decision. Decide it.";
+  const PRESIDIO_HOLD = "Second look held for Presidio approval — review in Anonymization";
+  const gates = {
+    hostMergeHold: (status: number, body: { error?: string } | null) =>
+      status === 409 && body?.error === HOST_CODE,
+    hostMergeHoldText: () => HOST_HOLD,
+    presidioHold: (status: number, body: { error?: string } | null) =>
+      status === 409 && body?.error === PRESIDIO_CODE,
+    presidioHoldText: () => PRESIDIO_HOLD,
+  };
+  const PAIRS = [{ canonical: "ws-01.lab.example", other: "ws-01", reason: "shortname-fqdn" }];
+
+  async function held(body: unknown) {
+    const h = await withPreview(FULL_PREVIEW, gates);
+    const run = h.api.runSecondLook();
+    h.pending.shift()!.resolve(body, { ok: false, status: 409 });
+    await run;
+    await settle();
+    return h;
+  }
+
+  it("says how many rows the duplicate-host hold left promoted, and refreshes", async () => {
+    const h = await held({ error: HOST_CODE, pairs: PAIRS, promoted: 3 });
+    const text = h.el("secondLookStatus").textContent;
+    expect(text.startsWith(HOST_HOLD)).toBe(true);
+    expect(text).toContain("3 raw event(s) were already promoted");
+    expect(text).toContain("out of date");
+    expect(text).toMatch(/re-synthesise after you decide/i);
+    expect(text).not.toContain(HOST_CODE);
+    expect(text).not.toContain("did not run");
+    expect(h.synthMetaCalls).toContain("case-1");
+    const remeasure = h.pending.find((p) => p.url === "/cases/case-1/second-look/preview")!;
+    expect(remeasure, "the preview is re-measured").toBeTruthy();
+    remeasure.resolve(FULL_PREVIEW);
+    await settle();
+    expect(h.el("secondLookStatus").textContent, "the re-measure keeps the message").toBe(text);
+    expect(h.el("secondLookRunBtn").disabled).toBe(false);
+  });
+
+  it.each([
+    ["no count", { error: HOST_CODE, pairs: PAIRS }],
+    ["a zero count", { error: HOST_CODE, pairs: PAIRS, promoted: 0 }],
+    ["a negative count", { error: HOST_CODE, pairs: PAIRS, promoted: -4 }],
+    ["a fractional count", { error: HOST_CODE, pairs: PAIRS, promoted: 2.5 }],
+    ["a count that is not a number", { error: HOST_CODE, pairs: PAIRS, promoted: "<img src=x onerror=1>" }],
+  ])("keeps today's hold sentence and refreshes nothing with %s", async (_name, body) => {
+    const h = await held(body);
+    expect(h.el("secondLookStatus").textContent).toBe(HOST_HOLD);
+    expect(h.synthMetaCalls, "nothing is known to have changed").toEqual([]);
+    expect(h.pending.map((p) => p.url)).not.toContain("/cases/case-1/second-look/preview");
+  });
+
+  it("says the same for a Presidio hold, and refreshes", async () => {
+    const h = await held({ error: PRESIDIO_CODE, findings: [], promoted: 3 });
+    const text = h.el("secondLookStatus").textContent;
+    expect(text.startsWith(`${PRESIDIO_HOLD}. `)).toBe(true);
+    expect(text).toContain("3 raw event(s) were already promoted");
+    expect(text).toMatch(/re-synthesise after you decide/i);
+    expect(text).not.toContain(PRESIDIO_CODE);
+    expect(h.synthMetaCalls).toContain("case-1");
+    expect(h.pending.map((p) => p.url)).toContain("/cases/case-1/second-look/preview");
+  });
+
+  it("keeps today's Presidio sentence when nothing was promoted", async () => {
+    const h = await held({ error: PRESIDIO_CODE, findings: [] });
+    expect(h.el("secondLookStatus").textContent).toBe(PRESIDIO_HOLD);
+    expect(h.synthMetaCalls).toEqual([]);
   });
 });
 
