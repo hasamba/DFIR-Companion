@@ -53,8 +53,7 @@ import { maxEventsDefault } from "../analysis/siemImport.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
 import { resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { createHuntEventBudget } from "./huntEventBudget.js";
-import { settleForensicImport } from "../routes/importSettle.js";
-import { describeImportSource } from "../analysis/importMeta.js";
+import { midFailureMessage, notImportedRecords, settleHuntCollect } from "./veloHuntSettle.js";
 import {
   recordDeploy,
   fillOutcome,
@@ -368,7 +367,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       }
       skipped.push(...holds.skippedRecords()); // held over a size limit: saved in drop/_held/ (#2755)
       for (const w of collectWarnings(job.huntId, skipped, cutShort, unread, !!job.timeScope)) logLine(w);
-      const done = completeness(skipped, cutShort, unread); // final: on the job BEFORE the seam grades (#2670)
+      let done = completeness(skipped, cutShort, unread); // final: on the job BEFORE the seam grades (#2670)
       // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
       // to report), but worth distinguishing from `skipped` so "N artifacts collected, M had no findings,
       // K failed to collect" is fully accounted for instead of a bare "+X events" that reads as one artifact.
@@ -456,88 +455,113 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const reportArtifactProgress = (done: number, detail: string): void => {
         if (importSlot) options.jobManager?.progress(importSlot.jobId, done, artifactFiles.length, detail);
       };
-      for (const [index, stored] of holds.importable(evidence.artifacts).entries()) {
+      const importable = holds.importable(evidence.artifacts);
+      const importedNames: string[] = []; // artifacts whose import returned: they are in the case
+      let midFailure: { index: number; err: unknown } | undefined;
+      for (const [index, stored] of importable.entries()) {
         const { name, file, rows: rowCount, storedName, importedAt, seq, debug } = stored;
         const partly = unread.some((u) => u.name === name) ? name : undefined; // stamps every row (#1651)
         const step = `artifact ${index + 1}/${artifactFiles.length} · ${name} (${rowCount} rows)`;
         reportArtifactProgress(index, step);
         logLine(`[velociraptor] hunt ${job.huntId}: importing ${step}`);
         inFlight = debug; // this artifact's recorder, made when it was stored (#1736)
-        const json = await readFile(file, "utf8"); // stored as evidence above; read again, one at a time
-        lastFile = storedName;
-        options.onAiStatus?.(caseId, {
-          status: "analyzing",
-          phase: "extracting",
-          at: importedAt,
-          detail: `importing Velociraptor hunt ${job.huntId} artifact ${name}`,
-        });
-        if (superOnly) {
-          const r = await importSuperOnlyArtifact(
-            { ...options, superTimelineStore: options.superTimelineStore!, autoTagImported },
-            {
-              caseId,
-              huntId: jobHuntId,
-              name,
-              json,
-              rows: rowCount,
-              storedName,
+        try {
+          const json = await readFile(file, "utf8"); // stored as evidence above; read again, one at a time
+          options.onAiStatus?.(caseId, {
+            status: "analyzing",
+            phase: "extracting",
+            at: importedAt,
+            detail: `importing Velociraptor hunt ${job.huntId} artifact ${name}`,
+          });
+          if (superOnly) {
+            const r = await importSuperOnlyArtifact(
+              { ...options, superTimelineStore: options.superTimelineStore!, autoTagImported },
+              {
+                caseId,
+                huntId: jobHuntId,
+                name,
+                json,
+                rows: rowCount,
+                storedName,
+                importedAt,
+                minSeverity,
+                veloUrl,
+                partly,
+                limit: superShare.limit(index),
+                cap: superCap,
+                scopeTag: scopeTagOf(cutShort.find((c) => c.name === name)),
+              },
+            );
+            superShare.charge(r.offered);
+            superTimelineAddedCount += r.added;
+            superTimelineEvicted = r.evicted
+              ? mergeEvictions(superTimelineEvicted, r.evicted)
+              : superTimelineEvicted;
+            if (r.capped) superCapped.push(r.capped);
+            if (r.imported) importedNames.push(name); // success even though nothing hit the forensic timeline
+          } else {
+            if (eventBudget.exhausted && !budgetExhaustedLogged) {
+              budgetExhaustedLogged = true;
+              logLine(
+                `[velociraptor] hunt ${job.huntId}: hunt-wide event cap (${maxEventsDefault()}) reached — remaining artifacts import Medium and above only; their other rows are persisted as evidence (raise DFIR_MAX_EVENTS to lift it)`,
+              );
+            }
+            await pipeline.importVelociraptorArtifact(caseId, json, {
+              label: storedName,
+              idPrefix: `${seq}`,
               importedAt,
               minSeverity,
               veloUrl,
-              partly,
-              limit: superShare.limit(index),
-              cap: superCap,
-              scopeTag: scopeTagOf(cutShort.find((c) => c.name === name)),
-            },
-          );
-          superShare.charge(r.offered);
-          superTimelineAddedCount += r.added;
-          superTimelineEvicted = r.evicted
-            ? mergeEvictions(superTimelineEvicted, r.evicted)
-            : superTimelineEvicted;
-          if (r.capped) superCapped.push(r.capped);
-          if (r.imported) importedAny = true; // success even though nothing hit the forensic timeline
-        } else {
-          if (eventBudget.exhausted && !budgetExhaustedLogged) {
-            budgetExhaustedLogged = true;
-            logLine(
-              `[velociraptor] hunt ${job.huntId}: hunt-wide event cap (${maxEventsDefault()}) reached — remaining artifacts import Medium and above only; their other rows are persisted as evidence (raise DFIR_MAX_EVENTS to lift it)`,
-            );
-          }
-          await pipeline.importVelociraptorArtifact(caseId, json, {
-            label: storedName,
-            idPrefix: `${seq}`,
-            importedAt,
-            minSeverity,
-            veloUrl,
-            velociraptor: { ...eventBudget.nextImport(), partlyReadArtifact: partly },
-            debug,
-          });
-          importedAny = true;
-          if (options.stateStore && budgetBaseline) {
-            try {
-              const afterState = await options.stateStore.load(caseId);
-              eventBudget.charge(
-                diffTimeline(budgetBaseline.forensicTimeline, afterState.forensicTimeline).added,
-                gateMin,
-              );
-              budgetBaseline = afterState;
-            } catch {
-              /* best-effort budget tracking; a read failure here must not fail the collect */
+              velociraptor: { ...eventBudget.nextImport(), partlyReadArtifact: partly },
+              debug,
+            });
+            importedNames.push(name);
+            if (options.stateStore && budgetBaseline) {
+              try {
+                const afterState = await options.stateStore.load(caseId);
+                eventBudget.charge(
+                  diffTimeline(budgetBaseline.forensicTimeline, afterState.forensicTimeline).added,
+                  gateMin,
+                );
+                budgetBaseline = afterState;
+              } catch {
+                /* best-effort budget tracking; a read failure here must not fail the collect */
+              }
             }
           }
+          lastFile = storedName;
+          emitImportDebug(caseId, debug, "succeeded"); // no dispatchImport here to write the line
+        } catch (e) {
+          // Nothing kept: the pass fails as it always has. Otherwise stop here and settle what
+          // imported — the earlier artifacts are in the case and must cross the seam (#2817).
+          if (!importedNames.length) throw e;
+          midFailure = { index, err: e };
+          break;
         }
-        emitImportDebug(caseId, debug, "succeeded"); // no dispatchImport here to write the line
+      }
+      importedAny = importedNames.length > 0;
+      let notImported: string[] = [];
+      if (midFailure) {
+        const failedMsg = (midFailure.err as Error).message;
+        recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, midFailure.err, inFlight);
+        notImported = importable.slice(midFailure.index).map((a) => a.name);
+        skipped.push(...notImportedRecords(notImported[0], failedMsg, notImported.slice(1)));
+        done = completeness(skipped, cutShort, unread); // on the job BEFORE the seam grades (#2670)
+        job = { ...job, ...done };
+        if (await current()) await huntStore.upsert(caseId, job);
       }
       inFlight = undefined; // every artifact's line is written; a later failure is not an artifact's
-      reportArtifactProgress(
-        artifactFiles.length,
-        `${artifactFiles.length}/${artifactFiles.length} artifact(s) imported`,
-      );
+      if (!midFailure)
+        reportArtifactProgress(
+          artifactFiles.length,
+          `${artifactFiles.length}/${artifactFiles.length} artifact(s) imported`,
+        );
 
       // 4) The uploaded JSON reports planned and stored above → dispatch. The skips (unknown kind,
-      // super-only bundle, CSV/log with AI off) were made by planUploads, before the section.
-      for (const { up, kind: upKind, debug: upDebug, storedName, importedAt, seq } of evidence.uploads) {
+      // super-only bundle, CSV/log with AI off) were made by planUploads, before the section. None after a
+      // failed artifact: the collect has stopped (a guard refusal means the server is short of memory).
+      const uploadsToImport = midFailure ? [] : evidence.uploads;
+      for (const { up, kind: upKind, debug: upDebug, storedName, importedAt, seq } of uploadsToImport) {
         if (await ev.aiGateClosed(upKind, getControl, caseId)) continue; // AI turned off while it waited
         try {
           lastFile = storedName;
@@ -561,68 +585,26 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           recordImportFailure?.(caseId, `velociraptor-upload:${upKind}`, up.name, e, upDebug); // the [import] FAILED line (#1438)
         }
       }
-      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      if (!midFailure) options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
 
-      // 5) One combined import-meta diff (so the dashboard's "📥 last import / +N" banner lights up).
-      let addedEvents = 0;
-      let addedIocs = 0;
-      if (importedAny && options.stateStore && stateBefore) {
-        try {
-          // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
-          const settled = await settleForensicImport(
-            {
-              stateStore: options.stateStore,
-              superTimelineStore: options.superTimelineStore,
-              onSuperTimeline: options.onSuperTimeline,
-              onState: options.onState,
-              autoTagImported,
-              demoteForensicForCase,
-              runStateExclusive,
-            },
-            caseId,
-            stateBefore,
-            `hunt ${job.huntId}`,
-          );
-          superTimelineAddedCount += settled.superTimelineAddedCount;
-          superTimelineEvicted = mergeEvictions(superTimelineEvicted, settled.superTimelineEvicted);
-          const { timelineDiff: diff, iocsDiff } = settled;
-          addedEvents = diff.added.length;
-          addedIocs = iocsDiff.added.length;
-          if (options.importMetaStore) {
-            await options.importMetaStore.record(caseId, {
-              kind: "velociraptor",
-              file: lastFile ?? `velo-hunt_${job.huntId}.json`,
-              // Name the COLLECTION, not the last file it wrote. Both halves come from the JOB, which
-              // snapshotted them at launch — describeImportSource records why any other source is wrong.
-              source: describeImportSource({
-                bundleName: job.bundleName,
-                huntId: jobHuntId,
-                artifactCount: job.artifacts.length,
-              }),
-              diff,
-              superTimelineAddedCount,
-              superTimelineEvicted,
-              iocsDiff,
-            });
-            options.onImportMeta?.(caseId);
-          }
-          // #76: snapshot the pre-collect state for undo when the hunt actually added data.
-          if (diff.added.length || diff.removed.length || iocsDiff.added.length || iocsDiff.removed.length) {
-            await pushImportCheckpoint(
-              caseId,
-              stateBefore,
-              `velociraptor (${lastFile ?? `hunt ${job.huntId}`})`,
-              settled.state,
-            );
-          }
-        } catch {
-          /* non-fatal */
-        }
-      }
+      // 5) The one combined settle, import record and undo checkpoint — for what imported, also when
+      // a later artifact failed (veloHuntSettle.ts). Never throws: a failure is logged there.
+      const settled = await settleHuntCollect(
+        { options, autoTagImported, demoteForensicForCase, runStateExclusive, pushImportCheckpoint },
+        {
+          ...{ caseId, huntId: jobHuntId, stateBefore, importedAny, lastFile },
+          ...{ bundleName: job.bundleName, artifactCount: job.artifacts.length },
+          ...{ superTimelineAddedCount, superTimelineEvicted },
+        },
+      );
+      const { addedEvents, addedIocs } = settled;
+      const failure = midFailure
+        ? midFailureMessage((midFailure.err as Error).message, importedNames, notImported, settled)
+        : undefined;
 
       // #157: fill this hunt's outcome (by huntId), bundle or suggested, even when nothing was imported:
       // a hunt that ran empty is a recorded miss, never re-proposed as productive. Best-effort.
-      if (options.huntOutcomeStore) {
+      if (options.huntOutcomeStore && !failure) {
         try {
           const cur = await options.huntOutcomeStore.load(caseId);
           // #80: run-to-run diff — only meaningful for a fingerprinted (non-bundle) hunt, and only
@@ -675,14 +657,14 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
 
       job = {
         ...job,
-        status: "imported",
+        status: failure ? "error" : "imported", // failed partway: what imported is settled (#2817)
         collectPhase: undefined,
         collectRows: undefined,
         importedAt: new Date().toISOString(),
         importFile: lastFile,
         addedEvents,
         addedIocs,
-        error: undefined,
+        error: failure,
         ...done,
         emptyArtifacts: emptyArtifacts.length ? emptyArtifacts : undefined,
         superCappedArtifacts: superCapped.length ? superCapped : undefined,
@@ -690,7 +672,13 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       if (await current()) await huntStore.upsert(caseId, job); // a forgotten hunt is not written back
       await regradeAfterCollect(options.stateStore, caseId, runStateExclusive, logLine); // final coverage (#2670)
       options.onVeloHunt?.(caseId);
-      if (importedAny) resynthesizeInBackground(caseId);
+      if (failure)
+        options.onAiStatus?.(caseId, {
+          status: "error",
+          at: new Date().toISOString(),
+          detail: `Velociraptor hunt collect failed: ${failure}`,
+        });
+      if (importedAny && !(failure && settled.error)) resynthesizeInBackground(caseId);
       else if (inventorySignature([before]) !== inventorySignature([job]))
         await deps.markConclusionsOutOfDate?.(caseId, "hunt outcome changed"); // what settles moved (#1612)
     } catch (err) {
