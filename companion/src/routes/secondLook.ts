@@ -147,7 +147,7 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
       // The re-synthesis inherits the host-merge gate, so a held case reaches here as a decision
       // gate rather than a failure. Report the hold, the way the deep-pass route does.
       if (isAnalystDecisionGate(error)) {
-        if (job) await options.jobManager?.hold(job.jobId, String((error as Error).message));
+        if (job) await options.jobManager?.hold(job.jobId, heldReason(error, promoted));
         return sendHeld(res, error, promoted);
       }
       if (isAbortError(error) || job?.signal?.aborted) {
@@ -200,6 +200,21 @@ function sendHeld(res: Response, error: unknown, promoted: number): Response {
     return res.status(409).json({ error: "host_merge_decision_required", pairs: error.pairs, promoted });
   }
   return sendPipelineError(res, error);
+}
+
+/**
+ * The held job's reason (#2839). The job row is the one report of this ending that outlives a page
+ * reload, so it states the same two facts as the card: rows were promoted, the conclusions are stale.
+ * "; " joins the clause because the row already reads "on hold — …". Nothing promoted → the gate's
+ * own message, unchanged.
+ */
+function heldReason(error: unknown, promoted: number): string {
+  const gate = String((error as Error).message);
+  if (promoted === 0) return gate;
+  return (
+    `${gate}; ${promoted} raw event(s) were already promoted and the conclusions are marked out of ` +
+    "date, so re-synthesise after you decide"
+  );
 }
 
 function cancelledMessage(promoted: number): string {

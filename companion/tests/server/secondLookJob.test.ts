@@ -316,4 +316,47 @@ describe("POST /cases/:id/second-look held for an analyst decision reports what 
     expect((await synthMetaStore.load("c1"))?.outOfDate).toBeTruthy();
     expect(isHeldJob(jobManager.list("c1").find((j) => j.kind === "second-look"))).toBe(true);
   });
+
+  // #2839: the job row is the one report of this ending that survives a page reload, so it carries
+  // the same two facts as the card — how many rows were promoted, and that the conclusions are stale.
+  const PROMOTED_CLAUSE =
+    "2 raw event(s) were already promoted and the conclusions are marked out of date, so re-synthesise after you decide";
+
+  it("the held job's message states the promoted count after the duplicate-host gate (#2839)", async () => {
+    const jobManager = new JobManager();
+    const { app, pipeline } = await harness({ jobManager });
+    const gate = hostGate();
+    stageHold(pipeline, gate, 2);
+    await request(app).post("/cases/c1/second-look").send({});
+    const job = jobManager.list("c1").find((j) => j.kind === "second-look");
+    expect(isHeldJob(job)).toBe(true);
+    expect(job?.failure?.code).toBe("held_for_analyst");
+    expect(job?.failure?.message).toBe(`${gate.message}; ${PROMOTED_CLAUSE}`);
+    expect(job?.detail).toBe(`on hold — ${gate.message}; ${PROMOTED_CLAUSE}`);
+  });
+
+  it("the held job's message is the gate's own when nothing was promoted (#2839)", async () => {
+    const jobManager = new JobManager();
+    const { app, pipeline } = await harness({ jobManager });
+    const gate = hostGate();
+    stageHold(pipeline, gate);
+    await request(app).post("/cases/c1/second-look").send({});
+    const job = jobManager.list("c1").find((j) => j.kind === "second-look");
+    expect(isHeldJob(job)).toBe(true);
+    expect(job?.failure?.message).toBe(gate.message);
+    expect(job?.detail).toBe(`on hold — ${gate.message}`);
+  });
+
+  it("the held job's message states the promoted count after the Presidio gate (#2839)", async () => {
+    const jobManager = new JobManager();
+    const { app, pipeline } = await harness({ jobManager });
+    const gate = new PresidioApprovalRequired([{ value: "Test Person", category: "PERSON" }]);
+    stageHold(pipeline, gate, 2);
+    await request(app).post("/cases/c1/second-look").send({});
+    const job = jobManager.list("c1").find((j) => j.kind === "second-look");
+    expect(isHeldJob(job)).toBe(true);
+    expect(job?.failure?.code).toBe("held_for_analyst");
+    expect(job?.failure?.message).toBe(`${gate.message}; ${PROMOTED_CLAUSE}`);
+    expect(job?.detail).toBe(`on hold — ${gate.message}; ${PROMOTED_CLAUSE}`);
+  });
 });
