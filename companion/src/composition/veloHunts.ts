@@ -78,7 +78,7 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as ev from "./veloEvidenceFirst.js"; // store evidence before the import section (#1874)
-import { completeness, failedCollect, regradeAfterCollect } from "./veloHuntCompleteness.js";
+import { collectFailed, completeness, ownOutcome, regradeAfterCollect } from "./veloHuntCompleteness.js";
 import {
   createSuperShareLedger,
   importSuperOnlyArtifact,
@@ -683,19 +683,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       else if (inventorySignature([before]) !== inventorySignature([job]))
         await deps.markConclusionsOutOfDate?.(caseId, "hunt outcome changed"); // what settles moved (#1612)
     } catch (err) {
-      recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, err, inFlight);
-      try {
-        const cur = await huntStore.get(caseId, huntId);
-        if (cur) await huntStore.upsert(caseId, failedCollect(cur, (err as Error).message));
-      } catch {
-        /* ignore */
-      }
-      options.onVeloHunt?.(caseId);
-      options.onAiStatus?.(caseId, {
-        status: "error",
-        at: new Date().toISOString(),
-        detail: `Velociraptor hunt collect failed: ${(err as Error).message}`,
-      });
+      const record = (e: unknown) =>
+        recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, e, inFlight);
+      const io = { ...options, ...deps, huntStore, record };
+      await collectFailed(io, caseId, huntId, err, ownOutcome(job, before)); // keeps its own result (#2850)
     } finally {
       // Never leave either held: both are per-case singletons, so a stranded one would block every
       // later import — the analyst's included — until the server restarts. Released in the reverse

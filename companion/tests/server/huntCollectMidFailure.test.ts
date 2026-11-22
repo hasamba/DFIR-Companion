@@ -8,7 +8,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildCollectionInventory,
   emptySettledClasses,
@@ -20,10 +20,13 @@ import { assessImportMemory, ImportMemoryRefusedError } from "../../src/analysis
 import { ImportUndoStore } from "../../src/analysis/importUndo.js";
 import { registerHuntSettle } from "../../src/analysis/huntSettleHook.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 import { SuperTimelineStore, type SuperEviction } from "../../src/analysis/superTimelineStore.js";
 import { buildBulkImportSink } from "../../src/composition/bulkImportSink.js";
 import { VeloHuntStore, type VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
 import { HUNT_REFUSAL_WORDING } from "../../src/composition/veloEvidenceFirst.js";
+import { ownOutcome } from "../../src/composition/veloHuntCompleteness.js";
+import { getServerLogger } from "../../src/logging/serverLogger.js";
 import { buildRuntimePipeline, createApp } from "../../src/server.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import type { VelociraptorRunResult } from "../../src/integrations/velociraptor/velociraptorApi.js";
@@ -65,7 +68,15 @@ interface Batched {
   uploadDropped?: SuperEviction;
   /** The real batched importer and a real super-timeline of `cap` rows; `rows` graded rows per artifact. */
   real?: { cap: number; rows: number };
+  /**
+   * A failure AFTER the collect built its result (#2850): "write" rejects the first write of an
+   * imported job; "notify" throws from the dashboard refresh that follows the final job write.
+   */
+  late?: "write" | "notify";
 }
+
+const LATE_WRITE = "EPERM: operation not permitted, rename";
+const LATE_NOTIFY = "late notify failure";
 
 // `rows` YARA hits of one artifact — a detection verdict, graded High — each its own event.
 const manyRows = (artifact: number, rows: number) =>
@@ -90,6 +101,25 @@ async function world(
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const veloHuntStore = new VeloHuntStore(store);
+  // #2850: every AI status the collect pushed, each job status it wrote, and where the late failure
+  // fired (an index into `statuses`; -1 until it does).
+  const late = { statuses: [] as string[], writes: [] as string[], fired: -1, built: false };
+  const realUpsert = veloHuntStore.upsert.bind(veloHuntStore);
+  veloHuntStore.upsert = async (caseId, written) => {
+    late.writes.push(written.status);
+    if (batched.late === "write" && written.status === "imported" && late.fired < 0) {
+      late.fired = late.statuses.length;
+      throw new Error(LATE_WRITE);
+    }
+    const saved = await realUpsert(caseId, written);
+    if (written.status !== "collecting" && written.importedAt) late.built = true; // the final job
+    return saved;
+  };
+  const onVeloHunt = () => {
+    if (batched.late !== "notify" || !late.built || late.fired >= 0) return;
+    late.fired = late.statuses.length;
+    throw new Error(LATE_NOTIFY);
+  };
   const importMetaStore = new ImportMetaStore(store);
   const importUndoStore = new ImportUndoStore(store, 5);
   if (brokenRecord)
@@ -169,6 +199,8 @@ async function world(
     superTimelineStore,
     ...bulk,
     serverClients: veloServerClients(client),
+    onVeloHunt,
+    onAiStatus: (_caseId, e) => void late.statuses.push(`${e.status}: ${e.detail ?? ""}`),
   });
   await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   const job: VeloHuntJob = {
@@ -190,7 +222,7 @@ async function world(
     return 0; // graded nothing
   });
   const made = { app, stateStore, veloHuntStore, importMetaStore, importUndoStore, superTimelineStore };
-  return { ...made, seen, sw, imports: () => imports };
+  return { ...made, store, late, seen, sw, imports: () => imports };
 }
 
 async function collect(w: Awaited<ReturnType<typeof world>>, end: VeloHuntJob["status"]) {
@@ -426,4 +458,100 @@ describe("a hunt collect that fails after an earlier part-imported collect (#284
     },
     POLL_TIMEOUT_MS * 4,
   );
+});
+
+// #2850: a failure after the collect built its result (in production: the final job write) reached
+// the collect's catch, which rewrote a hunt whose rows are all in the case as a failed collect.
+describe("a hunt collect that fails after it built its result (#2850)", () => {
+  type World = Awaited<ReturnType<typeof world>>;
+  /** Collect, and wait until the pass that hit the late failure has said how it ended. */
+  async function collectPastLateFailure(w: World) {
+    const res = await request(w.app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.1" });
+    expect(res.status).toBe(202);
+    const said = await pollFor("the collect's last status", async () => {
+      if (w.late.fired < 0) return null;
+      return w.late.statuses.slice(w.late.fired).find((s) => s.includes("Velociraptor hunt collect")) ?? null;
+    });
+    const job = await w.veloHuntStore.get("c1", "H.1");
+    if (!job) throw new Error("the hunt job is gone");
+    return { job, said };
+  }
+
+  it(
+    "the final job write fails once: the job ends imported, with its import time and counts",
+    async () => {
+      const w = await world(0, false, undefined, { late: "write" });
+      const { job, said } = await collectPastLateFailure(w);
+      expect(job.status).toBe("imported");
+      expect(job.importedAt).toBeTruthy();
+      expect(job.addedEvents).toBe(3);
+      expect(job.error).toBeUndefined();
+      expect(await events(w.stateStore)).toBe(3);
+      expect(w.late.writes.filter((s) => s === "imported")).toHaveLength(2); // refused, then landed
+      expect(w.late.writes).not.toContain("error");
+      expect(said).toContain("kept its result");
+      expect(said).toContain(LATE_WRITE);
+      expect(said).not.toContain("collect failed");
+      // The steps the throw skipped (re-grade, synthesis start) are flagged, not silently lost.
+      expect((await new SynthMetaStore(w.store).load("c1")).outOfDate?.reason).toMatch(/hunt collect/);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "a late callback throw on a clean collect: the job stays imported and no import failure is logged",
+    async () => {
+      const warn = vi.spyOn(getServerLogger(), "warn");
+      try {
+        const w = await world(0, false, undefined, { late: "notify" });
+        const { job, said } = await collectPastLateFailure(w);
+        expect(job.status).toBe("imported");
+        expect(job.addedEvents).toBe(3);
+        expect(job.error).toBeUndefined();
+        expect(said).toContain("kept its result");
+        const warned = warn.mock.calls.map((c) => String(c[0]));
+        expect(warned.some((l) => l.includes("hunt H.1") && l.includes(LATE_NOTIFY))).toBe(true);
+        expect(warned.some((l) => l.includes("FAILED"))).toBe(false);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "a part-imported collect plus a late throw keeps its own message and its stopped record",
+    async () => {
+      const w = await world(3, false, undefined, { late: "notify" });
+      const { job, said } = await collectPastLateFailure(w);
+      expect(job.status).toBe("error");
+      expect(job.error).toContain(`Imported: ${FIRST}, ${SECOND}.`);
+      expect(job.error).toContain(`Not imported: ${THIRD}.`);
+      expect(job.error).not.toContain(LATE_NOTIFY);
+      expect(job.addedEvents).toBe(2);
+      expect((job.skippedArtifacts ?? []).map((s) => s.notImported)).toEqual(["stopped"]);
+      expect(job.earlierCoverage).toBeUndefined();
+      expect(said).toContain("kept its result");
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it("ownOutcome: only a job the collect itself finished counts", () => {
+    const before: VeloHuntJob = {
+      bundleId: "b",
+      bundleName: "B",
+      artifacts: [FIRST],
+      huntId: "H.1",
+      launchedAt: "2026-01-01T00:00:00Z",
+      waitMinutes: 15,
+      collectAt: "2026-01-01T00:15:00Z",
+      status: "imported", // an EARLIER collect's result
+    };
+    expect(ownOutcome(before, before)).toBeUndefined(); // nothing written yet
+    expect(ownOutcome({ ...before, status: "collecting" }, before)).toBeUndefined();
+    const imported: VeloHuntJob = { ...before, addedEvents: 3 };
+    expect(ownOutcome(imported, before)).toBe(imported);
+    const partFailed: VeloHuntJob = { ...before, status: "error", error: "Imported: a. Not imported: b." };
+    expect(ownOutcome(partFailed, before)).toBe(partFailed);
+  });
 });

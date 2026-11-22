@@ -1,5 +1,6 @@
 import { runHuntSettle } from "../analysis/huntSettleHook.js";
-import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
+import type { VeloHuntJob, VeloHuntStore } from "../analysis/veloHuntStore.js";
+import { warnLine } from "../logging/serverLogger.js";
 
 /**
  * A hunt collect's completeness, and hunt grading that sees it (#2670).
@@ -72,4 +73,76 @@ export async function regradeAfterCollect(
   } catch (e) {
     log(`[hunt] ${caseId}: re-grade skipped: ${(e as Error).message}`); // never fails the collect
   }
+}
+
+/**
+ * The collect's own final job, once it has built one (#2850) — else `undefined`.
+ *
+ * `job` IS `before` (the stored job, which may say "imported" from an EARLIER collect) until the
+ * collect's first write, is "collecting" from there until it builds its outcome, and is that outcome
+ * — "imported", or its own part-imported "error" (#2817) — after it.
+ */
+export function ownOutcome(job: VeloHuntJob, before: VeloHuntJob): VeloHuntJob | undefined {
+  return job !== before && job.status !== "collecting" ? job : undefined;
+}
+
+/** What the collect's catch needs from the collect (`collectFailed`). */
+export interface CollectFailureIo {
+  huntStore: Pick<VeloHuntStore, "get" | "upsert">;
+  /** The `[import] … FAILED` line and the diagnostics entry. */
+  record: (err: unknown) => void;
+  onVeloHunt?: (caseId: string) => void;
+  onAiStatus?: (caseId: string, event: { status: "error"; at: string; detail: string }) => void;
+  markConclusionsOutOfDate?: (caseId: string, reason: string) => Promise<void>;
+}
+
+/**
+ * The collect's catch. Never throws: the collect's `finally` must still release its holds.
+ *
+ * With no outcome of its own (`own` undefined) the collect failed as a whole: the failure is
+ * recorded and the job is written through `failedCollect` (#2842).
+ *
+ * With one, the import already finished and only a LATER step failed — in production the final job
+ * write itself (a full disk, a file lock that outlasts the retry budget) (#2850). The rows, the
+ * import record and the undo checkpoint are in the case, so the job keeps the collect's outcome
+ * (written again) and no import failure is recorded. The throw skipped whatever followed it — the
+ * final re-grade, the synthesis start, the out-of-date mark — so the late error is logged, the
+ * conclusions are marked out of date and the status says what happened.
+ */
+export async function collectFailed(
+  io: CollectFailureIo,
+  caseId: string,
+  huntId: string,
+  err: unknown,
+  own: VeloHuntJob | undefined,
+): Promise<void> {
+  const message = err instanceof Error ? err.message : String(err);
+  const quietly = async (what: string, step: () => unknown): Promise<void> => {
+    try {
+      await step();
+    } catch (e) {
+      warnLine(`[velociraptor] ${caseId} hunt ${huntId}: ${what} failed: ${(e as Error).message}`);
+    }
+  };
+  if (own)
+    warnLine(
+      `[velociraptor] ${caseId} hunt ${huntId}: the collect kept its result, but a later step failed: ${message}`,
+    );
+  else await quietly("recording the failed collect", () => io.record(err));
+  await quietly("writing the hunt job after a failure", async () => {
+    const cur = await io.huntStore.get(caseId, huntId);
+    // A forgotten hunt is not written back.
+    if (cur) await io.huntStore.upsert(caseId, own ?? failedCollect(cur, message));
+  });
+  if (own)
+    await quietly("marking the conclusions out of date", () =>
+      io.markConclusionsOutOfDate?.(caseId, "a hunt collect's follow-up step failed"),
+    );
+  const detail = own
+    ? `Velociraptor hunt collect kept its result, but a follow-up step failed: ${message}`
+    : `Velociraptor hunt collect failed: ${message}`;
+  await quietly("the dashboard refresh", () => io.onVeloHunt?.(caseId));
+  await quietly("the status update", () =>
+    io.onAiStatus?.(caseId, { status: "error", at: new Date().toISOString(), detail }),
+  );
 }
