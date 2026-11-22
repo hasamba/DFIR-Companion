@@ -6,7 +6,7 @@ import { commitDedicatedImport } from "./importCommit.js";
 import { parseMacLoginItemBtm } from "../analysis/macLoginItemImport.js";
 import { detectBinaryImportKind, MAC_LOGIN_ITEM_FILENAMES } from "../analysis/macBinaryDetect.js";
 import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
-import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
+import { FileTooLargeError, grewDuringRead, readHandleBounded } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "./importFileHead.js";
 import { openImportFile } from "./importFileSource.js";
 import { CHANGED_WHILE_IMPORTING, changedSinceReceipt } from "./receiptedFile.js";
@@ -61,6 +61,8 @@ export function registerMacLoginItemImportRoute(
       bytes = await readHandleBounded(file.handle, readCap());
     } catch (err) {
       if (err instanceof FileTooLargeError) {
+        // Grown mid-read and still under the cap is a changed file, not a size refusal (#2834).
+        if (grewDuringRead(err)) return res.status(409).json({ error: CHANGED_WHILE_IMPORTING });
         return res.status(413).json({ error: `file is too large to import (${err.size} bytes)` });
       }
       return res.status(400).json({ error: `cannot read file: ${(err as Error).message}` });

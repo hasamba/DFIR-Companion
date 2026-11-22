@@ -3,7 +3,12 @@ import { mkdtemp, open, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FileTooLargeError, isStringTooLongError, readHandleBounded } from "../../src/storage/boundedRead.js";
+import {
+  FileTooLargeError,
+  grewDuringRead,
+  isStringTooLongError,
+  readHandleBounded,
+} from "../../src/storage/boundedRead.js";
 
 // #921 review. A `stat(path)` followed by `readFile(path)` checks one inode and reads whatever
 // occupies the path afterwards, so a swap between the two defeats a size cap. The check and the
@@ -67,6 +72,44 @@ describe("readHandleBounded", () => {
     } finally {
       await fh.close();
     }
+  });
+});
+
+// #2834. The bounded read throws the same error for "over the cap" and for "grew during the read".
+// Callers must tell them apart: a grown file under the cap is not a size refusal.
+describe("grewDuringRead", () => {
+  /** A handle whose stat says `size` bytes and whose read never runs dry: a file being appended to. */
+  const growingFrom = (size: number): FileHandle =>
+    ({
+      stat: async () => ({ size }),
+      read: async (buf: Buffer, offset: number, length: number) => {
+        buf.fill(0x41, offset, offset + length);
+        return { bytesRead: length, buffer: buf };
+      },
+    }) as unknown as FileHandle;
+
+  const failure = async (handle: FileHandle, maxBytes: number): Promise<FileTooLargeError> => {
+    const err = await readHandleBounded(handle, maxBytes).catch((e: unknown) => e);
+    if (!(err instanceof FileTooLargeError))
+      throw new Error(`expected FileTooLargeError, got ${String(err)}`);
+    return err;
+  };
+
+  it("is true for a file that grew during the read and is still under the cap", async () => {
+    expect(grewDuringRead(await failure(growingFrom(10), 1000))).toBe(true);
+  });
+
+  it("is false for a file that is over the cap by its own size", async () => {
+    const fh = await open(await tmpFile(1001), "r");
+    try {
+      expect(grewDuringRead(await failure(fh, 1000))).toBe(false);
+    } finally {
+      await fh.close();
+    }
+  });
+
+  it("is false when the growth takes the file over the cap — that is a real size refusal", async () => {
+    expect(grewDuringRead(await failure(growingFrom(1000), 1000))).toBe(false);
   });
 });
 

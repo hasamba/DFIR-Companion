@@ -24,7 +24,7 @@ import { basename, join, resolve } from "node:path";
 import { openNoFollow } from "../storage/noFollowRead.js";
 import { EXPORT_STAGING_DIRNAME } from "../storage/exportStaging.js";
 import { resolveInsideDropDir } from "../storage/dropRelpath.js";
-import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
+import { FileTooLargeError, grewDuringRead, readHandleBounded } from "../storage/boundedRead.js";
 import { randomUUID } from "node:crypto";
 import type { Buffer } from "node:buffer";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
@@ -225,6 +225,12 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
       try {
         data = await readHandleBounded(handle, maxBytes);
       } catch (err) {
+        // Grown mid-read and still under the cap: not a size refusal, and no limit to raise (#2834).
+        if (err instanceof FileTooLargeError && grewDuringRead(err)) {
+          throw new Error(
+            `"${name}" changed while it was being read — not uploaded to ${cfg.id}; drop it again when it is complete`,
+          );
+        }
         if (err instanceof FileTooLargeError) {
           throw new Error(
             `"${name}" is too large to upload to ${cfg.id} (${Math.ceil(err.size / 1048576)} MB > ` +

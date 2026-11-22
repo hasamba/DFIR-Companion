@@ -3177,7 +3177,9 @@ export is decompressed while it is read, at any size. The streamed import's note
 reached, whether the file was gzip) is written to `drop-log.txt` and the *last import* banner. A
 `.gz` file of any other kind is refused with *"gzip uploads are read only for cloud audit exports"*
 and moved to `_failed/`; decompress it and drop it again. Any other file over the cap is refused and
-moved to `_failed/`; import it from its path on the server instead.
+moved to `_failed/`; import it from its path on the server instead. A file that is still being written
+when it is read moves to `_failed/` with *"the file changed while it was being read"*; drop it again
+when it is complete.
 
 A file of 16 MB or more that is read whole is checked first against the server's import memory
 guard. If the guard refuses, the file is not read and moves to `_failed/` with the guard's reason. If

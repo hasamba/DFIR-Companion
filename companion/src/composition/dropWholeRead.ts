@@ -31,7 +31,7 @@ import {
   type RefusalWording,
 } from "../analysis/importMemoryGuard.js";
 import { openNoFollow } from "../storage/noFollowRead.js";
-import { readHandleBounded } from "../storage/boundedRead.js";
+import { FileTooLargeError, grewDuringRead, readHandleBounded } from "../storage/boundedRead.js";
 
 /**
  * At or above this size a dropped text file counts its start before it is read. Low enough that any
@@ -58,8 +58,8 @@ const REFUSAL_WORDING: RefusalWording = {
 // promised size (storage/boundedRead.ts). The listing stat's `isOversize` gate stays as the cheap
 // early skip, but it is only a check on what the sweep saw — a file that grew, or was swapped for a
 // larger one, between the listing and this read was read in full by the old path-based
-// `readFileNoFollow` (#1329, the #947 check-then-read shape). Throws FileTooLargeError, which each
-// caller phrases in its own terms.
+// `readFileNoFollow` (#1329, the #947 check-then-read shape). Throws FileTooLargeError, which the
+// callers phrase through dropTooLargeReason below.
 export async function readDropFileBounded(fullPath: string, maxBytes: number): Promise<Buffer> {
   const handle = await openNoFollow(fullPath);
   try {
@@ -67,6 +67,31 @@ export async function readDropFileBounded(fullPath: string, maxBytes: number): P
   } finally {
     await handle.close();
   }
+}
+
+/** The reason for a file that grew during the read and is still under the cap (#2834). */
+export const DROP_CHANGED_DURING_READ =
+  "the file changed while it was being read — drop it again when it is complete";
+
+/**
+ * The `_failed/` reason for a FileTooLargeError out of readDropFileBounded; null for any other error.
+ *
+ * A file that grew during the read and is still under the cap is not too large (#2834): it gets
+ * DROP_CHANGED_DURING_READ, with no byte counts (they are under the cap) and no advice to use
+ * Import-from-path. The file still fails and moves to `_failed/` — it is not retried on its own, so
+ * a file that never stops growing shows as a failure instead of waiting in drop/ for good.
+ *
+ * A file that is really over the cap keeps its size sentence. `whole` is the text and image read,
+ * whose listing-stat gate had passed (so the file changed size after the sweep listed it);
+ * `macLoginItem` is the byte-native login item read, capped at the parser's own bound.
+ */
+export function dropTooLargeReason(err: unknown, read: "whole" | "macLoginItem"): string | null {
+  if (!(err instanceof FileTooLargeError)) return null;
+  if (grewDuringRead(err)) return DROP_CHANGED_DURING_READ;
+  const sizes = `${err.size} bytes > ${err.maxBytes}-byte cap`;
+  return read === "macLoginItem"
+    ? `macOS login item file is too large to import (${sizes})`
+    : `too large at read time (${sizes}; the file changed after the sweep listed it) — use Import-from-path`;
 }
 
 export interface DropWholeReadDeps {

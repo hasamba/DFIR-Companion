@@ -55,7 +55,12 @@ import { huntHeldStoreFor } from "../analysis/huntHeldStore.js";
 import { applyDropHolds, holdFolderPlan } from "./dropHeld.js";
 import { clearStaging } from "./dropHuntExtract.js";
 import { createDropInFlight } from "./dropInFlight.js";
-import { createDropWholeReader, DropReadDeferredError, readDropFileBounded } from "./dropWholeRead.js";
+import {
+  createDropWholeReader,
+  DropReadDeferredError,
+  dropTooLargeReason,
+  readDropFileBounded,
+} from "./dropWholeRead.js";
 import {
   selectReadyFiles,
   excludeStuck,
@@ -500,13 +505,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         try {
           bytes = await readDropFileBounded(full, Math.min(maxImportFileBytes(), MAX_INPUT_BYTES));
         } catch (err) {
-          if (err instanceof FileTooLargeError) {
-            return {
-              ok: false,
-              reason: `macOS login item file is too large to import (${err.size} bytes > ${err.maxBytes}-byte cap)`,
-            };
-          }
-          throw err;
+          const reason = dropTooLargeReason(err, "macLoginItem"); // over the cap, or grew (#2834)
+          if (reason === null) throw err;
+          return { ok: false, reason };
         }
         // No analyzed-false branch here (unlike the text path below): this importer is fully
         // deterministic, with no AI-off gate to ever report through it (Ollama code review
@@ -601,12 +602,8 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         return { ok: false, reason: `${err.kind} detected in drop folder — refused to read (security)` };
       }
       // The listing-stat gate above passed, so the file changed size between the sweep and the read.
-      if (err instanceof FileTooLargeError) {
-        return {
-          ok: false,
-          reason: `too large at read time (${err.size} bytes > ${err.maxBytes}-byte cap; the file changed after the sweep listed it) — use Import-from-path`,
-        };
-      }
+      const tooLarge = dropTooLargeReason(err, "whole"); // says "changed" when it only grew (#2834)
+      if (tooLarge !== null) return { ok: false, reason: tooLarge };
       if (err instanceof DropReadDeferredError) return { ok: false, deferred: err.message }; // #2785
       recordImportFailure(caseId, "drop", name, err, debug);
       return { ok: false, reason: (err as Error)?.message ?? String(err) };
