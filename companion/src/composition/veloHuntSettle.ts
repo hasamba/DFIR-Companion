@@ -124,12 +124,18 @@ const NOTHING_CHANGED = " and nothing was changed.";
 
 /**
  * The artifacts a stopped collect did not import, as the job's skipped list records them: the one
- * that failed, with its error, and the ones after it that were never tried.
+ * that failed, with its error, and the ones after it that were never tried. All of them were
+ * downloaded, so each carries the mark that keeps it out of the card's failed-fetch list (#2835).
  */
 export function notImportedRecords(failed: string, error: string, notReached: string[]): SkippedArtifact[] {
+  const stopped = (name: string, why: string): SkippedArtifact => ({
+    name,
+    error: why,
+    notImported: "stopped",
+  });
   return [
-    { name: failed, error: error.replace(NOTHING_CHANGED, ".") },
-    ...notReached.map((name) => ({ name, error: `not imported: the collect stopped when ${failed} failed` })),
+    stopped(failed, error.replace(NOTHING_CHANGED, ".")),
+    ...notReached.map((name) => stopped(name, `not imported: the collect stopped when ${failed} failed`)),
   ];
 }
 

@@ -576,7 +576,7 @@ export interface VeloCoverageApi {
   veloCoverageHtml(job: {
     status?: string;
     artifacts?: string[];
-    skippedArtifacts?: { name: string; error: string }[];
+    skippedArtifacts?: { name: string; error: string; notImported?: string }[];
     emptyArtifacts?: string[];
     truncatedArtifacts?: {
       name: string;

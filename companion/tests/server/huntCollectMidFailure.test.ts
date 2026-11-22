@@ -180,6 +180,7 @@ describe("a hunt collect that fails on a later artifact (#2817)", () => {
       expect(await events(w.stateStore)).toBe(0);
 
       expect((job.skippedArtifacts ?? []).map((s) => s.name)).toEqual([THIRD]);
+      expect(job.skippedArtifacts?.[0]?.notImported).toBe("stopped"); // read, not imported (#2835)
       expect(job.skippedArtifacts?.[0]?.error).toContain("Import refused to protect the server");
       expect(job.skippedArtifacts?.[0]?.error).not.toMatch(/nothing was changed/i);
       // Before the settle: the seam's hunt grading already read the failed artifact from the job.
@@ -211,6 +212,7 @@ describe("a hunt collect that fails on a later artifact (#2817)", () => {
       expect(job.error).toContain(`Not imported: ${SECOND}, ${THIRD}.`);
       expect(w.imports()).toBe(2); // the collect stopped: the third was never tried
       expect((job.skippedArtifacts ?? []).map((s) => s.name)).toEqual([SECOND, THIRD]);
+      expect((job.skippedArtifacts ?? []).map((s) => s.notImported)).toEqual(["stopped", "stopped"]);
       expect((await w.importUndoStore.load("c1")).undo).toHaveLength(1);
     },
     POLL_TIMEOUT_MS * 2,

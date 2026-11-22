@@ -159,6 +159,118 @@ describe("veloCoverageHtml", () => {
     expect(html).not.toContain("<img src=x>");
     expect(html).toContain("&lt;img src=x&gt;");
   });
+
+  // #2835 — an artifact that was downloaded but not imported is not a failed fetch. The record says
+  // which it is; a record with no mark (a fetch failure, or a job stored before the mark) is a failure.
+  const HELD_WHY =
+    "held over the hunt artifact size limit (60.0 MB from one PC (limit 50 MB per PC)) — saved in " +
+    "_held/H.1/A.two.json; Import anyway or Skip in the dashboard";
+  const held = { name: "A.two", error: HELD_WHY, notImported: "held" };
+  const stopped = [
+    { name: "A.two", error: "Import refused to protect the server.", notImported: "stopped" },
+    { name: "A.three", error: "not imported: the collect stopped when A.two failed", notImported: "stopped" },
+  ];
+
+  it("lists a held artifact as read but not imported, never as failed to collect", () => {
+    const html = cov.veloCoverageHtml(imported({ skippedArtifacts: [held] }));
+    expect(html).toContain("2/3 artifact(s) returned results");
+    expect(html).toContain("1 read but not imported");
+    expect(html).toContain("READ, NOT IMPORTED");
+    expect(html).toContain("A.two: held over the hunt artifact size limit");
+    expect(html).not.toContain("failed to collect");
+  });
+
+  it("shows the block for a collect that stopped partway, with the cut-short warning for what imported", () => {
+    const html = cov.veloCoverageHtml({
+      status: "error",
+      artifacts: ["A.one", "A.two", "A.three"],
+      skippedArtifacts: stopped,
+      truncatedArtifacts: [{ name: "A.one", kept: 1000, total: 1001 }],
+    });
+    expect(html).toContain("1/3 artifact(s) returned results");
+    expect(html).toContain("2 read but not imported");
+    expect(html).toContain("READ, NOT IMPORTED");
+    expect(html).toContain("A.two: Import refused to protect the server.");
+    expect(html).toContain("A.three: not imported: the collect stopped when A.two failed");
+    expect(html).toContain("INCOMPLETE");
+    expect(html).not.toContain("failed to collect");
+  });
+
+  it("keeps a failed fetch and a not-imported artifact under their own counts and lists", () => {
+    const html = cov.veloCoverageHtml(
+      imported({ skippedArtifacts: [{ name: "A.three", error: "too big" }, held] }),
+    );
+    expect(html).toContain("1/3 artifact(s) returned results");
+    expect(html).toContain("1 failed to collect");
+    expect(html).toContain("1 read but not imported");
+    const [before, after] = html.split("READ, NOT IMPORTED");
+    expect(before).toContain("A.three: too big");
+    expect(before).not.toContain("A.two: held");
+    expect(after).toContain("A.two: held");
+    expect(after).not.toContain("A.three: too big");
+  });
+
+  it("stays quiet for a collect that failed with nothing marked as read", () => {
+    const failedFetch = [{ name: "A.three", error: "too big" }];
+    const job = { status: "error", artifacts: ["A.one", "A.two", "A.three"], skippedArtifacts: failedFetch };
+    expect(cov.veloCoverageHtml(job)).toBe("");
+    expect(cov.veloCoverageHtml({ ...job, truncatedArtifacts: [{ name: "A.one", kept: 1, total: 2 }] })).toBe(
+      "",
+    );
+  });
+
+  // The held list is saved before any import starts, so a collect that then imports NOTHING is an
+  // "error" job with a held record: say where that artifact is, and claim nothing about the rest.
+  it("names only the held artifact when the collect failed with nothing imported", () => {
+    const html = cov.veloCoverageHtml({
+      status: "error",
+      artifacts: ["A.one", "A.two", "A.three"],
+      skippedArtifacts: [held, { name: "A.three", error: "too big" }],
+      emptyArtifacts: ["A.one"],
+      truncatedArtifacts: [{ name: "A.one", kept: 1000, total: 1001 }],
+      unreadArtifacts: [{ name: "A.one", rows: 3 }],
+    });
+    expect(html).toContain("READ, NOT IMPORTED");
+    expect(html).toContain("A.two: held over the hunt artifact size limit");
+    expect(html).not.toContain("returned results");
+    expect(html).not.toContain("read but not imported");
+    expect(html).not.toContain("INCOMPLETE");
+    expect(html).not.toContain("NOT READ &mdash;");
+    expect(html).not.toContain("had no findings");
+    expect(html).not.toContain("too big");
+  });
+
+  it("says so when a one-artifact hunt's only artifact is held", () => {
+    const html = cov.veloCoverageHtml({ status: "imported", artifacts: ["A.two"], skippedArtifacts: [held] });
+    expect(html).toContain("0/1 artifact(s) returned results");
+    expect(html).toContain("1 read but not imported");
+    expect(html).toContain("READ, NOT IMPORTED");
+  });
+
+  it("stays quiet while a collect that holds an artifact is still running", () => {
+    const job = { artifacts: ["A.one", "A.two", "A.three"], skippedArtifacts: [held, ...stopped] };
+    expect(cov.veloCoverageHtml({ ...job, status: "collecting" })).toBe("");
+    expect(cov.veloCoverageHtml({ ...job, status: "running" })).toBe("");
+  });
+
+  it("escapes a not-imported artifact's name and reason", () => {
+    const bad = { name: "<img src=x onerror=1>", error: "<script>alert(1)</script>" };
+    for (const job of [
+      imported({ skippedArtifacts: [{ ...bad, notImported: "held" }] }),
+      {
+        status: "error",
+        artifacts: ["A.one", "A.two"],
+        skippedArtifacts: [{ ...bad, notImported: "stopped" }],
+      },
+      { status: "error", artifacts: ["A.one", "A.two"], skippedArtifacts: [{ ...bad, notImported: "held" }] },
+    ]) {
+      const html = cov.veloCoverageHtml(job);
+      expect(html).toContain("READ, NOT IMPORTED");
+      expect(html).toContain("&lt;img src=x onerror=1&gt;: &lt;script&gt;alert(1)&lt;/script&gt;");
+      expect(html).not.toContain("<img");
+      expect(html).not.toContain("<script>");
+    }
+  });
 });
 
 // The launch-time half of the same module. SKIPPED artifacts were dropped from the run; UNHELD tools

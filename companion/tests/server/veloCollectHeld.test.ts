@@ -114,6 +114,17 @@ describe("bundle hunt — artifacts over the size limits (#2753, #2755)", () => 
       expect(await pstreeEvents(stateStore)).toBe(0); // held: not imported
       const saved = await readFile(join(drop, ...HELD.split("/")), "utf8");
       expect(saved.trim().split("\n")).toHaveLength(41); // every downloaded row, one per line
+      // #2835: the hunt-jobs route tells the card this artifact was downloaded, not that its fetch failed.
+      const jobs = (await request(app).get("/cases/c1/velociraptor/hunt-jobs")).body as Array<{
+        skippedArtifacts?: { name: string; error: string; notImported?: string }[];
+      }>;
+      expect(jobs[0]?.skippedArtifacts).toEqual([
+        {
+          name: "Generic.System.Pstree",
+          error: expect.stringContaining("held over the hunt artifact size limit"),
+          notImported: "held",
+        },
+      ]);
 
       const listed = (await request(app).get("/cases/c1/drop/held")).body.files;
       expect(listed).toEqual([

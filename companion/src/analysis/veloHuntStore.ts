@@ -99,7 +99,7 @@ export interface VeloHuntJob {
   addedIocs?: number;
   // Per-artifact collection accounting from the last collect, so "N artifacts, +X events" doesn't read
   // as "only one artifact collected" when the rest simply had nothing to report vs. actually failed.
-  skippedArtifacts?: SkippedArtifact[]; // fetch FAILED (oversized/timeout/error) — see the reason
+  skippedArtifacts?: SkippedArtifact[]; // not imported: fetch FAILED, or marked downloaded-only (#2835)
   emptyArtifacts?: string[]; // fetched cleanly, zero rows — nothing to report, not an error
   truncatedArtifacts?: TruncatedArtifact[]; // fetched PARTIALLY — the read hit the row cap, findings missing
   unreadArtifacts?: UnreadArtifact[]; // named sources NOT read — the source list lookup failed (#1635)
