@@ -29,7 +29,7 @@ interface Reply {
   body: string;
 }
 
-/** Larger than any socket buffer, so a paused client keeps its response from finishing. */
+/** A body big enough to be worth counting against the held-bytes cap. */
 const MID_BODY_BYTES = 32 * 1024 * 1024;
 
 function harness(opts: { concurrency?: number } = {}) {
@@ -41,8 +41,16 @@ function harness(opts: { concurrency?: number } = {}) {
   const coalescer = new HeavyReadCoalescer();
   const app: Express = express();
   // A follower's own middleware header, set before the gate (like securityHeaders / originGuard).
+  // A request marked x-hold-socket gets its socket corked, so its response cannot finish until the
+  // test uncorks it. That stands in for a slow client deterministically: a paused reader is not
+  // enough, because a platform's loopback buffer can swallow the whole body (Windows does).
+  const corked: Array<() => void> = [];
   app.use((req, res, next) => {
     res.setHeader("X-Own", String(req.headers["x-tag"] ?? "none"));
+    if (req.headers["x-hold-socket"] && req.socket) {
+      req.socket.cork();
+      corked.push(() => req.socket.uncork());
+    }
     next();
   });
   mountHeavyReadGate(app, gate, coalescer);
@@ -70,7 +78,7 @@ function harness(opts: { concurrency?: number } = {}) {
   app.get("/cases/:id/geo-map", handler);
   app.get("/cases/:id/report.docx", handler); // heavy, but a download: never shared
   app.post("/cases/:id/hypotheses", (_req, res) => res.status(200).json({ ok: true }));
-  return { app, gate, coalescer, runs: () => runs, holds };
+  return { app, gate, coalescer, runs: () => runs, holds, corked };
 }
 
 async function listen(app: Express): Promise<number> {
@@ -290,12 +298,18 @@ describe("identical heavy reads share one answer (#2846)", () => {
     await until(() => h.runs() === 1);
     const first = send(port, "/cases/c1/geo-map?mid=1");
     await until(() => h.gate.waiting === 1);
-    // A follower whose client reads nothing: its socket keeps the body until it is drained.
+    // A follower whose response cannot finish yet: its socket is corked until the test releases it.
     let slowRes: http.IncomingMessage | undefined;
-    const slow = http.request({ host: "127.0.0.1", port, path: "/cases/c1/geo-map?mid=1", agent: false });
+    const slow = http.request({
+      host: "127.0.0.1",
+      port,
+      path: "/cases/c1/geo-map?mid=1",
+      agent: false,
+      headers: { "x-hold-socket": "1" },
+    });
     slow.on("response", (r) => {
       slowRes = r;
-      r.pause();
+      r.resume();
     });
     slow.on("error", () => undefined);
     slow.end();
@@ -304,9 +318,10 @@ describe("identical heavy reads share one answer (#2846)", () => {
     await until(() => h.runs() === 2);
     h.holds[1].resolve();
     await first.reply;
+    await until(() => h.coalescer.heldBytes === MID_BODY_BYTES); // replayed, not yet sent
+    expect(slowRes).toBeUndefined();
+    for (const uncork of h.corked) uncork();
     await until(() => slowRes !== undefined);
-    expect(h.coalescer.heldBytes).toBe(MID_BODY_BYTES); // still being sent to the slow client
-    slowRes!.resume();
     await new Promise((r) => slowRes!.on("end", r));
     await until(() => h.coalescer.heldBytes === 0);
     await blocker.reply;
