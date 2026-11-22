@@ -469,7 +469,9 @@ describe("heavy read gate in the real app (#1915 over #2057)", () => {
       const paths = ["/geo-map", "/geo-map.csv", "/lateral-paths", "/attack-layer.json", "/presentation"];
       for (let round = 0; round < 15; round++) {
         const before = admit.mock.calls.length;
-        const burst = [...paths, ...paths].map((p) => get(port, `/cases/c1${p}`));
+        // A distinct query per request: identical reads now share one answer (#2846) and never reach
+        // the gate, and this test is about the gate's slots under abandoned work.
+        const burst = [...paths, ...paths].map((p, i) => get(port, `/cases/c1${p}?r=${round}-${i}`));
         for (const r of burst) r.reply.catch(() => undefined);
         sent.push(...burst);
         // Drop each burst once every request in it has reached the gate (not after a fixed delay).
