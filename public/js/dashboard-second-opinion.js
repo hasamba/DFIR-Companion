@@ -511,6 +511,9 @@
       document.addEventListener("visibilitychange", onShow);
     }
   }
+  // A 409 whose body is not JSON carries no sentence of its own; this stands in for it (#2826).
+  const REFUSED_UNREADABLE = "the server refused the request and gave no readable reason";
+
   function runSecondOpinion() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
@@ -530,7 +533,9 @@
     })
       .then(async (r) => {
         if (r.status === 409) {
-          const body = await r.json().catch(() => ({}));
+          // #2826: a body can be read once. Every 409 is answered from this one read — a second
+          // r.json() below turned "AI is off for this case" into "body stream already read".
+          const body = await r.json().catch(() => ({ error: REFUSED_UNREADABLE }));
           if (body.error === "presidio_approval_required") {
             if (btn) btn.disabled = false;
             if (typeof setPresidioPending === "function")
@@ -539,6 +544,7 @@
               "second opinion held — Presidio found new value(s) to review (see Anonymization)";
             return null;
           }
+          return body;
         }
         return r.json();
       })
