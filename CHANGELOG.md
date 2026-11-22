@@ -29,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Rolled-back bulk import keeps older raw rows** — a failed or refused batched Velociraptor import no longer evicts super-timeline rows the case already had (closes #2816)
+- **Rolled-back bulk import on a case with no saved state** — the same protection, and the rollback of the run's own rows, now work on a case fed only by super-only imports (closes #2829)
+- **Hunt collect that fails partway** — the artifacts that imported are settled, recorded and undoable, and the hunt card names what was and was not imported (closes #2817)
+- **Import-from-path size refusal** — with a raised `DFIR_MAX_IMPORT_FILE_MB`, a file over the safe whole-read limit is refused before it is read (closes #2815)
+- **Import-from-path growing file** — a file that grows during the read gets the "file changed while it was being imported" refusal, not an empty one (closes #2830)
+- **Large sign-in and logon imports** — an import with more than about 125,000 sign-ins or logons no longer fails with "Maximum call stack size exceeded" (closes #2827)
+- **Bundle hunt size check on very large fleets** — a collect across more than about 125,000 PCs no longer overflows the call stack (closes #2822)
+- **AI-off message on Re-synthesize and Second opinion** — the buttons show "AI is off for this case", not "body stream already read" (closes #2826)
+- **Duplicate-host hold on the AI buttons** — Re-synthesize, Second opinion, Deep pass, Second look and hypothesis generation say the hold and point to the Duplicate Hosts panel, not a raw code (closes #2828)
+- **Hunt inventory merge hardening** — an inventory item missing its last-seen date or overflow count no longer loses the date or yields NaN (closes #2820)
+- **Hunt export plan hardening** — a resumed per-client CSV import also skips the hunt-wide JSON copy (closes #2821)
+- **Nightly browser tests** — the six tests that call an AI route turn AI on for their case first (closes #2807)
+- **`bench:velo-bulk`** — the benchmark imports files over 50 MB again and stops at once with the reason when a file is not imported (closes #2824)
 - **Import memory guard re-measured** — the heap estimate drops from 48 to 36 KB per event, so a 4 GB heap holds about 115,000 events; RAM stays at 128 KB per event; the manual gives sizing guidance (closes #2814)
 - **Big Velociraptor imports no longer crash the server** — the import memory guard re-checks a batched Velociraptor import against the rows it really keeps, and refuses it with the standard message and the case unchanged before the case outgrows the server's memory (closes #2812)
 - **Drop files over 512 MB under a raised cap** — a text file is never read whole past ~448 MB, so a Velociraptor JSON Lines result, cloud export or Plaso file that size streams; other kinds get a clear refusal instead of a string-length error (closes #2813)
