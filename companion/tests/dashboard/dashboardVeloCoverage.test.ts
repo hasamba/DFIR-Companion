@@ -253,6 +253,142 @@ describe("veloCoverageHtml", () => {
     expect(cov.veloCoverageHtml({ ...job, status: "running" })).toBe("");
   });
 
+  // #2841 — the server records "cut short" when it READS an artifact, before it decides to hold it or
+  // stops the collect. A not-imported artifact has no rows in the case, so it must not sit under
+  // INCOMPLETE ("kept N rows") as well: it is listed once, and its line says the read was partial.
+  const ALSO_PARTIAL = " (this read was also incomplete: not every row was read)";
+  const cutTwo = { name: "A.two", kept: 100000, total: 250000 };
+
+  it("lists a held artifact that was also cut short once, under READ, NOT IMPORTED", () => {
+    const html = cov.veloCoverageHtml(imported({ skippedArtifacts: [held], truncatedArtifacts: [cutTwo] }));
+    expect(html).toContain("2/3 artifact(s) returned results");
+    expect(html).toContain("1 read but not imported");
+    expect(html).not.toContain("INCOMPLETE");
+    expect(html).not.toContain("cut short at the row cap");
+    expect(html).not.toContain("100000");
+    expect(html).not.toContain("kept");
+    expect(html).toContain(`Import anyway or Skip in the dashboard${ALSO_PARTIAL}`);
+    expect(html.split("A.two: ")).toHaveLength(2);
+  });
+
+  it("keeps only the imported artifact under INCOMPLETE when a collect stopped partway", () => {
+    const html = cov.veloCoverageHtml({
+      status: "error",
+      artifacts: ["A.one", "A.three", "A.two"],
+      skippedArtifacts: stopped,
+      truncatedArtifacts: [
+        { name: "A.three", kept: 100000, total: 250000 },
+        { name: "A.one", kept: 5, total: 9 },
+      ],
+    });
+    expect(html).toContain("1/3 artifact(s) returned results");
+    expect(html).toContain("1 cut short at the row cap");
+    expect(html).toContain("2 read but not imported");
+    const [before, after] = html.split("READ, NOT IMPORTED");
+    expect(before).toContain("INCOMPLETE");
+    expect(before).toContain("A.one (kept 5 rows, there were more)");
+    expect(before).not.toContain("A.three");
+    expect(after).toContain(`A.three: not imported: the collect stopped when A.two failed${ALSO_PARTIAL}`);
+    expect(after).toContain("A.two: Import refused to protect the server.<br>");
+    expect(html).not.toContain("100000");
+  });
+
+  it("drops a windowed or newest-first cut record of a held artifact from INCOMPLETE too", () => {
+    for (const shape of [
+      { windowStart: "2026-01-01T00:00:00Z", windowEnd: "2026-01-02T00:00:00Z", windowFull: true },
+      { windowStart: "2026-01-01T00:00:00Z" },
+      { order: "newest", orderPartial: true },
+    ]) {
+      const html = cov.veloCoverageHtml(
+        imported({ skippedArtifacts: [held], truncatedArtifacts: [{ ...cutTwo, ...shape }] }),
+      );
+      expect(html).not.toContain("INCOMPLETE");
+      expect(html).not.toContain("cut short at the row cap");
+      expect(html).not.toContain("incident window");
+      expect(html).not.toContain("kept");
+      expect(html).toContain(ALSO_PARTIAL);
+    }
+  });
+
+  it("adds the note only to the not-imported artifact that was cut short", () => {
+    const html = cov.veloCoverageHtml({
+      status: "error",
+      artifacts: ["A.one", "A.two", "A.three"],
+      skippedArtifacts: stopped,
+      truncatedArtifacts: [{ name: "A.three", kept: 7, total: 9 }],
+    });
+    expect(html.split(ALSO_PARTIAL)).toHaveLength(2);
+    expect(html).toContain("A.two: Import refused to protect the server.<br>");
+    expect(cov.veloCoverageHtml(imported({ skippedArtifacts: [held] }))).not.toContain("also incomplete");
+  });
+
+  // Cannot come from the server (a failed fetch is never read, so never cut short) — it pins that only
+  // a MARKED record takes an artifact out of INCOMPLETE.
+  it("leaves a cut-short artifact under INCOMPLETE when a same-named record is an unmarked failure", () => {
+    const html = cov.veloCoverageHtml(
+      imported({ skippedArtifacts: [{ name: "A.two", error: "too big" }], truncatedArtifacts: [cutTwo] }),
+    );
+    expect(html).toContain("INCOMPLETE");
+    expect(html).toContain("A.two (kept 100000 rows, there were more)");
+    expect(html).toContain("1 cut short at the row cap");
+    expect(html).toContain("A.two: too big");
+    expect(html).not.toContain("also incomplete");
+  });
+
+  it("matches names exactly: a held artifact does not hide a differently-cased cut record", () => {
+    const html = cov.veloCoverageHtml(
+      imported({ skippedArtifacts: [held], truncatedArtifacts: [{ ...cutTwo, name: "a.two" }] }),
+    );
+    expect(html).toContain("a.two (kept 100000 rows, there were more)");
+    expect(html).not.toContain("also incomplete");
+  });
+
+  // NOT READ claims nothing about the case and still matters after Import anyway, so it stays.
+  it("still lists a held artifact under NOT READ when its source list could not be read", () => {
+    const html = cov.veloCoverageHtml(
+      imported({
+        skippedArtifacts: [held],
+        truncatedArtifacts: [cutTwo],
+        unreadArtifacts: [{ name: "A.two", rows: 100000 }],
+      }),
+    );
+    expect(html).toContain("1 not read in full");
+    expect(html).toContain("NOT READ &mdash; A.two");
+    expect(html).not.toContain("INCOMPLETE");
+    expect(html).toContain(ALSO_PARTIAL);
+  });
+
+  it("carries the note when the collect failed with nothing imported", () => {
+    const html = cov.veloCoverageHtml({
+      status: "error",
+      artifacts: ["A.one", "A.two", "A.three"],
+      skippedArtifacts: [held],
+      truncatedArtifacts: [cutTwo],
+    });
+    expect(html).toContain(`Import anyway or Skip in the dashboard${ALSO_PARTIAL}`);
+    expect(html).not.toContain("INCOMPLETE");
+    expect(html).not.toContain("returned results");
+  });
+
+  it("escapes a not-imported artifact's name on the line that carries the note", () => {
+    const name = "<img src=x onerror=1>";
+    const skippedArtifacts = [{ name, error: "<script>alert(1)</script>", notImported: "held" }];
+    for (const status of ["imported", "error"]) {
+      const html = cov.veloCoverageHtml({
+        status,
+        artifacts: ["A.one", name],
+        skippedArtifacts,
+        truncatedArtifacts: [{ name, kept: 9, total: 10 }],
+      });
+      expect(html).toContain(
+        `&lt;img src=x onerror=1&gt;: &lt;script&gt;alert(1)&lt;/script&gt;${ALSO_PARTIAL}`,
+      );
+      expect(html).not.toContain("INCOMPLETE");
+      expect(html).not.toContain("<img");
+      expect(html).not.toContain("<script>");
+    }
+  });
+
   it("escapes a not-imported artifact's name and reason", () => {
     const bad = { name: "<img src=x onerror=1>", error: "<script>alert(1)</script>" };
     for (const job of [

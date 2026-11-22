@@ -56,7 +56,7 @@ function veloCutLine(t) {
 
 /* exported veloCoverageHtml */
 function veloCoverageHtml(job) {
-  const cut = job.truncatedArtifacts || [];
+  const cutAll = Array.isArray(job.truncatedArtifacts) ? job.truncatedArtifacts : [];
   const skipped = Array.isArray(job.skippedArtifacts) ? job.skippedArtifacts : [];
   const failed = skipped.filter((s) => !s.notImported); // the fetch errored
   const unimported = skipped.filter((s) => s.notImported); // downloaded, not imported (#2835)
@@ -64,13 +64,25 @@ function veloCoverageHtml(job) {
   const unread = job.unreadArtifacts || [];
   const capped = Array.isArray(job.superCappedArtifacts) ? job.superCappedArtifacts : [];
   const total = (job.artifacts || []).length;
+  // "Cut short" is recorded when an artifact is READ, before it is held or the collect stops, so a
+  // not-imported artifact can be in both lists. Its rows are not in the case: it is listed once,
+  // under READ, NOT IMPORTED, and that line says the read was partial (#2841). Exact name match.
+  const unimportedNames = new Set(unimported.map((s) => s.name));
+  const cutNames = new Set(cutAll.map((t) => t.name));
+  const cut = cutAll.filter((t) => !unimportedNames.has(t.name));
+  const alsoPartial = (s) =>
+    cutNames.has(s.name) ? " (this read was also incomplete: not every row was read)" : "";
 
   const box = (body, color) =>
     `<div data-safe-style="font-size:12px;color:${color};margin-top:2px">${body}</div>`;
   const tint = (text, color) => `<span data-safe-style="color:${color}">${text}</span>`;
   const reasons = (list) => list.map((s) => `${esc(s.name)}: ${esc(s.error)}`).join("<br>");
   const unimportedBox = unimported.length
-    ? box(`&#9888; READ, NOT IMPORTED &mdash; ${reasons(unimported)}`, "#ff9f43")
+    ? box(
+        `&#9888; READ, NOT IMPORTED &mdash; ` +
+          unimported.map((s) => `${esc(s.name)}: ${esc(s.error)}${alsoPartial(s)}`).join("<br>"),
+        "#ff9f43",
+      )
     : "";
 
   // A failed collect kept something only when it STOPPED at a later artifact (#2817): those records
