@@ -25,7 +25,7 @@
  */
 import type { AppOptions } from "./appOptions.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
-import type { ImportLock } from "../analysis/importLock.js";
+import { ALL_CASES, type ImportLock } from "../analysis/importLock.js";
 import { SCAN_PAGE_ROWS } from "../analysis/forensicRows.js";
 import { isManualId } from "../analysis/manualId.js";
 import { carryAndStampPaged, dualWriteAndTagPaged } from "../routes/importSettlePaged.js";
@@ -34,10 +34,52 @@ import { getServerLogger } from "../logging/serverLogger.js";
 
 export interface HuntRecoveryDeps {
   options: Pick<AppOptions, "stateStore" | "superTimelineStore" | "onSuperTimeline">;
-  importLock: Pick<ImportLock, "runExclusive">;
+  /** `runPastHolds`: start-up holds imports into the case until THIS settle has run (see below). */
+  importLock: Pick<ImportLock, "runPastHolds">;
   runStateExclusive?: RunExclusive;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
   demoteForensicForCase: (caseId: string) => Promise<unknown>;
+}
+
+/** The longest a start-up hold keeps a case's imports waiting; the settle itself is not cut off. */
+export const RECOVERY_HOLD_TIMEOUT_MS = 120_000;
+
+/**
+ * The start-up barrier (#2851 review). The sweep is not awaited: the server serves, the monitors
+ * resume and the drop watcher arms while it lists cases and marks jobs. An import that reached an
+ * affected case first would snapshot the stranded rows as existing data, tag only its own and demote
+ * case-wide, moving them out untagged where this settle (which scans the forensic timeline) cannot
+ * find them. So imports into every case wait while the sweep enumerates (`ALL_CASES`, armed
+ * synchronously at start-up), and into an affected case until its settle has run. Reads never wait.
+ * `work` always settles the hold, success or failure; past `timeoutMs` the hold is let go with a
+ * WARN. A settle still running then holds the case's import section, so a released import still
+ * queues behind it.
+ */
+export function holdImportsDuring(
+  lock: Pick<ImportLock, "hold"> | undefined,
+  key: string | typeof ALL_CASES,
+  work: Promise<unknown>,
+  timeoutMs = RECOVERY_HOLD_TIMEOUT_MS,
+): void {
+  if (!lock) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      const scope = key === ALL_CASES ? "every case" : key;
+      getServerLogger().warn(
+        `[velo-hunt] start-up recovery still running after ${Math.round(timeoutMs / 1000)} s — ` +
+          `imports into ${scope} no longer wait for it`,
+        key === ALL_CASES ? undefined : { caseId: key },
+      );
+      resolve();
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  const settled = work.then(
+    () => clearTimeout(timer),
+    () => clearTimeout(timer),
+  );
+  lock.hold(key, Promise.race([settled, expired]));
 }
 
 /** The stored-file prefix of this hunt's artifacts (veloEvidenceFirst.ts, importCommit.ts names). */
@@ -65,7 +107,7 @@ export async function settleInterruptedHuntRows(
   if (!store) return 0;
   const lock = deps.runStateExclusive ?? runUnlocked;
   const file = huntFilePattern(huntId);
-  return deps.importLock.runExclusive(caseId, async () => {
+  return deps.importLock.runPastHolds(caseId, async () => {
     const ids: string[] = [];
     for await (const page of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS }))
       for (const e of page) if (unsettled(e, file)) ids.push(e.id);

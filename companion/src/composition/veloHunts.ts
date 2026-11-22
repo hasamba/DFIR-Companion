@@ -217,6 +217,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
     isCollecting: (c, h) => collectingNow.has(c, h), // #2403
     settleInterrupted: (c, h) => settleInterruptedHuntRows(deps, c, h), // #2851
+    importLock, // #2851 review: imports into a case wait for its start-up recovery
   });
   const servers = () => options.serverClients ?? unavailableServerClients;
   const collectVelo = createTickVelo(servers, logLine, "velo-hunt");

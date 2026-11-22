@@ -94,9 +94,10 @@ async function world() {
       return undefined;
     },
   };
-  const build = () => {
+  const build = (prepare?: (s: { stateStore: StateStore; veloHuntStore: VeloHuntStore }) => void) => {
     const stateStore = new StateStore(store);
     const veloHuntStore = new VeloHuntStore(store);
+    prepare?.({ stateStore, veloHuntStore });
     const superTimelineStore = new SuperTimelineStore(store);
     const tagsStore = new TagsStore(store);
     const pipeline = buildRuntimePipeline({
@@ -227,4 +228,65 @@ describe("a hunt import cut off by a restart is settled at start-up (#2851)", ()
     },
     POLL_TIMEOUT_MS * 6,
   );
+
+  // Codex review: the start-up sweep is not awaited — the server serves, the monitors resume and the
+  // drop watcher arms while it lists cases and marks jobs. An ordinary import that reached the case
+  // first demoted the stranded Info rows case-wide, untagged, and the settle (which scans only the
+  // forensic timeline) could no longer find them. Imports into the case now wait for its recovery.
+  const SQUID_LINE =
+    '10.30.10.14 - - [15/May/2024:06:50:28 +0000] "GET /plain/page HTTP/1.1" 200 512 "-" "Mozilla/5.0" TCP_HIT:HIER_NONE';
+  for (const delayed of ["the job marking (enumeration)", "the settle's forensic read"] as const)
+    it(
+      `an ordinary import during a delayed start-up recovery waits for it — ${delayed}`,
+      async () => {
+        const w = await world();
+        w.sw.hangAt = 3;
+        await request(w.a.app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.1" });
+        await pollFor("cut off in the third artifact", async () => (w.sw.imports >= 3 ? true : null));
+        w.sw.hangAt = 0;
+
+        let release!: () => void;
+        const gate = new Promise<void>((r) => (release = r));
+        const b = w.build(({ stateStore, veloHuntStore }) => {
+          if (delayed === "the job marking (enumeration)") {
+            const update = veloHuntStore.update.bind(veloHuntStore);
+            veloHuntStore.update = async (...args) => (await gate, update(...args));
+          } else {
+            const batches = stateStore.forensicTimelineBatches.bind(stateStore);
+            stateStore.forensicTimelineBatches = async function* (...args) {
+              await gate;
+              yield* batches(...args);
+            };
+          }
+        });
+        const imported = request(b.app)
+          .post("/cases/c1/import")
+          .send({ filename: "proxy_access.log", text: SQUID_LINE, webLogFormat: "squid_combined" });
+        expect((await imported).status).toBe(202);
+        const importLanded = async () => {
+          for await (const batch of b.superTimelineStore.eventBatches("c1"))
+            if (batch.some((e) => /plain\/page/.test(e.description))) return true;
+          return null;
+        };
+        // Give an unheld import every chance to finish (and demote) before the recovery goes on.
+        await Promise.race([pollFor("import landed", importLanded), new Promise((r) => setTimeout(r, 1500))]);
+        expect(await importLanded()).toBeNull(); // held: no import (and no demote) ahead of the recovery
+        release();
+        await pollFor("import landed", importLanded);
+        await pollFor("job marked", async () =>
+          (await b.veloHuntStore.get("c1", "H.1"))?.status === "error" ? true : null,
+        );
+        const after = await pollFor("marker graded", async () => {
+          const v = await view(b);
+          return v.forensic.some((e) => /marker2851-1/.test(e.description) && e.severity === "High")
+            ? v
+            : null;
+        }).catch(() => view(b));
+        const marker = after.forensic.find((e) => /marker2851-1/.test(e.description));
+        expect(marker?.severity).toBe("High"); // tagged before any case-wide demote reached it
+        expect(after.tagged.has(marker!.id)).toBe(true);
+        expect(after.forensic.some((e) => e.severity === "Info")).toBe(false);
+      },
+      POLL_TIMEOUT_MS * 4,
+    );
 });

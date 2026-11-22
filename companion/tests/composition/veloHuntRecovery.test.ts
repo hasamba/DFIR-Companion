@@ -15,6 +15,7 @@ import { VeloHuntStore, type VeloHuntJob } from "../../src/analysis/veloHuntStor
 import { buildManualEvent } from "../../src/analysis/manualEntry.js";
 import { createImportDemote } from "../../src/composition/importDemote.js";
 import {
+  holdImportsDuring,
   huntFilePattern,
   settleInterruptedHuntRows,
   type HuntRecoveryDeps,
@@ -212,7 +213,11 @@ const JOB: VeloHuntJob = {
   status: "collecting",
 };
 
-function timers(huntStore: VeloHuntStore, settle: (c: string, h: string) => Promise<unknown>) {
+function timers(
+  huntStore: VeloHuntStore,
+  settle: (c: string, h: string) => Promise<unknown>,
+  importLock?: ImportLock,
+) {
   const options = {
     veloHuntStore: huntStore,
     serverClients: veloServerClients({ huntStatus: async () => ({ state: "RUNNING" }) }),
@@ -223,8 +228,95 @@ function timers(huntStore: VeloHuntStore, settle: (c: string, h: string) => Prom
     startVeloHuntCollect: () => undefined,
     isCollecting: (_c, h) => h === "H.live",
     settleInterrupted: settle,
+    importLock,
   });
 }
+
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 20));
+
+// Codex review of #2851: an import that reached the case before the settle demoted the stranded rows
+// untagged. Start-up now holds imports — every case while it enumerates, an affected case until its
+// settle has run — and always lets go.
+describe("start-up holds imports until the case's recovery has run (#2851 review)", () => {
+  it("holds an import into the affected case until its settle ends; another case only while enumerating", async () => {
+    await cases.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
+    const huntStore = new VeloHuntStore(cases);
+    await huntStore.upsert("c1", { ...JOB, collectPhase: "importing" });
+    const importLock = new ImportLock();
+    let endSettle!: () => void;
+    const order: string[] = [];
+    const t = timers(
+      huntStore,
+      () => new Promise<void>((r) => (endSettle = () => (order.push("settle"), r()))),
+      importLock,
+    );
+    const resuming = t.resumeVeloHuntStatusPolls({ startup: true });
+    // Asked for while the sweep is still enumerating (synchronously after start-up began).
+    const c1 = importLock.runExclusive("c1", async () => void order.push("c1 import"));
+    const c2 = importLock.runExclusive("c2", async () => void order.push("c2 import"));
+    await c2; // c2 has no interrupted hunt: it waits only for the enumeration
+    await flush();
+    expect(order).toEqual(["c2 import"]);
+    endSettle();
+    await c1;
+    expect(order).toEqual(["c2 import", "settle", "c1 import"]);
+    await resuming;
+    t.stopVeloHuntStatusPollsForCase("c1");
+  });
+
+  it("lets go when the settle throws", async () => {
+    const huntStore = new VeloHuntStore(cases);
+    await huntStore.upsert("c1", { ...JOB, collectPhase: "importing" });
+    const importLock = new ImportLock();
+    const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => {});
+    try {
+      const t = timers(
+        huntStore,
+        async () => {
+          throw new Error("out of memory");
+        },
+        importLock,
+      );
+      const resuming = t.resumeVeloHuntStatusPolls({ startup: true });
+      await expect(importLock.runExclusive("c1", async () => "imported")).resolves.toBe("imported");
+      await resuming;
+      t.stopVeloHuntStatusPollsForCase("c1");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a case with nothing interrupted is not held once the sweep has run", async () => {
+    const huntStore = new VeloHuntStore(cases);
+    await huntStore.upsert("c1", { ...JOB, huntId: "H.run", status: "running" });
+    const importLock = new ImportLock();
+    const t = timers(huntStore, () => new Promise(() => {}), importLock);
+    await t.resumeVeloHuntStatusPolls({ startup: true });
+    void importLock.runExclusive("c1", () => new Promise(() => {}));
+    expect(importLock.isBusy("c1")).toBe(true); // queued at once: no hold
+    t.stopVeloHuntStatusPollsForCase("c1");
+  });
+
+  it("a hold past its timeout lets go with a WARN; a settled one clears its timer", async () => {
+    const importLock = new ImportLock();
+    const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => {});
+    try {
+      holdImportsDuring(importLock, "c1", new Promise(() => {}), 30); // a settle that hangs
+      await expect(importLock.runExclusive("c1", async () => "imported")).resolves.toBe("imported");
+      expect(warn.mock.calls.some(([m]) => /no longer wait/.test(String(m)) && /c1/.test(String(m)))).toBe(
+        true,
+      );
+      warn.mockClear();
+      holdImportsDuring(importLock, "c1", Promise.resolve(), 30);
+      await importLock.runExclusive("c1", async () => undefined);
+      await new Promise((r) => setTimeout(r, 60));
+      expect(warn).not.toHaveBeenCalled();
+      holdImportsDuring(undefined, "c1", new Promise(() => {})); // no lock wired: nothing to hold
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
 
 describe("start-up recovery runs the settle for an interrupted import only (#2851)", () => {
   it("settles a collect stored as importing — after marking it — and no other", async () => {

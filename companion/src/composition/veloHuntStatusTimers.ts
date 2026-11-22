@@ -22,6 +22,8 @@ import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import { unavailableServerClients } from "./serverSetClients.js";
 import { createTickVelo } from "./veloCaseClient.js";
 import { failedCollect } from "./veloHuntCompleteness.js";
+import { holdImportsDuring } from "./veloHuntRecovery.js";
+import { ALL_CASES, type ImportLock } from "../analysis/importLock.js";
 
 export interface VeloHuntStatusTimersDeps {
   store: CaseStore;
@@ -39,6 +41,8 @@ export interface VeloHuntStatusTimersDeps {
    * (composition/veloHuntRecovery.ts). Optional: without it the restart only marks the job.
    */
   settleInterrupted?: (caseId: string, huntId: string) => Promise<unknown>;
+  /** #2851 review: holds imports while start-up recovery runs (`holdImportsDuring`). */
+  importLock?: Pick<ImportLock, "hold">;
 }
 
 export interface VeloHuntStatusTimers {
@@ -184,7 +188,12 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
   async function resumeVeloHuntStatusPolls(opts: { startup?: boolean } = {}): Promise<void> {
     const huntStore = options.veloHuntStore;
     if (!huntStore) return;
-    const settling = opts.startup ? await recoverInterruptedCollects() : [];
+    let settling: Promise<void>[] = [];
+    if (opts.startup) {
+      const sweep = recoverInterruptedCollects();
+      holdImportsDuring(deps.importLock, ALL_CASES, sweep); // armed before this function's first await
+      settling = await sweep;
+    }
     let cases: Awaited<ReturnType<typeof store.listCases>> = [];
     try {
       cases = await store.listCases();
@@ -226,7 +235,9 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
   function settleInterruptedImport(caseId: string, huntId: string, generation: string): Promise<void> {
     const settle = deps.settleInterrupted;
     if (!settle) return Promise.resolve();
-    return runInCaseScope(store.casesRoot, caseId, () => settle(caseId, huntId), generation).then(
+    const settled = runInCaseScope(store.casesRoot, caseId, () => settle(caseId, huntId), generation);
+    holdImportsDuring(deps.importLock, caseId, settled); // set while the all-case hold is still up
+    return settled.then(
       () => undefined,
       (err: unknown) =>
         getServerLogger().warn(
