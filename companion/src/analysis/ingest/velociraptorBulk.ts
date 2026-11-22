@@ -23,6 +23,7 @@ import {
 } from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
 import { abortIfCancelled, mergeAndSaveDelta } from "./importState.js";
+import { bulkEvictionForRecord } from "./bulkEvictionReport.js";
 import type { ImportDebugRecorder } from "../importDebug.js";
 import type { SectionMemoryCheck } from "../importMemoryGuard.js";
 
@@ -125,6 +126,8 @@ export interface BulkImportSink {
    * sink has this, so a sink without it keeps the cap's per-append behaviour.
    */
   commitSuperCap?(caseId: string): Promise<SuperEviction>;
+  /** The run's forensic rows its cap passes dropped, which the settle puts back (#2816). */
+  superMissingOfRun?(caseId: string, run: BulkRunHandle): Promise<number>;
   openTagger(caseId: string, mode: "forensic" | "super-only"): Promise<BatchTagger | null>;
   forensicMinSeverity(caseId: string): Promise<Severity>;
   /** With `caseId` the line also lands in the case's own log (#1438). */
@@ -781,7 +784,7 @@ export async function importVelociraptorBulk(
       );
     }
     // The caller gets the state only, and its settle cannot see rows already gone: report them here.
-    const evicted = mergeEvictions(result.superEvicted, atCommit);
+    const evicted = await bulkEvictionForRecord(sink, caseId, opts.label, result, atCommit);
     if (evicted.count) opts.onSuperEvicted?.(evicted);
     opts.onProgress?.(1, 1);
     return state;

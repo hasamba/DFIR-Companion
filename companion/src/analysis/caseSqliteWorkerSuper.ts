@@ -464,6 +464,42 @@ function capSuper(dbPath, max) {
   try { return withTransaction(db, () => enforceSuperCap(db, max)); } finally { db.close(); }
 }
 
+// How many of a committed batched run's forensic rows the super-timeline does not hold and would
+// insert if offered (#2816). The run offered every one of them, so each was dropped by one of the
+// run's cap passes; the import's settle offers them again, puts them back, and reports the row
+// that goes for good. Counted by the append's own rule — absent by id, by content key and by base
+// key, once per content — in pages, so a large run's payloads are never held together.
+function superMissingOfRun(dbPath, afterRowId, importBatchId) {
+  if (!existsSync(dbPath) || typeof importBatchId !== "string" || !importBatchId) return 0;
+  const db = openDatabase(dbPath);
+  try {
+    const page = db.prepare(
+      "SELECT f.row_id AS row_id, f.payload AS payload FROM entities f WHERE f.kind='forensicTimeline' " +
+      "AND f.row_id>? AND json_extract(f.payload, '$.importBatchId')=? AND f.entity_id IS NOT NULL " +
+      "AND NOT EXISTS (SELECT 1 FROM entities s WHERE s.kind='superTimeline' AND s.entity_id=f.entity_id) " +
+      "ORDER BY f.row_id LIMIT 1000"
+    );
+    const seen = new Set();
+    let missing = 0;
+    for (let after = Number(afterRowId) || 0; ;) {
+      const rows = page.all(after, importBatchId);
+      if (!rows.length) return missing;
+      after = Number(rows[rows.length - 1].row_id);
+      const events = rows.map((row) => JSON.parse(row.payload));
+      const stored = storedSuperContentKeys(db, events.map(superContentKey));
+      const storedBase = storedSuperContentKeys(db, events.filter(superRecordId).map(superBaseContentKey));
+      for (const event of events) {
+        const key = superContentKey(event);
+        if (seen.has(key) || stored.has(key) || (superRecordId(event) && storedBase.has(superBaseContentKey(event)))) continue;
+        seen.add(key);
+        missing++;
+      }
+    }
+  } finally {
+    db.close();
+  }
+}
+
 // Rewrite stored rows in place once the case learned a hostname rename (#1508): the payload, the
 // host column the facet and the typed reads filter on, the content key the dedup compares, and the
 // value/term indexes all follow, because the write goes through the entity writer's update. The

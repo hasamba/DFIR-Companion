@@ -175,6 +175,8 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
     appendSuper: (caseId: string, events: ForensicEvent[], holdRowId?: number) =>
       superTimelineStore.appendReporting(caseId, events, holdRowId === undefined ? {} : { holdRowId }),
     commitSuperCap: (caseId: string) => superTimelineStore.enforceCap(caseId),
+    superMissingOfRun: (caseId: string, run: BulkRunHandle) =>
+      superTimelineStore.missingOfRun(caseId, run.fence, run.importBatchId),
     openTagger,
     forensicMinSeverity,
     log: deps.log,

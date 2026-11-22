@@ -312,6 +312,22 @@ export class SuperTimelineStore {
   }
 
   /**
+   * #2816 — how many of a committed batched run's forensic rows the store does not hold and would
+   * insert if offered again: the rows the run's cap passes dropped that the import's settle puts
+   * back. `fence` and `importBatchId` are the run's rollback handle.
+   */
+  async missingOfRun(caseId: string, fence: number, importBatchId: string): Promise<number> {
+    await this.ensureMigrated(caseId);
+    const missing = await caseSqliteWorker.request<number>({
+      op: "superMissingOfRun",
+      dbPath: this.databasePath(caseId),
+      afterRowId: fence,
+      importBatchId,
+    });
+    return Number(missing) || 0;
+  }
+
+  /**
    * #2619 — after an import Undo and a re-import, move each stored row onto the id the forensic
    * timeline now holds for it, so the raw record shows it as Promoted. The worker re-checks every
    * link (old id not in the forensic timeline, new id in it and not already stored); the row keeps

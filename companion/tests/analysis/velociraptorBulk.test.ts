@@ -719,6 +719,60 @@ describe("importVelociraptorBulk — what the cap dropped reaches the import's c
     ]);
   });
 
+  // The settle offers the import's graded rows to the super-timeline again and reports the row that
+  // then goes for good, so the run leaves out the dropped rows the settle puts back (#2816 review).
+  it.each([
+    {
+      missing: 6,
+      expected: [{ count: 8, setAside: 2, from: "2025-01-01T00:00:00Z", to: "2025-01-02T00:00:00Z" }],
+    },
+    {
+      missing: 13,
+      expected: [{ count: 1, setAside: 1, from: "2025-01-01T00:00:00Z", to: "2025-01-02T00:00:00Z" }],
+    },
+    { missing: 14, expected: [] },
+    { missing: 99, expected: [] },
+  ])("leaves out $missing dropped row(s) the settle puts back", async ({ missing, expected }) => {
+    const { ctx } = await contextWithStore();
+    const sink = memorySink({ batchRows: 10 });
+    sink.commitSuperCap = async () => ({
+      count: 14,
+      setAside: 2,
+      from: "2025-01-01T00:00:00Z",
+      to: "2025-01-02T00:00:00Z",
+    });
+    const asked: BulkRunHandle[] = [];
+    sink.superMissingOfRun = async (_c, run) => {
+      asked.push(run);
+      return missing;
+    };
+    const reported: SuperEviction[] = [];
+    await importVelociraptorBulk(ctx, sink, "c1", fifteen(), {
+      ...baseOpts(),
+      onSuperEvicted: (e) => reported.push(e),
+    });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.mode).toBe("forensic");
+    expect(reported).toEqual(expected);
+  });
+
+  it("reports the run's eviction whole, and says so, when the put-back rows cannot be read", async () => {
+    const { ctx } = await contextWithStore();
+    const sink = memorySink({ batchRows: 10 });
+    const atCommit = { count: 14, setAside: 2, from: "2025-01-01T00:00:00Z", to: "2025-01-02T00:00:00Z" };
+    sink.commitSuperCap = async () => atCommit;
+    sink.superMissingOfRun = async () => {
+      throw new Error("worker gone");
+    };
+    const reported: SuperEviction[] = [];
+    await importVelociraptorBulk(ctx, sink, "c1", fifteen(), {
+      ...baseOpts(),
+      onSuperEvicted: (e) => reported.push(e),
+    });
+    expect(reported).toEqual([atCommit]);
+    expect(sink.logs.some((l) => /worker gone — the import record may count a row twice/.test(l))).toBe(true);
+  });
+
   it("reports nothing when the cap dropped nothing, and nothing for a run that rolled back", async () => {
     const { ctx } = await contextWithStore();
     const reported: SuperEviction[] = [];

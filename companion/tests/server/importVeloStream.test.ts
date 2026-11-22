@@ -7,6 +7,8 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { buildBulkImportSink } from "../../src/composition/bulkImportSink.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { BulkImportSink } from "../../src/analysis/ingest/velociraptorBulk.js";
@@ -166,6 +168,54 @@ describe("POST /cases/:id/import-file — a large Velociraptor JSON Lines file s
     expect(meta.addedCount).toBe(0);
     expect(meta.superTimelineEvicted).toEqual(dropped);
   });
+
+  // #2816 review: graded rows stay in the forensic timeline, so the settle offers them to the
+  // super-timeline again. A row the batched run's cap had dropped is put back there (and may be
+  // dropped again); the record counts each row the store really lost once, not once per pass.
+  it("counts a graded row the cap dropped once, when the import alone outgrows the cap", async () => {
+    const CAP = 50;
+    const root = await mkdtemp(join(tmpdir(), "dfir-velo-stream-cap-"));
+    const store = new CaseStore(join(root, "cases"));
+    const stateStore = new StateStore(store);
+    const superTimelineStore = new SuperTimelineStore(store, CAP);
+    const bulkImportSink = buildBulkImportSink({
+      stateStore,
+      superTimelineStore,
+      log: () => {},
+      env: { DFIR_IMPORT_BATCH_ROWS: "500" },
+    })!;
+    const pipeline = buildRuntimePipeline({
+      provider: undefined,
+      synthesisProvider: undefined,
+      stateStore,
+      store,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+      bulkImportSink,
+    });
+    const metaStore = new ImportMetaStore(store);
+    const app = createApp(store, {
+      pipeline,
+      stateStore,
+      importMetaStore: metaStore,
+      superTimelineStore,
+      bulkImportSink,
+    });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const path = join(root, "sb_evtx.json");
+    await writeFile(path, ndjson(rowsOfAtLeast(1.5 * MB)), "utf8");
+
+    const res = await request(app).post("/cases/c1/import-file").send({ path });
+    expect(res.status, JSON.stringify(res.body)).toBe(202);
+    await until(async () => (await metaStore.load("c1")).lastImportedAt !== "", 60_000);
+
+    // Every row is a graded detection: each is in the forensic timeline and was offered to the
+    // super-timeline, which started empty. What it does not hold now is what the cap dropped.
+    const graded = (await stateStore.load("c1")).forensicTimeline.length;
+    const held = (await superTimelineStore.meta("c1")).rows;
+    expect(graded).toBeGreaterThan(CAP * 2);
+    expect(held).toBe(CAP);
+    expect((await metaStore.load("c1")).superTimelineEvicted?.count).toBe(graded - held);
+  }, 120_000);
 
   it("keeps the 413 for an over-cap Velociraptor file that is not JSON Lines, naming JSON Lines", async () => {
     const { app, store, root } = await makeApp(true);

@@ -742,6 +742,7 @@ async function dispatch(message) {
     case "migrateSuper": return migrateSuper(message.dbPath, message.eventsPath, message.labelsPath, message.tagsPath, message.excludeAuthorPrefix, message.max, message.setAsideMarkers, message.setAsideVersion);
     case "appendSuper": return appendSuper(message.dbPath, message.events, message.max, message.setAsideMarkers, message.relinkCandidates === true, message.holdRowId);
     case "capSuper": return capSuper(message.dbPath, message.max);
+    case "superMissingOfRun": return superMissingOfRun(message.dbPath, message.afterRowId, message.importBatchId);
     case "relinkSuper": return relinkSuper(message.dbPath, message.links, message.setAsideMarkers);
     case "rehomeSuper": return rehomeSuper(message.dbPath, message.events, message.setAsideMarkers);
     case "dropSummaryRows": return dropSummaryRows(message.dbPath, message.prefix, message.keepIds);
