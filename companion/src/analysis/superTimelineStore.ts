@@ -73,6 +73,13 @@ import type { OperationalMetricsStore, QueryIndex } from "./operationalMetrics.j
 // `meta().lastEviction` are the case's durable record, including evictions caused by unstarring a
 // row, which no import summary ever sees.
 //
+// A BATCHED IMPORT HOLDS ITS EVICTIONS UNTIL IT COMMITS (#2816). Its appends pass the run's
+// rollback fence (`holdRowId`), and the cap then evicts only that run's own rows: what the case
+// held before the run stays in place until `enforceCap` runs at the run's commit point. A run that
+// fails and rolls back therefore leaves the store exactly as it found it. The cost is that the
+// store can sit ABOVE the cap — by up to one cap of rows — while such a run is open; any ordinary
+// cap pass in that time (an analyst unstarring a row, a second import) evicts as usual.
+//
 // PROTECTION (#958). A row the analyst starred or tagged is protected and is never evicted. The
 // relation (`super_protected`) lives in the case database beside the rows, is written only for a
 // row that exists (a tag on an evicted or unknown id protects nothing and stores nothing), and is
@@ -249,7 +256,7 @@ export class SuperTimelineStore {
   async appendReporting(
     caseId: string,
     events: ForensicEvent[],
-    opts: { relinkCandidates?: boolean } = {},
+    opts: { relinkCandidates?: boolean; /** #2816: see RETENTION above. */ holdRowId?: number } = {},
   ): Promise<SuperAppendResult> {
     const asked = opts.relinkCandidates === true;
     if (!events.length)
@@ -262,12 +269,27 @@ export class SuperTimelineStore {
       max: this.max,
       setAsideMarkers: SET_ASIDE_NOTE_MARKERS,
       relinkCandidates: asked,
+      ...(opts.holdRowId !== undefined ? { holdRowId: opts.holdRowId } : {}),
     });
     return {
       retained: result?.retained ?? 0,
       evicted: result?.evicted ?? { ...NO_EVICTION },
       ...(asked ? { relinkCandidates: result?.relinkCandidates ?? [] } : {}),
     };
+  }
+
+  /**
+   * One plain cap pass (#2816): the commit step of a batched import whose appends held their
+   * evictions. Returns what it dropped; the case's durable eviction record gets it too.
+   */
+  async enforceCap(caseId: string): Promise<SuperEviction> {
+    await this.ensureMigrated(caseId);
+    const evicted = await caseSqliteWorker.request<SuperEviction>({
+      op: "capSuper",
+      dbPath: this.databasePath(caseId),
+      max: this.max,
+    });
+    return evicted ?? { ...NO_EVICTION };
   }
 
   /**

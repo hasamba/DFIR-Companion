@@ -110,7 +110,16 @@ function reconcileSetAside(db, markers, version) {
 // transaction after anything that adds rows or drops protection, so the store never rests above
 // the cap. NOT EXISTS, not NOT IN: a row with no entity_id must stay evictable, and
 // NULL NOT IN (...) is never true. Stores the exact post-delete total in entity_counts.
-function enforceSuperCap(db, max) {
+//
+// holdRowId (#2816) is a batched import's rollback fence. With it, the doomed set is worked out
+// exactly as without, but only the rows ABOVE the fence are deleted: what the case held before the
+// run stays until the run commits (capSuper below), so a rollback finds every one of them. The
+// spared rows are listed again on every pass, so a run that alone outgrows the cap still loses its
+// own head, and the store ends where it always did once the commit pass has run. The result — and
+// the case's durable eviction record — counts only what was really deleted. The fence travels with
+// each append and is stored nowhere, so a crash cannot leave a hold behind.
+function enforceSuperCap(db, max, holdRowId) {
+  const hold = Number.isFinite(holdRowId) ? Number(holdRowId) : -1; // row ids are positive
   const cap = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 100000;
   const count = Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline'").get().n);
   const protectedCount = Number(db.prepare(
@@ -141,9 +150,9 @@ function enforceSuperCap(db, max) {
     // back: a bulk import can evict hundreds of thousands of rows, and none of them is materialized.
     const summary = db.prepare(
       "SELECT count(*) AS n, coalesce(sum(member),0) AS asides, min(nullif(ts,'')) AS t0, max(nullif(ts,'')) AS t1 " +
-      "FROM (" + doomed + ")"
-    ).get(floorRowId, excess);
-    deleted = db.prepare("DELETE FROM entities WHERE row_id IN (SELECT row_id FROM (" + doomed + "))").run(floorRowId, excess).changes;
+      "FROM (" + doomed + ") WHERE row_id>?"
+    ).get(floorRowId, excess, hold);
+    deleted = db.prepare("DELETE FROM entities WHERE row_id IN (SELECT row_id FROM (" + doomed + ") WHERE row_id>?)").run(floorRowId, excess, hold).changes;
     db.prepare("DELETE FROM super_labels WHERE event_id NOT IN " +
       "(SELECT entity_id FROM entities WHERE kind='superTimeline' AND entity_id IS NOT NULL)").run();
     db.prepare("DELETE FROM super_set_aside WHERE event_id NOT IN " +
@@ -284,7 +293,7 @@ function storedSuperContentKeys(db, keys) {
   ).all(JSON.stringify(unique)).map((row) => row.content_key));
 }
 
-function writeSuperEvents(db, events, max, protectIds, setAsideMarkers, relinkCandidates) {
+function writeSuperEvents(db, events, max, protectIds, setAsideMarkers, relinkCandidates, holdRowId) {
   return withTransaction(db, () => {
     const writer = createEntityWriter(db);
     const incoming = events || [];
@@ -335,7 +344,7 @@ function writeSuperEvents(db, events, max, protectIds, setAsideMarkers, relinkCa
     // on its own append.
     if (firstRowId !== null) markSetAsideRows(db, setAsideMarkers, { fromRowId: firstRowId });
     if (added > 0) stampSuperContent(db);
-    const evicted = enforceSuperCap(db, max);
+    const evicted = enforceSuperCap(db, max, holdRowId);
     // retained, not inserted: a batch past the cap loses its own head
     const retained = firstRowId === null ? 0 : Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline' AND row_id>=?").get(firstRowId).n);
     return relinkCandidates ? { retained, evicted, relinkCandidates: superRelinkCandidates(db, contentDropped) } : { retained, evicted };
@@ -441,9 +450,18 @@ function migrateSuper(dbPath, eventsPath, labelsPath, tagsPath, excludeAuthorPre
 // Returns { retained, evicted } so a caller that reports can have BOTH from one atomic call.
 // SuperTimelineStore.append still hands its callers the retained number and nothing else.
 // With relinkCandidates (#2619) the result also lists the content-deduped rows a relink may claim.
-function appendSuper(dbPath, events, max, setAsideMarkers, relinkCandidates) {
+// holdRowId (#2816): a batched import's fence — see enforceSuperCap.
+function appendSuper(dbPath, events, max, setAsideMarkers, relinkCandidates, holdRowId) {
   const db = openDatabase(dbPath);
-  try { return writeSuperEvents(db, events, max, null, setAsideMarkers, relinkCandidates); } finally { db.close(); }
+  try { return writeSuperEvents(db, events, max, null, setAsideMarkers, relinkCandidates, holdRowId); } finally { db.close(); }
+}
+
+// One plain cap pass, with no hold (#2816): a batched import's commit step, which carries out the
+// evictions its appends held. Returns what it dropped, in the shape an append reports.
+function capSuper(dbPath, max) {
+  if (!existsSync(dbPath)) return { count: 0, setAside: 0, from: "", to: "" };
+  const db = openDatabase(dbPath);
+  try { return withTransaction(db, () => enforceSuperCap(db, max)); } finally { db.close(); }
 }
 
 // Rewrite stored rows in place once the case learned a hostname rename (#1508): the payload, the
