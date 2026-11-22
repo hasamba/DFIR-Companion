@@ -9,6 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
+import {
+  buildCollectionInventory,
+  emptySettledClasses,
+  renderCollectionInventory,
+  sanitizeHuntJobs,
+} from "../../src/analysis/collectionInventory.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { assessImportMemory, ImportMemoryRefusedError } from "../../src/analysis/importMemoryGuard.js";
 import { ImportUndoStore } from "../../src/analysis/importUndo.js";
@@ -213,6 +219,19 @@ describe("a hunt collect that fails on a later artifact (#2817)", () => {
       expect(w.imports()).toBe(2); // the collect stopped: the third was never tried
       expect((job.skippedArtifacts ?? []).map((s) => s.name)).toEqual([SECOND, THIRD]);
       expect((job.skippedArtifacts ?? []).map((s) => s.notImported)).toEqual(["stopped", "stopped"]);
+
+      // #2838: the AI's collection inventory lists this hunt — the stored job, read as synthesis reads it.
+      const inv = buildCollectionInventory({ events: [], hunts: sanitizeHuntJobs([job]) });
+      expect(inv.hunts.map((h) => `${h.artifact}=${h.state}`)).toEqual([
+        `${THIRD}=not-imported`,
+        `${FIRST}=archive-only`,
+        `${SECOND}=not-imported`,
+      ]);
+      const text = renderCollectionInventory(inv);
+      expect(text).toContain(`${SECOND} — read but NOT imported by this hunt (the collect stopped part-way)`);
+      expect(text).not.toContain("fetch failed");
+      expect(text).not.toContain("Import refused"); // the stored reason never reaches the prompt
+      expect([...emptySettledClasses(inv, "WS-001")]).toEqual([]);
       expect((await w.importUndoStore.load("c1")).undo).toHaveLength(1);
     },
     POLL_TIMEOUT_MS * 2,
@@ -245,6 +264,8 @@ describe("a hunt collect that fails on a later artifact (#2817)", () => {
       expect((await w.importMetaStore.load("c1")).lastImportFile).toBe("");
       expect(w.seen).toEqual([]);
       expect(job.skippedArtifacts).toBeUndefined();
+      // #2838: nothing imported, so the inventory says nothing about this hunt.
+      expect(buildCollectionInventory({ events: [], hunts: sanitizeHuntJobs([job]) }).hunts).toEqual([]);
     },
     POLL_TIMEOUT_MS * 2,
   );
