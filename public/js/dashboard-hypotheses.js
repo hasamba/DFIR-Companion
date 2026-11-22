@@ -431,7 +431,7 @@
           // A Presidio hold waits for the analyst — it is not a failure (#1782).
           if (typeof presidioHold === "function" && presidioHold(r.status, body))
             throw Object.assign(new Error("presidio hold"), { presidioHold: true });
-          throw new Error("HTTP " + r.status);
+          throw hypRefusal(r.status, body);
         }
         return r.json();
       })
@@ -451,12 +451,27 @@
           msg.textContent = presidioHoldText("Promote");
           return;
         }
-        if (msg)
-          msg.textContent =
-            "promote failed: " +
-            e.message +
-            " — restart the companion server if this 404s";
+        if (msg) msg.textContent = hypRefusalText("promote failed: ", e);
       });
+  }
+
+  // #2832: a refused promote/add used to print only "HTTP 423 — restart the companion server",
+  // dropping the reason the server gave (a closed case, a case file that needs repair) and sending
+  // the analyst to restart a healthy server. The server's sentence is carried on the error when
+  // there is one; the bare status is kept for an answer with no sentence.
+  function hypRefusal(status, body) {
+    const said = body && typeof body.error === "string" ? body.error.trim() : "";
+    return said
+      ? Object.assign(new Error(said), { serverSaid: true })
+      : new Error("HTTP " + status);
+  }
+
+  // The restart advice is for a stale server's 404, which carries no sentence — so it is printed
+  // only then. The sentence can hold the case's own text: callers set it with textContent.
+  function hypRefusalText(prefix, e) {
+    return e && e.serverSaid
+      ? prefix + e.message
+      : prefix + ((e && e.message) || "unknown error") + " — restart the companion server if this 404s";
   }
 
   // Three buttons wired at load. In a <head> script these run before the markup exists, so they
@@ -491,7 +506,7 @@
             // A Presidio hold waits for the analyst — it is not a failure (#1782).
             if (typeof presidioHold === "function" && presidioHold(r.status, body))
               throw Object.assign(new Error("presidio hold"), { presidioHold: true });
-            throw new Error("HTTP " + r.status);
+            throw hypRefusal(r.status, body);
           }
           return r.json();
         })
@@ -506,10 +521,7 @@
             msg.textContent = presidioHoldText("Add hypothesis");
             return;
           }
-          msg.textContent =
-            "failed: " +
-            e.message +
-            " — restart the companion server if this 404s";
+          msg.textContent = hypRefusalText("failed: ", e);
         });
     };
     // On-demand hypothesis generation (#140): hypotheses are a byproduct of synthesis, so this just
