@@ -33,6 +33,9 @@ function veloCancelledDetail(job) {
       : c.action === "stop"
         ? "and stopped in Velociraptor"
         : "here only — it may still be running in Velociraptor";
+  // Never answered (the companion restarted mid-call): the stop / delete is unconfirmed.
+  if (c.pending)
+    return `cancelled${who} here — Velociraptor never confirmed the ${c.action === "delete" ? "delete" : "stop"}; check the hunt in Velociraptor. No results were collected.`;
   // A refusal replaces the claim, never sits next to it: "deleted — but refused" reads as both.
   if (c.serverError)
     return `cancelled${who} here, but Velociraptor refused (${c.serverError}) — check the hunt in Velociraptor. No results were collected.`;

@@ -52,6 +52,16 @@ describe("veloCancelledDetail", () => {
     expect(line).not.toContain("deleted from Velociraptor");
   });
 
+  // The job records the choice before Velociraptor answers; a restart in between leaves `pending`.
+  it("never claims a stop or delete Velociraptor did not confirm", () => {
+    const line = mod.veloCancelledDetail({
+      status: "cancelled",
+      cancelled: { action: "delete", pending: true },
+    });
+    expect(line).toContain("never confirmed the delete");
+    expect(line).not.toContain("deleted from Velociraptor");
+  });
+
   it("is empty for any other status", () => {
     expect(mod.veloCancelledDetail({ status: "running" })).toBe("");
     expect(mod.veloCancelledDetail(null)).toBe("");

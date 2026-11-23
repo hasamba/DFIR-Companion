@@ -34,6 +34,9 @@ export interface VeloHuntCancel {
   at: string; // ISO
   by?: string;
   action: VeloHuntCancelAction;
+  // true from the cancel until Velociraptor answers the stop / delete. Still set later means the
+  // companion restarted mid-call: whether the hunt was stopped is unknown.
+  pending?: boolean;
   serverError?: string;
 }
 

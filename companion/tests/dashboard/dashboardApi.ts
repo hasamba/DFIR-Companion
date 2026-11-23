@@ -572,7 +572,10 @@ export interface VeloHuntCancelApi {
     job: { status?: string; huntId?: string; bundleName?: string; collectActive?: boolean } | null,
   ): string;
   veloCancelledDetail(
-    job: { status?: string; cancelled?: { action?: string; by?: string; serverError?: string } } | null,
+    job: {
+      status?: string;
+      cancelled?: { action?: string; by?: string; serverError?: string; pending?: boolean };
+    } | null,
   ): string;
 }
 

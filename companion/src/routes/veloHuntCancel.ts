@@ -12,6 +12,9 @@
  * STOPPED and start a collect — the cancel itself would trigger an import. The collect path refuses a
  * cancelled job, and a poll already on the network is discarded as stale once the status changed.
  *
+ * `cancelled.pending` is set until Velociraptor answers. A server restart during the call leaves it
+ * set, and the card then says the stop / delete is unconfirmed instead of claiming it happened.
+ *
  * A refused stop / delete is recorded on the job (`cancelled.serverError`) and returned, so the card
  * can say the hunt may still be running in Velociraptor instead of implying it was stopped.
  *
@@ -70,7 +73,13 @@ export function registerVeloHuntCancelRoutes(app: Express, ctx: RouteContext): v
         refused = cur.status;
         return null;
       }
-      return { ...cur, status: "cancelled", cancelled: { at: new Date().toISOString(), by, action } };
+      // `pending` until Velociraptor answers: a restart mid-call must not leave "stopped" on record.
+      const pending = action !== "none" ? { pending: true } : {};
+      return {
+        ...cur,
+        status: "cancelled",
+        cancelled: { at: new Date().toISOString(), by, action, ...pending },
+      };
     });
     if (!marked) return res.status(404).json({ error: `no Velociraptor hunt ${huntId} for this case` });
     if (refused)
@@ -85,11 +94,13 @@ export function registerVeloHuntCancelRoutes(app: Express, ctx: RouteContext): v
           : await stopHuntOnServer(vc.client, huntId);
       if (!result.ok) serverError = result.error;
     }
-    const job = serverError
-      ? ((await huntStore.update(caseId, huntId, (cur) =>
-          cur.cancelled ? { ...cur, cancelled: { ...cur.cancelled, serverError } } : null,
-        )) ?? marked)
-      : marked;
+    // Record Velociraptor's answer: clear `pending`, and keep a refusal's reason.
+    const answered = (cur: VeloHuntJob): VeloHuntJob | null => {
+      if (!cur.cancelled) return null;
+      const { pending: _done, ...rest } = cur.cancelled;
+      return { ...cur, cancelled: { ...rest, ...(serverError ? { serverError } : {}) } };
+    };
+    const job = vc ? ((await huntStore.update(caseId, huntId, answered)) ?? marked) : marked;
     options.onVeloHunt?.(caseId);
     void logActivity(options.activityLogStore, options.onActivity, caseId, {
       actor: by,
