@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -718,6 +718,16 @@ describe("GET /api/next-case-id", () => {
     expect(res.body.caseId).toBe(`INC-${year}-001`);
   });
 
+  // #2858: a folder removed outside the app never reached the delete route, so nothing retired it.
+  it("does not reissue the number of a case whose folder was removed by hand", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, `INC-${year}-001`, "One");
+    await seedCase(app, `INC-${year}-002`, "Two");
+    await rm(join(store.casesRoot, `INC-${year}-002`), { recursive: true });
+    const res = await request(app).get("/api/next-case-id");
+    expect(res.body.caseId).toBe(`INC-${year}-003`);
+  });
+
   it("counts an archived case, which still owns its number", async () => {
     const { app } = await harness();
     await seedCase(app, `INC-${year}-001`, "One");
@@ -725,6 +735,36 @@ describe("GET /api/next-case-id", () => {
     await request(app).post(`/cases/INC-${year}-001/archive`).send({ removeFromList: true });
     const res = await request(app).get("/api/next-case-id");
     expect(res.body.caseId).toBe(`INC-${year}-002`);
+  });
+});
+
+// #2858: an incident number is never issued twice, typed by hand or not. Reports and exports
+// written for the earlier case still carry it.
+describe("POST /cases — a used case id", () => {
+  const year = new Date().getFullYear();
+
+  it("refuses the id of a deleted case and names the next free number", async () => {
+    const { app } = await harness();
+    await seedCase(app, `INC-${year}-001`, "One");
+    await request(app).patch(`/cases/INC-${year}-001/status`).send({ status: "closed" });
+    await request(app).post(`/cases/INC-${year}-001/delete`).send({ archiveFirst: "none" });
+    const res = await request(app)
+      .post("/cases")
+      .send({ caseId: `INC-${year}-001`, name: "Again", investigator: "alice", aiProvider: null });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain(`INC-${year}-001`);
+    expect(res.body.error).toContain(`INC-${year}-002`);
+  });
+
+  it("refuses the id of a case whose folder was removed by hand", async () => {
+    const { app, store } = await harness();
+    await seedCase(app, "CASE-A", "A");
+    await rm(join(store.casesRoot, "CASE-A"), { recursive: true });
+    const res = await request(app)
+      .post("/cases")
+      .send({ caseId: "CASE-A", name: "Again", investigator: "alice", aiProvider: null });
+    expect(res.status).toBe(409);
+    expect(await store.caseExists("CASE-A")).toBe(false);
   });
 });
 
@@ -736,8 +776,8 @@ describe("POST /cases/:id/delete — cleanup failures do not misreport the delet
     const { app, store } = await harnessWithJobs("dfir-lifecycle-retire-fail-");
     await seedCase(app, "DEL-RETIRE", "Case");
     await request(app).patch("/cases/DEL-RETIRE/status").send({ status: "closed" });
-    const patch = store as { retireCaseId: CaseStore["retireCaseId"] };
-    patch.retireCaseId = async () => {
+    const patch = store as { rememberCaseIds: CaseStore["rememberCaseIds"] };
+    patch.rememberCaseIds = async () => {
       throw new Error("simulated ledger write failure");
     };
     const res = await request(app).post("/cases/DEL-RETIRE/delete").send({ archiveFirst: "none" });
@@ -769,7 +809,7 @@ describe("POST /cases/:id/delete — cleanup failures do not misreport the delet
       throw new Error("simulated job manager failure");
     };
     await request(app).post("/cases/DEL-BOTH/delete").send({ archiveFirst: "none" });
-    expect(await store.listRetiredCaseIds()).toEqual(["DEL-BOTH"]);
+    expect(await store.listUsedCaseIds()).toEqual(["DEL-BOTH"]);
   });
 });
 

@@ -420,47 +420,80 @@ describe("CaseStore.nextImportSeq", () => {
 // A deleted incident number must never be handed out again: reports, ZIP archives and .dfircase
 // exports written before the delete still carry it, so a reissued id would put two unrelated
 // investigations behind one number.
-describe("CaseStore retired case ids", () => {
+describe("CaseStore used case ids", () => {
   it("starts empty", async () => {
-    expect(await new CaseStore(root).listRetiredCaseIds()).toEqual([]);
+    expect(await new CaseStore(root).listUsedCaseIds()).toEqual([]);
   });
 
   it("remembers a retired id across a restart", async () => {
-    await new CaseStore(root).retireCaseId("INC-2026-003");
-    expect(await new CaseStore(root).listRetiredCaseIds()).toEqual(["INC-2026-003"]);
+    await new CaseStore(root).rememberCaseIds(["INC-2026-003"]);
+    expect(await new CaseStore(root).listUsedCaseIds()).toEqual(["INC-2026-003"]);
   });
 
   it("accumulates ids and never records one twice", async () => {
     const store = new CaseStore(root);
-    await store.retireCaseId("INC-2026-003");
-    await store.retireCaseId("INC-2026-007");
-    await store.retireCaseId("INC-2026-003");
-    expect(await store.listRetiredCaseIds()).toEqual(["INC-2026-003", "INC-2026-007"]);
+    await store.rememberCaseIds(["INC-2026-003"]);
+    await store.rememberCaseIds(["INC-2026-007"]);
+    await store.rememberCaseIds(["INC-2026-003"]);
+    expect(await store.listUsedCaseIds()).toEqual(["INC-2026-003", "INC-2026-007"]);
   });
 
   it("serializes concurrent retirements without losing one", async () => {
     const store = new CaseStore(root);
-    await Promise.all([1, 2, 3, 4, 5].map((n) => store.retireCaseId(`INC-2026-00${n}`)));
-    expect(await store.listRetiredCaseIds()).toHaveLength(5);
+    await Promise.all([1, 2, 3, 4, 5].map((n) => store.rememberCaseIds([`INC-2026-00${n}`])));
+    expect(await store.listUsedCaseIds()).toHaveLength(5);
   });
 
   it("refuses an id that is not a valid case id", async () => {
     const store = new CaseStore(root);
-    await expect(store.retireCaseId("../escape")).rejects.toThrow();
-    expect(await store.listRetiredCaseIds()).toEqual([]);
+    await expect(store.rememberCaseIds(["../escape"])).rejects.toThrow();
+    expect(await store.listUsedCaseIds()).toEqual([]);
   });
 
   it("treats an unreadable ledger as empty rather than blocking case creation", async () => {
     const store = new CaseStore(root);
-    await store.retireCaseId("INC-2026-003");
+    await store.rememberCaseIds(["INC-2026-003"]);
     await writeFile(join(root, ".dfir-companion-retired-cases.json"), "{ not json", "utf8");
-    expect(await store.listRetiredCaseIds()).toEqual([]);
+    expect(await store.listUsedCaseIds()).toEqual([]);
   });
 
   it("is not mistaken for a case by listCases", async () => {
     const store = new CaseStore(root);
-    await store.retireCaseId("INC-2026-003");
+    await store.rememberCaseIds(["INC-2026-003"]);
     expect(await store.listCases()).toEqual([]);
+  });
+
+  // #2858: a folder removed outside the app never reaches the delete route, so only recording the id
+  // when the case is CREATED keeps its number from being issued again.
+  it("records a case's id when the case is created", async () => {
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "INC-2026-049", name: "x", investigator: "a", aiProvider: null });
+    await rm(join(root, "INC-2026-049"), { recursive: true });
+    expect(await new CaseStore(root).listUsedCaseIds()).toEqual(["INC-2026-049"]);
+  });
+
+  it("still creates the case when the id cannot be recorded", async () => {
+    const store = new CaseStore(root);
+    await mkdir(join(root, ".dfir-companion-retired-cases.json")); // a directory: the write fails
+    const meta = await store.createCase({
+      caseId: "INC-2026-050",
+      name: "x",
+      investigator: "a",
+      aiProvider: null,
+    });
+    expect(meta.caseId).toBe("INC-2026-050");
+    expect(await store.caseExists("INC-2026-050")).toBe(true);
+  });
+
+  it("backfills every case already on disk, archived ones included", async () => {
+    const store = new CaseStore(root);
+    for (const caseId of ["INC-2026-001", "INC-2026-002"]) {
+      await store.createCase({ caseId, name: "x", investigator: "a", aiProvider: null });
+    }
+    await store.archiveCaseFolder("INC-2026-002", "archived");
+    await rm(join(root, ".dfir-companion-retired-cases.json")); // as on an install from before #2858
+    await store.rememberExistingCaseIds();
+    expect(await store.listUsedCaseIds()).toEqual(["INC-2026-001", "INC-2026-002"]);
   });
 });
 

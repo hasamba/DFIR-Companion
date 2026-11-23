@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Case ids are never reused** — every case id is recorded when the case is created, so a number stays used even after its folder is removed by hand; New Case refuses a used id and names the next free one (closes #2858)
 - **Held Second look reports promoted rows** — a run held for a duplicate-host or Presidio decision says how many raw events it already promoted and refreshes (closes #2833)
 - **Held Second look job entry** — the Jobs panel entry for that held run also states the rows it already promoted (closes #2839)
 - **Hypothesis promote and add show the refusal** — the server's own sentence replaces "HTTP 423 — restart the companion server" (closes #2832)

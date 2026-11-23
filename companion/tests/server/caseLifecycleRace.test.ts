@@ -247,6 +247,9 @@ describe("a create racing a delete of the same id (#1826)", () => {
     await request(app)
       .post("/cases")
       .send({ caseId: "d2", name: "Old", investigator: "alice", aiProvider: "mock" });
+    // New Case refuses a used id first (#2858); this guard is the layer under it, for an id the
+    // used-id ledger failed to record. Simulate that ledger so the request reaches it.
+    store.listUsedCaseIds = async () => [];
     expect((await request(app).patch("/cases/d2/status").send({ status: "closed" })).status).toBe(200);
 
     const cleanup = gate();
