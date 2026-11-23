@@ -28,7 +28,7 @@ import { boundedAggKey } from "./aggKey.js";
 import { appendRowNote } from "./derivedNote.js";
 import { RENAMED_BINARY_MARKER } from "./renamedBinaryNote.js";
 import { isStagedPath } from "./stagingPaths.js";
-import { withHostSuffix } from "./velociraptorTitle.js";
+import { titleSafe, withHostSuffix } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
 
@@ -168,15 +168,22 @@ function gradeRename(f: RenameFacts): Severity {
 // (#1476). As a note it rides along whichever row wins. The marker and its parser live in
 // renamedBinaryNote.ts (#1502) so the readers that turn the note into a flag share one owner.
 
+// A name or vendor in the TITLE gets titleSafe: the dashboard splits title from details at the first
+// " - ", and ProcDump's CompanyName "Sysinternals - www.sysinternals.com" cut the title inside its
+// parentheses. The path after " at " stays verbatim — it is the evidence an analyst copies.
+function titleText(value: string, max: number): string {
+  return titleSafe(oneLine(value).slice(0, max));
+}
+
 function describeRename(f: RenameFacts): string {
   let out: string;
   if (f.renamed) {
-    out = `Velociraptor: Renamed binary — ${oneLine(f.onDisk).slice(0, 120)} is really ${oneLine(f.original).slice(0, 120)}`;
-    if (f.vendor) out += ` (${oneLine(f.vendor).slice(0, 80)})`;
+    out = `Velociraptor: Renamed binary — ${titleText(f.onDisk, 120)} is really ${titleText(f.original, 120)}`;
+    if (f.vendor) out += ` (${titleText(f.vendor, 80)})`;
   } else if (f.unknownOrigin) {
-    out = `Velociraptor: Binary with no version resource — ${oneLine(f.onDisk).slice(0, 120)} carries no OriginalFilename to compare`;
+    out = `Velociraptor: Binary with no version resource — ${titleText(f.onDisk, 120)} carries no OriginalFilename to compare`;
   } else {
-    out = `Velociraptor: Renamed binary — ${oneLine(f.onDisk).slice(0, 120)} (name matches OriginalFilename)`;
+    out = `Velociraptor: Renamed binary — ${titleText(f.onDisk, 120)} (name matches OriginalFilename)`;
   }
   if (f.path) out += ` at ${oneLine(f.path).slice(0, 200)}`;
   if (f.renamed && f.systemUtility) out += " [renamed system utility]";

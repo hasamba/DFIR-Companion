@@ -33,6 +33,30 @@ describe("mapBinaryRename — happy path", () => {
     expect(iocs.some((i) => i.type === "hash" && i.value === SHA)).toBe(true);
   });
 
+  it("keeps the whole rename fact on the title line when a name or vendor contains ' - '", () => {
+    // The dashboard splits a row's title from its details at the FIRST " - ". ProcDump's CompanyName
+    // is "Sysinternals - www.sysinternals.com", which cut the title inside the parentheses.
+    const e = mapBinaryRename(
+      renamedCmd({
+        OSPath: "C:\\Tools\\procdump64a - Copy.exe",
+        Name: "procdump64a - Copy.exe",
+        VersionInformation: {
+          OriginalFilename: "procdump",
+          CompanyName: "Sysinternals - www.sysinternals.com",
+        },
+      }),
+      "HOST01",
+      new Map<string, SiemIoc>(),
+      TS,
+    );
+    const title = e.description.slice(0, e.description.indexOf(" - "));
+    expect(title).toContain(
+      "Renamed binary — procdump64a — Copy.exe is really procdump (Sysinternals — www.sysinternals.com)",
+    );
+    expect(e.description).toContain("at C:\\Tools\\procdump64a - Copy.exe"); // the path stays verbatim
+    expect(e.path).toBe("C:\\Tools\\procdump64a - Copy.exe");
+  });
+
   it("grades a renamed non-system binary Medium with plain T1036", () => {
     const r = renamedCmd({ VersionInformation: { OriginalFilename: "vendortool.exe" } });
     const e = mapBinaryRename(r, "H", new Map(), TS);
