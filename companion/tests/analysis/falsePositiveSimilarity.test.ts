@@ -70,6 +70,81 @@ describe("findSimilarEvents", () => {
     expect(findSimilarEvents(anchor, candidates)).toEqual([]);
   });
 
+  it("never suggests an event on host + source tool alone — that is context, not the same result", () => {
+    const anchor = event({
+      id: "e1",
+      asset: "HOST-A",
+      sources: ["Velociraptor"],
+      description:
+        "Velociraptor [DetectRaptor.Windows.Detection.Webhistory]: Phishing Hosting — www.canva.com - @ HOST-A",
+    });
+    const candidates = [
+      event({
+        id: "e2",
+        asset: "HOST-A",
+        sources: ["Velociraptor"],
+        description: "Velociraptor [Windows.Detection.Malfind]: OUTLOOK.EXE - @ HOST-A",
+      }),
+      event({ id: "e3", asset: "HOST-A", sources: ["Velociraptor"], description: "Process created" }),
+    ];
+    expect(findSimilarEvents(anchor, candidates)).toEqual([]);
+  });
+
+  it("suggests only events with the same detection result (same rule and same matched value)", () => {
+    const web = (id: string, domain: string, host: string, url = ""): ForensicEvent =>
+      event({
+        id,
+        asset: host,
+        sources: ["Velociraptor"],
+        description:
+          `Velociraptor [DetectRaptor.Windows.Detection.Webhistory]: Phishing Hosting — ${domain}` +
+          (url ? ` - URL: ${url} @ ${host}` : ` - @ ${host}`),
+      });
+    const anchor = web("e1", "drive.google.com", "HOST-A");
+    const candidates = [
+      web("e2", "drive.google.com", "HOST-B", "https://drive.google.com/file/x"), // same result
+      web("e3", "www.canva.com", "HOST-A"), // same rule, different domain
+      web("e4", "DRIVE.GOOGLE.COM", "HOST-A"), // same result, case differs
+    ];
+    const out = findSimilarEvents(anchor, candidates);
+    expect(out.map((c) => c.id).sort()).toEqual(["e2", "e4"]);
+    expect(out[0].reasons.some((r) => r.startsWith("same detection"))).toBe(true);
+  });
+
+  it("does not let a shared MITRE technique pull in a different detection result", () => {
+    const anchor = event({
+      id: "e1",
+      mitreTechniques: ["T1566"],
+      description:
+        "Velociraptor [DetectRaptor.Windows.Detection.Webhistory]: Phishing Hosting — drive.google.com",
+    });
+    const candidates = [
+      event({
+        id: "e2",
+        mitreTechniques: ["T1566"],
+        description:
+          "Velociraptor [DetectRaptor.Windows.Detection.Webhistory]: Phishing Hosting — www.canva.com",
+      }),
+    ];
+    expect(findSimilarEvents(anchor, candidates)).toEqual([]);
+  });
+
+  it("still suggests a different detection that carries the same file hash", () => {
+    const anchor = event({
+      id: "e1",
+      sha256: "abc123",
+      description: "Velociraptor [Windows.Detection.Yara]: rule_a — evil.dll",
+    });
+    const candidates = [
+      event({
+        id: "e2",
+        sha256: "abc123",
+        description: "THOR Alert [Filescan]: Malware file found — evil.dll",
+      }),
+    ];
+    expect(findSimilarEvents(anchor, candidates).map((c) => c.id)).toEqual(["e2"]);
+  });
+
   it("returns [] for an empty candidates array without throwing", () => {
     const anchor = event({ id: "e1", mitreTechniques: ["T1569"], sha256: "abc123" });
     expect(() => findSimilarEvents(anchor, [])).not.toThrow();

@@ -840,6 +840,7 @@
     "presidioPending.ts": "analysis/privacy",
     "presidioPersonFilter.ts": "analysis/privacy",
     "prevalence.ts": "analysis/detect",
+    "detectionRuleHead.ts": "analysis/detect",
     "processInterpreter.ts": "analysis/ingest",
     "psPolicyTestFile.ts": "analysis/ingest",
     "psSession.ts": "analysis/ingest",

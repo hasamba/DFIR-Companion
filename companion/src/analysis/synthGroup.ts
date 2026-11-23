@@ -26,9 +26,14 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { patternKey, commandShape } from "./prevalence.js";
+import { detectionRuleHead } from "./detectionRuleHead.js";
 import { byEventTime } from "./forensicSort.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { groupMemberLines, renderGroupMembers } from "./synthGroupMembers.js";
+
+// Re-exported so existing callers keep one import path; the helper lives lower so the
+// false-positive similarity scorer (analysis/findings) can share it without importing up.
+export { detectionRuleHead };
 
 // Default ceiling on how many forensic events (after burst grouping) reach a prompt, overridable with
 // DFIR_AI_SYNTH_MAX_EVENTS. Raised from 300 to 600 when grouping landed: collapsing repeated detections
@@ -94,35 +99,6 @@ export interface CollapsedPrompt {
   events: ForensicEvent[]; // representatives + ungrouped events, input order
   groupById: Map<string, DetectionGroup>; // representative event id → its group
   memberIdsByRepresentative: Map<string, string[]>; // representative event id → every id it covers
-}
-
-// Minimum length for an extracted rule header to be trusted (guards against a stray "[x] y: z").
-const DETECTION_MIN_HEAD = 10;
-
-/**
- * Extract the RULE IDENTITY from a detection-style description, or null when the description is not in
- * that format. Detection importers render:
- *
- *     "<Tool> [<Artifact>] <Detector>: <RuleName> - <per-event detail>"
- *
- * e.g. "Velociraptor [Windows.Detection.Sigma] Sigma: Encoded PowerShell - Computer: ws-01 User: alice".
- * The head identifies WHICH rule fired; the tail is per-event detail (host, user, path) that differs on
- * every hit. Fingerprinting the whole description therefore shatters one rule into one pattern per host —
- * measured on a real Velociraptor+Sigma case, 1,089 events produced 367 patterns instead of ~116.
- *
- * This is deliberately a HEURISTIC with a strict fallback: a description that does not carry both an
- * "[Artifact]" bracket and a "<Detector>: " separator returns null and keeps the existing fingerprint.
- * The failure mode is therefore "grouped less", never "grouped wrongly" — important because this couples
- * to an importer's rendering format, the same fragility that makes the login graph break silently when
- * mapWindows changes its description layout.
- */
-export function detectionRuleHead(description: string | undefined): string | null {
-  const desc = String(description ?? "");
-  if (!/\[[^\]]+\]/.test(desc)) return null; // needs the "[Artifact]" bracket
-  if (!desc.includes(": ")) return null; // needs the "<Detector>: <RuleName>" separator
-  const cut = desc.indexOf(" - ");
-  const head = (cut > 0 ? desc.slice(0, cut) : desc).trim();
-  return head.length >= DETECTION_MIN_HEAD ? head : null;
 }
 
 // The bucket key for one event. Mirrors prevalence.patternKey's hierarchy but inserts rule identity
