@@ -647,7 +647,7 @@
       imported: "#4cd964",
       error: "#ff9f43",
       deleted: "#ff6b6b",
-      unreachable: "#9aa4b2",
+      unreachable: "#9aa4b2", cancelled: "#9aa4b2", // cancelled: js/dashboard-velo-hunt-cancel.js
     };
     el.innerHTML = jobs
       .map((job) => {
@@ -655,7 +655,7 @@
           ? ` · <a href="${escAttr(job.guiUrl)}" target="_blank" rel="noopener" data-safe-style="color:var(--accent)">open in Velociraptor ↗</a>`
           : "";
         const badge = `<span data-safe-style="color:${statusColors[job.status] || "#9aa4b2"};font-weight:600">${esc(job.status)}</span>`;
-        let detail = "";
+        let detail = veloCancelledDetail(job); // "" unless cancelled (js/dashboard-velo-hunt-cancel.js)
         if (job.status === "imported") {
           const ev = job.addedEvents || 0,
             io = job.addedIocs || 0;
@@ -704,7 +704,7 @@
         return `<div class="synth-meta" data-safe-style="margin:0 0 8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px">
         <div data-safe-style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <div>🎯 <strong>${esc(job.bundleName)}</strong> · ${badge} · <code>${esc(job.huntId)}</code>${link}</div>
-          <div>${collectBtn}</div>
+          <div>${collectBtn}${veloCancelHuntBtnHtml(job)}</div>
         </div>
         <div data-safe-style="font-size:12px;color:var(--text-muted);margin-top:4px">${cd}${esc(detail)}</div>
         ${coverage}

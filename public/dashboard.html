@@ -418,6 +418,7 @@
   <script src="/js/dashboard-velo-case.js"></script>
   <script src="/js/dashboard-velo-coverage.js"></script>
   <script src="/js/dashboard-velo-labels.js"></script>
+  <script src="/js/dashboard-velo-hunt-cancel.js"></script>
   <!-- Velociraptor run list on the Fleet Collection panel. Pure helper over the triage module's cached bundles. -->
   <script src="/js/dashboard-velo-collect.js"></script>
   <script src="/js/dashboard-velo-triage.js"></script>
@@ -1356,6 +1357,30 @@
         <button id="ccaConfirm">Close case</button>
         <button id="ccaCancel" data-safe-style="background:var(--border-color);color:var(--text-primary);">Cancel</button>
         <span id="ccaMsg" role="status" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="veloCancelOverlay" class="comment-overlay">
+    <div class="comment-modal">
+      <h3 id="vcaTitle">Cancel hunt</h3>
+      <p data-safe-style="color:var(--text-muted); font-size:12px; margin:0 0 8px">The companion stops waiting for this hunt and will not collect it. What should happen to the hunt in Velociraptor?</p>
+      <label data-safe-style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
+        <input type="radio" name="vcaChoice" id="vcaNone" value="none" data-safe-style="margin:0" />
+        Nothing &mdash; stop tracking it here only; it keeps running in Velociraptor
+      </label>
+      <label data-safe-style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:4px; cursor:pointer;">
+        <input type="radio" name="vcaChoice" id="vcaStop" value="stop" checked data-safe-style="margin:0" />
+        Also stop the hunt in Velociraptor &mdash; results it collected so far stay on the server
+      </label>
+      <label data-safe-style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:8px; cursor:pointer;">
+        <input type="radio" name="vcaChoice" id="vcaDelete" value="delete" data-safe-style="margin:0" />
+        Also delete the hunt from Velociraptor &mdash; removes the hunt and every result it collected from the server (needs the server-admin permission)
+      </label>
+      <div data-safe-style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <button id="vcaConfirm">Cancel hunt</button>
+        <button id="vcaBack" data-safe-style="background:var(--border-color);color:var(--text-primary);">Back</button>
+        <span id="vcaMsg" role="status" data-safe-style="color:var(--text-muted); font-size:12px;"></span>
       </div>
     </div>
   </div>

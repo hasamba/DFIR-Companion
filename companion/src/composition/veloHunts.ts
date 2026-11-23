@@ -125,6 +125,8 @@ export interface VeloHunts {
   listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]>;
   /** Cancel every pending collect and status-poll timer of one case (its server set changed). */
   cancelVeloHuntTimersForCase(caseId: string): void;
+  /** Cancel one hunt's pending collect and status-poll timers (the analyst cancelled it). */
+  stopVeloHuntTimers(caseId: string, huntId: string): void;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
   pollVeloHuntStatus(caseId: string, huntId: string): Promise<void>;
   stopVeloHuntStatusPoll(caseId: string, huntId: string): void;
@@ -258,7 +260,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     stopVeloHuntStatusPoll(caseId, huntId); // an import is starting — it now owns this job's status
 
     let job = await huntStore.get(caseId, huntId);
-    if (!job) return;
+    if (!job || job.status === "cancelled") return; // the analyst cancelled it: never collected again
     const before = job; // what the inventory said before this collect
     // NOTE: a persisted status of "collecting" is deliberately NOT treated as "in flight" — see the
     // file header. The authority on what is actually running now is `collectingNow`.
@@ -286,7 +288,14 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         reachedClients,
         ...(stoppedEarly ? { stoppedEarly: true } : {}),
       };
-      await huntStore.upsert(caseId, job);
+      // Conditional, not a blind upsert: a cancel that landed during the coverage read wins (veloHuntCancel).
+      let cancelled = false;
+      const toWrite = job;
+      await huntStore.update(caseId, huntId, (cur) => {
+        cancelled = cur.status === "cancelled";
+        return cancelled ? null : toWrite;
+      });
+      if (cancelled) return;
       options.onVeloHunt?.(caseId);
       const minSeverity = job.minSeverity;
 
@@ -763,6 +772,12 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     cancelVeloHuntTimersForCase: (caseId) => {
       veloHuntTimers.forget(caseId);
       stopVeloHuntStatusPollsForCase(caseId);
+    },
+    stopVeloHuntTimers: (caseId, huntId) => {
+      const pending = veloHuntTimers.get(caseId, huntId);
+      if (pending) clearTimeout(pending); // delete() only drops the entry
+      veloHuntTimers.delete(caseId, huntId);
+      stopVeloHuntStatusPoll(caseId, huntId);
     },
     startVeloHuntCollect,
     listVeloHuntJobViews,

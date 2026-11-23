@@ -25,7 +25,13 @@ export type HuntPollOutcome =
 
 // A job in any of these statuses owns its own next transition elsewhere (an import in flight, or
 // already finished/failed/confirmed-gone) — the status poller has nothing useful left to check.
-const TERMINAL_STATUSES: readonly VeloHuntStatus[] = ["collecting", "imported", "error", "deleted"];
+const TERMINAL_STATUSES: readonly VeloHuntStatus[] = [
+  "collecting",
+  "imported",
+  "error",
+  "deleted",
+  "cancelled",
+];
 
 // Velociraptor hunt states that mean "done collecting, ready to import" (case-insensitive).
 const DONE_STATES = new Set(["STOPPED", "ARCHIVED"]);

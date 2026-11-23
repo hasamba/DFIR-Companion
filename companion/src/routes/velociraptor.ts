@@ -776,11 +776,11 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     const caseId = req.params.id;
     const wantedHuntId = String(req.body?.huntId ?? "").trim();
     const jobs = await options.veloHuntStore.list(caseId);
-    const job = wantedHuntId ? jobs.find((j) => j.huntId === wantedHuntId) : jobs[0];
+    const job = jobs.find((j) => (!wantedHuntId || j.huntId === wantedHuntId) && j.status !== "cancelled");
     if (!job)
       return res.status(404).json({
         error: wantedHuntId
-          ? `no Velociraptor hunt ${wantedHuntId} for this case`
+          ? `no Velociraptor hunt ${wantedHuntId} to collect for this case (missing, or cancelled)`
           : "no Velociraptor hunt to collect for this case",
       });
     const disposition = ctx.startVeloHuntCollect(caseId, job.huntId);

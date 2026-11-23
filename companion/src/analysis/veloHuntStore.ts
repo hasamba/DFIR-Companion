@@ -18,7 +18,24 @@ import type {
 // MULTIPLE concurrent jobs per case are supported (a list keyed by huntId) — starting a second hunt
 // while a first is still running no longer drops the first.
 
-export type VeloHuntStatus = "running" | "collecting" | "imported" | "error" | "deleted" | "unreachable";
+export type VeloHuntStatus =
+  "running" | "collecting" | "imported" | "error" | "deleted" | "unreachable" | "cancelled";
+
+/**
+ * What the analyst asked for when they cancelled a running hunt from its job card:
+ *   none   — stop tracking it here only; the hunt keeps running in Velociraptor.
+ *   stop   — also stop the hunt in Velociraptor (its collected results stay there).
+ *   delete — also delete the hunt and its collected results from Velociraptor.
+ */
+export type VeloHuntCancelAction = "none" | "stop" | "delete";
+
+/** The record of a cancel. `serverError` is set when Velociraptor refused the stop / delete. */
+export interface VeloHuntCancel {
+  at: string; // ISO
+  by?: string;
+  action: VeloHuntCancelAction;
+  serverError?: string;
+}
 
 /**
  * Where a collect actually is while `status` is "collecting" (#770).
@@ -77,6 +94,8 @@ export interface VeloHuntJob {
     degraded: boolean;
   };
   error?: string;
+  // Set when the analyst cancelled the hunt (status "cancelled"). The companion never collects it again.
+  cancelled?: VeloHuntCancel;
   // Set at collect time when Velociraptor reported this hunt terminal (STOPPED/ARCHIVED) well before
   // its own scheduled expiry — a strong signal an analyst stopped or deleted it in Velociraptor rather
   // than it running to natural completion (see isHuntStoppedEarly). Lets the UI say so instead of the

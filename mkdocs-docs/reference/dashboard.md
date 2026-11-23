@@ -944,8 +944,13 @@ The case-scoped half of Velociraptor. Everything on this panel lands in the conn
 
 - **Run a bundle** — every saved bundle with a **▶ Run** button. The button is disabled, and says
   why, until a case is connected and the Velociraptor API is configured. The run form (wait, expiry,
-  OS, minimum severity, time scope, label filters) opens under the bundle. The job card above the
-  list shows the running hunt, with **Collect now** to pull early.
+  OS, minimum severity, time scope, and the **include labels** / **exclude labels** pickers)
+  opens under the bundle. The job card above the list shows the running hunt, with **Collect now**
+  to pull early and **Cancel** to stop it. Cancel asks what to do in Velociraptor: nothing (stop
+  tracking it here only; the hunt keeps running there), stop the hunt (its results stay on the
+  server), or delete the hunt and its results from the server (needs the server-admin permission).
+  The companion never collects a cancelled hunt. When Velociraptor refuses the stop or delete, the
+  card says so and that the hunt may still be running there.
 - **Import external hunt/flow** — paste a hunt id, a flow id or a Velociraptor GUI URL to import a
   collection launched outside the Companion. If the hunt or flow is already in the case, the panel
   says when it was pulled in and imports nothing yet. It lists the artifacts that need importing
