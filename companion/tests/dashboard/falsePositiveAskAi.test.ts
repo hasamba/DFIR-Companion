@@ -30,7 +30,13 @@ function fakeElement() {
   };
 }
 
-const CANDIDATE = { id: "e2", kind: "event", label: "other event", score: 3, reasons: ["same detection result"] };
+const CANDIDATE = {
+  id: "e2",
+  kind: "event",
+  label: "other event",
+  score: 3,
+  reasons: ["same detection result"],
+};
 
 function harness(aiReply: () => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>) {
   const els: Record<string, ReturnType<typeof fakeElement>> = {};
