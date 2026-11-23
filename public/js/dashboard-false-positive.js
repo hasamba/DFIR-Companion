@@ -68,12 +68,31 @@
     return true;
   }
 
-  function renderFpCandidates(data) {
+  // One muted line under the list saying how the "Ask AI for similar" pass went. Without it an AI
+  // that could not run (no provider, AI off for the case, a failed request) redrew the same list and
+  // the button looked like it only refreshed.
+  function fpAiNoteHtml(note) {
+    return note
+      ? `<div class="fp-ai-note" data-safe-style="color:var(--text-muted);font-size:12px;margin-top:4px">${esc(note)}</div>`
+      : "";
+  }
+
+  function fpAiNote(data) {
+    if (data && data.aiUnavailable)
+      return "AI is off — no AI provider is configured, so Ask AI cannot search. Turn AI on in Settings to use it.";
+    const list = (data && data.candidates) || [];
+    const fromAi = list.filter((c) => (c.reasons || []).includes("suggested by AI"));
+    return fromAi.length ? "" : "AI found no other similar items.";
+  }
+
+  // `aiNote` is set only by the Ask-AI pass; the first, deterministic list carries none.
+  function renderFpCandidates(data, aiNote) {
     const list = (data && data.candidates) || [];
     const el = document.getElementById("fpCandidates");
     if (!list.length) {
       el.innerHTML =
-        "<div data-safe-style='color:var(--text-muted);font-size:12px'>No similar items found.</div>";
+        "<div data-safe-style='color:var(--text-muted);font-size:12px'>No similar items found.</div>" +
+        fpAiNoteHtml(aiNote);
       return;
     }
     el.innerHTML =
@@ -84,7 +103,19 @@
           (c) =>
             `<label data-safe-style="display:block"><input type="checkbox" class="fp-candidate" value="${escAttr(c.id)}" data-kind="${escAttr(c.kind)}" data-label="${escAttr(c.label)}"> ${esc(c.label)} <span data-safe-style="color:var(--text-muted);font-size:11px">(${esc((c.reasons || []).join(", "))})</span></label>`,
         )
-        .join("");
+        .join("") +
+      fpAiNoteHtml(aiNote);
+  }
+
+  // A failed AI pass keeps the deterministic list already on screen — boxes the analyst ticked stay
+  // ticked, so the note is appended, never a rewrite of the list — and adds the reason under it.
+  function showFpAiFailure(message) {
+    const el = document.getElementById("fpCandidates");
+    const prior = el.querySelector ? el.querySelector(".fp-ai-note") : null;
+    if (prior) prior.remove();
+    const html = fpAiNoteHtml(`AI search failed: ${message}`);
+    if (el.insertAdjacentHTML) el.insertAdjacentHTML("beforeend", html);
+    else el.innerHTML += html;
   }
 
   function closeFalsePositiveModal() {
@@ -116,8 +147,12 @@
               ai: true,
             }),
           });
-          const d = await r.json();
-          if (!fpHeld(r.status, d)) renderFpCandidates(d);
+          const d = await r.json().catch(() => ({}));
+          if (fpHeld(r.status, d)) return;
+          if (!r.ok) showFpAiFailure((d && d.error) || `HTTP ${r.status}`);
+          else renderFpCandidates(d, fpAiNote(d));
+        } catch (err) {
+          showFpAiFailure((err && err.message) || "request failed");
         } finally {
           btn.disabled = false;
           btn.textContent = "🔎 Ask AI for similar";
