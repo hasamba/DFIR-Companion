@@ -20,6 +20,8 @@ import type { OcrIndex, OcrIndexEntry } from "../analysis/ocrSearch.js";
 import { StateLock } from "../analysis/stateLock.js";
 import { atomicWrite } from "./atomicWrite.js";
 import { readListedCaseMeta } from "./caseMetaListing.js";
+import { UsedCaseIds } from "./usedCaseIds.js";
+import { getServerLogger } from "../logging/serverLogger.js";
 import { copyHandleHashed, CopyContentChangedError } from "./handleCopy.js";
 import {
   ARCHIVED_DIRNAME,
@@ -45,7 +47,6 @@ import {
 
 // How long a delete, archive or reseed waits for writes already admitted to the case folder (#1855).
 const WRITE_QUIESCE_MS = 30_000;
-const RETIRED_IDS_FILENAME = ".dfir-companion-retired-cases.json";
 
 export interface CreateCaseInput {
   caseId: string;
@@ -99,8 +100,8 @@ export class CaseStore {
   // Serializes the OCR index read-modify-write per case (see putOcrEntry).
   private readonly ocrLock = new StateLock();
 
-  // Serializes the retired-case-id ledger read-modify-write (see retireCaseId).
-  private readonly retiredLock = new StateLock();
+  // Every case id ever issued here — recorded at create and at delete (#2858; see usedCaseIds.ts).
+  private readonly usedIds: UsedCaseIds;
 
   // Serializes, per case, every case.json write against the folder moves and the delete (#1808). A
   // status or password write that landed mid-rm made the rm fail with ENOTEMPTY; one that landed
@@ -128,6 +129,7 @@ export class CaseStore {
     this.writeQuiesceMs = opts.writeQuiesceMs ?? WRITE_QUIESCE_MS;
     this.sequences = new SequenceAllocator(root);
     this.logTails = new AppendOnlyLogTail(opts.now);
+    this.usedIds = new UsedCaseIds(root, isValidCaseId);
   }
 
   get casesRoot(): string {
@@ -353,37 +355,27 @@ export class CaseStore {
     }
   }
 
-  // Case ids retired by a delete. An incident number is not free again once it has been used: the
-  // reports, ZIP archives and .dfircase exports written before the delete still carry it, so
-  // reissuing it would file two unrelated investigations under one number. Kept at the cases root
-  // (a dot-file, like the global job ledger) rather than inside any case, because the whole point
-  // is to outlive every folder it names.
-  private retiredCaseIdsPath(): string {
-    return join(this.root, RETIRED_IDS_FILENAME);
+  // Every case id this root has ever issued, deleted ones included (#561, #2858 — usedCaseIds.ts).
+  listUsedCaseIds(): Promise<string[]> {
+    return this.usedIds.list();
   }
 
-  // A missing or corrupt ledger reads as empty rather than throwing: not knowing which numbers are
-  // retired must never be able to block creating a case.
-  async listRetiredCaseIds(): Promise<string[]> {
-    try {
-      const parsed: unknown = JSON.parse(await readFile(this.retiredCaseIdsPath(), "utf8"));
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((id): id is string => typeof id === "string" && isValidCaseId(id)).sort();
-    } catch {
-      return [];
-    }
+  rememberCaseIds(caseIds: readonly string[]): Promise<void> {
+    return this.usedIds.remember(caseIds);
   }
 
-  // Read-modify-write, so it serializes on a lock the same way the OCR index and sequence
-  // allocation do — two deletes landing together must not drop one of the two ids.
-  async retireCaseId(caseId: string): Promise<void> {
-    if (!isValidCaseId(caseId)) throw new Error(`refusing to retire invalid caseId "${caseId}"`);
-    await this.retiredLock.runExclusive(RETIRED_IDS_FILENAME, async () => {
-      const retired = await this.listRetiredCaseIds();
-      if (retired.includes(caseId)) return;
-      const next = [...retired, caseId].sort();
-      await atomicWrite(this.retiredCaseIdsPath(), JSON.stringify(next, null, 2));
+  // Best-effort (#2858): an unrecorded id must never fail the create — the case already exists. The
+  // startup backfill records it next time.
+  async recordCaseId(caseId: string): Promise<void> {
+    await this.usedIds.remember([caseId]).catch((err: Error) => {
+      getServerLogger().warn(`[cases] case ${caseId} created, but its id was not recorded: ${err.message}`);
     });
+  }
+
+  // Startup backfill (#2858): cases created before ids were recorded at create are recorded now, so
+  // removing one of their folders by hand cannot free its number either.
+  async rememberExistingCaseIds(): Promise<void> {
+    await this.usedIds.remember((await this.listCases()).map((meta) => meta.caseId));
   }
 
   // Creating a case CLAIMS its id, so the write of case.json is exclusive (`wx` — O_CREAT|O_EXCL,
@@ -424,6 +416,7 @@ export class CaseStore {
         if (!isNew) this.forgetInMemory(caseId); // a reseed replaces the case (#1866)
         const value = await fn(isNew, generation);
         await this.ensureSeedGeneration(caseId, generation);
+        await this.recordCaseId(caseId); // a seeded case is born here, not in createCase (#2858)
         return value;
       };
       return isNew ? seed() : this.whileClosed(caseId, "replaced", seed, []);
@@ -476,6 +469,7 @@ export class CaseStore {
       await this.undoClaim(dir);
       throw err;
     }
+    await this.recordCaseId(input.caseId);
     for (const sub of [
       this.screenshotsDir(input.caseId),
       this.metadataDir(input.caseId),

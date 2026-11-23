@@ -289,6 +289,11 @@ export function startPostListenTasks({
   socratesRecovery,
 }: PostListenDeps): void {
   void startCloudCollectRecovery({ demoMode, recoverers: cloudCollectRecoverers, log: logLine });
+  // #2858: cases created before ids were recorded at create get recorded now, so removing one of their
+  // folders by hand cannot free its number for the New Case wizard.
+  void store
+    .rememberExistingCaseIds()
+    .catch((e) => warnLine(`[cases] could not record the existing case ids: ${(e as Error).message}`));
   // SO-CRATES does not run on the public demo, and a leftover job there must not be picked up.
   if (socratesRecovery && !demoMode)
     void socratesRecovery().catch((e) =>

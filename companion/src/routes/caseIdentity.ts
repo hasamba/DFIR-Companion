@@ -22,9 +22,9 @@ import { forgetCaseKeyedState } from "../storage/caseKeyedState.js";
  * The new-case wizard's suggested incident number.
  *
  * Computed server-side because the browser cannot see either input that matters: archived cases
- * (folder moved out of the active root) and retired ids (cases deleted through the app — see
- * CaseStore.retireCaseId). The old client-side "max of /cases + 1" could see neither, so it
- * reissued deleted numbers.
+ * (folder moved out of the active root) and used ids (every id ever issued, including cases deleted
+ * through the app or removed by hand — see storage/usedCaseIds.ts). The old client-side "max of
+ * /cases + 1" could see neither, so it reissued deleted numbers.
  *
  * NOT mounted under /cases/: every /cases/<segment> path resolves to a per-case auth policy, so it
  * would have 404'd under team auth as a case nobody can see, and it would have run the
@@ -40,22 +40,42 @@ export function registerCaseIdentityRoutes(app: Express, ctx: RouteContext): voi
   const { store } = ctx;
   app.get("/api/next-case-id", async (_req: Request, res: Response) => {
     try {
-      const year = new Date().getFullYear();
-      const claimed = [
-        ...(await store.listCases()).map((item) => item.caseId),
-        ...(await store.listRetiredCaseIds()),
-      ];
-      const pattern = new RegExp(`^INC-${year}-(\\d+)$`);
-      let highest = 0;
-      for (const caseId of claimed) {
-        const match = pattern.exec(caseId);
-        if (match) highest = Math.max(highest, Number.parseInt(match[1], 10));
-      }
-      return res.status(200).json({ caseId: `INC-${year}-${String(highest + 1).padStart(3, "0")}` });
+      return res.status(200).json({ caseId: await nextCaseId(store) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });
+}
+
+/** One past the highest INC-<this year>-NNN that is live, archived, or was ever issued. */
+async function nextCaseId(store: RouteContext["store"]): Promise<string> {
+  const year = new Date().getFullYear();
+  const claimed = [
+    ...(await store.listCases()).map((item) => item.caseId),
+    ...(await store.listUsedCaseIds()),
+  ];
+  const pattern = new RegExp(`^INC-${year}-(\\d+)$`);
+  let highest = 0;
+  for (const caseId of claimed) {
+    const match = pattern.exec(caseId);
+    if (match) highest = Math.max(highest, Number.parseInt(match[1], 10));
+  }
+  return `INC-${year}-${String(highest + 1).padStart(3, "0")}`;
+}
+
+/**
+ * Why New Case (POST /cases) must refuse this id, or null when it may be created.
+ *
+ * An id issued before that has no case on disk now — deleted, or its folder removed by hand — is
+ * never issued again (#2858). Only POST /cases asks this: a whole-case import restoring a case from
+ * its own export, the demo reseed and the AI-agent sweep rollback legitimately bring an id back.
+ * A same-id create while the deleted case's jobs wind down is refused too (#1831); with #2858 that
+ * is reachable from New Case only for an id the ledger failed to record.
+ */
+export async function newCaseIdRefusal(ctx: RouteContext, caseId: string): Promise<string | null> {
+  if ((await ctx.store.listUsedCaseIds()).includes(caseId))
+    return `case id ${caseId} was already used by an earlier case — case ids are never reused, because reports and exports of that case still carry it. Use ${await nextCaseId(ctx.store)}.`;
+  return ctx.options.jobManager?.isStopping(caseId) ? stoppingMessage(caseId) : null;
 }
 
 /**
@@ -80,7 +100,7 @@ export async function clearStateOutlivingCase(
   const steps: [string, () => Promise<void> | void][] = [
     ["revoke case access", () => options.teamAuth?.store.deleteCaseAccess(id, actor)],
     ["forget background jobs", () => options.jobManager?.forgetCase(id)],
-    ["retire case id", () => store.retireCaseId(id)],
+    ["retire case id", () => store.rememberCaseIds([id])],
     // The server-set link: a same-id successor must not inherit the deleted case's set, and the
     // set's "in use" count must drop. Only a hard delete reaches here; an archived case keeps it.
     ["unlink server set", () => options.serverSetStore?.unlinkCase(id)],
@@ -128,7 +148,7 @@ export function stoppingMessage(caseId: string): string {
  * jobs winding down, then clears access rows such a case may have left behind — before the publish,
  * so a failed clear leaves nothing published. The id is free at this point, so any row is stale.
  */
-export function importedCaseIdClaim(ctx: RouteContext, req: Request): (caseId: string) => void {
+export function importedCaseIdClaim(ctx: RouteContext, req: Request): (caseId: string) => Promise<void> {
   return (caseId) => {
     if (ctx.store.isDeleting(caseId))
       throw new CaseImportConflictError(
@@ -138,5 +158,8 @@ export function importedCaseIdClaim(ctx: RouteContext, req: Request): (caseId: s
     if (ctx.options.jobManager?.isStopping(caseId))
       throw new CaseImportConflictError(caseId, stoppingMessage(caseId));
     ctx.options.teamAuth?.store.deleteCaseAccess(caseId, requestAuthentication(req)?.identity);
+    // An imported case never passes through createCase, so its id is recorded here (#2858). Just
+    // before the publish: an import that then fails only burns a number, which is harmless.
+    return ctx.store.recordCaseId(caseId);
   };
 }

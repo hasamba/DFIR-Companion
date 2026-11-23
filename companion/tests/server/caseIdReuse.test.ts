@@ -3,7 +3,7 @@
 // the old case's aborted jobs, (c) files a part-failed folder removal left on disk.
 
 import { describe, it, expect } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -111,6 +111,9 @@ describe("(a) access rows a deleted case left behind", () => {
     });
     expect(reader.status).toBe(201);
     const readerId = reader.body.id as string;
+    // New Case refuses a used id first (#2858); this guard is the layer under it, for an id the
+    // used-id ledger failed to record. Simulate that ledger so the request reaches it.
+    store.listUsedCaseIds = async () => [];
     const body = { caseId: "c9", name: "Old", investigator: "admin", aiProvider: "mock" };
     expect((await admin.post("/cases").set("X-DFIR-CSRF", csrf).send(body)).status).toBe(201);
     const grant = await admin
@@ -182,6 +185,9 @@ describe("(b) a deleted case's jobs still stopping", () => {
     const store = new CaseStore(await tmpRoot());
     const jobManager = new JobManager({ perCaseConcurrency: 1 });
     const app = createApp(store, { stateStore: new StateStore(store), jobManager });
+    // New Case refuses a used id first (#2858); this guard is the layer under it, for an id the
+    // used-id ledger failed to record. Simulate that ledger so the request reaches it.
+    store.listUsedCaseIds = async () => [];
     const body = { caseId: "b1", name: "Old", investigator: "alice", aiProvider: "mock" };
     expect((await request(app).post("/cases").send(body)).status).toBe(201);
     const job = jobManager.register({ caseId: "b1", kind: "import", cancellable: true });
@@ -285,11 +291,12 @@ describe("whole-case imports of a reused id", () => {
     expect(imported.status).toBe(201);
   });
 
-  it("the import claim refuses a mid-delete or stopping id and clears stale access otherwise", () => {
+  it("the import claim refuses a mid-delete or stopping id and clears stale access otherwise", async () => {
     const cleared: string[] = [];
+    const recorded: string[] = [];
     const ctx = (deleting: boolean, stopping: boolean) =>
       ({
-        store: { isDeleting: () => deleting },
+        store: { isDeleting: () => deleting, recordCaseId: async (id: string) => void recorded.push(id) },
         options: {
           jobManager: { isStopping: () => stopping },
           teamAuth: { store: { deleteCaseAccess: (id: string) => cleared.push(id) } },
@@ -299,8 +306,35 @@ describe("whole-case imports of a reused id", () => {
     expect(() => importedCaseIdClaim(ctx(true, false), req)("x1")).toThrow(CaseImportConflictError);
     expect(() => importedCaseIdClaim(ctx(false, true), req)("x2")).toThrow(/still stopping/);
     expect(cleared).toEqual([]);
-    importedCaseIdClaim(ctx(false, false), req)("x3");
+    await importedCaseIdClaim(ctx(false, false), req)("x3");
     expect(cleared).toEqual(["x3"]);
+    expect(recorded).toEqual(["x3"]); // #2858: an imported case never passes through createCase
+  });
+
+  // #2858: whole-case import and the demo seed write the case folder themselves, so they record the
+  // id too. Otherwise removing such a case's folder by hand would free its number before a restart.
+  it("an imported case's number stays used after its folder is removed by hand", async () => {
+    resetLimiters();
+    const year = new Date().getFullYear();
+    const store = new CaseStore(await tmpRoot());
+    const stateStore = new StateStore(store);
+    const app = createApp(store, { stateStore });
+    const zip = (await archive(app, stateStore)).toString("base64");
+    const id = `INC-${year}-005`;
+    expect((await request(app).post("/cases/import/zip").send({ data: zip, targetCaseId: id })).status).toBe(
+      201,
+    );
+    await rm(join(store.casesRoot, id), { recursive: true });
+    expect((await request(app).get("/api/next-case-id")).body.caseId).toBe(`INC-${year}-006`);
+  });
+
+  it("a seeded demo case's number stays used after its folder is removed by hand", async () => {
+    resetLimiters();
+    const store = new CaseStore(await tmpRoot());
+    const app = createApp(store, { stateStore: new StateStore(store) });
+    expect((await request(app).post("/cases/seed-demo").send({ caseId: "DEMO-7" })).status).toBe(201);
+    await rm(join(store.casesRoot, "DEMO-7"), { recursive: true });
+    expect(await store.listUsedCaseIds()).toContain("DEMO-7");
   });
 
   it("a claim that throws before the publish leaves nothing published", async () => {

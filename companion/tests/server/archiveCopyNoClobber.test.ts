@@ -23,8 +23,15 @@ async function harness() {
   return { app, store };
 }
 
-async function seedClosedCase(app: ReturnType<typeof createApp>, caseId: string, name: string) {
-  await request(app).post("/cases").send({ caseId, name, investigator: "alice", aiProvider: "anthropic" });
+// Created through the store, not New Case: a deleted id is never offered again there (#2858), but a
+// whole-case import restoring that case's export legitimately brings the same id back.
+async function seedClosedCase(
+  app: ReturnType<typeof createApp>,
+  store: CaseStore,
+  caseId: string,
+  name: string,
+) {
+  await store.createCase({ caseId, name, investigator: "alice", aiProvider: "anthropic" });
   expect((await request(app).patch(`/cases/${caseId}/status`).send({ status: "closed" })).status).toBe(200);
 }
 
@@ -48,11 +55,11 @@ async function encryptedDelete(app: ReturnType<typeof createApp>, caseId: string
 describe("server-side archive copies are never overwritten (#2787)", () => {
   it("a second encrypted delete of the same id and name keeps the first copy", async () => {
     const { app, store } = await harness();
-    await seedClosedCase(app, "dup1", "Dup Case");
+    await seedClosedCase(app, store, "dup1", "Dup Case");
     const first = await encryptedDelete(app, "dup1");
     expect(first.path).toBe(join(store.casesRoot, "dup1 - Dup Case.dfircase"));
 
-    await seedClosedCase(app, "dup1", "Dup Case");
+    await seedClosedCase(app, store, "dup1", "Dup Case");
     const second = await encryptedDelete(app, "dup1");
     expect(second.path).toBe(join(store.casesRoot, "dup1 - Dup Case (2).dfircase"));
 
@@ -63,12 +70,12 @@ describe("server-side archive copies are never overwritten (#2787)", () => {
 
   it("a second ZIP delete of the same id and name keeps the first ZIP", async () => {
     const { app, store } = await harness();
-    await seedClosedCase(app, "dup2", "Dup Case");
+    await seedClosedCase(app, store, "dup2", "Dup Case");
     const first = await request(app).post("/cases/dup2/delete").send({ archiveFirst: "zip" });
     expect(first.status).toBe(200);
     const firstBytes = await readFile(first.body.archivePath);
 
-    await seedClosedCase(app, "dup2", "Dup Case");
+    await seedClosedCase(app, store, "dup2", "Dup Case");
     const second = await request(app).post("/cases/dup2/delete").send({ archiveFirst: "zip" });
     expect(second.status).toBe(200);
 

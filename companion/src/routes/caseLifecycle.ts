@@ -16,7 +16,7 @@ import { createCaseListServerSets } from "./caseListServerSets.js";
 import { sanitizeCaseMeta } from "../analysis/casePassword.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { registerSeedDemoRoutes } from "./seedDemo.js";
-import { registerCaseIdentityRoutes, clearStateOutlivingCase, stoppingMessage } from "./caseIdentity.js";
+import { registerCaseIdentityRoutes, clearStateOutlivingCase, newCaseIdRefusal } from "./caseIdentity.js";
 import {
   closeCredentialChoice,
   releaseBeforeCaseEnd,
@@ -149,8 +149,8 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
       if (invalid) return res.status(400).json({ error: invalid });
       if (await store.caseExists(caseId))
         return res.status(409).json({ error: `case ${caseId} already exists` });
-      if (options.jobManager?.isStopping(caseId))
-        return res.status(409).json({ error: stoppingMessage(caseId) });
+      const refused = await newCaseIdRefusal(ctx, caseId); // #2858 used before, #1831 still stopping
+      if (refused) return res.status(409).json({ error: refused });
       const meta = await store.createCase({
         caseId,
         name: String(name).trim(),
