@@ -35,6 +35,7 @@ import { registerToolsRoutes } from "../routes/tools.js";
 import { registerImportRoutes } from "../routes/import.js";
 import { registerDropHeldRoutes } from "../routes/dropHeldRoutes.js";
 import { registerVelociraptorRoutes } from "../routes/velociraptor.js";
+import { registerVeloHuntCancelRoutes } from "../routes/veloHuntCancel.js";
 import { registerAiAgentForensicsRoutes } from "../routes/aiAgentForensics.js";
 import { registerAiAgentPackRoutes } from "../routes/aiAgentPack.js";
 import { registerThreatIntelRoutes } from "../routes/threatIntel.js";
@@ -191,6 +192,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   // the limiter answers first even for a case that does not exist.
   app.use("/cases/:id/velociraptor", createCaseExistsGate(store));
   registerVelociraptorRoutes(app, ctx);
+  registerVeloHuntCancelRoutes(app, ctx); // the job card's Cancel (velociraptor.ts is at its size cap)
   registerAiAgentForensicsRoutes(app, ctx); // AI Agent Forensics panel (#2690)
   registerAiAgentPackRoutes(app, ctx); // its separate rule pack (#2690)
   registerThreatIntelRoutes(app, ctx);

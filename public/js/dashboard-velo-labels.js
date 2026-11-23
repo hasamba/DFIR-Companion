@@ -9,9 +9,10 @@
 // load that refreshes it; every function here takes the clients or the form it needs as an
 // argument. That is what lets the whole control be tested without a DOM.
 //
-// A NOTE ON THE SUMMARY WORDING. It says "include: all clients" / "exclude: nothing" rather than
-// explaining how several picked labels combine, because that is Velociraptor's rule to state, not
-// this control's, and it differs by server version. The picker reports WHAT is selected; the hunt
+// A NOTE ON THE SUMMARY WORDING. It says "include labels: all clients" / "exclude labels: nothing"
+// ("labels" so the pickers cannot be misread as a host or artifact filter) rather than explaining
+// how several picked labels combine, because that is Velociraptor's rule to state, not this
+// control's, and it differs by server version. The picker reports WHAT is selected; the hunt
 // conditions decide what that selects.
 
 // Every label the cached fleet actually carries, deduped and sorted.
@@ -47,11 +48,11 @@ function veloFleetLabels(clients) {
 // What the collapsed picker reads when it is shut: the label itself when one is picked, a count
 // beyond that, and what NOT picking anything means when none is.
 function veloLabelSummaryText(kind, picked) {
-  const verb = kind === "exc" ? "exclude" : "include";
+  const verb = kind === "exc" ? "exclude labels" : "include labels";
   const n = (picked || []).length;
   if (!n) return verb + (kind === "exc" ? ": nothing" : ": all clients");
   if (n === 1) return verb + ": " + picked[0];
-  return verb + ": " + n + " labels";
+  return verb + ": " + n + " picked";
 }
 
 // One picker: a <details> whose summary is the current selection and whose body is one checkbox per
@@ -61,7 +62,7 @@ function veloLabelSummaryText(kind, picked) {
 // reason, reads as a broken control rather than a snapshot nobody has taken yet — so it names the
 // button that fills it. It is a plain note, not an empty dropdown.
 function veloLabelPickerHtml(kind, labels) {
-  const verb = kind === "exc" ? "exclude" : "include";
+  const verb = kind === "exc" ? "exclude labels" : "include labels";
   const cls = "velo-lbl velo-lbl-" + kind;
   if (!(labels || []).length)
     return (

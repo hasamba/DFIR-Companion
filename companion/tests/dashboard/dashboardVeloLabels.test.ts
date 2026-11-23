@@ -61,7 +61,7 @@ describe("veloLabelPickerHtml", () => {
     expect(html.match(/type="checkbox"/g)).toHaveLength(2);
     expect(html).toContain('value="DC"');
     expect(html).toContain('value="WORKSTATION"');
-    expect(html).toContain("include: all clients");
+    expect(html).toContain("include labels: all clients");
   });
 
   it("escapes a label rather than letting it into the markup", () => {
@@ -81,11 +81,11 @@ describe("veloLabelPickerHtml", () => {
 
 describe("veloLabelSummaryText", () => {
   it("names the one label picked, and counts more than one", () => {
-    expect(lbl.veloLabelSummaryText("inc", [])).toBe("include: all clients");
-    expect(lbl.veloLabelSummaryText("inc", ["DC"])).toBe("include: DC");
-    expect(lbl.veloLabelSummaryText("inc", ["DC", "WORKSTATION"])).toBe("include: 2 labels");
-    expect(lbl.veloLabelSummaryText("exc", [])).toBe("exclude: nothing");
-    expect(lbl.veloLabelSummaryText("exc", ["DC"])).toBe("exclude: DC");
+    expect(lbl.veloLabelSummaryText("inc", [])).toBe("include labels: all clients");
+    expect(lbl.veloLabelSummaryText("inc", ["DC"])).toBe("include labels: DC");
+    expect(lbl.veloLabelSummaryText("inc", ["DC", "WORKSTATION"])).toBe("include labels: 2 picked");
+    expect(lbl.veloLabelSummaryText("exc", [])).toBe("exclude labels: nothing");
+    expect(lbl.veloLabelSummaryText("exc", ["DC"])).toBe("exclude labels: DC");
   });
 });
 
@@ -128,10 +128,10 @@ describe("veloWireLabelPickers", () => {
     }[];
     boxes[0].checked = true;
     boxes[0].onchange?.();
-    expect(form.pickers[".velo-lbl-inc"].summary.textContent).toBe("include: DC");
+    expect(form.pickers[".velo-lbl-inc"].summary.textContent).toBe("include labels: DC");
     boxes[1].checked = true;
     boxes[1].onchange?.();
-    expect(form.pickers[".velo-lbl-inc"].summary.textContent).toBe("include: 2 labels");
+    expect(form.pickers[".velo-lbl-inc"].summary.textContent).toBe("include labels: 2 picked");
   });
 
   it("does nothing on an empty-state picker", () => {

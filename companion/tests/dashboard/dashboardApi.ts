@@ -566,6 +566,19 @@ export interface VeloLabelsApi {
   veloWireLabelPickers(form: { querySelector(sel: string): unknown } | null): void;
 }
 
+// public/js/dashboard-velo-hunt-cancel.js — a running hunt card's Cancel button + the cancelled line.
+export interface VeloHuntCancelApi {
+  veloCancelHuntBtnHtml(
+    job: { status?: string; huntId?: string; bundleName?: string; collectActive?: boolean } | null,
+  ): string;
+  veloCancelledDetail(
+    job: {
+      status?: string;
+      cancelled?: { action?: string; by?: string; serverError?: string; pending?: boolean };
+    } | null,
+  ): string;
+}
+
 // public/js/dashboard-velo-coverage.js — the explanatory lines under a hunt job: per-artifact
 // accounting once it has collected, and what it is doing while it still is.
 export interface VeloCoverageApi {
