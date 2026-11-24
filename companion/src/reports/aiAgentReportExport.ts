@@ -19,7 +19,8 @@ import { row } from "./csv.js";
 const SENSITIVE_NOTE =
   "Sensitive run: preservation may have copied credential files into Velociraptor's file store. " +
   "The Companion never read the collected files; it keeps a manifest only.";
-const PROVISIONAL_NOTE = "Grades are provisional until measured on real developer profiles.";
+const PROVISIONAL_NOTE =
+  "Severity grades are a first estimate: they have not yet been checked against real developer machines, so some may change.";
 
 /**
  * A table cell of attacker-reachable text (#2721): a code span, so link, image, emphasis and raw-HTML

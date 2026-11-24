@@ -166,7 +166,7 @@ describe("aiAgentForensics section rendering (#2721)", () => {
     expect(out).toContain("b".repeat(64));
     expect(out).toMatch(/^#### Sigma coverage per rule and endpoint$/m);
     expect(out).toMatch(/^#### Rules not run, and why$/m);
-    expect(out).toContain("Grades are provisional");
+    expect(out).toContain("Severity grades are a first estimate");
     expect(out).toContain("Sensitive run");
     expect(out).toContain("the AI never reads it");
     expect(out).toContain("not to this record");
