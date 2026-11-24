@@ -18,7 +18,7 @@ import {
   type MappedEvent,
   type SiemIoc,
 } from "./siemImport.js";
-import { withHostSuffix } from "./velociraptorTitle.js";
+import { titleSafe, withHostSuffix } from "./velociraptorTitle.js";
 import { pickTime } from "./veloRowTime.js";
 import { isUnforgeableContentPath } from "./veloDetectionNoise.js";
 import { boundedAggKey } from "./aggKey.js";
@@ -64,9 +64,13 @@ export function mapHijackLib(
   const sha = str(getCI(infoObj, "ExecutableSHA256")).toLowerCase();
   if (path && !isUnforgeableContentPath(path)) addIoc(sink, "file", path);
 
-  let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: hijackable DLL ${dll}${
-    vendor ? ` (${vendor})` : ""
-  } at ${oneLine(path)} ${verdict}${type ? ` [${type}]` : ""}${url ? ` — ${url}` : ""}`;
+  // Title: which DLL and where it sits. Everything after the first " - " is the [details] body:
+  // the verdict, the side-load type and the hijacklibs.net entry are explanation, and in the title
+  // they pushed the path itself off the row. titleSafe keeps a " - " inside the path (a "App -
+  // Portable" folder) from being read as that boundary; the raw path is kept in `path`.
+  const title = `hijackable DLL ${dll}${vendor ? ` (${vendor})` : ""} at ${titleSafe(oneLine(path))}`;
+  const details = `${verdict}${type ? ` [${type}]` : ""}${url ? ` — ${url}` : ""}`;
+  let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${title} - ${details}`;
   description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
 
   return {

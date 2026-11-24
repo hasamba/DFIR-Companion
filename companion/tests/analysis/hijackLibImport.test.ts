@@ -82,3 +82,39 @@ describe("mapHijackLib — malformed rows", () => {
     expect(mapHijackLib(r, ARTIFACT, "H", new Map()).sha256).toBeUndefined();
   });
 });
+
+// The title (before the first " - ") is the DLL, vendor and where it sits. The verdict, the
+// side-load type and the hijacklibs.net link are explanation and belong in the details.
+describe("mapHijackLib — title vs details", () => {
+  const split = (d: string): [string, string] => {
+    const i = d.indexOf(" - ");
+    return i < 0 ? [d, ""] : [d.slice(0, i), d.slice(i + 3)];
+  };
+
+  it("ends the title at the path and moves the explanation to the details", () => {
+    const [title, rest] = split(mapHijackLib(row(), ARTIFACT, "HOST01", new Map()).description);
+    expect(title).toBe(
+      `Velociraptor [${ARTIFACT}]: hijackable DLL version.dll (Microsoft) at C:\\Users\\Public\\Downloads\\version.dll`,
+    );
+    expect(rest).toContain("OUTSIDE its expected vendor location — DLL side-load candidate [Sideloading]");
+    expect(rest).toContain("https://hijacklibs.net/entries/microsoft/built-in/version.html");
+  });
+
+  it("keeps a ' - ' inside the path from cutting the title short", () => {
+    const e = mapHijackLib(
+      row({ OSPath: "C:\\Tools\\App - Portable\\version.dll" }),
+      ARTIFACT,
+      "HOST01",
+      new Map(),
+    );
+    expect(split(e.description)[0]).toContain(
+      "version.dll (Microsoft) at C:\\Tools\\App — Portable\\version.dll",
+    );
+    expect(e.path).toBe("C:\\Tools\\App - Portable\\version.dll");
+  });
+
+  it("does not leave a trailing ' -' when the row has no host", () => {
+    const e = mapHijackLib(row(), ARTIFACT, "", new Map());
+    expect(e.description.trimEnd().endsWith(" -")).toBe(false);
+  });
+});
