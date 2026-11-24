@@ -6,7 +6,8 @@ import type { CasePickerApi } from "./dashboardApi.js";
 // holds the LOADED case (#2399): a pick resolves to the id Connect will load (pickedCaseId) and
 // leaves #caseId alone; the case load commits it, with the events #caseId's listeners expect.
 
-type Listener = (e: { type?: string; key?: string }) => void;
+type FakeEvent = { type?: string; key?: string; preventDefault?: () => void };
+type Listener = (e: FakeEvent) => void;
 
 interface FakeInput {
   id: string;
@@ -16,7 +17,7 @@ interface FakeInput {
   fired: string[];
   addEventListener(type: string, fn: Listener): void;
   dispatchEvent(e: { type: string }): boolean;
-  fire(type: string, e?: { key?: string }): void;
+  fire(type: string, e?: FakeEvent): void;
 }
 
 function fakeInput(id: string): FakeInput {
@@ -47,6 +48,17 @@ function harness(cases: Array<Record<string, unknown>>) {
   const picker = fakeInput("casePicker");
   const caseId = fakeInput("caseId");
   const archived = fakeInput("showArchivedToggle");
+  const clearBtn = fakeInput("casePickerClear");
+  // A real focus() fires `focus` only when the box was not already focused.
+  let focused = false;
+  Object.assign(picker, {
+    focus: () => {
+      if (focused) return;
+      focused = true;
+      picker.fire("focus");
+    },
+  });
+  picker.addEventListener("blur", () => void (focused = false));
   const options: FakeOption[] = [];
   const datalist = {
     id: "caseList",
@@ -62,6 +74,7 @@ function harness(cases: Array<Record<string, unknown>>) {
     ["showArchivedToggle", archived],
     ["caseList", datalist],
     ["seedDemoBtn", demoBtn],
+    ["casePickerClear", clearBtn],
   ]);
   let connected = 0;
   const mod = loadDashboardModule<CasePickerApi>("dashboard-case-picker.js", [], {
@@ -79,7 +92,7 @@ function harness(cases: Array<Record<string, unknown>>) {
     connect: () => void connected++,
   });
   mod.initCasePicker();
-  return { mod, picker, caseId, archived, options, demoBtn, connected: () => connected };
+  return { mod, picker, caseId, archived, clearBtn, options, demoBtn, connected: () => connected };
 }
 
 const CASES = [
@@ -292,6 +305,30 @@ describe("dashboard-case-picker.js", () => {
     expect(h.caseId.value).toBe("INC-2026-001");
     h.picker.fire("blur");
     expect(h.picker.value).toBe("Acme ransomware");
+    expect(h.caseId.fired).toEqual([]);
+  });
+
+  it("the clear button empties the box and keeps it focused, and the loaded case stays", async () => {
+    const h = harness(CASES);
+    await h.mod.loadCaseList();
+    h.caseId.value = "INC-2026-001";
+    h.mod.syncCasePicker();
+    // Pressing the button must not blur the box, or blur would put the name straight back.
+    let prevented = false;
+    h.clearBtn.fire("mousedown", { preventDefault: () => void (prevented = true) });
+    expect(prevented).toBe(true);
+    // Box not focused yet: the click focuses it, so blur without a pick still restores the name.
+    h.clearBtn.fire("click");
+    expect(h.picker.value).toBe("");
+    expect(h.mod.pickedCaseId()).toBe("INC-2026-001");
+    h.picker.fire("blur");
+    expect(h.picker.value).toBe("Acme ransomware");
+    // Box focused with half-typed text: the click wipes the text.
+    (h.picker as unknown as { focus(): void }).focus();
+    h.picker.value = "Pay";
+    h.clearBtn.fire("click");
+    expect(h.picker.value).toBe("");
+    expect(h.caseId.value).toBe("INC-2026-001");
     expect(h.caseId.fired).toEqual([]);
   });
 

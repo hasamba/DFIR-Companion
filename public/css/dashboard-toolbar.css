@@ -113,6 +113,17 @@
 .toolbar-main.icons-only { gap: 8px 7px; }               /* tighter column gap suits an icon row and buys ~55px to stay on one line */
 #casePicker { width: 160px; }                              /* sized for a short case name; content scrolls for longer ones */
 .toolbar-main.icons-only #casePicker { width: 120px; }        /* narrow further when tight */
+/* The x that clears the case box. It sits inside the box's right edge and shows only while the box
+   has text (:placeholder-shown). Id selectors so the icons-only button padding rule does not apply. */
+.case-picker-wrap { position: relative; display: inline-flex; align-items: center; }
+#casePicker { padding-right: 22px; }
+#casePickerClear { position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+  padding: 0; margin: 0; border: 0; border-radius: 50%; background: transparent;
+  color: var(--text-muted); cursor: pointer; }
+#casePickerClear:hover, #casePickerClear:focus-visible { color: var(--text-primary); background: var(--border-color); }
+#casePickerClear::before { content: none; }
+#casePicker:placeholder-shown + #casePickerClear { display: none; }
 
 /* ── Toolbar groups (#1540) ───────────────────────────────────────────────
    Each run of related controls sits in a .tb-group, so the strip reads as six named clusters

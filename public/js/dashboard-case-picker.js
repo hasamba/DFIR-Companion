@@ -211,6 +211,21 @@
       if (!picker.value.trim()) picker.value = prev;
     });
     document.getElementById("showArchivedToggle")?.addEventListener("change", loadCaseList);
+    initClearButton(picker);
+  }
+
+  // The x inside the box empties it. mousedown is cancelled so the box keeps focus — a blur would
+  // put the name straight back. Focus BEFORE emptying: on an unfocused box the focus handler saves
+  // the name to restore, so clearing is only a fresh start; a blur without a pick still restores it.
+  // The loaded case and the pick are untouched.
+  function initClearButton(picker) {
+    const btn = document.getElementById("casePickerClear");
+    if (!btn) return;
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
+    btn.addEventListener("click", () => {
+      picker.focus();
+      picker.value = "";
+    });
   }
 
   window.initCasePicker = initCasePicker;
