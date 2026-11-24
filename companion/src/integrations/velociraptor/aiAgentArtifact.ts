@@ -40,8 +40,9 @@ const MODEL_SCAN_MAX_BYTES = 2 * 1024 * 1024 * 1024;
  * changed template gets a new name even when the rules did not change, and an artifact on the server
  * always matches what the runs that named it executed (§13.8). Bump it with every VQL change.
  *   2 — #2722: the preserved copy's hash, and per-rule Sigma coverage rows.
+ *   3 — the Inventory source uses if() in place of `||` (`x || []` does not parse).
  */
-export const AI_AGENT_VQL_TEMPLATE_VERSION = 2;
+export const AI_AGENT_VQL_TEMPLATE_VERSION = 3;
 const SYSMON_LOG = "C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx";
 
 export interface AiAgentRunOptions {
