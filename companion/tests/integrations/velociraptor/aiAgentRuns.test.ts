@@ -196,8 +196,43 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     const deps = makeDeps();
     await expect(
       startAiAgentRun(deps, { caseId: "case-2", clientIds: ["C.w1", "C.other9"] }),
-    ).rejects.toThrow(/not enrolled on this case's Velociraptor server: C\.other9/);
+    ).rejects.toThrow(/Not started: this case's Velociraptor server does not list endpoint C\.other9/);
     expect(programs.some((p) => p.includes("hunt("))).toBe(false); // nothing launched
+  });
+
+  it("finds a picked endpoint the way the endpoint list does: the whole client list, matched here", async () => {
+    // A server-side `WHERE client_id IN [...]` filter came back empty on a live server for an
+    // endpoint the picker listed, so Run refused an enrolled endpoint. The fake cannot model that
+    // VQL, so the guard is that the lookup does not filter on the server at all.
+    await store.createCase({ caseId: "case-3", name: "c", investigator: "x", aiProvider: null });
+    const velo = fakeVelo();
+    const fleet = {
+      ...velo,
+      runProgram: async (p: string) => {
+        if (!p.includes("FROM clients()"))
+          return (velo as unknown as { runProgram(p: string): Promise<unknown> }).runProgram(p);
+        programs.push(p);
+        return {
+          rows: [
+            { client_id: "C.w1", OS: "windows", Hostname: "DEV-WS-014" },
+            { client_id: "C.w2", OS: "windows", Hostname: "DEV-WS-022" },
+          ],
+          reason: "",
+        };
+      },
+    } as unknown as VelociraptorClient;
+    const servers = { ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: fleet } };
+    const deps = makeDeps({
+      serverClients: {
+        forCase: () => servers,
+        forSet: () => servers,
+        forDefault: () => servers,
+      } as unknown as AiAgentForensicsDeps["serverClients"],
+    });
+    const r = await startAiAgentRun(deps, { caseId: "case-3", clientIds: ["C.w2"] });
+    expect(r.run.endpoints).toEqual([expect.objectContaining({ clientId: "C.w2", hostname: "DEV-WS-022" })]);
+    const lookup = programs.find((p) => p.includes("FROM clients()")) ?? "";
+    expect(lookup).not.toMatch(/WHERE|\bIN\b/i);
   });
 
   it("refreshes the report and the manifest without reading upload contents", async () => {

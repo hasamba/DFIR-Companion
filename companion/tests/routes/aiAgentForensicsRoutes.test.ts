@@ -125,7 +125,7 @@ describe("AI Agent Forensics routes", () => {
     expect(csv.text).toContain(`"'=HYPERLINK(""http://evil"")`); // formula guard + quote doubling
     const md = await request(app).get("/cases/c1/ai-agent/runs/aar-1/report.md");
     expect(md.text).toContain("DEV\\|WS"); // a pipe cannot break the table
-    expect(md.text).toContain("Grades are provisional");
+    expect(md.text).toContain("Severity grades are a first estimate");
     expect(md.text).toContain("Sensitive run");
     expect(md.text).toContain('=HYPERLINK("http://evil") \\| <img'); // the cell stays one cell
 

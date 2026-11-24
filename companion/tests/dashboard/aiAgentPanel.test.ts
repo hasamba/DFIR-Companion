@@ -38,8 +38,16 @@ describe("AI Agent Forensics panel", () => {
   });
 
   it("labels grades provisional and every run sensitive", () => {
-    expect(js).toContain("Grades are provisional until measured on real developer profiles.");
+    expect(js).toContain(
+      "Severity grades are a first estimate: they have not yet been checked against real developer machines, so some may change.",
+    );
     expect(js).toContain("SENSITIVE");
+  });
+
+  it("says before any run that the skipped rules are not an error, and shows a refusal as a warning", () => {
+    expect(js).toContain("Rules this check always skips (${total}) — not an error");
+    expect(js).toContain("notRunBlock(rules.notRun || [], true)");
+    expect(js).toContain('msg.classList.toggle("aa-warn", !r.ok)');
   });
 
   it("lists a case's endpoints through the case route, and explains a 403 accurately (#2725)", () => {

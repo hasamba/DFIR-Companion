@@ -42,6 +42,8 @@ export const AI_AGENT_BUNDLE_ID = "ai-agent-forensics";
 const BUNDLE_NAME = "AI Agent Forensics (sensitive)";
 const DEFAULT_WAIT_MINUTES = 30;
 const MAX_ENDPOINTS = 200;
+/** Same bound as the endpoint inventory read (`listClients`). */
+const CLIENT_LOOKUP_LIMIT = 100_000;
 /** Rows per evidence-first ingest when a sweep is filed into a case. */
 const ADD_BATCH_ROWS = 10_000;
 
@@ -108,15 +110,20 @@ async function readEndpoints(
   client: VelociraptorClient,
   ids: string[],
 ): Promise<{ endpoints: AiAgentEndpoint[]; missing: string[] }> {
-  const list = ids.map((c) => `'${c}'`).join(", ");
+  // The whole client list, matched here — the same read that fills the endpoint picker. A server-side
+  // `WHERE client_id IN [...]` filter returned no rows on a live server for an enrolled endpoint, so
+  // Run refused an endpoint the picker had just listed.
   const { rows, reason } = await client.runProgram(
-    `SELECT client_id, os_info.system AS OS, os_info.hostname AS Hostname, os_info.fqdn AS Fqdn FROM clients() WHERE client_id IN [${list}]`,
+    `SELECT client_id, os_info.system AS OS, os_info.hostname AS Hostname, os_info.fqdn AS Fqdn FROM clients() LIMIT ${CLIENT_LOOKUP_LIMIT}`,
   );
+  const wanted = new Set(ids);
   const found = new Map(
-    (rows as Record<string, unknown>[]).map((r) => [
-      String(r.client_id ?? ""),
-      { os: String(r.OS ?? ""), hostname: String(r.Hostname || r.Fqdn || "") },
-    ]),
+    (rows as Record<string, unknown>[])
+      .filter((r) => wanted.has(String(r.client_id ?? "")))
+      .map((r) => [
+        String(r.client_id ?? ""),
+        { os: String(r.OS ?? ""), hostname: String(r.Hostname || r.Fqdn || "") },
+      ]),
   );
   const endpoints = ids.map((clientId) => ({
     clientId,
@@ -218,7 +225,10 @@ export async function startAiAgentRun(
   // Inside a case, every endpoint must belong to the case's own server set (#2725): a case writer may
   // not reach a client of another set by naming its id.
   if (input.caseId && missing.length)
-    throw new AiAgentRunError(`not enrolled on this case's Velociraptor server: ${missing.join(", ")}`);
+    throw new AiAgentRunError(
+      `Not started: this case's Velociraptor server does not list endpoint ${missing.join(", ")}. ` +
+        "Untick it, or reopen the panel to reload the endpoint list, and press Run again.",
+    );
   const pre = await preflightAiAgentRun(endpoints, () =>
     client.listClientArtifacts("client", { refresh: true }),
   );

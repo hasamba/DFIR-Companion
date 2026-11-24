@@ -60,7 +60,7 @@
     const box = el("div", null, "aa-rules");
     if (!rules) return box;
     box.appendChild(el("p", `Rules: ${rules.version}`, "aa-note"));
-    box.appendChild(el("p", "Grades are provisional until measured on real developer profiles.", "aa-note aa-provisional"));
+    box.appendChild(el("p", "Severity grades are a first estimate: they have not yet been checked against real developer machines, so some may change.", "aa-note aa-provisional"));
     if (rules.problem) box.appendChild(el("p", rules.problem, "aa-warn"));
     box.appendChild(packControls());
     return box;
@@ -102,10 +102,15 @@
     return wrap;
   }
 
-  function notRunBlock(groups) {
+  // beforeRun: the panel's rule-pack list, shown before anything ran — it must not read as a failure.
+  function notRunBlock(groups, beforeRun) {
     const details = el("details", null, "aa-notrun");
     const total = groups.reduce((n, g) => n + g.rules.length, 0);
-    details.appendChild(el("summary", `Rules not run (${total}), and why`));
+    details.appendChild(el("summary", beforeRun ? `Rules this check always skips (${total}) — not an error` : `Rules not run (${total}), and why`));
+    if (beforeRun)
+      details.appendChild(
+        el("p", "The rule pack also has rules for data an endpoint check cannot read, such as cloud logs or LLM application logs. They are listed here by reason; the rest of the pack runs normally.", "aa-note"),
+      );
     for (const g of groups) {
       const p = el("p", `${g.reason} (${g.rules.length}): `);
       p.appendChild(el("span", g.rules.join(", "), "aa-muted"));
@@ -177,27 +182,31 @@
     capLabel.appendChild(cap);
     const run = el("button", "Run");
     run.type = "button";
-    const msg = el("span", "", "aa-msg");
+    const msg = el("p", "", "aa-msg"); // its own line under Run, so a refusal is not lost beside the button
     msg.setAttribute("role", "status");
     run.addEventListener("click", async () => {
       const clientIds = picker.selected();
       if (!clientIds.length) {
         msg.textContent = "Pick at least one endpoint.";
+        msg.classList.add("aa-warn");
         return;
       }
       if (caseId && caseId !== caseNow()) {
         msg.textContent = "The open case changed — reopen the panel before running.";
+        msg.classList.add("aa-warn");
         return;
       }
       run.disabled = true;
       msg.textContent = "Starting…";
+      msg.classList.remove("aa-warn");
       const body = { clientIds, scopes: scopes.selected(), uploadMaxBytes: Math.round(Number(cap.value || 50) * 1024 * 1024) };
       if (caseId) body.caseId = caseId;
       const r = await post("/ai-agent/runs", body);
       run.disabled = false;
       msg.textContent = r.ok
         ? `Started on ${r.body.run.endpoints.length} endpoint(s). Results are read after the hunt finishes (or press Refresh results).`
-        : r.body.error || `Could not start (HTTP ${r.status}).`;
+        : r.body.error || `Not started (HTTP ${r.status}).`;
+      msg.classList.toggle("aa-warn", !r.ok);
       if (r.ok) onStarted();
     });
     form.append(picker.wrap, scopes.wrap, capLabel, run, msg);
@@ -383,7 +392,7 @@
     }
     const again = () => renderPanel(box, caseId);
     const parts = [rulesBlock(), await runForm(caseId, again)];
-    if (rules) parts.push(notRunBlock(rules.notRun || []));
+    if (rules) parts.push(notRunBlock(rules.notRun || [], true));
     if (caseId) {
       const r = await call(runsUrl(caseId));
       for (const run of (r.ok && r.body.runs) || []) parts.push(runCard(caseId, run, false, again));
