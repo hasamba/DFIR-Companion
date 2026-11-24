@@ -117,3 +117,44 @@ describe("buildCollectionPlan", () => {
     expect(JSON.stringify({ events, overrides })).toBe(snapshot);
   });
 });
+
+// THOR run through Velociraptor (Generic.Scanner.ThorZIP) is labelled "Velociraptor" — thorRowMap.ts
+// gives each finding a "THOR <level> [<module>]: …" title. The scan is still THOR evidence.
+describe("THOR collected through Velociraptor", () => {
+  function veloEv(description: string): ForensicEvent {
+    return { ...ev(["Velociraptor"]), id: description, description };
+  }
+
+  it("ticks the threat-scan step from a Velociraptor THOR finding", () => {
+    const plan = buildCollectionPlan(
+      ["threat-scan"],
+      [veloEv("THOR Warning [ProcessCheck]: Possibly Dangerous file found — mimikatz.exe")],
+      {},
+    );
+    expect(plan.steps[0]?.state).toBe("collected");
+  });
+
+  it("still counts that finding as Velociraptor triage evidence", () => {
+    const plan = buildCollectionPlan(
+      ["endpoint-triage"],
+      [veloEv("THOR Alert [Filescan]: Malware file found — x.exe")],
+      {},
+    );
+    expect(plan.steps[0]?.state).toBe("collected");
+  });
+
+  it("does not treat a THOR-titled event from another source as a THOR scan", () => {
+    const other = { ...ev(["Plaso"]), description: "THOR Warning [Filescan]: copied note" };
+    const plan = buildCollectionPlan(["threat-scan"], [other], {});
+    expect(plan.steps[0]?.state).toBe("outstanding");
+  });
+
+  it("does not treat a Velociraptor row that merely mentions THOR as a THOR scan", () => {
+    const plan = buildCollectionPlan(
+      ["threat-scan"],
+      [veloEv("Velociraptor [Windows.System.Pslist]: thor64.exe running")],
+      {},
+    );
+    expect(plan.steps[0]?.state).toBe("outstanding");
+  });
+});
