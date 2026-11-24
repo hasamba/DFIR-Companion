@@ -44,9 +44,10 @@ describe("AI Agent Forensics panel", () => {
     expect(js).toContain("SENSITIVE");
   });
 
-  it("heads the skipped rules plainly before any run, and shows a refusal as a warning", () => {
-    expect(js).toContain("Rules this check always skips (${total})`");
-    expect(js).toContain("notRunBlock(rules.notRun || [], true)");
+  it("lists rules not run only in a run's report, never in the panel before a run, and shows a refusal as a warning", () => {
+    // The pre-run list was the same every time and read as a failure (user decision, 2026-11-24).
+    expect(js).not.toContain("notRunBlock(rules.notRun");
+    expect(js).toContain("notRunBlock(r.notRun)");
     expect(js).toContain('msg.classList.toggle("aa-warn", !r.ok)');
   });
 
