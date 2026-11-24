@@ -31,7 +31,9 @@ const input = (clientIds: string[], preserve = true) => ({
   description: "AI Agent Forensics (sensitive)",
 });
 
-function mockClient(opts: { refuseSet?: boolean; addFails?: string[]; noHunt?: boolean } = {}) {
+function mockClient(
+  opts: { refuseSet?: boolean; refuseReason?: string; addFails?: string[]; noHunt?: boolean } = {},
+) {
   const programs: string[] = [];
   const client: AiAgentLaunchClient = {
     huntGuiUrlFor: (h) => `https://velo.example/app/index.html#/hunts/${h}`,
@@ -39,7 +41,7 @@ function mockClient(opts: { refuseSet?: boolean; addFails?: string[]; noHunt?: b
       programs.push(p);
       if (p.includes("artifact_set"))
         return opts.refuseSet
-          ? { rows: [], reason: "PermissionDenied" }
+          ? { rows: [], reason: opts.refuseReason ?? "PermissionDenied" }
           : { rows: [{ Set: {} }], reason: "" };
       if (p.includes("hunt("))
         return opts.noHunt
@@ -114,6 +116,14 @@ describe("AI Agent Forensics launch", () => {
     const { client, programs } = mockClient({ refuseSet: true });
     await expect(launchAiAgentRun(client, input(["C.aaa"]))).rejects.toThrow(/ARTIFACT_WRITER/);
     expect(programs.some((p) => p.includes("hunt("))).toBe(false);
+  });
+
+  it("passes on Velociraptor's own reason without blaming a permission it did not name", async () => {
+    const reason = "ERROR:artifact_set: Invalid artifact name.";
+    const { client } = mockClient({ refuseSet: true, refuseReason: reason });
+    const err = await launchAiAgentRun(client, input(["C.aaa"])).catch((e: Error) => e);
+    expect(String(err)).toContain("Invalid artifact name");
+    expect(String(err)).not.toMatch(/ARTIFACT_WRITER/);
   });
 
   it("fails clearly when the server returns no hunt id", async () => {

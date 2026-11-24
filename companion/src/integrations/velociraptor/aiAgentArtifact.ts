@@ -1,11 +1,11 @@
 // AI Agent Forensics (#2690): builds the Companion-owned Velociraptor CLIENT artifact from the live
 // AI-agent rule set, at run time, so a rule update needs no manual Velociraptor change (§4.2).
 //
-//   Custom.DFIRCompanion.AIAgentRules.<digest>.PartN — import-only artifacts, each holding one chunk
+//   Custom.DFIRCompanion.AIAgentRules.D<digest>.PartN — import-only artifacts, each holding one chunk
 //       of the base64 JSON config (rule texts, globs, rule meta). Chunked because the launch runs
 //       `velociraptor query` with the program as ONE argv element, and Windows caps a command line
 //       at 32,767 characters; the rule texts alone are ~50 KB.
-//   Custom.DFIRCompanion.AIAgentForensics.<digest> — imports every part and runs the sources:
+//   Custom.DFIRCompanion.AIAgentForensics.D<digest> — imports every part and runs the sources:
 //       Yara (the selected scopes), Inventory (tools, MCP servers, credential stores), one source per
 //       compiled Sigma rule, and SigmaSysmon (the refused file_event/dns_query rules, §14.4).
 //
@@ -175,6 +175,14 @@ export function aiAgentArtifactDigest(
     .slice(0, 16);
 }
 
+/**
+ * The digest as an artifact-name part. Velociraptor refuses a name part that starts with a digit
+ * ("Name parts can not start with a number"), and a hex digest often does, so it gets a letter first.
+ */
+export function aiAgentNameSegment(digest: string): string {
+  return `D${digest}`;
+}
+
 function addSigma(set: AiAgentRuleSet, cfg: Record<string, unknown>) {
   const compiled = set.sigma.filter((d) => d.mode === "compiled");
   const sigmaKeys: { key: string; block: string }[] = [];
@@ -286,7 +294,7 @@ export function buildAiAgentArtifact(
   const parts: { name: string; yaml: string }[] = [];
   const vars: string[] = [];
   for (let i = 0; i * AI_AGENT_PART_CHARS < b64.length; i++) {
-    const name = `${PART_PREFIX}${digest}.Part${i}`;
+    const name = `${PART_PREFIX}${aiAgentNameSegment(digest)}.Part${i}`;
     const chunk = b64.slice(i * AI_AGENT_PART_CHARS, (i + 1) * AI_AGENT_PART_CHARS);
     vars.push(`aiagent_part_${i}`);
     parts.push({
@@ -300,7 +308,7 @@ export function buildAiAgentArtifact(
   sources.push(["Inventory", inventorySourceVql(pre)]);
   for (const s of sigmaKeys) sources.push([`Sigma${s.key}`, compiledSigmaSourceVql(pre, s.block, s.key)]);
   if (sysmonCount) sources.push(["SigmaSysmon", sysmonSigmaSourceVql(pre)]);
-  const name = `${AI_AGENT_ARTIFACT_PREFIX}${digest}`;
+  const name = `${AI_AGENT_ARTIFACT_PREFIX}${aiAgentNameSegment(digest)}`;
   const artifacts = packArtifacts(name, set.version, parts, sources);
   for (const a of artifacts) guard(a.yaml, a.name);
   for (const p of parts) guard(p.yaml, p.name);

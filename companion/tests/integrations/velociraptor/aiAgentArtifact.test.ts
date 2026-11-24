@@ -10,6 +10,7 @@ import {
   AI_AGENT_VQL_TEMPLATE_VERSION,
   AiAgentArtifactError,
   aiAgentArtifactDigest,
+  aiAgentNameSegment,
   buildAiAgentArtifact,
   credentialRegex,
 } from "../../../src/integrations/velociraptor/aiAgentArtifact.js";
@@ -31,6 +32,23 @@ function decodeConfig(b: ReturnType<typeof buildAiAgentArtifact>): Record<string
   const chunks = b.parts.map((p) => /LET aiagent_part_\d+ = "([A-Za-z0-9+/=]*)"/.exec(p.yaml)![1]);
   return JSON.parse(Buffer.from(chunks.join(""), "base64").toString("utf8")) as Record<string, unknown>;
 }
+
+describe("AI Agent Forensics artifact: names Velociraptor accepts", () => {
+  // Velociraptor refuses a name part that starts with a digit ("Name parts can not start with a
+  // number"), and a hex digest starts with one 10 times in 16.
+  const VALID_PART = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+  it("turns a digest that starts with a digit into a valid name part", () => {
+    expect(aiAgentNameSegment("24210e67d796ca5a")).toMatch(VALID_PART);
+    expect(aiAgentNameSegment("abcdef0123456789")).toMatch(VALID_PART);
+  });
+
+  it("gives every part of every artifact name a letter first", () => {
+    const b = buildAiAgentArtifact(set);
+    for (const n of [b.name, ...b.parts.map((p) => p.name), ...b.artifacts.map((a) => a.name)])
+      for (const part of n.split(".")) expect(part, n).toMatch(VALID_PART);
+  });
+});
 
 describe("AI Agent Forensics artifact: shape", () => {
   const b = buildAiAgentArtifact(set);
