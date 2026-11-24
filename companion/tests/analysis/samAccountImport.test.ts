@@ -99,3 +99,85 @@ describe("mapSamAccount — malformed rows", () => {
     expect(["Info", "Low", "Medium"]).toContain(e.severity);
   });
 });
+
+// The title (text before the first " - ") names the action the event is dated by, and the FILETIME
+// zero (1601-01-01) means "never", not a date.
+describe("mapSamAccount — title names the dated action", () => {
+  const title = (d: string): string => d.split(" - ")[0];
+  const ZERO = "1601-01-01T00:00:00Z";
+
+  it("dates by last login and says so when the password was never set", () => {
+    const e = mapSamAccount(
+      account({
+        ParsedF: {
+          Rid: 1001,
+          PasswordResetDate: ZERO,
+          LastLoginDate: "2026-05-14T11:20:00Z",
+          LoginCount: 4,
+        },
+      }),
+      ARTIFACT,
+      "WS01",
+    );
+    expect(title(e.description)).toContain("Local account: backdoor (RID 1001) — last login");
+    expect(e.description).toContain("password never set");
+    expect(e.description).not.toContain("1601");
+    expect(e.timestamp).toContain("2026-05-14");
+  });
+
+  it("dates by the password change and says so when that is the only date", () => {
+    const e = mapSamAccount(
+      account({ ParsedF: { Rid: 1001, PasswordResetDate: "2026-02-01T08:00:00Z" } }),
+      ARTIFACT,
+      "WS01",
+    );
+    expect(title(e.description)).toContain("— password set");
+    expect(e.timestamp).toContain("2026-02-01");
+  });
+
+  it("says 'record changed' when dated by the account key's last write", () => {
+    const e = mapSamAccount(
+      account({
+        KeyMTime: "2026-04-01T00:00:00Z",
+        ParsedF: { Rid: 1001, PasswordResetDate: "2026-02-01T08:00:00Z" },
+      }),
+      ARTIFACT,
+      "WS01",
+    );
+    expect(title(e.description)).toContain("— account record changed");
+    expect(e.timestamp).toContain("2026-04-01");
+  });
+
+  it("keeps 'created' as the action for a creation", () => {
+    const e = mapSamAccount(account({ CreateTime: "2026-07-02T10:00:00Z" }), ARTIFACT, "WS01");
+    expect(title(e.description)).toContain("Local account created: backdoor (RID 1001)");
+    expect(title(e.description)).not.toContain("—");
+  });
+
+  it("says 'never logged in' for a zero last-login and does not date the event to 1601", () => {
+    const e = mapSamAccount(
+      account({ ParsedF: { Rid: 1001, PasswordResetDate: ZERO, LastLoginDate: ZERO } }),
+      ARTIFACT,
+      "WS01",
+    );
+    expect(e.description).toContain("never logged in");
+    expect(e.description).not.toContain("1601");
+    expect(e.timestamp).toBe("");
+  });
+
+  it("still dates a built-in account by its creation time, and names it", () => {
+    const e = mapSamAccount(
+      {
+        Key: SAM_KEY,
+        ParsedV: { username: "Administrator" },
+        ParsedF: { Rid: 500 },
+        CreateTime: "2020-01-01T00:00:00Z",
+      },
+      ARTIFACT,
+      "WS01",
+    );
+    expect(e.timestamp).toContain("2020-01-01");
+    expect(title(e.description)).toContain("Local account: Administrator (RID 500) — created");
+    expect(e.severity).toBe("Info");
+  });
+});

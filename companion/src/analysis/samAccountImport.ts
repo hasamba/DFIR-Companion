@@ -112,11 +112,33 @@ function flagLabels(row: Row): string[] {
   return out;
 }
 
+// A SAM date column. The SAM stores "never" as FILETIME 0, which Velociraptor renders as
+// 1601-01-01 (and some versions as the Unix epoch). Printed as a date it read as "password set
+// 1601-01-01", and as the event's only date it put the account at the start of the timeline.
+interface SamDate {
+  at: string; // ISO time, "" when absent or never
+  never: boolean; // the column is present and holds the "never" value
+}
+
+const NEVER_DATE = /^(1601-01-01|1970-01-01)T00:00:00(\.0+)?Z?$/;
+
+function samTime(v: unknown): SamDate {
+  const at = vrTime(v);
+  if (at && NEVER_DATE.test(at)) return { at: "", never: true };
+  return { at, never: false };
+}
+
+// The first present time, with the action it records ("" for an action the title already states).
+function datedAction(candidates: ReadonlyArray<readonly [string, string]>): [string, string] {
+  const hit = candidates.find(([at]) => at !== "");
+  return hit ? [hit[0], hit[1]] : ["", ""];
+}
+
 /**
  * Map one SAM account row to a timeline event.
  *
- * Leads with the account, not the hive path: "Local account: dfir (RID 1001) [disabled] - last
- * login 2026-07-02T…". Says "created" ONLY when the row carries a creation timestamp; see the
+ * Leads with the account and the action the event is dated by, not the hive path: "Local account:
+ * dfir (RID 1001) — last login - [disabled] - last login 2026-07-02T…". Says "created" ONLY when the row carries a creation timestamp; see the
  * grading note at the top of this file. Times the event at that creation where one exists, so a
  * backdoor account made during the intrusion lands inside the window rather than at collection time.
  */
@@ -130,8 +152,8 @@ export function mapSamAccount(row: Row, artifact: string, host: string): MappedE
   const fullName = pick(row, ["ParsedV.fullname", "ParsedV.FullName"]);
   const comment = pick(row, ["ParsedV.comment", "ParsedV.Comment"]);
   const flags = flagLabels(row);
-  const lastLogin = vrTime(getPath(row, "ParsedF.LastLoginDate") ?? getCI(row, "LastLogin"));
-  const pwdReset = vrTime(
+  const lastLogin = samTime(getPath(row, "ParsedF.LastLoginDate") ?? getCI(row, "LastLogin"));
+  const pwdReset = samTime(
     getPath(row, "ParsedF.PasswordResetDate") ??
       getPath(row, "ParsedF.PasswordLastSet") ??
       getCI(row, "PasswordLastSet"),
@@ -146,13 +168,26 @@ export function mapSamAccount(row: Row, artifact: string, host: string): MappedE
   const keyWritten = vrTime(getCI(row, "KeyMTime") ?? getCI(row, "Mtime") ?? getPath(row, "Key.Mtime"));
   const isCreation = custom && createdAt !== "";
 
+  // The event's time and the action that time records. The title names that action, so an analyst
+  // reading the timeline sees WHAT happened at this moment, not just which account it concerns.
+  const [timestamp, action] = datedAction([
+    [createdAt, isCreation ? "" : "created"], // a creation title already says "created"
+    [keyWritten, "account record changed"],
+    [pwdReset.at, "password set"],
+    [lastLogin.at, "last login"],
+  ]);
+
   const parts: string[] = [];
   parts.push(`${isCreation ? "Local account created" : "Local account"}: ${user}`);
   if (rid !== null) parts[0] += ` (RID ${rid})`;
+  // " — " not " - ": the dashboard splits the title from the details on the first " - ".
+  if (action) parts[0] += ` — ${action}`;
   if (fullName && fullName.toLowerCase() !== user.toLowerCase()) parts.push(`"${fullName}"`);
   if (flags.length) parts.push(`[${flags.join(", ")}]`);
-  if (pwdReset) parts.push(`password set ${pwdReset}`);
-  if (lastLogin) parts.push(`last login ${lastLogin}`);
+  if (pwdReset.at) parts.push(`password set ${pwdReset.at}`);
+  else if (pwdReset.never) parts.push("password never set");
+  if (lastLogin.at) parts.push(`last login ${lastLogin.at}`);
+  else if (lastLogin.never) parts.push("never logged in");
   if (logins && logins !== "0") parts.push(`${logins} logins`);
   if (comment) parts.push(`- ${comment}`);
 
@@ -160,7 +195,7 @@ export function mapSamAccount(row: Row, artifact: string, host: string): MappedE
   description = withHostSuffix(description, host).slice(0, 600);
 
   return {
-    timestamp: createdAt || keyWritten || pwdReset || lastLogin,
+    timestamp,
     description,
     // Every rendered fact is in the key EXCEPT the timestamps, so re-collecting the same host does
     // not emit a second event per account while two different accounts stay apart.
