@@ -102,6 +102,7 @@ export interface TextApi {
   /** `String(s)` first, so anything goes in. */
   truncate(s: unknown, n: number): string;
   splitEventTitle(desc: string): { title: string; rest: string };
+  stripHostSuffix(desc: string, host: string): string;
   huntRefang(s: unknown): string;
   /** Display split for AI prose. `String(text)` first, so anything goes in. */
   proseParagraphs(text: unknown, targetChars?: number): string[];

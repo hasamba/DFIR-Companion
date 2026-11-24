@@ -377,7 +377,7 @@ function classify(row: Row, artifact: string): Kind {
   // DetectRaptor HijackLibsMFT / Webhistory rows have no rule Name, so rowVerdict skips them: own mappers.
   if (isObject(getCI(row, "HijackLibInfo"))) return "hijacklib";
   if (isWebhistoryRow(row)) return "webhistory";
-  if (isApplicationsRow(row)) return "applications"; // DetectRaptor Applications: Category verdict, no rule Name
+  if (isApplicationsRow(row, a)) return "applications"; // DetectRaptor Applications: Category verdict, no rule Name
 
   const rule = getCI(row, "Rule");
   if (

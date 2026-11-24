@@ -278,10 +278,11 @@ describe("every moved function still resolves at its call sites", () => {
   // superRepeatGroups and superGroupedHtml, the super-timeline's Group repeats view (#2391); 143
   // with iocEmptyStateText, the IOC panel's empty-state sentence (#2468); 146 with
   // highSeverityEventIds, iocLinkedToHighEvent and iocPinnedSignal, "Signal only" keeping an IOC extracted from a
-  // High/Critical event (#2543).
+  // High/Critical event (#2543); 146 with stripHostSuffix, the "@ HOST" removal both timelines share,
+  // which also drops the " - " that only introduced the host.
   // The number is a vacuity guard, not a budget.
-  it("moved 145 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(145);
+  it("moved 146 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(146);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {
