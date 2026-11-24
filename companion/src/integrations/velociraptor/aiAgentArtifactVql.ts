@@ -75,8 +75,9 @@ export function yaraSourceVql(preamble: string, keys: string[]): string {
 }
 
 /**
- * The first of the expressions that is set (not null, empty or false), else the last one. VQL has no
- * `||` operator — Velociraptor refuses the artifact at upload — so this nests `if()` calls instead.
+ * The first of the expressions that is set (not null, empty or false), else the last one, as nested
+ * `if()` calls. Velociraptor's parser refuses `x || []` (v0.75: unexpected token "||"), which refused
+ * the whole artifact at upload; `if()` parses in every form, so the sources use it and never `||`.
  */
 export function vqlFirst(...exprs: string[]): string {
   const last = exprs[exprs.length - 1];
