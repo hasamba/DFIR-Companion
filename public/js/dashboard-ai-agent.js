@@ -106,7 +106,7 @@
   function notRunBlock(groups, beforeRun) {
     const details = el("details", null, "aa-notrun");
     const total = groups.reduce((n, g) => n + g.rules.length, 0);
-    details.appendChild(el("summary", beforeRun ? `Rules this check always skips (${total}) — not an error` : `Rules not run (${total}), and why`));
+    details.appendChild(el("summary", beforeRun ? `Rules this check always skips (${total})` : `Rules not run (${total}), and why`));
     if (beforeRun)
       details.appendChild(
         el("p", "The rule pack also has rules for data an endpoint check cannot read, such as cloud logs or LLM application logs. They are listed here by reason; the rest of the pack runs normally.", "aa-note"),
