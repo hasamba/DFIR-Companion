@@ -100,6 +100,7 @@ import { rdpLateralSignal } from "./rdpLateralDetect.js";
 import { mapHijackLib } from "./hijackLibImport.js";
 import { isWebhistoryRow, mapWebhistory } from "./webhistoryDetection.js";
 import { isApplicationsRow, mapApplications } from "./applicationsDetection.js";
+import { isVeloMalfindRow, mapVeloMalfind } from "./veloMalfind.js";
 import { eventField } from "./veloEventField.js";
 import { decodeHitContext } from "./yaraHitContext.js";
 import { amcacheMasquerade } from "./amcacheMasquerade.js";
@@ -346,6 +347,7 @@ type Kind =
   | "hijacklib"
   | "webhistory"
   | "applications"
+  | "malfind"
   | "generic";
 
 function artifactName(row: Row): string {
@@ -378,6 +380,7 @@ function classify(row: Row, artifact: string): Kind {
   // DetectRaptor HijackLibsMFT / Webhistory rows have no rule Name, so rowVerdict skips them: own mappers.
   if (isObject(getCI(row, "HijackLibInfo"))) return "hijacklib";
   if (isWebhistoryRow(row)) return "webhistory";
+  if (isVeloMalfindRow(row, a)) return "malfind"; // Windows.Detection.Malfind region rows
   if (isApplicationsRow(row, a)) return "applications"; // DetectRaptor Applications: Category verdict, no rule Name
 
   const rule = getCI(row, "Rule");
@@ -1459,8 +1462,12 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       ms = mapMft(row, artifact, host);
     } else if (kind === "hijacklib" || kind === "webhistory") {
       ms = [(kind === "webhistory" ? mapWebhistory : mapHijackLib)(row, artifact, host, rowSink)];
-    } else if (kind === "applications") {
-      ms = [mapApplications(row, artifact, host)];
+    } else if (kind === "applications" || kind === "malfind") {
+      ms = [
+        kind === "malfind"
+          ? mapVeloMalfind(row, artifact, host, rowSink)
+          : mapApplications(row, artifact, host),
+      ];
     } else if (kind === "browser") {
       ms = [mapBrowserHistory(row, artifact, host, rowSink)];
     } else if (kind === "prefetch") {
