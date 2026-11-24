@@ -291,7 +291,7 @@
       // Affected host as a leading chip (like the forensic timeline), with the redundant trailing
       // "@ <host>" many importers append stripped off the description.
       let desc = String(e.description || "");
-      if (e.asset) desc = desc.replace(new RegExp("\\s*@\\s*" + e.asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i"), "");
+      if (e.asset) desc = stripHostSuffix(desc, e.asset);
       // The origin is already its own column (below) — several importers also repeat it inside the
       // description, showing it twice per row. Three known shapes: a leading "<origin>: " / "<origin> "
       // prefix (Volatility/Rekall, Falcon Sandbox…); "<origin>/<subcategory>: …" (Chainsaw's own

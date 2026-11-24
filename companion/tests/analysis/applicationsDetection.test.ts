@@ -72,3 +72,25 @@ describe("Velociraptor import of an Applications file", () => {
     for (const e of events) expect(e.severity).toBe("Medium");
   });
 });
+
+// A collection that dropped the Regex column (a narrowed export, a notebook copy) still names the
+// artifact; the row is still an Applications hit and must not fall to the generic "RMM" title.
+describe("Applications rows without a Regex column", () => {
+  it("claims the row when the artifact names it", () => {
+    const row = { Category: "RMM", KeyName: "AppX", DisplayName: "AppX" };
+    expect(isApplicationsRow(row)).toBe(false);
+    expect(isApplicationsRow(row, ARTIFACT)).toBe(true);
+    expect(isApplicationsRow(row, "Windows.Sys.Programs")).toBe(false);
+  });
+
+  it("titles the row with the application through the importer", () => {
+    const rows = [{ Category: "RMM", DisplayName: "AppX", _Source: ARTIFACT, Fqdn: "HOST01" }];
+    const { events } = parseVelociraptorJson(JSON.stringify(rows));
+    expect(events[0]?.description).toContain(`[${ARTIFACT}]: RMM — AppX`);
+  });
+
+  it("reads the application from a Name column", () => {
+    const e = mapApplications({ Category: "VPN", Name: "VpnY" }, ARTIFACT, "HOST01");
+    expect(e.description).toContain("VPN — VpnY");
+  });
+});

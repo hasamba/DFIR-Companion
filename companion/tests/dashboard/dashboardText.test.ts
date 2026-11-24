@@ -320,3 +320,26 @@ describe("buildClientPrevalence", () => {
     expect(entry?.hosts.size).toBe(0);
   });
 });
+
+// The host chip already names the host, so the "@ HOST" an importer appends is removed from the
+// title. An event whose only detail was the host was written "TITLE - @ HOST"; removing just the
+// "@ HOST" left a dangling "TITLE -" in the title.
+describe("stripHostSuffix", () => {
+  it("removes the trailing host", () => {
+    expect(t.stripHostSuffix("Login - user x @ HOST01", "HOST01")).toBe("Login - user x");
+  });
+
+  it("removes the ' - ' that only introduced the host", () => {
+    expect(t.stripHostSuffix("VPN - @ HOST01", "HOST01")).toBe("VPN");
+  });
+
+  it("matches the host case-insensitively and escapes regex characters in it", () => {
+    expect(t.stripHostSuffix("x - @ host.a+b", "HOST.A+B")).toBe("x");
+    expect(t.stripHostSuffix("x - @ hostXaab", "host.a+b")).toBe("x - @ hostXaab");
+  });
+
+  it("leaves the description alone with no host or no suffix", () => {
+    expect(t.stripHostSuffix("VPN - @ HOST01", "")).toBe("VPN - @ HOST01");
+    expect(t.stripHostSuffix("A - B", "HOST01")).toBe("A - B");
+  });
+});

@@ -41,6 +41,15 @@ function splitEventTitle(desc) {
   return i < 0 ? { title: desc, rest: "" } : { title: desc.slice(0, i), rest: desc.slice(i + 3) };
 }
 
+// Drop the "@ HOST" an importer appends when the row already shows a host chip. An event whose only
+// detail was its host reads "TITLE - @ HOST" (velociraptorTitle.ts withHostSuffix), so the " - " that
+// introduced the host goes too — removing only "@ HOST" left a dangling "TITLE -" as the title.
+function stripHostSuffix(desc, host) {
+  if (!host) return desc;
+  const h = String(host).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return desc.replace(new RegExp("(?:\\s+-)?\\s*@\\s*" + h + "\\s*$", "i"), "");
+}
+
 // Indicator harvesting for EVENT hunts. Events often carry indicators only in free text — a
 // Suricata/Zeek alert puts the domain + IPs in its description, not in structured fields — so a
 // hunt built purely from structured fields wrongly shows "nothing to pivot on". Refang the text,
@@ -193,6 +202,7 @@ window.DfirText = {
   linesToArray,
   truncate,
   splitEventTitle,
+  stripHostSuffix,
   huntRefang,
   proseParagraphs,
   proseSentences,

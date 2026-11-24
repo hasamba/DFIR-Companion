@@ -5897,7 +5897,7 @@
         // The host chip already shows the asset, so drop the redundant trailing "@ <host>"
         // many importers append to the description — but only when that chip is actually rendered.
         if (showHost && e.asset) {
-          desc = desc.replace(new RegExp("\\s*@\\s*" + e.asset.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i"), "");
+          desc = stripHostSuffix(desc, e.asset);
         }
         const host = e.asset ? ` <span class="ev-host" title="Affected host / asset">${ICON_HOST} ${esc(e.asset)}</span>` : "";
         // Velociraptor deep-link back to the originating hunt/flow — mirrors the super-timeline (#7).

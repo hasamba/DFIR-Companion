@@ -24,20 +24,33 @@ function field(row: Row, key: string): string {
   return oneLine(str(getCI(row, key)).trim());
 }
 
-/** The DetectRaptor Applications shape: a Category verdict and its Regex, plus a named program. */
-export function isApplicationsRow(row: Row): boolean {
-  return (
-    field(row, "Category") !== "" &&
-    getCI(row, "Regex") != null &&
-    (field(row, "DisplayName") !== "" || field(row, "KeyName") !== "")
-  );
+const NAME_KEYS = ["DisplayName", "KeyName", "Name"] as const;
+const APPLICATIONS_ARTIFACT = /detection\.applications/i;
+
+function nameOf(row: Row): string {
+  for (const k of NAME_KEYS) {
+    const v = field(row, k);
+    if (v) return v;
+  }
+  return "";
+}
+
+/**
+ * The DetectRaptor Applications shape: a Category verdict plus a named program, and either the Regex
+ * that matched or an artifact name that says so. An export that dropped the Regex column (a narrowed
+ * hunt download, a notebook copy) still came from this artifact, and without the artifact check it
+ * fell to the generic mapper, titled by the category alone.
+ */
+export function isApplicationsRow(row: Row, artifact = ""): boolean {
+  if (field(row, "Category") === "" || nameOf(row) === "") return false;
+  return getCI(row, "Regex") != null || APPLICATIONS_ARTIFACT.test(artifact);
 }
 
 // "RMM — TeamViewer 15.40.8": the category and the application lead; titleSafe keeps a " - " inside
 // either from being read as the title/details boundary.
 function titleOf(row: Row): { category: string; name: string; text: string } {
   const category = field(row, "Category");
-  const name = field(row, "DisplayName") || field(row, "KeyName");
+  const name = nameOf(row);
   const version = field(row, "DisplayVersion");
   const text = `${titleSafe(category)} — ${titleSafe(name)}${version ? ` ${titleSafe(version)}` : ""}`;
   return { category, name, text };
