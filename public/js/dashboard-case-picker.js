@@ -87,7 +87,10 @@
         }
         byId = nextById;
         byText = nextByText;
-        syncCasePicker();
+        // Never rewrite the box while the analyst is in it: focus empties it (and so does the x) and
+        // starts this reload, and writing the name back would undo that a moment later. Blur
+        // restores the name when nothing was picked.
+        if (document.activeElement !== document.getElementById("casePicker")) syncCasePicker();
         // The "Demo case" button is an onboarding affordance — show it only on an empty instance.
         const demoBtn = document.getElementById("seedDemoBtn");
         if (demoBtn) demoBtn.style.display = cases.length === 0 ? "" : "none";
