@@ -49,16 +49,15 @@ function harness(cases: Array<Record<string, unknown>>) {
   const caseId = fakeInput("caseId");
   const archived = fakeInput("showArchivedToggle");
   const clearBtn = fakeInput("casePickerClear");
-  // A real focus() fires `focus` only when the box was not already focused.
+  // A real focus() fires `focus` only when the box was not already focused; activeElement follows.
   let focused = false;
+  picker.addEventListener("focus", () => void (focused = true));
+  picker.addEventListener("blur", () => void (focused = false));
   Object.assign(picker, {
     focus: () => {
-      if (focused) return;
-      focused = true;
-      picker.fire("focus");
+      if (!focused) picker.fire("focus");
     },
   });
-  picker.addEventListener("blur", () => void (focused = false));
   const options: FakeOption[] = [];
   const datalist = {
     id: "caseList",
@@ -79,6 +78,9 @@ function harness(cases: Array<Record<string, unknown>>) {
   let connected = 0;
   const mod = loadDashboardModule<CasePickerApi>("dashboard-case-picker.js", [], {
     document: {
+      get activeElement() {
+        return focused ? picker : null;
+      },
       getElementById: (id: string) => els.get(id) ?? null,
       createElement: () => ({ value: "" }) as FakeOption,
     },
@@ -94,6 +96,9 @@ function harness(cases: Array<Record<string, unknown>>) {
   mod.initCasePicker();
   return { mod, picker, caseId, archived, clearBtn, options, demoBtn, connected: () => connected };
 }
+
+/** Let the fetch a focus starts finish. */
+const settle = () => new Promise<void>((r) => setTimeout(r, 0));
 
 const CASES = [
   { caseId: "INC-2026-001", name: "Acme ransomware", status: "active" },
@@ -301,6 +306,7 @@ describe("dashboard-case-picker.js", () => {
     h.caseId.value = "INC-2026-001";
     h.mod.syncCasePicker();
     h.picker.fire("focus");
+    await settle(); // the list reload focus starts leaves the box empty
     expect(h.picker.value).toBe("");
     expect(h.caseId.value).toBe("INC-2026-001");
     h.picker.fire("blur");
@@ -319,6 +325,7 @@ describe("dashboard-case-picker.js", () => {
     expect(prevented).toBe(true);
     // Box not focused yet: the click focuses it, so blur without a pick still restores the name.
     h.clearBtn.fire("click");
+    await settle(); // focus reloads the list; the reload must not write the name back
     expect(h.picker.value).toBe("");
     expect(h.mod.pickedCaseId()).toBe("INC-2026-001");
     h.picker.fire("blur");
