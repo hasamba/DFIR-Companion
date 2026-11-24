@@ -305,7 +305,12 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       case "chainsaw":
         return observe(pipeline.importChainsaw(caseId, text, { ...base, chainsaw: declaredHost(base) }));
       case "hayabusa":
-        return observe(pipeline.importHayabusa(caseId, text, { ...base, hayabusa: declaredHost(base) }));
+        return observe(
+          pipeline.importHayabusa(caseId, text, {
+            ...base,
+            hayabusa: { ...declaredHost(base), ...(base.fromVelociraptor ? { fromVelociraptor: true } : {}) },
+          }),
+        );
       case "velociraptor":
         return observe(
           pipeline.importVelociraptor(caseId, text, {

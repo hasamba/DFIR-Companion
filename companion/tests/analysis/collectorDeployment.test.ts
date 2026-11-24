@@ -504,6 +504,18 @@ describe("isMsiexecCreationTimeChange — Sysmon EID 2 written by the system msi
     expect(isMsiexecCreationTimeChange(row)).toBe(true);
   });
 
+  it("reads a Velociraptor-run Hayabusa row's fields the same way", () => {
+    const row = hayabusa({
+      eid: "2",
+      channel: "Microsoft-Windows-Sysmon/Operational",
+      title: "File Creation Time Changed",
+      details: "Proc: C:\\Windows\\SysWOW64\\msiexec.exe ¦ TgtFile: C:\\x.exe",
+    });
+    expect(isMsiexecCreationTimeChange({ ...row, description: `Velociraptor ${row.description}` })).toBe(
+      true,
+    );
+  });
+
   it("does NOT match a timestomp from another process, or an msiexec outside System32, or another EID", () => {
     expect(
       isMsiexecCreationTimeChange(

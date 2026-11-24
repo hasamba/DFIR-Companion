@@ -590,6 +590,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             minSeverity,
             superEvictions: capDropped, // an uploaded report that is itself a large export (#2831)
             debug: upDebug,
+            fromVelociraptor: true,
           });
           logSiemFallback(caseId, up.name, upKind, upDebug); // a guessed JSON kind outlives the status (#1824)
           importedAny = true;

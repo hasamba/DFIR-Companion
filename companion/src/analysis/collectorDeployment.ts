@@ -126,7 +126,7 @@ const LOCAL_HOST_NAMES = new Set(["localhost", "localhost.", "::1", "::", "0.0.0
 const LOOPBACK_V4 = /^(?:::ffff:)?127\.\d{1,3}\.\d{1,3}\.\d{1,3}$|^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/i;
 // Hayabusa's key for each Windows-mapper key this file reads (hayabusaImport.ts renders the detail
 // fields under Hayabusa's own aliases). A key with no entry is looked up under its own name.
-const HAYABUSA_PREFIX = /^Hayabusa: /;
+const HAYABUSA_PREFIX = /^(?:Velociraptor )?Hayabusa: /;
 const HAYABUSA_KEY: Readonly<Record<string, readonly string[]>> = {
   Image: ["Proc"],
   NewProcessName: ["Proc"],

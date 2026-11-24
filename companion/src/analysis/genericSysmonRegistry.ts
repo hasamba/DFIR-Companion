@@ -40,7 +40,7 @@ import type { ForensicEvent } from "./stateTypes.js";
 
 /** The generic rule titles, anchored at the start of the description each importer writes. */
 const GENERIC_TITLE =
-  /^(?:Hayabusa: |Velociraptor(?: \[[^\]]*\])? Sigma: )Reg Key (?:Value Set|Create\/Delete) \(Sysmon Alert\)/;
+  /^(?:(?:Velociraptor )?Hayabusa: |Velociraptor(?: \[[^\]]*\])? Sigma: )Reg Key (?:Value Set|Create\/Delete) \(Sysmon Alert\)/;
 
 /** Severities this pass may lower. */
 const LOWERABLE = new Set(["Low", "Medium"]);
