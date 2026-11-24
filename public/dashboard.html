@@ -556,7 +556,10 @@
     <strong>DFIR Companion</strong>
     <!-- The analyst sees and types the case NAME; #caseId (hidden) keeps holding the id every
          module reads. js/dashboard-case-picker.js keeps the two in step (#1523). -->
-    <input id="casePicker" placeholder="Case name" aria-label="Case" list="caseList" autocomplete="off" />
+    <span class="case-picker-wrap">
+      <input id="casePicker" placeholder="Case name" aria-label="Case" list="caseList" autocomplete="off" />
+      <button id="casePickerClear" type="button" aria-label="Clear case name" data-tip="Clear the box"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </span>
     <input id="caseId" type="hidden" />
     <datalist id="caseList"></datalist>
     <!-- The open case's server set (js/dashboard-case-servers.js): an icon-only button whose tooltip
