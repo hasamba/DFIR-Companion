@@ -78,6 +78,9 @@ export type ImportBase = {
   coverageGroup?: string;
   // A drop-folder batch's hooks (#2540) — read only by the streamed cloud import.
   cloudBatch?: CloudBatchHooks;
+  // The file is a report a Velociraptor artifact uploaded — read only by the Hayabusa importer, which
+  // then titles its rows "Velociraptor Hayabusa:".
+  fromVelociraptor?: boolean;
 };
 
 /**

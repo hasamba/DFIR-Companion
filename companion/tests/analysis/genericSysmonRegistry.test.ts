@@ -54,6 +54,13 @@ function veloRow(p: Partial<ForensicEvent> & { key?: string; title?: string } = 
 }
 
 describe("genericSysmonRegistryNote — the rows it lowers", () => {
+  it("lowers a Velociraptor-run Hayabusa row the same as a standalone one", () => {
+    const row = hayabusaRow();
+    const velo = { ...row, description: `Velociraptor ${row.description}` };
+    expect(genericSysmonRegistryNote(velo)).toContain("generic Sysmon alert");
+    expect(readRegistryKey(velo)).toBe(ORDINARY_KEY);
+  });
+
   it("lowers a Hayabusa row on an ordinary key", () => {
     expect(genericSysmonRegistryNote(hayabusaRow())).toContain("generic Sysmon alert");
   });

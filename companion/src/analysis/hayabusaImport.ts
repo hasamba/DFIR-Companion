@@ -68,6 +68,7 @@ import {
   type ImportDebugRecorder,
 } from "./rowDecisionDebug.js";
 import { createSliceClock, yieldToEventLoop } from "./yieldToEventLoop.js";
+import { titleSafe } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
 
@@ -95,6 +96,9 @@ export interface HayabusaImportOptions {
   hostFallback?: string;
   hostFallbackBasis?: "collector" | "analyst";
   debug?: ImportDebugRecorder; // this attempt's decision recorder (#1736)
+  // Velociraptor ran Hayabusa (Windows.Hayabusa.Rules), not the analyst: titles read "Velociraptor
+  // Hayabusa:" so the timeline shows which tool produced the row. The source label stays "Hayabusa".
+  fromVelociraptor?: boolean;
 }
 
 export interface HayabusaParseResult {
@@ -228,6 +232,7 @@ function mapRecord(
   aliases?: HostRenameMap,
   renames?: HostRenameLedger,
   fallback: { host: string; basis: "collector" | "analyst" } = { host: "", basis: "collector" },
+  origin = "Hayabusa",
 ): { mapped: MappedEvent; host: string; rh: RowHost } | null {
   const ruleTitle = firstStr(rec, ["RuleTitle", "Rule Title", "RuleName", "Title"]);
   const channel = firstStr(rec, ["Channel"]);
@@ -286,7 +291,9 @@ function mapRecord(
     .slice(0, 6)
     .map(([k, v]) => `${k}=${oneLine(v).slice(0, 120)}`)
     .join(" ");
-  let description = `Hayabusa: ${ruleTitle || `Event ${eid}`}`;
+  // titleSafe: a Sigma title such as "PUA - <tool> Execution" would otherwise be cut at its " - ",
+  // the dashboard's title/details boundary, leaving just "PUA" as the title.
+  let description = `${origin}: ${ruleTitle ? titleSafe(ruleTitle) : `Event ${eid}`}`;
   if (eid || channel) description += ` (EID ${eid || "?"}${channel ? ` ${channel}` : ""})`;
   if (subject) description += ` — ${subject}`;
   if (host) description += ` @ ${host}`;
@@ -510,9 +517,20 @@ function startParse(text: string, opts: HayabusaImportOptions): ParseRun | null 
   };
 }
 
+// A row Velociraptor wrote: it stamps `_Source` (the artifact) and the client/flow on every row. A
+// Velociraptor export dropped in by hand is the same result a hunt pull reads, and must title alike.
+function isVelociraptorRow(rec: Row): boolean {
+  return (
+    typeof getCI(rec, "_Source") === "string" ||
+    getCI(rec, "ClientId") != null ||
+    getCI(rec, "FlowId") != null
+  );
+}
+
 function mapOne(run: ParseRun, { rec, details, fullMessage }: HayabusaRecord): void {
   const { iocSink, aliases, renames, fallback, tally, hostTally } = run;
-  const r = mapRecord(rec, details, iocSink, fullMessage, aliases, renames, fallback);
+  const origin = run.opts.fromVelociraptor || isVelociraptorRow(rec) ? "Velociraptor Hayabusa" : "Hayabusa";
+  const r = mapRecord(rec, details, iocSink, fullMessage, aliases, renames, fallback, origin);
   if (!r) {
     tally?.skipped.add("no_rule_or_event_id");
     return;

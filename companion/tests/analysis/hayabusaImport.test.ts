@@ -634,3 +634,35 @@ describe("parseHayabusaTimeline — malformed timestamp (#2063)", () => {
     expect(parseHayabusaTimeline(text).events[0].timestamp).toBe("2026-05-01T08:00:00.123Z");
   });
 });
+
+// A Hayabusa result that came through Velociraptor (Windows.Hayabusa.Rules) says so in its title.
+// The source label stays "Hayabusa": it is what the Collection Plan and corroboration count.
+describe("Hayabusa title origin and rule names with ' - '", () => {
+  const rec = (title: string): string => JSON.stringify([{ ...jsonProc(), RuleTitle: title }]);
+
+  it("titles a standalone Hayabusa run 'Hayabusa:'", () => {
+    const e = parseHayabusaTimeline(rec("PowerShell Download Cradle")).events[0];
+    expect(e?.description.startsWith("Hayabusa: PowerShell Download Cradle")).toBe(true);
+  });
+
+  it("titles a Velociraptor-run result 'Velociraptor Hayabusa:' and keeps the Hayabusa source", () => {
+    const e = parseHayabusaTimeline(rec("PowerShell Download Cradle"), { fromVelociraptor: true }).events[0];
+    expect(e?.description.startsWith("Velociraptor Hayabusa: PowerShell Download Cradle")).toBe(true);
+    expect(e?.sources).toEqual(["Hayabusa"]);
+  });
+
+  it("keeps a ' - ' in the rule title from cutting the title short", () => {
+    const e = parseHayabusaTimeline(rec("PUA - Example Tool Execution")).events[0];
+    const desc = e?.description ?? "";
+    expect(desc.startsWith("Hayabusa: PUA — Example Tool Execution (EID 1 Sysmon)")).toBe(true);
+    expect(desc.slice(0, desc.indexOf("(EID"))).not.toContain(" - ");
+  });
+});
+
+describe("Hayabusa rows Velociraptor wrote, dropped in by hand", () => {
+  it("titles a row carrying Velociraptor's _Source 'Velociraptor Hayabusa:' without the flag", () => {
+    const text = JSON.stringify([{ ...jsonProc(), _Source: "Windows.Hayabusa.Rules" }]);
+    const e = parseHayabusaTimeline(text).events[0];
+    expect(e?.description.startsWith("Velociraptor Hayabusa: ")).toBe(true);
+  });
+});

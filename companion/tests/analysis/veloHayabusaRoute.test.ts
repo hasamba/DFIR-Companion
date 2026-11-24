@@ -73,6 +73,8 @@ describe("pipeline.importVelociraptorArtifact (#1756)", () => {
     const events = (await stateStore.load("c1")).forensicTimeline;
     expect(events).toHaveLength(3);
     expect(events.every((e) => e.sources?.includes("Hayabusa"))).toBe(true);
+    // Run by Velociraptor, not by the analyst's own Hayabusa — the title says which.
+    expect(events.every((e) => e.description.startsWith("Velociraptor Hayabusa: "))).toBe(true);
     expect(debug.summary().kind).toBe("hayabusa");
   });
 

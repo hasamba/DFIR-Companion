@@ -142,7 +142,7 @@ export async function importVelociraptorArtifact(
     label: opts.label,
     idPrefix: opts.idPrefix,
     importedAt: opts.importedAt,
-    hayabusa: hayabusaOptionsFrom(opts.velociraptor),
+    hayabusa: { ...hayabusaOptionsFrom(opts.velociraptor), fromVelociraptor: true }, // pulled from Velociraptor
     minSeverity: opts.minSeverity,
     veloUrl: opts.veloUrl,
     partlyReadArtifact: opts.velociraptor?.partlyReadArtifact,

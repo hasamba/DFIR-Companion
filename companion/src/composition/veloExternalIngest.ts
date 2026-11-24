@@ -424,6 +424,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
             minSeverity: opts.minSeverity,
             superEvictions: capDropped,
             debug,
+            fromVelociraptor: true,
           });
           imported.push(up.name);
           importedKinds.push({ file: up.name, kind, debug }); // only a file that actually imported
