@@ -100,6 +100,7 @@ import { rdpLateralSignal } from "./rdpLateralDetect.js";
 import { mapHijackLib } from "./hijackLibImport.js";
 import { isWebhistoryRow, mapWebhistory } from "./webhistoryDetection.js";
 import { isApplicationsRow, mapApplications } from "./applicationsDetection.js";
+import { eventField } from "./veloEventField.js";
 import { decodeHitContext } from "./yaraHitContext.js";
 import { amcacheMasquerade } from "./amcacheMasquerade.js";
 import { MAX_TIME_MS, MIN_TIME_MS, pickTime, usDateTime, vrTime } from "./veloRowTime.js";
@@ -671,7 +672,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   let evidenceKey = "";
   let evidence = "";
   for (const k of EVIDENCE_FIELD_KEYS) {
-    const v = str(getCI(row, k)).trim();
+    const v = eventField(row, [k]); // top level, or a flattened/nested EventData.<k>
     if (v) {
       evidenceKey = k;
       evidence = v;
@@ -686,8 +687,9 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     }
   }
   const procRaw =
-    firstStr(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]) || parsedNewProcess(message);
-  const parentRaw = firstStr(row, ["ParentName", "ParentImage", "ParentProcessName"]);
+    eventField(row, ["Exe", "Image", "ProcessName", "ProcName", "NewProcessName"]) ||
+    parsedNewProcess(message);
+  const parentRaw = eventField(row, ["ParentName", "ParentImage", "ParentProcessName"]);
   const processName = procRaw ? baseName(procRaw) : undefined;
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   const pipe = firstStr(row, ["PipeName"]);
@@ -715,9 +717,9 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
       } else {
         parts.push(oneLine(message));
       }
-    } else if (!processName && !pipe && evidence) {
-      // Content-centric detection (ISEAutoSave / PSReadline): path found but the evidence IS the
-      // main signal — include it labeled so the analyst sees what the rule matched.
+    } else if ((!processName && !pipe && evidence) || (processName && evidenceKey === "CommandLine")) {
+      // Content-centric detection (ISEAutoSave / PSReadline), or a process hit's command line: the
+      // evidence IS the signal — include it labeled so the analyst sees what the rule matched.
       parts.push(`${evidenceKey}: ${oneLine(evidence)}`);
     }
     titleTag = processName || pipe || (path && !isUnforgeableContentPath(path) ? baseName(path) : "");
