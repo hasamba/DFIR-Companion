@@ -141,6 +141,20 @@ export interface CollectionPlan {
   total: number; // excludes external and n/a steps — they are not collectable here
 }
 
+// THOR run through Velociraptor (Generic.Scanner.ThorZIP) keeps the "Velociraptor" source label, so
+// the threat-scan step never saw it. thorRowMap.ts titles every such finding "THOR <level> [<module>]:",
+// which is the only trace of the scanner left on the event. Read here and NOT added to `sources`:
+// other features count distinct sources per event, and one finding must not look corroborated twice.
+const VELO_THOR_TITLE = /^THOR (Alert|Warning|Notice|Info) \[/;
+
+function evidenceLabels(e: ForensicEvent): readonly string[] {
+  const sources = e.sources ?? [];
+  if (sources.includes("Velociraptor") && VELO_THOR_TITLE.test(e.description)) {
+    return [...sources, "THOR"];
+  }
+  return sources;
+}
+
 // Build the plan for one case. `stepIds` is the incident type's declared order; unknown ids are
 // dropped rather than rendered as blank rows (a typo in a custom type's JSON must not reach the UI).
 export function buildCollectionPlan(
@@ -150,7 +164,7 @@ export function buildCollectionPlan(
 ): CollectionPlan {
   // One pass over the timeline; every other panel already holds it in memory.
   const present = new Set<string>();
-  for (const e of events) for (const s of e.sources ?? []) present.add(s);
+  for (const e of events) for (const s of evidenceLabels(e)) present.add(s);
 
   const steps: CollectionStep[] = [];
   for (const id of stepIds) {
