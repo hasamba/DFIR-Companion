@@ -102,15 +102,10 @@
     return wrap;
   }
 
-  // beforeRun: the panel's rule-pack list, shown before anything ran — it must not read as a failure.
-  function notRunBlock(groups, beforeRun) {
+  function notRunBlock(groups) {
     const details = el("details", null, "aa-notrun");
     const total = groups.reduce((n, g) => n + g.rules.length, 0);
-    details.appendChild(el("summary", beforeRun ? `Rules this check always skips (${total}) — not an error` : `Rules not run (${total}), and why`));
-    if (beforeRun)
-      details.appendChild(
-        el("p", "The rule pack also has rules for data an endpoint check cannot read, such as cloud logs or LLM application logs. They are listed here by reason; the rest of the pack runs normally.", "aa-note"),
-      );
+    details.appendChild(el("summary", `Rules not run (${total}), and why`));
     for (const g of groups) {
       const p = el("p", `${g.reason} (${g.rules.length}): `);
       p.appendChild(el("span", g.rules.join(", "), "aa-muted"));
@@ -392,7 +387,6 @@
     }
     const again = () => renderPanel(box, caseId);
     const parts = [rulesBlock(), await runForm(caseId, again)];
-    if (rules) parts.push(notRunBlock(rules.notRun || [], true));
     if (caseId) {
       const r = await call(runsUrl(caseId));
       for (const run of (r.ok && r.body.runs) || []) parts.push(runCard(caseId, run, false, again));

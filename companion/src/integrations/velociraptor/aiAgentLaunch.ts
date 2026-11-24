@@ -68,13 +68,20 @@ export function huntProgram(input: AiAgentLaunchInput, artifacts: string[]): str
   );
 }
 
+const PERMISSION_REFUSAL_RE = /permission|denied|not allowed|ARTIFACT_WRITER/i;
+
 async function setArtifact(client: AiAgentLaunchClient, name: string, yaml: string): Promise<void> {
   const { rows, reason } = await client.runProgram(setProgram(yaml));
   const ok = rows.length > 0 && (rows[0] as { Set?: unknown }).Set != null;
-  if (!ok)
+  if (!ok) {
+    // The permission hint only when Velociraptor gave no reason or a permission one: on any other
+    // refusal (a bad name, bad YAML) it sends the analyst after the wrong fix.
+    const permission = !reason.trim() || PERMISSION_REFUSAL_RE.test(reason);
     throw new AiAgentLaunchError(
-      `Velociraptor refused artifact ${name}${reason ? `: ${reason}` : ""} (the API user needs ARTIFACT_WRITER)`,
+      `Velociraptor refused artifact ${name}${reason ? `: ${reason}` : ""}` +
+        (permission ? " (the API user needs ARTIFACT_WRITER)" : ""),
     );
+  }
 }
 
 /** Launch the run. Throws AiAgentLaunchError when nothing could be scheduled. */
