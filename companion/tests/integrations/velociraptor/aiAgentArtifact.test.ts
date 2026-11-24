@@ -50,6 +50,18 @@ describe("AI Agent Forensics artifact: names Velociraptor accepts", () => {
   });
 });
 
+describe("AI Agent Forensics artifact: VQL Velociraptor can parse", () => {
+  // VQL has no `||`/`&&` operators: a source using one is refused at artifact_set ("unexpected token
+  // \"||\""), so the run never starts. Checked here on every source of a run with every scope on.
+  it("uses no || or && in any source query", () => {
+    const b = buildAiAgentArtifact(set, { scopes: set.scopes.map((s) => s.id) });
+    for (const a of b.artifacts) {
+      const doc = parseYaml(a.yaml) as { sources: { name: string; query: string }[] };
+      for (const src of doc.sources) expect(src.query, src.name).not.toMatch(/\|\||&&/);
+    }
+  });
+});
+
 describe("AI Agent Forensics artifact: shape", () => {
   const b = buildAiAgentArtifact(set);
   type Doc = { name: string; imports: string[]; sources: { name: string; query: string }[] };

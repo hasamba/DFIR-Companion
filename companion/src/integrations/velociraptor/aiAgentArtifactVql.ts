@@ -75,6 +75,15 @@ export function yaraSourceVql(preamble: string, keys: string[]): string {
 }
 
 /**
+ * The first of the expressions that is set (not null, empty or false), else the last one. VQL has no
+ * `||` operator — Velociraptor refuses the artifact at upload — so this nests `if()` calls instead.
+ */
+export function vqlFirst(...exprs: string[]): string {
+  const last = exprs[exprs.length - 1];
+  return exprs.slice(0, -1).reduceRight((acc, e) => `if(condition=${e}, then=${e}, else=${acc})`, last);
+}
+
+/**
  * Inventory: tools present, configured MCP servers (name + executable only — the first token of the
  * command, arguments counted, `env` never read out), credential stores (path/size/time/hash only).
  */
@@ -83,8 +92,8 @@ export function inventorySourceVql(preamble: string): string {
   const server = (doc: string) =>
     [
       `SELECT ${head}, "inventory" AS Kind, tool AS Tool, _key AS McpServer,`,
-      `  split(string=str(str=get(item=_value, field="command") || get(item=_value, field="url") || ""), sep=" ")[0] AS McpCommand,`,
-      `  len(list=get(item=_value, field="args") || []) AS McpArgCount, OSPath AS ConfigPath`,
+      `  split(string=str(str=${vqlFirst('get(item=_value, field="command")', 'get(item=_value, field="url")', '""')}), sep=" ")[0] AS McpCommand,`,
+      `  len(list=${vqlFirst('get(item=_value, field="args")', "[]")}) AS McpArgCount, OSPath AS ConfigPath`,
       `FROM items(item=${doc})`,
     ].join("\n");
   return [
@@ -96,10 +105,10 @@ export function inventorySourceVql(preamble: string): string {
     `  tools={ SELECT ${head}, "inventory" AS Kind, name AS Tool FROM foreach(row=cfg.Tools,`,
     `    query={ SELECT name FROM glob(globs=globs) LIMIT 1 }) },`,
     `  mcp={ SELECT * FROM foreach(row=mcp_files, query={`,
-    `    ${server('get(item=mcp_doc(p=OSPath), field="mcpServers") || get(item=mcp_doc(p=OSPath), field="servers") || dict()')} }) },`,
+    `    ${server(vqlFirst('get(item=mcp_doc(p=OSPath), field="mcpServers")', 'get(item=mcp_doc(p=OSPath), field="servers")', "dict()"))} }) },`,
     `  projects={ SELECT * FROM foreach(row=mcp_files, query={`,
-    `    SELECT * FROM foreach(row={ SELECT _value AS P, tool, OSPath FROM items(item=get(item=mcp_doc(p=OSPath), field="projects") || dict()) },`,
-    `      query={ ${server('get(item=P, field="mcpServers") || dict()')} }) }) },`,
+    `    SELECT * FROM foreach(row={ SELECT _value AS P, tool, OSPath FROM items(item=${vqlFirst('get(item=mcp_doc(p=OSPath), field="projects")', "dict()")}) },`,
+    `      query={ ${server(vqlFirst('get(item=P, field="mcpServers")', "dict()"))} }) }) },`,
     `  creds={ SELECT ${head}, "credential" AS Kind, OSPath AS FilePath, Size AS FileSize, Mtime AS FileMtime,`,
     `    hash(path=OSPath).SHA256 AS FileSha256 FROM glob(globs=cfg.CredentialGlobs) WHERE NOT IsDir }`,
     ")",
