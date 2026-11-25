@@ -88,6 +88,12 @@ describe("parseThorReport", () => {
     expect(file.timestamp).toBe("2025-03-14T21:18:18Z"); // file mtime
   });
 
+  it("grades a THOR Error row Info — a scanner failure, as on the Velociraptor path (#2884)", () => {
+    const err = { time: "t", hostname: "H", level: "Error", module: "Filescan", message: "cannot read file" };
+    const r = parseThorReport(jsonl(err));
+    expect(r.events.map((e) => e.severity)).toEqual(["Info"]);
+  });
+
   it("extracts hashes / files / processes as IOCs", () => {
     const r = parseThorReport(jsonl(PROC_ALERT, FILE_WARN));
     const vals = r.iocs.map((i) => `${i.type}:${i.value}`);
