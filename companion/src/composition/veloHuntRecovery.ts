@@ -17,7 +17,9 @@
  *
  * The missing stamp is the marker. A whole-file artifact's rows are stamped only by the settle; a
  * batched artifact's rows are stamped per batch, when each batch crosses the seam, so they are left
- * alone. A second run finds nothing to do. Rows an analyst or Watson promoted are not the import's.
+ * alone. Without a batch id (below) a second run finds nothing to do; with one it re-settles that
+ * batch's rows, which the tagger and the super-timeline's dedupe make harmless. Rows an analyst or
+ * Watson promoted are not the import's.
  *
  * Not recovered (as for the drop batch): the import record, the Undo entry and the run record, and
  * the look-alike, cap and hunt-grading passes. The hunt card says so (#2849).
@@ -28,9 +30,15 @@
  * rows are not selected.
  *
  * The same settle runs in-process when the collect's OWN settle failed (#2852,
- * `settleAfterFailedSettle`). Known limit: the marker is the stamp, and the settle stamps first, so a
- * settle that failed AFTER stamping (in the dual-write or the tagger) leaves rows this cannot find.
+ * `settleAfterFailedSettle`). The settle stamps first, so a settle that failed partway through the
+ * stamp or AFTER it (the dual-write's page reads) leaves rows that DO carry a stamp. The collect picks
+ * its settle's batch id itself and records it on the job in the same write as the stored names
+ * (`importingBatchId`, #2888); the recovery then also selects the rows stamped with that id, and
+ * re-stamps them with the SAME id, so a second failure leaves them findable again. It widens only
+ * when the settle itself failed: after a record or Undo failure every row was settled. A job written
+ * before that field existed has no id: only its unstamped rows are selected.
  */
+import { randomUUID } from "node:crypto";
 import type { AppOptions } from "./appOptions.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { ALL_CASES, type ImportLock } from "../analysis/importLock.js";
@@ -101,6 +109,16 @@ export function uploadStoredNames(uploads: readonly { storedName: string }[]): s
   return uploads.length ? uploads.map((u) => u.storedName) : undefined;
 }
 
+/** What the collect writes on the job as it enters its import section (#2852, #2888). */
+export interface ImportingMarks {
+  importingUploads: string[] | undefined;
+  importingBatchId: string;
+}
+
+export function importingMarks(uploads: readonly { storedName: string }[]): ImportingMarks {
+  return { importingUploads: uploadStoredNames(uploads), importingBatchId: randomUUID() };
+}
+
 /** A row of this collect: from this hunt's stored artifact files, or one of its uploaded reports. */
 type CollectFile = (source: string) => boolean;
 
@@ -111,8 +129,9 @@ function collectFile(huntId: string, uploadFiles: readonly unknown[] | undefined
   return (s) => file.test(s) || uploads.has(s);
 }
 
-const unsettled = (e: ForensicEvent, ofCollect: CollectFile): boolean =>
-  !e.importBatchId &&
+/** Unstamped, or stamped by the failed settle's own batch (#2888) — never another import's batch. */
+const unsettled = (e: ForensicEvent, ofCollect: CollectFile, batchId: string | undefined): boolean =>
+  (!e.importBatchId || (batchId !== undefined && e.importBatchId === batchId)) &&
   !e.promotedAt &&
   !isManualId(e.id) &&
   e.sourceScreenshots.some((s) => typeof s === "string" && ofCollect(s));
@@ -120,6 +139,8 @@ const unsettled = (e: ForensicEvent, ofCollect: CollectFile): boolean =>
 export interface HuntRecoveryOpts {
   /** The stored names of the uploaded reports the collect imported (#2852). */
   uploadFiles?: readonly string[];
+  /** The batch id the collect's failed settle stamped with (#2888): its rows are selected too. */
+  batchId?: string;
   /** Why the rows are unsettled, for the WARN line. */
   cause?: string;
 }
@@ -140,10 +161,12 @@ export async function settleInterruptedHuntRows(
   if (!store) return 0;
   const lock = deps.runStateExclusive ?? runUnlocked;
   const ofCollect = collectFile(huntId, opts.uploadFiles);
+  // Read back from the job file: only a non-empty string is an id.
+  const batchId = typeof opts.batchId === "string" && opts.batchId ? opts.batchId : undefined;
   return deps.importLock.runPastHolds(caseId, async () => {
     const ids: string[] = [];
     for await (const page of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS }))
-      for (const e of page) if (unsettled(e, ofCollect)) ids.push(e.id);
+      for (const e of page) if (unsettled(e, ofCollect, batchId)) ids.push(e.id);
     if (!ids.length) return 0; // nothing of this hunt is unsettled: no case-wide demote either
     const ledger = await store.loadOverviewWithoutIocs(caseId);
     const scope = { addedIds: ids, touchedRowIds: [], touchedKnown: true, mergedCount: 0 };
@@ -152,6 +175,7 @@ export async function settleInterruptedHuntRows(
       carryAndStampPaged(store, caseId, ledger, scope, false, {
         capturedAt: undefined,
         downgrade: !!superStore,
+        importBatchId: batchId, // the same id: a second failure leaves the rows findable (#2888)
       }),
     );
     if (superStore && stamped.addedIds.length) {
@@ -179,27 +203,53 @@ const insideSection: Pick<ImportLock, "runPastHolds"> = { runPastHolds: (_caseId
  * #2852: the collect's own settle failed (composition/veloHuntSettle.ts). Settle the rows it did not
  * reach NOW, before the collect lets go of the import section — otherwise the next import's case-wide
  * demote moves them out untagged. Called from INSIDE that section, so it does not take it again.
- * Never throws: the settle may have failed for memory, and a second failure is logged, not raised.
- * Returns how many rows it settled.
+ * Never throws: the settle may have failed for memory, and a second failure is logged, not raised —
+ * and returned as `error`, so the caller can tell the analyst (#2888). `batchId`: see the header.
  */
 export async function settleAfterFailedSettle(
   deps: HuntRecoveryDeps,
   caseId: string,
   huntId: string,
   uploadFiles: readonly string[] | undefined,
-): Promise<number> {
+  batchId?: string,
+): Promise<FailedSettleRecovery> {
   try {
     const inside = { ...deps, importLock: insideSection };
-    return await settleInterruptedHuntRows(inside, caseId, huntId, {
+    const settled = await settleInterruptedHuntRows(inside, caseId, huntId, {
       uploadFiles,
+      batchId,
       cause: "whose own settle failed",
     });
+    return { settled };
   } catch (err) {
+    const error = (err as Error)?.message ?? String(err);
     getServerLogger().warn(
-      `[velo-hunt] ${caseId}: settling hunt ${huntId}'s rows after its settle failed did not work either: ` +
-        `${(err as Error)?.message ?? String(err)}`,
+      `[velo-hunt] ${caseId}: settling hunt ${huntId}'s rows after its settle failed did not work either: ${error}`,
       { caseId },
     );
-    return 0;
+    return { settled: 0, error };
   }
+}
+
+/** What the in-process recovery did: rows settled, and its own failure when it failed too. */
+export interface FailedSettleRecovery {
+  settled: number;
+  error?: string;
+}
+
+/**
+ * The collect's call after its settle (#2852, #2888): nothing when the settle reported no error;
+ * otherwise settle the collect's rows the settle did not reach. Its batch id widens the selection
+ * only when the settle ITSELF failed (`seamFailed`) — after a record or Undo failure every row was
+ * settled, and re-stamping them would run a second case-wide demote for nothing.
+ */
+export async function recoverFailedHuntSettle(
+  deps: HuntRecoveryDeps,
+  caseId: string,
+  job: { huntId: string; importingUploads?: readonly string[]; importingBatchId?: string },
+  settled: { error?: string; seamFailed?: boolean },
+): Promise<FailedSettleRecovery | undefined> {
+  if (!settled.error) return undefined;
+  const batchId = settled.seamFailed ? job.importingBatchId : undefined;
+  return settleAfterFailedSettle(deps, caseId, job.huntId, job.importingUploads, batchId);
 }

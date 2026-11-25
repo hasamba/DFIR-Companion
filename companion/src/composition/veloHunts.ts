@@ -218,7 +218,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     options,
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
     isCollecting: (c, h) => collectingNow.has(c, h), // #2403
-    settleInterrupted: (c, h, files) => rec.settleInterruptedHuntRows(deps, c, h, { uploadFiles: files }),
+    settleInterrupted: (c, h, uploadFiles, batchId) =>
+      rec.settleInterruptedHuntRows(deps, c, h, { uploadFiles, batchId }),
     importLock, // #2851 review: imports into a case wait for its start-up recovery
   });
   const servers = () => options.serverClients ?? unavailableServerClients;
@@ -427,7 +428,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // Sized: the memory guard may refuse here — the pass fails with its message on the hunt card.
       releaseImportLock = await importLock.acquire(caseId, evidence.hint);
       if (!(await current())) return; // the set changed while this pass waited its turn
-      job = { ...job, collectPhase: "importing", importingUploads: rec.uploadStoredNames(evidence.uploads) };
+      job = { ...job, collectPhase: "importing", ...rec.importingMarks(evidence.uploads) }; // #2852, #2888
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
       if (options.stateStore) {
@@ -608,10 +609,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         {
           ...{ caseId, huntId: jobHuntId, stateBefore, importedAny, lastFile },
           ...{ bundleName: job.bundleName, artifactCount: job.artifacts.length },
-          ...{ superTimelineAddedCount, capDropped },
+          ...{ superTimelineAddedCount, capDropped, importBatchId: job.importingBatchId },
         },
       );
-      if (settled.error) await rec.settleAfterFailedSettle(deps, caseId, jobHuntId, job.importingUploads); // #2852
+      await rec.recoverFailedHuntSettle(deps, caseId, job, settled); // #2852, #2888
       const { addedEvents, addedIocs } = settled;
       const failure = midFailure
         ? midFailureMessage((midFailure.err as Error).message, importedNames, notImported, settled)

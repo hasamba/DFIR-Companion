@@ -67,6 +67,8 @@ export interface HuntSettleInput {
   superTimelineAddedCount: number;
   /** What the cap dropped in the collect's imports, before the settle below. */
   capDropped: HuntEvictions;
+  /** The batch id the job recorded for this collect (#2888): the settle stamps its rows with it. */
+  importBatchId?: string;
 }
 
 export interface HuntSettleResult {
@@ -76,7 +78,16 @@ export interface HuntSettleResult {
   checkpointed: boolean;
   /** The settle, record or checkpoint failed: logged here, the rows stay as they were imported. */
   error?: string;
+  /**
+   * The settle itself did not complete (#2888): it threw, or never ran because the pre-import state
+   * read failed. Only then can rows of this collect carry its batch id without having been tagged; a
+   * record or Undo failure after a complete settle leaves `error` set and this unset.
+   */
+  seamFailed?: boolean;
 }
+
+/** #2888: the pre-import state read failed, so the settle has nothing to diff against. */
+export const NO_STATE_BEFORE = "the case state could not be read before the import";
 
 /** One combined import-meta diff (so the dashboard's "last import / +N" banner lights up). */
 export async function settleHuntCollect(
@@ -86,8 +97,14 @@ export async function settleHuntCollect(
   const { options } = deps;
   const { caseId, huntId, stateBefore, lastFile } = input;
   const result: HuntSettleResult = { addedEvents: 0, addedIocs: 0, checkpointed: false };
-  if (!input.importedAny || !options.stateStore || !stateBefore) return result;
+  if (!input.importedAny || !options.stateStore) return result;
+  if (!stateBefore) {
+    // #2888: never silent — the rows are in the case, unsettled; the caller settles them at once.
+    logLine(`[velociraptor] hunt ${huntId}: settling what was imported failed: ${NO_STATE_BEFORE}`);
+    return { ...result, error: NO_STATE_BEFORE, seamFailed: true };
+  }
   let counted = result; // the counts stand once the settle itself returned, whatever fails after it
+  let seamDone = false;
   try {
     // Measured here, once: after the last import, before the settle puts the graded rows back (#2831).
     const beforeSettle = await collectEvictionForRecord(
@@ -111,7 +128,9 @@ export async function settleHuntCollect(
       caseId,
       stateBefore,
       `hunt ${huntId}`,
+      { importBatchId: input.importBatchId },
     );
+    seamDone = true;
     const { timelineDiff: diff, iocsDiff } = settled;
     counted = { ...result, addedEvents: diff.added.length, addedIocs: iocsDiff.added.length };
     if (options.importMetaStore) {
@@ -146,10 +165,10 @@ export async function settleHuntCollect(
     // Non-fatal to the collect, but never silent (#2817): the rows are in the case and the settle,
     // the import record or the undo entry is missing. Rows the settle did not reach would be moved out
     // untagged by the next import's case-wide demote (#2851), so the collect settles them at once, still
-    // inside its section, when this reports an error (#2852, veloHuntRecovery.ts `settleAfterFailedSettle`).
+    // inside its section, when this reports an error (#2852, veloHuntRecovery.ts `recoverFailedHuntSettle`).
     const error = (e as Error).message;
     logLine(`[velociraptor] hunt ${huntId}: settling what was imported failed: ${error}`);
-    return { ...counted, error };
+    return seamDone ? { ...counted, error } : { ...counted, error, seamFailed: true };
   }
 }
 

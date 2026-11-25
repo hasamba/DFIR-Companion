@@ -77,6 +77,10 @@ interface Batched {
   upload?: boolean;
   /** #2852: the collect's own settle fails once, before it stamps a row (its ledger read). */
   settleFailsOnce?: boolean;
+  /** #2888: the collect's settle fails once AFTER it stamped the rows (its dual-write page read). */
+  settleFailsAfterStamp?: boolean;
+  /** #2888: the full state read right after the import slot is granted fails once. */
+  stateReadFails?: boolean;
 }
 
 const LATE_WRITE = "EPERM: operation not permitted, rename";
@@ -162,6 +166,35 @@ async function world(
         throw new Error("out of memory");
       }
       return realLedger(caseId);
+    };
+  }
+  if (batched.settleFailsAfterStamp) {
+    const realRows = stateStore.forensicRowsById.bind(stateStore);
+    let failed = false;
+    stateStore.forensicRowsById = async (caseId, ids) => {
+      const rows = await realRows(caseId, ids);
+      // Only the settle reads rows that are already stamped: the stamp step reads them before it writes.
+      if (sw.importsDone && !failed && rows.length && rows.every((r) => r.event.importBatchId)) {
+        failed = true;
+        throw new Error("out of memory");
+      }
+      return rows;
+    };
+  }
+  if (batched.stateReadFails) {
+    const realLoad = stateStore.load.bind(stateStore);
+    const realUpsertNow = veloHuntStore.upsert;
+    let armed = false;
+    veloHuntStore.upsert = async (caseId, written) => {
+      if (written.collectPhase === "importing") armed = true; // the read follows this write
+      return realUpsertNow(caseId, written);
+    };
+    stateStore.load = async (caseId, ...rest) => {
+      if (armed) {
+        armed = false;
+        throw new Error("out of memory");
+      }
+      return realLoad(caseId, ...rest);
     };
   }
   pipeline.importVelociraptorArtifact = async (...args) => {
@@ -390,7 +423,12 @@ describe("a hunt collect that fails on a later artifact (#2817)", () => {
     "the settle of what imported fails too: the card still leads with the artifact's error",
     async () => {
       const w = await world(3, true);
+      const warn = vi.spyOn(getServerLogger(), "warn");
       const job = await collect(w, "error");
+      // #2888: the settle itself completed, so its stamped rows are not re-stamped and re-demoted.
+      const warned = warn.mock.calls.map((c) => String(c[0]));
+      warn.mockRestore();
+      expect(warned.some((l) => /settled \d+ row\(s\) of hunt/.test(l))).toBe(false);
       expect(job.error).toMatch(/^Import refused to protect the server/);
       expect(job.error).toContain(`Not imported: ${THIRD}.`);
       expect(job.error).toContain("Settling or recording what was imported failed");
@@ -443,6 +481,57 @@ describe("a hunt collect whose own settle fails (#2852)", () => {
         expect(rows.every((e) => superIds.has(e.id))).toBe(true); // dual-written
         const warned = warn.mock.calls.map((c) => String(c[0]));
         expect(warned.some((l) => l.includes("H.1") && /settle failed/.test(l))).toBe(true);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+});
+
+// #2888: two holes the #2852 recovery did not cover. A settle that failed AFTER stamping left rows its
+// unstamped-only selector skipped; a failed pre-import state read skipped the settle with no error.
+describe("a hunt collect whose settle fails after stamping, or never starts (#2888)", () => {
+  async function superIdsOf(w: Awaited<ReturnType<typeof world>>): Promise<Set<string>> {
+    const ids = new Set<string>();
+    for await (const b of w.superTimelineStore.eventBatches("c1")) for (const e of b) ids.add(e.id);
+    return ids;
+  }
+
+  it(
+    "a settle that fails after the stamp: every stamped row is still dual-written and tagged",
+    async () => {
+      const w = await world(0, false, undefined, { upload: true, settleFailsAfterStamp: true });
+      const warn = vi.spyOn(getServerLogger(), "warn");
+      try {
+        const job = await collect(w, "imported");
+        expect(job.importingBatchId).toEqual(expect.any(String));
+        const rows = (await w.stateStore.load("c1")).forensicTimeline;
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.every((e) => e.importBatchId === job.importingBatchId)).toBe(true); // one id, reused
+        const superIds = await superIdsOf(w);
+        expect(rows.every((e) => superIds.has(e.id))).toBe(true); // the recovery dual-wrote them
+        const warned = warn.mock.calls.map((c) => String(c[0]));
+        expect(warned.some((l) => l.includes("H.1") && /settle failed/.test(l))).toBe(true);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "a failed pre-import state read: the imported rows are settled at once, not left for the next demote",
+    async () => {
+      const w = await world(0, false, undefined, { stateReadFails: true });
+      const warn = vi.spyOn(getServerLogger(), "warn");
+      try {
+        await collect(w, "imported");
+        const rows = (await w.stateStore.load("c1")).forensicTimeline;
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.every((e) => typeof e.importBatchId === "string")).toBe(true); // settled
+        const superIds = await superIdsOf(w);
+        expect(rows.every((e) => superIds.has(e.id))).toBe(true);
       } finally {
         warn.mockRestore();
       }

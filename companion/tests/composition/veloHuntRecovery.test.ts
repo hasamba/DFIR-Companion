@@ -17,6 +17,8 @@ import { createImportDemote } from "../../src/composition/importDemote.js";
 import {
   holdImportsDuring,
   huntFilePattern,
+  importingMarks,
+  recoverFailedHuntSettle,
   settleAfterFailedSettle,
   settleInterruptedHuntRows,
   uploadStoredNames,
@@ -248,7 +250,7 @@ describe("settleAfterFailedSettle (#2852)", () => {
       const settledInside = await d.importLock.runPastHolds("c1", () =>
         settleAfterFailedSettle(d, "c1", "H.1", [UPLOAD]),
       );
-      expect(settledInside).toBe(2);
+      expect(settledInside).toEqual({ settled: 2 });
       expect(
         offered
           .flat()
@@ -269,11 +271,27 @@ describe("settleAfterFailedSettle (#2852)", () => {
     const { d } = deps([]);
     const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => {});
     try {
-      await expect(settleAfterFailedSettle(d, "c1", "H.1", [])).resolves.toBe(0);
+      await expect(settleAfterFailedSettle(d, "c1", "H.1", [])).resolves.toEqual({
+        settled: 0,
+        error: "out of memory",
+      });
       const lines = warn.mock.calls.map(([m]) => String(m));
       expect(lines.some((l) => l.includes("c1") && l.includes("H.1") && l.includes("out of memory"))).toBe(
         true,
       );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("reports a second failure to its caller, not only to the log (#2888)", async () => {
+    await addRows([ev("plain-1", "Info")]);
+    vi.spyOn(stateStore, "loadOverviewWithoutIocs").mockRejectedValue(new Error("out of memory"));
+    const { d } = deps([]);
+    const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => {});
+    try {
+      const out = await recoverFailedHuntSettle(d, "c1", { huntId: "H.1" }, { error: "x", seamFailed: true });
+      expect(out).toEqual({ settled: 0, error: "out of memory" });
     } finally {
       warn.mockRestore();
     }
@@ -285,6 +303,97 @@ describe("settleAfterFailedSettle (#2852)", () => {
       "0002_b.json",
     ]);
     expect(uploadStoredNames([])).toBeUndefined();
+  });
+
+  it("importingMarks: the uploads' stored names and a fresh batch id per collect (#2888)", () => {
+    const a = importingMarks([{ storedName: "0001_a.json" }]);
+    const b = importingMarks([]);
+    expect(a.importingUploads).toEqual(["0001_a.json"]);
+    expect(b.importingUploads).toBeUndefined();
+    expect(a.importingBatchId).toEqual(expect.any(String));
+    expect(b.importingBatchId).toEqual(expect.any(String));
+    expect(a.importingBatchId).not.toBe(b.importingBatchId);
+  });
+});
+
+// #2888: the settle stamps first. A settle that failed partway through the stamp, or after it (the
+// dual-write's page reads), left rows carrying its batch id that the unstamped-only selector skipped.
+// The collect now picks that batch id itself, so the recovery can select those rows too.
+describe("a settle that failed after it stamped some or all rows (#2888)", () => {
+  const FAILED = "batch-of-the-failed-settle";
+  const failedStamp = { importBatchId: FAILED, importedAt: "2026-05-02T12:00:00Z" };
+
+  async function partlyStamped(): Promise<void> {
+    await addRows([
+      ev("stamped-marker", "Info", { description: "marker", ...failedStamp }),
+      ev("stamped-plain", "Info", failedStamp),
+      ev("unstamped-marker", "Info", { description: "marker" }),
+      ev("earlier-batch", "Medium", { importBatchId: "b-earlier", importedAt: "2026-05-01T00:00:00Z" }),
+    ]);
+  }
+
+  it("selects the unstamped rows AND those of the failed batch, re-stamped with that same id", async () => {
+    await partlyStamped();
+    const offered: ForensicEvent[][] = [];
+    const { d } = deps(offered);
+    expect(await settleInterruptedHuntRows(d, "c1", "H.1", { batchId: FAILED })).toBe(3);
+    const rows = offered.flat();
+    expect(rows.map((e) => e.id).sort()).toEqual(["stamped-marker", "stamped-plain", "unstamped-marker"]);
+    expect(rows.every((e) => e.importBatchId === FAILED)).toBe(true); // a retry finds them again
+    const after = new Map((await forensic()).map((e) => [e.id, e]));
+    expect(after.get("stamped-marker")?.severity).toBe("High"); // tagged before the demote
+    expect(after.get("unstamped-marker")?.severity).toBe("High");
+    expect(after.has("stamped-plain")).toBe(false); // demoted, after the tagger
+    expect(after.get("earlier-batch")?.importBatchId).toBe("b-earlier"); // another batch: left alone
+    expect(await superIds()).toEqual(expect.arrayContaining(["stamped-plain", "stamped-marker"]));
+  });
+
+  it("in-process: a settle whose seam call threw is fully re-graded, partly stamped or not", async () => {
+    await partlyStamped();
+    const offered: ForensicEvent[][] = [];
+    const { d } = deps(offered);
+    const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => {});
+    try {
+      const job = { huntId: "H.1", importingBatchId: FAILED };
+      const out = await recoverFailedHuntSettle(d, "c1", job, { error: "out of memory", seamFailed: true });
+      expect(out).toEqual({ settled: 3 });
+      expect(
+        offered
+          .flat()
+          .map((e) => e.id)
+          .sort(),
+      ).toEqual(["stamped-marker", "stamped-plain", "unstamped-marker"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("a failure AFTER a complete settle (record or Undo entry) does not re-stamp its rows", async () => {
+    await addRows([ev("stamped-marker", "Info", { description: "marker", ...failedStamp })]);
+    const offered: ForensicEvent[][] = [];
+    const { d, demoteForensicForCase } = deps(offered);
+    const job = { huntId: "H.1", importingBatchId: FAILED };
+    expect(await recoverFailedHuntSettle(d, "c1", job, { error: "disk full" })).toEqual({ settled: 0 });
+    expect(offered).toEqual([]);
+    expect(demoteForensicForCase).not.toHaveBeenCalled();
+  });
+
+  it("a clean settle runs no recovery at all", async () => {
+    await addRows([ev("unstamped-marker", "Info", { description: "marker" })]);
+    const offered: ForensicEvent[][] = [];
+    const { d, demoteForensicForCase } = deps(offered);
+    const job = { huntId: "H.1", importingBatchId: FAILED };
+    expect(await recoverFailedHuntSettle(d, "c1", job, {})).toBeUndefined();
+    expect(offered).toEqual([]);
+    expect(demoteForensicForCase).not.toHaveBeenCalled();
+  });
+
+  it("a batch id read back from a damaged job file is ignored, not matched", async () => {
+    await addRows([ev("stamped-plain", "Info", failedStamp)]);
+    const { d, demoteForensicForCase } = deps([]);
+    const opts = { batchId: 42 as unknown as string };
+    expect(await settleInterruptedHuntRows(d, "c1", "H.1", opts)).toBe(0);
+    expect(demoteForensicForCase).not.toHaveBeenCalled();
   });
 });
 
@@ -301,7 +410,7 @@ const JOB: VeloHuntJob = {
 
 function timers(
   huntStore: VeloHuntStore,
-  settle: (c: string, h: string, files?: readonly string[]) => Promise<unknown>,
+  settle: (c: string, h: string, files?: readonly string[], batchId?: string) => Promise<unknown>,
   importLock?: ImportLock,
 ) {
   const options = {
@@ -433,6 +542,47 @@ describe("start-up recovery runs the settle for an interrupted import only (#285
     await t.resumeVeloHuntStatusPolls({ startup: true });
     expect(seen).toEqual([[UPLOAD]]);
     t.stopVeloHuntStatusPollsForCase("c1");
+  });
+
+  it("hands the settle the batch id the collect recorded, so stamped-but-untagged rows are found (#2888)", async () => {
+    const huntStore = new VeloHuntStore(cases);
+    await huntStore.upsert("c1", { ...JOB, collectPhase: "importing", importingBatchId: "B-1" });
+    const seen: (string | undefined)[] = [];
+    const t = timers(huntStore, async (_c, _h, _files, batchId) => void seen.push(batchId));
+    await t.resumeVeloHuntStatusPolls({ startup: true });
+    expect(seen).toEqual(["B-1"]);
+    t.stopVeloHuntStatusPollsForCase("c1");
+  });
+
+  it("a restart after a post-stamp failure re-grades the stamped rows through the real settle (#2888)", async () => {
+    const stamp = { importBatchId: "B-1", importedAt: "2026-05-02T12:00:00Z" };
+    await addRows([
+      ev("stamped-marker", "Info", { description: "marker", ...stamp }),
+      ev("p", "Info", stamp),
+    ]);
+    const huntStore = new VeloHuntStore(cases);
+    await huntStore.upsert("c1", { ...JOB, collectPhase: "importing", importingBatchId: "B-1" });
+    const offered: ForensicEvent[][] = [];
+    const { d } = deps(offered);
+    const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => {});
+    try {
+      const t = timers(huntStore, (c, h, files, batchId) =>
+        settleInterruptedHuntRows(d, c, h, { uploadFiles: files, batchId }),
+      );
+      await t.resumeVeloHuntStatusPolls({ startup: true });
+      expect(
+        offered
+          .flat()
+          .map((e) => e.id)
+          .sort(),
+      ).toEqual(["p", "stamped-marker"]);
+      const after = new Map((await forensic()).map((e) => [e.id, e]));
+      expect(after.get("stamped-marker")?.severity).toBe("High");
+      expect(after.has("p")).toBe(false);
+      t.stopVeloHuntStatusPollsForCase("c1");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("a settle that fails is logged with the case and hunt id; start-up and the mark stand", async () => {

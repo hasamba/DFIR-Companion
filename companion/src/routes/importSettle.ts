@@ -125,12 +125,15 @@ export interface SettledImport {
 /**
  * `before` is what the import is diffed against: the ImportBaseline its section captured
  * (analysis/importBaseline.ts), or — from a legacy caller — the full state it loaded then.
+ * `opts.importBatchId` presets the stamp's batch id, so a caller whose settle fails after stamping can
+ * find those rows again (a hunt collect, #2888); every other caller lets the settle pick one.
  */
 export async function settleForensicImport(
   deps: SettleDeps,
   caseId: string,
   before: InvestigationState | ImportBaseline,
   label?: string,
+  opts: { importBatchId?: string } = {},
 ): Promise<SettledImport> {
   const baseline = toImportBaseline(before);
   const store = deps.stateStore;
@@ -166,6 +169,7 @@ export async function settleForensicImport(
     carryAndStampPaged(store, caseId, ledger, scope, scanAll, {
       capturedAt: baseline.capturedAt,
       downgrade: !!deps.superTimelineStore,
+      importBatchId: opts.importBatchId,
     }),
   );
   const addedIds = stamped.addedIds;

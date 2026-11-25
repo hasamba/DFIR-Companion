@@ -77,6 +77,9 @@ export interface VeloHuntJob {
   // section (#2852): their rows carry the report's own name, not the hunt's, so a recovery of an
   // interrupted or failed settle finds them only by these. Absent on older jobs and without uploads.
   importingUploads?: string[];
+  // The import batch id the last collect's settle stamps its rows with, chosen and written in the same
+  // write (#2888): a settle that failed or was cut off AFTER stamping leaves rows only this finds.
+  importingBatchId?: string;
   target?: HuntTarget;
   minSeverity?: Severity; // optional import floor chosen at run time (keeps low-value items out)
   timeoutSeconds?: number; // optional per-collection timeout used for this hunt (Velociraptor default 600s)
