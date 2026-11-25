@@ -54,7 +54,7 @@ import { maxEventsDefault } from "../analysis/siemImport.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
 import { resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { createHuntEventBudget } from "./huntEventBudget.js";
-import { midFailureMessage, notImportedRecords, settleHuntCollect } from "./veloHuntSettle.js";
+import { midFailureMessage, notImportedRecords, settleHuntCollect, settleWarning } from "./veloHuntSettle.js";
 import { createHuntEvictions } from "./veloHuntSettle.js"; // what the cap dropped, per collect (#2831)
 import {
   recordDeploy,
@@ -612,7 +612,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           ...{ superTimelineAddedCount, capDropped, importBatchId: job.importingBatchId },
         },
       );
-      await rec.recoverFailedHuntSettle(deps, caseId, job, settled); // #2852, #2888
+      const recovered = await rec.recoverFailedHuntSettle(deps, caseId, job, settled); // #2852, #2888
       const { addedEvents, addedIocs } = settled;
       const failure = midFailure
         ? midFailureMessage((midFailure.err as Error).message, importedNames, notImported, settled)
@@ -681,6 +681,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         addedEvents,
         addedIocs,
         error: failure,
+        settleWarning: failure ? undefined : settleWarning(settled, recovered), // #2889
         ...done,
         emptyArtifacts: emptyArtifacts.length ? emptyArtifacts : undefined,
         superCappedArtifacts: superCapped.length ? superCapped : undefined,

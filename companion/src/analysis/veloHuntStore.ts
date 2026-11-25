@@ -104,6 +104,9 @@ export interface VeloHuntJob {
     degraded: boolean;
   };
   error?: string;
+  // #2889: an "imported" collect whose settle, import record or Undo entry failed. Stored raw, like
+  // `error` (the card escapes it); a later collect that settles cleanly clears it.
+  settleWarning?: string;
   // Set when the analyst cancelled the hunt (status "cancelled"). The companion never collects it again.
   cancelled?: VeloHuntCancel;
   // Set at collect time when Velociraptor reported this hunt terminal (STOPPED/ARCHIVED) well before

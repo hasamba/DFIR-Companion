@@ -77,6 +77,8 @@ interface Batched {
   upload?: boolean;
   /** #2852: the collect's own settle fails once, before it stamps a row (its ledger read). */
   settleFailsOnce?: boolean;
+  /** #2889: the settle fails, then the in-process re-grade fails too (the same ledger read, twice). */
+  settleFailsTwice?: boolean;
   /** #2888: the collect's settle fails once AFTER it stamped the rows (its dual-write page read). */
   settleFailsAfterStamp?: boolean;
   /** #2888: the full state read right after the import slot is granted fails once. */
@@ -156,13 +158,14 @@ async function world(
   let imports = 0;
   // What a test changes between two collects of one hunt (#2842).
   const sw = { failAt, poisonRows: false, importsDone: false, uploadDone: false };
-  if (batched.settleFailsOnce) {
+  if (batched.settleFailsOnce || batched.settleFailsTwice) {
     const realLedger = stateStore.loadOverviewWithoutIocs.bind(stateStore);
-    let failed = false;
+    let failures = batched.settleFailsTwice ? 2 : 1;
     stateStore.loadOverviewWithoutIocs = async (caseId) => {
-      // The first ledger read after the last import is the collect's settle (routes/importSettle.ts).
-      if (sw.importsDone && (!batched.upload || sw.uploadDone) && !failed) {
-        failed = true;
+      // The first ledger read after the last import is the collect's settle (routes/importSettle.ts);
+      // the second is the re-grade's (veloHuntRecovery.ts).
+      if (sw.importsDone && (!batched.upload || sw.uploadDone) && failures > 0) {
+        failures -= 1;
         throw new Error("out of memory");
       }
       return realLedger(caseId);
@@ -537,6 +540,54 @@ describe("a hunt collect whose settle fails after stamping, or never starts (#28
       }
     },
     POLL_TIMEOUT_MS * 2,
+  );
+});
+
+// #2889: a settle failure with no failed artifact left a clean "imported" card; only the log knew.
+describe("a hunt collect whose settle fails while no artifact failed (#2889)", () => {
+  async function collectAgain(w: Awaited<ReturnType<typeof world>>, earlier: VeloHuntJob) {
+    const res = await request(w.app).post("/cases/c1/velociraptor/collect").send({ huntId: "H.1" });
+    expect(res.status).toBe(202);
+    return pollFor("hunt H.1 collected again", async () => {
+      const j = await w.veloHuntStore.get("c1", "H.1");
+      return j?.status === "imported" && j.importedAt !== earlier.importedAt ? j : null;
+    });
+  }
+
+  it(
+    "a failed import record: the card warns the record and Undo entry may be missing",
+    async () => {
+      const w = await world(0, true);
+      const job = await collect(w, "imported");
+      expect(job.error).toBeUndefined();
+      expect(job.settleWarning).toMatch(/no import record and no Undo entry/);
+      expect(job.settleWarning).not.toMatch(/grading did not finish/);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "the settle and its re-grade both fail: the card says grading did not finish",
+    async () => {
+      const w = await world(0, false, undefined, { settleFailsTwice: true });
+      const job = await collect(w, "imported");
+      expect(job.error).toBeUndefined();
+      expect(job.settleWarning).toMatch(/grading did not finish/);
+      expect(job.settleWarning).toMatch(/forensic timeline/);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "a later clean collect clears the warning",
+    async () => {
+      const w = await world(0, false, undefined, { settleFailsOnce: true });
+      const first = await collect(w, "imported");
+      expect(first.settleWarning).toEqual(expect.any(String));
+      const clean = await collectAgain(w, first);
+      expect(clean.settleWarning).toBeUndefined();
+    },
+    POLL_TIMEOUT_MS * 4,
   );
 });
 

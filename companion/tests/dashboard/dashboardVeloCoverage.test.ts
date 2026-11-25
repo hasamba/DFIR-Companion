@@ -633,4 +633,19 @@ describe("veloReadGapsHtml", () => {
     expect(html).toContain("&lt;b&gt;X&lt;/b&gt;: timeout");
     expect(html).not.toContain("<b>X</b>");
   });
+
+  // #2889: the collect imported, but its settle failed — the card must not read as a clean import.
+  it("warns when an imported collect's settle failed, escaped, even for a single artifact", () => {
+    const html = cov.veloCoverageHtml({
+      status: "imported",
+      artifacts: ["A.one"],
+      settleWarning: "grading did not finish <b>x</b>",
+    });
+    expect(html).toContain("&#9888;");
+    expect(html).toContain("grading did not finish &lt;b&gt;x&lt;/b&gt;");
+    expect(html).not.toContain("<b>x</b>");
+    expect(cov.veloCoverageHtml({ status: "imported", artifacts: ["A.one"] })).toBe("");
+    const failed = cov.veloCoverageHtml({ status: "error", artifacts: ["A.one"], settleWarning: "w" });
+    expect(failed).not.toContain("&#9888;");
+  });
 });

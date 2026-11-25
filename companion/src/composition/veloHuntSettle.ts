@@ -212,3 +212,25 @@ export function midFailureMessage(
       : "";
   return `${sentence} Imported: ${imported.join(", ")}. Not imported: ${notImported.join(", ")}.${tail}`;
 }
+
+/** #2889: the re-grade failed too — the rows may never have been graded. */
+export const SETTLE_WARNING_UNGRADED =
+  "Imported, but grading did not finish: rows may be missing from the forensic timeline. " +
+  "Collect again, or check the server log.";
+/** #2889: the re-grade ran. It never claims grading finished: it can settle 0 and still miss rows. */
+export const SETTLE_WARNING_UNRECORDED =
+  "Imported, but settling or recording what was imported failed (see the server log): " +
+  "it may have no import record and no Undo entry.";
+
+/**
+ * The hunt card's warning for a collect that imported with no failed artifact but whose settle,
+ * record or Undo step failed (#2889); undefined for a clean settle, so a clean collect clears it.
+ * `recovery` is what the in-process re-grade (`recoverFailedHuntSettle`) returned.
+ */
+export function settleWarning(
+  settled: Pick<HuntSettleResult, "error">,
+  recovery: { error?: string } | undefined,
+): string | undefined {
+  if (!settled.error) return undefined;
+  return recovery?.error ? SETTLE_WARNING_UNGRADED : SETTLE_WARNING_UNRECORDED;
+}

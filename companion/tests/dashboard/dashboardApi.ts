@@ -616,6 +616,7 @@ export interface VeloCoverageApi {
     unreadArtifacts?: { name: string; rows: number }[];
     timeScope?: { start: string; end?: string };
     earlierCoverage?: boolean;
+    settleWarning?: string;
   }): string;
   veloUnreadHtml(unread: { name: string; rows: number }[] | undefined, again: string): string;
   veloReadGapsHtml(
