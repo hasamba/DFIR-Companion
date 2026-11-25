@@ -2566,10 +2566,10 @@ describe("parseVelociraptorJson — THOR rows collected by a hunt", () => {
   });
 
   // THOR opens every scan with module init, licence banners and version lines, some at Notice level.
-  // They are graded exactly as THOR graded them: the analyst reconciles the case against the scanner's
-  // own summary (1 Alert / 40 Warnings / 2 Notices), and a timeline that quietly re-grades two of those
-  // to Info reports 0 Medium and breaks the reconciliation. Tidiness is not worth a wrong total.
-  it("keeps THOR's own grade for a scan-lifecycle module", () => {
+  // They were once kept at Medium so the case matched THOR's own summary totals; in practice four
+  // licence banners sat in the forensic timeline beside the one real finding (#2884). A lifecycle
+  // Notice is about the scanner, so it is Info; a Notice from a scan module stays Medium.
+  it("grades a scan-lifecycle Notice Info, and a scan-module Notice Medium", () => {
     const rows = JSON.stringify({
       "Generic.Scanner.ThorZIP": [
         { module: "Startup", message: "THOR Lite license permits non-commercial use", level: "Notice" },
@@ -2586,7 +2586,7 @@ describe("parseVelociraptorJson — THOR rows collected by a hunt", () => {
       artifact: "Generic.Scanner.ThorZIP",
       aggregate: false,
     });
-    expect(parsed.events.map((e) => e.severity)).toEqual(["Medium", "Medium"]);
+    expect(parsed.events.map((e) => e.severity)).toEqual(["Medium", "Info"]);
   });
 
   it("returns findings most-severe first, so a cap keeps alerts over scan chatter", () => {
@@ -2595,6 +2595,76 @@ describe("parseVelociraptorJson — THOR rows collected by a hunt", () => {
       aggregate: false,
     });
     expect(parsed.events.map((e) => e.severity)).toEqual(["Critical", "High", "Medium", "Info"]);
+  });
+});
+
+// #2884: a hunt-export zip imports THOR's whole log. Its lifecycle chatter at Info level (module init,
+// "Disabling feature X due to Lite version", rule-set loading) and the artifact's `Debug` source (a
+// listing of THOR's own tool folder) are about the scanner, not the endpoint, and the THOR import button
+// drops both. A two-host scan with one Warning filled the super-timeline with ~310 such rows.
+describe("parseVelociraptorJson — THOR scanner noise from a hunt export (#2884)", () => {
+  const huntRow = (payload: Record<string, unknown>) =>
+    JSON.stringify({
+      Line: JSON.stringify({ time: "2026-08-18T18:21:23Z", hostname: "H1", scanid: "S-1", ...payload }),
+      FlowId: "F.1",
+      ClientId: "C.1",
+      Fqdn: "H1.localdomain",
+    });
+  // The label the drop path derives from `results/All Generic.Scanner.ThorZIP.fixed%2FThorResultsJson.json`.
+  const RESULTS = "Generic.Scanner.ThorZIP.fixed/ThorResultsJson";
+
+  it("drops Info-level rows from THOR's lifecycle modules", () => {
+    const text = ["Init", "Startup", "Control", "ThorDB", "Report"]
+      .map((module) => huntRow({ level: "Info", module, message: `chatter-${module}` }))
+      .join("\n");
+    expect(parseVelociraptorJson(text, { artifact: RESULTS, aggregate: false }).events).toEqual([]);
+  });
+
+  it("keeps lifecycle rows above Info, so the scanner's own totals still reconcile", () => {
+    const text = [
+      huntRow({ level: "Notice", module: "Startup", message: "THOR Lite license" }),
+      huntRow({ level: "Error", module: "Init", message: "THOR already running" }),
+    ].join("\n");
+    const parsed = parseVelociraptorJson(text, { artifact: RESULTS, aggregate: false });
+    expect(parsed.events).toHaveLength(2);
+  });
+
+  it("keeps THOR's Info inventory from finding modules for super-timeline search", () => {
+    const text = ["Autoruns", "ProcessCheck", "ProcessConnections", "Filescan"]
+      .map((module) => huntRow({ level: "Info", module, message: `inventory-${module}` }))
+      .join("\n");
+    const parsed = parseVelociraptorJson(text, { artifact: RESULTS, aggregate: false });
+    expect(parsed.events).toHaveLength(4);
+  });
+
+  it("drops every row of a ThorZIP artifact's Debug source (THOR's own tool folder)", () => {
+    const rows = [
+      { Name: "changes.log", Size: 43216, FlowId: "F.1", ClientId: "C.1", Fqdn: "H1" },
+      { Name: "config", Size: 0, FlowId: "F.1", ClientId: "C.1", Fqdn: "H1" },
+    ];
+    const text = rows.map((r) => JSON.stringify(r)).join("\n");
+    for (const artifact of ["Generic.Scanner.ThorZIP.fixed/Debug", "Generic.Scanner.ThorZIP/Debug"]) {
+      expect(parseVelociraptorJson(text, { artifact, aggregate: false }).events).toEqual([]);
+    }
+  });
+
+  it("keeps a Debug source of an artifact that is not THOR's", () => {
+    const text = JSON.stringify({ Name: "changes.log", Size: 1, Fqdn: "H1" });
+    const parsed = parseVelociraptorJson(text, { artifact: "Custom.Collector/Debug", aggregate: false });
+    expect(parsed.events).toHaveLength(1);
+  });
+
+  it("titles a THOR Error row as THOR and grades it Info — a scanner failure, not a detection", () => {
+    const text = huntRow({ level: "Error", module: "Init", message: "THOR already running" });
+    const [e] = parseVelociraptorJson(text, { artifact: RESULTS, aggregate: false }).events;
+    expect(e.severity).toBe("Info");
+    expect(e.description).toMatch(/^THOR Error \[Init\]: THOR already running/);
+  });
+
+  it("keeps a non-THOR row that merely uses module/level column names", () => {
+    const text = JSON.stringify({ level: "Info", module: "Init", message: "app start", Fqdn: "H1" });
+    const parsed = parseVelociraptorJson(text, { artifact: "Custom.App/Log", aggregate: false });
+    expect(parsed.events).toHaveLength(1);
   });
 });
 
