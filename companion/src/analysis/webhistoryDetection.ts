@@ -8,7 +8,7 @@
 // In its own module (not velociraptorImport) because that file is frozen at the size ledger.
 
 import { getCI, isObject, oneLine, str, addIoc, type MappedEvent, type SiemIoc } from "./siemImport.js";
-import { withHostSuffix } from "./velociraptorTitle.js";
+import { capWithHostSuffix } from "./velociraptorTitle.js";
 import { pickTime } from "./veloRowTime.js";
 import { boundedAggKey } from "./aggKey.js";
 
@@ -75,7 +75,7 @@ export function mapWebhistory(
   if (browser) parts.push(browser);
   let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${category} — ${domain}`;
   if (parts.length) description += ` - ${parts.join(" - ")}`;
-  description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   const message = [
     `Category: ${category}`,

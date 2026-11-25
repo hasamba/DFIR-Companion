@@ -93,4 +93,15 @@ describe("Velociraptor Windows.Detection.Malfind", () => {
     const [e] = parse([{ Protection: "xrw", AddressRange: "00001000-00002000", Name: "x.exe", Fqdn: "H" }]);
     expect(e.description).toContain("executable memory region flagged in x.exe");
   });
+
+  // #2881: the description was capped AFTER the host suffix, so a long CommandLine that put the core
+  // within ~12 chars of the 1200-char cap left "… @ WS-LA" — and past the cap dropped the host.
+  it("keeps the '@ HOST' suffix whole however long the CommandLine is", () => {
+    for (let n = 850; n <= 1250; n++) {
+      const proc = { Pid: "4321", Name: "example.exe", CommandLine: "c".repeat(n) };
+      const [e] = parse([region("0a1b0000-0a1c0000", { ProcessChain: [proc] })]);
+      expect(e.description.length).toBeLessThanOrEqual(1200);
+      expect(e.description.endsWith(" @ WS-LAB-01")).toBe(true);
+    }
+  });
 });

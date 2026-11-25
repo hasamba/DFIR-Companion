@@ -11,6 +11,24 @@ export function withHostSuffix(description: string, host: string): string {
   return description.includes(" - ") ? `${description} @ ${host}` : `${description} - @ ${host}`;
 }
 
+// withHostSuffix under a length cap (#2881). Capping AFTER the suffix cut it to a fragment
+// ("… @ WS-LA", which could read as another host) whenever the core sat within a suffix-length of
+// the cap. Trim the core to leave room instead, so the host is whole — or, only when the host
+// alone cannot fit, absent. The suffix grows to " - @ HOST" when the trimmed core loses its " - ".
+export function capWithHostSuffix(core: string, host: string, cap: number): string {
+  const whole = withHostSuffix(core, host);
+  if (whole.length <= cap) return whole;
+  const plain = core.slice(0, cap);
+  if (!host || withHostSuffix(plain, host) === plain) return plain;
+  for (const suffix of [` @ ${host}`, ` - @ ${host}`]) {
+    const room = cap - suffix.length;
+    if (room <= 0) break;
+    const out = withHostSuffix(core.slice(0, room), host);
+    if (out.length <= cap) return out;
+  }
+  return plain;
+}
+
 // A rule/verdict NAME can itself contain " - " ("RMM - Microsoft Quick Assist Execution"), which
 // would be mistaken for that same boundary and truncate the title. Swap it for an em dash.
 export function titleSafe(name: string): string {

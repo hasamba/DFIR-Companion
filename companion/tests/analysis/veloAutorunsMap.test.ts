@@ -132,3 +132,14 @@ describe("Autoruns mapper (#2731)", () => {
     );
   });
 });
+
+// #2881: a cap applied after the host suffix cut it to a fragment ("@ WS-") in a ~6-char window.
+describe("Autoruns mapper — host suffix under the cap (#2881)", () => {
+  it("keeps the '@ HOST' suffix whole when a long entry name reaches the 600-char cap", () => {
+    for (let n = 150; n <= 450; n++) {
+      const [e] = events([autorunsRow("WS-01", "(Verified) Vendor Inc", { Entry: "e".repeat(n) })]);
+      expect(e.description.length).toBeLessThanOrEqual(600);
+      expect(e.description.endsWith(" @ WS-01")).toBe(true);
+    }
+  });
+});

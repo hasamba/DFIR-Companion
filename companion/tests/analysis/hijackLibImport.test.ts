@@ -117,4 +117,18 @@ describe("mapHijackLib — title vs details", () => {
     const e = mapHijackLib(row(), ARTIFACT, "", new Map());
     expect(e.description.trimEnd().endsWith(" -")).toBe(false);
   });
+
+  // #2881: the final .slice(0, 600) ran after the host suffix and cut it to a fragment ("@ HOS").
+  it("keeps the '@ HOST' suffix whole when a long path reaches the 600-char cap", () => {
+    for (let n = 400; n <= 700; n++) {
+      const e = mapHijackLib(
+        row({ OSPath: `C:\\${"d".repeat(n)}\\version.dll` }),
+        ARTIFACT,
+        "HOST01",
+        new Map(),
+      );
+      expect(e.description.length).toBeLessThanOrEqual(600);
+      expect(e.description.endsWith(" @ HOST01")).toBe(true);
+    }
+  });
 });

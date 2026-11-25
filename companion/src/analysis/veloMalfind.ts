@@ -15,7 +15,7 @@
 import { addIoc, getCI, isObject, oneLine, str, type MappedEvent, type SiemIoc } from "./siemImport.js";
 import { malfindDescription } from "./memoryFields.js";
 import { malfindContext } from "./malfindContext.js";
-import { withHostSuffix } from "./velociraptorTitle.js";
+import { capWithHostSuffix } from "./velociraptorTitle.js";
 import { pickTime } from "./veloRowTime.js";
 import { boundedAggKey } from "./aggKey.js";
 
@@ -117,11 +117,11 @@ export function mapVeloMalfind(
     Hexdump: text(getCI(row, "HexHeader")),
   });
   const details = [...detailParts(row, proc), ctx.summary].filter(Boolean);
-  const description = withHostSuffix(`${title} - ${details.join(" - ")}`.slice(0, DESCRIPTION_CAP), host);
+  const description = capWithHostSuffix(`${title} - ${details.join(" - ")}`, host, DESCRIPTION_CAP);
 
   return {
     timestamp: pickTime(row),
-    description: description.slice(0, DESCRIPTION_CAP),
+    description,
     severity: "Medium", // the detection floor's grade, as before — JIT/.NET/AV regions match too
     mitre: ["T1055"],
     aggKey: boundedAggKey(`vr|malfind|${host.toLowerCase()}|${pid}|${start}|${protection.toLowerCase()}`),
