@@ -140,9 +140,10 @@ letting the machine kill the server. It estimates two limits, and both must fit:
   of which the server can use about 13 GB, holds a case of about 100,000 events. 32 GB holds about
   200,000.
 - **JavaScript heap: about 29,000 events per GB of heap limit** (36 KB per event). `npm run dev` sets
-  an 8 GB heap, which caps a case near 230,000 events. The Docker image and the desktop builds use
-  Node's default heap, which depends on the machine's memory and is often about 4 GB. A 4 GB heap caps
-  a case near 115,000 events. Start the server with `node --max-old-space-size=<MB>` to raise it.
+  the heap to half the machine's memory (or its container cap), between 2 and 8 GB, and keeps a
+  `--max-old-space-size` already in `NODE_OPTIONS`. An 8 GB heap (a 16 GB+ machine) caps a case near
+  230,000 events. The Docker image and the desktop builds use Node's default heap, which depends on
+  the machine's memory and is often about 4 GB. A 4 GB heap caps a case near 115,000 events. Start the server with `node --max-old-space-size=<MB>` to raise it.
 
 Both figures come from measured imports (bulk and whole-file Velociraptor, SIEM JSON, EVTX XML) on
 synthetic data. Small cases cost the most per event, and a real case of about 145,000 events needed
