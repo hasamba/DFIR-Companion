@@ -21,7 +21,7 @@
 import type { Severity } from "./stateTypes.js";
 import { normalizeRow } from "./veloRowNormalize.js";
 import { parsedNewProcess, salientFromMessage } from "./veloMessageFields.js";
-import { thorFields } from "./thorRowMap.js";
+import { isThorScannerNoise, thorFields } from "./thorRowMap.js";
 import { bamFields } from "./bamRowMap.js";
 import { consolidateVeloScriptBlocks } from "./scriptBlockFragments.js";
 // The expandable full-detail message, and the cap that bounds it — see truncatedRemainder.ts.
@@ -1405,6 +1405,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
   // both drivers run first. Normalizing again is not free: an Elastic row keeps its `artifact_`
   // index, so the gate re-opens and the whole collapse/un-flatten walk runs again on every row.
   const artifact = artifactName(row) || ctx.fallbackArtifact;
+  if (isThorScannerNoise(row, artifact)) return { events: [], detections: 0 }; // about THOR, not the host (#2884)
   const rh = resolveRowHost(row, undefined, ctx.fallbackHost, ctx.aliases, ctx.fallbackBasis); // collector (row, else the flow's client) over the record's Computer (#1417, #1458), else the file's rename evidence (#1489)
   const host = rh.asset || ctx.fallbackHost; // a row's own host always wins; fallback only fills the gap
   if (host) ctx.hostTally.set(host, (ctx.hostTally.get(host) ?? 0) + 1);

@@ -107,16 +107,20 @@ describe("thorFields — a THOR finding collected through Velociraptor", () => {
     expect(a).not.toBe(b);
   });
 
-  it("grades by THOR's level, lifecycle modules included", () => {
+  it("grades by THOR's level, a lifecycle Notice and an Error as Info (#2884)", () => {
     expect(thorFields(processHit)!.severity).toBe("Critical");
     expect(thorFields(fileHit)!.severity).toBe("High");
     expect(
       thorFields({ ...ENVELOPE, level: "Notice", module: "Startup", message: "THOR Lite license" })!.severity,
-      // A Notice is a Notice whatever module raised it. Grading the Init/Startup ones Info kept licence
-      // banners out of the forensic timeline, and it cost the accounting an analyst actually does:
-      // THOR's summary reports 2 Notices and the case showed 0 Medium. Matching the scanner's own
-      // report beats tidying it — a wrong total is what breaks trust in the import.
+      // The licence / "Lite version" banners are about the scanner. Keeping them Medium to match THOR's
+      // own "2 Notices" total put four banners beside the one real finding; the analyst chose Info.
+    ).toBe("Info");
+    expect(
+      thorFields({ ...ENVELOPE, level: "Notice", module: "Filescan", message: "noteworthy" })!.severity,
     ).toBe("Medium");
+    expect(
+      thorFields({ ...ENVELOPE, level: "Error", module: "Init", message: "THOR already running" })!.severity,
+    ).toBe("Info");
   });
 
   it("returns undefined for a row that is not a THOR record", () => {

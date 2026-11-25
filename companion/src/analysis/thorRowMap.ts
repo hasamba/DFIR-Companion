@@ -18,12 +18,14 @@ import type { Severity } from "./stateTypes.js";
 
 type Row = Record<string, unknown>;
 
-// THOR level → severity, identical to thorImport.ts LEVEL_SEVERITY.
+// THOR level → severity, identical to thorImport.ts LEVEL_SEVERITY. `error` is the scanner failing
+// ("THOR already running", an unreadable file), not a detection (#2884).
 const LEVEL: Record<string, Severity> = {
   alert: "Critical",
   warning: "High",
   notice: "Medium",
   info: "Info",
+  error: "Info",
 };
 
 // What the finding is ABOUT, most specific first. `entry` beats `file` for a LogScan hit: the log file
@@ -83,6 +85,35 @@ function digest(s: string): string {
 }
 
 const baseName = (s: string): string => s.trim().split(/[\\/]/).pop() || s.trim();
+
+// Modules that report THOR's own scan lifecycle / app status, not the host. Shared with thorImport.ts,
+// which drops them outright on the import button.
+export const THOR_LIFECYCLE_MODULES: ReadonlySet<string> = new Set([
+  "Init",
+  "Startup",
+  "Control",
+  "ThorDB",
+  "Report",
+]);
+
+// A ThorZIP artifact's `Debug` source lists THOR's own tool folder on the endpoint (changes.log, config,
+// the licence file) — the scanner's install, not evidence. Matches the label decoded or still `%2F`-encoded.
+const THOR_DEBUG_SOURCE = /thorzip[^/]*(?:\/|%2f)debug$/i;
+
+/**
+ * True for a row that describes the THOR scanner rather than the endpoint, so the Velociraptor path
+ * drops it the way the THOR import button does (#2884): every row of a ThorZIP `Debug` source, and a
+ * THOR row that is Info level AND from a lifecycle module. A lifecycle row above Info is kept — the
+ * licence Notices reconcile the scanner's own totals and an Error says the scan failed — and so is
+ * THOR's Info inventory from finding modules (Autoruns, ProcessCheck …), searchable in the super-timeline.
+ */
+export function isThorScannerNoise(row: unknown, artifact = ""): boolean {
+  if (THOR_DEBUG_SOURCE.test(artifact.trim())) return true;
+  if (!isObject(row)) return false;
+  if (str(getCI(row, "level")).trim().toLowerCase() !== "info") return false;
+  if (!THOR_LIFECYCLE_MODULES.has(str(getCI(row, "module")).trim())) return false;
+  return !!getCI(row, "scanid") || !!getCI(row, "log_version") || /\bthor\b|thorzip/i.test(artifact);
+}
 
 export interface ThorFields {
   severity: Severity;
@@ -160,13 +191,12 @@ export function thorFields(
   const parent = firstStr(r, ["parent"]);
 
   return {
-    // The scanner's grade, unmodified. Downgrading the Init/Startup notices (thorImport.ts drops
-    // those modules outright) kept two licence banners out of the forensic timeline and cost the
-    // reconciliation an analyst actually performs: THOR's summary reports 1 Alert / 40 Warnings /
-    // 2 Notices, and the case showed no Medium at all. A timeline that disagrees with the scanner's
-    // own totals is worth less than one carrying two banners. The one change: a file whose content
-    // disagrees with its name goes up one level (#1966).
-    severity: mismatch?.severity ?? level,
+    // The scanner's grade, with two changes. A Notice from a lifecycle module (the "Lite version" and
+    // licence banners) is about the scanner, so it is Info (#2884) — the analyst chose a clean forensic
+    // timeline over matching THOR's own "2 Notices" total; thorImport.ts drops those modules outright.
+    // And a file whose content disagrees with its name goes up one level (#1966).
+    severity:
+      mismatch?.severity ?? (THOR_LIFECYCLE_MODULES.has(module) && level === "Medium" ? "Info" : level),
     description,
     detail: mismatch ? `${buildDetail(r)}\n${mismatch.note}` : buildDetail(r),
     // Keyed like thorImport.ts's dedup signature — module + message + SUBJECT + rule — plus the HOST,

@@ -12,10 +12,7 @@ import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import { maxEventsDefault } from "./siemImport.js";
 import { isDetectionToolLocation } from "./veloDetectionNoise.js";
 import { createDecisionTally, type ImportDebugRecorder } from "./rowDecisionDebug.js";
-import { contentMismatch } from "./thorRowMap.js";
-
-// Modules that report scan lifecycle / app status, not host findings — dropped by default.
-const LIFECYCLE_MODULES = new Set(["Init", "Startup", "Control", "ThorDB", "Report"]);
+import { contentMismatch, THOR_LIFECYCLE_MODULES as LIFECYCLE_MODULES } from "./thorRowMap.js";
 
 // THOR level → our severity.
 const LEVEL_SEVERITY: Record<string, Severity> = {
@@ -23,6 +20,7 @@ const LEVEL_SEVERITY: Record<string, Severity> = {
   Warning: "High",
   Notice: "Medium",
   Info: "Info",
+  Error: "Info", // the scanner failing, not a detection (#2884)
 };
 
 // THOR level ordering (higher = more severe) for the minLevel floor.
