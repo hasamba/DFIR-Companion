@@ -11,6 +11,7 @@ export {
   type VeloArtifactParam,
 } from "./artifactCatalog.js";
 import { CLIENT_RE, matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
+import * as snap from "./clientSnapshot.js"; // the one fleet-read row limit + its "list was cut" flag (#2887)
 // Re-exported so the inventory record/normalizer/matcher keep their long-standing import path.
 export { matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
 import { ChildOutputCollector } from "../childOutput.js";
@@ -621,16 +622,12 @@ export class VelociraptorClient {
   // brittle live `clients(search=...)` lookup whose index tokenizes the hostname on dots. Metadata
   // only, so the per-query row cap is NOT applied (use the larger collect cap; a server can have many).
   async listClients(): Promise<VeloClientRecord[]> {
-    const rows = await this.runRaw(
-      "SELECT client_id, os_info, last_seen_at, labels FROM clients() LIMIT 100000",
-      this.collectCap(),
-    );
-    const out: VeloClientRecord[] = [];
-    for (const row of rows) {
-      const rec = normalizeClientRow(row);
-      if (rec) out.push(rec);
-    }
-    return out;
+    return (await this.listClientSnapshot()).clients;
+  }
+  // The same read, plus whether it came back at the row limit and so may be missing clients (#2887).
+  async listClientSnapshot(): Promise<snap.ClientSnapshot> {
+    const sql = `SELECT client_id, os_info, last_seen_at, labels FROM clients() LIMIT ${snap.CLIENT_LOOKUP_LIMIT}`;
+    return snap.clientSnapshot(await this.runRaw(sql, this.collectCap()));
   }
 
   // Launch the VQL as a COLLECTION on a known client_id (issue #70) — the inventory already resolved
@@ -814,11 +811,9 @@ export class VelociraptorClient {
     if (!host) throw new Error("a target hostname is required for a single-endpoint collection");
     if (splitVqlStatements(sanitizeVqlDurations(vql)).length === 0)
       throw new Error("No runnable VQL found (the query is empty or only comments)");
-    const rec = matchClient(await this.listClients(), host);
-    if (!rec)
-      throw new Error(
-        `No enrolled Velociraptor client matches host "${host}" — refresh the client list or run a fleet hunt instead`,
-      );
+    const fleet = await this.listClientSnapshot();
+    const rec = matchClient(fleet.clients, host);
+    if (!rec) throw new Error(snap.hostMissMessage(host, fleet.truncated));
     return this.collectOnClient(rec.clientId, vql, description, host);
   }
 

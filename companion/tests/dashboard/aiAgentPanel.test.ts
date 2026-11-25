@@ -60,6 +60,20 @@ describe("AI Agent Forensics panel", () => {
     expect(refusal).not.toContain("Settings");
   });
 
+  it("endpoint picker: filters the whole list, caps only the drawn rows, says so, and keeps picks (#2887)", () => {
+    const picker = js.slice(js.indexOf("async function endpointPicker"), js.indexOf("function scopeBoxes"));
+    expect(picker).not.toContain(".slice(0, 2000)");
+    expect(picker).toContain("veloPickerRows(clients, filter.value)");
+    expect(picker).toContain("veloPickerNote(view)");
+    // A list the server cut at its row limit says so above the picker.
+    expect(picker).toContain("veloClientsCutNotice(inv.body)");
+    // A pick survives a filter that hides its row: the picks live in a Set, not in the drawn checkboxes.
+    expect(picker).toContain("const picked = new Set()");
+    expect(picker).toContain("box.checked = picked.has(c.clientId)");
+    expect(picker).toContain("selected: () => [...picked]");
+    expect(picker).not.toContain("input:checked");
+  });
+
   it("turns the standard 401 locked answer into an unlock hint (#2798)", () => {
     expect(js).toContain('res.status === 401 && body && body.error === "locked"');
     expect(js).toContain("is locked — unlock it first.");

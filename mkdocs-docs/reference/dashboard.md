@@ -982,7 +982,9 @@ section, and with no case open it opens the **sweep** view.
    server set, and anyone with write access to the case can see it (host name, FQDN, client id, last
    seen, labels). A read-only member is told they need write access. With no case open, the list is
    the whole fleet, and only an administrator can see it and start a run. Non-Windows endpoints are
-   left out and named: this version runs on Windows only.
+   left out and named: this version runs on Windows only. The filter searches the whole list (only
+   2,000 matches are drawn, with a note); when the server cut the client list at 100,000, this picker
+   and Settings → Velociraptor Triage say so and point to a fleet hunt or the Velociraptor GUI.
 2. Leave the three default scopes ticked (agent home folders, project instruction files, MCP server
    installs) or add the two slow ones (local model files, script drop locations).
 3. Press **Run**. Velociraptor runs the [ai-dfir-toolkit](https://github.com/depalmar/ai-dfir-toolkit)

@@ -1,6 +1,7 @@
 import { logActivityWithWarning, type NewActivityEntry } from "../analysis/activityLog.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { matchClient, normalizeHuntExpirySeconds } from "../integrations/velociraptor/velociraptorApi.js";
+import { hostMissMessage } from "../integrations/velociraptor/clientSnapshot.js";
 import type { RouteContext } from "./context.js";
 import { deployHuntBodyProblem, parseDeployHuntBody, type DeployHuntBody } from "./huntDeployBody.js";
 import { resolveCaseVelo, type VeloTarget } from "./veloServers.js";
@@ -59,12 +60,18 @@ export async function collectHostResolved(
     let rec = matchClient((await store.load()).clients, hostname);
     if (!rec) {
       await ctx.refreshVeloClients(vc.setId);
-      rec = matchClient((await store.load()).clients, hostname);
+      // The inventory read AFTER the refresh decides whether the list was cut (#2887).
+      const inv = await store.load();
+      rec = matchClient(inv.clients, hostname);
+      if (!rec)
+        throw new Error(
+          hostMissMessage(
+            hostname,
+            inv.truncated === true,
+            "refresh the client list (Settings → Velociraptor)",
+          ),
+        );
     }
-    if (!rec)
-      throw new Error(
-        `No enrolled Velociraptor client matches host "${hostname}" — refresh the client list (Settings → Velociraptor) or run a fleet hunt instead`,
-      );
     beforeLaunch();
     return await vc.client.collectOnClient(rec.clientId, vql, description, hostname);
   }

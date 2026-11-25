@@ -15,6 +15,11 @@ import type { VeloClientRecord } from "../integrations/velociraptor/velociraptor
 export interface VeloClientInventory {
   updatedAt: string; // ISO time of the last refresh ("" when never refreshed)
   clients: VeloClientRecord[];
+  /**
+   * The snapshot came back at the server's row limit, so clients past it are missing (#2887).
+   * OMITTED for a complete read, so a file written before #2887 loads unchanged.
+   */
+  truncated?: true;
 }
 
 export class VelociraptorClientStore {
@@ -28,6 +33,7 @@ export class VelociraptorClientStore {
         return {
           updatedAt: String(parsed.updatedAt ?? ""),
           clients: parsed.clients.filter((c): c is VeloClientRecord => !!c && typeof c.clientId === "string"),
+          ...(parsed.truncated === true ? { truncated: true as const } : {}),
         };
       }
     } catch {
@@ -37,8 +43,13 @@ export class VelociraptorClientStore {
   }
 
   // Replace the inventory with a fresh snapshot. `now` is passed in (no clock dependency in the store).
-  async save(clients: VeloClientRecord[], now: string): Promise<VeloClientInventory> {
-    const inv: VeloClientInventory = { updatedAt: now, clients };
+  // `truncated`: the snapshot reached the row limit (#2887); stored only when true.
+  async save(clients: VeloClientRecord[], now: string, truncated = false): Promise<VeloClientInventory> {
+    const inv: VeloClientInventory = {
+      updatedAt: now,
+      clients,
+      ...(truncated ? { truncated: true as const } : {}),
+    };
     await mkdir(dirname(this.file), { recursive: true });
     await atomicWrite(this.file, JSON.stringify(inv, null, 2));
     return inv;

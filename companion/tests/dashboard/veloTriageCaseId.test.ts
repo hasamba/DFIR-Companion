@@ -19,17 +19,27 @@ interface Api {
 }
 
 const calls: Call[] = [];
+let answer: Record<string, unknown> = {};
 const el = () => ({ textContent: "", innerHTML: "", disabled: false, value: "" });
 const nodes: Record<string, ReturnType<typeof el>> = {};
 const document = { getElementById: (id: string) => (nodes[id] ??= el()) };
 const fetch = async (url: string, init?: { body?: string }) => {
   calls.push({ url, body: init?.body ? JSON.parse(init.body) : undefined });
-  return { ok: true, json: async () => ({ updatedAt: "", clients: [], scoped: [], unscoped: [] }) };
+  return {
+    ok: true,
+    json: async () => ({ updatedAt: "", clients: [], scoped: [], unscoped: [], ...answer }),
+  };
 };
 
 const triage = loadDashboardModule<Api>(
   "dashboard-velo-triage.js",
-  ["dashboard-escape.js", "dashboard-values.js", "dashboard-velo-case.js"],
+  [
+    "dashboard-escape.js",
+    "dashboard-time.js",
+    "dashboard-values.js",
+    "dashboard-velo-case.js",
+    "dashboard-velo-clients.js",
+  ],
   { document, fetch, activeCaseId: null, veloEnabled: true, saveSettings: async () => true },
 );
 
@@ -45,6 +55,7 @@ const form = () => {
 
 beforeEach(() => {
   calls.length = 0;
+  answer = {};
   triage.activeCaseId = null;
   triage.veloEnabled = true;
 });
@@ -84,5 +95,33 @@ describe("the open case's id rides on the case-less Velociraptor calls", () => {
     await triage.doVeloReconnect();
     const call = calls.find((c) => c.url === "/velociraptor/reconnect");
     expect(call?.body).toEqual({});
+  });
+});
+
+// #2887: a client list the server cut at its row limit says so on the triage card.
+describe("the client list says when the server cut it", () => {
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const clients = [{ clientId: "C.a", hostname: "ws-a", fqdn: "" }];
+
+  it("a cut list carries the notice, after the refresh too", async () => {
+    answer = { clients, truncated: true };
+    triage.loadVeloClients();
+    await settle();
+    expect(nodes.veloClientsMsg.textContent).toContain("1 enrolled client");
+    expect(nodes.veloClientsMsg.textContent).toContain(
+      "Showing the first 100,000 clients the server returned — a client past that is not listed here; run a fleet hunt or use the Velociraptor GUI.",
+    );
+    nodes.veloClientsMsg.textContent = "";
+    triage.doRefreshVeloClients();
+    await settle();
+    expect(nodes.veloClientsMsg.textContent).toContain("Showing the first 100,000 clients");
+  });
+
+  it("a complete list has no notice", async () => {
+    answer = { clients };
+    triage.loadVeloClients();
+    await settle();
+    expect(nodes.veloClientsMsg.textContent).toContain("1 enrolled client");
+    expect(nodes.veloClientsMsg.textContent).not.toContain("100,000");
   });
 });

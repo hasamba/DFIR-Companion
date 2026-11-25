@@ -30,6 +30,7 @@ import { AI_AGENT_HUNT_EXPIRY_SECONDS, launchAiAgentRun } from "./aiAgentLaunch.
 import { preflightAiAgentRun, type AiAgentEndpoint } from "./aiAgentPreflight.js";
 import { readUploadManifestStatus } from "./uploadVql.js";
 import { CLIENT_RE } from "./clientInventory.js";
+import { CLIENT_LOOKUP_LIMIT } from "./clientSnapshot.js";
 import { saveFiledRun, updateFiledRun, type FiledFrom } from "../../reports/aiAgentFiledRuns.js";
 import {
   SWEEP_CASE_KIND,
@@ -42,8 +43,8 @@ export const AI_AGENT_BUNDLE_ID = "ai-agent-forensics";
 const BUNDLE_NAME = "AI Agent Forensics (sensitive)";
 const DEFAULT_WAIT_MINUTES = 30;
 const MAX_ENDPOINTS = 200;
-/** Same bound as the endpoint inventory read (`listClients`). */
-export const CLIENT_LOOKUP_LIMIT = 100_000;
+/** Same bound as the endpoint inventory read (`listClients`): one constant, in clientSnapshot.ts (#2887). */
+export { CLIENT_LOOKUP_LIMIT };
 /** Rows per evidence-first ingest when a sweep is filed into a case. */
 const ADD_BATCH_ROWS = 10_000;
 
