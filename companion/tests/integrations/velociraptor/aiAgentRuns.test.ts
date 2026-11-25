@@ -9,6 +9,7 @@ import { VeloHuntStore } from "../../../src/analysis/veloHuntStore.js";
 import { AiControlStore } from "../../../src/analysis/aiControl.js";
 import { AiAgentRunStore } from "../../../src/analysis/aiAgentRunStore.js";
 import {
+  CLIENT_LOOKUP_LIMIT,
   addSweepToCase,
   enforceSweepRetention,
   listSweeps,
@@ -233,6 +234,107 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     expect(r.run.endpoints).toEqual([expect.objectContaining({ clientId: "C.w2", hostname: "DEV-WS-022" })]);
     const lookup = programs.find((p) => p.includes("FROM clients()")) ?? "";
     expect(lookup).not.toMatch(/WHERE|\bIN\b/i);
+  });
+
+  describe("a client list cut at the row limit (#2880)", () => {
+    // A fleet larger than the lookup limit: clients() returns exactly CLIENT_LOOKUP_LIMIT rows, and
+    // the picked endpoint is not among them. Only the exact by-id client_info() lookup can see it.
+    function truncatedFleet(known: Record<string, { system: string; hostname: string }>) {
+      const velo = fakeVelo();
+      const fullPage = Array.from({ length: CLIENT_LOOKUP_LIMIT }, (_, i) => ({
+        client_id: `C.fleet${i}`,
+        OS: "windows",
+        Hostname: `WS-${i}`,
+      }));
+      const fleet = {
+        ...velo,
+        runProgram: async (p: string) => {
+          if (p.includes("FROM clients()")) {
+            programs.push(p);
+            return { rows: fullPage, reason: "" };
+          }
+          if (p.includes("client_info(")) {
+            programs.push(p);
+            const ids = [...p.matchAll(/'(C\.[A-Za-z0-9]+)'/g)].map((m) => m[1]);
+            const rows = ids.map((id) => ({
+              Info: id.startsWith("C.stub")
+                ? { client_id: id, os_info: {} }
+                : known[id]
+                  ? { client_id: id, os_info: { ...known[id], fqdn: "" } }
+                  : null,
+            }));
+            return { rows, reason: "" };
+          }
+          return (velo as unknown as { runProgram(p: string): Promise<unknown> }).runProgram(p);
+        },
+      } as unknown as VelociraptorClient;
+      const servers = { ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: fleet } };
+      const lines: string[] = [];
+      const deps = makeDeps({
+        serverClients: {
+          forCase: () => servers,
+          forSet: () => servers,
+          forDefault: () => servers,
+        } as unknown as AiAgentForensicsDeps["serverClients"],
+        log: (l: string) => lines.push(l),
+      });
+      return { deps, lines };
+    }
+
+    it("finds a picked endpoint past the limit by its exact id, and runs on it", async () => {
+      await store.createCase({ caseId: "case-t1", name: "c", investigator: "x", aiProvider: null });
+      const { deps, lines } = truncatedFleet({ "C.far1": { system: "windows", hostname: "FAR-WS-001" } });
+      const r = await startAiAgentRun(deps, { caseId: "case-t1", clientIds: ["C.far1"] });
+      expect(r.run.endpoints).toEqual([
+        expect.objectContaining({ clientId: "C.far1", hostname: "FAR-WS-001" }),
+      ]);
+      const lookup = programs.find((p) => p.includes("client_info(")) ?? "";
+      expect(lookup).toContain("'C.far1'");
+      expect(lines.some((l) => /100,000/.test(l))).toBe(true); // the truncation is logged
+    });
+
+    it("still refuses an id the exact lookup cannot find either, and says the list was cut", async () => {
+      await store.createCase({ caseId: "case-t2", name: "c", investigator: "x", aiProvider: null });
+      const { deps, lines } = truncatedFleet({});
+      await expect(startAiAgentRun(deps, { caseId: "case-t2", clientIds: ["C.gone7"] })).rejects.toThrow(
+        /does not list endpoint C\.gone7[\s\S]*client list was cut at 100,000/,
+      );
+      expect(programs.some((p) => p.includes("hunt("))).toBe(false); // nothing launched
+      expect(lines.some((l) => /C\.gone7/.test(l) && /100,000/.test(l))).toBe(true);
+    });
+
+    it("refuses an id the exact lookup returns only as a stub with no OS info (#2725)", async () => {
+      await store.createCase({ caseId: "case-t5", name: "c", investigator: "x", aiProvider: null });
+      const { deps } = truncatedFleet({});
+      await expect(startAiAgentRun(deps, { caseId: "case-t5", clientIds: ["C.stub1"] })).rejects.toThrow(
+        /does not list endpoint C\.stub1[\s\S]*client list was cut at 100,000/,
+      );
+    });
+
+    it("refuses safely when the exact lookup itself fails", async () => {
+      await store.createCase({ caseId: "case-t3", name: "c", investigator: "x", aiProvider: null });
+      const { deps } = truncatedFleet({});
+      const velo = deps.serverClients.forCase("case-t3") as unknown as {
+        servers: { velociraptor: { runProgram(p: string): Promise<unknown> } };
+      };
+      const inner = velo.servers.velociraptor.runProgram;
+      velo.servers.velociraptor.runProgram = async (p: string) => {
+        if (p.includes("client_info(")) throw new Error("child exited");
+        return inner(p);
+      };
+      await expect(startAiAgentRun(deps, { caseId: "case-t3", clientIds: ["C.gone8"] })).rejects.toThrow(
+        /does not list endpoint C\.gone8[\s\S]*client list was cut at 100,000/,
+      );
+    });
+
+    it("does not run the exact lookup when the list was not cut", async () => {
+      await store.createCase({ caseId: "case-t4", name: "c", investigator: "x", aiProvider: null });
+      const deps = makeDeps();
+      await expect(startAiAgentRun(deps, { caseId: "case-t4", clientIds: ["C.other9"] })).rejects.toThrow(
+        /does not list endpoint C\.other9\. Untick/,
+      );
+      expect(programs.some((p) => p.includes("client_info("))).toBe(false);
+    });
   });
 
   it("refreshes the report and the manifest without reading upload contents", async () => {

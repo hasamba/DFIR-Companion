@@ -24,7 +24,7 @@ import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
 import type { AiAgentHostOptions } from "../analysis/aiAgentHostLabels.js";
 import { bulkPathApplies, runVelociraptorBulk } from "../analysis/ingest/velociraptorBulk.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
-import { settleForensicImport } from "../routes/importSettle.js";
+import { settleImportOrRecover } from "../routes/importRowRecovery.js";
 import { createSuperEvictionTally, type SuperEviction } from "../analysis/superTimelineStore.js";
 import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
@@ -287,32 +287,24 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
 
       let addedEvents = 0,
         addedIocs = 0;
-      if (options.stateStore && stateBefore) {
+      // The super-only path returns above only when a super-timeline store exists; a superOnly
+      // request with NO store falls through to the forensic importer and must not demote — there
+      // is nowhere for a demoted row to go — so it gets no settle and no recovery. Every other case
+      // is the forensic path through the one seam (routes/importSettle.ts): dual-write, tag, demote,
+      // diff post-demote. No snapshot / a failed settle → WARN + recovery of this map's rows (#2890).
+      const guard =
+        !opts.superOnly && options.stateStore ? { ...settleDeps, stateStore: options.stateStore } : null;
+      const target = { caseId, storedNames: [storedName], tag: "velociraptor" };
+      const settled = await settleImportOrRecover(guard, target, stateBefore, storedName);
+      if (options.stateStore && stateBefore && (opts.superOnly || settled)) {
         try {
-          // The super-only path returns above only when a super-timeline store exists; a superOnly
-          // request with NO store falls through to the forensic importer and must not demote — there
-          // is nowhere for a demoted row to go. Every other case is the forensic path through the one
-          // seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
           // The super-only branch appends to the store itself, above, and reports there; only the
           // forensic branch crosses the seam that knows what the cap dropped (#1535).
-          let superTimelineEvicted: SuperEviction | undefined;
-          let tDiff, iDiff;
-          if (opts.superOnly) {
-            ({ timelineDiff: tDiff, iocsDiff: iDiff } = await diffWithoutDemote(
-              options.stateStore,
-              caseId,
-              stateBefore,
-            ));
-          } else {
-            const settled = await settleForensicImport(
-              { ...settleDeps, stateStore: options.stateStore },
-              caseId,
-              stateBefore,
-              storedName,
-            );
-            ({ timelineDiff: tDiff, iocsDiff: iDiff } = settled);
-            superTimelineEvicted = capDropped.plus(settled.superTimelineEvicted);
-          }
+          const diffs = settled ?? (await diffWithoutDemote(options.stateStore, caseId, stateBefore));
+          const { timelineDiff: tDiff, iocsDiff: iDiff } = diffs;
+          const superTimelineEvicted: SuperEviction | undefined = settled
+            ? capDropped.plus(settled.superTimelineEvicted)
+            : undefined;
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
           // settle logs its own done line; this branch bypassed it (#1438).
@@ -409,6 +401,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       const imported: string[] = [];
       const importedKinds: Array<{ file: string; kind: string; debug: ImportDebugRecorder }> = []; // #1824
       let lastStoredName: string | undefined;
+      const storedNames: string[] = []; // every dispatched upload's own stored name (#2890)
       const capDropped = createSuperEvictionTally(); // the uploads' batched runs, for the one record (#2831)
       for (const { up, kind, debug, storedName, importedAt, seq } of stored) {
         if (await aiGateClosed(kind, getControl, caseId)) {
@@ -417,6 +410,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         }
         try {
           lastStoredName = storedName;
+          storedNames.push(storedName);
           await dispatchImport(kind, caseId, up.content, {
             label: storedName,
             idPrefix: `${seq}`,
@@ -439,33 +433,33 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
 
       let addedEvents = 0,
         addedIocs = 0;
-      if (imported.length && options.stateStore && stateBefore) {
-        try {
-          const settled = await settleForensicImport(
-            { ...settleDeps, stateStore: options.stateStore },
-            caseId,
-            stateBefore,
-            lastStoredName,
-          );
-          const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
-          addedEvents = tDiff.added.length;
-          addedIocs = iDiff.added.length;
-          // Rows a batched run's cap passes dropped are recorded also when nothing forensic changed.
-          const changed = addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length;
-          if ((changed || capDropped.plus(undefined)?.count) && options.importMetaStore && lastStoredName) {
-            await options.importMetaStore.record(caseId, {
-              kind: "velociraptor",
-              file: lastStoredName,
-              diff: tDiff,
-              superTimelineAddedCount: settled.superTimelineAddedCount,
-              superTimelineEvicted: capDropped.plus(settled.superTimelineEvicted),
-              iocsDiff: iDiff,
-            });
-            options.onImportMeta?.(caseId);
+      if (imported.length && options.stateStore) {
+        // No snapshot / a failed settle → WARN + recovery of EVERY upload's rows (#2890): each
+        // carries its own stored name, and the settle is labelled with the last one only.
+        const guard = { ...settleDeps, stateStore: options.stateStore };
+        const target = { caseId, storedNames, tag: "velociraptor" };
+        const settled = await settleImportOrRecover(guard, target, stateBefore, lastStoredName);
+        if (settled)
+          try {
+            const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
+            addedEvents = tDiff.added.length;
+            addedIocs = iDiff.added.length;
+            // Rows a batched run's cap passes dropped are recorded also when nothing forensic changed.
+            const changed = addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length;
+            if ((changed || capDropped.plus(undefined)?.count) && options.importMetaStore && lastStoredName) {
+              await options.importMetaStore.record(caseId, {
+                kind: "velociraptor",
+                file: lastStoredName,
+                diff: tDiff,
+                superTimelineAddedCount: settled.superTimelineAddedCount,
+                superTimelineEvicted: capDropped.plus(settled.superTimelineEvicted),
+                iocsDiff: iDiff,
+              });
+              options.onImportMeta?.(caseId);
+            }
+          } catch {
+            /* non-fatal */
           }
-        } catch {
-          /* non-fatal */
-        }
         try {
           await applyWhitelistToCase(caseId);
         } catch {

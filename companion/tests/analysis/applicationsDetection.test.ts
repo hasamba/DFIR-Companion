@@ -94,3 +94,14 @@ describe("Applications rows without a Regex column", () => {
     expect(e.description).toContain("VPN — VpnY");
   });
 });
+
+// #2881: a cap applied after the host suffix cut it to a fragment ("@ HOS") in a ~12-char window.
+describe("mapApplications — host suffix under the cap (#2881)", () => {
+  it("keeps the '@ HOST' suffix whole when long details reach the 600-char cap", () => {
+    for (let n = 300; n <= 650; n++) {
+      const e = mapApplications(app("TeamViewer", { KeyPath: "k".repeat(n) }), ARTIFACT, "HOST01");
+      expect(e.description.length).toBeLessThanOrEqual(600);
+      expect(e.description.endsWith(" @ HOST01")).toBe(true);
+    }
+  });
+});

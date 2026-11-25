@@ -197,7 +197,9 @@ export const UPSTREAM_GROUPS = Object.freeze([
     watchPath: "09-agent-memory-forensics",
     files: Object.freeze([]),
   }),
-  // #2690: the AICodingAgents preservation globs. This group watches the compound target's folder.
+  // #2690: the AICodingAgents preservation globs, from the compound target in Targets/Compound.
+  // #2866: `onlyFiles` keeps the diff to AICodingAgents.tkape (same reason as #2723), so a version
+  // bump on an unrelated compound target (!SANS_Triage, RemoteAdmin, …) never opens the re-sync issue.
   Object.freeze({
     id: "kapefiles-aicodingagents",
     kind: "rule-files",
@@ -207,6 +209,7 @@ export const UPSTREAM_GROUPS = Object.freeze([
     markerFile: "data/ai-agent-rules/aicodingagents-globs.yaml",
     watchPath: "Targets/Compound",
     files: Object.freeze([]),
+    onlyFiles: Object.freeze(["Targets/Compound/AICodingAgents.tkape"]),
   }),
   // #2723: the nine app targets the globs were converted from, in Targets/Apps (~200 entries, well
   // inside one listing). `onlyFiles` keeps the diff to those nine, so an edit to one of the folder's

@@ -73,6 +73,14 @@ export interface VeloHuntJob {
   // persisted status is NOT authority on what is running (see composition/veloHunts.ts's header).
   collectPhase?: VeloCollectPhase;
   collectRows?: number; // rows this collect fetched from Velociraptor; known once the fetch finishes
+  // The stored names of the uploaded reports the last collect imported, written before its import
+  // section (#2852): their rows carry the report's own name, not the hunt's, so a recovery of an
+  // interrupted or failed settle finds them only by these. Absent on older jobs and without uploads.
+  importingUploads?: string[];
+  // The import batch id the last collect's settle stamps its rows with, chosen and written in the same
+  // write (#2888): a settle that failed or was cut off AFTER stamping leaves rows only this finds.
+  // Dropped once the settle's demote has returned, so a restart never re-grades a graded batch.
+  importingBatchId?: string;
   target?: HuntTarget;
   minSeverity?: Severity; // optional import floor chosen at run time (keeps low-value items out)
   timeoutSeconds?: number; // optional per-collection timeout used for this hunt (Velociraptor default 600s)
@@ -97,6 +105,9 @@ export interface VeloHuntJob {
     degraded: boolean;
   };
   error?: string;
+  // #2889: an "imported" collect whose settle, import record or Undo entry failed. Stored raw, like
+  // `error` (the card escapes it); a later collect that settles cleanly clears it.
+  settleWarning?: string;
   // Set when the analyst cancelled the hunt (status "cancelled"). The companion never collects it again.
   cancelled?: VeloHuntCancel;
   // Set at collect time when Velociraptor reported this hunt terminal (STOPPED/ARCHIVED) well before

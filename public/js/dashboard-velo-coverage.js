@@ -59,6 +59,17 @@ function veloCutLine(t) {
 // one line that says whose results it shows. Fixed text; it never prints without a block under it.
 /* exported veloCoverageHtml */
 function veloCoverageHtml(job) {
+  return veloSettleWarningHtml(job) + veloCoverageWithOrigin(job);
+}
+
+// #2889: the collect imported with no failed artifact, but its settle, import record or Undo entry
+// failed. Shown even for a one-artifact hunt, whose coverage block is empty. Server text, escaped.
+function veloSettleWarningHtml(job) {
+  if (job.status !== "imported" || !job.settleWarning) return "";
+  return `<div data-safe-style="font-size:12px;color:#ff9f43;margin-top:2px">&#9888; ${esc(job.settleWarning)}</div>`;
+}
+
+function veloCoverageWithOrigin(job) {
   const block = veloCoverageBlock(job);
   if (!block || job.earlierCoverage !== true) return block;
   return (

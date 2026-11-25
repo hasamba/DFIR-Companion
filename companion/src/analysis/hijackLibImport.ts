@@ -18,7 +18,7 @@ import {
   type MappedEvent,
   type SiemIoc,
 } from "./siemImport.js";
-import { titleSafe, withHostSuffix } from "./velociraptorTitle.js";
+import { capWithHostSuffix, titleSafe } from "./velociraptorTitle.js";
 import { pickTime } from "./veloRowTime.js";
 import { isUnforgeableContentPath } from "./veloDetectionNoise.js";
 import { boundedAggKey } from "./aggKey.js";
@@ -70,8 +70,11 @@ export function mapHijackLib(
   // Portable" folder) from being read as that boundary; the raw path is kept in `path`.
   const title = `hijackable DLL ${dll}${vendor ? ` (${vendor})` : ""} at ${titleSafe(oneLine(path))}`;
   const details = `${verdict}${type ? ` [${type}]` : ""}${url ? ` — ${url}` : ""}`;
-  let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${title} - ${details}`;
-  description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
+  const description = capWithHostSuffix(
+    `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${title} - ${details}`,
+    host,
+    600,
+  );
 
   return {
     timestamp: pickTime(row),

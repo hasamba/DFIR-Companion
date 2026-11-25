@@ -950,7 +950,9 @@ The case-scoped half of Velociraptor. Everything on this panel lands in the conn
   tracking it here only; the hunt keeps running there), stop the hunt (its results stay on the
   server), or delete the hunt and its results from the server (needs the server-admin permission).
   The companion never collects a cancelled hunt. When Velociraptor refuses the stop or delete, the
-  card says so and that the hunt may still be running there.
+  card says so and that the hunt may still be running there. On a closed or archived case, Cancel
+  can still stop the hunt or stop tracking it, but the delete choice is refused: deleting would
+  destroy collected results.
 - **Import external hunt/flow** — paste a hunt id, a flow id or a Velociraptor GUI URL to import a
   collection launched outside the Companion. If the hunt or flow is already in the case, the panel
   says when it was pulled in and imports nothing yet. It lists the artifacts that need importing
@@ -980,13 +982,19 @@ section, and with no case open it opens the **sweep** view.
    server set, and anyone with write access to the case can see it (host name, FQDN, client id, last
    seen, labels). A read-only member is told they need write access. With no case open, the list is
    the whole fleet, and only an administrator can see it and start a run. Non-Windows endpoints are
-   left out and named: this version runs on Windows only.
+   left out and named: this version runs on Windows only. The filter searches the whole list (only
+   2,000 matches are drawn, with a note); when the server cut the client list at 100,000, this picker
+   and Settings → Velociraptor Triage say so and point to a fleet hunt or the Velociraptor GUI.
 2. Leave the three default scopes ticked (agent home folders, project instruction files, MCP server
    installs) or add the two slow ones (local model files, script drop locations).
 3. Press **Run**. Velociraptor runs the [ai-dfir-toolkit](https://github.com/depalmar/ai-dfir-toolkit)
    YARA rules and Sigma rules **on the endpoint**, lists the AI tools and MCP servers present, and
    preserves the AI-agent files with `Windows.Triage.Targets` → `AICodingAgents`. A run never targets
-   the whole fleet: only the endpoints you ticked.
+   the whole fleet: only the endpoints you ticked. Inside a case, Run is refused when the case's
+   Velociraptor server does not list a ticked endpoint, and the refusal names it. On a server with
+   more than 100,000 clients, Run looks up by client id any ticked endpoint that is not in the first
+   100,000. If it still cannot find one, the refusal also says that the client list was cut at
+   100,000.
 
 The results-only report shows, per endpoint, the AI tools found, the MCP servers configured (name and
 executable only; arguments are counted, never shown, and environment values are never read), the
@@ -1145,7 +1153,11 @@ Each hypothesis has a status: **Open / Supported / Refuted / Unknown**. Open hyp
 
 **ACH-style tracking** — hypotheses also track contradicting evidence, a discriminating host+artifact that would settle the question, and an "exhausted" flag (set once enough linked hunts come back empty). The list is ranked fewest-contradictions-first, the classic Analysis-of-Competing-Hypotheses fix for a red herring winning unopposed.
 
+**🎯 test via hunt** — links the next Velociraptor hunt you deploy to that hypothesis, so an empty result counts against it. The link belongs to the case you pressed it in: opening another case cancels it, and a hunt deployed in another case is never linked to it.
+
 **Review** button — runs a focused for/against pass over open hypotheses (plain-English case for and against each, plus an advisory recommended status) without re-running full synthesis. Never mutates a hypothesis until you click **Apply**.
+
+**The panel shows only the open case.** When you open another case, or cancel a case load, the panel is emptied at once, together with the messages under **Add**, **Generate** and **Review**. If an Add, Generate or Review that you started in the previous case fails later, its message is not shown in the case you are in now.
 
 ---
 

@@ -36,9 +36,10 @@ const serverClients = {
   invalidate: () => undefined,
 } as unknown as AppOptions["serverClients"];
 const inventorySets: string[] = [];
+let inventoryExtra: Record<string, unknown> = {};
 const clientInventoryFor = ((setId: string) => {
   inventorySets.push(setId);
-  return { load: async () => INVENTORY };
+  return { load: async () => ({ ...INVENTORY, ...inventoryExtra }) };
 }) as unknown as AppOptions["clientInventoryFor"];
 
 const BOOTSTRAP_TOKEN = "test-bootstrap-token-with-enough-entropy";
@@ -97,6 +98,7 @@ describe("AI Agent Forensics routes under team authentication", () => {
       sessionTtlMs: 60 * 60_000,
     });
     inventorySets.length = 0;
+    inventoryExtra = {};
     app = createApp(cases, {
       teamAuth: auth,
       veloHuntStore: new VeloHuntStore(cases),
@@ -160,6 +162,13 @@ describe("AI Agent Forensics routes under team authentication", () => {
       },
       { clientId: "C.bbb222", hostname: "WS-02", fqdn: "ws-02.lab.test", labels: [] },
     ]);
+  });
+
+  it("passes the 'list was cut' flag through, and only when the inventory has it (#2887)", async () => {
+    const inv = await analyst("investigator4", "investigator");
+    expect((await endpoints(inv)).body).not.toHaveProperty("truncated");
+    inventoryExtra = { truncated: true };
+    expect((await endpoints(inv)).body.truncated).toBe(true);
   });
 
   it("analyst with write on the case: refused a run with no case open (administrator only)", async () => {

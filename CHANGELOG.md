@@ -30,6 +30,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Failed hunt settle re-graded** — rows from a hunt collect whose end-of-import settle fails, and rows from uploaded reports such as THOR, are graded before the next demote (closes #2852)
+- **Hunt settle failures after stamping** — a settle that fails mid-stamp, or a failed pre-import read, no longer leaves hunt rows ungraded; recovery also survives a restart (closes #2888)
+- **Import settle failures recovered** — streamed, drop-folder, Import-button and Velociraptor external imports log a failed settle and grade their own rows instead of dropping them silently (closes #2890)
+- **Hunt card settle warning** — an imported hunt whose grading, import record or Undo step failed now says so on the card (closes #2889)
+- **Hunt link stays in its case** — a pending "test via hunt" link never attaches a hunt to another case's hypothesis (closes #2847)
+- **Hypotheses panel on cancel** — a cancelled case load empties the panel; old-case messages no longer appear after a switch (closes #2848)
+- **AI Agent launch stops its hunt** — a launch with no usable endpoint really stops the paused hunt and says whether the stop worked (closes #2861)
+- **Toolbar labels** — the toolbar shows full labels again when they fit; it no longer collapses to icons at every width (closes #2883)
+- **Host suffix kept whole** — a long Velociraptor row description keeps "@ HOST" whole instead of cutting it to a fragment (closes #2881)
+- **Cancel a hunt on a closed case** — a closed or archived case can stop tracking or stop a running hunt, but not delete its results (closes #2867)
+- **AI Agent Run past 100,000 clients** — a picked endpoint missing from a cut client list is looked up by id, and the refusal says the list was cut (closes #2880)
+- **Cut client list notice** — the Velociraptor triage panel and AI Agent picker say when the server cut the client list; the picker filters the whole fleet, not the first 2,000 (closes #2887)
+- **Upstream rule check** — the weekly check watches only AICodingAgents.tkape, so unrelated KapeFiles target edits no longer open an issue (closes #2866)
+- **Dev heap sized from the machine** — `npm run dev` sets the heap to half the machine's (or container's) memory, 2–8 GB, instead of a fixed 8 GB (closes #2855)
+- **esc() drift guard** — a test now keeps all eight dashboard escape copies identical, and two copies print empty text for null like the rest (closes #2882)
+- **Host suffix in four more importers** — binary-rename, PersistenceSniper, SAM account and AI Agent rows keep "@ HOST" whole (part of #2885)
 - **Case ids are never reused** — every case id is recorded when the case is created, so a number stays used even after its folder is removed by hand; New Case refuses a used id and names the next free one (closes #2858)
 - **Held Second look reports promoted rows** — a run held for a duplicate-host or Presidio decision says how many raw events it already promoted and refreshes (closes #2833)
 - **Held Second look job entry** — the Jobs panel entry for that held run also states the rows it already promoted (closes #2839)

@@ -72,7 +72,7 @@
     const n = _veloClients.length;
     const from = inv.setName ? ` in server set '${inv.setName}'` : "";
     msg.textContent = n
-      ? `${n} enrolled client${n === 1 ? "" : "s"}${from} · updated ${veloClientsAge(inv.updatedAt)}`
+      ? `${n} enrolled client${n === 1 ? "" : "s"}${from} · updated ${veloClientsAge(inv.updatedAt)}${veloClientsCutNotice(inv) ? " · " + veloClientsCutNotice(inv) : ""}`
       : veloEnabled
         ? "no clients cached yet — click Refresh to snapshot the fleet"
         : "Velociraptor API not configured";
@@ -119,7 +119,7 @@
               " — try Reconnect if the server was down";
           return;
         }
-        renderVeloClients({ updatedAt: j.updatedAt, clients: j.clients || [], setName: j.setName });
+        renderVeloClients({ updatedAt: j.updatedAt, clients: j.clients || [], setName: j.setName, truncated: j.truncated });
       })
       .catch((e) => {
         if (msg) msg.textContent = "error: " + e.message;

@@ -333,6 +333,26 @@ describe("VelociraptorClient.listClients", () => {
     await new VelociraptorClient(cfg, runner).listClients();
     expect(programs[0]).toMatch(/SELECT [^"]*\blabels\b[^"]*FROM clients\(\)/);
   });
+
+  // #2887: a read that comes back at the row limit may have left clients out, and says so.
+  it("listClientSnapshot flags a read that reached the row limit", async () => {
+    const programs: string[] = [];
+    const rows = Array.from({ length: 100_000 }, (_, i) => ({ client_id: `C.c${i}`, os_info: {} }));
+    const runner: VqlRunner = async (statements) => {
+      programs.push(statements[0]);
+      return { rows, raw: "" };
+    };
+    const snap = await new VelociraptorClient(cfg, runner).listClientSnapshot();
+    expect(snap.truncated).toBe(true);
+    expect(snap.clients).toHaveLength(100_000);
+    expect(programs[0]).toContain("LIMIT 100000");
+  });
+
+  it("listClientSnapshot does not flag a smaller fleet", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ client_id: "C.a", os_info: {} }], raw: "" });
+    const snap = await new VelociraptorClient(cfg, runner).listClientSnapshot();
+    expect(snap).toEqual({ clients: [{ clientId: "C.a", hostname: "", fqdn: "" }], truncated: false });
+  });
 });
 
 describe("VelociraptorClient.collectOnClient", () => {
@@ -722,6 +742,14 @@ describe("VelociraptorClient.collectFromHost (live resolve)", () => {
     await expect(
       new VelociraptorClient(cfg, runner).collectFromHost("GHOST", "SELECT 1", "x"),
     ).rejects.toThrow(/No enrolled Velociraptor client matches host "GHOST"/);
+  });
+
+  it("says the client list was cut when the host is missing from a list read at the row limit (#2887)", async () => {
+    const rows = Array.from({ length: 100_000 }, (_, i) => ({ client_id: `C.c${i}`, os_info: {} }));
+    const runner: VqlRunner = async () => ({ rows, raw: "" });
+    await expect(
+      new VelociraptorClient(cfg, runner).collectFromHost("GHOST", "SELECT 1", "x"),
+    ).rejects.toThrow(/the server returned only the first 100,000 clients/);
   });
 
   it("throws when the VQL is empty or only comments (before resolving)", async () => {

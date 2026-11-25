@@ -9,7 +9,7 @@
 // In its own module (not velociraptorImport) because that file is frozen at the size ledger.
 
 import { getCI, oneLine, str, type MappedEvent } from "./siemImport.js";
-import { titleSafe, withHostSuffix } from "./velociraptorTitle.js";
+import { capWithHostSuffix, titleSafe } from "./velociraptorTitle.js";
 import { pickTime } from "./veloRowTime.js";
 import { boundedAggKey } from "./aggKey.js";
 
@@ -72,7 +72,7 @@ export function mapApplications(row: Row, artifact: string, host: string): Mappe
     .map(([k, v]) => `${k}: ${k === "Publisher" ? titleSafe(v) : v}`);
   let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${title.text}`;
   if (details.length) description += ` - ${details.join(" - ")}`;
-  description = withHostSuffix(description.slice(0, DESCRIPTION_CAP), host).slice(0, DESCRIPTION_CAP);
+  description = capWithHostSuffix(description, host, DESCRIPTION_CAP);
 
   return {
     timestamp: pickTime(row, TIME_KEYS),

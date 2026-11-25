@@ -25,7 +25,7 @@ import {
 } from "../analysis/superTimelineStore.js";
 import { collectEvictionForRecord, type BatchedRunEviction } from "../analysis/ingest/bulkEvictionReport.js";
 import type { BulkImportOpts } from "../analysis/ingest/velociraptorBulk.js";
-import { settleForensicImport } from "../routes/importSettle.js";
+import { failedAfterGrading, settleForensicImport } from "../routes/importSettle.js";
 import { logLine } from "../logging/serverLogger.js";
 
 export interface HuntSettleDeps {
@@ -67,6 +67,8 @@ export interface HuntSettleInput {
   superTimelineAddedCount: number;
   /** What the cap dropped in the collect's imports, before the settle below. */
   capDropped: HuntEvictions;
+  /** The batch id the job recorded for this collect (#2888): the settle stamps its rows with it. */
+  importBatchId?: string;
 }
 
 export interface HuntSettleResult {
@@ -76,7 +78,16 @@ export interface HuntSettleResult {
   checkpointed: boolean;
   /** The settle, record or checkpoint failed: logged here, the rows stay as they were imported. */
   error?: string;
+  /**
+   * The settle itself did not complete (#2888): it threw, or never ran because the pre-import state
+   * read failed. Only then can rows of this collect carry its batch id without having been tagged; a
+   * record or Undo failure after a complete settle leaves `error` set and this unset.
+   */
+  seamFailed?: boolean;
 }
+
+/** #2888: the pre-import state read failed, so the settle has nothing to diff against. */
+export const NO_STATE_BEFORE = "the case state could not be read before the import";
 
 /** One combined import-meta diff (so the dashboard's "last import / +N" banner lights up). */
 export async function settleHuntCollect(
@@ -86,8 +97,14 @@ export async function settleHuntCollect(
   const { options } = deps;
   const { caseId, huntId, stateBefore, lastFile } = input;
   const result: HuntSettleResult = { addedEvents: 0, addedIocs: 0, checkpointed: false };
-  if (!input.importedAny || !options.stateStore || !stateBefore) return result;
+  if (!input.importedAny || !options.stateStore) return result;
+  if (!stateBefore) {
+    // #2888: never silent — the rows are in the case, unsettled; the caller settles them at once.
+    logLine(`[velociraptor] hunt ${huntId}: settling what was imported failed: ${NO_STATE_BEFORE}`);
+    return { ...result, error: NO_STATE_BEFORE, seamFailed: true };
+  }
   let counted = result; // the counts stand once the settle itself returned, whatever fails after it
+  let seamDone = false;
   try {
     // Measured here, once: after the last import, before the settle puts the graded rows back (#2831).
     const beforeSettle = await collectEvictionForRecord(
@@ -111,7 +128,9 @@ export async function settleHuntCollect(
       caseId,
       stateBefore,
       `hunt ${huntId}`,
+      { importBatchId: input.importBatchId, onGraded: () => recordGraded(options, input) },
     );
+    seamDone = true;
     const { timelineDiff: diff, iocsDiff } = settled;
     counted = { ...result, addedEvents: diff.added.length, addedIocs: iocsDiff.added.length };
     if (options.importMetaStore) {
@@ -144,12 +163,34 @@ export async function settleHuntCollect(
     return { ...counted, checkpointed: true };
   } catch (e) {
     // Non-fatal to the collect, but never silent (#2817): the rows are in the case and the settle,
-    // the import record or the undo entry is missing. Rows the settle did not reach are not settled later: the next
-    // import's demote is case-wide and moves its Info rows out WITHOUT a tagger pass (#2851). Only a
-    // collect a restart cut off is settled again, at start-up (composition/veloHuntRecovery.ts).
+    // the import record or the undo entry is missing. Rows the settle did not reach would be moved out
+    // untagged by the next import's case-wide demote (#2851), so the collect settles them at once, still
+    // inside its section, when this reports an error (#2852, veloHuntRecovery.ts `recoverFailedHuntSettle`).
     const error = (e as Error).message;
     logLine(`[velociraptor] hunt ${huntId}: settling what was imported failed: ${error}`);
-    return { ...counted, error };
+    // A throw after the demote (a post-demote diff read) is not a seam failure: every row was graded.
+    return seamDone || failedAfterGrading(e)
+      ? { ...counted, error }
+      : { ...counted, error, seamFailed: true };
+  }
+}
+
+/**
+ * The settle's demote has returned (review of #2890): drop the batch id from the stored job, so a
+ * restart that finds the job still importing re-selects only unstamped rows, never re-stamping and
+ * demoting this graded batch again. Only while the job still names this batch. Never throws.
+ */
+async function recordGraded(options: AppOptions, input: HuntSettleInput): Promise<void> {
+  const batchId = input.importBatchId;
+  if (!batchId || !options.veloHuntStore) return;
+  try {
+    await options.veloHuntStore.update(input.caseId, input.huntId, (cur) =>
+      cur.importingBatchId === batchId ? { ...cur, importingBatchId: undefined } : null,
+    );
+  } catch (err) {
+    logLine(
+      `[velociraptor] hunt ${input.huntId}: recording that grading finished failed: ${(err as Error).message}`,
+    );
   }
 }
 
@@ -192,4 +233,26 @@ export function midFailureMessage(
       ? " Settling or recording what was imported failed (see the server log): it may have no import record and no Undo entry."
       : "";
   return `${sentence} Imported: ${imported.join(", ")}. Not imported: ${notImported.join(", ")}.${tail}`;
+}
+
+/** #2889: the re-grade failed too — the rows may never have been graded. */
+export const SETTLE_WARNING_UNGRADED =
+  "Imported, but grading did not finish: rows may be missing from the forensic timeline. " +
+  "Collect again, or check the server log.";
+/** #2889: the re-grade ran. It never claims grading finished: it can settle 0 and still miss rows. */
+export const SETTLE_WARNING_UNRECORDED =
+  "Imported, but settling or recording what was imported failed (see the server log): " +
+  "it may have no import record and no Undo entry.";
+
+/**
+ * The hunt card's warning for a collect that imported with no failed artifact but whose settle,
+ * record or Undo step failed (#2889); undefined for a clean settle, so a clean collect clears it.
+ * `recovery` is what the in-process re-grade (`recoverFailedHuntSettle`) returned.
+ */
+export function settleWarning(
+  settled: Pick<HuntSettleResult, "error">,
+  recovery: { error?: string } | undefined,
+): string | undefined {
+  if (!settled.error) return undefined;
+  return recovery?.error ? SETTLE_WARNING_UNGRADED : SETTLE_WARNING_UNRECORDED;
 }

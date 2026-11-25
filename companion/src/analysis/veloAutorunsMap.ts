@@ -4,7 +4,7 @@ import type { Severity } from "./stateTypes.js";
 import { startupAggKey, taskAggKey } from "./veloAggKeys.js";
 import { huntCommandTarget, splitCommandLine } from "./veloCommandTarget.js";
 import { pickTime } from "./veloRowTime.js";
-import { demangleUtf16Noise, withHostSuffix } from "./velociraptorTitle.js";
+import { capWithHostSuffix, demangleUtf16Noise } from "./velociraptorTitle.js";
 
 /**
  * Startup / autorun rows of the Velociraptor importer (#2731). Both artifacts reach the importer's
@@ -87,7 +87,7 @@ function mapAutoruns(row: Row, artifact: string, host: string, sink: Map<string,
   const label = `Velociraptor${artifact ? ` [${artifact}]` : ""}: Autorun entry (Autoruns): ${oneLine(entry) || "(entry)"} — ${what}${where} (${enabled ? "enabled" : "disabled"})`;
   return {
     timestamp: pickTime(row),
-    description: withHostSuffix(label.slice(0, 600), host).slice(0, 600),
+    description: capWithHostSuffix(label, host, 600),
     severity: unsigned ? "Low" : "Info",
     mitre: unsigned ? ["T1547"] : [],
     aggKey: startupAggKey(host, entry, `${location}|${image || launch}`),
@@ -117,7 +117,7 @@ function mapStartupItem(row: Row, host: string, sink: Map<string, SiemIoc>): Map
   const enabledLabel = enabled ? "enabled" : "disabled";
   const subject = details && details !== name ? oneLine(details).slice(0, 300) : ospath;
   let description = `Velociraptor: Startup [${name || "item"}] — ${subject} (${enabledLabel})`;
-  description = withHostSuffix(description, host).slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   // Active persistence is worth surfacing; disabled items are informational.
   const severity: Severity = enabled ? "Low" : "Info";
@@ -158,7 +158,7 @@ export function mapTaskScheduler(row: Row, host: string, sink: Map<string, SiemI
   let description = `Velociraptor: Scheduled Task [${taskName || "task"}]`;
   if (cmd) description += ` — ${oneLine(cmd).slice(0, 250)}`;
   if (userLabel) description += ` (${userLabel}${runLevel ? `, ${runLevel}` : ""})`;
-  description = withHostSuffix(description, host).slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   return {
     timestamp: pickTime(row),

@@ -510,7 +510,7 @@
     const relatedHypothesisId = snapshot
       ? undefined
       : (ctx && ctx.relatedHypothesisId) ||
-        (recorded ? consumePendingHuntHypothesis() : undefined);
+        (recorded ? consumePendingHuntHypothesis(ctx.caseId) : undefined); // #2847: own case only
     const body = recorded
       ? {
           vql,

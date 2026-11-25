@@ -2,7 +2,13 @@
 // collectionGenerationStore.ts uses to freeze a generation's own persistence inventory — kept
 // separate from mapPersistenceSniper's own MappedEvent/IOC/severity synthesis.
 import { describe, it, expect } from "vitest";
-import { isPersistenceSniperRow, persistenceEntryFact } from "../../src/analysis/persistenceSniperImport.js";
+import {
+  isPersistenceSniperRow,
+  mapPersistenceSniper,
+  persistenceEntryFact,
+} from "../../src/analysis/persistenceSniperImport.js";
+
+const TS = "2026-01-01T00:00:00Z";
 
 const REAL_ROW = {
   Technique: "Run Key",
@@ -42,5 +48,17 @@ describe("persistenceEntryFact", () => {
   it("an entry with no Value falls back to an empty string, never the Path (unlike the mapper's own subject fallback)", () => {
     const { Value: _drop, ...withoutValue } = REAL_ROW;
     expect(persistenceEntryFact(withoutValue).value).toBe("");
+  });
+});
+
+// #2885: the description was capped AFTER the "@ HOST" suffix, so a technique name that put the
+// core within a suffix-length of the 600-char cap left "… @ HOS" — and past the cap dropped the host.
+describe("mapPersistenceSniper — the host suffix survives the length cap", () => {
+  it("keeps the '@ HOST' suffix whole however long the technique name is", () => {
+    for (let n = 350; n <= 650; n++) {
+      const e = mapPersistenceSniper({ ...REAL_ROW, Technique: "t".repeat(n) }, "HOST1", new Map(), TS);
+      expect(e.description.length).toBeLessThanOrEqual(600);
+      expect(e.description.endsWith(" @ HOST1")).toBe(true);
+    }
   });
 });

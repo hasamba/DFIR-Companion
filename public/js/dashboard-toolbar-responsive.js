@@ -11,14 +11,23 @@
       const tb = document.getElementById("toolbarMain");
       if (!tb) return;
       let queued = false;
+      // One action-row height, from a real visible action button. Never the clear button inside
+      // the case box (#2870): it comes first in the toolbar, is hidden while the box is empty
+      // (height 0) and is only 18px tall otherwise, so it made every width look wrapped (#2883).
+      function actionRowHeight() {
+        for (const b of tb.querySelectorAll("button")) {
+          if (b.closest(".case-picker-wrap")) continue;
+          if (b.offsetHeight > 0) return b.offsetHeight;
+        }
+        return 34;
+      }
       function fitToolbar() {
         if (queued) return;
         queued = true;
         requestAnimationFrame(() => {
           queued = false;
           tb.classList.remove("icons-only"); // measure with full labels showing
-          const btn = tb.querySelector("button");
-          const rowH = btn ? btn.offsetHeight : 34; // one action-row height
+          const rowH = actionRowHeight();
           if (tb.scrollHeight > rowH * 1.6) tb.classList.add("icons-only"); // it wrapped → collapse
         });
       }

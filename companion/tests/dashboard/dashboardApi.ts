@@ -567,6 +567,17 @@ export interface VeloLabelsApi {
   veloWireLabelPickers(form: { querySelector(sel: string): unknown } | null): void;
 }
 
+// public/js/dashboard-velo-clients.js — the client lists' cut notice and the AI Agent picker's rows.
+export interface VeloClientsApi {
+  veloClientsCutNotice(inv: { truncated?: unknown } | null): string;
+  veloPickerRows(
+    clients: { clientId: string; hostname?: string; fqdn?: string }[] | null,
+    query: string,
+  ): { rows: { clientId: string; hostname?: string; fqdn?: string }[]; matched: number; total: number };
+  veloPickerNote(view: { rows: unknown[]; matched: number; total: number }): string;
+  veloPickerLabel(client: { clientId: string; hostname?: string; fqdn?: string }): string;
+}
+
 // public/js/dashboard-velo-hunt-cancel.js — a running hunt card's Cancel button + the cancelled line.
 export interface VeloHuntCancelApi {
   veloCancelHuntBtnHtml(
@@ -605,6 +616,7 @@ export interface VeloCoverageApi {
     unreadArtifacts?: { name: string; rows: number }[];
     timeScope?: { start: string; end?: string };
     earlierCoverage?: boolean;
+    settleWarning?: string;
   }): string;
   veloUnreadHtml(unread: { name: string; rows: number }[] | undefined, again: string): string;
   veloReadGapsHtml(

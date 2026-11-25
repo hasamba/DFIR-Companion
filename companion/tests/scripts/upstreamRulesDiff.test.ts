@@ -401,6 +401,67 @@ describe("rule-files groups with an onlyFiles filter (KapeFiles Targets/Apps, #2
   });
 });
 
+// #2866: the AICodingAgents compound target sits in Targets/Compound beside the other compound
+// targets. Without a filter, a version bump on !SANS_Triage or RemoteAdmin opened a re-sync issue
+// although AICodingAgents.tkape itself never changed.
+describe("rule-files groups with an onlyFiles filter (KapeFiles Targets/Compound, #2866)", () => {
+  const sha = (c: string) => c.repeat(40);
+  const COMPOUND = "Targets/Compound";
+  const TKAPE = `${COMPOUND}/AICodingAgents.tkape`;
+  const compound = UPSTREAM_GROUPS.find((g) => g.id === "kapefiles-aicodingagents")!;
+  const noFetch: FetchFile = async () => {
+    throw new Error("a rule-files group never fetches file content");
+  };
+
+  it("watches Targets/Compound against the tkape's recorded commit, filtered to AICodingAgents.tkape", () => {
+    expect(compound).toMatchObject({
+      kind: "rule-files",
+      repo: "EricZimmerman/KapeFiles",
+      marker: "AICodingAgents.tkape last changed in",
+      markerFile: "data/ai-agent-rules/aicodingagents-globs.yaml",
+      watchPath: COMPOUND,
+    });
+    expect([...(compound.onlyFiles ?? [])]).toEqual([TKAPE]);
+  });
+
+  it("reports no change when only other compound targets changed or were added", async () => {
+    const listDir: ListDir = async (_r, dir, ref) => {
+      expect(dir).toBe(COMPOUND);
+      const base = ref === sha("a");
+      return new Map<string, string>([
+        [TKAPE, "h-tkape"],
+        [`${COMPOUND}/!SANS_Triage.tkape`, base ? "s1" : "s2"],
+        [`${COMPOUND}/RemoteAdmin.tkape`, base ? "r1" : "r2"],
+        ...(base ? [] : ([[`${COMPOUND}/BrandNew.tkape`, "n1"]] as [string, string][])),
+      ]);
+    };
+    const result = await compareGroup(compound, sha("a"), sha("b"), noFetch, undefined, listDir);
+    expect(groupChanged(result)).toBe(false);
+  });
+
+  it("reports a change when AICodingAgents.tkape itself changed", async () => {
+    const listDir: ListDir = async (_r, _d, ref) =>
+      new Map<string, string>([
+        [TKAPE, ref === sha("a") ? "h-tkape" : "h-tkape-edited"],
+        [`${COMPOUND}/RemoteAdmin.tkape`, "r1"],
+      ]);
+    const result = await compareGroup(compound, sha("a"), sha("b"), noFetch, undefined, listDir);
+    const diff = result.lists[0].diff;
+    expect(diff.changed.map((c) => c.key)).toEqual([TKAPE]);
+    expect(diff.added).toEqual([]);
+    expect(diff.removed).toEqual([]);
+    expect(groupChanged(result)).toBe(true);
+  });
+
+  it("fails loudly when AICodingAgents.tkape is not in the listing, even if the folder is not empty", async () => {
+    const listDir: ListDir = async (_r, _d, ref) =>
+      ref === sha("a") ? new Map([[TKAPE, "h-tkape"]]) : new Map([[`${COMPOUND}/RemoteAdmin.tkape`, "r1"]]);
+    await expect(compareGroup(compound, sha("a"), sha("b"), noFetch, undefined, listDir)).rejects.toThrow(
+      /none of the 1 watched files in "Targets\/Compound\/" — were they moved\?/,
+    );
+  });
+});
+
 describe("each source's marker file records the upstream commit it came from", () => {
   const text = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
 

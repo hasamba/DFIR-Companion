@@ -133,19 +133,37 @@
     else if (!inv.ok) list.appendChild(el("p", (inv.body && inv.body.error) || `Could not list endpoints (HTTP ${inv.status}).`, "aa-note"));
     else if (!clients.length)
       list.appendChild(el("p", "No Velociraptor client inventory yet — an administrator can refresh it in Settings → Velociraptor.", "aa-note"));
-    for (const c of clients.slice(0, 2000)) {
-      const label = el("label", null, "aa-endpoint");
-      const box = el("input");
-      box.type = "checkbox";
-      box.value = c.clientId;
-      label.append(box, document.createTextNode(` ${c.hostname || c.fqdn || c.clientId} (${c.clientId})`));
-      list.appendChild(label);
+    // #2887: a list the server cut at its row limit says so; the filter searches the WHOLE list and
+    // only the drawn rows are capped (js/dashboard-velo-clients.js). Picks live in a Set, so a pick
+    // survives a filter that hides its row.
+    const cut = inv.ok ? veloClientsCutNotice(inv.body) : "";
+    if (cut) wrap.insertBefore(el("p", cut, "aa-note"), list);
+    const note = el("p", null, "aa-note");
+    note.hidden = true;
+    wrap.insertBefore(note, list);
+    const picked = new Set();
+    function draw() {
+      const view = veloPickerRows(clients, filter.value);
+      note.textContent = veloPickerNote(view);
+      note.hidden = !note.textContent;
+      list.replaceChildren();
+      for (const c of view.rows) {
+        const label = el("label", null, "aa-endpoint");
+        const box = el("input");
+        box.type = "checkbox";
+        box.value = c.clientId;
+        box.checked = picked.has(c.clientId);
+        box.addEventListener("change", () => (box.checked ? picked.add(c.clientId) : picked.delete(c.clientId)));
+        label.append(box, document.createTextNode(` ${veloPickerLabel(c)}`));
+        list.appendChild(label);
+      }
     }
-    filter.addEventListener("input", () => {
-      const q = filter.value.trim().toLowerCase();
-      for (const label of list.querySelectorAll("label")) label.hidden = q && !label.textContent.toLowerCase().includes(q);
-    });
-    return { wrap, selected: () => [...list.querySelectorAll("input:checked")].map((b) => b.value) };
+    // Only a real list is drawn: typing over a refusal or an empty inventory keeps its message.
+    if (inv.ok && clients.length) {
+      draw();
+      filter.addEventListener("input", draw);
+    }
+    return { wrap, selected: () => [...picked] };
   }
 
   function scopeBoxes() {

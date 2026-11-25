@@ -106,7 +106,9 @@ export async function carryAndStampPaged(
   ledger: InvestigationState,
   scope: SettleScope,
   scanAll: boolean,
-  opts: { capturedAt: string | undefined; downgrade: boolean },
+  /** `importBatchId`: preset by a caller that must find this batch's rows again (#2888); else fresh.
+   * `importedAt`: preset by a recovery that keeps the failed settle's instant; else now. */
+  opts: { capturedAt: string | undefined; downgrade: boolean; importBatchId?: string; importedAt?: string },
 ): Promise<StampedImport> {
   const newIds = new Set(scope.addedIds);
   const touchedIds: string[] = [];
@@ -121,8 +123,8 @@ export async function carryAndStampPaged(
     }
   }
   const ids = [...new Set([...scope.addedIds, ...touchedIds, ...carryIds])];
-  const importedAt = new Date().toISOString();
-  const importBatchId = randomUUID();
+  const importedAt = opts.importedAt ?? new Date().toISOString();
+  const importBatchId = opts.importBatchId ?? randomUUID();
   const carry = hostRenameCarrier(ledger);
   const collect = collector(ledger);
   const out: StampedImport = { addedIds: [], carried: 0, candidates: emptyCandidates() };

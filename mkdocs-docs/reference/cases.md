@@ -117,8 +117,9 @@ refused too, unless they are on the short list below.
       remediation plan, the hypothesis review, hunt and memory suggestions, super-timeline hunt
       searches, rule previews and dry runs, and custody verification.
     - Stopping work that is already running: cancelling a hunt search, stopping a live monitor,
-      discarding an MCP preview, and checking on a Velociraptor hunt that was launched before the
-      close.
+      discarding an MCP preview, and checking on or cancelling a Velociraptor hunt that was
+      launched before the close. A closed or archived case can stop such a hunt, or stop tracking
+      it, but it cannot delete the hunt and its results from Velociraptor.
 - If the companion stops in the middle of an archive or a restore, the case folder and its status
   can disagree. At the next start, the companion puts such a case back in the archived state, so
   **Restore** works on it again.

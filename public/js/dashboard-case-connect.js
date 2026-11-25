@@ -192,10 +192,10 @@
     // panel. The result was a dashboard that kept redrawing and re-loading a case the analyst had
     // just walked out of, at a URL that named no case at all.
     //
-    // Nothing is loaded now, so no action may target the cancelled case (#2399); the picker keeps it
-    // as its choice so retrying is one click.
+    // Nothing is loaded now, so no action may target the cancelled case (#2399), nor show its hypotheses (#2848).
     const cancelledCaseId = activeCaseId;
     if (typeof clearLoadedCase === "function") clearLoadedCase(cancelledCaseId);
+    if (typeof clearHypothesesPanel === "function") clearHypothesesPanel();
     // Order matters: drop activeCaseId LAST. render()'s stale guard compares against it, so
     // clearing it before the socket is closed would open a window where a push in flight is
     // measured against nothing.

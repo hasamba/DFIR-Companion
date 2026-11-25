@@ -181,3 +181,16 @@ describe("mapSamAccount — title names the dated action", () => {
     expect(e.severity).toBe("Info");
   });
 });
+
+// #2885: the description was capped AFTER the "@ HOST" suffix, so an account comment that put the
+// core within a suffix-length of the 600-char cap left "… @ WS0" — and past the cap dropped the host.
+describe("mapSamAccount — the host suffix survives the length cap (#2885)", () => {
+  it("keeps the '@ HOST' suffix whole however long the account comment is", () => {
+    for (let n = 400; n <= 650; n++) {
+      const row = account({ ParsedV: { username: "backdoor", comment: "c".repeat(n) } });
+      const e = mapSamAccount(row, ARTIFACT, "WS01");
+      expect(e.description.length).toBeLessThanOrEqual(600);
+      expect(e.description.endsWith(" @ WS01")).toBe(true);
+    }
+  });
+});

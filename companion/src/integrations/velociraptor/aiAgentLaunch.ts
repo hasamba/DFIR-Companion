@@ -13,6 +13,7 @@
 
 import type { AiAgentArtifactBundle } from "./aiAgentArtifact.js";
 import { CLIENT_RE } from "./clientInventory.js";
+import { stopHuntOnServer } from "./huntControl.js";
 
 export const TRIAGE_ARTIFACT = "Windows.Triage.Targets";
 export const TRIAGE_RULE = "AICodingAgents";
@@ -118,11 +119,14 @@ export async function launchAiAgentRun(
     else failed.push({ clientId, error: res.reason || "hunt_add returned nothing" });
   }
   if (added.length === 0) {
-    await client
-      .runProgram(`SELECT hunt_update(hunt_id='${huntId}', state='stop') AS Stopped FROM scope()`)
-      .catch(() => undefined);
+    // The paused hunt would sit in Velociraptor's list for the expiry; pressing Start there runs it
+    // on the whole fleet. Stop it, and tell the analyst when Velociraptor refused the stop.
+    const stopped = await stopHuntOnServer(client, huntId);
+    const stopNote = stopped.ok
+      ? `the run ${huntId} was stopped`
+      : `Velociraptor did not stop run ${huntId} (${stopped.error}). Stop it by hand in Velociraptor`;
     throw new AiAgentLaunchError(
-      `no endpoint could be added to the run (${failed.map((f) => `${f.clientId}: ${f.error}`).join("; ")})`,
+      `no endpoint could be added to the run (${failed.map((f) => `${f.clientId}: ${f.error}`).join("; ")}); ${stopNote}`,
     );
   }
   return { huntId, guiUrl: client.huntGuiUrlFor(huntId), artifacts, added, failed };

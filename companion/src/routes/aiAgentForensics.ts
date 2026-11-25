@@ -172,6 +172,7 @@ async function caseEndpoints(ctx: RouteContext, req: Request, res: Response): Pr
       updatedAt: inv.updatedAt,
       setName: r.servers.setName,
       clients: (inv.clients ?? []).map(caseEndpoint),
+      ...(inv.truncated ? { truncated: true } : {}), // the list was cut at the row limit (#2887)
     });
   } catch (err) {
     ctx.serverLogger.info(`[ai-agent] endpoint list ERROR: ${(err as Error).message}`);

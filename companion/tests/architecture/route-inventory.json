@@ -855,6 +855,7 @@
     "ROUTE GET /js/dashboard-case-servers.js",
     "ROUTE GET /js/dashboard-cloud-accounts.js",
     "ROUTE GET /js/dashboard-cloud-collect.js",
+    "ROUTE GET /js/dashboard-velo-clients.js",
     "ROUTE GET /js/dashboard-ai-agent.js",
     "ROUTE GET /js/dashboard-hunt-case.js",
     "ROUTE GET /js/dashboard-client-baseline.js",

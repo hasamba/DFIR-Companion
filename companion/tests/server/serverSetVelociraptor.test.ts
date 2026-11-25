@@ -468,6 +468,37 @@ describe("the case-less client list and time-scope preview follow the open case"
     const r = await request(app).get("/velociraptor/clients?caseId=bad%20id%2F..");
     expect(r.status).toBe(400);
   });
+
+  // #2887: a fleet bigger than the row limit. The refresh saves the "list was cut" flag, both reads
+  // carry it, and a host missing from the cut list is reported as possibly past the cut.
+  it("a client list read at the row limit is saved, served and explained as cut", async () => {
+    const fullPage = Array.from({ length: 100_000 }, (_, i) => ({
+      client_id: `C.c${i}`,
+      os_info: { hostname: `ws${i}` },
+    }));
+    runners["/a/api.yaml"] = vi.fn<VqlRunner>(async (statements) => ({
+      rows: statements[0].includes("FROM clients()") ? fullPage : [],
+      raw: "",
+    }));
+    const { app } = await twoSetApp();
+    const refreshed = await request(app).post("/velociraptor/clients/refresh").send({});
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body.truncated).toBe(true);
+    expect(logs.lines.some((l) => l.includes("100,000") && l.includes("limit"))).toBe(true);
+    expect((await request(app).get("/velociraptor/clients")).body.truncated).toBe(true);
+    const miss = await request(app)
+      .post("/velociraptor/collect-host")
+      .send({ hostname: "GHOST", vql: "SELECT 1 FROM info()" });
+    expect(miss.status).toBe(502);
+    expect(miss.body.error).toContain("the server returned only the first 100,000 clients");
+  });
+
+  it("a complete client list carries no cut flag", async () => {
+    const { app } = await twoSetApp();
+    const refreshed = await request(app).post("/velociraptor/clients/refresh").send({});
+    expect(refreshed.body).not.toHaveProperty("truncated");
+    expect((await request(app).get("/velociraptor/clients")).body).not.toHaveProperty("truncated");
+  });
 });
 
 describe("startup fleet inventory retries", () => {
@@ -516,6 +547,16 @@ describe("startup fleet inventory retries", () => {
       expect(old).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("the startup refresh saves the cut flag for a list read at the row limit (#2887)", async () => {
+    const s = sets.create({ name: "Big", velociraptor: velo("/big/api.yaml") });
+    const fullPage = Array.from({ length: 100_000 }, (_, i) => ({ client_id: `C.c${i}`, os_info: {} }));
+    runners["/big/api.yaml"] = vi.fn<VqlRunner>(async () => ({ rows: fullPage, raw: "" }));
+    start();
+    await loggedLine("server set 'Big' inventory: 100000 enrolled client(s) (list cut at the row limit)");
+    const inv = await new VelociraptorClientStore(join(dir, "velociraptor", `clients-${s.id}.json`)).load();
+    expect(inv.truncated).toBe(true);
+  });
 
   it("retries stop once the set is deleted or loses its Velociraptor", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

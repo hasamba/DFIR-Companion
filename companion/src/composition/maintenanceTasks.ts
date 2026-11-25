@@ -411,9 +411,12 @@ function refreshFleetInventories(
       if (!r.ok || !client) return;
       const label = `server set '${r.servers.setName}'`;
       client
-        .listClients()
-        .then((clients) => clientInventoryFor(setId).save(clients, new Date().toISOString()))
-        .then((inv) => logLine(`[velociraptor] ${label} inventory: ${inv.clients.length} enrolled client(s)`))
+        .listClientSnapshot()
+        .then((s) => clientInventoryFor(setId).save(s.clients, new Date().toISOString(), s.truncated))
+        .then((inv) => {
+          const cut = inv.truncated ? " (list cut at the row limit)" : ""; // #2887
+          logLine(`[velociraptor] ${label} inventory: ${inv.clients.length} enrolled client(s)${cut}`);
+        })
         .catch((e) => {
           const next = i + 1;
           if (next < backoffMs.length) {

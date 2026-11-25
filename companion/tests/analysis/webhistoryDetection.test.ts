@@ -124,3 +124,16 @@ describe("Velociraptor import of a Webhistory file", () => {
     }
   });
 });
+
+// #2881: a cap applied after the host suffix cut it to a fragment ("@ HOS") in a ~12-char window.
+describe("mapWebhistory — host suffix under the cap (#2881)", () => {
+  it("keeps the '@ HOST' suffix whole when a long page title reaches the 600-char cap", () => {
+    for (let n = 350; n <= 650; n++) {
+      const row = visit();
+      const long = { ...row, ArtifactData: { ...row.ArtifactData, Title: "t".repeat(n) } };
+      const e = mapWebhistory(long, ARTIFACT, "HOST01", new Map<string, SiemIoc>());
+      expect(e.description.length).toBeLessThanOrEqual(600);
+      expect(e.description.endsWith(" @ HOST01")).toBe(true);
+    }
+  });
+});

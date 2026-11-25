@@ -18,7 +18,7 @@ import {
 } from "./siemImport.js";
 import { persistenceAggKey } from "./veloAggKeys.js";
 import { isStagedCommandValue } from "./stagingPaths.js";
-import { withHostSuffix } from "./velociraptorTitle.js";
+import { capWithHostSuffix } from "./velociraptorTitle.js";
 import { isMicrosoftStoreAppPath, isStockOneDriveTask } from "./persistenceStockOs.js";
 
 type Row = Record<string, unknown>;
@@ -211,7 +211,7 @@ export function mapPersistenceSniper(
   if (sigFlag) description += ` [signature: ${sigFlag}]`;
   if (staged) description += ` [staged: temp/appdata]`;
   if (lolbinFlag) description += ` [lolbin]`;
-  description = withHostSuffix(description, host).slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   const aggKey = persistenceAggKey(host, technique, value || path);
 

@@ -58,4 +58,22 @@ describe("VelociraptorClientStore", () => {
     await writeFile(file, "{ not json", "utf8");
     expect((await new VelociraptorClientStore(file).load()).clients).toEqual([]);
   });
+
+  // #2887: a snapshot read at the row limit is saved with `truncated: true`, so the panels can say the
+  // list is incomplete. An old file (no flag) and a complete read both load with no flag at all.
+  it("keeps the truncated flag across a save and a reload", async () => {
+    const store = new VelociraptorClientStore(file);
+    expect(await store.save(recs, NOW, true)).toEqual({ updatedAt: NOW, clients: recs, truncated: true });
+    expect((await store.load()).truncated).toBe(true);
+  });
+
+  it("omits the flag for a complete read and for an old file that never had one", async () => {
+    const store = new VelociraptorClientStore(file);
+    expect(await store.save(recs, NOW, false)).toEqual({ updatedAt: NOW, clients: recs });
+    expect(await store.load()).not.toHaveProperty("truncated");
+    await writeFile(file, JSON.stringify({ updatedAt: NOW, clients: recs }), "utf8");
+    expect(await store.load()).toEqual({ updatedAt: NOW, clients: recs });
+    await writeFile(file, JSON.stringify({ updatedAt: NOW, clients: recs, truncated: "yes" }), "utf8");
+    expect(await store.load()).not.toHaveProperty("truncated"); // only a literal true counts
+  });
 });

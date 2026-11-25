@@ -107,9 +107,11 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     const r = serverClients().forSet(setId);
     const client = r.ok ? r.servers.velociraptor : undefined;
     if (!client || !options.clientInventoryFor) return 0;
-    const clients = await client.listClients();
-    await options.clientInventoryFor(setId).save(clients, new Date().toISOString());
-    logLine(`[velociraptor] client inventory refreshed — ${clients.length} enrolled client(s)`);
+    const { clients, truncated } = await client.listClientSnapshot();
+    await options.clientInventoryFor(setId).save(clients, new Date().toISOString(), truncated);
+    logLine(
+      `[velociraptor] client inventory refreshed — ${clients.length} enrolled client(s)${truncated ? " (list cut at the row limit)" : ""}`,
+    );
     return clients.length;
   }
 

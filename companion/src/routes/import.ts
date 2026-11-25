@@ -30,7 +30,7 @@ import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { buildImportBase, evictedInImport, importJobParameters } from "./importBase.js";
 import { createImportDebugRecorder } from "../analysis/importDebug.js";
 import { aiExtractionFromDebug } from "../analysis/importMeta.js";
-import { settleForensicImport } from "./importSettle.js";
+import { settleImportOrRecover } from "./importRowRecovery.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
 import { cloudStream } from "./importCloudStream.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
@@ -344,11 +344,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           await recordImportRows(store, caseId, seq, debug.summary().counts); // #2790
           // Record what this import added to the forensic timeline + IOCs, BEFORE resynthesis (which
           // preserves both). Best-effort: a meta failure must not break the import.
-          if (settleDeps && baseline) {
+          // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote, diffs
+          // from the POST-demote state. No snapshot / a failed settle → WARN + recovery (#2890).
+          const settleTarget = { caseId, storedNames: [storedName], tag: "import" };
+          const settled = await settleImportOrRecover(settleDeps, settleTarget, baseline, storedName);
+          if (baseline && settled) {
             try {
-              // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote,
-              // diffs from the POST-demote state so "+N events" counts only graded signal.
-              const settled = await settleForensicImport(settleDeps, caseId, baseline, storedName);
               const { superTimelineAddedCount, superTimelineEvicted } = settled;
               const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
               // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a

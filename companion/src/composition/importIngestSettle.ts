@@ -2,8 +2,9 @@ import type { AppOptions } from "./appOptions.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
 import type { SuperEvictionTally } from "../analysis/superTimelineStore.js";
-import { settleForensicImport, type SettleDeps } from "../routes/importSettle.js";
+import type { SettleDeps } from "../routes/importSettle.js";
 import type { ImportDemote } from "./importDemote.js";
+import { settleImportOrRecover } from "../routes/importRowRecovery.js";
 
 /**
  * The settle + import-meta tail the two streamed-ingest entry points share (ingestStreamed and its
@@ -17,6 +18,11 @@ import type { ImportDemote } from "./importDemote.js";
  * so it is written also when the import kept nothing forensic. The settle's OWN dropped rows do not
  * open the record: on a monitored case with a full super-timeline every quiet poll would take over
  * the import card. Non-fatal: the import is already merged.
+ *
+ * A missing snapshot or a failed settle is no longer silent (#2890): it logs a WARN and settles this
+ * import's rows by stored name (routes/importRowRecovery.ts), from inside the held section, before
+ * the next import's case-wide demote could move them out untagged. Only the settle call is guarded,
+ * so a failed import-meta write after a complete settle re-stamps nothing.
  */
 export interface StreamedSettleDeps {
   options: AppOptions;
@@ -56,10 +62,11 @@ export async function settleStreamedImport(
 ): Promise<{ addedEvents: number; addedIocs: number }> {
   const { options } = deps;
   const settleDeps = importSettleDeps(deps);
-  if (!settleDeps || !args.baseline) return { addedEvents: 0, addedIocs: 0 };
   const counts = { addedEvents: 0, addedIocs: 0 };
+  const target = { caseId: args.caseId, storedNames: [args.storedName], tag: "import" };
+  const settled = await settleImportOrRecover(settleDeps, target, args.baseline, args.storedName);
+  if (!settled) return counts;
   try {
-    const settled = await settleForensicImport(settleDeps, args.caseId, args.baseline, args.storedName);
     const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
     counts.addedEvents = tDiff.added.length;
     counts.addedIocs = iDiff.added.length;
@@ -80,7 +87,7 @@ export async function settleStreamedImport(
       options.onImportMeta?.(args.caseId);
     }
   } catch {
-    /* non-fatal */
+    /* non-fatal: the rows are settled; only the record is lost */
   }
   return counts;
 }

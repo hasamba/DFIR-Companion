@@ -141,9 +141,8 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     try {
       const count = await ctx.refreshVeloClients(vc.setId);
       const inv = await inventory.load();
-      return res
-        .status(200)
-        .json({ count, updatedAt: inv.updatedAt, clients: inv.clients, setName: vc.setName });
+      // `...inv` carries the "list was cut at the row limit" flag when it is set (#2887).
+      return res.status(200).json({ count, ...inv, setName: vc.setName });
     } catch (err) {
       logLine(`[velociraptor] client refresh ERROR: ${(err as Error).message}`);
       return res.status(502).json({ error: (err as Error).message });
