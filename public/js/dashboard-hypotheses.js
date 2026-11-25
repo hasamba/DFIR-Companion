@@ -46,6 +46,8 @@
     // the same id in two cases, so it is dropped when another case's list is loaded.
     if (hypWriteError && hypWriteError.caseId !== caseId) hypWriteError = null;
     if (hypLoadError && hypLoadError.caseId !== caseId) hypLoadError = null;
+    // #2847: a "test via hunt" link armed in another case is dropped (the switch wiped its note).
+    if (pendingHuntHypothesis && pendingHuntHypothesis.caseId !== caseId) clearPendingHuntHypothesis();
     // #2843: the held list is another case's — empty the list now, not when this request
     // answers. Its cards would write to the case just opened.
     if (hypothesesCase !== null && hypothesesCase !== caseId) {
@@ -429,7 +431,8 @@
   // so the analyst knows the link is pending.
   let pendingHuntHypothesis = null;
   function linkNextHuntToHypothesis(id, title) {
-    pendingHuntHypothesis = { id, title: title || id };
+    // #2847: the case it was armed in — a hunt in another case never carries this id.
+    pendingHuntHypothesis = { id, title: title || id, caseId: hypCaseOnScreen() };
     const msg = document.getElementById("suggestHuntsMsg");
     if (msg)
       msg.innerHTML = `🎯 next hunt will test hypothesis “${esc(pendingHuntHypothesis.title)}” — <a href="#" data-act="clearPendingHunt" data-safe-style="color:var(--accent)">cancel</a>`;
@@ -443,13 +446,14 @@
     pendingHuntHypothesis = null;
   }
 
-  // Read + clear the pending hypothesis link (used by launchHuntInto).
-  function consumePendingHuntHypothesis() {
+  // Read + clear the pending hypothesis link (used by launchHuntInto). #2847: handed out only to a
+  // hunt in the case it was armed in; always cleared, whichever case asks.
+  function consumePendingHuntHypothesis(caseId) {
     const p = pendingHuntHypothesis;
     pendingHuntHypothesis = null;
     const msg = document.getElementById("suggestHuntsMsg");
     if (msg && p) msg.textContent = "";
-    return p ? p.id : undefined;
+    return p && p.caseId && p.caseId === String(caseId || "").trim() ? p.id : undefined;
   }
 
   function hypDelete(id) {

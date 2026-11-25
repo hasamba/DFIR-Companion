@@ -1145,6 +1145,8 @@ Each hypothesis has a status: **Open / Supported / Refuted / Unknown**. Open hyp
 
 **ACH-style tracking** — hypotheses also track contradicting evidence, a discriminating host+artifact that would settle the question, and an "exhausted" flag (set once enough linked hunts come back empty). The list is ranked fewest-contradictions-first, the classic Analysis-of-Competing-Hypotheses fix for a red herring winning unopposed.
 
+**🎯 test via hunt** — links the next Velociraptor hunt you deploy to that hypothesis, so an empty result counts against it. The link belongs to the case you pressed it in: opening another case cancels it, and a hunt deployed in another case is never linked to it.
+
 **Review** button — runs a focused for/against pass over open hypotheses (plain-English case for and against each, plus an advisory recommended status) without re-running full synthesis. Never mutates a hypothesis until you click **Apply**.
 
 ---
