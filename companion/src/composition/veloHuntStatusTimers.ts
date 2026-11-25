@@ -39,8 +39,9 @@ export interface VeloHuntStatusTimersDeps {
   /**
    * #2851: settle the rows a collect cut off while IMPORTING left in the case
    * (composition/veloHuntRecovery.ts). Optional: without it the restart only marks the job.
+   * `uploadFiles`: the uploaded reports' stored names the job recorded (#2852).
    */
-  settleInterrupted?: (caseId: string, huntId: string) => Promise<unknown>;
+  settleInterrupted?: (caseId: string, huntId: string, uploadFiles?: readonly string[]) => Promise<unknown>;
   /** #2851 review: holds imports while start-up recovery runs (`holdImportsDuring`). */
   importLock?: Pick<ImportLock, "hold">;
 }
@@ -232,10 +233,16 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
    * from the sweep — the server serves and the polls re-arm meanwhile — and run as work of the case
    * incarnation just listed. Never rejects: a failure is logged with the case and hunt id.
    */
-  function settleInterruptedImport(caseId: string, huntId: string, generation: string): Promise<void> {
+  function settleInterruptedImport(
+    caseId: string,
+    huntId: string,
+    generation: string,
+    uploadFiles: readonly string[] | undefined,
+  ): Promise<void> {
     const settle = deps.settleInterrupted;
     if (!settle) return Promise.resolve();
-    const settled = runInCaseScope(store.casesRoot, caseId, () => settle(caseId, huntId), generation);
+    const run = () => settle(caseId, huntId, uploadFiles);
+    const settled = runInCaseScope(store.casesRoot, caseId, run, generation);
     holdImportsDuring(deps.importLock, caseId, settled); // set while the all-case hold is still up
     return settled.then(
       () => undefined,
@@ -284,7 +291,9 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
             marked++;
             options.onVeloHunt?.(c.caseId);
             if (message === INTERRUPTED_IMPORT_MESSAGE)
-              settling.push(settleInterruptedImport(c.caseId, huntId, generationOf(c)));
+              settling.push(
+                settleInterruptedImport(c.caseId, huntId, generationOf(c), stored.importingUploads),
+              );
           }
         }
       } catch {

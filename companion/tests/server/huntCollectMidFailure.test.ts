@@ -73,6 +73,10 @@ interface Batched {
    * imported job; "notify" throws from the dashboard refresh that follows the final job write.
    */
   late?: "write" | "notify";
+  /** #2852: an uploaded report rides along (whole-file, its own stored name). */
+  upload?: boolean;
+  /** #2852: the collect's own settle fails once, before it stamps a row (its ledger read). */
+  settleFailsOnce?: boolean;
 }
 
 const LATE_WRITE = "EPERM: operation not permitted, rename";
@@ -147,17 +151,38 @@ async function world(
   const realImport = pipeline.importVelociraptorArtifact.bind(pipeline);
   let imports = 0;
   // What a test changes between two collects of one hunt (#2842).
-  const sw = { failAt, poisonRows: false };
+  const sw = { failAt, poisonRows: false, importsDone: false, uploadDone: false };
+  if (batched.settleFailsOnce) {
+    const realLedger = stateStore.loadOverviewWithoutIocs.bind(stateStore);
+    let failed = false;
+    stateStore.loadOverviewWithoutIocs = async (caseId) => {
+      // The first ledger read after the last import is the collect's settle (routes/importSettle.ts).
+      if (sw.importsDone && (!batched.upload || sw.uploadDone) && !failed) {
+        failed = true;
+        throw new Error("out of memory");
+      }
+      return realLedger(caseId);
+    };
+  }
   pipeline.importVelociraptorArtifact = async (...args) => {
     imports += 1;
     if (imports === sw.failAt) throw refusal();
     const state = await realImport(...args);
+    if (imports === ARTIFACTS.length) sw.importsDone = true;
     // What a batched artifact's run hands the collect once it committed (#2831): the rows its cap
     // passes dropped, and the run itself.
     if (capDropped)
       args[2].onRunEvicted?.(capDropped, { importBatchId: `run-${imports}`, fence: 0, mode: "forensic" });
     return state;
   };
+  if (batched.upload) {
+    const realVelo = pipeline.importVelociraptor.bind(pipeline);
+    pipeline.importVelociraptor = async (...args) => {
+      const state = await realVelo(...args);
+      sw.uploadDone = true;
+      return state;
+    };
+  }
   if (batched.uploadDropped) {
     const dropped = batched.uploadDropped;
     const realVelo = pipeline.importVelociraptor.bind(pipeline);
@@ -182,7 +207,7 @@ async function world(
       return { rows, total: rows.length, truncated: false };
     },
     async huntUploads() {
-      if (!batched.uploadDropped) return [];
+      if (!batched.uploadDropped && !batched.upload) return [];
       const content = JSON.stringify([{ ...row(7), _Source: "Windows.System.Pslist" }]);
       return [{ name: "Windows.System.Pslist.json", clientId: "C.1", content }];
     },
@@ -390,6 +415,37 @@ describe("a hunt collect that fails on a later artifact (#2817)", () => {
       expect(job.skippedArtifacts).toBeUndefined();
       // #2838: nothing imported, so the inventory says nothing about this hunt.
       expect(buildCollectionInventory({ events: [], hunts: sanitizeHuntJobs([job]) }).hunts).toEqual([]);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+});
+
+// #2852: the collect's own settle failed in-process. Its rows (artifacts and an uploaded report) used
+// to stay unstamped and untagged until the next import's case-wide demote moved them out. Now they
+// are settled at once, inside the collect's import section.
+describe("a hunt collect whose own settle fails (#2852)", () => {
+  it(
+    "settles every row the collect imported — artifacts and the uploaded report — before it lets go",
+    async () => {
+      const w = await world(0, false, undefined, { upload: true, settleFailsOnce: true });
+      const warn = vi.spyOn(getServerLogger(), "warn");
+      try {
+        const job = await collect(w, "imported");
+        expect(job.importingUploads).toEqual([expect.stringMatching(/^\d+_.*Pslist/)]);
+        const rows = (await w.stateStore.load("c1")).forensicTimeline;
+        const upload = job.importingUploads?.[0] ?? "";
+        const fromUpload = rows.filter((e) => e.sourceScreenshots.includes(upload));
+        expect(rows.length).toBeGreaterThan(fromUpload.length); // the artifacts' rows
+        expect(fromUpload.length).toBeGreaterThan(0); // the upload's rows
+        expect(rows.every((e) => typeof e.importBatchId === "string")).toBe(true); // all settled
+        const superIds = new Set<string>();
+        for await (const b of w.superTimelineStore.eventBatches("c1")) for (const e of b) superIds.add(e.id);
+        expect(rows.every((e) => superIds.has(e.id))).toBe(true); // dual-written
+        const warned = warn.mock.calls.map((c) => String(c[0]));
+        expect(warned.some((l) => l.includes("H.1") && /settle failed/.test(l))).toBe(true);
+      } finally {
+        warn.mockRestore();
+      }
     },
     POLL_TIMEOUT_MS * 2,
   );

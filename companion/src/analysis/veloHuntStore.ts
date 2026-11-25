@@ -73,6 +73,10 @@ export interface VeloHuntJob {
   // persisted status is NOT authority on what is running (see composition/veloHunts.ts's header).
   collectPhase?: VeloCollectPhase;
   collectRows?: number; // rows this collect fetched from Velociraptor; known once the fetch finishes
+  // The stored names of the uploaded reports the last collect imported, written before its import
+  // section (#2852): their rows carry the report's own name, not the hunt's, so a recovery of an
+  // interrupted or failed settle finds them only by these. Absent on older jobs and without uploads.
+  importingUploads?: string[];
   target?: HuntTarget;
   minSeverity?: Severity; // optional import floor chosen at run time (keeps low-value items out)
   timeoutSeconds?: number; // optional per-collection timeout used for this hunt (Velociraptor default 600s)

@@ -44,7 +44,7 @@ import { ScopeStore } from "../analysis/scope.js";
 import { readInIncidentWindow, readScope } from "../integrations/velociraptor/veloWindowReread.js";
 import type { NewestOrder } from "../integrations/velociraptor/veloNewestRead.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
-import { settleInterruptedHuntRows } from "./veloHuntRecovery.js";
+import * as rec from "./veloHuntRecovery.js";
 import { loadHuntHolds } from "./veloHuntHolds.js";
 import { createHuntCollectAdmission } from "./veloHuntAdmission.js";
 import { unavailableServerClients } from "./serverSetClients.js";
@@ -218,7 +218,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     options,
     startVeloHuntCollect: (c, h) => startVeloHuntCollect(c, h),
     isCollecting: (c, h) => collectingNow.has(c, h), // #2403
-    settleInterrupted: (c, h) => settleInterruptedHuntRows(deps, c, h), // #2851
+    settleInterrupted: (c, h, files) => rec.settleInterruptedHuntRows(deps, c, h, { uploadFiles: files }),
     importLock, // #2851 review: imports into a case wait for its start-up recovery
   });
   const servers = () => options.serverClients ?? unavailableServerClients;
@@ -427,7 +427,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // Sized: the memory guard may refuse here — the pass fails with its message on the hunt card.
       releaseImportLock = await importLock.acquire(caseId, evidence.hint);
       if (!(await current())) return; // the set changed while this pass waited its turn
-      job = { ...job, collectPhase: "importing" };
+      job = { ...job, collectPhase: "importing", importingUploads: rec.uploadStoredNames(evidence.uploads) };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
       if (options.stateStore) {
@@ -611,6 +611,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           ...{ superTimelineAddedCount, capDropped },
         },
       );
+      if (settled.error) await rec.settleAfterFailedSettle(deps, caseId, jobHuntId, job.importingUploads); // #2852
       const { addedEvents, addedIocs } = settled;
       const failure = midFailure
         ? midFailureMessage((midFailure.err as Error).message, importedNames, notImported, settled)
