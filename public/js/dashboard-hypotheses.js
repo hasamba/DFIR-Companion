@@ -18,6 +18,7 @@
   let hypLoadSeq = 0;
   // #2843: the case the Falsification review box was drawn for (null: the box is empty).
   let hypReviewsCase = null;
+  let hypMsgCase = null; // #2848: the case the Add and Generate / Review lines were written in
   const HYP_STATUS = [
     ["open", "Open"],
     ["supported", "Supported"],
@@ -37,6 +38,8 @@
     // #2843: a reload asked for by an action of a case the analyst has left (a slow edit, Generate)
     // is dropped — first, so it cannot drop the open case's own lines below.
     if (String(caseId || "").trim() !== hypCaseOnScreen()) return;
+    // #2848: on any case change, a list held or not (after a cancel, none is).
+    if (hypMsgCase !== caseId) clearHypMessages(caseId);
     // The review box is tracked on its own: a Review can answer before its case's list does.
     if (hypReviewsCase !== null && hypReviewsCase !== caseId) {
       hypReviewsCase = null;
@@ -93,6 +96,21 @@
     // #1111: the coverage-attestation mini-panel lives inside this same section, so it refreshes
     // on every existing loadHypotheses() call site rather than needing its own callers threaded in.
     if (typeof loadEvidenceAttestations === "function") loadEvidenceAttestations(caseId);
+  }
+
+  // #2848: a cancelled case load leaves no case open, so nothing drawn for the last one stays.
+  function clearHypothesesPanel() {
+    hypotheses = [];
+    hypothesesCase = hypLoadError = hypWriteError = hypReviewsCase = null;
+    hypLoadSeq++; // a list answer still on its way for the cancelled case is not drawn
+    renderHypothesisReviews([]);
+    clearPendingHuntHypothesis();
+    clearHypMessages(null);
+    renderHypotheses();
+  }
+  function clearHypMessages(caseId) {
+    hypMsgCase = caseId;
+    for (const m of ["hypMsg", "hypGenMsg"].map((id) => document.getElementById(id))) if (m) m.textContent = "";
   }
 
   function renderHypotheses() {
@@ -556,6 +574,7 @@
       // Never swallow silently — a 404 here means a stale server (the #1 gotcha), and the analyst
       // must see why nothing happened instead of a dead button.
       .catch((e) => {
+        if (caseId !== hypCaseOnScreen()) return; // #2848: a late answer for a case left behind
         if (msg && e.presidioHold) {
           msg.textContent = presidioHoldText("Promote");
           return;
@@ -627,6 +646,7 @@
           loadHypotheses(caseId);
         })
         .catch((e) => {
+          if (caseId !== hypCaseOnScreen()) return;
           if (e.presidioHold) {
             msg.textContent = presidioHoldText("Add hypothesis");
             return;
@@ -682,7 +702,7 @@
           })
           .then((p) => {
             if (p.error) {
-              msg.textContent = "failed: " + p.error;
+              if (caseId === hypCaseOnScreen()) msg.textContent = "failed: " + p.error;
               return;
             }
             msg.textContent = "";
@@ -695,11 +715,8 @@
             loadSynthMeta(caseId);
           })
           .catch((e) => {
-            msg.textContent = e.presidioHold || e.hostMergeHold
-              ? e.message
-              : "failed: " +
-                e.message +
-                " — restart the companion server if this 404s";
+            if (caseId !== hypCaseOnScreen()) return;
+            msg.textContent = e.presidioHold || e.hostMergeHold ? e.message : hypRefusalText("failed: ", e);
           })
           .finally(() => {
             btn.disabled = false;
@@ -747,14 +764,10 @@
                 : "no open hypotheses to review";
           })
           .catch((e) => {
-            if (e.presidioHold) {
-              msg.textContent = presidioHoldText("Hypothesis review");
-              return;
-            }
-            msg.textContent =
-              "failed: " +
-              e.message +
-              " — restart the companion server if this 404s";
+            if (caseId !== hypCaseOnScreen()) return;
+            msg.textContent = e.presidioHold
+              ? presidioHoldText("Hypothesis review")
+              : hypRefusalText("failed: ", e);
           })
           .finally(() => {
             btn.disabled = false;
@@ -767,6 +780,7 @@
   window.linkNextHuntToHypothesis = linkNextHuntToHypothesis;
   window.consumePendingHuntHypothesis = consumePendingHuntHypothesis;
   window.clearPendingHuntHypothesis = clearPendingHuntHypothesis;
+  window.clearHypothesesPanel = clearHypothesesPanel;
   window.hypDelete = hypDelete;
   window.hypApplyReview = hypApplyReview;
   window.hypExcludeStart = hypExcludeStart;

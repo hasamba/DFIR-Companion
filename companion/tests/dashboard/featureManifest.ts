@@ -2245,6 +2245,7 @@ export const FEATURES: Feature[] = [
       "linkNextHuntToHypothesis",
       "consumePendingHuntHypothesis",
       "clearPendingHuntHypothesis",
+      "clearHypothesesPanel",
       "hypDelete",
       "hypApplyReview",
       "hypExcludeStart",

@@ -1155,6 +1155,8 @@ Each hypothesis has a status: **Open / Supported / Refuted / Unknown**. Open hyp
 
 **Review** button — runs a focused for/against pass over open hypotheses (plain-English case for and against each, plus an advisory recommended status) without re-running full synthesis. Never mutates a hypothesis until you click **Apply**.
 
+**The panel shows only the open case.** When you open another case, or cancel a case load, the panel is emptied at once, together with the messages under **Add**, **Generate** and **Review**. If an Add, Generate or Review that you started in the previous case fails later, its message is not shown in the case you are in now.
+
 ---
 
 ## Response Playbook
