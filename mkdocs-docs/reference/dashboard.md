@@ -950,7 +950,9 @@ The case-scoped half of Velociraptor. Everything on this panel lands in the conn
   tracking it here only; the hunt keeps running there), stop the hunt (its results stay on the
   server), or delete the hunt and its results from the server (needs the server-admin permission).
   The companion never collects a cancelled hunt. When Velociraptor refuses the stop or delete, the
-  card says so and that the hunt may still be running there.
+  card says so and that the hunt may still be running there. On a closed or archived case, Cancel
+  can still stop the hunt or stop tracking it, but the delete choice is refused: deleting would
+  destroy collected results.
 - **Import external hunt/flow** — paste a hunt id, a flow id or a Velociraptor GUI URL to import a
   collection launched outside the Companion. If the hunt or flow is already in the case, the panel
   says when it was pulled in and imports nothing yet. It lists the artifacts that need importing

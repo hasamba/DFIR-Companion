@@ -104,6 +104,7 @@ const EXPECTED_ALLOWED = [
   "POST /velociraptor/monitors/:mid/stop",
   "DELETE /velociraptor/monitors/:mid",
   "POST /velociraptor/hunt-jobs/:huntId/poll-status",
+  "POST /velociraptor/hunt-jobs/:huntId/cancel",
   // self-guarded: authenticates its push token first, then refuses a frozen case itself
   "POST /push",
 ].sort();

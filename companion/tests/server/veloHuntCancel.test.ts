@@ -80,7 +80,7 @@ async function makeApp(refuse?: "hunt_update" | "hunt_delete", hold?: Promise<vo
     .post("/cases/c1/velociraptor/run-bundle")
     .send({ bundleId: "best-practice", waitMinutes: 30 });
   expect(launched.status).toBeLessThan(300);
-  return { app, programs };
+  return { app, programs, store };
 }
 
 const cancel = (app: Parameters<typeof request>[0], velociraptor: unknown, huntId = HUNT) =>
@@ -174,5 +174,47 @@ describe("cancel a running bundle hunt", () => {
     expect((await cancel(app, "none", "H.NOPE")).status).toBe(404);
     expect((await cancel(app, "none")).status).toBe(200);
     expect((await cancel(app, "stop")).status).toBe(409); // already cancelled
+  });
+});
+
+// #2867: a frozen case still lets the analyst stop work that was running when it froze — the same
+// rule that keeps poll-status and monitor stop open. Deleting the hunt destroys its collected
+// results on the Velociraptor server, so a frozen case refuses that one, before anything changes.
+type Frozen = "closed" | "archived";
+async function freeze(app: Parameters<typeof request>[0], store: CaseStore, frozen: Frozen) {
+  if (frozen === "archived") return void (await store.archiveCaseFolder("c1", "archived"));
+  expect((await request(app).patch("/cases/c1/status").send({ status: "closed" })).status).toBe(200);
+}
+
+describe.each(["closed", "archived"] as const)("cancel a running hunt on a %s case (#2867)", (frozen) => {
+  const unfreeze = frozen === "archived" ? "restore it" : "reopen it";
+
+  it("stop tracking here is accepted", async () => {
+    const { app, store } = await makeApp();
+    await freeze(app, store, frozen);
+    expect((await cancel(app, "none")).status).toBe(200);
+    expect((await jobOf(app)).status).toBe("cancelled");
+  });
+
+  it("stop is accepted and stops the hunt in Velociraptor", async () => {
+    const { app, programs, store } = await makeApp();
+    await freeze(app, store, frozen);
+    expect((await cancel(app, "stop")).status).toBe(200);
+    expect((await jobOf(app)).cancelled.action).toBe("stop");
+    expect(programs).toContain(`SELECT hunt_update(hunt_id='${HUNT}', stop=TRUE) AS Stopped FROM scope()`);
+  });
+
+  it("delete is refused and the hunt is left running, here and in Velociraptor", async () => {
+    const { app, programs, store } = await makeApp();
+    await freeze(app, store, frozen);
+    const res = await cancel(app, "delete");
+    expect(res.status).toBe(423);
+    expect(res.body.error).toBe(
+      `Case "c1" is ${frozen} — ${unfreeze} before deleting the hunt and its results from Velociraptor`,
+    );
+    const job = await jobOf(app);
+    expect(job.status).toBe("running");
+    expect(job.cancelled).toBeUndefined();
+    expect(programs.some((p) => p.includes("hunt_update(") || p.includes("hunt_delete("))).toBe(false);
   });
 });

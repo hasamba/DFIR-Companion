@@ -27,7 +27,9 @@ import { requestAuthentication } from "../auth/types.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { deleteHuntOnServer, stopHuntOnServer } from "../integrations/velociraptor/huntControl.js";
 import { caseVelo } from "./veloServers.js";
+import { frozenCaseRefusal } from "./importCaseGuard.js";
 
+const FROZEN_DELETE_PURPOSE = "deleting the hunt and its results from Velociraptor";
 const ACTIONS: readonly VeloHuntCancelAction[] = ["none", "stop", "delete"];
 const CANCELLABLE = new Set(["running", "unreachable"]);
 
@@ -51,6 +53,11 @@ export function registerVeloHuntCancelRoutes(app: Express, ctx: RouteContext): v
     const huntId = req.params.huntId;
     const action = parseAction(req.body?.velociraptor);
     if (!action) return res.status(400).json({ error: "velociraptor must be one of: none, stop, delete" });
+    // A frozen case may still stop a running hunt (#2867), but a delete destroys its collected
+    // results — refused here, before anything is marked, so the hunt stays exactly as it was.
+    const frozen =
+      action === "delete" ? await frozenCaseRefusal(ctx.store, caseId, FROZEN_DELETE_PURPOSE) : null;
+    if (frozen) return res.status(423).json({ error: frozen });
     // Only a stop / delete needs the server; "none" works even when Velociraptor is unreachable.
     const vc = action === "none" ? null : caseVelo(ctx, caseId, res);
     if (action !== "none" && !vc) return;

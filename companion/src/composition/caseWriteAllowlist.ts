@@ -72,7 +72,8 @@ const READS_AS_POST: Entry[] = [
  * Stopping, or finishing, work that was already running when the case froze (#2404: a running
  * import finishes and is recorded). Imports, dedicated imports and cloud collections finish inside
  * their jobs, not through a route, so they need no entry. poll-status is the manual tick of a hunt
- * that was launched before the close — the same tick the scheduler runs on its own.
+ * that was launched before the close — the same tick the scheduler runs on its own. Hunt cancel
+ * stops such a hunt (#2867); its "delete" choice destroys results, so the route refuses that itself.
  */
 const RUNNING_WORK: Entry[] = [
   ["POST", re("/hunt-query/executions/:seg/cancel")],
@@ -80,6 +81,7 @@ const RUNNING_WORK: Entry[] = [
   ["POST", re("/velociraptor/monitors/:seg/stop")],
   ["DELETE", re("/velociraptor/monitors/:seg")],
   ["POST", re("/velociraptor/hunt-jobs/:seg/poll-status")],
+  ["POST", re("/velociraptor/hunt-jobs/:seg/cancel")],
 ];
 
 /**
