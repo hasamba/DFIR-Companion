@@ -42,10 +42,8 @@ import { randomUUID } from "node:crypto";
 import type { AppOptions } from "./appOptions.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { ALL_CASES, type ImportLock } from "../analysis/importLock.js";
-import { SCAN_PAGE_ROWS } from "../analysis/forensicRows.js";
-import { isManualId } from "../analysis/manualId.js";
-import { carryAndStampPaged, dualWriteAndTagPaged } from "../routes/importSettlePaged.js";
-import { runUnlocked, type RunExclusive } from "../routes/importSettleRows.js";
+import { settleUnsettledRows } from "../routes/importRowRecovery.js";
+import type { RunExclusive } from "../routes/importSettleRows.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 
 export interface HuntRecoveryDeps {
@@ -129,13 +127,6 @@ function collectFile(huntId: string, uploadFiles: readonly unknown[] | undefined
   return (s) => file.test(s) || uploads.has(s);
 }
 
-/** Unstamped, or stamped by the failed settle's own batch (#2888) — never another import's batch. */
-const unsettled = (e: ForensicEvent, ofCollect: CollectFile, batchId: string | undefined): boolean =>
-  (!e.importBatchId || (batchId !== undefined && e.importBatchId === batchId)) &&
-  !e.promotedAt &&
-  !isManualId(e.id) &&
-  e.sourceScreenshots.some((s) => typeof s === "string" && ofCollect(s));
-
 export interface HuntRecoveryOpts {
   /** The stored names of the uploaded reports the collect imported (#2852). */
   uploadFiles?: readonly string[];
@@ -159,40 +150,27 @@ export async function settleInterruptedHuntRows(
 ): Promise<number> {
   const store = deps.options.stateStore;
   if (!store) return 0;
-  const lock = deps.runStateExclusive ?? runUnlocked;
   const ofCollect = collectFile(huntId, opts.uploadFiles);
   // Read back from the job file: only a non-empty string is an id.
   const batchId = typeof opts.batchId === "string" && opts.batchId ? opts.batchId : undefined;
+  const recoveryDeps = {
+    stateStore: store,
+    runStateExclusive: deps.runStateExclusive,
+    superTimelineStore: deps.options.superTimelineStore,
+    onSuperTimeline: deps.options.onSuperTimeline,
+    autoTagImported: deps.autoTagImported,
+    demote: deps.demoteForensicForCase,
+  };
   return deps.importLock.runPastHolds(caseId, async () => {
-    const ids: string[] = [];
-    for await (const page of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS }))
-      for (const e of page) if (unsettled(e, ofCollect, batchId)) ids.push(e.id);
-    if (!ids.length) return 0; // nothing of this hunt is unsettled: no case-wide demote either
-    const ledger = await store.loadOverviewWithoutIocs(caseId);
-    const scope = { addedIds: ids, touchedRowIds: [], touchedKnown: true, mergedCount: 0 };
-    const superStore = deps.options.superTimelineStore;
-    const stamped = await lock(caseId, () =>
-      carryAndStampPaged(store, caseId, ledger, scope, false, {
-        capturedAt: undefined,
-        downgrade: !!superStore,
-        importBatchId: batchId, // the same id: a second failure leaves the rows findable (#2888)
-      }),
-    );
-    if (superStore && stamped.addedIds.length) {
-      const dualDeps = { ...deps.options, stateStore: store, runStateExclusive: lock };
-      await dualWriteAndTagPaged(
-        { ...dualDeps, autoTagImported: deps.autoTagImported },
-        caseId,
-        stamped.addedIds,
-      );
-    }
-    await deps.demoteForensicForCase(caseId);
+    // The shared core (routes/importRowRecovery.ts, #2890): select, stamp, dual-write, tag, demote.
+    const settled = await settleUnsettledRows(recoveryDeps, caseId, ofCollect, batchId);
+    if (settled === null) return 0; // nothing of this hunt is unsettled: no case-wide demote either
     getServerLogger().warn(
-      `[velo-hunt] ${caseId}: settled ${stamped.addedIds.length} row(s) of hunt ${huntId}'s collect ` +
+      `[velo-hunt] ${caseId}: settled ${settled} row(s) of hunt ${huntId}'s collect ` +
         `${opts.cause ?? RESTART_CAUSE} (no import record or Undo entry)`,
       { caseId },
     );
-    return stamped.addedIds.length;
+    return settled;
   });
 }
 

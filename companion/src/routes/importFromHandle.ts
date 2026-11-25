@@ -17,7 +17,7 @@ import { sniffImportFileHeadDetail, readImportFileBounded } from "./importFileHe
 import { CHANGED_WHILE_IMPORTING } from "./receiptedFile.js";
 import { cancellableByParse, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
 import { siemFallbackWarning } from "./importNotes.js";
-import { settleForensicImport } from "./importSettle.js";
+import { settleImportOrRecover } from "./importRowRecovery.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
 import { logImportActivity } from "./importActivity.js";
 import { recordImportRun } from "./importRunRecorder.js";
@@ -204,11 +204,12 @@ export async function importFromHandle(
       .then(async () => {
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         await recordImportRows(store, caseId, seq, debug.summary().counts); // #2790
-        if (settleDeps && baseline) {
+        // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote, diffs
+        // from the POST-demote state. No snapshot / a failed settle → WARN + recovery (#2890).
+        const settleTarget = { caseId, storedNames: [storedName], tag: "import" };
+        const settled = await settleImportOrRecover(settleDeps, settleTarget, baseline, storedName);
+        if (baseline && settled) {
           try {
-            // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote,
-            // diffs from the POST-demote state so "+N events" counts only graded signal.
-            const settled = await settleForensicImport(settleDeps, caseId, baseline, storedName);
             const { superTimelineAddedCount, superTimelineEvicted } = settled;
             const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
             // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
