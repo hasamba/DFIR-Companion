@@ -32,7 +32,13 @@ const input = (clientIds: string[], preserve = true) => ({
 });
 
 function mockClient(
-  opts: { refuseSet?: boolean; refuseReason?: string; addFails?: string[]; noHunt?: boolean } = {},
+  opts: {
+    refuseSet?: boolean;
+    refuseReason?: string;
+    addFails?: string[];
+    noHunt?: boolean;
+    stopReply?: { rows: unknown[]; reason: string };
+  } = {},
 ) {
   const programs: string[] = [];
   const client: AiAgentLaunchClient = {
@@ -53,6 +59,7 @@ function mockClient(
           ? { rows: [], reason: "client unknown" }
           : { rows: [{ Added: id }], reason: "" };
       }
+      if (p.includes("hunt_update") && opts.stopReply) return opts.stopReply;
       return { rows: [{}], reason: "" };
     },
   };
@@ -106,10 +113,37 @@ describe("AI Agent Forensics launch", () => {
     expect(r.failed).toEqual([{ clientId: "C.bbb", error: "client unknown" }]);
   });
 
-  it("stops the hunt and fails when no client could be added", async () => {
+  it("stops the hunt with stop=TRUE and fails when no client could be added", async () => {
     const { client, programs } = mockClient({ addFails: ["C.aaa"] });
-    await expect(launchAiAgentRun(client, input(["C.aaa"]))).rejects.toThrow(/no endpoint could be added/);
-    expect(programs.some((p) => p.includes("hunt_update(hunt_id='H.AI1', state='stop')"))).toBe(true);
+    const err = await launchAiAgentRun(client, input(["C.aaa"])).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(AiAgentLaunchError);
+    expect(String(err)).toMatch(/no endpoint could be added/);
+    expect(String(err)).toContain("run H.AI1 was stopped");
+    expect(programs.some((p) => p.includes("hunt_update(hunt_id='H.AI1', stop=TRUE)"))).toBe(true);
+    expect(programs.some((p) => p.includes("state="))).toBe(false);
+  });
+
+  it("names the hunt and the refusal when Velociraptor will not stop it", async () => {
+    const { client } = mockClient({
+      addFails: ["C.aaa"],
+      stopReply: { rows: [], reason: "PermissionDenied" },
+    });
+    const err = await launchAiAgentRun(client, input(["C.aaa"])).catch((e: Error) => e);
+    expect(err).toBeInstanceOf(AiAgentLaunchError);
+    expect(String(err)).toMatch(/no endpoint could be added/);
+    expect(String(err)).toContain("did not stop run H.AI1");
+    expect(String(err)).toContain("PermissionDenied");
+    expect(String(err)).toMatch(/stop it by hand/i);
+  });
+
+  it("says the run was not stopped when Velociraptor answers Stopped=false", async () => {
+    const { client } = mockClient({
+      addFails: ["C.aaa"],
+      stopReply: { rows: [{ Stopped: false }], reason: "" },
+    });
+    const err = await launchAiAgentRun(client, input(["C.aaa"])).catch((e: Error) => e);
+    expect(String(err)).toContain("did not stop run H.AI1");
+    expect(String(err)).not.toContain("was stopped");
   });
 
   it("names the missing permission when artifact_set is refused, and launches nothing", async () => {

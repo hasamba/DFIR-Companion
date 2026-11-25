@@ -54,8 +54,11 @@ chosen Windows endpoints for tampered AI coding agents. What it needs on the Vel
   as not run.
 
 The run is one paused hunt; only the endpoints you pick are added to it, so it never spreads to the
-fleet. Its collected files stay in Velociraptor: no upload of an AI Agent Forensics hunt or flow is
-ever imported, including through **Import external hunt/flow** and a custom
+fleet. When no endpoint can be added, the run fails and the Companion stops that paused hunt (this
+needs START_HUNT). The error says whether the hunt was stopped. When Velociraptor refuses the stop,
+the error names the hunt and the reason: stop that hunt by hand in Velociraptor, because pressing
+Start on it there runs it on the whole fleet. A run's collected files stay in Velociraptor: no
+upload of an AI Agent Forensics hunt or flow is ever imported, including through **Import external hunt/flow** and a custom
 `DFIR_VELOCIRAPTOR_UPLOAD_VQL`.
 
 **Rule updates.** The vendored rules come from
