@@ -43,7 +43,7 @@ const BUNDLE_NAME = "AI Agent Forensics (sensitive)";
 const DEFAULT_WAIT_MINUTES = 30;
 const MAX_ENDPOINTS = 200;
 /** Same bound as the endpoint inventory read (`listClients`). */
-const CLIENT_LOOKUP_LIMIT = 100_000;
+export const CLIENT_LOOKUP_LIMIT = 100_000;
 /** Rows per evidence-first ingest when a sweep is filed into a case. */
 const ADD_BATCH_ROWS = 10_000;
 
@@ -102,6 +102,17 @@ function veloFor(deps: AiAgentForensicsDeps, caseId: string): VelociraptorClient
   return r.servers.velociraptor;
 }
 
+interface EndpointLookup {
+  endpoints: AiAgentEndpoint[];
+  missing: string[];
+  /** The full client list came back at the row limit, so it may not hold every enrolled endpoint. */
+  truncated: boolean;
+}
+
+type FoundClient = { os: string; hostname: string };
+
+const LIMIT_TEXT = CLIENT_LOOKUP_LIMIT.toLocaleString("en-US");
+
 /**
  * The chosen clients' host names and OS, read live (bounded, validated ids), and the ids this server
  * does not know (`missing`): a client id that is not enrolled here is not on this server set.
@@ -109,7 +120,8 @@ function veloFor(deps: AiAgentForensicsDeps, caseId: string): VelociraptorClient
 async function readEndpoints(
   client: VelociraptorClient,
   ids: string[],
-): Promise<{ endpoints: AiAgentEndpoint[]; missing: string[] }> {
+  log: (line: string) => void,
+): Promise<EndpointLookup> {
   // The whole client list, matched here — the same read that fills the endpoint picker. A server-side
   // `WHERE client_id IN [...]` filter returned no rows on a live server for an enrolled endpoint, so
   // Run refused an endpoint the picker had just listed.
@@ -117,7 +129,7 @@ async function readEndpoints(
     `SELECT client_id, os_info.system AS OS, os_info.hostname AS Hostname, os_info.fqdn AS Fqdn FROM clients() LIMIT ${CLIENT_LOOKUP_LIMIT}`,
   );
   const wanted = new Set(ids);
-  const found = new Map(
+  const found = new Map<string, FoundClient>(
     (rows as Record<string, unknown>[])
       .filter((r) => wanted.has(String(r.client_id ?? "")))
       .map((r) => [
@@ -125,16 +137,61 @@ async function readEndpoints(
         { os: String(r.OS ?? ""), hostname: String(r.Hostname || r.Fqdn || "") },
       ]),
   );
+  const listMissing = ids.filter((id) => !found.has(id));
+  // A failed clients() query returns no rows: say why, never blame the ids.
+  if (listMissing.length && reason?.trim())
+    throw new AiAgentRunError(`could not read the endpoints from Velociraptor: ${reason.trim()}`, 502);
+  // A list cut at the limit may leave out an enrolled endpoint (#2880): look up only those ids by
+  // their exact id. client_info() on this server never returns another server's client (#2725).
+  const truncated = rows.length >= CLIENT_LOOKUP_LIMIT;
+  const byId = truncated && listMissing.length ? await readClientsById(client, listMissing, log) : null;
+  const all = new Map([...found, ...(byId ?? [])]);
   const endpoints = ids.map((clientId) => ({
     clientId,
-    hostname: found.get(clientId)?.hostname || clientId,
-    os: found.get(clientId)?.os ?? "",
+    hostname: all.get(clientId)?.hostname || clientId,
+    os: all.get(clientId)?.os ?? "",
   }));
-  const missing = ids.filter((id) => !found.has(id));
-  // A failed clients() query returns no rows: say why, never blame the ids.
-  if (missing.length && reason?.trim())
-    throw new AiAgentRunError(`could not read the endpoints from Velociraptor: ${reason.trim()}`, 502);
-  return { endpoints, missing };
+  const missing = ids.filter((id) => !all.has(id));
+  if (truncated)
+    log(
+      `[ai-agent] the Velociraptor client list reached the ${LIMIT_TEXT} row limit; ` +
+        `${listMissing.length} picked endpoint(s) were not in it, ${missing.length} still not found by id` +
+        (missing.length ? `: ${missing.join(", ")}` : ""),
+    );
+  return { endpoints, missing, truncated };
+}
+
+/**
+ * The exact by-id lookup for ids a truncated client list left out: one program, one client_info() per
+ * id (ids are CLIENT_RE-validated before they reach here). Fails safe — an error, or a row that names
+ * an id nobody asked for, leaves the id not found, so it is still refused.
+ */
+async function readClientsById(
+  client: VelociraptorClient,
+  ids: string[],
+  log: (line: string) => void,
+): Promise<Map<string, FoundClient>> {
+  const list = ids.map((id) => `'${id}'`).join(", ");
+  const out = new Map<string, FoundClient>();
+  try {
+    const { rows, reason } = await client.runProgram(
+      `SELECT client_info(client_id=_value) AS Info FROM foreach(row=[${list}])`,
+    );
+    if (reason?.trim()) log(`[ai-agent] the by-id client lookup reported: ${reason.trim()}`);
+    for (const row of rows as { Info?: unknown }[]) {
+      const info = (row?.Info ?? {}) as { client_id?: unknown; os_info?: Record<string, unknown> };
+      const id = String(info.client_id ?? "");
+      if (!ids.includes(id)) continue;
+      const os = info.os_info ?? {};
+      const system = String(os.system ?? "");
+      const hostname = String(os.hostname || os.fqdn || "");
+      // A stub row (an id with no OS info) is not proof the endpoint is enrolled here: refuse it.
+      if (system || hostname) out.set(id, { os: system, hostname });
+    }
+  } catch (e) {
+    log(`[ai-agent] the by-id client lookup failed: ${(e as Error).message}`);
+  }
+  return out;
 }
 
 function validClientIds(raw: unknown): string[] {
@@ -221,12 +278,15 @@ export async function startAiAgentRun(
   const bundle = buildAiAgentArtifact(set, { scopes: input.scopes, uploadMaxBytes }); // option errors before any case is made
   const target = input.caseId ? { client: veloFor(deps, input.caseId) } : sweepSet(deps, input.serverSetId);
   const client = target.client;
-  const { endpoints, missing } = await readEndpoints(client, clientIds);
+  const { endpoints, missing, truncated } = await readEndpoints(client, clientIds, deps.log);
   // Inside a case, every endpoint must belong to the case's own server set (#2725): a case writer may
   // not reach a client of another set by naming its id.
   if (input.caseId && missing.length)
     throw new AiAgentRunError(
       `Not started: this case's Velociraptor server does not list endpoint ${missing.join(", ")}. ` +
+        (truncated
+          ? `The server's client list was cut at ${LIMIT_TEXT} rows, so this check could not see every endpoint. `
+          : "") +
         "Untick it, or reopen the panel to reload the endpoint list, and press Run again.",
     );
   const pre = await preflightAiAgentRun(endpoints, () =>

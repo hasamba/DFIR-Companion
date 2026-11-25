@@ -988,7 +988,11 @@ section, and with no case open it opens the **sweep** view.
 3. Press **Run**. Velociraptor runs the [ai-dfir-toolkit](https://github.com/depalmar/ai-dfir-toolkit)
    YARA rules and Sigma rules **on the endpoint**, lists the AI tools and MCP servers present, and
    preserves the AI-agent files with `Windows.Triage.Targets` → `AICodingAgents`. A run never targets
-   the whole fleet: only the endpoints you ticked.
+   the whole fleet: only the endpoints you ticked. Inside a case, Run is refused when the case's
+   Velociraptor server does not list a ticked endpoint, and the refusal names it. On a server with
+   more than 100,000 clients, Run looks up by client id any ticked endpoint that is not in the first
+   100,000. If it still cannot find one, the refusal also says that the client list was cut at
+   100,000.
 
 The results-only report shows, per endpoint, the AI tools found, the MCP servers configured (name and
 executable only; arguments are counted, never shown, and environment values are never read), the
