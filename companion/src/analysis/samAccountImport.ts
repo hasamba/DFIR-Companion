@@ -31,7 +31,7 @@
 // (#384) — see check-file-size.mjs.
 
 import { getCI, getPath, str, type MappedEvent } from "./siemImport.js";
-import { withHostSuffix } from "./velociraptorTitle.js";
+import { capWithHostSuffix } from "./velociraptorTitle.js";
 import { vrTime } from "./veloRowTime.js";
 
 type Row = Record<string, unknown>;
@@ -192,7 +192,7 @@ export function mapSamAccount(row: Row, artifact: string, host: string): MappedE
   if (comment) parts.push(`- ${comment}`);
 
   let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${parts.join(" - ")}`;
-  description = withHostSuffix(description, host).slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   return {
     timestamp,

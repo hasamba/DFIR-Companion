@@ -28,7 +28,7 @@ import { boundedAggKey } from "./aggKey.js";
 import { appendRowNote } from "./derivedNote.js";
 import { RENAMED_BINARY_MARKER } from "./renamedBinaryNote.js";
 import { isStagedPath } from "./stagingPaths.js";
-import { titleSafe, withHostSuffix } from "./velociraptorTitle.js";
+import { capWithHostSuffix, titleSafe } from "./velociraptorTitle.js";
 
 type Row = Record<string, unknown>;
 
@@ -267,7 +267,7 @@ export function mapBinaryRename(
   return withRenameNote(
     {
       timestamp: dropTime(row, timestamp),
-      description: withHostSuffix(describeRename(f), host).slice(0, 600),
+      description: capWithHostSuffix(describeRename(f), host, 600),
       severity: gradeRename(f),
       // T1036.003 Rename System Utility when it is one, else plain T1036 Masquerading. A row that
       // proves no rename carries no masquerading technique.

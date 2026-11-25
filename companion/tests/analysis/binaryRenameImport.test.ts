@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { mapBinaryRename } from "../../src/analysis/binaryRenameImport.js";
 import type { SiemIoc } from "../../src/analysis/siemImport.js";
+import { splitDerivedNotes } from "../../src/analysis/derivedNote.js";
 
 const SHA = "b".repeat(64);
 const TS = "2026-01-01T00:00:00Z";
@@ -110,5 +111,26 @@ describe("mapBinaryRename — malformed rows", () => {
     expect(e.sha256).toBeUndefined();
     expect(typeof e.description).toBe("string");
     expect(e.timestamp).toBe(TS);
+  });
+});
+
+// #2885: the base text was capped AFTER the "@ HOST" suffix, so a row whose names, vendor and path
+// all sat near their own caps left "… @ WORKSTATION-LA" — and past 600 dropped the host. The rename
+// note goes on after the base, so the host is checked at the end of the base.
+describe("mapBinaryRename — the host suffix survives the length cap", () => {
+  const HOST = "WORKSTATION-LAB-0001";
+  const STAGED = "C:\\Users\\a\\AppData\\Local\\Temp\\";
+
+  it("keeps the '@ HOST' suffix whole at the end of the base however long the vendor is", () => {
+    for (let n = 0; n <= 80; n++) {
+      const row = {
+        OSPath: `${STAGED}${"d".repeat(200 - STAGED.length - 4)}.exe`,
+        Name: `${"n".repeat(116)}.exe`,
+        VersionInformation: { OriginalFilename: `${"o".repeat(116)}.exe`, CompanyName: "v".repeat(n) },
+      };
+      const { base } = splitDerivedNotes(mapBinaryRename(row, HOST, new Map(), TS).description);
+      expect(base.length).toBeLessThanOrEqual(600);
+      expect(base.endsWith(`@ ${HOST}`)).toBe(true);
+    }
   });
 });

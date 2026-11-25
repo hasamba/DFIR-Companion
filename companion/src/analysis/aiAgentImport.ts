@@ -18,7 +18,7 @@
 import type { MappedEvent, SiemIoc } from "./siemImport.js";
 import { mitreFromText } from "./siemImport.js";
 import { addIoc, mergeRowIocs } from "./iocSink.js";
-import { withHostSuffix } from "./velociraptorTitle.js";
+import { capWithHostSuffix } from "./velociraptorTitle.js";
 import { parseGrade } from "./aiAgentRuleParse.js";
 import { activeAiAgentRuleSet } from "./aiAgentActiveRules.js";
 import { aiAgentRuleGrade, aiAgentRuleLink, type AiAgentRuleSet } from "./aiAgentRuleSet.js";
@@ -130,7 +130,7 @@ function mapHit(
   if (lowInfo) description += " [file rewritten every agent session — low-information time]";
   if (selfScan) description += " [detector's own rule copy or test fixture — self-scan]";
   description += " [provisional grade]";
-  description = withHostSuffix(description, ep.label).slice(0, 600);
+  description = capWithHostSuffix(description, ep.label, 600);
   const atlas = (row.RuleAtlas ?? "").trim();
   const detail = [
     `Rule ${row.RuleName} (${row.Family}${row.RuleFile ? `, ${row.RuleFile}` : ""})`,
@@ -182,7 +182,7 @@ function infoEvent(
 ): MappedEvent {
   return {
     timestamp: iso(row.ScanTime) || new Date(0).toISOString(),
-    description: withHostSuffix(`${LABEL} ${description}`, ep.label).slice(0, 600),
+    description: capWithHostSuffix(`${LABEL} ${description}`, ep.label, 600),
     severity: "Info",
     mitre: [],
     aggKey: `aiagent|${ep.key}|${aggKey}`,
@@ -235,10 +235,7 @@ export function mapAiAgentRow(
   if (!parsed.ok) {
     const bad: MappedEvent = {
       timestamp: iso(row.ScanTime) || new Date().toISOString(),
-      description: withHostSuffix(`${LABEL}: unreadable result row (${parsed.error})`, ep.label).slice(
-        0,
-        600,
-      ),
+      description: capWithHostSuffix(`${LABEL}: unreadable result row (${parsed.error})`, ep.label, 600),
       severity: "Info",
       mitre: [],
       aggKey: `aiagent|${ep.key}|unreadable`,

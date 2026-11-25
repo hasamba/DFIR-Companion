@@ -11,7 +11,7 @@ import { createTimelineSelection } from "../../src/analysis/ai/synthesisPromptEv
 import { renderTaggedEventLine } from "../../src/analysis/ai/eventLine.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { keepsVendorGrade } from "../../src/analysis/vendorGrade.js";
-import { hitTime, AI_AGENT_TIME_LABEL } from "../../src/analysis/aiAgentImport.js";
+import { hitTime, AI_AGENT_TIME_LABEL, mapAiAgentRow } from "../../src/analysis/aiAgentImport.js";
 import { redactSnippet, parseAiAgentRow } from "../../src/analysis/aiAgentRows.js";
 import type { SiemEvent } from "../../src/analysis/siemImport.js";
 
@@ -390,5 +390,45 @@ describe("AI Agent Forensics mapper: endpoints that share a host name (#2734)", 
       hit({ ...same, Fqdn: "-", Hostname: "WS-01", ClientId: clientId, FileMtime: "2026-11-12T03:14:00Z" });
     const r = parseVelociraptorJson(JSON.stringify([dash("C.aaa111"), dash("C.bbb222")]));
     expect(r.events.map((e) => e.asset).sort()).toEqual(["WS-01 (C.aaa111)", "WS-01 (C.bbb222)"]);
+  });
+});
+
+// #2885: the description was capped AFTER the "@ HOST" suffix, so a core within a suffix-length of
+// the 600-char cap left a fragment ("… @ DEV-WS-0", which could read as another host) and a longer
+// one dropped the host. The core is trimmed to leave room instead.
+describe("AI Agent Forensics mapper: the host suffix survives the length cap (#2885)", () => {
+  const HOST = "DEV-WS-014";
+  const map = (row: Record<string, unknown>, host = HOST) => {
+    const r = mapAiAgentRow(row, ARTIFACT, host, new Map());
+    expect(r?.events).toHaveLength(1);
+    return r!.events[0];
+  };
+
+  it("keeps the host whole on a hit whatever the file path's length", () => {
+    for (let n = 420; n <= 700; n++) {
+      const e = map(hit({ RuleName: "R", FilePath: `C:\\${"p".repeat(n)}`, MatchedText: "x" }));
+      expect(e.description.length).toBeLessThanOrEqual(600);
+      expect(e.description.endsWith(` @ ${HOST}`)).toBe(true);
+    }
+  });
+
+  it("keeps the host whole on an inventory row whatever the MCP server name's length", () => {
+    for (let n = 400; n <= 512; n++) {
+      const e = map({ ...inventory, McpServer: "m".repeat(n) });
+      expect(e.description).toContain("inventory: MCP server");
+      expect(e.description.length).toBeLessThanOrEqual(600);
+      expect(e.description.endsWith(` @ ${HOST}`)).toBe(true);
+    }
+  });
+
+  it("never leaves a fragment of a host too long to fit on an unreadable row", () => {
+    // The core is trimmed to keep the host whole, so only its start is asserted.
+    for (let n = 500; n <= 560; n++) {
+      const host = `H${"o".repeat(n)}`;
+      const e = map({ DFIRCompanionAIAgent: 1, Kind: "hit", _Source: ARTIFACT }, host);
+      expect(e.description).toContain("AI Agent Forensics: unreadable");
+      expect(e.description.length).toBeLessThanOrEqual(600);
+      expect(e.description.endsWith(`@ ${host}`) || !e.description.includes("@ ")).toBe(true);
+    }
   });
 });
