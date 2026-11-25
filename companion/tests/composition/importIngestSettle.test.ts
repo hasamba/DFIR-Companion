@@ -212,6 +212,57 @@ describe("settleStreamedImport recovers a failed or skipped settle (#2890)", () 
     expect(warned(/settled \d+ row\(s\)/)).toBe(false);
   });
 
+  it("a failure AFTER demote (the post-demote outline read) re-grades nothing (review)", async () => {
+    const offered: ForensicEvent[][] = [];
+    const { d, demoteForensic } = settleDeps(offered);
+    const realDemote = createImportDemote({ options, runStateExclusive: runExclusive }).demoteForensic;
+    let demoted = false;
+    demoteForensic.mockImplementation(async (caseId: string) => {
+      const out = await realDemote(caseId);
+      demoted = true;
+      return out;
+    });
+    const realOutline = stateStore.forensicOutline.bind(stateStore);
+    vi.spyOn(stateStore, "forensicOutline").mockImplementation(async (...args) => {
+      if (demoted) throw new Error("outline read failed");
+      return realOutline(...args);
+    });
+    await expect(
+      streamedImport(d, [ev("marker-1", "Info", { description: "marker" }), ev("plain-1", "Info")]),
+    ).resolves.toEqual({ addedEvents: 0, addedIocs: 0 });
+
+    expect(demoteForensic).toHaveBeenCalledTimes(1); // one case-wide demote: the settle's
+    expect(offered).toHaveLength(1); // one tagger pass: the settle's
+    const first = offered[0].find((e) => e.id === "marker-1");
+    const after = (await forensic()).get("marker-1");
+    expect(after?.severity).toBe("High");
+    expect(after?.importedAt).toBe(first?.importedAt); // provenance unchanged
+    expect(after?.importBatchId).toBe(first?.importBatchId);
+    expect(warned(/after grading completed: outline read failed/)).toBe(true);
+    expect(warned(/settled \d+ row\(s\)/)).toBe(false);
+  });
+
+  it("a recovery after a post-stamp failure keeps the failed settle's import time", async () => {
+    const stamped: ForensicEvent[] = [];
+    const real = stateStore.forensicRowsById.bind(stateStore);
+    let failed = false;
+    vi.spyOn(stateStore, "forensicRowsById").mockImplementation(async (caseId, ids) => {
+      const rows = await real(caseId, ids);
+      if (!failed && rows.length && rows.every((r) => r.event.importBatchId)) {
+        failed = true;
+        stamped.push(...rows.map((r) => r.event));
+        await new Promise((r) => setTimeout(r, 5)); // a re-stamp would carry a later instant
+        throw new Error("out of memory");
+      }
+      return rows;
+    });
+    const { d } = settleDeps();
+    await streamedImport(d, [ev("marker-1", "Info", { description: "marker" })]);
+    const first = stamped.find((e) => e.id === "marker-1");
+    expect(first?.importedAt).toEqual(expect.any(String));
+    expect((await forensic()).get("marker-1")?.importedAt).toBe(first?.importedAt);
+  });
+
   it("never throws when the recovery fails too, and says so", async () => {
     const { d } = settleDeps();
     vi.spyOn(stateStore, "loadOverviewWithoutIocs").mockRejectedValue(new Error("out of memory"));

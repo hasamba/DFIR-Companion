@@ -79,6 +79,7 @@ export interface VeloHuntJob {
   importingUploads?: string[];
   // The import batch id the last collect's settle stamps its rows with, chosen and written in the same
   // write (#2888): a settle that failed or was cut off AFTER stamping leaves rows only this finds.
+  // Dropped once the settle's demote has returned, so a restart never re-grades a graded batch.
   importingBatchId?: string;
   target?: HuntTarget;
   minSeverity?: Severity; // optional import floor chosen at run time (keeps low-value items out)

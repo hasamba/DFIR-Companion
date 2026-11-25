@@ -127,13 +127,15 @@ export interface SettledImport {
  * (analysis/importBaseline.ts), or — from a legacy caller — the full state it loaded then.
  * `opts.importBatchId` presets the stamp's batch id, so a caller whose settle fails after stamping can
  * find those rows again (a hunt collect, #2888); every other caller lets the settle pick one.
+ * `opts.onGraded` runs once demote has returned (a hunt collect records it on its job, so a restart
+ * does not re-grade the batch). Any failure from there on is a `SettleAfterGradingError`.
  */
 export async function settleForensicImport(
   deps: SettleDeps,
   caseId: string,
   before: InvestigationState | ImportBaseline,
   label?: string,
-  opts: { importBatchId?: string } = {},
+  opts: { importBatchId?: string; onGraded?: () => Promise<void> } = {},
 ): Promise<SettledImport> {
   const baseline = toImportBaseline(before);
   const store = deps.stateStore;
@@ -233,46 +235,69 @@ export async function settleForensicImport(
   changed ||= hunt > 0;
   const demoted = await demote(deps, caseId);
   changed ||= demoted.removed > 0;
-  // #2619: after demote, so only rows that stay in the forensic record relink their raw-record copy.
-  await relinkSuperAfterSettle({ ...deps, runStateExclusive: lock }, caseId, relinkCandidates);
-  // Caller names (#2490): after demote, so only rows that stay in the forensic record are rewritten.
-  const namesChanged = principalLedgerChanged(baseline.overview, ledger);
-  const named = await lock(caseId, () =>
-    nameCallersScoped(store, caseId, ledger, {
-      scanAll: namesChanged || !scope.touchedKnown,
-      candidateIds: candidates.nameIds,
-    }),
-  );
-  changed ||= named > 0;
-  // #1874: from the rows that can change it, not a keyed read of the whole timeline (importSettleDiff.ts).
-  const { timelineDiff, forensicCount } = await settleTimelineDiff(store, caseId, baseline);
-  debug(
-    `demote buildTimeCapped=${capped} forensicBeforeDemote=${forensicCount + demoted.removed} ` +
-      `forensicAfterDemote=${forensicCount}`,
-  );
-  const iocsDiff = await settleIocsDiff(store, caseId, baseline);
-  const addedEvents = async (): Promise<ForensicEvent[]> =>
-    addedIds.length ? (await store.forensicRowsById(caseId, addedIds)).map((r) => r.event) : [];
-  if (changed) await announceState(deps, caseId, demoted.state);
-  logImportSettled(caseId, label, {
-    forensicAdded: timelineDiff.added.length,
-    forensicRemoved: timelineDiff.removed.length,
-    superAdded: superTimelineAddedCount,
-    superEvicted: superTimelineEvicted?.count ?? 0,
-    iocsAdded: iocsDiff.added.length,
-    iocsRemoved: iocsDiff.removed.length,
-  });
-  return {
-    superTimelineAddedCount,
-    superTimelineEvicted,
-    timelineDiff,
-    iocsDiff,
-    addedEvents,
-    forensicCount,
-    ...(demoted.state ? { state: demoted.state } : {}),
-    ...(namesChanged ? { principalNamesChanged: true } : {}),
-  };
+  // Every row is stamped, tagged and demoted from here on: a failure below is not unfinished grading,
+  // and a recovery that re-ran it would re-stamp the rows and demote again (review of #2890).
+  try {
+    await opts.onGraded?.();
+    // #2619: after demote, so only rows that stay in the forensic record relink their raw-record copy.
+    await relinkSuperAfterSettle({ ...deps, runStateExclusive: lock }, caseId, relinkCandidates);
+    // Caller names (#2490): after demote, so only rows that stay in the forensic record are rewritten.
+    const namesChanged = principalLedgerChanged(baseline.overview, ledger);
+    const named = await lock(caseId, () =>
+      nameCallersScoped(store, caseId, ledger, {
+        scanAll: namesChanged || !scope.touchedKnown,
+        candidateIds: candidates.nameIds,
+      }),
+    );
+    changed ||= named > 0;
+    // #1874: from the rows that can change it, not a keyed read of the whole timeline (importSettleDiff.ts).
+    const { timelineDiff, forensicCount } = await settleTimelineDiff(store, caseId, baseline);
+    debug(
+      `demote buildTimeCapped=${capped} forensicBeforeDemote=${forensicCount + demoted.removed} ` +
+        `forensicAfterDemote=${forensicCount}`,
+    );
+    const iocsDiff = await settleIocsDiff(store, caseId, baseline);
+    const addedEvents = async (): Promise<ForensicEvent[]> =>
+      addedIds.length ? (await store.forensicRowsById(caseId, addedIds)).map((r) => r.event) : [];
+    if (changed) await announceState(deps, caseId, demoted.state);
+    logImportSettled(caseId, label, {
+      forensicAdded: timelineDiff.added.length,
+      forensicRemoved: timelineDiff.removed.length,
+      superAdded: superTimelineAddedCount,
+      superEvicted: superTimelineEvicted?.count ?? 0,
+      iocsAdded: iocsDiff.added.length,
+      iocsRemoved: iocsDiff.removed.length,
+    });
+    return {
+      superTimelineAddedCount,
+      superTimelineEvicted,
+      timelineDiff,
+      iocsDiff,
+      addedEvents,
+      forensicCount,
+      ...(demoted.state ? { state: demoted.state } : {}),
+      ...(namesChanged ? { principalNamesChanged: true } : {}),
+    };
+  } catch (err) {
+    throw new SettleAfterGradingError(err);
+  }
 }
+
+/**
+ * A settle failure raised AFTER demote returned: every row of the import was stamped, dual-written,
+ * tagged and demoted; only the relink, caller-naming, diff or report steps did not finish. Keeps the
+ * cause's message. A recovery must not re-run grading for it (routes/importRowRecovery.ts).
+ */
+export class SettleAfterGradingError extends Error {
+  readonly gradingComplete = true;
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "SettleAfterGradingError";
+  }
+}
+
+/** True for a settle failure that happened after grading completed (see SettleAfterGradingError). */
+export const failedAfterGrading = (err: unknown): boolean => err instanceof SettleAfterGradingError;
 
 async function demote(
   deps: SettleDeps,

@@ -28,6 +28,7 @@ import {
   createVeloHuntStatusTimers,
   INTERRUPTED_IMPORT_MESSAGE,
 } from "../../src/composition/veloHuntStatusTimers.js";
+import { createHuntEvictions, settleHuntCollect } from "../../src/composition/veloHuntSettle.js";
 import { getServerLogger } from "../../src/logging/serverLogger.js";
 import { veloServerClients } from "../helpers/serverClientsStub.js";
 import type { AppOptions } from "../../src/composition/appOptions.js";
@@ -394,6 +395,74 @@ describe("a settle that failed after it stamped some or all rows (#2888)", () =>
     const opts = { batchId: 42 as unknown as string };
     expect(await settleInterruptedHuntRows(d, "c1", "H.1", opts)).toBe(0);
     expect(demoteForensicForCase).not.toHaveBeenCalled();
+  });
+});
+
+// Codex review: a failure in the settle's post-demote reads (the diffs) was taken for unfinished
+// grading — rows re-selected by batch id, re-stamped with a new time, tagged and demoted a second time.
+describe("a collect settle that fails AFTER its demote is not re-graded (review)", () => {
+  it("in-process and on restart: one tagger pass, one demote, the import time unchanged", async () => {
+    const before = await stateStore.load("c1");
+    await addRows([ev("marker-1", "Info", { description: "marker" }), ev("plain-1", "Info")]);
+    const huntStore = new VeloHuntStore(cases);
+    const job = { ...JOB, collectPhase: "importing" as const, importingBatchId: "B-1" };
+    await huntStore.upsert("c1", job);
+    const offered: ForensicEvent[][] = [];
+    const { d } = deps(offered);
+    const realDemote = createImportDemote({
+      options: d.options,
+      runStateExclusive: runExclusive,
+    });
+    let demoted = false;
+    const demote = vi.fn(async (caseId: string) => {
+      const out = await realDemote.demoteForensicForCase(caseId);
+      demoted = true;
+      return out;
+    });
+    const realOutline = stateStore.forensicOutline.bind(stateStore);
+    vi.spyOn(stateStore, "forensicOutline").mockImplementation(async (...args) => {
+      if (demoted) throw new Error("outline read failed");
+      return realOutline(...args);
+    });
+    const warn = vi.spyOn(getServerLogger(), "warn").mockImplementation(() => {});
+    try {
+      const options = { ...(d.options as AppOptions), veloHuntStore: huntStore };
+      const settled = await settleHuntCollect(
+        {
+          options,
+          autoTagImported: d.autoTagImported,
+          demoteForensicForCase: demote,
+          runStateExclusive: runExclusive,
+          pushImportCheckpoint: vi.fn(),
+        },
+        {
+          ...{ caseId: "c1", huntId: "H.1", stateBefore: before, importedAny: true, lastFile: MINE },
+          ...{ bundleName: "B", artifactCount: 1, superTimelineAddedCount: 0 },
+          ...{ capDropped: createHuntEvictions(), importBatchId: "B-1" },
+        },
+      );
+      expect(settled.error).toMatch(/outline read failed/);
+      expect(settled.seamFailed).toBeUndefined(); // grading finished: not a seam failure
+      const hd = { ...d, demoteForensicForCase: demote };
+      await recoverFailedHuntSettle(hd, "c1", job, settled);
+      // The job no longer names the batch, so a restart does not re-select its graded rows.
+      const stored = await huntStore.get("c1", "H.1");
+      expect(stored?.importingBatchId).toBeUndefined();
+      const restart = { uploadFiles: stored?.importingUploads, batchId: stored?.importingBatchId };
+      expect(await settleInterruptedHuntRows(hd, "c1", "H.1", restart)).toBe(0);
+
+      expect(offered).toHaveLength(1); // one tagger pass: the settle's
+      expect(demote).toHaveBeenCalledTimes(1); // one case-wide demote: the settle's
+      const first = offered[0].find((e) => e.id === "marker-1");
+      const after = new Map((await forensic()).map((e) => [e.id, e]));
+      expect(after.get("marker-1")?.severity).toBe("High");
+      expect(after.get("marker-1")?.importedAt).toBe(first?.importedAt);
+      expect(after.get("marker-1")?.importBatchId).toBe("B-1");
+      expect(after.has("plain-1")).toBe(false);
+    } finally {
+      warn.mockRestore();
+      vi.restoreAllMocks();
+    }
   });
 });
 

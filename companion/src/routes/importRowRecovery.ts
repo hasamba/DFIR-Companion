@@ -13,8 +13,9 @@
  * `sourceScreenshots` — that carry no import stamp, or carry the batch id the failed settle preset
  * (#2888: a settle that failed during or after the stamp leaves stamped rows). Then run the settle's
  * own steps on them: stamp with the SAME id (a second failure leaves them findable), dual-write,
- * tagger, demote — merge-all → tagger → demote, as every import. Rows an analyst or Watson promoted
- * and manual rows are never the import's. Nothing selected → no demote either.
+ * tagger, demote — merge-all → tagger → demote, as every import. Rows the failed settle stamped keep
+ * its import time, and the rows it did not reach get that same time: one instant, one batch. Rows an
+ * analyst or Watson promoted and manual rows are never the import's. Nothing selected → no demote.
  *
  * Not recovered: the import record, the Undo checkpoint, and the settle's look-alike / cap passes.
  *
@@ -28,7 +29,12 @@ import { isManualId } from "../analysis/manualId.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { carryAndStampPaged, dualWriteAndTagPaged, type DualWriteDeps } from "./importSettlePaged.js";
 import { runUnlocked, type RunExclusive } from "./importSettleRows.js";
-import { settleForensicImport, type SettleDeps, type SettledImport } from "./importSettle.js";
+import {
+  failedAfterGrading,
+  settleForensicImport,
+  type SettleDeps,
+  type SettledImport,
+} from "./importSettle.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 
@@ -68,8 +74,13 @@ export async function settleUnsettledRows(
   const store = deps.stateStore;
   const lock = deps.runStateExclusive ?? runUnlocked;
   const ids: string[] = [];
+  let importedAt: string | undefined; // the failed settle's own instant, when it stamped any row
   for await (const page of store.forensicTimelineBatches(caseId, { limit: SCAN_PAGE_ROWS }))
-    for (const e of page) if (unsettled(e, ofImport, batchId)) ids.push(e.id);
+    for (const e of page) {
+      if (!unsettled(e, ofImport, batchId)) continue;
+      ids.push(e.id);
+      if (!importedAt && batchId && e.importBatchId === batchId) importedAt = e.importedAt;
+    }
   if (!ids.length) return null; // nothing of this import is unsettled: no case-wide demote either
   const ledger = store.loadOverviewWithoutIocs
     ? await store.loadOverviewWithoutIocs(caseId)
@@ -81,6 +92,7 @@ export async function settleUnsettledRows(
       capturedAt: undefined,
       downgrade: !!superStore,
       importBatchId: batchId, // the same id: a second failure leaves the rows findable (#2888)
+      importedAt, // and the same instant: the recovery does not rewrite when the case received them
     }),
   );
   if (superStore && stamped.addedIds.length) {
@@ -147,7 +159,9 @@ export async function recoverImportRows(
 /**
  * Run the settle with a preset batch id; on a throw, log it and settle the import's rows the settle
  * did not reach, then return null. Wrap ONLY the settle call: when a later step (the import record)
- * fails, every row was already settled, and recovering would re-stamp them and demote again.
+ * fails, every row was already settled, and recovering would re-stamp them and demote again. The same
+ * holds for a settle that threw AFTER its demote (a post-demote diff read, `failedAfterGrading`): it
+ * logs a WARN and recovers nothing.
  */
 export async function settleOrRecover<T>(
   deps: RowRecoveryDeps,
@@ -158,6 +172,13 @@ export async function settleOrRecover<T>(
   try {
     return await settle(batchId);
   } catch (err) {
+    if (failedAfterGrading(err)) {
+      getServerLogger().warn(
+        `[${t.tag}] ${t.caseId}: the settle's diff/report step failed after grading completed: ${errorText(err)}`,
+        { caseId: t.caseId },
+      );
+      return null;
+    }
     getServerLogger().warn(`[${t.tag}] ${t.caseId}: settle failed: ${errorText(err)}`, { caseId: t.caseId });
     await recoverImportRows(deps, { ...t, batchId, cause: "whose settle failed" });
     return null;

@@ -25,7 +25,7 @@ import {
 } from "../analysis/superTimelineStore.js";
 import { collectEvictionForRecord, type BatchedRunEviction } from "../analysis/ingest/bulkEvictionReport.js";
 import type { BulkImportOpts } from "../analysis/ingest/velociraptorBulk.js";
-import { settleForensicImport } from "../routes/importSettle.js";
+import { failedAfterGrading, settleForensicImport } from "../routes/importSettle.js";
 import { logLine } from "../logging/serverLogger.js";
 
 export interface HuntSettleDeps {
@@ -128,7 +128,7 @@ export async function settleHuntCollect(
       caseId,
       stateBefore,
       `hunt ${huntId}`,
-      { importBatchId: input.importBatchId },
+      { importBatchId: input.importBatchId, onGraded: () => recordGraded(options, input) },
     );
     seamDone = true;
     const { timelineDiff: diff, iocsDiff } = settled;
@@ -168,7 +168,29 @@ export async function settleHuntCollect(
     // inside its section, when this reports an error (#2852, veloHuntRecovery.ts `recoverFailedHuntSettle`).
     const error = (e as Error).message;
     logLine(`[velociraptor] hunt ${huntId}: settling what was imported failed: ${error}`);
-    return seamDone ? { ...counted, error } : { ...counted, error, seamFailed: true };
+    // A throw after the demote (a post-demote diff read) is not a seam failure: every row was graded.
+    return seamDone || failedAfterGrading(e)
+      ? { ...counted, error }
+      : { ...counted, error, seamFailed: true };
+  }
+}
+
+/**
+ * The settle's demote has returned (review of #2890): drop the batch id from the stored job, so a
+ * restart that finds the job still importing re-selects only unstamped rows, never re-stamping and
+ * demoting this graded batch again. Only while the job still names this batch. Never throws.
+ */
+async function recordGraded(options: AppOptions, input: HuntSettleInput): Promise<void> {
+  const batchId = input.importBatchId;
+  if (!batchId || !options.veloHuntStore) return;
+  try {
+    await options.veloHuntStore.update(input.caseId, input.huntId, (cur) =>
+      cur.importingBatchId === batchId ? { ...cur, importingBatchId: undefined } : null,
+    );
+  } catch (err) {
+    logLine(
+      `[velociraptor] hunt ${input.huntId}: recording that grading finished failed: ${(err as Error).message}`,
+    );
   }
 }
 
