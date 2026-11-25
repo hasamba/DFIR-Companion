@@ -29,8 +29,12 @@
 //
 // WHY esc/escAttr ARE DUPLICATED RATHER THAN MOVED. The inline script has 661 call sites for
 // `esc`, so #414 left it in place and gave js/diagnostics-panel.js its own copy. That decision
-// stands: this file carries the third copy, and tests/reports/dashboardEscape.test.ts asserts all
-// three stay byte-identical. Two implementations of an XSS-critical primitive are a real hazard
+// stands: this file carries one of EIGHT copies -- dashboard.html, this file, js/command-palette.js,
+// js/dashboard-text.js (inside mdToHtml), js/diagnostics-panel.js, present.html, mobile.html and
+// admin.html (the last three load no shared JS). tests/reports/dashboardEscape.test.ts compiles
+// every copy from source and asserts each gives the same output as the dashboard.html one on a
+// hostile corpus (both quotes, every bidi control, entities, null/undefined), and that escAttr here
+// matches too (#2882). Several implementations of an XSS-critical primitive are a real hazard
 // (#387), so the guard is a drift test rather than a runtime dependency.
 //
 // Be precise about which copy runs where, because it is not this one. The inline script declares
