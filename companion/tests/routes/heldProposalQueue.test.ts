@@ -79,7 +79,7 @@ let root: string | undefined;
 afterEach(async () => {
   vi.restoreAllMocks();
   await heldOfferIdle(CASE);
-  if (root) await rm(root, { recursive: true, force: true });
+  if (root) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   root = undefined;
 });
 
