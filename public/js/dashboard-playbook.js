@@ -101,7 +101,13 @@
   // only the newest load, for the case still on screen, paints (the state push calls this bare).
   let pbLoadedCase = null;
   let pbLoadSeq = 0;
+  // #2929: a hunt-suggestion answer paints only in the generation it was asked in (owner change / cancel).
+  let pbGen = 0;
+  const pbLive = (caseId, gen = pbGen) => () => gen === pbGen && pbOnScreen(caseId);
   function clearPlaybook(caseId) {
+    pbGen++;
+    const hb = document.getElementById("pbHuntBtn");
+    if (hb) hb.disabled = false; // the older request's answer no longer frees it
     pbLoadedCase = caseId;
     playbookTasks = [];
     pbHuntFlat = [];
@@ -411,6 +417,7 @@
     if (!caseId) return;
     const btn = document.getElementById("pbHuntBtn");
     const msg = document.getElementById("pbHuntMsg");
+    const live = pbLive(caseId);
     if (btn) btn.disabled = true;
     if (msg) {
       msg.style.color = "var(--text-muted)";
@@ -423,7 +430,7 @@
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, status: r.status, j })))
       .then(({ ok, status, j }) => {
-        if (!pbOnScreen(caseId)) return; // #2900: the analyst switched case meanwhile
+        if (!live()) return; // #2900/#2929: the analyst switched case, or cancelled and reopened it
         // A Presidio hold waits for the analyst — it is not a failure (#1782).
         if (!ok && typeof presidioHold === "function" && presidioHold(status, j)) {
           if (msg) {
@@ -466,13 +473,13 @@
         }
       })
       .catch((e) => {
-        if (msg) {
+        if (msg && live()) {
           msg.style.color = "var(--sev-high)";
           msg.textContent = "error: " + e.message;
         }
       })
       .finally(() => {
-        if (btn) btn.disabled = false;
+        if (btn && live()) btn.disabled = false;
       });
   }
 
@@ -622,7 +629,7 @@
           if (!s) return;
           const q = document.getElementById("pbhQ" + idx);
           const excludeVql = q ? q.value : s.vql;
-          const origText = b.textContent;
+          const origText = b.textContent, live = pbLive(caseId);
           b.textContent = "⏳ thinking…";
           b.disabled = true;
           fetch(`/cases/${caseId}/playbook/suggest-hunts`, {
@@ -634,6 +641,7 @@
               r.json().then((j) => ({ ok: r.ok, status: r.status, j })),
             )
             .then(({ ok, status, j }) => {
+              if (!live()) return; // #2929: the analyst switched case, or cancelled and reopened it
               // A Presidio hold waits for the analyst — it is not a failure (#1782).
               if (
                 !ok &&
@@ -666,7 +674,7 @@
             })
             .catch((err) => {
               const msg = document.getElementById("pbHuntMsg");
-              if (msg) {
+              if (msg && live()) {
                 msg.style.color = "var(--sev-high)";
                 msg.textContent = "regen failed: " + err.message;
               }

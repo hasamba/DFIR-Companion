@@ -53,9 +53,13 @@
   let taggerByEvent = new Map(); // event id -> [{ id, label, author }]
   let taggerKnown = new Set(); // event ids whose tagger tags are known, or asked for
   let taggerVersion = null;
+  // #2929: moves when the owner changes or a case load is cancelled, so an ask sent before a cancel
+  // and a reopen of the same case never replaces what the reopened case's pages carried.
+  let taggerGen = 0;
 
   function taggerForCase(caseId) {
     if (!caseId || caseId === taggerCase) return;
+    taggerGen++;
     taggerCase = caseId;
     taggerByEvent = new Map();
     taggerKnown = new Set();
@@ -100,6 +104,8 @@
   function askTaggerTags(ids) {
     const caseId = taggerCase;
     if (!caseId || !ids.length) return;
+    const gen = taggerGen;
+    const live = () => gen === taggerGen && taggerCase === caseId;
     ids.forEach((id) => taggerKnown.add(id));
     const chunks = [];
     for (let i = 0; i < ids.length; i += TAGGER_ASK_CHUNK) chunks.push(ids.slice(i, i + TAGGER_ASK_CHUNK));
@@ -117,7 +123,7 @@
                 return r.json();
               })
               .then((body) => {
-                if (taggerCase !== caseId) return;
+                if (!live()) return;
                 const found = (body && body.eventTaggerTags) || {};
                 chunk.forEach((id) => {
                   if (Object.prototype.hasOwnProperty.call(found, id) && Array.isArray(found[id])) taggerByEvent.set(id, found[id]);
@@ -128,11 +134,11 @@
         Promise.resolve(),
       )
       .then(() => {
-        if (taggerCase === caseId) repaintTags();
+        if (live()) repaintTags();
       })
       .catch(() => {
         // Left unknown, so the next page or tag change asks again; the pills shown stay as they were.
-        if (taggerCase === caseId) ids.forEach((id) => taggerKnown.delete(id));
+        if (live()) ids.forEach((id) => taggerKnown.delete(id));
       });
   }
 
@@ -256,6 +262,8 @@
     if (caseId !== null) return;
     resetTagLoads();
     clearTags(null);
+    taggerGen++; // #2929: an ask on its way is dropped, and every row may be asked about again
+    taggerKnown = new Set();
   }
   function loadTags(caseId) {
     if (!tagsOnScreen(caseId)) return; // a late caller for a case the analyst has left

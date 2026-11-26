@@ -229,12 +229,13 @@
   let presidioPending = [];
   // A late answer for a case left must not fill this panel (#1782); #2904: cleared at a switch, newest wins.
   const ppOnScreen = (caseId) => (document.getElementById("caseId")?.value ?? caseId).trim() === caseId;
-  let ppCase = null, ppSeq = 0;
-  const ppReset = (c) => c === null && ((ppSeq++, ppCase = null), setPresidioPending([])); // #2915: a cancelled load
+  let ppCase = null, ppSeq = 0, ppGen = 0; // #2929: ppGen moves only when the owner changes (a cancel too)
+  const ppReset = (c) => c === null && ((ppSeq++, ppGen++, ppCase = null), setPresidioPending([])); // #2915: a cancelled load
+  const ppLive = (caseId, gen = ppGen) => () => gen === ppGen && ppOnScreen(caseId); // a decision's answer still paints?
   function loadPresidioPending(caseId) {
     if (!caseId || !ppOnScreen(caseId)) return;
     typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(ppReset);
-    if (ppCase !== caseId) { ppCase = caseId; setPresidioPending([]); }
+    if (ppCase !== caseId) { ppGen++; ppCase = caseId; setPresidioPending([]); }
     const seq = ++ppSeq;
     fetch(`/cases/${caseId}/presidio-pending`)
       .then((r) => (r.ok ? r.json() : { pending: [] }))
@@ -324,7 +325,7 @@
         .join("");
     el.querySelectorAll("[data-presidio-approve]").forEach((btn) =>
       btn.addEventListener("click", () => {
-        const caseId = document.getElementById("caseId").value.trim();
+        const caseId = document.getElementById("caseId").value.trim(), live = ppLive(caseId);
         if (!caseId) return;
         fetch(`/cases/${caseId}/presidio-pending/approve`, {
           method: "POST",
@@ -334,9 +335,9 @@
             category: btn.getAttribute("data-presidio-cat"),
           }),
         })
-          .then((r) => readDecision(r, "presidio_custom_list_full", CUSTOM_FULL_TEXT))
+          .then((r) => readDecision(r, "presidio_custom_list_full", CUSTOM_FULL_TEXT, live))
           .then((d) => {
-            if (!ppOnScreen(caseId)) return; // #2904: the analyst switched case meanwhile
+            if (!live()) return; // #2904/#2929: the analyst switched case, or cancelled and reopened it
             presidioPending = d.pending || [];
             renderPresidioPending();
             // Clearing the LAST finding lifts the gate. The server kicks the held run, but that
@@ -352,12 +353,12 @@
     );
     el.querySelectorAll("[data-presidio-suppress]").forEach((btn) =>
       btn.addEventListener("click", () => {
-        const caseId = document.getElementById("caseId").value.trim();
+        const caseId = document.getElementById("caseId").value.trim(), live = ppLive(caseId);
         if (!caseId) return;
         postPresidioSuppress(caseId, btn.getAttribute("data-presidio-suppress"))
-          .then((r) => readDecision(r, "presidio_not_pending", NOT_LEFT_VISIBLE_TEXT))
+          .then((r) => readDecision(r, "presidio_not_pending", NOT_LEFT_VISIBLE_TEXT, live))
           .then((d) => {
-            if (!ppOnScreen(caseId)) return; // #2904
+            if (!live()) return;
             presidioPending = d.pending || [];
             renderPresidioPending();
             refreshAiState(caseId); // same reason as the approve path above
@@ -392,11 +393,11 @@
       () => null,
     );
   }
-  function readDecision(r, code, text) {
+  function readDecision(r, code, text, live) {
     if (r.ok) return r.json();
     return refusalBody(r, code).then((d) => {
       if (!d) return { pending: presidioPending };
-      setAnonMsg(text);
+      if (live()) setAnonMsg(text);
       return d;
     });
   }
@@ -415,7 +416,7 @@
   // answer still lists it. #1822: a value the server refuses (already hidden from the AI, or decided
   // in another window) is skipped, not a stop — and the panel says how many were skipped.
   function suppressAllPresidioPending(caseId) {
-    const values = presidioPending.map((e) => e.value);
+    const values = presidioPending.map((e) => e.value), live = ppLive(caseId), stale = () => Promise.reject(new Error("stale")); // #2929
     const el = document.getElementById("presidioPending");
     if (el) el.querySelectorAll("button").forEach((b) => (b.disabled = true));
     const stillPending = (value) => presidioPending.some((e) => e.value === value);
@@ -435,7 +436,7 @@
       .reduce(
         (chain, value) =>
           chain
-            .then(() => (stillPending(value) ? postPresidioSuppress(caseId, value) : null))
+            .then(() => (!live() ? stale() : stillPending(value) ? postPresidioSuppress(caseId, value) : null))
             .then((r) => {
               if (!r) return skip({ pending: presidioPending });
               if (r.ok) return r.json();
@@ -444,14 +445,11 @@
                 return skip(d);
               });
             })
-            .then((d) => {
-              presidioPending = d.pending || [];
-            }),
+            .then((d) => (live() ? (presidioPending = d.pending || []) : stale())),
         Promise.resolve(),
       )
-      .then(renderPresidioPending, () => loadPresidioPending(caseId))
-      .then(tellSkipped)
-      .then(() => refreshAiState(caseId));
+      .then(() => live() && (renderPresidioPending(), true), () => live() && (loadPresidioPending(caseId), true))
+      .then((ok) => ok && (tellSkipped(), refreshAiState(caseId)));
   }
   function renderCustomEntities() {
     document.getElementById("anonCustom").innerHTML = anonCustom.length
