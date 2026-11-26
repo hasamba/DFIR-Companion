@@ -199,7 +199,7 @@ describe("a hidden section's heavy panel is not fetched on case open (#2854)", (
     ];
     const kept = p.d.eagerOnly(entries);
     expect(kept.map(([k]) => k)).toEqual(["custody", "d3fend"]);
-    const tally = runPanelLoaders(kept, null);
+    const tally = runPanelLoaders(kept);
     expect(tally.total).toBe(2);
     expect(tally.settled.size).toBe(2);
     // ...and the dropped ones load when their section is shown.
@@ -209,7 +209,7 @@ describe("a hidden section's heavy panel is not fetched on case open (#2854)", (
 
   it("a loader that the guard skips issues no request, so a run settles it at once", () => {
     const p = page({ hidden: ["sec-hostranking"] });
-    const tally = runPanelLoaders([["hostRanking", () => p.api.loadHostRanking("CASE-A")]], null);
+    const tally = runPanelLoaders([["hostRanking", () => p.api.loadHostRanking("CASE-A")]]);
     expect(tally.settled.has("hostRanking")).toBe(true);
     expect(p.urls()).toEqual([]);
   });
