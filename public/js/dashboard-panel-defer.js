@@ -63,6 +63,9 @@
   };
   const LOADING = "Loading this case's data…";
   const FAILED = "This panel could not be loaded for this case. It retries on the next update.";
+  // #2900: a cancelled (or failed) case load leaves nothing loading, so the mask must not say it is.
+  const STOPPED = "Not loaded — the case load was stopped. Open a case to load this panel.";
+  const resetListeners = []; // #2900: panels outside PANELS that keep their own placeholder
 
   const pending = new Set(); // keys skipped while hidden, loaded on reveal
   const loadedOnPage = new Set(); // sections some load has started for on this page
@@ -332,10 +335,31 @@
 
   // A case switch or a cancelled load: nothing pending survives, and no answer still on its way
   // may lift a mask. Masks stay — the content under them is still the old case's.
-  function reset() {
+  //
+  // #2900: `caseId` names the case now opening, or none after a cancel or a failed load. With no
+  // case nothing is loading, so a "Loading…" mask says the load stopped instead; the next case open
+  // turns those back into "Loading…" (eagerOnly tracks a shown one in the fan-out, a hidden one
+  // loads on reveal). A failure line is left as it is.
+  function reset(caseId) {
     pending.clear();
     tracking = null;
     for (const [key, gen] of loadGen) loadGen.set(key, gen + 1);
+    const opening = !!String(caseId || "").trim();
+    for (const sec of new Set(Object.values(PANELS).map((def) => def[0]))) {
+      const text = isMasked(sec) ? sectionEl(sec).dataset.panelStale : null;
+      if (!opening && text === LOADING) setMask(sec, STOPPED);
+      else if (opening && text === STOPPED) setMask(sec, LOADING);
+    }
+    for (const fn of resetListeners) {
+      try {
+        fn(opening ? String(caseId).trim() : null);
+      } catch {
+        /* one panel's placeholder must not stop the reset */
+      }
+    }
+  }
+  function onReset(fn) {
+    if (typeof fn === "function" && !resetListeners.includes(fn)) resetListeners.push(fn);
   }
 
   window.DfirPanelDefer = {
@@ -343,6 +367,8 @@
     eagerOnly,
     flushRevealed,
     reset,
+    onReset,
+    stoppedText: STOPPED,
     panels: () => JSON.parse(JSON.stringify(PANELS)),
   };
 })();

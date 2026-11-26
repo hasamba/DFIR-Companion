@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Rows wait for the tagger before demote** — rows an import stamped but did not tag (a crash, or a tagger error) stay in the forensic timeline and are graded at the next start, not demoted untagged (closes #2891)
+- **Case switch leaves no previous-case panels** — the login graph, asset graph, duplicate hosts, activity log, playbook, pins and finding workflow never show the previous case's data, and a cancelled load's panels say nothing is loading (closes #2900)
 - **Failed settles still grade their rows** — a dedicated import, NG-SIEM search, Watson paste, drop-folder batch, cloud collection page or import replay whose end-of-import settle fails still reports the failure, but its rows are graded before the next demote (part of #2891)
 - **No previous-case content after a case switch** — a heavy panel visible when you open another case shows "Loading this case's data…" until the new case's data arrives, and Attack Phases no longer redraws the previous case's phases (closes #2894)
 - **Stronger Telegram button tokens** — Apply / Reject buttons carry 128-bit tokens checked in constant time; buttons sent before the upgrade answer "expired", decide those in the dashboard (closes #2897)

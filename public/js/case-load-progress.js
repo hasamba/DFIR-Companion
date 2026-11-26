@@ -716,7 +716,7 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
     // #2854: a case switch or a cancelled load also drops the panels deferred while hidden.
     retirePanelReloads: (caseId) => {
       panelReloader.retire(caseId);
-      if (window.DfirPanelDefer) window.DfirPanelDefer.reset();
+      if (window.DfirPanelDefer) window.DfirPanelDefer.reset(caseId); // #2900 null = cancelled
     },
     createLoadState,
     advanceStage,

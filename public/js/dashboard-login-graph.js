@@ -16,22 +16,43 @@
   "use strict";
 
   let lgData = null; // last /login-graph payload
+  let lgCase = null; // #2900: the case lgData (and an open side panel) belongs to
+  let lgSeq = 0; // #2900: only the newest load may paint
   let lgTimer = null; // debounced reload
+  // #2900: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function lgOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
   function loadLoginGraph(caseId) {
     if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("loginGraph", caseId)) return; // #2854 hidden: load on reveal
+    if (!lgOnScreen(caseId)) return; // #2900: a late caller for a case the analyst has left
+    const seq = ++lgSeq;
+    // A side panel opened on the previous case's graph must not survive into this one.
+    if (lgCase !== caseId) lgHideSidePanel();
     const gv = lgEnsureGV();
     if (gv) gv.loadView();
     fetch(`/cases/${encodeURIComponent(caseId)}/login-graph`)
       .then((r) => r.json())
       .then((g) => {
+        // #2900: a reload for the case the analyst left (in flight across the switch) never paints.
+        if (seq !== lgSeq || !lgOnScreen(caseId)) return;
         lgData = g;
+        lgCase = caseId;
         renderLoginGraph();
       })
       .catch(() => {});
   }
+  // Through the page's shared request cap (#1713), which also drops a reload for a retired case.
   function scheduleLoginGraphReload(caseId) {
     clearTimeout(lgTimer);
-    lgTimer = setTimeout(() => loadLoginGraph(caseId), 800);
+    lgTimer = setTimeout(() => {
+      if (!lgOnScreen(caseId)) return; // #2900: armed for the case the analyst has since left
+      const clp = window.DfirCaseLoadProgress;
+      if (clp && typeof clp.runPanelReload === "function")
+        clp.runPanelReload("loginGraph", caseId, () => loadLoginGraph(caseId));
+      else loadLoginGraph(caseId);
+    }, 800);
   }
 
   // The shared-module instance for the Login Graph (created once, lazily, after DOM is ready).
@@ -214,6 +235,7 @@
 
   function lgHideSidePanel() {
     const p = document.getElementById("lgSidePanel");
+    if (!p) return;
     p.style.display = "none";
     p.replaceChildren();
   }
