@@ -29,6 +29,40 @@ export function capWithHostSuffix(core: string, host: string, cap: number): stri
   return plain;
 }
 
+// A ransomware note goes AFTER the host ("… @ HOST — <note> (T1486)"), so the host-suffixed part is
+// capped at what the note leaves (#2885); capping the whole string again cut the host on exactly the
+// High rows. The note is bounded first: DFIR_RANSOM_EXTS can name an arbitrarily long family.
+const RANSOM_NOTE_CAP = 160;
+export function ransomTailWithHost(
+  core: string,
+  host: string,
+  note: string | undefined,
+  cap: number,
+): string {
+  if (!note) return capWithHostSuffix(core, host, cap);
+  const tail = ` — ${note.slice(0, RANSOM_NOTE_CAP)} (T1486)`;
+  return capWithHostSuffix(core, host, Math.max(0, cap - tail.length)) + tail;
+}
+
+// Rewrite a description that already ends in its host suffix (the import loop's artifact-name
+// injection, #2885) without losing that host to the cap: strip the suffix, transform the core, and
+// re-apply it under the cap. A description whose host is not a withHostSuffix suffix (none, part of
+// the text, or followed by a former-hostname note) is transformed and capped as before.
+export function injectKeepingHost(
+  description: string,
+  host: string,
+  cap: number,
+  transform: (core: string) => string,
+): string {
+  for (const suffix of [` - @ ${host}`, ` @ ${host}`]) {
+    if (!host || !description.endsWith(suffix)) continue;
+    const core = description.slice(0, -suffix.length);
+    if (core.toLowerCase().includes(host.toLowerCase())) break; // not a suffix withHostSuffix added
+    return capWithHostSuffix(transform(core), host, cap);
+  }
+  return transform(description).slice(0, cap);
+}
+
 // A rule/verdict NAME can itself contain " - " ("RMM - Microsoft Quick Assist Execution"), which
 // would be mistaken for that same boundary and truncate the title. Swap it for an em dash.
 export function titleSafe(name: string): string {

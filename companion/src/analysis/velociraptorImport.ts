@@ -67,7 +67,7 @@ import { mapAiAgentRow, learnWholeFile, AiAgentHostLedger } from "./aiAgentImpor
 import type { AiAgentHostsCtx, AiAgentHostOptions } from "./aiAgentImport.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
-import { withHostSuffix, titleSafe } from "./velociraptorTitle.js";
+import { capWithHostSuffix, injectKeepingHost, ransomTailWithHost, titleSafe } from "./velociraptorTitle.js";
 import {
   gradeByContentLocation,
   isUnforgeableContentPath,
@@ -526,7 +526,7 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
   if (grade.reason === "self-scan") description += ` [detection tooling / sample corpus]`;
   else if (grade.reason === "heuristic-trusted") description += ` [heuristic rule on a signed OS binary]`;
   else if (grade.reason === "heuristic") description += ` [heuristic rule — needs corroboration]`;
-  description = withHostSuffix(description, host).slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   const aggKey = yaraHitAggKey(grade, host, ruleName, path || procName);
 
@@ -565,7 +565,13 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   if (win) {
     if (sev) win.severity = worst(win.severity, sev);
     for (const m of tags) if (!win.mitre.includes(m)) win.mitre.push(m);
-    win.description = `Velociraptor Sigma: ${titleSafe(title)} - ${win.description}`.slice(0, 600);
+    const sigmaHead = `Velociraptor Sigma: ${titleSafe(title)} - `;
+    win.description = injectKeepingHost(
+      win.description,
+      host || (flat?.host ?? ""),
+      600,
+      (d) => sigmaHead + d,
+    );
     win.aggKey = sigmaOverlayAggKey(win.aggKey, title);
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
@@ -579,10 +585,10 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   const detail = salientFromMessage(message) || (message ? oneLine(message).slice(0, 400) : "");
   let description = `Velociraptor Sigma: ${titleSafe(title)}`;
   if (detail) description += ` - ${detail}`;
-  description = withHostSuffix(description, host);
+  description = capWithHostSuffix(description, host, 600);
   return {
     timestamp: pickTime(row),
-    description: description.slice(0, 600),
+    description,
     severity: sev ?? "Medium",
     mitre: tags,
     aggKey: sigmaAggKey(host, title),
@@ -634,8 +640,8 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     const winEd = flat && isObject(flat.rec.event_data) ? flat.rec.event_data : {};
     const winImage = firstStr(winEd, ["Image", "NewProcessName", "TargetImage", "TargetFilename"]);
     const winTag = baseName(winImage);
-    win.description =
-      `${label}: ${titleSafe(v.title)}${winTag ? ` — ${winTag}` : ""} - ${win.description}`.slice(0, 600);
+    const detHead = `${label}: ${titleSafe(v.title)}${winTag ? ` — ${winTag}` : ""} - `;
+    win.description = injectKeepingHost(win.description, host || (flat?.host ?? ""), 600, (d) => detHead + d);
     win.aggKey = detectionOverlayAggKey(win.aggKey, v.title);
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
@@ -734,7 +740,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   if (subject) description += ` - ${subject}`;
   if (masq) description += ` [masquerade: ${masq.onDisk} claims ${masq.original}]`;
   if (fileDeleted) description += ` [deleted]`;
-  description = withHostSuffix(description, host).slice(0, 4000);
+  description = capWithHostSuffix(description, host, 4000);
 
   const aggKey = detectionAggKey(host, v.title, path || processName || pipe || subject);
 
@@ -839,7 +845,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   let description = special?.description ?? `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${base}`;
   if (genRansom) description = `${description} — ${genRansom.note} (T1486)`.slice(0, 600);
   else if (rdp) description = `${description} — ${rdp.note} (T1021.001)`.slice(0, 600);
-  description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   const aggKey = special?.aggKey ?? genericVrAggKey(host, artifact, base);
 
@@ -894,17 +900,17 @@ function mapUsn(row: Row, artifact: string, host: string): MappedEvent {
     0,
     600,
   );
-  description = withHostSuffix(description, host).slice(0, 600);
   // Ransomware impact (T1486) hides in the USN journal (encrypted-file renames + the ransom note):
   // grade it High so it survives the most-severe-first cap, and collapse every "encrypted with .X"
   // row on a host into ONE counted finding by the signal note. See ransomwareDetect.
   const ransom = ransomwareSignal(path);
+  description = ransomTailWithHost(description, host, ransom?.note, 600);
   const aggKey = ransom
     ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
     : usnAggKey(host, reason, path);
   return {
     timestamp: pickTime(row),
-    description: ransom ? `${description} — ${ransom.note} (T1486)`.slice(0, 600) : description,
+    description,
     severity: ransom ? ransom.severity : "Info",
     mitre: ransom ? [...ransom.mitre] : [],
     aggKey,
@@ -972,14 +978,14 @@ function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
     const macb = parts.join(" ");
     const tail = stream ? ` — ${[stream.words, ...stream.qualifiers].join(" — ")}` : "";
     const text = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${macb} — ${oneLine(path)}${tail}`;
-    const description = withHostSuffix(text.slice(0, 600), host).slice(0, 600);
+    const description = ransomTailWithHost(text, host, ransom?.note, 600);
     // A ransomware sweep touches thousands of MFT records — collapse per host + impact type (see mapUsn).
     const aggKey = ransom
       ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
       : mftAggKey(host, macb, path, stream);
     events.push({
       timestamp: t,
-      description: ransom ? `${description} — ${ransom.note} (T1486)`.slice(0, 600) : description,
+      description,
       severity: ransom ? ransom.severity : (stream?.severity ?? "Info"),
       mitre: ransom ? [...ransom.mitre] : [...(stream?.mitre ?? [])],
       aggKey,
@@ -1019,7 +1025,7 @@ function actionEvent(o: {
       0,
       600,
     );
-  description = withHostSuffix(description, o.host).slice(0, 600);
+  description = capWithHostSuffix(description, o.host, 600);
   const aggKey = actionAggKey(o.host, o.artifact, o.action, o.aggSubject ?? o.subject);
   return {
     timestamp: o.time,
@@ -1220,7 +1226,7 @@ function mapPslist(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEv
   if (callChain && callChain !== name) description += ` [${callChain}]`;
   const subject = cmdline || exe;
   if (subject) description += `: ${oneLine(subject).slice(0, 300)}`;
-  description = withHostSuffix(description, host).slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   const aggKey = pslistAggKey(host, name, ppid, cmdline || exe || name);
 
@@ -1267,8 +1273,7 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   if (proto) description += ` - ${proto}`;
   if (status) description += ` - ${status}`;
   description += ` - ${src} → ${dst}`;
-  if (host) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   const aggKey = netstatAggKey(host, name, status, lport, raddr, rport);
 
@@ -1317,7 +1322,7 @@ function mapDownload(row: Row, host: string, sink: Map<string, SiemIoc>): Mapped
   // [_Source] right after "Velociraptor" (consistent with every other mapper).
   let description = `Velociraptor: Downloaded ${name || rawPath || "file"} from ${urlDisplay}`;
   if (hostUrl && grade.zoneLabel) description += ` (${grade.zoneLabel})`;
-  description = withHostSuffix(description, host).slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   const aggKey = downloadAggKey(host, name, urlDisplay);
 
@@ -1551,11 +1556,11 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
         !m.description.startsWith("DetectRaptor ") &&
         !m.description.startsWith("THOR ")
       ) {
-        m.description = (
-          m.description.startsWith("Velociraptor")
-            ? m.description.replace(/^Velociraptor/, `Velociraptor [${realArtifact}]`)
-            : `[${realArtifact}] ${m.description}`
-        ).slice(0, 1200);
+        m.description = injectKeepingHost(m.description, host, 1200, (d) =>
+          d.startsWith("Velociraptor")
+            ? d.replace(/^Velociraptor/, `Velociraptor [${realArtifact}]`)
+            : `[${realArtifact}] ${d}`,
+        );
       }
       // Forensic distinctness: detections sharing a rule title/EID but describing different
       // artifacts (HackTool:Passview vs HackTool:Mimikatz) are SEPARATE events. Fold the message
