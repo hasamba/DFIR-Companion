@@ -354,6 +354,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-ocr-search.js": "application/javascript; charset=utf-8",
   "/js/dashboard-evidence-graph.js": "application/javascript; charset=utf-8",
   "/js/dashboard-import-changes.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-anon-patterns.js": "application/javascript; charset=utf-8",
   "/js/dashboard-presidio.js": "application/javascript; charset=utf-8",
   "/js/dashboard-hypotheses.js": "application/javascript; charset=utf-8",
   "/js/dashboard-ioc-quick-actions.js": "application/javascript; charset=utf-8",
