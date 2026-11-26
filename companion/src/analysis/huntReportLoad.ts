@@ -1,3 +1,4 @@
+import { isArchivedProfile } from "./clientProfile.js";
 import { huntCoverageFromJobs } from "./huntFraming.js";
 import { loadHuntJobsSafe, type HuntFramingStores } from "./huntFramingLoad.js";
 import { isHuntType } from "./incidentTypes.js";
@@ -17,7 +18,7 @@ import type { HuntInventoryRecord } from "./huntInventoryStore.js";
 export interface HuntReportStores extends Omit<HuntFramingStores, "huntInventoryStore"> {
   huntInventoryStore?: { load(caseId: string): Promise<HuntInventoryRecord> };
   huntClientLinkStore?: { load(caseId: string): Promise<{ clientId: string } | null> };
-  clientProfileStore?: { get(id: string): Promise<{ name: string } | null> };
+  clientProfileStore?: { get(id: string): Promise<{ name: string; archivedAt?: string } | null> };
   /** The last comparable hunt for the case's client (composition/huntBaselineGrades.ts). */
   previousHunt?: (caseId: string) => Promise<{ at: string; itemKeys: ReadonlySet<string> } | null>;
   /** Items still waiting for the client, with their age across hunts (composition). */
@@ -36,6 +37,7 @@ export async function loadHuntReportData(
   const profile = link ? await stores.clientProfileStore?.get(link.clientId).catch(() => null) : null;
   return {
     ...(profile ? { clientName: profile.name } : {}),
+    ...(profile && isArchivedProfile(profile) ? { clientArchived: true as const } : {}),
     coverage: huntCoverageFromJobs(jobs),
     hunts: jobs.map((j) => ({
       huntId: j.huntId,

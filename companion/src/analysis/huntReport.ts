@@ -45,6 +45,8 @@ export interface HuntReportComparison {
 
 export interface HuntReportData {
   clientName?: string;
+  /** The linked client is archived (#2945): the report says "(archived)" after its name. */
+  clientArchived?: true;
   coverage: HuntCoverage;
   hunts: HuntReportHunt[];
   items: HuntReportItem[];

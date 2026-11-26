@@ -1,17 +1,11 @@
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
+import { isInstanceAdministrator } from "./instanceAdmin.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
 import { CLOUD_COLLECT_RESUME_ELSEWHERE } from "../integrations/cloudCollect/collectStore.js";
 
-function canAccessGlobalJob(ctx: RouteContext, req: Request): boolean {
-  const teamAuth = ctx.options.teamAuth;
-  if (!teamAuth) return true;
-  const auth = teamAuth.requireSession(req);
-  return auth !== null && teamAuth.isGlobalAdministrator(auth);
-}
-
 function canReadByRole(ctx: RouteContext, req: Request, caseId: string | null): boolean {
-  if (caseId === null) return canAccessGlobalJob(ctx, req);
+  if (caseId === null) return isInstanceAdministrator(ctx, req);
   return !ctx.options.teamAuth || ctx.options.teamAuth.canReadCase(req, caseId);
 }
 
@@ -35,7 +29,7 @@ async function canRead(ctx: RouteContext, req: Request, caseId: string | null): 
 }
 
 function canWrite(ctx: RouteContext, req: Request, caseId: string | null): boolean {
-  if (caseId === null) return canAccessGlobalJob(ctx, req);
+  if (caseId === null) return isInstanceAdministrator(ctx, req);
   return !ctx.options.teamAuth || ctx.options.teamAuth.canWriteCase(req, caseId);
 }
 
