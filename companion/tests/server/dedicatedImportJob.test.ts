@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl.js";
 import { JobManager } from "../../src/analysis/jobManager.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { failSettleAfterStamp } from "../helpers/settleFailure.js";
 
 // #2407: the ~24 dedicated `import-*` kinds commit through routes/importCommit.ts, which never
 // registered a job. They were missing from the Jobs panel, and every "is the case busy?" reader
@@ -157,5 +158,49 @@ describe("dedicated imports run under a job (#2407)", () => {
     await new Promise((r) => setTimeout(r, 100));
     await jobManager.forgetCase("c1");
     expect(jobManager.isStopping("c1")).toBe(false);
+  });
+});
+
+// #2891 (gap 3): a dedicated import whose settle fails still fails its job, but the rows the
+// importer merged are stamped, dual-written and demoted first, so the next import's case-wide demote
+// cannot move them out untagged. A missing pre-import snapshot no longer skips the settle silently.
+describe("a dedicated import whose settle cannot finish still settles its rows (#2891)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const superTotal = async (s: SuperTimelineStore) => (await s.query("c1", {})).total;
+
+  it("a settle that fails after stamping: the job fails, and the rows were settled first", async () => {
+    const jobManager = new JobManager();
+    const { app, stateStore, superTimelineStore } = await makeApp(jobManager);
+    const fired = failSettleAfterStamp(stateStore);
+    const res = await request(app).post("/cases/c1/import-thor").send({ text: THOR, filename: "thor.json" });
+    expect(res.status).toBe(202);
+    const job = await pollFor("the thor import job to fail", async () => {
+      const j = importJobs(jobManager)[0];
+      return j?.status === "failed" ? j : undefined;
+    });
+    expect(fired()).toBe(true);
+    expect(job.failure?.message).toContain("out of memory");
+    expect(await superTotal(superTimelineStore)).toBe(2); // both rows dual-written
+    const forensic = (await stateStore.load("c1")).forensicTimeline;
+    expect(forensic.length).toBeGreaterThan(0);
+    expect(forensic.every((e) => e.importBatchId && e.severity !== "Info")).toBe(true);
+  });
+
+  it("no pre-import snapshot: the rows are still settled, and the import succeeds as before", async () => {
+    const jobManager = new JobManager();
+    const { app, stateStore, superTimelineStore } = await makeApp(jobManager);
+    stateStore.captureImportBaseline = async () => {
+      throw new Error("baseline unavailable");
+    };
+    const res = await request(app).post("/cases/c1/import-thor").send({ text: THOR, filename: "thor.json" });
+    expect(res.status).toBe(202);
+    await pollFor("the thor import job to succeed", async () =>
+      importJobs(jobManager)[0]?.status === "succeeded" ? true : undefined,
+    );
+    expect(await superTotal(superTimelineStore)).toBe(2);
+    const forensic = (await stateStore.load("c1")).forensicTimeline;
+    expect(forensic.length).toBeGreaterThan(0);
+    expect(forensic.every((e) => e.importBatchId && e.severity !== "Info")).toBe(true);
   });
 });

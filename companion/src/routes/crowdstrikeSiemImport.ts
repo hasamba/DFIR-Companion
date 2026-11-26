@@ -20,7 +20,7 @@ import type { ImportBaseline } from "../analysis/importBaseline.js";
 import type { NgsiemRow, NgsiemRunResult } from "../integrations/crowdstrike/ngsiemSearch.js";
 import type { RouteContext } from "./context.js";
 import { beginImportSection } from "./importSection.js";
-import { settleForensicImport } from "./importSettle.js";
+import { settleImportOrRecoverThenThrow } from "./importRowRecovery.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
 
 export const NGSIEM_SOURCE_LABEL = "CrowdStrike NG-SIEM";
@@ -117,7 +117,9 @@ async function importAndSettle(
         extraSource: NGSIEM_SOURCE_LABEL,
       },
     });
-    const settled = await settleForensicImport(settle, spec.caseId, baseline, saved.storedName);
+    // A settle failure still fails the search, after its rows are settled (#2891).
+    const target = { caseId: spec.caseId, storedNames: [saved.storedName], tag: "crowdstrike" };
+    const settled = await settleImportOrRecoverThenThrow(settle, target, baseline, saved.storedName);
     const { timelineDiff: diff, iocsDiff } = settled;
     if (options.importMetaStore) {
       await options.importMetaStore.record(spec.caseId, {

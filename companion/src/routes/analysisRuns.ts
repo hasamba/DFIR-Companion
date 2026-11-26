@@ -17,7 +17,7 @@ import { markFailedSynthesisOutOfDate } from "./analystGate.js";
 import type { RouteContext } from "./context.js";
 import { activeRulesHash, importReceiptOfCase } from "./importRunRecorder.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
-import { settleForensicImport } from "./importSettle.js";
+import { settleImportOrRecoverThenThrow } from "./importRowRecovery.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
 import { sendAiOff } from "./aiOffRefusal.js";
 import { isAiDependent } from "./importKinds.js";
@@ -211,8 +211,10 @@ async function replayImportSection(
     idPrefix: `replay-${Date.now()}`,
     importedAt: startedAt,
   });
-  // The settle writes the "[import] … done" line itself (#1438).
-  await settleForensicImport(settleDeps, run.caseId, baseline, label);
+  // The settle writes the "[import] … done" line itself (#1438). A settle failure still fails the
+  // replay, after its rows are graded so the next demote cannot move them untagged (#2891).
+  const target = { caseId: run.caseId, storedNames: [label], tag: "replay" };
+  await settleImportOrRecoverThenThrow(settleDeps, target, baseline, label);
   // #1887: the same changed-only receipt a live import records (routes/importRunRecorder.ts).
   const receipt = await importReceiptOfCase(ctx, stateStore, run.caseId, baseline);
   await runStore.record(run.caseId, {
