@@ -2,10 +2,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { caseMasker, withSendMasking } from "../analysis/ai/maskRequest.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
-import { bindingKey } from "../analysis/slashCommandStore.js";
 import {
   WatsonMirror,
-  type MirrorLiveness,
   type MirrorMasking,
   type TelegramSendGate,
 } from "../integrations/telegram/watsonMirror.js";
@@ -13,13 +11,12 @@ import { sharedTelegramLimiters } from "../analysis/notify/telegramRateLimiter.j
 import { resolveToken } from "../analysis/telegramPoller.js";
 import { workstationRoots } from "../integrations/telegram/watsonMirrorFormat.js";
 import { sendMirrorMessage } from "../integrations/telegram/watsonMirrorSender.js";
-import type { WatsonMirrorEntry } from "../integrations/telegram/watsonMirrorStore.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { RouteContext } from "../routes/context.js";
 import { jevAnonStores } from "../routes/jevMasking.js";
 import {
   mirrorAudit,
-  telegramAllowlist,
+  mirrorLiveness,
   telegramApiBase,
   telegramBotToken,
 } from "../routes/watsonMirrorSupport.js";
@@ -61,32 +58,6 @@ function installDir(): string {
   } catch {
     return "";
   }
-}
-
-/** Before every send: may this chat still receive turns of this case? */
-async function liveness(ctx: RouteContext, entry: WatsonMirrorEntry): Promise<MirrorLiveness> {
-  const allow = telegramAllowlist();
-  if (allow.length === 0 || !allow.includes(entry.enabledBy))
-    return {
-      ok: false,
-      action: "disable",
-      reason: "the user who turned it on is no longer on the allowlist",
-    };
-  const binding = await ctx.options.slashCommandChannelStore?.get(bindingKey("telegram", entry.chatId));
-  // Unbind and a bind to another case switch the chat off at once (watsonMirrorCommand.ts); this
-  // catches a binding changed any other way.
-  if (!binding || binding.caseId !== entry.caseId)
-    return { ok: false, action: "disable", reason: "the chat is no longer bound to the case" };
-  let meta;
-  try {
-    meta = await ctx.store.getCaseMeta(entry.caseId);
-  } catch {
-    return { ok: false, action: "pause", reason: "the case could not be read" };
-  }
-  if (!meta) return { ok: false, action: "disable", reason: "the case was deleted" };
-  if (meta.password) return { ok: false, action: "disable", reason: "the case is password-protected" };
-  if (meta.status === "archived") return { ok: false, action: "pause", reason: "the case is archived" };
-  return { ok: true };
 }
 
 const PENDING_NAMES: MirrorMasking = { ok: false, reason: "names await approval in the Anonymization panel" };
@@ -139,10 +110,16 @@ export function createAppWatsonMirror(ctx: RouteContext): WatsonMirror | undefin
     store: mirrorStore,
     loadChat: (caseId) => chatStore.load(caseId),
     loadHistory: (caseId) => chatStore.history.page(caseId, { limit: MIRROR_HISTORY_TURNS }),
-    liveness: (entry) => liveness(ctx, entry),
+    liveness: (entry) => mirrorLiveness(ctx, entry),
     masking: (caseId, raw) => mirrorMaskText(ctx, caseId, raw),
-    send: (chatId, text, botToken) =>
-      sendMirrorMessage({ botToken: botToken ?? telegramBotToken, apiBase: telegramApiBase(), chatId, text }),
+    send: (chatId, text, botToken, replyMarkup) =>
+      sendMirrorMessage({
+        botToken: botToken ?? telegramBotToken,
+        apiBase: telegramApiBase(),
+        chatId,
+        text,
+        ...(replyMarkup ? { replyMarkup } : {}),
+      }),
     limiter: sharedMirrorGate,
     audit: mirrorAudit(ctx, "telegram-mirror"),
     roots: workstationRoots({

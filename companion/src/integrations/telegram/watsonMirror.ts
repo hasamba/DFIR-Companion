@@ -1,4 +1,10 @@
-import type { WatsonChat } from "../../analysis/ai/watson/types.js";
+import type { WatsonChat, WatsonTurn } from "../../analysis/ai/watson/types.js";
+import {
+  buildMirrorKeyboard,
+  MIRROR_BUTTONS_MAX,
+  telegramApprovable,
+  type InlineKeyboard,
+} from "./watsonMirrorActions.js";
 import type { Logger } from "../../logging/logger.js";
 import {
   buildMirrorMessages,
@@ -63,8 +69,16 @@ export interface WatsonMirrorDeps {
   liveness: (entry: WatsonMirrorEntry) => Promise<MirrorLiveness>;
   /** Re-mask `raw` with the case's anonymization list; not ok when masking fails or names await approval. */
   masking: (caseId: string, raw: string) => Promise<MirrorMasking>;
-  /** botToken: the bot the slot was reserved on (#2711) — send from that same bot. */
-  send: (chatId: string, text: string, botToken?: string) => Promise<MirrorSendOutcome>;
+  /**
+   * botToken: the bot the slot was reserved on (#2711) — send from that same bot. replyMarkup (#2712):
+   * the Apply / Reject buttons, on the last message of a batch only.
+   */
+  send: (
+    chatId: string,
+    text: string,
+    botToken?: string,
+    replyMarkup?: InlineKeyboard,
+  ) => Promise<MirrorSendOutcome>;
   /**
    * #2711: the bot's shared limiter (mirror lane: after alerts and command replies). Absent → a
    * private limiter on this service's clock, which is what the unit tests use.
@@ -244,7 +258,9 @@ export class WatsonMirror {
     if (!urgent && Number.isFinite(lastBatch) && lastBatch + this.windowMs > now) {
       return this.schedule(chatId, lastBatch + this.windowMs - now);
     }
-    const raw = turns.map((t) => turnPlainText(t, chat.proposals)).join("\n\n");
+    const buttons = await this.buttonsFor(entry, turns, chat);
+    const numbers = new Map(buttons.map((b) => [b.proposalId, b.n]));
+    const raw = turns.map((t) => turnPlainText(t, chat.proposals, numbers)).join("\n\n");
     const masking = await this.deps.masking(caseId, replaceWorkstationRoots(raw, this.deps.roots));
     if (!masking.ok) return this.hold(entry, masking.reason);
     if (entry.held) {
@@ -254,7 +270,7 @@ export class WatsonMirror {
     if (entry.gapPending && !(await this.sendGapNotice(entry))) return;
     if (turns.length === 0) return;
     const messages = buildMirrorMessages(masking.text, mirrorFooter(caseId, this.deps.publicUrl()));
-    const ids = await this.sendAll(entry, messages);
+    const ids = await this.sendAll(entry, messages, buildMirrorKeyboard(buttons));
     if (!ids) return;
     await this.deps.store.markSent(
       chatId,
@@ -267,6 +283,26 @@ export class WatsonMirror {
     });
     const after = await this.deps.store.get(chatId);
     if (after?.pending.length) this.schedule(chatId, 0);
+  }
+
+  /**
+   * #2712: the batch's proposals a Telegram press may decide, numbered in chat order, each with its
+   * button token (minted and persisted before the send, for this enablement only). Capped.
+   */
+  private async buttonsFor(
+    entry: WatsonMirrorEntry,
+    turns: readonly WatsonTurn[],
+    chat: WatsonChat,
+  ): Promise<Array<{ proposalId: string; n: number; token: string }>> {
+    const byId = new Map(chat.proposals.map((p) => [p.id, p]));
+    const ids = [...new Set(turns.flatMap((t) => t.proposalIds ?? []))]
+      .filter((id) => telegramApprovable(byId.get(id)))
+      .slice(0, MIRROR_BUTTONS_MAX);
+    if (ids.length === 0) return [];
+    const tokens = await this.deps.store.actionTokens(entry.chatId, entry.enabledAt, ids);
+    return ids
+      .filter((id) => tokens[id])
+      .map((proposalId, i) => ({ proposalId, n: i + 1, token: tokens[proposalId] }));
   }
 
   /** Re-check before every send. A chat that may no longer receive is switched off (or paused). */
@@ -350,6 +386,7 @@ export class WatsonMirror {
   private async sendOne(
     entry: WatsonMirrorEntry,
     text: string,
+    replyMarkup?: InlineKeyboard,
   ): Promise<MirrorSendOutcome | { kind: "revoked" }> {
     const isGroup = entry.chatType !== "private";
     for (;;) {
@@ -361,21 +398,25 @@ export class WatsonMirror {
         return { kind: "revoked" };
       }
       if (!slot.commit()) continue; // the slot went while we checked (a 429 pause): queue again
-      const out = await this.deps.send(entry.chatId, text, slot.botToken);
+      const out = await this.deps.send(entry.chatId, text, slot.botToken, replyMarkup);
       if (out.kind === "rate_limited") slot.backOff(out.retryAfterMs); // pauses the whole bot
       return out;
     }
   }
 
-  /** Send the messages in order. The Telegram ids, or undefined when a failure stopped the batch. */
+  /**
+   * Send the messages in order, the buttons (if any) on the last one. The Telegram ids, or undefined
+   * when a failure stopped the batch.
+   */
   private async sendAll(
     entry: WatsonMirrorEntry,
     messages: readonly string[],
+    keyboard?: InlineKeyboard,
   ): Promise<number[] | undefined> {
     const ids: number[] = [];
-    for (const m of messages) {
+    for (const [i, m] of messages.entries()) {
       if (this.stopped) return undefined;
-      const out = await this.sendOne(entry, m);
+      const out = await this.sendOne(entry, m, i === messages.length - 1 ? keyboard : undefined);
       if (out.kind === "sent") {
         ids.push(out.messageId);
         continue;

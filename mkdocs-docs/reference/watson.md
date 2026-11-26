@@ -61,7 +61,7 @@ Watson does not change the super-timeline. It searches it only when you ask (see
 
 ## The Watson badge and Undo
 
-Everything you apply from Watson carries a **Watson** badge. The badge shows on the finding, the next step and the report text, with the name of the analyst who approved it. The report says that the item was proposed by Watson and approved by that analyst.
+Everything you apply from Watson carries a **Watson** badge. The badge shows on the finding, the next step and the report text, with the name of the analyst who approved it. The report says that the item was proposed by Watson and approved by that analyst. An item applied from the Telegram mirror's buttons names the Telegram user, marked "(via Telegram)".
 
 Each applied item has its own **Undo**, in the chat and next to the badge. Undo puts back what was there before. Undo is refused, and nothing changes, in two cases. The card says why:
 
@@ -121,7 +121,7 @@ To see exactly what Watson would send for a message, use **Preview what the AI w
 
 From Slack, Teams or Telegram, `/dfir ask <question>` sends the question to Watson in the same shared chat. See [War-Room Bot](war-room-bot.md).
 
-A Telegram chat can also mirror the Watson chat: after `/dfir mirror on` it gets every new turn, and plain messages become questions. The panel lists those chats under **Mirrored to Telegram**, each with an **Off** button. See [Mirror the Watson chat to Telegram](war-room-bot.md#mirror-the-watson-chat-to-telegram).
+A Telegram chat can also mirror the Watson chat: after `/dfir mirror on` it gets every new turn, and plain messages become questions. The panel lists those chats under **Mirrored to Telegram**, each with an **Off** button. See [Mirror the Watson chat to Telegram](war-room-bot.md#mirror-the-watson-chat-to-telegram). A listed Telegram user can also **Apply** or **Reject** low-risk proposals (a new finding, next step, report text or key question) from buttons in that chat; everything else, and Undo, stays in the dashboard. See [Apply and Reject from the chat](war-room-bot.md#mirror-the-watson-chat-to-telegram).
 
 ## Searching the super-timeline
 

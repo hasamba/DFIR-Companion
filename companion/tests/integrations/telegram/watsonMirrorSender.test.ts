@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  answerCallbackQuery,
   fetchBotUsername,
   mirrorBackoffMs,
   sendMirrorMessage,
@@ -72,6 +73,34 @@ describe("sendMirrorMessage", () => {
       kind: "transient",
     });
     expect(f.calls).toEqual([]);
+  });
+});
+
+describe("#2712 buttons", () => {
+  it("adds the inline keyboard only when there is one", async () => {
+    const f = fakeFetch(200, { ok: true, result: { message_id: 1 } });
+    const replyMarkup = { inline_keyboard: [[{ text: "Apply 1", callback_data: "wm:a:AAAAAAAAAAAAAAAA" }]] };
+    await sendMirrorMessage({ botToken: "t", chatId: "1", text: "x", fetchFn: f.fn, replyMarkup });
+    await sendMirrorMessage({ botToken: "t", chatId: "1", text: "x", fetchFn: f.fn });
+    expect(f.calls[0].body.reply_markup).toEqual(replyMarkup);
+    expect("reply_markup" in f.calls[1].body).toBe(false);
+  });
+
+  it("answers a press with a toast of at most 200 characters", async () => {
+    const f = fakeFetch(200, { ok: true });
+    expect(
+      await answerCallbackQuery({
+        botToken: "t",
+        callbackQueryId: "cb1",
+        text: "y".repeat(300),
+        fetchFn: f.fn,
+      }),
+    ).toBe(true);
+    expect(f.calls[0].url).toBe("https://api.telegram.org/bott/answerCallbackQuery");
+    expect(f.calls[0].body).toEqual({ callback_query_id: "cb1", text: "y".repeat(200) });
+    expect(
+      await answerCallbackQuery({ botToken: "", callbackQueryId: "cb1", text: "x", fetchFn: f.fn }),
+    ).toBe(false);
   });
 });
 

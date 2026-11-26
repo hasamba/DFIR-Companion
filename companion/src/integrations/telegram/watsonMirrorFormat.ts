@@ -1,6 +1,7 @@
 import { escapeBidiControls } from "../../analysis/bidiControl.js";
 import { escapeRegExp } from "../../analysis/regexEscape.js";
 import type { WatsonProposal, WatsonRequest, WatsonTurn } from "../../analysis/ai/watson/types.js";
+import { proposalPreview } from "./watsonMirrorActions.js";
 
 // #2647: the Telegram mirror's formatter. Pure, no I/O.
 //
@@ -81,7 +82,7 @@ const roleLine = (t: WatsonTurn): string =>
     ? `Analyst${t.actor ? ` (${t.actor})` : ""}:`
     : t.role === "watson"
       ? "Watson:"
-      : "Note:";
+      : `Note${t.actor ? ` (${t.actor})` : ""}:`;
 
 function requestLine(r: WatsonRequest): string {
   switch (r.kind) {
@@ -134,8 +135,15 @@ const UNKNOWN_PROPOSAL = "a change (open the dashboard to see it)";
  * What the dashboard shows for the turn, as plain text: the role, the text, the answer's status line,
  * answer and `Next:` pointer, what Watson learned, the request and one line per proposal. Cards and
  * result tables are one line each; the footer link leads to the rest.
+ *
+ * #2712: a proposal in `numbers` carries Apply / Reject buttons: its line reads "Watson proposes [n]:"
+ * and is followed by the change itself, so the analyst sees what the button approves.
  */
-export function turnPlainText(turn: WatsonTurn, proposals: readonly WatsonProposal[]): string {
+export function turnPlainText(
+  turn: WatsonTurn,
+  proposals: readonly WatsonProposal[],
+  numbers: ReadonlyMap<string, number> = new Map(),
+): string {
   const byId = new Map(proposals.map((p) => [p.id, p]));
   const lines = [roleLine(turn)];
   if (turn.text) lines.push(turn.text);
@@ -145,7 +153,14 @@ export function turnPlainText(turn: WatsonTurn, proposals: readonly WatsonPropos
   if (turn.request) lines.push(requestLine(turn.request));
   for (const id of turn.proposalIds ?? []) {
     const p = byId.get(id);
-    lines.push(`Watson proposes: ${p ? proposalLabel(p) : UNKNOWN_PROPOSAL}`);
+    const n = numbers.get(id);
+    if (!p || n === undefined) {
+      lines.push(`Watson proposes: ${p ? proposalLabel(p) : UNKNOWN_PROPOSAL}`);
+      continue;
+    }
+    lines.push(`Watson proposes [${n}]: ${proposalLabel(p)}`);
+    const preview = proposalPreview(p);
+    if (preview) lines.push(`  ${preview}`);
   }
   return lines.join("\n");
 }

@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActivityLogStore, NewActivityEntry } from "../../../src/analysis/activityLog.js";
 import { addAnswerAsQuestion } from "../../../src/analysis/ai/watson/addQuestion.js";
 import { WatsonChatStore } from "../../../src/analysis/ai/watson/chatStore.js";
@@ -145,6 +145,52 @@ describe("applyWatsonProposal", () => {
 
   const statusOf = async (id: string) =>
     (await chatStore.load(CASE)).proposals.find((p) => p.id === id)?.status;
+
+  // #2712: a Telegram press re-checks its authorization under the chat lock, before any write.
+  it("runs the authorize hook under the lock and writes nothing when it refuses", async () => {
+    const seen: string[] = [];
+    await expect(
+      applyWatsonProposal(deps, CASE, "wp-u", "apply", "@a (via Telegram)", {
+        authorize: async (p) => {
+          seen.push(`${p.id}:${p.status}`);
+          throw new Error("revoked");
+        },
+      }),
+    ).rejects.toThrow("revoked");
+    expect(seen).toEqual(["wp-u:pending"]);
+    expect(await statusOf("wp-u")).toBe("pending");
+    expect(mem.saves).toBe(0);
+    expect(entries).toEqual([]);
+    await applyWatsonProposal(deps, CASE, "wp-u", "apply", "@a (via Telegram)", {
+      authorize: async () => {},
+    });
+    expect(await statusOf("wp-u")).toBe("applied");
+  });
+
+  // #2712: a press that waited behind the state lock is re-authorized once it holds it.
+  it("re-authorizes inside the state lock, so a revocation while waiting stops the write", async () => {
+    let revoked = false;
+    let checks = 0;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const holder = deps.stateLock.runExclusive(CASE, () => held); // a synthesis save in progress
+    const press = applyWatsonProposal(deps, CASE, "wp-u", "apply", "@a (via Telegram)", {
+      authorize: async () => {
+        checks++;
+        if (revoked) throw new Error("revoked");
+      },
+    });
+    await vi.waitFor(() => expect(checks).toBe(1)); // passed the chat-lock check; waits for the state lock
+    await new Promise((r) => setTimeout(r, 10));
+    expect(checks).toBe(1);
+    revoked = true; // e.g. /dfir mirror off
+    release();
+    await holder;
+    await expect(press).rejects.toThrow("revoked");
+    expect(await statusOf("wp-u")).toBe("pending");
+    expect(mem.saves).toBe(0);
+    expect(entries).toEqual([]);
+  });
 
   it("apply writes the new answer pinned and authored by Watson, and marks the proposal applied", async () => {
     mem.state = {

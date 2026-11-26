@@ -268,7 +268,7 @@ Mirroring is **off by default**, and each chat turns it on for itself:
 - Only a listed user may turn it on, and only a listed user may ask Watson by plain message.
 - `DFIR_TELEGRAM_BOT_TOKEN` must be set, also in webhook mode: the mirror sends through the Bot API.
 
-**What is sent.** Each new turn, as the dashboard shows it: the question and who asked it, Watson's message, the answer's status line, the answer and its **Next:** line, what Watson learned, and one line for each proposal ("Watson proposes: new finding: …"). Cards and result tables are one line each. Every message ends with a link to the case when `DFIR_PUBLIC_URL` is set, and with "Open case … in the dashboard" when it is not. Nothing from before `/dfir mirror on` is sent.
+**What is sent.** Each new turn, as the dashboard shows it: the question and who asked it, Watson's message, the answer's status line, the answer and its **Next:** line, what Watson learned, and one line for each proposal ("Watson proposes: new finding: …"; see Apply and Reject below). Cards and result tables are one line each. Every message ends with a link to the case when `DFIR_PUBLIC_URL` is set, and with "Open case … in the dashboard" when it is not. Nothing from before `/dfir mirror on` is sent.
 
 **When it is sent.** An analyst's question and Watson's answer to it go out at once. Turns that come in while nobody waits for an answer (reactions, Auto rounds) are collected and sent together, at most once a minute per chat. Nothing is dropped: a long batch is split into several messages, in order. Messages are never edited.
 
@@ -281,6 +281,33 @@ Mirroring is **off by default**, and each chat turns it on for itself:
 - **Anonymization on for the case:** each message is masked again with the case's anonymization list before it is sent, because the saved chat holds the real values. When masking fails, or names wait for approval in the Anonymization panel, nothing is sent. The chat gets "Held: open the dashboard to review", and later turns wait until the hold clears.
 - **Always:** the paths of your workstation (the cases folder, the Companion's install and data folders) are replaced with `<case>` and `<companion>`. Evidence paths from the artifacts, such as `C:\Windows\Temp\x.ps1`, are investigation content and are sent as they are.
 - **Link previews are always off**, so Telegram never opens a URL from an answer. A preview of attacker infrastructure would tell the attacker that someone looked.
+
+**Apply and Reject from the chat.** Some proposals arrive with **Apply** and **Reject** buttons under the message, so you can decide them from your phone. Only low-risk changes to the case get buttons:
+
+- a new finding (but not one that cites lines of a pasted file: those lines would be added to the forensic timeline);
+- a new next step;
+- report text (Conclusions or Investigation limitations);
+- a new key question, or an answer to one.
+
+Velociraptor collections and hunts, CrowdStrike searches, risky queries, promotions of held or super-timeline rows, demoting or dismissing a finding, and changes to an existing finding or next step never get buttons. They keep their text line, and you decide them in the dashboard. There is no Undo from Telegram: Undo stays in the dashboard.
+
+Each proposal with buttons is numbered in the message ("Watson proposes [1]: new finding: …"), followed by the change itself (the finding's severity and description, the answer, the report text), so you see what you approve. The buttons read **Apply 1**, **Reject 1** and so on; they carry no case content. A change too long to show in full gets no button.
+
+A press counts only when all of these are true, checked again at the moment the change is written:
+
+- the person who pressed is on `DFIR_TELEGRAM_ACTION_USERS` (any listed user in the chat, not only the one who turned mirroring on);
+- the chat is still bound to the case and still mirroring it, and mirroring was not turned off and on again since the message was sent (that kills older buttons);
+- the case exists and is not closed, archived or password-protected;
+- the proposal is still waiting for a decision.
+
+Otherwise Telegram shows a short note ("Already decided…", "This button has expired…") and nothing changes. Messages are never edited, so an old button stays visible after the proposal was decided in the dashboard; pressing it does nothing.
+
+A press goes through the same checks as the dashboard's Apply, so a finding that changed since Watson proposed it is refused the same way. The badge and the report say "approved by @name (via Telegram)" (the Telegram username, or the display name when there is none), and the case's activity log also records the numeric Telegram user id and the chat. The decision then appears in the Watson chat as a note, which reaches the Telegram chat like any other turn.
+
+!!! warning "Trust"
+    A Telegram account on the allowlist can now write findings, next steps and report text into the case. Keep `DFIR_TELEGRAM_ACTION_USERS` to people you would give that right in the dashboard. A Telegram display name is chosen by its owner; the activity log's numeric id is the reliable record.
+
+In webhook mode, Telegram sends button presses to the same URL. If you registered the webhook with an `allowed_updates` list, add `callback_query` to it. Polling asks for button presses by itself.
 
 **When it stops by itself.** Mirroring switches off for a chat, and the case's activity log says why, when: the chat is unbound or bound to another case, the case is deleted or gets a password (turn it on again from the chat after you unlock the case), the user who turned it on is removed from the allowlist, or the bot is removed from the chat. While a case is archived, nothing is sent. A message that is already on its way to Telegram can still arrive.
 
