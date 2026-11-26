@@ -316,3 +316,48 @@ describe("narrative and second opinion (#2933)", () => {
     expect(p.el("secondOpinion").disabled).toBe(true);
   });
 });
+
+describe("after the code review (#2933)", () => {
+  it("second opinion: a decision's follow-up state read from before a cancel does not render", async () => {
+    const p = fakePage();
+    const rendered: unknown[] = [];
+    const api = loadDashboardModule<Api>("dashboard-second-opinion.js", ESC, {
+      ...p.globals,
+      render: (st: unknown) => rendered.push(st),
+    });
+    api.loadSecondOpinion("CASE-A");
+    p.requests[last(p)].answer(null);
+    await drainAll();
+    api.applySecondOpinionDelta("CASE-A", "d1", true);
+    p.requests[last(p)].answer({ deltas: [] });
+    await drainAll();
+    const stateRead = last(p);
+    expect(p.requests[stateRead].url).toBe("/cases/CASE-A/state");
+    cancelAndReopen(p, api, () => api.loadSecondOpinion("CASE-A"));
+    p.requests[stateRead].answer({ caseId: "CASE-A" });
+    await drainAll();
+    expect(rendered).toEqual([]);
+  });
+
+  it("super-timeline: a cancel frees the starred-report button, and the old answer leaves a newer one busy", async () => {
+    const p = fakePage();
+    const api = loadDashboardModule<Api>("dashboard-super-timeline.js", ESC, {
+      ...p.globals,
+      DfirStarred: { count: () => 1, has: () => false },
+      presidioHoldText: (s: string) => s,
+    });
+    api.genStarredReport();
+    const old = last(p);
+    expect(p.el("stStarredReport").disabled).toBe(true);
+    p.cancel(api);
+    p.switchCase("CASE-A", api);
+    api.loadSavedTimeframes("CASE-A"); // registers the reset hook on a real open
+    p.cancel(api);
+    expect(p.el("stStarredReport").disabled, "the cancel left the button busy").toBe(false);
+    p.switchCase("CASE-A", api);
+    api.genStarredReport();
+    p.requests[old].answer({ error: "OLD" }, false);
+    await drainAll();
+    expect(p.el("stStarredReport").disabled).toBe(true);
+  });
+});

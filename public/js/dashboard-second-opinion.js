@@ -394,7 +394,7 @@
         // The accept may have changed findings/MITRE — refresh the case view.
         fetch(`/cases/${caseId}/state`)
           .then((r) => r.json())
-          .then((st) => stillOpen(caseId) && render(st))
+          .then((st) => live() && render(st)) // #2933: the follow-up read too
           .catch(() => {});
       })
       .catch((e) => live() && (document.getElementById("status").textContent = "second opinion error: " + e.message));
@@ -432,7 +432,7 @@
         if (accept === "referee") refereeStatus(followRefereeStatus(before, rec));
         fetch(`/cases/${caseId}/state`)
           .then((r) => r.json())
-          .then((st) => stillOpen(caseId) && render(st))
+          .then((st) => live() && render(st)) // #2933: the follow-up read too
           .catch(() => {});
       })
       .catch((e) => live() && (document.getElementById("status").textContent = "second opinion error: " + e.message));
