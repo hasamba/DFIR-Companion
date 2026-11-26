@@ -298,7 +298,6 @@
   // — /cockpit alone was fetched five times — and the handler uses `ctx.ran` to run each of those
   // loaders once per catch-up. A real push carries no context, so it always reloads.
   function catchUp(sock, caseId) {
-    const base = `/cases/${encodeURIComponent(caseId)}`;
     const pushesAtStart = statePushes;
     const ctx = { source: "catch-up", ran: new Set() };
     const send = (msg) => {
@@ -319,17 +318,9 @@
             })
             .catch(() => {}),
       ],
-      // The scope branch redraws with the window it is given, which loadScope alone would not do.
-      [
-        "scope",
-        () =>
-          fetch(`${base}/scope`)
-            .then((r) => (r.ok ? r.json() : null))
-            .then((s) => {
-              if (s) send({ type: "scope_changed", start: s.start, end: s.end });
-            })
-            .catch(() => {}),
-      ],
+      // A read, not a push (#2915): loadScope is ordered against real pushes (a push that arrives
+      // while it is on its way wins) and redraws when the window it reads differs.
+      ["scope", () => typeof loadScope === "function" && loadScope(caseId)],
       ...CATCH_UP_TYPES.map((type) => [
         type,
         () => {

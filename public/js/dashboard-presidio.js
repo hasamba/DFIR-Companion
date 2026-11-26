@@ -1,6 +1,4 @@
-// Presidio approval panel (analyst-reviewed anonymization) — extracted from dashboard.html
-// (issue #415, tier 3).
-//
+// Presidio approval panel (analyst-reviewed anonymization) — extracted from dashboard.html (#415).
 // presidioPending was the section's one state escape, written from three places outside it —
 // two in the page and one in dashboard-search-scope.js — and every one of them did the same
 // pair: assign the findings, then call renderPresidioPending(). That pair is one operation, and
@@ -232,8 +230,10 @@
   // A late answer for a case left must not fill this panel (#1782); #2904: cleared at a switch, newest wins.
   const ppOnScreen = (caseId) => (document.getElementById("caseId")?.value ?? caseId).trim() === caseId;
   let ppCase = null, ppSeq = 0;
+  const ppReset = (c) => c === null && ((ppSeq++, ppCase = null), setPresidioPending([])); // #2915: a cancelled load
   function loadPresidioPending(caseId) {
     if (!caseId || !ppOnScreen(caseId)) return;
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(ppReset);
     if (ppCase !== caseId) { ppCase = caseId; setPresidioPending([]); }
     const seq = ++ppSeq;
     fetch(`/cases/${caseId}/presidio-pending`)

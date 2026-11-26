@@ -26,6 +26,9 @@
         // confirm(), not receive(): the two inputs are where this window was READ from, so
         // writing them back is not this path's business. (The server's own scope_changed echo
         // does write them, with its normalised ISO form — see the handler.)
+        // #2915: the newest word on the window (an older read still on its way must not undo it),
+        // and dropped when the analyst has left this case meanwhile.
+        if (typeof noteScopeConfirmed === "function" && !noteScopeConfirmed(caseId)) return;
         DfirScope.confirm(s.start, s.end);
         // The view is scope-consistent immediately (client-side projection). A scope change starts
         // no synthesis (#1599): the conclusions are marked out of date and the AI status pill says

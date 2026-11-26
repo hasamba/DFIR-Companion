@@ -55,13 +55,21 @@
   // the previous case's rows at once (blank, not "No activity recorded yet", which is a claim).
   let activityCase = null;
   let activitySeq = 0;
+  function clearActivityLog(caseId) {
+    activityCase = caseId;
+    const el = document.getElementById("activityLogPanel");
+    if (el) el.innerHTML = "";
+  }
+  // #2915: a cancelled or failed case load blanks the rows too; the next open (same case too) reads again.
+  function onActivityReset(caseId) {
+    if (caseId !== null) return;
+    activitySeq++;
+    clearActivityLog(null);
+  }
   function loadActivityLog(caseId) {
     if (!activityOnScreen(caseId)) return; // a late caller for a case the analyst has left
-    if (activityCase !== caseId) {
-      activityCase = caseId;
-      const el = document.getElementById("activityLogPanel");
-      if (el) el.innerHTML = "";
-    }
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onActivityReset);
+    if (activityCase !== caseId) clearActivityLog(caseId);
     const seq = ++activitySeq;
     const qs = activityFilterValue
       ? `?category=${encodeURIComponent(activityFilterValue)}`

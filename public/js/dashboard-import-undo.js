@@ -38,8 +38,17 @@
   const undoBusy = new Map(); // caseId -> token of the undo/redo in flight for it
   const undoCurrentCase = () => (document.getElementById("caseId") || {}).value?.trim?.() || "";
 
+  // #2915: a cancelled or failed case load drops the summary and hides the buttons (the next open
+  // reads it again). An undo/redo still running keeps its own busy mark.
+  function onUndoReset(caseId) {
+    if (caseId !== null) return;
+    undoStackSeq++;
+    undoSummary = null;
+    paintUndoButtons();
+  }
   function loadUndoStack(caseId) {
     if (caseId !== undoCurrentCase()) return Promise.resolve(); // #2904: a late caller for a case left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onUndoReset);
     // #2904: the previous case's buttons and their tooltips (naming its last import) go at once.
     if (undoSummary && undoSummary.caseId !== caseId) {
       undoSummary = null;

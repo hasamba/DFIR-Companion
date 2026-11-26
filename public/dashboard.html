@@ -358,6 +358,7 @@
   <script src="/js/dashboard-query-translator.js"></script>
   <!-- Scope apply. No initializer. -->
   <script src="/js/dashboard-scope-apply.js"></script>
+  <script src="/js/dashboard-scope-load.js"></script>
   <!-- Per-case AI on/off toggle. No initializer. -->
   <script src="/js/dashboard-ai-toggle.js"></script>
   <!-- Live CLIENT_EVENT monitoring (#84). No initializer. -->
@@ -5236,22 +5237,7 @@
     // inScope(), projectScope() and renderScopeInfo() live in js/dashboard-scope.js (#415): pure
     // functions of the window, and DfirScope.receive()/confirm() repaint the chip as they commit.
 
-    // #2904: a load for another case clears the window at once (the previous case's window must never
-    // filter this one, even when this GET fails); only the newest answer for the case on screen commits.
-    // No redraw while loading (render() comes separately) unless this case already rendered.
-    let scopeLoad = { caseId: null, seq: 0 };
-    function loadScope(caseId) {
-      const onScreen = () => { const el = document.getElementById("caseId"); return !el || typeof el.value !== "string" || el.value.trim() === caseId; };
-      if (!onScreen()) return; // a late caller for a case the analyst has left
-      if (scopeLoad.caseId !== caseId) { scopeLoad.caseId = caseId; DfirScope.receive(null, null); }
-      const seq = ++scopeLoad.seq;
-      fetch(`/cases/${caseId}/scope`).then(r => r.json()).then(s => {
-        if (seq !== scopeLoad.seq || !onScreen()) return;
-        const was = DfirScope.get(), changed = was.start !== (s.start || null) || was.end !== (s.end || null);
-        DfirScope.receive(s.start, s.end);
-        if (changed && DfirState.lastState()) typeof render === "function" && render(DfirState.lastState());
-      }).catch(() => {});
-    }
+    // loadScope moved to js/dashboard-scope-load.js (#2915), with the scope_changed push it is ordered against.
 
     // The compact, always-visible row title: a plain-weight (not bold — a whole sentence in bold reads
     // as noise, not signal) truncated description. Anything beyond this — the untruncated text, MITRE,

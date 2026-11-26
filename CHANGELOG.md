@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Scope and light panels after a cancel or a failed read** — a live scope change wins over an older scope read, a cancelled case load clears the comments, tags, report details, custody and other light panels, and a failed scope read says "could not load the time window" with Retry instead of "none (all events)" (closes #2915)
 - **Result tables scroll from the keyboard** — scrolling result tables (Timeline Gaps, Timeline Anomalies, Beacon Candidates, Cloud Coverage, hunt and query results) take keyboard focus and are announced by name, so keyboard and screen-reader users can scroll them (closes #2923)
 - **Cross-case capture warning on a phone** — the "screenshots are arriving for another case" banner wraps instead of pushing the dashboard sideways at narrow widths (closes #2919)
 - **Held rows graded at the next import** — rows an importer merged but never stamped are held from the demote too, rows a tagger failure held are graded at the next import (not only at restart) with the caps a full settle applies, Watson paste rows only ever get the held tagger and keep their proposals after a failed settle, and exports never show the internal grading mark (closes #2909)

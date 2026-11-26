@@ -12,6 +12,13 @@
   // ── Live CLIENT_EVENT monitoring (#84) ────────────────────────────────────────────────────
   let veloMonCase = null;
   let veloMonSeq = 0;
+  // #2915: a cancelled or failed case load drops the monitors and the LIVE badge; the next open reads again.
+  function onVeloMonReset(caseId) {
+    if (caseId !== null) return;
+    veloMonSeq++;
+    veloMonCase = null;
+    renderVeloMonitors([]);
+  }
   function loadVeloMonitors(caseId) {
     // Populate the CLIENT_EVENT picker once when Velociraptor is on, so the dropdown isn't empty
     // and the analyst doesn't have to click "Browse" first (it can still be re-browsed manually).
@@ -20,6 +27,7 @@
       veloMonBrowse();
     }
     if (caseId && veloCaseId() !== caseId) return; // #2904: a late caller for a case the analyst left
+    if (caseId) typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onVeloMonReset);
     // #2904: the previous case's monitors (and LIVE badge) go at once; only the newest load paints.
     if (veloMonCase !== caseId || !caseId) renderVeloMonitors([]);
     veloMonCase = caseId;

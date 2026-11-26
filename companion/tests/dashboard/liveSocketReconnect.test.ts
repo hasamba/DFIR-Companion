@@ -81,6 +81,7 @@ function harness(opts: { runner?: PanelRunner } = {}) {
   const aiRefreshed: string[] = [];
   const jobsLoaded: number[] = [];
   const fetched: string[] = [];
+  const scopeLoads: string[] = [];
   const messages: LiveMsg[] = [];
   const contexts: Array<CatchUpCtx | undefined> = [];
   const api = loadDashboardModule<LiveApi>("dashboard-live-socket.js", [], {
@@ -91,6 +92,8 @@ function harness(opts: { runner?: PanelRunner } = {}) {
     activeCaseId: "INC-1",
     refreshAiState: (id: string) => aiRefreshed.push(id),
     loadJobs: () => jobsLoaded.push(1),
+    // #2915: the catch-up reads the scope through js/dashboard-scope-load.js (ordered against pushes).
+    loadScope: (id: string) => scopeLoads.push(id),
     fetch: (url: string) => {
       fetched.push(url);
       const body = url.endsWith("/scope")
@@ -113,7 +116,18 @@ function harness(opts: { runner?: PanelRunner } = {}) {
     doc.visibilityState = v;
     for (const fn of listeners.get("visibilitychange") ?? []) fn();
   };
-  return { api, status, aiRefreshed, jobsLoaded, fetched, messages, contexts, onMessage, setVisibility };
+  return {
+    api,
+    status,
+    aiRefreshed,
+    jobsLoaded,
+    fetched,
+    scopeLoads,
+    messages,
+    contexts,
+    onMessage,
+    setVisibility,
+  };
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -223,7 +237,8 @@ describe("the case socket reconnects after it drops (#1675)", () => {
     await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
     expect(h.aiRefreshed).toEqual(["INC-1", "INC-1"]);
     expect(h.jobsLoaded).toEqual([1]);
-    expect(h.fetched).toEqual(["/cases/INC-1/state", "/cases/INC-1/scope"]);
+    expect(h.fetched).toEqual(["/cases/INC-1/state"]);
+    expect(h.scopeLoads).toEqual(["INC-1"]);
     expect(h.messages).toContainEqual({ type: "state", state: { caseId: "INC-1", forensicTimeline: [] } });
   });
 
@@ -410,11 +425,9 @@ describe("a reconnect re-reads every push-driven panel the gap missed (#1681)", 
         types.filter((x) => x === t),
         t,
       ).toHaveLength(1);
-    expect(h.messages).toContainEqual({
-      type: "scope_changed",
-      start: "2026-01-01T00:00:00Z",
-      end: null,
-    });
+    // #2915: the scope is a READ (loadScope), never replayed as a scope_changed push.
+    expect(h.scopeLoads).toEqual(["INC-1"]);
+    expect(types).not.toContain("scope_changed");
     // Transient pushes are events, not state: replaying them would raise false case-mismatch banners.
     expect(types).not.toContain("capture_ingest");
     expect(types).not.toContain("import_ingest");
@@ -439,28 +452,23 @@ describe("a reconnect re-reads every push-driven panel the gap missed (#1681)", 
     expect(h.messages).toEqual([]);
   });
 
-  it("drops a scope answer that lands after the case was switched", async () => {
+  // #2915: the catch-up's scope read used to be its own GET replayed as a scope_changed push, so a
+  // stale answer could overwrite a real push that arrived meanwhile. It is loadScope now, whose
+  // version, case-on-screen and push ordering are pinned in caseSwitchScope.test.ts.
+  it("reads the scope through loadScope and never fetches or replays it itself", async () => {
     const h = harness();
-    let answerScope: (v: unknown) => void = () => {};
-    h.api.fetch = (url: string) =>
-      url.endsWith("/scope")
-        ? Promise.resolve({ ok: true, json: () => new Promise((resolve) => (answerScope = resolve)) })
-        : Promise.resolve({ ok: false });
     await reconnect(h);
     FakeSocket.made[1].open();
     await vi.advanceTimersByTimeAsync(CATCH_UP_SETTLE_MS);
-    h.messages.length = 0;
-    h.api.activeCaseId = "INC-2";
-    h.api.openCaseSocket("INC-2", h.onMessage);
-    answerScope({ start: "x", end: "y" });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(h.messages).toEqual([]);
+    expect(h.scopeLoads).toEqual(["INC-1"]);
+    expect(h.fetched.filter((u) => u.endsWith("/scope"))).toEqual([]);
+    expect(h.messages.map((m) => m.type)).not.toContain("scope_changed");
   });
 });
 
 // Every catch-up type must be one handleCaseMessage handles with a bare { type } — no field read —
 // or the replay would call a loader with undefined. scope_changed reads msg.start/msg.end, so it is
-// fetched and sent with them instead of from the list.
+// not in the list: the catch-up reads the scope with loadScope instead (#2915).
 describe("handleCaseMessage reloads each catch-up type's panel from a bare message (#1681)", () => {
   const live = readFileSync(
     new URL("../../../public/js/dashboard-live-socket.js", import.meta.url),
@@ -660,7 +668,7 @@ describe("the reconnect catch-up is one bounded, deduplicated run (#1709)", () =
     expect(ctx?.source).toBe("catch-up");
     expect(h.contexts.every((c) => c === ctx)).toBe(true);
     expect(h.messages.map((m) => m.type)).toContain("state");
-    expect(h.messages.map((m) => m.type)).toContain("scope_changed");
+    expect(h.scopeLoads).toEqual(["INC-1"]); // #2915: a read, not a replayed push
     FakeSocket.made[1].push({ type: "pins_changed" });
     expect(h.contexts.at(-1)).toBeUndefined();
   });

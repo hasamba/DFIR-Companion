@@ -833,6 +833,7 @@
     "ROUTE GET /js/dashboard-panel-defer.js",
     "ROUTE GET /js/dashboard-query-translator.js",
     "ROUTE GET /js/dashboard-scope-apply.js",
+    "ROUTE GET /js/dashboard-scope-load.js",
     "ROUTE GET /js/dashboard-ai-toggle.js",
     "ROUTE GET /js/dashboard-velo-monitors.js",
     "ROUTE GET /js/dashboard-velo-bundles.js",

@@ -23,8 +23,16 @@
     if (winEl) winEl.style.display = "none";
     if (info) info.textContent = "";
   }
+  // #2915: a cancelled or failed case load blanks the profile; the next open (same case too) reads again.
+  function onCorrReset(caseId) {
+    if (caseId !== null) return;
+    corrSeq++;
+    corrCase = null;
+    blankCorrProfile();
+  }
   function loadCorrProfile(caseId) {
     if (!corrOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onCorrReset);
     if (corrCase !== caseId) {
       corrCase = caseId;
       blankCorrProfile();
