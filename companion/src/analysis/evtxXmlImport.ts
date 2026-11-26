@@ -129,7 +129,7 @@ function parseEventData(eventBlock: string): Row {
   return out;
 }
 
-function parseEventBlock(block: string): Row | undefined {
+export function parseEventBlock(block: string): Row | undefined {
   const sys = SYSTEM_RE.exec(block)?.[1] ?? "";
   const eid = elText(sys, "EventID");
   if (!eid) return undefined;

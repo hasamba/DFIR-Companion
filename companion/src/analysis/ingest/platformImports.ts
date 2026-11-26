@@ -54,7 +54,16 @@ export async function importSiem(
     signal?: AbortSignal; // #2425: the import job's Cancel — checked right before the merge
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseSiemExport(jsonText, { ...opts.siem, debug: opts.debug });
+  return commitSiemParsed(ctx, caseId, parseSiemExport(jsonText, { ...opts.siem, debug: opts.debug }), opts);
+}
+
+/** importSiem's tail after the parse, shared with the JSON Lines file streamed from disk (#2823). */
+export async function commitSiemParsed(
+  ctx: ImportContext,
+  caseId: string,
+  parsedRaw: SiemParseResult,
+  opts: Omit<Parameters<typeof importSiem>[3], "siem">,
+): Promise<InvestigationState> {
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
@@ -597,18 +606,37 @@ export async function importEvtxXml(
     await opts.onProgress?.(1, 1);
     return ctx.opts.stateStore.load(caseId);
   }
+  const progress = evtxXmlParseProgress(opts.onParseProgress);
+  const siem = { ...opts.siem, debug: opts.debug };
+  const parsedRaw = await parseEvtxXmlProgress(xmlText, siem, progress.read, progress.process, opts.signal);
+  return commitEvtxXmlParsed(ctx, caseId, parsedRaw, opts);
+}
+
+type ParseProgress = (done: number, total: number, detail?: string) => void | Promise<void>;
+
+/** The two parse phases of a Windows Event XML import, reported as one job's progress. */
+export function evtxXmlParseProgress(onParseProgress?: ParseProgress): {
+  read: (done: number, total: number) => void | Promise<void>;
+  process: (done: number, total: number) => void | Promise<void>;
+} {
   let parseTotal = 0;
-  const parsedRaw = await parseEvtxXmlProgress(
-    xmlText,
-    { ...opts.siem, debug: opts.debug },
-    (done, total) => {
+  return {
+    read: (done, total) => {
       parseTotal = total;
-      return opts.onParseProgress?.(done, total * 2, "reading Windows events");
+      return onParseProgress?.(done, total * 2, "reading Windows events");
     },
-    (done, total) =>
-      opts.onParseProgress?.(parseTotal + done, parseTotal + total, "processing Windows events"),
-    opts.signal,
-  );
+    process: (done, total) =>
+      onParseProgress?.(parseTotal + done, parseTotal + total, "processing Windows events"),
+  };
+}
+
+/** importEvtxXml's tail after the parse, shared with the export streamed from disk (#2823). */
+export async function commitEvtxXmlParsed(
+  ctx: ImportContext,
+  caseId: string,
+  parsedRaw: SiemParseResult,
+  opts: Omit<Parameters<typeof importEvtxXml>[3], "siem">,
+): Promise<InvestigationState> {
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   noteParsed(opts.debug, parsed.total, parsedRaw.events, parsed.events);
   if (parsed.events.length === 0 && parsed.iocs.length === 0)

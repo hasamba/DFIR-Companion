@@ -13,6 +13,7 @@ import type { RouteContext } from "./context.js";
 import { buildImportBase, evictedInImport, importJobParameters } from "./importBase.js";
 import { cloudStream } from "./importCloudStream.js";
 import { decideVeloDiskStream, type VeloDiskDecision } from "./importVeloStream.js";
+import { decideWindowsLogDiskStream, windowsLogWholeReadHint } from "./importWindowsLogStream.js";
 import { sniffImportFileHeadDetail, readImportFileBounded } from "./importFileHead.js";
 import { CHANGED_WHILE_IMPORTING } from "./receiptedFile.js";
 import { cancellableByParse, isAiDependent, refuseAiOffImport, refuseDetectedImport } from "./importKinds.js";
@@ -95,13 +96,15 @@ export async function importFromHandle(
   // string, capped by DFIR_MAX_IMPORT_FILE_MB (#921).
   const size = (await handle.stat()).size;
   let velo: VeloDiskDecision;
+  let winlog: boolean; // a large SIEM JSON Lines / Windows Event XML export reads in parts (#2823)
   try {
     velo = await decideVeloDiskStream({ kind, handle, size, gzip, sinkWired: !!options.bulkImportSink });
+    winlog = await decideWindowsLogDiskStream({ kind, handle, size, gzip });
   } catch (err) {
     return res.status(400).json({ error: `cannot read file: ${(err as Error).message}` });
   }
   if (velo.refuse) return res.status(413).json({ error: velo.refuse });
-  const streaming = velo.streams || cloudStream.readsFromDisk(kind, size, gzip);
+  const streaming = velo.streams || winlog || cloudStream.readsFromDisk(kind, size, gzip);
   if (gzip && !streaming) return res.status(415).json({ error: cloudStream.GZIP_ONLY_CLOUD });
   let text = "";
   if (!streaming) {
@@ -193,7 +196,8 @@ export async function importFromHandle(
     // Plaso streams from disk; everything else dispatches the in-memory string.
     const run = async (): Promise<unknown> => {
       await tracking.start();
-      section = await beginImportSection(importLock, caseId, options.stateStore, saved.bytes);
+      const hint = streaming ? saved.bytes : windowsLogWholeReadHint(kind, saved.bytes); // charged by size (#2823)
+      section = await beginImportSection(importLock, caseId, options.stateStore, hint);
       baseline = section.baseline;
       return streaming
         ? cloudStream.runStoredFile(ctx, { kind, caseId, storedName, base })

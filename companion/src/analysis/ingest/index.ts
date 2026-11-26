@@ -25,3 +25,4 @@ export * from "./recoveryImports.js";
 export * from "./sigmaRegradeApply.js";
 export * from "./timelineImports.js";
 export * from "./velociraptorFileImport.js";
+export * from "./windowsLogFileImport.js";

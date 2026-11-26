@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Large SIEM / EVTX XML imports read in parts** — a SIEM JSON Lines or Windows Event XML export of 32 MB or more is read from disk piece by piece, so memory follows the rows, not the file; a large file of those kinds that is still read whole is charged by its size in the memory guard (closes #2823)
 - **Failed settles still grade their rows** — a dedicated import, NG-SIEM search, Watson paste, drop-folder batch, cloud collection page or import replay whose end-of-import settle fails still reports the failure, but its rows are graded before the next demote (part of #2891)
 - **No previous-case content after a case switch** — a heavy panel visible when you open another case shows "Loading this case's data…" until the new case's data arrives, and Attack Phases no longer redraws the previous case's phases (closes #2894)
 - **Stronger Telegram button tokens** — Apply / Reject buttons carry 128-bit tokens checked in constant time; buttons sent before the upgrade answer "expired", decide those in the dashboard (closes #2897)
