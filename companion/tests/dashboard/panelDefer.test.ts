@@ -450,6 +450,132 @@ describe("a revealed panel never shows the previous case's content (#2854)", () 
   });
 });
 
+// #2894: a deferred panel that is VISIBLE when the case changes kept the previous case's content,
+// unmarked, until its own load for the new case painted. The case-open fan-out now masks it and
+// runs its load tracked IN PLACE — same fan-out, same moment, same strip count.
+describe("a panel visible at a case switch is masked until this case's load paints (#2894)", () => {
+  type Entry = [string, () => void];
+  const SEC = "sec-hostranking";
+  // proceedConnect: #caseId changes, the reloads are retired, then the fan-out goes through eagerOnly.
+  function open(p: ReturnType<typeof page>, caseId: string, run?: () => void): Entry[] {
+    p.switchCase(caseId);
+    return p.d.eagerOnly<Entry>([
+      ["custody", () => {}],
+      ["hostRanking", run ?? (() => p.api.loadHostRanking(caseId))],
+    ]);
+  }
+  const runAll = (entries: Entry[]) => entries.forEach(([, run]) => run());
+  async function loadedForA() {
+    const p = page();
+    runAll(open(p, "CASE-A"));
+    p.requests[0].answer({ body: { ranks: [] } });
+    await flushAll();
+    return p;
+  }
+
+  it("the first case open on the page masks nothing", async () => {
+    const p = await loadedForA();
+    expect(p.section(SEC).dataset.panelStale).toBeUndefined();
+  });
+
+  it("masks at the switch, keeps the load in the fan-out, and unmasks once this case's answer painted", async () => {
+    const p = await loadedForA();
+    const kept = open(p, "CASE-B");
+    expect(kept.map(([k]) => k)).toEqual(["custody", "hostRanking"]); // strip total unchanged
+    expect(p.section(SEC).dataset.panelStale).toMatch(/Loading/);
+    runAll(kept);
+    expect(p.urls()).toEqual(["/cases/CASE-A/host-ranking", "/cases/CASE-B/host-ranking"]);
+    expect(p.reloads).toEqual([]); // not moved out to the debounced reloader
+    await flushAll();
+    expect(p.section(SEC).dataset.panelStale).toMatch(/Loading/); // out, nothing painted yet
+    p.requests[1].answer({ body: { ranks: [] } });
+    await flushAll();
+    expect(p.section(SEC).dataset.panelStale).toBeUndefined();
+  });
+
+  it("a failed load keeps the mask with the failure line", async () => {
+    for (const answer of [{ ok: false, status: 503 }, { fail: true }]) {
+      const p = await loadedForA();
+      runAll(open(p, "CASE-B"));
+      p.requests[1].answer(answer);
+      await flushAll();
+      expect(p.section(SEC).dataset.panelStale).toMatch(/could not be loaded/);
+    }
+  });
+
+  it("a loader that settles with no request is never left masked", async () => {
+    const p = await loadedForA();
+    const kept = open(p, "CASE-B", () => {}); // e.g. a gate that has nothing to ask for this case
+    expect(p.section(SEC).dataset.panelStale).toMatch(/Loading/);
+    const tally = runPanelLoaders(kept);
+    expect(tally.settled.size).toBe(2);
+    await flushAll();
+    expect(p.section(SEC).dataset.panelStale).toBeUndefined();
+  });
+
+  it("reconnecting to the case whose load already painted masks nothing", async () => {
+    const p = await loadedForA();
+    runAll(open(p, "CASE-B"));
+    p.requests[1].answer({ body: { ranks: [] } });
+    await flushAll();
+    open(p, "CASE-B");
+    expect(p.section(SEC).dataset.panelStale).toBeUndefined();
+  });
+
+  it("an answer for the case the analyst has left does not unmask the next one", async () => {
+    const p = await loadedForA();
+    runAll(open(p, "CASE-B"));
+    runAll(open(p, "CASE-C")); // B's load is still out
+    p.requests[1].answer({ body: { ranks: [] } });
+    await flushAll();
+    expect(p.section(SEC).dataset.panelStale).toMatch(/Loading/);
+    p.requests[2].answer({ body: { ranks: [] } });
+    await flushAll();
+    expect(p.section(SEC).dataset.panelStale).toBeUndefined();
+  });
+
+  it("a section masked while hidden and shown at the next case open loads in the fan-out too", async () => {
+    const p = await loadedForA();
+    p.switchCase("CASE-B");
+    p.hide(SEC);
+    p.api.loadHostRanking("CASE-B"); // deferred and masked
+    (p.api as unknown as { loadSectionsVis(): Record<string, boolean> }).loadSectionsVis()[SEC] = true;
+    const kept = open(p, "CASE-C");
+    expect(kept.map(([k]) => k)).toEqual(["custody", "hostRanking"]);
+    runAll(kept);
+    expect(p.reloads).toEqual([]);
+    p.requests[1].answer({ body: { ranks: [] } });
+    await flushAll();
+    expect(p.section(SEC).dataset.panelStale).toBeUndefined();
+  });
+
+  it("runs nested inside the real case-open runner: counted there, and an abort leaves it masked", async () => {
+    const p = await loadedForA();
+    const sandbox = p.api as unknown as { fetch: unknown };
+    const own = sandbox.fetch as (u: string) => Promise<unknown>;
+    const nodeFetch = globalThis.fetch;
+    // The sandbox's fetch reaches the global the runner patches, as one page's fetch would.
+    globalThis.fetch = own as typeof fetch;
+    sandbox.fetch = (u: string) => (globalThis.fetch as unknown as typeof own)(u);
+    try {
+      const ac = new AbortController();
+      const tally = runPanelLoaders(open(p, "CASE-B"), undefined, { signal: ac.signal });
+      expect(p.urls()).toEqual(["/cases/CASE-A/host-ranking", "/cases/CASE-B/host-ranking"]);
+      expect(tally.settled.has("hostRanking")).toBe(false); // the runner sees the request too
+      // A cancel aborts the fan-out and retires the reloads (abandonCaseLoad); an answer that
+      // still lands for the abandoned load must not lift the mask.
+      ac.abort();
+      p.switchCase("");
+      p.requests[1].answer({ body: { ranks: [] } });
+      await flushAll();
+      expect(p.section(SEC).dataset.panelStale).toMatch(/Loading/);
+    } finally {
+      globalThis.fetch = nodeFetch;
+      sandbox.fetch = own;
+    }
+  });
+});
+
 // ── source pins: the wiring that the behaviour above depends on ────────────────────────────────
 const GUARD = (key: string) =>
   new RegExp(
