@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { bundledAiAgentRulesDir, loadAiAgentRuleSet } from "../../../src/analysis/aiAgentRuleSet.js";
+import { yaraScopeVql } from "../../../src/integrations/velociraptor/aiAgentArtifactVql.js";
 import {
   AI_AGENT_ARTIFACT_PREFIX,
   AI_AGENT_MAX_PROGRAM_CHARS,
@@ -32,6 +33,17 @@ function decodeConfig(b: ReturnType<typeof buildAiAgentArtifact>): Record<string
   const chunks = b.parts.map((p) => /LET aiagent_part_\d+ = "([A-Za-z0-9+/=]*)"/.exec(p.yaml)![1]);
   return JSON.parse(Buffer.from(chunks.join(""), "base64").toString("utf8")) as Record<string, unknown>;
 }
+
+describe("YARA coverage counts (#2924)", () => {
+  it("counts the scanned files with count(), never len() of a subquery, which Velociraptor reads as 0", () => {
+    const { lets, coverage } = yaraScopeVql("S0");
+    expect(lets).toContain(
+      "LET n_in_S0 <= SELECT count() AS N FROM files_S0 WHERE Size <= cfg.ScanMaxBytes GROUP BY 1",
+    );
+    expect(coverage).toContain("n_in_S0[0].N");
+    expect(coverage).not.toContain("len(list={");
+  });
+});
 
 describe("AI Agent Forensics artifact: names Velociraptor accepts", () => {
   // Velociraptor refuses a name part that starts with a digit ("Name parts can not start with a

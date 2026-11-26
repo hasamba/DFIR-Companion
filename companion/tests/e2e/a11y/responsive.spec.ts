@@ -40,6 +40,10 @@ async function measureOverflow(page: Page): Promise<{ amount: number; culprits: 
     for (const el of document.querySelectorAll("body *")) {
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.right <= doc.clientWidth + 1) continue;
+      // Content that is not rendered still has a box: Chrome lays out a CLOSED <details>'s body, so
+      // the IOCs "Mark source" menu reported right=459 at 375px while widening nothing. Listed as an
+      // offender, it hid the real one (#2923). checkVisibility() is false for that skipped content.
+      if (!el.checkVisibility()) continue;
       const parent = el.parentElement;
       if (parent && parent !== document.body && parent.getBoundingClientRect().right > doc.clientWidth + 1)
         continue;
@@ -123,14 +127,15 @@ test("narrow screen: the page does not scroll sideways at 380px", async ({ page,
   ).toBeLessThanOrEqual(1);
 });
 
-// #2919: the cross-case warning ("screenshots are arriving for case X") carries the other case's
-// full id in its Switch button, and as one unwrapped row it pushed the page 45px sideways at phone
-// width. It only appeared when some other test had posted a capture in the last two minutes, so the
-// per-view test below failed by suite order. Raised here on purpose, through the real path: a
-// capture for a second case, then the dashboard's own check-on-connect.
-test("narrow screen: the cross-case capture warning wraps at 375px", async ({ page, demoCase, baseURL }) => {
+/** Seed a second case beside the test's own, to receive the "foreign" captures. */
+async function seedOtherCase(demoCase: string, baseURL: string | undefined): Promise<string> {
   const otherCase = `${demoCase}-other`;
   await seedDemoCase(baseURL ?? "http://127.0.0.1:4788", otherCase);
+  return otherCase;
+}
+
+/** Post a screenshot capture for the other case, so this page's case gets the warning. */
+async function postForeignCapture(page: Page, otherCase: string): Promise<void> {
   const posted = await page.request.post("/captures", {
     data: {
       caseId: otherCase,
@@ -143,17 +148,64 @@ test("narrow screen: the cross-case capture warning wraps at 375px", async ({ pa
     },
   });
   expect(posted.ok(), await posted.text()).toBe(true);
+}
 
-  await page.setViewportSize({ width: 375, height: 900 });
+test.describe("cross-case capture warning", () => {
+  // The one place the warning is wanted: every other spec runs with it suppressed (#2923, see
+  // crossCaseBanner in fixtures/test.ts).
+  test.use({ crossCaseBanner: "live" });
+
+  // #2919: the cross-case warning ("screenshots are arriving for case X") carries the other case's
+  // full id in its Switch button, and as one unwrapped row it pushed the page 45px sideways at phone
+  // width. It only appeared when some other test had posted a capture in the last two minutes, so the
+  // per-view test below failed by suite order. Raised here on purpose, through the real path: a
+  // capture for a second case, then the dashboard's own check-on-connect.
+  test("narrow screen: the cross-case capture warning wraps at 375px", async ({
+    page,
+    demoCase,
+    baseURL,
+  }) => {
+    const otherCase = await seedOtherCase(demoCase, baseURL);
+    await postForeignCapture(page, otherCase);
+
+    await page.setViewportSize({ width: 375, height: 900 });
+    await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+    await waitForCaseRendered(page, demoCase);
+    await expect(page.locator("#caseMismatchBanner")).toBeVisible({ timeout: 15_000 });
+    // /captures/recent and the capture broadcast are global, so a parallel test's capture can put a
+    // different case id in the warning (it did, in this file's own run). Post again while the page is
+    // open until the live broadcast puts THIS test's case back, and measure that warning.
+    await expect(async () => {
+      await postForeignCapture(page, otherCase);
+      await expect(page.locator("#caseMismatchSwitch")).toHaveText(`Switch to ${otherCase}`, {
+        timeout: 2_000,
+      });
+    }).toPass({ timeout: 20_000 });
+
+    const overflow = await measureOverflow(page);
+    expect(
+      overflow.amount,
+      `horizontal overflow of ${overflow.amount}px. Widest offenders: ${overflow.culprits.join(" | ")}`,
+    ).toBeLessThanOrEqual(1);
+  });
+});
+
+// #2923: the default suppression has to actually take hold, or specs are coupled again with nothing
+// to say so. The dashboard still raises the warning (its `hidden` flag clears); it just takes no space.
+test("other specs: the cross-case warning is raised but takes no space by default", async ({
+  page,
+  demoCase,
+  baseURL,
+}) => {
+  await postForeignCapture(page, await seedOtherCase(demoCase, baseURL));
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
   await waitForCaseRendered(page, demoCase);
-  await expect(page.locator("#caseMismatchBanner")).toBeVisible({ timeout: 15_000 });
-
-  const overflow = await measureOverflow(page);
-  expect(
-    overflow.amount,
-    `horizontal overflow of ${overflow.amount}px. Widest offenders: ${overflow.culprits.join(" | ")}`,
-  ).toBeLessThanOrEqual(1);
+  await expect
+    .poll(() => page.locator("#caseMismatchBanner").evaluate((el) => (el as HTMLElement).hidden), {
+      timeout: 15_000,
+    })
+    .toBe(false);
+  await expect(page.locator("#caseMismatchBanner")).toBeHidden();
 });
 
 test("narrow screen: the skip link still works at 380px", async ({ page }) => {
@@ -209,3 +261,60 @@ for (const width of [375, 768]) {
     expect(failures, `views that scroll sideways at ${width}px:\n${failures.join("\n")}`).toEqual([]);
   });
 }
+
+// #2923: in one #2919 run the IOCs filter menus were named as escaping the viewport at 375px in the
+// triage, report, deep-dive and hunt-prep views. Measured: they do not. The named one was the "Mark
+// source" menu inside a CLOSED <details>, which has a layout box but no rendering, and was listed
+// only because the cross-case warning had already widened the page. The per-view test above measures
+// the menus closed; this one opens each through its real control, which is the interaction a phone
+// user actually has, and checks the open menu stays on screen.
+test("narrow screen: the IOC filter menus open inside the viewport at 375px", async ({ page, demoCase }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 375, height: 900 });
+  await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+  await waitForCaseRendered(page, demoCase);
+  await page.waitForLoadState("networkidle");
+
+  /** [control that opens the menu, the menu] */
+  const menus: [string, string][] = [
+    ["#iocTypeFilterBtn", "#iocTypeFilterMenu"],
+    ["#iocExcludeBtn", "#iocExcludeMenu"],
+    [
+      "#sec-iocs details.trusted-source-mark > summary",
+      "#sec-iocs details.trusted-source-mark .src-filter-menu",
+    ],
+  ];
+  const failures: string[] = [];
+  for (const view of ["triage", "report", "deep-dive", "hunt-prep"]) {
+    await page.locator("#dashViewBtn").click();
+    const viewMenu = page.locator("#dashViewMenu");
+    await expect(viewMenu).toBeVisible();
+    await viewMenu.locator(`.dv-item[data-view="${view}"]`).click();
+    await expect(viewMenu).toBeHidden();
+    await page.waitForLoadState("networkidle");
+    await expect(page.locator("#sec-iocs")).toBeVisible();
+
+    for (const [control, menuSel] of menus) {
+      const opener = page.locator(control);
+      // The Types control appears only once the case has IOCs of more than one kind; the demo case
+      // has them, so a missing control is a failure, not a skip.
+      await expect(opener, `${view}: ${control} not shown`).toBeVisible();
+      await opener.click();
+      const menu = page.locator(menuSel);
+      await expect(menu).toBeVisible();
+      const box = await menu.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { left: r.left, right: r.right, vw: document.documentElement.clientWidth };
+      });
+      const overflow = await measureOverflow(page);
+      if (box.left < -1 || box.right > box.vw + 1 || overflow.amount > 1) {
+        failures.push(
+          `${view} ${menuSel}: ${Math.round(box.left)}..${Math.round(box.right)} of ${box.vw}, page overflow ${overflow.amount}px (${overflow.culprits.join(" | ")})`,
+        );
+      }
+      await opener.click(); // the same control closes it
+      await expect(menu).toBeHidden();
+    }
+  }
+  expect(failures, `IOC menus past the edge at 375px:\n${failures.join("\n")}`).toEqual([]);
+});

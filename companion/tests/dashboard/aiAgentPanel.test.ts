@@ -103,6 +103,10 @@ describe("AI Agent Forensics panel", () => {
       "added to this case's forensic timeline automatically once every endpoint has finished",
     );
     expect(card).toContain("created Paused in Velociraptor on purpose"); // #2907
+    // #2924: a Running card looks again by itself, and every card can be checked again.
+    expect(card).toContain('st.body.state === "running" && card.isConnected');
+    expect(card).toContain("setTimeout(() => void checkStatus(), STATUS_RECHECK_MS)");
+    expect(card).toContain('"Check again"');
     expect(card).toContain("Download report (Markdown)");
     expect(card).toContain("Download findings (spreadsheet)");
     expect(card).toContain("Download rule coverage (spreadsheet)");
@@ -114,7 +118,7 @@ describe("AI Agent Forensics panel", () => {
   it("asks Velociraptor automatically only for the newest run cards (#2898)", () => {
     expect(js).toContain("const AUTO_STATUS_CARDS = 3;");
     expect(js).toContain("if (autoStatus) void checkStatus();");
-    expect(js).toContain('el("button", "Check status")');
+    expect(js).toContain('el("button", autoStatus ? "Check again" : "Check status")');
   });
 
   it("shows warnings stored by older runs in the new plain wording (#2898)", () => {

@@ -436,6 +436,7 @@
   }
 
   // Only the newest few cards ask Velociraptor on every render; older ones wait for a click (#2898).
+  const STATUS_RECHECK_MS = 60_000; // #2924: how often a Running card looks again
   const AUTO_STATUS_CARDS = 3;
 
   function runCard(caseId, run, sweep, rerender, autoStatus) {
@@ -448,23 +449,32 @@
     const statusLine = el("p", "Status: checking Velociraptor…", "aa-status");
     statusLine.setAttribute("role", "status");
     card.appendChild(statusLine);
+    // #2924: the status used to be read once, when the panel opened, and then went stale — a finished
+    // run kept saying Running. A Running card now looks again every minute while it is on the page,
+    // and every card has a Check again button.
+    const statusText = el("span", "Status: checking Velociraptor…");
+    statusLine.textContent = "";
+    statusLine.appendChild(statusText);
+    const again = el("button", autoStatus ? "Check again" : "Check status");
+    again.type = "button";
+    statusLine.append(" ", again);
+    let timer = null;
     const checkStatus = async () => {
+      clearTimeout(timer);
+      statusText.textContent = "Status: checking Velociraptor…";
       const st = await call(`${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/status`);
-      statusLine.textContent = st.ok
-        ? `Status: ${st.body.summary}`
-        : `Status: could not ask Velociraptor (${(st.body && st.body.error) || `HTTP ${st.status}`})`;
+      if (!st.ok) {
+        statusText.textContent = `Status: could not ask Velociraptor (${(st.body && st.body.error) || `HTTP ${st.status}`})`;
+        return;
+      }
+      const done = st.body.state === "finished";
+      statusText.textContent = `Status: ${st.body.summary}${done && !sweep ? " — its hits go to the case's forensic timeline on their own; press Refresh results to list them here." : ""}`;
+      again.textContent = "Check again";
+      if (st.body.state === "running" && card.isConnected) timer = setTimeout(() => void checkStatus(), STATUS_RECHECK_MS);
     };
+    again.addEventListener("click", () => void checkStatus());
     if (autoStatus) void checkStatus();
-    else {
-      statusLine.textContent = "Status: not checked ";
-      const check = el("button", "Check status");
-      check.type = "button";
-      check.addEventListener("click", () => {
-        statusLine.textContent = "Status: checking Velociraptor…";
-        void checkStatus();
-      });
-      statusLine.appendChild(check);
-    }
+    else statusText.textContent = "Status: not checked";
     const scopeLabel = (id) => ((rules && rules.scopes) || []).find((x) => x.id === id)?.label || id;
     card.appendChild(el("p", `Checked: ${run.scopes.map(scopeLabel).join(", ")}. Copies of the AI-agent files saved in Velociraptor: ${run.preserved ? "yes" : run.matchedFilesKept ? "only the files a rule matched" : "no"}. Rule pack: ${run.ruleSetVersion}.`, "aa-note"));
     card.appendChild(
