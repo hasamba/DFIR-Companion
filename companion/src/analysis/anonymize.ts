@@ -4,13 +4,7 @@ import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
 import { exactValueRegExp } from "./anonPatterns.js";
-import {
-  compileCustomEntities,
-  findCustomSpans,
-  rangeCategory,
-  reserveCustomIpv6,
-  spliceSpans,
-} from "./anonCustomSpans.js";
+import { compileCustomEntities, findCustomSpans, rangeCategory, spliceSpans } from "./anonCustomSpans.js";
 import { SECRET_PLACEHOLDER, redactSecretText } from "./anonSecrets.js";
 import { scanTokenLiterals } from "./anonTokenLiterals.js";
 import {
@@ -507,10 +501,8 @@ export function createAnonymizer(
     // "\uE000IPV6:0\uE000" can arrive in the input. Strip the sentinel before minting any of our own:
     // a forged placeholder must never index the literals table and make restore() invent an
     // address in text that never contained one.
-    const reserve = (m: string) => `${IPV6_SENTINEL}IPV6:${literals.push(m) - 1}${IPV6_SENTINEL}`;
-    const ranged = reserveCustomIpv6(t.replace(IPV6_SENTINEL_RE, ""), compiled, reserve); // #2946
-    const text = ranged.replace(IPV6_RE, (m) => {
-      if (!policy.categories.IP || (!isInternalIpv6(m) && !isMaskableIpv6(m))) return m; // not ours
+    const text = t.replace(IPV6_SENTINEL_RE, "").replace(IPV6_RE, (m) => {
+      if (!isInternalIpv6(m) && !isMaskableIpv6(m)) return m; // detector false positive — leave it alone
       const i = literals.length;
       literals.push(m);
       return `${IPV6_SENTINEL}IPV6:${i}${IPV6_SENTINEL}`;
@@ -522,9 +514,8 @@ export function createAnonymizer(
     return t.replace(IPV6_PLACEHOLDER_RE, (m, idxStr: string) => {
       const ip = literals[Number(idxStr)];
       if (ip === undefined) return m; // belt-and-braces with the strip above: never invent a value
-      const ranged = rangeCategory(compiled, ip);
+      const ranged = rangeCategory(compiled, ip); // #2946: a custom range names the category
       if (ranged) return forcing(() => assign(ranged, ip));
-      if (!policy.categories.IP) return ip;
       if (isInternalIpv6(ip)) return assign("IP", ip);
       return policy.maskPublicIps ? assign("EXTIP", ip) : ip;
     });
@@ -602,7 +593,7 @@ export function createAnonymizer(
     // substitute inside one. Only when IP masking is active: if the IP category is off, no later
     // step ever reparses an IPv6 literal, so there is nothing to protect it FROM.
     let ipv6Literals: string[] = [];
-    if (policy.categories.IP || compiled.ranges.length > 0) {
+    if (policy.categories.IP) {
       const reserved = reserveIpv6Literals(t);
       t = reserved.text;
       ipv6Literals = reserved.literals;
@@ -622,8 +613,10 @@ export function createAnonymizer(
     if (policy.categories.HOST) t = anonHosts(t);
     if (policy.categories.DOMAIN) t = anonDomains(t);
     if (policy.categories.USER) t = anonBareUsernames(t);
-    t = restoreIpv6Literals(t, ipv6Literals); // classify + tokenize the reserved literals
-    if (policy.categories.IP) t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
+    if (policy.categories.IP) {
+      t = restoreIpv6Literals(t, ipv6Literals); // classify + tokenize the reserved literals
+      t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
+    }
     if (policy.categories.CARD) t = anonCards(t);
     if (policy.categories.PHONE) t = anonPhones(t);
     if (policy.categories.NATID) t = anonNatIds(t);

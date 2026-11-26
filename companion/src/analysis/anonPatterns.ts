@@ -120,18 +120,36 @@ export function wildcardRegExp(value: string, category: AnonTokenCategory): RegE
   return new RegExp(left + body + right, "giu");
 }
 
-function wholeRegExp(value: string, category: AnonTokenCategory): RegExp {
-  const C = `[${starClass(category).cls}]`;
-  const { lead, trail, parts } = splitPattern(value.trim());
-  const body = parts.map(escapeRegExp).join(`${C}*`);
-  return new RegExp(`^${lead ? `${C}*` : ""}${body}${trail ? `${C}*` : ""}$`, "iu");
+/** The span a wildcard match covers once its star parts are trimmed back, or null when empty. */
+export function wildcardMatchSpan(m: RegExpMatchArray): { start: number; end: number } | null {
+  const start0 = m.index ?? 0;
+  const lead = m.groups?.l ?? "";
+  const trail = m.groups?.t ?? "";
+  const start = start0 + lead.length - lead.replace(LEAD_TRIM, "").length;
+  const end = start0 + m[0].length - (trail.length - trail.replace(TRAIL_TRIM, "").length);
+  return end > start ? { start, end } : null;
+}
+
+/**
+ * A test of whether masking would hide a whole value standing alone: a valid pattern's own bounded
+ * search regex must match it from the first character to the last. Reusing the masking regex keeps
+ * the answer equal to what masking does, and keeps the cost linear on case-derived values.
+ */
+export function patternMatcher(e: CustomEntity): (value: string) => boolean {
+  if (e.match !== "pattern" || validatePatternEntity(e) !== null) return () => false;
+  if (IP_CATEGORIES.has(e.category)) return (v) => cidrContains(e.value, v);
+  const re = wildcardRegExp(e.value, e.category);
+  return (value) => {
+    re.lastIndex = 0;
+    const first = re.exec(value);
+    const span = first ? wildcardMatchSpan(first) : null;
+    return span !== null && span.start === 0 && span.end === value.length;
+  };
 }
 
 /** Whether a whole value is covered by a valid pattern or range entity (counts, decisions). */
 export function patternMatchesWhole(e: CustomEntity, value: string): boolean {
-  if (e.match !== "pattern" || validatePatternEntity(e) !== null) return false;
-  if (IP_CATEGORIES.has(e.category)) return cidrContains(e.value, value);
-  return wholeRegExp(e.value, e.category).test(value.trim());
+  return patternMatcher(e)(value);
 }
 
 function cidrContains(range: string, ip: string): boolean {
@@ -173,7 +191,8 @@ export function describeCustomPatterns(
     .map((e) => {
       const invalid = validatePatternEntity(e);
       if (invalid) return { value: e.value, category: e.category, count: 0, sample: [], invalid };
-      const hits = [...distinct.values()].filter((v) => patternMatchesWhole(e, v));
+      const covers = patternMatcher(e);
+      const hits = [...distinct.values()].filter(covers);
       return {
         value: e.value,
         category: e.category,

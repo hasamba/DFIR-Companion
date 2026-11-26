@@ -231,3 +231,39 @@ describe("patternMatchesWhole", () => {
     expect(patternMatchesWhole(pat("fd00:abcd::/32", "IP"), "fd00:abcd::9")).toBe(true);
   });
 });
+
+describe("Codex review regressions (#2946)", () => {
+  it("merges crossing matches so no part of either value stays in clear", () => {
+    const { out, back } = mask(
+      [pat("*.corp.example", "DOMAIN"), { value: "corp.example/sensitive-path-long", category: "OTHER" }],
+      "see payroll.corp.example/sensitive-path-long now",
+    );
+    expect(out).toBe("see ANON_OTHER_1 now");
+    expect(back).toBe("see payroll.corp.example/sensitive-path-long now");
+  });
+
+  it("an IPv6 range does not stop a longer custom value that encloses the address", () => {
+    const custom = [
+      pat("fd00:abcd::/32", "IP"),
+      { value: "[fd00:abcd::1]:secret", category: "OTHER" as const },
+    ];
+    expect(mask(custom, "x [fd00:abcd::1]:secret y").out).toBe("x ANON_OTHER_1 y");
+  });
+
+  it("an IPv6 range still applies with the IP category on, including a terminal ::", () => {
+    expect(mask([pat("fd00:abcd::/32", "IP")], "a fd00:abcd:: b", policy({ IP: true })).out).toBe(
+      "a ANON_IP_1 b",
+    );
+  });
+
+  it("whole-value matching stays linear on a crafted value", () => {
+    const covers = (n: number) => patternMatchesWhole(pat("*a*aab*", "OTHER"), "a".repeat(n * 50));
+    expectLinearScan("pattern whole-value match", covers, 40);
+  });
+
+  it("whole-value matching agrees with masking", () => {
+    expect(patternMatchesWhole(pat("prod-*-web", "HOST"), "prod-a-web")).toBe(true);
+    // Masking stops at the first "-web", so the tail would stay visible: not covered.
+    expect(patternMatchesWhole(pat("prod-*-web", "HOST"), "prod-a-web-b-web")).toBe(false);
+  });
+});
