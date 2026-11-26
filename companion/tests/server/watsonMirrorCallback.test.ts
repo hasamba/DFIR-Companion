@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -32,6 +32,7 @@ const ALICE = { id: 555, username: "alice_ir", first_name: "Alice" };
 let store: CaseStore;
 let chatStore: WatsonChatStore;
 let mirrors: WatsonMirrorStore;
+let mirrorFile: string;
 let activity: ActivityLogStore;
 let stateStore: StateStore;
 let app: ReturnType<typeof createApp>;
@@ -51,7 +52,8 @@ beforeEach(async () => {
     await new AiControlStore(store).save(id, { enabled: true, lastAnalyzedSeq: 0 });
   }
   chatStore = new WatsonChatStore(store);
-  mirrors = new WatsonMirrorStore(join(root, "notifications", "watson-mirror.json"));
+  mirrorFile = join(root, "notifications", "watson-mirror.json");
+  mirrors = new WatsonMirrorStore(mirrorFile);
   activity = new ActivityLogStore(store);
   stateStore = new StateStore(store);
   sent = [];
@@ -266,6 +268,17 @@ describe("Telegram proposal buttons (#2712)", () => {
     expect(toast(await press("apply wp-f"))).toBe(TOAST.invalid);
     expect(toast(await press("wm:a:AAAAAAAAAAAAAAAA"))).toBe(TOAST.expired);
     expect(toast(await press(`wm:a:${token}`, { chat: -100777 }))).toBe(TOAST.expired);
+    expect((await proposalOf("wp-f"))?.status).toBe("pending");
+  });
+
+  it("treats a pre-upgrade 96-bit button as expired, even on a pending proposal (#2897)", async () => {
+    await mirroredProposals([finding()]);
+    const saved = JSON.parse(await readFile(mirrorFile, "utf8"));
+    const legacy = "L".repeat(16);
+    saved.chats[String(CHAT)].actions.push({ token: legacy, proposalId: "wp-f" });
+    await writeFile(mirrorFile, JSON.stringify(saved));
+    expect(toast(await press(`wm:a:${legacy}`))).toBe(TOAST.expired);
+    expect(toast(await press(`wm:r:${legacy}`))).toBe(TOAST.expired);
     expect((await proposalOf("wp-f"))?.status).toBe("pending");
   });
 

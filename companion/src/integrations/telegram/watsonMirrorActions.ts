@@ -68,13 +68,21 @@ export function telegramApprovable(p: WatsonProposal | undefined): p is WatsonPr
 /** The two decisions a button can carry. Never "undo". */
 export type MirrorButtonAction = "apply" | "reject";
 
-const TOKEN_BYTES = 12; // 16 base64url characters, 96 random bits
-const CALLBACK_RE = /^wm:([ar]):([A-Za-z0-9_-]{16})$/;
+const TOKEN_BYTES = 16; // #2897: 128 random bits
+/** Length of a current token: 16 bytes as base64url, no padding. */
+export const ACTION_TOKEN_LENGTH = 22;
+const CURRENT_TOKEN_RE = /^[A-Za-z0-9_-]{22}$/;
+// #2897: a 16-character token is a pre-upgrade (96-bit) button still sitting in a chat. It parses, so
+// the presser is told it expired; the store never honours it.
+const CALLBACK_RE = /^wm:([ar]):([A-Za-z0-9_-]{22}|[A-Za-z0-9_-]{16})$/;
+
+/** Is this a token the store may honour (current length and alphabet)? Legacy 16-character ones are not. */
+export const isCurrentActionToken = (token: string): boolean => CURRENT_TOKEN_RE.test(token);
 
 /** A fresh opaque token. It maps to (chat, proposal) in the mirror store; it carries no ids itself. */
 export const newActionToken = (): string => randomBytes(TOKEN_BYTES).toString("base64url");
 
-/** `wm:a:<token>` / `wm:r:<token>`: 21 bytes, inside Telegram's 64-byte callback_data limit. */
+/** `wm:a:<token>` / `wm:r:<token>`: 27 bytes, inside Telegram's 64-byte callback_data limit. */
 export const encodeMirrorCallback = (action: MirrorButtonAction, token: string): string =>
   `wm:${action === "apply" ? "a" : "r"}:${token}`;
 
