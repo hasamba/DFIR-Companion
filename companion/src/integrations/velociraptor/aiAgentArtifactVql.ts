@@ -180,3 +180,18 @@ export function sysmonSigmaSourceVql(preamble: string): string {
     `    "the Sysmon event log is not on this endpoint" AS Detail FROM foreach(row=cfg.SysmonTitles) })`,
   ].join("\n");
 }
+
+/**
+ * #2907: the compiled Sigma rules left out of this run because they walk the whole disk and the
+ * "whole-disk-files" scope was not ticked. One coverage row each, so the report says why they did not
+ * run instead of leaving them silently absent. The titles come from cfg, never the VQL.
+ */
+export function skippedSigmaSourceVql(preamble: string): string {
+  return [
+    preamble,
+    `SELECT ${MARK}, "coverage" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime,`,
+    `  "Sigma" AS Source, Title AS RuleName, "not run: whole-disk file checks are off" AS Status,`,
+    `  "this rule searches the whole C: drive; tick Whole-disk file checks (slow) to run it" AS Detail`,
+    `FROM foreach(row=cfg.SkippedSigmaTitles)`,
+  ].join("\n");
+}

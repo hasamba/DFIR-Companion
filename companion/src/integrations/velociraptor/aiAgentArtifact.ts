@@ -22,6 +22,7 @@ import {
   cfgPreamble,
   compiledSigmaSourceVql,
   inventorySourceVql,
+  skippedSigmaSourceVql,
   sysmonSigmaSourceVql,
   yaraSourceVql,
 } from "./aiAgentArtifactVql.js";
@@ -41,8 +42,9 @@ const MODEL_SCAN_MAX_BYTES = 2 * 1024 * 1024 * 1024;
  * always matches what the runs that named it executed (§13.8). Bump it with every VQL change.
  *   2 — #2722: the preserved copy's hash, and per-rule Sigma coverage rows.
  *   3 — the Inventory source uses if() in place of `||` (`x || []` does not parse).
+ *   4 — #2907: whole-disk compiled Sigma rules are opt-in; a SigmaSkipped source reports the rest.
  */
-export const AI_AGENT_VQL_TEMPLATE_VERSION = 3;
+export const AI_AGENT_VQL_TEMPLATE_VERSION = 4;
 const SYSMON_LOG = "C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx";
 
 export interface AiAgentRunOptions {
@@ -184,8 +186,24 @@ export function aiAgentNameSegment(digest: string): string {
   return `D${digest}`;
 }
 
-function addSigma(set: AiAgentRuleSet, cfg: Record<string, unknown>) {
-  const compiled = set.sigma.filter((d) => d.mode === "compiled");
+/** The scope that opts in to the compiled Sigma rules that walk the whole disk (#2907). */
+export const WHOLE_DISK_SCOPE = "whole-disk-files";
+// A compiled block whose glob() list has a `C:/**` root: the walk visits every folder on the drive.
+// Matched on the generated glob(globs=[…]) argument only, never on a detection value elsewhere.
+const WHOLE_DISK_GLOB = /glob\(globs=\[[^\]]*"C:\/\*\*/;
+
+/** Does any block of this compiled Sigma rule walk the whole disk? Then the whole rule is opt-in. */
+export function sigmaWalksWholeDisk(blocks: readonly string[]): boolean {
+  return blocks.some((b) => WHOLE_DISK_GLOB.test(b));
+}
+
+function addSigma(set: AiAgentRuleSet, cfg: Record<string, unknown>, wholeDisk: boolean) {
+  const all = set.sigma.filter((d) => d.mode === "compiled");
+  // On a real endpoint four such rules ran one after another and two of them alone used up the
+  // two-hour limit, so they run only when the analyst ticks the slow scope.
+  const compiled = wholeDisk ? all : all.filter((d) => !sigmaWalksWholeDisk(d.vqlBlocks));
+  const skipped = wholeDisk ? [] : all.filter((d) => sigmaWalksWholeDisk(d.vqlBlocks));
+  cfg.SkippedSigmaTitles = skipped.map((d) => ({ Title: d.title }));
   const sigmaKeys: { key: string; block: string }[] = [];
   compiled.forEach((d, i) => {
     d.vqlBlocks.forEach((block, j) => {
@@ -215,7 +233,7 @@ function addSigma(set: AiAgentRuleSet, cfg: Record<string, unknown>) {
       { File: d.file, Grade: set.sigmaGrades[d.title] ?? sigmaLevelGrade(d.level), Tags: d.tags.join(", ") },
     ]),
   );
-  return { sigmaKeys, sysmonCount: sysmon.length };
+  return { sigmaKeys, sysmonCount: sysmon.length, skippedCount: skipped.length };
 }
 
 function indent(vql: string): string {
@@ -282,7 +300,8 @@ export function buildAiAgentArtifact(
   const uploadMaxBytes = Math.max(0, Math.floor(opts.uploadMaxBytes ?? AI_AGENT_DEFAULT_UPLOAD_MAX_BYTES));
   const scopes = selectScopes(set, opts);
   const { cfg, keys } = buildConfig(set, scopes, uploadMaxBytes);
-  const { sigmaKeys, sysmonCount } = addSigma(set, cfg);
+  const wholeDisk = scopes.some((s) => s.id === WHOLE_DISK_SCOPE);
+  const { sigmaKeys, sysmonCount, skippedCount } = addSigma(set, cfg, wholeDisk);
   if (keys.length === 0 && sigmaKeys.length === 0 && sysmonCount === 0)
     throw new AiAgentArtifactError("the AI-agent rule set has no rule that can run");
   const json = JSON.stringify(cfg);
@@ -309,6 +328,7 @@ export function buildAiAgentArtifact(
   sources.push(["Inventory", inventorySourceVql(pre)]);
   for (const s of sigmaKeys) sources.push([`Sigma${s.key}`, compiledSigmaSourceVql(pre, s.block, s.key)]);
   if (sysmonCount) sources.push(["SigmaSysmon", sysmonSigmaSourceVql(pre)]);
+  if (skippedCount) sources.push(["SigmaSkipped", skippedSigmaSourceVql(pre)]);
   const name = `${AI_AGENT_ARTIFACT_PREFIX}${aiAgentNameSegment(digest)}`;
   const artifacts = packArtifacts(name, set.version, parts, sources);
   for (const a of artifacts) guard(a.yaml, a.name);

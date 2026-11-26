@@ -100,8 +100,9 @@ describe("AI Agent Forensics panel", () => {
     expect(card).toContain("/status`");
     expect(card).toContain("Status: ");
     expect(card).toContain(
-      "added to this case's forensic timeline automatically about 30 minutes after the run started",
+      "added to this case's forensic timeline automatically once every endpoint has finished",
     );
+    expect(card).toContain("created Paused in Velociraptor on purpose"); // #2907
     expect(card).toContain("Download report (Markdown)");
     expect(card).toContain("Download findings (spreadsheet)");
     expect(card).toContain("Download rule coverage (spreadsheet)");

@@ -144,6 +144,7 @@ export interface VeloHuntJob {
   // re-import of this hunt skips the upload-content read entirely; only a manifest is kept.
   uploadPolicy?: "external";
   aiAgentRunId?: string; // the AI Agent Forensics run this hunt carries (aiAgentRunStore.ts)
+  aiAgentEndpointCount?: number; // endpoints added to that run's paused hunt: the collect waits for each (#2907)
   sensitive?: boolean; // the run may have copied credential files into Velociraptor's file store (§14.3)
 }
 

@@ -16,6 +16,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { pollHuntStatusOnce, type HuntPollDeps } from "../integrations/velociraptor/huntStatusPoller.js";
+import { aiAgentRunReadyToCollect } from "../integrations/velociraptor/aiAgentCollectReady.js";
 import { getServerLogger, logLine } from "../logging/serverLogger.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
@@ -129,7 +130,11 @@ export function createVeloHuntStatusTimers(deps: VeloHuntStatusTimersDeps): Velo
       return;
     }
 
-    const pollDeps: HuntPollDeps = { getState: (id) => client.huntStatus(id), log: logLine };
+    const pollDeps: HuntPollDeps = {
+      getState: (id) => client.huntStatus(id),
+      log: logLine,
+      aiAgentReady: (j) => aiAgentRunReadyToCollect(client, j),
+    };
     const outcome = await pollHuntStatusOnce(job, pollDeps);
     // #2403: the answer is only good if nothing moved the hunt on while this poll waited — most of all
     // a collect, which stops the timer but cannot stop a poll already on the network. A stale poll

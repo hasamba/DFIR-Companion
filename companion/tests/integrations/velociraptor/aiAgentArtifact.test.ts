@@ -79,12 +79,13 @@ describe("AI Agent Forensics artifact: shape", () => {
       expect((parseYaml(p.yaml) as { export: string }).export).toMatch(/^LET aiagent_part_/);
   });
 
-  it("runs YARA, inventory, the 8 compiled Sigma rules and the Sysmon engine", () => {
+  // #2907: the compiled rules that walk the whole disk are opt-in, so 4 of the 8 run by default (7 blocks).
+  it("runs YARA, inventory, the compiled Sigma rules that stay off the whole disk, and the Sysmon engine", () => {
     const names = doc.sources.map((s) => s.name);
     expect(names[0]).toBe("Yara");
     expect(names).toContain("Inventory");
     expect(names).toContain("SigmaSysmon");
-    expect(names.filter((n) => n.startsWith("SigmaG")).length).toBeGreaterThanOrEqual(8);
+    expect(names.filter((n) => n.startsWith("SigmaG")).length).toBeGreaterThanOrEqual(7);
     expect(doc.sources.every((s) => s.query.includes("DFIRCompanionAIAgent"))).toBe(true);
   });
 

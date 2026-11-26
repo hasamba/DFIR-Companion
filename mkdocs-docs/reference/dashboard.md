@@ -1022,9 +1022,17 @@ Velociraptor: **Running — 0 of 1 endpoint(s) finished; 1,172 rows collected so
 endpoint finished. An endpoint Velociraptor has not reached yet is counted as **not started yet
 (offline?)**, and a collection that ended with an error is counted and named. The three newest cards check it when the panel
 opens; older cards have a **Check status** button. The card also says where results go: rule hits are
-added to the case's forensic timeline automatically about 30 minutes after the run started, or
-straight away when you press **Refresh results**, and the list of AI tools and MCP servers goes to the
-super-timeline. A sweep's hits reach a case only through **Add to case**. When the server's
+added to the case's forensic timeline automatically once every endpoint's collection has ended (at
+the latest about 2 hours 15 minutes after the run started, the per-endpoint limit plus a grace period),
+or straight away when you press **Refresh results**, and the list of AI tools and MCP servers goes to
+the super-timeline. A collection that ended at the 2-hour limit is called out: its results may be
+partial. Velociraptor shows the run's hunt as **Paused** on purpose — that keeps it on the picked
+endpoints only — and it still runs on them; nobody needs to start it.
+
+The compiled Sigma rules that search the whole C: drive (model files, PROMPTFLUX scripts, the ARTEX
+probe file, SesameOp loader files) run only when **Whole-disk file checks (Sigma, slow)** is ticked:
+on a real endpoint those searches alone used up the 2-hour limit. Left unticked, the coverage report
+lists them as **not run: whole-disk file checks are off**. A sweep's hits reach a case only through **Add to case**. When the server's
 `Windows.Triage.Targets` is too old to know the AI-agent files, the card says the run still checks
 them for tampering and lists the AI tools, but does not save copies of the files in Velociraptor.
 
