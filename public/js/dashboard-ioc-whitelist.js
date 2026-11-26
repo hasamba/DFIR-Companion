@@ -116,6 +116,7 @@
       return;
     }
     msg.textContent = "applying…";
+    const fpg = typeof falsePositiveGen === "function" ? falsePositiveGen() : undefined; // #2933
     fetch(`/cases/${caseId}/ioc-whitelist/apply`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -130,7 +131,7 @@
       })
       .then((j) => {
         msg.textContent = `${j.matched} matched · ${j.added} newly marked false positive`;
-        if (j.legitimate) commitFalsePositives(caseId, j.legitimate);
+        if (j.legitimate) commitFalsePositives(caseId, j.legitimate, fpg);
       })
       .catch((e) => {
         msg.textContent =

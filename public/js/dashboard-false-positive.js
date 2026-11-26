@@ -215,6 +215,7 @@
           document.getElementById("fpAddToWhitelist").checked;
         const caseId = document.getElementById("caseId").value.trim();
         const onDone = fpTarget.onDone;
+        const fpg = typeof falsePositiveGen === "function" ? falsePositiveGen() : undefined; // #2933
         document.getElementById("fpMsg").textContent =
           `marking ${items.length} false positive…`;
         try {
@@ -243,7 +244,7 @@
             if (!r.ok) throw new Error("HTTP " + r.status);
             markers = await r.json();
           }
-          commitFalsePositives(caseId, markers);
+          commitFalsePositives(caseId, markers, fpg);
           closeFalsePositiveModal();
           if (onDone) onDone();
           document.getElementById("status").textContent =

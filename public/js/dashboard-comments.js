@@ -36,7 +36,10 @@
   // empty index). Only the newest answer for the case on screen is applied.
   let commentsCase = null;
   let commentsSeq = 0;
+  // #2933: a post's answer applies only in the generation it was sent in (owner change / cancel).
+  let commentsGen = 0;
   function clearComments(caseId) {
+    commentsGen++;
     commentsCase = caseId;
     commentsByTarget = new Map();
     if (commentTarget) closeCommentModal();
@@ -118,7 +121,8 @@
     const caseId = document.getElementById("caseId").value.trim();
     const text = document.getElementById("commentText").value.trim();
     if (!caseId || !commentTarget || !text) return;
-    const msg = document.getElementById("commentMsg");
+    const msg = document.getElementById("commentMsg"), gen = commentsGen;
+    const live = () => gen === commentsGen && commentsOnScreen(caseId);
     msg.textContent = "posting…";
     fetch(`/cases/${caseId}/comments`, {
       method: "POST",
@@ -136,11 +140,12 @@
         return r.json();
       })
       .then(() => {
+        if (!live()) return; // #2933: the analyst switched case, or cancelled and reopened it
         document.getElementById("commentText").value = "";
         msg.textContent = "";
         loadComments(caseId);
       })
-      .catch((e) => (msg.textContent = "failed: " + e.message));
+      .catch((e) => live() && (msg.textContent = "failed: " + e.message));
   }
   function deleteComment(id) {
     const caseId = document.getElementById("caseId").value.trim();

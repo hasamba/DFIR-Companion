@@ -15,6 +15,7 @@
   // no window, no info — not a claim about this case); only the newest answer for it paints.
   let corrCase = null;
   let corrSeq = 0;
+  let corrGen = 0; // #2933: Apply's answer paints only in the generation it was sent in (owner change / cancel)
   function blankCorrProfile() {
     const sel = document.getElementById("corrProfileSel");
     const winEl = document.getElementById("corrWindowSec");
@@ -27,6 +28,7 @@
   function onCorrReset(caseId) {
     if (caseId !== null) return;
     corrSeq++;
+    corrGen++;
     corrCase = null;
     blankCorrProfile();
   }
@@ -34,6 +36,7 @@
     if (!corrOnScreen(caseId)) return; // a late caller for a case the analyst has left
     typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onCorrReset);
     if (corrCase !== caseId) {
+      corrGen++;
       corrCase = caseId;
       blankCorrProfile();
     }
@@ -81,6 +84,7 @@
           ? Math.max(0, parseInt(winEl.value, 10) || 0)
           : 2
         : (CORR_PROFILE_WINDOWS[profileName] ?? 2);
+    const gen = corrGen, live = () => gen === corrGen && corrOnScreen(caseId);
     fetch(`/cases/${caseId}/correlation-profile`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -97,11 +101,13 @@
         return r.json();
       })
       .then((p) => {
+        if (!live()) return; // #2933: the analyst switched case, or cancelled and reopened it
         _updateCorrProfileInfo(p);
         document.getElementById("status").textContent =
           "Correlation profile saved — takes effect on next synthesis.";
       })
       .catch((e) => {
+        if (!live()) return;
         document.getElementById("status").textContent =
           e && e.serverMessage
             ? "Correlation profile not saved: " + e.serverMessage
