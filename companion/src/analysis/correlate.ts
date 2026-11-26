@@ -372,6 +372,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     // longer description wins primary, or second-look would treat their choice as pending again
     // (#932 item 5 part B). promotedAt is the LATEST of any member for the same reason (#1586).
     ...promotionMarks(events), // promotionMerge.ts
+    ...(events.some((e) => e.gradePending) ? { gradePending: true as const } : {}), // #2891: any member
     // artifactName, unlike the fields below, is an ATTRIBUTION of the shown description (which artifact
     // produced this text) — not a neutral shared fact about the underlying process/host/connection — so
     // it must come from the SAME event as `description` (primary), never borrowed from a different

@@ -29,6 +29,7 @@ const KEEPS_SWEEPS = new Set([
   "composition/veloHuntStatusTimers.ts", // a sweep's hunt must keep being polled and collected
   "composition/dropFolder.ts",
   "composition/maintenanceTasks.ts",
+  "composition/ungradedRecovery.ts", // #2891 a sweep case's own import rows are graded like any case's
   "composition/veloMonitors.ts",
   "analysis/operationalCapacity.ts",
   "analysis/custodyIntegrity.ts",

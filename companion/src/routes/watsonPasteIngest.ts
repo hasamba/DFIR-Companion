@@ -98,6 +98,7 @@ async function parseInSection(
   });
   const deps = {
     ...settleDeps,
+    markGradePending: false, // #2891: a re-grade must never apply a raise the analyst did not accept
     autoTagImported: importTagger(
       { options, store: ctx.store, runStateExclusive: ctx.runStateExclusive, logLine },
       held.tag,

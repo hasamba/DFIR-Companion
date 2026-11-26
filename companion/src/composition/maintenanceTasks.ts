@@ -269,6 +269,8 @@ export interface PostListenDeps {
   cloudCollectRecoverers?: readonly CloudCollectRecoverer[];
   /** SO-CRATES jobs a restart left unfinished (#2408): resume or mark interrupted. Skipped on the demo. */
   socratesRecovery?: () => Promise<void>;
+  /** #2891: re-grade the rows a crash or a failed tagger left waiting (composition/ungradedRecovery.ts). */
+  regradeUngraded?: () => Promise<void>;
 }
 
 /**
@@ -287,6 +289,7 @@ export function startPostListenTasks({
   auditExporter,
   cloudCollectRecoverers = [],
   socratesRecovery,
+  regradeUngraded,
 }: PostListenDeps): void {
   void startCloudCollectRecovery({ demoMode, recoverers: cloudCollectRecoverers, log: logLine });
   // #2858: cases created before ids were recorded at create get recorded now, so removing one of their
@@ -294,6 +297,11 @@ export function startPostListenTasks({
   void store
     .rememberExistingCaseIds()
     .catch((e) => warnLine(`[cases] could not record the existing case ids: ${(e as Error).message}`));
+  // It never rejects; the catch is a guard. Not skipped on the demo: it only grades a case's own rows.
+  if (regradeUngraded)
+    void regradeUngraded().catch((e) =>
+      warnLine(`[import] start-up re-grade failed: ${(e as Error).message}`),
+    );
   // SO-CRATES does not run on the public demo, and a leftover job there must not be picked up.
   if (socratesRecovery && !demoMode)
     void socratesRecovery().catch((e) =>

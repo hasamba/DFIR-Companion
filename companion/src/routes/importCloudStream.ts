@@ -115,7 +115,8 @@ async function importCloudFileLogged(
         ),
       preGradeRules: await preGradeRules(ctx),
       onSuperRows:
-        base.cloudBatch?.superRows ?? (settle ? (rows) => settle.autoTagImported(caseId, rows) : undefined),
+        base.cloudBatch?.superRows ??
+        (settle ? async (rows) => void (await settle.autoTagImported(caseId, rows)) : undefined),
     });
     stashDisclosure(caseId, storedName, disclosure);
     log.info(formatImportMerged(caseId, storedName, Date.now() - startedAt), { caseId });

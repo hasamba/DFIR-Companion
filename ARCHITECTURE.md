@@ -222,6 +222,18 @@ severity — otherwise the next import silently undid the promotion (#1432). A m
 and the four coverage notes the merge builds (#2497, recognised by fixed id plus the `Coverage`
 source in `coverageEventTime.ts`) are exempt the same way; the order is unchanged.
 
+The second row demote never touches is one whose promotion window has not happened yet (#2891). The
+import stamp writes `gradePending` in the same row write as `importedAt` / `importBatchId`, and only
+the tagger's finished run removes it (`analysis/gradeMark.ts`). The case-wide demote
+(`composition/importDemote.ts`) keeps a row that still carries it, unless the settle vouches that the
+tagger just finished on it. A crash between the stamp and the tag, or a tagger that failed internally
+(`autoTagNewEvents` now reports the rows it did not finish on), therefore leaves the rows in the
+forensic timeline instead of demoting them untagged. Start-up recovery (`composition/ungradedRecovery.ts`)
+finds them with one SQL query of the forensic timeline and runs dual-write → tag → demote on them. The
+mark means "pending", not "graded", so rows written before it existed count as graded, and so do rows
+from writers that never cross the settle stamp. The super-timeline copies never carry it. A Watson
+paste writes no mark, because its tagger holds raises for the analyst.
+
 The consequence to hold on to: **a new tagger rule changes what future collections surface to the
 model, not what past ones do.** A later "Run tagger" still evaluates the historical super-timeline
 rows and still writes their tags — so they become findable by tag — but it cannot raise them back

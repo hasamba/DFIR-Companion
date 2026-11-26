@@ -1,4 +1,5 @@
 import type { AppOptions } from "./appOptions.js";
+import type { TagOutcome } from "../analysis/gradeMark.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
 import type { SuperEvictionTally } from "../analysis/superTimelineStore.js";
@@ -27,7 +28,7 @@ import { settleImportOrRecover } from "../routes/importRowRecovery.js";
 export interface StreamedSettleDeps {
   options: AppOptions;
   runStateExclusive: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   demote: ImportDemote;
 }
 
