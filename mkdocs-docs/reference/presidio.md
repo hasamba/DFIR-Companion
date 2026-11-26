@@ -133,7 +133,7 @@ Three kinds of PII are **only** ever found by Presidio, and go undetected withou
 
 The eleven checkboxes above the names row are all built-in detectors and stay available either way. For **Credit cards**, **Phone numbers** and **Emails**, Presidio only adds recall on formats the local patterns miss (Luhn + issuer prefix; E.164, Israeli and separated NANP; the email regex) — it does not provide them, so switching Presidio off does not stop those values being masked.
 
-Until Presidio is configured, a value you already know can be masked by adding it under **Custom entities** — a name with category `PERSON`, an IBAN or anything else with `OTHER`.
+Until Presidio is configured, a value you already know can be masked by adding it under **Custom entities** — a name with category `PERSON`, an IBAN or anything else with `OTHER`. The list also takes wildcard patterns (`prod-*`) and IP ranges (`10.20.0.0/16`); see [Custom entities](ai-analysis.md#custom-entities-exact-values-patterns-and-ip-ranges).
 
 ## The approval flow
 

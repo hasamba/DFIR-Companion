@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { CustomEntitiesStore } from "../../src/analysis/anonEntities.js";
 import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
+import { DiscoveredEntitiesStore } from "../../src/analysis/anonDiscovered.js";
 import { createApp } from "../../src/server.js";
 import type { CustomEntity } from "../../src/analysis/anonymize.js";
 
@@ -17,13 +18,14 @@ import type { CustomEntity } from "../../src/analysis/anonymize.js";
 
 let app: ReturnType<typeof createApp>;
 let custom: CustomEntitiesStore;
+let cases: CaseStore;
 let pending: PresidioPendingStore;
 const JANE: CustomEntity = { value: "Jane Doe", category: "PERSON" };
 const DC9: CustomEntity = { value: "DC9", category: "HOST" };
 
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "dfir-anonversion-"));
-  const cases = new CaseStore(root);
+  cases = new CaseStore(root);
   await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   app = createApp(cases, { stateStore: new StateStore(cases) });
   custom = new CustomEntitiesStore(cases);
@@ -154,5 +156,47 @@ describe("versioned settings save (#1839)", () => {
     expect(res.status).toBe(409);
     expect(res.body.error).toBe("anon_control_stale");
     expect((await control()).body.enabled).toBe(true);
+  });
+});
+
+describe("pattern entities on save and load (#2946)", () => {
+  it("refuses a too-broad pattern or a malformed range with the reason, and saves nothing", async () => {
+    const w = await openWindow();
+    for (const bad of [
+      { value: "*", category: "HOST", match: "pattern" },
+      { value: "10.20.0.0/40", category: "IP", match: "pattern" },
+      { value: "10.0.0.0/7", category: "IP", match: "pattern" },
+    ]) {
+      const res = await save([bad], w.version);
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: "anon_entity_invalid", value: bad.value });
+      expect(typeof res.body.reason).toBe("string");
+    }
+    expect(await values()).toEqual([]);
+  });
+
+  it("saves a valid pattern, keeps its flag, and reports the known values it covers", async () => {
+    const w = await openWindow();
+    const res = await save(
+      [
+        { value: "prod-*", category: "HOST", match: "pattern" },
+        { value: "10.20.0.0/16", category: "IP", match: "pattern" },
+      ],
+      w.version,
+    );
+    expect(res.status).toBe(200);
+    await new DiscoveredEntitiesStore(cases).addDiscovered("c1", [
+      { value: "prod-web01", category: "HOST" },
+      { value: "prod-db02", category: "HOST" },
+      { value: "myprod-web01", category: "HOST" },
+      { value: "10.20.1.1", category: "IP" },
+      { value: "10.21.1.1", category: "IP" },
+    ]);
+    const got = await request(app).get("/cases/c1/anon-entities");
+    expect(got.body.custom[0]).toEqual({ value: "prod-*", category: "HOST", match: "pattern" });
+    expect(got.body.patterns).toEqual([
+      { value: "prod-*", category: "HOST", count: 2, sample: ["prod-web01", "prod-db02"] },
+      { value: "10.20.0.0/16", category: "IP", count: 1, sample: ["10.20.1.1"] },
+    ]);
   });
 });

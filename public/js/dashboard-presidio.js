@@ -5,10 +5,8 @@
 // splitting it across four files means the day someone assigns without rendering, the badge goes
 // quietly stale. setPresidioPending() is that operation, owned here.
 (function () {
-  // Moved here from dashboard.html (#415). All six of the anonymization block's bindings —
-  // ANON_CATEGORIES, ANON_ENTITY_CATEGORIES, anonAuto, anonControl, anonCustom, anonSuppressed —
-  // were read by THIS module and nothing else, while the page held the declarations and the four
-  // loaders. Same shape as the pinned-findings repair: the panel moved out, its state did not.
+  // Moved here from dashboard.html (#415): the anonymization block's six bindings were read by
+  // THIS module alone, while the page held the declarations and the four loaders.
   const ANON_CATEGORIES = [
     ["IP", "IP addresses"],
     ["USER", "Usernames"],
@@ -106,10 +104,11 @@
         if (currentCase() !== caseId) return; // a late answer for a case the analyst has left
         anonAuto = d.auto || {};
         anonSuppressed = d.suppressed || [];
-        if (customToo === true) setCustomBase(caseId, d.custom, d.customVersion);
+        if (customToo === true) setCustomBase(caseId, d.custom, d.customVersion, d.patterns);
       });
   }
-  function setCustomBase(caseId, list, version) {
+  function setCustomBase(caseId, list, version, patterns) {
+    if (patterns) window.setAnonPatternReports(patterns); // #2946: per-pattern match counts
     anonCustomBase = (list || []).map((e) => ({ ...e }));
     anonCustom = anonCustomBase.map((e) => ({ ...e }));
     anonCustomVersion = typeof version === "number" ? version : null;
@@ -128,7 +127,7 @@
     let dropped = 0;
     for (const w of working) {
       const b = baseBy.get(key(w));
-      if (b && b.value === w.value && b.category === w.category) continue; // not an edit
+      if (b && b.value === w.value && b.category === w.category && b.match === w.match) continue; // not an edit
       if (at.has(key(w))) merged[at.get(key(w))] = { ...w };
       else if (merged.length >= max) {
         dropped++;
@@ -456,7 +455,7 @@
       ? anonCustom
           .map(
             (e, i) =>
-              `<div class="anon-cust-row"><span class="anon-chip">${esc(e.value)}</span><span data-safe-style="color:var(--text-muted);font-size:11px">${esc(e.category)}</span><button data-i="${i}" class="anon-cust-rm" title="remove">✕</button></div>`,
+              `<div class="anon-cust-row"><span class="anon-chip">${esc(e.value)}</span><span data-safe-style="color:var(--text-muted);font-size:11px">${esc(e.category)}</span>${window.anonPatternTag(e)}<button data-i="${i}" class="anon-cust-rm" title="remove">✕</button></div>`,
           )
           .join("")
       : "<em data-safe-style='color:var(--text-muted)'>none added</em>";
@@ -473,8 +472,9 @@
     const val = valEl.value.trim();
     const cat = document.getElementById("anonCustCat").value;
     if (!val) return;
-    if (!anonCustom.some((e) => e.value.toLowerCase() === val.toLowerCase()))
-      anonCustom.push({ value: val, category: cat });
+    const entry = window.anonCustomEntry(val, cat); // #2946: a pattern / range, or why it is refused
+    if (typeof entry === "string") return void (document.getElementById("anonMsg").textContent = entry);
+    if (!anonCustom.some((e) => e.value.toLowerCase() === val.toLowerCase())) anonCustom.push(entry);
     valEl.value = "";
     renderCustomEntities();
   }
@@ -718,6 +718,7 @@
       .then(({ r, d }) => {
         if (currentCase() !== caseId) throw new Error("case changed");
         if (r.status === 409 && d.error === "anon_entities_stale") return staleCustom(caseId, d);
+        if (r.status === 400 && d.error === "anon_entity_invalid") throw new Error(`${d.value}: ${d.reason}`);
         if (!r.ok) throw new Error("entities HTTP " + r.status);
         setCustomBase(caseId, d.custom, d.customVersion);
         return postJson(`/cases/${caseId}/anon-control`, control).then(({ r: rc, d: c }) => {

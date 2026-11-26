@@ -141,7 +141,10 @@ function splitTrail(m: string): [string, string] {
 function knownForAnonymizer(known: KnownEntities): KnownEntities {
   // Hosts and accounts go through the custom list so ONE longest-first pass orders them: without
   // that, the bare user "alice" would fire inside host "WKS-ALICE" before the host pass ran.
-  const custom: CustomEntity[] = (known.custom ?? []).filter((c) => c.category !== "PATH");
+  // A PATH pattern (#2946) goes here too: the literal path pass below cannot read a wildcard.
+  const custom: CustomEntity[] = (known.custom ?? []).filter(
+    (c) => c.category !== "PATH" || c.match === "pattern",
+  );
   for (const h of known.hosts) custom.push({ value: h, category: "HOST" });
   // A USER entity is tokenized by its bare name (#1780), so "CORP\alice", "alice@corp.example" and
   // a bare "alice" share one token. Common words ("admin", "test") are never replaced bare.
@@ -171,7 +174,9 @@ export function createSupportRedactor(input: SupportRedactorInput): SupportRedac
   const roots = [...new Set(input.roots.filter(isAbsoluteRoot))].sort((a, b) => b.length - a.length);
   const rootRes = roots.map((r) => new RegExp(`${escapeRegExp(r)}(?:[\\\\/]${SEG})*[\\\\/]?`, "giu"));
   const customPaths = literalRegExp(
-    (input.known.custom ?? []).filter((c) => c.category === "PATH").map((c) => c.value),
+    (input.known.custom ?? [])
+      .filter((c) => c.category === "PATH" && c.match !== "pattern")
+      .map((c) => c.value),
   );
   const anonymizer = createAnonymizer(
     { enabled: true, categories: ALL_BUT_PATH, redactSecrets: true, maskPublicIps: true },

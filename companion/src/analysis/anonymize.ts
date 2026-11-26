@@ -3,7 +3,14 @@ import { isIP } from "node:net";
 import type { InvestigationState } from "./stateTypes.js";
 import { extractAccounts, FILE_EXT_USER } from "./assetGraph.js";
 import { embeddedIpv4, expandIpv6Groups } from "./iocValue.js";
-import { escapeRegExp } from "./regexEscape.js";
+import { exactValueRegExp } from "./anonPatterns.js";
+import {
+  compileCustomEntities,
+  findCustomSpans,
+  rangeCategory,
+  reserveCustomIpv6,
+  spliceSpans,
+} from "./anonCustomSpans.js";
 import { SECRET_PLACEHOLDER, redactSecretText } from "./anonSecrets.js";
 import { scanTokenLiterals } from "./anonTokenLiterals.js";
 import {
@@ -83,6 +90,7 @@ export function isAnonToken(s: string): boolean {
 export interface CustomEntity {
   value: string;
   category: AnonTokenCategory;
+  match?: "pattern"; // #2946: a wildcard (any category) or a CIDR range (IP/EXTIP); absent = exact
 }
 
 export interface AnonPolicy {
@@ -132,41 +140,6 @@ export interface AnonPair {
 
 export { SECRET_PLACEHOLDER };
 export { israeliIdValid, luhnValid } from "./anonChecksums.js";
-
-// Exact-match tokenizing of a KNOWN value (hostname, internal domain, analyst-added or
-// Presidio-approved custom entity) needs a word boundary so "DC01" doesn't fire inside "DC01X"
-// and "Jane" doesn't fire inside "Janes". JS `\b` CANNOT be used for that here: it is defined
-// against ASCII `\w` ([A-Za-z0-9_]), so a value whose first or last character is outside that
-// set — every Hebrew, Cyrillic, Greek, CJK or accented name, and anything starting with "+" —
-// puts `\b` between two non-word characters, where it never matches. The value was then NEVER
-// masked, silently and permanently: once approved it lives in known.custom, so the Presidio
-// gate sees it as already-known and never asks again, and the analyst is told it is tokenized
-// while it goes to the provider (and into the redacted export) in cleartext. This branch ships
-// Israeli Teudat Zehut and Israeli phone detectors, so non-Latin values are the target domain.
-//
-// The replacement is an explicit Unicode-aware boundary: refuse to match when the character
-// immediately before/after is a letter, a number or "_" in ANY script. That keeps the
-// anti-substring property for ASCII while making it work for every other script.
-//
-// This is deliberately NOT `\b`-equivalent in both directions, and the difference is worth
-// knowing. `\b` is a TRANSITION test, so for a value whose own edge is a non-word character it
-// inverts: `\b-corp\b` DID fire inside "ACME-corp", and `\b\.local\b` DID fire inside
-// "corp.local", because the neighbouring "E"/"p" supplied the transition. These lookarounds ask
-// only "is the neighbour a word character", so neither fires now. That is the correct reading of
-// the anti-substring rule — a value should not match glued inside a longer word — and it is
-// unreachable from the case-derived lists, whose values are whole hostnames and domains. It IS
-// reachable from ANALYST-TYPED custom entities: someone entering ".corp.local" as a suffix
-// expecting it to catch "dc01.corp.local" gets no match. Enter the whole value ("dc01.corp.local")
-// or rely on known.internalDomains, which already handles the parent-domain case.
-//
-// The `u` flag
-// is required for \p{…} and is safe with escapeRegExp — see regexEscape.ts: every character it
-// escapes is a legal identity escape in Unicode mode, so no escaped value can turn into an
-// "Invalid regular expression" under `u`.
-const UNICODE_WORD = "\\p{L}\\p{N}_";
-function exactValueRegExp(value: string): RegExp {
-  return new RegExp(`(?<![${UNICODE_WORD}])${escapeRegExp(value)}(?![${UNICODE_WORD}])`, "giu");
-}
 
 // RFC1918 + loopback + link-local + CGNAT = "internal/victim" IPv4s we tokenize as ANON_IP_n.
 // A public IP is frequently adversary C2 — classification here is unchanged by maskPublicIps;
@@ -361,8 +334,10 @@ export function createAnonymizer(
     (known.suppressed ?? []).map((s) => s.toLowerCase()).filter((s) => !hidden.has(s)),
   );
 
+  const compiled = compileCustomEntities(known.custom ?? [], policy.maskPublicIps);
+  let forceCustom = false; // true while a custom match mints: the explicit "hide this" beats a veto
   function assign(category: AnonTokenCategory, real: string): string {
-    if (suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
+    if (!forceCustom && suppressed.has(real.toLowerCase())) return real; // suppressed → keep the real value verbatim
     const key = `${category}:${real.toLowerCase()}`;
     const existing = toToken.get(key);
     if (existing) return existing;
@@ -428,7 +403,7 @@ export function createAnonymizer(
     return assign("USER", user);
   }
   function accountToken(account: string): string {
-    if (suppressed.has(account.toLowerCase())) return account; // the analyst vetoed this account
+    if (!forceCustom && suppressed.has(account.toLowerCase())) return account; // analyst veto
     // A registry hive, Windows principal, tactic folder or Folder\file.exe is not a person: it keeps
     // its old single whole-value token and teaches the bare pass nothing ("evil.exe", "Execution").
     if (isNoiseAccount(account) || FILE_EXT_USER.test(bareUsername(account))) return assign("USER", account);
@@ -532,8 +507,10 @@ export function createAnonymizer(
     // "\uE000IPV6:0\uE000" can arrive in the input. Strip the sentinel before minting any of our own:
     // a forged placeholder must never index the literals table and make restore() invent an
     // address in text that never contained one.
-    const text = t.replace(IPV6_SENTINEL_RE, "").replace(IPV6_RE, (m) => {
-      if (!isInternalIpv6(m) && !isMaskableIpv6(m)) return m; // detector false positive — leave it alone
+    const reserve = (m: string) => `${IPV6_SENTINEL}IPV6:${literals.push(m) - 1}${IPV6_SENTINEL}`;
+    const ranged = reserveCustomIpv6(t.replace(IPV6_SENTINEL_RE, ""), compiled, reserve); // #2946
+    const text = ranged.replace(IPV6_RE, (m) => {
+      if (!policy.categories.IP || (!isInternalIpv6(m) && !isMaskableIpv6(m))) return m; // not ours
       const i = literals.length;
       literals.push(m);
       return `${IPV6_SENTINEL}IPV6:${i}${IPV6_SENTINEL}`;
@@ -545,6 +522,9 @@ export function createAnonymizer(
     return t.replace(IPV6_PLACEHOLDER_RE, (m, idxStr: string) => {
       const ip = literals[Number(idxStr)];
       if (ip === undefined) return m; // belt-and-braces with the strip above: never invent a value
+      const ranged = rangeCategory(compiled, ip);
+      if (ranged) return forcing(() => assign(ranged, ip));
+      if (!policy.categories.IP) return ip;
       if (isInternalIpv6(ip)) return assign("IP", ip);
       return policy.maskPublicIps ? assign("EXTIP", ip) : ip;
     });
@@ -591,23 +571,23 @@ export function createAnonymizer(
     return t.replace(NATID_RE, (m) => (israeliIdValid(m) ? assign("NATID", m) : m));
   }
 
+  // Exact values, wildcard patterns and IPv4 ranges in ONE pass over the text (anonCustomSpans.ts).
+  // An EXTIP entry is skipped there when maskPublicIps is off: the redacted export keeps adversary
+  // infrastructure visible, so a screenshot-discovered public IP must not be re-hidden by value.
   function anonCustom(t: string): string {
-    const custom = known.custom ?? [];
-    if (custom.length === 0) return t;
-    let out = t;
-    for (const { value, category } of [...custom].sort((a, b) => b.value.length - a.value.length)) {
-      if (!value || value.length < 1) continue;
-      // A public IP the anonymizer minted as EXTIP earlier (e.g. discovered from a screenshot,
-      // then persisted into known.custom) must NOT be re-tokenized here when maskPublicIps is
-      // off — otherwise the redacted export (which always disables it) would exact-match and
-      // hide adversary infrastructure that policy explicitly says to keep visible, even though
-      // anonIpv4()/restoreIpv6Literals() themselves correctly leave live public-IP text alone.
-      if (category === "EXTIP" && !policy.maskPublicIps) continue;
-      out = out.replace(exactValueRegExp(value), (m) =>
-        category === "USER" ? accountToken(m) : assign(category, m),
-      );
+    const spans = findCustomSpans(t, compiled);
+    if (spans.length === 0) return t;
+    return forcing(() =>
+      spliceSpans(t, spans, (cat, m) => (cat === "USER" ? accountToken(m) : assign(cat, m))),
+    );
+  }
+  function forcing<T>(fn: () => T): T {
+    forceCustom = true;
+    try {
+      return fn();
+    } finally {
+      forceCustom = false;
     }
-    return out;
   }
 
   function apply(text: string): string {
@@ -622,7 +602,7 @@ export function createAnonymizer(
     // substitute inside one. Only when IP masking is active: if the IP category is off, no later
     // step ever reparses an IPv6 literal, so there is nothing to protect it FROM.
     let ipv6Literals: string[] = [];
-    if (policy.categories.IP) {
+    if (policy.categories.IP || compiled.ranges.length > 0) {
       const reserved = reserveIpv6Literals(t);
       t = reserved.text;
       ipv6Literals = reserved.literals;
@@ -642,10 +622,8 @@ export function createAnonymizer(
     if (policy.categories.HOST) t = anonHosts(t);
     if (policy.categories.DOMAIN) t = anonDomains(t);
     if (policy.categories.USER) t = anonBareUsernames(t);
-    if (policy.categories.IP) {
-      t = restoreIpv6Literals(t, ipv6Literals); // classify + tokenize the reserved literals
-      t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
-    }
+    t = restoreIpv6Literals(t, ipv6Literals); // classify + tokenize the reserved literals
+    if (policy.categories.IP) t = anonIpv4(t); // then any standalone (non-embedded) IPv4 address
     if (policy.categories.CARD) t = anonCards(t);
     if (policy.categories.PHONE) t = anonPhones(t);
     if (policy.categories.NATID) t = anonNatIds(t);

@@ -262,6 +262,13 @@ describe("presidio decisions: the stricter choice wins (#1822)", () => {
     await expectHidden();
   });
 
+  it("refuses Leave visible for a value a custom pattern already hides (#2946)", async () => {
+    await customStore.save("c1", [{ value: "Jane *", category: "PERSON", match: "pattern" }]);
+    const res = await suppress();
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ error: "presidio_not_pending", reason: "already_hidden" });
+  });
+
   it("matches the pending value case-insensitively", async () => {
     await approve();
     expect((await suppress("JANE DOE")).status).toBe(409);
