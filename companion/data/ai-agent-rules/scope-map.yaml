@@ -149,6 +149,63 @@ yara:
 # informational → Info), capped at High. Overrides by rule title go here.
 sigmaGrades: {}
 
+# #2719: folders that are the agents' own working data — session transcripts, installed skills, temp
+# folders and editors' local edit history. They are full of instructions and unusual characters BY
+# DESIGN, so the instruction and hidden-text rules fire on everyday use: on one developer endpoint with
+# normal agent use, 1,143 hits, almost all here. A hit in one of these is graded Info (super-timeline
+# only, still searchable). A named instruction file (the project-instructions names: CLAUDE.md,
+# AGENTS.md, .mcp.json, …) keeps its grade wherever it sits. Fragments are matched case-insensitively
+# against the path with forward slashes.
+agentWorkingData:
+  # session transcripts and session state
+  - /.claude/projects/
+  - /appdata/roaming/claude/claude-code-sessions/
+  - /appdata/roaming/claude/local-agent-mode-sessions/
+  - /localcache/roaming/claude/claude-code-sessions/
+  - /localcache/roaming/claude/local-agent-mode-sessions/
+  - /.codex/sessions/
+  - /.codex/archived_sessions/
+  - /.copilot/session-state/
+  - /.gemini/history/
+  - /chatsessions/
+  - /chateditingsessions/
+  - /emptywindowchatsessions/
+  - /transferredchatsessions/
+  - /.cursor/projects/
+  - /saoudrizwan.claude-dev/tasks/
+  - /rooveterinaryinc.roo-cline/tasks/
+  - /.cline/data/sessions/
+  - /.local/share/opencode/storage/
+  # installed skills
+  - /.claude/skills/
+  - /.claude/plugins/
+  - /.codex/skills/
+  - /.gemini/skills/
+  - /.copilot/skills/
+  - /.config/opencode/skills/
+  # temp, logs, snapshots, caches
+  - /.gemini/tmp/
+  - /.claude/file-history/
+  - /.claude/shell-snapshots/
+  - /.claude/paste-cache/
+  - /.claude/debug/
+  - /.claude/todos/
+  - /.claude/backups/
+  - /.codex/log/
+  - /.codex/shell_snapshots/
+  - /.copilot/logs/
+  - /.local/share/opencode/log/
+  - /.local/share/opencode/snapshot/
+  - /saoudrizwan.claude-dev/checkpoints/
+  - /saoudrizwan.claude-dev/cache/
+  - /rooveterinaryinc.roo-cline/checkpoints/
+  - /rooveterinaryinc.roo-cline/cache/
+  # editors' local edit history (a copy of every file you edit)
+  - /appdata/roaming/code/user/history/
+  - /appdata/roaming/cursor/user/history/
+  - /appdata/roaming/code/backups/
+  - /appdata/roaming/cursor/backups/
+
 # Files every agent session rewrites. A hit dated by one of these has a low-information time: the
 # file's modified time is the last session, not the moment the content was planted.
 lowInformationTimeFiles:
