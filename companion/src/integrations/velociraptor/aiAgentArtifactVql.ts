@@ -41,6 +41,8 @@ export function yaraScopeVql(key: string): { lets: string; hits: string; coverag
     `LET kept_${key} = SELECT *, if(condition=${s}.Upload AND HitSize <= cfg.UploadMaxBytes,`,
     `    then=upload(file=HitPath)) AS Up`,
     `  FROM scan_${key} WHERE NOT Rule IN cfg.Disabled`,
+    `LET n_in_${key} <= SELECT count() AS N FROM files_${key} WHERE Size <= cfg.ScanMaxBytes GROUP BY 1`,
+    `LET n_over_${key} <= SELECT count() AS N FROM files_${key} WHERE Size > cfg.ScanMaxBytes GROUP BY 1`,
   ].join("\n");
   const meta = (field: string) => `get(item=get(item=cfg.RuleMeta, field=Rule), field="${field}")`;
   const hits = [
@@ -60,9 +62,10 @@ export function yaraScopeVql(key: string): { lets: string; hits: string; coverag
   const coverage = [
     `SELECT ${MARK}, "coverage" AS Kind, cfg.RuleSet AS RuleSet, scan_time AS ScanTime,`,
     `  format(format="YARA %v", args=[${s}.Id]) AS Source, "scanned" AS Status,`,
+    // #2924: len(list={ subquery }) is always 0 in Velociraptor, so every scope read "0 file(s) scanned".
     `  format(format="%v file(s) scanned; %v skipped over the %v-byte scan cap",`,
-    `    args=[len(list={ SELECT * FROM files_${key} WHERE Size <= cfg.ScanMaxBytes }),`,
-    `          len(list={ SELECT * FROM files_${key} WHERE Size > cfg.ScanMaxBytes }), cfg.ScanMaxBytes]) AS Detail`,
+    `    args=[if(condition=n_in_${key}, then=n_in_${key}[0].N, else=0),`,
+    `          if(condition=n_over_${key}, then=n_over_${key}[0].N, else=0), cfg.ScanMaxBytes]) AS Detail`,
     `FROM scope()`,
   ].join("\n");
   return { lets, hits, coverage };
