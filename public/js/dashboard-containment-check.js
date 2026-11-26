@@ -36,15 +36,25 @@
     if (DfirState.lastState()) render(DfirState.lastState());
   }
 
-  function loadContainmentCheck(caseId) {
-    ccBindOnce();
+  function ccNewCase(caseId) {
     ccActiveCase = String(caseId || "");
     ccCaseGen += 1;
-    const gen = ccCaseGen;
     ccByFinding = new Map();
     ccPlaybookKeys = null;
     ccSyncAt = 0;
     ccConfigured = false;
+  }
+  // #2940: another case opening (or a cancelled load) retires the checks at the switch itself — the
+  // fan-out may never reach this loader for that case, and finding ids recur across cases, so an old
+  // answer would show on B's finding (or on A's again after A -> B -> A). A reopen keeps them.
+  const onCcReset = (c) => String(c || "") !== ccActiveCase && ccNewCase(c);
+
+  function loadContainmentCheck(caseId) {
+    ccBindOnce();
+    if (typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function")
+      DfirPanelDefer.onReset(onCcReset);
+    ccNewCase(caseId);
+    const gen = ccCaseGen;
     if (!ccActiveCase) return Promise.resolve();
     return fetch(`/cases/${encodeURIComponent(ccActiveCase)}/jev/status`)
       .then((r) => (r.ok ? r.json() : { configured: false }))

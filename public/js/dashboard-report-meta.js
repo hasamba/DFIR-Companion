@@ -124,10 +124,11 @@
   }
   // #2915: a cancelled or failed case load blanks the form too (and retires any GET on its way); the
   // next open — the same case included — reads the details again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onReportMetaReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === rmShownFor) return;
     rmGen++;
-    blankReportMeta("");
+    blankReportMeta(caseId || "");
   }
   function loadReportMeta(caseId) {
     if (!rmOnScreen(caseId)) return Promise.resolve(); // a late caller for a case the analyst left

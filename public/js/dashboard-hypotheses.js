@@ -22,7 +22,7 @@
   // #2933: an answer paints only in its own generation (moved by clearHypMessages, never a same-case reload).
   let hypGen = 0;
   const hypLive = (caseId, gen = hypGen) => () => gen === hypGen && caseId === hypCaseOnScreen();
-  const onHypReset = (c) => c === null && clearHypothesesPanel();
+  const onHypReset = (c) => (c === null || c !== hypMsgCase) && clearHypothesesPanel(c); // #2940: another case too
   const HYP_STATUS = [
     ["open", "Open"],
     ["supported", "Supported"],
@@ -104,13 +104,13 @@
   }
 
   // #2848: a cancelled case load leaves no case open, so nothing drawn for the last one stays.
-  function clearHypothesesPanel() {
+  function clearHypothesesPanel(caseId = null) {
     hypotheses = [];
     hypothesesCase = hypLoadError = hypWriteError = hypReviewsCase = null;
     hypLoadSeq++; // a list answer still on its way for the cancelled case is not drawn
     renderHypothesisReviews([]);
     clearPendingHuntHypothesis();
-    clearHypMessages(null);
+    clearHypMessages(caseId); // #2940: at a switch the opening case owns the lines (a reopen of it keeps them)
     renderHypotheses();
   }
   function clearHypMessages(caseId) {

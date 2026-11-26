@@ -28,11 +28,12 @@
     }
   }
   // #2915: a cancelled or failed case load drops the monitors and the LIVE badge; the next open reads again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onVeloMonReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === veloMonCase) return;
     veloMonSeq++;
     veloMonNewOwner();
-    veloMonCase = null;
+    veloMonCase = caseId;
     renderVeloMonitors([]);
   }
   function loadVeloMonitors(caseId) {

@@ -26,13 +26,14 @@
   }
   // #2915: a cancelled or failed case load drops the notes (and a half-finished edit) and unchecks the
   // AI box; the next open — the same case included — reads both again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onNotebookReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === notebookCaseId) return;
     nbAiSeq++;
-    nbAiCase = null;
+    nbAiCase = caseId;
     const box = document.getElementById("nbAiToggle");
     if (box) box.checked = false;
-    clearNotebook(null);
+    clearNotebook(caseId);
     const list = document.getElementById("nbList");
     if (list) list.innerHTML = ""; // blank, not "No entries yet." — no case is loaded
   }

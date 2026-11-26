@@ -320,6 +320,25 @@
       });
   }
 
+  // #2940: another case opening (or a cancelled load) is the same exit path, taken at the switch
+  // itself — the fan-out may never reach this loader for that case, and until it did the old run's
+  // answer still painted (on B, or on A again after A -> B -> A). A reopen of the same case is not.
+  function onSlReset(c) {
+    const id = c || "";
+    if (id === slCaseId) return;
+    slCaseId = id;
+    slBusy = false;
+    slRunGen++;
+    slLoadGen++;
+    slResult = null;
+    slRunError = "";
+    slRunPromoted = false;
+    slPreview = null;
+    slPreviewError = "";
+    slPreviewState = id ? "loading" : "idle";
+    renderSecondLook();
+  }
+
   /** Measure, never spend. Called on case connect, and again after a run so the panel re-costs. */
   function loadSecondLookPreview(caseId, opts) {
     // A CASE SWITCH IS AN EXIT PATH for a run started under the previous case: the flag goes off
@@ -328,6 +347,8 @@
     // A RE-MEASURE OF THE SAME CASE IS NOT. The last thing this function does after a successful
     // run is call itself, and clearing the result there would wipe the report of the run the
     // analyst had just pressed — one render after it appeared.
+    if (typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function")
+      DfirPanelDefer.onReset(onSlReset);
     const switched = slCaseId !== caseId;
     slCaseId = caseId;
     slBusy = false;

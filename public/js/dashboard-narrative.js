@@ -126,11 +126,12 @@
     }
   }
   // #2915: a cancelled or failed case load hides the banner; the next open (same case too) reads again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onSynthMetaReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === synthMetaCase) return;
     synthMetaSeq++;
     narrNewOwner();
-    synthMetaCase = null;
+    synthMetaCase = caseId;
     renderSynthMeta(null);
   }
   function loadSynthMeta(caseId) {
