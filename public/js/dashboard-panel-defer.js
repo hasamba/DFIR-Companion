@@ -73,6 +73,10 @@
   const owner = new Map(); // key -> the case whose tracked load of this panel last succeeded
   const loadGen = new Map(); // key -> generation; a newer tracked load or a reset moves it on
   let tracking = null; // the key whose tracked load is running right now (its guard must pass)
+  // #2937: actionLive's generation. It moves when a different case opens or a load is cancelled —
+  // the owner of the page changed — and never when the case already open is opened again.
+  let openGen = 0;
+  let lastOpen = null;
   let flushQueued = false;
 
   const sectionEl = (id) =>
@@ -345,6 +349,9 @@
     tracking = null;
     for (const [key, gen] of loadGen) loadGen.set(key, gen + 1);
     const opening = !!String(caseId || "").trim();
+    const id = opening ? String(caseId).trim() : null;
+    if (id === null || id !== lastOpen) openGen++;
+    lastOpen = id;
     for (const sec of new Set(Object.values(PANELS).map((def) => def[0]))) {
       const text = isMasked(sec) ? sectionEl(sec).dataset.panelStale : null;
       if (!opening && text === LOADING) setMask(sec, STOPPED);
@@ -361,6 +368,13 @@
   function onReset(fn) {
     if (typeof fn === "function" && !resetListeners.includes(fn)) resetListeners.push(fn);
   }
+  // #2937: for an action in a module that owns no case (whitelist / NSRL Apply, the false-positive
+  // modal, Synthesize, import undo). Its answer still paints while live() — the case it was sent for
+  // is on screen and no other case has opened (nor a load been cancelled) since.
+  function actionLive(caseId) {
+    const gen = openGen;
+    return () => gen === openGen && caseOnScreen() === caseId;
+  }
 
   window.DfirPanelDefer = {
     skip,
@@ -368,6 +382,7 @@
     flushRevealed,
     reset,
     onReset,
+    actionLive,
     stoppedText: STOPPED,
     panels: () => JSON.parse(JSON.stringify(PANELS)),
   };

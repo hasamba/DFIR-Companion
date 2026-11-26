@@ -21,6 +21,7 @@ interface DeferApi {
     flushRevealed(): void;
     reset(caseId?: string | null): void;
     panels(): Record<string, [string, string]>;
+    actionLive(caseId: string): () => boolean;
   };
   loadHostRanking(caseId: string): void;
 }
@@ -166,6 +167,23 @@ function page(opts: { hidden?: string[]; caseId?: string; noVisibility?: boolean
     },
   };
 }
+
+describe("actionLive: an owner-less action's answer follows the case open, not a reload (#2937)", () => {
+  it("stays live through a reopen of the same case; dies on another case or a cancel", () => {
+    const p = page({ caseId: "CASE-A" });
+    p.switchCase("CASE-A");
+    const live = p.d.actionLive("CASE-A");
+    p.switchCase("CASE-A");
+    expect(live(), "reopening the case already open retired the action").toBe(true);
+    p.switchCase("CASE-B");
+    p.switchCase("CASE-A");
+    expect(live(), "A -> B -> A kept the old answer alive").toBe(false);
+    const again = p.d.actionLive("CASE-A");
+    p.switchCase("");
+    p.switchCase("CASE-A");
+    expect(again(), "a cancel and a reopen kept the old answer alive").toBe(false);
+  });
+});
 
 describe("a hidden section's heavy panel is not fetched on case open (#2854)", () => {
   it("skips the hidden panel and loads the visible one", () => {

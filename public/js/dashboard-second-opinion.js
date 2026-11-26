@@ -37,7 +37,7 @@
   // #2904: the case whose record the panel shows, and the newest load. A load for another case hides
   // the previous case's panel (and drops its record) at once; only the newest answer paints.
   let soCase = null;
-  // Strict, unlike stillOpen(): after a cancel #caseId is "" and the cancelled case's answer is dropped.
+  // Strict: after a cancel #caseId is "" and the cancelled case's answer is dropped (#1590, #2933).
   const soOnScreen = (caseId) => {
     const el = document.getElementById("caseId");
     return !el || typeof el.value !== "string" || el.value.trim() === caseId;
@@ -447,11 +447,6 @@
       .querySelectorAll("[data-so-referee-rerun]")
       .forEach((b) => (b.disabled = on));
   }
-  // A response for a case the analyst has since left must not paint this panel (#1590).
-  function stillOpen(caseId) {
-    const open = currentCaseId();
-    return !open || open === caseId;
-  }
   function currentCaseId() {
     const input = document.getElementById("caseId");
     return input ? String(input.value || "").trim() : "";
@@ -527,6 +522,7 @@
   // The run finished: show the result. A busy analyst gets a toast and the panel note instead of a
   // jump; a hidden tab jumps when the analyst comes back to it.
   function announceSecondOpinionDone(caseId, n, agreed) {
+    const live = soLive(caseId); // #2937: the jump on return checks this visit, not only the case id
     soDoneNote = { caseId, at: Date.now(), n, agreed };
     soCollapsed = false; // open for this run only; the saved preference is untouched
     renderSecondOpinion(lastSecondOpinionRec);
@@ -542,7 +538,7 @@
       const onShow = () => {
         if (document.hidden) return;
         document.removeEventListener("visibilitychange", onShow);
-        if (stillOpen(caseId)) jumpToSecondOpinion();
+        if (live()) jumpToSecondOpinion();
       };
       document.addEventListener("visibilitychange", onShow);
     }

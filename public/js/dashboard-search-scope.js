@@ -327,6 +327,12 @@
       deep ? "synthesizing findings (deep reasoning)…" : "synthesizing findings…",
     );
     const ppg = typeof presidioPendingGen === "function" ? presidioPendingGen() : undefined; // #2933
+    // #2937: the answer's status line and follow-up reads belong to this case open only.
+    const live =
+      typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.actionLive === "function"
+        ? DfirPanelDefer.actionLive(caseId)
+        : () => document.getElementById("caseId").value.trim() === caseId;
+    const say = (text) => live() && (document.getElementById("status").textContent = text);
     fetch(`/cases/${caseId}/synthesize`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -340,13 +346,12 @@
           if (body.error === "presidio_approval_required") {
             if (typeof setPresidioPending === "function")
               setPresidioPending(body.findings, caseId, ppg);
-            document.getElementById("status").textContent =
-              "synthesis held — Presidio found new value(s) to review (see Anonymization)";
+            say("synthesis held — Presidio found new value(s) to review (see Anonymization)");
             return null;
           }
           // #2828: the duplicate-host gate is a hold too — say what to do, never the raw code.
           if (typeof hostMergeHold === "function" && hostMergeHold(r.status, body)) {
-            document.getElementById("status").textContent = hostMergeHoldText("synthesis", body);
+            say(hostMergeHoldText("synthesis", body));
             return null;
           }
           return body;
@@ -354,8 +359,7 @@
         // 499: this run was superseded by a newer one, or cancelled from the jobs list. Neither is a
         // failure, so the status line must not say "synthesis failed".
         if (r.status === 499) {
-          document.getElementById("status").textContent =
-            "synthesis stopped — superseded by a newer run or cancelled";
+          say("synthesis stopped — superseded by a newer run or cancelled");
           return null;
         }
         if (r.status === 423)
@@ -367,10 +371,9 @@
         return r.json();
       })
       .then((p) => {
-        if (!p) return; // handled above (409 presidio hold, 499 superseded)
+        if (!p || !live()) return; // handled above (409 presidio hold, 499 superseded), or a case left
         if (p.error) {
-          document.getElementById("status").textContent =
-            "synthesis failed: " + p.error;
+          say("synthesis failed: " + p.error);
           return;
         }
         // #1676: an empty forensic timeline runs nothing — say that, not "synthesized: 0 findings".
@@ -382,15 +385,11 @@
         // refresh state in case the WS push was missed
         fetch(`/cases/${caseId}/state`)
           .then((r) => r.json())
-          .then(render)
+          .then((st) => live() && render(st))
           .catch(() => {});
         loadSynthMeta(caseId);
       })
-      .catch(
-        (e) =>
-          (document.getElementById("status").textContent =
-            "synthesis error: " + e.message),
-      )
+      .catch((e) => say("synthesis error: " + e.message))
       // Whatever the outcome — done, held by Presidio, case closed, failed — ask the case what the
       // pill should say, so the optimistic "synthesizing" above never outlives the run.
       .finally(() => {

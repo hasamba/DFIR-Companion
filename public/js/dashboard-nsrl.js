@@ -191,6 +191,15 @@
         msg.textContent = e.message;
       });
   }
+  // #2937: the Apply line speaks for one case. Another case opening (or a cancelled load) clears it, and
+  // an answer from before that writes nothing; reopening the same case keeps both.
+  let nsrlMsgCase = null;
+  function nsrlOnReset(c) {
+    if (nsrlMsgCase === null || c === nsrlMsgCase) return;
+    nsrlMsgCase = null;
+    const m = document.getElementById("nsrlApplyMsg");
+    if (m) m.textContent = "";
+  }
   function nsrlApplyToCase() {
     const caseId = document.getElementById("caseId").value.trim();
     const msg = document.getElementById("nsrlApplyMsg");
@@ -199,6 +208,12 @@
       return;
     }
     msg.textContent = "applying…";
+    nsrlMsgCase = caseId;
+    if (typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function") DfirPanelDefer.onReset(nsrlOnReset);
+    const live =
+      typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.actionLive === "function"
+      ? DfirPanelDefer.actionLive(caseId)
+      : () => document.getElementById("caseId").value.trim() === caseId;
     const fpg = typeof falsePositiveGen === "function" ? falsePositiveGen() : undefined; // #2933
     fetch(`/cases/${caseId}/nsrl/apply`, {
       method: "POST",
@@ -213,10 +228,12 @@
         return r.json();
       })
       .then((j) => {
+        if (!live()) return;
         msg.textContent = `${j.matchedIocs} IOC(s) + ${j.matchedEvents} event(s) matched · ${j.added} newly marked false positive`;
         if (j.legitimate) commitFalsePositives(caseId, j.legitimate, fpg);
       })
       .catch((e) => {
+        if (!live()) return;
         msg.textContent =
           "failed: " +
           e.message +

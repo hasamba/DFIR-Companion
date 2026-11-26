@@ -120,10 +120,17 @@ export function fakePage(caseId = "CASE-A") {
   const timers: (() => void)[] = [];
   // The reset hook of js/dashboard-panel-defer.js: the same dedupe-by-identity contract.
   const resetListeners: ((caseId: string | null) => void)[] = [];
+  // #2937: actionLive's open generation — moved by a cancel, or by open() of a different case.
+  let openGen = 0;
+  let lastOpen: string | null = caseId;
   const DfirPanelDefer = {
     stoppedText: "Not loaded — the case load was stopped. Open a case to load this panel.",
     onReset: (fn: (caseId: string | null) => void) => {
       if (!resetListeners.includes(fn)) resetListeners.push(fn);
+    },
+    actionLive: (id: string) => {
+      const gen = openGen;
+      return () => gen === openGen && el("caseId").value === id;
     },
   };
   const globals: Record<string, unknown> = {
@@ -167,8 +174,20 @@ export function fakePage(caseId = "CASE-A") {
     // (clearLoadedCase), DfirPanelDefer.reset(null) tells every listener, activeCaseId goes last.
     cancel: (sandbox?: object) => {
       el("caseId").value = "";
+      openGen++;
+      lastOpen = null;
       resetListeners.forEach((fn) => fn(null));
       if (sandbox) (sandbox as { activeCaseId?: string | null }).activeCaseId = null;
+    },
+    // #2937: a full case open (proceedConnect): #caseId and activeCaseId change, then
+    // DfirPanelDefer.reset(id) tells every listener. Another case (or one after a cancel) moves
+    // actionLive's generation; reopening the case already open does not.
+    open: (id: string, sandbox?: object) => {
+      if (id !== lastOpen) openGen++;
+      lastOpen = id;
+      el("caseId").value = id;
+      if (sandbox) (sandbox as { activeCaseId?: string }).activeCaseId = id;
+      resetListeners.forEach((fn) => fn(id));
     },
     resetListenerCount: () => resetListeners.length,
   };

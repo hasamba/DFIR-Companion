@@ -754,9 +754,14 @@ describe("dashboard.html", () => {
     // fresh preview — and that is independent of how the arrows are laid out.
     const html = dashboardClientSource().replace(/\s+/g, " ");
     expect(html).toContain("let veloTsPreviewSeq = 0;");
-    expect(html).toMatch(/function veloTimeScopePreview[\s\S]{0,900}const mySeq = \+\+veloTsPreviewSeq;/);
-    expect(html).toMatch(/\.then\(\(\{ ok, j \}\) => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
-    expect(html).toMatch(/\.catch\(\(?e\)? => \{ if \(mySeq !== veloTsPreviewSeq\) return;/);
+    // #2937: the same guards also drop an answer from before a case switch or a cancel (veloLive).
+    expect(html).toMatch(
+      /function veloTimeScopePreview[\s\S]{0,900}const mySeq = \+\+veloTsPreviewSeq, live = veloLive\(\);/,
+    );
+    expect(html).toMatch(
+      /\.then\(\(\{ ok, j \}\) => \{ if \(mySeq !== veloTsPreviewSeq \|\| !live\(\)\) return;/,
+    );
+    expect(html).toMatch(/\.catch\(\(?e\)? => mySeq === veloTsPreviewSeq && live\(\) && /);
   });
 
   it("filters a bundle run by PICKING fleet labels, never by typing one", async () => {

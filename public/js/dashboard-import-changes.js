@@ -46,6 +46,9 @@
   // generation it was sent in; it moves when the owner changes (a cancel too), never on a same-case reload.
   let icGen = 0;
   const icLive = (caseId, gen = icGen) => () => gen === icGen && icOnScreen(caseId);
+  // #2937: the raw-tool banner has its own owner and request number — not icGen, which the case's first
+  // import-meta load moves; a switch or a cancel hides it and retires its pending tools read.
+  let rawBannerCase = null, rawBannerSeq = 0;
   function clearImportMeta(caseId) {
     icGen++;
     importMetaCase = caseId;
@@ -53,6 +56,7 @@
     newIocKeys = new Set();
     hideBanner("importMeta");
     hideBanner("iocImportMeta");
+    if (rawBannerCase !== caseId) (rawBannerCase = null), rawBannerSeq++, hideBanner("rawToolBanner");
   }
   // #2915: a cancelled or failed case load drops all three banners (and the "new" rows, and the held
   // list's re-poll); the next open — the same case included — reads them again.
@@ -311,9 +315,13 @@
   function askRunToolsOnImport(caseId, rawFiles) {
     const el = document.getElementById("rawToolBanner");
     if (!el) return;
+    icListenReset();
+    const seq = ++rawBannerSeq;
+    rawBannerCase = caseId;
     fetch("/tools/status")
       .then((r) => (r.ok ? r.json() : null))
       .then((status) => {
+        if (seq !== rawBannerSeq || !icOnScreen(caseId)) return; // #2937: a newer banner, a switch or a cancel
         const items = rawFiles.map((f, i) => {
           const ext = uploadExtOf(f.name);
           return {
@@ -436,9 +444,7 @@
             runUploadRawFiles(caseId, runs, el, yes);
           };
       })
-      .catch(() => {
-        el.style.display = "none";
-      });
+      .catch(() => seq === rawBannerSeq && (el.style.display = "none"));
   }
   // Upload each selected file's bytes and run its tool. Spawn tools return counts synchronously;
   // SO-CRATES returns job ids because its analysis is asynchronous, so those are polled after.
@@ -513,22 +519,27 @@
         (jobIds.length
           ? " — " + jobIds.length + " SO-CRATES analysis/es running…"
           : ""));
-      if (jobIds.length && live()) pollSocratesJobs(caseId, jobIds);
+      if (jobIds.length && live()) pollSocratesJobs(caseId, jobIds, live);
       loadImportMeta(caseId);
     })();
   }
   // SO-CRATES analysis is asynchronous, so follow the jobs until every one is terminal. Polls at
-  // 5s and gives up after 20 minutes, matching the server-side attempt ceiling.
-  function pollSocratesJobs(caseId, jobIds) {
+  // 5s and gives up after 20 minutes, matching the server-side attempt ceiling. #2937: a switch or a
+  // cancel ends it (checked again after every await); the case's own load reads what the jobs imported.
+  function pollSocratesJobs(caseId, jobIds, live) {
     const statusEl = document.getElementById("status");
     const wanted = new Set(jobIds);
     let ticks = 0;
+    const stale = () => !live() && (clearInterval(timer), true);
     const timer = setInterval(async () => {
+      if (stale()) return;
       ticks++;
       try {
         const r = await fetch("/cases/" + caseId + "/socrates/jobs");
-        if (!r.ok) return;
-        const jobs = ((await r.json()).jobs || []).filter((j) =>
+        if (!r.ok || stale()) return;
+        const body = await r.json();
+        if (stale()) return;
+        const jobs = (body.jobs || []).filter((j) =>
           wanted.has(j.jobId),
         );
         const done = jobs.filter(
