@@ -723,7 +723,7 @@
             // refresh the rest of the case in case the WS push was missed
             fetch(`/cases/${caseId}/state`)
               .then((r) => r.json())
-              .then(render)
+              .then((st) => live() && render(st)) // #2933: the follow-up read too
               .catch(() => {});
             loadSynthMeta(caseId);
           })
