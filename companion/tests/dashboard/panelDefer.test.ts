@@ -559,7 +559,7 @@ describe("a panel visible at a case switch is masked until this case's load pain
     sandbox.fetch = (u: string) => (globalThis.fetch as unknown as typeof own)(u);
     try {
       const ac = new AbortController();
-      const tally = runPanelLoaders(open(p, "CASE-B"), null, { signal: ac.signal });
+      const tally = runPanelLoaders(open(p, "CASE-B"), undefined, { signal: ac.signal });
       expect(p.urls()).toEqual(["/cases/CASE-A/host-ranking", "/cases/CASE-B/host-ranking"]);
       expect(tally.settled.has("hostRanking")).toBe(false); // the runner sees the request too
       // A cancel aborts the fan-out and retires the reloads (abandonCaseLoad); an answer that
