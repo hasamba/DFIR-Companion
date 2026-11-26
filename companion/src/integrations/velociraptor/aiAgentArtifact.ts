@@ -44,8 +44,9 @@ const MODEL_SCAN_MAX_BYTES = 2 * 1024 * 1024 * 1024;
  *   3 — the Inventory source uses if() in place of `||` (`x || []` does not parse).
  *   4 — #2907: whole-disk compiled Sigma rules are opt-in; a SigmaSkipped source reports the rest.
  *   5 — #2912: YARA matched bytes as hex (MatchedHex + MatchedLength), not %s debris.
+ *   6 — #2924: YARA coverage counts files with count(), not len() of a subquery (always 0).
  */
-export const AI_AGENT_VQL_TEMPLATE_VERSION = 5;
+export const AI_AGENT_VQL_TEMPLATE_VERSION = 6;
 const SYSMON_LOG = "C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx";
 
 export interface AiAgentRunOptions {
