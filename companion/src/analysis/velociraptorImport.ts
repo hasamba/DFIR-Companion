@@ -67,13 +67,7 @@ import { mapAiAgentRow, learnWholeFile, AiAgentHostLedger } from "./aiAgentImpor
 import type { AiAgentHostsCtx, AiAgentHostOptions } from "./aiAgentImport.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
-import {
-  capWithHostSuffix,
-  injectKeepingHost,
-  ransomTailWithHost,
-  withHostSuffix,
-  titleSafe,
-} from "./velociraptorTitle.js";
+import { capWithHostSuffix, injectKeepingHost, ransomTailWithHost, titleSafe } from "./velociraptorTitle.js";
 import {
   gradeByContentLocation,
   isUnforgeableContentPath,
@@ -571,7 +565,13 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   if (win) {
     if (sev) win.severity = worst(win.severity, sev);
     for (const m of tags) if (!win.mitre.includes(m)) win.mitre.push(m);
-    win.description = `Velociraptor Sigma: ${titleSafe(title)} - ${win.description}`.slice(0, 600);
+    const sigmaHead = `Velociraptor Sigma: ${titleSafe(title)} - `;
+    win.description = injectKeepingHost(
+      win.description,
+      host || (flat?.host ?? ""),
+      600,
+      (d) => sigmaHead + d,
+    );
     win.aggKey = sigmaOverlayAggKey(win.aggKey, title);
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
@@ -585,10 +585,10 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   const detail = salientFromMessage(message) || (message ? oneLine(message).slice(0, 400) : "");
   let description = `Velociraptor Sigma: ${titleSafe(title)}`;
   if (detail) description += ` - ${detail}`;
-  description = withHostSuffix(description, host);
+  description = capWithHostSuffix(description, host, 600);
   return {
     timestamp: pickTime(row),
-    description: description.slice(0, 600),
+    description,
     severity: sev ?? "Medium",
     mitre: tags,
     aggKey: sigmaAggKey(host, title),
@@ -640,8 +640,8 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     const winEd = flat && isObject(flat.rec.event_data) ? flat.rec.event_data : {};
     const winImage = firstStr(winEd, ["Image", "NewProcessName", "TargetImage", "TargetFilename"]);
     const winTag = baseName(winImage);
-    win.description =
-      `${label}: ${titleSafe(v.title)}${winTag ? ` — ${winTag}` : ""} - ${win.description}`.slice(0, 600);
+    const detHead = `${label}: ${titleSafe(v.title)}${winTag ? ` — ${winTag}` : ""} - `;
+    win.description = injectKeepingHost(win.description, host || (flat?.host ?? ""), 600, (d) => detHead + d);
     win.aggKey = detectionOverlayAggKey(win.aggKey, v.title);
     win.sources = ["Velociraptor"];
     if (!win.timestamp) win.timestamp = pickTime(row);
@@ -1273,8 +1273,7 @@ function mapNetstat(row: Row, host: string, sink: Map<string, SiemIoc>): MappedE
   if (proto) description += ` - ${proto}`;
   if (status) description += ` - ${status}`;
   description += ` - ${src} → ${dst}`;
-  if (host) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+  description = capWithHostSuffix(description, host, 600);
 
   const aggKey = netstatAggKey(host, name, status, lport, raddr, rport);
 

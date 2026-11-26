@@ -163,6 +163,78 @@ describe("Velociraptor importer keeps the '@ HOST' suffix whole under the cap (#
     );
   });
 
+  it("Sigma row without a parsed event, with a long rule title", () => {
+    sweep(
+      480,
+      640,
+      (n) => ({
+        _Source: "Windows.Sigma.Base",
+        Rule: { Title: "t".repeat(n), Level: "high" },
+        Message: "example message",
+        Fqdn: HOST,
+      }),
+      withPrefix(600, "Windows.Sigma.Base"),
+    );
+  });
+
+  // A parsed Windows event: mapWindows ends its description with " @ HOST"; the Sigma / detection
+  // overlay then put the rule name in front and cut the whole string to 600 again, so a long rule
+  // name pushed the host off the end.
+  const sysmonProcess: Row = {
+    System: {
+      EventID: 1,
+      Channel: "Microsoft-Windows-Sysmon/Operational",
+      Computer: HOST,
+      TimeCreated: "2026-01-01T00:00:00Z",
+    },
+    EventData: { Image: "C:\\Tools\\example.exe", CommandLine: `example.exe ${"a".repeat(400)}` },
+    Fqdn: HOST,
+  };
+
+  it("Sigma overlay on a parsed event with a long rule title", () => {
+    const art = "Windows.Hayabusa.Sigma";
+    sweep(
+      0,
+      160,
+      (n) => ({ _Source: art, Rule: { Title: `Rule ${"t".repeat(n)}`, Level: "high" }, ...sysmonProcess }),
+      withPrefix(600, art),
+    );
+  });
+
+  it("detection overlay on a parsed event with a long rule name", () => {
+    sweep(
+      0,
+      160,
+      (n) => ({
+        _Source: "DetectRaptor.Windows.Detection.Evtx",
+        Detection: `Rule ${"t".repeat(n)}`,
+        ...sysmonProcess,
+      }),
+      600,
+    );
+  });
+
+  it("netstat row with a long process name", () => {
+    const art = "Windows.Network.Netstat";
+    sweep(
+      520,
+      640,
+      (n) => ({
+        _Source: art,
+        Name: `${"n".repeat(n)}.exe`,
+        Pid: 4321,
+        Laddr: "10.0.0.5",
+        Lport: 50000,
+        Raddr: "198.51.100.7",
+        Rport: 443,
+        Status: "ESTABLISHED",
+        Type: "TCP",
+        Fqdn: HOST,
+      }),
+      withPrefix(600, art),
+    );
+  });
+
   it("a short row is unchanged: the host suffix follows the full description", () => {
     const [d] = descriptions([usn("C:\\Data\\short.txt")]);
     expect(d).toBe(`Velociraptor [Windows.Forensics.Usn]: FILE_CREATE — C:\\Data\\short.txt - @ ${HOST}`);
