@@ -104,17 +104,31 @@
   }
 
   // The send's headers: the Idempotency-Key, or none at all when no key could be made (#2640). An
-  // empty or "undefined" header would be one shared key for every send.
+  // empty or "undefined" header would be one shared key for every send. Each send counts as one
+  // attempt on its key until watsonSendSettled.
   function watsonSendHeaders(caseId, text) {
     const key = watsonSendKey(caseId, text);
+    const held = wPendingKey.get(caseId);
+    if (key && held && held.key === key) held.pending = (held.pending || 0) + 1;
     return key ? { "Idempotency-Key": key } : {};
   }
 
-  // Keep the key only after a lost answer: the resend must be the same request. With `key`, only that
-  // send's key goes (#2943: an older visit's send settling must not drop a newer send's retry key).
+  // Keep the key after a lost answer: the resend must be the same request. #2943: sends with the same
+  // text can overlap across case visits and share one key, so with `key` the key goes only when its
+  // last attempt in flight settles and none of its attempts was lost; a send under another key
+  // (different text) leaves it alone.
   function watsonSendSettled(caseId, networkFailed, key) {
     const held = wPendingKey.get(caseId);
-    if (!networkFailed && (key === undefined || (held && held.key === key))) wPendingKey.delete(caseId);
+    if (key === undefined) {
+      if (!networkFailed) wPendingKey.delete(caseId);
+      return;
+    }
+    if (!held || held.key !== key) return;
+    held.pending = Math.max(0, (held.pending || 1) - 1);
+    if (networkFailed) held.lost = true;
+    if (held.pending > 0) return;
+    if (held.lost) held.lost = false; // the resend reuses it
+    else wPendingKey.delete(caseId);
   }
 
   window.watsonWorkingHtml = watsonWorkingHtml;

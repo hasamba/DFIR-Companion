@@ -226,6 +226,31 @@ describe("Watson answers after a case switch (#2943)", () => {
     await third;
   });
 
+  it("the same text sent on both visits: the old send succeeding keeps the key the lost resend needs", async () => {
+    const s = setup();
+    await s.loadA();
+    const first = s.send("question");
+    s.open("CASE-B");
+    s.open("CASE-A");
+    const second = s.send("question");
+    const key = s.pending("/message")[0].headers["Idempotency-Key"];
+    expect(s.pending("/message")[1].headers["Idempotency-Key"]).toBe(key);
+    s.pending("/message")[0].answer(200, chatWith());
+    await first;
+    s.pending("/message")[1].fail();
+    await second;
+    await drain();
+    const third = s.send("question");
+    expect(s.pending("/message")[2].headers["Idempotency-Key"]).toBe(key);
+    s.pending("/message")[2].answer(200, chatWith());
+    await third;
+    await drain();
+    const fourth = s.send("question");
+    expect(s.pending("/message")[3].headers["Idempotency-Key"], "a settled key was reused").not.toBe(key);
+    s.pending("/message")[3].answer(200, chatWith());
+    await fourth;
+  });
+
   it("a cancel and a reopen of the same case drop the first visit's answer", async () => {
     const s = setup();
     await s.loadA();
