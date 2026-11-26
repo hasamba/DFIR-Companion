@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Held Watson promotions survive a restart** — raises a later re-grade finds for a Watson paste's rows (start-up, next import, streamed and drop-folder imports) are offered as held-rows cards in the chat instead of dropped; the case-state response no longer carries the internal grade mark (closes #2918)
+- **Held Watson rows keep their paste** — rows an earlier paste left set aside are offered as held-rows cards under that paste, not in a later paste's turn; Velociraptor hunt and external imports grade them too; the grade-mark check covers every route with a path parameter (closes #2930)
 - **Result tables scroll from the keyboard** — scrolling result tables (Timeline Gaps, Timeline Anomalies, Beacon Candidates, Cloud Coverage, hunt and query results) take keyboard focus and are announced by name, so keyboard and screen-reader users can scroll them (closes #2923)
 - **Cross-case capture warning on a phone** — the "screenshots are arriving for another case" banner wraps instead of pushing the dashboard sideways at narrow widths (closes #2919)
 - **Held rows graded at the next import** — rows an importer merged but never stamped are held from the demote too, rows a tagger failure held are graded at the next import (not only at restart) with the caps a full settle applies, Watson paste rows only ever get the held tagger and keep their proposals after a failed settle, and exports never show the internal grading mark (closes #2909)

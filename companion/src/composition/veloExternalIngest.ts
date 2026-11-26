@@ -71,6 +71,8 @@ export interface VeloExternalIngestDeps {
   dispatchImport: (kind: string, caseId: string, text: string, base: ImportBase) => Promise<unknown>;
   resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /** #2930: the held tagger for a Watson paste's "held" rows the settle's leftover sweep meets. */
+  tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   demoteForensicForCase: (caseId: string, opts?: DemoteOptions) => Promise<InvestigationState>;
   getControl: (caseId: string) => Promise<AiControl>;
   applyWhitelistToCase: (caseId: string) => Promise<{ matched: number; added: number }>;
@@ -122,6 +124,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
     dispatchImport,
     resolveImportKind,
     autoTagImported,
+    tagHeld,
     demoteForensicForCase,
     runStateExclusive,
     getControl,
@@ -131,11 +134,15 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
   } = deps;
   // The stateStore is added at each call site, where the `options.stateStore &&` guard has
   // already narrowed it.
+  // #2930: `tagHeld` grades a Watson paste's "held" rows the settle's leftover sweep meets (as the route
+  // imports and the streamed settle do). The super-only branch below tags super-timeline rows directly
+  // and touches no marked forensic row, so it needs no held tagger.
   const settleDeps = {
     superTimelineStore: options.superTimelineStore,
     onSuperTimeline: options.onSuperTimeline,
     onState: options.onState,
     autoTagImported,
+    tagHeld,
     demoteForensicForCase,
     runStateExclusive,
   };
