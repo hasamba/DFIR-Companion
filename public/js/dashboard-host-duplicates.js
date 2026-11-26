@@ -184,7 +184,7 @@
   }
 
   async function loadHostDuplicates(caseId) {
-    if (!caseId) return;
+    if (!caseId || !hdOnScreen(caseId)) return; // #2900: never a late caller for a case left
     const seq = ++hdSeq;
     const current = () => seq === hdSeq && hdCase === caseId && hdOnScreen(caseId);
     try {

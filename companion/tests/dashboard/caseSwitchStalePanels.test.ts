@@ -466,3 +466,58 @@ describe("light case-open loaders: the previous case's content is not kept (#290
     expect(p.el("pbList").innerHTML).not.toContain("a-late");
   });
 });
+
+describe("a late caller for the case left does not clear the case on screen (#2900 review)", () => {
+  it("asset graph: an A edit's callback after the switch neither clears B nor fetches", async () => {
+    const p = fakePage();
+    const api = loadDashboardModule<{ loadAssetGraph(c: string): void; hasAssetGraph(): boolean }>(
+      "dashboard-asset-graph.js",
+      ["dashboard-escape.js"],
+      p.globals,
+    );
+    p.switchCase("CASE-B");
+    api.loadAssetGraph("CASE-B");
+    p.requests[0].answer({ assets: [{ id: "host:b", name: "b", type: "host" }], iocs: [], edges: [] });
+    await drainAll();
+    api.loadAssetGraph("CASE-A");
+    expect(p.urls()).toEqual(["/cases/CASE-B/asset-graph"]);
+    expect(api.hasAssetGraph()).toBe(true);
+  });
+
+  it("asset overrides: the newest load wins across A -> B -> A", async () => {
+    const p = fakePage();
+    const api = loadDashboardModule<{
+      loadAssetOverrides(c: string): void;
+      assetOverrideMerges(): Record<string, string>;
+    }>("dashboard-asset-graph.js", ["dashboard-escape.js"], p.globals);
+    api.loadAssetOverrides("CASE-A");
+    p.switchCase("CASE-B");
+    api.loadAssetOverrides("CASE-B");
+    p.switchCase("CASE-A");
+    api.loadAssetOverrides("CASE-A");
+    p.requests[2].answer({ merges: { "host:new": "host:x" } });
+    p.requests[0].answer({ merges: { "host:old": "host:x" } });
+    await drainAll();
+    expect(api.assetOverrideMerges()).toEqual({ "host:new": "host:x" });
+  });
+
+  it("playbook: an A add/sync callback after the switch does not clear B's tasks", async () => {
+    const p = fakePage();
+    const api = loadDashboardModule<{ loadPlaybook(c: string): void }>(
+      "dashboard-playbook.js",
+      ["dashboard-escape.js", "dashboard-values.js"],
+      { ...p.globals, VHS_SEV_RANK: {} },
+    );
+    p.switchCase("CASE-B");
+    api.loadPlaybook("CASE-B");
+    p.requests[0].answer({
+      tasks: [{ id: "t1", title: "b-task", status: "todo" }],
+      stats: null,
+      control: null,
+    });
+    await drainAll();
+    api.loadPlaybook("CASE-A");
+    expect(p.el("pbList").innerHTML).toContain("b-task");
+    expect(p.urls()).toEqual(["/cases/CASE-B/playbook"]);
+  });
+});

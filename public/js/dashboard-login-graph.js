@@ -26,6 +26,7 @@
   }
   function loadLoginGraph(caseId) {
     if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("loginGraph", caseId)) return; // #2854 hidden: load on reveal
+    if (!lgOnScreen(caseId)) return; // #2900: a late caller for a case the analyst has left
     const seq = ++lgSeq;
     // A side panel opened on the previous case's graph must not survive into this one.
     if (lgCase !== caseId) lgHideSidePanel();

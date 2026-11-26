@@ -70,6 +70,7 @@
   // brush (filterFrom/filterTo) so the asset/evidence graphs scope to the same range as the
   // swimlane brush, search-bar dates and applied dwell-windows. Empty when no time filter is set.
   function loadAssetGraph(caseId) {
+    if (!assetOnScreen(caseId)) return; // #2900: a late caller (an A edit's callback) must not clear B
     clearAssetGraphFor(caseId);
     assetGraphCase = caseId;
     const gv = assetEnsureGV();
@@ -105,13 +106,16 @@
       })
       .catch(failed);
   }
+  let assetOverridesSeq = 0;
   function loadAssetOverrides(caseId) {
+    if (!assetOnScreen(caseId)) return; // #2900: a late caller for a case the analyst has left
     if (assetOverridesCase !== caseId) assetOverridesData = null; // #2900: never A's merges on B
     assetOverridesCase = caseId;
+    const seq = ++assetOverridesSeq;
     fetch(`/cases/${caseId}/asset-overrides`)
       .then((r) => (r.ok ? r.json() : null))
       .then((ov) => {
-        if (!assetOnScreen(caseId) || assetOverridesCase !== caseId) return; // #2900
+        if (seq !== assetOverridesSeq || !assetOnScreen(caseId)) return; // #2900 newest load, case on screen
         assetOverridesData = ov;
         renderAssetList();
         // js/dashboard-facet-filters.js's hostFacets() reads assetOverrideMerges() to collapse a

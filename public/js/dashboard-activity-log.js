@@ -56,6 +56,7 @@
   let activityCase = null;
   let activitySeq = 0;
   function loadActivityLog(caseId) {
+    if (!activityOnScreen(caseId)) return; // a late caller for a case the analyst has left
     if (activityCase !== caseId) {
       activityCase = caseId;
       const el = document.getElementById("activityLogPanel");

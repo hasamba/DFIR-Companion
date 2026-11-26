@@ -102,6 +102,7 @@
   let pbLoadedCase = null;
   let pbLoadSeq = 0;
   function loadPlaybook(caseId) {
+    if (!pbOnScreen(caseId)) return; // a late caller (an add/sync callback) for a case left
     if (pbLoadedCase !== caseId) {
       pbLoadedCase = caseId;
       playbookTasks = [];

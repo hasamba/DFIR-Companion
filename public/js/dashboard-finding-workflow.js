@@ -33,6 +33,7 @@
   let workflowCase = null;
   let workflowSeq = 0;
   function loadFindingWorkflow(caseId) {
+    if (!workflowOnScreen(caseId)) return; // a late caller for a case the analyst has left
     if (workflowCase !== caseId) {
       workflowCase = caseId;
       workflowByFinding = new Map();

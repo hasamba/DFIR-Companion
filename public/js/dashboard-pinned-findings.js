@@ -39,6 +39,7 @@
   let pinsCase = null;
   let pinsSeq = 0;
   function loadPins(caseId) {
+    if (!pinsOnScreen(caseId)) return; // a late caller for a case the analyst has left
     if (pinsCase !== caseId) {
       pinsCase = caseId;
       pinnedList = [];
