@@ -38,7 +38,12 @@
   // repaints from the cleared list; this case's state render redraws the buttons).
   let pinsCase = null;
   let pinsSeq = 0;
+  // #2929: a pin change's answer paints only in the generation it was sent in. It moves when the owner
+  // changes (a cancel included), never on a same-case reload.
+  let pinsGen = 0;
+  const pinsLive = (caseId, gen = pinsGen) => () => gen === pinsGen && pinsOnScreen(caseId);
   function clearPins(caseId) {
+    pinsGen++;
     pinsCase = caseId;
     pinnedList = [];
     pinnedSet = new Set();
@@ -123,22 +128,23 @@
 
   // A refused pin change (a closed case answers 423, #2437) shows the server's sentence and yields
   // null, so the caller never paints an error body as the pin list.
-  async function pinRefusalOr(r) {
+  async function pinRefusalOr(r, live) {
     if (r.ok) return r.json();
     const b = await r.json().catch(() => ({}));
-    flashPinMsg(b.error || "Pin change failed (HTTP " + r.status + ")");
+    if (live()) flashPinMsg(b.error || "Pin change failed (HTTP " + r.status + ")");
     return null;
   }
   function togglePin(fid) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId || !fid) return;
     const id = String(fid);
+    const live = pinsLive(caseId);
     if (pinnedSet.has(id)) {
       fetch(`/cases/${caseId}/pinned-findings/${encodeURIComponent(id)}`, {
         method: "DELETE",
       })
-        .then(pinRefusalOr)
-        .then((d) => d && pinsOnScreen(caseId) && applyPinResponse(d)) // #2900
+        .then((r) => pinRefusalOr(r, live))
+        .then((d) => d && live() && applyPinResponse(d)) // #2900/#2929
         .catch(() => {});
     } else {
       fetch(`/cases/${caseId}/pinned-findings`, {
@@ -149,15 +155,15 @@
         .then(async (r) => {
           if (r.status === 409) {
             const b = await r.json().catch(() => ({}));
-            flashPinMsg(
+            if (live()) flashPinMsg(
               `Pin limit reached (max ${b.limit || pinLimit}) — unpin one first`,
             );
             return null;
           }
-          return pinRefusalOr(r);
+          return pinRefusalOr(r, live);
         })
         .then((d) => {
-          if (d && pinsOnScreen(caseId)) applyPinResponse(d); // #2900
+          if (d && live()) applyPinResponse(d); // #2900/#2929
         })
         .catch(() => {});
     }
@@ -280,14 +286,15 @@
     renderPinned(); // settle: rebuild once against the new order
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
+    const live = pinsLive(caseId);
     fetch(`/cases/${caseId}/pinned-findings/order`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ order }),
     })
-      .then(pinRefusalOr)
+      .then((r) => pinRefusalOr(r, live))
       .then((d) => {
-        if (!pinsOnScreen(caseId)) return; // #2900: the analyst switched case meanwhile
+        if (!live()) return; // #2900/#2929: the analyst switched case, or cancelled and reopened it
         if (d) applyPinResponse(d);
         else loadPins(caseId);
       })

@@ -81,6 +81,8 @@
         return r.json();
       })
       .then((s) => {
+        // #2929: anything but a window object is a failed read, never "no window".
+        if (!s || typeof s !== "object" || Array.isArray(s)) throw new Error("not a time window");
         if (!current()) return;
         const was = DfirScope.get(), changed = was.start !== (s.start || null) || was.end !== (s.end || null);
         scopeLoad.known = caseId;
