@@ -173,7 +173,7 @@
           // #1645: a read not done in full, cut short or failed is named, and never called "returned nothing".
           const gaps = veloReadGapsHtml({ unread: j.unread, truncated: j.truncated, failed: j.skipped }, "Open the results again once the server answers.");
           const none = gaps ? "" : "<div data-safe-style='color:var(--text-muted);font-size:12px'>no rows (the hunt may still be collecting, or returned nothing)</div>";
-          detail.innerHTML = note + gaps + (n ? renderVqlRows(j) : none);
+          detail.innerHTML = note + gaps + (n ? renderVqlRows(j, "Hunt profile results") : none);
           const ib = detail.querySelector(".hp-collect-inline");
           if (ib) ib.onclick = () => collectHunt(ib.dataset.hid, ib);
           if (!gaps) detail.dataset.loaded = "1";   // an incomplete read is fetched again on the next open

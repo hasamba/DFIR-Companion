@@ -355,7 +355,7 @@ export interface FragmentsApi {
   ): { date: string | null; dateLabel: string; times: string[]; sub: string; rest: string } | null;
   mentionHtml(text: string): string;
   ticketPushChips(id: string): string;
-  renderVqlRows(j: { rows?: unknown[]; total?: number; truncated?: boolean }): string;
+  renderVqlRows(j: { rows?: unknown[]; total?: number; truncated?: boolean }, label?: string): string;
   jobRowHtml(view: JobView): string;
   qaSpan(type: string, val: string, ctx?: { evid?: unknown; iocid?: unknown }): string;
   citeFindings(ids: Array<string | null> | null): string;

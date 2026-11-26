@@ -44,14 +44,14 @@ function ticketPushChips(id) {
     `<button class="snow-push-btn" data-snow-fid="${fid}" title="Open this finding as a ServiceNow incident. Re-pushing UPDATES the incident it opened instead of opening a duplicate.">SNow</button>`;
 }
 
-function renderVqlRows(j) {
+function renderVqlRows(j, label) {
   const rows = j.rows || [];
   if (!rows.length) return "<div data-safe-style='color:var(--text-muted);font-size:12px'>0 rows.</div>";
   const cols = [...new Set(rows.flatMap((r) => (r && typeof r === "object" ? Object.keys(r) : [])))].slice(0, 12);
   const cell = (v) => esc(v == null ? "" : (typeof v === "object" ? JSON.stringify(v) : String(v)));
   const head = cols.map((col) => `<th>${esc(col)}</th>`).join("");
   const trs = rows.slice(0, 200).map((r) => `<tr>${cols.map((col) => `<td>${cell(r && r[col])}</td>`).join("")}</tr>`).join("");
-  return `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>${head}</tr></thead><tbody>${trs}</tbody></table></div>`
+  return `<div class="vql-result-wrap" tabindex="0" role="region" aria-label="${escAttr(label || "Query results")}"><table class="vql-result"><thead><tr>${head}</tr></thead><tbody>${trs}</tbody></table></div>`
     + `<div data-safe-style="color:var(--text-muted);font-size:11px;margin-top:4px">${esc(j.total)} row(s)${j.truncated ? " (capped)" : ""}${cols.length === 12 ? " · first 12 columns" : ""}</div>`;
 }
 
