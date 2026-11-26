@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Velociraptor row host names stay whole** — long Velociraptor rows (YARA, detections, USN, MFT, processes, downloads, generic) keep the whole "@ HOST", not a cut-off fragment (closes #2885)
 - **Failed hunt settle re-graded** — rows from a hunt collect whose end-of-import settle fails, and rows from uploaded reports such as THOR, are graded before the next demote (closes #2852)
 - **Hunt settle failures after stamping** — a settle that fails mid-stamp, or a failed pre-import read, no longer leaves hunt rows ungraded; recovery also survives a restart (closes #2888)
 - **Import settle failures recovered** — streamed, drop-folder, Import-button and Velociraptor external imports log a failed settle and grade their own rows instead of dropping them silently (closes #2890)
