@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { test, expect } from "../fixtures/test.js";
+import { waitForCaseRendered } from "../fixtures/sections.js";
 
 // Covers: NO USER STORY EXISTS.
 // feature-user-stories.csv has no accessibility stories — only US-216 and US-220 mention it,
@@ -71,7 +72,15 @@ test("axe scan: dashboard surfaces", async ({ page, demoCase }) => {
 
   // 2. With a fully populated case, which is what an investigator actually looks at.
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
-  await expect(page.locator("#swimlaneLabels .swimlane-label").first()).toBeAttached({ timeout: 30_000 });
+  // Readiness is the forensic timeline plus the cockpit — never a hidden panel. Since #2854 a heavy
+  // panel whose section the default Now view hides (the swimlane, which this used to wait on) is not
+  // loaded at all until shown, so waiting on its DOM times out. axe skips display:none anyway, so
+  // this scope has always been the default view: revealing every section would be a different,
+  // wider scope with its own ledger key, not a restoration of this one.
+  await waitForCaseRendered(page, demoCase);
+  // The stability poll below accepts 0 -> 0, so first require the cockpit to have rendered THIS
+  // case's cards; otherwise a slow cockpit request could let the scan run on the loading state.
+  await expect(page.locator("article[data-cockpit-id]").first()).toBeAttached({ timeout: 30_000 });
   // Wait for the cockpit to stop rendering lead cards before scanning. Each card contributes its
   // own contrast violations, so scanning mid-render makes the count depend on machine speed — the
   // ledger drifted by four nodes purely between an isolated run and a loaded one.

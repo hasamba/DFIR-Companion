@@ -1,5 +1,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures/test.js";
+import { waitForCaseRendered } from "../fixtures/sections.js";
+import { seedDemoCase } from "../fixtures/api.js";
 
 // Covers: NO USER STORY EXISTS.
 // feature-user-stories.csv has no accessibility stories — only US-216 and US-220 mention it,
@@ -105,14 +107,49 @@ test("narrow screen: the page does not scroll sideways at 380px", async ({ page,
 
   // Measure only once the case content has actually rendered. Measuring at load reported no
   // overflow purely because the wide content had not arrived yet — a green result that proved
-  // nothing, which is worse than the red one it replaced.
-  await expect(page.locator("#swimlaneLabels .swimlane-label").first()).toBeAttached({ timeout: 30_000 });
+  // nothing, which is worse than the red one it replaced. The signal is the forensic timeline, which
+  // renders in every view: the swimlane this used to wait on is hidden in the default Now view and,
+  // since #2854, not loaded until shown.
+  await waitForCaseRendered(page, demoCase);
   await page.waitForLoadState("networkidle");
 
   const overflow = await measureOverflow(page);
 
   // A page that scrolls sideways on a narrow display is unusable one-handed in the field. One pixel
   // of slack absorbs sub-pixel rounding; beyond that is a real layout escape.
+  expect(
+    overflow.amount,
+    `horizontal overflow of ${overflow.amount}px. Widest offenders: ${overflow.culprits.join(" | ")}`,
+  ).toBeLessThanOrEqual(1);
+});
+
+// #2919: the cross-case warning ("screenshots are arriving for case X") carries the other case's
+// full id in its Switch button, and as one unwrapped row it pushed the page 45px sideways at phone
+// width. It only appeared when some other test had posted a capture in the last two minutes, so the
+// per-view test below failed by suite order. Raised here on purpose, through the real path: a
+// capture for a second case, then the dashboard's own check-on-connect.
+test("narrow screen: the cross-case capture warning wraps at 375px", async ({ page, demoCase, baseURL }) => {
+  const otherCase = `${demoCase}-other`;
+  await seedDemoCase(baseURL ?? "http://127.0.0.1:4788", otherCase);
+  const posted = await page.request.post("/captures", {
+    data: {
+      caseId: otherCase,
+      timestamp: "2026-05-16T09:00:00.000Z",
+      url: "https://console.example.com/alerts/8821",
+      tabTitle: "Alert 8821",
+      triggerType: "click",
+      imageBase64:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    },
+  });
+  expect(posted.ok(), await posted.text()).toBe(true);
+
+  await page.setViewportSize({ width: 375, height: 900 });
+  await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+  await waitForCaseRendered(page, demoCase);
+  await expect(page.locator("#caseMismatchBanner")).toBeVisible({ timeout: 15_000 });
+
+  const overflow = await measureOverflow(page);
   expect(
     overflow.amount,
     `horizontal overflow of ${overflow.amount}px. Widest offenders: ${overflow.culprits.join(" | ")}`,
@@ -136,10 +173,14 @@ const NARROW_VIEWS = ["analyst", "lead", "executive", "triage", "report", "deep-
 
 for (const width of [375, 768]) {
   test(`narrow screen: no built-in view scrolls sideways at ${width}px`, async ({ page, demoCase }) => {
+    // Seven view switches, each waiting for the network to settle — and since #2854 the Analyst
+    // switch is what loads the ~25 heavy panels the default view skipped. ~18s alone, past the 30s
+    // default when the suite runs in parallel.
+    test.setTimeout(90_000);
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
     expect(await page.evaluate(() => window.innerWidth)).toBe(width);
-    await expect(page.locator("#swimlaneLabels .swimlane-label").first()).toBeAttached({ timeout: 30_000 });
+    await waitForCaseRendered(page, demoCase);
     await page.waitForLoadState("networkidle");
 
     const failures: string[] = [];
@@ -149,6 +190,15 @@ for (const width of [375, 768]) {
       await expect(menu).toBeVisible();
       await menu.locator(`.dv-item[data-view="${view}"]`).click();
       await expect(menu).toBeHidden();
+      // Hidden heavy panels load when a view shows them (#2854). The swimlane is one of them and
+      // Analyst shows it, so its labels appearing proves the view menu started the deferred loads.
+      // It does not prove every other deferred panel has painted; networkidle below is what waits
+      // for their requests to settle before the measurement.
+      if (view === "analyst") {
+        await expect(page.locator("#swimlaneLabels .swimlane-label").first()).toBeAttached({
+          timeout: 30_000,
+        });
+      }
       await page.waitForLoadState("networkidle");
       const overflow = await measureOverflow(page);
       if (overflow.amount > 1) {
