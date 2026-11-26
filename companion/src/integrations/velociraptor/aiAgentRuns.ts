@@ -11,7 +11,12 @@
 //                case's import lock. No re-collection.
 //   retention  — keep the newest SWEEP_RETENTION sweep cases; older ones lose only the Companion copy.
 
-import { describeAiAgentRunStatus, type AiAgentRunStatus } from "./aiAgentRunStatus.js";
+import {
+  describeAiAgentRunStatus,
+  huntFlowsVql,
+  parseHuntFlows,
+  type AiAgentRunStatus,
+} from "./aiAgentRunStatus.js";
 import type { CaseStore } from "../../storage/caseStore.js";
 import type { ServerClients } from "../serverSets/types.js";
 import type { ServerSetStore } from "../serverSets/serverSetStore.js";
@@ -409,8 +414,13 @@ export async function readAiAgentRunStatus(
 ): Promise<AiAgentRunStatus> {
   const run = await deps.runStore.get(caseId, runId);
   if (!run) throw new AiAgentRunError("run not found", 404);
-  const hunt = await veloFor(deps, caseId).huntStatus(run.huntId);
-  return describeAiAgentRunStatus(hunt, run.endpoints.length);
+  const client = veloFor(deps, caseId);
+  const hunt = await client.huntStatus(run.huntId);
+  if (!hunt) return describeAiAgentRunStatus(null, [], run.endpoints.length);
+  // Each endpoint's own collection, not the hunt's lagging counters (see aiAgentRunStatus.ts).
+  const read = await client.runProgram(huntFlowsVql(run.huntId));
+  const flows = read.reason && read.rows.length === 0 ? undefined : parseHuntFlows(read.rows);
+  return describeAiAgentRunStatus(hunt.state, flows, run.endpoints.length);
 }
 
 /** Re-read the run's results from Velociraptor and rebuild its report + upload manifest. */

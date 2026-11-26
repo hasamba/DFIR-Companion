@@ -1016,9 +1016,11 @@ the collection in Velociraptor. **Download report (Markdown)** and **Download fi
 (spreadsheet)** download the same report (the spreadsheet has one row per hit); **Download rule
 coverage (spreadsheet)** downloads the rule-by-endpoint table.
 
-Each run card starts with a **Status** line read live from Velociraptor: **Running — 1 of 2
-endpoint(s) finished**, **Finished — 2 of 2 endpoint(s) done**, or **Stopped in Velociraptor** when
-the hunt was stopped before every endpoint finished. The three newest cards check it when the panel
+Each run card starts with a **Status** line read live from each endpoint's collection in
+Velociraptor: **Running — 0 of 1 endpoint(s) finished; 1,172 rows collected so far**, **Finished —
+2 of 2 endpoint(s) done**, or **Stopped in Velociraptor** when the hunt was stopped before every
+endpoint finished. An endpoint Velociraptor has not reached yet is counted as **not started yet
+(offline?)**, and a collection that ended with an error is counted and named. The three newest cards check it when the panel
 opens; older cards have a **Check status** button. The card also says where results go: rule hits are
 added to the case's forensic timeline automatically about 30 minutes after the run started, or
 straight away when you press **Refresh results**, and the list of AI tools and MCP servers goes to the
