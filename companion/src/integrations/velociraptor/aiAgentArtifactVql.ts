@@ -49,7 +49,8 @@ export function yaraScopeVql(key: string): { lets: string; hits: string; coverag
     `  ${meta("Atlas")} AS RuleAtlas, ${meta("Grade")} AS Grade, ${s}.Id AS Scope,`,
     `  HitPath AS FilePath, HitSize AS FileSize, HitMtime AS FileMtime, HitBtime AS FileBtime,`,
     `  hash(path=HitPath).SHA256 AS FileSha256, Up.Sha256 AS PreservedSha256,`,
-    `  format(format="%.200s", args=[String.Data]) AS MatchedText,`,
+    // #2912: String.Data is bytes; formatting it with %s printed per-byte debris. Hex is exact.
+    `  format(format="%.200x", args=[str(str=String.Data)]) AS MatchedHex, len(list=String.Data) AS MatchedLength,`,
     `  if(condition=NOT ${s}.Upload, then="kept by the AICodingAgents preservation collection",`,
     `     else=if(condition=HitSize > cfg.UploadMaxBytes, then="match observed; file not preserved (over the upload cap)",`,
     `     else=if(condition=Up, then=format(format="uploaded (%v bytes)", args=[Up.Size]),`,

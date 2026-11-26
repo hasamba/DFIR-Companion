@@ -62,6 +62,9 @@ export const aiAgentHitRow = z
     PreservedSha256: sha,
     EventTime: text(64),
     MatchedText: text(AI_AGENT_SNIPPET_MAX * 4),
+    /** #2912: the matched bytes as hex (at most 200 bytes), and the whole match's length in bytes. */
+    MatchedHex: text(AI_AGENT_SNIPPET_MAX * 2),
+    MatchedLength: num,
     Preserved: text(64),
   })
   .passthrough();
@@ -164,12 +167,29 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /((?:api[_-]?key|token|secret|password|passwd|authorization)["']?\s*[:=]\s*["']?)[^\s"',;]{8,}/gi,
 ];
 
+// #2912: when the match was cut short, a secret at the very end may be shorter than the patterns above
+// require. A key assignment or a token prefix at the end of a partial match is redacted whatever its
+// length.
+const CUT_SECRET_TAIL: readonly RegExp[] = [
+  /((?:api[_-]?key|token|secret|password|passwd|authorization)["']?\s*[:=]\s*["']?)[^\s"',;]+$/i,
+  /(Bearer\s+)[A-Za-z0-9._~+/-]+=*$/i,
+  /\b(?:sk-|gh[pousr]_|github_pat_|hf_|AKIA|AIza|xox[abprs]-|eyJ)[A-Za-z0-9._-]*$/,
+];
+
+/** Secret-shaped runs in plain text redacted; `partial` also redacts a secret cut off at the end. */
+export function redactSnippetText(text: string, partial = false): string {
+  let s = text.slice(0, AI_AGENT_SNIPPET_MAX * 4);
+  const redact = (re: RegExp) =>
+    (s = s.replace(re, (m, keep?: string) =>
+      typeof keep === "string" && m.startsWith(keep) ? `${keep}[redacted]` : "[redacted]",
+    ));
+  for (const re of SECRET_PATTERNS) redact(re);
+  if (partial) for (const re of CUT_SECRET_TAIL) redact(re);
+  return s;
+}
+
 /** The snippet as the panel and the reports show it: secret-shaped runs redacted, length-capped. */
 export function redactSnippet(raw: string | undefined): string {
-  let s = (raw ?? "").slice(0, AI_AGENT_SNIPPET_MAX * 4);
-  for (const re of SECRET_PATTERNS)
-    s = s.replace(re, (m, keep?: string) =>
-      typeof keep === "string" && m.startsWith(keep) ? `${keep}[redacted]` : "[redacted]",
-    );
+  const s = redactSnippetText(raw ?? "");
   return s.length > AI_AGENT_SNIPPET_MAX ? `${s.slice(0, AI_AGENT_SNIPPET_MAX)}…` : s;
 }

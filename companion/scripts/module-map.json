@@ -156,6 +156,7 @@
     "aiAgentPack.ts": "analysis/findings",
     "aiAgentReport.ts": "analysis/ingest",
     "aiAgentReportTypes.ts": "shared",
+    "aiAgentMatchedText.ts": "analysis/ingest",
     "aiAgentRows.ts": "analysis/ingest",
     "aiAgentRuleParse.ts": "analysis/hunt",
     "aiAgentRuleSet.ts": "analysis/hunt",

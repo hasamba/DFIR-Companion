@@ -6,7 +6,8 @@
 
 import { gradeAiAgentHit, hitTime, AI_AGENT_TIME_LABEL } from "./aiAgentImport.js";
 import { aiAgentRuleLink, type AiAgentNotRun, type AiAgentRuleSet } from "./aiAgentRuleSet.js";
-import { aiAgentClientId, isAiAgentRow, parseAiAgentRow, redactSnippet } from "./aiAgentRows.js";
+import { matchedSnippet } from "./aiAgentMatchedText.js";
+import { aiAgentClientId, isAiAgentRow, parseAiAgentRow } from "./aiAgentRows.js";
 import { aiAgentHashCheck } from "./aiAgentHashCheck.js";
 import type { UploadManifestEntry } from "./aiAgentRunStore.js";
 import type { Severity } from "./stateTypes.js";
@@ -181,7 +182,7 @@ export function buildAiAgentReport(
         timeBasis: basis,
         timeLabel: AI_AGENT_TIME_LABEL,
         scanTime: r.ScanTime ?? "",
-        snippet: redactSnippet(r.MatchedText),
+        snippet: matchedSnippet(r),
         preserved: r.Preserved ?? "",
       });
     } else if (r.Kind === "inventory") {

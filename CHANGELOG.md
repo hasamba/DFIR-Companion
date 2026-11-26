@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **AI Agent Forensics picker Refresh and Online only** — case writers re-read the Velociraptor client list from the picker; Online only shows endpoints seen in the last 15 minutes, each row says when it was last seen (part of #2898)
+- **AI Agent Forensics matched text readable** — YARA hits show the text that matched (hidden characters made visible, secrets redacted) instead of `%!s(uint8=…)`, also for runs already on the server (closes #2912)
 - **AI Agent Forensics findings filters** — the findings table filters by grade, rule and endpoint (when more than one), with shortened paths and hashes (full values on hover) (closes #2911)
 - **AI Agent Forensics finishes inside its time limit** — whole-disk Sigma file checks are opt-in, results import once every endpoint finishes instead of after 30 minutes, the card flags a run that hit the 2-hour limit and explains Velociraptor's Paused (closes #2907)
 - **AI Agent Forensics run status** — each run card shows Running / Finished / Stopped with endpoint counts, says where results go, and names its downloads and warnings in plain English (closes #2898)
