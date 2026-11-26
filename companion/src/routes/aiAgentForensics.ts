@@ -9,6 +9,7 @@
 //   GET  /cases/:id/ai-agent/endpoints                   the case set's endpoints, reduced fields (case WRITE)
 //   POST /cases/:id/ai-agent/endpoints/refresh           re-read them from Velociraptor first (case WRITE)
 //   GET  /cases/:id/ai-agent/runs                        the case's (or sweep's) runs
+//   GET  /cases/:id/ai-agent/runs/:runId/status          the run's live progress in Velociraptor (#2898)
 //   POST /cases/:id/ai-agent/runs/:runId/refresh         read results back, rebuild the report
 //   POST /cases/:id/ai-agent/runs/:runId/add-to-case     file a sweep into body.targetCaseId
 //   GET  /cases/:id/ai-agent/runs/:runId/report.md|.csv  the run report, escaped
@@ -27,6 +28,7 @@ import {
   AiAgentRunError,
   addSweepToCase,
   listSweeps,
+  readAiAgentRunStatus,
   refreshAiAgentRun,
   startAiAgentRun,
   type AiAgentForensicsDeps,
@@ -282,6 +284,16 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
       return res.status(200).json({ runs: runs.map(publicRun) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/cases/:id/ai-agent/runs/:runId/status", async (req: Request, res: Response) => {
+    const d = deps(ctx, runStore);
+    if (!d) return res.status(501).json(NOT_WIRED);
+    try {
+      return res.status(200).json(await readAiAgentRunStatus(d, req.params.id, req.params.runId));
+    } catch (err) {
+      return fail(res, err);
     }
   });
 

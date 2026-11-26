@@ -13,6 +13,7 @@ import {
   addSweepToCase,
   enforceSweepRetention,
   listSweeps,
+  readAiAgentRunStatus,
   refreshAiAgentRun,
   startAiAgentRun,
   type AiAgentForensicsDeps,
@@ -351,6 +352,22 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     expect(programs.filter((p) => !p.includes("artifact_set")).some((p) => p.includes("read_file"))).toBe(
       false,
     );
+  });
+
+  it("reads the run's live status from its Velociraptor hunt (#2898)", async () => {
+    const huntStatus = vi.fn(async () => ({
+      state: "PAUSED",
+      clients: { scheduled: 1, completed: 0, errors: 0 },
+    }));
+    const deps = makeDeps();
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    const velo = (deps.serverClients.forCase(caseId) as { servers: { velociraptor: object } }).servers
+      .velociraptor;
+    Object.assign(velo, { huntStatus });
+    const s = await readAiAgentRunStatus(deps, caseId, run.runId);
+    expect(huntStatus).toHaveBeenCalledWith("H.AI1");
+    expect(s).toMatchObject({ state: "running", summary: "Running — 0 of 1 endpoint(s) finished" });
+    await expect(readAiAgentRunStatus(deps, caseId, "aar-missing")).rejects.toMatchObject({ status: 404 });
   });
 
   it("files a sweep's rows into a real case, and refuses a sweep as the target", async () => {

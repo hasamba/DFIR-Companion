@@ -11,6 +11,7 @@
 //                case's import lock. No re-collection.
 //   retention  — keep the newest SWEEP_RETENTION sweep cases; older ones lose only the Companion copy.
 
+import { describeAiAgentRunStatus, type AiAgentRunStatus } from "./aiAgentRunStatus.js";
 import type { CaseStore } from "../../storage/caseStore.js";
 import type { ServerClients } from "../serverSets/types.js";
 import type { ServerSetStore } from "../serverSets/serverSetStore.js";
@@ -398,6 +399,18 @@ export function withSilentEndpoints(
   return silent.length
     ? aiAgentEndpointLabels({ ...report, endpoints: [...report.endpoints, ...silent] })
     : report;
+}
+
+/** The run's live progress, read from its Velociraptor hunt (#2898). Nothing is stored. */
+export async function readAiAgentRunStatus(
+  deps: AiAgentForensicsDeps,
+  caseId: string,
+  runId: string,
+): Promise<AiAgentRunStatus> {
+  const run = await deps.runStore.get(caseId, runId);
+  if (!run) throw new AiAgentRunError("run not found", 404);
+  const hunt = await veloFor(deps, caseId).huntStatus(run.huntId);
+  return describeAiAgentRunStatus(hunt, run.endpoints.length);
 }
 
 /** Re-read the run's results from Velociraptor and rebuild its report + upload manifest. */

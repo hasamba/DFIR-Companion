@@ -10,6 +10,10 @@
 import type { VeloArtifactInfo } from "./artifactCatalog.js";
 import { TRIAGE_ARTIFACT, TRIAGE_RULE } from "./aiAgentLaunch.js";
 
+// What a run without preservation still does, said the way an analyst reads it (#2898).
+const STILL_RUNS =
+  "The run still checks the AI-agent files for tampering and lists the AI tools, but it does not save copies of the files in Velociraptor.";
+
 export interface AiAgentEndpoint {
   clientId: string;
   hostname: string;
@@ -48,14 +52,15 @@ export async function preflightAiAgentRun(
     if (!preserve)
       warnings.push(
         triage
-          ? `${TRIAGE_ARTIFACT} on this server has no ${TRIAGE_RULE} rule (an older triage release): detection and inventory run, artifacts not preserved`
-          : `${TRIAGE_ARTIFACT} is not on this server: detection and inventory run, artifacts not preserved`,
+          ? `Your Velociraptor server has an older ${TRIAGE_ARTIFACT} artifact that does not know where AI coding agents keep their files. ${STILL_RUNS}`
+          : `Your Velociraptor server does not have the ${TRIAGE_ARTIFACT} artifact. ${STILL_RUNS}`,
       );
   } catch (e) {
     warnings.push(
-      `could not read the server's artifact catalog (${(e as Error).message}): detection and inventory run, artifacts not preserved`,
+      `Could not read your Velociraptor server's artifact list (${(e as Error).message}). ${STILL_RUNS}`,
     );
   }
-  if (skipped.length) warnings.push(`${skipped.length} non-Windows endpoint(s) left out`);
+  if (skipped.length)
+    warnings.push(`${skipped.length} endpoint(s) left out: this check runs on Windows only`);
   return { clientIds, skipped, preserve, warnings };
 }

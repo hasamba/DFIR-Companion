@@ -375,15 +375,50 @@
     msg.textContent = r.ok ? `Added to ${target}: +${r.body.addedEvents} event(s).` : r.body.error || `Could not add (HTTP ${r.status}).`;
   }
 
+  // Warnings stored on runs launched before #2898 used tool wording; show them the way new runs say it.
+  const STILL_RUNS = "The run still checks the AI-agent files for tampering and lists the AI tools, but it does not save copies of the files in Velociraptor.";
+  function plainWarning(w) {
+    const text = String(w);
+    if (/has no AICodingAgents rule/.test(text))
+      return `Your Velociraptor server has an older Windows.Triage.Targets artifact that does not know where AI coding agents keep their files. ${STILL_RUNS}`;
+    if (/^Windows\.Triage\.Targets is not on this server/.test(text)) return `Your Velociraptor server does not have the Windows.Triage.Targets artifact. ${STILL_RUNS}`;
+    const m = /^could not read the server's artifact catalog \((.*)\): detection and inventory run/.exec(text);
+    if (m) return `Could not read your Velociraptor server's artifact list (${m[1]}). ${STILL_RUNS}`;
+    const left = /^(\d+) non-Windows endpoint\(s\) left out$/.exec(text);
+    if (left) return `${left[1]} endpoint(s) left out: this check runs on Windows only`;
+    return text;
+  }
+
   function runCard(caseId, run, sweep, rerender) {
     const card = el("div", null, "aa-run");
     const head = el("div", null, "aa-run-head");
     head.appendChild(el("strong", `Run ${run.launchedAt.replace("T", " ").slice(0, 16)} · ${run.endpoints.length} endpoint(s)`));
     head.appendChild(el("span", " SENSITIVE", "aa-sensitive"));
     card.appendChild(head);
-    card.appendChild(el("p", `Rules: ${run.ruleSetVersion} · scopes: ${run.scopes.join(", ")} · preserved: ${run.preserved ? "yes" : "no — artifacts not preserved"}`, "aa-note"));
+    // #2898: is the run still going? Read live from its Velociraptor hunt, never stored.
+    const statusLine = el("p", "Status: checking Velociraptor…", "aa-status");
+    statusLine.setAttribute("role", "status");
+    card.appendChild(statusLine);
+    const checkStatus = async () => {
+      const st = await call(`${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/status`);
+      statusLine.textContent = st.ok
+        ? `Status: ${st.body.summary}`
+        : `Status: could not ask Velociraptor (${(st.body && st.body.error) || `HTTP ${st.status}`})`;
+    };
+    void checkStatus();
+    const scopeLabel = (id) => ((rules && rules.scopes) || []).find((x) => x.id === id)?.label || id;
+    card.appendChild(el("p", `Checked: ${run.scopes.map(scopeLabel).join(", ")}. Copies of the AI-agent files saved in Velociraptor: ${run.preserved ? "yes" : "no"}. Rule pack: ${run.ruleSetVersion}.`, "aa-note"));
+    card.appendChild(
+      el(
+        "p",
+        sweep
+          ? "Where results go: this is a sweep with no case — press Add to case… to put its hits into a case's forensic timeline."
+          : "Where results go: rule hits are added to this case's forensic timeline automatically about 30 minutes after the run started, or straight away when you press Refresh results. The list of AI tools and MCP servers goes to the super-timeline.",
+        "aa-note",
+      ),
+    );
     card.appendChild(el("p", "Sensitive: preservation may have copied credential files into Velociraptor's file store. The Companion never reads the collected files (manifest only).", "aa-note"));
-    for (const w of run.warnings || []) card.appendChild(el("p", w, "aa-warn"));
+    for (const w of run.warnings || []) card.appendChild(el("p", plainWarning(w), "aa-warn"));
     for (const f of run.failedEndpoints || []) card.appendChild(el("p", `${f.clientId}: not added (${f.error})`, "aa-warn"));
     const actions = el("div", null, "aa-actions");
     const msg = el("span", "", "aa-msg");
@@ -395,6 +430,7 @@
       const r = await post(`${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/refresh`);
       msg.textContent = r.ok ? "" : r.body.error || `Could not read results (HTTP ${r.status}).`;
       if (r.ok) rerender();
+      else void checkStatus();
     });
     actions.appendChild(refresh);
     if (run.guiUrl && /^https?:\/\//.test(run.guiUrl)) {
@@ -404,14 +440,18 @@
       a.rel = "noopener noreferrer";
       actions.appendChild(a);
     }
-    for (const fmt of ["md", "csv"]) {
-      const a = el("a", `Report .${fmt}`);
-      a.href = `${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/report.${fmt}`;
+    // #2898: say what each download is, not its file extension.
+    const downloads = [
+      ["report.md", "Download report (Markdown)", "The whole run as a readable text report: endpoints, AI tools, MCP servers and every hit."],
+      ["report.csv", "Download findings (spreadsheet)", "One row per hit, for Excel or a SIEM."],
+      ["sigma-coverage.csv", "Download rule coverage (spreadsheet)", "Which Sigma rules ran on which endpoint, and whether each one hit."],
+    ];
+    for (const [file, label, tip] of downloads) {
+      const a = el("a", label);
+      a.href = `${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/${file}`;
+      a.title = tip;
       actions.appendChild(a);
     }
-    const sigmaCsv = el("a", "Sigma coverage .csv");
-    sigmaCsv.href = `${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/sigma-coverage.csv`;
-    actions.appendChild(sigmaCsv);
     if (sweep) {
       const add = el("button", "Add to case…");
       add.type = "button";
@@ -428,7 +468,7 @@
       );
     const r = run.report;
     if (!r) {
-      card.appendChild(el("p", "Results not read yet.", "aa-note"));
+      card.appendChild(el("p", "Results in this panel: not read yet — press Refresh results once the status says Finished.", "aa-note"));
       return card;
     }
     card.appendChild(endpointLines(r.endpoints));

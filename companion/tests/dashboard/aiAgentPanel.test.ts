@@ -95,6 +95,27 @@ describe("AI Agent Forensics panel", () => {
     expect(picker).not.toContain("Settings → Velociraptor");
   });
 
+  it("run card: a live status line, where results go, and plain-English labels (#2898)", () => {
+    const card = js.slice(js.indexOf("function runCard"), js.indexOf("async function renderPanel"));
+    expect(card).toContain("/status`");
+    expect(card).toContain("Status: ");
+    expect(card).toContain(
+      "added to this case's forensic timeline automatically about 30 minutes after the run started",
+    );
+    expect(card).toContain("Download report (Markdown)");
+    expect(card).toContain("Download findings (spreadsheet)");
+    expect(card).toContain("Download rule coverage (spreadsheet)");
+    expect(card).not.toContain("Report .${fmt}");
+    expect(card).not.toContain("scopes: ${run.scopes");
+    expect(card).toContain("Copies of the AI-agent files saved in Velociraptor");
+  });
+
+  it("shows warnings stored by older runs in the new plain wording (#2898)", () => {
+    expect(js).toContain("function plainWarning(w)");
+    expect(js).toContain("plainWarning(w)");
+    expect(js).toContain("does not know where AI coding agents keep their files");
+  });
+
   it("turns the standard 401 locked answer into an unlock hint (#2798)", () => {
     expect(js).toContain('res.status === 401 && body && body.error === "locked"');
     expect(js).toContain("is locked — unlock it first.");
@@ -110,6 +131,6 @@ describe("AI Agent Forensics panel", () => {
     expect(js).toContain("The bytes YARA read are not separately hashed");
     expect(js).not.toContain("the file changed after the scan");
     expect(js).toContain('cell ? `${cell.status}, ${cell.hits} hit(s)` : "not recorded"');
-    expect(js).toContain("/sigma-coverage.csv`");
+    expect(js).toContain('["sigma-coverage.csv", "Download rule coverage (spreadsheet)"');
   });
 });

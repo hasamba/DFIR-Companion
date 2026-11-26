@@ -673,6 +673,7 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 
 /* AI Agent Forensics panel (#2690) */
 .aa-note { color: var(--text-muted); font-size: 12px; margin: 4px 0; }
+.aa-status { font-size: 13px; font-weight: 600; margin: 4px 0; }
 .aa-warn { color: var(--sev-medium, #e0a030); font-size: 12px; margin: 4px 0; }
 .aa-provisional { font-style: italic; }
 .aa-sensitive { color: var(--sev-high, #e05050); font-size: 11px; font-weight: 600; margin-left: 6px; }
