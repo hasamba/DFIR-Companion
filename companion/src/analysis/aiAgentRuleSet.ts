@@ -68,6 +68,8 @@ export interface AiAgentRuleSet {
   mcpConfigs: { tool: string; glob: string }[];
   credentials: string[];
   lowInformationTimeFiles: string[];
+  /** #2719: lower-case path fragments of the agents' own working data; a hit there is graded Info. */
+  agentWorkingData: string[];
   selfScanHashes: Set<string>;
 }
 
@@ -261,6 +263,7 @@ export function loadAiAgentRuleSet(dir: string = bundledAiAgentRulesDir()): AiAg
     mcpConfigs: (Array.isArray(paths.mcpConfigs) ? paths.mcpConfigs : []) as AiAgentRuleSet["mcpConfigs"],
     credentials: strs(paths.credentials),
     lowInformationTimeFiles: strs(map.lowInformationTimeFiles),
+    agentWorkingData: strs(map.agentWorkingData).map((f) => f.toLowerCase()),
     selfScanHashes: selfScanSet(dir, yara, sigma),
   };
 }
