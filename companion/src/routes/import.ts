@@ -60,6 +60,7 @@ import { openImportFile, saveReceiptedImport } from "./importFileSource.js";
 import { registerImportReceiptCustody } from "./importReceipt.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
+import { gradeArmOf } from "./importSettle.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
 import { importFromHandle } from "./importFromHandle.js";
 import { registerImportUploadRoute } from "./importUpload.js";
@@ -333,7 +334,13 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       let section: ImportSection | null = null;
       const run = async (): Promise<unknown> => {
         await tracking.start();
-        section = await beginImportSection(importLock, caseId, options.stateStore, text.length);
+        section = await beginImportSection(
+          importLock,
+          caseId,
+          options.stateStore,
+          text.length,
+          gradeArmOf(settleDeps),
+        );
         baseline = section.baseline;
         return cloudStream.runStored(ctx, { kind, caseId, storedName, text, base }, dispatchImport);
       };

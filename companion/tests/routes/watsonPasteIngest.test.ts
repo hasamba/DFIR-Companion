@@ -258,14 +258,20 @@ describe("Watson paste ingest", () => {
     expect(mentions((await h.stateStore.load(CASE)).forensicTimeline, "ntdsutil")).toHaveLength(0);
   });
 
-  it("a settle that fails after stamping still settles the paste's rows before the next demote (#2891)", async () => {
+  it("a settle that fails after stamping still settles the paste's rows and keeps its proposals (#2891, #2909)", async () => {
     const h = await harness();
     const fired = failSettleAfterStamp(h.stateStore);
     const res = await paste(h.app as never, SIEM, "events.json");
     expect(fired()).toBe(true);
     expect(res.status).toBe(200);
-    // Still reported as a grading failure: the held proposals do not survive the throw.
-    expect((await h.chatStore.load(CASE)).pastes[0].parsed).toMatchObject({ kind: "text" });
+    // #2909: the held proposals survive the throw — the recovery's held tagger read the rows, so the
+    // row it would raise is still offered for approval (once, not once per pass), never applied.
+    const chat = await h.chatStore.load(CASE);
+    expect(chat.pastes[0].parsed).toMatchObject({ kind: "siem", rows: 2, held: 1 });
+    const proposals = chat.proposals.filter((p) => p.kind === "event_promote");
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].status).toBe("pending");
+    expect(proposals[0].events.map((e) => e.severity)).toEqual(["High"]);
     // But no raw Info row of the paste is left in the record the AI reads, and none is lost: both
     // were dual-written and demoted, as a successful settle leaves them (the promotion stays held).
     const forensic = (await h.stateStore.load(CASE)).forensicTimeline;
@@ -400,6 +406,21 @@ describe("held tagger and the chat it builds", () => {
     // Tags are still written for both rows.
     const tags = await tagsStore.load(CASE);
     expect(new Set(tags.map((t) => t.targetId))).toEqual(new Set(["e-info", "e-low"]));
+  });
+
+  it("reports which rows it finished on: all after a run, none after an internal failure (#2909)", async () => {
+    root = await mkdtemp(join(tmpdir(), "dfir-watson-held-"));
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: CASE, name: "n", investigator: "i", aiProvider: null });
+    const tagsStore = new TagsStore(store);
+    const ok = heldContentTagger({ taggerStore: new TaggerStore(join(root, "user-tags.yaml")), tagsStore });
+    expect(await ok.tag(CASE, [ev("e-1", "Info")])).toEqual({ ungraded: [] });
+    const broken = new TaggerStore(join(root, "user-tags.yaml"));
+    vi.spyOn(broken, "load").mockRejectedValue(new Error("invalid ruleset"));
+    const failing = heldContentTagger({ taggerStore: broken, tagsStore });
+    expect(await failing.tag(CASE, [ev("e-2", "Info"), ev("e-3", "Low")])).toEqual({
+      ungraded: ["e-2", "e-3"],
+    });
   });
 
   it("with no row above Info, says the rows stay in the super-timeline and that the analyst can ask about them", () => {

@@ -231,8 +231,16 @@ tagger just finished on it. A crash between the stamp and the tag, or a tagger t
 forensic timeline instead of demoting them untagged. Start-up recovery (`composition/ungradedRecovery.ts`)
 finds them with one SQL query of the forensic timeline and runs dual-write → tag → demote on them. The
 mark means "pending", not "graded", so rows written before it existed count as graded, and so do rows
-from writers that never cross the settle stamp. The super-timeline copies never carry it. A Watson
-paste writes no mark, because its tagger holds raises for the analyst.
+from writers that never cross the settle stamp. The super-timeline copies never carry it.
+
+#2909 closed the gaps around it. An import section that ends in the settle arms the case for the
+importer's merge window (`analysis/caseSqliteWorkerGrade.ts`): every forensic row inserted while armed
+carries the mark from its insert, so an importer that throws after a partial merge, or a crash before
+the stamp, cannot leave unmarked rows for the next demote. The settle drops the arm first. The next
+import's settle grades the marked rows earlier imports left (`routes/importRegrade.ts`, bounded and
+backed off when its own tagger fails), with the same caps a full settle runs; start-up stays the
+backstop. A Watson paste marks its rows `"held"`: only a held tagger (tags, proposals, no raise) ever
+grades them, and "held" wins over a plain mark in a fold or a stamp. Report exports strip the mark.
 
 The consequence to hold on to: **a new tagger rule changes what future collections surface to the
 model, not what past ones do.** A later "Run tagger" still evaluates the historical super-timeline

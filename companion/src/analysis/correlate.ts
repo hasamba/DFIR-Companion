@@ -29,7 +29,7 @@ import { mergeGroupCanonical } from "./canonicalMerge.js";
 import { DERIVED_NOTE_NAMES } from "./derivedNote.js";
 import { mergeDerivedNotes } from "./buildTimeMerge.js";
 import { collectorRecordGrade } from "./collectorMerge.js";
-import { partlyReadArtifactOf, promotionMarks, timeBasisOf } from "./promotionMerge.js";
+import { gradeMarkUnion, partlyReadArtifactOf, promotionMarks, timeBasisOf } from "./promotionMerge.js";
 import { scannedText } from "./correlateSpans.js";
 
 export interface CorrelateOptions {
@@ -372,7 +372,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     // longer description wins primary, or second-look would treat their choice as pending again
     // (#932 item 5 part B). promotedAt is the LATEST of any member for the same reason (#1586).
     ...promotionMarks(events), // promotionMerge.ts
-    ...(events.some((e) => e.gradePending) ? { gradePending: true as const } : {}), // #2891: any member
+    ...gradeMarkUnion(events), // #2891/#2909: any member pending → pending; "held" wins (promotionMerge.ts)
     // artifactName, unlike the fields below, is an ATTRIBUTION of the shown description (which artifact
     // produced this text) — not a neutral shared fact about the underlying process/host/connection — so
     // it must come from the SAME event as `description` (primary), never borrowed from a different

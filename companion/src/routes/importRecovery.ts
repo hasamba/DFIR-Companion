@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { autoTagNewEvents } from "../analysis/taggerAuto.js";
+import { gradedIdsOf, isHeldGrade, withoutGradePending } from "../analysis/gradeMark.js";
+import { clearGradePending } from "./importSettlePaged.js";
+import { runUnlocked } from "./importSettleRows.js";
 import { diffIocs } from "../analysis/iocsDiff.js";
 import { lastCommittedImportBatch } from "../analysis/importResume.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
@@ -138,9 +141,14 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           }
 
           const imported = await options.stateStore.load(job.caseId);
-          const allArtifactEvents = imported.forensicTimeline.filter((event) =>
+          // #2909: the super-timeline copy and the tagger never see the grade mark; a row marked "held"
+          // (a Watson paste's) is never offered to this plain tagger.
+          const artifactRows = imported.forensicTimeline.filter((event) =>
             event.sourceScreenshots.includes(parameters.storedName),
           );
+          const allArtifactEvents = artifactRows.map(withoutGradePending);
+          const plainEvents = allArtifactEvents.filter((_e, i) => !isHeldGrade(artifactRows[i]));
+          let graded: string[] = [];
           debug(
             `parsed artifactEvents=${allArtifactEvents.length} forensicNow=${imported.forensicTimeline.length}`,
           );
@@ -161,9 +169,9 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
               }
             }
           }
-          if (allArtifactEvents.length) {
+          if (plainEvents.length) {
             try {
-              await autoTagNewEvents(
+              const outcome = await autoTagNewEvents(
                 {
                   taggerStore: options.taggerStore,
                   tagsStore: options.tagsStore,
@@ -175,13 +183,21 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
                   logLine: (message) => ctx.serverLogger.info(message),
                 },
                 job.caseId,
-                allArtifactEvents,
+                plainEvents,
               );
+              graded = gradedIdsOf(plainEvents, outcome);
             } catch (error) {
               await warn("automatic tagging failed", error);
             }
           }
-          const finalState = await ctx.demoteForensicForCase(job.caseId);
+          // Only rows the tagger finished on may leave among marked rows; they lose the mark after.
+          const finalState = await ctx.demoteForensicForCase(job.caseId, { graded: new Set(graded) });
+          await clearGradePending(
+            options.stateStore,
+            ctx.runStateExclusive ?? runUnlocked,
+            job.caseId,
+            graded,
+          );
           debug(
             `settled superRetained=${superTimelineAddedCount} superEvicted=${superTimelineEvicted?.count ?? 0} ` +
               `forensicAfterDemote=${finalState.forensicTimeline.length}`,

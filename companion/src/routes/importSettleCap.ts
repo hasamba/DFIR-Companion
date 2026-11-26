@@ -10,7 +10,7 @@ import {
   windowFor,
 } from "../analysis/buildTimeWindow.js";
 import { hostBuildMarkers } from "../analysis/gapHostHistory.js";
-import { rewriteByIdInPages } from "./importSettleRows.js";
+import { rewriteByIdInPages, type RunExclusive } from "./importSettleRows.js";
 import {
   capLabSetupRow,
   hasLabSetupMark,
@@ -111,4 +111,35 @@ export async function stampEngineBootScoped(
   const stamps = new Map(stampEngineBoot(candidates).map((e) => [e.id, engineBootOf(e)] as const));
   if (!stamps.size) return 0;
   return rewriteByIdInPages(store, caseId, [...stamps.keys()], (e) => withEngineBoot(e, stamps.get(e.id)));
+}
+
+/** What the three post-tagger corrections need: the ids/rows each one reads (SettleCandidates' subset). */
+export interface CapCandidates {
+  buildTimeIds: readonly string[];
+  labSetupIds: readonly string[];
+  engineBoot: readonly ForensicEvent[];
+}
+
+/**
+ * The settle's three post-tagger corrections, in its order — build-time cap (#1529) → lab-setup cap
+ * (#1946) → Defender engine start-up (#2084) — each under the state lock. One function so the settle
+ * and every re-grade (#2909: in-process recovery, the next import's sweep, start-up) run the same
+ * steps on the rows they graded, before the demote. Returns how many rows each step changed.
+ */
+export async function gradeCapsScoped(
+  store: ForensicRowStore,
+  lock: RunExclusive,
+  caseId: string,
+  ledger: Pick<InvestigationState, "hostRenames">,
+  opts: { scanAll: boolean; candidates: CapCandidates },
+): Promise<{ capped: number; labCapped: number; engineBoot: number }> {
+  const { scanAll, candidates } = opts;
+  const capped = await lock(caseId, () =>
+    capBuildTimeScoped(store, caseId, ledger, { scanAll, extraIds: candidates.buildTimeIds }),
+  );
+  const labCapped = await lock(caseId, () =>
+    capLabSetupScoped(store, caseId, { scanAll, candidateIds: candidates.labSetupIds }),
+  );
+  const engineBoot = await lock(caseId, () => stampEngineBootScoped(store, caseId, candidates.engineBoot));
+  return { capped, labCapped, engineBoot };
 }

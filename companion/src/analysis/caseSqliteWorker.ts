@@ -13,6 +13,7 @@ import { TAGS_WORKER_SOURCE } from "./caseSqliteWorkerTags.js";
 import { SEARCH_WORKER_SOURCE } from "./caseSqliteWorkerSearch.js";
 import { CLOUD_WORKER_SOURCE } from "./caseSqliteWorkerCloud.js";
 import { RUN_GUARD_WORKER_SOURCE } from "./caseSqliteWorkerRunGuard.js";
+import { GRADE_WORKER_SOURCE } from "./caseSqliteWorkerGrade.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -161,8 +162,10 @@ function createEntityWriter(db) {
   );
   const deleteValuesStatement = db.prepare("DELETE FROM entity_values WHERE row_id=?");
   const terms = createTermsWriter(db); // #1452: the term index follows every timeline row
+  const gradeMark = gradeArmReader(db); // #2909: caseSqliteWorkerGrade.ts
   return {
-    insert(projection, entity) {
+    insert(given, entity) {
+      const projection = gradeMark(given, entity);
       const result = insertStatement.run(
         projection.kind, projection.entityId, projection.ordinal, projection.timestamp,
         projection.timestampMs, projection.host, projection.source, projection.severity,
@@ -620,6 +623,7 @@ function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
   SEARCH_WORKER_SOURCE +
   CLOUD_WORKER_SOURCE +
   RUN_GUARD_WORKER_SOURCE +
+  GRADE_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {

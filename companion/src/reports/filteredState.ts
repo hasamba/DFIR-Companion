@@ -1,4 +1,5 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
+import { withoutGradePending } from "../analysis/gradeMark.js";
 import type { StateStore } from "../analysis/stateStore.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
@@ -76,7 +77,8 @@ export async function loadFilteredState(
   const aligned = { ...loaded, forensicTimeline: projectAlignment(skew, loaded.forensicTimeline) };
   const scoped = projectScope(aligned, src.scope ? await src.scope.load(caseId) : NO_SCOPE);
   const markers = src.falsePositives ? await src.falsePositives.load(caseId) : [];
-  const kept = filterFalsePositiveEvents(scoped.forensicTimeline, markers);
+  // #2909: the grade mark is internal bookkeeping (analysis/gradeMark.ts), never part of a report.
+  const kept = filterFalsePositiveEvents(scoped.forensicTimeline, markers).map(withoutGradePending);
   // The analyst's attack-outcome statements are a side file, never part of the saved state (a
   // re-synthesis would wipe them). Applied here so every report surface attributes a blocked or
   // executed attack the way the analyst said, over whatever the machine derived.

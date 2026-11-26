@@ -2,6 +2,7 @@ import { capBuildTimeRow, type BuildTimeWindow } from "../../buildTimeWindow.js"
 import { engineBootOf, stampEngineBoot, withEngineBoot } from "../../defenderEngineBoot.js";
 import { capLabSetupRow } from "../../labSetupTransfer.js";
 import type { ForensicEvent } from "../../stateTypes.js";
+import type { TagOutcome } from "../../gradeMark.js";
 import { applyToForensicEvent } from "../../tagger.js";
 import { readTaggerSettings, runAndApplyTagger } from "../../taggerRun.js";
 import type { TagsStore } from "../../tags.js";
@@ -12,8 +13,10 @@ import { WATSON_MARKER } from "../../timeline/watsonItems.js";
 // tagger does, but changes no grade: a row a rule would raise out of Info stays Info (so demote
 // moves it to the super-timeline like any Info row) and its raised copy is collected instead, to be
 // held as a pending Watson proposal the analyst approves. Same gates as autoTagNewEvents
-// (TAGGER_AUTO, TAGGER_SCOPE=super raises nothing, an empty or invalid ruleset skips) and, like it,
-// it never throws: a paste must never fail because of the tagger.
+// (TAGGER_AUTO, TAGGER_SCOPE=super raises nothing, an empty ruleset skips) and, like it, it never
+// throws: a paste must never fail because of the tagger. Like it too (#2909), it says which rows it
+// did NOT finish on: a deliberate skip finishes every row; an internal failure (an invalid ruleset, a
+// failed run or tags write) finishes none, so their grade mark stays and a re-grade tries again.
 //
 // Only rows the tagger would raise OUT OF Info are held. A row an importer already graded above
 // Info keeps the importer's grade; the tagger's raise of it is not applied and not held.
@@ -23,11 +26,13 @@ export interface HeldTaggerDeps {
   tagsStore?: TagsStore;
   onTags?: (caseId: string) => void;
   logLine?: (message: string) => void;
+  /** Names the caller in the log line (default "Watson paste"). */
+  label?: string;
 }
 
 export interface HeldTagger {
-  /** Stands in for the content-tagger step of the settle's `autoTagImported`. */
-  tag(caseId: string, added: readonly ForensicEvent[]): Promise<void>;
+  /** Stands in for the content-tagger step of the settle (its `tagHeld`). */
+  tag(caseId: string, added: readonly ForensicEvent[]): Promise<TagOutcome>;
   /** Raised copies of the rows the tagger would have taken out of Info, before the corrections. */
   held(): ForensicEvent[];
   /** Every row the settle offered the tagger (this import's added rows, pre-demote). */
@@ -37,15 +42,17 @@ export interface HeldTagger {
 export function heldContentTagger(deps: HeldTaggerDeps): HeldTagger {
   let held: ForensicEvent[] = [];
   let offered: ForensicEvent[] = [];
-  const tag = async (caseId: string, added: readonly ForensicEvent[]): Promise<void> => {
+  const label = deps.label ?? "Watson paste";
+  const finished: TagOutcome = { ungraded: [] };
+  const tag = async (caseId: string, added: readonly ForensicEvent[]): Promise<TagOutcome> => {
     offered = [...offered, ...added];
     const { taggerStore, tagsStore } = deps;
-    if (!taggerStore || !tagsStore || !added.length) return;
+    if (!taggerStore || !tagsStore || !added.length) return finished;
     const settings = readTaggerSettings();
-    if (!settings.auto) return;
+    if (!settings.auto) return finished;
     try {
       const ruleset = await taggerStore.load();
-      if (!ruleset.rules.length) return;
+      if (!ruleset.rules.length) return finished;
       const applied = await runAndApplyTagger({
         caseId,
         events: added,
@@ -55,7 +62,7 @@ export function heldContentTagger(deps: HeldTaggerDeps): HeldTagger {
         mutateForensic: false,
       });
       if (applied.tagsWritten > 0) deps.onTags?.(caseId);
-      if (settings.scope === "super") return;
+      if (settings.scope === "super") return finished;
       const byId = new Map(applied.result.perEvent.map((r) => [r.eventId, r] as const));
       const raised = added.flatMap((e) => {
         const r = byId.get(e.id);
@@ -66,11 +73,13 @@ export function heldContentTagger(deps: HeldTaggerDeps): HeldTagger {
       held = [...held, ...raised];
       if (applied.result.totalMatched > 0) {
         deps.logLine?.(
-          `[tagger] ${caseId} Watson paste: tagged ${applied.result.totalMatched} event(s), +${applied.tagsWritten} tag(s), ${raised.length} held for approval`,
+          `[tagger] ${caseId} ${label}: tagged ${applied.result.totalMatched} event(s), +${applied.tagsWritten} tag(s), ${raised.length} held for approval`,
         );
       }
+      return finished;
     } catch (err) {
-      deps.logLine?.(`[tagger] ${caseId} Watson paste tagging skipped: ${(err as Error).message}`);
+      deps.logLine?.(`[tagger] ${caseId} ${label} tagging failed: ${(err as Error).message}`);
+      return { ungraded: added.map((e) => e.id) };
     }
   };
   return { tag, held: () => held, offered: () => offered };

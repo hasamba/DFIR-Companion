@@ -343,6 +343,7 @@
     "caseSqliteWorker.ts": "storage",
     "caseSqliteWorkerPool.ts": "storage",
     "caseSqliteWorkerRows.ts": "storage",
+    "caseSqliteWorkerGrade.ts": "storage",
     "forensicRows.ts": "storage",
     "forensicRowRewrite.ts": "storage",
     "forensicEventInsert.ts": "storage",

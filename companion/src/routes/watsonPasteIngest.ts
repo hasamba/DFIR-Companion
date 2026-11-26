@@ -14,6 +14,7 @@ import type { WatsonPaste } from "../analysis/ai/watson/types.js";
 import type { RouteContext } from "./context.js";
 import { beginImportSection } from "./importSection.js";
 import { settleImportOrRecoverThenThrow } from "./importRowRecovery.js";
+import { gradeArmOf, type SettledImport } from "./importSettle.js";
 import { importTagger, routeSettleDeps } from "./routeSettleDeps.js";
 
 export type { WatsonPasteIngest } from "../analysis/ai/watson/pasteIngestChat.js";
@@ -96,18 +97,24 @@ async function parseInSection(
     onTags: options.onTags,
     logLine,
   });
+  // #2909: the paste's rows are marked "held" (at insert and with the stamp), so only a held tagger ever
+  // grades them — this one now, a tags-only one in a later re-grade — never a plain one that would apply a
+  // raise the analyst did not accept. Rows another import left marked true keep the plain tagger.
   const deps = {
     ...settleDeps,
-    markGradePending: false, // #2891: a re-grade must never apply a raise the analyst did not accept
-    autoTagImported: importTagger(
+    markGradePending: "held" as const,
+    tagHeld: importTagger(
       { options, store: ctx.store, runStateExclusive: ctx.runStateExclusive, logLine },
       held.tag,
     ),
   };
-  const section = await beginImportSection(ctx.importLock, caseId, options.stateStore, {
-    incomingBytes: paste.bytes,
-    wording: PASTE_REFUSAL_WORDING,
-  });
+  const section = await beginImportSection(
+    ctx.importLock,
+    caseId,
+    options.stateStore,
+    { incomingBytes: paste.bytes, wording: PASTE_REFUSAL_WORDING },
+    gradeArmOf(deps),
+  );
   try {
     if (!section.baseline) return { kind: "text", reason: "Watson could not make a snapshot of the case" };
     await ctx.dispatchImport(kind, caseId, text, {
@@ -116,16 +123,31 @@ async function parseInSection(
       importedAt: new Date().toISOString(),
     });
     onImported();
-    // A settle failure still fails the paste, after its rows are settled (#2891) — with the HELD
-    // tagger, so a recovery never applies a promotion the analyst has not accepted.
+    // A settle failure settles the paste's rows first (#2891) — with the HELD tagger, so a recovery
+    // never applies a promotion the analyst has not accepted. #2909: when the held tagger did read the
+    // rows (the settle's own pass or the recovery's), its proposals are still offered rather than lost.
     const target = { caseId, storedNames: [paste.storedName], tag: "watson" };
-    const settled = await settleImportOrRecoverThenThrow(deps, target, section.baseline, paste.storedName);
-    const offered = held.offered();
-    const candidates = held.held();
+    let settled: SettledImport | null = null;
+    try {
+      settled = await settleImportOrRecoverThenThrow(deps, target, section.baseline, paste.storedName);
+    } catch (err) {
+      if (!held.offered().length) throw err;
+      ctx.serverLogger.warn(
+        `[watson] ${caseId}: paste ${paste.storedName}: grading failed (${message(err)}); its rows were ` +
+          "recovered and the rows the tagger would raise are still offered for approval",
+      );
+    }
+    const offered = lastById(held.offered()); // a failed settle and its recovery offer the rows twice
+    const candidates = lastById(held.held());
     const windows = candidates.length ? await heldBuildWindows(settleDeps.stateStore, caseId, offered) : [];
     const finalized = finalizeHeld(candidates, { windows, labPaths: labSetupPaths(), offered });
-    const added = settled.timelineDiff.added.length; // rows that landed in the forensic timeline
-    return { kind, rows: offered.length || added, held: finalized, added };
+    const added = settled?.timelineDiff.added.length; // rows that landed in the forensic timeline
+    return {
+      kind,
+      rows: offered.length || (added ?? 0),
+      held: finalized,
+      ...(added === undefined ? {} : { added }),
+    };
   } finally {
     section.release();
   }
@@ -159,6 +181,11 @@ async function heldBuildWindows(
     }
   }
   return buildTimeWindows(discovery, renames);
+}
+
+/** One row per id, the latest copy (the recovery's read is after the failed settle's). */
+function lastById(rows: readonly ForensicEvent[]): ForensicEvent[] {
+  return [...new Map(rows.map((e) => [e.id, e] as const)).values()];
 }
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));

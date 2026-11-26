@@ -70,7 +70,11 @@ export function createDiskIngest(deps: DiskIngestDeps): IngestDiskFile {
     demoteForensic: deps.demoteForensic,
   };
   const baselineOf = async (caseId: string): Promise<ImportBaseline | null> =>
-    options.stateStore ? captureImportBaseline(options.stateStore, caseId).catch(() => null) : null;
+    options.stateStore
+      ? captureImportBaseline(options.stateStore, caseId, {
+          markGrade: options.superTimelineStore ? true : undefined,
+        }).catch(() => null) // #2909
+      : null;
 
   async function admitted(
     caseId: string,

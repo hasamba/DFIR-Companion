@@ -1,4 +1,5 @@
 import { autoTagNewEvents } from "../analysis/taggerAuto.js";
+import { heldContentTagger } from "../analysis/ai/watson/heldTagger.js";
 import { tagCollectorFootprint } from "../analysis/cloudCollectorFootprint.js";
 import { syncTrustedActivity } from "../analysis/trustedActivitySync.js";
 import { parseTrustedMarks, trustedActivityTags } from "../analysis/trustedSourceMarks.js";
@@ -101,15 +102,35 @@ async function footprintAndTrusted(
   }
 }
 
+/**
+ * The held tagger a RE-GRADE uses for rows marked "held" (#2909: a Watson paste's rows the paste never
+ * finished grading): tags written, no grade raised. A re-grade has no chat turn to offer the raises
+ * in, so they are dropped (and counted in the log line): the rows go to the super-timeline like any
+ * held Info row, where the analyst can still promote them. A fresh tagger per call, so nothing builds up.
+ */
+export function regradeHeldTagger(d: ImportTaggerDeps): ContentTagger {
+  return (caseId, added) => {
+    const held = heldContentTagger({
+      taggerStore: d.options.taggerStore,
+      tagsStore: d.options.tagsStore,
+      onTags: d.options.onTags,
+      logLine: d.logLine,
+      label: "Watson paste re-grade (raises not offered again)",
+    });
+    return importTagger(d, held.tag)(caseId, added);
+  };
+}
+
 export function routeSettleDeps(ctx: SettleContext): SettleDeps | null {
   const { options } = ctx;
   if (!options.stateStore) return null;
-  const autoTagImported = importTagger({
+  const taggerDeps: ImportTaggerDeps = {
     options,
     store: ctx.store,
     runStateExclusive: ctx.runStateExclusive,
     logLine: (m) => ctx.serverLogger.info(m),
-  });
+  };
+  const autoTagImported = importTagger(taggerDeps);
   return {
     stateStore: options.stateStore,
     runStateExclusive: ctx.runStateExclusive,
@@ -118,6 +139,7 @@ export function routeSettleDeps(ctx: SettleContext): SettleDeps | null {
     onStateChanged: options.onStateChanged,
     onState: options.onState,
     autoTagImported,
+    tagHeld: regradeHeldTagger(taggerDeps), // #2909: rows marked "held" (a Watson paste's)
     demoteForensic: ctx.demoteForensic,
   };
 }

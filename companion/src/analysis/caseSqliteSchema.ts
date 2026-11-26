@@ -125,6 +125,10 @@ export const CASE_SQLITE_SCHEMA_SQL =
   // import. Unarmed, each trigger costs one lookup in an empty table.
   "CREATE TABLE IF NOT EXISTS import_journal (row_id INTEGER PRIMARY KEY, entity_id TEXT, payload TEXT NOT NULL);" +
   "CREATE TABLE IF NOT EXISTS import_journal_arm (token TEXT PRIMARY KEY);" +
+  // #2909: the grade arm (caseSqliteWorkerGrade.ts) and the marked rows' ids, from the index alone.
+  "CREATE TABLE IF NOT EXISTS import_grade_arm (token TEXT PRIMARY KEY, mode TEXT NOT NULL);" +
+  "CREATE INDEX IF NOT EXISTS entities_grade_pending_idx ON entities(entity_id) " +
+  "WHERE kind='forensicTimeline' AND json_extract(payload, '$.gradePending') IS NOT NULL;" +
   "CREATE TRIGGER IF NOT EXISTS entities_journal_update BEFORE UPDATE OF payload ON entities " +
   "WHEN old.kind = 'forensicTimeline' AND EXISTS (SELECT 1 FROM import_journal_arm) BEGIN " +
   "INSERT OR IGNORE INTO import_journal(row_id, entity_id, payload) VALUES (old.row_id, old.entity_id, old.payload); END;" +

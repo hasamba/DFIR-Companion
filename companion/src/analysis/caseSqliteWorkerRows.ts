@@ -80,6 +80,7 @@ function captureImportBaseline(dbPath, token, factsStamp) {
       if (typeof token === "string" && token) {
         db.exec("DELETE FROM import_journal; DELETE FROM import_journal_ioc; DELETE FROM import_journal_arm;");
         db.prepare("INSERT INTO import_journal_arm(token) VALUES (?)").run(token);
+        db.exec("DELETE FROM import_grade_arm;"); // #2909: a new section re-arms (caseSqliteWorkerGrade.ts)
       }
       if (typeof factsStamp !== "string") {
         return { overview: readState(db, ["forensicTimeline"]), outline: outlineRows(db, true) };
@@ -122,6 +123,7 @@ function disarmImportJournal(dbPath, token) {
     return withTransaction(db, () => {
       if (armedToken(db) !== token) return false;
       db.exec("DELETE FROM import_journal_arm; DELETE FROM import_journal; DELETE FROM import_journal_ioc;");
+      db.prepare("DELETE FROM import_grade_arm WHERE token=?").run(token); // #2909
       return true;
     });
   } finally {
@@ -388,7 +390,7 @@ function dispatchRows(message) {
     case "deleteEntityRows": return deleteEntityRows(message.dbPath, message.kind, message.rowIds);
     case "patchStateMeta": return patchStateMeta(message.dbPath, message.patch);
     case "insertForensicInOrder": return insertForensicInOrder(message.dbPath, message.entity, message.updatedAt);
-    default: return dispatchFacts(message); // caseSqliteWorkerFacts.ts
+    default: return dispatchGrade(message); // caseSqliteWorkerGrade.ts
   }
 }
 `;

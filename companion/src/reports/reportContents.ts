@@ -1,5 +1,6 @@
 import type { InvestigationState } from "../analysis/stateTypes.js";
 import { withoutEventAliases } from "../analysis/eventAliases.js";
+import { withoutGradePending } from "../analysis/gradeMark.js";
 import { withExpandedEventProvenance } from "../analysis/canonicalProvenanceCompact.js";
 import { stateEventResolver } from "../analysis/eventAliasLookup.js";
 import { resolveHypothesisLinks } from "../analysis/hypothesisLineage.js";
@@ -123,6 +124,16 @@ export function renderReportContents(
     forensicTimelineCsv: forensicTimelineCsv(state),
     // The correlation lineage (#1715) is server bookkeeping, not a finding of the report. Field
     // provenance is written out in full (#1874): the export reads as it did before storage compacted it.
-    stateJson: JSON.stringify(withExpandedEventProvenance(withoutEventAliases(state)), null, 2),
+    // The grade mark is internal too (#2909): a state handed in from outside the filtered load drops it here.
+    stateJson: JSON.stringify(
+      withExpandedEventProvenance(withoutEventAliases(withoutGradeMarks(state))),
+      null,
+      2,
+    ),
   };
+}
+
+function withoutGradeMarks(state: InvestigationState): InvestigationState {
+  if (!state.forensicTimeline.some((e) => e.gradePending !== undefined)) return state;
+  return { ...state, forensicTimeline: state.forensicTimeline.map(withoutGradePending) };
 }

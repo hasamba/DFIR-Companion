@@ -20,6 +20,7 @@ import type { ImportBaseline } from "../analysis/importBaseline.js";
 import type { NgsiemRow, NgsiemRunResult } from "../integrations/crowdstrike/ngsiemSearch.js";
 import type { RouteContext } from "./context.js";
 import { beginImportSection } from "./importSection.js";
+import { gradeArmOf } from "./importSettle.js";
 import { settleImportOrRecoverThenThrow } from "./importRowRecovery.js";
 import { routeSettleDeps } from "./routeSettleDeps.js";
 
@@ -99,9 +100,13 @@ async function importAndSettle(
   const pipeline = options.pipeline;
   const settle = routeSettleDeps(ctx);
   if (!pipeline || !settle || !options.stateStore) throw new Error("the case cannot import rows right now");
-  const section = await beginImportSection(ctx.importLock, spec.caseId, options.stateStore, {
-    incomingBytes: Buffer.byteLength(forImport.text, "utf8"),
-  });
+  const section = await beginImportSection(
+    ctx.importLock,
+    spec.caseId,
+    options.stateStore,
+    { incomingBytes: Buffer.byteLength(forImport.text, "utf8") },
+    gradeArmOf(settle), // #2909
+  );
   try {
     const baseline: ImportBaseline | null = section.baseline;
     // No snapshot means no settle: importing anyway would leave raw Info rows in the forensic

@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Held rows graded at the next import** — rows an importer merged but never stamped are held from the demote too, rows a tagger failure held are graded at the next import (not only at restart) with the caps a full settle applies, Watson paste rows only ever get the held tagger and keep their proposals after a failed settle, and exports never show the internal grading mark (closes #2909)
 - **Rows wait for the tagger before demote** — rows an import stamped but did not tag (a crash, or a tagger error) stay in the forensic timeline and are graded at the next start, not demoted untagged (closes #2891)
 - **Large SIEM / EVTX XML imports read in parts** — a SIEM JSON Lines or Windows Event XML export of 32 MB or more is read from disk piece by piece, so memory follows the rows, not the file; a large file of those kinds that is still read whole is charged by its size in the memory guard (closes #2823)
 - **Case switch leaves no previous-case panels** — the login graph, asset graph, duplicate hosts, activity log, playbook, pins and finding workflow never show the previous case's data, and a cancelled load's panels say nothing is loading (closes #2900)
