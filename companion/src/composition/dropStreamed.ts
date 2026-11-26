@@ -9,7 +9,8 @@
  * the drop cap streams the same way (#2705); any other Velociraptor shape keeps the oversize refusal.
  */
 import { basename } from "node:path";
-import type { ImportDebugRecorder } from "../analysis/importDebug.js";
+import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
+import type { FileHandle } from "node:fs/promises";
 import { isGzipMagic } from "../analysis/cloudStreamReader.js";
 import { isStreamKind } from "../analysis/ingest/cloudStreamProviders.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
@@ -17,9 +18,16 @@ import { openNoFollow } from "../storage/noFollowRead.js";
 import { sniffImportFileHeadDetail } from "../routes/importFileHead.js";
 import { GZIP_ONLY_CLOUD, readsFromDisk } from "../routes/importCloudStream.js";
 import { decideVeloDiskStream, veloDiskStreamThreshold } from "../routes/importVeloStream.js";
+import { decideWindowsLogDiskStream } from "../routes/importWindowsLogStream.js";
+import { CLOUD_STREAM_MIN_BYTES } from "../analysis/cloudStreamLimits.js";
+import { logSiemFallback } from "../routes/importDebugEmit.js";
+import { siemFallbackWarning } from "../routes/importNotes.js";
 import type { IngestDiskFile } from "./importIngestDisk.js";
 
 export { isGzipMagic };
+
+/** At or above this size an under-cap drop file is offered to the streamer first (#2823). */
+export const WINLOG_MIN = CLOUD_STREAM_MIN_BYTES;
 
 export interface StreamedDropResult {
   ok: boolean;
@@ -41,18 +49,40 @@ export type StreamDropFile = (
   fullPath: string,
   relpath: string,
   debug: ImportDebugRecorder,
+  /** An under-cap file (#2823): only a SIEM JSON Lines / Windows Event XML export streams; else null. */
+  windowsLogOnly?: boolean,
 ) => Promise<StreamedDropResult | null>;
 
 export function createDropStreamer(deps: DropStreamerDeps): StreamDropFile {
   const { resolveImportKind, ingestDiskFile, dropMaxBytes } = deps;
   const veloSinkWired = deps.veloSinkWired ?? (() => false);
-  return async (caseId, fullPath, relpath, debug) => {
+  const winlogThreshold = Math.min(CLOUD_STREAM_MIN_BYTES, dropMaxBytes);
+  async function ingest(
+    caseId: string,
+    a: { kind: string; handle: FileHandle; name: string; relpath: string; debug: ImportDebugRecorder },
+  ): Promise<StreamedDropResult> {
+    const assetHost = assetHostFromDropRelpath(a.relpath) || undefined;
+    const r = await ingestDiskFile(caseId, a.kind, a.handle, a.name, assetHost, a.debug);
+    logSiemFallback(caseId, a.relpath, a.kind, a.debug); // a guessed SIEM import, as the text path names it (#1824)
+    const warning = [...r.disclosure, siemFallbackWarning(a.kind, a.debug).warning ?? ""].filter(Boolean);
+    return { ok: true, ...(warning.length ? { warning: warning.join(" ") } : {}) };
+  }
+  return async (caseId, fullPath, relpath, debug, windowsLogOnly = false) => {
     const name = basename(relpath);
     const handle = await openNoFollow(fullPath);
     try {
       const { sample, gzip } = await sniffImportFileHeadDetail(handle);
-      const kind = resolveImportKind(name.replace(/\.gz$/i, ""), sample, debug);
+      const bare = name.replace(/\.gz$/i, "");
+      // An under-cap file only asks whether it streams: the whole read detects it again if not.
+      const kind = resolveImportKind(bare, sample, windowsLogOnly ? createImportDebugRecorder() : debug);
       const { size } = await handle.stat();
+      // A large SIEM JSON Lines / Windows Event XML export reads in parts, not whole (#2823).
+      const winlog = await decideWindowsLogDiskStream({ kind, handle, size, gzip }, winlogThreshold);
+      if (windowsLogOnly) {
+        if (!winlog) return null; // the under-cap whole read stays as it was
+        resolveImportKind(bare, sample, debug); // this attempt's detection decision
+        return await ingest(caseId, { kind, handle, name, relpath, debug });
+      }
       // A Velociraptor JSON Lines file streams whenever the alternative is a refusal at the drop cap (#2705).
       const veloThreshold = Math.min(veloDiskStreamThreshold(), dropMaxBytes);
       const velo = await decideVeloDiskStream(
@@ -61,11 +91,12 @@ export function createDropStreamer(deps: DropStreamerDeps): StreamDropFile {
       );
       if (velo.refuse) return { ok: false, reason: velo.refuse };
       const streams =
-        velo.streams || readsFromDisk(kind, size, gzip) || (isStreamKind(kind) && size > dropMaxBytes);
+        velo.streams ||
+        winlog ||
+        readsFromDisk(kind, size, gzip) ||
+        (isStreamKind(kind) && size > dropMaxBytes);
       if (!streams) return gzip ? { ok: false, reason: GZIP_ONLY_CLOUD } : null;
-      const assetHost = assetHostFromDropRelpath(relpath) || undefined;
-      const r = await ingestDiskFile(caseId, kind, handle, name, assetHost, debug);
-      return { ok: true, ...(r.disclosure.length ? { warning: r.disclosure.join(" ") } : {}) };
+      return await ingest(caseId, { kind, handle, name, relpath, debug });
     } finally {
       await handle.close().catch(() => undefined);
     }

@@ -35,6 +35,7 @@ import { detectImportWithCustomEx } from "../analysis/importDecision.js";
 import { createImportDebugRecorder, type ImportDebugRecorder } from "../analysis/importDebug.js";
 import { emitImportDebug } from "../routes/importDebugEmit.js";
 import { importingDetail } from "../routes/importNotes.js";
+import { windowsLogWholeReadHint } from "../routes/importWindowsLogStream.js";
 import {
   looksLikeMacLoginItemFilename,
   looksLikeUndecodedMacLoginItemFilename,
@@ -608,7 +609,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     // ingest and the Velociraptor monitors all land here, none of them passes through the job queue,
     // and any of them writing inside another import's section would be counted as that import's own
     // work (and swept into its undo checkpoint). See analysis/importLock.ts.
-    const counts = await importLock.runSized(caseId, { incomingBytes: text.length }, async () => {
+    const sized = windowsLogWholeReadHint(kind, text.length); // a whole SIEM / EVTX XML text: charged by size (#2823)
+    const counts = await importLock.runSized(caseId, sized, async () => {
       const baseline = await baselineOf(caseId);
       try {
         return await dispatchAndSettle(baseline);

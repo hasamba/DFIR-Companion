@@ -176,7 +176,7 @@ export function mitreFromText(...parts: string[]): string[] {
 // ───────────────────────────── container unwrapping ─────────────────────────────
 
 // If an element wraps its real fields under `_source` (Elastic), return that; else the element.
-function unwrapSource(el: unknown): Row | null {
+export function unwrapSource(el: unknown): Row | null {
   if (!isObject(el)) return null;
   const src = getCI(el, "_source");
   return isObject(src) ? src : el;
