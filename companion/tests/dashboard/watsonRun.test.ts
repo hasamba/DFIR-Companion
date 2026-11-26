@@ -80,6 +80,7 @@ function setup(
       "dashboard-watson-mode.js",
       "dashboard-watson-run.js",
       "dashboard-watson-velo.js",
+      "dashboard-watson-layout.js",
     ],
     {
       document,
