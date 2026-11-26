@@ -24,7 +24,11 @@ const DC9 = { value: "DC9", category: "HOST" };
 const SRV = { value: "SRV1", category: "HOST" };
 
 function api(extra: Record<string, unknown> = {}) {
-  return loadDashboardModule<Api>("dashboard-presidio.js", ["dashboard-escape.js"], extra);
+  return loadDashboardModule<Api>(
+    "dashboard-presidio.js",
+    ["dashboard-escape.js", "dashboard-anon-patterns.js"],
+    extra,
+  );
 }
 
 describe("rebaseAnonCustom", () => {
@@ -157,5 +161,15 @@ describe("the modal's Save on a stale list (#1839)", () => {
     await flush();
     expect(posts).toEqual([]);
     expect(String(dom.els.anonMsg.textContent)).toContain("has not loaded yet");
+  });
+});
+
+describe("rebaseAnonCustom and the pattern flag (#2946)", () => {
+  it("treats turning a value into a pattern as an edit", () => {
+    const base = [{ value: "prod-*", category: "HOST" }];
+    const working = [{ value: "prod-*", category: "HOST", match: "pattern" }];
+    const x = api().rebaseAnonCustom(base, working, base, 500);
+    expect(x.merged).toEqual(working);
+    expect(x.kept).toBe(1);
   });
 });

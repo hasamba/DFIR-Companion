@@ -914,6 +914,7 @@
     "ROUTE GET /js/dashboard-ocr-search.js",
     "ROUTE GET /js/dashboard-evidence-graph.js",
     "ROUTE GET /js/dashboard-import-changes.js",
+    "ROUTE GET /js/dashboard-anon-patterns.js",
     "ROUTE GET /js/dashboard-presidio.js",
     "ROUTE GET /js/dashboard-hypotheses.js",
     "ROUTE GET /js/dashboard-ioc-quick-actions.js",

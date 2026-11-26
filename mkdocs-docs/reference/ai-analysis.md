@@ -213,6 +213,26 @@ By default, the Companion **tokenizes identifying information** before sending a
 
 This anonymization is applied transparently. The timeline and findings shown to you use the real values (the mapping is maintained per-case).
 
+### Custom entities: exact values, patterns and IP ranges
+
+The **Custom entities** list in the Anonymization panel hides anything the detectors miss. Each entry is one of three kinds:
+
+- **An exact value** (`dc01`, `Jane Doe`, `PROJECT-ORION`): hidden wherever it appears as a whole word, in any letter case.
+- **A pattern**, in any category: put `*` at the start, at the end, or once in the middle. `prod-*` hides `prod-web01` and `prod-db02`. `*-dev` hides `app-dev`. `svc_*` (USER) hides `svc_backup`. `*\finance\*` (PATH) hides every path through a `finance` folder. `*.corp.example` (DOMAIN) hides every host under that domain.
+- **An IP range**, in the IP or EXTIP category: enter a CIDR range such as `10.20.0.0/16` or `fd00:abcd::/32`. Every address inside it is hidden, including an IPv4 address written as `::ffff:10.20.1.1`.
+
+How patterns and ranges behave:
+
+- **Each matching value gets its own token.** `prod-web01` becomes `ANON_HOST_1` and `prod-db02` becomes `ANON_HOST_2`, so the AI can still tell the machines apart. The answer you read shows the real names.
+- **A pattern only matches whole values.** `prod-*` does not hide the middle of `myprod-web01`, and a `*` never reaches across a space.
+- **What a `*` can stand for depends on the category.** For HOST and DOMAIN it covers letters, digits, `.`, `-` and `_`. USER also allows `$`, `@` and `\`, and EMAIL also allows `+`, `%` and `@`. For PATH and REG it covers every path character. For the other categories it covers everything except spaces, quotes and brackets. A `*` stands for at most 253 characters for hosts, domains, users and emails, and 1024 for the rest.
+- **The panel refuses a pattern that would hide almost everything:** a `*` on its own, fewer than 3 characters besides `*`, more than one `*` in the middle, or a range wider than `/8` (IPv4) or `/16` (IPv6). It also refuses a `*` in an IP category; use a range there. A broken entry is refused when you add or save it, with the reason.
+- **Each saved pattern or range shows how many known values it matches** in this case: values the case has already listed or sent masked. Open the count to see them. New matching values are hidden as they appear.
+- **An EXTIP range follows the public-IP rule.** It is applied on the AI wire and not in the redacted case package, which keeps adversary infrastructure visible.
+- **Values added from Presidio's "Hide from AI" button and the auto-detected list stay exact values.** A flagged value that happens to contain `*` is never treated as a pattern.
+
+Patterns and ranges apply everywhere custom entities apply: every AI call (synthesis, Watson, explain-event, summaries, Jev), screenshot redaction, the redacted case package and the support bundle.
+
 !!! warning "Known limitation: the account and email detectors are ASCII-only"
     The `DOMAIN\user` and email patterns match `[A-Za-z0-9._%+-]` — **ASCII characters only**. A name written in any other script is not auto-detected, and this is not only about Hebrew or Cyrillic: **any accented Latin name is affected too**.
 

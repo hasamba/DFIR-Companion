@@ -1,4 +1,5 @@
 import { StateLock } from "./stateLock.js";
+import { patternMatchesWhole } from "./anonPatterns.js";
 import { MAX_CUSTOM_ENTITIES, sanitizeCustomEntities, type CustomEntitiesStore } from "./anonEntities.js";
 import { anonControlVersion, type AnonControl, type AnonControlStore } from "./anonControl.js";
 import type { DiscoveredEntitiesStore } from "./anonDiscovered.js";
@@ -108,7 +109,9 @@ export class PresidioDecisions {
       // A pending value can still be hidden: the pipeline writes its findings from a snapshot it
       // read before the analyst's Hide landed. Hidden means the custom list or the auto list.
       const [custom, disc] = await Promise.all([this.custom.load(caseId), this.discovered.load(caseId)]);
-      if ([...custom, ...disc.discovered].some((e) => key(e.value) === k)) {
+      // A custom pattern or range covering the value hides it too (#2946).
+      const covered = (e: CustomEntity) => key(e.value) === k || patternMatchesWhole(e, value);
+      if ([...custom, ...disc.discovered].some(covered)) {
         return { applied: false, reason: "already_hidden", pending };
       }
       await forgetAround(this.authored, caseId, value, () => this.discovered.suppress(caseId, value));

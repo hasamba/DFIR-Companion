@@ -42,7 +42,9 @@ export function sanitizeCustomEntities(raw: unknown): CustomEntity[] {
     const category: AnonTokenCategory = VALID.includes(rawCat as AnonTokenCategory)
       ? (rawCat as AnonTokenCategory)
       : "OTHER";
-    out.push({ value, category });
+    // #2946: the pattern flag is kept only when it is exactly "pattern"; anything else is exact.
+    const match = (item as { match?: unknown })?.match === "pattern" ? { match: "pattern" as const } : {};
+    out.push({ value, category, ...match });
     if (out.length >= MAX_CUSTOM_ENTITIES) break;
   }
   return out;

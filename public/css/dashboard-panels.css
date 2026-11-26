@@ -81,6 +81,10 @@
 .hunt-add svg, .explain-btn svg, .ioc-chain-btn svg, .sigma-export-btn svg, .ccheck-btn svg { width: 11px; height: 11px; vertical-align: -1px; }
 .anon-chip { display:inline-block; background:var(--badge-bg-neutral); border:1px solid var(--border-color); border-radius:10px; padding:1px 7px; margin:1px 0; font-size:11px; }
 .anon-chip.anon-chip-sup { opacity:.6; }
+.anon-pat-tag { display:inline-block; margin-left:6px; padding:0 5px; border-radius:6px; font-size:10px; background:var(--badge-bg-neutral); color:var(--text-muted); }
+.anon-pat-tag.anon-pat-bad { background:var(--warning-bg); color:var(--tag-orange-text); white-space:normal; }
+.anon-pat-count { display:inline-block; margin-left:6px; font-size:11px; color:var(--text-muted); }
+.anon-pat-count summary { cursor:pointer; }
 .anon-chip .anon-auto-rm, .anon-chip .anon-auto-restore { background:transparent; border:none; color:var(--text-dim); cursor:pointer; font-size:10px; padding:0 0 0 1px; line-height:1; }
 .anon-chip .anon-auto-rm:hover { color:var(--badge-danger-text); }
 .anon-presidio-retry { background:transparent; border:none; color:var(--accent); cursor:pointer; font-size:11px; padding:0; text-decoration:underline; }

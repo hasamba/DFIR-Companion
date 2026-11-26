@@ -3,6 +3,8 @@ import { logActivity } from "../analysis/activityLog.js";
 import { AnonControlStore, anonControlVersion, type AnonControl } from "../analysis/anonControl.js";
 import { CustomEntitiesStore, sanitizeCustomEntities } from "../analysis/anonEntities.js";
 import { DiscoveredEntitiesStore } from "../analysis/anonDiscovered.js";
+import { AnonMapStore } from "../analysis/anonMap.js";
+import { describeCustomPatterns, firstInvalidPattern } from "../analysis/anonPatterns.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
 import { AiAuthoredTextStore } from "../analysis/aiAuthoredText.js";
 import { PresidioDecisions, forgetAround } from "../analysis/presidioDecisions.js";
@@ -56,6 +58,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   // + external) that residual text may survive — `screenshotWarning` gates that notice.
   const anonControl = new AnonControlStore(store);
   const customEntities = new CustomEntitiesStore(store);
+  const anonMap = new AnonMapStore(store);
   const discoveredEntities = new DiscoveredEntitiesStore(store);
   const presidioPending = new PresidioPendingStore(store);
   const aiAuthoredText = new AiAuthoredTextStore(store);
@@ -253,7 +256,10 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         paths: clean(groups.PATH),
         other: clean(groups.OTHER),
       };
-      return res.status(200).json({ auto, custom, customVersion, suppressed: disc.suppressed });
+      // #2946: each pattern's known matches (or why it is broken), from every value the case has listed or masked.
+      const mapped = (await anonMap.load(req.params.id)).pairs.map((p) => p.value);
+      const patterns = describeCustomPatterns(custom, [...mapped, ...Object.values(groups).flat()]);
+      return res.status(200).json({ auto, custom, customVersion, suppressed: disc.suppressed, patterns });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -263,6 +269,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       // #1839: a versioned save. The editor sends the version it loaded; a stale base (another
       // window hid or changed a value since) is refused with the current list, under the same
       // per-case lock as "Hide from AI", so a stale window can never erase a value just hidden.
+      const bad = firstInvalidPattern(req.body?.entities); // #2946: never drop a bad pattern silently
+      if (bad) return res.status(400).json({ error: "anon_entity_invalid", ...bad });
       const outcome = await presidioDecisions.replaceCustom(
         req.params.id,
         req.body?.entities,

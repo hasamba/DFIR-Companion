@@ -305,3 +305,23 @@ describe("support redactor — fail-closed gaps from the code review (#1735)", (
     expect(out).toMatch(/opened ANON_FILE_\d+\.csv/);
   });
 });
+
+describe("custom patterns in the support bundle (#2946)", () => {
+  it("applies a PATH wildcard and a HOST wildcard instead of matching them literally", () => {
+    const base = input();
+    const r = createSupportRedactor({
+      ...base,
+      known: {
+        ...base.known,
+        custom: [
+          { value: "*\\finance\\*", category: "PATH", match: "pattern" },
+          { value: "prod-*", category: "HOST", match: "pattern" },
+        ],
+      },
+    });
+    const out = r.redactLog("read D:\\share\\finance\\q1.xlsx on prod-web01 done");
+    expect(out).not.toContain("finance");
+    expect(out).not.toContain("prod-web01");
+    expect(out).toMatch(/ANON_PATH_\d+ on ANON_HOST_\d+ done$/);
+  });
+});

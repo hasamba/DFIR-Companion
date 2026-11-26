@@ -486,6 +486,7 @@
   <script src="/js/dashboard-watson-status.js"></script>
   <script src="/js/dashboard-watson-layout.js"></script>
   <script src="/js/dashboard-watson.js"></script>
+  <script src="/js/dashboard-anon-patterns.js"></script>
   <script src="/js/dashboard-presidio.js"></script>
   <script src="/js/dashboard-hypotheses.js"></script>
   <script src="/js/dashboard-evidence-attestation.js"></script>
@@ -754,10 +755,11 @@
         <div class="asset-subhead" data-safe-style="margin:12px 0 2px">Custom entities (add anything the auto-detection missed)</div>
         <div id="anonCustom" data-safe-style="max-height:120px;overflow:auto;font-size:12px;margin-bottom:6px"></div>
         <div data-safe-style="display:flex;gap:6px;align-items:center">
-          <input id="anonCustVal" placeholder="value (host, user, IP, codename…)" data-safe-style="flex:1" />
+          <input id="anonCustVal" placeholder="value, pattern (prod-*, *-dev) or IP range (10.20.0.0/16)" data-safe-style="flex:1" />
           <select id="anonCustCat" aria-label="Category for the custom anonymization term"></select>
           <button id="anonCustAdd" type="button">Add</button>
         </div>
+        <div data-safe-style="font-size:11px;color:var(--text-muted);margin:4px 0 0">Put <strong>*</strong> at the start, the end, or once in the middle to hide every matching value (<code>prod-*</code>, <code>*-dev</code>, <code>*.corp.example</code>). For IP or EXTIP, enter a CIDR range (<code>10.20.0.0/16</code>). Each matching value gets its own token.</div>
         <div id="anonMsg" data-safe-style="color:var(--text-muted);font-size:12px;margin-top:8px"></div>
         <div data-safe-style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
           <button id="aiPreviewBtn" type="button" data-safe-style="margin-right:auto" data-tip="See the exact text an AI action would send — clear and masked side by side — before it runs. Nothing is sent and nothing is saved. Uses the saved settings: Save first to preview a change.">Preview what the AI will see</button>
