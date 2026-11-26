@@ -145,6 +145,27 @@ describe("import changes (#2937)", () => {
     expect(p.el("rawToolBanner").innerHTML).not.toContain("OLD.pcap");
   });
 
+  it("raw-tool banner: a case switch hides it at once, before the new case's import-meta load", async () => {
+    const { p, api } = importChanges();
+    api.loadImportMeta("CASE-A");
+    await banner(p, api);
+    const runYes = (p.el("rawRunYes") as unknown as { onclick: () => void }).onclick;
+    p.open("CASE-B", api);
+    expect(p.el("rawToolBanner").style.display).toBe("none");
+    const before = p.requests.length;
+    runYes();
+    await drainAll();
+    expect(p.requests.length, "the stale banner's Run selected uploaded into the case left").toBe(before);
+  });
+
+  it("raw-tool banner: reopening the same case keeps it", async () => {
+    const { p, api } = importChanges();
+    api.loadImportMeta("CASE-A");
+    await banner(p, api);
+    p.open("CASE-A", api);
+    expect(p.el("rawToolBanner").style.display).toBe("block");
+  });
+
   it("raw-tool banner: the case's first import-meta load keeps a banner raised for it", async () => {
     const { p, api } = importChanges();
     await banner(p, api);

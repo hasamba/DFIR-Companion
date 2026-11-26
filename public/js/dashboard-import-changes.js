@@ -56,11 +56,15 @@
     newIocKeys = new Set();
     hideBanner("importMeta");
     hideBanner("iocImportMeta");
+    retireRawBanner(caseId);
+  }
+  function retireRawBanner(caseId) {
     if (rawBannerCase !== caseId) (rawBannerCase = null), rawBannerSeq++, hideBanner("rawToolBanner");
   }
   // #2915: a cancelled or failed case load drops all three banners (and the "new" rows, and the held
   // list's re-poll); the next open — the same case included — reads them again.
   function onImportChangesReset(caseId) {
+    if (rawBannerCase !== null) retireRawBanner(caseId); // #2937: at the switch itself, not at B's queued load
     if (caseId !== null) return;
     importMetaSeq++, dropSeq++, heldSeq++;
     clearImportMeta(null);
@@ -421,6 +425,7 @@
         const yes = document.getElementById("rawRunYes");
         if (yes)
           yes.onclick = () => {
+            if (seq !== rawBannerSeq || !icOnScreen(caseId)) return; // #2937: a banner left by a switch
             // Expand the checkbox grid into one (file, tool, password) run per ticked box.
             const runs = [];
             el.querySelectorAll(
