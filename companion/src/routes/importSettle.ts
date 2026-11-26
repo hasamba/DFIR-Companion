@@ -95,6 +95,12 @@ export interface SettleDeps {
   /** The held tagger for rows marked "held" (#2909, importSettlePaged.ts DualWriteDeps.tagHeld). */
   tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   /**
+   * The held tagger for the LEFTOVER sweep's "held" rows (default `tagHeld`). #2930: a Watson paste's
+   * own `tagHeld` collects raises for its own turn; rows an earlier paste left held belong to that
+   * paste, so the paste hands the re-grade tagger here and they go through the held-proposal outbox.
+   */
+  sweepTagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /**
    * The forensic gate's demote; returns the rows it removed (composition/importDemote.ts). `graded`:
    * the rows the tagger just finished on — the only rows carrying the grade mark it may move (#2891).
    */
@@ -245,7 +251,7 @@ export async function settleForensicImport(
   // demote (importRegrade.ts) — inside this import's section, state locks only.
   const sweep =
     (deps.superTimelineStore &&
-      (await sweepLeftovers(deps, caseId, {
+      (await sweepLeftovers(deps.sweepTagHeld ? { ...deps, tagHeld: deps.sweepTagHeld } : deps, caseId, {
         ledger,
         ownIds: addedIds,
         ownGraded: gradedIds.length,

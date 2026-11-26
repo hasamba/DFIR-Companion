@@ -103,6 +103,7 @@ export interface VeloHuntsDeps {
   dispatchImport: (kind: string, caseId: string, text: string, base: ImportBase) => Promise<unknown>;
   resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>; // #2930: settle + recovery
   demoteForensicForCase: (caseId: string, opts?: DemoteOptions) => Promise<InvestigationState>;
   getControl: (caseId: string) => Promise<AiControl>;
   pushImportCheckpoint: RouteContext["pushImportCheckpoint"];
@@ -150,6 +151,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     dispatchImport,
     resolveImportKind,
     autoTagImported,
+    tagHeld,
     demoteForensicForCase,
     runStateExclusive,
     getControl,
@@ -606,7 +608,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // 5) The one combined settle, import record and undo checkpoint — for what imported, also when
       // a later artifact failed (veloHuntSettle.ts). Never throws: a failure is logged there.
       const settled = await settleHuntCollect(
-        { options, autoTagImported, demoteForensicForCase, runStateExclusive, pushImportCheckpoint },
+        { options, autoTagImported, tagHeld, demoteForensicForCase, runStateExclusive, pushImportCheckpoint },
         {
           ...{ caseId, huntId: jobHuntId, stateBefore, importedAny, lastFile },
           ...{ bundleName: job.bundleName, artifactCount: job.artifacts.length },

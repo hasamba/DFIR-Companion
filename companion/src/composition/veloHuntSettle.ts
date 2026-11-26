@@ -32,6 +32,8 @@ import { logLine } from "../logging/serverLogger.js";
 export interface HuntSettleDeps {
   options: AppOptions;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /** #2930: the held tagger for a Watson paste's "held" rows the settle's leftover sweep meets. */
+  tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   demoteForensicForCase: (caseId: string, opts?: DemoteOptions) => Promise<InvestigationState>;
   runStateExclusive?: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
   pushImportCheckpoint: RouteContext["pushImportCheckpoint"];
@@ -123,6 +125,7 @@ export async function settleHuntCollect(
         onSuperTimeline: options.onSuperTimeline,
         onState: options.onState,
         autoTagImported: deps.autoTagImported,
+        tagHeld: deps.tagHeld,
         demoteForensicForCase: deps.demoteForensicForCase,
         runStateExclusive: deps.runStateExclusive,
       },

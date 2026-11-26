@@ -100,6 +100,29 @@ export function unpipedSpawns(source: string): number[] {
   return found.sort((a, b) => a - b);
 }
 
+/**
+ * Whether `source` could hold a spawn unpipedSpawns() would report — the cheap gate in front of the
+ * parse (#2934). Parsing all ~2,500 test files took 8.5s on an idle machine and past 30s under a loaded
+ * parallel run, while only a dozen or so contain a spawn at all.
+ *
+ * Conservative by construction: the detector matches callees by name, and a name is either spelled out
+ * in the text or written with a unicode escape (`exec\u0053ync` is execSync to TypeScript). A file with
+ * neither cannot produce a finding, so skipping it changes nothing the walk reports.
+ */
+export function mayHoldSpawn(source: string): boolean {
+  // Decode every escape, wherever it sits: decoding inside strings and comments only adds candidates.
+  const decoded = source.includes("\\u")
+    ? source.replace(
+        /\\u\{([0-9a-fA-F]+)\}|\\u([0-9a-fA-F]{4})/g,
+        (whole, braced?: string, four?: string) => {
+          const code = parseInt(braced ?? four ?? "", 16);
+          return code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+        },
+      )
+    : source;
+  return [...SPAWNS].some((name) => decoded.includes(name));
+}
+
 /** Every .ts file under tests/, as a path relative to tests/. */
 async function testSources(dir: URL, prefix = ""): Promise<string[]> {
   const out: string[] = [];
@@ -129,14 +152,13 @@ describe("tests do not leak a child process's stderr into the run", () => {
     writeFileSync(succeeds, "process.exit(0);\n");
   });
 
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  // Windows can hold the probe scripts' handles for a moment after the children exit.
+  afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
 
-  // 30s, not the suite's 15s default. MEASURED at 7.7s on an idle machine — this parses every one
-  // of the ~625 test files with the TypeScript compiler, so it is genuinely heavy rather than slow
-  // by accident. At 51% of the default budget it was the first test to fail under any contention
-  // (observed at 21s on a loaded run), which reads as flake and trains people to ignore it. The
-  // headroom is for the machine, not for the test: if this ever approaches 30s the scan itself has
-  // regressed and that is worth failing over.
+  // Only files that could hold a spawn are parsed (mayHoldSpawn): the walk reads every test file but
+  // parses a dozen or so, so it no longer scales with the suite or with machine load. It used to parse
+  // all of them (8.5s idle for ~2,500 files) and timed out at 30s under a parallel run (#2934). The 30s
+  // stays as a ceiling: reading the files is all that is left, and nearing it means the walk regressed.
   it("gives every spawn in the suite an explicit stdio that pipes stderr", { timeout: 30_000 }, async () => {
     // Structural, not behavioural, and deliberately so. The leak is invisible from inside the
     // process that leaks — the parent's stderr belongs to the test runner — so the cheap thing a
@@ -147,14 +169,23 @@ describe("tests do not leak a child process's stderr into the run", () => {
     );
 
     const offenders: string[] = [];
+    const parsed: string[] = [];
     for (const file of files) {
       // No file is exempt, including this one. It used to be skipped because its fixture — a list
       // of deliberately bad spawns written as strings — was reported as real code. Skipping was
       // the wrong fix: an exemption is a hole the size of whatever else is in the file. The
       // scanner now knows a quoted call from a call.
       const source = await readFile(new URL(file, TESTS), "utf8");
+      if (!mayHoldSpawn(source)) continue;
+      parsed.push(file);
       offenders.push(...unpipedSpawns(source).map((line) => `${file}:${line}`));
     }
+
+    // The gate must not empty the walk: the helper every script test goes through, and this file's own
+    // fixture of bad spawns, are always among the files parsed.
+    expect(parsed, "the spawn gate skipped files it must parse").toEqual(
+      expect.arrayContaining(["helpers/runScript.ts", "architecture/childStderr.test.ts"]),
+    );
 
     expect(
       offenders,
@@ -203,7 +234,25 @@ describe("tests do not leak a child process's stderr into the run", () => {
     expect(unpipedSpawns(source)).toEqual([1, 2, 6, 7, 8, 10, 14, 15, 16, 17, 25]);
   });
 
-  it("agrees with what each stdio form actually does to a real child's stderr", () => {
+  it("parses every file the detector could report on, escaped spawn names included", () => {
+    // The gate in front of the parse is only safe if it never skips a file the detector would flag.
+    // A unicode escape spells a spawn name without its letters, and TypeScript still reads it as one.
+    const escaped = 'const a = exec\\u0053ync("x", { encoding: "utf8" });';
+    expect(escaped).not.toContain("execSync");
+    expect(unpipedSpawns(escaped)).toEqual([1]);
+    expect(mayHoldSpawn(escaped)).toBe(true);
+    const braced = "spawn\\u{53}ync(node, [s]);";
+    expect(unpipedSpawns(braced)).toEqual([1]);
+    expect(mayHoldSpawn(braced)).toBe(true);
+    // An escape that spells something else does not drag a file into the parse.
+    expect(mayHoldSpawn('const dash = "\\u2014";')).toBe(false);
+    for (const name of SPAWNS) expect(mayHoldSpawn(`x.${name}(a);`), name).toBe(true);
+    expect(mayHoldSpawn('import { describe } from "vitest";\nconst runner = exec;\n')).toBe(false);
+  });
+
+  // 30s, not the suite's 15s default: it runs sixteen node processes one after another (0.7s idle),
+  // and process start-up is the first thing a loaded machine slows down.
+  it("agrees with what each stdio form actually does to a real child's stderr", { timeout: 30_000 }, () => {
     // The detector's table, checked against Node instead of against my reading of the docs.
     //
     // Every entry here was wrong in some earlier version of this guard: the first accepted any

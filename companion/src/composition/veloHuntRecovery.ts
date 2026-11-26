@@ -53,6 +53,8 @@ export interface HuntRecoveryDeps {
   importLock: Pick<ImportLock, "runPastHolds">;
   runStateExclusive?: RunExclusive;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /** #2930: a hunt row folded with a Watson paste's "held" row carries "held": only this may grade it. */
+  tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   demoteForensicForCase: (caseId: string, opts?: DemoteOptions) => Promise<unknown>;
 }
 
@@ -160,6 +162,7 @@ export async function settleInterruptedHuntRows(
     superTimelineStore: deps.options.superTimelineStore,
     onSuperTimeline: deps.options.onSuperTimeline,
     autoTagImported: deps.autoTagImported,
+    tagHeld: deps.tagHeld,
     demote: deps.demoteForensicForCase,
   };
   return deps.importLock.runPastHolds(caseId, async () => {

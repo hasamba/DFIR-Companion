@@ -23,7 +23,17 @@ export function heldIdsInChat(chat: WatsonChat): Set<string> {
   );
 }
 
-/** The paste a row came from: the one whose stored file the row names. */
+/**
+ * The paste a row is offered under: the EARLIEST recorded paste whose stored file the row names
+ * (`chat.pastes` is appended in record order, pasteIngestChat.ts).
+ *
+ * A grouping rule, not exclusive provenance (#2934). A row folded from two pastes names both and did
+ * come from both; it goes under the earlier one, so its card and the promotion's case-timeline note
+ * name that paste's file. The rows promoted are the right rows either way. Recording the paste on the
+ * grade mark was weighed and not done: the mark is written at the insert arm, the settle stamp, row
+ * recovery and the start-up sweep and merged by folds, and one recorded id still could not represent
+ * a row with two sources.
+ */
 export function pasteOf(chat: WatsonChat, e: ForensicEvent): WatsonPaste | undefined {
   const names = new Set(e.sourceScreenshots);
   return chat.pastes.find((p) => names.has(p.storedName));

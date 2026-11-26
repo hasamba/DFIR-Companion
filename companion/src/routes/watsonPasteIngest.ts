@@ -1,4 +1,5 @@
 import { labSetupPaths } from "../analysis/labSetupTransfer.js";
+import type { TagOutcome } from "../analysis/gradeMark.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { finalizeHeld, heldContentTagger } from "../analysis/ai/watson/heldTagger.js";
 import { heldBuildWindows } from "../analysis/ai/watson/heldWindows.js";
@@ -93,6 +94,9 @@ async function parseInSection(
   // #2909: the paste's rows are marked "held" (at insert and with the stamp), so only a held tagger ever
   // grades them — this one now, a tags-only one in a later re-grade — never a plain one that would apply a
   // raise the analyst did not accept. Rows another import left marked true keep the plain tagger.
+  // #2930: the settle's leftover sweep keeps the RE-GRADE held tagger (routeSettleDeps): rows an earlier
+  // paste left held are that paste's, so their raises go through the held-proposal outbox under its name
+  // (analysis/ai/watson/heldOffer.ts) — never into this paste's turn as this paste's.
   const deps = {
     ...settleDeps,
     markGradePending: "held" as const,
@@ -100,6 +104,7 @@ async function parseInSection(
       { options, store: ctx.store, runStateExclusive: ctx.runStateExclusive, logLine },
       held.tag,
     ),
+    sweepTagHeld: settleDeps.tagHeld ?? leaveHeld, // no re-grade tagger: the rows stay held for one
   };
   const section = await beginImportSection(
     ctx.importLock,
@@ -145,6 +150,11 @@ async function parseInSection(
     section.release();
   }
 }
+
+/** Finishes no row: they keep the "held" mark for a later re-grade. */
+const leaveHeld = async (_caseId: string, rows: readonly ForensicEvent[]): Promise<TagOutcome> => ({
+  ungraded: rows.map((e) => e.id),
+});
 
 /** One row per id, the latest copy (the recovery's read is after the failed settle's). */
 function lastById(rows: readonly ForensicEvent[]): ForensicEvent[] {

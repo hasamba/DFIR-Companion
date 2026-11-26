@@ -220,6 +220,7 @@ export async function importSuperOnlyArtifact(
     { caseId: a.caseId },
   );
   deps.onSuperTimeline?.(a.caseId); // live dashboards refresh as super-only events stream in
+  // Super-only rows never enter the forensic timeline, so none carries a grade mark: no held tagger (#2930).
   await deps.autoTagImported(a.caseId, events);
   return {
     added: appended.retained,

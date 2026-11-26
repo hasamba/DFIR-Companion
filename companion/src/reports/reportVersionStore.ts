@@ -6,6 +6,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import type { Finding, IOC, ForensicEvent } from "../analysis/stateTypes.js";
 import type { Uncertainty } from "../analysis/stateTypes.js";
 import { StateLock } from "../analysis/stateLock.js";
+import { withoutGradePending } from "../analysis/gradeMark.js";
 import { authenticatedActorFields } from "../auth/identityContext.js";
 import type { ReportMeta } from "./reportMeta.js";
 import type { ReportTemplate } from "./reportTemplate.js";
@@ -93,6 +94,29 @@ function nextVersionLabel(existing: readonly ReportVersionSummary[]): string {
   return `v${n ? Number(n) + 1 : existing.length + 1}`;
 }
 
+// The internal grade mark (analysis/gradeMark.ts) never leaves the server (#2934). A version
+// snapshotted on a development build between #2891 and #2909 can hold rows still carrying it, and a
+// release froze such a version verbatim. Reads strip it here. A version's `state` is not hashed
+// (contentHash covers the markdown, metaHash the meta), so a stripped version is still that version,
+// and a release frozen from it NOW freezes a clean snapshot.
+function versionWithoutMark(version: ReportVersionRecord): ReportVersionRecord {
+  // The file is parsed unchecked, so a damaged or hand-edited one may lack the rows: leave it as read.
+  const rows = (version.state as Partial<ReportVersionDiffState> | undefined)?.forensicTimeline;
+  const marked = (e: unknown): boolean => !!e && typeof e === "object" && "gradePending" in e;
+  if (!Array.isArray(rows) || !rows.some(marked)) return version;
+  const forensicTimeline = rows.map((e) => (marked(e) ? withoutGradePending(e) : e));
+  return { ...version, state: { ...version.state, forensicTimeline } };
+}
+
+// A served release is a PROJECTION of the stored record without the mark. Its `manifestHash` names the
+// STORED record — the one ReportReleaseStore.verify() re-hashes from disk — so for a release frozen with
+// the mark, the served body does not re-hash to it. The stored file and the hash chain are never
+// rewritten: they are the frozen evidence.
+function releaseWithoutMark(release: ReportReleaseRecord): ReportReleaseRecord {
+  const snapshot = versionWithoutMark(release.snapshot);
+  return snapshot === release.snapshot ? release : { ...release, snapshot };
+}
+
 export class ReportVersionStore {
   private readonly workflows: ReportWorkflowStore;
   private readonly releases: ReportReleaseStore;
@@ -148,7 +172,9 @@ export class ReportVersionStore {
     // to a real version, so treat it as "not found" (404) rather than risk a traversal in recordPath.
     if (!isValidVersionId(id)) return null;
     try {
-      return JSON.parse(await readFile(this.recordPath(caseId, id), "utf8")) as ReportVersionRecord;
+      return versionWithoutMark(
+        JSON.parse(await readFile(this.recordPath(caseId, id), "utf8")) as ReportVersionRecord,
+      );
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
       if (err instanceof SyntaxError) return null;
@@ -249,12 +275,12 @@ export class ReportVersionStore {
       if (prior && workflow.status === "approved") {
         const record = await this.interruptedRelease(caseId, versionId, prior.id);
         await this.workflows.markReleased(caseId, versionId, input.actor, record.id);
-        return record;
+        return releaseWithoutMark(record);
       }
       if (prior) throw new Error("this report version is already released");
       const release = await this.releases.create(caseId, { ...input, version, workflow });
       await this.workflows.markReleased(caseId, versionId, input.actor, release.id);
-      return release;
+      return releaseWithoutMark(release);
     });
   }
 
@@ -283,8 +309,9 @@ export class ReportVersionStore {
     return this.releases.list(caseId);
   }
 
-  getRelease(caseId: string, releaseId: string): Promise<ReportReleaseRecord | null> {
-    return this.releases.get(caseId, releaseId);
+  async getRelease(caseId: string, releaseId: string): Promise<ReportReleaseRecord | null> {
+    const release = await this.releases.get(caseId, releaseId);
+    return release ? releaseWithoutMark(release) : null;
   }
 
   verifyReleases(caseId: string): Promise<ReportReleaseIntegrity> {
