@@ -297,6 +297,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-cloud-collect.js": "application/javascript; charset=utf-8",
   // Velociraptor client lists' "list was cut" notice + the AI Agent picker's rows (#2887).
   "/js/dashboard-velo-clients.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-ai-agent-hits.js": "application/javascript; charset=utf-8",
   // AI Agent Forensics panel + sweep view (#2690).
   "/js/dashboard-ai-agent.js": "application/javascript; charset=utf-8",
   "/js/dashboard-hunt-case.js": "application/javascript; charset=utf-8",

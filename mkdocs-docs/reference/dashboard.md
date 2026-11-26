@@ -1036,6 +1036,10 @@ lists them as **not run: whole-disk file checks are off**. A sweep's hits reach 
 `Windows.Triage.Targets` is too old to know the AI-agent files, the card says the run still checks
 them for tampering and lists the AI tools, but does not save copies of the files in Velociraptor.
 
+- **Filtering the findings.** Above each run's findings table, **Grade** and **Rule** filters (and
+  **Endpoint**, when the run covers more than one) narrow the rows, with a "Showing N of M findings"
+  count. Long paths are cut in the middle and hashes shortened to their first 12 characters; hover a
+  cell for the full value. **Rule source** names who wrote the rule, with a link to it.
 - **Two hashes per matched file.** The **file** hash is taken on the endpoint after the YARA scan;
   the **preserved** hash is the hash of the copy kept in Velociraptor (from the run's own upload, or
   for agent-home files from the preservation collection's file list). The check says **same**
