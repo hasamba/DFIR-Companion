@@ -229,8 +229,7 @@
   // with the 409 fast-path (see synthesize/runSecondOpinion) as an optimisation on top —
   // never the only way the panel appears.
   let presidioPending = [];
-  // A late answer for a case the analyst has left must not fill this case's panel (#1782). #2904: a
-  // load for another case clears the previous case's values and badge at once; the newest load wins.
+  // A late answer for a case left must not fill this panel (#1782); #2904: cleared at a switch, newest wins.
   const ppOnScreen = (caseId) => (document.getElementById("caseId")?.value ?? caseId).trim() === caseId;
   let ppCase = null, ppSeq = 0;
   function loadPresidioPending(caseId) {
@@ -247,7 +246,8 @@
       .catch(() => {});
   }
   // The one operation the three outside writers used to open-code as an assign-then-render pair.
-  function setPresidioPending(findings) {
+  function setPresidioPending(findings, caseId) { // #2904: a hold answer for a case left is dropped
+    if (caseId !== undefined && !ppOnScreen(caseId)) return;
     presidioPending = findings || [];
     renderPresidioPending();
   }

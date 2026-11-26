@@ -37,9 +37,14 @@
   // #2904: the case whose record the panel shows, and the newest load. A load for another case hides
   // the previous case's panel (and drops its record) at once; only the newest answer paints.
   let soCase = null;
+  // Strict, unlike stillOpen(): after a cancel #caseId is "" and the cancelled case's answer is dropped.
+  const soOnScreen = (caseId) => {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  };
   let soSeq = 0;
   function loadSecondOpinion(caseId) {
-    if (!stillOpen(caseId)) return; // a late caller (a debounced reload) for a case the analyst left
+    if (!soOnScreen(caseId)) return; // a late caller (a debounced reload) for a case the analyst left
     if (soCase !== caseId) {
       soCase = caseId;
       renderSecondOpinion(null);
@@ -48,7 +53,7 @@
     fetch(`/cases/${caseId}/second-opinion`)
       .then((r) => r.json())
       .then((rec) => {
-        if (seq === soSeq && stillOpen(caseId)) renderSecondOpinion(rec);
+        if (seq === soSeq && soOnScreen(caseId)) renderSecondOpinion(rec);
       })
       .catch(() => {});
   }
@@ -461,7 +466,7 @@
       return;
     }
     if (r.status === 409 && body && body.error === "presidio_approval_required") {
-      if (typeof setPresidioPending === "function") setPresidioPending(body.findings);
+      if (typeof setPresidioPending === "function") setPresidioPending(body.findings, caseId);
       refereeStatus("referee held — Presidio found new value(s) to review (see Anonymization)");
       return;
     }
@@ -556,7 +561,7 @@
           if (body.error === "presidio_approval_required") {
             if (btn) btn.disabled = false;
             if (typeof setPresidioPending === "function")
-              setPresidioPending(body.findings);
+              setPresidioPending(body.findings, caseId);
             document.getElementById("status").textContent =
               "second opinion held — Presidio found new value(s) to review (see Anonymization)";
             return null;

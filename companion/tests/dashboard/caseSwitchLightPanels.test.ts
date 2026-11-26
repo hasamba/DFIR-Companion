@@ -508,3 +508,30 @@ describe("report details: no stale answer fills the form or is saved (#2904)", (
     expect(p.el("rm-companyName").value).toBe("");
   });
 });
+
+describe("Codex review of #2904", () => {
+  it("Presidio: a hold answer for case A after the switch does not fill B's panel", async () => {
+    const p = fakePage();
+    const api = loadDashboardModule<Api>("dashboard-presidio.js", ESC, p.globals);
+    p.switchCase("CASE-B", api);
+    api.loadPresidioPending("CASE-B");
+    p.requests[0].answer({ pending: [] });
+    await drainAll();
+    api.setPresidioPending([{ value: "AAA", category: "PERSON" }], "CASE-A");
+    expect(p.el("presidioPending").innerHTML).not.toContain("AAA");
+    api.setPresidioPending([{ value: "BBB", category: "PERSON" }], "CASE-B");
+    expect(p.el("presidioPending").innerHTML).toContain("BBB");
+  });
+
+  it("2nd opinion: after a cancelled load, its answer and a queued reload are dropped", async () => {
+    const p = fakePage();
+    const api = loadDashboardModule<Api>("dashboard-second-opinion.js", ESC, p.globals);
+    api.loadSecondOpinion("CASE-A");
+    p.switchCase("");
+    p.requests[0].answer({ generatedAt: "2020-01-01T00:00:00Z", modelA: "AAA", modelB: "m", deltas: [] });
+    await drainAll();
+    expect(p.el("secondOpinionPanel").innerHTML).not.toContain("AAA");
+    api.loadSecondOpinion("CASE-A");
+    expect(p.requests).toHaveLength(1);
+  });
+});
