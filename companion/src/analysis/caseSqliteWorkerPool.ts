@@ -48,6 +48,7 @@ const READ_OPS = new Set([
   "forensicOutline",
   "entityRows",
   "forensicRowsOutsideSeverities",
+  "forensicRowsGradePending", // #2891: start-up recovery's query (analysis/gradeMark.ts)
   "distinctHosts",
   "forensicHostsInOrder",
   // #1874: the tag list (caseSqliteWorkerTags.ts); it asks the writer to migrate tags.json first when needed

@@ -33,6 +33,7 @@ import { getServerLogger } from "../../src/logging/serverLogger.js";
 import { veloServerClients } from "../helpers/serverClientsStub.js";
 import type { AppOptions } from "../../src/composition/appOptions.js";
 import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
+import type { DemoteOptions } from "../../src/analysis/gradeMark.js";
 
 const MINE = "0003_velo-hunt_H.1_Windows.System.Pslist.json";
 const OTHER = "0004_velo-hunt_H.10_Windows.System.Pslist.json";
@@ -414,8 +415,9 @@ describe("a collect settle that fails AFTER its demote is not re-graded (review)
       runStateExclusive: runExclusive,
     });
     let demoted = false;
-    const demote = vi.fn(async (caseId: string) => {
-      const out = await realDemote.demoteForensicForCase(caseId);
+    // Forwards the rows the tagger finished on (#2891): the demote holds every other marked row.
+    const demote = vi.fn(async (caseId: string, opts?: DemoteOptions) => {
+      const out = await realDemote.demoteForensicForCase(caseId, opts);
       demoted = true;
       return out;
     });

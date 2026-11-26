@@ -322,8 +322,9 @@ function writeMergeIndex(db, entries) {
 }
 
 // Fields the merge never reads: no correlation pass, bucket key or flag looks at them. Settle stamps
-// them on every row an import added, right after the merge wrote those rows.
-const MERGE_UNREAD_FIELDS = ["importedAt", "importBatchId"];
+// them on every row an import added, right after the merge wrote those rows; the grade mark (#2891)
+// is written with that stamp and removed after the tagger.
+const MERGE_UNREAD_FIELDS = ["importedAt", "importBatchId", "gradePending"];
 
 function withoutUnreadFields(entity) {
   const copy = Object.assign({}, entity);
