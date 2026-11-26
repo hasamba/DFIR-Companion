@@ -104,6 +104,26 @@ describe("super-timeline and Velociraptor (#2940)", () => {
     expect(p.el("stStarredReport").disabled).toBe(true);
   });
 
+  it("promote: rows ticked on A are not sent to B when B opens before its super-timeline loads", () => {
+    const p = fakePage();
+    const api = loadDashboardModule<Api>("dashboard-super-timeline.js", ESC, {
+      ...p.globals,
+      DfirStarred: { count: () => 0, has: () => false },
+    });
+    api.loadSavedTimeframes("CASE-A");
+    api.toggleSuperPromote("A-ROW", true);
+    p.open("CASE-A", api);
+    api.promoteSuperSelected();
+    const promotes = () => p.urls().filter((u) => u.endsWith("/super-timeline/promote"));
+    expect(promotes(), "a reopen of the same case kept the ticks").toEqual([
+      "/cases/CASE-A/super-timeline/promote",
+    ]);
+    api.toggleSuperPromote("A-ROW-2", true);
+    p.open("CASE-B", api);
+    api.promoteSuperSelected();
+    expect(promotes()).not.toContain("/cases/CASE-B/super-timeline/promote");
+  });
+
   function velo(file: string, extra: Record<string, unknown> = {}) {
     const p = fakePage();
     const ref: { api?: Api } = {};

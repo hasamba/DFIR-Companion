@@ -696,7 +696,7 @@
       `<option value="${escAttr(w.id)}">${esc(w.label)}</option>`).join("");
     sel.value = cur;
   }
-  const tfReset = (c) => (c === null || c !== tfCase) && ((tfSeq++, superCaseGen++, tfCase = c), stAiFree(), paintTimeframes([])); // #2915/#2933 a cancel; #2940 another case
+  const tfReset = (c) => (c === null || c !== tfCase) && ((tfSeq++, superCaseGen++, tfCase = c), stAiFree(), c !== null && scopeSuperFiltersToCase(c), paintTimeframes([])); // #2915/#2933 a cancel; #2940 another case: a new visit at the switch (A's ticked rows can never be promoted into it)
   function loadSavedTimeframes(caseId) {
     caseId = caseId || superCaseId();
     if (!caseId || caseId !== superCaseId()) return; // none open, or a late caller for a case left
