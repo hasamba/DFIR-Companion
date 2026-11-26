@@ -71,11 +71,14 @@ describe("client profile edit / archive / delete (#2941)", () => {
       detail?: string;
     }>;
 
+  let authStore: AuthStore;
+
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "dfir-client-admin-"));
     cases = new CaseStore(join(root, "cases"));
+    authStore = new AuthStore(join(root, "auth.sqlite"));
     const auth = new TeamAuth({
-      store: new AuthStore(join(root, "auth.sqlite")),
+      store: authStore,
       bootstrapToken: BOOTSTRAP_TOKEN,
       cookieSecure: false,
       sessionTtlMs: 60 * 60_000,
@@ -110,7 +113,9 @@ describe("client profile edit / archive / delete (#2941)", () => {
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    // Close the auth database first: Windows refuses to delete an open SQLite file (EBUSY).
+    authStore.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("members get 403 for every new action — existing or unknown client, case administrator included", async () => {
