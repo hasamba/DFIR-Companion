@@ -101,6 +101,15 @@ describe("AI Agent Forensics artifact: shape", () => {
     expect((cfg.S0 as { Upload: boolean }).Upload).toBe(false); // agent home: kept by the triage collection
   });
 
+  it("without triage preservation, agent home uploads its matched files too, under its own name (#2920)", () => {
+    const off = buildAiAgentArtifact(set, { preserve: false });
+    const cfg = decodeConfig(off);
+    expect((cfg.S0 as { Upload: boolean }).Upload).toBe(true);
+    expect((cfg.S1 as { Upload: boolean }).Upload).toBe(true);
+    expect(off.name).not.toBe(b.name);
+    expect(buildAiAgentArtifact(set, { preserve: true }).name).toBe(b.name); // preserving runs keep their name
+  });
+
   it("raises the scan cap only when local model files are scanned", () => {
     const m = buildAiAgentArtifact(set, { scopes: ["model-files"] });
     expect(decodeConfig(m).ScanMaxBytes).toBeGreaterThan(1024 * 1024 * 1024);

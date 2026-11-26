@@ -12,7 +12,10 @@ import { TRIAGE_ARTIFACT, TRIAGE_RULE } from "./aiAgentLaunch.js";
 
 // What a run without preservation still does, said the way an analyst reads it (#2898).
 const STILL_RUNS =
-  "The run still checks the AI-agent files for tampering and lists the AI tools, but it does not save copies of the files in Velociraptor.";
+  "The run still checks the AI-agent files for tampering, lists the AI tools, and saves a copy of each file a rule matched in Velociraptor, but not the full set of AI-agent files.";
+// #2920: how to get the full set back. Windows.Triage.Targets is built into the Velociraptor server.
+const HOW_TO_FIX =
+  "To save them all, update your Velociraptor server to a release whose Windows.Triage.Targets has the AICodingAgents option (check in View Artifacts → Windows.Triage.Targets → Parameters).";
 
 export interface AiAgentEndpoint {
   clientId: string;
@@ -52,8 +55,8 @@ export async function preflightAiAgentRun(
     if (!preserve)
       warnings.push(
         triage
-          ? `Your Velociraptor server has an older ${TRIAGE_ARTIFACT} artifact that does not know where AI coding agents keep their files. ${STILL_RUNS}`
-          : `Your Velociraptor server does not have the ${TRIAGE_ARTIFACT} artifact. ${STILL_RUNS}`,
+          ? `Your Velociraptor server has an older ${TRIAGE_ARTIFACT} artifact that does not know where AI coding agents keep their files. ${STILL_RUNS} ${HOW_TO_FIX}`
+          : `Your Velociraptor server does not have the ${TRIAGE_ARTIFACT} artifact. ${STILL_RUNS} ${HOW_TO_FIX}`,
       );
   } catch (e) {
     warnings.push(

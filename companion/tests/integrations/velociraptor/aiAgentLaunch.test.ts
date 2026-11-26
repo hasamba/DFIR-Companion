@@ -193,7 +193,11 @@ describe("AI Agent Forensics preflight", () => {
     expect(p.preserve).toBe(false);
     // Plain English (#2898): what still happens, and what does not.
     expect(p.warnings[0]).toContain("does not know where AI coding agents keep their files");
-    expect(p.warnings[0]).toContain("does not save copies of the files in Velociraptor");
+    // #2920: it says what is still kept, and how to get the full set back.
+    expect(p.warnings[0]).toContain("saves a copy of each file a rule matched");
+    expect(p.warnings[0]).toContain("update your Velociraptor server");
+    expect(p.warnings[0]).toContain("AICodingAgents option");
+    expect(p.warnings[0]).toContain("but not the full set of AI-agent files");
     expect(p.warnings[0]).not.toMatch(/triage release|detection and inventory run/);
   });
 

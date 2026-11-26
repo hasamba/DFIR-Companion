@@ -1033,8 +1033,11 @@ The compiled Sigma rules that search the whole C: drive (model files, PROMPTFLUX
 probe file, SesameOp loader files) run only when **Whole-disk file checks (Sigma, slow)** is ticked:
 on a real endpoint those searches alone used up the 2-hour limit. Left unticked, the coverage report
 lists them as **not run: whole-disk file checks are off**. A sweep's hits reach a case only through **Add to case**. When the server's
-`Windows.Triage.Targets` is too old to know the AI-agent files, the card says the run still checks
-them for tampering and lists the AI tools, but does not save copies of the files in Velociraptor.
+`Windows.Triage.Targets` is too old to know the AI-agent files (no **AICodingAgents** parameter), the
+run still checks them for tampering and lists the AI tools, and it saves a copy of each file a rule
+matched, though not the full set of AI-agent files. The card says how to get the full set: update the
+Velociraptor server to a release whose `Windows.Triage.Targets` has the AICodingAgents option (check
+in View Artifacts → Windows.Triage.Targets → Parameters).
 
 - **Filtering the findings.** Above each run's findings table, **Grade** and **Rule** filters (and
   **Endpoint**, when the run covers more than one) narrow the rows, with a "Showing N of M findings"

@@ -38,6 +38,8 @@ export interface AiAgentRun {
   ruleSetVersion: string;
   artifacts: string[];
   preserved: boolean;
+  /** #2920: no preservation, so the run uploaded each file a rule matched. Absent on older runs. */
+  matchedFilesKept?: boolean;
   warnings: string[];
   /** Always true: preservation may have copied credential files into Velociraptor (§14.3). */
   sensitive: true;

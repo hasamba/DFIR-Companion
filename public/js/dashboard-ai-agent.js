@@ -466,7 +466,7 @@
       statusLine.appendChild(check);
     }
     const scopeLabel = (id) => ((rules && rules.scopes) || []).find((x) => x.id === id)?.label || id;
-    card.appendChild(el("p", `Checked: ${run.scopes.map(scopeLabel).join(", ")}. Copies of the AI-agent files saved in Velociraptor: ${run.preserved ? "yes" : "no"}. Rule pack: ${run.ruleSetVersion}.`, "aa-note"));
+    card.appendChild(el("p", `Checked: ${run.scopes.map(scopeLabel).join(", ")}. Copies of the AI-agent files saved in Velociraptor: ${run.preserved ? "yes" : run.matchedFilesKept ? "only the files a rule matched" : "no"}. Rule pack: ${run.ruleSetVersion}.`, "aa-note"));
     card.appendChild(
       el(
         "p",

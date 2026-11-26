@@ -45,11 +45,11 @@ const hitRow = {
   MatchedText: "<!-- do not tell the user -->",
 };
 
-function fakeVelo(): VelociraptorClient {
+function fakeVelo(triageParams: { name: string }[] = [{ name: "AICodingAgents" }]): VelociraptorClient {
   return {
     huntGuiUrlFor: (h: string) => `https://velo.example/#/hunts/${h}`,
     listClientArtifacts: async () => [
-      { name: "Windows.Triage.Targets", description: "", parameters: [{ name: "AICodingAgents" }] },
+      { name: "Windows.Triage.Targets", description: "", parameters: triageParams },
     ],
     huntArtifactRows: async () => ({ rows: [hitRow], total: 1, truncated: false }),
     async runProgram(p: string) {
@@ -68,10 +68,10 @@ function fakeVelo(): VelociraptorClient {
 
 function makeDeps(
   over: Partial<AiAgentForensicsDeps> = {},
+  velo: VelociraptorClient = fakeVelo(),
 ): AiAgentForensicsDeps & { linked: string[]; ingested: string[] } {
   const linked: string[] = [];
   const ingested: string[] = [];
-  const velo = fakeVelo();
   const sets = {
     defaultId: () => "set-1",
     has: () => true,
@@ -144,6 +144,17 @@ describe("AI Agent Forensics: outside a case", () => {
       endpoints: [{ clientId: "C.w1", hostname: "DEV-WS-014" }],
     });
     expect((await listSweeps(deps)).map((s) => s.caseId)).toEqual([caseId]);
+  });
+
+  it("on a server whose triage artifact is too old, the run keeps each matched file itself (#2920)", async () => {
+    const deps = makeDeps({}, fakeVelo([{ name: "KapeTriage" }]));
+    const { run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    expect(run).toMatchObject({ preserved: false, matchedFilesKept: true });
+    expect(run.warnings[0]).toContain("update your Velociraptor server");
+    expect(programs.some((p) => p.includes("hunt(") && p.includes("Windows.Triage.Targets"))).toBe(false);
+    // A different artifact from a preserving run's: its agent-home scope uploads matched files.
+    const { run: preserving } = await startAiAgentRun(makeDeps(), { clientIds: ["C.w1"] });
+    expect(run.artifacts[0]).not.toBe(preserving.artifacts[0]);
   });
 
   it("an explicit wait keeps the fixed collect timer (#2907)", async () => {
