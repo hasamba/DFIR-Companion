@@ -412,6 +412,21 @@ describe("item 6 — recovery tag paths remove the mark and keep it out of the s
   });
 });
 
+describe("item 6 + 4 — a recovery tag path runs the caps before it unmarks", () => {
+  it("gradeStampedRows with no candidates handed in still caps a lab-setup row the tagger raised", async () => {
+    const lab = {
+      ...ev("lab-marker", "Info", "dropped marker"),
+      path: "C:\\Users\\a\\AppData\\Local\\Temp\\vmware-a\\VMwareDnD\\488a9d64\\tool.exe",
+      importBatchId: "b1",
+      gradePending: true as const,
+    };
+    await addRows([lab]);
+    await gradeStampedRows(recoveryDepsFromSettle(deps(raiseMarkers).d), "c1", ["lab-marker"]);
+    expect((await forensic()).get("lab-marker")).toMatchObject({ severity: "Medium" });
+    expect(await pending()).toEqual([]);
+  });
+});
+
 describe("item 7 — no export carries the mark", () => {
   it("every report file, the filtered state and the Timesketch export are free of it", async () => {
     await addRows([

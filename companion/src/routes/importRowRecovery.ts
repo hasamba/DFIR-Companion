@@ -33,11 +33,12 @@ import { isManualId } from "../analysis/manualId.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import {
   carryAndStampPaged,
-  clearGradePending,
+  collector,
   dualWriteAndTagPaged,
+  emptyCandidates,
   type DualWriteDeps,
 } from "./importSettlePaged.js";
-import { runUnlocked, type RunExclusive } from "./importSettleRows.js";
+import { rowPages, runUnlocked, type RunExclusive } from "./importSettleRows.js";
 import {
   failedAfterGrading,
   settleForensicImport,
@@ -118,7 +119,7 @@ export async function settleUnsettledRows(
  * The seam's back half for rows already stamped: dual-write → tagger → the settle's three corrections
  * (#2909: build-time and lab-setup caps, Defender engine start-up, on these rows' candidates) → demote
  * → remove the grade mark from the survivors the tagger finished on (#2891). Takes no import lock (the
- * caller holds the section). Without `caps` the corrections are skipped (no ledger to read them from).
+ * caller holds the section). Without `caps` the candidates are read from the rows themselves.
  */
 export async function gradeStampedRows(
   deps: RowRecoveryDeps,
@@ -128,14 +129,30 @@ export async function gradeStampedRows(
 ): Promise<void> {
   const store = deps.stateStore;
   const lock = deps.runStateExclusive ?? runUnlocked;
+  // A caller without the stamp's candidates (a landed cloud page, an interrupted drop batch) gets
+  // them read here with the stamp's own tests, before the tagger: the corrections always run (#2909).
+  const corrections = caps ?? (await capsOf(store, caseId, ids));
   let gradedIds: string[] = [];
   if (deps.superTimelineStore && ids.length) {
     const dualDeps = { ...deps, stateStore: store, runStateExclusive: lock };
     gradedIds = (await dualWriteAndTagPaged(dualDeps, caseId, ids)).gradedIds;
   }
-  if (caps) return finishRegrade(deps, caseId, { gradedIds, ...caps });
-  await deps.demote(caseId, { graded: new Set(gradedIds) });
-  await clearGradePending(store, lock, caseId, gradedIds);
+  await finishRegrade(deps, caseId, { gradedIds, ...corrections });
+}
+
+async function capsOf(
+  store: ForensicRowStore,
+  caseId: string,
+  ids: readonly string[],
+): Promise<{ ledger: InvestigationState; candidates: CapCandidates }> {
+  const ledger = store.loadOverviewWithoutIocs
+    ? await store.loadOverviewWithoutIocs(caseId)
+    : await store.loadOverview(caseId);
+  const candidates = emptyCandidates();
+  const collect = collector(ledger);
+  for await (const rows of rowPages(store, caseId, ids))
+    for (const r of rows) collect(candidates, r.event, false);
+  return { ledger, candidates };
 }
 
 /** The recovery deps from the deps an import already hands settleForensicImport. */
