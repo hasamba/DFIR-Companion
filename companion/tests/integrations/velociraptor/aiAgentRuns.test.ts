@@ -1,5 +1,7 @@
 // AI Agent Forensics (#2690): run lifecycle — sweep case, case mode, refresh, Add to case, retention.
 // Real case storage on a temp folder; the Velociraptor client is a mock.
+import { AI_AGENT_COLLECT_GRACE_SECONDS } from "../../../src/integrations/velociraptor/aiAgentCollectReady.js";
+import { AI_AGENT_COLLECTION_TIMEOUT_SECONDS } from "../../../src/integrations/velociraptor/aiAgentLaunch.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -125,10 +127,16 @@ describe("AI Agent Forensics: outside a case", () => {
       uploadPolicy: "external",
       sensitive: true,
       aiAgentRunId: run.runId,
+      aiAgentEndpointCount: 1,
       status: "running",
     });
     expect(job?.artifacts.every((a) => a.startsWith("Custom.DFIRCompanion.AIAgentForensics."))).toBe(true);
-    expect(deps.armCollectTimer).toHaveBeenCalledWith(caseId, "H.AI1", 30);
+    // #2907: no fixed 30-minute collect; the status poll collects when every endpoint has finished, and
+    // collectAt is the latest it waits (the per-endpoint limit plus the grace period).
+    expect(deps.armCollectTimer).not.toHaveBeenCalled();
+    expect(Date.parse(job!.collectAt) - Date.parse(job!.launchedAt)).toBe(
+      (AI_AGENT_COLLECTION_TIMEOUT_SECONDS + AI_AGENT_COLLECT_GRACE_SECONDS) * 1000,
+    );
     expect(deps.scheduleVeloHuntStatusPoll).toHaveBeenCalledWith(caseId, "H.AI1");
     expect(run).toMatchObject({
       preserved: true,
@@ -136,6 +144,14 @@ describe("AI Agent Forensics: outside a case", () => {
       endpoints: [{ clientId: "C.w1", hostname: "DEV-WS-014" }],
     });
     expect((await listSweeps(deps)).map((s) => s.caseId)).toEqual([caseId]);
+  });
+
+  it("an explicit wait keeps the fixed collect timer (#2907)", async () => {
+    const deps = makeDeps();
+    const { caseId } = await startAiAgentRun(deps, { clientIds: ["C.w1"], waitMinutes: 45 });
+    expect(deps.armCollectTimer).toHaveBeenCalledWith(caseId, "H.AI1", 45);
+    const job = await deps.veloHuntStore.get(caseId, "H.AI1");
+    expect(Date.parse(job!.collectAt) - Date.parse(job!.launchedAt)).toBe(45 * 60_000);
   });
 
   it("leaves no hidden case behind when the launch fails", async () => {

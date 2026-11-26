@@ -426,10 +426,12 @@
         "p",
         sweep
           ? "Where results go: this is a sweep with no case — press Add to case… to put its hits into a case's forensic timeline."
-          : "Where results go: rule hits are added to this case's forensic timeline automatically about 30 minutes after the run started, or straight away when you press Refresh results. The list of AI tools and MCP servers goes to the super-timeline.",
+          : "Where results go: rule hits are added to this case's forensic timeline automatically once every endpoint has finished (at the latest about 2 hours 15 minutes after the run started), or straight away when you press Refresh results. The list of AI tools and MCP servers goes to the super-timeline.",
         "aa-note",
       ),
     );
+    // #2907: an analyst reads Velociraptor's "Paused" as "will not run until someone starts it".
+    card.appendChild(el("p", "This run was created Paused in Velociraptor on purpose, so it reaches only the endpoints picked here and never spreads to others. It still runs on those endpoints — nobody needs to start it.", "aa-note"));
     card.appendChild(el("p", "Sensitive: preservation may have copied credential files into Velociraptor's file store. The Companion never reads the collected files (manifest only).", "aa-note"));
     for (const w of run.warnings || []) card.appendChild(el("p", plainWarning(w), "aa-warn"));
     for (const f of run.failedEndpoints || []) card.appendChild(el("p", `${f.clientId}: not added (${f.error})`, "aa-warn"));

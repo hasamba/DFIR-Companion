@@ -686,7 +686,7 @@
             : "";
         const cd =
           job.status === "running" && job.collectAt
-            ? `<span class="velo-countdown" data-collect-at="${escAttr(job.collectAt)}"></span> `
+            ? `<span class="velo-countdown" data-collect-at="${escAttr(job.collectAt)}"${job.aiAgentRunId ? ' data-when-done="1"' : ""}></span> `
             : "";
         // Per-artifact accounting (failed / nothing-found / cut short at the row cap) —
         // public/js/dashboard-velo-coverage.js.
@@ -731,7 +731,7 @@
         } else {
           const m = Math.floor(ms / 60000),
             s = Math.floor((ms % 60000) / 1000);
-          cd.textContent = `auto-collect in ${m}m ${String(s).padStart(2, "0")}s ·`;
+          cd.textContent = `auto-collect ${cd.dataset.whenDone ? "when every endpoint finishes, at the latest " : ""}in ${m}m ${String(s).padStart(2, "0")}s ·`;
         }
       });
     };

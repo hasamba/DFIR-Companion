@@ -11,6 +11,7 @@
 //                case's import lock. No re-collection.
 //   retention  — keep the newest SWEEP_RETENTION sweep cases; older ones lose only the Companion copy.
 
+import { aiAgentCollectDeadline } from "./aiAgentCollectReady.js";
 import {
   describeAiAgentRunStatus,
   huntFlowsVql,
@@ -317,7 +318,14 @@ export async function startAiAgentRun(
   }
   const runId = newAiAgentRunId();
   const now = new Date();
+  // #2907: with no explicit wait, the status poll collects once every endpoint's collection has ended
+  // (aiAgentCollectReady.ts), and collectAt is only the latest it will wait. An explicit wait keeps
+  // the old fixed timer: the caller asked for that moment.
+  const fixedWait = input.waitMinutes !== undefined;
   const waitMinutes = Math.min(24 * 60, Math.max(5, Math.floor(input.waitMinutes ?? DEFAULT_WAIT_MINUTES)));
+  const collectAtMs = fixedWait
+    ? now.getTime() + waitMinutes * 60_000
+    : aiAgentCollectDeadline(now.toISOString());
   const job: VeloHuntJob = {
     bundleId: AI_AGENT_BUNDLE_ID,
     bundleName: BUNDLE_NAME,
@@ -326,15 +334,16 @@ export async function startAiAgentRun(
     guiUrl: launch.guiUrl,
     launchedAt: now.toISOString(),
     waitMinutes,
-    collectAt: new Date(now.getTime() + waitMinutes * 60_000).toISOString(),
+    collectAt: new Date(collectAtMs).toISOString(),
     status: "running",
     expirySeconds: AI_AGENT_HUNT_EXPIRY_SECONDS,
     uploadPolicy: "external",
     aiAgentRunId: runId,
+    aiAgentEndpointCount: launch.added.length,
     sensitive: true,
   };
   await deps.veloHuntStore.upsert(caseId, job);
-  deps.armCollectTimer(caseId, launch.huntId, waitMinutes);
+  if (fixedWait) deps.armCollectTimer(caseId, launch.huntId, waitMinutes);
   deps.scheduleVeloHuntStatusPoll(caseId, launch.huntId);
   const byId = new Map(endpoints.map((e) => [e.clientId, e.hostname]));
   const run: AiAgentRun = {

@@ -7,6 +7,7 @@
 // NOT the hunt's summary counters. On a real run the hunt's stats said 0 rows and 0 finished while the
 // endpoint's collection was IN_PROGRESS with 1,172 rows: the counters lag behind the collections, and a
 // status built on them could read "0 finished" long after the work was done.
+import { AI_AGENT_COLLECTION_TIMEOUT_SECONDS } from "./aiAgentLaunch.js";
 import { CLIENT_RE } from "./clientInventory.js";
 
 export type AiAgentRunState = "running" | "finished" | "stopped" | "unknown";
@@ -27,6 +28,8 @@ export interface HuntFlowRead {
   state: string;
   rows: number;
   status: string;
+  /** How long the collection ran, in seconds, from its create and last-active times; undefined when unread. */
+  ranSeconds?: number;
 }
 
 const HUNT_RE = /^H\.[A-Za-z0-9]+$/;
@@ -37,7 +40,8 @@ export function huntFlowsVql(huntId: string): string {
   if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
   return (
     "SELECT Flow.client_id AS ClientId, Flow.state AS State, Flow.status AS Status, " +
-    `Flow.total_collected_rows AS Rows FROM hunt_flows(hunt_id='${huntId}')`
+    "Flow.total_collected_rows AS Rows, Flow.create_time AS Created, Flow.active_time AS LastActive " +
+    `FROM hunt_flows(hunt_id='${huntId}')`
   );
 }
 
@@ -56,9 +60,38 @@ export function parseHuntFlows(rows: unknown): HuntFlowRead[] | undefined {
       state: r.State.trim().toUpperCase(),
       rows: Number.isSafeInteger(n) && n >= 0 ? n : 0,
       status: typeof r.Status === "string" ? r.Status.trim() : "",
+      ranSeconds: ranSeconds(r.Created, r.LastActive),
     });
   }
   return out;
+}
+
+// Velociraptor flow times are microseconds since the epoch.
+function ranSeconds(created: unknown, lastActive: unknown): number | undefined {
+  const a = Number(created);
+  const b = Number(lastActive);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b < a) return undefined;
+  return Math.floor((b - a) / 1e6);
+}
+
+// A collection that ended this close to the per-endpoint limit most likely ran into it. Its last
+// activity is not proof of WHY it ended, so the card hedges ("may be partial") instead of asserting.
+const LIMIT_SLACK_SECONDS = 60;
+const nearLimit = (f: HuntFlowRead): boolean =>
+  ended(f) &&
+  f.ranSeconds !== undefined &&
+  f.ranSeconds >= AI_AGENT_COLLECTION_TIMEOUT_SECONDS - LIMIT_SLACK_SECONDS;
+
+/**
+ * Every collection the run expects has ended. False while one is still running, while fewer
+ * collections exist than endpoints were added (one not reached yet), or when nothing was read.
+ */
+export function aiAgentFlowsAllEnded(
+  flows: readonly HuntFlowRead[] | undefined,
+  endpointCount: number,
+): boolean {
+  if (!flows || flows.length === 0 || flows.length < endpointCount) return false;
+  return flows.every(ended);
 }
 
 const ended = (f: HuntFlowRead): boolean => f.state === "FINISHED" || f.state === "ERROR";
@@ -90,12 +123,16 @@ export function describeAiAgentRunStatus(
   const rows = flows.reduce((sum, f) => sum + f.rows, 0);
   const of = `${finished} of ${total} endpoint(s)`;
   const base = { total, finished, errors };
+  const limitHit = flows.filter(nearLimit).length;
+  const limitNote = limitHit
+    ? `; ${limitHit} ran to the ${AI_AGENT_COLLECTION_TIMEOUT_SECONDS / 3600}-hour time limit, so its results may be partial`
+    : "";
   if (total > 0 && finished >= total) {
     const errorNote = errors ? `; ${errors} ended with an error` : "";
-    return { ...base, state: "finished", summary: `Finished — ${of} done${errorNote}` };
+    return { ...base, state: "finished", summary: `Finished — ${of} done${errorNote}${limitNote}` };
   }
   if (STOPPED_STATES.has(huntState.trim().toUpperCase()))
-    return { ...base, state: "stopped", summary: `Stopped in Velociraptor — ${of} finished` };
+    return { ...base, state: "stopped", summary: `Stopped in Velociraptor — ${of} finished${limitNote}` };
   const notes = [
     ...(rows ? [`${rows.toLocaleString("en-US")} rows collected so far`] : []),
     ...(notStarted ? [`${notStarted} not started yet (offline?)`] : []),
