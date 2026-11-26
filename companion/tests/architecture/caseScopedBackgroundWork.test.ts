@@ -92,6 +92,8 @@ const LIST_SWEEPS: Record<string, string> = {
   "composition/watsonVeloRecovery.ts":
     "Watson phase 3 startup: stranded launching proposals marked uncertain per case, in scope with generationOf(listed)",
   "composition/maintenanceTasks.ts": "scheduled backup per case, in scope with generationOf(listed)",
+  "composition/ungradedRecovery.ts":
+    "#2891 startup: rows waiting for the content tagger re-graded per case, in scope with generationOf(listed)",
   "composition/socratesJobRunner.ts":
     "#2408 startup: unfinished SO-CRATES jobs resumed or marked interrupted, in scope with generationOf(listed)",
   "composition/veloMonitors.ts": "startup resume arms each monitor in scope with generationOf(listed)",
