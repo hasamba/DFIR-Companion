@@ -13,6 +13,7 @@ import {
   addSweepToCase,
   enforceSweepRetention,
   listSweeps,
+  readAiAgentRunStatus,
   refreshAiAgentRun,
   startAiAgentRun,
   type AiAgentForensicsDeps,
@@ -351,6 +352,35 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     expect(programs.filter((p) => !p.includes("artifact_set")).some((p) => p.includes("read_file"))).toBe(
       false,
     );
+  });
+
+  it("reads the run's live status from its Velociraptor hunt (#2898)", async () => {
+    const huntStatus = vi.fn(async () => ({
+      state: "PAUSED",
+      clients: { scheduled: 1, completed: 0, errors: 0 },
+    }));
+    const deps = makeDeps();
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    // The hunt's counters lag (0 finished, 0 rows) while the endpoint's collection is under way.
+    const resolved = deps.serverClients.forCase(caseId) as unknown as {
+      servers: { velociraptor: Record<string, unknown> };
+    };
+    const velo = resolved.servers.velociraptor;
+    const runProgram = velo.runProgram as (p: string) => Promise<{ rows: unknown[]; reason: string }>;
+    Object.assign(velo, {
+      huntStatus,
+      runProgram: async (p: string) =>
+        p.includes("hunt_flows(hunt_id='H.AI1')")
+          ? { rows: [{ ClientId: "C.w1", State: "IN_PROGRESS", Rows: 1172, Status: "" }], reason: "" }
+          : runProgram.call(velo, p),
+    });
+    const s = await readAiAgentRunStatus(deps, caseId, run.runId);
+    expect(huntStatus).toHaveBeenCalledWith("H.AI1");
+    expect(s).toMatchObject({
+      state: "running",
+      summary: "Running — 0 of 1 endpoint(s) finished; 1,172 rows collected so far",
+    });
+    await expect(readAiAgentRunStatus(deps, caseId, "aar-missing")).rejects.toMatchObject({ status: 404 });
   });
 
   it("files a sweep's rows into a real case, and refuses a sweep as the target", async () => {

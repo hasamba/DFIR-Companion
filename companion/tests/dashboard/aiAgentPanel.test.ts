@@ -63,7 +63,9 @@ describe("AI Agent Forensics panel", () => {
   it("endpoint picker: filters the whole list, caps only the drawn rows, says so, and keeps picks (#2887)", () => {
     const picker = js.slice(js.indexOf("async function endpointPicker"), js.indexOf("function scopeBoxes"));
     expect(picker).not.toContain(".slice(0, 2000)");
-    expect(picker).toContain("veloPickerRows(clients, filter.value)");
+    expect(picker).toContain(
+      "veloPickerRows(clients, filter.value, undefined, { onlineOnly: online.checked })",
+    );
     expect(picker).toContain("veloPickerNote(view)");
     // A list the server cut at its row limit says so above the picker.
     expect(picker).toContain("veloClientsCutNotice(inv.body)");
@@ -72,6 +74,52 @@ describe("AI Agent Forensics panel", () => {
     expect(picker).toContain("box.checked = picked.has(c.clientId)");
     expect(picker).toContain("selected: () => [...picked]");
     expect(picker).not.toContain("input:checked");
+  });
+
+  it("endpoint picker: Refresh re-reads the list through the right route, Online only filters it (#2898)", () => {
+    const picker = js.slice(js.indexOf("async function endpointPicker"), js.indexOf("function scopeBoxes"));
+    // Inside a case the case route (case writers); with no case the administrator's fleet refresh.
+    expect(picker).toContain(
+      'const refreshUrl = caseId ? `${listUrl}/refresh` : "/velociraptor/clients/refresh"',
+    );
+    expect(picker).toContain("await post(refreshUrl)");
+    expect(picker).toContain('el("button", "Refresh", "aa-refresh")');
+    expect(picker).toContain("Online only (seen in the last 15 min)");
+    expect(picker).toContain('online.addEventListener("change", draw)');
+    // Each row says when the endpoint was last seen; picks survive a refresh (one Set for the panel).
+    expect(picker).toContain("veloSeenAgo(c)");
+    expect(picker.match(/new Set\(\)/g)).toHaveLength(1);
+    // A failed refresh keeps the list shown and says why, instead of wiping it.
+    expect(picker).toContain("Refresh failed: ");
+    // The panel no longer sends the analyst to Settings to refresh.
+    expect(picker).not.toContain("Settings → Velociraptor");
+  });
+
+  it("run card: a live status line, where results go, and plain-English labels (#2898)", () => {
+    const card = js.slice(js.indexOf("function runCard"), js.indexOf("async function renderPanel"));
+    expect(card).toContain("/status`");
+    expect(card).toContain("Status: ");
+    expect(card).toContain(
+      "added to this case's forensic timeline automatically about 30 minutes after the run started",
+    );
+    expect(card).toContain("Download report (Markdown)");
+    expect(card).toContain("Download findings (spreadsheet)");
+    expect(card).toContain("Download rule coverage (spreadsheet)");
+    expect(card).not.toContain("Report .${fmt}");
+    expect(card).not.toContain("scopes: ${run.scopes");
+    expect(card).toContain("Copies of the AI-agent files saved in Velociraptor");
+  });
+
+  it("asks Velociraptor automatically only for the newest run cards (#2898)", () => {
+    expect(js).toContain("const AUTO_STATUS_CARDS = 3;");
+    expect(js).toContain("if (autoStatus) void checkStatus();");
+    expect(js).toContain('el("button", "Check status")');
+  });
+
+  it("shows warnings stored by older runs in the new plain wording (#2898)", () => {
+    expect(js).toContain("function plainWarning(w)");
+    expect(js).toContain("plainWarning(w)");
+    expect(js).toContain("does not know where AI coding agents keep their files");
   });
 
   it("turns the standard 401 locked answer into an unlock hint (#2798)", () => {
@@ -89,6 +137,6 @@ describe("AI Agent Forensics panel", () => {
     expect(js).toContain("The bytes YARA read are not separately hashed");
     expect(js).not.toContain("the file changed after the scan");
     expect(js).toContain('cell ? `${cell.status}, ${cell.hits} hit(s)` : "not recorded"');
-    expect(js).toContain("/sigma-coverage.csv`");
+    expect(js).toContain('["sigma-coverage.csv", "Download rule coverage (spreadsheet)"');
   });
 });

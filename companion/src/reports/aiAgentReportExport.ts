@@ -54,7 +54,7 @@ function summaryLines(run: AiAgentRunView): string[] {
     `- Launched: ${oneLineMd(run.launchedAt)} · hunt ${codeSpanMd(run.huntId)}${run.guiUrl ? ` · ${codeSpanMd(run.guiUrl)}` : ""}`,
     ...(run.report ? [`- Results read: ${oneLineMd(run.report.builtAt)}`] : []),
     `- Scopes: ${run.scopes.map(codeSpanMd).join(", ")}`,
-    `- Preserved with Windows.Triage.Targets / AICodingAgents: ${run.preserved ? "yes" : "no — artifacts not preserved"}`,
+    `- Copies of the AI-agent files saved in Velociraptor: ${run.preserved ? "yes" : "no"}`,
     ...(run.manifest
       ? [
           `- Preserved files in Velociraptor: ${run.manifest.total} (${run.manifest.totalBytes} bytes, manifest only)`,

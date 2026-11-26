@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AI Agent Forensics picker Refresh and Online only** — case writers re-read the Velociraptor client list from the picker; Online only shows endpoints seen in the last 15 minutes, each row says when it was last seen (part of #2898)
+- **AI Agent Forensics run status** — each run card shows Running / Finished / Stopped with endpoint counts, says where results go, and names its downloads and warnings in plain English (closes #2898)
 - **Telegram Apply / Reject buttons** — mirrored Watson proposals for a new finding, next step, report text or key question can be decided from the chat by an allowlisted user, recorded as "(via Telegram)" (closes #2712)
 - **Hidden panels load on reveal** — heavy panels in a section the dashboard view or Settings hides skip case open and live refreshes, and load once when shown (closes #2854)
 - **Cancel a running bundle hunt** — the hunt card's Cancel asks whether to also stop or delete the hunt in Velociraptor; the run form's pickers now read include labels / exclude labels
@@ -32,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **THOR via Velociraptor without scanner noise** — THOR's Info status lines and its Debug folder listing are no longer imported; licence banners and THOR errors are graded Info (closes #2884)
 - **Rows wait for the tagger before demote** — rows an import stamped but did not tag (a crash, or a tagger error) stay in the forensic timeline and are graded at the next start, not demoted untagged (closes #2891)
 - **Large SIEM / EVTX XML imports read in parts** — a SIEM JSON Lines or Windows Event XML export of 32 MB or more is read from disk piece by piece, so memory follows the rows, not the file; a large file of those kinds that is still read whole is charged by its size in the memory guard (closes #2823)
 - **Case switch leaves no previous-case panels** — the login graph, asset graph, duplicate hosts, activity log, playbook, pins and finding workflow never show the previous case's data, and a cancelled load's panels say nothing is loading (closes #2900)

@@ -29,17 +29,39 @@ const INVENTORY = {
     { clientId: "C.bbb222", hostname: "WS-02", fqdn: "ws-02.lab.test", secretNote: "not for analysts" },
   ],
 };
+// A Refresh (#2898) reads the server's client list into the inventory; this synthetic server knows a
+// third client the saved inventory does not.
+let snapshotCalls = 0;
+const velociraptor = {
+  listClientSnapshot: async () => {
+    snapshotCalls++;
+    return {
+      clients: [
+        ...INVENTORY.clients,
+        { clientId: "C.ccc333", hostname: "WS-03", fqdn: "ws-03.lab.test", lastSeen: "1700000500" },
+      ],
+      truncated: false,
+    };
+  },
+};
+const servers = { setId: "set-1", setName: "Lab", velociraptor };
 const serverClients = {
-  forCase: () => ({ ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: {} } }),
-  forSet: () => ({ ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: {} } }),
-  forDefault: () => ({ ok: true, servers: { setId: "set-1", setName: "Lab", velociraptor: {} } }),
+  forCase: () => ({ ok: true, servers }),
+  forSet: () => ({ ok: true, servers }),
+  forDefault: () => ({ ok: true, servers }),
   invalidate: () => undefined,
 } as unknown as AppOptions["serverClients"];
 const inventorySets: string[] = [];
 let inventoryExtra: Record<string, unknown> = {};
+let saved: { clients: unknown[]; updatedAt: string } | undefined;
 const clientInventoryFor = ((setId: string) => {
   inventorySets.push(setId);
-  return { load: async () => ({ ...INVENTORY, ...inventoryExtra }) };
+  return {
+    load: async () => (saved ? { ...saved, ...inventoryExtra } : { ...INVENTORY, ...inventoryExtra }),
+    save: async (clients: unknown[], updatedAt: string) => {
+      saved = { clients, updatedAt };
+    },
+  };
 }) as unknown as AppOptions["clientInventoryFor"];
 
 const BOOTSTRAP_TOKEN = "test-bootstrap-token-with-enough-entropy";
@@ -87,6 +109,8 @@ describe("AI Agent Forensics routes under team authentication", () => {
       .send({ clientIds: [], ...body });
 
   const endpoints = (s: Session) => s.agent.get("/cases/c1/ai-agent/endpoints");
+  const refreshEndpoints = (s: Session) =>
+    s.agent.post("/cases/c1/ai-agent/endpoints/refresh").set("X-DFIR-CSRF", s.csrf).send({});
 
   beforeEach(async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-team-aiagent-"));
@@ -99,6 +123,8 @@ describe("AI Agent Forensics routes under team authentication", () => {
     });
     inventorySets.length = 0;
     inventoryExtra = {};
+    saved = undefined;
+    snapshotCalls = 0;
     app = createApp(cases, {
       teamAuth: auth,
       veloHuntStore: new VeloHuntStore(cases),
@@ -169,6 +195,31 @@ describe("AI Agent Forensics routes under team authentication", () => {
     expect((await endpoints(inv)).body).not.toHaveProperty("truncated");
     inventoryExtra = { truncated: true };
     expect((await endpoints(inv)).body.truncated).toBe(true);
+  });
+
+  it("analyst with write on the case: refreshes the case set's client list, reduced fields only (#2898)", async () => {
+    const inv = await analyst("investigator5", "investigator");
+    const r = await refreshEndpoints(inv);
+    expect(r.status).toBe(200);
+    expect(snapshotCalls).toBe(1);
+    expect(r.body.setName).toBe("Lab");
+    expect(r.body.updatedAt).not.toBe(INVENTORY.updatedAt); // the fetch time of THIS refresh
+    expect(r.body.clients.map((c: { clientId: string }) => c.clientId)).toEqual([
+      "C.aaa111",
+      "C.bbb222",
+      "C.ccc333",
+    ]);
+    expect(r.body.clients[1]).not.toHaveProperty("secretNote");
+    // The refreshed list is what the picker reads from now on.
+    expect((await endpoints(inv)).body.clients).toHaveLength(3);
+  });
+
+  it("read-only and outside users may not refresh the case's client list (#2898)", async () => {
+    const reader = await analyst("reader2", "reader");
+    expect((await refreshEndpoints(reader)).status).toBe(403); // the case policy refuses a reader's POST
+    const outsider = await analyst("outsider2");
+    expect((await refreshEndpoints(outsider)).status).toBe(404);
+    expect(snapshotCalls).toBe(0);
   });
 
   it("analyst with write on the case: refused a run with no case open (administrator only)", async () => {
