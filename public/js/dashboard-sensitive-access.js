@@ -135,6 +135,7 @@
     status = "loading";
     renderSensitiveAccess();
     const gen = ++loadGen;
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("sensitiveAccess", caseId)) return; // #2854 hidden: load on reveal (after the case-switch reset above)
     fetch(`/cases/${encodeURIComponent(caseId)}/sensitive-access`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);

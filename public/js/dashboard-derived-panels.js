@@ -34,6 +34,7 @@
   let beaconsData = [];
   let beaconsTimer = null;
   function loadBeacons(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("beacons", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/beacon-candidates`).then(r => r.json()).then(b => {
       beaconsData = Array.isArray(b) ? b : [];
       renderBeacons();
@@ -76,6 +77,7 @@
   let evidenceGapsData = [];
   let evidenceGapsTimer = null;
   function loadEvidenceGaps(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("evidenceGaps", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/known-unknowns`).then(r => r.json()).then(j => {
       evidenceGapsData = (j && Array.isArray(j.items)) ? j.items : [];
       renderEvidenceGaps();
@@ -139,6 +141,7 @@
   let cloudWeaknessData = { read: false, items: [], limits: [] };
   let cloudCoverageTimer = null;
   function loadCloudCoverage(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("cloudCoverage", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/cloud-coverage`).then(r => r.json()).then(j => {
       cloudCoverageData = { items: (j && Array.isArray(j.items)) ? j.items : [], caveats: (j && Array.isArray(j.caveats)) ? j.caveats : [] };
       renderCloudCoverage();
@@ -219,6 +222,7 @@
   let playbookMatchData = null;
   let playbookMatchTimer = null;
   function loadPlaybookMatch(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("playbookMatch", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/playbook-match`).then(r => r.ok ? r.json() : null).then(d => {
       playbookMatchData = (d && typeof d === "object") ? d : null;
       renderPlaybookMatch();
@@ -298,6 +302,7 @@
   }
 
   function loadAttackMitigations(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("attackMitigations", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/attack-mitigations`).then(r => r.json()).then(d => {
       mitigationsData = (d && typeof d === "object") ? d : null;
       renderMitigations();

@@ -74,6 +74,7 @@
   const evTacticColor = (tac) => (tac && EV_KC_COLOR[tac]) || EV_KC_NO_TACTIC;
 
   function loadEvidenceGraph(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("evidenceGraph", caseId)) return; // #2854 hidden: load on reveal
     const gv = evEnsureGV();
     if (gv) gv.loadView(); // restore this case's persisted view state (layout/dim/edge-style)
     fetch(`/cases/${caseId}/evidence-graph${DfirTimelineView.timeQuery()}`)

@@ -27,6 +27,7 @@
   let timelineGapsData = [];
   let timelineGapsTimer = null;
   function loadTimelineGaps(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("timelineGaps", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/timeline-gaps`)
       // An error answer (a server still busy after its retries, #1915) is not "no gaps": keep the panel.
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))

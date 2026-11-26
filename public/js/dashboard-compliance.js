@@ -32,6 +32,7 @@
   //     legal determination rather than on a forensic timestamp.
   let complianceData = null;
   function loadCompliance(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("compliance", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/compliance`).then(r => r.ok ? r.json() : null).then(d => {
       complianceData = (d && typeof d === "object" && Array.isArray(d.results)) ? d : null;
       renderCompliance();

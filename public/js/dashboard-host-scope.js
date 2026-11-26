@@ -235,6 +235,7 @@
     // harmless: the panel shows the failure until the next successful reload repaints it.
     const seq = ++hostScopeLoadSeq;
     hostScopeLoadCase = caseId;
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("hostScope", caseId)) return; // #2854 hidden: load on reveal (after the case-switch reset above)
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/host-scope`);
       if (!r.ok) {

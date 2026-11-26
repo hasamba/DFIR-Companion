@@ -18,6 +18,7 @@
   let lgData = null; // last /login-graph payload
   let lgTimer = null; // debounced reload
   function loadLoginGraph(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("loginGraph", caseId)) return; // #2854 hidden: load on reveal
     const gv = lgEnsureGV();
     if (gv) gv.loadView();
     fetch(`/cases/${encodeURIComponent(caseId)}/login-graph`)
