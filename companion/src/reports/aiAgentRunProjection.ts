@@ -36,6 +36,7 @@ export function projectAiAgentRun(raw: unknown): AiAgentRunView | null {
     scopes: strs(raw.scopes),
     ruleSetVersion: str(raw.ruleSetVersion) ? raw.ruleSetVersion : "",
     preserved: raw.preserved === true,
+    matchedFilesKept: raw.matchedFilesKept === true,
     warnings: strs(raw.warnings),
     failedEndpoints: objs(raw.failedEndpoints).map((e) => ({
       clientId: String(e.clientId ?? ""),

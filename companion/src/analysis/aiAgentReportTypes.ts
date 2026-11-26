@@ -88,6 +88,8 @@ export interface AiAgentRunView {
   scopes: string[];
   ruleSetVersion: string;
   preserved: boolean;
+  /** #2920: no preservation, so the run uploaded each file a rule matched. */
+  matchedFilesKept?: boolean;
   warnings: string[];
   failedEndpoints: { clientId: string; error: string }[];
   skippedEndpoints: { clientId: string; hostname: string; reason: string }[];
