@@ -36,7 +36,16 @@ function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, n - 1)
 // Split at the FIRST such separator so the row shows just the finding name; the raw trailer
 // moves into the [details] panel instead of always rendering inline. No separator (a plain
 // one-sentence description) → the whole thing is the title, nothing to split off.
+// AI Agent Forensics rows (#2924) read "AI Agent Forensics: RULE — PATH [time basis…] [provisional
+// grade]": the title ends at the file name and the bracketed notes go to [details]. Display only — the
+// stored description is part of the event's duplicate check and is never rewritten.
+const AI_AGENT_TITLE = "AI Agent Forensics: ";
 function splitEventTitle(desc) {
+  if (desc.startsWith(AI_AGENT_TITLE)) {
+    // Only the TRAILING run of [notes] (and a host suffix) is split off, so a path with "[1]" in it stays whole.
+    const m = /(?: \[[^\[\]]*\])+(?:\s+@\s*\S+)?\s*$/.exec(desc);
+    if (m && m.index > 0) return { title: desc.slice(0, m.index), rest: desc.slice(m.index + 1) };
+  }
   const i = desc.indexOf(" - ");
   return i < 0 ? { title: desc, rest: "" } : { title: desc.slice(0, i), rest: desc.slice(i + 3) };
 }

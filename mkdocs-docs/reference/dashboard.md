@@ -1021,7 +1021,9 @@ Velociraptor: **Running — 0 of 1 endpoint(s) finished; 1,172 rows collected so
 2 of 2 endpoint(s) done**, or **Stopped in Velociraptor** when the hunt was stopped before every
 endpoint finished. An endpoint Velociraptor has not reached yet is counted as **not started yet
 (offline?)**, and a collection that ended with an error is counted and named. The three newest cards check it when the panel
-opens; older cards have a **Check status** button. The card also says where results go: rule hits are
+opens and, while a run is Running, again every minute; every card has a **Check again** (or **Check
+status**) button. In the timeline, an AI Agent Forensics event's title ends at the file name; the
+time basis and grade notes are under **details**. The card also says where results go: rule hits are
 added to the case's forensic timeline automatically once every endpoint's collection has ended (at
 the latest about 2 hours 15 minutes after the run started, the per-endpoint limit plus a grace period),
 or straight away when you press **Refresh results**, and the list of AI tools and MCP servers goes to
@@ -1039,6 +1041,12 @@ matched, though not the full set of AI-agent files. The card says how to get the
 Velociraptor server to a release whose `Windows.Triage.Targets` has the AICodingAgents option (check
 in View Artifacts → Windows.Triage.Targets → Parameters).
 
+- **Agent working data is graded Info.** A hit in the agents' own working data (session transcripts,
+  installed skills, temp folders, editors' local edit history) goes to the super-timeline only: those
+  files are full of instructions by design, and on a developer machine with normal agent use they
+  produced almost all of 1,143 hits. A named instruction file (CLAUDE.md, AGENTS.md, .mcp.json, …), an
+  MCP config or a project folder keeps its grade. The event's details say "graded Info: agent working
+  data". Grades are still provisional.
 - **Filtering the findings.** Above each run's findings table, **Grade** and **Rule** filters (and
   **Endpoint**, when the run covers more than one) narrow the rows, with a "Showing N of M findings"
   count. Long paths are cut in the middle and hashes shortened to their first 12 characters; hover a

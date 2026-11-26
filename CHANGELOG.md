@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **AI Agent Forensics picker Refresh and Online only** — case writers re-read the Velociraptor client list from the picker; Online only shows endpoints seen in the last 15 minutes, each row says when it was last seen (part of #2898)
+- **AI Agent Forensics quieter on developer machines** — hits in the agents' own working data (session transcripts, installed skills, temp folders, edit history) are graded Info; instruction files and MCP configs keep their grade (part of #2719)
+- **AI Agent Forensics titles and live status** — timeline titles end at the file name (notes move to details), and a Running run card re-checks itself every minute with a Check again button, and the YARA coverage line counts the files it scanned instead of always "0" (closes #2924)
 - **AI Agent Forensics keeps matched files on older servers** — when the server's triage artifact lacks the AICodingAgents option, the run saves each file a rule matched, and the card says how to update the server (closes #2920)
 - **AI Agent Forensics matched text readable** — YARA hits show the text that matched (hidden characters made visible, secrets redacted) instead of `%!s(uint8=…)`, also for runs already on the server (closes #2912)
 - **AI Agent Forensics findings filters** — the findings table filters by grade, rule and endpoint (when more than one), with shortened paths and hashes (full values on hover) (closes #2911)
@@ -39,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Held Watson promotions survive a restart** — raises a later re-grade finds for a Watson paste's rows (start-up, next import, streamed and drop-folder imports) are offered as held-rows cards in the chat instead of dropped; the case-state response no longer carries the internal grade mark (closes #2918)
+- **Result tables scroll from the keyboard** — scrolling result tables (Timeline Gaps, Timeline Anomalies, Beacon Candidates, Cloud Coverage, hunt and query results) take keyboard focus and are announced by name, so keyboard and screen-reader users can scroll them (closes #2923)
 - **Cross-case capture warning on a phone** — the "screenshots are arriving for another case" banner wraps instead of pushing the dashboard sideways at narrow widths (closes #2919)
 - **Held rows graded at the next import** — rows an importer merged but never stamped are held from the demote too, rows a tagger failure held are graded at the next import (not only at restart) with the caps a full settle applies, Watson paste rows only ever get the held tagger and keep their proposals after a failed settle, and exports never show the internal grading mark (closes #2909)
 - **THOR via Velociraptor without scanner noise** — THOR's Info status lines and its Debug folder listing are no longer imported; licence banners and THOR errors are graded Info (closes #2884)

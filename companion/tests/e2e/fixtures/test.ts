@@ -30,7 +30,37 @@ export function caseIdFor(prefix: string, testInfo: TestInfo): string {
   return `${prefix}-w${testInfo.workerIndex}-r${testInfo.retry}-${safe}`;
 }
 
-export const test = base.extend<{ demoCase: string }>({
+/**
+ * Whether the dashboard's cross-case capture warning (#caseMismatchBanner) may take up space.
+ *
+ * Every spec shares one e2e server, and the warning's inputs are global on purpose: GET
+ * /captures/recent reports the newest capture across all cases, and every capture and import is
+ * broadcast to every open dashboard. So a capture or import made by one test raised the warning in
+ * whatever dashboard another test had open — a full-width row that moves the page, wraps at phone
+ * width, and enters an axe scan — depending purely on suite order (#2923).
+ *
+ * "suppressed" (the default) hides the element with a constructed stylesheet in every page of the
+ * test's browser context. That is presentation only: the dashboard still receives the events, runs
+ * its timers and toggles the element's `hidden` attribute; the server state is still shared. It just
+ * cannot change the layout or the accessibility tree of a spec that is not about it. A constructed
+ * sheet, as in revealSections(), because the dashboard's CSP blocks an injected <style>.
+ *
+ * A spec ABOUT the warning opts back in with `test.use({ crossCaseBanner: "live" })`.
+ */
+export type CrossCaseBanner = "suppressed" | "live";
+
+export const test = base.extend<{ demoCase: string; crossCaseBanner: CrossCaseBanner }>({
+  crossCaseBanner: ["suppressed", { option: true }],
+  context: async ({ context, crossCaseBanner }, use) => {
+    if (crossCaseBanner === "suppressed") {
+      await context.addInitScript(() => {
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync("#caseMismatchBanner { display: none !important; }");
+        document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      });
+    }
+    await use(context);
+  },
   demoCase: async ({ baseURL }, use, testInfo) => {
     const caseId = caseIdFor("e2e-demo", testInfo);
     await seedDemoCase(baseURL ?? "http://127.0.0.1:4788", caseId);

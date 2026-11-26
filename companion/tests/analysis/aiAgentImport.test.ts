@@ -11,7 +11,13 @@ import { createTimelineSelection } from "../../src/analysis/ai/synthesisPromptEv
 import { renderTaggedEventLine } from "../../src/analysis/ai/eventLine.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { keepsVendorGrade } from "../../src/analysis/vendorGrade.js";
-import { hitTime, AI_AGENT_TIME_LABEL, mapAiAgentRow } from "../../src/analysis/aiAgentImport.js";
+import {
+  gradeAiAgentHit,
+  hitTime,
+  AI_AGENT_TIME_LABEL,
+  mapAiAgentRow,
+} from "../../src/analysis/aiAgentImport.js";
+import { loadAiAgentRuleSet } from "../../src/analysis/aiAgentRuleSet.js";
 import { redactSnippet, parseAiAgentRow } from "../../src/analysis/aiAgentRows.js";
 import type { SiemEvent } from "../../src/analysis/siemImport.js";
 
@@ -169,6 +175,53 @@ describe("AI Agent Forensics mapper: grading", () => {
 
   it("counts only hits as detections", () => {
     expect(parsed.detections).toBe(3);
+  });
+});
+
+describe("AI Agent Forensics: agent working data is graded Info (#2719)", () => {
+  // Measured on one developer endpoint with normal agent use: 1,143 hits, almost all in the agents'
+  // own transcripts, skills, temp folders and edit history.
+  const set = loadAiAgentRuleSet();
+  const grade = (path: string) => {
+    const parsed = parseAiAgentRow(
+      hit({ RuleName: "Copilot_Rules_File_Coercive_Instructions", Grade: "High", FilePath: path }),
+    );
+    if (!parsed.ok || parsed.row.Kind !== "hit") throw new Error("test row did not parse as a hit");
+    return gradeAiAgentHit(set, parsed.row);
+  };
+
+  it("lowers a hit in a transcript, an installed skill, a temp folder or the edit history to Info", () => {
+    for (const p of [
+      "C:\\Users\\dev\\.claude\\projects\\proj\\session.jsonl",
+      "C:\\Users\\dev\\.claude\\skills\\some-skill\\SKILL.md",
+      "C:\\Users\\dev\\.gemini\\tmp\\bin\\tool.txt",
+      "C:\\Users\\dev\\AppData\\Roaming\\Code\\User\\History\\-1a2b3c\\x.ps1",
+      "C:\\Users\\dev\\AppData\\Roaming\\Claude\\claude-code-sessions\\a\\b.json",
+    ])
+      expect(grade(p), p).toMatchObject({ severity: "Info", workingData: true });
+  });
+
+  it("keeps instruction files, MCP configs and project folders at their grade", () => {
+    for (const p of [
+      "C:\\Users\\dev\\.claude\\CLAUDE.md",
+      "C:\\Users\\dev\\.claude\\skills\\x\\CLAUDE.md", // a named instruction file, even inside a skill
+      "C:\\Users\\dev\\.cursor\\mcp.json",
+      "C:\\Users\\dev\\src\\app\\AGENTS.md",
+      "C:\\Users\\dev\\.claude\\agents\\reviewer.md",
+    ])
+      expect(grade(p), p).toMatchObject({ severity: "High", workingData: false });
+  });
+
+  it("says why in the event detail, never in its description", () => {
+    const row = hit({
+      RuleName: "Agent_Memory_Hidden_Instruction_Concealment",
+      Grade: "High",
+      FilePath: "C:\\Users\\dev\\.claude\\projects\\p\\s.jsonl",
+    });
+    const e = mapAiAgentRow(row, ARTIFACT, "WS-01", new Map())!.events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.description).not.toContain("working data");
+    expect(JSON.stringify(e)).toContain("graded Info: agent working data");
   });
 });
 

@@ -110,10 +110,25 @@ function lowInformationTime(set: AiAgentRuleSet, path: string): boolean {
 export function gradeAiAgentHit(
   set: AiAgentRuleSet,
   row: AiAgentHitRow,
-): { severity: Severity; selfScan: boolean } {
+): { severity: Severity; selfScan: boolean; workingData: boolean } {
   const baseline = parseGrade(row.Grade) ?? aiAgentRuleGrade(set, row.Family, row.RuleName);
   const selfScan = !!row.FileSha256 && set.selfScanHashes.has(row.FileSha256);
-  return { severity: selfScan ? "Info" : baseline, selfScan };
+  const workingData = !selfScan && isAgentWorkingData(set, row.FilePath ?? "");
+  return { severity: selfScan || workingData ? "Info" : baseline, selfScan, workingData };
+}
+
+/**
+ * #2719: is this path the agents' own working data (transcripts, installed skills, temp, edit history)?
+ * Those are full of instructions by design, so a hit there is noise until shown otherwise. A named
+ * instruction file (CLAUDE.md, AGENTS.md, .mcp.json, …) is never counted as working data.
+ */
+export function isAgentWorkingData(set: AiAgentRuleSet, path: string): boolean {
+  if (!path) return false;
+  const p = path.replace(/\\/g, "/").toLowerCase();
+  const name = p.slice(p.lastIndexOf("/") + 1);
+  const instructionNames = set.scopes.flatMap((s) => s.search?.names ?? []).map((n) => n.toLowerCase());
+  if (instructionNames.includes(name)) return false;
+  return set.agentWorkingData.some((f) => p.includes(f));
 }
 
 function mapHit(
@@ -123,7 +138,7 @@ function mapHit(
   sink: Map<string, SiemIoc>,
 ): MappedEvent {
   const path = row.FilePath || (row.Family === "sigma" ? sigmaSubjectPath(row) : "");
-  const { severity, selfScan } = gradeAiAgentHit(set, row);
+  const { severity, selfScan, workingData } = gradeAiAgentHit(set, row);
   const { time, basis } = hitTime(row);
   const lowInfo = !!path && lowInformationTime(set, path);
   let description = `${LABEL}: ${row.RuleName}${path ? ` — ${path}` : ""} [${basis}: ${AI_AGENT_TIME_LABEL}]`;
@@ -142,6 +157,10 @@ function mapHit(
     ep.clientId ? `client ${ep.clientId}` : "",
     `file modified ${row.FileMtime || "unknown"}, created ${row.FileBtime || "unknown"}, scanned ${row.ScanTime || "unknown"}`,
     `event time basis: ${basis}`,
+    // #2719: said in the detail, never the description (the description is the event's identity).
+    workingData
+      ? "graded Info: agent working data (session transcript, installed skill, temp or edit history)"
+      : "",
     row.Preserved ? `preserved: ${row.Preserved}` : "",
     // The file changed between hashing and the upload (#2722): said here, never a second hash IOC.
     // The hash is taken after the YARA scan, so it is not called the scan hash (Codex review).
