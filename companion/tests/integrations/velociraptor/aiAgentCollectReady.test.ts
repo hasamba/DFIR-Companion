@@ -23,20 +23,19 @@ import { pollHuntStatusOnce } from "../../../src/integrations/velociraptor/huntS
 
 const LAUNCH = "2026-01-10T08:00:00.000Z";
 const T0 = Date.parse(LAUNCH);
-const job = (over: Partial<VeloHuntJob> = {}): VeloHuntJob =>
-  ({
-    bundleId: "ai-agent",
-    bundleName: "AI Agent Forensics",
-    artifacts: [],
-    huntId: "H.TEST1",
-    launchedAt: LAUNCH,
-    waitMinutes: 30,
-    collectAt: LAUNCH,
-    status: "running",
-    aiAgentRunId: "run-1",
-    aiAgentEndpointCount: 2,
-    ...over,
-  }) as VeloHuntJob;
+const job = (over: Partial<VeloHuntJob> = {}): VeloHuntJob => ({
+  bundleId: "ai-agent",
+  bundleName: "AI Agent Forensics",
+  artifacts: [],
+  huntId: "H.TEST1",
+  launchedAt: LAUNCH,
+  waitMinutes: 30,
+  collectAt: LAUNCH,
+  status: "running",
+  aiAgentRunId: "run-1",
+  aiAgentEndpointCount: 2,
+  ...over,
+});
 const clientWith = (rows: unknown[]) => ({ runProgram: vi.fn(async () => ({ rows, reason: "" })) });
 const row = (id: string, state: string) => ({ ClientId: id, State: state, Rows: 1, Status: "" });
 
@@ -61,6 +60,14 @@ describe("aiAgentRunReadyToCollect", () => {
     expect(await aiAgentRunReadyToCollect(failing, job(), T0 + 600_000)).toBe(false);
     expect(await aiAgentRunReadyToCollect(clientWith([{ bad: 1 }]), job(), T0 + 600_000)).toBe(false);
     expect(await aiAgentRunReadyToCollect(clientWith([]), job(), T0 + 600_000)).toBe(false);
+  });
+
+  it("a run saved without an endpoint count waits for the deadline, never guessing one endpoint", async () => {
+    const c = clientWith([row("C.a1", "FINISHED")]);
+    const legacy = job({ aiAgentEndpointCount: undefined });
+    expect(await aiAgentRunReadyToCollect(c, legacy, T0 + 3_600_000)).toBe(false);
+    expect(c.runProgram).not.toHaveBeenCalled();
+    expect(await aiAgentRunReadyToCollect(c, legacy, aiAgentCollectDeadline(LAUNCH))).toBe(true);
   });
 
   it("collects anyway once the per-endpoint limit plus the grace period has passed", async () => {

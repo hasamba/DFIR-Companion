@@ -34,9 +34,13 @@ export async function aiAgentRunReadyToCollect(
   now: number = Date.now(),
 ): Promise<boolean> {
   if (now >= aiAgentCollectDeadline(job.launchedAt)) return true;
+  // A run saved before #2907 does not record how many endpoints it covers. Guessing one would import
+  // it as soon as the first endpoint finished, so it waits for the deadline instead.
+  const expected = job.aiAgentEndpointCount;
+  if (typeof expected !== "number" || !Number.isSafeInteger(expected) || expected < 1) return false;
   try {
     const { rows } = await client.runProgram(huntFlowsVql(job.huntId));
-    return aiAgentFlowsAllEnded(parseHuntFlows(rows), Math.max(1, job.aiAgentEndpointCount ?? 1));
+    return aiAgentFlowsAllEnded(parseHuntFlows(rows), expected);
   } catch {
     return false;
   }
