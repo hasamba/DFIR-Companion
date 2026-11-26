@@ -389,7 +389,10 @@
     return text;
   }
 
-  function runCard(caseId, run, sweep, rerender) {
+  // Only the newest few cards ask Velociraptor on every render; older ones wait for a click (#2898).
+  const AUTO_STATUS_CARDS = 3;
+
+  function runCard(caseId, run, sweep, rerender, autoStatus) {
     const card = el("div", null, "aa-run");
     const head = el("div", null, "aa-run-head");
     head.appendChild(el("strong", `Run ${run.launchedAt.replace("T", " ").slice(0, 16)} · ${run.endpoints.length} endpoint(s)`));
@@ -405,7 +408,17 @@
         ? `Status: ${st.body.summary}`
         : `Status: could not ask Velociraptor (${(st.body && st.body.error) || `HTTP ${st.status}`})`;
     };
-    void checkStatus();
+    if (autoStatus) void checkStatus();
+    else {
+      statusLine.textContent = "Status: not checked ";
+      const check = el("button", "Check status");
+      check.type = "button";
+      check.addEventListener("click", () => {
+        statusLine.textContent = "Status: checking Velociraptor…";
+        void checkStatus();
+      });
+      statusLine.appendChild(check);
+    }
     const scopeLabel = (id) => ((rules && rules.scopes) || []).find((x) => x.id === id)?.label || id;
     card.appendChild(el("p", `Checked: ${run.scopes.map(scopeLabel).join(", ")}. Copies of the AI-agent files saved in Velociraptor: ${run.preserved ? "yes" : "no"}. Rule pack: ${run.ruleSetVersion}.`, "aa-note"));
     card.appendChild(
@@ -495,11 +508,11 @@
     const parts = [rulesBlock(), await runForm(caseId, again)];
     if (caseId) {
       const r = await call(runsUrl(caseId));
-      for (const run of (r.ok && r.body.runs) || []) parts.push(runCard(caseId, run, false, again));
+      ((r.ok && r.body.runs) || []).forEach((run, i) => parts.push(runCard(caseId, run, false, again, i < AUTO_STATUS_CARDS)));
     } else {
       const r = await call("/ai-agent/sweeps");
       if (!r.ok) parts.push(el("p", r.body.error || `Sweeps are not available (HTTP ${r.status}).`, "aa-warn"));
-      for (const s of (r.ok && r.body.sweeps) || []) if (s.run) parts.push(runCard(s.caseId, s.run, true, again));
+      ((r.ok && r.body.sweeps) || []).filter((s) => s.run).forEach((s, i) => parts.push(runCard(s.caseId, s.run, true, again, i < AUTO_STATUS_CARDS)));
     }
     if (stale()) return;
     box.replaceChildren(...parts);

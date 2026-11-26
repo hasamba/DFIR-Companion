@@ -89,8 +89,9 @@ describe("veloPickerLabel", () => {
 // within the last 15 minutes of `now`.
 describe("veloLastSeenMs", () => {
   const t = Date.UTC(2026, 10, 26, 12, 0, 0);
-  it("reads microseconds, milliseconds, seconds and ISO text as the same instant", () => {
+  it("reads nanoseconds, microseconds, milliseconds, seconds and ISO text as the same instant", () => {
     expect(vc.veloLastSeenMs(String(t * 1000))).toBe(t);
+    expect(vc.veloLastSeenMs(`${t}000000`)).toBe(t); // nanoseconds, as some Velociraptor times are
     expect(vc.veloLastSeenMs(String(t))).toBe(t);
     expect(vc.veloLastSeenMs(String(t / 1000))).toBe(t);
     expect(vc.veloLastSeenMs(new Date(t).toISOString())).toBe(t);

@@ -110,6 +110,12 @@ describe("AI Agent Forensics panel", () => {
     expect(card).toContain("Copies of the AI-agent files saved in Velociraptor");
   });
 
+  it("asks Velociraptor automatically only for the newest run cards (#2898)", () => {
+    expect(js).toContain("const AUTO_STATUS_CARDS = 3;");
+    expect(js).toContain("if (autoStatus) void checkStatus();");
+    expect(js).toContain('el("button", "Check status")');
+  });
+
   it("shows warnings stored by older runs in the new plain wording (#2898)", () => {
     expect(js).toContain("function plainWarning(w)");
     expect(js).toContain("plainWarning(w)");

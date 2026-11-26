@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AI Agent Forensics picker Refresh and Online only** — case writers re-read the Velociraptor client list from the picker; Online only shows endpoints seen in the last 15 minutes, each row says when it was last seen (part of #2898)
+- **AI Agent Forensics run status** — each run card shows Running / Finished / Stopped with endpoint counts, says where results go, and names its downloads and warnings in plain English (closes #2898)
 - **Telegram Apply / Reject buttons** — mirrored Watson proposals for a new finding, next step, report text or key question can be decided from the chat by an allowlisted user, recorded as "(via Telegram)" (closes #2712)
 - **Hidden panels load on reveal** — heavy panels in a section the dashboard view or Settings hides skip case open and live refreshes, and load once when shown (closes #2854)
 - **Cancel a running bundle hunt** — the hunt card's Cancel asks whether to also stop or delete the hunt in Velociraptor; the run form's pickers now read include labels / exclude labels
@@ -32,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **THOR via Velociraptor without scanner noise** — THOR's Info status lines and its Debug folder listing are no longer imported; licence banners and THOR errors are graded Info (closes #2884)
 - **Velociraptor row host names stay whole** — long Velociraptor rows (YARA, Sigma, detections, USN, MFT, processes, network connections, downloads, generic) keep the whole "@ HOST", not a cut-off fragment (closes #2885)
 - **Failed hunt settle re-graded** — rows from a hunt collect whose end-of-import settle fails, and rows from uploaded reports such as THOR, are graded before the next demote (closes #2852)
 - **Hunt settle failures after stamping** — a settle that fails mid-stamp, or a failed pre-import read, no longer leaves hunt rows ungraded; recovery also survives a restart (closes #2888)

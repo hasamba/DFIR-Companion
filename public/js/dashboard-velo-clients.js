@@ -29,7 +29,7 @@ function veloPickerLabel(c) {
 
 // ── Online (#2898) ────────────────────────────────────────────────────────────────────────────────
 // Velociraptor's clients() reports `last_seen_at` in MICROseconds since the epoch, and the inventory
-// keeps it as text. Seconds, milliseconds and ISO text are read too, by magnitude, so an older server or
+// keeps it as text. Seconds, milliseconds, nanoseconds and ISO text are read too, by magnitude, so an older server or
 // a hand-edited inventory still sorts out. A client counts as online when it was seen within 15 minutes.
 const VELO_ONLINE_MS = 15 * 60 * 1000;
 
@@ -40,6 +40,7 @@ function veloLastSeenMs(value) {
   if (/^\d+(\.\d+)?$/.test(text)) {
     const n = Number(text);
     if (!(n > 0)) return null;
+    if (n >= 1e17) return Math.round(n / 1e6); // nanoseconds (Velociraptor writes some times this way)
     if (n >= 1e14) return Math.round(n / 1000); // microseconds
     if (n >= 1e11) return Math.round(n); // milliseconds
     return Math.round(n * 1000); // seconds
