@@ -3,7 +3,12 @@
 // reserves room for the suffix under the cap, so the host is either whole or (only when it cannot
 // fit at all) absent — never a fragment. Host names here are invented.
 import { describe, expect, it } from "vitest";
-import { capWithHostSuffix, withHostSuffix } from "../../src/analysis/velociraptorTitle.js";
+import {
+  capWithHostSuffix,
+  injectKeepingHost,
+  ransomTailWithHost,
+  withHostSuffix,
+} from "../../src/analysis/velociraptorTitle.js";
 
 const HOST = "WS-LAB-01";
 
@@ -44,5 +49,46 @@ describe("capWithHostSuffix", () => {
     const core = `T - ${"q".repeat(200)}`;
     expect(capWithHostSuffix(core, "", 50)).toBe(core.slice(0, 50));
     expect(capWithHostSuffix(core, "H".repeat(60), 50)).toBe(core.slice(0, 50));
+  });
+});
+
+// #2885 — the Velociraptor importer's two re-cap points: the ransomware note after the host, and the
+// import loop's artifact-name injection.
+describe("ransomTailWithHost", () => {
+  it("is capWithHostSuffix when there is no ransomware note", () => {
+    expect(ransomTailWithHost("x".repeat(700), HOST, undefined, 600)).toBe(
+      capWithHostSuffix("x".repeat(700), HOST, 600),
+    );
+  });
+
+  it("bounds an oversized note so the host still fits within the cap", () => {
+    const out = ransomTailWithHost("T - " + "x".repeat(700), HOST, "n".repeat(2000), 600);
+    expect(out.length).toBeLessThanOrEqual(600);
+    expect(out).toContain(` @ ${HOST} — n`);
+    expect(out.endsWith(" (T1486)")).toBe(true);
+  });
+});
+
+describe("injectKeepingHost", () => {
+  const prefix = (d: string): string => `[Art] ${d}`;
+
+  it("re-applies a withHostSuffix suffix after the transform, under the cap", () => {
+    const desc = withHostSuffix("T - " + "x".repeat(200), HOST);
+    const out = injectKeepingHost(desc, HOST, 120, prefix);
+    expect(out.length).toBeLessThanOrEqual(120);
+    expect(out.startsWith("[Art] T - ")).toBe(true);
+    expect(out.endsWith(` @ ${HOST}`)).toBe(true);
+  });
+
+  it("is unchanged from transform-then-slice when the result fits", () => {
+    const desc = withHostSuffix("Title only", HOST);
+    expect(injectKeepingHost(desc, HOST, 1200, prefix)).toBe(prefix(desc));
+  });
+
+  it("falls back to transform-then-slice when the host is not a trailing suffix", () => {
+    const desc = `T on ${HOST} - ${"z".repeat(200)} [logged under former hostname OLD-01]`;
+    expect(injectKeepingHost(desc, HOST, 100, prefix)).toBe(prefix(desc).slice(0, 100));
+    const inText = `T on ${HOST} @ ${HOST}`;
+    expect(injectKeepingHost(inText, HOST, 100, prefix)).toBe(prefix(inText));
   });
 });
