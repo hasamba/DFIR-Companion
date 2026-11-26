@@ -433,6 +433,7 @@
     mFormOpen = false;
     mCandidates = null;
     mCandidatesCaseId = null;
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("collectionGenerationDiff", caseId)) return; // #2854 hidden: load on reveal (after the case-switch reset above)
     // Independent — a failure in one must never hide a valid result from the other. Settled with
     // Promise.all so a caller (a test, or a future progress-reporting caller) can await BOTH
     // finishing; runPanelLoaders itself tracks completion by intercepting fetch() directly and

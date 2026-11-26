@@ -84,6 +84,7 @@
     }
 
     function loadSwimlane(caseId) {
+      if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("swimlane", caseId)) return; // #2854 hidden: load on reveal
       const groupBy = document.getElementById("swimlaneGroupBy").value || "asset";
       swUpdateSubtitle();
       fetch(`/cases/${caseId}/swimlane?groupBy=${encodeURIComponent(groupBy)}`)

@@ -245,6 +245,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-palette-registry.js": "application/javascript; charset=utf-8",
   // Section order and visibility (#238) — which panels are shown and in what order.
   "/js/dashboard-section-order.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-panel-defer.js": "application/javascript; charset=utf-8",
   // Query Translator — natural language into hunt queries for each platform.
   "/js/dashboard-query-translator.js": "application/javascript; charset=utf-8",
   // Applying the analyst's scope filter to the loaded case.

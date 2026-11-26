@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hidden panels load on reveal** — heavy panels in a section the dashboard view or Settings hides skip case open and live refreshes, and load once when shown (closes #2854)
 - **Cancel a running bundle hunt** — the hunt card's Cancel asks whether to also stop or delete the hunt in Velociraptor; the run form's pickers now read include labels / exclude labels
 - **Held results as drop-folder files** — oversized Velociraptor results (zips, unzipped hunts, single dropped files, bundle hunts) wait in drop/_held/; Import anyway moves the file back into drop/, Skip moves it to drop/_skipped/ (closes #2755)
 - **Bundle hunt size limits** — a collected bundle hunt holds an artifact over 50 MB from one PC or 200 MB across PCs for Import anyway / Skip, like dropped hunt zips (closes #2753)

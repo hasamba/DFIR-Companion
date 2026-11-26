@@ -237,6 +237,7 @@
     status = "loading";
     renderTlsGraph();
     const gen = ++loadGen;
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("tlsGraph", caseId)) return; // #2854 hidden: load on reveal (after the case-switch reset above)
     // A late answer for a case the user has left, or an older load, never overwrites the panel.
     fetch(`/cases/${encodeURIComponent(caseId)}/tls-graph`)
       .then((r) => {

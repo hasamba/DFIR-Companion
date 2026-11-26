@@ -25,6 +25,7 @@
   let phasesTimer = null;
 
   function loadPhases(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("phases", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/phases`)
       .then((r) => r.json())
       .then((p) => {

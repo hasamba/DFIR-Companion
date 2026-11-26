@@ -995,6 +995,8 @@ export const FEATURES: Feature[] = [
       "markSectionRevealed",
       "clearSectionReveals",
       "renderSecChecks",
+      // #2854: js/dashboard-panel-defer.js counts a palette reveal as shown.
+      "isSectionRevealed",
     ],
     private: [],
   },
@@ -2530,6 +2532,7 @@ export const NON_FEATURES = new Set([
   "dashboard-timeline-search.js", // pure loader: re-asks /state for the search term (#928), owns no panel
   "dashboard-tagger.js",
   "dashboard-tagger-updates.js", // Content tagger → built-in rule updates (#2344): calls /tagger/rules/updates, holds only its review
+  "dashboard-panel-defer.js", // Hidden sections load on reveal (#2854): one DfirPanelDefer namespace, owns no panel
   "dashboard-detection-rules.js", // Content tagger → Detection rules box (#2389): calls /sigma/status, holds the two summary lines
   "dashboard-rule-pack.js", // Content tagger → Rule pack (#2349): calls /tagger/pack routes, holds only the open review
   "dashboard-kev.js",

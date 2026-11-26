@@ -828,6 +828,7 @@
     "ROUTE GET /js/dashboard-pinned-findings.js",
     "ROUTE GET /js/dashboard-palette-registry.js",
     "ROUTE GET /js/dashboard-section-order.js",
+    "ROUTE GET /js/dashboard-panel-defer.js",
     "ROUTE GET /js/dashboard-query-translator.js",
     "ROUTE GET /js/dashboard-scope-apply.js",
     "ROUTE GET /js/dashboard-ai-toggle.js",
