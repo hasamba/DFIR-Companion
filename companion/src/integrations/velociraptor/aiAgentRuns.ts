@@ -283,7 +283,7 @@ export async function startAiAgentRun(
     throw new AiAgentRunError("case not found", 404);
   const set = activeAiAgentRuleSet();
   const uploadMaxBytes = Math.max(0, Math.floor(input.uploadMaxBytes ?? AI_AGENT_DEFAULT_UPLOAD_MAX_BYTES));
-  const bundle = buildAiAgentArtifact(set, { scopes: input.scopes, uploadMaxBytes }); // option errors before any case is made
+  const checked = buildAiAgentArtifact(set, { scopes: input.scopes, uploadMaxBytes }); // option errors before any case is made
   const target = input.caseId ? { client: veloFor(deps, input.caseId) } : sweepSet(deps, input.serverSetId);
   const client = target.client;
   const { endpoints, missing, truncated } = await readEndpoints(client, clientIds, deps.log);
@@ -301,6 +301,10 @@ export async function startAiAgentRun(
     client.listClientArtifacts("client", { refresh: true }),
   );
   if (pre.error) throw new AiAgentRunError(pre.error);
+  // #2920: without the triage preservation the run keeps the files a rule matched itself.
+  const bundle = pre.preserve
+    ? checked
+    : buildAiAgentArtifact(set, { scopes: input.scopes, uploadMaxBytes, preserve: false });
   // The sweep case is made only now, right before the launch, and removed again if the launch fails.
   const caseId = input.caseId ?? (await createSweepCase(deps, "setId" in target ? target.setId : undefined));
   let launch: Awaited<ReturnType<typeof launchAiAgentRun>>;
@@ -360,6 +364,7 @@ export async function startAiAgentRun(
     ruleSetVersion: set.version,
     artifacts: launch.artifacts,
     preserved: pre.preserve,
+    ...(pre.preserve ? {} : { matchedFilesKept: true }),
     warnings: pre.warnings,
     sensitive: true,
   };

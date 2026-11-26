@@ -67,6 +67,21 @@ describe("splitEventTitle", () => {
     expect(t.splitEventTitle("Boot")).toEqual({ title: "Boot", rest: "" });
     expect(t.splitEventTitle("Boot-at-3pm")).toEqual({ title: "Boot-at-3pm", rest: "" });
   });
+
+  it("ends an AI Agent Forensics title at the file name; the bracketed notes go to details (#2924)", () => {
+    const d =
+      "AI Agent Forensics: Rule_X — C:\\Users\\dev\\notes - draft.md [file created: latest time the content could have been planted] [provisional grade]";
+    expect(t.splitEventTitle(d)).toEqual({
+      title: "AI Agent Forensics: Rule_X — C:\\Users\\dev\\notes - draft.md",
+      rest: "[file created: latest time the content could have been planted] [provisional grade]",
+    });
+    expect(t.splitEventTitle("AI Agent Forensics: Rule_X")).toEqual({
+      title: "AI Agent Forensics: Rule_X",
+      rest: "",
+    });
+    const bracketed = "AI Agent Forensics: R — C:\\x [1]\\a.md [file last modified] [provisional grade]";
+    expect(t.splitEventTitle(bracketed).title).toBe("AI Agent Forensics: R — C:\\x [1]\\a.md");
+  });
 });
 
 // Defanged indicators arrive pasted from reports and ticket comments. Refanging is deliberately

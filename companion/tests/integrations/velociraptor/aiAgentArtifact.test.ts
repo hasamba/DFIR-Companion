@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { bundledAiAgentRulesDir, loadAiAgentRuleSet } from "../../../src/analysis/aiAgentRuleSet.js";
+import { yaraScopeVql } from "../../../src/integrations/velociraptor/aiAgentArtifactVql.js";
 import {
   AI_AGENT_ARTIFACT_PREFIX,
   AI_AGENT_MAX_PROGRAM_CHARS,
@@ -32,6 +33,17 @@ function decodeConfig(b: ReturnType<typeof buildAiAgentArtifact>): Record<string
   const chunks = b.parts.map((p) => /LET aiagent_part_\d+ = "([A-Za-z0-9+/=]*)"/.exec(p.yaml)![1]);
   return JSON.parse(Buffer.from(chunks.join(""), "base64").toString("utf8")) as Record<string, unknown>;
 }
+
+describe("YARA coverage counts (#2924)", () => {
+  it("counts the scanned files with count(), never len() of a subquery, which Velociraptor reads as 0", () => {
+    const { lets, coverage } = yaraScopeVql("S0");
+    expect(lets).toContain(
+      "LET n_in_S0 <= SELECT count() AS N FROM files_S0 WHERE Size <= cfg.ScanMaxBytes GROUP BY 1",
+    );
+    expect(coverage).toContain("n_in_S0[0].N");
+    expect(coverage).not.toContain("len(list={");
+  });
+});
 
 describe("AI Agent Forensics artifact: names Velociraptor accepts", () => {
   // Velociraptor refuses a name part that starts with a digit ("Name parts can not start with a
@@ -99,6 +111,15 @@ describe("AI Agent Forensics artifact: shape", () => {
     expect(s1.SkipRegex).toContain("node_modules");
     expect(s1.Upload).toBe(true); // a matched project file is uploaded (decision 4)
     expect((cfg.S0 as { Upload: boolean }).Upload).toBe(false); // agent home: kept by the triage collection
+  });
+
+  it("without triage preservation, agent home uploads its matched files too, under its own name (#2920)", () => {
+    const off = buildAiAgentArtifact(set, { preserve: false });
+    const cfg = decodeConfig(off);
+    expect((cfg.S0 as { Upload: boolean }).Upload).toBe(true);
+    expect((cfg.S1 as { Upload: boolean }).Upload).toBe(true);
+    expect(off.name).not.toBe(b.name);
+    expect(buildAiAgentArtifact(set, { preserve: true }).name).toBe(b.name); // preserving runs keep their name
   });
 
   it("raises the scan cap only when local model files are scanned", () => {

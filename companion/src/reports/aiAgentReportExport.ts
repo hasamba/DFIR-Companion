@@ -27,6 +27,12 @@ const PROVISIONAL_NOTE =
  * syntax stay literal (html.ts renders explicit http(s) links and images), with the pipe and newline
  * escaped so the cell stays one cell.
  */
+
+/** #2920: what the run kept in Velociraptor, in the analyst's words. */
+export function aiAgentCopiesSaved(run: { preserved: boolean; matchedFilesKept?: boolean }): string {
+  if (run.preserved) return "yes";
+  return run.matchedFilesKept ? "only the files a rule matched" : "no";
+}
 export function evidenceCellMd(value: string): string {
   return cellCodeMd(codeSpanMd(value));
 }
@@ -54,7 +60,7 @@ function summaryLines(run: AiAgentRunView): string[] {
     `- Launched: ${oneLineMd(run.launchedAt)} · hunt ${codeSpanMd(run.huntId)}${run.guiUrl ? ` · ${codeSpanMd(run.guiUrl)}` : ""}`,
     ...(run.report ? [`- Results read: ${oneLineMd(run.report.builtAt)}`] : []),
     `- Scopes: ${run.scopes.map(codeSpanMd).join(", ")}`,
-    `- Copies of the AI-agent files saved in Velociraptor: ${run.preserved ? "yes" : "no"}`,
+    `- Copies of the AI-agent files saved in Velociraptor: ${aiAgentCopiesSaved(run)}`,
     ...(run.manifest
       ? [
           `- Preserved files in Velociraptor: ${run.manifest.total} (${run.manifest.totalBytes} bytes, manifest only)`,

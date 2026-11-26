@@ -1021,7 +1021,9 @@ Velociraptor: **Running — 0 of 1 endpoint(s) finished; 1,172 rows collected so
 2 of 2 endpoint(s) done**, or **Stopped in Velociraptor** when the hunt was stopped before every
 endpoint finished. An endpoint Velociraptor has not reached yet is counted as **not started yet
 (offline?)**, and a collection that ended with an error is counted and named. The three newest cards check it when the panel
-opens; older cards have a **Check status** button. The card also says where results go: rule hits are
+opens and, while a run is Running, again every minute; every card has a **Check again** (or **Check
+status**) button. In the timeline, an AI Agent Forensics event's title ends at the file name; the
+time basis and grade notes are under **details**. The card also says where results go: rule hits are
 added to the case's forensic timeline automatically once every endpoint's collection has ended (at
 the latest about 2 hours 15 minutes after the run started, the per-endpoint limit plus a grace period),
 or straight away when you press **Refresh results**, and the list of AI tools and MCP servers goes to
@@ -1033,8 +1035,11 @@ The compiled Sigma rules that search the whole C: drive (model files, PROMPTFLUX
 probe file, SesameOp loader files) run only when **Whole-disk file checks (Sigma, slow)** is ticked:
 on a real endpoint those searches alone used up the 2-hour limit. Left unticked, the coverage report
 lists them as **not run: whole-disk file checks are off**. A sweep's hits reach a case only through **Add to case**. When the server's
-`Windows.Triage.Targets` is too old to know the AI-agent files, the card says the run still checks
-them for tampering and lists the AI tools, but does not save copies of the files in Velociraptor.
+`Windows.Triage.Targets` is too old to know the AI-agent files (no **AICodingAgents** parameter), the
+run still checks them for tampering and lists the AI tools, and it saves a copy of each file a rule
+matched, though not the full set of AI-agent files. The card says how to get the full set: update the
+Velociraptor server to a release whose `Windows.Triage.Targets` has the AICodingAgents option (check
+in View Artifacts → Windows.Triage.Targets → Parameters).
 
 - **Filtering the findings.** Above each run's findings table, **Grade** and **Rule** filters (and
   **Endpoint**, when the run covers more than one) narrow the rows, with a "Showing N of M findings"

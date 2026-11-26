@@ -44,14 +44,21 @@ const MODEL_SCAN_MAX_BYTES = 2 * 1024 * 1024 * 1024;
  *   3 — the Inventory source uses if() in place of `||` (`x || []` does not parse).
  *   4 — #2907: whole-disk compiled Sigma rules are opt-in; a SigmaSkipped source reports the rest.
  *   5 — #2912: YARA matched bytes as hex (MatchedHex + MatchedLength), not %s debris.
+ *   6 — #2924: YARA coverage counts files with count(), not len() of a subquery (always 0).
  */
-export const AI_AGENT_VQL_TEMPLATE_VERSION = 5;
+export const AI_AGENT_VQL_TEMPLATE_VERSION = 6;
 const SYSMON_LOG = "C:/Windows/System32/winevt/Logs/Microsoft-Windows-Sysmon%4Operational.evtx";
 
 export interface AiAgentRunOptions {
   /** Scope ids to scan; defaults to the scopes marked default in the scope map. */
   scopes?: string[];
   uploadMaxBytes?: number;
+  /**
+   * #2920: false when the server's Windows.Triage.Targets cannot keep the agent files (no
+   * AICodingAgents option). Then every YARA scope uploads the files a rule matched, agent-home
+   * included, instead of leaving them to a preservation collection that will not run. Default true.
+   */
+  preserve?: boolean;
 }
 
 export interface AiAgentArtifactDef {
@@ -127,7 +134,7 @@ function sigmaFieldMapping(texts: string[]): Record<string, string> {
   return map;
 }
 
-function buildConfig(set: AiAgentRuleSet, scopes: AiAgentScope[], uploadMaxBytes: number) {
+function buildConfig(set: AiAgentRuleSet, scopes: AiAgentScope[], uploadMaxBytes: number, preserve: boolean) {
   const ruleMeta: Record<string, Record<string, string>> = {};
   for (const f of set.yara)
     for (const r of f.rules)
@@ -155,7 +162,8 @@ function buildConfig(set: AiAgentRuleSet, scopes: AiAgentScope[], uploadMaxBytes
       Globs: scopeGlobs(set, scope),
       SkipRegex: skipRegex(scope),
       Rules: rules.join("\n"),
-      Upload: !scope.includeTriageGlobs, // agent-home files are kept by the triage collection itself
+      // Agent-home files are kept by the triage collection itself, when it can run (#2920).
+      Upload: !scope.includeTriageGlobs || !preserve,
     };
   });
   return { cfg, keys };
@@ -172,9 +180,12 @@ export function aiAgentArtifactDigest(
   scopes: readonly string[],
   uploadMaxBytes: number,
   templateVersion = AI_AGENT_VQL_TEMPLATE_VERSION,
+  preserve = true,
 ): string {
+  // `preserve` joins the digest only when false, so the names of existing preserving runs stay put.
+  const key = { scopes, uploadMaxBytes, template: templateVersion, ...(preserve ? {} : { preserve }) };
   return createHash("sha256")
-    .update(`${setDigest}\0${JSON.stringify({ scopes, uploadMaxBytes, template: templateVersion })}`)
+    .update(`${setDigest}\0${JSON.stringify(key)}`)
     .digest("hex")
     .slice(0, 16);
 }
@@ -300,7 +311,8 @@ export function buildAiAgentArtifact(
 ): AiAgentArtifactBundle {
   const uploadMaxBytes = Math.max(0, Math.floor(opts.uploadMaxBytes ?? AI_AGENT_DEFAULT_UPLOAD_MAX_BYTES));
   const scopes = selectScopes(set, opts);
-  const { cfg, keys } = buildConfig(set, scopes, uploadMaxBytes);
+  const preserve = opts.preserve !== false;
+  const { cfg, keys } = buildConfig(set, scopes, uploadMaxBytes, preserve);
   const wholeDisk = scopes.some((s) => s.id === WHOLE_DISK_SCOPE);
   const { sigmaKeys, sysmonCount, skippedCount } = addSigma(set, cfg, wholeDisk);
   if (keys.length === 0 && sigmaKeys.length === 0 && sysmonCount === 0)
@@ -310,6 +322,8 @@ export function buildAiAgentArtifact(
     set.digest,
     scopes.map((s) => s.id),
     uploadMaxBytes,
+    AI_AGENT_VQL_TEMPLATE_VERSION,
+    preserve,
   );
   const b64 = Buffer.from(json, "utf8").toString("base64");
   const parts: { name: string; yaml: string }[] = [];
