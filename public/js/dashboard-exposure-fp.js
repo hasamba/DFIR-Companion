@@ -417,6 +417,8 @@
     if (stCase !== caseId) {
       stCase = caseId;
       renderSourceTrust(null); // the previous case's overrides must not be saved onto this one
+      const msg = document.getElementById("sourceTrustMsg");
+      if (msg) msg.textContent = "";
     }
     const seq = ++stSeq;
     fetch(`/cases/${caseId}/source-trust`)

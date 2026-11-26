@@ -117,6 +117,8 @@
       rmShownFor = caseId;
       rmFilledFor = "";
       fillReportMeta({});
+      const st = document.getElementById("rmStatus");
+      if (st) st.textContent = ""; // a save of the previous case's form may still say "saving…"
     }
     return fetchReportMeta(caseId).catch(() => {});
   }
