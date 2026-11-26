@@ -212,6 +212,41 @@ describe("AI Agent Forensics: agent working data is graded Info (#2719)", () => 
       expect(grade(p), p).toMatchObject({ severity: "High", workingData: false });
   });
 
+  it("lowers a hit in an agent's own cache, logs, history database or browser profile to Info", () => {
+    for (const p of [
+      "C:\\Users\\dev\\.codex\\.tmp\\plugins\\plugins\\vendor\\skills\\a\\SKILL.md",
+      "C:\\Users\\dev\\.codex\\vendor_imports\\skills\\skills\\.curated\\b\\SKILL.md",
+      "C:\\Users\\dev\\.codex\\ambient-suggestions\\0a1b\\ambient-suggestions.json",
+      "C:\\Users\\dev\\.codex\\.codex-global-state.json",
+      "C:\\Users\\dev\\.codex\\thread_history_1.sqlite",
+      "C:\\Users\\dev\\.codex\\logs_2.sqlite-wal",
+      "C:\\Users\\dev\\.codex\\state_5.sqlite",
+      "C:\\Users\\dev\\.claude\\cache\\changelog.md",
+      "C:\\Users\\dev\\.claude\\history.jsonl",
+      "C:\\Users\\dev\\.claude.json.backup",
+      "C:\\Users\\dev\\.claude.json.tmp.123.abc",
+      "C:\\Users\\dev\\.gemini\\antigravity-browser-profile\\Default\\Extensions\\x\\messages.json",
+      "C:\\Users\\dev\\AppData\\Roaming\\Code\\logs\\20260101T000000\\window1\\agenthost.log",
+      "C:\\Users\\dev\\.local\\share\\opencode\\opencode.db-wal",
+      "C:\\Users\\dev\\.local\\state\\opencode\\service.json",
+    ])
+      expect(grade(p), p).toMatchObject({ severity: "Info", workingData: true });
+  });
+
+  it("keeps live config, agent definitions and the cached tool and plugin lists at their grade", () => {
+    for (const p of [
+      "C:\\Users\\dev\\.claude.json",
+      "C:\\Users\\dev\\.claude\\settings.json",
+      "C:\\Users\\dev\\.mcp.json",
+      "C:\\Users\\dev\\AppData\\Roaming\\Code\\User\\settings.json",
+      "C:\\Users\\dev\\AppData\\Roaming\\Claude\\claude_desktop_config.json",
+      "C:\\Users\\dev\\.codex\\cache\\codex_apps_tools\\0a1b.json",
+      "C:\\Users\\dev\\.codex\\cache\\remote_plugin_catalog\\0a1b.json",
+      "C:\\Users\\dev\\.claude\\agents\\helper.md",
+    ])
+      expect(grade(p), p).toMatchObject({ severity: "High", workingData: false });
+  });
+
   it("says why in the event detail, never in its description", () => {
     const row = hit({
       RuleName: "Agent_Memory_Hidden_Instruction_Concealment",
