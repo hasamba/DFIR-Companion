@@ -171,21 +171,59 @@
     return (await res.json())[key] || [];
   }
 
+  // #2900: whose lists the panel holds, and whether they came from an answer yet. A load for
+  // another case clears the previous case's pairs and badge at once (the gate closes until this
+  // case's answer reopens it); only the newest load, for the case still on screen, may paint. Every
+  // call still fetches, so the next import-settle or AI-status push retries a failed load.
+  let hdCase = null;
+  let hdLoaded = false;
+  let hdSeq = 0;
+  function hdOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+
   async function loadHostDuplicates(caseId) {
     if (!caseId) return;
+    const seq = ++hdSeq;
+    const current = () => seq === hdSeq && hdCase === caseId && hdOnScreen(caseId);
     try {
-      const [pendingRes, dismissedRes] = await Promise.all([
+      const answers = Promise.all([
         fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates`),
         fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates/dismissed`),
       ]);
+      if (hdCase !== caseId) {
+        hdCase = caseId;
+        hdLoaded = false;
+        pending = [];
+        dismissed = [];
+        loadFailed = false;
+        try {
+          paint();
+        } catch {
+          /* a paint failure must not stop this case's load */
+        }
+      }
+      const [pendingRes, dismissedRes] = await answers;
       const nextPending = await listOrNull(pendingRes, "pending");
       const nextDismissed = await listOrNull(dismissedRes, "dismissed");
+      if (!current()) return;
       pending = nextPending || [];
       dismissed = nextDismissed || [];
       loadFailed = nextPending === null || nextDismissed === null;
+      hdLoaded = true;
       paint();
     } catch {
-      // A panel that cannot load must not take the dashboard down with it.
+      // A panel that cannot load must not take the dashboard down with it. For a case whose lists
+      // never arrived, an empty panel would read as "no pairs", so it says the load failed.
+      if (current() && !hdLoaded) {
+        loadFailed = true;
+        try {
+          paint();
+        } catch {
+          /* nothing more to show */
+        }
+      }
     }
   }
 
@@ -201,6 +239,7 @@
       );
       if (!r.ok) return;
       const d = await r.json();
+      if (hdCase !== caseId || !hdOnScreen(caseId)) return; // #2900: the analyst switched case meanwhile
       pending = d.pending || [];
       paint();
       // Resolving the last pair lifts the gate and the server kicks the held run — but that kick
@@ -227,6 +266,7 @@
       );
       if (!r.ok) return;
       const d = await r.json();
+      if (hdCase !== caseId || !hdOnScreen(caseId)) return; // #2900
       dismissed = d.dismissed || [];
       pending = d.pending || [];
       paint();

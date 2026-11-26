@@ -28,10 +28,29 @@
     );
   }
 
+  // #2900: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function pinsOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2900: finding ids recur across cases ("f1"), so the previous case's pins must not stay to be
+  // matched against this case's findings. A load for another case clears them at once (the strip
+  // repaints from the cleared list; this case's state render redraws the buttons).
+  let pinsCase = null;
+  let pinsSeq = 0;
   function loadPins(caseId) {
+    if (pinsCase !== caseId) {
+      pinsCase = caseId;
+      pinnedList = [];
+      pinnedSet = new Set();
+      _pinnedSig = null;
+      renderPinned();
+    }
+    const seq = ++pinsSeq;
     fetch(`/cases/${caseId}/pinned-findings`)
       .then((r) => r.json())
       .then((data) => {
+        if (seq !== pinsSeq || !pinsOnScreen(caseId)) return;
         pinnedList = Array.isArray(data && data.pins) ? data.pins : [];
         pinnedSet = new Set(pinnedList.map((p) => String(p.findingId)));
         if (typeof (data && data.limit) === "number") pinLimit = data.limit;
@@ -109,7 +128,7 @@
         method: "DELETE",
       })
         .then(pinRefusalOr)
-        .then((d) => d && applyPinResponse(d))
+        .then((d) => d && pinsOnScreen(caseId) && applyPinResponse(d)) // #2900
         .catch(() => {});
     } else {
       fetch(`/cases/${caseId}/pinned-findings`, {
@@ -128,7 +147,7 @@
           return pinRefusalOr(r);
         })
         .then((d) => {
-          if (d) applyPinResponse(d);
+          if (d && pinsOnScreen(caseId)) applyPinResponse(d); // #2900
         })
         .catch(() => {});
     }
@@ -257,7 +276,11 @@
       body: JSON.stringify({ order }),
     })
       .then(pinRefusalOr)
-      .then((d) => (d ? applyPinResponse(d) : loadPins(caseId)))
+      .then((d) => {
+        if (!pinsOnScreen(caseId)) return; // #2900: the analyst switched case meanwhile
+        if (d) applyPinResponse(d);
+        else loadPins(caseId);
+      })
       .catch(() => {});
   }
 

@@ -92,12 +92,31 @@
   ];
   const pbCaseId = () => document.getElementById("caseId").value.trim();
 
+  // #2900: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function pbOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2900: a load for another case clears the previous case's tasks and hunt suggestions at once;
+  // only the newest load, for the case still on screen, paints (the state push calls this bare).
+  let pbLoadedCase = null;
+  let pbLoadSeq = 0;
   function loadPlaybook(caseId) {
+    if (pbLoadedCase !== caseId) {
+      pbLoadedCase = caseId;
+      playbookTasks = [];
+      pbHuntFlat = [];
+      pbHuntCollapsed = {};
+      if (typeof setPlaybookLanguageHunts === "function") setPlaybookLanguageHunts([]);
+      renderPlaybook();
+    }
+    const seq = ++pbLoadSeq;
     fetch(`/cases/${caseId}/playbook`)
       .then((r) =>
         r.ok ? r.json() : { tasks: [], stats: null, control: null },
       )
       .then((d) => {
+        if (seq !== pbLoadSeq || !pbOnScreen(caseId)) return;
         playbookTasks = Array.isArray(d.tasks) ? d.tasks : [];
         const tpl = document.getElementById("pbTemplates");
         if (tpl && d.control) tpl.checked = !!d.control.useTemplates;
@@ -395,6 +414,7 @@
     })
       .then((r) => r.json().then((j) => ({ ok: r.ok, status: r.status, j })))
       .then(({ ok, status, j }) => {
+        if (!pbOnScreen(caseId)) return; // #2900: the analyst switched case meanwhile
         // A Presidio hold waits for the analyst — it is not a failure (#1782).
         if (!ok && typeof presidioHold === "function" && presidioHold(status, j)) {
           if (msg) {

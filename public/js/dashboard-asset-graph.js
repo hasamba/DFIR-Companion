@@ -32,10 +32,46 @@
   let assetGraphLoadSeq = 0; // generation token: only the latest load may mutate cached state
   let assetOverridesData = null; // { renames, added, removed, addedLinks, removedLinks }
   let assetGraphTimer = null;
+  // #2900: whose data the graph and the overrides hold, so a switch never shows another case's.
+  let assetGraphCase = null;
+  let assetOverridesCase = null;
+  let assetPlaceholder = false; // the "loading" line stands where the graph was
+  const ASSET_LOADING = "Loading this case's data…";
+  function assetOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  function paintAssetPlaceholder(text) {
+    const el = document.getElementById("assetGraph");
+    if (el) el.innerHTML = `<div data-safe-style='padding:16px;color:var(--text-muted)'>${esc(text)}</div>`;
+  }
+  // A cancelled case load leaves nothing loading: the placeholder must not go on saying it is
+  // (an aborted request never reaches this module's handlers — runPanelLoaders keeps it pending).
+  function onAssetReset(caseId) {
+    if (caseId !== null || !assetPlaceholder) return;
+    const stopped = typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.stoppedText;
+    paintAssetPlaceholder(stopped || "Not loaded — the case load was stopped.");
+  }
+  // At a switch, A's graph, its list and A's overrides go at once; the toolbar stays.
+  function clearAssetGraphFor(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function")
+      DfirPanelDefer.onReset(onAssetReset);
+    if (assetOverridesCase !== caseId) assetOverridesData = null;
+    if (!assetPlaceholder && (!assetGraphData || assetGraphCase === caseId)) return;
+    assetGraphData = null;
+    if (assetGV) assetGV.destroy();
+    assetPlaceholder = true;
+    paintAssetPlaceholder(ASSET_LOADING);
+    renderAssetList();
+    const countEl = document.getElementById("assetIocCount");
+    if (countEl) countEl.textContent = "";
+  }
   // The active time-window query string for the graph reads (#83). Mirrors the global timeline
   // brush (filterFrom/filterTo) so the asset/evidence graphs scope to the same range as the
   // swimlane brush, search-bar dates and applied dwell-windows. Empty when no time filter is set.
   function loadAssetGraph(caseId) {
+    clearAssetGraphFor(caseId);
+    assetGraphCase = caseId;
     const gv = assetEnsureGV();
     if (gv) gv.loadView(); // restore this case's persisted view state (layout/dim/edge-style/positions)
     // A generation token, bumped per load, guards cached state against out-of-order responses:
@@ -59,7 +95,8 @@
       .then((r) => (r.ok ? r.json() : null))
       .then((g) => {
         if (seq !== assetGraphLoadSeq) return; // superseded by a newer load — ignore entirely
-        if (!g || !Array.isArray(g.assets)) {
+        // #2900: the case the analyst left (or a cancel) — clear rather than paint it.
+        if (!g || !Array.isArray(g.assets) || !assetOnScreen(caseId)) {
           failed();
           return;
         }
@@ -69,9 +106,12 @@
       .catch(failed);
   }
   function loadAssetOverrides(caseId) {
+    if (assetOverridesCase !== caseId) assetOverridesData = null; // #2900: never A's merges on B
+    assetOverridesCase = caseId;
     fetch(`/cases/${caseId}/asset-overrides`)
       .then((r) => (r.ok ? r.json() : null))
       .then((ov) => {
+        if (!assetOnScreen(caseId) || assetOverridesCase !== caseId) return; // #2900
         assetOverridesData = ov;
         renderAssetList();
         // js/dashboard-facet-filters.js's hostFacets() reads assetOverrideMerges() to collapse a
@@ -334,6 +374,7 @@
   }
 
   function renderAssetGraph() {
+    assetPlaceholder = false;
     renderAssetList();
     const el = document.getElementById("assetGraph");
     if (!assetGraphData || !assetGraphData.assets.length) {
