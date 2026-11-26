@@ -1,5 +1,6 @@
 import { autoTagNewEvents } from "../analysis/taggerAuto.js";
 import { heldContentTagger } from "../analysis/ai/watson/heldTagger.js";
+import { queueHeldRaises, type QueueRaisesDeps } from "../analysis/ai/watson/heldOffer.js";
 import { tagCollectorFootprint } from "../analysis/cloudCollectorFootprint.js";
 import { syncTrustedActivity } from "../analysis/trustedActivitySync.js";
 import { parseTrustedMarks, trustedActivityTags } from "../analysis/trustedSourceMarks.js";
@@ -104,20 +105,41 @@ async function footprintAndTrusted(
 
 /**
  * The held tagger a RE-GRADE uses for rows marked "held" (#2909: a Watson paste's rows the paste never
- * finished grading): tags written, no grade raised. A re-grade has no chat turn to offer the raises
- * in, so they are dropped (and counted in the log line): the rows go to the super-timeline like any
- * held Info row, where the analyst can still promote them. A fresh tagger per call, so nothing builds up.
+ * finished grading): tags written, no grade raised. A re-grade has no chat turn to offer the raises in,
+ * so (#2918) they are queued and offered as held-rows cards in the case's Watson chat
+ * (analysis/ai/watson/heldOffer.ts) — a restart no longer loses them. A raise it could not queue is
+ * reported ungraded, so its row keeps the mark and a later re-grade queues it again. A fresh tagger
+ * per call, so nothing builds up.
  */
 export function regradeHeldTagger(d: ImportTaggerDeps): ContentTagger {
-  return (caseId, added) => {
+  return async (caseId, added) => {
     const held = heldContentTagger({
       taggerStore: d.options.taggerStore,
       tagsStore: d.options.tagsStore,
       onTags: d.options.onTags,
       logLine: d.logLine,
-      label: "Watson paste re-grade (raises not offered again)",
+      label: "Watson paste re-grade (raises queued for approval)",
     });
-    return importTagger(d, held.tag)(caseId, added);
+    const outcome = await importTagger(d, held.tag)(caseId, added);
+    const stateStore = d.options.stateStore;
+    if (!stateStore) return outcome;
+    const unqueued = await queueHeldRaises(heldOfferDeps(d, stateStore), caseId, held);
+    if (!unqueued.length) return outcome;
+    return { ungraded: [...new Set([...(outcome?.ungraded ?? []), ...unqueued])] };
+  };
+}
+
+/** What queueing and offering held promotions read from the app's wiring (#2918). */
+export function heldOfferDeps(
+  d: Pick<ImportTaggerDeps, "options" | "store" | "logLine">,
+  stateStore: QueueRaisesDeps["stateStore"],
+): QueueRaisesDeps {
+  return {
+    stateDir: (caseId) => d.store.stateDir(caseId),
+    stateStore,
+    chatStore: d.options.watsonChatStore,
+    onWatson: d.options.onWatson,
+    log: d.logLine,
   };
 }
 

@@ -32,7 +32,8 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import { generationOf, runInCaseScope } from "../storage/caseIncarnation.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { RouteContext } from "../routes/context.js";
-import { routeSettleDeps } from "../routes/routeSettleDeps.js";
+import { heldOfferDeps, routeSettleDeps } from "../routes/routeSettleDeps.js";
+import { offerQueuedHeld, type HeldOfferDeps } from "../analysis/ai/watson/heldOffer.js";
 import { recoveryDepsFromSettle, type RowRecoveryDeps } from "../routes/importRowRecovery.js";
 import { finishRegrade, regradeMarked } from "../routes/importRegrade.js";
 import { carryAndStampPaged } from "../routes/importSettlePaged.js";
@@ -140,12 +141,28 @@ async function regradeCase(ctx: RouteContext, deps: RowRecoveryDeps, caseId: str
   );
 }
 
+/**
+ * One case's re-grade, then (outside its import section) the offer of its queued held Watson
+ * promotions (#2918) — whether or not the re-grade found marked rows: a stop between a queue write
+ * and the chat write leaves only the queue, and this is where it is offered after the restart.
+ */
+async function regradeThenOffer(
+  ctx: RouteContext,
+  deps: RowRecoveryDeps,
+  offer: HeldOfferDeps,
+  caseId: string,
+): Promise<void> {
+  await regradeCase(ctx, deps, caseId);
+  await offerQueuedHeld(offer, caseId);
+}
+
 /** The start-up sweep over every case (startServer hands it to startPostListenTasks). Never rejects. */
 export function ungradedRowRecovery(ctx: RouteContext): () => Promise<void> {
   return async () => {
     const settle = routeSettleDeps(ctx);
     if (!settle) return;
     const deps = recoveryDepsFromSettle(settle);
+    const offer = heldOfferDeps({ ...ctx, logLine: (m) => ctx.serverLogger.info(m) }, settle.stateStore);
     let cases: Awaited<ReturnType<RouteContext["store"]["listCases"]>> = [];
     try {
       cases = await ctx.store.listCases();
@@ -155,7 +172,7 @@ export function ungradedRowRecovery(ctx: RouteContext): () => Promise<void> {
     }
     for (const listed of cases) {
       const caseId = listed.caseId;
-      const run = () => regradeCase(ctx, deps, caseId);
+      const run = () => regradeThenOffer(ctx, deps, offer, caseId);
       await runInCaseScope(ctx.store.casesRoot, caseId, run, generationOf(listed)).catch((err: unknown) =>
         getServerLogger().warn(`[import] ${caseId}: start-up re-grade failed: ${errorText(err)}`, { caseId }),
       );

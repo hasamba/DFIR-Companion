@@ -424,6 +424,7 @@ export function createDiskBatchIngest(deps: DiskBatchDeps): DiskBatchIngest {
             runStateExclusive: deps.runStateExclusive,
             superTimelineStore: options.superTimelineStore,
             autoTagImported: deps.settleDeps.autoTagImported,
+            tagHeld: deps.settleDeps.tagHeld, // #2918: a Watson paste's held rows
             demote: deps.demoteForensic,
           },
           caseId,

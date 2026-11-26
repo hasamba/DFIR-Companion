@@ -9,6 +9,8 @@ import { requestAuthentication } from "../auth/types.js";
 import { markAiBudgetUnspent } from "../http/rateLimiter.js";
 import type { RouteContext } from "./context.js";
 import { watsonRoundDeps } from "./watsonDeps.js";
+import { offerQueuedHeld } from "../analysis/ai/watson/heldOffer.js";
+import { heldOfferDeps } from "./routeSettleDeps.js";
 import { IDEMPOTENCY_KEY_RE, WatsonMessageDedupe } from "./watsonIdempotency.js";
 
 /**
@@ -56,7 +58,24 @@ export async function watsonRunOrRefuse(ctx: RouteContext, caseId: string): Prom
   const pipeline = ctx.options.pipeline;
   if (!deps || !pipeline) throw new WatsonRouteRefusal(501, NO_PROVIDER_TEXT);
   if (!(await deps.isAiEnabled(caseId))) throw new WatsonRouteRefusal(409, new WatsonAiOff().message);
+  await offerHeldBeforeRound(ctx, caseId);
   return { pipeline, deps };
+}
+
+/**
+ * Held promotions a re-grade queued and no offer has put on a card yet (#2918: past the per-offer cap,
+ * or a failed offer) go on cards before the analyst's round. Best effort: a failure never stops it.
+ */
+async function offerHeldBeforeRound(ctx: RouteContext, caseId: string): Promise<void> {
+  const stateStore = ctx.options.stateStore;
+  if (!stateStore) return;
+  const logLine = (m: string): void => ctx.serverLogger.info(m);
+  await offerQueuedHeld(
+    heldOfferDeps({ options: ctx.options, store: ctx.store, logLine }, stateStore),
+    caseId,
+  ).catch((err: unknown) =>
+    ctx.serverLogger.warn(`[watson] ${caseId}: held promotions not offered: ${(err as Error).message}`),
+  );
 }
 
 type SendError = (res: Response, err: unknown) => Response;

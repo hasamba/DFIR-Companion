@@ -29,6 +29,8 @@ export interface StreamedSettleDeps {
   options: AppOptions;
   runStateExclusive: <T>(caseId: string, fn: () => Promise<T>) => Promise<T>;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /** The held tagger for rows marked "held" (#2918): absent, a held row the settle meets stays marked. */
+  tagHeld?: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   demote: ImportDemote;
 }
 
@@ -44,6 +46,7 @@ export function importSettleDeps(deps: StreamedSettleDeps): SettleDeps | null {
     onStateChanged: options.onStateChanged,
     onState: options.onState,
     autoTagImported: deps.autoTagImported,
+    ...(deps.tagHeld ? { tagHeld: deps.tagHeld } : {}),
     demoteForensic: deps.demote.demoteForensic,
   };
 }

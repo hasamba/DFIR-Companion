@@ -1,14 +1,7 @@
-import {
-  buildMarkerKind,
-  buildTimeWindows,
-  hardAttackerSignal,
-  type BuildTimeWindow,
-} from "../analysis/buildTimeWindow.js";
-import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
-import { hostBuildMarkers } from "../analysis/gapHostHistory.js";
 import { labSetupPaths } from "../analysis/labSetupTransfer.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { finalizeHeld, heldContentTagger } from "../analysis/ai/watson/heldTagger.js";
+import { heldBuildWindows } from "../analysis/ai/watson/heldWindows.js";
 import type { WatsonPasteIngest } from "../analysis/ai/watson/pasteIngestChat.js";
 import type { WatsonPaste } from "../analysis/ai/watson/types.js";
 import type { RouteContext } from "./context.js";
@@ -151,36 +144,6 @@ async function parseInSection(
   } finally {
     section.release();
   }
-}
-
-/**
- * The build-time windows the settle's cap used (importSettleCap.ts). Demote has since removed this
- * import's Info rows from the forensic timeline, so its own rows are read from what the tagger saw.
- */
-async function heldBuildWindows(
-  store: ForensicRowStore,
-  caseId: string,
-  offered: readonly ForensicEvent[],
-): Promise<BuildTimeWindow[]> {
-  const ledger = store.loadOverviewWithoutIocs
-    ? await store.loadOverviewWithoutIocs(caseId)
-    : await store.loadOverview(caseId);
-  const renames = ledger.hostRenames ?? [];
-  const chains = hostBuildMarkers(renames);
-  if (!chains.length) return [];
-  const signals = (e: ForensicEvent): boolean => !!(buildMarkerKind(e) || hardAttackerSignal(e));
-  const discovery = offered.filter(signals);
-  const seen = new Set(discovery.map((e) => e.id));
-  const names = new Set(chains.flatMap((c) => c.names));
-  const hosts = (await store.forensicHosts(caseId)).filter((h) =>
-    names.has(h.trim().split(".")[0].toUpperCase()),
-  );
-  for (const host of hosts) {
-    for await (const batch of store.forensicTimelineBatches(caseId, { host, limit: SCAN_PAGE_ROWS })) {
-      for (const e of batch) if (signals(e) && !seen.has(e.id)) discovery.push(e);
-    }
-  }
-  return buildTimeWindows(discovery, renames);
 }
 
 /** One row per id, the latest copy (the recovery's read is after the failed settle's). */

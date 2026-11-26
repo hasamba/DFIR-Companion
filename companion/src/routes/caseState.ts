@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { projectAlignment } from "../analysis/clockSkew.js";
 import { techniqueNamesFor } from "../analysis/attackTechniqueNames.js";
 import { withoutEventAliases } from "../analysis/eventAliases.js";
+import { withoutGradePending } from "../analysis/gradeMark.js";
 import { withoutRejectedEventTags, withoutRejectedTechniques } from "../analysis/rejectedTechniques.js";
 import { withFindingTextTechniques } from "../analysis/findingTextTechniques.js";
 import { isAbortError } from "../analysis/abortable.js";
@@ -61,10 +62,11 @@ export function registerCaseStateRoutes(app: Express, ctx: RouteContext): void {
       // dashboard renders corrected times (each event keeping its recorded one in originalTimestamp)
       // while state/state.json keeps the evidence exactly as imported.
       const skew = options.clockSkewStore ? await options.clockSkewStore.load(req.params.id) : undefined;
+      // #2918: the grade mark is server bookkeeping (analysis/gradeMark.ts) — a new object per marked row.
       const forensicTimeline = withoutRejectedEventTags(
         projectAlignment(skew, timeline.entities),
         state.rejectedTechniques,
-      );
+      ).map(withoutGradePending);
       // The automatic tagger's labels for THIS page's rows (#2059) — the tag list no longer carries them.
       const eventTaggerTags = await taggerTagsForRows(
         options.tagsStore,
