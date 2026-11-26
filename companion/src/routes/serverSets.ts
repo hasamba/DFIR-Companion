@@ -31,6 +31,7 @@ import {
 } from "../integrations/serverSets/types.js";
 import { logSafeError } from "../integrations/serverSets/logSafeError.js";
 import type { RouteContext } from "./context.js";
+import { isInstanceAdministrator } from "./instanceAdmin.js";
 import { parseServerSetInput, parseTestTools, probeError } from "./serverSetBody.js";
 
 const NOT_FOUND = "Server set not found."; // the resolver's own wording for an unknown set id
@@ -41,13 +42,6 @@ const TOOLS: ToolName[] = ["iris", "timesketch", "velociraptor"];
 type Results = Partial<Record<ToolName, Probe>>;
 
 type Probe = { ok: boolean; error?: string };
-
-function isGlobalAdmin(ctx: RouteContext, req: Request): boolean {
-  const teamAuth = ctx.options.teamAuth;
-  if (!teamAuth) return true; // single-user mode: the one operator is the administrator
-  const auth = requestAuthentication(req) ?? teamAuth.requireSession(req);
-  return !!auth && teamAuth.isGlobalAdministrator(auth);
-}
 
 // `caseId` is set for a case's set change, so the audit entry names the case it touched.
 function audit(
@@ -293,7 +287,7 @@ export function registerServerSetRoutes(app: Express, ctx: RouteContext): void {
     withStore(ctx, (sets, req, res) => {
       const list = sets.list();
       const defaultId = sets.defaultId();
-      if (!isGlobalAdmin(ctx, req)) {
+      if (!isInstanceAdministrator(ctx, req)) {
         return res.json({ defaultId, sets: list.map(({ id, name }) => ({ id, name })) });
       }
       const out = list.map((s) => ({ ...maskServerSet(s), usedBy: sets.casesUsing(s.id).length }));

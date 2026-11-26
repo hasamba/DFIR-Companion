@@ -42,9 +42,10 @@ whether or not this case is linked to it, and never change the case's link. Memb
   client's audit trail.
 - **Archive client** hides the client from the **New Case** Client box and from the panel's Client
   box. Nothing is removed: baseline answers, versions, audit trail and linked cases all stay. Linked
-  cases keep working and keep their grading, and show the client as "Client A (archived)". No new
-  case can be linked to an archived client. Tick **Show archived clients** to list archived
-  clients again, then pick one and press **Unarchive client** to bring it back.
+  cases keep working and keep their grading, and show the client as "Client A (archived)" in the
+  panels and in the threat hunt report. No new case can be linked to an archived client. Tick
+  **Show archived clients** to list archived clients again, then pick one and press **Unarchive
+  client** to bring it back.
 - **Delete client…** asks first, naming the client. It works only when no case is linked to the
   client, archived cases included. Otherwise the panel names the linked cases and suggests
   **Archive client** instead. Delete removes the client record with its baseline answers, versions

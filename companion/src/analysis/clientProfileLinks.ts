@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ARCHIVED_DIRNAME } from "../storage/caseIncarnation.js";
+import { heldStill, type FolderMoveState } from "../storage/caseFolderMoves.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 
 /**
@@ -9,12 +10,12 @@ import { isValidCaseId } from "../storage/caseStore.js";
  * check, so it never takes "could not read" for "not linked":
  *   - it walks the case FOLDERS, not the case list: a case whose case.json is damaged is skipped by
  *     the list, but its `state/hunt-client.json` still names the client;
- *   - it takes snapshots of the active root plus `_archived/` until two snapshots in a row agree
- *     (at most MAX_SNAPSHOTS, else it throws), and checks every case seen in any of them. Archive and
- *     restore take case locks this check cannot hold, so this is what keeps a case moved mid-scan in
- *     view: to be missed it would have to move twice inside EACH of two identical snapshots;
- *   - a link file that is missing where the folder was is read again at the case's current place (it
- *     may just have moved); a link file that cannot be parsed counts as linked ("unreadable");
+ *   - archive and restore move case folders under a lock this check cannot hold, so it reads the case
+ *     store's move counter before it looks and again after it has read every link file (#2945). When
+ *     a move started or was in flight anywhere in that window it looks again (at most MAX_ATTEMPTS,
+ *     else it throws). A look that held still saw every case where it is, so a missing link file
+ *     means no link — a case moved twice and back still counts as a move;
+ *   - a link file that cannot be parsed counts as linked ("unreadable");
  *   - any other read error is thrown, and the caller refuses the delete.
  */
 export interface LinkedCase {
@@ -25,20 +26,20 @@ export interface LinkedCase {
 
 export interface CaseFolders {
   readonly casesRoot: string;
-  stateDir(caseId: string): string;
+  readonly folderMoves: { state(): FolderMoveState };
   getCaseMeta(caseId: string): Promise<{ name?: string } | null>;
 }
 
 const LINK_FILE = "hunt-client.json";
 const UNREADABLE = Symbol("unreadable");
-export const MAX_SNAPSHOTS = 5;
+export const MAX_ATTEMPTS = 5;
 export const FOLDERS_KEPT_MOVING =
   "Cases kept moving between the active and archived folders while checking which cases use this client. Try again.";
 
 /** Case-folder names in `dir`, leaving out `skip`. Swappable so a test can move folders mid-scan. */
 export type ListCaseFolders = (dir: string, skip: string | null) => Promise<string[]>;
 
-async function caseFolders(dir: string, skip: string | null): Promise<string[]> {
+export async function listCaseFolders(dir: string, skip: string | null): Promise<string[]> {
   let entries: Dirent[];
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -52,12 +53,12 @@ async function caseFolders(dir: string, skip: string | null): Promise<string[]> 
 }
 
 /** The client id a link file names, null when there is no link, UNREADABLE when it cannot be parsed. */
-async function readLink(path: string): Promise<string | null | typeof UNREADABLE | undefined> {
+async function readLink(path: string): Promise<string | null | typeof UNREADABLE> {
   let raw: string;
   try {
     raw = await readFile(path, "utf8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined; // not here (now)
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
   }
   try {
@@ -86,29 +87,27 @@ async function snapshot(root: string, list: ListCaseFolders): Promise<Map<string
   return snap;
 }
 
-const snapshotKey = (snap: Map<string, string>): string => [...snap.values()].sort().join("\n");
+/** One look: every case folder in both places, and the cases whose link file names `clientId`. */
+async function look(cases: CaseFolders, clientId: string, list: ListCaseFolders): Promise<LinkedCase[]> {
+  const out: LinkedCase[] = [];
+  for (const [caseId, folder] of await snapshot(cases.casesRoot, list)) {
+    const link = await readLink(join(folder, "state", LINK_FILE));
+    if (link === UNREADABLE) out.push({ caseId, name: await caseName(cases, caseId), unreadable: true });
+    else if (link === clientId) out.push({ caseId, name: await caseName(cases, caseId) });
+  }
+  return out;
+}
 
 export async function findLinkedCases(
   cases: CaseFolders,
   clientId: string,
-  list: ListCaseFolders = caseFolders,
+  list: ListCaseFolders = listCaseFolders,
 ): Promise<LinkedCase[]> {
-  const seen = new Map<string, string>(); // case id → the folder it was first seen in
-  let previous: string | null = null;
-  for (let i = 0; ; i++) {
-    if (i === MAX_SNAPSHOTS) throw new Error(FOLDERS_KEPT_MOVING);
-    const snap = await snapshot(cases.casesRoot, list);
-    for (const [id, folder] of snap) if (!seen.has(id)) seen.set(id, folder);
-    const key = snapshotKey(snap);
-    if (key === previous) break;
-    previous = key;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const before = cases.folderMoves.state();
+    const found = await look(cases, clientId, list);
+    if (heldStill(before, cases.folderMoves.state()))
+      return found.sort((a, b) => a.caseId.localeCompare(b.caseId));
   }
-  const out: LinkedCase[] = [];
-  for (const [caseId, folder] of seen) {
-    const here = await readLink(join(folder, "state", LINK_FILE));
-    const link = here === undefined ? await readLink(join(cases.stateDir(caseId), LINK_FILE)) : here;
-    if (link === UNREADABLE) out.push({ caseId, name: await caseName(cases, caseId), unreadable: true });
-    else if (link === clientId) out.push({ caseId, name: await caseName(cases, caseId) });
-  }
-  return out.sort((a, b) => a.caseId.localeCompare(b.caseId));
+  throw new Error(FOLDERS_KEPT_MOVING);
 }

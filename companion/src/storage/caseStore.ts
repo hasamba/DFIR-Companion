@@ -34,6 +34,7 @@ import type { CaseWriteRefusal, Vacated } from "./caseIncarnation.js";
 import { forgetCaseKeyedState } from "./caseKeyedState.js";
 import { SequenceAllocator, type SequenceKind } from "./sequenceAllocator.js";
 import { AppendOnlyLogTail } from "./appendOnlyLogTail.js";
+import { FolderMoveCounter } from "./caseFolderMoves.js";
 import { readLogTail, readMaxSequence, type LogScope } from "./auditLogFolds.js";
 import {
   CaseAlreadyExistsError,
@@ -107,6 +108,9 @@ export class CaseStore {
   // status or password write that landed mid-rm made the rm fail with ENOTEMPTY; one that landed
   // between an archive's move and its status write could strand the case (#1809).
   private readonly metaLock = new StateLock();
+  // Every folder move between the root and _archived/, for readers that cannot take metaLock (#2945).
+  readonly folderMoves = new FolderMoveCounter();
+  private readonly moveFolder = (from: string, to: string) => this.folderMoves.track(() => rename(from, to));
 
   // Ids with a delete in flight, counted so two deletes of one id cannot clear each other's mark.
   // Set when deleteCaseFolder is called, cleared once its locked section (rm + cleanup) ends (#1826).
@@ -217,7 +221,7 @@ export class CaseStore {
         "moved",
         async () => {
           await mkdir(join(this.root, ARCHIVED_DIRNAME), { recursive: true });
-          await rename(active, archived);
+          await this.moveFolder(active, archived);
         },
         ["active"],
       );
@@ -232,7 +236,7 @@ export class CaseStore {
     const archived = join(this.root, ARCHIVED_DIRNAME, caseId);
     return this.metaLock.runExclusive(caseId, async () => {
       if (!this.isInArchive(caseId)) throw new CaseLifecycleError(`case ${caseId} is not archived`, 409);
-      await this.whileClosed(caseId, "moved", () => rename(archived, active), ["archived"]);
+      await this.whileClosed(caseId, "moved", () => this.moveFolder(archived, active), ["archived"]);
       return status ? this.relabelAfterMove(caseId, status, active, archived) : null;
     });
   }
@@ -270,7 +274,7 @@ export class CaseStore {
     try {
       return await this.writeCaseMetaLocked(caseId, { status });
     } catch (err) {
-      const rolledBack = await rename(movedTo, movedFrom).then(
+      const rolledBack = await this.moveFolder(movedTo, movedFrom).then(
         () => "",
         (undo: Error) => `; moving it back also failed (${undo.message}) — the folder stays at ${movedTo}`,
       );
@@ -298,7 +302,8 @@ export class CaseStore {
         return true;
       }
       if (meta?.status !== "archived" || !existsSync(active) || existsSync(archived)) return false;
-      const move = () => mkdir(dirname(archived), { recursive: true }).then(() => rename(active, archived));
+      const move = () =>
+        mkdir(dirname(archived), { recursive: true }).then(() => this.moveFolder(active, archived));
       await this.whileClosed(caseId, "moved", move, ["active"]);
       return true;
     });

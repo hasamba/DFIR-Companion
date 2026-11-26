@@ -47,7 +47,8 @@ export function huntSummarySection(
 
 function scope(hunt: HuntReportData, lines: string[]): void {
   lines.push("### Scope", "");
-  if (hunt.clientName) lines.push(`- Client: ${cellMd(hunt.clientName)}`);
+  if (hunt.clientName)
+    lines.push(`- Client: ${cellMd(hunt.clientName)}${hunt.clientArchived ? " (archived)" : ""}`);
   if (hunt.baselineVersion !== undefined)
     lines.push(`- Graded against baseline version ${hunt.baselineVersion}`);
   lines.push(`- ${coverageSentence(hunt.coverage)}`, "");

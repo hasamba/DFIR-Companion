@@ -10,7 +10,8 @@ import {
   unarchiveProfile,
 } from "../../src/analysis/clientProfile.js";
 import { ClientProfileStore } from "../../src/analysis/clientProfileStore.js";
-import { FOLDERS_KEPT_MOVING, findLinkedCases } from "../../src/analysis/clientProfileLinks.js";
+import { findLinkedCases } from "../../src/analysis/clientProfileLinks.js";
+import { FolderMoveCounter } from "../../src/storage/caseFolderMoves.js";
 
 // Edit / archive / delete a client (#2941): the pure edits, the locked delete, and the linked-case scan.
 
@@ -98,7 +99,7 @@ describe("findLinkedCases (#2941)", () => {
   }
   const folders = (root: string) => ({
     casesRoot: root,
-    stateDir: (id: string) => join(root, id, "state"),
+    folderMoves: new FolderMoveCounter(),
     getCaseMeta: async (id: string) => {
       const { readFile } = await import("node:fs/promises");
       for (const p of [join(root, id, "case.json"), join(root, "_archived", id, "case.json")]) {
@@ -128,30 +129,6 @@ describe("findLinkedCases (#2941)", () => {
       { caseId: "c-damaged", name: "c-damaged" },
       { caseId: "c-old", name: "Old" },
     ]);
-  });
-
-  it("still finds a case restored and re-archived between the folder reads of one look", async () => {
-    const root = await tempDir("dfir-linked-moving-");
-    const link = JSON.stringify({ clientId: "client-a", linkedAt: "", linkedBy: "" });
-    await caseFolder(root, "_archived/c-moving", "Moving", link);
-    // First look: the case is restored after the active read and archived again before the archived
-    // read, so neither read sees it. Later looks see it where it is on disk (archived).
-    let reads = 0;
-    const list = async (dir: string) => {
-      reads++;
-      if (reads <= 2) return [];
-      return dir.endsWith("_archived") ? ["c-moving"] : [];
-    };
-    expect(await findLinkedCases(folders(root), "client-a", list)).toEqual([
-      { caseId: "c-moving", name: "Moving" },
-    ]);
-  });
-
-  it("refuses (throws) when the folders never hold still", async () => {
-    const root = await tempDir("dfir-linked-churn-");
-    let n = 0;
-    const list = async (dir: string) => (dir.endsWith("_archived") ? [] : [`c-${n++}`]);
-    await expect(findLinkedCases(folders(root), "client-a", list)).rejects.toThrow(FOLDERS_KEPT_MOVING);
   });
 
   it("answers an empty list when there is no cases folder yet", async () => {

@@ -69,17 +69,6 @@ export function canWriteCloudCase(ctx: RouteContext, req: Request, caseId: strin
   return auth !== undefined && teamAuth.canAccessCase(auth, caseId, "write");
 }
 
-/**
- * True for an instance administrator, or anyone in single-user mode (#2347): sees every account,
- * including unattached ones, and alone may delete an unattached one.
- */
-export function isCloudAdmin(ctx: RouteContext, req: Request): boolean {
-  const teamAuth = ctx.options.teamAuth;
-  if (!teamAuth) return true;
-  const auth = requestAuthentication(req);
-  return auth !== undefined && teamAuth.isGlobalAdministrator(auth);
-}
-
 /** Who is adding an account, for its "added by" (#2347). Single-user mode has no identity. */
 export function cloudAdder(req: Request): { id: string; displayName: string } | undefined {
   const identity = requestAuthentication(req)?.identity;
