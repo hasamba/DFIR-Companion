@@ -43,8 +43,16 @@
     return !el || typeof el.value !== "string" || el.value.trim() === caseId;
   };
   let soSeq = 0;
+  // #2915: a cancelled or failed case load hides the panel; the next open (same case too) reads again.
+  function onSoReset(caseId) {
+    if (caseId !== null) return;
+    soSeq++;
+    soCase = null;
+    renderSecondOpinion(null);
+  }
   function loadSecondOpinion(caseId) {
     if (!soOnScreen(caseId)) return; // a late caller (a debounced reload) for a case the analyst left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onSoReset);
     if (soCase !== caseId) {
       soCase = caseId;
       renderSecondOpinion(null);

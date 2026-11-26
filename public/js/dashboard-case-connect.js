@@ -687,23 +687,8 @@
     // no panel shows. forensic_gate_changed: no panel shows the per-case gate, and changing it
     // re-grades nothing already imported. Add a branch here if a panel ever shows either.
     else if (msg.type === "case_lifecycle_changed") loadLifecycleChange(caseId);
-    else if (msg.type === "scope_changed") {
-      // The same commit loadScope makes — the window came from the server either way, so the
-      // two controls are a sink here. Unlike loadScope this path then redraws, because the
-      // change came from outside and nothing else is going to.
-      //
-      // The hub broadcasts to every subscriber with no sender exclusion (src/live/hub.ts:67-80),
-      // so applyScope receives its own echo and this runs a second time after it — which is why
-      // applying a scope renders twice and the analyst's typed input is replaced by the
-      // server's normalised form. Pre-existing behaviour, preserved.
-      DfirScope.receive(msg.start, msg.end);
-      // render() projects with the freshly-updated window AND caches its argument as
-      // `DfirState.lastState()`, so pass the RAW state — passing an already-projected one would
-      // cache a scope-narrowed subset, permanently dropping out-of-window events on the next
-      // scope widen/clear until a fresh server state arrives.
-      if (DfirState.lastState())
-        typeof render === "function" && render(DfirState.lastState());
-    }
+    // The read and the push share one version, so a push beats an older read (#2915).
+    else if (msg.type === "scope_changed") receiveScopePush(caseId, msg);
   }
 
   // Case templates and incident types moved to js/dashboard-case-templates.js (#415 tier 3).

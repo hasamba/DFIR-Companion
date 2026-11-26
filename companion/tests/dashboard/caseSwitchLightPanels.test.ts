@@ -53,6 +53,7 @@ const PANELS: Panel[] = [
     name: "learned patterns",
     file: "dashboard-exposure-fp.js",
     preload: ESC,
+    extra: { render: () => {}, fpMarkers: [], fpReasonFilter: "" }, // the cancel reset clears fpMarkers too
     loader: "loadLearnedPatterns",
     endpoint: "/learned-patterns",
     answerA: [{ signature: "AAA", reason: "other", count: 2 }],
@@ -63,6 +64,7 @@ const PANELS: Panel[] = [
     name: "source trust",
     file: "dashboard-exposure-fp.js",
     preload: ESC,
+    extra: { render: () => {}, fpMarkers: [], fpReasonFilter: "" }, // the cancel reset clears fpMarkers too
     loader: "loadSourceTrust",
     endpoint: "/source-trust",
     answerA: { defaults: { AAA: 0.5 }, overrides: {} },
@@ -384,6 +386,101 @@ describe.each(PANELS)("$name: case A's content never shows on case B (#2904)", (
     expect(t.shows("BBB")).toBe(shownB);
   });
 });
+
+// #2915: more case-open panels that keep a case's content (#2900 item 5 and the notebook). Their
+// switch behaviour is covered in caseSwitchStalePanels; here they join the cancel checks below.
+const MORE_PANELS: Panel[] = [
+  {
+    name: "activity log",
+    file: "dashboard-activity-log.js",
+    preload: ESC,
+    loader: "loadActivityLog",
+    endpoint: "/activity-log",
+    answerA: [{ ts: "2026-01-01T00:00:00Z", category: "import", actor: "x", detail: "AAA" }],
+    answerB: [{ ts: "2026-01-01T00:00:00Z", category: "import", actor: "x", detail: "BBB" }],
+    shows: (p, _a, m) => p.el("activityLogPanel").innerHTML.includes(m),
+  },
+  {
+    name: "pinned findings",
+    file: "dashboard-pinned-findings.js",
+    preload: ESC,
+    extra: { render: () => {}, ICON_PIN: "<svg/>" },
+    loader: "loadPins",
+    endpoint: "/pinned-findings",
+    answerA: { pins: [{ findingId: "f1" }], limit: 5 },
+    answerB: { pins: [], limit: 5 },
+    shows: (_p, a, m) => m === "AAA" && String(a.pinBtn("f1")).includes(" pinned"),
+  },
+  {
+    name: "finding workflow",
+    file: "dashboard-finding-workflow.js",
+    preload: ESC,
+    extra: { render: () => {}, ICON_FLOW: "<svg/>", ICON_USER: "<svg/>" },
+    loader: "loadFindingWorkflow",
+    endpoint: "/finding-workflow",
+    answerA: [{ findingId: "f1", assignee: "AAA", status: "in_progress" }],
+    answerB: [{ findingId: "f1", assignee: "BBB", status: "in_progress" }],
+    shows: (_p, a, m) => String(a.findingWorkflowControls("f1")).includes(m),
+  },
+  {
+    name: "playbook",
+    file: "dashboard-playbook.js",
+    preload: ESC,
+    extra: { VHS_SEV_RANK: {} },
+    loader: "loadPlaybook",
+    endpoint: "/playbook",
+    answerA: { tasks: [{ id: "t1", title: "AAA", status: "todo" }], stats: null, control: null },
+    answerB: { tasks: [{ id: "t1", title: "BBB", status: "todo" }], stats: null, control: null },
+    shows: (p, _a, m) => p.el("pbList").innerHTML.includes(m),
+  },
+  {
+    name: "notebook entries",
+    file: "dashboard-notebook.js",
+    preload: ESC,
+    loader: "loadNotebook",
+    endpoint: "/notebook",
+    answerA: [{ id: "n1", type: "note", text: "AAA" }],
+    answerB: [{ id: "n2", type: "note", text: "BBB" }],
+    shows: (p, _a, m) => p.el("nbList").innerHTML.includes(m),
+  },
+];
+
+// #2915: a cancelled (or failed) case load runs DfirPanelDefer.reset(null) — the hook the heavy panels
+// use for "Not loaded — the case load was stopped". The light panels listen to it too: the cancelled
+// case's content goes, and the next open (the same case included) loads it again. The aborted
+// request never settles (runPanelLoaders keeps it pending), so nothing may wait behind it.
+describe.each([...PANELS, ...MORE_PANELS])(
+  "$name: a cancelled load leaves none of the cancelled case's content (#2915)",
+  (panel) => {
+    const start = () => {
+      const t = open(panel);
+      PANEL_ANSWERS.set(t, { a: panel.answerA, b: panel.answerB });
+      return t;
+    };
+
+    it("A's content goes when the load is cancelled", async () => {
+      const t = start();
+      await shownForA(t);
+      expect(t.p.resetListenerCount()).toBeGreaterThan(0);
+      t.p.cancel(t.api);
+      expect(t.shows("AAA")).toBe(false);
+    });
+
+    it("reopening the same case after a cancel reads it again and shows it", async () => {
+      const t = start();
+      await shownForA(t);
+      t.load("CASE-A"); // a reload on its way when the analyst cancels: it never settles
+      t.p.cancel(t.api);
+      t.p.switchCase("CASE-A", t.api);
+      const before = t.p.requests.length;
+      t.load("CASE-A");
+      expect(t.p.requests.length, "the reopen sent no request").toBeGreaterThan(before);
+      t.req("CASE-A").answer(panel.answerA);
+      await drainAll();
+      expect(t.shows("AAA")).toBe(true);
+    });
+  },
+);
 
 describe("client baseline: an older render never appends into a newer one (#2904)", () => {
   type BaselineApi = { loadClientBaseline(caseId: string): Promise<void> };

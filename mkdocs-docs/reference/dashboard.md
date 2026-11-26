@@ -382,6 +382,12 @@ Each row shows a compact title line (timestamp, severity badge, description, sou
     in the last 24 hours. To scope to when the evidence actually is, type the window into the
     **from** / **to** fields, or drag a range on the Timeline Swimlane.
 
+!!! note "\"could not load the time window\""
+    When a case opens and its saved scope cannot be read, the chip next to **Clear** says
+    *could not load the time window — showing all events*. The timeline and findings are **not**
+    filtered until the window loads. Press **Retry** on the chip. Do not press **Apply** while the
+    two fields are blank: that replaces the saved window.
+
 ### Vim-Style Keyboard Navigation
 
 Toggle in **Settings → General** (default on). With the timeline focused:

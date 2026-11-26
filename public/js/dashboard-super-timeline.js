@@ -1,5 +1,4 @@
 // Super timeline (#188) — the paginated, faceted view over every event in the case (#415 tier 3).
-//
 // THE BIGGEST TIER-3 MOVE SO FAR, and the one where "owns its state" earns the wrapper most: sixteen
 // mutable bindings — the pagination cursor, four facet lists with their selected sets, the two
 // "ever seen" sets that make a NEW origin or host default to checked rather than filtered away, the
@@ -685,22 +684,24 @@
 
   // --- Saved timeframes (the dwell-windows store: label + start + end) ----------
   let tfCase = null, tfSeq = 0; // #2904: whose timeframes are listed (cleared at a switch); newest load paints
+  function paintTimeframes(list) {
+    superSavedTimeframes = Array.isArray(list) ? list : [];
+    const sel = document.getElementById("stTimeframe");
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">— none —</option>` + superSavedTimeframes.map(w =>
+      `<option value="${escAttr(w.id)}">${esc(w.label)}</option>`).join("");
+    sel.value = cur;
+  }
+  const tfReset = (c) => c === null && ((tfSeq++, tfCase = null), paintTimeframes([])); // #2915: a cancelled load
   function loadSavedTimeframes(caseId) {
     caseId = caseId || superCaseId();
     if (!caseId || caseId !== superCaseId()) return; // none open, or a late caller for a case left
-    const paint = (list) => {
-      superSavedTimeframes = Array.isArray(list) ? list : [];
-      const sel = document.getElementById("stTimeframe");
-      if (!sel) return;
-      const cur = sel.value;
-      sel.innerHTML = `<option value="">— none —</option>` + superSavedTimeframes.map(w =>
-        `<option value="${escAttr(w.id)}">${esc(w.label)}</option>`).join("");
-      sel.value = cur;
-    };
-    if (tfCase !== caseId) { tfCase = caseId; paint([]); }
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(tfReset);
+    if (tfCase !== caseId) { tfCase = caseId; paintTimeframes([]); }
     const seq = ++tfSeq;
     fetch(`/cases/${encodeURIComponent(caseId)}/dwell-windows`).then(r => r.json())
-      .then(list => seq === tfSeq && caseId === superCaseId() && paint(list)).catch(() => {});
+      .then(list => seq === tfSeq && caseId === superCaseId() && paintTimeframes(list)).catch(() => {});
   }
 
   function applyTimeframe() {

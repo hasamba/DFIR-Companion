@@ -250,6 +250,8 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-query-translator.js": "application/javascript; charset=utf-8",
   // Applying the analyst's scope filter to the loaded case.
   "/js/dashboard-scope-apply.js": "application/javascript; charset=utf-8",
+  // Reading the case's scope window, ordered against the live scope push (#2915).
+  "/js/dashboard-scope-load.js": "application/javascript; charset=utf-8",
   // The per-case AI on/off toggle.
   "/js/dashboard-ai-toggle.js": "application/javascript; charset=utf-8",
   // Live CLIENT_EVENT monitoring (#84) — the Velociraptor event monitors on the fleet.

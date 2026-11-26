@@ -13,15 +13,31 @@
   let nbEditingId = null;
   let notebookCaseId = null; // the case the list and the editor belong to
 
+  function clearNotebook(caseId) {
+    notebookCaseId = caseId;
+    notebookEntries = [];
+    if (document.getElementById("nbAddBtn")) nbCancelEdit();
+    renderNotebook();
+  }
+  // #2915: a cancelled or failed case load drops the notes (and a half-finished edit) and unchecks the
+  // AI box; the next open — the same case included — reads both again.
+  function onNotebookReset(caseId) {
+    if (caseId !== null) return;
+    nbAiSeq++;
+    nbAiCase = null;
+    const box = document.getElementById("nbAiToggle");
+    if (box) box.checked = false;
+    clearNotebook(null);
+    const list = document.getElementById("nbList");
+    if (list) list.innerHTML = ""; // blank, not "No entries yet." — no case is loaded
+  }
+  const nbListenReset = () =>
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onNotebookReset);
   function loadNotebook(caseId) {
+    nbListenReset();
     // A different case (#2442): its half-finished edit and entry list must not carry over — "Save
     // edit" would PATCH the old case's entry id into the new case.
-    if (caseId !== notebookCaseId) {
-      notebookCaseId = caseId;
-      notebookEntries = [];
-      if (document.getElementById("nbAddBtn")) nbCancelEdit();
-      renderNotebook();
-    }
+    if (caseId !== notebookCaseId) clearNotebook(caseId);
     fetch(`/cases/${caseId}/notebook`)
       .then((r) => r.json())
       .then((list) => {
@@ -42,6 +58,7 @@
   let nbAiSeq = 0;
   function loadNbAiToggle(caseId) {
     if (!nbOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    nbListenReset();
     const el = document.getElementById("nbAiToggle");
     if (nbAiCase !== caseId) {
       nbAiCase = caseId;

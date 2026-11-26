@@ -319,19 +319,35 @@
   }
   let fpLoadSeq = 0;
   let fpLoadedCaseId = null;
+  // #2904: the panel's rows (and their un-mark buttons) are the previous case's too — blank, not
+  // "Nothing marked", which would be a claim about this case before its answer.
+  function clearFalsePositives(caseId) {
+    fpLoadedCaseId = caseId;
+    fpMarkers = [];
+    const el = document.getElementById("false-positive");
+    if (el) el.innerHTML = "";
+    const countEl = document.getElementById("fpCount");
+    if (countEl) countEl.textContent = "";
+  }
+  // #2915: a cancelled or failed case load (DfirPanelDefer.reset(null)) drops the three panels'
+  // content and owners, so the next open — the same case included — clears and reads them again.
+  function onFpReset(caseId) {
+    if (caseId !== null) return;
+    fpLoadSeq++, lpSeq++, stSeq++;
+    clearFalsePositives(null);
+    lpCase = stCase = null;
+    renderLearnedPatterns([]);
+    renderSourceTrust(null);
+    const msg = document.getElementById("sourceTrustMsg");
+    if (msg) msg.textContent = "";
+  }
+  const fpListenReset = () =>
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onFpReset);
   function loadFalsePositives(caseId) {
     if (caseId !== activeCaseId) return; // a late frame from a closed socket, or a stale caller
+    fpListenReset();
     const seq = ++fpLoadSeq;
-    if (caseId !== fpLoadedCaseId) {
-      fpLoadedCaseId = caseId;
-      fpMarkers = [];
-      // #2904: the panel's rows (and their un-mark buttons) are the previous case's too — blank, not
-      // "Nothing marked", which would be a claim about this case before its answer.
-      const el = document.getElementById("false-positive");
-      if (el) el.innerHTML = "";
-      const countEl = document.getElementById("fpCount");
-      if (countEl) countEl.textContent = "";
-    }
+    if (caseId !== fpLoadedCaseId) clearFalsePositives(caseId);
     fetch(`/cases/${caseId}/false-positive`)
       .then((r) => r.json())
       .then((markers) => {
@@ -379,6 +395,7 @@
   let lpSeq = 0;
   function loadLearnedPatterns(caseId) {
     if (!fpOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    fpListenReset();
     if (lpCase !== caseId) {
       lpCase = caseId;
       renderLearnedPatterns([]);
@@ -414,6 +431,7 @@
   let stSeq = 0;
   function loadSourceTrust(caseId) {
     if (!fpOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    fpListenReset();
     if (stCase !== caseId) {
       stCase = caseId;
       renderSourceTrust(null); // the previous case's overrides must not be saved onto this one

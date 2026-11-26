@@ -1015,6 +1015,13 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // #2915: the case-load scope read and the scope_changed push, sharing one version so the
+    // newest word on the window wins. Moved out of the inline script and dashboard-case-connect.js.
+    file: "dashboard-scope-load.js",
+    publish: ["loadScope", "receiveScopePush", "noteScopeConfirmed"],
+    private: [],
+  },
+  {
     // The per-case AI on/off toggle — the third feature under that banner.
     file: "dashboard-ai-toggle.js",
     publish: ["loadAiToggle", "toggleAi"],

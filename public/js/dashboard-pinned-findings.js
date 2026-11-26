@@ -38,15 +38,24 @@
   // repaints from the cleared list; this case's state render redraws the buttons).
   let pinsCase = null;
   let pinsSeq = 0;
+  function clearPins(caseId) {
+    pinsCase = caseId;
+    pinnedList = [];
+    pinnedSet = new Set();
+    _pinnedSig = null;
+    renderPinned();
+  }
+  // #2915: a cancelled or failed case load empties the strip too (the cards are not redrawn — the view
+  // the cancel left stays as it is); the next open — the same case included — reads the pins again.
+  function onPinsReset(caseId) {
+    if (caseId !== null) return;
+    pinsSeq++;
+    clearPins(null);
+  }
   function loadPins(caseId) {
     if (!pinsOnScreen(caseId)) return; // a late caller for a case the analyst has left
-    if (pinsCase !== caseId) {
-      pinsCase = caseId;
-      pinnedList = [];
-      pinnedSet = new Set();
-      _pinnedSig = null;
-      renderPinned();
-    }
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onPinsReset);
+    if (pinsCase !== caseId) clearPins(caseId);
     const seq = ++pinsSeq;
     fetch(`/cases/${caseId}/pinned-findings`)
       .then((r) => r.json())

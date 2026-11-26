@@ -39,11 +39,20 @@
   // blanks the previous case's list at once; only the newest answer for the case on screen paints.
   let hpCase = null;
   let hpSeq = 0;
+  // #2915: a cancelled or failed case load blanks the list; the next open (same case too) reads again.
+  function onHpReset(caseId) {
+    if (caseId !== null) return;
+    hpSeq++;
+    hpCase = null;
+    const el = document.getElementById("huntProfile");
+    if (el) el.innerHTML = "";
+  }
   function loadHuntProfile(caseId) {
     const el = document.getElementById("huntProfile");
     if (!el) return;
     if (!caseId) { el.innerHTML = `<div class="hp-empty">—</div>`; return; }
     if (!hpOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onHpReset);
     if (hpCase !== caseId) { hpCase = caseId; el.innerHTML = ""; }
     const seq = ++hpSeq;
     const current = () => seq === hpSeq && hpOnScreen(caseId);

@@ -101,16 +101,24 @@
   // only the newest load, for the case still on screen, paints (the state push calls this bare).
   let pbLoadedCase = null;
   let pbLoadSeq = 0;
+  function clearPlaybook(caseId) {
+    pbLoadedCase = caseId;
+    playbookTasks = [];
+    pbHuntFlat = [];
+    pbHuntCollapsed = {};
+    if (typeof setPlaybookLanguageHunts === "function") setPlaybookLanguageHunts([]);
+    renderPlaybook();
+  }
+  // #2915: a cancelled or failed case load clears the tasks too; the next open (same case too) reads again.
+  function onPlaybookReset(caseId) {
+    if (caseId !== null) return;
+    pbLoadSeq++;
+    clearPlaybook(null);
+  }
   function loadPlaybook(caseId) {
     if (!pbOnScreen(caseId)) return; // a late caller (an add/sync callback) for a case left
-    if (pbLoadedCase !== caseId) {
-      pbLoadedCase = caseId;
-      playbookTasks = [];
-      pbHuntFlat = [];
-      pbHuntCollapsed = {};
-      if (typeof setPlaybookLanguageHunts === "function") setPlaybookLanguageHunts([]);
-      renderPlaybook();
-    }
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onPlaybookReset);
+    if (pbLoadedCase !== caseId) clearPlaybook(caseId);
     const seq = ++pbLoadSeq;
     fetch(`/cases/${caseId}/playbook`)
       .then((r) =>
