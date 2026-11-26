@@ -1,5 +1,5 @@
 import { test, expect } from "../fixtures/test.js";
-import { revealSections } from "../fixtures/sections.js";
+import { revealSections, waitForCaseRendered } from "../fixtures/sections.js";
 
 // Covers: US-352
 // feature-user-stories.csv had no host-scope-and-clearance entry before this PR (#553) — it is a
@@ -86,11 +86,13 @@ test("host-scope: the dashboard panel renders the board, gap list and host table
   demoCase,
 }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+  await waitForCaseRendered(page, demoCase);
   await revealSections(page, "sec-host-scope");
 
   const panel = page.locator("#hostScopeBody");
   // The panel starts as the literal placeholder "—"; a passing test must see it replaced.
-  await expect(panel.locator(".hs-board")).toBeVisible();
+  // The panel loads on reveal (#2854), so its first paint can trail the reveal under a busy suite.
+  await expect(panel.locator(".hs-board")).toBeVisible({ timeout: 30_000 });
   await expect(panel).not.toHaveText("—");
 
   // Stat tiles: "All hosts" plus one per status, each carrying a real count control.
@@ -113,10 +115,11 @@ test("host-scope: clicking Clear… prompts for a reason and records the decisio
   demoCase,
 }) => {
   await page.goto(`/dashboard?caseId=${encodeURIComponent(demoCase)}`);
+  await waitForCaseRendered(page, demoCase);
   await revealSections(page, "sec-host-scope");
 
   const panel = page.locator("#hostScopeBody");
-  await expect(panel.locator(".hs-table tbody tr").first()).toBeVisible();
+  await expect(panel.locator(".hs-table tbody tr").first()).toBeVisible({ timeout: 30_000 });
 
   const row = panel.locator('tr[data-host="wkstn-jsmith"]');
   await expect(row).toHaveCount(1);

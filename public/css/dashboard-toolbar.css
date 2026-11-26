@@ -524,12 +524,14 @@ body { padding-bottom: var(--preflight-banner-h, 0px); }
 #lifecycleMenu button:hover { background: var(--hover-wash); }
 #lifecycleMenu button#deleteCaseBtn:hover { background: #4a2020; }
 /* Cross-case warning banner (captures arriving for a case other than the one being viewed). */
-#caseMismatchBanner { display: flex; align-items: center; gap: 10px; padding: 7px 16px;
+/* Wraps on a narrow screen: "Switch to <case id>" carries the whole case id, and as one unwrapped
+   flex row it pushed the page 45px sideways at phone width (#2919). */
+#caseMismatchBanner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 7px 16px;
   background: var(--warning-bg); color: var(--tag-orange-text); border-bottom: 1px solid var(--warning-border); font-size: 12.5px; }
 #caseMismatchBanner[hidden] { display: none; }
-#caseMismatchText { flex: 1; }
+#caseMismatchText { flex: 1 1 16em; min-width: 0; overflow-wrap: anywhere; }
 #caseMismatchBanner button { background: var(--warning-border); color: var(--tag-orange-text); border: 1px solid var(--warning-border);
-  border-radius: 5px; cursor: pointer; padding: 3px 9px; font-size: 12px; }
+  border-radius: 5px; cursor: pointer; padding: 3px 9px; font-size: 12px; max-width: 100%; overflow-wrap: anywhere; }
 #caseMismatchBanner button:hover { background: var(--warning-bg-strong); }
 #caseMismatchDismiss { padding: 3px 8px; }
 .sf-search-wrap { position: relative; display: flex; align-items: center; }

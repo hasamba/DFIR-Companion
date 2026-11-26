@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Cross-case capture warning on a phone** — the "screenshots are arriving for another case" banner wraps instead of pushing the dashboard sideways at narrow widths (closes #2919)
 - **Held rows graded at the next import** — rows an importer merged but never stamped are held from the demote too, rows a tagger failure held are graded at the next import (not only at restart) with the caps a full settle applies, Watson paste rows only ever get the held tagger and keep their proposals after a failed settle, and exports never show the internal grading mark (closes #2909)
 - **THOR via Velociraptor without scanner noise** — THOR's Info status lines and its Debug folder listing are no longer imported; licence banners and THOR errors are graded Info (closes #2884)
 - **Rows wait for the tagger before demote** — rows an import stamped but did not tag (a crash, or a tagger error) stay in the forensic timeline and are graded at the next start, not demoted untagged (closes #2891)
