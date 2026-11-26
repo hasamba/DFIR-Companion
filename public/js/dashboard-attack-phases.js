@@ -33,12 +33,23 @@
   };
   const phasesOnScreen = () => (phasesCase === caseOnScreen() ? phasesData : []);
 
+  // #2933: only the newest load paints. A cancelled load (reset(null)) retires every load still on its
+  // way and the scheduled reload, so an answer from before it never lands on the same case reopened.
+  let phasesSeq = 0;
+  function onPhasesReset(c) {
+    if (c !== null) return;
+    phasesSeq++;
+    clearTimeout(phasesTimer);
+  }
   function loadPhases(caseId) {
+    if (!caseId || caseId !== caseOnScreen()) return; // a late caller for a case the analyst has left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onPhasesReset);
+    const seq = ++phasesSeq; // before the hidden-panel skip: an older load is retired either way
     if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("phases", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/phases`)
       .then((r) => r.json())
       .then((p) => {
-        if (caseId !== caseOnScreen()) return; // the analyst has left this case
+        if (seq !== phasesSeq || caseId !== caseOnScreen()) return; // superseded, or the analyst has left this case
         if (caseId !== phasesCase) phOpen.clear(); // expansions belong to one case
         phasesCase = caseId;
         phasesData = Array.isArray(p) ? p : [];

@@ -43,10 +43,21 @@
     return !el || typeof el.value !== "string" || el.value.trim() === caseId;
   };
   let soSeq = 0;
+  // #2933: an action's answer paints only in the generation it was sent in — strict on screen, and moved
+  // only when the owner changes here (a cancel too; never renderSecondOpinion, never a same-case reload).
+  let soGen = 0;
+  const soLive = (caseId, gen = soGen) => () => gen === soGen && soOnScreen(caseId);
+  function soNewOwner() {
+    soGen++;
+    refereeRerunInFlight = false; // the older answers no longer free these, so free them here
+    const b = document.getElementById("secondOpinion");
+    if (b) b.disabled = false;
+  }
   // #2915: a cancelled or failed case load hides the panel; the next open (same case too) reads again.
   function onSoReset(caseId) {
     if (caseId !== null) return;
     soSeq++;
+    soNewOwner();
     soCase = null;
     renderSecondOpinion(null);
   }
@@ -54,6 +65,7 @@
     if (!soOnScreen(caseId)) return; // a late caller (a debounced reload) for a case the analyst left
     typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onSoReset);
     if (soCase !== caseId) {
+      soNewOwner();
       soCase = caseId;
       renderSecondOpinion(null);
     }
@@ -355,6 +367,7 @@
     postSecondOpinionDecision(caseId, "reopened", { deltaId, keep }, "Second-opinion keep/drop");
   }
   function postSecondOpinionDecision(caseId, route, payload, label) {
+    const live = soLive(caseId); // #2933: stillOpen() let an answer through after a cancel
     fetch(`/cases/${caseId}/second-opinion/${route}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -364,15 +377,14 @@
         const rec = await r.json();
         // A Presidio hold waits for the analyst — it is not a failure (#1782).
         if (typeof presidioHold === "function" && presidioHold(r.status, rec)) {
-          if (stillOpen(caseId))
-            document.getElementById("status").textContent = presidioHoldText(label);
+          if (live()) document.getElementById("status").textContent = presidioHoldText(label);
           return null;
         }
         return rec;
       })
       .then((rec) => {
         if (rec === null) return; // held for Presidio approval, shown above
-        if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
+        if (!live()) return; // the analyst left this case meanwhile, or cancelled and reopened it
         if (rec && rec.error) {
           document.getElementById("status").textContent =
             "second opinion: " + rec.error;
@@ -385,15 +397,12 @@
           .then((st) => stillOpen(caseId) && render(st))
           .catch(() => {});
       })
-      .catch(
-        (e) =>
-          (document.getElementById("status").textContent =
-            "second opinion error: " + e.message),
-      );
+      .catch((e) => live() && (document.getElementById("status").textContent = "second opinion error: " + e.message));
   }
   // accept: true | false | "referee" (follow the referee's call on each pending delta).
   function applyAllSecondOpinion(caseId, accept) {
     const before = lastSecondOpinionRec && Array.isArray(lastSecondOpinionRec.deltas) ? lastSecondOpinionRec.deltas : [];
+    const live = soLive(caseId);
     fetch(`/cases/${caseId}/second-opinion/apply-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -405,15 +414,14 @@
         const rec = await r.json();
         // A Presidio hold waits for the analyst — it is not a failure (#1782).
         if (typeof presidioHold === "function" && presidioHold(r.status, rec)) {
-          if (stillOpen(caseId))
-            document.getElementById("status").textContent = presidioHoldText("Second-opinion apply-all");
+          if (live()) document.getElementById("status").textContent = presidioHoldText("Second-opinion apply-all");
           return null;
         }
         return rec;
       })
       .then((rec) => {
         if (rec === null) return; // held for Presidio approval, shown above
-        if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
+        if (!live()) return; // the analyst left this case meanwhile, or cancelled and reopened it
         if (rec && rec.error) {
           document.getElementById("status").textContent =
             "second opinion: " + rec.error;
@@ -427,11 +435,7 @@
           .then((st) => stillOpen(caseId) && render(st))
           .catch(() => {});
       })
-      .catch(
-        (e) =>
-          (document.getElementById("status").textContent =
-            "second opinion error: " + e.message),
-      );
+      .catch((e) => live() && (document.getElementById("status").textContent = "second opinion error: " + e.message));
   }
   // Re-run only the referee (#1587). One press at a time: the flag is cleared on every path, and
   // the returned promise never rejects, so nothing escapes as an unhandled rejection.
@@ -456,7 +460,8 @@
     const s = document.getElementById("status");
     if (s) s.textContent = text;
   }
-  async function postReferee(caseId) {
+  async function postReferee(caseId, live = soLive(caseId)) {
+    const ppg = typeof presidioPendingGen === "function" ? presidioPendingGen() : undefined; // #2933
     const r = await fetch(`/cases/${caseId}/second-opinion/referee`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -464,7 +469,7 @@
     });
     const body = await r.json().catch(() => ({}));
     // The analyst may have opened another case while the referee ran; this answer is not theirs.
-    if (currentCaseId() !== caseId) return;
+    if (!live()) return; // #2933: nor one from before a cancel and a reopen
     if (r.ok && body && !body.error) {
       renderSecondOpinion(body);
       const n = Array.isArray(body.deltas)
@@ -474,7 +479,7 @@
       return;
     }
     if (r.status === 409 && body && body.error === "presidio_approval_required") {
-      if (typeof setPresidioPending === "function") setPresidioPending(body.findings, caseId);
+      if (typeof setPresidioPending === "function") setPresidioPending(body.findings, caseId, ppg);
       refereeStatus("referee held — Presidio found new value(s) to review (see Anonymization)");
       return;
     }
@@ -489,16 +494,17 @@
   }
   function rerunSecondOpinionReferee(caseId) {
     if (refereeRerunInFlight || !caseId) return Promise.resolve();
-    refereeRerunInFlight = true;
+    const token = (refereeRerunInFlight = {}); // #2933: only this press's answer frees the next one
     soRefereeFollowed = null; // the referee is about to make new calls
     setRefereeRerunDisabled(true);
     refereeStatus("re-running the referee…");
-    return postReferee(caseId)
+    const live = soLive(caseId);
+    return postReferee(caseId, live)
       .catch((e) => {
-        if (currentCaseId() === caseId)
-          refereeStatus("referee error: " + (e && e.message ? e.message : String(e)));
+        if (live()) refereeStatus("referee error: " + (e && e.message ? e.message : String(e)));
       })
       .then(() => {
+        if (refereeRerunInFlight !== token) return; // the owner change freed it, and a newer press holds it
         refereeRerunInFlight = false;
         setRefereeRerunDisabled(false);
       });
@@ -556,6 +562,8 @@
         ? "running second opinion with deep reasoning "
         : "running second opinion ") +
       "(refreshing the primary, then a different model)…";
+    const live = soLive(caseId); // #2933: no repaint, no button freed, after a switch or a cancel
+    const ppg = typeof presidioPendingGen === "function" ? presidioPendingGen() : undefined;
     fetch(`/cases/${caseId}/second-opinion`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -566,10 +574,11 @@
           // #2826: a body can be read once. Every 409 is answered from this one read — a second
           // r.json() below turned "AI is off for this case" into "body stream already read".
           const body = await r.json().catch(() => ({ error: REFUSED_UNREADABLE }));
+          if (!live()) return null;
           if (body.error === "presidio_approval_required") {
             if (btn) btn.disabled = false;
             if (typeof setPresidioPending === "function")
-              setPresidioPending(body.findings, caseId);
+              setPresidioPending(body.findings, caseId, ppg);
             document.getElementById("status").textContent =
               "second opinion held — Presidio found new value(s) to review (see Anonymization)";
             return null;
@@ -585,9 +594,8 @@
         return r.json();
       })
       .then((rec) => {
-        if (!rec) return; // handled above (409 presidio hold)
+        if (!rec || !live()) return; // handled above (409 hold), or the analyst left / cancelled meanwhile
         if (btn) btn.disabled = false;
-        if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
         if (rec && rec.error) {
           document.getElementById("status").textContent =
             "second opinion failed: " + rec.error;
@@ -609,6 +617,7 @@
         announceSecondOpinionDone(caseId, n, rec.agreementCount | 0);
       })
       .catch((e) => {
+        if (!live()) return;
         if (btn) btn.disabled = false;
         document.getElementById("status").textContent =
           "second opinion error: " + e.message;

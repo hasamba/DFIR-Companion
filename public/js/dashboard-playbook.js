@@ -106,8 +106,9 @@
   const pbLive = (caseId, gen = pbGen) => () => gen === pbGen && pbOnScreen(caseId);
   function clearPlaybook(caseId) {
     pbGen++;
-    const hb = document.getElementById("pbHuntBtn");
+    const hb = document.getElementById("pbHuntBtn"), pm = document.getElementById("pbMsg");
     if (hb) hb.disabled = false; // the older request's answer no longer frees it
+    if (pm) pm.textContent = ""; // #2933: nor does its answer clear an "adding…" line
     pbLoadedCase = caseId;
     playbookTasks = [];
     pbHuntFlat = [];
@@ -301,7 +302,7 @@
   }
 
   function pbPatch(id, patch) {
-    const caseId = pbCaseId();
+    const caseId = pbCaseId(), live = pbLive(caseId);
     if (!caseId) return;
     fetch(`/cases/${caseId}/playbook/${id}`, {
       method: "PATCH",
@@ -316,7 +317,7 @@
       .then(() => loadPlaybook(caseId))
       .catch((e) => {
         const m = document.getElementById("pbMsg");
-        if (m) m.textContent = "failed: " + e.message;
+        if (m && live()) m.textContent = "failed: " + e.message; // #2933
         loadPlaybook(caseId);
       });
   }
@@ -699,6 +700,7 @@
         return;
       }
       if (msg) msg.textContent = "adding…";
+      const live = pbLive(caseId);
       fetch(`/cases/${caseId}/playbook`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -709,13 +711,12 @@
           return r.json();
         })
         .then(() => {
+          if (!live()) return; // #2933: the analyst switched case, or cancelled and reopened it
           document.getElementById("pbTitle").value = "";
           if (msg) msg.textContent = "";
           loadPlaybook(caseId);
         })
-        .catch((e) => {
-          if (msg) msg.textContent = "failed: " + e.message;
-        });
+        .catch((e) => msg && live() && (msg.textContent = "failed: " + e.message));
     };
 
     document.getElementById("pbSyncBtn").onclick = function () {
@@ -723,20 +724,14 @@
       if (!caseId) return;
       const msg = document.getElementById("pbMsg");
       if (msg) msg.textContent = "syncing…";
+      const live = pbLive(caseId);
       fetch(`/cases/${caseId}/playbook/sync`, { method: "POST" })
         .then((r) => {
           if (!r.ok) throw new Error("HTTP " + r.status);
           return r.json();
         })
-        .then(() => {
-          if (msg) msg.textContent = "";
-          loadPlaybook(caseId);
-        })
-        .catch((e) => {
-          if (msg)
-            msg.textContent =
-              "sync failed (restart the companion server?): " + e.message;
-        });
+        .then(() => live() && (msg && (msg.textContent = ""), loadPlaybook(caseId)))
+        .catch((e) => msg && live() && (msg.textContent = "sync failed (restart the companion server?): " + e.message));
     };
 
     document
@@ -756,6 +751,7 @@
         }
         const msg = document.getElementById("pbMsg");
         if (msg) msg.textContent = "applying…";
+        const live = pbLive(caseId);
         fetch(`/cases/${caseId}/playbook/control`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
@@ -765,11 +761,9 @@
             if (!r.ok) throw new Error("HTTP " + r.status);
             return r.json();
           })
-          .then(() => {
-            if (msg) msg.textContent = "";
-            loadPlaybook(caseId);
-          })
+          .then(() => live() && (msg && (msg.textContent = ""), loadPlaybook(caseId)))
           .catch((e) => {
+            if (!live()) return; // #2933: the reopened case's box is not flipped back by an older answer
             this.checked = !this.checked;
             if (msg)
               msg.textContent =

@@ -19,6 +19,10 @@
   // #2843: the case the Falsification review box was drawn for (null: the box is empty).
   let hypReviewsCase = null;
   let hypMsgCase = null; // #2848: the case the Add and Generate / Review lines were written in
+  // #2933: an answer paints only in its own generation (moved by clearHypMessages, never a same-case reload).
+  let hypGen = 0;
+  const hypLive = (caseId, gen = hypGen) => () => gen === hypGen && caseId === hypCaseOnScreen();
+  const onHypReset = (c) => c === null && clearHypothesesPanel();
   const HYP_STATUS = [
     ["open", "Open"],
     ["supported", "Supported"],
@@ -38,6 +42,7 @@
     // #2843: a reload asked for by an action of a case the analyst has left (a slow edit, Generate)
     // is dropped — first, so it cannot drop the open case's own lines below.
     if (String(caseId || "").trim() !== hypCaseOnScreen()) return;
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onHypReset);
     // #2848: on any case change, a list held or not (after a cancel, none is).
     if (hypMsgCase !== caseId) clearHypMessages(caseId);
     // The review box is tracked on its own: a Review can answer before its case's list does.
@@ -110,6 +115,8 @@
   }
   function clearHypMessages(caseId) {
     hypMsgCase = caseId;
+    hypGen++; // the older Generate / Review answer no longer frees its button, so free it here
+    for (const b of ["hypGenerateBtn", "hypReviewBtn"].map((id) => document.getElementById(id))) if (b) b.disabled = false;
     for (const m of ["hypMsg", "hypGenMsg"].map((id) => document.getElementById(id))) if (m) m.textContent = "";
   }
 
@@ -412,6 +419,7 @@
   // ignore the answer, so a refusal — a closed case is the common one — put the control back on
   // the saved value with no word of why, and a lost connection left the unsaved value on screen.
   function hypWrite(caseId, id, prefix, url, init) {
+    const live = hypLive(caseId);
     fetch(url, init)
       .then(async (r) => {
         // A success body is never read: a delete answers 204 with none.
@@ -421,10 +429,12 @@
       // reported as "not saved".
       .then(
         () => {
+          if (!live()) return; // #2933: the analyst switched case, or cancelled and reopened it
           hypWriteError = null;
           loadHypotheses(caseId);
         },
         (e) => {
+          if (!live()) return;
           hypWriteError = { caseId, id, text: hypRefusalText(prefix, e) };
           // Redraw first: it puts the control back on the saved value and shows the reason even
           // when the reload below fails too (no connection). The reload is what shows the truth.
@@ -543,6 +553,7 @@
     const msg = document.getElementById("nbMsg");
     if (!caseId || !entry) return;
     if (msg) msg.textContent = "promoting…";
+    const live = hypLive(caseId);
     fetch(`/cases/${caseId}/hypotheses`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -563,6 +574,7 @@
         return r.json();
       })
       .then(() => {
+        if (!live()) return; // #2933
         if (msg) msg.textContent = "promoted ✓ — see the Hypotheses panel";
         loadHypotheses(caseId);
         const sec = document.getElementById("sec-hypotheses");
@@ -574,7 +586,7 @@
       // Never swallow silently — a 404 here means a stale server (the #1 gotcha), and the analyst
       // must see why nothing happened instead of a dead button.
       .catch((e) => {
-        if (caseId !== hypCaseOnScreen()) return; // #2848: a late answer for a case left behind
+        if (!live()) return; // #2848/#2933: a late answer for a case left behind, or before a cancel
         if (msg && e.presidioHold) {
           msg.textContent = presidioHoldText("Promote");
           return;
@@ -619,6 +631,7 @@
         return;
       }
       msg.textContent = "adding…";
+      const live = hypLive(caseId);
       fetch(`/cases/${caseId}/hypotheses`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -640,13 +653,14 @@
           return r.json();
         })
         .then(() => {
+          if (!live()) return; // #2933: the reopened case's inputs are not cleared by an older add
           document.getElementById("hypTitle").value = "";
           document.getElementById("hypOutcome").value = "";
           msg.textContent = "";
           loadHypotheses(caseId);
         })
         .catch((e) => {
-          if (caseId !== hypCaseOnScreen()) return;
+          if (!live()) return;
           if (e.presidioHold) {
             msg.textContent = presidioHoldText("Add hypothesis");
             return;
@@ -671,6 +685,7 @@
         }
         btn.disabled = true;
         msg.textContent = "synthesizing…";
+        const live = hypLive(caseId);
         fetch(`/cases/${caseId}/synthesize`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -701,10 +716,8 @@
             return r.json();
           })
           .then((p) => {
-            if (p.error) {
-              if (caseId === hypCaseOnScreen()) msg.textContent = "failed: " + p.error;
-              return;
-            }
+            if (!live()) return; // #2933
+            if (p.error) return void (msg.textContent = "failed: " + p.error);
             msg.textContent = "";
             loadHypotheses(caseId);
             // refresh the rest of the case in case the WS push was missed
@@ -715,12 +728,10 @@
             loadSynthMeta(caseId);
           })
           .catch((e) => {
-            if (caseId !== hypCaseOnScreen()) return;
+            if (!live()) return;
             msg.textContent = e.presidioHold || e.hostMergeHold ? e.message : hypRefusalText("failed: ", e);
           })
-          .finally(() => {
-            btn.disabled = false;
-          });
+          .finally(() => live() && (btn.disabled = false));
       });
     document
       .getElementById("hypReviewBtn")
@@ -735,6 +746,7 @@
         }
         btn.disabled = true;
         msg.textContent = "reviewing hypotheses…";
+        const live = hypLive(caseId);
         fetch(`/cases/${caseId}/hypothesis-review`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -753,25 +765,18 @@
           .then((p) => {
             // #2843: an answer for a case the analyst has left is not drawn — its Apply buttons
             // would write to the open case, and "nothing to review" would be said of the wrong one.
-            const here = caseId === hypCaseOnScreen();
-            if (here) {
-              hypReviewsCase = caseId;
-              renderHypothesisReviews(p.reviews);
-            }
-            msg.textContent =
-              !here || (p.reviews && p.reviews.length)
-                ? ""
-                : "no open hypotheses to review";
+            if (!live()) return; // #2933: nor one from before a cancel or an A -> B -> A
+            hypReviewsCase = caseId;
+            renderHypothesisReviews(p.reviews);
+            msg.textContent = p.reviews && p.reviews.length ? "" : "no open hypotheses to review";
           })
           .catch((e) => {
-            if (caseId !== hypCaseOnScreen()) return;
+            if (!live()) return;
             msg.textContent = e.presidioHold
               ? presidioHoldText("Hypothesis review")
               : hypRefusalText("failed: ", e);
           })
-          .finally(() => {
-            btn.disabled = false;
-          });
+          .finally(() => live() && (btn.disabled = false));
       });
   }
 

@@ -154,7 +154,7 @@
     }
   }
   async function skipHeldScreenshots(caseId) {
-    const offer = heldSkipOffer;
+    const offer = heldSkipOffer, live = aiLive(caseId);
     // Bound to the case it was shown for (#2442): never act on a case the analyst left.
     if (!offer || offer.caseId !== caseId || caseId !== activeCaseId) return hideHeldSkip();
     const status = document.getElementById("status");
@@ -168,7 +168,7 @@
         },
       );
       const body = await r.json().catch(() => ({}));
-      if (caseId !== activeCaseId) return;
+      if (!live()) return; // #2933: the analyst switched case, or cancelled and reopened it
       if (r.status === 409) {
         status.textContent =
           "Nothing skipped: the screenshots waiting for analysis changed. Check the AI status, then press Skip again.";
@@ -185,7 +185,7 @@
         (body.warning ? `. The activity log entry could not be written: ${body.warning}` : "");
       refreshAiState(caseId);
     } catch (e) {
-      if (caseId === activeCaseId) status.textContent = "Could not skip the screenshots: " + e.message;
+      if (live()) status.textContent = "Could not skip the screenshots: " + e.message;
     }
   }
 
@@ -247,11 +247,11 @@
   async function retryPresidio(caseId) {
     // The buttons are bound to the case they were shown for (#2442): never act on a case left behind.
     if (caseId !== activeCaseId) return hidePresidioActions();
-    const status = document.getElementById("status");
+    const status = document.getElementById("status"), live = aiLive(caseId);
     status.textContent = "checking Presidio…";
     try {
       const h = await getJson("/system/presidio-health");
-      if (caseId !== activeCaseId) return;
+      if (!live()) return;
       if (h.reachable === false) {
         status.textContent =
           "Presidio is still not reachable" +
@@ -262,21 +262,22 @@
       hidePresidioActions();
       resynthesize();
     } catch (e) {
-      status.textContent = "Presidio check failed: " + e.message;
+      if (live()) status.textContent = "Presidio check failed: " + e.message;
     }
   }
   async function continueWithoutPresidio(caseId) {
     if (caseId !== activeCaseId) return hidePresidioActions(); // no anon-control write to it (#2442)
-    const status = document.getElementById("status");
+    const status = document.getElementById("status"), live = aiLive(caseId);
     try {
       // The version the switch is saved against (#1839): a stale one is refused, never overwritten.
       const c = await getJson(anonControlUrl(caseId));
+      if (!live()) return; // #2933: a pre-read from before a cancel sends no switch-off
       const r = await fetch(anonControlUrl(caseId), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ presidio: false, version: c.version }),
       });
-      if (caseId !== activeCaseId) return;
+      if (!live()) return;
       if (r.status === 409) {
         status.textContent =
           "Nothing changed: another window changed this case's anonymization settings. Press Continue again.";
@@ -287,7 +288,7 @@
       loadAnonToggle(caseId);
       resynthesize();
     } catch (e) {
-      status.textContent = "Could not switch Presidio off for this case: " + e.message;
+      if (live()) status.textContent = "Could not switch Presidio off for this case: " + e.message;
     }
   }
 
@@ -374,6 +375,10 @@
   // pill back to the page's "AI: —" at once, so the case left's state (and its held-screenshot offer)
   // never shows on this one — not even when this case's read fails.
   let aiStateCase = null;
+  // #2933: an action's answer (Skip, Retry, Continue) paints only in the generation it was sent in; it
+  // moves when the pill's owner changes or a load is cancelled, never on a same-case refresh.
+  let aiActGen = 0;
+  const aiLive = (caseId, gen = aiActGen) => () => gen === aiActGen && caseId === activeCaseId;
   function resetAiPill() {
     const el = document.getElementById("aiStatus");
     if (el) {
@@ -386,6 +391,7 @@
   function onAiStateReset(caseId) {
     if (caseId !== null) return;
     aiStateSeq++;
+    aiActGen++;
     aiStateCase = null;
     resetAiPill();
   }
@@ -394,6 +400,7 @@
     // must not invalidate a correction still in flight for the case on screen.
     if (!caseId || caseId !== activeCaseId) return;
     typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onAiStateReset);
+    if (aiStateCase !== caseId) aiActGen++;
     if (aiStateCase !== null && aiStateCase !== caseId) resetAiPill();
     aiStateCase = caseId;
     const seq = ++aiStateSeq;
