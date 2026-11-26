@@ -25,7 +25,6 @@ import { MINIMUM_POLICIES } from "../integrations/cloudCheck/minimumPolicies.js"
 import {
   CLOUD_NOT_FOUND,
   canWriteCloudCase,
-  isCloudAdmin,
   sendCloudRefusal,
   withCloudVault,
   withCloudVaultExclusive,
@@ -33,6 +32,7 @@ import {
 } from "./cloudAccountAccess.js";
 import { deleteCloudCredentials } from "./cloudCredentialRelease.js";
 import type { RouteContext } from "./context.js";
+import { isInstanceAdministrator } from "./instanceAdmin.js";
 
 /** At most this many accounts in one multi-delete. */
 const MAX_DELETE = 200;
@@ -56,7 +56,7 @@ export function cloudAccountDeletable(
   req: Request,
   account: CloudAccountView,
 ): CloudAccess<CloudAccountView> {
-  if (isCloudAdmin(ctx, req)) return { ok: true, value: account };
+  if (isInstanceAdministrator(ctx, req)) return { ok: true, value: account };
   const writable = account.caseIds.filter((c) => canWriteCloudCase(ctx, req, c)).length;
   if (writable === 0) return { ok: false, status: 404, error: CLOUD_NOT_FOUND };
   const blocked = account.caseIds.length - writable;
@@ -123,7 +123,7 @@ export function registerCloudCredentialListRoutes(app: Express, ctx: RouteContex
   app.get(
     "/cloud-accounts",
     withCloudVault(ctx, async (vault, req, res) => {
-      const admin = isCloudAdmin(ctx, req);
+      const admin = isInstanceAdministrator(ctx, req);
       const { keyPath, keyState } = vault.status();
       const rows = visibleAccounts(ctx, req, vault, admin);
       const accounts = await Promise.all(rows.map((a) => listRow(ctx, req, a, admin)));

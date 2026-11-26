@@ -8,6 +8,9 @@ import {
 } from "../../src/reports/reportTemplate.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { HuntReportData } from "../../src/analysis/huntReport.js";
+import { loadHuntReportData } from "../../src/analysis/huntReportLoad.js";
+import { renderHtmlReport } from "../../src/reports/html.js";
+import { renderDocxReportChecked } from "../../src/reports/docx.js";
 
 const ev = (id: string, severity: ForensicEvent["severity"]): ForensicEvent => ({
   id,
@@ -117,5 +120,57 @@ describe("Threat hunt summary report (#2670)", () => {
     expect(md).toContain("(+2 more)");
     expect(md).toContain("**Anomalies need follow-up");
     expect(md).toContain("| 7zip | 4 | 2026-01-01 | 2 hunt(s) |");
+  });
+
+  it("marks an archived client in the scope, with the name escaped like other report text (#2945)", () => {
+    const md = render(emptyState("c1"), hunt({ clientName: "Client <b>A</b> | x", clientArchived: true }));
+    expect(md).toContain("- Client: Client \\<b\\>A\\</b\\> \\| x (archived)");
+    expect(render(emptyState("c1"), hunt({ clientName: "Client A" }))).toContain("- Client: Client A\n");
+  });
+
+  it("carries the archived mark into the HTML and DOCX renderings, the name still inert (#2945)", async () => {
+    const data = hunt({ clientName: "Client <b>A</b>", clientArchived: true });
+    const html = renderHtmlReport(
+      emptyState("c1"),
+      emptyReportMeta(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      HUNT_REPORT_TEMPLATE,
+      undefined,
+      undefined,
+      undefined,
+      data,
+    );
+    expect(html).toContain("(archived)");
+    expect(html).not.toContain("<b>A</b>");
+    const { default: JSZip } = await import("jszip");
+    const { buffer } = await renderDocxReportChecked(
+      emptyState("c1"),
+      emptyReportMeta(),
+      undefined,
+      HUNT_REPORT_TEMPLATE,
+      undefined,
+      data,
+    );
+    const xml = await (await JSZip.loadAsync(buffer)).file("word/document.xml")!.async("text");
+    expect(xml).toContain("(archived)");
+  });
+});
+
+describe("hunt report data: the linked client's archived state (#2945)", () => {
+  const stores = (archivedAt?: string) => ({
+    incidentTypeStore: { loadType: async () => ({ mode: "hunt" as const }) },
+    huntClientLinkStore: { load: async () => ({ clientId: "client-a" }) },
+    clientProfileStore: { get: async () => ({ name: "Client A", ...(archivedAt ? { archivedAt } : {}) }) },
+  });
+
+  it("flags an archived client and leaves an active one unflagged", async () => {
+    const archived = await loadHuntReportData(stores("2026-01-02T00:00:00Z") as never, "c1");
+    expect(archived).toMatchObject({ clientName: "Client A", clientArchived: true });
+    const active = await loadHuntReportData(stores() as never, "c1");
+    expect(active?.clientName).toBe("Client A");
+    expect(active).not.toHaveProperty("clientArchived");
   });
 });

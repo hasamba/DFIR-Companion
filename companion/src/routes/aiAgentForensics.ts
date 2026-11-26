@@ -17,6 +17,7 @@
 
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
+import { isInstanceAdministrator } from "./instanceAdmin.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { frozenCaseRefusal } from "./importCaseGuard.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
@@ -40,7 +41,6 @@ import {
   aiAgentReportMarkdown,
   aiAgentSigmaCoverageCsv,
 } from "../reports/aiAgentReportExport.js";
-import { requestAuthentication } from "../auth/types.js";
 import type { VeloClientRecord } from "../integrations/velociraptor/clientInventory.js";
 
 /** The run as the dashboard sees it: no raw rows. */
@@ -127,14 +127,6 @@ async function writableBodyCase(
 }
 
 const NOT_WIRED = { error: "Velociraptor hunts are not configured on this server" };
-
-/** True for the instance administrator, and for the one operator in single-user mode. */
-function isGlobalAdmin(ctx: RouteContext, req: Request): boolean {
-  const teamAuth = ctx.options.teamAuth;
-  if (!teamAuth) return true;
-  const auth = requestAuthentication(req) ?? teamAuth.requireSession(req);
-  return !!auth && teamAuth.isGlobalAdministrator(auth);
-}
 
 /** One endpoint as a case writer sees it (#2725): the reduced view, nothing else from the record. */
 interface CaseEndpoint {
@@ -246,7 +238,7 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
     if (caseId && !isValidCaseId(caseId))
       return res.status(400).json({ error: "caseId must be a valid case id" });
     // A run with no case open makes a sweep on any server set: the instance administrator's (#2725).
-    if (!caseId && !isGlobalAdmin(ctx, req))
+    if (!caseId && !isInstanceAdministrator(ctx, req))
       return res.status(403).json({
         error:
           "only an administrator can run AI Agent Forensics with no case open — open a case you can write to",

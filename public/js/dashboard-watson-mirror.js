@@ -71,4 +71,10 @@
   window.watsonMirrorListHtml = watsonMirrorListHtml;
   window.watsonMirrorRefresh = watsonMirrorRefresh;
   window.watsonMirrorOff = watsonMirrorOff;
+  // #2943: the owner changed (dashboard-watson.js): an older read paints nothing; the list waits for the new GET.
+  window.watsonMirrorReset = () => {
+    wMirrorSeq++;
+    wMirrors = [];
+    paint();
+  };
 })();

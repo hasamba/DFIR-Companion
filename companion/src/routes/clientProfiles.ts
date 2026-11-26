@@ -19,6 +19,7 @@ import { currentIdentity } from "../auth/identityContext.js";
 import { CLIENT_DATA_DEMO_REFUSAL } from "../auth/policy.js";
 import { requestAuthentication } from "../auth/types.js";
 import type { RouteContext } from "./context.js";
+import { isInstanceAdministrator } from "./instanceAdmin.js";
 
 /**
  * Client profiles (#2670, decisions D3/D5) — instance-level, outside every case.
@@ -54,14 +55,6 @@ const summary = (p: ClientProfile) => ({
 const NOT_FOUND = "client profile not found";
 const LINKED =
   "This client is linked to cases and cannot be deleted. Archive it instead: it disappears from the client lists and every linked case keeps working.";
-
-/** True for the instance administrator, and for the one operator in single-user mode. */
-function isGlobalAdmin(ctx: RouteContext, req: Request): boolean {
-  const teamAuth = ctx.options.teamAuth;
-  if (!teamAuth) return true;
-  const auth = requestAuthentication(req) ?? teamAuth.requireSession(req);
-  return !!auth && teamAuth.isGlobalAdministrator(auth);
-}
 
 /**
  * The instance activity log (#2941) — the audit log GET /auth/audit reads, which server-set deletes
@@ -121,7 +114,7 @@ export function registerClientProfileRoutes(app: Express, ctx: RouteContext): vo
     if (!s) return res.status(200).json([]);
     const flag = String(req.query.includeArchived ?? "");
     // A member asking for archived clients still gets the active list: they never manage clients.
-    const withArchived = (flag === "1" || flag === "true") && isGlobalAdmin(ctx, req);
+    const withArchived = (flag === "1" || flag === "true") && isInstanceAdministrator(ctx, req);
     try {
       const list = await s.list();
       return res

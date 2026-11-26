@@ -118,6 +118,7 @@ function setup(
       "dashboard-watson-run.js",
       "dashboard-watson-status.js",
       "dashboard-watson-velo.js",
+      "dashboard-watson-layout.js",
     ],
     {
       document,
