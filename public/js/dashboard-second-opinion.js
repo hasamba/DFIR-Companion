@@ -54,11 +54,12 @@
     if (b) b.disabled = false;
   }
   // #2915: a cancelled or failed case load hides the panel; the next open (same case too) reads again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onSoReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === soCase) return;
     soSeq++;
     soNewOwner();
-    soCase = null;
+    soCase = caseId;
     renderSecondOpinion(null);
   }
   function loadSecondOpinion(caseId) {

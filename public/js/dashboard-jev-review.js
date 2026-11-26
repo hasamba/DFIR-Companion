@@ -646,26 +646,9 @@
   }
 
   function loadJevReview(caseId) {
-    currentCaseId = caseId;
-    // A case switch is also an exit path for a run started under the previous case: the flag goes
-    // off, the ticker stops and the generation moves on, so the old run's `finally` cannot touch
-    // any of the three again. The old request is aborted too (#1552): nobody is waiting for it now.
-    busy = false;
-    runningAll = false;
-    confirming = false;
-    promoting = false;
-    confirmingPromote = false;
-    abortRun();
-    promoteGen++;
-    stopTick();
-    status = null;
-    statusState = "loading";
-    statusError = "";
-    result = null;
-    reviewError = "";
-    reviewNote = "";
-    resetSelection();
-    renderJevReview();
+    jevSwitchTo(caseId);
+    if (typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function")
+      DfirPanelDefer.onReset(onJevReset);
     const gen = ++loadGen;
     return fetch(`/cases/${encodeURIComponent(caseId)}/jev/status`)
       .then((r) => r.json().then((body) => ({ ok: r.ok, code: r.status, body })))
@@ -692,6 +675,33 @@
       .finally(() => {
         if (currentCaseId === caseId && loadGen === gen) renderJevReview();
       });
+  }
+  // #2940: another case opening (or a cancelled load) does the same at the switch itself. The fan-out
+  // may never reach this loader for that case, and until it did the old run's answer still painted —
+  // on B, or on A again after A -> B -> A — and its rows could be promoted into the case on screen.
+  const onJevReset = (c) => (c || "") !== currentCaseId && jevSwitchTo(c || "");
+  function jevSwitchTo(caseId) {
+    currentCaseId = caseId;
+    // A case switch is also an exit path for a run started under the previous case: the flag goes
+    // off, the ticker stops and the generation moves on, so the old run's `finally` cannot touch
+    // any of the three again. The old request is aborted too (#1552): nobody is waiting for it now.
+    busy = false;
+    runningAll = false;
+    confirming = false;
+    promoting = false;
+    confirmingPromote = false;
+    abortRun();
+    promoteGen++;
+    loadGen++; // #2940: and the previous visit's status read
+    stopTick();
+    status = null;
+    statusState = "loading";
+    statusError = "";
+    result = null;
+    reviewError = "";
+    reviewNote = "";
+    resetSelection();
+    renderJevReview();
   }
 
   // The toolbar's way in. It OPENS the panel and never starts a review: a toolbar click that

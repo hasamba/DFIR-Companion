@@ -52,10 +52,11 @@
   }
   // #2915: a cancelled or failed case load empties the strip too (the cards are not redrawn — the view
   // the cancel left stays as it is); the next open — the same case included — reads the pins again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onPinsReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === pinsCase) return;
     pinsSeq++;
-    clearPins(null);
+    clearPins(caseId);
   }
   function loadPins(caseId) {
     if (!pinsOnScreen(caseId)) return; // a late caller for a case the analyst has left

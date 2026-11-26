@@ -230,7 +230,7 @@
   // A late answer for a case left must not fill this panel (#1782); #2904: cleared at a switch, newest wins.
   const ppOnScreen = (caseId) => (document.getElementById("caseId")?.value ?? caseId).trim() === caseId;
   let ppCase = null, ppSeq = 0, ppGen = 0; // #2929: ppGen moves only when the owner changes (a cancel too)
-  const ppReset = (c) => c === null && ((ppSeq++, ppGen++, ppCase = null), setPresidioPending([])); // #2915: a cancelled load
+  const ppReset = (c) => (c === null || c !== ppCase) && ((ppSeq++, ppGen++, ppCase = c), setPresidioPending([])); // #2915 a cancel; #2940 another case
   const ppLive = (caseId, gen = ppGen) => () => gen === ppGen && ppOnScreen(caseId); // a decision's answer still paints?
   function loadPresidioPending(caseId) {
     if (!caseId || !ppOnScreen(caseId)) return;

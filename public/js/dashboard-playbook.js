@@ -117,10 +117,11 @@
     renderPlaybook();
   }
   // #2915: a cancelled or failed case load clears the tasks too; the next open (same case too) reads again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onPlaybookReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === pbLoadedCase) return;
     pbLoadSeq++;
-    clearPlaybook(null);
+    clearPlaybook(caseId);
   }
   function loadPlaybook(caseId) {
     if (!pbOnScreen(caseId)) return; // a late caller (an add/sync callback) for a case left

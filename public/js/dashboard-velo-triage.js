@@ -595,7 +595,7 @@
     ["veloExtGo", "veloRefreshClientsBtn", "veloReconnectBtn", "veloSettingsReconnectBtn"].forEach((id) => { const b = document.getElementById(id); if (b) b.disabled = false; });
     document.querySelectorAll(".velo-run-form").forEach((f) => (f.style.display = "none"));
   }
-  const veloJobsReset = (c) => c === null && (veloJobsSeq++, loadVeloHuntJobs(null)); // #2915: a cancelled load
+  const veloJobsReset = (c) => (c === null || c !== veloJobsCase) && (veloJobsSeq++, veloExtNewOwner(), renderVeloJobs([]), (veloJobsCase = c)); // #2915 a cancel; #2940 another case, at the switch
   function loadVeloHuntJobs(caseId) {
     if (caseId && veloCaseId() !== caseId) return; // a late caller for a case the analyst has left
     if (caseId) typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(veloJobsReset);

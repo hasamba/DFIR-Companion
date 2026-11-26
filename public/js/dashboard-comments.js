@@ -47,10 +47,11 @@
   // #2915: a cancelled or failed case load drops the index and closes an open thread (no render: the
   // view the cancel left is not redrawn; the next render reads the empty index). The next open — the
   // same case included — reads the comments again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onCommentsReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === commentsCase) return;
     commentsSeq++;
-    clearComments(null);
+    clearComments(caseId);
   }
   function loadComments(caseId) {
     if (!commentsOnScreen(caseId)) return; // a late caller for a case the analyst has left

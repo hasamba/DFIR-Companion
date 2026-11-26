@@ -260,10 +260,11 @@
   // #2915: a cancelled or failed case load drops the index, the lock (the aborted fetch never
   // settles) and an open editor — no render, as at the switch. The next open — the same case
   // included — reads the tags again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onTagsReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === tagsCase) return;
     resetTagLoads();
-    clearTags(null);
+    clearTags(caseId);
     taggerGen++; // #2929: an ask on its way is dropped, and every row may be asked about again
     taggerKnown = new Set();
   }

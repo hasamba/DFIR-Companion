@@ -65,10 +65,11 @@
   // list's re-poll); the next open — the same case included — reads them again.
   function onImportChangesReset(caseId) {
     if (rawBannerCase !== null) retireRawBanner(caseId); // #2937: at the switch itself, not at B's queued load
-    if (caseId !== null) return;
+    // #2940: another case opening retires the rest at the switch too — this loader may never run for it.
+    if (caseId !== null && caseId === importMetaCase) return;
     importMetaSeq++, dropSeq++, heldSeq++;
-    clearImportMeta(null);
-    dropCase = heldCase = null;
+    clearImportMeta(caseId);
+    dropCase = heldCase = caseId;
     clearTimeout(heldTimer);
     hideBanner("dropStatus");
     hideBanner("dropHeld");

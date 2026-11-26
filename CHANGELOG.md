@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Old action answers stay out after A, then B, then A** — every panel, the missed evidence review, second look and containment check retire their in-flight actions when another case opens, even when B never loads the panel; reopening the same case keeps them; the false-positive dialog closes and drops its "marking…" line at the switch (closes #2940)
 - **Held Watson promotions survive a restart** — raises a later re-grade finds for a Watson paste's rows (start-up, next import, streamed and drop-folder imports) are offered as held-rows cards in the chat instead of dropped; the case-state response no longer carries the internal grade mark (closes #2918)
 - **Held Watson rows keep their paste** — rows an earlier paste left set aside are offered as held-rows cards under that paste, not in a later paste's turn; Velociraptor hunt and external imports grade them too; the grade-mark check covers every route with a path parameter (closes #2930)
 - **Old action answers stay out after a cancel and reopen** — custody Verify, duplicate-host merge / dismiss / undo, tagger row tags, Presidio decisions, pins, finding status, playbook hunt suggestions, report details and source-trust saves no longer paint an answer from before a cancelled load, and Verify cannot be pressed twice; a malformed time-window answer counts as a failed read (closes #2929)
