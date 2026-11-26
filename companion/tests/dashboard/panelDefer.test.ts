@@ -385,6 +385,42 @@ describe("a revealed panel never shows the previous case's content (#2854)", () 
     expect(p.section("sec-d3fend").dataset.panelStale).toBeUndefined();
   });
 
+  it("two panels of one section retrying on separate timers: one success does not unmask over a failure", async () => {
+    const p = page();
+    const a = p.api as unknown as { loadD3fend(c: string): void; loadAttackMitigations(c: string): void };
+    a.loadD3fend("CASE-A");
+    a.loadAttackMitigations("CASE-A");
+    for (const r of p.requests) r.answer();
+    await flushAll();
+    p.switchCase("CASE-B");
+    p.hide("sec-d3fend");
+    a.loadD3fend("CASE-B");
+    a.loadAttackMitigations("CASE-B");
+    p.show("sec-d3fend");
+    p.requests[2].answer({ fail: true });
+    p.requests[3].answer({ fail: true });
+    await flushAll();
+    expect(p.section("sec-d3fend").dataset.panelStale).toMatch(/could not be loaded/);
+    // The two debounced reloads fire separately, each becoming its own tracked load.
+    a.loadD3fend("CASE-B");
+    await flushAll();
+    a.loadAttackMitigations("CASE-B");
+    await flushAll();
+    expect(p.urls().slice(4)).toEqual([
+      "/cases/CASE-B/d3fend-countermeasures",
+      "/cases/CASE-B/attack-mitigations",
+    ]);
+    p.requests[5].answer(); // mitigations: fine
+    p.requests[4].answer({ fail: true }); // D3FEND: still failing, A's countermeasures still drawn
+    await flushAll();
+    expect(p.section("sec-d3fend").dataset.panelStale).toMatch(/could not be loaded/);
+    a.loadD3fend("CASE-B");
+    await flushAll();
+    p.requests[6].answer();
+    await flushAll();
+    expect(p.section("sec-d3fend").dataset.panelStale).toBeUndefined();
+  });
+
   it("an answer for a case the analyst has left neither paints nor unmasks", async () => {
     const p = await loadedForA();
     p.switchCase("CASE-B");

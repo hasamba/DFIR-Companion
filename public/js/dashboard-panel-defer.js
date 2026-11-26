@@ -19,8 +19,9 @@
 // THE PREVIOUS CASE'S CONTENT. A hidden panel keeps whatever it last drew. If that was another case,
 // the section is masked (data-panel-stale, styled in dashboard-sections.css) until a load for THIS
 // case has answered and painted. The reveal load is tracked request by request — every request its
-// loader makes, for every loader in the section — so a panel built from two answers, or a section
-// holding two panels (sec-d3fend), stays masked until all of them are in. A failed answer keeps the
+// loader makes — and the mask comes off only once every panel of the section has succeeded for this
+// case, so a panel built from two answers, or a section holding two panels that retry on separate
+// timers (sec-d3fend), stays masked until all of them are in. A failed answer keeps the
 // mask and says so instead of exposing the old case.
 (function () {
   "use strict";
@@ -64,8 +65,9 @@
 
   const pending = new Set(); // keys skipped while hidden, loaded on reveal
   const loadedOnPage = new Set(); // sections some load has started for on this page
-  const owner = new Map(); // section -> the case whose tracked load last succeeded in it
-  const sectionGen = new Map(); // section -> generation; a reveal load or a reset moves it on
+  // Per PANEL, not per section: sec-d3fend holds two panels, and each one's retries run on their own.
+  const owner = new Map(); // key -> the case whose tracked load of this panel last succeeded
+  const loadGen = new Map(); // key -> generation; a newer tracked load or a reset moves it on
   let tracking = null; // the key whose tracked load is running right now (its guard must pass)
   let flushQueued = false;
 
@@ -105,7 +107,7 @@
   // Hidden: remember it, and mask the section if what it shows may be another case's.
   function defer(key, sec, caseId) {
     pending.add(key);
-    if (loadedOnPage.has(sec) && owner.get(sec) !== caseId) setMask(sec, LOADING);
+    if (loadedOnPage.has(sec) && owner.get(key) !== caseId) setMask(sec, LOADING);
   }
 
   // The first line of a deferred loader (after its case-switch cleanup). True = do not fetch.
@@ -132,7 +134,7 @@
     loadedOnPage.add(sec);
     // An untracked load for another case: nobody knows whether it will paint, so the section's
     // owner is unknown from here on.
-    if (owner.get(sec) !== id) owner.delete(sec);
+    if (owner.get(key) !== id) owner.delete(key);
     return false;
   }
 
@@ -157,15 +159,20 @@
   }
 
   // ── tracked reveal loads ──────────────────────────────────────────────────────────────────────
-  // One record per section per flush: how many requests are out, whether one failed.
+  // One record per panel per tracked load: how many requests are out, whether one failed. The mask
+  // comes off only when EVERY panel of the section has succeeded for the case on screen, so a
+  // section whose two panels retry on separate timers stays masked while either is failed or out.
+  function sectionSettled(sec, caseId) {
+    return Object.keys(PANELS).every((k) => PANELS[k][0] !== sec || owner.get(k) === caseId);
+  }
   function finish(rec) {
     const done = () => {
-      if (sectionGen.get(rec.sec) !== rec.gen) return; // a newer load or a case switch took over
-      if (!rec.failed) owner.set(rec.sec, rec.caseId);
-      else owner.delete(rec.sec);
+      if (loadGen.get(rec.key) !== rec.gen) return; // a newer load or a case switch took over
+      if (!rec.failed) owner.set(rec.key, rec.caseId);
+      else owner.delete(rec.key);
       if (!isMasked(rec.sec)) return;
       if (rec.failed) setMask(rec.sec, FAILED);
-      else clearMask(rec.sec);
+      else if (sectionSettled(rec.sec, rec.caseId)) clearMask(rec.sec);
     };
     // A macrotask, so the loader's own render (microtasks after its body read) has run first.
     if (typeof setTimeout === "function") setTimeout(done, 0);
@@ -272,26 +279,23 @@
       return;
     }
     const due = [...pending].filter((key) => isShown(PANELS[key][0]));
-    const records = new Map();
+    const records = [];
     for (const key of due) {
       pending.delete(key);
       const [sec, loaderName] = PANELS[key];
       const loader = globalThis[loaderName];
       if (typeof loader !== "function") continue;
-      let rec = records.get(sec);
-      if (!rec) {
-        const gen = (sectionGen.get(sec) || 0) + 1;
-        sectionGen.set(sec, gen);
-        rec = { sec, gen, caseId, left: 0, failed: false, sealed: false };
-        records.set(sec, rec);
-      }
+      const gen = (loadGen.get(key) || 0) + 1;
+      loadGen.set(key, gen);
+      const rec = { key, sec, gen, caseId, left: 0, failed: false, sealed: false };
+      records.push(rec);
       try {
         runTracked(key, rec, () => loader(caseId));
       } catch {
         rec.failed = true;
       }
     }
-    for (const rec of records.values()) {
+    for (const rec of records) {
       rec.sealed = true;
       if (rec.left === 0) finish(rec);
     }
@@ -302,7 +306,7 @@
   function reset() {
     pending.clear();
     tracking = null;
-    for (const [sec, gen] of sectionGen) sectionGen.set(sec, gen + 1);
+    for (const [key, gen] of loadGen) loadGen.set(key, gen + 1);
   }
 
   window.DfirPanelDefer = {
