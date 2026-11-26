@@ -81,7 +81,11 @@
   // its answer — and frees the Verify button. Only the newest answer for the case on screen paints.
   let custodyCase = null;
   let custodySeq = 0;
+  // #2929: Verify's generation. It moves only when the owner changes (a cancel included), never on a
+  // same-case Refresh, so a verify sent before a cancel and a reopen of the same case paints nothing.
+  let custodyGen = 0;
   function clearCustodyFor(caseId) {
+    custodyGen++;
     custodyCase = caseId;
     custodyRecords = [];
     custodyFailedPaths = new Set();
@@ -133,12 +137,15 @@
       if (!caseId) return;
       verifyBtn.disabled = true;
       if (msg) msg.textContent = "Re-hashing evidence…";
+      // #2904/#2929: only an answer for this verify's case and generation paints or frees the button.
+      const gen = custodyGen;
+      const live = () => gen === custodyGen && custodyOnScreen(caseId);
       // The synchronous verify endpoint: it re-reads every artifact, so it can take a while on a
       // case holding disk images. The button stays disabled until it answers.
       fetch(`/cases/${caseId}/custody/verify`)
         .then(r => r.ok ? r.json() : null)
         .then(d => {
-          if (!custodyOnScreen(caseId)) return; // #2904: the analyst switched case meanwhile
+          if (!live()) return;
           if (!d) { if (msg) msg.textContent = "Verification unavailable."; return; }
           custodyFailedPaths = new Set((d.mismatches || []).map(m => m.artifactPath));
           custodyVerifiedAt = new Date().toISOString();
@@ -151,8 +158,8 @@
           }
           renderCustody();
         })
-        .catch(() => { if (msg && custodyOnScreen(caseId)) msg.textContent = "Verification failed to run."; })
-        .finally(() => { if (custodyOnScreen(caseId)) verifyBtn.disabled = false; });
+        .catch(() => { if (msg && live()) msg.textContent = "Verification failed to run."; })
+        .finally(() => { if (live()) verifyBtn.disabled = false; });
     });
   }
 

@@ -178,6 +178,9 @@
   let hdCase = null;
   let hdLoaded = false;
   let hdSeq = 0;
+  // #2929: the merge / dismiss / undo generation. It moves only when the owner changes (a cancel
+  // included), never on a same-case reload, so an answer sent before a cancel and a reopen paints nothing.
+  let hdGen = 0;
   function hdOnScreen(caseId) {
     const el = document.getElementById("caseId");
     return !el || typeof el.value !== "string" || el.value.trim() === caseId;
@@ -188,6 +191,7 @@
   function onHdReset(caseId) {
     if (caseId !== null) return;
     hdSeq++;
+    hdGen++;
     hdCase = null;
     hdLoaded = false;
     pending = [];
@@ -210,6 +214,7 @@
         fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates/dismissed`),
       ]);
       if (hdCase !== caseId) {
+        hdGen++;
         hdCase = caseId;
         hdLoaded = false;
         pending = [];
@@ -244,7 +249,13 @@
     }
   }
 
+  // #2900/#2929: an answer paints only for the case and generation the click was made in.
+  function hdActionLive(caseId) {
+    const gen = hdGen;
+    return () => gen === hdGen && hdCase === caseId && hdOnScreen(caseId);
+  }
   async function resolve(caseId, action, canonical, other) {
+    const live = hdActionLive(caseId);
     try {
       const r = await fetch(
         `/cases/${encodeURIComponent(caseId)}/host-duplicates/${action}`,
@@ -256,7 +267,7 @@
       );
       if (!r.ok) return;
       const d = await r.json();
-      if (hdCase !== caseId || !hdOnScreen(caseId)) return; // #2900: the analyst switched case meanwhile
+      if (!live()) return; // the analyst switched case, or cancelled and reopened it, meanwhile
       pending = d.pending || [];
       paint();
       // Resolving the last pair lifts the gate and the server kicks the held run — but that kick
@@ -272,6 +283,7 @@
   // #1170: undo never kicks a resynthesis — re-arming the gate (if it was a blocking pair) is the
   // correct, expected outcome of an explicit "reconsider this" action, not a resume.
   async function undoDismiss(caseId, canonical, other) {
+    const live = hdActionLive(caseId);
     try {
       const r = await fetch(
         `/cases/${encodeURIComponent(caseId)}/host-duplicates/dismiss`,
@@ -283,7 +295,7 @@
       );
       if (!r.ok) return;
       const d = await r.json();
-      if (hdCase !== caseId || !hdOnScreen(caseId)) return; // #2900
+      if (!live()) return;
       dismissed = d.dismissed || [];
       pending = d.pending || [];
       paint();

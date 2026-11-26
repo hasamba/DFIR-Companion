@@ -5,7 +5,7 @@
 export interface Pending {
   url: string;
   init: { method?: string; body?: string } | undefined;
-  answer(body: unknown, ok?: boolean): void;
+  answer(body: unknown, ok?: boolean, status?: number): void;
   fail(): void;
 }
 
@@ -23,9 +23,9 @@ export interface FakeEl {
   dataset: Record<string, string>;
   hidden?: boolean;
   children: unknown[];
-  addEventListener(type?: string, fn?: () => void): void;
-  /** Runs the listeners added for `type` (a click on a button the module built). */
-  fire(type: string): void;
+  addEventListener(type?: string, fn?: (evt?: unknown) => void): void;
+  /** Runs the listeners added for `type` (a click on a button the module built), with `evt` if given. */
+  fire(type: string, evt?: unknown): void;
   setAttribute(name: string, value: string): void;
   removeAttribute(): void;
   appendChild(child: unknown): unknown;
@@ -47,7 +47,7 @@ export function fakePage(caseId = "CASE-A") {
   const el = (id: string): FakeEl => {
     let e = els.get(id);
     if (!e) {
-      const listeners: Record<string, (() => void)[]> = {};
+      const listeners: Record<string, ((evt?: unknown) => void)[]> = {};
       const made: FakeEl = {
         id,
         value: "",
@@ -64,7 +64,7 @@ export function fakePage(caseId = "CASE-A") {
         addEventListener: (type, fn) => {
           if (type && fn) (listeners[type] ??= []).push(fn);
         },
-        fire: (type) => (listeners[type] ?? []).forEach((fn) => fn()),
+        fire: (type, evt) => (listeners[type] ?? []).forEach((fn) => fn(evt)),
         setAttribute: (name, value) => {
           if (name.startsWith("data-")) made.dataset[name.slice(5)] = value;
         },
@@ -107,10 +107,10 @@ export function fakePage(caseId = "CASE-A") {
       requests.push({
         url,
         init,
-        answer: (body, ok = true) =>
+        answer: (body, ok = true, status = ok ? 200 : 500) =>
           resolve({
             ok,
-            status: ok ? 200 : 500,
+            status,
             headers: { get: () => null },
             json: async () => body,
           }),
