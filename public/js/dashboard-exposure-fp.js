@@ -93,6 +93,7 @@
     el.innerHTML = `<div data-safe-style="color:var(--text-muted);font-size:12px">${checked} · Providers: ${esc(providers)}<br>${targetLine}</div>${rows}${errs}`;
   }
   function loadCustomerExposure(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("customerExposure", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/customer-exposure`)
       .then((r) => r.json())
       .then(renderCustomerExposure)

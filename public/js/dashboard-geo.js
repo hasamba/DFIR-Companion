@@ -37,6 +37,7 @@
   const GEO_TILE_URL = "/geo-tiles/{z}/{x}/{y}.png";
 
   function loadGeoMap(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("geoMap", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/geo-map`).then(r => r.json()).then(d => {
       geoMapData = (d && typeof d === "object" && Array.isArray(d.markers)) ? d : null;
       renderGeoView();

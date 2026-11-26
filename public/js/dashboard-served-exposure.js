@@ -141,6 +141,7 @@
     status = "loading";
     renderServedExposure();
     const gen = ++loadGen;
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("servedExposure", caseId)) return; // #2854 hidden: load on reveal (after the case-switch reset above)
     fetch(`/cases/${encodeURIComponent(caseId)}/served-exposure`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);

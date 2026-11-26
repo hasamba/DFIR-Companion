@@ -1,0 +1,315 @@
+// Hidden sections load when they are shown (#2854).
+//
+// A case open used to fetch every panel, and every live `state` push re-derived ~20 of them, whether
+// or not the analyst could see them. The default "Now" view lists two sections, so most of those
+// whole-case reads (10-60 s each on a large case) were for panels nobody was looking at. Now a HEAVY
+// panel whose section the active view profile or the section-visibility settings hide is skipped,
+// remembered as pending, and loaded once when its section is shown again.
+//
+// "Shown" is the analyst's layout: the stored preference (isSectionVisible) or this page load's
+// palette reveal (isSectionRevealed). It is NOT the data gate (data-gate-open): a data-gated panel's
+// own loader is what opens its gate, so waiting for the gate would never load it.
+//
+// FAILS OPEN. If the section-visibility functions are missing or throw, every panel counts as
+// shown and loads as before. A missing module may cost the saving, never a panel.
+//
+// Every reveal path ends in applySectionsVis() (view switch, Settings save, palette reveal, a
+// panel's own self-reveal, every render), and that calls flushRevealed() below.
+//
+// THE PREVIOUS CASE'S CONTENT. A hidden panel keeps whatever it last drew. If that was another case,
+// the section is masked (data-panel-stale, styled in dashboard-sections.css) until a load for THIS
+// case has answered and painted. The reveal load is tracked request by request — every request its
+// loader makes, for every loader in the section — so a panel built from two answers, or a section
+// holding two panels (sec-d3fend), stays masked until all of them are in. A failed answer keeps the
+// mask and says so instead of exposing the old case.
+(function () {
+  "use strict";
+
+  // Deferred panels: key (as in CASE_PANEL_LOADERS) -> [section id, loader global]. Only heavy
+  // reads whose data nothing outside their own section reads. The eager ones and why are listed in
+  // the #2854 plan: the cockpit (default view), the asset graph (timeline host facet), the four IOC
+  // provenance reads (IOC rows, corroboration, finding details), hypotheses and Second Look (their
+  // loaders carry case-switch cleanup), duplicate hosts (its gate forces the section open) and the
+  // super-timeline (not a gated heavy read).
+  const PANELS = {
+    campaignScope: ["sec-campaign-scope", "loadCampaignScope"],
+    servedExposure: ["sec-served-exposure", "loadServedExposure"],
+    kerberoastChain: ["sec-kerberoast-chain", "loadKerberoastChain"],
+    tlsGraph: ["sec-tls-graph", "loadTlsGraph"],
+    sensitiveAccess: ["sec-sensitive-access", "loadSensitiveAccess"],
+    hostScope: ["sec-host-scope", "loadHostScope"],
+    collectionGenerationDiff: ["sec-collection-generation-diff", "loadCollectionGenerationDiff"],
+    loginGraph: ["sec-login-graph", "loadLoginGraph"],
+    evidenceGraph: ["sec-evidence", "loadEvidenceGraph"],
+    phases: ["sec-phases", "loadPhases"],
+    timelineGaps: ["sec-gaps", "loadTimelineGaps"],
+    evidenceGaps: ["sec-evidence-gaps", "loadEvidenceGaps"],
+    cloudCoverage: ["sec-cloud-coverage", "loadCloudCoverage"],
+    beacons: ["sec-beacons", "loadBeacons"],
+    anomalies: ["sec-anomalies", "loadAnomalies"],
+    sessions: ["sec-sessions", "loadSessions"],
+    adversaryHints: ["sec-adversary", "loadAdversaryHints"],
+    playbookMatch: ["sec-playbook-match", "loadPlaybookMatch"],
+    hostRanking: ["sec-hostranking", "loadHostRanking"],
+    d3fend: ["sec-d3fend", "loadD3fend"],
+    attackMitigations: ["sec-d3fend", "loadAttackMitigations"],
+    compliance: ["sec-compliance", "loadCompliance"],
+    geoMap: ["sec-geomap", "loadGeoMap"],
+    swimlane: ["sec-swimlane", "loadSwimlane"],
+    customerExposure: ["sec-exposure", "loadCustomerExposure"],
+    relatedCases: ["sec-related-cases", "loadRelatedCases"],
+  };
+  const LOADING = "Loading this case's data…";
+  const FAILED = "This panel could not be loaded for this case. It retries on the next update.";
+
+  const pending = new Set(); // keys skipped while hidden, loaded on reveal
+  const loadedOnPage = new Set(); // sections some load has started for on this page
+  const owner = new Map(); // section -> the case whose tracked load last succeeded in it
+  const sectionGen = new Map(); // section -> generation; a reveal load or a reset moves it on
+  let tracking = null; // the key whose tracked load is running right now (its guard must pass)
+  let flushQueued = false;
+
+  const sectionEl = (id) =>
+    typeof document !== "undefined" && document.getElementById ? document.getElementById(id) : null;
+  function caseOnScreen() {
+    const el = sectionEl("caseId");
+    return el ? String(el.value || "").trim() : "";
+  }
+  function isShown(id) {
+    if (typeof isSectionVisible !== "function" || typeof loadSectionsVis !== "function") return true;
+    try {
+      if (isSectionVisible(id, loadSectionsVis())) return true;
+      return typeof isSectionRevealed === "function" && !!isSectionRevealed(id);
+    } catch {
+      return true;
+    }
+  }
+  function setMask(id, text) {
+    const el = sectionEl(id);
+    if (el && el.dataset) el.dataset.panelStale = text;
+  }
+  function clearMask(id) {
+    const el = sectionEl(id);
+    if (el && el.dataset) delete el.dataset.panelStale;
+  }
+  function isMasked(id) {
+    const el = sectionEl(id);
+    return !!(el && el.dataset && el.dataset.panelStale !== undefined);
+  }
+  function queueFlush() {
+    if (flushQueued) return;
+    flushQueued = true;
+    Promise.resolve().then(flushRevealed);
+  }
+
+  // Hidden: remember it, and mask the section if what it shows may be another case's.
+  function defer(key, sec, caseId) {
+    pending.add(key);
+    if (loadedOnPage.has(sec) && owner.get(sec) !== caseId) setMask(sec, LOADING);
+  }
+
+  // The first line of a deferred loader (after its case-switch cleanup). True = do not fetch.
+  function skip(key, caseId) {
+    const entry = PANELS[key];
+    if (!entry) return false;
+    const sec = entry[0];
+    const id = String(caseId || "").trim();
+    if (tracking === key) {
+      loadedOnPage.add(sec);
+      return false;
+    }
+    if (!isShown(sec)) {
+      defer(key, sec, id);
+      return true;
+    }
+    // Shown but masked: only a tracked load may lift the mask, so this call becomes one.
+    if (isMasked(sec)) {
+      pending.add(key);
+      queueFlush();
+      return true;
+    }
+    pending.delete(key); // this load supersedes a queued reveal
+    loadedOnPage.add(sec);
+    // An untracked load for another case: nobody knows whether it will paint, so the section's
+    // owner is unknown from here on.
+    if (owner.get(sec) !== id) owner.delete(sec);
+    return false;
+  }
+
+  // The case-open fan-out keeps only the panels that will really load, so the strip's "N of M
+  // panels loaded" counts real loads. A dropped panel loads when its section is shown.
+  function eagerOnly(entries) {
+    const caseId = caseOnScreen();
+    return (Array.isArray(entries) ? entries : []).filter((entry) => {
+      const def = PANELS[entry[0]];
+      if (!def) return true;
+      if (!isShown(def[0])) {
+        defer(entry[0], def[0], caseId);
+        return false;
+      }
+      if (isMasked(def[0])) {
+        pending.add(entry[0]);
+        queueFlush();
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // ── tracked reveal loads ──────────────────────────────────────────────────────────────────────
+  // One record per section per flush: how many requests are out, whether one failed.
+  function finish(rec) {
+    const done = () => {
+      if (sectionGen.get(rec.sec) !== rec.gen) return; // a newer load or a case switch took over
+      if (!rec.failed) owner.set(rec.sec, rec.caseId);
+      else owner.delete(rec.sec);
+      if (!isMasked(rec.sec)) return;
+      if (rec.failed) setMask(rec.sec, FAILED);
+      else clearMask(rec.sec);
+    };
+    // A macrotask, so the loader's own render (microtasks after its body read) has run first.
+    if (typeof setTimeout === "function") setTimeout(done, 0);
+    else Promise.resolve().then(done);
+  }
+  function requestDone(rec, failed) {
+    if (failed) rec.failed = true;
+    rec.left--;
+    if (rec.sealed && rec.left === 0) finish(rec);
+  }
+  const BODY_READERS = ["json", "text", "blob", "arrayBuffer", "formData"];
+  // A request is done when its body has been read (or, if the loader never reads it, one macrotask
+  // after the answer). A non-OK answer other than 501 ("not configured", which loaders draw as
+  // their reason) is a failure: several loaders keep their old content on an error answer.
+  function watchAnswer(res, rec) {
+    let over = false;
+    const end = (failed) => {
+      if (over) return;
+      over = true;
+      requestDone(rec, failed);
+    };
+    const bad = !!res && res.ok === false && res.status !== 501;
+    if (!res || typeof res !== "object") {
+      end(true);
+      return res;
+    }
+    let backstop = null;
+    if (typeof setTimeout === "function") backstop = setTimeout(() => end(bad), 0);
+    for (const name of BODY_READERS) {
+      const readBody = typeof res[name] === "function" ? res[name] : null;
+      if (!readBody) continue;
+      try {
+        Object.defineProperty(res, name, {
+          configurable: true,
+          writable: true,
+          value: function (...args) {
+            if (backstop !== null) clearTimeout(backstop);
+            const out = readBody.apply(this, args);
+            if (!out || typeof out.then !== "function") {
+              end(bad);
+              return out;
+            }
+            out.then(
+              () => end(bad),
+              () => end(true),
+            );
+            return out;
+          },
+        });
+      } catch {
+        /* a frozen answer: the backstop still ends it */
+      }
+    }
+    if (backstop === null) end(bad);
+    return res;
+  }
+  function runTracked(key, rec, run) {
+    const inner = () => {
+      const before = globalThis.fetch;
+      if (typeof before === "function") {
+        globalThis.fetch = function (...args) {
+          rec.left++;
+          let p;
+          try {
+            p = before.apply(this, args);
+          } catch (err) {
+            requestDone(rec, true);
+            throw err;
+          }
+          if (!p || typeof p.then !== "function") {
+            requestDone(rec, true);
+            return p;
+          }
+          return p.then(
+            (res) => watchAnswer(res, rec),
+            (err) => {
+              requestDone(rec, true);
+              throw err;
+            },
+          );
+        };
+      }
+      tracking = key;
+      try {
+        run();
+      } finally {
+        tracking = null;
+        globalThis.fetch = before;
+      }
+    };
+    const clp = typeof window !== "undefined" ? window.DfirCaseLoadProgress : null;
+    if (clp && typeof clp.runPanelReload === "function") clp.runPanelReload(key, rec.caseId, inner);
+    else inner();
+  }
+
+  // Load every pending panel whose section is shown now, for the case on screen. Cheap when nothing
+  // is pending, which is what it is on almost every render.
+  function flushRevealed() {
+    flushQueued = false;
+    if (!pending.size) return;
+    const caseId = caseOnScreen();
+    if (!caseId) {
+      pending.clear();
+      return;
+    }
+    const due = [...pending].filter((key) => isShown(PANELS[key][0]));
+    const records = new Map();
+    for (const key of due) {
+      pending.delete(key);
+      const [sec, loaderName] = PANELS[key];
+      const loader = globalThis[loaderName];
+      if (typeof loader !== "function") continue;
+      let rec = records.get(sec);
+      if (!rec) {
+        const gen = (sectionGen.get(sec) || 0) + 1;
+        sectionGen.set(sec, gen);
+        rec = { sec, gen, caseId, left: 0, failed: false, sealed: false };
+        records.set(sec, rec);
+      }
+      try {
+        runTracked(key, rec, () => loader(caseId));
+      } catch {
+        rec.failed = true;
+      }
+    }
+    for (const rec of records.values()) {
+      rec.sealed = true;
+      if (rec.left === 0) finish(rec);
+    }
+  }
+
+  // A case switch or a cancelled load: nothing pending survives, and no answer still on its way
+  // may lift a mask. Masks stay — the content under them is still the old case's.
+  function reset() {
+    pending.clear();
+    tracking = null;
+    for (const [sec, gen] of sectionGen) sectionGen.set(sec, gen + 1);
+  }
+
+  window.DfirPanelDefer = {
+    skip,
+    eagerOnly,
+    flushRevealed,
+    reset,
+    panels: () => JSON.parse(JSON.stringify(PANELS)),
+  };
+})();

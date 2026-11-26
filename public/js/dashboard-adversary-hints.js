@@ -31,6 +31,7 @@
   // fetched beside the hints, rendered under them. Absent when there is no matching assertion.
   let gapLeadsData = null;
   function loadAdversaryHints(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("adversaryHints", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/adversary-hints`)
       .then((r) => r.json())
       .then((d) => {

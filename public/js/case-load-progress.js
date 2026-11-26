@@ -713,7 +713,11 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
   window.DfirCaseLoadProgress = {
     panelLanes,
     runPanelReload: panelReloader.run,
-    retirePanelReloads: panelReloader.retire,
+    // #2854: a case switch or a cancelled load also drops the panels deferred while hidden.
+    retirePanelReloads: (caseId) => {
+      panelReloader.retire(caseId);
+      if (window.DfirPanelDefer) window.DfirPanelDefer.reset();
+    },
     createLoadState,
     advanceStage,
     setEventCount,

@@ -166,7 +166,9 @@
       if (!el.classList.contains("kc-empty")) kcSelect(el.dataset.tac);
     },
     applyHostRankingScope: (el) => applyHostRankingScope(),
+    // #2854: through revealSection, so a view-hidden section is shown (and its panel loaded).
     jumpToGaps: (el) => {
+      if (typeof revealSection === "function") return revealSection("sec-gaps");
       const g = document.getElementById("sec-gaps");
       if (g) g.scrollIntoView({ behavior: "smooth" });
     },
@@ -197,6 +199,7 @@
       }
     },
     playbookJumpToGaps: (el) => {
+      if (typeof revealSection === "function") return revealSection("sec-evidence-gaps");
       const g = document.getElementById("sec-evidence-gaps");
       if (g) {
         g.classList.remove("collapsed");

@@ -26,6 +26,7 @@
   let d3fendData = null;
   let d3fendTimer = null;
   function loadD3fend(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("d3fend", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/d3fend-countermeasures`).then(r => r.json()).then(d => {
       d3fendData = (d && typeof d === "object") ? d : null;
       renderD3fend();

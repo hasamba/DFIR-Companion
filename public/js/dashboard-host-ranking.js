@@ -26,6 +26,7 @@
   let hostRankingTimer = null;
   let hostRankingExpanded = null; // "<type>:<name-lowercased>" of the one open row, or null (#237)
   function loadHostRanking(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("hostRanking", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/host-ranking`)
       .then((r) => r.json())
       .then((d) => {

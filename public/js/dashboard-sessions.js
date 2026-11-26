@@ -43,6 +43,7 @@
   const sessionSummaries = new Map();   // sessionId → markdown, for the current segmentation only
 
   function loadSessions(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("sessions", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/sessions`).then(r => r.ok ? r.json() : { sessions: [] }).then(d => {
       const next = Array.isArray(d && d.sessions) ? d.sessions : [];
       // Session ids are POSITIONAL within a segmentation run, so a re-derive can silently reassign

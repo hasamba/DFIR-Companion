@@ -113,6 +113,7 @@
     // Unknown or off: no request. An unknown flag is resolved by setCrossCaseCapability, which
     // loads the case on screen once /health says the pivot is on.
     if (crossCaseEnabled !== true) return;
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("relatedCases", caseId)) return; // #2854 hidden: load on reveal (after the case-switch reset above)
     try {
       const r = await fetch(`/cases/${encodeURIComponent(id)}/related`);
       if (!r.ok) return;

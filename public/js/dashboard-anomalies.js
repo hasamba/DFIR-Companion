@@ -28,6 +28,7 @@
   let anomaliesData = null;
   let anomaliesTimer = null;
   function loadAnomalies(caseId) {
+    if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("anomalies", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/anomalies`).then(r => r.json()).then(d => {
       anomaliesData = (d && typeof d === "object") ? d : null;
       renderAnomalies();

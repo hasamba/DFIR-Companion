@@ -471,7 +471,7 @@
       // and connecting to a different case answer immediately instead of queueing behind the
       // fan-out. See runPanelLoaders for the measurements.
       panelApi.runPanelLoaders(
-        CASE_PANEL_LOADERS,
+        (window.DfirPanelDefer || { eagerOnly: (l) => l }).eagerOnly(CASE_PANEL_LOADERS), // #2854
         (tally) => {
           if (panelGen === _panelLoadGen) panelApi.paintPanelStrip(tally);
         },

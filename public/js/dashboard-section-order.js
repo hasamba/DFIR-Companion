@@ -134,6 +134,8 @@
             ? ""
             : "none";
     });
+    // #2854: a heavy panel skipped while its section was hidden loads now that it is shown.
+    if (window.DfirPanelDefer) window.DfirPanelDefer.flushRevealed();
   }
 
   function renderSecChecks() {
@@ -202,6 +204,7 @@
   window.applySecOrder = applySecOrder;
   window.applySectionsVis = applySectionsVis;
   window.markSectionRevealed = markSectionRevealed;
+  window.isSectionRevealed = (id) => sessionRevealed.has(id); // #2854 js/dashboard-panel-defer.js
   window.clearSectionReveals = clearSectionReveals;
   window.renderSecChecks = renderSecChecks;
 })();

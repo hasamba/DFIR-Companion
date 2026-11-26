@@ -1369,8 +1369,8 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     expect(html).toContain("const CASE_PANEL_LOADERS = [");
     // Whitespace-tolerant for the same reason as the DELETE call above: prettier wraps this call
     // now that it carries options, and an exact-spacing assertion would fail for a reformat
-    // rather than for a behaviour change.
-    expect(html).toMatch(/runPanelLoaders\(\s*CASE_PANEL_LOADERS/);
+    // rather than for a behaviour change. #2854: hidden sections' heavy panels are filtered out first.
+    expect(html).toMatch(/runPanelLoaders\(\s*(?:[^\n]*\.eagerOnly\()?CASE_PANEL_LOADERS/);
     // Generation-guarded like the state load (#174): an abandoned case must not paint the strip
     // for the case now on screen.
     expect(html).toMatch(/panelGen === _panelLoadGen/);
@@ -1383,11 +1383,13 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     // The panels run on the SAME abort generation as state/lifecycle, so dismissing the overlay
     // or switching cases cancels them too. Without this the ~60 requests outlived the case they
     // belonged to and went on occupying the browser's connection pool.
-    expect(html).toMatch(/runPanelLoaders\(\s*CASE_PANEL_LOADERS[\s\S]{0,400}signal: loadSignal/);
+    expect(html).toMatch(
+      /runPanelLoaders\(\s*(?:[^\n]*\.eagerOnly\()?CASE_PANEL_LOADERS[\s\S]{0,400}signal: loadSignal/,
+    );
     // And they are capped below the six-connection HTTP/1.1 limit, so lanes stay free for
     // whatever the analyst does next while a big case loads.
     expect(html).toMatch(
-      /runPanelLoaders\(\s*CASE_PANEL_LOADERS[\s\S]{0,400}concurrency: PANEL_LOAD_CONCURRENCY/,
+      /runPanelLoaders\(\s*(?:[^\n]*\.eagerOnly\()?CASE_PANEL_LOADERS[\s\S]{0,400}concurrency: PANEL_LOAD_CONCURRENCY/,
     );
     expect(html).toMatch(/const PANEL_LOAD_CONCURRENCY = [1-5];/);
   });
