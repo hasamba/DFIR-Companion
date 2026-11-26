@@ -17,6 +17,7 @@
  * twice; a duplicate note is worse than a missing one).
  */
 import type { CloudCoverageDraft, CloudCoverageStore } from "../analysis/cloudCoverage.js";
+import type { TagOutcome } from "../analysis/gradeMark.js";
 import type { WeaknessFile } from "../analysis/awsAccountWeakness.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { ImportBaseline } from "../analysis/importBaseline.js";
@@ -172,8 +173,8 @@ async function settleBatch(deps: BatchTailDeps, a: BatchTailArgs): Promise<Settl
   const base = importSettleDeps(deps.settleDeps);
   if (!base) return null;
   const pending = a.collect.superPending;
-  const tag = async (caseId: string, rows: ForensicEvent[]): Promise<void> =>
-    base.autoTagImported(caseId, [...pending.splice(0), ...rows]);
+  const tag = async (caseId: string, rows: ForensicEvent[]): Promise<TagOutcome> =>
+    base.autoTagImported(caseId, [...pending.splice(0), ...rows]); // its outcome reaches the settle (#2891)
   const importBatchId = randomUUID();
   try {
     return await settleForensicImport({ ...base, autoTagImported: tag }, a.caseId, a.baseline, a.label, {

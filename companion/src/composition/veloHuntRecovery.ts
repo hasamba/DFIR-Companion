@@ -39,6 +39,7 @@
  * before that field existed has no id: only its unstamped rows are selected.
  */
 import { randomUUID } from "node:crypto";
+import type { DemoteOptions, TagOutcome } from "../analysis/gradeMark.js";
 import type { AppOptions } from "./appOptions.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { ALL_CASES, type ImportLock } from "../analysis/importLock.js";
@@ -51,8 +52,8 @@ export interface HuntRecoveryDeps {
   /** `runPastHolds`: start-up holds imports into the case until THIS settle has run (see below). */
   importLock: Pick<ImportLock, "runPastHolds">;
   runStateExclusive?: RunExclusive;
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
-  demoteForensicForCase: (caseId: string) => Promise<unknown>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  demoteForensicForCase: (caseId: string, opts?: DemoteOptions) => Promise<unknown>;
 }
 
 /** The longest a start-up hold keeps a case's imports waiting; the settle itself is not cut off. */

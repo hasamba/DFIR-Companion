@@ -21,13 +21,20 @@
  *
  * In routes/ (not composition/) because both route layers and composition call it, and routes may
  * not import composition. It takes no lock: every caller already holds the case's import section,
- * which is not re-entrant. The restart window (a crash between stamp and tag) is NOT covered here.
+ * which is not re-entrant. The restart window (a crash between stamp and tag) is covered by the grade
+ * mark and start-up recovery instead (#2891, analysis/gradeMark.ts, composition/ungradedRecovery.ts).
  */
 import { randomUUID } from "node:crypto";
+import type { DemoteOptions, TagOutcome } from "../analysis/gradeMark.js";
 import { SCAN_PAGE_ROWS, type ForensicRowStore } from "../analysis/forensicRows.js";
 import { isManualId } from "../analysis/manualId.js";
 import { getServerLogger } from "../logging/serverLogger.js";
-import { carryAndStampPaged, dualWriteAndTagPaged, type DualWriteDeps } from "./importSettlePaged.js";
+import {
+  carryAndStampPaged,
+  clearGradePending,
+  dualWriteAndTagPaged,
+  type DualWriteDeps,
+} from "./importSettlePaged.js";
 import { runUnlocked, type RunExclusive } from "./importSettleRows.js";
 import {
   failedAfterGrading,
@@ -43,9 +50,11 @@ export interface RowRecoveryDeps {
   runStateExclusive?: RunExclusive;
   superTimelineStore?: DualWriteDeps["superTimelineStore"];
   onSuperTimeline?: (caseId: string) => void;
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
-  /** The case-wide forensic demote (either flavour; its result is not read). */
-  demote: (caseId: string) => Promise<unknown>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /** The case-wide forensic demote (either flavour; its result is not read). `graded`: see SettleDeps. */
+  demote: (caseId: string, opts?: DemoteOptions) => Promise<unknown>;
+  /** False: write no grade mark (a Watson paste, SettleDeps.markGradePending). */
+  markGradePending?: boolean;
 }
 
 /** True for a row source (a stored name) that belongs to the import being recovered. */
@@ -93,14 +102,31 @@ export async function settleUnsettledRows(
       downgrade: !!superStore,
       importBatchId: batchId, // the same id: a second failure leaves the rows findable (#2888)
       importedAt, // and the same instant: the recovery does not rewrite when the case received them
+      gradePending: !!superStore && deps.markGradePending !== false, // #2891, as the settle
     }),
   );
-  if (superStore && stamped.addedIds.length) {
-    const dualDeps = { ...deps, stateStore: store, runStateExclusive: lock };
-    await dualWriteAndTagPaged(dualDeps, caseId, stamped.addedIds);
-  }
-  await deps.demote(caseId);
+  await gradeStampedRows(deps, caseId, stamped.addedIds);
   return stamped.addedIds.length;
+}
+
+/**
+ * The seam's back half for rows already stamped: dual-write → tagger → demote → remove the grade mark
+ * from the survivors the tagger finished on (#2891). Takes no import lock (the caller holds the section).
+ */
+export async function gradeStampedRows(
+  deps: RowRecoveryDeps,
+  caseId: string,
+  ids: readonly string[],
+): Promise<void> {
+  const store = deps.stateStore;
+  const lock = deps.runStateExclusive ?? runUnlocked;
+  let gradedIds: string[] = [];
+  if (deps.superTimelineStore && ids.length) {
+    const dualDeps = { ...deps, stateStore: store, runStateExclusive: lock };
+    gradedIds = (await dualWriteAndTagPaged(dualDeps, caseId, ids)).gradedIds;
+  }
+  await deps.demote(caseId, { graded: new Set(gradedIds) });
+  await clearGradePending(store, lock, caseId, gradedIds);
 }
 
 /** The recovery deps from the deps an import already hands settleForensicImport. */
@@ -113,6 +139,7 @@ export function recoveryDepsFromSettle(d: SettleDeps): RowRecoveryDeps {
     onSuperTimeline: d.onSuperTimeline,
     autoTagImported: d.autoTagImported,
     demote,
+    ...(d.markGradePending === false ? { markGradePending: false } : {}),
   };
 }
 

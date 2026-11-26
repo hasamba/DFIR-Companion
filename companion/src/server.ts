@@ -50,6 +50,7 @@ import { registerAllRoutes } from "./composition/routeRegistry.js";
 import { createRuntimeStores } from "./composition/runtimeStores.js";
 import { startMaintenanceTasks, startPostListenTasks } from "./composition/maintenanceTasks.js";
 import { cloudCollectStartupRecoverers } from "./composition/cloudCollectRecovery.js";
+import { ungradedRowRecovery } from "./composition/ungradedRecovery.js";
 import { buildAiRuntime } from "./composition/aiRuntime.js";
 import { buildBulkImportSink } from "./composition/bulkImportSink.js";
 import { buildAppOptions } from "./composition/appWiring.js";
@@ -395,6 +396,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // app.locals is how the host reaches the outbound transports (and the Telegram mirror) to stop them.
   Object.assign(app.locals, registerAllRoutes(app, ctx));
   app.locals.captureAnalysis = analysis; // shutdown cancels its pending host-duplicate checks (#2584)
+  app.locals.regradeUngraded = ungradedRowRecovery(ctx); // #2891: run once the server listens (startServer)
   app.locals.watsonReactor = createAppWatsonReactor(ctx, analysis.synthesisBusy); // spec §4.6, one per app
   if (app.locals.watsonReactor) options.onWatsonReactorReady?.(app.locals.watsonReactor);
   app.locals.watsonFlowWatcher = createAppWatsonFlowWatcher(ctx, (id) => app.locals.watsonReactor?.wake(id));
@@ -664,9 +666,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     writerGuard?.release();
   });
 
-  // The three best-effort startup tasks that must not run until the server is actually up: demo
-  // seeding, the Velociraptor inventory snapshot, and the update check. See
-  // composition/maintenanceTasks.ts.
+  // The best-effort startup tasks that must not run until the server is up (composition/maintenanceTasks.ts).
   startPostListenTasks({
     store,
     demoMode,
@@ -680,6 +680,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     cloudCollectRecoverers: cloudCollectStartupRecoverers(store, logLine),
     // #2408: an SO-CRATES analysis still running when the server stopped is resumed.
     socratesRecovery: scheduledSocratesRecovery,
+    regradeUngraded: app.locals.regradeUngraded, // #2891: rows a crash or a failed tagger left waiting
   });
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.

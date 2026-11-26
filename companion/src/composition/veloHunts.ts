@@ -23,6 +23,7 @@
  * and the hunt's resultRows froze at the previous value forever. It read as flake; it was a drop.
  */
 import type { CaseStore } from "../storage/caseStore.js";
+import type { DemoteOptions, TagOutcome } from "../analysis/gradeMark.js";
 import { CaseKeyedMap } from "../storage/caseKeyedState.js";
 import { runInCaseScope } from "../storage/caseIncarnation.js";
 import type { AppOptions } from "./appOptions.js";
@@ -101,8 +102,8 @@ export interface VeloHuntsDeps {
   ) => Promise<{ storedName: string; importedAt: string; seq: number }>;
   dispatchImport: (kind: string, caseId: string, text: string, base: ImportBase) => Promise<unknown>;
   resolveImportKind: (filename: string, text: string, debug?: ImportDebugRecorder) => string;
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
-  demoteForensicForCase: (caseId: string) => Promise<InvestigationState>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  demoteForensicForCase: (caseId: string, opts?: DemoteOptions) => Promise<InvestigationState>;
   getControl: (caseId: string) => Promise<AiControl>;
   pushImportCheckpoint: RouteContext["pushImportCheckpoint"];
   resynthesizeInBackground: (caseId: string) => void;

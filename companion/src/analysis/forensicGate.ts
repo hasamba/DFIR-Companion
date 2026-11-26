@@ -30,11 +30,13 @@ export function demoteBelowSeverity(
   // id only the manual-entry builders mint, never by `sources`, which an import can fill freely.
   // A coverage note the merge built stays too (#2497): it tells synthesis that "nothing found" is
   // not "absent", and a High gate must not silence that.
-  for (const e of events) (exempt(e) || SEVERITY_RANK[e.severity] >= floor ? kept : demoted).push(e);
+  for (const e of events) (gateExempt(e) || SEVERITY_RANK[e.severity] >= floor ? kept : demoted).push(e);
   return { kept, demoted };
 }
 
-const exempt = (e: ForensicEvent): boolean => !!e.promotedAt || isManualId(e.id) || isCoverageNote(e);
+/** Out of the gate's reach whatever its severity (above); start-up re-grade never re-tags these (#2891). */
+export const gateExempt = (e: ForensicEvent): boolean =>
+  !!e.promotedAt || isManualId(e.id) || isCoverageNote(e);
 
 // per-case override ?? global env ?? "Low". An unrecognized env value falls back to "Low".
 export function resolveForensicMinSeverity(

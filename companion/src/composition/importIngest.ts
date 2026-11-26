@@ -21,6 +21,7 @@
  * counts what actually entered the forensic timeline, not what was parsed.
  */
 import { statusFromStore, withIngestAdmission } from "../analysis/caseIngestAdmission.js";
+import type { DemoteOptions, TagOutcome } from "../analysis/gradeMark.js";
 import { Buffer } from "node:buffer";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
@@ -65,7 +66,7 @@ export interface ImportIngestDeps {
   recordImporterRun: (id: string, patch: Omit<ImporterRunStat, "lastRunAt">) => void;
   redactErr: (err: unknown) => string;
   /** Content-based tagger run over just the events an import added (see analysis/taggerAuto.ts). */
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
   getControl: (caseId: string) => Promise<AiControl>;
   applyWhitelistToCase: (caseId: string) => Promise<{ matched: number; added: number }>;
   applyNsrlToCase: (caseId: string) => Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;
@@ -114,9 +115,9 @@ export interface ImportIngest {
     rows?: number,
   ): Promise<{ storedName: string; importedAt: string; seq: number }>;
   /** Move sub-threshold events out of the forensic timeline (they live on in the super-timeline). */
-  demoteForensicForCase(caseId: string): Promise<InvestigationState>;
+  demoteForensicForCase(caseId: string, opts?: DemoteOptions): Promise<InvestigationState>;
   /** The same demote, returning only the rows it removed — no load of the case (#1874). */
-  demoteForensic(caseId: string): Promise<ForensicEvent[]>;
+  demoteForensic(caseId: string, opts?: DemoteOptions): Promise<ForensicEvent[]>;
   ingestStreamed(
     caseId: string,
     kind: string,

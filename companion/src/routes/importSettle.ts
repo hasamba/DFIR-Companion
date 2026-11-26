@@ -1,4 +1,5 @@
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
+import type { DemoteOptions, TagOutcome } from "../analysis/gradeMark.js";
 import type { SuperEviction, SuperRelink } from "../analysis/superTimelineStore.js";
 import type { TimelineDiff } from "../analysis/timelineDiff.js";
 import type { IocsDiff } from "../analysis/iocsDiff.js";
@@ -12,7 +13,12 @@ import { flagLookalikeCandidates } from "./importSettleLookalike.js";
 import { nameCallersScoped } from "./importSettleNames.js";
 import { principalLedgerChanged } from "../analysis/principalNames.js";
 import { runUnlocked, settleScope, type RunExclusive } from "./importSettleRows.js";
-import { carryAndStampPaged, dualWriteAndTagPaged, huntSettlePaged } from "./importSettlePaged.js";
+import {
+  carryAndStampPaged,
+  clearGradePending,
+  dualWriteAndTagPaged,
+  huntSettlePaged,
+} from "./importSettlePaged.js";
 import { relinkSuperAfterSettle } from "./importSettleRelinkSuper.js";
 import {
   rehomeSuperTimeline,
@@ -84,11 +90,19 @@ export interface SettleDeps {
   onStateChanged?: (caseId: string) => void;
   /** Legacy callers that only wire a state broadcaster: the settle loads the case once for it. */
   onState?: (state: InvestigationState) => void;
-  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
-  /** The forensic gate's demote; returns the rows it removed (composition/importDemote.ts). */
-  demoteForensic?: (caseId: string) => Promise<ForensicEvent[]>;
+  autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<TagOutcome>;
+  /**
+   * The forensic gate's demote; returns the rows it removed (composition/importDemote.ts). `graded`:
+   * the rows the tagger just finished on — the only rows carrying the grade mark it may move (#2891).
+   */
+  demoteForensic?: (caseId: string, opts?: DemoteOptions) => Promise<ForensicEvent[]>;
   /** The same demote returning the whole case afterwards — legacy callers only. */
-  demoteForensicForCase?: (caseId: string) => Promise<InvestigationState>;
+  demoteForensicForCase?: (caseId: string, opts?: DemoteOptions) => Promise<InvestigationState>;
+  /**
+   * False: write no grade mark (#2891). A Watson paste's tagger HOLDS its raises as proposals, so a
+   * start-up re-grade with the plain tagger would apply a raise the analyst never approved.
+   */
+  markGradePending?: boolean;
 }
 
 export interface SettledImport {
@@ -172,6 +186,8 @@ export async function settleForensicImport(
       capturedAt: baseline.capturedAt,
       downgrade: !!deps.superTimelineStore,
       importBatchId: opts.importBatchId,
+      // #2891: the mark goes on with the stamp only when the tagger runs below (a super store is wired).
+      gradePending: !!deps.superTimelineStore && deps.markGradePending !== false,
     }),
   );
   const addedIds = stamped.addedIds;
@@ -194,8 +210,10 @@ export async function settleForensicImport(
   let superTimelineAddedCount = 0;
   let superTimelineEvicted: SuperEviction | undefined;
   let relinkCandidates: Awaited<ReturnType<typeof dualWriteAndTagPaged>>["relinkCandidates"] = [];
+  let gradedIds: string[] = []; // #2891: the rows the tagger finished on
   if (deps.superTimelineStore && addedIds.length) {
     const dual = await dualWriteAndTagPaged({ ...deps, runStateExclusive: lock }, caseId, addedIds);
+    gradedIds = dual.gradedIds;
     superTimelineAddedCount = dual.retained;
     superTimelineEvicted = dual.evicted;
     relinkCandidates = dual.relinkCandidates;
@@ -233,8 +251,11 @@ export async function settleForensicImport(
     getServerLogger().warn(`[hunt] ${caseId}: grading skipped: ${e.message}`, { caseId }),
   );
   changed ||= hunt > 0;
-  const demoted = await demote(deps, caseId);
+  const demoted = await demote(deps, caseId, { graded: new Set(gradedIds) });
   changed ||= demoted.removed > 0;
+  // #2891: the survivors the tagger finished on lose their mark — still unfinished grading, so a failure
+  // here is recovered like any other before it (the rows keep the mark, and a re-grade finds them).
+  await clearGradePending(store, lock, caseId, gradedIds);
   // Every row is stamped, tagged and demoted from here on: a failure below is not unfinished grading,
   // and a recovery that re-ran it would re-stamp the rows and demote again (review of #2890).
   try {
@@ -302,11 +323,12 @@ export const failedAfterGrading = (err: unknown): boolean => err instanceof Sett
 async function demote(
   deps: SettleDeps,
   caseId: string,
+  opts: DemoteOptions,
 ): Promise<{ removed: number; state?: InvestigationState }> {
-  if (deps.demoteForensic) return { removed: (await deps.demoteForensic(caseId)).length };
+  if (deps.demoteForensic) return { removed: (await deps.demoteForensic(caseId, opts)).length };
   if (!deps.demoteForensicForCase) return { removed: 0 };
   // A legacy demote reports the state, not what it removed; the diff above still counts removals.
-  return { removed: 0, state: await deps.demoteForensicForCase(caseId) };
+  return { removed: 0, state: await deps.demoteForensicForCase(caseId, opts) };
 }
 
 // One broadcast per settle. A legacy caller with only a state broadcaster gets one load for it.

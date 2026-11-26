@@ -161,6 +161,21 @@ function forensicRowsOutsideSeverities(dbPath, keep) {
   }
 }
 
+// The forensic rows still waiting for the content tagger (#2891, analysis/gradeMark.ts). One query, so
+// start-up recovery can ask every case without paging its rows through JavaScript.
+function forensicRowsGradePending(dbPath) {
+  if (!existsSync(dbPath)) return [];
+  const db = openDatabase(dbPath);
+  try {
+    return db.prepare(
+      "SELECT row_id, version, payload FROM entities WHERE kind='forensicTimeline' " +
+      "AND json_extract(payload, '$.gradePending') IS NOT NULL ORDER BY ordinal"
+    ).all().map(toRow);
+  } finally {
+    db.close();
+  }
+}
+
 function distinctHosts(dbPath, kind) {
   if (!existsSync(dbPath)) return [];
   const db = openDatabase(dbPath);
@@ -366,6 +381,7 @@ function dispatchRows(message) {
     case "disarmImportJournal": return disarmImportJournal(message.dbPath, message.token);
     case "entityRows": return entityRows(message.dbPath, message.kind, message.ids, message.rowIds);
     case "forensicRowsOutsideSeverities": return forensicRowsOutsideSeverities(message.dbPath, message.keep);
+    case "forensicRowsGradePending": return forensicRowsGradePending(message.dbPath);
     case "distinctHosts": return distinctHosts(message.dbPath, message.kind);
     case "forensicHostsInOrder": return forensicHostsInOrder(message.dbPath);
     case "updateEntityRows": return updateEntityRows(message.dbPath, message.kind, message.rows);

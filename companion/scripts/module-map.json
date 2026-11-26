@@ -671,6 +671,7 @@
     "iocJournal.ts": "storage",
     "iocJournalDiff.ts": "analysis/ingest",
     "importBaseline.ts": "analysis/ingest",
+    "gradeMark.ts": "analysis/ingest",
     "importerSpec.ts": "analysis/ingest",
     "importerStore.ts": "analysis/ingest",
     "incidentTypeStore.ts": "analysis/intel",

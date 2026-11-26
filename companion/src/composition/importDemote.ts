@@ -1,6 +1,8 @@
 import type { AppOptions } from "./appOptions.js";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity, SEVERITY_RANK } from "../analysis/forensicGate.js";
+import { isGradePending, withoutGradePending, type DemoteOptions } from "../analysis/gradeMark.js";
+import { getServerLogger } from "../logging/serverLogger.js";
 
 /**
  * The forensic gate's demote: route sub-threshold (Info by default) telemetry to the super-timeline
@@ -21,6 +23,12 @@ import { demoteBelowSeverity, resolveForensicMinSeverity, SEVERITY_RANK } from "
  * missing or unrecognized severity is a candidate, as it always was), demoteBelowSeverity applies
  * the exact rule to them (a promoted row or a manual event stays, #1919), and the demoted rows are
  * deleted by row id.
+ *
+ * #2891: a row still carrying the grade mark (analysis/gradeMark.ts) has not had the content tagger's
+ * promotion window yet — a crash between its import's stamp and tag, or a tagger that failed. It never
+ * leaves here, whatever its severity, unless the caller vouches that the tagger just finished on it
+ * (`opts.graded`, the settle's own rows). Start-up recovery grades the rest. The capture copies are
+ * written to the super-timeline without the mark: the raw record never carries it.
  */
 export interface ImportDemoteDeps {
   options: AppOptions;
@@ -29,13 +37,13 @@ export interface ImportDemoteDeps {
 
 export interface ImportDemote {
   /** Remove every sub-threshold forensic row; returns the rows removed, in timeline order. */
-  demoteForensic(caseId: string): Promise<ForensicEvent[]>;
+  demoteForensic(caseId: string, opts?: DemoteOptions): Promise<ForensicEvent[]>;
   /** The same demote, returning the case state afterwards (one load — for callers that diff it). */
-  demoteForensicForCase(caseId: string): Promise<InvestigationState>;
+  demoteForensicForCase(caseId: string, opts?: DemoteOptions): Promise<InvestigationState>;
 }
 
 export function createImportDemote({ options, runStateExclusive }: ImportDemoteDeps): ImportDemote {
-  async function demoteForensic(caseId: string): Promise<ForensicEvent[]> {
+  async function demoteForensic(caseId: string, opts: DemoteOptions = {}): Promise<ForensicEvent[]> {
     const stateStore = options.stateStore;
     const gate = options.forensicGateControlStore;
     if (!stateStore || !gate) return [];
@@ -49,14 +57,16 @@ export function createImportDemote({ options, runStateExclusive }: ImportDemoteD
       );
       const candidates = await stateStore.forensicRowsOutsideSeverities(caseId, keep);
       const byId = new Map(candidates.map((r) => [r.event, r.rowId]));
-      const { demoted } = demoteBelowSeverity(
+      const { demoted: below } = demoteBelowSeverity(
         candidates.map((r) => r.event),
         min,
       );
+      const demoted = below.filter((e) => !isGradePending(e) || !!opts.graded?.has(e.id));
+      logHeld(caseId, below.length - demoted.length);
       if (!demoted.length) return [];
       if (options.superTimelineStore) {
         try {
-          await options.superTimelineStore.append(caseId, demoted);
+          await options.superTimelineStore.append(caseId, demoted.map(withoutGradePending));
           options.onSuperTimeline?.(caseId);
         } catch {
           // Capture failed — keep the rows in the forensic timeline rather than dropping them on
@@ -72,12 +82,22 @@ export function createImportDemote({ options, runStateExclusive }: ImportDemoteD
     });
   }
 
-  async function demoteForensicForCase(caseId: string): Promise<InvestigationState> {
-    const removed = await demoteForensic(caseId);
+  async function demoteForensicForCase(caseId: string, opts?: DemoteOptions): Promise<InvestigationState> {
+    const removed = await demoteForensic(caseId, opts);
     const state = await options.stateStore!.load(caseId);
     if (removed.length) options.onState?.(state);
     return state;
   }
 
   return { demoteForensic, demoteForensicForCase };
+}
+
+// Rows held back because the tagger has not finished on them (#2891) — a WARN, so an analyst reading the
+// log can tell why Info rows are still in the forensic timeline. Start-up recovery grades them.
+function logHeld(caseId: string, held: number): void {
+  if (!held) return;
+  getServerLogger().warn(
+    `[import] ${caseId}: ${held} row(s) below the forensic gate kept — the content tagger has not finished on them yet`,
+    { caseId },
+  );
 }
