@@ -94,6 +94,7 @@ describe("Case Details form version check", () => {
 
   it("a form loaded for another case is loaded again before saving", async () => {
     const { api, sent, el } = load();
+    el("caseId").value = "c0"; // #2904: a load runs for the case on screen
     await api.loadReportMeta("c0");
     el("caseId").value = "c1";
     await api.saveReportMeta();

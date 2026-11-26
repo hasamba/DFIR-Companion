@@ -34,11 +34,21 @@
   // modal's "Ask AI for similar" button. Distinct from the per-case `aiEnabled` toggle above (whether
   // AI analysis is turned ON for the currently-loaded case) — do not conflate the two.
   let fpAiConfigured = false;
+  // #2904: the case whose record the panel shows, and the newest load. A load for another case hides
+  // the previous case's panel (and drops its record) at once; only the newest answer paints.
+  let soCase = null;
+  let soSeq = 0;
   function loadSecondOpinion(caseId) {
+    if (!stillOpen(caseId)) return; // a late caller (a debounced reload) for a case the analyst left
+    if (soCase !== caseId) {
+      soCase = caseId;
+      renderSecondOpinion(null);
+    }
+    const seq = ++soSeq;
     fetch(`/cases/${caseId}/second-opinion`)
       .then((r) => r.json())
       .then((rec) => {
-        if (stillOpen(caseId)) renderSecondOpinion(rec);
+        if (seq === soSeq && stillOpen(caseId)) renderSecondOpinion(rec);
       })
       .catch(() => {});
   }
@@ -178,6 +188,7 @@
     const el = document.getElementById("secondOpinionPanel");
     if (!el) return;
     lastSecondOpinionRec = rec;
+    if (rec) soCase = currentCaseId() || soCase; // #2904: the record shown is the case on screen's
     if (!rec || !rec.generatedAt) {
       el.innerHTML = "";
       el.style.display = "none";

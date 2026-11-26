@@ -39,6 +39,12 @@
   const undoCurrentCase = () => (document.getElementById("caseId") || {}).value?.trim?.() || "";
 
   function loadUndoStack(caseId) {
+    if (caseId !== undoCurrentCase()) return Promise.resolve(); // #2904: a late caller for a case left
+    // #2904: the previous case's buttons and their tooltips (naming its last import) go at once.
+    if (undoSummary && undoSummary.caseId !== caseId) {
+      undoSummary = null;
+      paintUndoButtons();
+    }
     const seq = ++undoStackSeq;
     return fetch(`/cases/${caseId}/import/undo-stack`)
       .then((r) => (r.ok ? r.json() : null))

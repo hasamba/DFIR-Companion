@@ -10,6 +10,8 @@
   let _veloEventArtifacts = []; // last-loaded CLIENT_EVENT artifact list (monitor picker)
 
   // ── Live CLIENT_EVENT monitoring (#84) ────────────────────────────────────────────────────
+  let veloMonCase = null;
+  let veloMonSeq = 0;
   function loadVeloMonitors(caseId) {
     // Populate the CLIENT_EVENT picker once when Velociraptor is on, so the dropdown isn't empty
     // and the analyst doesn't have to click "Browse" first (it can still be re-browsed manually).
@@ -17,13 +19,17 @@
       setVeloMonAutoBrowsed(true);
       veloMonBrowse();
     }
-    if (!caseId) {
-      renderVeloMonitors([]);
-      return;
-    }
+    if (caseId && veloCaseId() !== caseId) return; // #2904: a late caller for a case the analyst left
+    // #2904: the previous case's monitors (and LIVE badge) go at once; only the newest load paints.
+    if (veloMonCase !== caseId || !caseId) renderVeloMonitors([]);
+    veloMonCase = caseId;
+    if (!caseId) return;
+    const seq = ++veloMonSeq;
     fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/monitors`)
       .then((r) => (r.ok ? r.json() : []))
-      .then((j) => renderVeloMonitors(Array.isArray(j) ? j : []))
+      .then((j) => {
+        if (seq === veloMonSeq && veloCaseId() === caseId) renderVeloMonitors(Array.isArray(j) ? j : []);
+      })
       .catch(() => {});
   }
   // Update the toolbar "🔴 LIVE n" badge from the monitor list.

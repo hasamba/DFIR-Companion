@@ -222,8 +222,6 @@
       });
   }
 
-  ("use strict");
-
   // The gate is the PERSISTED store, not the 409 — an import runs fire-and-forget (202 + a
   // background pipeline job) so there is no synchronous response to carry a 409 when the gate
   // fires mid-import; it only ever surfaces as an ai_status "error" over the WebSocket. So this
@@ -231,13 +229,18 @@
   // with the 409 fast-path (see synthesize/runSecondOpinion) as an optimisation on top —
   // never the only way the panel appears.
   let presidioPending = [];
+  // A late answer for a case the analyst has left must not fill this case's panel (#1782). #2904: a
+  // load for another case clears the previous case's values and badge at once; the newest load wins.
+  const ppOnScreen = (caseId) => (document.getElementById("caseId")?.value ?? caseId).trim() === caseId;
+  let ppCase = null, ppSeq = 0;
   function loadPresidioPending(caseId) {
-    if (!caseId) return;
+    if (!caseId || !ppOnScreen(caseId)) return;
+    if (ppCase !== caseId) { ppCase = caseId; setPresidioPending([]); }
+    const seq = ++ppSeq;
     fetch(`/cases/${caseId}/presidio-pending`)
       .then((r) => (r.ok ? r.json() : { pending: [] }))
       .then((d) => {
-        // A late answer for a case the analyst has left must not fill this case's panel (#1782).
-        if (document.getElementById("caseId")?.value.trim() !== caseId) return;
+        if (seq !== ppSeq || !ppOnScreen(caseId)) return;
         presidioPending = d.pending || [];
         renderPresidioPending();
       })
@@ -333,6 +336,7 @@
         })
           .then((r) => readDecision(r, "presidio_custom_list_full", CUSTOM_FULL_TEXT))
           .then((d) => {
+            if (!ppOnScreen(caseId)) return; // #2904: the analyst switched case meanwhile
             presidioPending = d.pending || [];
             renderPresidioPending();
             // Clearing the LAST finding lifts the gate. The server kicks the held run, but that
@@ -353,6 +357,7 @@
         postPresidioSuppress(caseId, btn.getAttribute("data-presidio-suppress"))
           .then((r) => readDecision(r, "presidio_not_pending", NOT_LEFT_VISIBLE_TEXT))
           .then((d) => {
+            if (!ppOnScreen(caseId)) return; // #2904
             presidioPending = d.pending || [];
             renderPresidioPending();
             refreshAiState(caseId); // same reason as the approve path above
@@ -767,9 +772,6 @@
     el.textContent = "AI: " + text;
     el.title = "AI: " + text; // full text on hover (the badge truncates in the tight icons-only toolbar)
   }
-
-  // Import progress bar helpers moved to js/dashboard-import-progress.js (#415 tier 3).
-  // AI status banner moved to js/dashboard-ai-status.js (#415 tier 3).
 
   // The badge lives in the page header, so this binds at load, not on module evaluation.
   function initPresidio() {

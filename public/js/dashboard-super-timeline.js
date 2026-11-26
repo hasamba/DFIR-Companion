@@ -6,21 +6,15 @@
 // promotion tick-list, and the saved timeframes. In a CLASSIC script every one of those is a page
 // global that anything can write.
 //
-// TWO OF THEM USED TO BE WRITTEN FROM OUTSIDE, and both became setters rather than staying public:
-//   - superOffset was reset to 0 before applySearch() by the pivot-to-timeline handler.
-//     resetSuperPagination() says what that meant.
-//   - superSelectedLabels was replaced wholesale by the tag-pill click handler.
-//     setSuperLabelFilter(label) does it without handing out the Set.
-// Everything else stays inside.
+// TWO OF THEM USED TO BE WRITTEN FROM OUTSIDE and became setters rather than staying public:
+// superOffset (reset by the pivot-to-timeline handler) -> resetSuperPagination(), and
+// superSelectedLabels (replaced by the tag-pill click) -> setSuperLabelFilter(label). Nothing else.
 //
 // It calls back into the page for the row fragments (descHtml, eventDetailsBlock, tagPills,
-// commentChip, explainChip, huntChip) and the bulk-tag modal. That is the established shape here —
-// js/dashboard-timeline-view.js calls nine page functions — and all of them run from handlers or
-// from a render, never at load, so this file still loads cleanly on its own.
+// commentChip, explainChip, huntChip) and the bulk-tag modal — all from handlers or a render, never
+// at load, so this file still loads cleanly on its own.
 (function () {
-  // Moved here from dashboard.html (#415). The page never used it; this module reads it in five
-  // places. It sat under the Super-Timeline banner in the page purely because that is where the
-  // feature was typed before it moved out.
+  // Moved here from dashboard.html (#415): the page never used it; this module reads it in five places.
   const ST_PAGE = 100;
 
   let superOffset = 0;            // pagination cursor
@@ -690,10 +684,11 @@
   }
 
   // --- Saved timeframes (the dwell-windows store: label + start + end) ----------
+  let tfCase = null, tfSeq = 0; // #2904: whose timeframes are listed (cleared at a switch); newest load paints
   function loadSavedTimeframes(caseId) {
     caseId = caseId || superCaseId();
-    if (!caseId) return;
-    fetch(`/cases/${encodeURIComponent(caseId)}/dwell-windows`).then(r => r.json()).then(list => {
+    if (!caseId || caseId !== superCaseId()) return; // none open, or a late caller for a case left
+    const paint = (list) => {
       superSavedTimeframes = Array.isArray(list) ? list : [];
       const sel = document.getElementById("stTimeframe");
       if (!sel) return;
@@ -701,7 +696,11 @@
       sel.innerHTML = `<option value="">— none —</option>` + superSavedTimeframes.map(w =>
         `<option value="${escAttr(w.id)}">${esc(w.label)}</option>`).join("");
       sel.value = cur;
-    }).catch(() => {});
+    };
+    if (tfCase !== caseId) { tfCase = caseId; paint([]); }
+    const seq = ++tfSeq;
+    fetch(`/cases/${encodeURIComponent(caseId)}/dwell-windows`).then(r => r.json())
+      .then(list => seq === tfSeq && caseId === superCaseId() && paint(list)).catch(() => {});
   }
 
   function applyTimeframe() {

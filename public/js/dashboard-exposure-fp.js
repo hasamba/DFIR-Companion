@@ -325,6 +325,12 @@
     if (caseId !== fpLoadedCaseId) {
       fpLoadedCaseId = caseId;
       fpMarkers = [];
+      // #2904: the panel's rows (and their un-mark buttons) are the previous case's too — blank, not
+      // "Nothing marked", which would be a claim about this case before its answer.
+      const el = document.getElementById("false-positive");
+      if (el) el.innerHTML = "";
+      const countEl = document.getElementById("fpCount");
+      if (countEl) countEl.textContent = "";
     }
     fetch(`/cases/${caseId}/false-positive`)
       .then((r) => r.json())
@@ -366,10 +372,21 @@
       )
       .join("");
   }
+  // #2904: learned patterns and source trust follow the case on screen — a load for another case
+  // clears the previous case's list at once, and only the newest answer for the case on screen paints.
+  const fpOnScreen = (caseId) => caseId === activeCaseId;
+  let lpCase = null;
+  let lpSeq = 0;
   function loadLearnedPatterns(caseId) {
+    if (!fpOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (lpCase !== caseId) {
+      lpCase = caseId;
+      renderLearnedPatterns([]);
+    }
+    const seq = ++lpSeq;
     fetch(`/cases/${caseId}/learned-patterns`)
       .then((r) => (r.ok ? r.json() : []))
-      .then(renderLearnedPatterns)
+      .then((list) => seq === lpSeq && fpOnScreen(caseId) && renderLearnedPatterns(list))
       .catch(() => {});
   }
 
@@ -393,11 +410,19 @@
       )
       .join("");
   }
+  let stCase = null;
+  let stSeq = 0;
   function loadSourceTrust(caseId) {
+    if (!fpOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (stCase !== caseId) {
+      stCase = caseId;
+      renderSourceTrust(null); // the previous case's overrides must not be saved onto this one
+    }
+    const seq = ++stSeq;
     fetch(`/cases/${caseId}/source-trust`)
       .then((r) => (r.ok ? r.json() : null))
       .then((p) => {
-        if (p) renderSourceTrust(p);
+        if (p && seq === stSeq && fpOnScreen(caseId)) renderSourceTrust(p);
       })
       .catch(() => {});
   }
@@ -443,6 +468,7 @@
             return r.json();
           })
           .then((p) => {
+            if (!fpOnScreen(caseId)) return; // #2904: the analyst switched case meanwhile
             renderSourceTrust(p);
             msg.textContent = "saved — applies on next synthesis";
           })

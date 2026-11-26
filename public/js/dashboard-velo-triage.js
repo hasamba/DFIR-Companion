@@ -5,9 +5,7 @@
 // read them through the shared global lexical environment that a classic script's top-level `let`s
 // live in, and the fix is different for each kind:
 //
-//   THREE WERE IN THE WRONG FILE. veloArtifactCache, veloEditingId and _veloEventArtifacts are
-//   declared here and never touched here — one module writes and reads each. Their declarations
-//   moved into that module. There was no escape, only a misplaced `let`.
+//   THREE WERE IN THE WRONG FILE (veloArtifactCache, veloEditingId, _veloEventArtifacts): moved to the one module using each.
 //
 //   FOUR ARE GENUINELY SHARED, so this module keeps the write and hands out the value:
 //   veloBundlesList(), veloClientsList() and veloMonAutoBrowsed()/
@@ -616,14 +614,16 @@
       });
   }
 
+  let veloJobsCase = null, veloJobsSeq = 0; // #2904: whose hunts are shown; only the newest load paints
   function loadVeloHuntJobs(caseId) {
-    if (!caseId) {
-      renderVeloJobs([]);
-      return;
-    }
+    if (caseId && veloCaseId() !== caseId) return; // a late caller for a case the analyst has left
+    if (veloJobsCase !== caseId || !caseId) renderVeloJobs([]); // the previous case's hunts go at once
+    veloJobsCase = caseId;
+    if (!caseId) return;
+    const seq = ++veloJobsSeq;
     fetch(`/cases/${encodeURIComponent(caseId)}/velociraptor/hunt-jobs`)
       .then((r) => (r.ok ? r.json() : []))
-      .then((j) => renderVeloJobs(Array.isArray(j) ? j : []))
+      .then((j) => seq === veloJobsSeq && veloCaseId() === caseId && renderVeloJobs(Array.isArray(j) ? j : []))
       .catch(() => {});
   }
   // Render every tracked hunt (newest first) as its own card — concurrent hunts each show their
