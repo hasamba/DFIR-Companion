@@ -83,3 +83,64 @@ describe("veloPickerLabel", () => {
     expect(vc.veloPickerLabel({ clientId: "C.a" })).toBe("C.a (C.a)");
   });
 });
+
+// #2898: the picker's "Online only" box and its "seen … ago" text. Velociraptor's clients() reports
+// `last_seen_at` in MICROseconds since the epoch; the inventory stores it as a string. Online = seen
+// within the last 15 minutes of `now`.
+describe("veloLastSeenMs", () => {
+  const t = Date.UTC(2026, 10, 26, 12, 0, 0);
+  it("reads nanoseconds, microseconds, milliseconds, seconds and ISO text as the same instant", () => {
+    expect(vc.veloLastSeenMs(String(t * 1000))).toBe(t);
+    expect(vc.veloLastSeenMs(`${t}000000`)).toBe(t); // nanoseconds, as some Velociraptor times are
+    expect(vc.veloLastSeenMs(String(t))).toBe(t);
+    expect(vc.veloLastSeenMs(String(t / 1000))).toBe(t);
+    expect(vc.veloLastSeenMs(new Date(t).toISOString())).toBe(t);
+  });
+
+  it("is null for a missing, zero or unreadable value", () => {
+    for (const v of [undefined, "", "0", "never", null]) expect(vc.veloLastSeenMs(v)).toBeNull();
+  });
+});
+
+describe("veloIsOnline / veloSeenAgo", () => {
+  const now = Date.UTC(2026, 10, 26, 12, 0, 0);
+  const seen = (msAgo: number) => ({ clientId: "C.x", lastSeen: String((now - msAgo) * 1000) });
+  it("counts a client seen within 15 minutes as online, and not one seen longer ago", () => {
+    expect(vc.veloIsOnline(seen(14 * 60_000), now)).toBe(true);
+    expect(vc.veloIsOnline(seen(15 * 60_000), now)).toBe(true);
+    expect(vc.veloIsOnline(seen(16 * 60_000), now)).toBe(false);
+    expect(vc.veloIsOnline({ clientId: "C.x" }, now)).toBe(false);
+  });
+
+  it("says how long ago, in the largest whole unit", () => {
+    expect(vc.veloSeenAgo(seen(20_000), now)).toBe("seen just now");
+    expect(vc.veloSeenAgo(seen(3 * 60_000), now)).toBe("seen 3 min ago");
+    expect(vc.veloSeenAgo(seen(5 * 3_600_000), now)).toBe("seen 5 h ago");
+    expect(vc.veloSeenAgo(seen(3 * 86_400_000), now)).toBe("seen 3 d ago");
+    expect(vc.veloSeenAgo({ clientId: "C.x" }, now)).toBe("last seen unknown");
+  });
+});
+
+describe("veloPickerRows — online only (#2898)", () => {
+  const now = Date.UTC(2026, 10, 26, 12, 0, 0);
+  const clients = [
+    { clientId: "C.on1", hostname: "ws-on", fqdn: "", lastSeen: String((now - 60_000) * 1000) },
+    { clientId: "C.off", hostname: "ws-off", fqdn: "", lastSeen: String((now - 86_400_000) * 1000) },
+    { clientId: "C.on2", hostname: "srv-on", fqdn: "", lastSeen: String((now - 120_000) * 1000) },
+  ];
+  it("keeps only online clients, counted against the whole list", () => {
+    const r = vc.veloPickerRows(clients, "", 2000, { onlineOnly: true, now });
+    expect(r.rows.map((c) => c.clientId)).toEqual(["C.on1", "C.on2"]);
+    expect(r.matched).toBe(2);
+    expect(r.total).toBe(3);
+  });
+
+  it("combines with the text filter", () => {
+    const r = vc.veloPickerRows(clients, "ws", 2000, { onlineOnly: true, now });
+    expect(r.rows.map((c) => c.clientId)).toEqual(["C.on1"]);
+  });
+
+  it("shows every client when the box is off", () => {
+    expect(vc.veloPickerRows(clients, "", 2000, { onlineOnly: false, now }).rows).toHaveLength(3);
+  });
+});

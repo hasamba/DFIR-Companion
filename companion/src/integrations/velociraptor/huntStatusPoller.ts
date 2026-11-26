@@ -16,6 +16,12 @@ export type HuntStateReader = (huntId: string) => Promise<{ state: string; expir
 export interface HuntPollDeps {
   getState: HuntStateReader;
   log?: (msg: string) => void;
+  /**
+   * #2907: an AI Agent Forensics run is a PAUSED hunt that Velociraptor never reports as done, so for
+   * such a job the poll asks this instead: have its endpoints' collections ended (or has its deadline
+   * passed)? Must not throw; "not yet" on any doubt.
+   */
+  aiAgentReady?: (job: VeloHuntJob) => Promise<boolean>;
 }
 
 export type HuntPollOutcome =
@@ -71,6 +77,8 @@ export async function pollHuntStatusOnce(job: VeloHuntJob, deps: HuntPollDeps): 
     if (!result) return { action: "stop", job: { ...job, status: "deleted" } };
     const state = result.state.toUpperCase();
     if (DONE_STATES.has(state)) return { action: "collect", job };
+    if (job.aiAgentRunId && deps.aiAgentReady && (await deps.aiAgentReady(job)))
+      return { action: "collect", job };
     if (state !== "RUNNING" && state !== "PAUSED") {
       deps.log?.(
         `[velo-hunt-status] hunt ${job.huntId} reported unrecognized state "${result.state}" — treating as still running`,

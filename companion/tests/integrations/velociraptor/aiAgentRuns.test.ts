@@ -1,5 +1,7 @@
 // AI Agent Forensics (#2690): run lifecycle — sweep case, case mode, refresh, Add to case, retention.
 // Real case storage on a temp folder; the Velociraptor client is a mock.
+import { AI_AGENT_COLLECT_GRACE_SECONDS } from "../../../src/integrations/velociraptor/aiAgentCollectReady.js";
+import { AI_AGENT_COLLECTION_TIMEOUT_SECONDS } from "../../../src/integrations/velociraptor/aiAgentLaunch.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,6 +15,7 @@ import {
   addSweepToCase,
   enforceSweepRetention,
   listSweeps,
+  readAiAgentRunStatus,
   refreshAiAgentRun,
   startAiAgentRun,
   type AiAgentForensicsDeps,
@@ -124,10 +127,16 @@ describe("AI Agent Forensics: outside a case", () => {
       uploadPolicy: "external",
       sensitive: true,
       aiAgentRunId: run.runId,
+      aiAgentEndpointCount: 1,
       status: "running",
     });
     expect(job?.artifacts.every((a) => a.startsWith("Custom.DFIRCompanion.AIAgentForensics."))).toBe(true);
-    expect(deps.armCollectTimer).toHaveBeenCalledWith(caseId, "H.AI1", 30);
+    // #2907: no fixed 30-minute collect; the status poll collects when every endpoint has finished, and
+    // collectAt is the latest it waits (the per-endpoint limit plus the grace period).
+    expect(deps.armCollectTimer).not.toHaveBeenCalled();
+    expect(Date.parse(job!.collectAt) - Date.parse(job!.launchedAt)).toBe(
+      (AI_AGENT_COLLECTION_TIMEOUT_SECONDS + AI_AGENT_COLLECT_GRACE_SECONDS) * 1000,
+    );
     expect(deps.scheduleVeloHuntStatusPoll).toHaveBeenCalledWith(caseId, "H.AI1");
     expect(run).toMatchObject({
       preserved: true,
@@ -135,6 +144,14 @@ describe("AI Agent Forensics: outside a case", () => {
       endpoints: [{ clientId: "C.w1", hostname: "DEV-WS-014" }],
     });
     expect((await listSweeps(deps)).map((s) => s.caseId)).toEqual([caseId]);
+  });
+
+  it("an explicit wait keeps the fixed collect timer (#2907)", async () => {
+    const deps = makeDeps();
+    const { caseId } = await startAiAgentRun(deps, { clientIds: ["C.w1"], waitMinutes: 45 });
+    expect(deps.armCollectTimer).toHaveBeenCalledWith(caseId, "H.AI1", 45);
+    const job = await deps.veloHuntStore.get(caseId, "H.AI1");
+    expect(Date.parse(job!.collectAt) - Date.parse(job!.launchedAt)).toBe(45 * 60_000);
   });
 
   it("leaves no hidden case behind when the launch fails", async () => {
@@ -351,6 +368,35 @@ describe("AI Agent Forensics: inside a case, refresh and Add to case", () => {
     expect(programs.filter((p) => !p.includes("artifact_set")).some((p) => p.includes("read_file"))).toBe(
       false,
     );
+  });
+
+  it("reads the run's live status from its Velociraptor hunt (#2898)", async () => {
+    const huntStatus = vi.fn(async () => ({
+      state: "PAUSED",
+      clients: { scheduled: 1, completed: 0, errors: 0 },
+    }));
+    const deps = makeDeps();
+    const { caseId, run } = await startAiAgentRun(deps, { clientIds: ["C.w1"] });
+    // The hunt's counters lag (0 finished, 0 rows) while the endpoint's collection is under way.
+    const resolved = deps.serverClients.forCase(caseId) as unknown as {
+      servers: { velociraptor: Record<string, unknown> };
+    };
+    const velo = resolved.servers.velociraptor;
+    const runProgram = velo.runProgram as (p: string) => Promise<{ rows: unknown[]; reason: string }>;
+    Object.assign(velo, {
+      huntStatus,
+      runProgram: async (p: string) =>
+        p.includes("hunt_flows(hunt_id='H.AI1')")
+          ? { rows: [{ ClientId: "C.w1", State: "IN_PROGRESS", Rows: 1172, Status: "" }], reason: "" }
+          : runProgram.call(velo, p),
+    });
+    const s = await readAiAgentRunStatus(deps, caseId, run.runId);
+    expect(huntStatus).toHaveBeenCalledWith("H.AI1");
+    expect(s).toMatchObject({
+      state: "running",
+      summary: "Running — 0 of 1 endpoint(s) finished; 1,172 rows collected so far",
+    });
+    await expect(readAiAgentRunStatus(deps, caseId, "aar-missing")).rejects.toMatchObject({ status: 404 });
   });
 
   it("files a sweep's rows into a real case, and refuses a sweep as the target", async () => {

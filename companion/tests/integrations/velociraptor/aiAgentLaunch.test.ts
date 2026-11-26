@@ -191,7 +191,10 @@ describe("AI Agent Forensics preflight", () => {
   it("runs detection without preservation on an older triage release, and says so", async () => {
     const p = await preflightAiAgentRun([eps[0]], async () => [triage(["KapeTriage"])]);
     expect(p.preserve).toBe(false);
-    expect(p.warnings[0]).toContain("artifacts not preserved");
+    // Plain English (#2898): what still happens, and what does not.
+    expect(p.warnings[0]).toContain("does not know where AI coding agents keep their files");
+    expect(p.warnings[0]).toContain("does not save copies of the files in Velociraptor");
+    expect(p.warnings[0]).not.toMatch(/triage release|detection and inventory run/);
   });
 
   it("never blocks on a catalog read failure", async () => {

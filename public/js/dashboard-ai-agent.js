@@ -116,37 +116,63 @@
 
   async function endpointPicker(caseId) {
     const wrap = el("div", null, "aa-endpoints");
+    const bar = el("div", null, "aa-endpoint-bar");
     const filter = el("input");
     filter.type = "search";
     filter.placeholder = "Filter endpoints";
     filter.setAttribute("aria-label", "Filter endpoints");
+    // #2898: "Online only" keeps endpoints Velociraptor saw in the last 15 minutes; Refresh re-reads the
+    // client list from Velociraptor, so that view is current. Picks live in a Set and survive both.
+    const onlineLabel = el("label", null, "aa-online");
+    const online = el("input");
+    online.type = "checkbox";
+    onlineLabel.append(online, document.createTextNode(" Online only (seen in the last 15 min)"));
+    const refresh = el("button", "Refresh", "aa-refresh");
+    refresh.type = "button";
+    refresh.title = "Read the current client list from Velociraptor";
+    bar.append(filter, onlineLabel, refresh);
+    const status = el("p", null, "aa-note");
+    const cutNote = el("p", null, "aa-note");
+    const note = el("p", null, "aa-note");
     const list = el("div", null, "aa-endpoint-list");
     list.setAttribute("role", "group");
     list.setAttribute("aria-label", "Endpoints to check");
-    wrap.append(filter, list);
-    // Inside a case: the case's own endpoint list (case writers, #2725). No case: the fleet inventory,
-    // which — like a run with no case open — is the administrator's.
-    const inv = await call(caseId ? `/cases/${encodeURIComponent(caseId)}/ai-agent/endpoints` : "/velociraptor/clients");
-    const clients = (inv.ok && inv.body.clients) || [];
-    if (inv.status === 403)
-      list.appendChild(el("p", caseId ? "You need write access to this case to list its endpoints — ask the case owner or an administrator." : "Only an administrator can list endpoints and run with no case open — open a case you can write to.", "aa-note"));
-    else if (!inv.ok) list.appendChild(el("p", (inv.body && inv.body.error) || `Could not list endpoints (HTTP ${inv.status}).`, "aa-note"));
-    else if (!clients.length)
-      list.appendChild(el("p", "No Velociraptor client inventory yet — an administrator can refresh it in Settings → Velociraptor.", "aa-note"));
-    // #2887: a list the server cut at its row limit says so; the filter searches the WHOLE list and
-    // only the drawn rows are capped (js/dashboard-velo-clients.js). Picks live in a Set, so a pick
-    // survives a filter that hides its row.
-    const cut = inv.ok ? veloClientsCutNotice(inv.body) : "";
-    if (cut) wrap.insertBefore(el("p", cut, "aa-note"), list);
-    const note = el("p", null, "aa-note");
-    note.hidden = true;
-    wrap.insertBefore(note, list);
+    for (const p of [status, cutNote, note]) p.hidden = true;
+    wrap.append(bar, status, cutNote, note, list);
+    // Inside a case: the case's own endpoint list (case writers, #2725), refreshed through the case
+    // route (#2898). No case: the fleet inventory, which — like a run with no case open — is the
+    // administrator's, and so is its refresh.
+    const listUrl = caseId ? `/cases/${encodeURIComponent(caseId)}/ai-agent/endpoints` : "/velociraptor/clients";
+    const refreshUrl = caseId ? `${listUrl}/refresh` : "/velociraptor/clients/refresh";
     const picked = new Set();
+    let inv = { ok: false, status: 0, body: {} };
+    let clients = [];
+    const say = (p, text) => {
+      p.textContent = text || "";
+      p.hidden = !p.textContent;
+    };
+
+    function problem() {
+      if (inv.status === 403)
+        return caseId ? "You need write access to this case to list its endpoints — ask the case owner or an administrator." : "Only an administrator can list endpoints and run with no case open — open a case you can write to.";
+      if (!inv.ok) return (inv.body && inv.body.error) || `Could not list endpoints (HTTP ${inv.status}).`;
+      if (!clients.length) return "No Velociraptor client inventory yet — press Refresh to read it from Velociraptor.";
+      return "";
+    }
+
     function draw() {
-      const view = veloPickerRows(clients, filter.value);
-      note.textContent = veloPickerNote(view);
-      note.hidden = !note.textContent;
       list.replaceChildren();
+      const why = problem();
+      if (why) {
+        say(note, "");
+        list.appendChild(el("p", why, "aa-note"));
+        return;
+      }
+      // #2887: the filter searches the WHOLE list and only the drawn rows are capped.
+      const view = veloPickerRows(clients, filter.value, undefined, { onlineOnly: online.checked });
+      say(note, veloPickerNote(view));
+      if (!view.rows.length && online.checked && !filter.value.trim())
+        list.appendChild(el("p", "No endpoint was seen in the last 15 minutes — press Refresh for the current list.", "aa-note"));
       for (const c of view.rows) {
         const label = el("label", null, "aa-endpoint");
         const box = el("input");
@@ -154,15 +180,37 @@
         box.value = c.clientId;
         box.checked = picked.has(c.clientId);
         box.addEventListener("change", () => (box.checked ? picked.add(c.clientId) : picked.delete(c.clientId)));
-        label.append(box, document.createTextNode(` ${veloPickerLabel(c)}`));
+        label.append(box, document.createTextNode(` ${veloPickerLabel(c)} `), el("span", veloSeenAgo(c), "aa-seen"));
         list.appendChild(label);
       }
     }
-    // Only a real list is drawn: typing over a refusal or an empty inventory keeps its message.
-    if (inv.ok && clients.length) {
+
+    function show(next) {
+      inv = next;
+      clients = (inv.ok && inv.body.clients) || [];
+      say(cutNote, inv.ok ? veloClientsCutNotice(inv.body) : "");
+      const at = inv.ok && inv.body.updatedAt ? new Date(inv.body.updatedAt) : null;
+      say(status, at && !Number.isNaN(at.getTime()) ? `Client list fetched ${at.toLocaleString()}` : "");
       draw();
-      filter.addEventListener("input", draw);
     }
+
+    refresh.addEventListener("click", async () => {
+      refresh.disabled = true;
+      refresh.textContent = "Refreshing…";
+      const r = await post(refreshUrl);
+      refresh.disabled = false;
+      refresh.textContent = "Refresh";
+      if (r.ok) return show(r);
+      // A failed refresh keeps the list already shown and says why.
+      const why =
+        r.status === 403
+          ? caseId ? "you need write access to this case" : "only an administrator can refresh the fleet list"
+          : (r.body && r.body.error) || `HTTP ${r.status}`;
+      say(status, `Refresh failed: ${why}.`);
+    });
+    filter.addEventListener("input", draw);
+    online.addEventListener("change", draw);
+    show(await call(listUrl));
     return { wrap, selected: () => [...picked] };
   }
 
@@ -327,15 +375,65 @@
     msg.textContent = r.ok ? `Added to ${target}: +${r.body.addedEvents} event(s).` : r.body.error || `Could not add (HTTP ${r.status}).`;
   }
 
-  function runCard(caseId, run, sweep, rerender) {
+  // Warnings stored on runs launched before #2898 used tool wording; show them the way new runs say it.
+  const STILL_RUNS = "The run still checks the AI-agent files for tampering and lists the AI tools, but it does not save copies of the files in Velociraptor.";
+  function plainWarning(w) {
+    const text = String(w);
+    if (/has no AICodingAgents rule/.test(text))
+      return `Your Velociraptor server has an older Windows.Triage.Targets artifact that does not know where AI coding agents keep their files. ${STILL_RUNS}`;
+    if (/^Windows\.Triage\.Targets is not on this server/.test(text)) return `Your Velociraptor server does not have the Windows.Triage.Targets artifact. ${STILL_RUNS}`;
+    const m = /^could not read the server's artifact catalog \((.*)\): detection and inventory run/.exec(text);
+    if (m) return `Could not read your Velociraptor server's artifact list (${m[1]}). ${STILL_RUNS}`;
+    const left = /^(\d+) non-Windows endpoint\(s\) left out$/.exec(text);
+    if (left) return `${left[1]} endpoint(s) left out: this check runs on Windows only`;
+    return text;
+  }
+
+  // Only the newest few cards ask Velociraptor on every render; older ones wait for a click (#2898).
+  const AUTO_STATUS_CARDS = 3;
+
+  function runCard(caseId, run, sweep, rerender, autoStatus) {
     const card = el("div", null, "aa-run");
     const head = el("div", null, "aa-run-head");
     head.appendChild(el("strong", `Run ${run.launchedAt.replace("T", " ").slice(0, 16)} · ${run.endpoints.length} endpoint(s)`));
     head.appendChild(el("span", " SENSITIVE", "aa-sensitive"));
     card.appendChild(head);
-    card.appendChild(el("p", `Rules: ${run.ruleSetVersion} · scopes: ${run.scopes.join(", ")} · preserved: ${run.preserved ? "yes" : "no — artifacts not preserved"}`, "aa-note"));
+    // #2898: is the run still going? Read live from its Velociraptor hunt, never stored.
+    const statusLine = el("p", "Status: checking Velociraptor…", "aa-status");
+    statusLine.setAttribute("role", "status");
+    card.appendChild(statusLine);
+    const checkStatus = async () => {
+      const st = await call(`${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/status`);
+      statusLine.textContent = st.ok
+        ? `Status: ${st.body.summary}`
+        : `Status: could not ask Velociraptor (${(st.body && st.body.error) || `HTTP ${st.status}`})`;
+    };
+    if (autoStatus) void checkStatus();
+    else {
+      statusLine.textContent = "Status: not checked ";
+      const check = el("button", "Check status");
+      check.type = "button";
+      check.addEventListener("click", () => {
+        statusLine.textContent = "Status: checking Velociraptor…";
+        void checkStatus();
+      });
+      statusLine.appendChild(check);
+    }
+    const scopeLabel = (id) => ((rules && rules.scopes) || []).find((x) => x.id === id)?.label || id;
+    card.appendChild(el("p", `Checked: ${run.scopes.map(scopeLabel).join(", ")}. Copies of the AI-agent files saved in Velociraptor: ${run.preserved ? "yes" : "no"}. Rule pack: ${run.ruleSetVersion}.`, "aa-note"));
+    card.appendChild(
+      el(
+        "p",
+        sweep
+          ? "Where results go: this is a sweep with no case — press Add to case… to put its hits into a case's forensic timeline."
+          : "Where results go: rule hits are added to this case's forensic timeline automatically once every endpoint has finished (at the latest about 2 hours 15 minutes after the run started), or straight away when you press Refresh results. The list of AI tools and MCP servers goes to the super-timeline.",
+        "aa-note",
+      ),
+    );
+    // #2907: an analyst reads Velociraptor's "Paused" as "will not run until someone starts it".
+    card.appendChild(el("p", "This run was created Paused in Velociraptor on purpose, so it reaches only the endpoints picked here and never spreads to others. It still runs on those endpoints — nobody needs to start it.", "aa-note"));
     card.appendChild(el("p", "Sensitive: preservation may have copied credential files into Velociraptor's file store. The Companion never reads the collected files (manifest only).", "aa-note"));
-    for (const w of run.warnings || []) card.appendChild(el("p", w, "aa-warn"));
+    for (const w of run.warnings || []) card.appendChild(el("p", plainWarning(w), "aa-warn"));
     for (const f of run.failedEndpoints || []) card.appendChild(el("p", `${f.clientId}: not added (${f.error})`, "aa-warn"));
     const actions = el("div", null, "aa-actions");
     const msg = el("span", "", "aa-msg");
@@ -347,6 +445,7 @@
       const r = await post(`${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/refresh`);
       msg.textContent = r.ok ? "" : r.body.error || `Could not read results (HTTP ${r.status}).`;
       if (r.ok) rerender();
+      else void checkStatus();
     });
     actions.appendChild(refresh);
     if (run.guiUrl && /^https?:\/\//.test(run.guiUrl)) {
@@ -356,14 +455,18 @@
       a.rel = "noopener noreferrer";
       actions.appendChild(a);
     }
-    for (const fmt of ["md", "csv"]) {
-      const a = el("a", `Report .${fmt}`);
-      a.href = `${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/report.${fmt}`;
+    // #2898: say what each download is, not its file extension.
+    const downloads = [
+      ["report.md", "Download report (Markdown)", "The whole run as a readable text report: endpoints, AI tools, MCP servers and every hit."],
+      ["report.csv", "Download findings (spreadsheet)", "One row per hit, for Excel or a SIEM."],
+      ["sigma-coverage.csv", "Download rule coverage (spreadsheet)", "Which Sigma rules ran on which endpoint, and whether each one hit."],
+    ];
+    for (const [file, label, tip] of downloads) {
+      const a = el("a", label);
+      a.href = `${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/${file}`;
+      a.title = tip;
       actions.appendChild(a);
     }
-    const sigmaCsv = el("a", "Sigma coverage .csv");
-    sigmaCsv.href = `${runsUrl(caseId)}/${encodeURIComponent(run.runId)}/sigma-coverage.csv`;
-    actions.appendChild(sigmaCsv);
     if (sweep) {
       const add = el("button", "Add to case…");
       add.type = "button";
@@ -380,7 +483,7 @@
       );
     const r = run.report;
     if (!r) {
-      card.appendChild(el("p", "Results not read yet.", "aa-note"));
+      card.appendChild(el("p", "Results in this panel: not read yet — press Refresh results once the status says Finished.", "aa-note"));
       return card;
     }
     card.appendChild(endpointLines(r.endpoints));
@@ -407,11 +510,11 @@
     const parts = [rulesBlock(), await runForm(caseId, again)];
     if (caseId) {
       const r = await call(runsUrl(caseId));
-      for (const run of (r.ok && r.body.runs) || []) parts.push(runCard(caseId, run, false, again));
+      ((r.ok && r.body.runs) || []).forEach((run, i) => parts.push(runCard(caseId, run, false, again, i < AUTO_STATUS_CARDS)));
     } else {
       const r = await call("/ai-agent/sweeps");
       if (!r.ok) parts.push(el("p", r.body.error || `Sweeps are not available (HTTP ${r.status}).`, "aa-warn"));
-      for (const s of (r.ok && r.body.sweeps) || []) if (s.run) parts.push(runCard(s.caseId, s.run, true, again));
+      ((r.ok && r.body.sweeps) || []).filter((s) => s.run).forEach((s, i) => parts.push(runCard(s.caseId, s.run, true, again, i < AUTO_STATUS_CARDS)));
     }
     if (stale()) return;
     box.replaceChildren(...parts);
