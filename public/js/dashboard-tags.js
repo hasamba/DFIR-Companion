@@ -262,8 +262,8 @@
     if (caseId !== null) return;
     resetTagLoads();
     clearTags(null);
-    taggerGen++; // #2929: and the tagger tags asked for are re-learnt from the reopened case's pages
-    taggerCase = null;
+    taggerGen++; // #2929: an ask on its way is dropped, and every row may be asked about again
+    taggerKnown = new Set();
   }
   function loadTags(caseId) {
     if (!tagsOnScreen(caseId)) return; // a late caller for a case the analyst has left
