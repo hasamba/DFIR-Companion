@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
@@ -64,4 +64,30 @@ export class ClientProfileStore {
       return next;
     });
   }
+
+  /**
+   * Run `fn` under this profile's lock (#2941) — the lock update() and remove() hold. Linking a case
+   * runs here, so a link and a delete of the same client can never interleave.
+   */
+  exclusive<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    return lock.runExclusive(id, fn);
+  }
+
+  /**
+   * Delete one profile (#2941) under its lock. `guard` sees the current profile and returns a reason
+   * to refuse (e.g. the cases still linked) or null to go ahead; check and delete are one locked step.
+   */
+  remove<R>(id: string, guard: (p: ClientProfile) => Promise<R | null>): Promise<RemoveResult<R>> {
+    return lock.runExclusive(id, async (): Promise<RemoveResult<R>> => {
+      const cur = await this.get(id);
+      if (!cur) return { status: "missing" };
+      const reason = await guard(cur);
+      if (reason !== null) return { status: "refused", reason };
+      await rm(this.path(id));
+      return { status: "deleted", profile: cur };
+    });
+  }
 }
+
+export type RemoveResult<R> =
+  { status: "missing" } | { status: "refused"; reason: R } | { status: "deleted"; profile: ClientProfile };

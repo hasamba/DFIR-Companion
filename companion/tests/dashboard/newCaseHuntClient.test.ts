@@ -170,6 +170,18 @@ describe("New Case: the administrator creates a client from the Client box (#273
   const NEW = { status: 201, body: { id: "client-n-9", name: "Client N" } };
   const labels = (h: ReturnType<typeof harness>) => h.el("ncHuntClient").options.map((o) => o.textContent);
 
+  it("leaves an archived client out of the Client list (#2941)", async () => {
+    const h = harness({
+      "GET /client-profiles": {
+        body: [...CLIENTS, { id: "client-old-4", name: "Client Old", archived: true }],
+      },
+    });
+    await h.api.openNewCase();
+    await flush();
+    expect(labels(h)).not.toContain("Client Old");
+    expect(labels(h)).toContain("Client A");
+  });
+
   it("offers New client… to the administrator, last in the list", async () => {
     const h = harness({}, { auth: { enabled: true, identity: { globalRole: "administrator" } } });
     await h.api.openNewCase();

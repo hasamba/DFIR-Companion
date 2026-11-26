@@ -146,7 +146,7 @@
       if (!s.convertedFrom) box.appendChild(el("p", "This case is not a threat hunt. Pick the “Threat hunt” template to switch it to hunt mode.", "ev-sub"));
       return;
     }
-    if (s.clientName) box.appendChild(el("p", `Client: ${s.clientName}${s.baselineVersion ? ` · baseline version ${s.baselineVersion}` : ""}`));
+    if (s.clientName) box.appendChild(el("p", `Client: ${s.clientName}${s.clientArchived ? " (archived)" : ""}${s.baselineVersion ? ` · baseline version ${s.baselineVersion}` : ""}`));
     box.appendChild(el("p", coverageText(s.coverage)));
     box.appendChild(itemsTable(s.items));
     box.appendChild(actions(caseId, s));

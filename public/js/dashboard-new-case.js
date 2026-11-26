@@ -123,7 +123,8 @@
     try {
       const res = await fetch("/client-profiles"); // 403 on the public demo: no picker
       const list = res.ok ? await res.json() : [];
-      huntClients = Array.isArray(list) ? list : [];
+      // #2941: the server leaves archived clients out; drop any that slip through all the same.
+      huntClients = Array.isArray(list) ? list.filter((c) => c && !c.archived) : [];
       huntClientCreate = res.ok && isInstanceAdmin();
     } catch {
       huntClients = [];

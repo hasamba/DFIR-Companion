@@ -3,23 +3,34 @@ import { z } from "zod";
 import {
   applyDomains,
   applyMarks,
+  archiveProfile,
   domainsInputSchema,
+  editProfile,
+  isArchivedProfile,
   markInputSchema,
   newProfile,
   profileInputSchema,
+  unarchiveProfile,
   type ClientProfile,
 } from "../analysis/clientProfile.js";
+import { findLinkedCases } from "../analysis/clientProfileLinks.js";
 import { parseClientCsv } from "../analysis/huntConfirmList.js";
 import { currentIdentity } from "../auth/identityContext.js";
 import { CLIENT_DATA_DEMO_REFUSAL } from "../auth/policy.js";
+import { requestAuthentication } from "../auth/types.js";
 import type { RouteContext } from "./context.js";
 
 /**
  * Client profiles (#2670, decisions D3/D5) — instance-level, outside every case.
- *   GET  /client-profiles                    — names (+ default server set) for every signed-in user.
+ *   GET  /client-profiles                    — names (+ default server set) for every signed-in user;
+ *                                              archived clients left out (#2941). `?includeArchived=1`
+ *                                              adds them, marked, for the administrator only.
  *   POST /client-profiles                    — create (instance administrator).
  *   GET  /client-profiles/:pid               — the full profile: baseline, versions, audit (admin).
  *   PUT  /client-profiles/:pid               — rename / default server set (admin).
+ *   POST /client-profiles/:pid/archive       — archive / unarchive, all data and links kept (admin, #2941).
+ *   POST /client-profiles/:pid/unarchive
+ *   DELETE /client-profiles/:pid             — delete, refused (409) while any case is linked (admin, #2941).
  *   POST /client-profiles/:pid/marks         — Approved / Not allowed / Unknown marks, one version (admin).
  *   POST /client-profiles/:pid/marks/import  — the client's filled confirm-list CSV (admin).
  *   PUT  /client-profiles/:pid/domains       — blocked / approved domains and categories (admin).
@@ -37,7 +48,45 @@ const summary = (p: ClientProfile) => ({
   id: p.id,
   name: p.name,
   ...(p.defaultServerSetId ? { defaultServerSetId: p.defaultServerSetId } : {}),
+  ...(isArchivedProfile(p) ? { archived: true } : {}),
 });
+
+const NOT_FOUND = "client profile not found";
+const LINKED =
+  "This client is linked to cases and cannot be deleted. Archive it instead: it disappears from the client lists and every linked case keeps working.";
+
+/** True for the instance administrator, and for the one operator in single-user mode. */
+function isGlobalAdmin(ctx: RouteContext, req: Request): boolean {
+  const teamAuth = ctx.options.teamAuth;
+  if (!teamAuth) return true;
+  const auth = requestAuthentication(req) ?? teamAuth.requireSession(req);
+  return !!auth && teamAuth.isGlobalAdministrator(auth);
+}
+
+/**
+ * The instance activity log (#2941) — the audit log GET /auth/audit reads, which server-set deletes
+ * write too. A deleted client's own trail goes with it, so this is the delete's only lasting record:
+ * the server log line is written first, and a failed audit write is logged, never thrown.
+ */
+function instanceAudit(
+  ctx: RouteContext,
+  req: Request,
+  action: string,
+  p: Pick<ClientProfile, "id" | "name">,
+) {
+  ctx.serverLogger.info(
+    `[client-profiles] ${action} id=${p.id} name=${JSON.stringify(p.name)} by=${actor()}`,
+  );
+  const auth = requestAuthentication(req);
+  if (auth?.kind !== "session") return;
+  try {
+    ctx.options.teamAuth?.store.addAudit(auth.identity, action, p.id, undefined, `client "${p.name}"`);
+  } catch (err) {
+    ctx.serverLogger.error(
+      `[client-profiles] audit write failed for ${action} id=${p.id}: ${(err as Error).message}`,
+    );
+  }
+}
 
 function firstIssue(err: z.ZodError): string {
   const i = err.issues[0];
@@ -67,11 +116,17 @@ export function registerClientProfileRoutes(app: Express, ctx: RouteContext): vo
     },
   );
 
-  app.get("/client-profiles", async (_req: Request, res: Response) => {
+  app.get("/client-profiles", async (req: Request, res: Response) => {
     const s = store();
     if (!s) return res.status(200).json([]);
+    const flag = String(req.query.includeArchived ?? "");
+    // A member asking for archived clients still gets the active list: they never manage clients.
+    const withArchived = (flag === "1" || flag === "true") && isGlobalAdmin(ctx, req);
     try {
-      return res.status(200).json((await s.list()).map(summary));
+      const list = await s.list();
+      return res
+        .status(200)
+        .json((withArchived ? list : list.filter((p) => !isArchivedProfile(p))).map(summary));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -103,23 +158,47 @@ export function registerClientProfileRoutes(app: Express, ctx: RouteContext): vo
       const parsed = profileInputSchema.safeParse(req.body ?? {});
       if (!parsed.success) return res.status(400).json({ error: firstIssue(parsed.error) });
       const at = new Date().toISOString();
-      const next = await store()?.update(req.params.pid, (p) => ({
-        ...p,
-        name: parsed.data.name,
-        defaultServerSetId: parsed.data.defaultServerSetId,
-        audit: [
-          ...p.audit,
-          {
-            at,
-            by: actor(),
-            action: "profile",
-            detail: `renamed / server set "${parsed.data.defaultServerSetId ?? ""}"`,
-            version: p.version,
-          },
-        ],
-        updatedAt: at,
-      }));
-      return next ? res.status(200).json(next) : res.status(404).json({ error: "client profile not found" });
+      const next = await store()?.update(req.params.pid, (p) => editProfile(p, parsed.data, actor(), at));
+      return next ? res.status(200).json(next) : res.status(404).json({ error: NOT_FOUND });
+    }),
+  );
+
+  for (const [verb, apply, action] of [
+    ["archive", archiveProfile, "client-profile-archived"],
+    ["unarchive", unarchiveProfile, "client-profile-unarchived"],
+  ] as const) {
+    app.post(
+      `/client-profiles/:pid/${verb}`,
+      guarded(async (req: Request, res: Response) => {
+        let changed = false;
+        const next = await store()?.update(req.params.pid, (p) => {
+          const out = apply(p, actor(), new Date().toISOString());
+          changed = out !== p;
+          return out;
+        });
+        if (!next) return res.status(404).json({ error: NOT_FOUND });
+        if (changed) instanceAudit(ctx, req, action, next);
+        return res.status(200).json(summary(next));
+      }),
+    );
+  }
+
+  app.delete(
+    "/client-profiles/:pid",
+    guarded(async (req: Request, res: Response) => {
+      const s = store();
+      if (!s) return res.status(404).json({ error: NOT_FOUND });
+      // Check and delete are one step under the client's lock; a link takes the same lock (huntClient.ts).
+      const result = await s.remove(req.params.pid, async (p) => {
+        const linked = await findLinkedCases(ctx.store, p.id);
+        return linked.length ? linked : null;
+      });
+      if (result.status === "missing") return res.status(404).json({ error: NOT_FOUND });
+      // Case names are data the dashboard renders as text; nothing here builds markup.
+      if (result.status === "refused")
+        return res.status(409).json({ error: LINKED, linkedCases: result.reason });
+      instanceAudit(ctx, req, "client-profile-deleted", result.profile);
+      return res.status(200).json({ deleted: result.profile.id });
     }),
   );
 

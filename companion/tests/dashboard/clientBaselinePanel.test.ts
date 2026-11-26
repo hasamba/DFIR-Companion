@@ -70,7 +70,7 @@ function harness(
     [`POST /client-profiles/${PID}/marks`]: { body: { version: 5 } },
     ...extra,
   });
-  const api = loadDashboardModule<PanelApi>("dashboard-client-baseline.js", [], {
+  const api = loadDashboardModule<PanelApi>("dashboard-client-baseline.js", ["dashboard-client-admin.js"], {
     document: doc,
     fetch: net.fetch,
     prompt: () => "client email 2026-11-20",

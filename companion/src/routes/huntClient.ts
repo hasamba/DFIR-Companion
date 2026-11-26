@@ -4,7 +4,7 @@ import { huntCoverageFromJobs } from "../analysis/huntFraming.js";
 import { loadHuntJobsSafe } from "../analysis/huntFramingLoad.js";
 import { stableHostKey } from "../analysis/huntHostKey.js";
 import { confirmCandidates, confirmListCsv, confirmListMarkdown } from "../analysis/huntConfirmList.js";
-import { EMPTY_BASELINE, PROFILE_ID_RE } from "../analysis/clientProfile.js";
+import { EMPTY_BASELINE, PROFILE_ID_RE, isArchivedProfile } from "../analysis/clientProfile.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { currentIdentity } from "../auth/identityContext.js";
 import { CLIENT_DATA_DEMO_REFUSAL } from "../auth/policy.js";
@@ -14,7 +14,9 @@ import type { RouteContext } from "./context.js";
 /**
  * A hunt case's client (#2670):
  *   GET  /cases/:id/hunt/client             — the linked client, baseline versions, earlier hunts.
- *   POST /cases/:id/hunt/client             — link the case to a client (case ADMINISTRATOR, D3).
+ *   POST /cases/:id/hunt/client             — link the case to a client (case ADMINISTRATOR, D3). Not
+ *                                             to an archived client (409, #2941), and under the
+ *                                             client's lock, so a delete of it cannot slip in between.
  *   GET  /cases/:id/hunt/candidates         — what the client still has to confirm, rarest first.
  *   GET  /cases/:id/hunt/confirm-list.csv   — the same list for the client (export right).
  *   GET  /cases/:id/hunt/confirm-list.md
@@ -80,7 +82,12 @@ export function registerHuntClientRoutes(app: Express, ctx: RouteContext): void 
       return res.status(200).json({
         link,
         client: profile
-          ? { id: profile.id, name: profile.name, defaultServerSetId: profile.defaultServerSetId }
+          ? {
+              id: profile.id,
+              name: profile.name,
+              defaultServerSetId: profile.defaultServerSetId,
+              ...(isArchivedProfile(profile) ? { archived: true } : {}),
+            }
           : null,
         currentVersion: profile?.version ?? null,
         pinnedVersion: pinnedVersion ?? null,
@@ -97,15 +104,28 @@ export function registerHuntClientRoutes(app: Express, ctx: RouteContext): void 
     if (!body.success) return res.status(400).json({ error: "clientId is required" });
     if (!options.huntClientLinkStore || !options.clientProfileStore)
       return res.status(501).json({ error: "client profiles not configured" });
+    const profiles = options.clientProfileStore;
+    const linkStore = options.huntClientLinkStore;
     try {
-      const profile = await options.clientProfileStore.get(body.data.clientId);
-      if (!profile) return res.status(404).json({ error: "client profile not found" });
-      const by = currentIdentity()?.displayName || "analyst";
-      const link = await options.huntClientLinkStore.save(req.params.id, {
-        clientId: profile.id,
-        linkedAt: new Date().toISOString(),
-        linkedBy: by,
+      // The profile is read and the link written under the client's lock (#2941): a delete holds the
+      // same lock across its linked-case check, so it sees this link or this link sees no client.
+      const out = await profiles.exclusive(body.data.clientId, async () => {
+        const profile = await profiles.get(body.data.clientId);
+        if (!profile) return { status: 404, error: "client profile not found" } as const;
+        if (isArchivedProfile(profile))
+          return {
+            status: 409,
+            error: "This client is archived. Unarchive it before linking a case to it.",
+          } as const;
+        const link = await linkStore.save(req.params.id, {
+          clientId: profile.id,
+          linkedAt: new Date().toISOString(),
+          linkedBy: currentIdentity()?.displayName || "analyst",
+        });
+        return { status: 200, link, profile } as const;
       });
+      if (out.status !== 200) return res.status(out.status).json({ error: out.error });
+      const { link, profile } = out;
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "hunt",
         action: "hunt-client-link",
