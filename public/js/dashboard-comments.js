@@ -36,13 +36,23 @@
   // empty index). Only the newest answer for the case on screen is applied.
   let commentsCase = null;
   let commentsSeq = 0;
+  function clearComments(caseId) {
+    commentsCase = caseId;
+    commentsByTarget = new Map();
+    if (commentTarget) closeCommentModal();
+  }
+  // #2915: a cancelled or failed case load drops the index and closes an open thread (no render: the
+  // view the cancel left is not redrawn; the next render reads the empty index). The next open — the
+  // same case included — reads the comments again.
+  function onCommentsReset(caseId) {
+    if (caseId !== null) return;
+    commentsSeq++;
+    clearComments(null);
+  }
   function loadComments(caseId) {
     if (!commentsOnScreen(caseId)) return; // a late caller for a case the analyst has left
-    if (commentsCase !== caseId) {
-      commentsCase = caseId;
-      commentsByTarget = new Map();
-      if (commentTarget) closeCommentModal();
-    }
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onCommentsReset);
+    if (commentsCase !== caseId) clearComments(caseId);
     const seq = ++commentsSeq;
     fetch(`/cases/${caseId}/comments`)
       .then((r) => r.json())

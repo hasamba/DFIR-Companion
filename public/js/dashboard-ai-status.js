@@ -374,18 +374,27 @@
   // pill back to the page's "AI: —" at once, so the case left's state (and its held-screenshot offer)
   // never shows on this one — not even when this case's read fails.
   let aiStateCase = null;
+  function resetAiPill() {
+    const el = document.getElementById("aiStatus");
+    if (el) {
+      el.className = "ai-unknown";
+      el.textContent = el.title = "AI: —";
+    }
+    hideHeldSkip();
+  }
+  // #2915: a cancelled or failed case load puts the pill back to "AI: —" too (no case is loaded).
+  function onAiStateReset(caseId) {
+    if (caseId !== null) return;
+    aiStateSeq++;
+    aiStateCase = null;
+    resetAiPill();
+  }
   async function refreshAiState(caseId) {
     // An inactive case is rejected BEFORE the counter moves: a late call for a case the analyst left
     // must not invalidate a correction still in flight for the case on screen.
     if (!caseId || caseId !== activeCaseId) return;
-    if (aiStateCase !== null && aiStateCase !== caseId) {
-      const el = document.getElementById("aiStatus");
-      if (el) {
-        el.className = "ai-unknown";
-        el.textContent = el.title = "AI: —";
-      }
-      hideHeldSkip();
-    }
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onAiStateReset);
+    if (aiStateCase !== null && aiStateCase !== caseId) resetAiPill();
     aiStateCase = caseId;
     const seq = ++aiStateSeq;
     try {

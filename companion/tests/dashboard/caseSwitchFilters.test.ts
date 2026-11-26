@@ -2,83 +2,13 @@
 // (confidence floor, origin lenses) must never filter the new case — not while the new case's
 // answer is on its way, not when that answer fails, and not when the old case's answer lands late.
 import { readFileSync } from "node:fs";
-import { runInContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { functionsOf, mainInlineScript } from "../helpers/dashboardAst.js";
 import { drainAll, fakePage } from "../helpers/caseSwitchPage.js";
+import { A_WINDOW, bState, scopePage, type Finding } from "../helpers/scopePage.js";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
-interface Finding {
-  id: string;
-  confidence?: number;
-}
-interface StateLike {
-  caseId: string;
-  forensicTimeline: Array<{ id: string; timestamp: string; relatedFindingIds?: string[] }>;
-  findings: Finding[];
-  iocs: unknown[];
-  mitreTechniques: unknown[];
-}
-
-const bState: StateLike = {
-  caseId: "CASE-B",
-  forensicTimeline: [
-    { id: "e1", timestamp: "2020-01-01T00:00:00Z", relatedFindingIds: ["f1"] },
-    { id: "e2", timestamp: "2030-01-01T00:00:00Z" },
-  ],
-  findings: [{ id: "f1", confidence: 40 }],
-  iocs: [],
-  mitreTechniques: [],
-};
-const A_WINDOW = { start: "2029-01-01T00:00:00.000Z", end: "2031-01-01T00:00:00.000Z" };
-
-// ── scope: the inline loadScope, run against the real DfirScope ─────────────────────────────────
-interface ScopeSandbox {
-  loadScope(caseId: string): void;
-  DfirScope: {
-    isEmpty(): boolean;
-    get(): { start: string | null; end: string | null };
-    project(s: StateLike): StateLike;
-  };
-  DfirState: object;
-  render: (s: unknown) => void;
-}
-
-// The function and its one piece of state, taken from the page's main inline script by AST (not a
-// bounded regex — the CI Windows checkout has CRLF line ends).
-let loadScopeSource: string | null = null;
-function inlineLoadScopeSource(): string {
-  if (loadScopeSource) return loadScopeSource;
-  const main = mainInlineScript();
-  const fn = functionsOf(main).find((f) => f.name === "loadScope");
-  if (!fn) throw new Error("loadScope not found in the inline script");
-  const decl = /let scopeLoad\s*=\s*\{[^}]*\};/.exec(main.source);
-  if (!decl) throw new Error("scopeLoad state not found next to loadScope");
-  loadScopeSource = `${decl[0]}\n${fn.node.getText(main.ast)}\nthis.loadScope = loadScope;`;
-  return loadScopeSource;
-}
-
-function scopePage() {
-  const p = fakePage();
-  const sb = loadDashboardModule<ScopeSandbox>(
-    "dashboard-scope.js",
-    ["dashboard-state.js", "dashboard-time.js"],
-    p.globals,
-  );
-  let held: StateLike | null = null;
-  const renders: unknown[] = [];
-  sb.DfirState = { ...sb.DfirState, lastState: () => held };
-  sb.render = (s) => renders.push(s);
-  runInContext(inlineLoadScopeSource(), sb);
-  return {
-    p,
-    sb,
-    renders,
-    hold: (s: StateLike | null) => {
-      held = s;
-    },
-  };
-}
+// ── scope: js/dashboard-scope-load.js, run against the real DfirScope ─────────────────────────
+// (The page and the scope sandbox live in ../helpers/scopePage.ts, shared with caseSwitchScope.)
 
 async function scopeHeldForA(t: ReturnType<typeof scopePage>) {
   t.sb.loadScope("CASE-A");
@@ -232,6 +162,22 @@ describe("confidence control: case A's filters never hide case B's findings (#29
     t.p.requests[0].answer(A_FILTERS);
     await drainAll();
     expect(visibleFindings(t.p, bFindings)).toEqual(["f1", "f-auto-1", "f-gap-1"]);
+  });
+
+  it("#2915: after a cancelled load, reopening the same case resets and reads its filters again", async () => {
+    const t = conf();
+    await filtersHeldForA(t);
+    t.api.loadConfidenceControl("CASE-A"); // on its way at the cancel: never settles
+    t.p.cancel(t.api);
+    expect(visibleFindings(t.p, bFindings)).toEqual([]); // the view the cancel left keeps its filter
+    t.p.switchCase("CASE-A", t.api);
+    t.api.loadConfidenceControl("CASE-A");
+    expect(t.p.requests).toHaveLength(3);
+    expect(visibleFindings(t.p, bFindings)).toEqual(["f1", "f-auto-1", "f-gap-1"]);
+    t.p.requests[1].answer({ minConfidence: 0 });
+    t.p.requests[2].answer(A_FILTERS);
+    await drainAll();
+    expect(visibleFindings(t.p, bFindings)).toEqual([]);
   });
 
   it("B's own filters still apply, and a late call for A neither fetches nor resets them", async () => {

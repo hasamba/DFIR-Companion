@@ -1,6 +1,4 @@
-// Velociraptor triage — the bundle list, the client inventory, the hunt jobs and the collection
-// they drive (#415 tier 3).
-//
+// Velociraptor triage — the bundle list, the client inventory, the hunt jobs and the collection they drive (#415).
 // SEVEN BINDINGS CROSSED THE BOUNDARY AND NONE OF THEM IS PUBLISHED. Two already-extracted modules
 // read them through the shared global lexical environment that a classic script's top-level `let`s
 // live in, and the fix is different for each kind:
@@ -615,8 +613,10 @@
   }
 
   let veloJobsCase = null, veloJobsSeq = 0; // #2904: whose hunts are shown; only the newest load paints
+  const veloJobsReset = (c) => c === null && (veloJobsSeq++, loadVeloHuntJobs(null)); // #2915: a cancelled load
   function loadVeloHuntJobs(caseId) {
     if (caseId && veloCaseId() !== caseId) return; // a late caller for a case the analyst has left
+    if (caseId) typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(veloJobsReset);
     if (veloJobsCase !== caseId || !caseId) renderVeloJobs([]); // the previous case's hunts go at once
     veloJobsCase = caseId;
     if (!caseId) return;

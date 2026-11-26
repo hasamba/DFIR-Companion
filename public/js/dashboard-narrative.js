@@ -108,8 +108,16 @@
   }
   let synthMetaCase = null;
   let synthMetaSeq = 0;
+  // #2915: a cancelled or failed case load hides the banner; the next open (same case too) reads again.
+  function onSynthMetaReset(caseId) {
+    if (caseId !== null) return;
+    synthMetaSeq++;
+    synthMetaCase = null;
+    renderSynthMeta(null);
+  }
   function loadSynthMeta(caseId) {
     if (!synthMetaOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onSynthMetaReset);
     if (synthMetaCase !== caseId) {
       synthMetaCase = caseId;
       renderSynthMeta(null);

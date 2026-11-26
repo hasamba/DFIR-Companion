@@ -32,8 +32,17 @@
   // assignees and statuses at once (this case's state render reads the cleared map).
   let workflowCase = null;
   let workflowSeq = 0;
+  // #2915: a cancelled or failed case load drops the map too (no render — the view the cancel left is
+  // not redrawn); the next open — the same case included — reads it again.
+  function onWorkflowReset(caseId) {
+    if (caseId !== null) return;
+    workflowSeq++;
+    workflowCase = null;
+    workflowByFinding = new Map();
+  }
   function loadFindingWorkflow(caseId) {
     if (!workflowOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onWorkflowReset);
     if (workflowCase !== caseId) {
       workflowCase = caseId;
       workflowByFinding = new Map();

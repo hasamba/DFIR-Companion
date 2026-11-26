@@ -183,8 +183,25 @@
     return !el || typeof el.value !== "string" || el.value.trim() === caseId;
   }
 
+  // #2915: a cancelled or failed case load clears the pairs and badge too (and closes the gate); the
+  // next open — the same case included — reads them again.
+  function onHdReset(caseId) {
+    if (caseId !== null) return;
+    hdSeq++;
+    hdCase = null;
+    hdLoaded = false;
+    pending = [];
+    dismissed = [];
+    loadFailed = false;
+    try {
+      paint();
+    } catch {
+      /* nothing more to show */
+    }
+  }
   async function loadHostDuplicates(caseId) {
     if (!caseId || !hdOnScreen(caseId)) return; // #2900: never a late caller for a case left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onHdReset);
     const seq = ++hdSeq;
     const current = () => seq === hdSeq && hdCase === caseId && hdOnScreen(caseId);
     try {

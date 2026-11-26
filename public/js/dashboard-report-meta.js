@@ -111,15 +111,24 @@
   // #2904: a load for another case blanks the previous case's details at once — its text must not
   // sit in this case's form, not even when this case's read fails.
   let rmShownFor = "";
+  function blankReportMeta(caseId) {
+    rmShownFor = caseId;
+    rmFilledFor = "";
+    fillReportMeta({});
+    const st = document.getElementById("rmStatus");
+    if (st) st.textContent = ""; // a save of the previous case's form may still say "saving…"
+  }
+  // #2915: a cancelled or failed case load blanks the form too (and retires any GET on its way); the
+  // next open — the same case included — reads the details again.
+  function onReportMetaReset(caseId) {
+    if (caseId !== null) return;
+    rmGen++;
+    blankReportMeta("");
+  }
   function loadReportMeta(caseId) {
     if (!rmOnScreen(caseId)) return Promise.resolve(); // a late caller for a case the analyst left
-    if (rmShownFor !== caseId) {
-      rmShownFor = caseId;
-      rmFilledFor = "";
-      fillReportMeta({});
-      const st = document.getElementById("rmStatus");
-      if (st) st.textContent = ""; // a save of the previous case's form may still say "saving…"
-    }
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onReportMetaReset);
+    if (rmShownFor !== caseId) blankReportMeta(caseId);
     return fetchReportMeta(caseId).catch(() => {});
   }
 

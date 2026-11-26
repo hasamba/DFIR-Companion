@@ -93,8 +93,15 @@
     const btn = document.getElementById("custodyVerifyBtn");
     if (btn) btn.disabled = false;
   }
+  // #2915: a cancelled or failed case load blanks the panel too; the next open (same case too) reads again.
+  function onCustodyReset(caseId) {
+    if (caseId !== null) return;
+    custodySeq++;
+    clearCustodyFor(null);
+  }
   function loadCustody(caseId) {
     if (!custodyOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onCustodyReset);
     if (custodyCase !== caseId) clearCustodyFor(caseId);
     const seq = ++custodySeq;
     fetch(`/cases/${caseId}/custody`)
