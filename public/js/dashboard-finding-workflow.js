@@ -23,10 +23,26 @@
     in_review: "In review",
     resolved: "Resolved",
   };
+  // #2900: is `caseId` still the case on screen? Fails open when there is no #caseId to read.
+  function workflowOnScreen(caseId) {
+    const el = document.getElementById("caseId");
+    return !el || typeof el.value !== "string" || el.value.trim() === caseId;
+  }
+  // #2900: finding ids recur across cases, so a load for another case drops the previous case's
+  // assignees and statuses at once (this case's state render reads the cleared map).
+  let workflowCase = null;
+  let workflowSeq = 0;
   function loadFindingWorkflow(caseId) {
+    if (!workflowOnScreen(caseId)) return; // a late caller for a case the analyst has left
+    if (workflowCase !== caseId) {
+      workflowCase = caseId;
+      workflowByFinding = new Map();
+    }
+    const seq = ++workflowSeq;
     fetch(`/cases/${caseId}/finding-workflow`)
       .then((r) => r.json())
       .then((list) => {
+        if (seq !== workflowSeq || !workflowOnScreen(caseId)) return;
         workflowByFinding = new Map();
         (Array.isArray(list) ? list : []).forEach((r) => {
           if (r && r.findingId) workflowByFinding.set(String(r.findingId), r);
@@ -83,7 +99,7 @@
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         // Reconcile locally for instant feedback; the WS finding_workflow_changed also arrives.
-        if (data && "record" in data) {
+        if (data && "record" in data && workflowOnScreen(caseId)) {
           if (data.record) workflowByFinding.set(String(fid), data.record);
           else workflowByFinding.delete(String(fid));
           if (DfirState.lastState()) render(DfirState.lastState());
