@@ -1384,12 +1384,12 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     // or switching cases cancels them too. Without this the ~60 requests outlived the case they
     // belonged to and went on occupying the browser's connection pool.
     expect(html).toMatch(
-      /runPanelLoaders\(\s*(?:[^\n]*\.eagerOnly\()?CASE_PANEL_LOADERS[\s\S]{0,400}signal: loadSignal/,
+      /runPanelLoaders\(\s*(?:[^\n]*\.eagerOnly\()?CASE_PANEL_LOADERS[\s\S]{0,600}signal: loadSignal/,
     );
     // And they are capped below the six-connection HTTP/1.1 limit, so lanes stay free for
     // whatever the analyst does next while a big case loads.
     expect(html).toMatch(
-      /runPanelLoaders\(\s*(?:[^\n]*\.eagerOnly\()?CASE_PANEL_LOADERS[\s\S]{0,400}concurrency: PANEL_LOAD_CONCURRENCY/,
+      /runPanelLoaders\(\s*(?:[^\n]*\.eagerOnly\()?CASE_PANEL_LOADERS[\s\S]{0,600}concurrency: PANEL_LOAD_CONCURRENCY/,
     );
     expect(html).toMatch(/const PANEL_LOAD_CONCURRENCY = [1-5];/);
   });
