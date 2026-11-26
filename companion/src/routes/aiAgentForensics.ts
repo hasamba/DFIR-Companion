@@ -7,6 +7,7 @@
 //   POST /ai-agent/runs                                  start a run (body.caseId → in that case; none → sweep,
 //                                                        the instance administrator's in team mode — #2725)
 //   GET  /cases/:id/ai-agent/endpoints                   the case set's endpoints, reduced fields (case WRITE)
+//   POST /cases/:id/ai-agent/endpoints/refresh           re-read them from Velociraptor first (case WRITE)
 //   GET  /cases/:id/ai-agent/runs                        the case's (or sweep's) runs
 //   POST /cases/:id/ai-agent/runs/:runId/refresh         read results back, rebuild the report
 //   POST /cases/:id/ai-agent/runs/:runId/add-to-case     file a sweep into body.targetCaseId
@@ -180,6 +181,28 @@ async function caseEndpoints(ctx: RouteContext, req: Request, res: Response): Pr
   }
 }
 
+/**
+ * POST /cases/:id/ai-agent/endpoints/refresh (#2898): the picker's Refresh. Re-reads the case set's
+ * client list from Velociraptor into the shared inventory, then answers exactly as the GET does. Case
+ * WRITE, like the list itself: the people who may launch a run may see who is online now. The global
+ * Settings refresh (POST /velociraptor/clients/refresh) stays the administrator's.
+ */
+async function refreshCaseEndpoints(ctx: RouteContext, req: Request, res: Response): Promise<Response> {
+  const caseId = req.params.id;
+  if (ctx.options.teamAuth && !ctx.options.teamAuth.canWriteCase(req, caseId))
+    return res.status(403).json({ error: "you need write access to this case to refresh its endpoints" });
+  const r = ctx.serverClients.forCase(caseId);
+  if (!r.ok || !r.servers.velociraptor)
+    return res.status(409).json({ error: "this case's server set has no Velociraptor server" });
+  try {
+    await ctx.refreshVeloClients(r.servers.setId);
+  } catch (err) {
+    ctx.serverLogger.info(`[ai-agent] endpoint refresh ERROR: ${(err as Error).message}`);
+    return res.status(502).json({ error: "could not read the client list from Velociraptor" });
+  }
+  return caseEndpoints(ctx, req, res);
+}
+
 export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext): void {
   const runStore = new AiAgentRunStore(ctx.store);
 
@@ -249,6 +272,9 @@ export function registerAiAgentForensicsRoutes(app: Express, ctx: RouteContext):
   });
 
   app.get("/cases/:id/ai-agent/endpoints", (req: Request, res: Response) => caseEndpoints(ctx, req, res));
+  app.post("/cases/:id/ai-agent/endpoints/refresh", (req: Request, res: Response) =>
+    refreshCaseEndpoints(ctx, req, res),
+  );
 
   app.get("/cases/:id/ai-agent/runs", async (req: Request, res: Response) => {
     try {

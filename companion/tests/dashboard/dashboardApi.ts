@@ -571,9 +571,14 @@ export interface VeloLabelsApi {
 export interface VeloClientsApi {
   veloClientsCutNotice(inv: { truncated?: unknown } | null): string;
   veloPickerRows(
-    clients: { clientId: string; hostname?: string; fqdn?: string }[] | null,
+    clients: { clientId: string; hostname?: string; fqdn?: string; lastSeen?: string }[] | null,
     query: string,
+    cap?: number,
+    opts?: { onlineOnly?: boolean; now?: number },
   ): { rows: { clientId: string; hostname?: string; fqdn?: string }[]; matched: number; total: number };
+  veloLastSeenMs(value: unknown): number | null;
+  veloIsOnline(client: { clientId: string; lastSeen?: string }, now?: number): boolean;
+  veloSeenAgo(client: { clientId: string; lastSeen?: string }, now?: number): string;
   veloPickerNote(view: { rows: unknown[]; matched: number; total: number }): string;
   veloPickerLabel(client: { clientId: string; hostname?: string; fqdn?: string }): string;
 }

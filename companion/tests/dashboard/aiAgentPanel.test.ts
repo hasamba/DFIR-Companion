@@ -63,7 +63,9 @@ describe("AI Agent Forensics panel", () => {
   it("endpoint picker: filters the whole list, caps only the drawn rows, says so, and keeps picks (#2887)", () => {
     const picker = js.slice(js.indexOf("async function endpointPicker"), js.indexOf("function scopeBoxes"));
     expect(picker).not.toContain(".slice(0, 2000)");
-    expect(picker).toContain("veloPickerRows(clients, filter.value)");
+    expect(picker).toContain(
+      "veloPickerRows(clients, filter.value, undefined, { onlineOnly: online.checked })",
+    );
     expect(picker).toContain("veloPickerNote(view)");
     // A list the server cut at its row limit says so above the picker.
     expect(picker).toContain("veloClientsCutNotice(inv.body)");
@@ -72,6 +74,25 @@ describe("AI Agent Forensics panel", () => {
     expect(picker).toContain("box.checked = picked.has(c.clientId)");
     expect(picker).toContain("selected: () => [...picked]");
     expect(picker).not.toContain("input:checked");
+  });
+
+  it("endpoint picker: Refresh re-reads the list through the right route, Online only filters it (#2898)", () => {
+    const picker = js.slice(js.indexOf("async function endpointPicker"), js.indexOf("function scopeBoxes"));
+    // Inside a case the case route (case writers); with no case the administrator's fleet refresh.
+    expect(picker).toContain(
+      'const refreshUrl = caseId ? `${listUrl}/refresh` : "/velociraptor/clients/refresh"',
+    );
+    expect(picker).toContain("await post(refreshUrl)");
+    expect(picker).toContain('el("button", "Refresh", "aa-refresh")');
+    expect(picker).toContain("Online only (seen in the last 15 min)");
+    expect(picker).toContain('online.addEventListener("change", draw)');
+    // Each row says when the endpoint was last seen; picks survive a refresh (one Set for the panel).
+    expect(picker).toContain("veloSeenAgo(c)");
+    expect(picker.match(/new Set\(\)/g)).toHaveLength(1);
+    // A failed refresh keeps the list shown and says why, instead of wiping it.
+    expect(picker).toContain("Refresh failed: ");
+    // The panel no longer sends the analyst to Settings to refresh.
+    expect(picker).not.toContain("Settings → Velociraptor");
   });
 
   it("turns the standard 401 locked answer into an unlock hint (#2798)", () => {

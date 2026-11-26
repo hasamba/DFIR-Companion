@@ -116,37 +116,63 @@
 
   async function endpointPicker(caseId) {
     const wrap = el("div", null, "aa-endpoints");
+    const bar = el("div", null, "aa-endpoint-bar");
     const filter = el("input");
     filter.type = "search";
     filter.placeholder = "Filter endpoints";
     filter.setAttribute("aria-label", "Filter endpoints");
+    // #2898: "Online only" keeps endpoints Velociraptor saw in the last 15 minutes; Refresh re-reads the
+    // client list from Velociraptor, so that view is current. Picks live in a Set and survive both.
+    const onlineLabel = el("label", null, "aa-online");
+    const online = el("input");
+    online.type = "checkbox";
+    onlineLabel.append(online, document.createTextNode(" Online only (seen in the last 15 min)"));
+    const refresh = el("button", "Refresh", "aa-refresh");
+    refresh.type = "button";
+    refresh.title = "Read the current client list from Velociraptor";
+    bar.append(filter, onlineLabel, refresh);
+    const status = el("p", null, "aa-note");
+    const cutNote = el("p", null, "aa-note");
+    const note = el("p", null, "aa-note");
     const list = el("div", null, "aa-endpoint-list");
     list.setAttribute("role", "group");
     list.setAttribute("aria-label", "Endpoints to check");
-    wrap.append(filter, list);
-    // Inside a case: the case's own endpoint list (case writers, #2725). No case: the fleet inventory,
-    // which — like a run with no case open — is the administrator's.
-    const inv = await call(caseId ? `/cases/${encodeURIComponent(caseId)}/ai-agent/endpoints` : "/velociraptor/clients");
-    const clients = (inv.ok && inv.body.clients) || [];
-    if (inv.status === 403)
-      list.appendChild(el("p", caseId ? "You need write access to this case to list its endpoints — ask the case owner or an administrator." : "Only an administrator can list endpoints and run with no case open — open a case you can write to.", "aa-note"));
-    else if (!inv.ok) list.appendChild(el("p", (inv.body && inv.body.error) || `Could not list endpoints (HTTP ${inv.status}).`, "aa-note"));
-    else if (!clients.length)
-      list.appendChild(el("p", "No Velociraptor client inventory yet — an administrator can refresh it in Settings → Velociraptor.", "aa-note"));
-    // #2887: a list the server cut at its row limit says so; the filter searches the WHOLE list and
-    // only the drawn rows are capped (js/dashboard-velo-clients.js). Picks live in a Set, so a pick
-    // survives a filter that hides its row.
-    const cut = inv.ok ? veloClientsCutNotice(inv.body) : "";
-    if (cut) wrap.insertBefore(el("p", cut, "aa-note"), list);
-    const note = el("p", null, "aa-note");
-    note.hidden = true;
-    wrap.insertBefore(note, list);
+    for (const p of [status, cutNote, note]) p.hidden = true;
+    wrap.append(bar, status, cutNote, note, list);
+    // Inside a case: the case's own endpoint list (case writers, #2725), refreshed through the case
+    // route (#2898). No case: the fleet inventory, which — like a run with no case open — is the
+    // administrator's, and so is its refresh.
+    const listUrl = caseId ? `/cases/${encodeURIComponent(caseId)}/ai-agent/endpoints` : "/velociraptor/clients";
+    const refreshUrl = caseId ? `${listUrl}/refresh` : "/velociraptor/clients/refresh";
     const picked = new Set();
+    let inv = { ok: false, status: 0, body: {} };
+    let clients = [];
+    const say = (p, text) => {
+      p.textContent = text || "";
+      p.hidden = !p.textContent;
+    };
+
+    function problem() {
+      if (inv.status === 403)
+        return caseId ? "You need write access to this case to list its endpoints — ask the case owner or an administrator." : "Only an administrator can list endpoints and run with no case open — open a case you can write to.";
+      if (!inv.ok) return (inv.body && inv.body.error) || `Could not list endpoints (HTTP ${inv.status}).`;
+      if (!clients.length) return "No Velociraptor client inventory yet — press Refresh to read it from Velociraptor.";
+      return "";
+    }
+
     function draw() {
-      const view = veloPickerRows(clients, filter.value);
-      note.textContent = veloPickerNote(view);
-      note.hidden = !note.textContent;
       list.replaceChildren();
+      const why = problem();
+      if (why) {
+        say(note, "");
+        list.appendChild(el("p", why, "aa-note"));
+        return;
+      }
+      // #2887: the filter searches the WHOLE list and only the drawn rows are capped.
+      const view = veloPickerRows(clients, filter.value, undefined, { onlineOnly: online.checked });
+      say(note, veloPickerNote(view));
+      if (!view.rows.length && online.checked && !filter.value.trim())
+        list.appendChild(el("p", "No endpoint was seen in the last 15 minutes — press Refresh for the current list.", "aa-note"));
       for (const c of view.rows) {
         const label = el("label", null, "aa-endpoint");
         const box = el("input");
@@ -154,15 +180,37 @@
         box.value = c.clientId;
         box.checked = picked.has(c.clientId);
         box.addEventListener("change", () => (box.checked ? picked.add(c.clientId) : picked.delete(c.clientId)));
-        label.append(box, document.createTextNode(` ${veloPickerLabel(c)}`));
+        label.append(box, document.createTextNode(` ${veloPickerLabel(c)} `), el("span", veloSeenAgo(c), "aa-seen"));
         list.appendChild(label);
       }
     }
-    // Only a real list is drawn: typing over a refusal or an empty inventory keeps its message.
-    if (inv.ok && clients.length) {
+
+    function show(next) {
+      inv = next;
+      clients = (inv.ok && inv.body.clients) || [];
+      say(cutNote, inv.ok ? veloClientsCutNotice(inv.body) : "");
+      const at = inv.ok && inv.body.updatedAt ? new Date(inv.body.updatedAt) : null;
+      say(status, at && !Number.isNaN(at.getTime()) ? `Client list fetched ${at.toLocaleString()}` : "");
       draw();
-      filter.addEventListener("input", draw);
     }
+
+    refresh.addEventListener("click", async () => {
+      refresh.disabled = true;
+      refresh.textContent = "Refreshing…";
+      const r = await post(refreshUrl);
+      refresh.disabled = false;
+      refresh.textContent = "Refresh";
+      if (r.ok) return show(r);
+      // A failed refresh keeps the list already shown and says why.
+      const why =
+        r.status === 403
+          ? caseId ? "you need write access to this case" : "only an administrator can refresh the fleet list"
+          : (r.body && r.body.error) || `HTTP ${r.status}`;
+      say(status, `Refresh failed: ${why}.`);
+    });
+    filter.addEventListener("input", draw);
+    online.addEventListener("change", draw);
+    show(await call(listUrl));
     return { wrap, selected: () => [...picked] };
   }
 
