@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **AI Agent Forensics picker Refresh and Online only** — case writers re-read the Velociraptor client list from the picker; Online only shows endpoints seen in the last 15 minutes, each row says when it was last seen (part of #2898)
+- **AI Agent Forensics working data, wider** — Codex plugin staging, caches and history databases, the Gemini browser profile, VS Code logs, OpenCode's database and .claude.json backups also grade Info; agent definitions and cached tool lists keep their grade (part of #2719)
 - **AI Agent Forensics quieter on developer machines** — hits in the agents' own working data (session transcripts, installed skills, temp folders, edit history) are graded Info; instruction files and MCP configs keep their grade (part of #2719)
 - **AI Agent Forensics titles and live status** — timeline titles end at the file name (notes move to details), and a Running run card re-checks itself every minute with a Check again button, and the YARA coverage line counts the files it scanned instead of always "0" (closes #2924)
 - **AI Agent Forensics keeps matched files on older servers** — when the server's triage artifact lacks the AICodingAgents option, the run saves each file a rule matched, and the card says how to update the server (closes #2920)

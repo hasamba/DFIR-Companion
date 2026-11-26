@@ -200,6 +200,25 @@ agentWorkingData:
   - /saoudrizwan.claude-dev/cache/
   - /rooveterinaryinc.roo-cline/checkpoints/
   - /rooveterinaryinc.roo-cline/cache/
+  # agents' own staging, caches, history databases, logs and backup copies. Kept narrow on purpose:
+  # live config (.claude.json, settings.json, .mcp.json), agent definitions (.claude/agents) and
+  # Codex's cached tool and plugin lists (.codex/cache) stay graded, because the agent loads them.
+  - /.codex/.tmp/
+  - /.codex/vendor_imports/
+  - /.codex/ambient-suggestions/
+  - /.codex/.codex-global-state.json
+  - /.codex/thread_history_
+  - /.codex/logs_
+  - /.codex/state_
+  - /.claude/cache/
+  - /.claude/history.jsonl
+  - /.claude.json.backup
+  - /.claude.json.tmp.
+  - /.gemini/antigravity-browser-profile/
+  - /.local/share/opencode/opencode.db
+  - /.local/state/opencode/
+  - /appdata/roaming/code/logs/
+  - /appdata/roaming/cursor/logs/
   # editors' local edit history (a copy of every file you edit)
   - /appdata/roaming/code/user/history/
   - /appdata/roaming/cursor/user/history/
