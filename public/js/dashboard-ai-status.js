@@ -388,11 +388,13 @@
     hideHeldSkip();
   }
   // #2915: a cancelled or failed case load puts the pill back to "AI: —" too (no case is loaded).
+  // #2940: so does another case opening, at the switch itself — this loader may never run for it, and
+  // an action from the first visit to A must not paint after A -> B -> A. A reopen of A keeps it.
   function onAiStateReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === aiStateCase) return;
     aiStateSeq++;
     aiActGen++;
-    aiStateCase = null;
+    aiStateCase = caseId;
     resetAiPill();
   }
   async function refreshAiState(caseId) {

@@ -371,13 +371,25 @@
   // #2915: a cancelled or failed case load (DfirPanelDefer.reset(null)) drops the three panels'
   // content and owners, so the next open — the same case included — clears and reads them again.
   function onFpReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null) return onFpOpen(caseId);
     fpLoadSeq++, lpSeq++, stSeq++, stGen++;
     clearFalsePositives(null);
     clearCustomerExposure(null);
     lpCase = stCase = null;
     renderLearnedPatterns([]);
     renderSourceTrust(null);
+    const msg = document.getElementById("sourceTrustMsg");
+    if (msg) msg.textContent = "";
+  }
+  // #2940: another case opening retires, at the switch, each panel here still owned by another case —
+  // its loader may never run for this one (customer exposure is a deferred panel), and an action from
+  // the first visit to A must not paint after A -> B -> A. Each owner on its own: a reopen moves none.
+  function onFpOpen(caseId) {
+    if (fpLoadedCaseId !== caseId) fpLoadSeq++, clearFalsePositives(caseId);
+    if (ceCase !== caseId) ceSeq++, clearCustomerExposure(caseId);
+    if (lpCase !== caseId) lpSeq++, (lpCase = caseId), renderLearnedPatterns([]);
+    if (stCase === caseId) return;
+    stSeq++, stGen++, (stCase = caseId), renderSourceTrust(null);
     const msg = document.getElementById("sourceTrustMsg");
     if (msg) msg.textContent = "";
   }

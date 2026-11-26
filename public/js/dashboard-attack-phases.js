@@ -35,9 +35,12 @@
 
   // #2933: only the newest load paints. A cancelled load (reset(null)) retires every load still on its
   // way and the scheduled reload, so an answer from before it never lands on the same case reopened.
-  let phasesSeq = 0;
+  // #2940: so does another case opening, at the switch — a hidden section never loads for it, so after
+  // A -> B -> A a load from the first visit to A would still be the newest. phasesOwner: the case asked for.
+  let phasesSeq = 0, phasesOwner = null;
   function onPhasesReset(c) {
-    if (c !== null) return;
+    if (c !== null && c === phasesOwner) return;
+    phasesOwner = c;
     phasesSeq++;
     clearTimeout(phasesTimer);
   }
@@ -45,6 +48,7 @@
     if (!caseId || caseId !== caseOnScreen()) return; // a late caller for a case the analyst has left
     typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function" && DfirPanelDefer.onReset(onPhasesReset);
     const seq = ++phasesSeq; // before the hidden-panel skip: an older load is retired either way
+    phasesOwner = caseId;
     if (typeof DfirPanelDefer !== "undefined" && DfirPanelDefer.skip("phases", caseId)) return; // #2854 hidden: load on reveal
     fetch(`/cases/${caseId}/phases`)
       .then((r) => r.json())

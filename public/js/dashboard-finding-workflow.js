@@ -35,11 +35,12 @@
   let workflowGen = 0; // #2929: a PATCH answer paints only in the generation it was sent in (owner change / cancel)
   // #2915: a cancelled or failed case load drops the map too (no render — the view the cancel left is
   // not redrawn); the next open — the same case included — reads it again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onWorkflowReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === workflowCase) return;
     workflowSeq++;
     workflowGen++;
-    workflowCase = null;
+    workflowCase = caseId;
     workflowByFinding = new Map();
   }
   function loadFindingWorkflow(caseId) {

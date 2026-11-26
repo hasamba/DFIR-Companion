@@ -98,10 +98,11 @@
     if (btn) btn.disabled = false;
   }
   // #2915: a cancelled or failed case load blanks the panel too; the next open (same case too) reads again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onCustodyReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === custodyCase) return;
     custodySeq++;
-    clearCustodyFor(null);
+    clearCustodyFor(caseId);
   }
   function loadCustody(caseId) {
     if (!custodyOnScreen(caseId)) return; // a late caller for a case the analyst has left

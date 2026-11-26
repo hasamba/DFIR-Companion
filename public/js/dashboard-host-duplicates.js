@@ -188,11 +188,12 @@
 
   // #2915: a cancelled or failed case load clears the pairs and badge too (and closes the gate); the
   // next open — the same case included — reads them again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onHdReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === hdCase) return;
     hdSeq++;
     hdGen++;
-    hdCase = null;
+    hdCase = caseId;
     hdLoaded = false;
     pending = [];
     dismissed = [];

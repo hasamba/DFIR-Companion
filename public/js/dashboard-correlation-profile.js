@@ -25,11 +25,12 @@
     if (info) info.textContent = "";
   }
   // #2915: a cancelled or failed case load blanks the profile; the next open (same case too) reads again.
+  // #2940: another case opening does the same at the switch (this loader may never run for it).
   function onCorrReset(caseId) {
-    if (caseId !== null) return;
+    if (caseId !== null && caseId === corrCase) return;
     corrSeq++;
     corrGen++;
-    corrCase = null;
+    corrCase = caseId;
     blankCorrProfile();
   }
   function loadCorrProfile(caseId) {

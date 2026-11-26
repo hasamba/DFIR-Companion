@@ -22,9 +22,24 @@
       ? DfirPanelDefer.actionLive(caseId)
       : () => document.getElementById("caseId").value.trim() === caseId;
   const fpStill = (caseId, seq = fpOpenSeq, live = fpActionLive(caseId)) => () => seq === fpOpenSeq && live();
+  // #2940: the case the open modal was opened on. Another case opening (or a cancelled load) closes it
+  // at the switch: its references are that case's, and a Save or Ask AI would send them to the new
+  // one; its "marking…" line would stay until the next open. A reopen of the same case keeps it.
+  let fpModalCase = null;
+  function fpOnReset(c) {
+    if (fpModalCase === null || c === fpModalCase) return;
+    fpOpenSeq++;
+    document.getElementById("fpMsg").textContent = "";
+    const ask = document.getElementById("fpAskAiBtn");
+    ask.disabled = false;
+    ask.textContent = "🔎 Ask AI for similar";
+    closeFalsePositiveModal();
+  }
 
   function openFalsePositiveModal(kind, ref, label, extraRefs, onDone) {
     fpOpenSeq++;
+    fpModalCase = document.getElementById("caseId").value.trim();
+    if (typeof DfirPanelDefer !== "undefined" && typeof DfirPanelDefer.onReset === "function") DfirPanelDefer.onReset(fpOnReset);
     const ask = document.getElementById("fpAskAiBtn");
     ask.disabled = false; // an earlier modal's Ask AI no longer frees it
     ask.textContent = "🔎 Ask AI for similar";
@@ -132,6 +147,7 @@
 
   function closeFalsePositiveModal() {
     fpTarget = null;
+    fpModalCase = null;
     document.getElementById("fpOverlay").classList.remove("open");
   }
 
