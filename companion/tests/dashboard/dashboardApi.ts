@@ -583,6 +583,22 @@ export interface VeloClientsApi {
   veloPickerLabel(client: { clientId: string; hostname?: string; fqdn?: string }): string;
 }
 
+// public/js/dashboard-ai-agent-hits.js — the AI Agent findings table's filters and shortened cells.
+export interface AiAgentHitsApi {
+  aaHitFilterOptions(hits: { severity?: string; rule?: string; host?: string }[] | null): {
+    grades: string[];
+    rules: string[];
+    hosts: string[];
+  };
+  aaFilterHits<T extends { severity?: string; rule?: string; host?: string }>(
+    hits: T[] | null,
+    filter: { grade?: string; rule?: string; host?: string } | null,
+  ): T[];
+  aaHitCountNote(shown: number, total: number): string;
+  aaShortPath(path: unknown, max?: number): string;
+  aaShortHash(hash: unknown): string;
+}
+
 // public/js/dashboard-velo-hunt-cancel.js — a running hunt card's Cancel button + the cancelled line.
 export interface VeloHuntCancelApi {
   veloCancelHuntBtnHtml(
